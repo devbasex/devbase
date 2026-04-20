@@ -1,0 +1,7 @@
+services:
+
+  dev:
+    image: devbase-general:latest
+    build:
+      context: .
+      dockerfile: Dockerfile

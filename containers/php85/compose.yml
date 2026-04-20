@@ -1,0 +1,7 @@
+services:
+
+  dev:
+    image: devbase-php85:latest
+    build:
+      context: .
+      dockerfile: Dockerfile

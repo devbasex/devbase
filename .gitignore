@@ -1,0 +1,12 @@
+__pycache__/
+.venv/
+.env
+.env.backup
+.docker-compose.scale.yml
+plugins.yml
+plugins/*/
+!plugins/.gitkeep
+projects/*
+!projects/.gitkeep
+.serena/serena_config.yml
+.env.sources.yml

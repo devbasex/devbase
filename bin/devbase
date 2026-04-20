@@ -1,0 +1,201 @@
+#!/bin/bash
+set -e
+
+# devbase root directory (where devbase command is installed)
+# Resolve symlinks to find the actual location of the devbase script
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+DEVBASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Environment setup
+export DOCKER_GID=$( [ "$(uname)" = "Darwin" ] && echo "0" || grep docker /etc/group | cut -d: -f3 )
+export COMPOSE_PROJECT_NAME=$(basename "$PWD")
+[ -f ".env" ] && set -a && source .env && set +a
+[ -f "env" ] && set -a && source ./env && set +a
+
+# Export for Python modules
+export DEVBASE_ROOT
+
+# ===================================================================
+# Function definitions
+# ===================================================================
+
+cmd_build() {
+    echo "=== Building devbase images ==="
+
+    # Helper: Check if Dockerfile uses devbase-* base images
+    check_base_image_dependency() {
+        local dockerfile_path="$1"
+        if [ -f "$dockerfile_path" ]; then
+            if grep -q "^FROM devbase-" "$dockerfile_path"; then
+                # Extract base image name (e.g., "devbase-base", "devbase-general")
+                grep "^FROM devbase-" "$dockerfile_path" | head -1 | awk '{print $2}' | cut -d: -f1
+                return 0
+            fi
+        fi
+        return 1
+    }
+
+    # Helper: Build base image
+    build_base_image() {
+        local base_image="$1"
+        shift
+        local container_dir="${DEVBASE_ROOT}/containers/${base_image#devbase-}"
+
+        if [ ! -d "$container_dir" ]; then
+            echo "✗ Container directory not found: $container_dir"
+            return 1
+        fi
+
+        echo "Building ${base_image}:latest..."
+        if docker buildx build --load -t "${base_image}:latest" "$container_dir" "$@"; then
+            echo "✓ ${base_image} built successfully"
+            return 0
+        else
+            echo "✗ Failed to build ${base_image}"
+            return 1
+        fi
+    }
+
+    # Detect Dockerfile path from compose.yml
+    local dockerfile_path="Dockerfile"
+    if [ -f "compose.yml" ]; then
+        # Try to extract dockerfile path from compose.yml (simple grep approach)
+        local dockerfile_line=$(grep -A 3 "build:" compose.yml | grep "dockerfile:" | head -1 | awk '{print $2}')
+        if [ -n "$dockerfile_line" ]; then
+            dockerfile_path="$dockerfile_line"
+        fi
+
+        # If dockerfile is relative, combine with context path
+        local context_line=$(grep -A 3 "build:" compose.yml | grep "context:" | head -1 | awk '{print $2}')
+        if [ -n "$context_line" ]; then
+            # Expand environment variables in context path
+            context_line=$(eval echo "$context_line")
+            if [[ "$dockerfile_path" != /* ]]; then
+                dockerfile_path="${context_line}/${dockerfile_path}"
+            fi
+        fi
+    fi
+
+    # --no-cache specified: always rebuild base first
+    if [[ "$*" == *"--no-cache"* ]]; then
+        echo ""
+        echo "[1/3] Clearing buildx cache..."
+        docker builder prune -af >/dev/null 2>&1 || true
+        echo "✓ Buildx cache cleared"
+
+        echo ""
+        echo "[2/3] Building devbase-base..."
+        if ! build_base_image "devbase-base" "$@"; then
+            exit 1
+        fi
+
+        echo ""
+        echo "[3/3] Building project image..."
+        if docker compose build dev "$@"; then
+            echo ""
+            echo "✓ All images built successfully"
+        else
+            echo ""
+            echo "✗ Failed to build project image"
+            exit 1
+        fi
+        return
+    fi
+
+    # Normal build: check if project uses devbase-* base image
+    local base_image_name=$(check_base_image_dependency "$dockerfile_path")
+    if [ -n "$base_image_name" ]; then
+        echo ""
+        echo "[1/2] Project uses ${base_image_name}, building base image..."
+        if ! build_base_image "$base_image_name" "$@"; then
+            exit 1
+        fi
+    else
+        # Fallback: check if devbase-base exists
+        if ! docker image inspect devbase-base:latest >/dev/null 2>&1; then
+            echo ""
+            echo "[1/2] Building devbase-base..."
+            if ! build_base_image "devbase-base" "$@"; then
+                exit 1
+            fi
+        else
+            echo "[1/2] devbase-base already exists (use --no-cache to rebuild)"
+        fi
+    fi
+
+    echo ""
+    echo "[2/2] Building project image..."
+    if docker compose build dev "$@"; then
+        echo ""
+        echo "✓ All images built successfully"
+    else
+        echo ""
+        echo "✗ Failed to build project image"
+        exit 1
+    fi
+}
+
+# ===================================================================
+# Command dispatch
+# ===================================================================
+
+# Ensure uv is available (auto-install if missing)
+ensure_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "Installing uv..." >&2
+    curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
+    export PATH="$HOME/.local/bin:$PATH"
+    if ! command -v uv >/dev/null 2>&1; then
+        echo "Error: Failed to install uv" >&2
+        exit 1
+    fi
+}
+
+# Helper to run Python implementation via uv
+run_python() {
+    ensure_uv
+    PYTHONPATH="${DEVBASE_ROOT}/lib:$PYTHONPATH" exec uv run --project "$DEVBASE_ROOT" python -m devbase.cli "$@"
+}
+
+# Resolve abbreviated command to full command name via unique prefix matching
+resolve_command() {
+    local input="$1"
+    local commands="init status container ct env plugin pl snapshot ss up down login build ps help"
+    local matches=()
+    for cmd in $commands; do
+        [[ "$cmd" == "$input"* ]] && matches+=("$cmd")
+    done
+    if [ ${#matches[@]} -eq 1 ]; then
+        echo "${matches[0]}"
+    else
+        echo "$input"  # no match or ambiguous -> return as-is
+    fi
+}
+
+# Resolve the command (skip flags like --version, -V, -h, --help)
+_resolved_cmd="${1:-}"
+case "$_resolved_cmd" in
+    --*|-*|"") ;;  # flags and empty: don't resolve
+    *) _resolved_cmd="$(resolve_command "$_resolved_cmd")" ;;
+esac
+
+case "$_resolved_cmd" in
+    # Python-implemented commands
+    --version|-V)
+        run_python "$@" ;;
+    init|status|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps)
+        run_python "${_resolved_cmd}" "${@:2}" ;;
+    # Shell-implemented commands
+    build)  shift; cmd_build "$@" ;;
+    # Help and unknown
+    -h|--help|help|"") run_python "--help" ;;
+    *)      echo "Error: unknown command '$1'" >&2; exit 1 ;;
+esac

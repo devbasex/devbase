@@ -1,0 +1,225 @@
+#compdef devbase
+
+# zsh completion for devbase
+
+_devbase_plugin_names() {
+    local devbase_root plugin_dir
+    devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
+    plugin_dir="${devbase_root}/plugins"
+    if [[ -d "$plugin_dir" ]]; then
+        local -a plugins
+        plugins=(${plugin_dir}/*(N:t))
+        _describe 'plugin' plugins
+    fi
+}
+
+_devbase_repo_names() {
+    local devbase_root yml
+    devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
+    yml="${devbase_root}/plugins.yml"
+    if [[ -f "$yml" ]] && (( $+commands[python3] )); then
+        local -a repos
+        repos=($(python3 -c "
+import yaml, sys
+try:
+    d = yaml.safe_load(open('$yml'))
+    print(' '.join(r['name'] for r in (d or {}).get('repositories', [])))
+except Exception:
+    pass
+" 2>/dev/null))
+        _describe 'repository' repos
+    fi
+}
+
+_devbase() {
+    local -a commands container_subcommands env_subcommands
+    local -a plugin_subcommands repo_subcommands snapshot_subcommands
+
+    commands=(
+        'init:Initialize devbase environment'
+        'status:Show overall status'
+        'container:Manage containers'
+        'ct:Manage containers (alias)'
+        'env:Manage environment variables'
+        'plugin:Manage plugins'
+        'pl:Manage plugins (alias)'
+        'snapshot:Manage snapshots'
+        'ss:Manage snapshots (alias)'
+        'up:Start containers (shortcut)'
+        'down:Stop containers (shortcut)'
+        'login:Login to container (shortcut)'
+        'build:Build container images'
+        'ps:Show container status (shortcut)'
+        'help:Show help'
+    )
+
+    container_subcommands=(
+        'up:Start containers'
+        'down:Stop and remove containers'
+        'ps:Show container status'
+        'login:Login to container'
+        'logs:Show container logs'
+        'scale:Scale containers online'
+        'build:Build container images'
+    )
+
+    env_subcommands=(
+        'init:Initial setup (interactive)'
+        'sync:Resync credentials from sources'
+        'list:List variables'
+        'set:Set a variable'
+        'get:Get a variable'
+        'delete:Delete a variable'
+        'edit:Open .env in editor'
+        'project:Setup project-specific variables'
+    )
+
+    plugin_subcommands=(
+        'list:List plugins'
+        'install:Install a plugin'
+        'uninstall:Uninstall a plugin'
+        'update:Update plugin(s)'
+        'info:Show plugin details'
+        'sync:Resync project symlinks'
+        'repo:Manage plugin repositories'
+    )
+
+    repo_subcommands=(
+        'add:Register a repository'
+        'remove:Unregister a repository'
+        'list:List registered repositories'
+        'refresh:Refresh repository plugin list'
+    )
+
+    snapshot_subcommands=(
+        'create:Create a snapshot'
+        'list:List snapshots'
+        'restore:Restore from a snapshot'
+        'copy:Copy a snapshot'
+        'delete:Delete a snapshot'
+        'rotate:Rotate old snapshots'
+    )
+
+    case "$words[2]" in
+        login)
+            _values 'index' 1 2
+            ;;
+        container|ct)
+            case "$words[3]" in
+                login)
+                    _values 'index' 1 2
+                    ;;
+                scale)
+                    _values 'new_scale' 1 2 3 4 5
+                    ;;
+                ps)
+                    _arguments '--all[Show all containers]' '-a[Show all containers]'
+                    ;;
+                logs)
+                    _arguments \
+                        '--follow[Follow log output]' \
+                        '-f[Follow log output]' \
+                        '--tail[Number of lines]:lines:'
+                    ;;
+                build)
+                    _arguments '1:image:'
+                    ;;
+                *)
+                    _describe -t container-commands 'container command' container_subcommands
+                    ;;
+            esac
+            ;;
+        env)
+            case "$words[3]" in
+                init)
+                    _arguments '--reset[Reset existing config]'
+                    ;;
+                list)
+                    _arguments \
+                        '--global[Show global only]' '-g[Show global only]' \
+                        '--project[Show project only]' '-p[Show project only]' \
+                        '--reveal[Reveal sensitive values]' '-r[Reveal sensitive values]' \
+                        '--keys[Show keys only]' '-k[Show keys only]'
+                    ;;
+                set)
+                    _arguments \
+                        '1:assignment:' \
+                        '--project[Set in project .env]' '-p[Set in project .env]'
+                    ;;
+                get|delete)
+                    _arguments '1:key:'
+                    ;;
+                *)
+                    _describe -t env-commands 'env command' env_subcommands
+                    ;;
+            esac
+            ;;
+        plugin|pl)
+            case "$words[3]" in
+                list)
+                    _arguments '--available[Show available plugins from registered repositories]'
+                    ;;
+                install)
+                    _arguments \
+                        '1:source:_files' \
+                        '--link[Install as symlink for local development]' \
+                        '--all[Install all plugins from repository]'
+                    ;;
+                uninstall|update|info)
+                    _devbase_plugin_names
+                    ;;
+                repo)
+                    case "$words[4]" in
+                        add)
+                            _arguments \
+                                '1:url:_urls' \
+                                '--name[Custom name for the repository]:name:'
+                            ;;
+                        remove|refresh)
+                            _devbase_repo_names
+                            ;;
+                        list)
+                            ;;
+                        *)
+                            _describe -t repo-commands 'repo command' repo_subcommands
+                            ;;
+                    esac
+                    ;;
+                *)
+                    _describe -t plugin-commands 'plugin command' plugin_subcommands
+                    ;;
+            esac
+            ;;
+        snapshot|ss)
+            case "$words[3]" in
+                create)
+                    _arguments \
+                        '--name[Snapshot name]:name:' \
+                        '--full[Force full backup]'
+                    ;;
+                restore)
+                    _arguments \
+                        '1:name:' \
+                        '--point[Restore up to incr-N only]:n:'
+                    ;;
+                copy)
+                    _arguments '1:name:' '2:new_name:'
+                    ;;
+                delete)
+                    _arguments '1:name:'
+                    ;;
+                rotate)
+                    _arguments '--keep[Generations to keep]:n:'
+                    ;;
+                *)
+                    _describe -t snapshot-commands 'snapshot command' snapshot_subcommands
+                    ;;
+            esac
+            ;;
+        *)
+            _describe -t commands 'devbase command' commands
+            ;;
+    esac
+}
+
+_devbase "$@"

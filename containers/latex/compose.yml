@@ -1,0 +1,7 @@
+services:
+
+  dev:
+    image: devbase-latex:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
