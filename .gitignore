@@ -8,5 +8,4 @@ plugins/*/
 !plugins/.gitkeep
 projects/*
 !projects/.gitkeep
-.serena/serena_config.yml
 .env.sources.yml
