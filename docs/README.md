@@ -44,6 +44,7 @@ graph TD
 |-------------|------|
 | [はじめに](user/getting-started.md) | 前提条件、初回セットアップ、日常ワークフロー |
 | [CLI リファレンス](user/cli-reference.md) | 全コマンドの構文・オプション・使用例 |
+| [プラグインレジストリ](user/plugin-registries.md) | 公開・社内レジストリの一覧と追加方法 |
 | [環境変数ガイド](user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [コンテナ操作ガイド](user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
@@ -90,6 +91,7 @@ docs/
 ├── user/                              ← 利用者向け
 │   ├── getting-started.md             ← はじめに
 │   ├── cli-reference.md               ← CLI リファレンス
+│   ├── plugin-registries.md           ← プラグインレジストリ
 │   ├── environment-variables.md       ← 環境変数ガイド
 │   ├── container-operations.md        ← コンテナ操作ガイド
 │   ├── snapshot-guide.md              ← スナップショットガイド
