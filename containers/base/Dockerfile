@@ -146,7 +146,7 @@ RUN set -eux; \
 RUN set -eux; \
     # AI CLI aliases
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc; \
-    echo 'alias claude='\''ANTHROPIC_BETA=context-1m-2025-08-07 claude --dangerously-skip-permissions "$@"'\''' >> ~/.bashrc; \
+    echo 'alias claude='\''claude --dangerously-skip-permissions "$@"'\''' >> ~/.bashrc; \
     echo 'alias claudb='\''CLAUDE_CODE_USE_BEDROCK=1 AWS_REGION=us-west-2 claude --dangerously-skip-permissions "$@"'\''' >> ~/.bashrc; \
     echo 'alias gemini='\''GOOGLE_GENAI_USE_VERTEXAI=true gemini --yolo "$@"'\''' >> ~/.bashrc; \
     echo 'alias codex='\''codex --dangerously-bypass-approvals-and-sandbox "$@"'\''' >> ~/.bashrc; \
