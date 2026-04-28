@@ -41,7 +41,19 @@ devbase login                        # コンテナにログイン
 
 ## Plugin
 
-devbaseのプロジェクトはPluginとして管理されます。Pluginは外部のGitリポジトリに格納され、リポジトリ登録後に`devbase plugin install`でインストールします。
+devbaseのプロジェクトはPluginとして管理されます。Pluginは**プラグインレジストリ**（複数の Plugin を束ねた Git リポジトリ）から `devbase plugin install` でインストールします。
+
+### 主なプラグインレジストリ
+
+| レジストリ | Visibility | 役割 |
+|-----------|-----------|------|
+| [`devbasex/devbase-samples`](https://github.com/devbasex/devbase-samples) | public | サンプルレジストリ（`devbase init` 時に自動登録） |
+| [`takemi-ohama/devbase-ext`](https://github.com/takemi-ohama/devbase-ext) | private | 個人プロジェクト向けプラグインマーケット |
+| [`volareinc/devbase-ext`](https://github.com/volareinc/devbase-ext) | private | volareinc 社内プロジェクト向けプラグインマーケット |
+
+詳細は [プラグインレジストリ](docs/user/plugin-registries.md) を参照してください。
+
+### 操作例
 
 ```bash
 # リポジトリ登録（GitHubショートハンド対応）
@@ -95,6 +107,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 |-------------|------|
 | [はじめに](docs/user/getting-started.md) | 前提条件、初回セットアップ、日常ワークフロー |
 | [CLIリファレンス](docs/user/cli-reference.md) | 全コマンドの構文・オプション・使用例 |
+| [プラグインレジストリ](docs/user/plugin-registries.md) | 公開・社内レジストリの一覧と追加方法 |
 | [環境変数ガイド](docs/user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [コンテナ操作ガイド](docs/user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](docs/user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
