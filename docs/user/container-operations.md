@@ -156,6 +156,7 @@ graph TD
     B --> C[general]
     B --> G[go]
     C --> D[php]
+    C --> I[php85]
     C --> E[latex]
     C --> F[lfm]
     A --> H[snapshot]
@@ -173,7 +174,8 @@ graph TD
 |---------|-------|---------|------|
 | **base** | Ubuntu Noble | Docker CLI、Python 3 | 最小限の開発環境 |
 | **general** | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | 汎用開発環境 |
-| **php** | general | PHP 8.3、Composer、MySQL Shell | PHP 開発 |
+| **php** | general | PHP 8.3、Composer、MySQL Shell | PHP 8.3 系 開発 |
+| **php85** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **latex** | general | LaTeX | 文書作成 |
 | **lfm** | general | Rust、gfortran、MeCab | 数値計算・自然言語処理 |
 | **go** | base | Go 開発環境 | Go 開発 |

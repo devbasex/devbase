@@ -112,7 +112,7 @@ CONTAINER_SCALE=1
 | `GIT_REPO` | リポジトリ名 |
 | `GIT_HOST` | Gitホスト名（デフォルト: `github.com`）。GitLabの場合は `gitlab.com` を指定 |
 | `WORK_DIR` | コンテナ内の作業ディレクトリ |
-| `CONTAINER_SCALE` | 起動するコンテナ数（デフォルト: 1） |
+| `CONTAINER_SCALE` | 起動するコンテナ数（デフォルト: 2） |
 
 ### 2.4 .env ファイル（任意）
 
@@ -148,7 +148,7 @@ devbase up
 
 ```bash
 # コンテナにログイン
-devbase shell
+devbase login
 
 # コンテナの状態確認
 devbase ps
@@ -244,7 +244,8 @@ flowchart LR
 | `base` | Ubuntu Noble | Docker CLI、Python 3 | 軽量な開発環境 |
 | `general` | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | 汎用開発 |
 | `go` | base | Go開発環境 | Go言語プロジェクト |
-| `php` | general | PHP 8.3、Composer | PHP/Laravelプロジェクト |
+| `php` | general | PHP 8.3、Composer | PHP 8.3 系プロジェクト |
+| `php85` | general | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
 | `latex` | general | LaTeX | 文書・論文作成 |
 | `lfm` | general | Rust、gfortran、MeCab | 数値計算・自然言語処理 |
 | `snapshot` | Ubuntu Noble | zstd | スナップショット専用 |

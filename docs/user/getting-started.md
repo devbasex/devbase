@@ -205,8 +205,8 @@ devbase/
 │       ├── plugin.yml       # プラグイン定義
 │       ├── compose.yml      # Docker Compose 設定
 │       ├── env              # プロジェクト設定（Git 管理）
-│       ├── .env             # プロジェクト機密情報（gitignore）
-│       └── backups/         # スナップショット保存先
+│       └── .env             # プロジェクト機密情報（gitignore）
+├── backups/                 # スナップショット保存先（全プロジェクト共通）
 ├── .env                     # グローバル環境変数（gitignore）
 └── plugins.yml              # プラグイン設定
 ```

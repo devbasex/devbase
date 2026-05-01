@@ -9,3 +9,4 @@ plugins/*/
 projects/*
 !projects/.gitkeep
 .env.sources.yml
+issues/

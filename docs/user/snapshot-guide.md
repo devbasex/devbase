@@ -98,7 +98,7 @@ flowchart TD
 
 ## バックアップデータ構造
 
-スナップショットは `projects/<project>/backups/` ディレクトリに保存されます。
+スナップショットは `${DEVBASE_ROOT}/backups/` ディレクトリ（devbase ルート直下）に保存され、全プロジェクトで共通の場所に集約されます。
 
 ```
 backups/
