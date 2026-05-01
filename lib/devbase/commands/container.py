@@ -405,8 +405,21 @@ def _ensure_env_files() -> bool:
     return success
 
 
+_IMAGE_MAX_AGE_DAYS = 7
+
+
 def _ensure_images() -> bool:
-    """Check if required container images exist. If not, run build command."""
+    """Check that required container images exist and are fresh.
+
+    Behavior:
+      - Image missing + has build: → run `devbase build`
+      - Image missing + image-only (no build:) → run `docker pull`
+      - Image present and >= _IMAGE_MAX_AGE_DAYS old + has build:
+        → rebuild with `--no-cache`
+      - Image present and >= _IMAGE_MAX_AGE_DAYS old + image-only
+        → re-pull
+      - Otherwise: nothing to do
+    """
     compose_file = Path('compose.yml')
     if not compose_file.exists():
         logger.warning("compose.yml not found, skipping image check")
@@ -431,23 +444,40 @@ def _ensure_images() -> bool:
         services = config.get('services', {})
         dev_service = services.get(dev_service_name, {})
         image_name = dev_service.get('image', '')
+        has_build = bool(dev_service.get('build'))
 
         if not image_name:
             logger.warning("No image specified for %s service", dev_service_name)
             return True
 
-        result = subprocess.run(
+        inspect = subprocess.run(
             ['docker', 'image', 'inspect', image_name],
             capture_output=True,
+            text=True,
             check=False
         )
 
-        if result.returncode == 0:
+        if inspect.returncode != 0:
+            if has_build:
+                logger.info("Container image '%s' not found", image_name)
+                logger.info("Running 'devbase container build' to create it...")
+                return _run_build()
+            logger.info("Container image '%s' not found, pulling...", image_name)
+            return _run_pull(image_name)
+
+        age_days = _get_image_age_days(inspect.stdout)
+        if age_days is None or age_days < _IMAGE_MAX_AGE_DAYS:
             return True
 
-        logger.info("Container image '%s' not found", image_name)
-        logger.info("Running 'devbase container build' to create it...")
-        return _run_build()
+        logger.info(
+            "Container image '%s' is %d days old (>= %d days threshold)",
+            image_name, age_days, _IMAGE_MAX_AGE_DAYS
+        )
+        if has_build:
+            logger.info("Rebuilding with --no-cache...")
+            return _run_build(no_cache=True)
+        logger.info("Re-pulling latest image...")
+        return _run_pull(image_name)
 
     except Exception as e:
         logger.warning("Error checking image: %s", e)
@@ -455,8 +485,38 @@ def _ensure_images() -> bool:
         return _run_build()
 
 
-def _run_build() -> bool:
-    """Run the build command."""
+def _get_image_age_days(inspect_json: str) -> Optional[int]:
+    """Return age of the inspected image in days, or None on failure."""
+    try:
+        data = json.loads(inspect_json)
+        if not data:
+            return None
+        created = data[0].get('Created', '')
+        if not created:
+            return None
+        from datetime import datetime, timezone
+        # Docker's 'Created' is RFC3339 with nanoseconds, e.g.
+        # '2024-01-15T10:30:00.123456789Z'. fromisoformat (Python 3.10) does not
+        # accept nanoseconds, so trim to microseconds and convert 'Z' to +00:00.
+        ts = created.replace('Z', '+00:00')
+        if '.' in ts:
+            head, frac = ts.split('.', 1)
+            tz_idx = max(frac.rfind('+'), frac.rfind('-'))
+            if tz_idx >= 0:
+                frac, tz = frac[:tz_idx], frac[tz_idx:]
+            else:
+                tz = ''
+            ts = f"{head}.{frac[:6]}{tz}"
+        dt = datetime.fromisoformat(ts)
+        delta = datetime.now(timezone.utc) - dt
+        return delta.days
+    except Exception as e:
+        logger.warning("Could not parse image creation date: %s", e)
+        return None
+
+
+def _run_build(no_cache: bool = False) -> bool:
+    """Run the build command (optionally with --no-cache)."""
     devbase_root = Path(os.environ.get('DEVBASE_ROOT', ''))
     if not devbase_root.exists():
         logger.error("DEVBASE_ROOT not set")
@@ -467,14 +527,28 @@ def _run_build() -> bool:
         logger.error("devbase command not found at %s", devbase_bin)
         return False
 
+    cmd = ['bash', str(devbase_bin), 'build']
+    if no_cache:
+        cmd.append('--no-cache')
+
+    try:
+        result = subprocess.run(cmd, check=False)
+        return result.returncode == 0
+    except Exception as e:
+        logger.error("Running build: %s", e)
+        return False
+
+
+def _run_pull(image_name: str) -> bool:
+    """docker pull the specified public image."""
     try:
         result = subprocess.run(
-            ['bash', str(devbase_bin), 'build'],
+            ['docker', 'pull', image_name],
             check=False
         )
         return result.returncode == 0
     except Exception as e:
-        logger.error("Running build: %s", e)
+        logger.error("Pulling image '%s': %s", image_name, e)
         return False
 
 
