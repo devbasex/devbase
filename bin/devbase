@@ -85,18 +85,13 @@ cmd_build() {
     # --no-cache specified: always rebuild base first
     if [[ "$*" == *"--no-cache"* ]]; then
         echo ""
-        echo "[1/3] Clearing buildx cache..."
-        docker builder prune -af >/dev/null 2>&1 || true
-        echo "✓ Buildx cache cleared"
-
-        echo ""
-        echo "[2/3] Building devbase-base..."
+        echo "[1/2] Building devbase-base..."
         if ! build_base_image "devbase-base" "$@"; then
             exit 1
         fi
 
         echo ""
-        echo "[3/3] Building project image..."
+        echo "[2/2] Building project image..."
         if docker compose build dev "$@"; then
             echo ""
             echo "✓ All images built successfully"
