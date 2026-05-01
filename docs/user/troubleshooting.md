@@ -356,7 +356,7 @@ devbase snapshot restore pre-restore-20260221-150000
 devbase snapshot list
 
 # バックアップディレクトリのサイズ確認
-du -sh projects/<project>/backups/
+du -sh ${DEVBASE_ROOT}/backups/
 
 # 不要な世代を削除（2世代のみ保持）
 devbase snapshot rotate --keep 2

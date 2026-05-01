@@ -488,4 +488,4 @@ devbase snapshot rotate [--keep N]
 
 | オプション | 説明 |
 |-----------|------|
-| `--keep N` | 保持する世代数（デフォルトは `DEFAULT_MAX_GENERATIONS`） |
+| `--keep N` | 保持する世代数（デフォルト: `3`） |
