@@ -87,7 +87,7 @@ networks:
 
 **ポイント:**
 
-- `build.context` には `${DEVBASE_ROOT}` ベースのパスを指定する（相対パス禁止）
+- 標準コンテナを使う場合は、`build.context` には `${DEVBASE_ROOT}` ベースのパスを指定する（相対パス禁止）。Docker Hub などの公開イメージを利用する場合は `image:` のみを指定し `build:` を省略できる。独自の `Dockerfile` を使う場合は `${DEVBASE_ROOT}/plugins/<plugin>/...` 配下に配置する（`projects/` 直下はシンボリックリンクのため `context: .` は不可。詳細は [compose.yml ガイドライン §4.3](compose-yml-guidelines.md)）
 - `env_file` は3段階の環境変数ファイルを読み込む
 - `devbase_net` はdevbaseが管理する共有ネットワーク
 
