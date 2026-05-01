@@ -43,7 +43,7 @@ devbase plugin repo list
 devbase plugin repo remove <name>
 
 # 同期（最新化）
-devbase plugin repo sync
+devbase plugin repo refresh
 ```
 
 ## 自前レジストリの作成
