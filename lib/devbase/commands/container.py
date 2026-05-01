@@ -2,8 +2,10 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -405,18 +407,40 @@ def _ensure_env_files() -> bool:
     return success
 
 
-_IMAGE_MAX_AGE_DAYS = 7
+_IMAGE_MAX_AGE_DAYS_DEFAULT = 7
+
+
+def _image_max_age_days() -> int:
+    """Threshold for triggering an image rebuild/pull.
+
+    Override via the DEVBASE_IMAGE_MAX_AGE_DAYS environment variable.
+    Falls back to the default on missing or malformed values.
+    """
+    raw = os.environ.get('DEVBASE_IMAGE_MAX_AGE_DAYS')
+    if not raw:
+        return _IMAGE_MAX_AGE_DAYS_DEFAULT
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError
+        return value
+    except ValueError:
+        logger.warning(
+            "Invalid DEVBASE_IMAGE_MAX_AGE_DAYS=%r, using default %d",
+            raw, _IMAGE_MAX_AGE_DAYS_DEFAULT
+        )
+        return _IMAGE_MAX_AGE_DAYS_DEFAULT
 
 
 def _ensure_images() -> bool:
     """Check that required container images exist and are fresh.
 
-    Behavior:
+    Behavior (threshold = DEVBASE_IMAGE_MAX_AGE_DAYS or 7):
       - Image missing + has build: → run `devbase build`
       - Image missing + image-only (no build:) → run `docker pull`
-      - Image present and >= _IMAGE_MAX_AGE_DAYS old + has build:
+      - Image present and >= threshold days old + has build:
         → rebuild with `--no-cache`
-      - Image present and >= _IMAGE_MAX_AGE_DAYS old + image-only
+      - Image present and >= threshold days old + image-only
         → re-pull
       - Otherwise: nothing to do
     """
@@ -465,13 +489,14 @@ def _ensure_images() -> bool:
             logger.info("Container image '%s' not found, pulling...", image_name)
             return _run_pull(image_name)
 
+        max_age = _image_max_age_days()
         age_days = _get_image_age_days(inspect.stdout)
-        if age_days is None or age_days < _IMAGE_MAX_AGE_DAYS:
+        if age_days is None or age_days < max_age:
             return True
 
         logger.info(
             "Container image '%s' is %d days old (>= %d days threshold)",
-            image_name, age_days, _IMAGE_MAX_AGE_DAYS
+            image_name, age_days, max_age
         )
         if has_build:
             logger.info("Rebuilding with --no-cache...")
@@ -494,21 +519,12 @@ def _get_image_age_days(inspect_json: str) -> Optional[int]:
         created = data[0].get('Created', '')
         if not created:
             return None
-        from datetime import datetime, timezone
         # Docker's 'Created' is RFC3339 with nanoseconds, e.g.
-        # '2024-01-15T10:30:00.123456789Z'. fromisoformat (Python 3.10) does not
-        # accept nanoseconds, so trim to microseconds and convert 'Z' to +00:00.
-        ts = created.replace('Z', '+00:00')
-        if '.' in ts:
-            head, frac = ts.split('.', 1)
-            tz_idx = max(frac.rfind('+'), frac.rfind('-'))
-            if tz_idx >= 0:
-                frac, tz = frac[:tz_idx], frac[tz_idx:]
-            else:
-                tz = ''
-            ts = f"{head}.{frac[:6]}{tz}"
-        dt = datetime.fromisoformat(ts)
-        delta = datetime.now(timezone.utc) - dt
+        # '2024-01-15T10:30:00.123456789Z'. Python 3.10's fromisoformat does
+        # not accept nanoseconds, so trim fractional seconds to 6 digits and
+        # normalize 'Z' to '+00:00'.
+        ts = re.sub(r'(\.\d{6})\d+', r'\1', created.replace('Z', '+00:00'))
+        delta = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
         return delta.days
     except Exception as e:
         logger.warning("Could not parse image creation date: %s", e)
