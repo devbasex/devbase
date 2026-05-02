@@ -26,7 +26,7 @@ cd devbase
 source ~/.bashrc  # または ~/.zshrc
 
 # 2. Pluginのインストール
-devbase plugin repo add user/repo    # リポジトリ登録（initで公式は自動登録済み）
+devbase plugin repo add user/repo    # リポジトリ登録（init でサンプルレジストリ devbasex/devbase-samples は自動登録済み）
 devbase plugin install <name>        # Plugin名でインストール
 
 # 3. プロジェクトの起動

@@ -1,9 +1,13 @@
 """Container lifecycle commands (up, down, ps, login, logs, scale, build)"""
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -103,7 +107,11 @@ def cmd_up(project_name: str = None, scale: int = None) -> int:
 
     # Pre-check 2: Ensure container images exist
     if not _ensure_images():
-        logger.error("Failed to build container images. Please run 'devbase container build' manually.")
+        logger.error(
+            "Failed to ensure container images. "
+            "Run 'devbase container build' for build-based services, "
+            "or 'docker pull <image>' for image-only services."
+        )
         return 1
 
     # Pre-step: Auto snapshot（差分世代数ベース世代管理）
@@ -405,8 +413,47 @@ def _ensure_env_files() -> bool:
     return success
 
 
+_IMAGE_MAX_AGE_DAYS_DEFAULT = 7
+
+
+def _image_max_age_days() -> int:
+    """Threshold for triggering an image rebuild/pull.
+
+    Override via the DEVBASE_IMAGE_MAX_AGE_DAYS environment variable.
+    Falls back to the default on missing or malformed values.
+    """
+    raw = os.environ.get('DEVBASE_IMAGE_MAX_AGE_DAYS')
+    if not raw:
+        return _IMAGE_MAX_AGE_DAYS_DEFAULT
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError
+        return value
+    except ValueError:
+        logger.warning(
+            "Invalid DEVBASE_IMAGE_MAX_AGE_DAYS=%r, using default %d",
+            raw, _IMAGE_MAX_AGE_DAYS_DEFAULT
+        )
+        return _IMAGE_MAX_AGE_DAYS_DEFAULT
+
+
 def _ensure_images() -> bool:
-    """Check if required container images exist. If not, run build command."""
+    """Check that required container images exist and are fresh.
+
+    Behavior (threshold = DEVBASE_IMAGE_MAX_AGE_DAYS or 7):
+      - Image missing + has build: → run `devbase build`
+      - Image missing + image-only (no build:) → run `docker pull`
+      - Image present and >= threshold days old + has build:
+        → rebuild with `--no-cache` (uses image 'Created' timestamp)
+      - Image present + image-only + last-pull >= threshold days old
+        → run `docker pull` (uses local touch-file mtime, since image
+        'Created' reflects upstream build time and is not a meaningful
+        local-freshness signal)
+      - Otherwise: nothing to do
+
+    Returns True on success or no-op, False on failure.
+    """
     compose_file = Path('compose.yml')
     if not compose_file.exists():
         logger.warning("compose.yml not found, skipping image check")
@@ -431,23 +478,69 @@ def _ensure_images() -> bool:
         services = config.get('services', {})
         dev_service = services.get(dev_service_name, {})
         image_name = dev_service.get('image', '')
+        has_build = bool(dev_service.get('build'))
 
         if not image_name:
             logger.warning("No image specified for %s service", dev_service_name)
             return True
 
-        result = subprocess.run(
+        inspect = subprocess.run(
             ['docker', 'image', 'inspect', image_name],
             capture_output=True,
+            text=True,
             check=False
         )
 
-        if result.returncode == 0:
+        if inspect.returncode != 0:
+            if has_build:
+                logger.info("Container image '%s' not found", image_name)
+                logger.info("Running 'devbase container build' to create it...")
+                return _run_build()
+            logger.info("Container image '%s' not found, pulling...", image_name)
+            ok = _run_pull(image_name)
+            if ok:
+                _mark_pulled(image_name)
+            return ok
+
+        max_age = _image_max_age_days()
+
+        # Image-only services: use local touch-file mtime, since image
+        # 'Created' reflects upstream build time, not local pull time.
+        if not has_build:
+            pull_age = _pull_age_days(image_name)
+            if pull_age is None:
+                # Pre-existing image with no marker (e.g., upgrade from a
+                # devbase version without touch-file tracking). Bootstrap a
+                # marker now so future runs can apply the threshold. We do
+                # not auto-pull here to avoid surprising network calls on
+                # the first `up` after upgrade.
+                logger.info(
+                    "First time tracking image '%s'; recording marker (no pull this run)",
+                    image_name
+                )
+                _mark_pulled(image_name)
+                return True
+            if pull_age < max_age:
+                return True
+            logger.info(
+                "Image '%s' last pulled %d days ago (>= %d days threshold), re-pulling...",
+                image_name, pull_age, max_age
+            )
+            ok = _run_pull(image_name)
+            if ok:
+                _mark_pulled(image_name)
+            return ok
+
+        age_days = _get_image_age_days(inspect.stdout)
+        if age_days is None or age_days < max_age:
             return True
 
-        logger.info("Container image '%s' not found", image_name)
-        logger.info("Running 'devbase container build' to create it...")
-        return _run_build()
+        logger.info(
+            "Container image '%s' is %d days old (>= %d days threshold)",
+            image_name, age_days, max_age
+        )
+        logger.info("Rebuilding with --no-cache...")
+        return _run_build(no_cache=True)
 
     except Exception as e:
         logger.warning("Error checking image: %s", e)
@@ -455,8 +548,29 @@ def _ensure_images() -> bool:
         return _run_build()
 
 
-def _run_build() -> bool:
-    """Run the build command."""
+def _get_image_age_days(inspect_json: str) -> Optional[int]:
+    """Return age of the inspected image in days, or None on failure."""
+    try:
+        data = json.loads(inspect_json)
+        if not data:
+            return None
+        created = data[0].get('Created', '')
+        if not created:
+            return None
+        # Docker's 'Created' is RFC3339 with nanoseconds, e.g.
+        # '2024-01-15T10:30:00.123456789Z'. Python 3.10's fromisoformat does
+        # not accept nanoseconds, so trim fractional seconds to 6 digits and
+        # normalize 'Z' to '+00:00'.
+        ts = re.sub(r'(\.\d{6})\d+', r'\1', created.replace('Z', '+00:00'))
+        delta = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
+        return delta.days
+    except Exception as e:
+        logger.warning("Could not parse image creation date: %s", e)
+        return None
+
+
+def _run_build(no_cache: bool = False) -> bool:
+    """Run the build command (optionally with --no-cache)."""
     devbase_root = Path(os.environ.get('DEVBASE_ROOT', ''))
     if not devbase_root.exists():
         logger.error("DEVBASE_ROOT not set")
@@ -467,15 +581,77 @@ def _run_build() -> bool:
         logger.error("devbase command not found at %s", devbase_bin)
         return False
 
+    cmd = ['bash', str(devbase_bin), 'build']
+    if no_cache:
+        cmd.append('--no-cache')
+
     try:
-        result = subprocess.run(
-            ['bash', str(devbase_bin), 'build'],
-            check=False
-        )
+        result = subprocess.run(cmd, check=False)
         return result.returncode == 0
     except Exception as e:
         logger.error("Running build: %s", e)
         return False
+
+
+def _run_pull(image_name: str) -> bool:
+    """docker pull the specified public image."""
+    try:
+        result = subprocess.run(
+            ['docker', 'pull', image_name],
+            check=False
+        )
+        return result.returncode == 0
+    except Exception as e:
+        logger.error("Pulling image '%s': %s", image_name, e)
+        return False
+
+
+def _pull_marker_path(image_name: str) -> Optional[Path]:
+    """Path of the touch-file recording the last pull time of `image_name`.
+
+    Filename format: ``<sanitized>--<sha12>`` to keep the human-readable part
+    while preventing collisions between distinct image references that
+    sanitize to the same string (e.g., ``a/b:c`` vs ``a_b/c``).
+
+    Returns None when DEVBASE_ROOT is not set so callers can no-op safely.
+    """
+    devbase_root = os.environ.get('DEVBASE_ROOT')
+    if not devbase_root:
+        return None
+    sanitized = re.sub(r'[^A-Za-z0-9._-]', '_', image_name)[:60]
+    digest = hashlib.sha256(image_name.encode('utf-8')).hexdigest()[:12]
+    return Path(devbase_root) / '.cache' / 'pulls' / f'{sanitized}--{digest}'
+
+
+def _pull_age_days(image_name: str) -> Optional[int]:
+    """Days since the last successful pull of `image_name`. None if never.
+
+    Negative ages (clock skew or future-dated marker) are clamped to 0 with
+    a warning so they do not silently suppress refresh forever.
+    """
+    marker = _pull_marker_path(image_name)
+    if marker is None or not marker.exists():
+        return None
+    delta = time.time() - marker.stat().st_mtime
+    if delta < 0:
+        logger.warning(
+            "Pull marker for '%s' has a future mtime (clock skew?); treating as 0 days",
+            image_name
+        )
+        return 0
+    return int(delta / 86400)
+
+
+def _mark_pulled(image_name: str) -> None:
+    """Touch the marker file to record a successful pull."""
+    marker = _pull_marker_path(image_name)
+    if marker is None:
+        return
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except OSError as e:
+        logger.warning("Could not write pull marker for '%s': %s", image_name, e)
 
 
 def _update_scale_in_env(new_scale: int) -> bool:
