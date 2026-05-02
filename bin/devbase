@@ -92,7 +92,7 @@ cmd_build() {
 
         echo ""
         echo "[2/2] Building project image..."
-        if docker compose build dev "$@"; then
+        if docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
             echo ""
             echo "✓ All images built successfully"
         else
@@ -126,7 +126,7 @@ cmd_build() {
 
     echo ""
     echo "[2/2] Building project image..."
-    if docker compose build dev "$@"; then
+    if docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
         echo ""
         echo "✓ All images built successfully"
     else

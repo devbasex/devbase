@@ -101,6 +101,11 @@ devbase up
 
 - 起動時にスナップショットを自動作成（新世代 or 差分追加）
 - `CONTAINER_SCALE` の値に基づいてコンテナ数を決定
+- イメージの自動準備:
+  - `build:` 定義あり、イメージ未存在 → `devbase build` を自動実行
+  - `build:` 定義あり、イメージが7日以上古い → `devbase build --no-cache` で再ビルド
+  - `image:` のみ（公開イメージ）、未存在 → `docker pull` を自動実行
+  - 閾値は `DEVBASE_IMAGE_MAX_AGE_DAYS` 環境変数で上書き可能（既定 7、不正値は警告して既定値）
 
 ### `devbase container down`
 

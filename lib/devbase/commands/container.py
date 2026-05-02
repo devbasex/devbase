@@ -105,7 +105,11 @@ def cmd_up(project_name: str = None, scale: int = None) -> int:
 
     # Pre-check 2: Ensure container images exist
     if not _ensure_images():
-        logger.error("Failed to build container images. Please run 'devbase container build' manually.")
+        logger.error(
+            "Failed to ensure container images. "
+            "Run 'devbase container build' for build-based services, "
+            "or 'docker pull <image>' for image-only services."
+        )
         return 1
 
     # Pre-step: Auto snapshot（差分世代数ベース世代管理）
@@ -440,9 +444,13 @@ def _ensure_images() -> bool:
       - Image missing + image-only (no build:) → run `docker pull`
       - Image present and >= threshold days old + has build:
         → rebuild with `--no-cache`
-      - Image present and >= threshold days old + image-only
-        → re-pull
+      - Image present + image-only → nothing to do
+        (Created reflects upstream build time, not local pull time, so we
+        cannot derive a meaningful freshness signal here. Users who want
+        public images refreshed should run `docker pull` explicitly.)
       - Otherwise: nothing to do
+
+    Returns True on success or no-op, False on failure.
     """
     compose_file = Path('compose.yml')
     if not compose_file.exists():
@@ -489,6 +497,11 @@ def _ensure_images() -> bool:
             logger.info("Container image '%s' not found, pulling...", image_name)
             return _run_pull(image_name)
 
+        # Image-only services: 'Created' reflects upstream build time, not
+        # local pull time, so age-based re-pull is not meaningful. Skip.
+        if not has_build:
+            return True
+
         max_age = _image_max_age_days()
         age_days = _get_image_age_days(inspect.stdout)
         if age_days is None or age_days < max_age:
@@ -498,11 +511,8 @@ def _ensure_images() -> bool:
             "Container image '%s' is %d days old (>= %d days threshold)",
             image_name, age_days, max_age
         )
-        if has_build:
-            logger.info("Rebuilding with --no-cache...")
-            return _run_build(no_cache=True)
-        logger.info("Re-pulling latest image...")
-        return _run_pull(image_name)
+        logger.info("Rebuilding with --no-cache...")
+        return _run_build(no_cache=True)
 
     except Exception as e:
         logger.warning("Error checking image: %s", e)
