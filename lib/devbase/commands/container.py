@@ -1,5 +1,6 @@
 """Container lifecycle commands (up, down, ps, login, logs, scale, build)"""
 
+import hashlib
 import json
 import os
 import re
@@ -507,7 +508,19 @@ def _ensure_images() -> bool:
         # 'Created' reflects upstream build time, not local pull time.
         if not has_build:
             pull_age = _pull_age_days(image_name)
-            if pull_age is None or pull_age < max_age:
+            if pull_age is None:
+                # Pre-existing image with no marker (e.g., upgrade from a
+                # devbase version without touch-file tracking). Bootstrap a
+                # marker now so future runs can apply the threshold. We do
+                # not auto-pull here to avoid surprising network calls on
+                # the first `up` after upgrade.
+                logger.info(
+                    "First time tracking image '%s'; recording marker (no pull this run)",
+                    image_name
+                )
+                _mark_pulled(image_name)
+                return True
+            if pull_age < max_age:
                 return True
             logger.info(
                 "Image '%s' last pulled %d days ago (>= %d days threshold), re-pulling...",
@@ -596,21 +609,37 @@ def _run_pull(image_name: str) -> bool:
 def _pull_marker_path(image_name: str) -> Optional[Path]:
     """Path of the touch-file recording the last pull time of `image_name`.
 
+    Filename format: ``<sanitized>--<sha12>`` to keep the human-readable part
+    while preventing collisions between distinct image references that
+    sanitize to the same string (e.g., ``a/b:c`` vs ``a_b/c``).
+
     Returns None when DEVBASE_ROOT is not set so callers can no-op safely.
     """
     devbase_root = os.environ.get('DEVBASE_ROOT')
     if not devbase_root:
         return None
-    safe = re.sub(r'[^A-Za-z0-9._-]', '_', image_name)
-    return Path(devbase_root) / '.cache' / 'pulls' / safe
+    sanitized = re.sub(r'[^A-Za-z0-9._-]', '_', image_name)[:60]
+    digest = hashlib.sha256(image_name.encode('utf-8')).hexdigest()[:12]
+    return Path(devbase_root) / '.cache' / 'pulls' / f'{sanitized}--{digest}'
 
 
 def _pull_age_days(image_name: str) -> Optional[int]:
-    """Days since the last successful pull of `image_name`. None if never."""
+    """Days since the last successful pull of `image_name`. None if never.
+
+    Negative ages (clock skew or future-dated marker) are clamped to 0 with
+    a warning so they do not silently suppress refresh forever.
+    """
     marker = _pull_marker_path(image_name)
     if marker is None or not marker.exists():
         return None
-    return int((time.time() - marker.stat().st_mtime) / 86400)
+    delta = time.time() - marker.stat().st_mtime
+    if delta < 0:
+        logger.warning(
+            "Pull marker for '%s' has a future mtime (clock skew?); treating as 0 days",
+            image_name
+        )
+        return 0
+    return int(delta / 86400)
 
 
 def _mark_pulled(image_name: str) -> None:
