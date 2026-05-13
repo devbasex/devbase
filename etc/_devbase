@@ -38,6 +38,7 @@ _devbase() {
     commands=(
         'init:Initialize devbase environment'
         'status:Show overall status'
+        'shell-rc:Print shell RC file path (for source ...)'
         'container:Manage containers'
         'ct:Manage containers (alias)'
         'env:Manage environment variables'
