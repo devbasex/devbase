@@ -10,6 +10,7 @@ devbase のコマンドは 4 つのグループとトップレベルコマンド
 graph TD
     A[devbase] --> B[init]
     A --> C[status]
+    A --> H[shell-rc]
     A --> D[container / ct]
     A --> E[env]
     A --> F[plugin / pl]
@@ -85,6 +86,32 @@ devbase status
 - インストール済みプラグイン一覧
 - 環境変数の設定状況
 - スナップショットの状態
+
+### `devbase shell-rc`
+
+`devbase init` が書き込んだシェル設定ファイル（rc ファイル）のフルパスを stdout に 1 行だけ出力します。`source` のコマンド置換と組み合わせ、ユーザーが zsh / bash on Linux / bash on macOS のどれを使っているかを意識せずに rc ファイルを再読み込みするためのユーティリティです。
+
+```
+devbase shell-rc
+```
+
+判定ロジックは `devbase init` と同一なので、書き込み先と完全に一致します。
+
+| 環境 | 出力例 |
+|------|--------|
+| zsh | `/Users/<user>/.zshrc` |
+| bash on macOS | `/Users/<user>/.bash_profile` |
+| bash on Linux | `/home/<user>/.bashrc` |
+
+使用例:
+
+```bash
+# 初期化直後に rc を再読み込み（環境差を吸収）
+./bin/devbase init
+source "$(./bin/devbase shell-rc)"
+```
+
+> **⚠ 引用符は必須**: `source $(devbase shell-rc)` のように引用符を省くと、ホームディレクトリ名に空白を含む環境（例: `/Users/foo bar/.zshrc`）で word splitting が起き `source` が失敗します。必ず `source "$(devbase shell-rc)"` の形で書いてください。
 
 ## container (ct) グループ
 

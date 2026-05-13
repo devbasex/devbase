@@ -321,7 +321,7 @@ def _dispatch(cmd, args):
 
     # --- Commands not requiring DEVBASE_ROOT ---
     if cmd == 'shell-rc':
-        from devbase.commands.shell import cmd_shell_rc
+        from devbase.commands.shell_rc import cmd_shell_rc
         return cmd_shell_rc()
 
     # --- Commands requiring DEVBASE_ROOT ---
