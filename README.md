@@ -23,7 +23,7 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 git clone https://github.com/devbasex/devbase.git
 cd devbase
 ./bin/devbase init
-source ~/.bashrc  # または ~/.zshrc
+source "$(./bin/devbase shell-rc)"   # rc ファイル（zsh/bash on Linux/macOS）を自動判定して再読み込み
 
 # 2. Pluginのインストール
 devbase plugin repo add user/repo    # リポジトリ登録（init でサンプルレジストリ devbasex/devbase-samples は自動登録済み）
@@ -32,8 +32,7 @@ devbase plugin install <name>        # Plugin名でインストール
 # 3. プロジェクトの起動
 cd projects/your-project
 devbase env init                     # 環境変数の設定（初回のみ）
-devbase build                        # コンテナイメージのビルド（初回のみ）
-devbase up                           # コンテナを起動
+devbase up                           # コンテナを起動（初回はイメージビルドを含むため時間がかかります）
 devbase login                        # コンテナにログイン
 ```
 
@@ -83,7 +82,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 
 - **ショートカット**: `up`, `down`, `login`, `build`, `ps` はトップレベルから直接使用可能
 - **プレフィックス略記**: `devbase p l` → `devbase plugin list`
-- **トップレベルコマンド**: `init`, `status`
+- **トップレベルコマンド**: `init`, `status`, `shell-rc`
 
 全コマンドの構文・オプション・使用例は [CLIリファレンス](docs/user/cli-reference.md) を参照してください。
 

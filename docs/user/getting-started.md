@@ -34,19 +34,21 @@ cd devbase
 
 `init` コマンドは以下を自動実行します。
 
-- `bin/devbase` を PATH に追加（`~/.bashrc` / `~/.zshrc` に追記）
+- `bin/devbase` を PATH に追加（環境に応じて `~/.zshrc` / `~/.bashrc` / `~/.bash_profile` のいずれかに追記）
 - シェル補完スクリプトの登録（Tab 補完が有効になる）
 - プラグイン設定ファイル `plugins.yml` の作成
+
+書き込み先は現在のシェル種別と OS から自動判定されます（zsh → `~/.zshrc`、bash on macOS → `~/.bash_profile`、bash on Linux → `~/.bashrc`）。
 
 ### 3. シェルの再読み込み
 
 ```bash
-# Bash の場合
-source ~/.bashrc
-
-# Zsh の場合
-source ~/.zshrc
+source "$(./bin/devbase shell-rc)"
 ```
+
+`devbase shell-rc` は `init` が書き込んだ rc ファイルのパスを 1 行で出力します。コマンド置換と組み合わせることで、環境差を意識せずに 1 行で再読み込みできます。
+
+> **⚠ 引用符は必須**: `source $(./bin/devbase shell-rc)` のように引用符を省くと、ホームディレクトリ名に空白を含む環境（例: `/Users/foo bar/.zshrc`）で word splitting が起き `source` が失敗します。必ず `source "$(...)"` の形で書いてください。
 
 > **Note:** 新しいターミナルを開いても同様に反映されます。
 

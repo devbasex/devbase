@@ -10,7 +10,7 @@ _devbase_completions() {
         cword=$COMP_CWORD
     }
 
-    local commands="init status container ct env plugin pl snapshot ss up down login build ps help"
+    local commands="init status shell-rc container ct env plugin pl snapshot ss up down login build ps help"
     local container_subcommands="up down ps login logs scale build"
     local env_subcommands="init sync list set get delete edit project"
     local plugin_subcommands="list install uninstall update info sync repo"

@@ -236,6 +236,10 @@ def _create_parser():
     # --- Top-level commands ---
     subparsers.add_parser('init', help='Initialize devbase environment')
     subparsers.add_parser('status', help='Show overall status')
+    subparsers.add_parser(
+        'shell-rc',
+        help='Print shell RC file path (e.g. source "$(devbase shell-rc)")'
+    )
 
     _add_container_parser(subparsers)
     _add_env_parser(subparsers)
@@ -258,7 +262,7 @@ def _resolve_prefix(input_cmd, candidates):
 
 def _expand_argv():
     """Expand abbreviated command/subcommand names in sys.argv in-place."""
-    commands = ['init', 'status', 'container', 'ct', 'env', 'plugin', 'pl',
+    commands = ['init', 'status', 'shell-rc', 'container', 'ct', 'env', 'plugin', 'pl',
                 'snapshot', 'ss', 'up', 'down', 'login', 'build', 'ps', 'scale', 'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
@@ -314,6 +318,11 @@ def _dispatch(cmd, args):
     if cmd == 'container':
         from devbase.commands.container import cmd_container
         return cmd_container(args)
+
+    # --- Commands not requiring DEVBASE_ROOT ---
+    if cmd == 'shell-rc':
+        from devbase.commands.shell_rc import cmd_shell_rc
+        return cmd_shell_rc()
 
     # --- Commands requiring DEVBASE_ROOT ---
     devbase_root = _require_devbase_root()
