@@ -23,6 +23,7 @@ SHORTCUTS = {
     'login': ('container', 'login'),
     'build': ('container', 'build'),
     'ps': ('container', 'ps'),
+    'scale': ('container', 'scale'),
 }
 
 # Group aliases
@@ -196,6 +197,9 @@ def _add_shortcuts(subparsers):
     subparsers.add_parser('up', help='Start containers')
     subparsers.add_parser('down', help='Stop and remove containers')
 
+    scale_sc = subparsers.add_parser('scale', help='Scale containers online')
+    scale_sc.add_argument('new_scale', type=int, help='New number of containers')
+
 
 def _create_parser():
     """Create command line parser"""
@@ -210,6 +214,7 @@ def _create_parser():
             "  login         container login\n"
             "  build         container build\n"
             "  ps            container ps\n"
+            "  scale         container scale\n"
         )
     )
 
@@ -254,7 +259,7 @@ def _resolve_prefix(input_cmd, candidates):
 def _expand_argv():
     """Expand abbreviated command/subcommand names in sys.argv in-place."""
     commands = ['init', 'status', 'container', 'ct', 'env', 'plugin', 'pl',
-                'snapshot', 'ss', 'up', 'down', 'login', 'build', 'ps', 'help']
+                'snapshot', 'ss', 'up', 'down', 'login', 'build', 'ps', 'scale', 'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):
