@@ -123,6 +123,31 @@ CONTAINER_SCALE=1
 MY_SECRET_API_KEY=sk-xxxxxxxxxxxx
 ```
 
+### 2.5 ライフサイクルフック（任意）
+
+プロジェクトディレクトリ直下に以下の実行可能ファイルを置くと、`devbase up` のライフサイクルに合わせて自動的に呼び出されます。どちらも実行できなくても問題ない場合は配置不要です。
+
+| ファイル | 実行タイミング | 主な用途 |
+|---------|---------------|---------|
+| `pre-up` | `devbase up` 開始直後（`docker compose up` の前） | `build.context` 用ソースリポジトリの clone、設定ファイルの生成など、イメージビルド前に完了させたい準備 |
+| `deploy` | コンテナ起動完了後、各スケールインスタンスごとに実行 | S3 からの `.env` 取得、コンテナ起動後に必要な外部リソースの初期化など |
+
+```bash
+#!/bin/bash
+# projects/my-project/pre-up
+set -e
+
+# env から GIT_USER / GIT_REPO を取得
+source ./env
+
+# build context に使うリポジトリが無ければ clone
+if [ ! -d "./repo" ]; then
+    git clone "https://github.com/${GIT_USER}/${GIT_REPO}.git" repo
+fi
+```
+
+> **Note:** どちらのフックも `bash` で実行されます。`chmod +x` で実行可能ビットを立てておいてください。`pre-up` が非ゼロ終了すると `devbase up` は中断します。`deploy` は各インスタンスに対して `DEVBASE_INSTANCE_INDEX` を環境変数として渡しますが、失敗してもデプロイは続行されます。
+
 ---
 
 ## 3. ローカルでの開発・テスト

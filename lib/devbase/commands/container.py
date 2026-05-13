@@ -54,6 +54,29 @@ def _run_deploy_script_for_instances(deploy_script: Path, indices) -> None:
             logger.warning("Deploy script failed for instance %d (exit code %d)", i, e.returncode)
 
 
+def _run_pre_up_hook() -> bool:
+    """`./pre-up` フックがあればコンテナ起動前に実行する。
+
+    ビルドコンテキスト用のリポジトリ clone など、`docker compose up` より前に
+    完了しておく必要のある準備処理をプロジェクト側で記述するためのフック。
+
+    Returns:
+        True: フックが存在しなかった、または成功した
+        False: フックが失敗した（呼び出し側で `cmd_up` を中断する）
+    """
+    pre_up_script = Path('./pre-up')
+    if not (pre_up_script.exists() and pre_up_script.is_file()):
+        return True
+
+    logger.info("Running pre-up hook: %s", pre_up_script)
+    try:
+        subprocess.run(['bash', str(pre_up_script)], check=True, env=os.environ.copy())
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error("pre-up hook failed (exit code %d)", e.returncode)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # ディスパッチャ
 # ---------------------------------------------------------------------------
@@ -103,6 +126,10 @@ def cmd_up(project_name: str = None, scale: int = None) -> int:
     # Pre-check 1: Ensure .env file exists with content
     if not _ensure_env_files():
         logger.error("Failed to create .env file. Please run 'devbase env init' manually.")
+        return 1
+
+    # Pre-step: Run ./pre-up hook (e.g. clone source repos used as build contexts)
+    if not _run_pre_up_hook():
         return 1
 
     # Pre-check 2: Ensure container images exist
