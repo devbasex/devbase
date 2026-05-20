@@ -25,6 +25,38 @@ def _deep_copy(obj: Any) -> Any:
         return obj
 
 
+def _rewrite_depends_on(
+    service_config: Dict[str, Any],
+    dev_service_name: str,
+    scale: int,
+) -> None:
+    """Rewrite `depends_on: <dev>` references to scaled instances (dev-1, ..., dev-N).
+
+    Supports both list form (`depends_on: [dev, mysql]`) and map form
+    (`depends_on: {dev: {condition: service_healthy}}`). For scale > 1 a
+    single `dev` reference is expanded to every dev-i instance so that the
+    dependent service waits for all of them.
+    """
+    deps = service_config.get('depends_on')
+    if not deps:
+        return
+
+    instance_names = [f"{dev_service_name}-{i}" for i in range(1, scale + 1)]
+
+    if isinstance(deps, list):
+        new_deps = []
+        for d in deps:
+            if d == dev_service_name:
+                new_deps.extend(instance_names)
+            else:
+                new_deps.append(d)
+        service_config['depends_on'] = new_deps
+    elif isinstance(deps, dict) and dev_service_name in deps:
+        condition = deps.pop(dev_service_name)
+        for name in instance_names:
+            deps[name] = _deep_copy(condition)
+
+
 def _replace_volumes_for_instance(
     volumes: list, ai_volume: str, work_volume: str,
 ) -> list:
@@ -164,10 +196,14 @@ def generate_scaled_compose(
     # Build scaled compose
     scaled_config = {'services': {}}
 
-    # Copy non-dev services (mysql, valkey, etc.) as-is
+    # Copy non-dev services (mysql, valkey, etc.) — rewriting any
+    # `depends_on: <dev>` reference to the scaled instances (dev-1..N) so
+    # service_healthy chains keep working after dev is renamed.
     for service_name, service_config in services.items():
         if service_name != dev_service_name:
-            scaled_config['services'][service_name] = _deep_copy(service_config)
+            copied = _deep_copy(service_config)
+            _rewrite_depends_on(copied, dev_service_name, scale)
+            scaled_config['services'][service_name] = copied
 
     # Generate a service for each instance
     for i in range(1, scale + 1):
