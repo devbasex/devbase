@@ -73,6 +73,7 @@ _devbase() {
         'delete:Delete a variable'
         'edit:Open .env in editor'
         'project:Setup project-specific variables'
+        'export:Export .env files as an encrypted bundle (age)'
     )
 
     plugin_subcommands=(
@@ -149,6 +150,18 @@ _devbase() {
                     ;;
                 get|delete)
                     _arguments '1:key:'
+                    ;;
+                export)
+                    _arguments \
+                        '1:dest:_files' \
+                        '*--include-project[Limit to specified project (repeatable)]:name:' \
+                        '*--exclude-project[Exclude project (repeatable)]:name:' \
+                        '--no-global[Exclude $DEVBASE_ROOT/.env]' \
+                        '--no-metadata[Exclude $DEVBASE_ROOT/.env.sources.yml]' \
+                        '*--recipient[age / OpenSSH public key (repeatable)]:key:' \
+                        '--passphrase-env[Read passphrase from env var]:var:' \
+                        '--passphrase-stdin[Read passphrase from stdin]' \
+                        '--force-unencrypted[Write as plaintext tar.gz]'
                     ;;
                 *)
                     _describe -t env-commands 'env command' env_subcommands

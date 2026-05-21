@@ -89,3 +89,59 @@ def test_stdio_backend_writes_to_stdout(monkeypatch):
     monkeypatch.setattr(sys, "stdout", FakeStdout())
     storage.StdioBackend().write_bytes("-", b"hello")
     assert buf.getvalue() == b"hello"
+
+
+def test_local_backend_write_creates_with_0600_no_toctou(tmp_path, monkeypatch):
+    """`os.open` の mode 引数 (0o600) が確実に渡され、umask に依存せず作成時点から
+    0600 になることを検証する"""
+    backend = storage.LocalBackend()
+    dest = tmp_path / "secure.bin"
+
+    captured = {}
+    real_os_open = storage.os.open
+
+    def spy_open(path, flags, mode=0o777):
+        captured['mode'] = mode
+        captured['flags'] = flags
+        return real_os_open(path, flags, mode)
+
+    monkeypatch.setattr(storage.os, "open", spy_open)
+    backend.write_bytes(str(dest), b"secret")
+    assert captured['mode'] == 0o600
+    # O_CREAT|O_TRUNC|O_WRONLY が含まれていること
+    import os as _os
+    assert captured['flags'] & _os.O_CREAT
+    assert captured['flags'] & _os.O_TRUNC
+    assert dest.stat().st_mode & 0o777 == 0o600
+
+
+def test_local_backend_overwrite_existing_file_keeps_0600(tmp_path):
+    """既存ファイル (0644) に上書きしても 0600 まで権限を絞れる"""
+    backend = storage.LocalBackend()
+    dest = tmp_path / "exists.bin"
+    dest.write_bytes(b"old")
+    dest.chmod(0o644)
+
+    backend.write_bytes(str(dest), b"new")
+    assert dest.read_bytes() == b"new"
+    assert dest.stat().st_mode & 0o777 == 0o600
+
+
+def test_local_backend_write_wraps_oserror_as_storage_error(tmp_path):
+    """書き込み時の OSError は StorageError にラップされる"""
+    backend = storage.LocalBackend()
+    # 書き込み不可能なパス (存在しないルートを起点) — mkdir も失敗する状況を作る
+    # FileExistsError をテストするため、parent をファイルにして mkdir を阻む
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"x")
+    dest = blocker / "child" / "out.bin"
+    with pytest.raises(storage.StorageError):
+        backend.write_bytes(str(dest), b"data")
+
+
+def test_local_backend_read_wraps_oserror_as_storage_error(tmp_path):
+    """read 時の OSError (例: ディレクトリを read) は StorageError にラップされる"""
+    backend = storage.LocalBackend()
+    # ディレクトリを read_bytes すると IsADirectoryError
+    with pytest.raises(storage.StorageError):
+        backend.read_bytes(str(tmp_path))

@@ -262,6 +262,43 @@ def test_pack_is_deterministic():
     assert blob1[:2] == b"\x1f\x8b"
 
 
+def test_unpack_rejects_duplicate_manifest_paths():
+    """manifest.files に同じ path が複数回現れたら BundleError"""
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [
+            {"path": "env/global.env",
+             "sha256": bundle._sha256(b"FOO=bar\n")},
+            {"path": "env/global.env",
+             "sha256": bundle._sha256(b"FOO=bar\n")},
+        ],
+    })
+    with pytest.raises(bundle.BundleError, match="path が重複"):
+        bundle.unpack(bad)
+
+
+def test_unpack_rejects_broken_tar_with_bundle_error():
+    """壊れた tar.gz は BundleError として送出される (tarfile.TarError を漏らさない)"""
+    # gzip ヘッダだけ正しいが中身が壊れているバイト列
+    broken = b"\x1f\x8b\x08\x00" + b"\x00" * 32
+    with pytest.raises(bundle.BundleError):
+        bundle.unpack(broken)
+
+
+def test_make_entries_from_disk_ignores_directory_named_env(tmp_path):
+    """対象パスがディレクトリの場合は is_file() で除外され、例外にならない"""
+    root = tmp_path
+    # .env がディレクトリだったケース
+    (root / ".env").mkdir()
+    # 通常の sources.yml
+    (root / ".env.sources.yml").write_text("sources: {}\n")
+    entries = bundle.make_entries_from_disk(root)
+    arcnames = {e.arcname for e in entries}
+    assert "env/global.env" not in arcnames
+    assert "env/sources.yml" in arcnames
+
+
 def test_unpack_rejects_unknown_tar_entries():
     """manifest に記載のないファイルが tar に紛れ込んでいたら BundleError"""
     import io, tarfile, yaml

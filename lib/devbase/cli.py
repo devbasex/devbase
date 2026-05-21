@@ -41,6 +41,15 @@ SUBCMD_MAP = {
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
 
+# 後方互換: prefix が複数候補にマッチする場合に、特定の入力を特定のサブコマンドに
+# 優先的に解決させる。例えば `devbase env e` は従来 `edit` のみに解決されていたが、
+# `export` 追加後は ambiguous になるため、既存ショートカットを維持するために維持先を明示する。
+SUBCMD_PREFIX_PREFERENCES = {
+    ('env',): {
+        'e': 'edit',
+    },
+}
+
 
 def _require_devbase_root() -> Path:
     """Get DEVBASE_ROOT from environment, exiting if not set."""
@@ -280,14 +289,22 @@ def _create_parser():
     return parser
 
 
-def _resolve_prefix(input_cmd, candidates):
+def _resolve_prefix(input_cmd, candidates, preferences=None):
     """Resolve an abbreviated command to its full name via unique prefix matching.
 
-    Returns the full command name if exactly one candidate matches,
-    otherwise returns the input as-is (ambiguous or no match).
+    Returns the full command name if exactly one candidate matches.
+    If ambiguous, falls back to `preferences[input_cmd]` (if provided) to keep
+    backward compatibility with previously-unique abbreviations.
+    Otherwise returns the input as-is.
     """
     matches = [c for c in candidates if c.startswith(input_cmd)]
-    return matches[0] if len(matches) == 1 else input_cmd
+    if len(matches) == 1:
+        return matches[0]
+    if preferences and input_cmd in preferences:
+        preferred = preferences[input_cmd]
+        if preferred in matches:
+            return preferred
+    return input_cmd
 
 
 def _expand_argv():
@@ -303,7 +320,8 @@ def _expand_argv():
         cmd = sys.argv[1]
         for aliases, subcmds in SUBCMD_MAP.items():
             if cmd in aliases:
-                sys.argv[2] = _resolve_prefix(sys.argv[2], subcmds)
+                preferences = SUBCMD_PREFIX_PREFERENCES.get(aliases)
+                sys.argv[2] = _resolve_prefix(sys.argv[2], subcmds, preferences)
                 break
 
     # plugin repo sub-subcommand

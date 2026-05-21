@@ -99,20 +99,29 @@ def unpack(blob: bytes) -> Tuple[Dict, Dict[str, bytes]]:
         tf = tarfile.open(fileobj=buf, mode='r:gz')
     except tarfile.TarError as e:
         raise BundleError(f"tar.gz の読み込みに失敗しました: {e}") from e
+    except OSError as e:
+        raise BundleError(f"tar.gz の読み込みに失敗しました: {e}") from e
 
     members: Dict[str, bytes] = {}
-    with tf:
-        for info in tf.getmembers():
-            if not info.isfile():
-                continue
-            if info.name.startswith('/') or '..' in info.name.split('/'):
-                raise BundleError(f"不正なパスを含んでいます: {info.name}")
-            if info.name in members:
-                raise BundleError(f"重複エントリを検出しました: {info.name}")
-            f = tf.extractfile(info)
-            if f is None:
-                continue
-            members[info.name] = f.read()
+    try:
+        with tf:
+            for info in tf.getmembers():
+                if not info.isfile():
+                    continue
+                if info.name.startswith('/') or '..' in info.name.split('/'):
+                    raise BundleError(f"不正なパスを含んでいます: {info.name}")
+                if info.name in members:
+                    raise BundleError(f"重複エントリを検出しました: {info.name}")
+                f = tf.extractfile(info)
+                if f is None:
+                    continue
+                members[info.name] = f.read()
+    except BundleError:
+        raise
+    except tarfile.TarError as e:
+        raise BundleError(f"tar の展開に失敗しました: {e}") from e
+    except OSError as e:
+        raise BundleError(f"tar の展開に失敗しました: {e}") from e
 
     manifest_bytes = members.pop(MANIFEST_NAME, None)
     if manifest_bytes is None:
@@ -154,6 +163,9 @@ def _validate_manifest(manifest: Dict, members: Dict[str, bytes]) -> None:
         expected = entry.get('sha256')
         if not isinstance(path, str) or not path:
             raise BundleError(f"manifest.files の path が不正です: {path!r}")
+        if path in manifest_paths:
+            # 重複 path は origin/metadata の解釈が曖昧になるため拒否する
+            raise BundleError(f"manifest.files に同じ path が重複しています: {path}")
         if not isinstance(expected, str) or len(expected) != 64 or not all(
             c in '0123456789abcdef' for c in expected.lower()
         ):
@@ -204,7 +216,8 @@ def make_entries_from_disk(devbase_root,
 
     if include_global:
         global_env = devbase_root / '.env'
-        if global_env.exists():
+        # is_file() でディレクトリ等を除外し、IsADirectoryError 等の例外を防ぐ
+        if global_env.is_file():
             entries.append(BundleEntry(
                 arcname='env/global.env',
                 origin='$DEVBASE_ROOT/.env',
@@ -213,7 +226,7 @@ def make_entries_from_disk(devbase_root,
 
     if include_metadata:
         sources_yml = devbase_root / '.env.sources.yml'
-        if sources_yml.exists():
+        if sources_yml.is_file():
             entries.append(BundleEntry(
                 arcname='env/sources.yml',
                 origin='$DEVBASE_ROOT/.env.sources.yml',
@@ -233,7 +246,7 @@ def make_entries_from_disk(devbase_root,
             if included is not None and name not in included:
                 continue
             env_path = proj_dir / '.env'
-            if env_path.exists():
+            if env_path.is_file():
                 entries.append(BundleEntry(
                     arcname=f'env/projects/{name}/.env',
                     origin=f'$DEVBASE_ROOT/projects/{name}/.env',

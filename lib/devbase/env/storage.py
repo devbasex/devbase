@@ -42,22 +42,49 @@ class LocalBackend:
 
     def write_bytes(self, dest: str, data: bytes) -> None:
         path = _to_local_path(dest)
-        if path.parent and not path.parent.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-        # 0600 で書き出すため open(..., 'wb') 後に chmod する
-        with open(path, 'wb') as f:
-            f.write(data)
         try:
-            os.chmod(path, 0o600)
-        except OSError:
-            # Windows 等で chmod が無効でも書き込み自体は完了させる
-            pass
+            if path.parent and not path.parent.exists():
+                path.parent.mkdir(parents=True, exist_ok=True)
+            # TOCTOU 回避: open(..., 'wb') 後に chmod すると、umask が緩い環境では
+            # 一瞬 0644 等で平文 export が露出する。
+            # os.open に mode=0o600 を渡し、O_CREAT|O_TRUNC|O_WRONLY で作成時点
+            # から 0600 を強制する。既存ファイルも書き込み前に chmod で権限を絞る。
+            if path.exists():
+                try:
+                    os.chmod(path, 0o600)
+                except OSError:
+                    # Windows 等で chmod が無効でも処理を続行
+                    pass
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            fd = os.open(path, flags, 0o600)
+            try:
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(data)
+            except BaseException:
+                # fdopen 失敗時は fd を明示的に閉じる (fdopen 成功時は with が close)
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                raise
+            # mode 引数が無視される環境 (Windows 等) でも後追いで chmod を試みる
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+        except StorageError:
+            raise
+        except OSError as e:
+            raise StorageError(f"書き込みに失敗しました ({path}): {e}") from e
 
     def read_bytes(self, source: str) -> bytes:
         path = _to_local_path(source)
         if not path.exists():
             raise StorageError(f"ファイルが見つかりません: {path}")
-        return path.read_bytes()
+        try:
+            return path.read_bytes()
+        except OSError as e:
+            raise StorageError(f"読み込みに失敗しました ({path}): {e}") from e
 
 
 class StdioBackend:
