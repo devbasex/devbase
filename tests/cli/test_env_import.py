@@ -779,3 +779,110 @@ def test_env_import_dollar_value_is_escaped_after_merge(
     parsed = EnvFile.parse_bytes((dest_root / ".env").read_bytes())
     assert parsed['PRICE'] == 'cost is $100'
     assert parsed['EXISTING'] == 'keep'
+
+
+# --- PR #15 round5: コメント / 空行のみの既存 .env が create 扱いされて
+# 上書きされないこと (`existing` dict が空でも target.exists() で merge に入る)。
+
+def _setup_comment_only_dest(dest_root: Path) -> str:
+    """key=value を含まずコメント / 空行のみで構成された既存 .env を作る"""
+    text = (
+        "# user-managed header (no kv yet)\n"
+        "\n"
+        "# section: aws\n"
+        "\n"
+    )
+    (dest_root / ".env").write_text(text)
+    os.chmod(dest_root / ".env", 0o600)
+    return text
+
+
+def _build_simple_bundle(tmp_path: Path, pub_file: Path,
+                         name: str = "comment-only") -> Path:
+    src_root = tmp_path / f"{name}-src"
+    src_root.mkdir()
+    (src_root / ".env").write_text("INCOMING_KEY=incoming\n")
+    bundle_path = tmp_path / f"{name}.dbenv"
+    rc = export(src_root, ExportOptions(
+        dest=str(bundle_path), recipients=[f"@{pub_file}"]))
+    assert rc == 0
+    return bundle_path
+
+
+@pytest.mark.parametrize("merge_mode", ["prefer-incoming", "keep-existing"])
+def test_env_import_comment_only_existing_preserves_comments_on_merge(
+        fake_root, dest_root, age_keys, tmp_path, merge_mode):
+    """コメント / 空行のみの既存 .env が ``existing`` 辞書の空判定で create 扱いに
+    なって上書きされ、ヘッダコメントが消失しないこと (PR #15 round5 指摘)"""
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+    bundle_path = _build_simple_bundle(tmp_path, pub_file, "comment-merge")
+
+    _setup_comment_only_dest(dest_root)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        merge=merge_mode))
+    assert rc == 0
+
+    out = (dest_root / ".env").read_text()
+    assert "# user-managed header (no kv yet)" in out
+    assert "# section: aws" in out
+    assert "INCOMING_KEY=incoming" in out
+
+
+def test_env_import_comment_only_existing_preserves_comments_on_replace_keys(
+        fake_root, dest_root, age_keys, tmp_path):
+    """--replace-keys 経路でも、コメントのみの既存 .env が create 扱いされず
+    コメントが保持されること (PR #15 round5 指摘)"""
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+    bundle_path = _build_simple_bundle(tmp_path, pub_file, "comment-rk")
+
+    _setup_comment_only_dest(dest_root)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        replace_keys=["INCOMING_KEY"]))
+    assert rc == 0
+
+    out = (dest_root / ".env").read_text()
+    assert "# user-managed header (no kv yet)" in out
+    assert "# section: aws" in out
+    assert "INCOMING_KEY=incoming" in out
+
+
+def test_env_import_comment_only_existing_replace_reports_op_replace(
+        fake_root, dest_root, age_keys, tmp_path, caplog):
+    """--replace 経路では incoming で完全上書きするが、その op は 'create' では
+    なく 'replace' として報告されること (PR #15 round5 指摘)。
+
+    --replace の意味論として既存内容は捨てるため、コメント保持は要件ではないが、
+    ログ上 ``create`` と表示されるとロールバック挙動など他の経路 (= 新規作成は
+    backup を取らない) と判別できなくなるため、op 表記の正確性を確認する。
+    """
+    import logging
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+    bundle_path = _build_simple_bundle(tmp_path, pub_file, "comment-replace")
+
+    _setup_comment_only_dest(dest_root)
+
+    with caplog.at_level(logging.INFO, logger="devbase.env.io_import"):
+        rc = import_bundle(dest_root, ImportOptions(
+            source=str(bundle_path), identities=[str(id_file)],
+            replace=True))
+    assert rc == 0
+
+    # 'replace: <path>' のような行が出ているはず。少なくとも 'create:' 表記で
+    # 出力されていないことを確認 (op_replace の正しさ)。
+    log_text = "\n".join(r.message for r in caplog.records)
+    assert "replace: " in log_text, log_text
+    # backup には元のコメントのみの .env が記録されている (存在判定が正しければ
+    # _backup_existing が target を見つけてコピーするため)
+    backup_root = dest_root / "backups" / "env-import"
+    assert backup_root.is_dir()
+    snapshots = [p for p in backup_root.iterdir() if p.is_dir()]
+    assert len(snapshots) >= 1
+    backed = (snapshots[0] / ".env").read_text()
+    assert "# user-managed header (no kv yet)" in backed

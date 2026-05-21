@@ -47,6 +47,9 @@ SUBCMD_MAP = {
 SUBCMD_PREFIX_PREFERENCES = {
     ('env',): {
         'e': 'edit',
+        # `import` 追加で `i` が `init` / `import` の両方にマッチして ambiguous に
+        # なるため、既存ショートカット (`devbase env i` → `init`) を維持する。
+        'i': 'init',
     },
 }
 

@@ -227,7 +227,7 @@ def _build_merge_plan(
     arcname: str,
     incoming_bytes: bytes,
     existing_bytes: bytes,
-    existing: Dict[str, str],
+    target_exists: bool,
     merged: Dict[str, str],
     added: List[str],
     overwritten: List[str],
@@ -235,13 +235,16 @@ def _build_merge_plan(
 ) -> _Plan:
     """merge 系 (replace_keys / keep-existing / prefer-incoming) 共通の _Plan 生成。
 
-    - 新規作成時は ``incoming_bytes`` をそのまま採用して二重エスケープを回避
-      (PR #15 codex 指摘)
+    - 新規作成時 (``target_exists`` が False) は ``incoming_bytes`` をそのまま採用して
+      二重エスケープを回避 (PR #15 codex 指摘)
     - 既存ファイルへの merge 時は ``_merge_into_existing_bytes`` でコメント / 空行 /
-      キー順を保持したまま値を差し替える (PR #15 gemini 指摘)
+      キー順を保持したまま値を差し替える (PR #15 gemini 指摘)。
+      ``existing`` (key=value dict) の空判定で create/merge を決めると、コメント /
+      空行のみで構成された既存 .env が ``incoming_bytes`` で上書きされてコメントが
+      失われるため、ファイル実体の有無で判定する (PR #15 round5 指摘)。
     """
-    new_bytes = (incoming_bytes if not existing
-                 else _merge_into_existing_bytes(existing_bytes, merged))
+    new_bytes = (_merge_into_existing_bytes(existing_bytes, merged)
+                 if target_exists else incoming_bytes)
     return _Plan(
         target=target,
         arcname=arcname,
@@ -249,7 +252,7 @@ def _build_merge_plan(
         added_keys=sorted(added),
         overwritten_keys=sorted(overwritten),
         skipped_keys=sorted(skipped),
-        op='merge' if existing else 'create',
+        op='merge' if target_exists else 'create',
     )
 
 
@@ -272,7 +275,8 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
     incoming = EnvFile.parse_bytes(incoming_bytes)
     existing: Dict[str, str] = {}
     existing_bytes: bytes = b''
-    if target.exists():
+    target_exists = target.exists()
+    if target_exists:
         existing_bytes = target.read_bytes()
         existing = EnvFile.parse_bytes(existing_bytes)
 
@@ -280,6 +284,8 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
         added = sorted(set(incoming) - set(existing))
         overwritten = sorted(k for k in incoming if k in existing and incoming[k] != existing[k])
         # replace は バンドル側の値で完全に置き換える (merge 経路と別系統)
+        # op 判定は ``existing`` (key=value dict) ではなくファイル実体の有無で行う:
+        # コメントのみの既存 .env を 'create' と誤判定しないため (PR #15 round5 指摘)。
         return _Plan(
             target=target,
             arcname=arcname,
@@ -287,7 +293,7 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
             added_keys=added,
             overwritten_keys=overwritten,
             skipped_keys=[],
-            op='replace' if existing else 'create',
+            op='replace' if target_exists else 'create',
         )
 
     merged: Dict[str, str] = dict(existing)
@@ -340,7 +346,7 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
         arcname=arcname,
         incoming_bytes=incoming_bytes,
         existing_bytes=existing_bytes,
-        existing=existing,
+        target_exists=target_exists,
         merged=merged,
         added=added,
         overwritten=overwritten,
