@@ -30,7 +30,7 @@ from devbase.log import get_logger
 from devbase.env import bundle as _bundle
 from devbase.env import cipher as _cipher
 from devbase.env import storage as _storage
-from devbase.env.store import EnvFile
+from devbase.env.store import EnvEntry, EnvFile
 
 logger = get_logger(__name__)
 
@@ -187,30 +187,39 @@ def _target_for(arcname: str, devbase_root: Path) -> Path:
     raise ImportError(f"未対応のバンドルエントリ: {arcname}")
 
 
-def _parse_env_bytes(data: bytes) -> Dict[str, str]:
-    """EnvFile と同じ規則で bytes をパースする (一時ファイル不要)"""
-    return EnvFile.parse_bytes(data)
+def _merge_into_existing_bytes(existing_bytes: bytes,
+                               merged: Dict[str, str]) -> bytes:
+    """既存 ``.env`` のコメント / 空行 / キー順を保持したまま、
+    ``merged`` の内容で値を上書きしてバイト列化する。
 
+    ``merged`` のうち既存ファイルに無いキーは末尾に追加する。
+    既存ファイルにあって ``merged`` から削除されているキーは、entries からも除外して
+    出力する (現状の merge ロジック上、削除されるケースは無いが安全側で対応)。
 
-def _format_env_bytes(data: Dict[str, str]) -> bytes:
-    """EnvFile.save と同じフォーマットで dict をバイト列化する"""
-    lines: List[str] = []
-    for key in sorted(data):
-        value = data[key]
-        needs_quote = (
-            '\n' in value
-            or any(c in value for c in (' ', '"', "'", '$', '`', '\\',
-                                        '<', '>', '|', '&', ';',
-                                        '(', ')', '#'))
-        )
-        if needs_quote:
-            quoted = (value.replace('\\', '\\\\')
-                          .replace('"', '\\"')
-                          .replace('\n', '\\n'))
-            lines.append(f'{key}="{quoted}"\n')
+    PR #15 gemini 指摘: ``EnvFile.dump_bytes`` で再シリアライズすると ``key=value``
+    だけの出力になりコメント・空行が失われる。これを避けるため entries ベースで
+    再構成する。
+    """
+    entries = EnvFile.parse_entries(existing_bytes)
+    seen: set = set()
+    out_entries: List[EnvEntry] = []
+    for e in entries:
+        if e.kind == 'kv' and e.key is not None:
+            if e.key in merged:
+                # 値を merge 後のものに差し替え (key 順 / コメントは保持)
+                out_entries.append(EnvEntry(
+                    kind='kv', raw=e.raw, key=e.key, value=merged[e.key]
+                ))
+                seen.add(e.key)
+            # merged から除外されているキーは entries からも落とす
         else:
-            lines.append(f'{key}={value}\n')
-    return ''.join(lines).encode('utf-8')
+            out_entries.append(e)
+    # 既存に無かった新規キーは末尾に append (定常的な key 順を維持するため sorted)
+    for key in sorted(k for k in merged if k not in seen):
+        out_entries.append(EnvEntry(
+            kind='kv', raw='', key=key, value=merged[key]
+        ))
+    return EnvFile.dump_entries_bytes(out_entries)
 
 
 def _plan_env_merge(target: Path, incoming_bytes: bytes,
@@ -218,14 +227,20 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
     """1 つの .env に対する merge / replace 計画を作る
 
     既存ファイルが無い (= create) ケースでは、バンドル側の ``incoming_bytes`` を
-    そのまま採用する。``_format_env_bytes`` で再シリアライズすると、export 側で
+    そのまま採用する。``EnvFile.dump_bytes`` で再シリアライズすると、export 側で
     既に escape された値を parse_bytes 経由でも完全に round-trip できる前提が
     崩れた瞬間に二重エスケープが発生するためである (PR #15 codex 指摘)。
+
+    既存ファイルが存在する merge 経路では ``_merge_into_existing_bytes`` で
+    既存のコメント / 空行 / キー順を保持したまま値だけ差し替える
+    (PR #15 gemini 指摘)。
     """
-    incoming = _parse_env_bytes(incoming_bytes)
+    incoming = EnvFile.parse_bytes(incoming_bytes)
     existing: Dict[str, str] = {}
+    existing_bytes: bytes = b''
     if target.exists():
-        existing = _parse_env_bytes(target.read_bytes())
+        existing_bytes = target.read_bytes()
+        existing = EnvFile.parse_bytes(existing_bytes)
 
     if opts.replace:
         added = sorted(set(incoming) - set(existing))
@@ -267,7 +282,8 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
                     added.append(key)
                     merged[key] = value
         # 新規作成時は incoming_bytes をそのまま保持して二重エスケープを回避
-        new_bytes = incoming_bytes if not existing else _format_env_bytes(merged)
+        new_bytes = (incoming_bytes if not existing
+                     else _merge_into_existing_bytes(existing_bytes, merged))
         return _Plan(
             target=target,
             arcname=arcname,
@@ -288,7 +304,8 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
             else:
                 merged[key] = value
                 added.append(key)
-        new_bytes = incoming_bytes if not existing else _format_env_bytes(merged)
+        new_bytes = (incoming_bytes if not existing
+                     else _merge_into_existing_bytes(existing_bytes, merged))
         return _Plan(
             target=target,
             arcname=arcname,
@@ -311,7 +328,8 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
             else:
                 merged[key] = value
                 added.append(key)
-        new_bytes = incoming_bytes if not existing else _format_env_bytes(merged)
+        new_bytes = (incoming_bytes if not existing
+                     else _merge_into_existing_bytes(existing_bytes, merged))
         return _Plan(
             target=target,
             arcname=arcname,

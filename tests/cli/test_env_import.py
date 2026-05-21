@@ -628,3 +628,154 @@ def test_envfile_parse_bytes_round_trip_with_escapes():
     raw2 = 'LITERAL="a\\\\nb"\n'
     parsed2 = EnvFile.parse_bytes(raw2.encode('utf-8'))
     assert parsed2['LITERAL'] == 'a\\nb'  # backslash + 'n' + 'b' (3 chars)
+
+
+def test_envfile_dollar_escape_round_trip():
+    """``$`` を含む値は ``\\$`` にエスケープされ、``source`` 時に変数展開されない
+    (PR #15 gemini 指摘)"""
+    from devbase.env.store import EnvFile
+
+    # dump → parse の round-trip で値が保たれる
+    data = {
+        'DOLLAR': '$HOME',                # 単純な変数展開を含む
+        'PRICE': 'cost is $100',          # 値内の $
+        'ESCAPED_LIKE': 'a\\$b',          # backslash + $ の組み合わせ
+        'PLAIN_NUM': '12345',             # quote 不要なケース
+    }
+    dumped = EnvFile.dump_bytes(data)
+    text = dumped.decode('utf-8')
+    # $ が裸 (バックスラッシュ無し) で出力されていないこと
+    # ($ の直前は必ず \ である or 行の終端 / 別の \\)
+    for line in text.splitlines():
+        if '=' in line and '"' in line:
+            # ダブルクオート内に裸の $ があるかチェック
+            _, _, val = line.partition('=')
+            # 値部分の $ をすべて検査: 直前の文字が \\ であること
+            for idx, ch in enumerate(val):
+                if ch == '$':
+                    assert idx > 0 and val[idx - 1] == '\\', (
+                        f"unescaped $ in dump: {line!r}"
+                    )
+    parsed = EnvFile.parse_bytes(dumped)
+    assert parsed == data
+
+
+def test_env_import_merge_preserves_comments_and_blanks(
+        fake_root, dest_root, age_keys, tmp_path):
+    """merge 経路で既存 ``.env`` のコメントと空行が保持されること (PR #15 gemini 指摘)"""
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+
+    # incoming bundle: AWS_CONFIG_BASE64=AAAA + GLOBAL=1
+    src_root = tmp_path / "comment-src"
+    src_root.mkdir()
+    (src_root / ".env").write_text("AWS_CONFIG_BASE64=AAAA\nGLOBAL=1\n")
+    bundle_path = tmp_path / "comment.dbenv"
+    rc = export(src_root, ExportOptions(
+        dest=str(bundle_path), recipients=[f"@{pub_file}"]))
+    assert rc == 0
+
+    # 既存 dest .env にコメント・空行・既存キーを配置
+    existing_text = (
+        "# Top-level header comment\n"
+        "\n"
+        "# AWS section\n"
+        "AWS_CONFIG_BASE64=OLD\n"
+        "\n"
+        "# user-managed key\n"
+        "KEEP=this\n"
+    )
+    (dest_root / ".env").write_text(existing_text)
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        merge='prefer-incoming'))
+    assert rc == 0
+
+    out = (dest_root / ".env").read_text()
+    # コメント・空行が保持されている
+    assert "# Top-level header comment" in out
+    assert "# AWS section" in out
+    assert "# user-managed key" in out
+    # 既存値は prefer-incoming で AAAA に書き換わる
+    assert "AWS_CONFIG_BASE64=AAAA" in out
+    # 既存にしか無かった KEEP は維持
+    assert "KEEP=this" in out
+    # incoming にしか無かった GLOBAL は末尾に追加
+    assert "GLOBAL=1" in out
+    # 空行も最低 1 つ残っている
+    assert "\n\n" in out
+
+
+def test_env_import_keep_existing_preserves_comments(
+        fake_root, dest_root, age_keys, tmp_path):
+    """keep-existing 経路でもコメントが保持されること"""
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+
+    src_root = tmp_path / "keep-src"
+    src_root.mkdir()
+    (src_root / ".env").write_text("INCOMING_KEY=incoming\n")
+    bundle_path = tmp_path / "keep.dbenv"
+    rc = export(src_root, ExportOptions(
+        dest=str(bundle_path), recipients=[f"@{pub_file}"]))
+    assert rc == 0
+
+    (dest_root / ".env").write_text(
+        "# This comment must survive\nKEEP_ME=v\n"
+    )
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)]))
+    assert rc == 0
+
+    out = (dest_root / ".env").read_text()
+    assert "# This comment must survive" in out
+    assert "KEEP_ME=v" in out
+    assert "INCOMING_KEY=incoming" in out
+
+
+def test_env_import_dollar_value_is_escaped_after_merge(
+        fake_root, dest_root, age_keys, tmp_path):
+    """``$`` を含む値が merge 後の ``.env`` 上でエスケープされていること
+    (シェルで source した時の変数展開を防ぐ / PR #15 gemini 指摘)"""
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+
+    src_root = tmp_path / "dollar-src"
+    src_root.mkdir()
+    # 値に $ を含む。export 側 (EnvFile.save 形式) で書き出される
+    (src_root / ".env").write_text('PRICE="cost is \\$100"\n')
+    bundle_path = tmp_path / "dollar.dbenv"
+    rc = export(src_root, ExportOptions(
+        dest=str(bundle_path), recipients=[f"@{pub_file}"]))
+    assert rc == 0
+
+    # 既存 dest .env (merge 経路に入る)
+    (dest_root / ".env").write_text("EXISTING=keep\n")
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        merge='prefer-incoming'))
+    assert rc == 0
+
+    raw_text = (dest_root / ".env").read_text()
+    # 裸の $ が現れていないこと (\ の直後でなければ NG)
+    for line in raw_text.splitlines():
+        if 'PRICE' not in line:
+            continue
+        # 値の中の $ は必ず \\ の直後
+        _, _, val = line.partition('=')
+        for idx, ch in enumerate(val):
+            if ch == '$':
+                assert idx > 0 and val[idx - 1] == '\\', (
+                    f"unescaped $ in merged .env: {line!r}"
+                )
+
+    from devbase.env.store import EnvFile
+    parsed = EnvFile.parse_bytes((dest_root / ".env").read_bytes())
+    assert parsed['PRICE'] == 'cost is $100'
+    assert parsed['EXISTING'] == 'keep'
