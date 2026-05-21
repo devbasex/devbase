@@ -48,6 +48,17 @@ def test_resolve_rejects_unknown_scheme():
         storage.resolve("ftp://host/x")
 
 
+@pytest.mark.parametrize("uri", [
+    r"C:\Users\foo\bundle.tar.gz",
+    r"c:\tmp\out.bin",
+    "D:/data/out.bin",
+])
+def test_resolve_windows_drive_letter_falls_back_to_local(uri):
+    """Windows のドライブレター付きパスは urlparse が scheme と誤認するが
+    LocalBackend にフォールバックされる"""
+    assert isinstance(storage.resolve(uri), storage.LocalBackend)
+
+
 def test_local_backend_file_uri_roundtrip(tmp_path):
     backend = storage.LocalBackend()
     dest = tmp_path / "via-uri.bin"

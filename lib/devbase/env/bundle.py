@@ -122,6 +122,11 @@ def unpack(blob: bytes) -> Tuple[Dict, Dict[str, bytes]]:
 
 
 def _validate_manifest(manifest: Dict, members: Dict[str, bytes]) -> None:
+    if not isinstance(manifest, dict):
+        raise BundleError(
+            f"{MANIFEST_NAME} の top-level が mapping ではありません "
+            f"(type={type(manifest).__name__})"
+        )
     version = manifest.get('version')
     if not isinstance(version, int):
         raise BundleError("manifest.version が不正です")

@@ -232,3 +232,16 @@ def test_unpack_rejects_duplicate_tar_entries():
             tout.addfile(info, io.BytesIO(payload))
     with pytest.raises(bundle.BundleError, match="重複エントリ"):
         bundle.unpack(out.getvalue())
+
+
+@pytest.mark.parametrize("payload", [b"- a\n- b\n", b"just a string\n", b"42\n"])
+def test_unpack_rejects_non_mapping_manifest(payload):
+    """manifest.yaml の top-level が dict でない場合 BundleError"""
+    import io, tarfile
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as tout:
+        m = tarfile.TarInfo(name=bundle.MANIFEST_NAME)
+        m.size = len(payload)
+        tout.addfile(m, io.BytesIO(payload))
+    with pytest.raises(bundle.BundleError, match="mapping ではありません"):
+        bundle.unpack(out.getvalue())

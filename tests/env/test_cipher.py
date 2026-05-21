@@ -73,6 +73,15 @@ def test_recipient_at_file_reference_depth_limit(tmp_path):
         cipher.encrypt(b"x", recipients=[f"@{a}"])
 
 
+def test_recipient_at_file_reference_rejects_non_utf8(tmp_path):
+    """@PATH ファイルが UTF-8 でない場合 CipherError に包んで送出"""
+    bad = tmp_path / "bad.pub"
+    # 0x80 は UTF-8 として不正な開始バイト
+    bad.write_bytes(b"\x80\x81\x82\n")
+    with pytest.raises(cipher.CipherError, match="UTF-8 デコード"):
+        cipher.encrypt(b"x", recipients=[f"@{bad}"])
+
+
 def test_default_recipient_paths_includes_ed25519():
     """ed25519 公開鍵が rsa より先に試される"""
     paths = cipher.default_recipient_paths()

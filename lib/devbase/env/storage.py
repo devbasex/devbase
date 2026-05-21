@@ -88,6 +88,12 @@ def resolve(uri: str) -> StorageBackend:
             "(後続 PR で対応予定)"
         )
 
+    # Windows のドライブレター付きパス (例: C:\path, d:/path) は
+    # urlparse が scheme='c' / 'd' と誤認するため、1 文字アルファベットで
+    # かつ `://` を伴わないものは LocalBackend にフォールバックする
+    if len(scheme) == 1 and scheme.isalpha() and '://' not in uri:
+        return LocalBackend()
+
     raise StorageError(f"未対応のスキームです: {scheme}://")
 
 

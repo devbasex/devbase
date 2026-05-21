@@ -39,7 +39,13 @@ def _resolve_recipient(spec: str, _depth: int = 0):
         path = Path(spec[1:]).expanduser()
         if not path.exists():
             raise CipherError(f"recipient ファイルが見つかりません: {path}")
-        return _resolve_recipient(path.read_text(encoding='utf-8').strip(), _depth + 1)
+        try:
+            content = path.read_text(encoding='utf-8')
+        except UnicodeDecodeError as e:
+            raise CipherError(
+                f"recipient ファイルの UTF-8 デコードに失敗しました: {path}: {e}"
+            ) from e
+        return _resolve_recipient(content.strip(), _depth + 1)
 
     if spec.startswith('age1'):
         try:
