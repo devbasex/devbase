@@ -1,5 +1,6 @@
 """Plugin installer - handles install/uninstall operations"""
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -259,6 +260,49 @@ def _install_from_repo(
             raise PluginError("No plugin name specified")
 
 
+def _replace_entry(path: Path) -> None:
+    """Remove ``path`` (file, symlink, or directory) so it can be replaced."""
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
+def _sync_dir(src: Path, dst: Path) -> None:
+    """rsync-like merge: make ``dst``'s contents match ``src``'s.
+
+    Preserves the inode of ``dst`` and of any subdirectories that exist in
+    both ``src`` and ``dst``. Compared to ``rmtree(dst) + copytree(src, dst)``,
+    a process whose CWD is inside ``dst`` (or a subdir present in both) keeps
+    a valid CWD across this operation — important when the user is working
+    inside a ``projects/<name>`` symlink that resolves into the plugin tree.
+    """
+    dst.mkdir(parents=True, exist_ok=True)
+
+    src_entries = {e.name: e for e in src.iterdir()}
+    dst_entries = {e.name: e for e in dst.iterdir()}
+
+    for name, dst_entry in dst_entries.items():
+        if name not in src_entries:
+            _replace_entry(dst_entry)
+
+    for name, src_entry in src_entries.items():
+        dst_entry = dst / name
+        if src_entry.is_symlink():
+            link_target = os.readlink(src_entry)
+            if dst_entry.is_symlink() or dst_entry.exists():
+                _replace_entry(dst_entry)
+            os.symlink(link_target, dst_entry)
+        elif src_entry.is_dir():
+            if dst_entry.exists() and not dst_entry.is_dir():
+                _replace_entry(dst_entry)
+            _sync_dir(src_entry, dst_entry)
+        else:
+            if dst_entry.is_symlink() or (dst_entry.exists() and dst_entry.is_dir()):
+                _replace_entry(dst_entry)
+            shutil.copy2(src_entry, dst_entry)
+
+
 def copy_plugin(
     registry: PluginRegistry,
     name: str,
@@ -266,7 +310,12 @@ def copy_plugin(
     source_display: str,
     plugins_dir: Path,
 ) -> None:
-    """Copy a plugin from cloned repo to plugins/.
+    """Install or update a plugin from a cloned repo into ``plugins/``.
+
+    For updates, the existing plugin directory inode is preserved by
+    syncing contents in place (rsync-like) instead of rmtree+copytree.
+    This avoids invalidating any shell or editor whose CWD is inside the
+    plugin (typically via a ``projects/<name>`` symlink).
 
     Raises PluginError on failure.
     """
@@ -274,11 +323,15 @@ def copy_plugin(
         raise PluginError(f"Plugin directory not found: {plugin_path}")
 
     dest = plugins_dir / name
-    if dest.exists():
-        logger.warning("Removing existing plugin '%s'", name)
-        shutil.rmtree(dest)
-
-    shutil.copytree(plugin_path, dest)
+    if dest.is_symlink():
+        logger.warning("Removing existing plugin '%s' (symlink)", name)
+        dest.unlink()
+        shutil.copytree(plugin_path, dest)
+    elif dest.exists():
+        logger.info("Updating existing plugin '%s'", name)
+        _sync_dir(plugin_path, dest)
+    else:
+        shutil.copytree(plugin_path, dest)
 
     info = load_plugin_info(dest)
     version = info.version if info else '0.1.0'
