@@ -55,8 +55,11 @@ def git_clone(url: str, dest: Path, ref: Optional[str] = None) -> None:
     if ref:
         cmd.extend(['--branch', ref])
     cmd.extend([url, str(dest)])
+    dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(
+            cmd, check=True, capture_output=True, text=True, cwd=str(dest.parent),
+        )
     except subprocess.CalledProcessError as e:
         raise PluginError(f"git clone failed for {url}: {e.stderr.strip()}")
 
