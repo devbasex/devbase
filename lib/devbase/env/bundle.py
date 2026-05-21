@@ -141,12 +141,18 @@ def _validate_manifest(manifest: Dict, members: Dict[str, bytes]) -> None:
         expected = entry.get('sha256')
         if not isinstance(path, str) or not path:
             raise BundleError(f"manifest.files の path が不正です: {path!r}")
-        if expected is not None and not isinstance(expected, str):
-            raise BundleError(f"manifest.files の sha256 が不正です (path={path}): {expected!r}")
+        if not isinstance(expected, str) or len(expected) != 64 or not all(
+            c in '0123456789abcdef' for c in expected.lower()
+        ):
+            raise BundleError(
+                f"manifest.files の sha256 が不正です (path={path}): "
+                f"64文字の16進文字列が必要です"
+            )
+        expected = expected.lower()
         if path not in members:
             raise BundleError(f"manifest に記載されたファイルが見つかりません: {path}")
         actual = _sha256(members[path])
-        if expected and expected != actual:
+        if expected != actual:
             raise BundleError(
                 f"sha256 が一致しません (path={path}, expected={expected[:12]}..., "
                 f"actual={actual[:12]}...)"

@@ -71,3 +71,22 @@ def test_recipient_at_file_reference_depth_limit(tmp_path):
     b.write_text(f"@{a}\n")
     with pytest.raises(cipher.CipherError, match="深すぎ|循環"):
         cipher.encrypt(b"x", recipients=[f"@{a}"])
+
+
+def test_default_recipient_paths_includes_ed25519():
+    """ed25519 公開鍵が rsa より先に試される"""
+    paths = cipher.default_recipient_paths()
+    names = [p.name for p in paths]
+    assert "id_ed25519.pub" in names
+    assert "id_rsa.pub" in names
+    # ed25519 を rsa より先に優先
+    assert names.index("id_ed25519.pub") < names.index("id_rsa.pub")
+
+
+def test_default_identity_paths_includes_ed25519():
+    """ed25519 秘密鍵が rsa より先に試される"""
+    paths = cipher.default_identity_paths()
+    names = [p.name for p in paths]
+    assert "id_ed25519" in names
+    assert "id_rsa" in names
+    assert names.index("id_ed25519") < names.index("id_rsa")

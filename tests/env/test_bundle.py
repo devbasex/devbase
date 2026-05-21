@@ -168,6 +168,50 @@ def test_unpack_rejects_invalid_sha256_field():
         bundle.unpack(bad)
 
 
+def test_unpack_rejects_missing_sha256_field():
+    """sha256 が欠落 (None) している manifest は BundleError"""
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [{"path": "env/global.env"}],  # sha256 欠落
+    })
+    with pytest.raises(bundle.BundleError, match="sha256 が不正"):
+        bundle.unpack(bad)
+
+
+def test_unpack_rejects_sha256_none():
+    """sha256 が明示的に None でも BundleError (完全性チェック迂回防止)"""
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [{"path": "env/global.env", "sha256": None}],
+    })
+    with pytest.raises(bundle.BundleError, match="sha256 が不正"):
+        bundle.unpack(bad)
+
+
+def test_unpack_rejects_sha256_wrong_length():
+    """sha256 が 64 文字でない場合は BundleError"""
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [{"path": "env/global.env", "sha256": "abc123"}],
+    })
+    with pytest.raises(bundle.BundleError, match="sha256 が不正"):
+        bundle.unpack(bad)
+
+
+def test_unpack_rejects_sha256_non_hex():
+    """sha256 が 64 文字でも 16 進でないなら BundleError"""
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [{"path": "env/global.env", "sha256": "z" * 64}],
+    })
+    with pytest.raises(bundle.BundleError, match="sha256 が不正"):
+        bundle.unpack(bad)
+
+
 def test_unpack_rejects_duplicate_tar_entries():
     import io, tarfile, yaml
     out = io.BytesIO()

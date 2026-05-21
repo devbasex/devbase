@@ -150,10 +150,18 @@ def decrypt(data: bytes,
 
 
 def default_recipient_paths() -> List[Path]:
-    """recipient 省略時に試す既定の公開鍵パス候補"""
-    return [Path.home() / '.ssh' / 'id_rsa.pub']
+    """recipient 省略時に試す既定の公開鍵パス候補
+
+    ed25519 を優先し、次に rsa を試す。
+    """
+    ssh = Path.home() / '.ssh'
+    return [ssh / 'id_ed25519.pub', ssh / 'id_rsa.pub']
 
 
 def default_identity_paths() -> List[Path]:
-    """identity 省略時に試す既定の秘密鍵パス候補"""
-    return [Path.home() / '.ssh' / 'id_rsa']
+    """identity 省略時に試す既定の秘密鍵パス候補
+
+    ed25519 を優先し、次に rsa を試す。
+    """
+    ssh = Path.home() / '.ssh'
+    return [ssh / 'id_ed25519', ssh / 'id_rsa']
