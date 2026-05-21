@@ -36,7 +36,7 @@ GROUP_ALIASES = {
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
-    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project'],
+    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
@@ -108,6 +108,36 @@ def _add_env_parser(subparsers):
 
     env_sub.add_parser('edit', help='Open .env in editor')
     env_sub.add_parser('project', help='Setup project-specific variables')
+
+    env_export = env_sub.add_parser(
+        'export',
+        help='Export .env files as an encrypted bundle (age)',
+    )
+    env_export.add_argument('dest', nargs='?', default=None,
+                            help="Output path (default: ./devbase-env-<TS>.dbenv, '-' for stdout)")
+    env_export.add_argument('--include-project', action='append', default=None,
+                            metavar='NAME', dest='include_projects',
+                            help='Limit to specified project (repeatable)')
+    env_export.add_argument('--exclude-project', action='append', default=[],
+                            metavar='NAME', dest='exclude_projects',
+                            help='Exclude project (repeatable)')
+    env_export.add_argument('--no-global', action='store_true',
+                            help='Exclude $DEVBASE_ROOT/.env')
+    env_export.add_argument('--no-metadata', action='store_true',
+                            help='Exclude $DEVBASE_ROOT/.env.sources.yml')
+    env_export.add_argument('--recipient', action='append', default=[],
+                            metavar='KEY', dest='recipients',
+                            help=("age / OpenSSH public key (repeatable). "
+                                  "Formats: 'age1...', 'ssh-ed25519 AAAA...', 'ssh-rsa AAAA...', "
+                                  "'@PATH' for file reference. "
+                                  "Default: ~/.ssh/id_rsa.pub if present"))
+    env_export.add_argument('--passphrase-env', metavar='VAR', default=None,
+                            help='Read passphrase from environment variable VAR')
+    env_export.add_argument('--passphrase-stdin', action='store_true',
+                            help='Read passphrase from the first line of stdin')
+    env_export.add_argument('--force-unencrypted', action='store_true',
+                            help='Write as plaintext tar.gz (rejected by default; '
+                                 'warns when sensitive keys are detected)')
 
 
 def _add_plugin_parser(subparsers):

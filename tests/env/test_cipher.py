@@ -1,0 +1,62 @@
+"""cipher.py: age 暗号化のラウンドトリップとエラー検出"""
+
+from __future__ import annotations
+
+import pyrage
+import pytest
+
+from devbase.env import cipher
+
+
+@pytest.fixture
+def x25519_keypair():
+    identity = pyrage.x25519.Identity.generate()
+    return str(identity.to_public()), str(identity)
+
+
+def test_recipient_roundtrip_with_x25519(tmp_path, x25519_keypair):
+    pub, priv_str = x25519_keypair
+    id_path = tmp_path / "age_identity.key"
+    id_path.write_text(priv_str)
+
+    blob = cipher.encrypt(b"hello", recipients=[pub])
+    assert blob != b"hello"
+    assert cipher.decrypt(blob, identities=[str(id_path)]) == b"hello"
+
+
+def test_passphrase_roundtrip():
+    blob = cipher.encrypt(b"secret payload", passphrase="correct horse")
+    assert cipher.decrypt(blob, passphrase="correct horse") == b"secret payload"
+
+
+def test_passphrase_wrong_raises_cipher_error():
+    blob = cipher.encrypt(b"x", passphrase="right")
+    with pytest.raises(cipher.CipherError):
+        cipher.decrypt(blob, passphrase="wrong")
+
+
+def test_encrypt_requires_recipient_or_passphrase():
+    with pytest.raises(cipher.CipherError):
+        cipher.encrypt(b"x")
+
+
+def test_encrypt_rejects_both_recipient_and_passphrase(x25519_keypair):
+    pub, _ = x25519_keypair
+    with pytest.raises(cipher.CipherError):
+        cipher.encrypt(b"x", recipients=[pub], passphrase="p")
+
+
+def test_recipient_at_file_reference(tmp_path, x25519_keypair):
+    pub, priv_str = x25519_keypair
+    pub_file = tmp_path / "age.pub"
+    pub_file.write_text(pub + "\n")
+    id_file = tmp_path / "age.key"
+    id_file.write_text(priv_str)
+
+    blob = cipher.encrypt(b"data", recipients=[f"@{pub_file}"])
+    assert cipher.decrypt(blob, identities=[str(id_file)]) == b"data"
+
+
+def test_recipient_rejects_unsupported_ssh_type():
+    with pytest.raises(cipher.CipherError, match="ssh-ecdsa|ssh-"):
+        cipher.encrypt(b"x", recipients=["ssh-ecdsa AAAA dummy"])
