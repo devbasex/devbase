@@ -20,11 +20,21 @@ class StorageBackend(Protocol):
     def read_bytes(self, source: str) -> bytes: ...
 
 
+def _to_local_path(uri: str) -> Path:
+    """ローカルパス文字列または file:// URI を Path に正規化する"""
+    parsed = urlparse(uri)
+    if parsed.scheme.lower() == 'file':
+        # file:///tmp/x や file://localhost/tmp/x を /tmp/x として扱う
+        from urllib.request import url2pathname
+        return Path(url2pathname(parsed.path)).expanduser()
+    return Path(uri).expanduser()
+
+
 class LocalBackend:
     """ローカルファイルシステム"""
 
     def write_bytes(self, dest: str, data: bytes) -> None:
-        path = Path(dest).expanduser()
+        path = _to_local_path(dest)
         if path.parent and not path.parent.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
         # 0600 で書き出すため open(..., 'wb') 後に chmod する
@@ -37,7 +47,7 @@ class LocalBackend:
             pass
 
     def read_bytes(self, source: str) -> bytes:
-        path = Path(source).expanduser()
+        path = _to_local_path(source)
         if not path.exists():
             raise StorageError(f"ファイルが見つかりません: {path}")
         return path.read_bytes()

@@ -64,9 +64,12 @@ def _resolve_identity(path_spec: str):
         raise CipherError(f"identity ファイルが見つかりません: {path}")
 
     raw = path.read_bytes()
-    text = raw.decode('utf-8', errors='ignore').strip()
 
-    if text.startswith('AGE-SECRET-KEY-1'):
+    if raw.strip().startswith(b'AGE-SECRET-KEY-1'):
+        try:
+            text = raw.decode('utf-8').strip()
+        except UnicodeDecodeError as e:
+            raise CipherError(f"age 秘密鍵が UTF-8 でデコードできません ({path}): {e}") from e
         try:
             return pyrage.x25519.Identity.from_str(text)
         except Exception as e:

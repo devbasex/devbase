@@ -130,9 +130,17 @@ def _validate_manifest(manifest: Dict, members: Dict[str, bytes]) -> None:
         )
 
     files = manifest.get('files') or []
+    if not isinstance(files, list):
+        raise BundleError("manifest.files が list ではありません")
     for entry in files:
+        if not isinstance(entry, dict):
+            raise BundleError(f"manifest.files の要素が dict ではありません: {type(entry).__name__}")
         path = entry.get('path')
         expected = entry.get('sha256')
+        if not isinstance(path, str) or not path:
+            raise BundleError(f"manifest.files の path が不正です: {path!r}")
+        if expected is not None and not isinstance(expected, str):
+            raise BundleError(f"manifest.files の sha256 が不正です (path={path}): {expected!r}")
         if path not in members:
             raise BundleError(f"manifest に記載されたファイルが見つかりません: {path}")
         actual = _sha256(members[path])
