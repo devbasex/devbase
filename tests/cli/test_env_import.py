@@ -442,3 +442,189 @@ def test_import_passphrase_env_roundtrip(fake_root, dest_root, tmp_path, monkeyp
         source=str(dest), passphrase_env="DEVBASE_TEST_PASS"))
     assert rc == 0
     assert (dest_root / ".env").exists()
+
+
+def test_import_preserves_escaped_values_no_double_escape(
+        dest_root, age_keys, tmp_path):
+    """値に backslash / quote / newline / spaces が含まれていても
+    export → import で二重エスケープされないことを保証する (PR #15 codex 指摘)"""
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+
+    # 特殊文字を含む .env を持つ source root を構築
+    src_root = tmp_path / "esc-src"
+    (src_root / "projects" / "alpha").mkdir(parents=True)
+    raw_env = (
+        'BACKSLASH="a\\\\b"\n'              # 値: a\b (3 chars)
+        'QUOTE_IN_VALUE="he said \\"hi\\""\n'  # 値: he said "hi"
+        'WITH_NEWLINE="line1\\nline2"\n'    # 値: line1<newline>line2
+        'WITH_SPACE="value with space"\n'   # 値: value with space
+        'PLAIN=simple\n'                    # 値: simple
+    )
+    (src_root / ".env").write_text(raw_env)
+    (src_root / "projects" / "alpha" / ".env").write_text(
+        'ALPHA_BACK="a\\\\b"\n'
+    )
+
+    bundle_path = tmp_path / "esc.dbenv"
+    rc = export(src_root, ExportOptions(
+        dest=str(bundle_path), recipients=[f"@{pub_file}"]))
+    assert rc == 0
+
+    # 新規作成 (dest 側に既存ファイル無し)
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)]))
+    assert rc == 0
+
+    # 新規作成時は incoming_bytes をそのまま使うので元バイト列と一致する
+    assert (dest_root / ".env").read_text() == raw_env
+
+    # EnvFile から読んだ際に escape が正しく解釈されること (parse_bytes round-trip)
+    from devbase.env.store import EnvFile
+    parsed = EnvFile.parse_bytes((dest_root / ".env").read_bytes())
+    assert parsed['BACKSLASH'] == 'a\\b'
+    assert parsed['QUOTE_IN_VALUE'] == 'he said "hi"'
+    assert parsed['WITH_NEWLINE'] == 'line1\nline2'
+    assert parsed['WITH_SPACE'] == 'value with space'
+    assert parsed['PLAIN'] == 'simple'
+
+
+def test_import_merge_round_trips_escaped_values(
+        dest_root, age_keys, tmp_path):
+    """既存ファイルがあって merge する場合でも、parse → format の round-trip で
+    値が壊れない (二重エスケープしない)"""
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+
+    src_root = tmp_path / "esc-src2"
+    (src_root / "projects" / "alpha").mkdir(parents=True)
+    (src_root / ".env").write_text('NEW_BACK="a\\\\b"\n')
+
+    bundle_path = tmp_path / "esc2.dbenv"
+    rc = export(src_root, ExportOptions(
+        dest=str(bundle_path), recipients=[f"@{pub_file}"]))
+    assert rc == 0
+
+    # dest に既存ファイルを置く (merge 経路に入る)
+    (dest_root / ".env").write_text('EXISTING="x\\\\y"\n')
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        merge='prefer-incoming'))
+    assert rc == 0
+
+    from devbase.env.store import EnvFile
+    parsed = EnvFile.parse_bytes((dest_root / ".env").read_bytes())
+    # 二重エスケープされていないので、parse 後の値は元の 3 文字 "a\\b"
+    assert parsed['NEW_BACK'] == 'a\\b'
+    assert parsed['EXISTING'] == 'x\\y'
+
+
+def test_rollback_unlinks_newly_created_sources_yml(
+        fake_root, dest_root, age_keys, tmp_path, monkeypatch):
+    """sources.yml を --merge-metadata で新規作成中に commit 失敗すると、
+    ロールバックで sources.yml が削除されること (PR #15 gemini 指摘)"""
+    from devbase.env import io_import as _io_import
+
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    # dest には sources.yml が無い状態。--merge-metadata で新規作成パスに入る
+    assert not (dest_root / ".env.sources.yml").exists()
+
+    # commit 中に sources.yml の rename だけ失敗させる (最後のファイル)
+    original_replace = os.replace
+
+    def failing_replace(src, dst):
+        if str(dst).endswith('.env.sources.yml'):
+            raise OSError("simulated commit failure on sources.yml")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(_io_import.os, 'replace', failing_replace)
+
+    with pytest.raises(_io_import.ImportError, match="commit"):
+        import_bundle(dest_root, ImportOptions(
+            source=str(bundle_path), identities=[str(id_file)],
+            merge_metadata=True))
+
+    # sources.yml はもともと存在しなかったので、ロールバックで unlink されているはず
+    assert not (dest_root / ".env.sources.yml").exists()
+
+
+def test_commit_failure_cleans_remaining_import_tmp_files(
+        fake_root, dest_root, age_keys, tmp_path, monkeypatch):
+    """_commit 失敗時に、まだ rename されていない .import.tmp ファイルが残らないこと
+    (PR #15 gemini 指摘)"""
+    from devbase.env import io_import as _io_import
+
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    original_replace = os.replace
+    call_count = {'n': 0}
+
+    def failing_replace(src, dst):
+        call_count['n'] += 1
+        if call_count['n'] >= 2:
+            raise OSError("simulated commit failure")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(_io_import.os, 'replace', failing_replace)
+
+    with pytest.raises(_io_import.ImportError, match="commit"):
+        import_bundle(dest_root, ImportOptions(
+            source=str(bundle_path), identities=[str(id_file)]))
+
+    # 残骸の .import.tmp ファイルが無いこと
+    leftover = list(dest_root.rglob('*.import.tmp'))
+    assert leftover == [], f"残骸の tmp が残っている: {leftover}"
+
+
+def test_backup_dir_collision_avoidance(fake_root, dest_root, age_keys, tmp_path):
+    """同じプロセス内で連続して import を実行しても、backup ディレクトリ名が衝突せず
+    前回バックアップを上書きしないこと (PR #15 codex 指摘)"""
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    # 1 回目
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)]))
+    assert rc == 0
+    # 2 回目 (同一プロセス内, おそらく同一秒)
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)]))
+    assert rc == 0
+
+    backup_root = dest_root / "backups" / "env-import"
+    subdirs = sorted(p.name for p in backup_root.iterdir() if p.is_dir())
+    # 2 つの異なる backup ディレクトリが残っていること
+    assert len(subdirs) == 2, f"backup が衝突して 1 つになっている: {subdirs}"
+
+
+def test_envfile_parse_bytes_round_trip_with_escapes():
+    """``EnvFile.parse_bytes`` が ``save`` が施す escape を正しく逆変換すること
+    (PR #15 codex 指摘の double-escape 回避テスト)"""
+    from devbase.env.store import EnvFile
+
+    # 直接 EnvFile.save と同じ規則で encode したものを parse_bytes で復元
+    raw = (
+        'BACKSLASH="a\\\\b"\n'            # a\b
+        'QUOTED="he said \\"hi\\""\n'     # he said "hi"
+        'NL="x\\ny"\n'                    # x<newline>y
+        'PLAIN=simple\n'
+        'EMPTY=""\n'                      # empty string with quotes
+    )
+    parsed = EnvFile.parse_bytes(raw.encode('utf-8'))
+    assert parsed['BACKSLASH'] == 'a\\b'
+    assert parsed['QUOTED'] == 'he said "hi"'
+    assert parsed['NL'] == 'x\ny'
+    assert parsed['PLAIN'] == 'simple'
+    assert parsed['EMPTY'] == ''
+
+    # 「リテラル ``\\n``」(2 文字: backslash + 'n') を含む値も区別できること
+    # save は ``a\\nb`` (3 chars) を ``"a\\\\nb"`` に変換するので、これを parse_bytes
+    # に通せば元の 3 文字に戻る
+    raw2 = 'LITERAL="a\\\\nb"\n'
+    parsed2 = EnvFile.parse_bytes(raw2.encode('utf-8'))
+    assert parsed2['LITERAL'] == 'a\\nb'  # backslash + 'n' + 'b' (3 chars)

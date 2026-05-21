@@ -40,10 +40,14 @@ _GZIP_MAGIC = b'\x1f\x8b'
 
 _MERGE_MODES = ('keep-existing', 'prefer-incoming')
 
-# _make_backup_dir が生成するタイムスタンプ形式 (YYYYMMDD-HHMMSS) のみを
-# GC 対象にする。これ以外のディレクトリは devbase が作ったものではないので
-# 削除しない (--backup-dir 親に無関係なディレクトリがあっても安全)。
-_BACKUP_DIR_NAME_RE = re.compile(r'^\d{8}-\d{6}$')
+# _make_backup_dir が生成するタイムスタンプ形式のみを GC 対象にする。
+# 以下のいずれかにマッチするディレクトリのみ削除する:
+#   YYYYMMDD-HHMMSS                    (旧フォーマット, 後方互換)
+#   YYYYMMDD-HHMMSS-NNNNNN             (microsecond 付き)
+#   YYYYMMDD-HHMMSS-NNNNNN-NN          (同一マイクロ秒内の連番付き)
+# これ以外のディレクトリは devbase が作ったものではないので削除しない
+# (--backup-dir 親に無関係なディレクトリがあっても安全)。
+_BACKUP_DIR_NAME_RE = re.compile(r'^\d{8}-\d{6}(?:-\d{6}(?:-\d+)?)?$')
 
 
 class ImportError(DevbaseError):
@@ -211,7 +215,13 @@ def _format_env_bytes(data: Dict[str, str]) -> bytes:
 
 def _plan_env_merge(target: Path, incoming_bytes: bytes,
                     opts: ImportOptions, arcname: str) -> _Plan:
-    """1 つの .env に対する merge / replace 計画を作る"""
+    """1 つの .env に対する merge / replace 計画を作る
+
+    既存ファイルが無い (= create) ケースでは、バンドル側の ``incoming_bytes`` を
+    そのまま採用する。``_format_env_bytes`` で再シリアライズすると、export 側で
+    既に escape された値を parse_bytes 経由でも完全に round-trip できる前提が
+    崩れた瞬間に二重エスケープが発生するためである (PR #15 codex 指摘)。
+    """
     incoming = _parse_env_bytes(incoming_bytes)
     existing: Dict[str, str] = {}
     if target.exists():
@@ -256,10 +266,12 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
                 else:
                     added.append(key)
                     merged[key] = value
+        # 新規作成時は incoming_bytes をそのまま保持して二重エスケープを回避
+        new_bytes = incoming_bytes if not existing else _format_env_bytes(merged)
         return _Plan(
             target=target,
             arcname=arcname,
-            new_bytes=_format_env_bytes(merged),
+            new_bytes=new_bytes,
             added_keys=sorted(added),
             overwritten_keys=sorted(overwritten),
             skipped_keys=sorted(skipped),
@@ -276,10 +288,11 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
             else:
                 merged[key] = value
                 added.append(key)
+        new_bytes = incoming_bytes if not existing else _format_env_bytes(merged)
         return _Plan(
             target=target,
             arcname=arcname,
-            new_bytes=_format_env_bytes(merged),
+            new_bytes=new_bytes,
             added_keys=sorted(added),
             overwritten_keys=[],
             skipped_keys=sorted(skipped),
@@ -298,10 +311,11 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
             else:
                 merged[key] = value
                 added.append(key)
+        new_bytes = incoming_bytes if not existing else _format_env_bytes(merged)
         return _Plan(
             target=target,
             arcname=arcname,
-            new_bytes=_format_env_bytes(merged),
+            new_bytes=new_bytes,
             added_keys=sorted(added),
             overwritten_keys=sorted(overwritten),
             skipped_keys=[],
@@ -373,14 +387,33 @@ def _plan_sources(target: Path, incoming_bytes: bytes,
 
 
 def _make_backup_dir(devbase_root: Path, opts: ImportOptions) -> Path:
+    """バックアップディレクトリを作成する。
+
+    秒精度のみだと同一秒に 2 回 import を走らせたときに同じディレクトリを再利用して
+    前回バックアップを上書きしてしまうため、microsecond + 連番を付与して衝突を回避する
+    (PR #15 codex 指摘)。
+    """
     if opts.backup_dir:
         base = Path(opts.backup_dir).expanduser()
     else:
         base = devbase_root / 'backups' / 'env-import'
-    ts = datetime.now().strftime('%Y%m%d-%H%M%S')
-    path = base / ts
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    base.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now()
+    stem = now.strftime('%Y%m%d-%H%M%S-%f')  # microsecond まで
+    path = base / stem
+    if not path.exists():
+        path.mkdir(parents=True)
+        return path
+    # 同一マイクロ秒に複数回走った場合の安全弁: 連番を付与
+    for n in range(1, 1000):
+        candidate = base / f'{stem}-{n:02d}'
+        if not candidate.exists():
+            candidate.mkdir(parents=True)
+            return candidate
+    raise ImportError(
+        f"backup ディレクトリの衝突回避に失敗しました (base={base}, stem={stem})"
+    )
 
 
 def _backup_existing(plans: Sequence[_Plan], sources_copy: Optional[Tuple[Path, bytes]],
@@ -439,19 +472,30 @@ def _write_atomic(plan: _Plan) -> Path:
 
 def _commit(plans_and_tmps: List[Tuple[_Plan, Path]], backup_dir: Path,
             devbase_root: Path) -> List[Path]:
-    """phase 2: tmp → target に rename。途中失敗時は best-effort で rollback"""
+    """phase 2: tmp → target に rename。
+
+    途中失敗時は best-effort で rollback したうえで、まだ rename されていない
+    残りの ``.import.tmp`` ファイルもクリーンアップする (PR #15 gemini 指摘)。
+    """
     committed: List[Tuple[_Plan, Path]] = []
+    remaining_tmps = [tmp for _, tmp in plans_and_tmps]
     try:
-        for plan, tmp in plans_and_tmps:
+        for idx, (plan, tmp) in enumerate(plans_and_tmps):
             os.replace(tmp, plan.target)
             try:
                 os.chmod(plan.target, 0o600)
             except OSError:
                 pass
             committed.append((plan, plan.target))
+            # rename 済みの tmp は残らないが、リストから除外して後続 cleanup を簡潔に
+            remaining_tmps[idx] = None  # type: ignore[call-overload]
     except OSError as e:
         logger.error("commit フェーズで失敗しました: %s", e)
-        _rollback(committed, backup_dir, devbase_root)
+        try:
+            _rollback(committed, backup_dir, devbase_root)
+        finally:
+            # rename 前で残っている .import.tmp を後始末
+            _cleanup_tmps([t for t in remaining_tmps if t is not None])
         raise ImportError(f"commit フェーズで失敗しました: {e}") from e
     return [t for _, t in committed]
 
@@ -460,7 +504,13 @@ def _rollback(committed: Sequence[Tuple[_Plan, Path]], backup_dir: Path,
               devbase_root: Path) -> None:
     """best-effort ロールバック:
       - 既存上書き (backup あり) → backup から復元
-      - 新規作成 (op='create', backup なし) → unlink して元の「不在」状態に戻す
+      - backup が無いケース → 元ファイルが存在しなかった (= 新規作成) と
+        みなして unlink し、元の「不在」状態に戻す。``op='create'`` だけでなく
+        ``op='sources-merge'`` で sources.yml を新規作成したケースもここで
+        unlink する (PR #15 gemini 指摘)。
+
+    ``_backup_existing`` は target が存在した場合のみ backup を作る。よって
+    「backup が無い」事実は「元ファイルが存在しなかった」ことを示している。
     """
     for plan, target in committed:
         try:
@@ -474,8 +524,8 @@ def _rollback(committed: Sequence[Tuple[_Plan, Path]], backup_dir: Path,
                 logger.warning("rollback: %s を %s から復元しました", target, src)
             except OSError as e:
                 logger.error("rollback 失敗: %s -> %s: %s", src, target, e)
-        elif plan.op == 'create':
-            # 元ファイルが無かった新規作成 → 削除して元の状態に戻す
+        else:
+            # 元ファイル不在 → 新規作成された target を unlink して元の状態に戻す
             try:
                 target.unlink()
                 logger.warning("rollback: 新規作成された %s を削除しました", target)
@@ -483,12 +533,6 @@ def _rollback(committed: Sequence[Tuple[_Plan, Path]], backup_dir: Path,
                 pass
             except OSError as e:
                 logger.error("rollback unlink 失敗: %s: %s", target, e)
-        else:
-            logger.error(
-                "rollback 用 backup が見つかりません: %s "
-                "(元ファイルが存在しなかった可能性があります)",
-                src,
-            )
 
 
 def _cleanup_tmps(tmps: Sequence[Path]) -> None:

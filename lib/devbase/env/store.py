@@ -61,7 +61,13 @@ class EnvFile:
 
     @staticmethod
     def parse_bytes(data: bytes) -> Dict[str, str]:
-        """bytes 列を load と同じ規則でパースして dict を返す (ファイル不要)"""
+        """bytes 列を load と同じ規則でパースして dict を返す (ファイル不要)
+
+        ``save`` / :func:`devbase.env.io_import._format_env_bytes` の inverse として
+        振る舞うため、ダブルクオート内の ``\\\\`` / ``\\"`` / ``\\n`` を unescape する。
+        formatter と round-trip 整合性が取れていないと、parse → format で
+        二重エスケープが発生する (PR #15 codex 指摘)。
+        """
         result: Dict[str, str] = {}
         for raw_line in data.decode('utf-8').splitlines():
             line = raw_line.strip()
@@ -72,10 +78,45 @@ class EnvFile:
             key, _, value = line.partition('=')
             key = key.strip()
             value = value.strip()
-            if value and value[0] == value[-1] and value[0] in ('"', "'"):
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                quote = value[0]
                 value = value[1:-1]
+                if quote == '"':
+                    value = EnvFile._unescape_double_quoted(value)
             result[key] = value
         return result
+
+    @staticmethod
+    def _unescape_double_quoted(s: str) -> str:
+        """``save`` が double-quote 値に対して施した escape を 1 パスで戻す。
+
+        単純な逐次 ``replace`` は ``"\\\\n"`` (リテラル ``\\\\`` + ``n``) と
+        ``"\\n"`` (改行) の区別が付かないため state machine で処理する。
+        未知のエスケープ文字 (``\\x`` 等) はバックスラッシュごとそのまま保持する。
+        """
+        out: list = []
+        i = 0
+        n = len(s)
+        while i < n:
+            c = s[i]
+            if c == '\\' and i + 1 < n:
+                nxt = s[i + 1]
+                if nxt == '\\':
+                    out.append('\\')
+                    i += 2
+                elif nxt == '"':
+                    out.append('"')
+                    i += 2
+                elif nxt == 'n':
+                    out.append('\n')
+                    i += 2
+                else:
+                    out.append(c)
+                    i += 1
+            else:
+                out.append(c)
+                i += 1
+        return ''.join(out)
 
     def load(self) -> Dict[str, str]:
         """ファイルを読み込みkey=valueをパースする"""
