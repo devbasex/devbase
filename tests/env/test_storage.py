@@ -48,6 +48,27 @@ def test_resolve_rejects_unknown_scheme():
         storage.resolve("ftp://host/x")
 
 
+def test_local_backend_file_uri_roundtrip(tmp_path):
+    backend = storage.LocalBackend()
+    dest = tmp_path / "via-uri.bin"
+    uri = f"file://{dest}"
+    backend.write_bytes(uri, b"xyz")
+    assert dest.read_bytes() == b"xyz"
+    assert backend.read_bytes(uri) == b"xyz"
+
+    # localhost も許容
+    uri_localhost = f"file://localhost{dest}"
+    assert backend.read_bytes(uri_localhost) == b"xyz"
+
+
+def test_local_backend_file_uri_rejects_remote_host(tmp_path):
+    backend = storage.LocalBackend()
+    with pytest.raises(storage.StorageError, match="ホスト指定"):
+        backend.read_bytes("file://other-host/tmp/x")
+    with pytest.raises(storage.StorageError, match="ホスト指定"):
+        backend.write_bytes("file://other-host/tmp/x", b"data")
+
+
 def test_stdio_backend_writes_to_stdout(monkeypatch):
     buf = io.BytesIO()
 

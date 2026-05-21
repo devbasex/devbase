@@ -101,6 +101,8 @@ def unpack(blob: bytes) -> Tuple[Dict, Dict[str, bytes]]:
                 continue
             if info.name.startswith('/') or '..' in info.name.split('/'):
                 raise BundleError(f"不正なパスを含んでいます: {info.name}")
+            if info.name in members:
+                raise BundleError(f"重複エントリを検出しました: {info.name}")
             f = tf.extractfile(info)
             if f is None:
                 continue

@@ -24,7 +24,14 @@ def _to_local_path(uri: str) -> Path:
     """ローカルパス文字列または file:// URI を Path に正規化する"""
     parsed = urlparse(uri)
     if parsed.scheme.lower() == 'file':
-        # file:///tmp/x や file://localhost/tmp/x を /tmp/x として扱う
+        # file:///tmp/x や file://localhost/tmp/x のみ許容
+        # file://other-host/tmp/x はホスト情報が脱落するので拒否
+        netloc = (parsed.netloc or '').lower()
+        if netloc not in ('', 'localhost'):
+            raise StorageError(
+                f"file:// URI のホスト指定はサポートされていません "
+                f"(netloc={parsed.netloc!r}, 許可: '' / 'localhost')"
+            )
         from urllib.request import url2pathname
         return Path(url2pathname(parsed.path)).expanduser()
     return Path(uri).expanduser()

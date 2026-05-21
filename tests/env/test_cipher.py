@@ -60,3 +60,14 @@ def test_recipient_at_file_reference(tmp_path, x25519_keypair):
 def test_recipient_rejects_unsupported_ssh_type():
     with pytest.raises(cipher.CipherError, match="ssh-ecdsa|ssh-"):
         cipher.encrypt(b"x", recipients=["ssh-ecdsa AAAA dummy"])
+
+
+def test_recipient_at_file_reference_depth_limit(tmp_path):
+    """@PATH の循環参照で RecursionError ではなく CipherError を返す"""
+    # 互いを参照する 2 ファイル
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text(f"@{b}\n")
+    b.write_text(f"@{a}\n")
+    with pytest.raises(cipher.CipherError, match="深すぎ|循環"):
+        cipher.encrypt(b"x", recipients=[f"@{a}"])

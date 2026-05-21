@@ -14,24 +14,32 @@ class CipherError(DevbaseError):
     """暗号化・復号エラー"""
 
 
-def _resolve_recipient(spec: str):
+_MAX_RECIPIENT_REF_DEPTH = 5
+
+
+def _resolve_recipient(spec: str, _depth: int = 0):
     """recipient 仕様文字列を pyrage Recipient に解決する
 
     形式:
       'age1...'              -> X25519 公開鍵
       'ssh-ed25519 AAAA...'  -> OpenSSH ed25519 公開鍵
       'ssh-rsa AAAA...'      -> OpenSSH RSA 公開鍵
-      '@PATH'                -> ファイル参照 (中身を再帰的に解釈)
+      '@PATH'                -> ファイル参照 (中身を再帰的に解釈, 深さ上限あり)
     """
     spec = spec.strip()
     if not spec:
         raise CipherError("recipient が空です")
 
     if spec.startswith('@'):
+        if _depth >= _MAX_RECIPIENT_REF_DEPTH:
+            raise CipherError(
+                f"recipient の @PATH 参照が深すぎます (上限={_MAX_RECIPIENT_REF_DEPTH})。"
+                "循環参照の可能性があります"
+            )
         path = Path(spec[1:]).expanduser()
         if not path.exists():
             raise CipherError(f"recipient ファイルが見つかりません: {path}")
-        return _resolve_recipient(path.read_text(encoding='utf-8').strip())
+        return _resolve_recipient(path.read_text(encoding='utf-8').strip(), _depth + 1)
 
     if spec.startswith('age1'):
         try:

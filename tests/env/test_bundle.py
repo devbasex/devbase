@@ -110,3 +110,81 @@ def test_unpack_rejects_traversal_paths():
         tout.addfile(info, io.BytesIO(b"BAD"))
     with pytest.raises(bundle.BundleError, match="不正なパス"):
         bundle.unpack(out.getvalue())
+
+
+def _rewrite_manifest(blob: bytes, new_manifest_obj) -> bytes:
+    """blob 内の manifest.yml を new_manifest_obj に置き換えた tar.gz を返す"""
+    import io, tarfile, yaml
+    src = io.BytesIO(blob)
+    out = io.BytesIO()
+    with tarfile.open(fileobj=src, mode="r:gz") as tin, \
+         tarfile.open(fileobj=out, mode="w:gz") as tout:
+        for info in tin.getmembers():
+            data = tin.extractfile(info).read()
+            if info.name == bundle.MANIFEST_NAME:
+                data = yaml.safe_dump(new_manifest_obj).encode("utf-8")
+                info.size = len(data)
+            tout.addfile(info, io.BytesIO(data))
+    return out.getvalue()
+
+
+def test_unpack_rejects_files_not_list():
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": "not-a-list",
+    })
+    with pytest.raises(bundle.BundleError, match="files が list"):
+        bundle.unpack(bad)
+
+
+def test_unpack_rejects_files_entry_not_dict():
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": ["not-a-dict"],
+    })
+    with pytest.raises(bundle.BundleError, match="dict ではありません"):
+        bundle.unpack(bad)
+
+
+def test_unpack_rejects_invalid_path_field():
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [{"path": 123, "sha256": "x" * 64}],
+    })
+    with pytest.raises(bundle.BundleError, match="path が不正"):
+        bundle.unpack(bad)
+
+
+def test_unpack_rejects_invalid_sha256_field():
+    blob = bundle.pack([_entry("env/global.env", b"FOO=bar\n")])
+    bad = _rewrite_manifest(blob, {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [{"path": "env/global.env", "sha256": 12345}],
+    })
+    with pytest.raises(bundle.BundleError, match="sha256 が不正"):
+        bundle.unpack(bad)
+
+
+def test_unpack_rejects_duplicate_tar_entries():
+    import io, tarfile, yaml
+    out = io.BytesIO()
+    manifest = {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [{"path": "env/global.env",
+                   "sha256": bundle._sha256(b"FOO=bar\n")}],
+    }
+    manifest_bytes = yaml.safe_dump(manifest).encode("utf-8")
+    with tarfile.open(fileobj=out, mode="w:gz") as tout:
+        m = tarfile.TarInfo(name=bundle.MANIFEST_NAME)
+        m.size = len(manifest_bytes)
+        tout.addfile(m, io.BytesIO(manifest_bytes))
+        # 同名エントリを 2 回追加
+        for payload in (b"FOO=bar\n", b"FOO=other\n"):
+            info = tarfile.TarInfo(name="env/global.env")
+            info.size = len(payload)
+            tout.addfile(info, io.BytesIO(payload))
+    with pytest.raises(bundle.BundleError, match="重複エントリ"):
+        bundle.unpack(out.getvalue())
