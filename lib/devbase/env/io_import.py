@@ -222,6 +222,37 @@ def _merge_into_existing_bytes(existing_bytes: bytes,
     return EnvFile.dump_entries_bytes(out_entries)
 
 
+def _build_merge_plan(
+    target: Path,
+    arcname: str,
+    incoming_bytes: bytes,
+    existing_bytes: bytes,
+    existing: Dict[str, str],
+    merged: Dict[str, str],
+    added: List[str],
+    overwritten: List[str],
+    skipped: List[str],
+) -> _Plan:
+    """merge 系 (replace_keys / keep-existing / prefer-incoming) 共通の _Plan 生成。
+
+    - 新規作成時は ``incoming_bytes`` をそのまま採用して二重エスケープを回避
+      (PR #15 codex 指摘)
+    - 既存ファイルへの merge 時は ``_merge_into_existing_bytes`` でコメント / 空行 /
+      キー順を保持したまま値を差し替える (PR #15 gemini 指摘)
+    """
+    new_bytes = (incoming_bytes if not existing
+                 else _merge_into_existing_bytes(existing_bytes, merged))
+    return _Plan(
+        target=target,
+        arcname=arcname,
+        new_bytes=new_bytes,
+        added_keys=sorted(added),
+        overwritten_keys=sorted(overwritten),
+        skipped_keys=sorted(skipped),
+        op='merge' if existing else 'create',
+    )
+
+
 def _plan_env_merge(target: Path, incoming_bytes: bytes,
                     opts: ImportOptions, arcname: str) -> _Plan:
     """1 つの .env に対する merge / replace 計画を作る
@@ -234,6 +265,9 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
     既存ファイルが存在する merge 経路では ``_merge_into_existing_bytes`` で
     既存のコメント / 空行 / キー順を保持したまま値だけ差し替える
     (PR #15 gemini 指摘)。
+
+    各分岐で重複していた ``new_bytes`` 生成と ``_Plan`` 構築は
+    ``_build_merge_plan`` に括り出している (PR #15 gemini round4 指摘)。
     """
     incoming = EnvFile.parse_bytes(incoming_bytes)
     existing: Dict[str, str] = {}
@@ -245,7 +279,7 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
     if opts.replace:
         added = sorted(set(incoming) - set(existing))
         overwritten = sorted(k for k in incoming if k in existing and incoming[k] != existing[k])
-        # replace は バンドル側の値で完全に置き換える
+        # replace は バンドル側の値で完全に置き換える (merge 経路と別系統)
         return _Plan(
             target=target,
             arcname=arcname,
@@ -256,11 +290,12 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
             op='replace' if existing else 'create',
         )
 
+    merged: Dict[str, str] = dict(existing)
+    added: List[str] = []
+    overwritten: List[str] = []
+    skipped: List[str] = []
+
     if opts.replace_keys:
-        merged = dict(existing)
-        added: List[str] = []
-        overwritten: List[str] = []
-        skipped: List[str] = []
         replace_set = set(opts.replace_keys)
         for key, value in incoming.items():
             if key in replace_set:
@@ -281,45 +316,14 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
                 else:
                     added.append(key)
                     merged[key] = value
-        # 新規作成時は incoming_bytes をそのまま保持して二重エスケープを回避
-        new_bytes = (incoming_bytes if not existing
-                     else _merge_into_existing_bytes(existing_bytes, merged))
-        return _Plan(
-            target=target,
-            arcname=arcname,
-            new_bytes=new_bytes,
-            added_keys=sorted(added),
-            overwritten_keys=sorted(overwritten),
-            skipped_keys=sorted(skipped),
-            op='merge' if existing else 'create',
-        )
-
-    if opts.merge == 'keep-existing':
-        merged = dict(existing)
-        added: List[str] = []
-        skipped: List[str] = []
+    elif opts.merge == 'keep-existing':
         for key, value in incoming.items():
             if key in existing:
                 skipped.append(key)
             else:
                 merged[key] = value
                 added.append(key)
-        new_bytes = (incoming_bytes if not existing
-                     else _merge_into_existing_bytes(existing_bytes, merged))
-        return _Plan(
-            target=target,
-            arcname=arcname,
-            new_bytes=new_bytes,
-            added_keys=sorted(added),
-            overwritten_keys=[],
-            skipped_keys=sorted(skipped),
-            op='merge' if existing else 'create',
-        )
-
-    if opts.merge == 'prefer-incoming':
-        merged = dict(existing)
-        added: List[str] = []
-        overwritten: List[str] = []
+    elif opts.merge == 'prefer-incoming':
         for key, value in incoming.items():
             if key in existing:
                 if existing[key] != value:
@@ -328,19 +332,20 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
             else:
                 merged[key] = value
                 added.append(key)
-        new_bytes = (incoming_bytes if not existing
-                     else _merge_into_existing_bytes(existing_bytes, merged))
-        return _Plan(
-            target=target,
-            arcname=arcname,
-            new_bytes=new_bytes,
-            added_keys=sorted(added),
-            overwritten_keys=sorted(overwritten),
-            skipped_keys=[],
-            op='merge' if existing else 'create',
-        )
+    else:
+        raise ImportError(f"不明な --merge モード: {opts.merge!r}")
 
-    raise ImportError(f"不明な --merge モード: {opts.merge!r}")
+    return _build_merge_plan(
+        target=target,
+        arcname=arcname,
+        incoming_bytes=incoming_bytes,
+        existing_bytes=existing_bytes,
+        existing=existing,
+        merged=merged,
+        added=added,
+        overwritten=overwritten,
+        skipped=skipped,
+    )
 
 
 def _plan_sources(target: Path, incoming_bytes: bytes,
