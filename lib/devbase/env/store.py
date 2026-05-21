@@ -59,33 +59,30 @@ class EnvFile:
         self._data: Dict[str, str] = {}
         self._loaded = False
 
+    @staticmethod
+    def parse_bytes(data: bytes) -> Dict[str, str]:
+        """bytes 列を load と同じ規則でパースして dict を返す (ファイル不要)"""
+        result: Dict[str, str] = {}
+        for raw_line in data.decode('utf-8').splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' not in line:
+                continue
+            key, _, value = line.partition('=')
+            key = key.strip()
+            value = value.strip()
+            if value and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            result[key] = value
+        return result
+
     def load(self) -> Dict[str, str]:
         """ファイルを読み込みkey=valueをパースする"""
-        self._data = {}
-
         if not self.file_path.exists():
-            self._loaded = True
-            return self._data
-
-        with open(self.file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-
-                if not line or line.startswith('#'):
-                    continue
-
-                if '=' not in line:
-                    continue
-
-                key, _, value = line.partition('=')
-                key = key.strip()
-                value = value.strip()
-
-                if value and value[0] == value[-1] and value[0] in ('"', "'"):
-                    value = value[1:-1]
-
-                self._data[key] = value
-
+            self._data = {}
+        else:
+            self._data = self.parse_bytes(self.file_path.read_bytes())
         self._loaded = True
         return self._data
 

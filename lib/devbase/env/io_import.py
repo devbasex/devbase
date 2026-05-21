@@ -40,6 +40,11 @@ _GZIP_MAGIC = b'\x1f\x8b'
 
 _MERGE_MODES = ('keep-existing', 'prefer-incoming')
 
+# _make_backup_dir が生成するタイムスタンプ形式 (YYYYMMDD-HHMMSS) のみを
+# GC 対象にする。これ以外のディレクトリは devbase が作ったものではないので
+# 削除しない (--backup-dir 親に無関係なディレクトリがあっても安全)。
+_BACKUP_DIR_NAME_RE = re.compile(r'^\d{8}-\d{6}$')
+
 
 class ImportError(DevbaseError):
     """import エラー"""
@@ -179,22 +184,8 @@ def _target_for(arcname: str, devbase_root: Path) -> Path:
 
 
 def _parse_env_bytes(data: bytes) -> Dict[str, str]:
-    """EnvFile と同じ規則で bytes をパースする (一時ファイル経由で再利用)"""
-    import tempfile
-    with tempfile.NamedTemporaryFile(
-        prefix='devbase-env-import-', suffix='.env', delete=False, mode='wb'
-    ) as tmp:
-        tmp.write(data)
-        tmp_path = Path(tmp.name)
-    try:
-        ef = EnvFile(tmp_path)
-        ef.load()
-        return ef.get_all()
-    finally:
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
+    """EnvFile と同じ規則で bytes をパースする (一時ファイル不要)"""
+    return EnvFile.parse_bytes(data)
 
 
 def _format_env_bytes(data: Dict[str, str]) -> bytes:
@@ -256,9 +247,15 @@ def _plan_env_merge(target: Path, incoming_bytes: bytes,
                     added.append(key)
                     merged[key] = value
             else:
-                # --replace-keys 指定外のキーは既存を優先 (= keep-existing 相当)
-                if key not in existing:
-                    skipped.append(key)
+                # --replace-keys 指定外のキーは keep-existing 相当:
+                # 既存にあれば残し、無ければ新規追加 (skipped は overwrite を
+                # 抑止した = 上書きしなかったキーのみ)。
+                if key in existing:
+                    if existing[key] != value:
+                        skipped.append(key)
+                else:
+                    added.append(key)
+                    merged[key] = value
         return _Plan(
             target=target,
             arcname=arcname,
@@ -443,7 +440,7 @@ def _write_atomic(plan: _Plan) -> Path:
 def _commit(plans_and_tmps: List[Tuple[_Plan, Path]], backup_dir: Path,
             devbase_root: Path) -> List[Path]:
     """phase 2: tmp → target に rename。途中失敗時は best-effort で rollback"""
-    committed: List[Path] = []
+    committed: List[Tuple[_Plan, Path]] = []
     try:
         for plan, tmp in plans_and_tmps:
             os.replace(tmp, plan.target)
@@ -451,18 +448,21 @@ def _commit(plans_and_tmps: List[Tuple[_Plan, Path]], backup_dir: Path,
                 os.chmod(plan.target, 0o600)
             except OSError:
                 pass
-            committed.append(plan.target)
+            committed.append((plan, plan.target))
     except OSError as e:
         logger.error("commit フェーズで失敗しました: %s", e)
         _rollback(committed, backup_dir, devbase_root)
         raise ImportError(f"commit フェーズで失敗しました: {e}") from e
-    return committed
+    return [t for _, t in committed]
 
 
-def _rollback(committed: Sequence[Path], backup_dir: Path,
+def _rollback(committed: Sequence[Tuple[_Plan, Path]], backup_dir: Path,
               devbase_root: Path) -> None:
-    """best-effort ロールバック: backup_dir から各 target を復元する"""
-    for target in committed:
+    """best-effort ロールバック:
+      - 既存上書き (backup あり) → backup から復元
+      - 新規作成 (op='create', backup なし) → unlink して元の「不在」状態に戻す
+    """
+    for plan, target in committed:
         try:
             relative = target.relative_to(devbase_root)
         except ValueError:
@@ -474,6 +474,15 @@ def _rollback(committed: Sequence[Path], backup_dir: Path,
                 logger.warning("rollback: %s を %s から復元しました", target, src)
             except OSError as e:
                 logger.error("rollback 失敗: %s -> %s: %s", src, target, e)
+        elif plan.op == 'create':
+            # 元ファイルが無かった新規作成 → 削除して元の状態に戻す
+            try:
+                target.unlink()
+                logger.warning("rollback: 新規作成された %s を削除しました", target)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logger.error("rollback unlink 失敗: %s: %s", target, e)
         else:
             logger.error(
                 "rollback 用 backup が見つかりません: %s "
@@ -492,14 +501,20 @@ def _cleanup_tmps(tmps: Sequence[Path]) -> None:
 
 
 def _gc_backups(backup_dir: Path, keep_last: int) -> None:
-    """backup_dir の親ディレクトリ内の古い backup を keep_last 個まで残して GC する"""
+    """backup_dir の親ディレクトリ内の古い backup を keep_last 個まで残して GC する。
+
+    安全性のため、削除対象は devbase が生成するタイムスタンプ形式
+    (YYYYMMDD-HHMMSS) のディレクトリに限定する。--backup-dir で指定された
+    親ディレクトリに無関係なファイル/ディレクトリがあっても、それらは触らない。
+    """
     if keep_last <= 0:
         return
     parent = backup_dir.parent
     if not parent.is_dir():
         return
     siblings = sorted(
-        (p for p in parent.iterdir() if p.is_dir()),
+        (p for p in parent.iterdir()
+         if p.is_dir() and _BACKUP_DIR_NAME_RE.match(p.name)),
         key=lambda p: p.name,
     )
     if len(siblings) <= keep_last:

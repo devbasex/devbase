@@ -340,6 +340,97 @@ def test_import_no_metadata_skips_sources_yml(fake_root, dest_root, age_keys, tm
     assert not (sub / "sources.yml.imported").exists()
 
 
+def test_import_replace_keys_adds_unspecified_new_keys(fake_root, dest_root, age_keys, tmp_path):
+    """--replace-keys 指定外でも、既存ファイルに無い incoming キーは追加される
+    (CLI help 'other keys behave like keep-existing' に整合)"""
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    # 既存は AWS_CONFIG_BASE64 のみ。incoming は AWS_CONFIG_BASE64 + GLOBAL=1
+    (dest_root / ".env").write_text("AWS_CONFIG_BASE64=OLD\n")
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        replace_keys=['AWS_CONFIG_BASE64']))
+    assert rc == 0
+
+    text = (dest_root / ".env").read_text()
+    assert "AWS_CONFIG_BASE64=AAAA" in text  # 指定キーは上書き
+    assert "GLOBAL=1" in text  # 指定外でも既存に無い新規キーは追加される (keep-existing 相当)
+
+
+def test_rollback_unlinks_newly_created_files_on_commit_failure(
+        fake_root, dest_root, age_keys, tmp_path, monkeypatch):
+    """commit フェーズ途中失敗時、元ファイル不在で新規作成された target は unlink され、
+    部分適用状態が残らないこと"""
+    from devbase.env import io_import as _io_import
+
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    # dest には元ファイルが一切無い (= 全 plan op='create')
+    assert not (dest_root / ".env").exists()
+    assert not (dest_root / "projects" / "alpha" / ".env").exists()
+
+    # 2 つ目以降の os.replace で失敗させる
+    original_replace = os.replace
+    call_count = {'n': 0}
+
+    def failing_replace(src, dst):
+        call_count['n'] += 1
+        if call_count['n'] >= 2:
+            raise OSError("simulated commit failure")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(_io_import.os, 'replace', failing_replace)
+
+    with pytest.raises(_io_import.ImportError, match="commit フェーズで失敗"):
+        import_bundle(dest_root, ImportOptions(
+            source=str(bundle_path), identities=[str(id_file)]))
+
+    # rollback で新規作成 (op='create') の .env は削除されていること
+    assert not (dest_root / ".env").exists()
+    # まだ commit されていない target ももちろん存在しない
+    assert not (dest_root / "projects" / "beta" / ".env").exists()
+
+
+def test_gc_backups_only_removes_timestamp_dirs(fake_root, dest_root, age_keys, tmp_path):
+    """--backup-dir 指定時でも、devbase が作った timestamp 形式以外のディレクトリは
+    GC で削除されない"""
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    custom_backup_root = tmp_path / "user-backups"
+    custom_backup_root.mkdir()
+    # 関係ないディレクトリ
+    unrelated = custom_backup_root / "important-user-data"
+    unrelated.mkdir()
+    (unrelated / "keep.txt").write_text("must not be deleted")
+    # 関係ないファイル
+    unrelated_file = custom_backup_root / "readme.txt"
+    unrelated_file.write_text("must not be deleted")
+    # devbase 命名の古い backup を keep_last 超に置く
+    for i in range(5):
+        (custom_backup_root / f"20240101-00000{i}").mkdir()
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        backup_dir=str(custom_backup_root), keep_last=3))
+    assert rc == 0
+
+    # 無関係なディレクトリ/ファイルは残る
+    assert unrelated.exists()
+    assert (unrelated / "keep.txt").exists()
+    assert unrelated_file.exists()
+    # timestamp 形式は keep_last=3 まで絞られる (新規 backup 含む)
+    timestamp_dirs = sorted(
+        p.name for p in custom_backup_root.iterdir()
+        if p.is_dir() and p.name not in ('important-user-data',)
+    )
+    assert len(timestamp_dirs) == 3
+
+
 def test_import_passphrase_env_roundtrip(fake_root, dest_root, tmp_path, monkeypatch):
     dest = tmp_path / "out.dbenv"
     monkeypatch.setenv("DEVBASE_TEST_PASS", "s3cr3t")
