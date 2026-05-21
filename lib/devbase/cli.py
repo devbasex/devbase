@@ -36,7 +36,7 @@ GROUP_ALIASES = {
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
-    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export'],
+    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
@@ -148,6 +148,55 @@ def _add_env_parser(subparsers):
     env_export.add_argument('--force-unencrypted', action='store_true',
                             help='Write as plaintext tar.gz (rejected by default; '
                                  'warns when sensitive keys are detected)')
+
+    env_import = env_sub.add_parser(
+        'import',
+        help='Import .env files from a bundle (age-encrypted or plaintext tar.gz)',
+    )
+    env_import.add_argument('source',
+                            help="Bundle path or '-' for stdin")
+    env_import.add_argument('--merge', choices=['keep-existing', 'prefer-incoming'],
+                            default='keep-existing',
+                            help=("Key-level merge mode. keep-existing (default) keeps "
+                                  "existing keys and adds new ones; prefer-incoming "
+                                  "overwrites with bundle values"))
+    env_import.add_argument('--replace-keys', metavar='KEYS', default='',
+                            help=("Comma-separated keys to force-overwrite from bundle "
+                                  "(other keys behave like keep-existing). "
+                                  "Cannot be combined with --replace"))
+    env_import.add_argument('--replace', action='store_true',
+                            help='Replace each target .env file wholesale (backup is taken)')
+    env_import.add_argument('--dry-run', action='store_true',
+                            help='Show planned diff without writing')
+    env_import.add_argument('--identity', action='append', default=[],
+                            metavar='FILE', dest='identities',
+                            help=("age / OpenSSH private key file (repeatable). "
+                                  "Default: ~/.ssh/id_ed25519, then ~/.ssh/id_rsa "
+                                  "(first existing one)"))
+    env_import.add_argument('--passphrase-env', metavar='VAR', default=None,
+                            help='Read passphrase from environment variable VAR')
+    env_import.add_argument('--passphrase-stdin', action='store_true',
+                            help='Read passphrase from the first line of stdin')
+    env_import.add_argument('--include-project', action='append', default=None,
+                            metavar='NAME', dest='include_projects',
+                            help='Limit to specified project (repeatable)')
+    env_import.add_argument('--exclude-project', action='append', default=[],
+                            metavar='NAME', dest='exclude_projects',
+                            help='Exclude project (repeatable)')
+    env_import.add_argument('--no-global', action='store_true',
+                            help='Do not import $DEVBASE_ROOT/.env')
+    env_import.add_argument('--no-metadata', action='store_true',
+                            help='Do not import $DEVBASE_ROOT/.env.sources.yml '
+                                 '(default behavior is reference-only copy; this fully ignores it)')
+    env_import.add_argument('--merge-metadata', action='store_true',
+                            help='Merge new source entries into existing .env.sources.yml '
+                                 '(machine-specific fields are preserved as-is from bundle; '
+                                 'run `devbase env sync` after import to refresh)')
+    env_import.add_argument('--backup-dir', metavar='DIR', default=None,
+                            help='Override backup directory '
+                                 '(default: $DEVBASE_ROOT/backups/env-import/<ts>)')
+    env_import.add_argument('--keep-last', type=int, default=10, metavar='N',
+                            help='Keep only the last N backup directories (default: 10, 0 to disable)')
 
 
 def _add_plugin_parser(subparsers):

@@ -34,6 +34,7 @@ def cmd_env(devbase_root: Path, args) -> int:
         'edit':    lambda: cmd_env_edit(devbase_root),
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
+        'import':  lambda: cmd_env_import(devbase_root, args),
     }
 
     handler = handlers.get(subcmd)
@@ -399,6 +400,33 @@ def cmd_env_export(devbase_root: Path, args) -> int:
         force_unencrypted=getattr(args, 'force_unencrypted', False),
     )
     return export(devbase_root, opts)
+
+
+def cmd_env_import(devbase_root: Path, args) -> int:
+    """devbase env import"""
+    from devbase.env.io_import import ImportOptions, import_bundle
+
+    replace_keys_arg = getattr(args, 'replace_keys', '') or ''
+    replace_keys = [k.strip() for k in replace_keys_arg.split(',') if k.strip()]
+
+    opts = ImportOptions(
+        source=getattr(args, 'source'),
+        merge=getattr(args, 'merge', 'keep-existing'),
+        replace_keys=replace_keys,
+        replace=getattr(args, 'replace', False),
+        dry_run=getattr(args, 'dry_run', False),
+        identities=list(getattr(args, 'identities', []) or []),
+        passphrase_env=getattr(args, 'passphrase_env', None),
+        passphrase_stdin=getattr(args, 'passphrase_stdin', False),
+        include_projects=getattr(args, 'include_projects', None),
+        exclude_projects=list(getattr(args, 'exclude_projects', []) or []),
+        include_global=not getattr(args, 'no_global', False),
+        include_metadata=not getattr(args, 'no_metadata', False),
+        merge_metadata=getattr(args, 'merge_metadata', False),
+        backup_dir=getattr(args, 'backup_dir', None),
+        keep_last=getattr(args, 'keep_last', 10),
+    )
+    return import_bundle(devbase_root, opts)
 
 
 def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:

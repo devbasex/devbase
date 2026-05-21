@@ -1,0 +1,353 @@
+"""devbase env import の統合テスト (擬似 DEVBASE_ROOT で round-trip / merge / replace / dry-run)"""
+
+from __future__ import annotations
+
+import io
+import os
+from pathlib import Path
+from typing import Tuple
+
+import pyrage
+import pytest
+
+from devbase.env import bundle, cipher
+from devbase.env.io_export import ExportOptions, export
+from devbase.env.io_import import (
+    ImportError as ImportBundleError,
+    ImportOptions,
+    import_bundle,
+)
+
+
+@pytest.fixture
+def fake_root(tmp_path):
+    """export 用の擬似 DEVBASE_ROOT (PR1 と同じ構造)"""
+    root = tmp_path / "src-root"
+    (root / "projects" / "alpha").mkdir(parents=True)
+    (root / "projects" / "beta").mkdir(parents=True)
+    (root / ".env").write_text("AWS_CONFIG_BASE64=AAAA\nGLOBAL=1\n")
+    (root / ".env.sources.yml").write_text(
+        "sources:\n  aws:\n    type: tar_base64\n    hash: deadbeef\n"
+    )
+    (root / "projects" / "alpha" / ".env").write_text("ALPHA_API_KEY=xyz\n")
+    (root / "projects" / "beta" / ".env").write_text("BETA_DB_PASSWORD=p\n")
+    return root
+
+
+@pytest.fixture
+def dest_root(tmp_path):
+    """import 先の擬似 DEVBASE_ROOT (空 or 既存ファイルあり)"""
+    root = tmp_path / "dst-root"
+    (root / "projects" / "alpha").mkdir(parents=True)
+    (root / "projects" / "beta").mkdir(parents=True)
+    return root
+
+
+@pytest.fixture
+def age_keys(tmp_path):
+    identity = pyrage.x25519.Identity.generate()
+    pub_file = tmp_path / "age.pub"
+    pub_file.write_text(str(identity.to_public()) + "\n")
+    id_file = tmp_path / "age.key"
+    id_file.write_text(str(identity))
+    return pub_file, id_file
+
+
+def _export_bundle(fake_root: Path, age_keys: Tuple[Path, Path],
+                   tmp_path: Path) -> Path:
+    pub_file, _ = age_keys
+    dest = tmp_path / "out.dbenv"
+    rc = export(fake_root, ExportOptions(
+        dest=str(dest), recipients=[f"@{pub_file}"]))
+    assert rc == 0
+    return dest
+
+
+def test_import_roundtrip_creates_files_with_0600(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)]))
+    assert rc == 0
+
+    # global と各 project の .env が復元されている
+    assert (dest_root / ".env").read_text() == "AWS_CONFIG_BASE64=AAAA\nGLOBAL=1\n"
+    assert (dest_root / "projects" / "alpha" / ".env").read_text() == "ALPHA_API_KEY=xyz\n"
+    assert (dest_root / "projects" / "beta" / ".env").read_text() == "BETA_DB_PASSWORD=p\n"
+
+    # パーミッションが 0600
+    assert (dest_root / ".env").stat().st_mode & 0o777 == 0o600
+    assert (dest_root / "projects" / "alpha" / ".env").stat().st_mode & 0o777 == 0o600
+
+    # sources.yml は既定では上書きしないので存在しない
+    assert not (dest_root / ".env.sources.yml").exists()
+    # backup ディレクトリに参照用 sources.yml.imported が残る
+    backup_root = dest_root / "backups" / "env-import"
+    assert backup_root.is_dir()
+    sub = next(backup_root.iterdir())
+    assert (sub / "sources.yml.imported").exists()
+
+
+def test_import_dry_run_does_not_modify(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    # 既存ファイルを置く
+    (dest_root / ".env").write_text("EXISTING=keep\n")
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)], dry_run=True))
+    assert rc == 0
+
+    # 元の .env は変更されていない
+    assert (dest_root / ".env").read_text() == "EXISTING=keep\n"
+    # backup も作られない
+    assert not (dest_root / "backups").exists()
+
+
+def test_import_keep_existing_only_adds_new_keys(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    (dest_root / ".env").write_text("AWS_CONFIG_BASE64=OLD\nKEEP=this\n")
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)]))
+    assert rc == 0
+
+    text = (dest_root / ".env").read_text()
+    # 既存の AWS_CONFIG_BASE64 は OLD のまま (keep-existing)
+    assert "AWS_CONFIG_BASE64=OLD" in text
+    # 新規キー GLOBAL=1 は追加される
+    assert "GLOBAL=1" in text
+    # 既存キー KEEP は残る
+    assert "KEEP=this" in text
+
+
+def test_import_prefer_incoming_overwrites_existing(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    (dest_root / ".env").write_text("AWS_CONFIG_BASE64=OLD\nKEEP=this\n")
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        merge='prefer-incoming'))
+    assert rc == 0
+
+    text = (dest_root / ".env").read_text()
+    # バンドル側で上書きされる
+    assert "AWS_CONFIG_BASE64=AAAA" in text
+    # incoming に無い既存キーは残る
+    assert "KEEP=this" in text
+
+
+def test_import_replace_keys_only_overwrites_specified(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    (dest_root / ".env").write_text("AWS_CONFIG_BASE64=OLD\nGLOBAL=KEEP\n")
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        replace_keys=['AWS_CONFIG_BASE64']))
+    assert rc == 0
+
+    text = (dest_root / ".env").read_text()
+    assert "AWS_CONFIG_BASE64=AAAA" in text   # 上書きされる
+    assert "GLOBAL=KEEP" in text               # 指定外なので keep
+
+
+def test_import_replace_takes_backup_and_replaces(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    (dest_root / ".env").write_text("OLD=value\n")
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)], replace=True))
+    assert rc == 0
+
+    text = (dest_root / ".env").read_text()
+    assert "AWS_CONFIG_BASE64=AAAA" in text
+    assert "GLOBAL=1" in text
+    assert "OLD=value" not in text  # 完全に置き換わる
+
+    backup_root = dest_root / "backups" / "env-import"
+    sub = next(backup_root.iterdir())
+    assert (sub / ".env").read_text() == "OLD=value\n"
+
+
+def test_import_rejects_replace_with_replace_keys(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+    with pytest.raises(ImportBundleError, match="--replace と --replace-keys"):
+        import_bundle(dest_root, ImportOptions(
+            source=str(bundle_path), identities=[str(id_file)],
+            replace=True, replace_keys=['A']))
+
+
+def test_import_rejects_stdin_with_passphrase_stdin(dest_root):
+    with pytest.raises(ImportBundleError, match="SOURCE='-'"):
+        import_bundle(dest_root, ImportOptions(
+            source='-', passphrase_stdin=True))
+
+
+def test_import_rejects_both_passphrase_env_and_stdin(dest_root):
+    with pytest.raises(ImportBundleError, match="--passphrase-env"):
+        import_bundle(dest_root, ImportOptions(
+            source='/dev/null', passphrase_env='X', passphrase_stdin=True))
+
+
+def test_import_rejects_unknown_manifest_version(fake_root, dest_root, age_keys, tmp_path):
+    """manifest.version が SUPPORTED_MANIFEST_VERSION より大きいバンドルは拒否される"""
+    import gzip
+    import io as _io
+    import tarfile
+    import yaml
+
+    pub_file, id_file = age_keys
+    # 通常 export
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+    # 復号して中身を書き換えてから age で再暗号化する
+    plain = cipher.decrypt(bundle_path.read_bytes(), identities=[str(id_file)])
+
+    # tar.gz を再構築して manifest.version=999 にする
+    buf_in = _io.BytesIO(plain)
+    tin = tarfile.open(fileobj=buf_in, mode='r:gz')
+    out = _io.BytesIO()
+    with gzip.GzipFile(fileobj=out, mode='wb', mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tout:
+            for info in tin.getmembers():
+                data = tin.extractfile(info).read()
+                if info.name == bundle.MANIFEST_NAME:
+                    manifest = yaml.safe_load(data)
+                    manifest['version'] = 999
+                    data = yaml.safe_dump(manifest, sort_keys=False).encode('utf-8')
+                ti = tarfile.TarInfo(name=info.name)
+                ti.size = len(data)
+                ti.mtime = 0
+                ti.mode = 0o600
+                tout.addfile(ti, _io.BytesIO(data))
+    tin.close()
+
+    bad_plain = out.getvalue()
+    bad = pyrage.encrypt(bad_plain,
+                         [pyrage.ssh.Recipient.from_str(pub_file.read_text().strip())]
+                         if pub_file.read_text().strip().startswith('ssh-')
+                         else [pyrage.x25519.Recipient.from_str(pub_file.read_text().strip())])
+    bad_path = tmp_path / "bad.dbenv"
+    bad_path.write_bytes(bad)
+
+    with pytest.raises(bundle.BundleError, match="サポートされていません"):
+        import_bundle(dest_root, ImportOptions(
+            source=str(bad_path), identities=[str(id_file)]))
+
+
+def test_import_preserves_lf_line_endings(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    # CRLF を排除した想定: export → import で LF が保持されること
+    (fake_root / ".env").write_text("A=1\nB=2\n")
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)]))
+    assert rc == 0
+    raw = (dest_root / ".env").read_bytes()
+    assert b'\r' not in raw
+    assert raw.endswith(b'\n')
+
+
+def test_import_keep_last_gc_removes_old_backups(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    backup_root = dest_root / "backups" / "env-import"
+    # 既存の古い backup を 5 個事前作成する (タイムスタンプ命名規則に合わせる)
+    backup_root.mkdir(parents=True)
+    for i in range(5):
+        (backup_root / f"20260101-00000{i}").mkdir()
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)], keep_last=3))
+    assert rc == 0
+
+    remaining = sorted(p.name for p in backup_root.iterdir())
+    assert len(remaining) == 3
+    # 最新 3 個に絞られる: 既存の 20260101-000003, 000004, 加えて新規 backup
+    assert remaining[-1].startswith('20')
+
+
+def test_import_include_project_filter(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        include_projects=['alpha']))
+    assert rc == 0
+    assert (dest_root / "projects" / "alpha" / ".env").exists()
+    assert not (dest_root / "projects" / "beta" / ".env").exists()
+
+
+def test_import_plaintext_bundle(fake_root, dest_root, tmp_path):
+    """--force-unencrypted で出力した平文 tar.gz もそのまま import できる"""
+    dest = tmp_path / "out.dbenv.tar.gz"
+    rc = export(fake_root, ExportOptions(dest=str(dest), force_unencrypted=True))
+    assert rc == 0
+
+    rc = import_bundle(dest_root, ImportOptions(source=str(dest)))
+    assert rc == 0
+    assert (dest_root / ".env").exists()
+
+
+def test_import_merge_metadata_adds_only_new_sources(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    # 既存 sources.yml を用意 (aws のみ。bundle 側も aws を持つ)
+    (dest_root / ".env.sources.yml").write_text(
+        "sources:\n  aws:\n    type: tar_base64\n    hash: existinghash\n"
+    )
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        merge_metadata=True))
+    assert rc == 0
+
+    import yaml as _yaml
+    data = _yaml.safe_load((dest_root / ".env.sources.yml").read_text())
+    # 既存 aws は維持される (hash=existinghash のまま)
+    assert data['sources']['aws']['hash'] == 'existinghash'
+
+
+def test_import_no_metadata_skips_sources_yml(fake_root, dest_root, age_keys, tmp_path):
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        include_metadata=False))
+    assert rc == 0
+    # 参照用コピーも作られない (filter で除外されるため)
+    backup_root = dest_root / "backups" / "env-import"
+    sub = next(backup_root.iterdir())
+    assert not (sub / "sources.yml.imported").exists()
+
+
+def test_import_passphrase_env_roundtrip(fake_root, dest_root, tmp_path, monkeypatch):
+    dest = tmp_path / "out.dbenv"
+    monkeypatch.setenv("DEVBASE_TEST_PASS", "s3cr3t")
+    rc = export(fake_root, ExportOptions(
+        dest=str(dest), passphrase_env="DEVBASE_TEST_PASS"))
+    assert rc == 0
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(dest), passphrase_env="DEVBASE_TEST_PASS"))
+    assert rc == 0
+    assert (dest_root / ".env").exists()
