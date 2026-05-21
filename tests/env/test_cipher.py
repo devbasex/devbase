@@ -82,6 +82,25 @@ def test_recipient_at_file_reference_rejects_non_utf8(tmp_path):
         cipher.encrypt(b"x", recipients=[f"@{bad}"])
 
 
+def test_resolve_identity_wraps_oserror(tmp_path, monkeypatch):
+    """identity ファイルの read_bytes が OSError を投げた場合 CipherError に包んで送出"""
+    id_path = tmp_path / "identity.key"
+    id_path.write_text("dummy")
+
+    from pathlib import Path as _Path
+
+    original_read_bytes = _Path.read_bytes
+
+    def fake_read_bytes(self):
+        if self == id_path:
+            raise OSError("simulated I/O error")
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(_Path, "read_bytes", fake_read_bytes)
+    with pytest.raises(cipher.CipherError, match="読み込みに失敗"):
+        cipher.decrypt(b"x", identities=[str(id_path)])
+
+
 def test_default_recipient_paths_includes_ed25519():
     """ed25519 公開鍵が rsa より先に試される"""
     paths = cipher.default_recipient_paths()

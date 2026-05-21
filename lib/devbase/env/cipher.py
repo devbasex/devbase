@@ -77,7 +77,10 @@ def _resolve_identity(path_spec: str):
     if not path.exists():
         raise CipherError(f"identity ファイルが見つかりません: {path}")
 
-    raw = path.read_bytes()
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        raise CipherError(f"identity ファイルの読み込みに失敗しました ({path}): {e}") from e
 
     if raw.strip().startswith(b'AGE-SECRET-KEY-1'):
         try:
