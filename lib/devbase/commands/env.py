@@ -33,6 +33,7 @@ def cmd_env(devbase_root: Path, args) -> int:
         'delete':  lambda: cmd_env_delete(devbase_root, getattr(args, 'key', '')),
         'edit':    lambda: cmd_env_edit(devbase_root),
         'project': lambda: cmd_env_project(devbase_root),
+        'export':  lambda: cmd_env_export(devbase_root, args),
     }
 
     handler = handlers.get(subcmd)
@@ -380,6 +381,24 @@ def cmd_env_project(devbase_root: Path) -> int:
     env_file.save()
     logger.info("保存完了: %s (%d変数)", env_path, env_file.count())
     return 0
+
+
+def cmd_env_export(devbase_root: Path, args) -> int:
+    """devbase env export"""
+    from devbase.env.io_export import ExportOptions, export
+
+    opts = ExportOptions(
+        dest=getattr(args, 'dest', None),
+        include_global=not getattr(args, 'no_global', False),
+        include_metadata=not getattr(args, 'no_metadata', False),
+        include_projects=getattr(args, 'include_projects', None),
+        exclude_projects=list(getattr(args, 'exclude_projects', []) or []),
+        recipients=list(getattr(args, 'recipients', []) or []),
+        passphrase_env=getattr(args, 'passphrase_env', None),
+        passphrase_stdin=getattr(args, 'passphrase_stdin', False),
+        force_unencrypted=getattr(args, 'force_unencrypted', False),
+    )
+    return export(devbase_root, opts)
 
 
 def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:

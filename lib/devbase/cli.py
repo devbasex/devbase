@@ -36,9 +36,18 @@ GROUP_ALIASES = {
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
-    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project'],
+    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
+}
+
+# 後方互換: prefix が複数候補にマッチする場合に、特定の入力を特定のサブコマンドに
+# 優先的に解決させる。例えば `devbase env e` は従来 `edit` のみに解決されていたが、
+# `export` 追加後は ambiguous になるため、既存ショートカットを維持するために維持先を明示する。
+SUBCMD_PREFIX_PREFERENCES = {
+    ('env',): {
+        'e': 'edit',
+    },
 }
 
 
@@ -108,6 +117,37 @@ def _add_env_parser(subparsers):
 
     env_sub.add_parser('edit', help='Open .env in editor')
     env_sub.add_parser('project', help='Setup project-specific variables')
+
+    env_export = env_sub.add_parser(
+        'export',
+        help='Export .env files as an encrypted bundle (age)',
+    )
+    env_export.add_argument('dest', nargs='?', default=None,
+                            help="Output path (default: ./devbase-env-<TS>.dbenv, '-' for stdout)")
+    env_export.add_argument('--include-project', action='append', default=None,
+                            metavar='NAME', dest='include_projects',
+                            help='Limit to specified project (repeatable)')
+    env_export.add_argument('--exclude-project', action='append', default=[],
+                            metavar='NAME', dest='exclude_projects',
+                            help='Exclude project (repeatable)')
+    env_export.add_argument('--no-global', action='store_true',
+                            help='Exclude $DEVBASE_ROOT/.env')
+    env_export.add_argument('--no-metadata', action='store_true',
+                            help='Exclude $DEVBASE_ROOT/.env.sources.yml')
+    env_export.add_argument('--recipient', action='append', default=[],
+                            metavar='KEY', dest='recipients',
+                            help=("age / OpenSSH public key (repeatable). "
+                                  "Formats: 'age1...', 'ssh-ed25519 AAAA...', 'ssh-rsa AAAA...', "
+                                  "'@PATH' for file reference. "
+                                  "Default: ~/.ssh/id_ed25519.pub, then ~/.ssh/id_rsa.pub "
+                                  "(first existing one)"))
+    env_export.add_argument('--passphrase-env', metavar='VAR', default=None,
+                            help='Read passphrase from environment variable VAR')
+    env_export.add_argument('--passphrase-stdin', action='store_true',
+                            help='Read passphrase from the first line of stdin')
+    env_export.add_argument('--force-unencrypted', action='store_true',
+                            help='Write as plaintext tar.gz (rejected by default; '
+                                 'warns when sensitive keys are detected)')
 
 
 def _add_plugin_parser(subparsers):
@@ -250,14 +290,22 @@ def _create_parser():
     return parser
 
 
-def _resolve_prefix(input_cmd, candidates):
+def _resolve_prefix(input_cmd, candidates, preferences=None):
     """Resolve an abbreviated command to its full name via unique prefix matching.
 
-    Returns the full command name if exactly one candidate matches,
-    otherwise returns the input as-is (ambiguous or no match).
+    Returns the full command name if exactly one candidate matches.
+    If ambiguous, falls back to `preferences[input_cmd]` (if provided) to keep
+    backward compatibility with previously-unique abbreviations.
+    Otherwise returns the input as-is.
     """
     matches = [c for c in candidates if c.startswith(input_cmd)]
-    return matches[0] if len(matches) == 1 else input_cmd
+    if len(matches) == 1:
+        return matches[0]
+    if preferences and input_cmd in preferences:
+        preferred = preferences[input_cmd]
+        if preferred in matches:
+            return preferred
+    return input_cmd
 
 
 def _expand_argv():
@@ -273,7 +321,8 @@ def _expand_argv():
         cmd = sys.argv[1]
         for aliases, subcmds in SUBCMD_MAP.items():
             if cmd in aliases:
-                sys.argv[2] = _resolve_prefix(sys.argv[2], subcmds)
+                preferences = SUBCMD_PREFIX_PREFERENCES.get(aliases)
+                sys.argv[2] = _resolve_prefix(sys.argv[2], subcmds, preferences)
                 break
 
     # plugin repo sub-subcommand

@@ -1,0 +1,147 @@
+"""storage.py: Local / Stdio backend + resolve()"""
+
+from __future__ import annotations
+
+import io
+import sys
+
+import pytest
+
+from devbase.env import storage
+
+
+def test_local_backend_roundtrip(tmp_path):
+    backend = storage.LocalBackend()
+    dest = tmp_path / "out" / "bundle.bin"
+    backend.write_bytes(str(dest), b"abc")
+
+    assert backend.read_bytes(str(dest)) == b"abc"
+    assert dest.stat().st_mode & 0o777 == 0o600
+
+
+def test_local_backend_missing_file_raises(tmp_path):
+    backend = storage.LocalBackend()
+    with pytest.raises(storage.StorageError):
+        backend.read_bytes(str(tmp_path / "no-such"))
+
+
+def test_resolve_local_for_plain_path():
+    assert isinstance(storage.resolve("/tmp/foo"), storage.LocalBackend)
+    assert isinstance(storage.resolve("relative/path"), storage.LocalBackend)
+    assert isinstance(storage.resolve("file:///tmp/foo"), storage.LocalBackend)
+
+
+def test_resolve_stdio_for_dash():
+    assert isinstance(storage.resolve("-"), storage.StdioBackend)
+    assert storage.is_stdio("-")
+    assert not storage.is_stdio("/tmp/foo")
+
+
+def test_resolve_rejects_unimplemented_schemes():
+    for uri in ("s3://bucket/key", "gs://bucket/object"):
+        with pytest.raises(storage.StorageError, match="未実装"):
+            storage.resolve(uri)
+
+
+def test_resolve_rejects_unknown_scheme():
+    with pytest.raises(storage.StorageError, match="未対応"):
+        storage.resolve("ftp://host/x")
+
+
+@pytest.mark.parametrize("uri", [
+    r"C:\Users\foo\bundle.tar.gz",
+    r"c:\tmp\out.bin",
+    "D:/data/out.bin",
+])
+def test_resolve_windows_drive_letter_falls_back_to_local(uri):
+    """Windows のドライブレター付きパスは urlparse が scheme と誤認するが
+    LocalBackend にフォールバックされる"""
+    assert isinstance(storage.resolve(uri), storage.LocalBackend)
+
+
+def test_local_backend_file_uri_roundtrip(tmp_path):
+    backend = storage.LocalBackend()
+    dest = tmp_path / "via-uri.bin"
+    uri = f"file://{dest}"
+    backend.write_bytes(uri, b"xyz")
+    assert dest.read_bytes() == b"xyz"
+    assert backend.read_bytes(uri) == b"xyz"
+
+    # localhost も許容
+    uri_localhost = f"file://localhost{dest}"
+    assert backend.read_bytes(uri_localhost) == b"xyz"
+
+
+def test_local_backend_file_uri_rejects_remote_host(tmp_path):
+    backend = storage.LocalBackend()
+    with pytest.raises(storage.StorageError, match="ホスト指定"):
+        backend.read_bytes("file://other-host/tmp/x")
+    with pytest.raises(storage.StorageError, match="ホスト指定"):
+        backend.write_bytes("file://other-host/tmp/x", b"data")
+
+
+def test_stdio_backend_writes_to_stdout(monkeypatch):
+    buf = io.BytesIO()
+
+    class FakeStdout:
+        buffer = buf
+
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
+    storage.StdioBackend().write_bytes("-", b"hello")
+    assert buf.getvalue() == b"hello"
+
+
+def test_local_backend_write_creates_with_0600_no_toctou(tmp_path, monkeypatch):
+    """`os.open` の mode 引数 (0o600) が確実に渡され、umask に依存せず作成時点から
+    0600 になることを検証する"""
+    backend = storage.LocalBackend()
+    dest = tmp_path / "secure.bin"
+
+    captured = {}
+    real_os_open = storage.os.open
+
+    def spy_open(path, flags, mode=0o777):
+        captured['mode'] = mode
+        captured['flags'] = flags
+        return real_os_open(path, flags, mode)
+
+    monkeypatch.setattr(storage.os, "open", spy_open)
+    backend.write_bytes(str(dest), b"secret")
+    assert captured['mode'] == 0o600
+    # O_CREAT|O_TRUNC|O_WRONLY が含まれていること
+    import os as _os
+    assert captured['flags'] & _os.O_CREAT
+    assert captured['flags'] & _os.O_TRUNC
+    assert dest.stat().st_mode & 0o777 == 0o600
+
+
+def test_local_backend_overwrite_existing_file_keeps_0600(tmp_path):
+    """既存ファイル (0644) に上書きしても 0600 まで権限を絞れる"""
+    backend = storage.LocalBackend()
+    dest = tmp_path / "exists.bin"
+    dest.write_bytes(b"old")
+    dest.chmod(0o644)
+
+    backend.write_bytes(str(dest), b"new")
+    assert dest.read_bytes() == b"new"
+    assert dest.stat().st_mode & 0o777 == 0o600
+
+
+def test_local_backend_write_wraps_oserror_as_storage_error(tmp_path):
+    """書き込み時の OSError は StorageError にラップされる"""
+    backend = storage.LocalBackend()
+    # 書き込み不可能なパス (存在しないルートを起点) — mkdir も失敗する状況を作る
+    # FileExistsError をテストするため、parent をファイルにして mkdir を阻む
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"x")
+    dest = blocker / "child" / "out.bin"
+    with pytest.raises(storage.StorageError):
+        backend.write_bytes(str(dest), b"data")
+
+
+def test_local_backend_read_wraps_oserror_as_storage_error(tmp_path):
+    """read 時の OSError (例: ディレクトリを read) は StorageError にラップされる"""
+    backend = storage.LocalBackend()
+    # ディレクトリを read_bytes すると IsADirectoryError
+    with pytest.raises(storage.StorageError):
+        backend.read_bytes(str(tmp_path))
