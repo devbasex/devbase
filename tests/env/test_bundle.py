@@ -245,3 +245,44 @@ def test_unpack_rejects_non_mapping_manifest(payload):
         tout.addfile(m, io.BytesIO(payload))
     with pytest.raises(bundle.BundleError, match="mapping ではありません"):
         bundle.unpack(out.getvalue())
+
+
+def test_pack_is_deterministic():
+    """同一入力に対し pack() の出力バイト列が完全に一致 (gzip mtime=0 が効いている)"""
+    entries = [
+        _entry("env/global.env", b"FOO=bar\n"),
+        _entry("env/projects/p1/.env", b"X=1\n"),
+    ]
+    blob1 = bundle.pack(entries, devbase_version="test",
+                        created_at="2024-01-01T00:00:00+00:00")
+    blob2 = bundle.pack(entries, devbase_version="test",
+                        created_at="2024-01-01T00:00:00+00:00")
+    assert blob1 == blob2
+    # gzip マジックで始まる
+    assert blob1[:2] == b"\x1f\x8b"
+
+
+def test_unpack_rejects_unknown_tar_entries():
+    """manifest に記載のないファイルが tar に紛れ込んでいたら BundleError"""
+    import io, tarfile, yaml
+    out = io.BytesIO()
+    manifest = {
+        "version": bundle.SUPPORTED_MANIFEST_VERSION,
+        "files": [{"path": "env/global.env",
+                   "sha256": bundle._sha256(b"FOO=bar\n")}],
+    }
+    manifest_bytes = yaml.safe_dump(manifest).encode("utf-8")
+    with tarfile.open(fileobj=out, mode="w:gz") as tout:
+        m = tarfile.TarInfo(name=bundle.MANIFEST_NAME)
+        m.size = len(manifest_bytes)
+        tout.addfile(m, io.BytesIO(manifest_bytes))
+        # manifest に記載があるファイル
+        legit = tarfile.TarInfo(name="env/global.env")
+        legit.size = len(b"FOO=bar\n")
+        tout.addfile(legit, io.BytesIO(b"FOO=bar\n"))
+        # manifest に記載のないファイル
+        stowaway = tarfile.TarInfo(name="env/stowaway.env")
+        stowaway.size = len(b"EVIL=1\n")
+        tout.addfile(stowaway, io.BytesIO(b"EVIL=1\n"))
+    with pytest.raises(bundle.BundleError, match="manifest に記載のないファイル"):
+        bundle.unpack(out.getvalue())

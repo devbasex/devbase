@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import tarfile
@@ -67,11 +68,16 @@ def pack(entries: Sequence[BundleEntry],
                                     allow_unicode=True).encode('utf-8')
 
     buf = io.BytesIO()
-    # mtime=0 で再現性を確保
-    with tarfile.open(fileobj=buf, mode='w:gz', format=tarfile.PAX_FORMAT) as tf:
-        _add_member(tf, MANIFEST_NAME, manifest_bytes)
-        for entry in entries:
-            _add_member(tf, entry.arcname, entry.data)
+    # 再現性を確保:
+    #   - tarfile の mode='w:gz' は gzip ヘッダに現在時刻を埋め込むため出力が
+    #     非決定的になる。gzip.GzipFile を mtime=0 で明示的に作成し、その上に
+    #     tarfile を mode='w' で書き出すことで完全に決定的なバイト列にする。
+    #   - PAX_FORMAT を指定して各エントリの mtime=0 等のメタも安定させる。
+    with gzip.GzipFile(fileobj=buf, mode='wb', mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tf:
+            _add_member(tf, MANIFEST_NAME, manifest_bytes)
+            for entry in entries:
+                _add_member(tf, entry.arcname, entry.data)
     return buf.getvalue()
 
 
@@ -139,6 +145,8 @@ def _validate_manifest(manifest: Dict, members: Dict[str, bytes]) -> None:
     files = manifest.get('files') or []
     if not isinstance(files, list):
         raise BundleError("manifest.files が list ではありません")
+
+    manifest_paths: set = set()
     for entry in files:
         if not isinstance(entry, dict):
             raise BundleError(f"manifest.files の要素が dict ではありません: {type(entry).__name__}")
@@ -162,6 +170,17 @@ def _validate_manifest(manifest: Dict, members: Dict[str, bytes]) -> None:
                 f"sha256 が一致しません (path={path}, expected={expected[:12]}..., "
                 f"actual={actual[:12]}...)"
             )
+        manifest_paths.add(path)
+
+    # tar 内のファイルセットと manifest のファイルセットの完全一致を検証する。
+    # manifest に記載のないファイルが tar に混入していても検知できるようにする
+    # (バンドル内未知ファイルの混入はセキュリティ・整合性リスクのため拒否)。
+    unknown = sorted(set(members) - manifest_paths)
+    if unknown:
+        raise BundleError(
+            "manifest に記載のないファイルがバンドルに含まれています: "
+            + ", ".join(unknown)
+        )
 
 
 def make_entries_from_disk(devbase_root,

@@ -45,6 +45,10 @@ def _resolve_recipient(spec: str, _depth: int = 0):
             raise CipherError(
                 f"recipient ファイルの UTF-8 デコードに失敗しました: {path}: {e}"
             ) from e
+        except OSError as e:
+            raise CipherError(
+                f"recipient ファイルの読み込みに失敗しました ({path}): {e}"
+            ) from e
         return _resolve_recipient(content.strip(), _depth + 1)
 
     if spec.startswith('age1'):
@@ -82,6 +86,17 @@ def _resolve_identity(path_spec: str):
     except OSError as e:
         raise CipherError(f"identity ファイルの読み込みに失敗しました ({path}): {e}") from e
 
+    # OpenSSH 秘密鍵は PEM 風の決まったヘッダを持つため、age 鍵より先に
+    # ヘッダで判別する。これにより鍵形式判別が明示的になり、将来の鍵形式
+    # 追加時にも分岐を増やすだけで済む。
+    if b'-----BEGIN OPENSSH PRIVATE KEY-----' in raw:
+        try:
+            return pyrage.ssh.Identity.from_buffer(raw)
+        except Exception as e:
+            raise CipherError(
+                f"OpenSSH 秘密鍵の解釈に失敗しました ({path}): {e}"
+            ) from e
+
     if raw.strip().startswith(b'AGE-SECRET-KEY-1'):
         try:
             text = raw.decode('utf-8').strip()
@@ -92,6 +107,8 @@ def _resolve_identity(path_spec: str):
         except Exception as e:
             raise CipherError(f"age 秘密鍵の解釈に失敗しました ({path}): {e}") from e
 
+    # ヘッダから判別できなかった場合のフォールバック。OpenSSH 互換の他形式
+    # (rsa 以外の PEM など) を pyrage に任せて受け付ける。
     try:
         return pyrage.ssh.Identity.from_buffer(raw)
     except Exception as e:

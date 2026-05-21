@@ -101,6 +101,39 @@ def test_resolve_identity_wraps_oserror(tmp_path, monkeypatch):
         cipher.decrypt(b"x", identities=[str(id_path)])
 
 
+def test_resolve_recipient_at_path_wraps_oserror(tmp_path, monkeypatch):
+    """@PATH の read_text が OSError を投げた場合 CipherError に包んで送出"""
+    rcpt_path = tmp_path / "rcpt.pub"
+    rcpt_path.write_text("dummy")
+
+    from pathlib import Path as _Path
+
+    original_read_text = _Path.read_text
+
+    def fake_read_text(self, *args, **kwargs):
+        if self == rcpt_path:
+            raise PermissionError("simulated permission denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(_Path, "read_text", fake_read_text)
+    with pytest.raises(cipher.CipherError, match="読み込みに失敗"):
+        cipher.encrypt(b"x", recipients=[f"@{rcpt_path}"])
+
+
+def test_resolve_identity_prefers_openssh_header(tmp_path):
+    """OpenSSH ヘッダで始まる秘密鍵は age 鍵判定より先に SSH として処理される"""
+    # 中身は不正でも、OpenSSH ヘッダで判別された後 pyrage 側エラーになる
+    # ことを確認 (= age 経路ではなく SSH 経路に入った証拠)
+    id_path = tmp_path / "id.key"
+    id_path.write_bytes(
+        b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        b"not-a-valid-key\n"
+        b"-----END OPENSSH PRIVATE KEY-----\n"
+    )
+    with pytest.raises(cipher.CipherError, match="OpenSSH 秘密鍵の解釈"):
+        cipher.decrypt(b"x", identities=[str(id_path)])
+
+
 def test_default_recipient_paths_includes_ed25519():
     """ed25519 公開鍵が rsa より先に試される"""
     paths = cipher.default_recipient_paths()
