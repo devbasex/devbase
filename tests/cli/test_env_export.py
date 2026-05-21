@@ -10,7 +10,7 @@ import pyrage
 import pytest
 
 from devbase.env import bundle, cipher
-from devbase.env.io_export import ExportOptions, ExportError, export
+from devbase.env.io_export import ExportOptions, ExportError, _read_passphrase, export
 
 
 @pytest.fixture
@@ -91,6 +91,29 @@ def test_export_rejects_both_passphrase_env_and_stdin(fake_root):
     with pytest.raises(ExportError, match="--passphrase-env"):
         export(fake_root, ExportOptions(
             dest="/dev/null", passphrase_env="X", passphrase_stdin=True))
+
+
+def test_read_passphrase_shows_prompt_on_tty(monkeypatch, capsys):
+    """tty 入力時は stderr に 'passphrase: ' プロンプトを表示する"""
+    fake_stdin = io.StringIO("hunter2\n")
+    monkeypatch.setattr(fake_stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+
+    pw = _read_passphrase(ExportOptions(passphrase_stdin=True))
+    assert pw == "hunter2"
+    err = capsys.readouterr().err
+    assert "passphrase: " in err
+
+
+def test_read_passphrase_no_prompt_on_pipe(monkeypatch, capsys):
+    """パイプ (非 tty) 入力時はプロンプトを出さない"""
+    fake_stdin = io.StringIO("hunter2\n")
+    monkeypatch.setattr(fake_stdin, "isatty", lambda: False, raising=False)
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+
+    pw = _read_passphrase(ExportOptions(passphrase_stdin=True))
+    assert pw == "hunter2"
+    assert "passphrase" not in capsys.readouterr().err
 
 
 def test_export_with_passphrase_env(fake_root, tmp_path, monkeypatch):

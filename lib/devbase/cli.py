@@ -139,7 +139,8 @@ def _add_env_parser(subparsers):
                             help=("age / OpenSSH public key (repeatable). "
                                   "Formats: 'age1...', 'ssh-ed25519 AAAA...', 'ssh-rsa AAAA...', "
                                   "'@PATH' for file reference. "
-                                  "Default: ~/.ssh/id_rsa.pub if present"))
+                                  "Default: ~/.ssh/id_ed25519.pub, then ~/.ssh/id_rsa.pub "
+                                  "(first existing one)"))
     env_export.add_argument('--passphrase-env', metavar='VAR', default=None,
                             help='Read passphrase from environment variable VAR')
     env_export.add_argument('--passphrase-stdin', action='store_true',

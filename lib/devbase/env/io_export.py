@@ -46,7 +46,11 @@ def _default_dest(force_unencrypted: bool) -> str:
 
 
 def _resolve_recipients(specs: Sequence[str]) -> List[str]:
-    """recipient 指定の解決。空なら既定鍵 (~/.ssh/id_rsa.pub) を試みる"""
+    """recipient 指定の解決。
+
+    空なら既定鍵を優先順 (``~/.ssh/id_ed25519.pub`` → ``~/.ssh/id_rsa.pub``) で
+    探索し、最初に見つかったものを利用する。
+    """
     if specs:
         return list(specs)
     for path in _cipher.default_recipient_paths():
@@ -66,6 +70,10 @@ def _read_passphrase(opts: ExportOptions) -> Optional[str]:
         return value
     if opts.passphrase_stdin:
         import sys
+        # tty で対話実行している場合、ユーザーが「ハングしている」と誤解しないよう
+        # stderr へプロンプトを出してから stdin を待つ (パイプ入力時は出さない)。
+        if sys.stdin.isatty():
+            print("passphrase: ", end='', file=sys.stderr, flush=True)
         line = sys.stdin.readline()
         if not line:
             raise ExportError("stdin からパスフレーズを読み取れませんでした")
@@ -148,7 +156,8 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
                 "  --passphrase-env VAR       環境変数からパスフレーズ取得\n"
                 "  --passphrase-stdin         stdin の最初の行をパスフレーズとして使用\n"
                 "  --force-unencrypted        平文 tar.gz として書き出す (機密キー検知時は警告)\n"
-                "  ~/.ssh/id_rsa.pub があれば --recipient 省略時の既定として使用されます"
+                "  ~/.ssh/id_ed25519.pub または ~/.ssh/id_rsa.pub があれば "
+                "--recipient 省略時の既定として使用されます (ed25519 優先)"
             )
         payload = _cipher.encrypt(tar_blob, recipients=recipients, passphrase=passphrase)
         logger.debug("暗号化後サイズ: %d bytes", len(payload))
