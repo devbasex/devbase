@@ -49,7 +49,15 @@ def _resolve_recipient(spec: str, _depth: int = 0):
             raise CipherError(
                 f"recipient ファイルの読み込みに失敗しました ({path}): {e}"
             ) from e
-        return _resolve_recipient(content.strip(), _depth + 1)
+        # ファイル中に複数行 / コメント / 空行が混在していても扱えるよう、
+        # 空行と '#' で始まるコメント行を除いた最初の有効行を採用する。
+        valid = [
+            line.strip() for line in content.splitlines()
+            if line.strip() and not line.strip().startswith('#')
+        ]
+        if not valid:
+            raise CipherError(f"recipient ファイルに有効な行がありません: {path}")
+        return _resolve_recipient(valid[0], _depth + 1)
 
     if spec.startswith('age1'):
         try:

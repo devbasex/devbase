@@ -101,6 +101,31 @@ def test_resolve_identity_wraps_oserror(tmp_path, monkeypatch):
         cipher.decrypt(b"x", identities=[str(id_path)])
 
 
+def test_resolve_recipient_at_path_skips_comments_and_blank_lines(tmp_path, x25519_keypair):
+    """@PATH ファイル中のコメント行 / 空行をスキップして最初の有効な recipient を採用"""
+    pub_path = tmp_path / "rcpt.pub"
+    pub_path.write_text(
+        "# this is a comment\n"
+        "\n"
+        f"{x25519_keypair[0]}\n"
+        "# trailing comment\n"
+    )
+    ciphertext = cipher.encrypt(b"hello", recipients=[f"@{pub_path}"])
+    # 復号できれば有効な recipient として解釈されている
+    id_path = tmp_path / "id.key"
+    id_path.write_text(x25519_keypair[1])
+    plain = cipher.decrypt(ciphertext, identities=[str(id_path)])
+    assert plain == b"hello"
+
+
+def test_resolve_recipient_at_path_rejects_only_comments(tmp_path):
+    """@PATH ファイルがコメント・空行のみだと CipherError"""
+    pub_path = tmp_path / "empty.pub"
+    pub_path.write_text("# only comments\n\n# nothing else\n")
+    with pytest.raises(cipher.CipherError, match="有効な行がありません"):
+        cipher.encrypt(b"x", recipients=[f"@{pub_path}"])
+
+
 def test_resolve_recipient_at_path_wraps_oserror(tmp_path, monkeypatch):
     """@PATH の read_text が OSError を投げた場合 CipherError に包んで送出"""
     rcpt_path = tmp_path / "rcpt.pub"
