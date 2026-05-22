@@ -288,6 +288,12 @@ class _SyncReport:
     preserved_orphans: list[Path] = field(default_factory=list)
 
 
+# Files at the plugin root that are upstream-owned metadata: always overwritten
+# so registry version/description never desync from upstream even if a user
+# happened to edit them locally.
+_ALWAYS_OVERWRITE_AT_ROOT = frozenset({'plugin.yml'})
+
+
 def _sync_dir(src: Path, dst: Path, report: _SyncReport, rel: Path = Path('.')) -> None:
     """Conservatively sync ``src`` → ``dst``, preserving user edits.
 
@@ -299,6 +305,10 @@ def _sync_dir(src: Path, dst: Path, report: _SyncReport, rel: Path = Path('.')) 
     | exists | exists  | same | no-op |
     | exists | exists  | differ | keep dst, write src as ``<name>.new`` (``kept_local``) |
     | missing | exists |  -  | leave dst alone (``preserved_orphans``) |
+
+    Exception: files named in ``_ALWAYS_OVERWRITE_AT_ROOT`` at the plugin root
+    are always overwritten with upstream content (treated as plugin metadata,
+    not user-editable).
 
     Preserves the inode of ``dst`` and of subdirectories present in both — a
     user whose CWD lives inside ``dst`` (typically via a ``projects/<name>``
@@ -323,6 +333,17 @@ def _sync_dir(src: Path, dst: Path, report: _SyncReport, rel: Path = Path('.')) 
     for name, src_entry in src_entries.items():
         dst_entry = dst / name
         sub_rel = rel / name
+        if (
+            rel == Path('.')
+            and name in _ALWAYS_OVERWRITE_AT_ROOT
+            and not src_entry.is_symlink()
+            and not src_entry.is_dir()
+        ):
+            if dst_entry.is_symlink() or dst_entry.exists():
+                _replace_entry(dst_entry)
+            shutil.copy2(src_entry, dst_entry)
+            report.updated.append(sub_rel)
+            continue
         if src_entry.is_symlink():
             link_target = os.readlink(src_entry)
             if dst_entry.is_symlink() and os.readlink(dst_entry) == link_target:
