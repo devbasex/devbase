@@ -15,7 +15,12 @@ DEVBASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Environment setup
 export DOCKER_GID=$( [ "$(uname)" = "Darwin" ] && echo "0" || grep docker /etc/group | cut -d: -f3 )
 export COMPOSE_PROJECT_NAME=$(basename "$PWD")
-[ -f ".env" ] && set -a && source .env && set +a
+# devbase root の .env (AWS / BigQuery 等の devbase ツール用変数) を読み込む。
+# project ディレクトリで実行された場合に Laravel ランタイム用 .env を bash で
+# source すると、CRLF 改行や `|` / `&` 等の特殊文字を含む値で syntax error に
+# なる。compose は同階層の .env を自動で読むため wrapper 側で project .env を
+# source する必要は無い。
+[ -f "${DEVBASE_ROOT}/.env" ] && set -a && source "${DEVBASE_ROOT}/.env" && set +a
 [ -f "env" ] && set -a && source ./env && set +a
 
 # Export for Python modules
