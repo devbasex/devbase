@@ -9,7 +9,9 @@ import pyrage
 import pytest
 
 from devbase.env import bundle, cipher
-from devbase.env.io_export import ExportOptions, ExportError, _read_passphrase, export
+from devbase.env.io_export import (
+    ExportOptions, ExportError, _read_passphrase, _validate_options, export,
+)
 
 
 @pytest.fixture
@@ -239,3 +241,54 @@ def test_export_uses_default_recipient_if_present(fake_root, tmp_path, monkeypat
     assert rc == 0
     decrypted = cipher.decrypt(dest.read_bytes(), identities=[str(id_file)])
     bundle.unpack(decrypted)
+
+
+# --- fail-fast 排他チェック (PR #22 round2 gemini 指摘) ---
+
+
+def test_validate_rejects_recipient_and_passphrase_env():
+    """_validate_options で --recipient + --passphrase-env が即座に弾かれること。
+
+    ディスク I/O (make_entries_from_disk / pack) より前に ExportError になる。
+    """
+    with pytest.raises(ExportError, match="--recipient"):
+        _validate_options(ExportOptions(
+            recipients=["age1dummy"],
+            passphrase_env="SOME_VAR",
+        ))
+
+
+def test_validate_rejects_recipient_and_passphrase_stdin():
+    """_validate_options で --recipient + --passphrase-stdin が即座に弾かれること。"""
+    with pytest.raises(ExportError, match="--recipient"):
+        _validate_options(ExportOptions(
+            recipients=["age1dummy"],
+            passphrase_stdin=True,
+        ))
+
+
+def test_validate_rejects_force_unencrypted_with_recipient():
+    """_validate_options で --force-unencrypted + --recipient が即座に弾かれること。"""
+    with pytest.raises(ExportError, match="--force-unencrypted"):
+        _validate_options(ExportOptions(
+            force_unencrypted=True,
+            recipients=["age1dummy"],
+        ))
+
+
+def test_validate_rejects_force_unencrypted_with_passphrase_env():
+    """_validate_options で --force-unencrypted + --passphrase-env が即座に弾かれること。"""
+    with pytest.raises(ExportError, match="--force-unencrypted"):
+        _validate_options(ExportOptions(
+            force_unencrypted=True,
+            passphrase_env="SOME_VAR",
+        ))
+
+
+def test_validate_rejects_force_unencrypted_with_passphrase_stdin():
+    """_validate_options で --force-unencrypted + --passphrase-stdin が即座に弾かれること。"""
+    with pytest.raises(ExportError, match="--force-unencrypted"):
+        _validate_options(ExportOptions(
+            force_unencrypted=True,
+            passphrase_stdin=True,
+        ))

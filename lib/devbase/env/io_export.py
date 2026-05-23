@@ -81,18 +81,23 @@ def _validate_options(opts: ExportOptions) -> None:
     # (import 側は両方 stdin なので併用不可。io_import._validate_options 参照)
     if opts.passphrase_env and opts.passphrase_stdin:
         raise ExportError("--passphrase-env と --passphrase-stdin は併用できません")
+    if (opts.passphrase_env or opts.passphrase_stdin) and opts.recipients:
+        raise ExportError(
+            "--recipient と --passphrase-env/--passphrase-stdin は併用できません"
+        )
+    if opts.force_unencrypted and (
+        opts.recipients or opts.passphrase_env or opts.passphrase_stdin
+    ):
+        raise ExportError(
+            "--force-unencrypted は recipient / passphrase と併用できません"
+        )
 
 
 def _encrypt_payload(tar_blob: bytes, opts: ExportOptions) -> bytes:
     """``opts`` の鍵指定に従って tar.gz を暗号化する。鍵が無ければ既定鍵を試す"""
     passphrase = _read_passphrase(opts)
-    if passphrase is not None and opts.recipients:
-        # 明示指定の --recipient と --passphrase-* を黙って捨てると意図と異なる
-        # 暗号化が行われるため、ここで明示的にエラーにする
-        # (cipher.encrypt 側にも同等チェックがあるが、recipients=[] に上書きする前に弾く)
-        raise ExportError(
-            "--recipient と --passphrase-env/--passphrase-stdin は併用できません"
-        )
+    # NOTE: --recipient と --passphrase-* の排他チェックは _validate_options で
+    # fail-fast 済み。cipher.encrypt 側にも防御的チェックがある。
     recipients = (
         [] if passphrase is not None
         else _io_common.resolve_recipient_specs(opts.recipients)
@@ -148,10 +153,8 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
     logger.debug("tar.gz サイズ: %d bytes", len(tar_blob))
 
     if opts.force_unencrypted:
-        if opts.recipients or opts.passphrase_env or opts.passphrase_stdin:
-            raise ExportError(
-                "--force-unencrypted は recipient / passphrase と併用できません"
-            )
+        # NOTE: --force-unencrypted と鍵指定の排他チェックは _validate_options で
+        # fail-fast 済み。ここでは平文出力の警告のみ。
         _warn_if_plaintext_sensitive(entries)
         payload = tar_blob
     else:
