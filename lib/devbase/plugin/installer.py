@@ -1,9 +1,12 @@
 """Plugin installer - handles install/uninstall operations"""
 
+import hashlib
+import os
 import shutil
 import subprocess
 import tempfile
 import yaml
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -55,8 +58,11 @@ def git_clone(url: str, dest: Path, ref: Optional[str] = None) -> None:
     if ref:
         cmd.extend(['--branch', ref])
     cmd.extend([url, str(dest)])
+    dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(
+            cmd, check=True, capture_output=True, text=True, cwd=str(dest.parent),
+        )
     except subprocess.CalledProcessError as e:
         raise PluginError(f"git clone failed for {url}: {e.stderr.strip()}")
 
@@ -256,6 +262,139 @@ def _install_from_repo(
             raise PluginError("No plugin name specified")
 
 
+def _replace_entry(path: Path) -> None:
+    """Remove ``path`` (file, symlink, or directory) so it can be replaced."""
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
+def _hash_file(path: Path) -> str:
+    """Return the SHA-256 hex digest of a regular file's contents."""
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@dataclass
+class _SyncReport:
+    """Summary of an in-place plugin sync, surfaced to users after update."""
+    added: list[Path] = field(default_factory=list)
+    updated: list[Path] = field(default_factory=list)
+    kept_local: list[Path] = field(default_factory=list)
+    preserved_orphans: list[Path] = field(default_factory=list)
+
+
+# Files at the plugin root that are upstream-owned metadata: always overwritten
+# so registry version/description never desync from upstream even if a user
+# happened to edit them locally.
+_ALWAYS_OVERWRITE_AT_ROOT = frozenset({'plugin.yml'})
+
+
+def _sync_dir(src: Path, dst: Path, report: _SyncReport, rel: Path = Path('.')) -> None:
+    """Conservatively sync ``src`` → ``dst``, preserving user edits.
+
+    Semantics (per file in src/dst):
+
+    | src | dst | content | action |
+    |---|---|---|---|
+    | exists | missing |  -  | copy from src (record as ``added``) |
+    | exists | exists  | same | no-op |
+    | exists | exists  | differ | keep dst, write src as ``<name>.new`` (``kept_local``) |
+    | missing | exists |  -  | leave dst alone (``preserved_orphans``) |
+
+    Exception: files named in ``_ALWAYS_OVERWRITE_AT_ROOT`` at the plugin root
+    are always overwritten with upstream content (treated as plugin metadata,
+    not user-editable).
+
+    Preserves the inode of ``dst`` and of subdirectories present in both — a
+    user whose CWD lives inside ``dst`` (typically via a ``projects/<name>``
+    symlink resolving into the plugin tree) keeps a valid CWD across updates.
+
+    User-only files (orphans) and user-edited files are never destroyed.
+    """
+    dst.mkdir(parents=True, exist_ok=True)
+
+    src_entries = {e.name: e for e in src.iterdir()}
+    dst_entries = {e.name: e for e in dst.iterdir()}
+
+    for name, dst_entry in dst_entries.items():
+        if name in src_entries:
+            continue
+        if name.endswith('.new'):
+            # `.new` is our own conflict marker — refresh, don't preserve.
+            _replace_entry(dst_entry)
+            continue
+        report.preserved_orphans.append(rel / name)
+
+    for name, src_entry in src_entries.items():
+        dst_entry = dst / name
+        sub_rel = rel / name
+        if (
+            rel == Path('.')
+            and name in _ALWAYS_OVERWRITE_AT_ROOT
+            and not src_entry.is_symlink()
+            and not src_entry.is_dir()
+        ):
+            if dst_entry.is_symlink() or dst_entry.exists():
+                _replace_entry(dst_entry)
+            shutil.copy2(src_entry, dst_entry)
+            report.updated.append(sub_rel)
+            continue
+        if src_entry.is_symlink():
+            link_target = os.readlink(src_entry)
+            if dst_entry.is_symlink() and os.readlink(dst_entry) == link_target:
+                continue
+            if dst_entry.is_symlink() or dst_entry.exists():
+                # Conflict: leave user's, drop upstream alongside as `.new` symlink.
+                new_dst = dst_entry.with_name(dst_entry.name + '.new')
+                if new_dst.is_symlink() or new_dst.exists():
+                    _replace_entry(new_dst)
+                os.symlink(link_target, new_dst)
+                report.kept_local.append(sub_rel)
+            else:
+                os.symlink(link_target, dst_entry)
+                report.added.append(sub_rel)
+        elif src_entry.is_dir():
+            if dst_entry.is_symlink() or (dst_entry.exists() and not dst_entry.is_dir()):
+                # Type mismatch: user has a file/symlink where upstream has a dir.
+                # Drop upstream alongside as `<name>.new/`.
+                new_dst = dst_entry.with_name(dst_entry.name + '.new')
+                if new_dst.is_symlink() or (new_dst.exists() and not new_dst.is_dir()):
+                    _replace_entry(new_dst)
+                _sync_dir(src_entry, new_dst, report, sub_rel)
+                report.kept_local.append(sub_rel)
+            else:
+                already_existed = dst_entry.is_dir()
+                _sync_dir(src_entry, dst_entry, report, sub_rel)
+                if not already_existed:
+                    report.added.append(sub_rel)
+        else:
+            if not dst_entry.exists() and not dst_entry.is_symlink():
+                shutil.copy2(src_entry, dst_entry)
+                report.added.append(sub_rel)
+                continue
+            if dst_entry.is_symlink() or dst_entry.is_dir():
+                # Type mismatch: user has a symlink/dir where upstream has a file.
+                new_dst = dst_entry.with_name(dst_entry.name + '.new')
+                if new_dst.is_symlink() or new_dst.exists():
+                    _replace_entry(new_dst)
+                shutil.copy2(src_entry, new_dst)
+                report.kept_local.append(sub_rel)
+                continue
+            # Both are regular files — compare content.
+            if _hash_file(src_entry) == _hash_file(dst_entry):
+                continue
+            new_dst = dst_entry.with_name(dst_entry.name + '.new')
+            if new_dst.is_symlink() or new_dst.exists():
+                _replace_entry(new_dst)
+            shutil.copy2(src_entry, new_dst)
+            report.kept_local.append(sub_rel)
+
+
 def copy_plugin(
     registry: PluginRegistry,
     name: str,
@@ -263,7 +402,13 @@ def copy_plugin(
     source_display: str,
     plugins_dir: Path,
 ) -> None:
-    """Copy a plugin from cloned repo to plugins/.
+    """Install or update a plugin from a cloned repo into ``plugins/``.
+
+    For updates, contents are synced in place (preserving directory inodes
+    and user-edited files) instead of rmtree+copytree. User-edited files
+    are kept as-is; the upstream version of a conflicting file is dropped
+    alongside with a ``.new`` suffix for the user to diff/merge manually.
+    Files present only in the user's working tree (orphans) are preserved.
 
     Raises PluginError on failure.
     """
@@ -271,11 +416,30 @@ def copy_plugin(
         raise PluginError(f"Plugin directory not found: {plugin_path}")
 
     dest = plugins_dir / name
-    if dest.exists():
-        logger.warning("Removing existing plugin '%s'", name)
-        shutil.rmtree(dest)
-
-    shutil.copytree(plugin_path, dest)
+    if dest.is_symlink():
+        logger.warning("Removing existing plugin '%s' (symlink)", name)
+        dest.unlink()
+        shutil.copytree(plugin_path, dest)
+    elif dest.exists():
+        logger.info("Updating existing plugin '%s'", name)
+        report = _SyncReport()
+        _sync_dir(plugin_path, dest, report)
+        if report.kept_local:
+            logger.warning(
+                "  %d local edit(s) kept; upstream saved as .new alongside:",
+                len(report.kept_local),
+            )
+            for p in report.kept_local[:10]:
+                logger.warning("    - %s (upstream: %s.new)", p, p.name)
+            if len(report.kept_local) > 10:
+                logger.warning("    ... and %d more", len(report.kept_local) - 10)
+        if report.preserved_orphans:
+            logger.info(
+                "  %d local-only file(s) preserved (not in upstream)",
+                len(report.preserved_orphans),
+            )
+    else:
+        shutil.copytree(plugin_path, dest)
 
     info = load_plugin_info(dest)
     version = info.version if info else '0.1.0'
