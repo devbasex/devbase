@@ -8,6 +8,12 @@ dependencies = [
     "pyrage>=1.2",
 ]
 
+[project.optional-dependencies]
+# `devbase env export/import` の S3 backend (`s3://`) を使う場合のみ必要
+s3 = [
+    "boto3>=1.34",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

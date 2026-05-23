@@ -151,6 +151,10 @@ def _add_env_parser(subparsers):
     env_export.add_argument('--force-unencrypted', action='store_true',
                             help='Write as plaintext tar.gz (rejected by default; '
                                  'warns when sensitive keys are detected)')
+    env_export.add_argument('--unsafe-allow-unencrypted-bucket', action='store_true',
+                            help='Allow S3 export to buckets without default encryption '
+                                 '(per-object SSE is always applied regardless of this flag). '
+                                 'Has no effect for non-s3:// destinations.')
 
     env_import = env_sub.add_parser(
         'import',

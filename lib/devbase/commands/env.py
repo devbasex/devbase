@@ -398,6 +398,9 @@ def cmd_env_export(devbase_root: Path, args) -> int:
         passphrase_env=getattr(args, 'passphrase_env', None),
         passphrase_stdin=getattr(args, 'passphrase_stdin', False),
         force_unencrypted=getattr(args, 'force_unencrypted', False),
+        unsafe_allow_unencrypted_bucket=getattr(
+            args, 'unsafe_allow_unencrypted_bucket', False
+        ),
     )
     return export(devbase_root, opts)
 
