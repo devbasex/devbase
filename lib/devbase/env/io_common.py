@@ -46,7 +46,9 @@ def read_passphrase(
         line = sys.stdin.readline()
         if not line:
             raise error_class("stdin からパスフレーズを読み取れませんでした")
-        return line.rstrip('\n')
+        # CRLF (Windows/WSL からのパイプ) を考慮して \r も剥がす。
+        # パスフレーズ末尾に \r が残ると複合化が一致せず原因不明の失敗になる。
+        return line.rstrip('\r\n')
     return None
 
 

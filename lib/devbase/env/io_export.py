@@ -75,11 +75,10 @@ def _sensitive_keys(entries: Sequence[_bundle.BundleEntry]) -> List[str]:
 
 
 def _validate_options(opts: ExportOptions) -> None:
-    if opts.passphrase_stdin and opts.dest == '-':
-        raise ExportError(
-            "DEST='-' (stdout) と --passphrase-stdin は併用できません "
-            "(stdin/stdout が衝突します)"
-        )
+    # NOTE: DEST='-' (stdout) と --passphrase-stdin の併用は許可する。
+    # export は stdin (passphrase) と stdout (bundle) で別ストリームを使うため
+    # `echo "pass" | devbase env export - --passphrase-stdin > out` は適法。
+    # (import 側は両方 stdin なので併用不可。io_import._validate_options 参照)
     if opts.passphrase_env and opts.passphrase_stdin:
         raise ExportError("--passphrase-env と --passphrase-stdin は併用できません")
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import os
 from pathlib import Path
 
 import pyrage
@@ -82,9 +81,27 @@ def test_export_force_unencrypted_writes_plaintext_tar_gz(fake_root, tmp_path, c
     assert dest.stat().st_mode & 0o777 == 0o600
 
 
-def test_export_rejects_stdout_with_passphrase_stdin(fake_root):
-    with pytest.raises(ExportError, match="DEST='-'"):
-        export(fake_root, ExportOptions(dest="-", passphrase_stdin=True))
+def test_export_allows_stdout_with_passphrase_stdin(
+    fake_root, age_keys, monkeypatch, capsysbinary
+):
+    """DEST='-' (stdout) と --passphrase-stdin の併用は許可される。
+
+    stdin (passphrase) と stdout (bundle) は別ストリームのため衝突しない:
+        echo "pass" | devbase env export - --passphrase-stdin > out.dbenv
+    """
+    fake_stdin = io.StringIO("hunter2\n")
+    monkeypatch.setattr(fake_stdin, "isatty", lambda: False, raising=False)
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+
+    rc = export(fake_root, ExportOptions(dest="-", passphrase_stdin=True))
+    assert rc == 0
+
+    out_bytes = capsysbinary.readouterr().out
+    assert len(out_bytes) > 0
+    # age 暗号化ヘッダ (passphrase mode) — `age-encryption.org/v1` を含む
+    decrypted = cipher.decrypt(out_bytes, passphrase="hunter2")
+    manifest, members = bundle.unpack(decrypted)
+    assert "env/global.env" in members
 
 
 def test_export_rejects_both_passphrase_env_and_stdin(fake_root):
@@ -128,6 +145,19 @@ def test_read_passphrase_falls_back_to_stdin_on_pipe(monkeypatch, capsys):
     pw = _read_passphrase(ExportOptions(passphrase_stdin=True))
     assert pw == "hunter2"
     assert "passphrase" not in capsys.readouterr().err
+
+
+def test_read_passphrase_strips_crlf_from_pipe(monkeypatch):
+    """Windows/WSL 由来の CRLF パイプ入力でも末尾 \\r が混入しないこと。
+
+    `\\r` が残ると age 復号は無音で失敗するため、対称的に `rstrip('\\r\\n')` が必要。
+    """
+    fake_stdin = io.StringIO("hunter2\r\n")
+    monkeypatch.setattr(fake_stdin, "isatty", lambda: False, raising=False)
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+
+    pw = _read_passphrase(ExportOptions(passphrase_stdin=True))
+    assert pw == "hunter2"
 
 
 def test_read_passphrase_tty_eof_raises_export_error(monkeypatch):
