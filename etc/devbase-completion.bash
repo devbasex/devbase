@@ -83,7 +83,7 @@ _devbase_completions() {
                         ;;
                     export)
                         if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--include-project --exclude-project --no-global --no-metadata --recipient --passphrase-env --passphrase-stdin --force-unencrypted" -- "$cur"))
+                            COMPREPLY=($(compgen -W "--include-project --exclude-project --no-global --no-metadata --recipient --passphrase-env --passphrase-stdin --force-unencrypted --unsafe-allow-unencrypted-bucket" -- "$cur"))
                         fi
                         ;;
                     import)

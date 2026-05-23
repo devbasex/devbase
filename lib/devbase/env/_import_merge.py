@@ -23,7 +23,15 @@ from devbase.env.store import EnvFile
 
 logger = get_logger(__name__)
 
-_PROJECT_ENV_RE = re.compile(r'^env/projects/([^/]+)/\.env$')
+# project 名は通常のディレクトリ名のみ許容する。
+#   - 先頭文字: 英数字 / `_`  (`.` を許可すると `env/projects/./.env` が
+#     `$DEVBASE_ROOT/projects/.env` に正規化され、グローバル .env を上書きする
+#     path traversal 系の問題になる — PR #13 codex round 3 指摘)
+#   - 2文字目以降: 英数字 / `_` / `-` / `.`
+#   - `.` / `..` のような特殊セグメント、空文字、`/` を含む値は弾く
+# bundle._validate_manifest や tar 展開側 (`..` のみ拒否) では塞ぎきれないため、
+# arcname を path に解決する側で project 名を制限する。
+_PROJECT_ENV_RE = re.compile(r'^env/projects/([A-Za-z0-9_][A-Za-z0-9_.\-]*)/\.env$')
 
 # import_bundle が許容する --merge モード一覧。CLI の choices と一致させる。
 MERGE_MODES: Tuple[str, ...] = ('keep-existing', 'prefer-incoming')

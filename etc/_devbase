@@ -162,7 +162,8 @@ _devbase() {
                         '*--recipient[age / OpenSSH public key (repeatable)]:key:' \
                         '--passphrase-env[Read passphrase from env var]:var:' \
                         '--passphrase-stdin[Read passphrase from stdin]' \
-                        '--force-unencrypted[Write as plaintext tar.gz]'
+                        '--force-unencrypted[Write as plaintext tar.gz]' \
+                        '--unsafe-allow-unencrypted-bucket[Allow uploading unencrypted tar.gz to S3 (off by default)]'
                     ;;
                 import)
                     _arguments \

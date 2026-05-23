@@ -1006,3 +1006,51 @@ def test_env_import_filter_members_rejects_unknown_arcname():
             include_projects=None,
             exclude_projects=(),
         )
+
+
+@pytest.mark.parametrize(
+    "bad_arcname",
+    [
+        'env/projects/./.env',     # `.` で global .env 領域に抜ける
+        'env/projects/../.env',    # `..` での親ディレクトリ脱出
+        'env/projects/.hidden/.env',  # 隠しディレクトリ名
+        'env/projects/ /.env',     # 空白だけのプロジェクト名
+    ],
+)
+def test_env_import_rejects_unsafe_project_names(bad_arcname):
+    """``_PROJECT_ENV_RE`` が ``.`` / ``..`` / ``.hidden`` 等の特殊セグメントを
+    project 名として受け入れず、未対応 arcname として ``MergeError`` で止めること
+    (PR #13 codex round 3 指摘の path traversal 対策)。
+
+    特に ``env/projects/./.env`` は正規表現 ``[^/]+`` だと match してしまい、
+    ``target_for`` で ``$DEVBASE_ROOT/projects/.env`` に正規化されてグローバル
+    ``.env`` を上書きする経路が成立する。ここで明示的に拒否する。
+    """
+    from devbase.env._import_merge import MergeError, filter_members, target_for
+
+    # filter_members 経路: 未対応 arcname として MergeError
+    members = {bad_arcname: b'PWNED=1\n'}
+    with pytest.raises(MergeError, match="未対応の arcname"):
+        filter_members(
+            members,
+            include_global=True,
+            include_metadata=True,
+            include_projects=None,
+            exclude_projects=(),
+        )
+
+    # target_for 経路: 直接呼ばれても MergeError
+    with pytest.raises(MergeError, match="未対応のバンドルエントリ"):
+        target_for(bad_arcname, Path('/tmp/fake-root'))
+
+
+def test_env_import_accepts_normal_project_names():
+    """正常な project 名 (英数字 / `_` / `-` / `.` を含む) は受け入れること。
+    上記の安全性チェックで実用ケースを壊していないことの回帰テスト。
+    """
+    from devbase.env._import_merge import target_for
+
+    root = Path('/tmp/fake-root')
+    for name in ['alpha', 'beta_1', 'my-app', 'svc.v2', 'a']:
+        arc = f'env/projects/{name}/.env'
+        assert target_for(arc, root) == root / 'projects' / name / '.env'
