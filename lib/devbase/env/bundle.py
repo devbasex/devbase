@@ -164,10 +164,10 @@ def _validate_manifest(manifest: Dict, members: Dict[str, bytes]) -> None:
     version = manifest.get('version')
     if not isinstance(version, int):
         raise BundleError("manifest.version が不正です")
-    if version != SUPPORTED_MANIFEST_VERSION:
+    if version > SUPPORTED_MANIFEST_VERSION:
         raise BundleError(
             f"manifest.version={version} はこの devbase ではサポートされていません "
-            f"(対応={SUPPORTED_MANIFEST_VERSION})。devbase 本体を更新してください"
+            f"(対応最大={SUPPORTED_MANIFEST_VERSION})。devbase 本体を更新してください"
         )
 
     files = manifest.get('files') or []

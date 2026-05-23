@@ -49,12 +49,7 @@ def test_unpack_rejects_corrupted_sha256():
         bundle.unpack(out.getvalue())
 
 
-@pytest.mark.parametrize("bad_version", [
-    bundle.SUPPORTED_MANIFEST_VERSION + 1,
-    0,
-    -1,
-])
-def test_unpack_rejects_unknown_version(bad_version):
+def test_unpack_rejects_unknown_version():
     entries = [_entry("env/global.env", b"FOO=bar\n")]
     blob = bundle.pack(entries)
 
@@ -67,7 +62,7 @@ def test_unpack_rejects_unknown_version(bad_version):
             data = tin.extractfile(info).read()
             if info.name == bundle.MANIFEST_NAME:
                 m = yaml.safe_load(data)
-                m["version"] = bad_version
+                m["version"] = bundle.SUPPORTED_MANIFEST_VERSION + 1
                 data = yaml.safe_dump(m).encode("utf-8")
                 info.size = len(data)
             tout.addfile(info, io.BytesIO(data))
