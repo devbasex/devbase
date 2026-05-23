@@ -198,7 +198,7 @@ devbase env export - --force-unencrypted | gpg --encrypt -r alice@example.com > 
 gpg --decrypt bundle.gpg | devbase env import -
 ```
 
-> **制約**: `DEST='-'` / `SOURCE='-'` と `--passphrase-stdin` は **併用不可** (stdin/stdout が衝突するため明示的にエラーにします)。
+> **制約**: `SOURCE='-'` と `--passphrase-stdin` は **併用不可** (どちらも stdin を要求するため衝突します。import 側のみエラーになります)。`DEST='-'` (export) は stdin (passphrase) と stdout (bundle) で別ストリームを使うため `--passphrase-stdin` と併用できます。
 
 ## `devbase env export` リファレンス
 

@@ -110,6 +110,25 @@ def test_export_rejects_both_passphrase_env_and_stdin(fake_root):
             dest="/dev/null", passphrase_env="X", passphrase_stdin=True))
 
 
+def test_export_rejects_recipient_and_passphrase_combo(
+    fake_root, age_keys, tmp_path, monkeypatch
+):
+    """--recipient と --passphrase-* を同時指定したら ExportError を上げる。
+    黙って recipients=[] に上書きしてパスフレーズだけで暗号化するのは
+    ユーザの意図と異なるため明示的に拒否する (cipher.encrypt 側のチェックに
+    到達する前にここで弾く)。"""
+    pub_file, _ = age_keys
+    monkeypatch.setenv("DEVBASE_TEST_PASS", "s3cr3t")
+    dest = tmp_path / "out.dbenv"
+    with pytest.raises(ExportError, match="--recipient"):
+        export(fake_root, ExportOptions(
+            dest=str(dest),
+            recipients=[f"@{pub_file}"],
+            passphrase_env="DEVBASE_TEST_PASS",
+        ))
+    assert not dest.exists()
+
+
 def test_read_passphrase_uses_getpass_on_tty(monkeypatch):
     """tty 入力時は getpass.getpass を使い stdin.readline は呼ばない (エコー抑止)"""
     fake_stdin = io.StringIO("should-not-be-read\n")

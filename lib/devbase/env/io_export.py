@@ -86,6 +86,13 @@ def _validate_options(opts: ExportOptions) -> None:
 def _encrypt_payload(tar_blob: bytes, opts: ExportOptions) -> bytes:
     """``opts`` の鍵指定に従って tar.gz を暗号化する。鍵が無ければ既定鍵を試す"""
     passphrase = _read_passphrase(opts)
+    if passphrase is not None and opts.recipients:
+        # 明示指定の --recipient と --passphrase-* を黙って捨てると意図と異なる
+        # 暗号化が行われるため、ここで明示的にエラーにする
+        # (cipher.encrypt 側にも同等チェックがあるが、recipients=[] に上書きする前に弾く)
+        raise ExportError(
+            "--recipient と --passphrase-env/--passphrase-stdin は併用できません"
+        )
     recipients = (
         [] if passphrase is not None
         else _io_common.resolve_recipient_specs(opts.recipients)
