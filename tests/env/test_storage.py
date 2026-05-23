@@ -448,26 +448,6 @@ def test_s3_backend_read_wraps_unknown_error():
         backend.read_bytes("s3://bucket/k")
 
 
-def test_s3_backend_raises_clear_error_when_boto3_missing(monkeypatch):
-    """boto3 が無い環境では分かりやすいエラーメッセージで失敗する"""
-    backend = storage.S3Backend()
-
-    # boto3 import を強制的に ImportError にする
-    import builtins
-    real_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name == 'boto3' or name.startswith('boto3.'):
-            raise ImportError("boto3 not installed (simulated)")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, '__import__', fake_import)
-    with pytest.raises(storage.StorageError, match=r"devbase\[s3\]") as ei:
-        backend.write_bytes("s3://bucket/k", b"x")
-    # boto3 という名前も併記されていること
-    assert "boto3" in str(ei.value)
-
-
 def test_s3_backend_get_client_passes_endpoint_and_region(monkeypatch):
     """S3Options.endpoint_url / region が boto3.client へ正しく渡る"""
     backend = storage.S3Backend(storage.S3Options(

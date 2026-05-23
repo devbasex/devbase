@@ -172,7 +172,7 @@ def _parse_s3_uri(uri: str) -> Tuple[str, str]:
 
 
 class S3Backend:
-    """AWS S3 / S3 互換ストレージ (MinIO 等)。boto3 を optional dep として遅延 import する。
+    """AWS S3 / S3 互換ストレージ (MinIO 等)。
 
     - write_bytes: PutObject 時に ServerSideEncryption を常に付与し、
       `unsafe_allow_unencrypted_bucket=False` のときは
@@ -187,13 +187,7 @@ class S3Backend:
     def _get_client(self):
         if self._client is not None:
             return self._client
-        try:
-            import boto3  # type: ignore
-        except ImportError as e:
-            raise StorageError(
-                "S3 backend を使うには boto3 が必要です "
-                "(`pip install 'devbase[s3]'` または `uv add 'devbase[s3]'` を実行してください)"
-            ) from e
+        import boto3
 
         kwargs = {}
         if self._options.endpoint_url:
