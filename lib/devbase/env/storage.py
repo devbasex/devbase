@@ -45,39 +45,13 @@ class LocalBackend:
     """ローカルファイルシステム"""
 
     def write_bytes(self, dest: str, data: bytes) -> None:
+        # 暗号化済みバンドルでも平文 export でも 0600 強制 (TOCTOU 回避)。
+        # 共通実装は io_common.write_secure_bytes へ集約。
+        from devbase.env import io_common as _io_common
+
         path = _to_local_path(dest)
         try:
-            if path.parent and not path.parent.exists():
-                path.parent.mkdir(parents=True, exist_ok=True)
-            # TOCTOU 回避: open(..., 'wb') 後に chmod すると、umask が緩い環境では
-            # 一瞬 0644 等で平文 export が露出する。
-            # os.open に mode=0o600 を渡し、O_CREAT|O_TRUNC|O_WRONLY で作成時点
-            # から 0600 を強制する。既存ファイルも書き込み前に chmod で権限を絞る。
-            if path.exists():
-                try:
-                    os.chmod(path, 0o600)
-                except OSError:
-                    # Windows 等で chmod が無効でも処理を続行
-                    pass
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-            fd = os.open(path, flags, 0o600)
-            try:
-                with os.fdopen(fd, 'wb') as f:
-                    f.write(data)
-            except BaseException:
-                # fdopen 失敗時は fd を明示的に閉じる (fdopen 成功時は with が close)
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                raise
-            # mode 引数が無視される環境 (Windows 等) でも後追いで chmod を試みる
-            try:
-                os.chmod(path, 0o600)
-            except OSError:
-                pass
-        except StorageError:
-            raise
+            _io_common.write_secure_bytes(path, data)
         except OSError as e:
             raise StorageError(f"書き込みに失敗しました ({path}): {e}") from e
 

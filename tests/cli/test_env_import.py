@@ -417,6 +417,7 @@ def test_rollback_unlinks_newly_created_files_on_commit_failure(
         fake_root, dest_root, age_keys, tmp_path, monkeypatch):
     """commit フェーズ途中失敗時、元ファイル不在で新規作成された target は unlink され、
     部分適用状態が残らないこと"""
+    from devbase.env import _import_atomic as _atomic
     from devbase.env import io_import as _io_import
 
     _, id_file = age_keys
@@ -436,7 +437,7 @@ def test_rollback_unlinks_newly_created_files_on_commit_failure(
             raise OSError("simulated commit failure")
         return original_replace(src, dst)
 
-    monkeypatch.setattr(_io_import.os, 'replace', failing_replace)
+    monkeypatch.setattr(_atomic.os, 'replace', failing_replace)
 
     with pytest.raises(_io_import.ImportError, match="commit フェーズで失敗"):
         import_bundle(dest_root, ImportOptions(
@@ -578,6 +579,7 @@ def test_rollback_unlinks_newly_created_sources_yml(
         fake_root, dest_root, age_keys, tmp_path, monkeypatch):
     """sources.yml を --merge-metadata で新規作成中に commit 失敗すると、
     ロールバックで sources.yml が削除されること (PR #15 gemini 指摘)"""
+    from devbase.env import _import_atomic as _atomic
     from devbase.env import io_import as _io_import
 
     _, id_file = age_keys
@@ -594,7 +596,7 @@ def test_rollback_unlinks_newly_created_sources_yml(
             raise OSError("simulated commit failure on sources.yml")
         return original_replace(src, dst)
 
-    monkeypatch.setattr(_io_import.os, 'replace', failing_replace)
+    monkeypatch.setattr(_atomic.os, 'replace', failing_replace)
 
     with pytest.raises(_io_import.ImportError, match="commit"):
         import_bundle(dest_root, ImportOptions(
@@ -609,6 +611,7 @@ def test_commit_failure_cleans_remaining_import_tmp_files(
         fake_root, dest_root, age_keys, tmp_path, monkeypatch):
     """_commit 失敗時に、まだ rename されていない .import.tmp ファイルが残らないこと
     (PR #15 gemini 指摘)"""
+    from devbase.env import _import_atomic as _atomic
     from devbase.env import io_import as _io_import
 
     _, id_file = age_keys
@@ -623,7 +626,7 @@ def test_commit_failure_cleans_remaining_import_tmp_files(
             raise OSError("simulated commit failure")
         return original_replace(src, dst)
 
-    monkeypatch.setattr(_io_import.os, 'replace', failing_replace)
+    monkeypatch.setattr(_atomic.os, 'replace', failing_replace)
 
     with pytest.raises(_io_import.ImportError, match="commit"):
         import_bundle(dest_root, ImportOptions(
@@ -921,7 +924,8 @@ def test_env_import_comment_only_existing_replace_reports_op_replace(
 
     _setup_comment_only_dest(dest_root)
 
-    with caplog.at_level(logging.INFO, logger="devbase.env.io_import"):
+    # plan 表示は _import_merge.log_plans で行われるためそのモジュールの logger を捕捉する
+    with caplog.at_level(logging.INFO, logger="devbase.env._import_merge"):
         rc = import_bundle(dest_root, ImportOptions(
             source=str(bundle_path), identities=[str(id_file)],
             replace=True))
