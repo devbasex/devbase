@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,6 +90,15 @@ def _escape_double_quoted(value: str) -> str:
                  .replace('$', '\\$'))
 
 
+# ``_unescape_double_quoted`` 用の逆引きテーブル。``re.sub(r'\\.', ...)`` で
+# マッチした 2 文字を 1 文字に置換する。未知エスケープ (例: ``\x``) は
+# バックスラッシュごとそのまま残す必要があるため、``dict.get`` の default に
+# マッチ文字列自身を返す。末尾単独 ``\`` は ``\\.`` のドットが 2 文字目を
+# 要求するため自然にマッチせず、そのまま保持される。
+_DOUBLE_QUOTE_UNESCAPES = {'\\\\': '\\', '\\"': '"', '\\n': '\n', '\\$': '$'}
+_DOUBLE_QUOTE_UNESCAPE_RE = re.compile(r'\\.')
+
+
 class EnvFile:
     """
     .envファイルの読み書き・バックアップ・バリデーションを管理する。
@@ -151,35 +161,12 @@ class EnvFile:
         """``save`` が double-quote 値に対して施した escape を 1 パスで戻す。
 
         単純な逐次 ``replace`` は ``"\\\\n"`` (リテラル ``\\\\`` + ``n``) と
-        ``"\\n"`` (改行) の区別が付かないため state machine で処理する。
-        未知のエスケープ文字 (``\\x`` 等) はバックスラッシュごとそのまま保持する。
+        ``"\\n"`` (改行) の区別が付かないため、``\\<char>`` を一括で捉える
+        ``re.sub`` + 逆引き辞書で処理する。
         """
-        out: list = []
-        i = 0
-        n = len(s)
-        while i < n:
-            c = s[i]
-            if c == '\\' and i + 1 < n:
-                nxt = s[i + 1]
-                if nxt == '\\':
-                    out.append('\\')
-                    i += 2
-                elif nxt == '"':
-                    out.append('"')
-                    i += 2
-                elif nxt == 'n':
-                    out.append('\n')
-                    i += 2
-                elif nxt == '$':
-                    out.append('$')
-                    i += 2
-                else:
-                    out.append(c)
-                    i += 1
-            else:
-                out.append(c)
-                i += 1
-        return ''.join(out)
+        return _DOUBLE_QUOTE_UNESCAPE_RE.sub(
+            lambda m: _DOUBLE_QUOTE_UNESCAPES.get(m.group(0), m.group(0)), s
+        )
 
     @staticmethod
     def _format_kv_line(key: str, value: str) -> str:
