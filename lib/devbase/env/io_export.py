@@ -165,7 +165,7 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
     dest = opts.dest or _default_dest(opts.force_unencrypted)
     # 既定名 (opts.dest 未指定) かつローカルパスの場合、既存ファイルの上書きを拒否する
     # (microsecond 精度でも理論上は衝突しうるため防御的にチェック)
-    if opts.dest is None and not _storage.is_s3(dest) and not _storage.is_stdio(dest):
+    if not opts.dest and not _storage.is_s3(dest) and not _storage.is_stdio(dest):
         if Path(dest).exists():
             raise ExportError(
                 f"既定出力先 {dest} が既に存在します。"

@@ -322,3 +322,24 @@ def test_export_default_dest_rejects_existing_file(
         export(fake_root, ExportOptions(
             recipients=[f"@{pub_file}"],
         ))
+
+
+def test_export_empty_dest_rejects_existing_file(
+        fake_root, age_keys, tmp_path, monkeypatch):
+    """opts.dest が空文字 "" の場合も既定名が使われ、既存ファイル上書きを拒否する。
+
+    opts.dest="" は falsy なので `not opts.dest` で None と同様に既定名ガードが
+    有効になること。(PR #22 round4 gemini 指摘)
+    """
+    pub_file, _ = age_keys
+    fixed_name = "./devbase-env-20240101-120000-000000.dbenv"
+    monkeypatch.setattr("devbase.env.io_export._default_dest", lambda fu: fixed_name)
+    existing = tmp_path / "devbase-env-20240101-120000-000000.dbenv"
+    existing.write_bytes(b"old data")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ExportError, match="既に存在します"):
+        export(fake_root, ExportOptions(
+            dest="",  # 空文字 — None と同様に既定名ガードが効くこと
+            recipients=[f"@{pub_file}"],
+        ))
