@@ -2,6 +2,7 @@ __pycache__/
 .venv/
 .env
 .env.backup
+.gemini/
 .docker-compose.scale.yml
 plugins.yml
 plugins/*/

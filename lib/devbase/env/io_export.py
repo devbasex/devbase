@@ -39,6 +39,9 @@ class ExportOptions:
     passphrase_env: Optional[str] = None
     passphrase_stdin: bool = False
     force_unencrypted: bool = False
+    # S3 backend 専用: バケット既定暗号化が未設定でも export を許可するか
+    # (オブジェクト単位の SSE はこのフラグに関係なく常に付与される)
+    unsafe_allow_unencrypted_bucket: bool = False
 
 
 def _default_dest(force_unencrypted: bool) -> str:
@@ -167,7 +170,12 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
         logger.debug("暗号化後サイズ: %d bytes", len(payload))
 
     dest = opts.dest or _default_dest(opts.force_unencrypted)
-    backend = _storage.resolve(dest)
+    # S3 など backend 固有のオプションを渡したい場合は s3_options を組み立てる。
+    # それ以外 (local/stdio) では未使用なので無害。
+    s3_options = _storage.S3Options.from_env(
+        unsafe_allow_unencrypted_bucket=opts.unsafe_allow_unencrypted_bucket,
+    ) if _storage.is_s3(dest) else None
+    backend = _storage.resolve(dest, s3_options=s3_options)
     backend.write_bytes(dest, payload)
 
     if _storage.is_stdio(dest):
