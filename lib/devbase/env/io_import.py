@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 import re
 import shutil
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -94,9 +96,11 @@ def _read_passphrase(opts: ImportOptions) -> Optional[str]:
             raise ImportError(f"環境変数 {opts.passphrase_env} が空または未設定です")
         return value
     if opts.passphrase_stdin:
-        import sys
         if sys.stdin.isatty():
-            print("passphrase: ", end='', file=sys.stderr, flush=True)
+            try:
+                return getpass.getpass("passphrase: ", stream=sys.stderr)
+            except EOFError as e:
+                raise ImportError("stdin からパスフレーズを読み取れませんでした") from e
         line = sys.stdin.readline()
         if not line:
             raise ImportError("stdin からパスフレーズを読み取れませんでした")
