@@ -73,6 +73,8 @@ _devbase() {
         'delete:Delete a variable'
         'edit:Open .env in editor'
         'project:Setup project-specific variables'
+        'export:Export .env files as an encrypted bundle (age)'
+        'import:Import .env bundle (age decrypt + merge)'
     )
 
     plugin_subcommands=(
@@ -149,6 +151,37 @@ _devbase() {
                     ;;
                 get|delete)
                     _arguments '1:key:'
+                    ;;
+                export)
+                    _arguments \
+                        '1:dest:_files' \
+                        '*--include-project[Limit to specified project (repeatable)]:name:' \
+                        '*--exclude-project[Exclude project (repeatable)]:name:' \
+                        '--no-global[Exclude $DEVBASE_ROOT/.env]' \
+                        '--no-metadata[Exclude $DEVBASE_ROOT/.env.sources.yml]' \
+                        '*--recipient[age / OpenSSH public key (repeatable)]:key:' \
+                        '--passphrase-env[Read passphrase from env var]:var:' \
+                        '--passphrase-stdin[Read passphrase from stdin]' \
+                        '--force-unencrypted[Write as plaintext tar.gz]' \
+                        '--unsafe-allow-unencrypted-bucket[Allow uploading unencrypted tar.gz to S3 (off by default)]'
+                    ;;
+                import)
+                    _arguments \
+                        '1:source:_files' \
+                        '--merge[Merge strategy]:mode:(keep-existing prefer-incoming)' \
+                        '--replace-keys[Replace only these keys (comma-separated)]:keys:' \
+                        '--replace[Replace existing files entirely]' \
+                        '--dry-run[Preview changes without writing]' \
+                        '*--identity[age / OpenSSH private key file (repeatable)]:file:_files' \
+                        '--passphrase-env[Read passphrase from env var]:var:' \
+                        '--passphrase-stdin[Read passphrase from stdin]' \
+                        '*--include-project[Limit to specified project (repeatable)]:name:' \
+                        '*--exclude-project[Exclude project (repeatable)]:name:' \
+                        '--no-global[Do not import $DEVBASE_ROOT/.env]' \
+                        '--no-metadata[Do not import $DEVBASE_ROOT/.env.sources.yml]' \
+                        '--merge-metadata[Add only new sources entries from bundle]' \
+                        '--backup-dir[Override backup directory]:dir:_files -/' \
+                        '--keep-last[Keep only the last N backup directories]:n:'
                     ;;
                 *)
                     _describe -t env-commands 'env command' env_subcommands
