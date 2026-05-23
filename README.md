@@ -76,7 +76,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 | グループ | 略記 | 説明 |
 |---------|------|------|
 | `container` | `ct` | コンテナ管理（up / down / login / ps / logs / scale / build） |
-| `env` | — | 環境変数管理（init / sync / list / set / get / delete / edit / project） |
+| `env` | — | 環境変数管理（init / sync / list / set / get / delete / edit / project / export / import） |
 | `plugin` | `pl` | プラグイン管理（list / install / uninstall / update / info / sync / repo） |
 | `snapshot` | `ss` | スナップショット管理（create / list / restore / copy / delete / rotate） |
 
@@ -106,6 +106,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 | [CLIリファレンス](docs/user/cli-reference.md) | 全コマンドの構文・オプション・使用例 |
 | [プラグインレジストリ](docs/user/plugin-registries.md) | 公開・社内レジストリの一覧と追加方法 |
 | [環境変数ガイド](docs/user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
+| [環境変数の export/import ガイド](docs/user/env-export-import.md) | バンドル形式・age 暗号化・S3 連携・merge/replace の運用 |
 | [コンテナ操作ガイド](docs/user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](docs/user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
 | [トラブルシューティング](docs/user/troubleshooting.md) | カテゴリ別の問題と解決策 |
