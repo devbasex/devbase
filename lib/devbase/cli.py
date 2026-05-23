@@ -179,7 +179,7 @@ def _add_env_parser(subparsers):
                             metavar='FILE', dest='identities',
                             help=("age / OpenSSH private key file (repeatable). "
                                   "Default: ~/.ssh/id_ed25519, then ~/.ssh/id_rsa "
-                                  "(first existing one)"))
+                                  "(all existing ones)"))
     env_import.add_argument('--passphrase-env', metavar='VAR', default=None,
                             help='Read passphrase from environment variable VAR')
     env_import.add_argument('--passphrase-stdin', action='store_true',

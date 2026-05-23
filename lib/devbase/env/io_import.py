@@ -85,6 +85,10 @@ def _validate_options(opts: ImportOptions) -> None:
         )
     if opts.passphrase_env and opts.passphrase_stdin:
         raise ImportError("--passphrase-env と --passphrase-stdin は併用できません")
+    if opts.identities and (opts.passphrase_env or opts.passphrase_stdin):
+        raise ImportError(
+            "--identity と --passphrase-env/--passphrase-stdin は併用できません"
+        )
 
 
 def _decrypt_if_needed(blob: bytes, opts: ImportOptions) -> bytes:

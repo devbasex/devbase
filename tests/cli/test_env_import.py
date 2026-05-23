@@ -206,6 +206,18 @@ def test_import_rejects_both_passphrase_env_and_stdin(dest_root):
             source='/dev/null', passphrase_env='X', passphrase_stdin=True))
 
 
+def test_import_rejects_identity_with_passphrase(dest_root):
+    """--identity と --passphrase-env/--passphrase-stdin の同時指定は拒否される"""
+    with pytest.raises(ImportBundleError, match="--identity と --passphrase"):
+        import_bundle(dest_root, ImportOptions(
+            source='/dev/null', identities=['/tmp/fake.key'],
+            passphrase_env='X'))
+    with pytest.raises(ImportBundleError, match="--identity と --passphrase"):
+        import_bundle(dest_root, ImportOptions(
+            source='/tmp/dummy', identities=['/tmp/fake.key'],
+            passphrase_stdin=True))
+
+
 def test_read_passphrase_uses_getpass_on_tty(monkeypatch):
     """tty 入力時は getpass.getpass を使い stdin.readline は呼ばない (エコー抑止)"""
     fake_stdin = io.StringIO("should-not-be-read\n")
