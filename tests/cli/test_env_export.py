@@ -343,3 +343,99 @@ def test_export_empty_dest_rejects_existing_file(
             dest="",  # 空文字 — None と同様に既定名ガードが効くこと
             recipients=[f"@{pub_file}"],
         ))
+
+
+# --- dest 末尾 `/` のファイル名自動補完 (#24, PLAN03-2) ---
+
+
+def test_complete_dir_dest_s3_trailing_slash(monkeypatch):
+    """S3 URI が末尾 `/` のときは既定ファイル名を append する (`aws s3 cp` 互換)"""
+    from devbase.env.io_export import _complete_dir_dest
+    monkeypatch.setattr(
+        "devbase.env.io_export._default_filename",
+        lambda fu: "devbase-env-FIXED.dbenv",
+    )
+    assert _complete_dir_dest("s3://bucket/prefix/", False) == \
+        "s3://bucket/prefix/devbase-env-FIXED.dbenv"
+
+
+def test_complete_dir_dest_s3_full_key_unchanged(monkeypatch):
+    """S3 フルキー (末尾 `/` なし) はそのまま返す (回帰防止)"""
+    from devbase.env.io_export import _complete_dir_dest
+    monkeypatch.setattr(
+        "devbase.env.io_export._default_filename",
+        lambda fu: "devbase-env-FIXED.dbenv",
+    )
+    assert _complete_dir_dest("s3://bucket/prefix/foo.dbenv", False) == \
+        "s3://bucket/prefix/foo.dbenv"
+
+
+def test_complete_dir_dest_local_existing_dir(tmp_path, monkeypatch):
+    """ローカル既存ディレクトリのときも補完する"""
+    from devbase.env.io_export import _complete_dir_dest
+    monkeypatch.setattr(
+        "devbase.env.io_export._default_filename",
+        lambda fu: "devbase-env-FIXED.dbenv",
+    )
+    d = tmp_path / "outdir"
+    d.mkdir()
+    result = _complete_dir_dest(str(d), False)
+    assert result == str(d / "devbase-env-FIXED.dbenv")
+
+
+def test_complete_dir_dest_local_trailing_slash(tmp_path, monkeypatch):
+    """末尾 `/` のローカルパスは (ディレクトリが存在しなくても) 補完する"""
+    from devbase.env.io_export import _complete_dir_dest
+    monkeypatch.setattr(
+        "devbase.env.io_export._default_filename",
+        lambda fu: "devbase-env-FIXED.dbenv",
+    )
+    target = str(tmp_path / "nodir") + "/"
+    assert _complete_dir_dest(target, False).endswith("/nodir/devbase-env-FIXED.dbenv")
+
+
+def test_complete_dir_dest_local_normal_file_unchanged(tmp_path, monkeypatch):
+    """通常のファイルパスは補完しない"""
+    from devbase.env.io_export import _complete_dir_dest
+    monkeypatch.setattr(
+        "devbase.env.io_export._default_filename",
+        lambda fu: "devbase-env-FIXED.dbenv",
+    )
+    target = str(tmp_path / "out.dbenv")
+    assert _complete_dir_dest(target, False) == target
+
+
+def test_complete_dir_dest_stdio_unchanged():
+    """stdio (`-`) は補完しない"""
+    from devbase.env.io_export import _complete_dir_dest
+    assert _complete_dir_dest("-", False) == "-"
+
+
+def test_complete_dir_dest_plaintext_suffix(monkeypatch):
+    """force_unencrypted=True のときは `.dbenv.tar.gz` で補完される"""
+    from devbase.env.io_export import _complete_dir_dest, _default_filename
+    name = _default_filename(True)
+    assert name.endswith(".dbenv.tar.gz")
+    result = _complete_dir_dest("s3://bucket/prefix/", True)
+    assert result.endswith(".dbenv.tar.gz")
+    assert result.startswith("s3://bucket/prefix/")
+
+
+def test_export_local_dir_completes_filename(fake_root, age_keys, tmp_path):
+    """end-to-end: ローカル既存ディレクトリへの export でファイル名が補完される"""
+    pub_file, id_file = age_keys
+    outdir = tmp_path / "outdir"
+    outdir.mkdir()
+    rc = export(fake_root, ExportOptions(
+        dest=str(outdir),
+        recipients=[f"@{pub_file}"],
+    ))
+    assert rc == 0
+    # 補完されたファイルが 1 つだけ生成されている
+    files = list(outdir.iterdir())
+    assert len(files) == 1
+    assert files[0].name.startswith("devbase-env-")
+    assert files[0].name.endswith(".dbenv")
+    # 内容を復号できる
+    decrypted = cipher.decrypt(files[0].read_bytes(), identities=[str(id_file)])
+    assert decrypted
