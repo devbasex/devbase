@@ -345,8 +345,9 @@ def test_import_keep_last_gc_removes_old_backups(fake_root, dest_root, age_keys,
 
     remaining = sorted(p.name for p in backup_root.iterdir())
     assert len(remaining) == 3
-    # 最新 3 個に絞られる: 既存の 20260101-000003, 000004, 加えて新規 backup
-    assert remaining[-1].startswith('20')
+    # 最新 3 個に絞られる: 既存の旧フォーマット 2 個 + dbenv- prefix 付き新規 backup
+    # 新規 backup は dbenv- prefix 付き (ソート順で末尾)
+    assert remaining[-1].startswith('dbenv-')
 
 
 def test_import_include_project_filter(fake_root, dest_root, age_keys, tmp_path):
@@ -476,7 +477,7 @@ def test_gc_backups_only_removes_timestamp_dirs(fake_root, dest_root, age_keys, 
     # 関係ないファイル
     unrelated_file = custom_backup_root / "readme.txt"
     unrelated_file.write_text("must not be deleted")
-    # devbase 命名の古い backup を keep_last 超に置く
+    # devbase 命名 (旧フォーマット) の古い backup を keep_last 超に置く
     for i in range(5):
         (custom_backup_root / f"20240101-00000{i}").mkdir()
 
@@ -495,6 +496,37 @@ def test_gc_backups_only_removes_timestamp_dirs(fake_root, dest_root, age_keys, 
         if p.is_dir() and p.name not in ('important-user-data',)
     )
     assert len(timestamp_dirs) == 3
+
+
+def test_gc_backups_ignores_bare_timestamp_dirs_from_other_tools(
+        fake_root, dest_root, age_keys, tmp_path):
+    """--backup-dir 親にタイムスタンプ形式だが prefix 無しの無関係ディレクトリがあっても
+    旧フォーマット (後方互換) 以外は GC 対象にならない。新たに作られる backup は
+    dbenv- prefix 付きになる"""
+    _, id_file = age_keys
+    bundle_path = _export_bundle(fake_root, age_keys, tmp_path)
+
+    custom_backup_root = tmp_path / "shared-backups"
+    custom_backup_root.mkdir()
+    # 他ツールが作ったタイムスタンプ風ディレクトリ (prefix 無し・microsecond 付き形式に
+    # 一致しないパターン: 例えば "backup-20240101-120000" は regex に引っかからない)
+    other_tool_dir = custom_backup_root / "backup-20240101-120000"
+    other_tool_dir.mkdir()
+    (other_tool_dir / "data.db").write_text("important")
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        backup_dir=str(custom_backup_root), keep_last=1))
+    assert rc == 0
+
+    # 他ツールのディレクトリは無傷
+    assert other_tool_dir.exists()
+    assert (other_tool_dir / "data.db").read_text() == "important"
+
+    # 新しい backup は dbenv- prefix 付き
+    new_backups = [p for p in custom_backup_root.iterdir()
+                   if p.is_dir() and p.name.startswith("dbenv-")]
+    assert len(new_backups) == 1
 
 
 def test_import_passphrase_env_roundtrip(fake_root, dest_root, tmp_path, monkeypatch):

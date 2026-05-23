@@ -10,7 +10,8 @@ import pytest
 
 from devbase.env import bundle, cipher
 from devbase.env.io_export import (
-    ExportOptions, ExportError, _read_passphrase, _validate_options, export,
+    ExportOptions, ExportError, _default_dest, _read_passphrase,
+    _validate_options, export,
 )
 
 
@@ -291,4 +292,33 @@ def test_validate_rejects_force_unencrypted_with_passphrase_stdin():
         _validate_options(ExportOptions(
             force_unencrypted=True,
             passphrase_stdin=True,
+        ))
+
+
+# --- default dest 衝突回避 (PR #22 codex round 3 指摘) ---
+
+
+def test_default_dest_includes_microsecond():
+    """既定出力名が microsecond 精度を含むこと"""
+    name = _default_dest(force_unencrypted=False)
+    # ./devbase-env-YYYYMMDD-HHMMSS-ffffff.dbenv
+    import re
+    assert re.match(r'^\./devbase-env-\d{8}-\d{6}-\d{6}\.dbenv$', name), name
+
+
+def test_export_default_dest_rejects_existing_file(
+        fake_root, age_keys, tmp_path, monkeypatch):
+    """既定出力先に同名ファイルが既に存在する場合は ExportError を上げる"""
+    pub_file, _ = age_keys
+    # _default_dest を固定して衝突を再現する
+    fixed_name = "./devbase-env-20240101-120000-000000.dbenv"
+    monkeypatch.setattr("devbase.env.io_export._default_dest", lambda fu: fixed_name)
+    # 既存ファイルを作成
+    existing = tmp_path / "devbase-env-20240101-120000-000000.dbenv"
+    existing.write_bytes(b"old data")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ExportError, match="既に存在します"):
+        export(fake_root, ExportOptions(
+            recipients=[f"@{pub_file}"],
         ))

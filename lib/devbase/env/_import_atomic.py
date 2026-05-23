@@ -29,14 +29,18 @@ from devbase.env._import_merge import Plan
 
 logger = get_logger(__name__)
 
-# _make_backup_dir が生成するタイムスタンプ形式のみを GC 対象にする。
-# 以下のいずれかにマッチするディレクトリのみ削除する:
-#   YYYYMMDD-HHMMSS                    (旧フォーマット, 後方互換)
-#   YYYYMMDD-HHMMSS-NNNNNN             (microsecond 付き)
-#   YYYYMMDD-HHMMSS-NNNNNN-NN          (同一マイクロ秒内の連番付き)
-# これ以外のディレクトリは devbase が作ったものではないので削除しない
-# (--backup-dir 親に無関係なディレクトリがあっても安全)。
-_BACKUP_DIR_NAME_RE = re.compile(r'^\d{8}-\d{6}(?:-\d{6}(?:-\d+)?)?$')
+# make_backup_dir が生成するディレクトリ名形式のみを GC 対象にする。
+# prefix ``dbenv-`` を付けることで、--backup-dir 親に無関係なタイムスタンプ
+# ディレクトリ (他ツールの backup 等) が存在しても誤って rmtree しない。
+#   dbenv-YYYYMMDD-HHMMSS-NNNNNN             (microsecond 付き)
+#   dbenv-YYYYMMDD-HHMMSS-NNNNNN-NN          (同一マイクロ秒内の連番付き)
+# (旧フォーマット ``YYYYMMDD-HHMMSS`` は prefix 無しだが後方互換のため残す)
+_BACKUP_DIR_PREFIX = 'dbenv-'
+_BACKUP_DIR_NAME_RE = re.compile(
+    r'^dbenv-\d{8}-\d{6}-\d{6}(?:-\d+)?$'   # 新フォーマット (prefix 付き)
+    r'|'
+    r'^\d{8}-\d{6}(?:-\d{6}(?:-\d+)?)?$'     # 旧フォーマット (後方互換)
+)
 
 
 class AtomicError(DevbaseError):
@@ -55,7 +59,7 @@ def make_backup_dir(devbase_root: Path, backup_dir: Optional[str]) -> Path:
             else devbase_root / 'backups' / 'env-import')
     base.mkdir(parents=True, exist_ok=True)
 
-    stem = datetime.now().strftime('%Y%m%d-%H%M%S-%f')  # microsecond まで
+    stem = _BACKUP_DIR_PREFIX + datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     primary = base / stem
     if not primary.exists():
         primary.mkdir(parents=True)
@@ -184,9 +188,9 @@ def cleanup_tmps(tmps) -> None:
 def gc_backups(backup_dir: Path, keep_last: int) -> None:
     """``backup_dir`` の親ディレクトリで古い backup を ``keep_last`` 個まで残して GC する。
 
-    devbase 生成のタイムスタンプ形式 (``YYYYMMDD-HHMMSS[-NNNNNN[-NN]]``) に
-    マッチするディレクトリのみが GC 対象。``--backup-dir`` 親に無関係な
-    ファイル / ディレクトリがあっても、それらは触らない。
+    ``dbenv-`` prefix 付きの devbase 生成ディレクトリ、または旧フォーマットの
+    タイムスタンプ形式 (``YYYYMMDD-HHMMSS[-NNNNNN[-NN]]``) にマッチする
+    ディレクトリのみが GC 対象。``--backup-dir`` 親に無関係なディレクトリは触らない。
     """
     if keep_last <= 0:
         return

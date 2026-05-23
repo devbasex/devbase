@@ -45,7 +45,8 @@ class ExportOptions:
 
 
 def _default_dest(force_unencrypted: bool) -> str:
-    ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+    # microsecond まで含めて衝突を回避する (PR #22 codex round 3 指摘)
+    ts = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     suffix = '.dbenv.tar.gz' if force_unencrypted else '.dbenv'
     return f'./devbase-env-{ts}{suffix}'
 
@@ -162,6 +163,14 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
         logger.debug("暗号化後サイズ: %d bytes", len(payload))
 
     dest = opts.dest or _default_dest(opts.force_unencrypted)
+    # 既定名 (opts.dest 未指定) かつローカルパスの場合、既存ファイルの上書きを拒否する
+    # (microsecond 精度でも理論上は衝突しうるため防御的にチェック)
+    if opts.dest is None and not _storage.is_s3(dest) and not _storage.is_stdio(dest):
+        if Path(dest).exists():
+            raise ExportError(
+                f"既定出力先 {dest} が既に存在します。"
+                "出力先を明示的に指定するか、既存ファイルを移動してください"
+            )
     # S3 など backend 固有のオプションを渡したい場合は s3_options を組み立てる。
     # それ以外 (local/stdio) では未使用なので無害。
     s3_options = (_storage.S3Options.from_env(
