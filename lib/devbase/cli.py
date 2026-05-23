@@ -36,9 +36,21 @@ GROUP_ALIASES = {
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
-    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project'],
+    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
+}
+
+# 後方互換: prefix が複数候補にマッチする場合に、特定の入力を特定のサブコマンドに
+# 優先的に解決させる。例えば `devbase env e` は従来 `edit` のみに解決されていたが、
+# `export` 追加後は ambiguous になるため、既存ショートカットを維持するために維持先を明示する。
+SUBCMD_PREFIX_PREFERENCES = {
+    ('env',): {
+        'e': 'edit',
+        # `import` 追加で `i` が `init` / `import` の両方にマッチして ambiguous に
+        # なるため、既存ショートカット (`devbase env i` → `init`) を維持する。
+        'i': 'init',
+    },
 }
 
 
@@ -108,6 +120,90 @@ def _add_env_parser(subparsers):
 
     env_sub.add_parser('edit', help='Open .env in editor')
     env_sub.add_parser('project', help='Setup project-specific variables')
+
+    env_export = env_sub.add_parser(
+        'export',
+        help='Export .env files as an encrypted bundle (age)',
+    )
+    env_export.add_argument('dest', nargs='?', default=None,
+                            help="Output path (default: ./devbase-env-<TS>.dbenv, '-' for stdout)")
+    env_export.add_argument('--include-project', action='append', default=None,
+                            metavar='NAME', dest='include_projects',
+                            help='Limit to specified project (repeatable)')
+    env_export.add_argument('--exclude-project', action='append', default=[],
+                            metavar='NAME', dest='exclude_projects',
+                            help='Exclude project (repeatable)')
+    env_export.add_argument('--no-global', action='store_true',
+                            help='Exclude $DEVBASE_ROOT/.env')
+    env_export.add_argument('--no-metadata', action='store_true',
+                            help='Exclude $DEVBASE_ROOT/.env.sources.yml')
+    env_export.add_argument('--recipient', action='append', default=[],
+                            metavar='KEY', dest='recipients',
+                            help=("age / OpenSSH public key (repeatable). "
+                                  "Formats: 'age1...', 'ssh-ed25519 AAAA...', 'ssh-rsa AAAA...', "
+                                  "'@PATH' for file reference. "
+                                  "Default: ~/.ssh/id_ed25519.pub, then ~/.ssh/id_rsa.pub "
+                                  "(first existing one)"))
+    env_export.add_argument('--passphrase-env', metavar='VAR', default=None,
+                            help='Read passphrase from environment variable VAR')
+    env_export.add_argument('--passphrase-stdin', action='store_true',
+                            help='Read passphrase from the first line of stdin')
+    env_export.add_argument('--force-unencrypted', action='store_true',
+                            help='Write as plaintext tar.gz (rejected by default; '
+                                 'warns when sensitive keys are detected)')
+    env_export.add_argument('--unsafe-allow-unencrypted-bucket', action='store_true',
+                            help='Allow S3 export to buckets without default encryption '
+                                 '(per-object SSE is always applied regardless of this flag). '
+                                 'Has no effect for non-s3:// destinations.')
+
+    env_import = env_sub.add_parser(
+        'import',
+        help='Import .env files from a bundle (age-encrypted or plaintext tar.gz)',
+    )
+    env_import.add_argument('source',
+                            help="Bundle path or '-' for stdin")
+    env_import.add_argument('--merge', choices=['keep-existing', 'prefer-incoming'],
+                            default='keep-existing',
+                            help=("Key-level merge mode. keep-existing (default) keeps "
+                                  "existing keys and adds new ones; prefer-incoming "
+                                  "overwrites with bundle values"))
+    env_import.add_argument('--replace-keys', metavar='KEYS', default='',
+                            help=("Comma-separated keys to force-overwrite from bundle "
+                                  "(other keys behave like keep-existing). "
+                                  "Cannot be combined with --replace"))
+    env_import.add_argument('--replace', action='store_true',
+                            help='Replace each target .env file wholesale (backup is taken)')
+    env_import.add_argument('--dry-run', action='store_true',
+                            help='Show planned diff without writing')
+    env_import.add_argument('--identity', action='append', default=[],
+                            metavar='FILE', dest='identities',
+                            help=("age / OpenSSH private key file (repeatable). "
+                                  "Default: ~/.ssh/id_ed25519, then ~/.ssh/id_rsa "
+                                  "(first existing one)"))
+    env_import.add_argument('--passphrase-env', metavar='VAR', default=None,
+                            help='Read passphrase from environment variable VAR')
+    env_import.add_argument('--passphrase-stdin', action='store_true',
+                            help='Read passphrase from the first line of stdin')
+    env_import.add_argument('--include-project', action='append', default=None,
+                            metavar='NAME', dest='include_projects',
+                            help='Limit to specified project (repeatable)')
+    env_import.add_argument('--exclude-project', action='append', default=[],
+                            metavar='NAME', dest='exclude_projects',
+                            help='Exclude project (repeatable)')
+    env_import.add_argument('--no-global', action='store_true',
+                            help='Do not import $DEVBASE_ROOT/.env')
+    env_import.add_argument('--no-metadata', action='store_true',
+                            help='Do not import $DEVBASE_ROOT/.env.sources.yml '
+                                 '(default behavior is reference-only copy; this fully ignores it)')
+    env_import.add_argument('--merge-metadata', action='store_true',
+                            help='Merge new source entries into existing .env.sources.yml '
+                                 '(machine-specific fields are preserved as-is from bundle; '
+                                 'run `devbase env sync` after import to refresh)')
+    env_import.add_argument('--backup-dir', metavar='DIR', default=None,
+                            help='Override backup directory '
+                                 '(default: $DEVBASE_ROOT/backups/env-import/<ts>)')
+    env_import.add_argument('--keep-last', type=int, default=10, metavar='N',
+                            help='Keep only the last N backup directories (default: 10, 0 to disable)')
 
 
 def _add_plugin_parser(subparsers):
@@ -250,14 +346,22 @@ def _create_parser():
     return parser
 
 
-def _resolve_prefix(input_cmd, candidates):
+def _resolve_prefix(input_cmd, candidates, preferences=None):
     """Resolve an abbreviated command to its full name via unique prefix matching.
 
-    Returns the full command name if exactly one candidate matches,
-    otherwise returns the input as-is (ambiguous or no match).
+    Returns the full command name if exactly one candidate matches.
+    If ambiguous, falls back to `preferences[input_cmd]` (if provided) to keep
+    backward compatibility with previously-unique abbreviations.
+    Otherwise returns the input as-is.
     """
     matches = [c for c in candidates if c.startswith(input_cmd)]
-    return matches[0] if len(matches) == 1 else input_cmd
+    if len(matches) == 1:
+        return matches[0]
+    if preferences and input_cmd in preferences:
+        preferred = preferences[input_cmd]
+        if preferred in matches:
+            return preferred
+    return input_cmd
 
 
 def _expand_argv():
@@ -273,7 +377,8 @@ def _expand_argv():
         cmd = sys.argv[1]
         for aliases, subcmds in SUBCMD_MAP.items():
             if cmd in aliases:
-                sys.argv[2] = _resolve_prefix(sys.argv[2], subcmds)
+                preferences = SUBCMD_PREFIX_PREFERENCES.get(aliases)
+                sys.argv[2] = _resolve_prefix(sys.argv[2], subcmds, preferences)
                 break
 
     # plugin repo sub-subcommand
