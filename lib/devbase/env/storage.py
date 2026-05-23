@@ -45,39 +45,13 @@ class LocalBackend:
     """ローカルファイルシステム"""
 
     def write_bytes(self, dest: str, data: bytes) -> None:
+        # 暗号化済みバンドルでも平文 export でも 0600 強制 (TOCTOU 回避)。
+        # 共通実装は io_common.write_secure_bytes へ集約。
+        from devbase.env import io_common as _io_common
+
         path = _to_local_path(dest)
         try:
-            if path.parent and not path.parent.exists():
-                path.parent.mkdir(parents=True, exist_ok=True)
-            # TOCTOU 回避: open(..., 'wb') 後に chmod すると、umask が緩い環境では
-            # 一瞬 0644 等で平文 export が露出する。
-            # os.open に mode=0o600 を渡し、O_CREAT|O_TRUNC|O_WRONLY で作成時点
-            # から 0600 を強制する。既存ファイルも書き込み前に chmod で権限を絞る。
-            if path.exists():
-                try:
-                    os.chmod(path, 0o600)
-                except OSError:
-                    # Windows 等で chmod が無効でも処理を続行
-                    pass
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-            fd = os.open(path, flags, 0o600)
-            try:
-                with os.fdopen(fd, 'wb') as f:
-                    f.write(data)
-            except BaseException:
-                # fdopen 失敗時は fd を明示的に閉じる (fdopen 成功時は with が close)
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                raise
-            # mode 引数が無視される環境 (Windows 等) でも後追いで chmod を試みる
-            try:
-                os.chmod(path, 0o600)
-            except OSError:
-                pass
-        except StorageError:
-            raise
+            _io_common.write_secure_bytes(path, data)
         except OSError as e:
             raise StorageError(f"書き込みに失敗しました ({path}): {e}") from e
 
@@ -223,38 +197,38 @@ class S3Backend:
         except Exception as e:
             code = self._error_code(e)
             if code == 'ServerSideEncryptionConfigurationNotFoundError':
-                msg = (
-                    f"S3 バケット '{bucket}' のデフォルト暗号化が未設定です。"
+                problem = f"S3 バケット '{bucket}' のデフォルト暗号化が未設定です。"
+                guidance = (
                     "バケットポリシーで SSE-KMS or SSE-S3 を有効化するか、"
                     "明示的に '--unsafe-allow-unencrypted-bucket' を指定してください "
                     "(オブジェクト単位の SSE はこのオプションに関係なく常に付与されます)"
                 )
                 if self._options.unsafe_allow_unencrypted_bucket:
-                    logger.warning("%s (unsafe フラグにより続行)", msg)
+                    logger.warning("%s (unsafe フラグにより続行)", problem)
                     return
-                raise StorageError(msg) from e
+                raise StorageError(f"{problem}{guidance}") from e
             if code in ('AccessDenied', 'AccessDeniedException'):
-                msg = (
+                problem = (
                     f"S3 バケット '{bucket}' の暗号化設定を確認できません "
                     "(GetBucketEncryption 権限がありません)。"
+                )
+                guidance = (
                     "バケットポリシーの確認が取れないため export を中止します。"
                     "権限を付与するか、'--unsafe-allow-unencrypted-bucket' を明示してください"
                 )
                 if self._options.unsafe_allow_unencrypted_bucket:
-                    logger.warning("%s (unsafe フラグにより続行)", msg)
+                    logger.warning("%s (unsafe フラグにより続行)", problem)
                     return
-                raise StorageError(msg) from e
+                raise StorageError(f"{problem}{guidance}") from e
             # MinIO / LocalStack 等の S3 互換ストレージでは
             # GetBucketEncryption が NotImplemented / MethodNotAllowed / 501 等を返す
             # ことがある。`--unsafe-allow-unencrypted-bucket` 指定時は逃げ道として
             # 警告のみで続行する (オブジェクト個別の SSE は引き続き付与される)。
-            msg = (
-                f"バケット暗号化設定の確認に失敗しました ({bucket}): {e}"
-            )
+            problem = f"バケット暗号化設定の確認に失敗しました ({bucket}): {e}"
             if self._options.unsafe_allow_unencrypted_bucket:
-                logger.warning("%s (unsafe フラグにより続行)", msg)
+                logger.warning("%s (unsafe フラグにより続行)", problem)
                 return
-            raise StorageError(msg) from e
+            raise StorageError(problem) from e
 
     def write_bytes(self, dest: str, data: bytes) -> None:
         bucket, key = _parse_s3_uri(dest)

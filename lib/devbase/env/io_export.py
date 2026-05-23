@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import getpass
-import os
+import getpass  # noqa: F401  (tests monkey-patch devbase.env.io_export.getpass)
 import re
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -16,12 +14,14 @@ from devbase.log import get_logger
 
 from devbase.env import bundle as _bundle
 from devbase.env import cipher as _cipher
+from devbase.env import io_common as _io_common
 from devbase.env import storage as _storage
 
 logger = get_logger(__name__)
 
-# 機密情報の検出パターン (平文出力時の警告用)
+# 平文出力時に "機密キーが含まれます" の警告を出す判定パターン
 _SENSITIVE_PATTERNS = ('KEY', 'SECRET', 'TOKEN', 'PASSWORD', 'CREDENTIALS', 'BASE64')
+_ENV_KEY_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=', re.MULTILINE)
 
 
 class ExportError(DevbaseError):
@@ -50,48 +50,17 @@ def _default_dest(force_unencrypted: bool) -> str:
     return f'./devbase-env-{ts}{suffix}'
 
 
-def _resolve_recipients(specs: Sequence[str]) -> List[str]:
-    """recipient 指定の解決。
-
-    空なら既定鍵を優先順 (``~/.ssh/id_ed25519.pub`` → ``~/.ssh/id_rsa.pub``) で
-    探索し、最初に見つかったものを利用する。
-    """
-    if specs:
-        return list(specs)
-    for path in _cipher.default_recipient_paths():
-        if path.exists():
-            logger.info("recipient 既定鍵を使用: %s", path)
-            return [f'@{path}']
-    return []
-
-
 def _read_passphrase(opts: ExportOptions) -> Optional[str]:
-    if opts.passphrase_env:
-        value = os.environ.get(opts.passphrase_env)
-        if not value:
-            raise ExportError(
-                f"環境変数 {opts.passphrase_env} が空または未設定です"
-            )
-        return value
-    if opts.passphrase_stdin:
-        # tty で対話実行している場合は getpass.getpass でエコー抑止
-        # (パイプ入力時は echo の概念がないので従来どおり stdin.readline で読む)。
-        if sys.stdin.isatty():
-            try:
-                return getpass.getpass("passphrase: ", stream=sys.stderr)
-            except EOFError as e:
-                raise ExportError("stdin からパスフレーズを読み取れませんでした") from e
-        line = sys.stdin.readline()
-        if not line:
-            raise ExportError("stdin からパスフレーズを読み取れませんでした")
-        return line.rstrip('\n')
-    return None
+    """既存テストとの互換のために残している thin wrapper。
+    実体は :mod:`devbase.env.io_common.read_passphrase`。"""
+    return _io_common.read_passphrase(
+        opts.passphrase_env, opts.passphrase_stdin, ExportError
+    )
 
 
-def _has_sensitive_keys(entries) -> List[str]:
-    """env 形式のテキストから機密キーを抽出する (平文出力時の警告用)"""
-    hits = set()
-    key_re = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=', re.MULTILINE)
+def _sensitive_keys(entries: Sequence[_bundle.BundleEntry]) -> List[str]:
+    """平文出力に含まれる機密キー候補を返す (警告表示用、.env エントリのみ走査)"""
+    hits: set[str] = set()
     for entry in entries:
         if not entry.arcname.endswith('.env'):
             continue
@@ -99,16 +68,13 @@ def _has_sensitive_keys(entries) -> List[str]:
             text = entry.data.decode('utf-8', errors='ignore')
         except Exception:
             continue
-        for key in key_re.findall(text):
-            upper = key.upper()
-            if any(p in upper for p in _SENSITIVE_PATTERNS):
+        for key in _ENV_KEY_RE.findall(text):
+            if any(p in key.upper() for p in _SENSITIVE_PATTERNS):
                 hits.add(key)
     return sorted(hits)
 
 
-def export(devbase_root: Path, opts: ExportOptions) -> int:
-    """export 本体。CLI ハンドラから呼ばれる"""
-    # 引数組み合わせの早期検証
+def _validate_options(opts: ExportOptions) -> None:
     if opts.passphrase_stdin and opts.dest == '-':
         raise ExportError(
             "DEST='-' (stdout) と --passphrase-stdin は併用できません "
@@ -116,6 +82,43 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
         )
     if opts.passphrase_env and opts.passphrase_stdin:
         raise ExportError("--passphrase-env と --passphrase-stdin は併用できません")
+
+
+def _encrypt_payload(tar_blob: bytes, opts: ExportOptions) -> bytes:
+    """``opts`` の鍵指定に従って tar.gz を暗号化する。鍵が無ければ既定鍵を試す"""
+    passphrase = _read_passphrase(opts)
+    recipients = (
+        [] if passphrase is not None
+        else _io_common.resolve_recipient_specs(opts.recipients)
+    )
+    if not recipients and not passphrase:
+        raise ExportError(
+            "暗号化キーが指定されていません。次のいずれかを指定してください:\n"
+            "  --recipient KEY            age / OpenSSH 公開鍵\n"
+            "  --passphrase-env VAR       環境変数からパスフレーズ取得\n"
+            "  --passphrase-stdin         stdin の最初の行をパスフレーズとして使用\n"
+            "  --force-unencrypted        平文 tar.gz として書き出す (機密キー検知時は警告)\n"
+            "  ~/.ssh/id_ed25519.pub または ~/.ssh/id_rsa.pub があれば "
+            "--recipient 省略時の既定として使用されます (ed25519 優先)"
+        )
+    return _cipher.encrypt(tar_blob, recipients=recipients, passphrase=passphrase)
+
+
+def _warn_if_plaintext_sensitive(entries: Sequence[_bundle.BundleEntry]) -> None:
+    sensitive = _sensitive_keys(entries)
+    if not sensitive:
+        return
+    head = ', '.join(sensitive[:10])
+    suffix = ' ...' if len(sensitive) > 10 else ''
+    logger.warning("平文 export に機密キーが含まれます: %s%s", head, suffix)
+    logger.warning(
+        "ファイルパーミッションは 0600 で書き出されますが、保管・転送時の暗号化を強く推奨します"
+    )
+
+
+def export(devbase_root: Path, opts: ExportOptions) -> int:
+    """export 本体。CLI ハンドラから呼ばれる"""
+    _validate_options(opts)
 
     entries = _bundle.make_entries_from_disk(
         devbase_root,
@@ -143,38 +146,18 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
             raise ExportError(
                 "--force-unencrypted は recipient / passphrase と併用できません"
             )
-        sensitive = _has_sensitive_keys(entries)
-        if sensitive:
-            logger.warning(
-                "平文 export に機密キーが含まれます: %s",
-                ', '.join(sensitive[:10]) + (' ...' if len(sensitive) > 10 else '')
-            )
-            logger.warning(
-                "ファイルパーミッションは 0600 で書き出されますが、保管・転送時の暗号化を強く推奨します"
-            )
+        _warn_if_plaintext_sensitive(entries)
         payload = tar_blob
     else:
-        passphrase = _read_passphrase(opts)
-        recipients = _resolve_recipients(opts.recipients) if passphrase is None else []
-        if not recipients and not passphrase:
-            raise ExportError(
-                "暗号化キーが指定されていません。次のいずれかを指定してください:\n"
-                "  --recipient KEY            age / OpenSSH 公開鍵\n"
-                "  --passphrase-env VAR       環境変数からパスフレーズ取得\n"
-                "  --passphrase-stdin         stdin の最初の行をパスフレーズとして使用\n"
-                "  --force-unencrypted        平文 tar.gz として書き出す (機密キー検知時は警告)\n"
-                "  ~/.ssh/id_ed25519.pub または ~/.ssh/id_rsa.pub があれば "
-                "--recipient 省略時の既定として使用されます (ed25519 優先)"
-            )
-        payload = _cipher.encrypt(tar_blob, recipients=recipients, passphrase=passphrase)
+        payload = _encrypt_payload(tar_blob, opts)
         logger.debug("暗号化後サイズ: %d bytes", len(payload))
 
     dest = opts.dest or _default_dest(opts.force_unencrypted)
     # S3 など backend 固有のオプションを渡したい場合は s3_options を組み立てる。
     # それ以外 (local/stdio) では未使用なので無害。
-    s3_options = _storage.S3Options.from_env(
+    s3_options = (_storage.S3Options.from_env(
         unsafe_allow_unencrypted_bucket=opts.unsafe_allow_unencrypted_bucket,
-    ) if _storage.is_s3(dest) else None
+    ) if _storage.is_s3(dest) else None)
     backend = _storage.resolve(dest, s3_options=s3_options)
     backend.write_bytes(dest, payload)
 

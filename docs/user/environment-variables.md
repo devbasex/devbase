@@ -240,9 +240,22 @@ ls ~/.aws/
 
 > **Warning:** 環境変数を変更した後は `devbase up` でコンテナを再起動してください。起動中のコンテナには反映されません。
 
+## 別マシンへの移行 / バックアップ
+
+複数プロジェクトの `.env` 群を 1 つのバンドルにまとめ、暗号化したまま転送・復元するには `devbase env export` / `devbase env import` を使います。詳細は [環境変数の export/import ガイド](env-export-import.md) を参照してください。
+
+```bash
+# 既存マシンで export (~/.ssh/id_ed25519.pub があれば鍵指定省略可)
+devbase env export ./bundle.dbenv
+
+# 新マシンで import (既定は keep-existing マージ)
+devbase env import ./bundle.dbenv
+```
+
 ## ベストプラクティス
 
 1. **機密情報は `.env` に格納する** -- Git 管理対象の `env` ファイルには機密情報を含めない
 2. **プロジェクト固有の設定は `-p` フラグを使う** -- グローバル設定を汚染しない
 3. **`env sync` を定期的に実行する** -- ホストマシンの認証情報更新後は必ず同期
 4. **`.env.sources.yml` を Git 管理しない** -- 環境固有のハッシュ情報のため
+5. **別マシンへの移行は `devbase env export` を使う** -- `scp -r` で個別コピーする代わりに、暗号化バンドル 1 ファイルで安全に移動できる ([詳細](env-export-import.md))
