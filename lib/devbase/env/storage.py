@@ -148,18 +148,22 @@ class S3Options:
 
 
 def _parse_s3_uri(uri: str) -> Tuple[str, str]:
-    """s3://bucket/key/path を (bucket, key) に分解する"""
-    parsed = urlparse(uri)
-    if parsed.scheme.lower() != 's3':
+    """s3://bucket/key/path を (bucket, key) に分解する
+
+    `urlparse` は S3 キー名に含まれる `?` / `#` を `query` / `fragment` として
+    切り落としてしまうため、AWS CLI の挙動に合わせてスキームを除去した上で
+    直接 `/` 分割する。
+    """
+    if not uri[:5].lower() == 's3://':
         raise StorageError(f"S3 URI が期待されますが: {uri!r}")
-    bucket = parsed.netloc
-    key = parsed.path.lstrip('/')
+    rest = uri[5:]
+    bucket, sep, key = rest.partition('/')
     if not bucket:
         raise StorageError(
             f"S3 URI のバケット名が空です: {uri!r} "
             "(s3://bucket/key の形式で指定してください)"
         )
-    if not key:
+    if not sep or not key:
         raise StorageError(
             f"S3 URI のキーが空です: {uri!r} "
             "(s3://bucket/key の形式で指定してください)"
@@ -188,7 +192,7 @@ class S3Backend:
         except ImportError as e:
             raise StorageError(
                 "S3 backend を使うには boto3 が必要です "
-                "(`pip install boto3` または `uv add boto3` を実行してください)"
+                "(`pip install 'devbase[s3]'` または `uv add 'devbase[s3]'` を実行してください)"
             ) from e
 
         kwargs = {}
@@ -246,9 +250,17 @@ class S3Backend:
                     logger.warning("%s (unsafe フラグにより続行)", msg)
                     return
                 raise StorageError(msg) from e
-            raise StorageError(
+            # MinIO / LocalStack 等の S3 互換ストレージでは
+            # GetBucketEncryption が NotImplemented / MethodNotAllowed / 501 等を返す
+            # ことがある。`--unsafe-allow-unencrypted-bucket` 指定時は逃げ道として
+            # 警告のみで続行する (オブジェクト個別の SSE は引き続き付与される)。
+            msg = (
                 f"バケット暗号化設定の確認に失敗しました ({bucket}): {e}"
-            ) from e
+            )
+            if self._options.unsafe_allow_unencrypted_bucket:
+                logger.warning("%s (unsafe フラグにより続行)", msg)
+                return
+            raise StorageError(msg) from e
 
     def write_bytes(self, dest: str, data: bytes) -> None:
         bucket, key = _parse_s3_uri(dest)

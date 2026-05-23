@@ -250,6 +250,20 @@ def test_parse_s3_uri_invalid():
         storage._parse_s3_uri("/tmp/foo")
 
 
+def test_parse_s3_uri_preserves_query_and_fragment_in_key():
+    """S3 のキー名は `?` / `#` を含めることができる。urlparse 由来の query/fragment
+    切り落としに退行していないことを検証する (AWS CLI と同じ挙動)"""
+    assert storage._parse_s3_uri("s3://bucket/key?with=query") == (
+        "bucket", "key?with=query"
+    )
+    assert storage._parse_s3_uri("s3://bucket/path/to#hash") == (
+        "bucket", "path/to#hash"
+    )
+    assert storage._parse_s3_uri("s3://bucket/a?b#c/d") == (
+        "bucket", "a?b#c/d"
+    )
+
+
 def test_s3_options_from_env_defaults(monkeypatch):
     for var in ('DEVBASE_S3_SSE', 'DEVBASE_S3_SSE_KMS_KEY_ID',
                 'DEVBASE_S3_ENDPOINT_URL', 'DEVBASE_S3_REGION'):
@@ -373,6 +387,31 @@ def test_s3_backend_write_allows_access_denied_with_unsafe_flag():
     assert any(name == 'put_object' for name, _ in fake.calls)
 
 
+def test_s3_backend_write_rejects_unknown_encryption_check_error():
+    """未知の GetBucketEncryption エラーは、unsafe フラグ無しでは中止する"""
+    backend = storage.S3Backend(storage.S3Options())
+    _attach_fake_client(backend, _FakeS3Client(
+        get_encryption_error=_make_aws_error('NotImplemented'),
+    ))
+    with pytest.raises(storage.StorageError, match="バケット暗号化設定の確認に失敗"):
+        backend.write_bytes("s3://bucket/k", b"x")
+
+
+def test_s3_backend_write_allows_unknown_encryption_error_with_unsafe_flag(caplog):
+    """S3 互換ストレージ (MinIO 等) で GetBucketEncryption が NotImplemented を
+    返すケース: unsafe フラグ指定時は警告のみで PutObject へ進む"""
+    backend = storage.S3Backend(storage.S3Options(
+        unsafe_allow_unencrypted_bucket=True,
+    ))
+    fake = _attach_fake_client(backend, _FakeS3Client(
+        get_encryption_error=_make_aws_error('NotImplemented'),
+    ))
+    with caplog.at_level('WARNING'):
+        backend.write_bytes("s3://bucket/k", b"x")
+    assert any('unsafe' in r.message for r in caplog.records)
+    assert any(name == 'put_object' for name, _ in fake.calls)
+
+
 def test_s3_backend_write_wraps_put_error():
     backend = storage.S3Backend(storage.S3Options())
     _attach_fake_client(backend, _FakeS3Client(
@@ -423,8 +462,10 @@ def test_s3_backend_raises_clear_error_when_boto3_missing(monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', fake_import)
-    with pytest.raises(storage.StorageError, match="boto3"):
+    with pytest.raises(storage.StorageError, match=r"devbase\[s3\]") as ei:
         backend.write_bytes("s3://bucket/k", b"x")
+    # boto3 という名前も併記されていること
+    assert "boto3" in str(ei.value)
 
 
 def test_s3_backend_get_client_passes_endpoint_and_region(monkeypatch):
