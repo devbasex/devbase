@@ -70,16 +70,21 @@ def resolve_recipient_specs(specs: Sequence[str]) -> List[str]:
 def resolve_identity_specs(specs: Sequence[str]) -> List[str]:
     """identity 指定の解決。
 
-    明示指定があればそのまま返す。空なら ``~/.ssh/id_ed25519`` → ``id_rsa`` の
-    順で存在する秘密鍵を探し、最初に見つかったものを返す。
+    明示指定があればそのまま返す。空なら ``~/.ssh/id_ed25519`` / ``id_rsa`` の
+    うち **存在するものをすべて** 返す。``pyrage.decrypt`` は複数 identity を
+    受け付け、バンドル内の暗号化対象と一致した identity だけ復号に使われるため、
+    両方を渡しておけば「どの鍵で暗号化されたか分からない」状況でも復号できる
+    (PR #13 gemini 指摘)。一方 ``resolve_recipient_specs`` は明確に「どの鍵で
+    暗号化するか」を選ぶ必要があるため最初の 1 つだけを返す (非対称な仕様)。
     """
     if specs:
         return list(specs)
+    found: List[str] = []
     for path in _cipher.default_identity_paths():
         if path.exists():
             logger.info("identity 既定鍵を使用: %s", path)
-            return [str(path)]
-    return []
+            found.append(str(path))
+    return found
 
 
 def write_secure_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:

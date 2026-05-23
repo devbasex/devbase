@@ -126,6 +126,25 @@ def test_resolve_recipient_at_path_rejects_only_comments(tmp_path):
         cipher.encrypt(b"x", recipients=[f"@{pub_path}"])
 
 
+def test_resolve_recipient_at_path_rejects_multiple_keys(tmp_path, x25519_keypair):
+    """@PATH ファイルに複数の鍵を列挙したら CipherError で明示的に拒否される。
+
+    暗黙に最初の 1 行だけ採用すると、`team_keys.txt` のような複数公開鍵ファイル
+    を渡したケースで「最初の 1 人」だけにしか暗号化されず、他メンバーの復号が
+    壊れる。誤運用を防ぐため明確にエラーを返す (PR #13 gemini 指摘)。
+    """
+    pub_a, _ = x25519_keypair
+    # 2 つ目の鍵を別途生成
+    pub_b = str(pyrage.x25519.Identity.generate().to_public())
+
+    team_keys = tmp_path / "team_keys.txt"
+    team_keys.write_text(
+        f"# alice\n{pub_a}\n# bob\n{pub_b}\n"
+    )
+    with pytest.raises(cipher.CipherError, match="複数行の鍵|1 鍵で指定"):
+        cipher.encrypt(b"x", recipients=[f"@{team_keys}"])
+
+
 def test_resolve_recipient_at_path_wraps_oserror(tmp_path, monkeypatch):
     """@PATH の read_text が OSError を投げた場合 CipherError に包んで送出"""
     rcpt_path = tmp_path / "rcpt.pub"

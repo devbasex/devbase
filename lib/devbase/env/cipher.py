@@ -50,13 +50,22 @@ def _resolve_recipient(spec: str, _depth: int = 0):
                 f"recipient ファイルの読み込みに失敗しました ({path}): {e}"
             ) from e
         # ファイル中に複数行 / コメント / 空行が混在していても扱えるよう、
-        # 空行と '#' で始まるコメント行を除いた最初の有効行を採用する。
+        # 空行と '#' で始まるコメント行を除いた有効行のみを取り出す。
         valid = [
             line.strip() for line in content.splitlines()
             if line.strip() and not line.strip().startswith('#')
         ]
         if not valid:
             raise CipherError(f"recipient ファイルに有効な行がありません: {path}")
+        if len(valid) > 1:
+            # 複数公開鍵を 1 ファイルに列挙したケース (team_keys.txt 等)。
+            # 暗黙に「最初の 1 人」だけ採用するとチーム運用で暗号化が壊れるため、
+            # 明示的に複数 `--recipient` で指定するよう要求する (PR #13 gemini 指摘)。
+            raise CipherError(
+                f"recipient ファイルに複数行の鍵が含まれています ({path}, {len(valid)} 件)。"
+                "複数の公開鍵で暗号化したい場合は `--recipient @file_a.pub --recipient @file_b.pub` "
+                "のように 1 ファイルにつき 1 鍵で指定してください"
+            )
         return _resolve_recipient(valid[0], _depth + 1)
 
     if spec.startswith('age1'):
