@@ -197,38 +197,38 @@ class S3Backend:
         except Exception as e:
             code = self._error_code(e)
             if code == 'ServerSideEncryptionConfigurationNotFoundError':
-                msg = (
-                    f"S3 バケット '{bucket}' のデフォルト暗号化が未設定です。"
+                problem = f"S3 バケット '{bucket}' のデフォルト暗号化が未設定です。"
+                guidance = (
                     "バケットポリシーで SSE-KMS or SSE-S3 を有効化するか、"
                     "明示的に '--unsafe-allow-unencrypted-bucket' を指定してください "
                     "(オブジェクト単位の SSE はこのオプションに関係なく常に付与されます)"
                 )
                 if self._options.unsafe_allow_unencrypted_bucket:
-                    logger.warning("%s (unsafe フラグにより続行)", msg)
+                    logger.warning("%s (unsafe フラグにより続行)", problem)
                     return
-                raise StorageError(msg) from e
+                raise StorageError(f"{problem}{guidance}") from e
             if code in ('AccessDenied', 'AccessDeniedException'):
-                msg = (
+                problem = (
                     f"S3 バケット '{bucket}' の暗号化設定を確認できません "
                     "(GetBucketEncryption 権限がありません)。"
+                )
+                guidance = (
                     "バケットポリシーの確認が取れないため export を中止します。"
                     "権限を付与するか、'--unsafe-allow-unencrypted-bucket' を明示してください"
                 )
                 if self._options.unsafe_allow_unencrypted_bucket:
-                    logger.warning("%s (unsafe フラグにより続行)", msg)
+                    logger.warning("%s (unsafe フラグにより続行)", problem)
                     return
-                raise StorageError(msg) from e
+                raise StorageError(f"{problem}{guidance}") from e
             # MinIO / LocalStack 等の S3 互換ストレージでは
             # GetBucketEncryption が NotImplemented / MethodNotAllowed / 501 等を返す
             # ことがある。`--unsafe-allow-unencrypted-bucket` 指定時は逃げ道として
             # 警告のみで続行する (オブジェクト個別の SSE は引き続き付与される)。
-            msg = (
-                f"バケット暗号化設定の確認に失敗しました ({bucket}): {e}"
-            )
+            problem = f"バケット暗号化設定の確認に失敗しました ({bucket}): {e}"
             if self._options.unsafe_allow_unencrypted_bucket:
-                logger.warning("%s (unsafe フラグにより続行)", msg)
+                logger.warning("%s (unsafe フラグにより続行)", problem)
                 return
-            raise StorageError(msg) from e
+            raise StorageError(problem) from e
 
     def write_bytes(self, dest: str, data: bytes) -> None:
         bucket, key = _parse_s3_uri(dest)
