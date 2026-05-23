@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -69,11 +71,13 @@ def _read_passphrase(opts: ExportOptions) -> Optional[str]:
             )
         return value
     if opts.passphrase_stdin:
-        import sys
-        # tty で対話実行している場合、ユーザーが「ハングしている」と誤解しないよう
-        # stderr へプロンプトを出してから stdin を待つ (パイプ入力時は出さない)。
+        # tty で対話実行している場合は getpass.getpass でエコー抑止
+        # (パイプ入力時は echo の概念がないので従来どおり stdin.readline で読む)。
         if sys.stdin.isatty():
-            print("passphrase: ", end='', file=sys.stderr, flush=True)
+            try:
+                return getpass.getpass("passphrase: ", stream=sys.stderr)
+            except EOFError as e:
+                raise ExportError("stdin からパスフレーズを読み取れませんでした") from e
         line = sys.stdin.readline()
         if not line:
             raise ExportError("stdin からパスフレーズを読み取れませんでした")

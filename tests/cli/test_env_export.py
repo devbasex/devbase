@@ -93,27 +93,56 @@ def test_export_rejects_both_passphrase_env_and_stdin(fake_root):
             dest="/dev/null", passphrase_env="X", passphrase_stdin=True))
 
 
-def test_read_passphrase_shows_prompt_on_tty(monkeypatch, capsys):
-    """tty 入力時は stderr に 'passphrase: ' プロンプトを表示する"""
-    fake_stdin = io.StringIO("hunter2\n")
+def test_read_passphrase_uses_getpass_on_tty(monkeypatch):
+    """tty 入力時は getpass.getpass を使い stdin.readline は呼ばない (エコー抑止)"""
+    fake_stdin = io.StringIO("should-not-be-read\n")
     monkeypatch.setattr(fake_stdin, "isatty", lambda: True, raising=False)
     monkeypatch.setattr("sys.stdin", fake_stdin)
 
+    calls = {}
+
+    def fake_getpass(prompt='', stream=None):
+        calls['prompt'] = prompt
+        calls['stream'] = stream
+        return "hunter2"
+
+    monkeypatch.setattr("devbase.env.io_export.getpass.getpass", fake_getpass)
+
     pw = _read_passphrase(ExportOptions(passphrase_stdin=True))
     assert pw == "hunter2"
-    err = capsys.readouterr().err
-    assert "passphrase: " in err
+    assert calls['prompt'] == "passphrase: "
+    assert fake_stdin.read() == "should-not-be-read\n"  # stdin は消費されていない
 
 
-def test_read_passphrase_no_prompt_on_pipe(monkeypatch, capsys):
-    """パイプ (非 tty) 入力時はプロンプトを出さない"""
+def test_read_passphrase_falls_back_to_stdin_on_pipe(monkeypatch, capsys):
+    """パイプ (非 tty) 入力時は getpass を使わず stdin.readline で読む"""
     fake_stdin = io.StringIO("hunter2\n")
     monkeypatch.setattr(fake_stdin, "isatty", lambda: False, raising=False)
     monkeypatch.setattr("sys.stdin", fake_stdin)
 
+    def fail_getpass(*args, **kwargs):
+        raise AssertionError("getpass.getpass should not be called for piped stdin")
+
+    monkeypatch.setattr("devbase.env.io_export.getpass.getpass", fail_getpass)
+
     pw = _read_passphrase(ExportOptions(passphrase_stdin=True))
     assert pw == "hunter2"
     assert "passphrase" not in capsys.readouterr().err
+
+
+def test_read_passphrase_tty_eof_raises_export_error(monkeypatch):
+    """tty で getpass が EOFError を投げた場合は ExportError に変換される"""
+    fake_stdin = io.StringIO("")
+    monkeypatch.setattr(fake_stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+
+    def raise_eof(*args, **kwargs):
+        raise EOFError()
+
+    monkeypatch.setattr("devbase.env.io_export.getpass.getpass", raise_eof)
+
+    with pytest.raises(ExportError, match="パスフレーズを読み取れません"):
+        _read_passphrase(ExportOptions(passphrase_stdin=True))
 
 
 def test_export_with_passphrase_env(fake_root, tmp_path, monkeypatch):
