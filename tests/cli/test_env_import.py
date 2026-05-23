@@ -943,3 +943,66 @@ def test_env_import_comment_only_existing_replace_reports_op_replace(
     assert len(snapshots) >= 1
     backed = (snapshots[0] / ".env").read_text()
     assert "# user-managed header (no kv yet)" in backed
+
+
+def test_env_import_merge_preserves_raw_unchanged_unquoted_dollar(
+        dest_root, age_keys, tmp_path):
+    """merge 経路で値が変更されていないキーは ``raw`` 行をそのまま温存し、
+    ``PATH=$HOME/bin`` のような未クオート値が ``PATH="\\$HOME/bin"`` に
+    勝手にエスケープされないこと (PR #13 codex 指摘)。
+
+    シェル ``source`` 時に ``$HOME`` の変数展開が効くか効かないかは
+    クオートの有無で意味が変わるため、merge 対象でない既存値は元の形式を
+    保たなければならない。
+    """
+    _, id_file = age_keys
+    pub_file, _ = age_keys
+
+    src_root = tmp_path / "raw-preserve-src"
+    src_root.mkdir()
+    # incoming 側には別キーだけ (PATH は触らない)
+    (src_root / ".env").write_text("INCOMING=v\n")
+    bundle_path = tmp_path / "raw-preserve.dbenv"
+    rc = export(src_root, ExportOptions(
+        dest=str(bundle_path), recipients=[f"@{pub_file}"]))
+    assert rc == 0
+
+    # 既存 dest .env に未クオートの $ を含む値を仕込む (シェルで展開される形)
+    (dest_root / ".env").write_text(
+        "PATH=$HOME/bin:/usr/local/bin\n"
+        "PLAIN=keep_me\n"
+    )
+    os.chmod(dest_root / ".env", 0o600)
+
+    rc = import_bundle(dest_root, ImportOptions(
+        source=str(bundle_path), identities=[str(id_file)],
+        merge='prefer-incoming'))
+    assert rc == 0
+
+    out = (dest_root / ".env").read_text()
+    # raw 行が温存されているので、$HOME はそのまま (\\$ にエスケープされていない)
+    assert "PATH=$HOME/bin:/usr/local/bin" in out, out
+    # 同じく PLAIN もそのまま
+    assert "PLAIN=keep_me" in out, out
+    # 新規追加された incoming キーは appended
+    assert "INCOMING=v" in out, out
+
+
+def test_env_import_filter_members_rejects_unknown_arcname():
+    """``filter_members`` が manifest 範囲外の未対応 arcname を黙って捨てず、
+    ``MergeError`` で明示的に止めること (PR #13 codex 指摘)。
+    """
+    from devbase.env._import_merge import MergeError, filter_members
+
+    members = {
+        'env/global.env': b'GLOBAL=1\n',
+        'env/secrets.yml': b'secret: x\n',  # 未対応 path
+    }
+    with pytest.raises(MergeError, match="未対応の arcname"):
+        filter_members(
+            members,
+            include_global=True,
+            include_metadata=True,
+            include_projects=None,
+            exclude_projects=(),
+        )

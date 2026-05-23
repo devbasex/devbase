@@ -105,15 +105,30 @@ def _resolve_identity(path_spec: str):
                 f"OpenSSH 秘密鍵の解釈に失敗しました ({path}): {e}"
             ) from e
 
-    if raw.strip().startswith(b'AGE-SECRET-KEY-1'):
-        try:
-            text = raw.decode('utf-8').strip()
-        except UnicodeDecodeError as e:
-            raise CipherError(f"age 秘密鍵が UTF-8 でデコードできません ({path}): {e}") from e
-        try:
-            return pyrage.x25519.Identity.from_str(text)
-        except Exception as e:
-            raise CipherError(f"age 秘密鍵の解釈に失敗しました ({path}): {e}") from e
+    # age-keygen が生成する秘密鍵ファイルは先頭に `# created: ...` などの
+    # コメント行を含むため、`raw.strip().startswith(b'AGE-SECRET-KEY-1')` では
+    # 検出できない。`_resolve_recipient` と同様に行単位で走査して、コメント /
+    # 空行を除いた最初の有効行が AGE-SECRET-KEY-1 で始まるかで判定する
+    # (PR #13 gemini 指摘)。
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        text = None
+    if text is not None:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            if stripped.startswith('AGE-SECRET-KEY-1'):
+                try:
+                    # pyrage.x25519.Identity.from_str は単独の AGE-SECRET-KEY-1
+                    # 行のみを受け付けるため、ファイル全体ではなく該当行を渡す。
+                    return pyrage.x25519.Identity.from_str(stripped)
+                except Exception as e:
+                    raise CipherError(
+                        f"age 秘密鍵の解釈に失敗しました ({path}): {e}"
+                    ) from e
+            break  # 最初の有効行が AGE-SECRET-KEY-1 でなければ age 鍵ではない
 
     # ヘッダから判別できなかった場合のフォールバック。OpenSSH 互換の他形式
     # (rsa 以外の PEM など) を pyrage に任せて受け付ける。

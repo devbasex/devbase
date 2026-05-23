@@ -176,3 +176,23 @@ def test_default_identity_paths_includes_ed25519():
     assert "id_ed25519" in names
     assert "id_rsa" in names
     assert names.index("id_ed25519") < names.index("id_rsa")
+
+
+def test_resolve_identity_accepts_age_keygen_output_with_comments(
+        tmp_path, x25519_keypair):
+    """``age-keygen`` が生成する秘密鍵ファイル (先頭に ``# created`` / ``# public key``
+    のコメント行) を age 鍵として正しく検出して復号できること (PR #13 gemini 指摘)。
+    """
+    pub, priv_str = x25519_keypair
+
+    # age-keygen の出力フォーマットを再現
+    keygen_output = (
+        f"# created: 2024-01-01T00:00:00Z\n"
+        f"# public key: {pub}\n"
+        f"{priv_str}\n"
+    )
+    id_path = tmp_path / "age-keygen.key"
+    id_path.write_text(keygen_output)
+
+    blob = cipher.encrypt(b"payload", recipients=[pub])
+    assert cipher.decrypt(blob, identities=[str(id_path)]) == b"payload"

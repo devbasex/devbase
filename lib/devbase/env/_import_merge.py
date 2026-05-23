@@ -19,7 +19,7 @@ import yaml
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
 
-from devbase.env.store import EnvEntry, EnvFile
+from devbase.env.store import EnvFile
 
 logger = get_logger(__name__)
 
@@ -85,9 +85,13 @@ def filter_members(
             continue
         m = _PROJECT_ENV_RE.match(arcname)
         if not m:
-            # 他の形式は manifest 検証で拒否されているはずだが念のため。
-            logger.debug("未対応の arcname を無視します: %s", arcname)
-            continue
+            # manifest 検証 (bundle._validate_manifest) は path のパターンを制限していないため、
+            # 未対応 arcname がここに来た場合は黙って捨てると "manifest と適用結果が食い違う"
+            # 整合性問題になる。明示的にエラーで止める (PR #13 codex 指摘)。
+            raise MergeError(
+                f"バンドルに未対応の arcname が含まれています: {arcname} "
+                "(対応形式: env/global.env / env/sources.yml / env/projects/<name>/.env)"
+            )
         name = m.group(1)
         if name in excluded:
             continue
@@ -104,24 +108,35 @@ def _merge_into_existing_bytes(existing_bytes: bytes,
     既存に無いキーは末尾に sorted 順で append。``merged`` から除外されたキーは
     出力からも除外する (現状の merge ロジック上発生しないが、安全側で対応)。
 
+    値が変更されていないキーは ``raw`` 行をそのまま温存して出力する。これにより
+    例えば ``PATH=$HOME/bin`` のような未クオート値が ``PATH="\\$HOME/bin"`` に
+    勝手にエスケープされて source 時の意味が変わるのを防ぐ (PR #13 codex 指摘)。
+    値が変わったキーと新規キーのみ ``EnvFile._format_kv_line`` でフォーマットする。
+
     ``EnvFile.dump_bytes`` で再シリアライズするとコメント・空行が失われるため、
     ``EnvFile.parse_entries`` ベースで再構成している (PR #15 gemini 指摘)。
     """
     seen: set[str] = set()
-    out_entries: List[EnvEntry] = []
+    out_lines: List[str] = []
     for e in EnvFile.parse_entries(existing_bytes):
         if e.kind != 'kv' or e.key is None:
-            out_entries.append(e)
+            out_lines.append(e.raw + '\n')
             continue
         if e.key in merged:
-            out_entries.append(EnvEntry(
-                kind='kv', raw=e.raw, key=e.key, value=merged[e.key]
-            ))
             seen.add(e.key)
+            new_value = merged[e.key]
+            if e.value == new_value:
+                # 値が変わっていないキーは元の raw 行を温存する (escape 形式や
+                # クオート有無を保持して source 時の意味が変わらないように)
+                out_lines.append(e.raw + '\n')
+            else:
+                out_lines.append(
+                    EnvFile._format_kv_line(e.key, new_value)
+                )
         # merged から除外されているキーは entries からも落とす
     for key in sorted(k for k in merged if k not in seen):
-        out_entries.append(EnvEntry(kind='kv', raw='', key=key, value=merged[key]))
-    return EnvFile.dump_entries_bytes(out_entries)
+        out_lines.append(EnvFile._format_kv_line(key, merged[key]))
+    return ''.join(out_lines).encode('utf-8')
 
 
 def _plan_replace(target: Path, arcname: str, incoming: Dict[str, str],
