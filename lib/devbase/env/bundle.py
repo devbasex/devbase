@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
+import re
 import tarfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,14 +14,32 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import yaml
 
 from devbase.errors import DevbaseError
+from devbase.log import get_logger
 
 try:
     from devbase import __version__ as _DEVBASE_VERSION
 except ImportError:
     _DEVBASE_VERSION = "unknown"
 
+logger = get_logger(__name__)
+
 MANIFEST_NAME = "manifest.yml"
 SUPPORTED_MANIFEST_VERSION = 1
+
+# import/export 共通の project 名 validator。
+# 詳細仕様は `_import_merge._PROJECT_ENV_RE` の docstring を参照:
+#   - 先頭文字: 英数字 / `_`  (`.` 始まりは `./` / `../` 等の特殊セグメント拒否のため)
+#   - 2文字目以降: 英数字 / `_` / `-` / `.`
+#   - `.` / `..` / 空文字 / 空白 / `/` を含む値は弾く
+# import 側 (`_import_merge.filter_members`) で `MergeError` にする一方、
+# export 側 (`make_entries_from_disk`) でも同じ validator を使い、
+# round-trip できない bundle を export しないようにする (PR #13 codex round 5 指摘)。
+_VALID_PROJECT_NAME_RE = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.\-]*$')
+
+
+def is_valid_project_name(name: str) -> bool:
+    """bundle arcname (`env/projects/<name>/.env`) に使える project 名かを判定する"""
+    return bool(_VALID_PROJECT_NAME_RE.match(name))
 
 
 class BundleError(DevbaseError):
@@ -244,6 +263,24 @@ def make_entries_from_disk(devbase_root,
             if name in excluded:
                 continue
             if included is not None and name not in included:
+                continue
+            # import 側で `_PROJECT_ENV_RE` により制限されている project 名と同じ
+            # validator で fail-fast する。空白や先頭 `.` などを含むディレクトリを
+            # そのまま arcname にすると export は成功しても後続の import が
+            # `未対応の arcname` で失敗し、round-trip できない bundle が生成される
+            # (PR #13 codex round 5 指摘)。明示エラーではなく "警告 + スキップ" 方針:
+            #   - レビュー指摘の選択肢が「明示エラー or skip with warning」だったこと
+            #   - 一時ディレクトリや leftover (e.g. `.git`, `.DS_Store` でも `.` 始まりで弾かれる)
+            #     が混在しても valid な project だけは export を成功させたいユースケース
+            # のため後者を採用。include_projects で明示指定された名前が invalid な
+            # ときも warning のみで落とすことで、暗黙的に round-trip 不能なバンドル
+            # を作らないようにする。
+            if not is_valid_project_name(name):
+                logger.warning(
+                    "project '%s' は bundle に含められない名前 (空白 / 先頭 `.` / `/` 等) "
+                    "のためスキップします: %s",
+                    name, proj_dir,
+                )
                 continue
             env_path = proj_dir / '.env'
             if env_path.is_file():

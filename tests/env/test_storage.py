@@ -448,6 +448,74 @@ def test_s3_backend_read_wraps_unknown_error():
         backend.read_bytes("s3://bucket/k")
 
 
+def test_s3_backend_rejects_no_such_bucket_even_with_unsafe_flag():
+    """`NoSuchBucket` は暗号化未設定とは無関係な根本エラーなので、
+    `--unsafe-allow-unencrypted-bucket` の有無に関わらず即座に StorageError。
+
+    unsafe フラグで「続行」しても後段の put_object が同じ NoSuchBucket で再失敗
+    するだけで、ユーザのトラブルシューティングを妨げる (PR #13 gemini round 5 指摘)。
+    """
+    # フラグ無し
+    backend = storage.S3Backend(storage.S3Options())
+    fake = _attach_fake_client(backend, _FakeS3Client(
+        get_encryption_error=_make_aws_error('NoSuchBucket'),
+    ))
+    with pytest.raises(storage.StorageError, match="NoSuchBucket"):
+        backend.write_bytes("s3://bucket/k", b"x")
+    # put_object は呼ばれない (encryption 段でエラーで止まる)
+    assert not any(name == 'put_object' for name, _ in fake.calls)
+
+    # unsafe フラグ有りでも同じ挙動 (続行しない)
+    backend2 = storage.S3Backend(storage.S3Options(
+        unsafe_allow_unencrypted_bucket=True,
+    ))
+    fake2 = _attach_fake_client(backend2, _FakeS3Client(
+        get_encryption_error=_make_aws_error('NoSuchBucket'),
+    ))
+    with pytest.raises(storage.StorageError, match="NoSuchBucket"):
+        backend2.write_bytes("s3://bucket/k", b"x")
+    assert not any(name == 'put_object' for name, _ in fake2.calls)
+
+
+def test_s3_backend_rejects_auth_or_network_error_without_aws_code():
+    """`response[Error][Code]` が取れないローカルエラー (NoCredentialsError /
+    EndpointConnectionError 等) は unsafe フラグの有無に関わらず即 StorageError。
+
+    botocore の ClientError ではなく、AWS API レスポンスを伴わない例外は
+    `_error_code` が None を返す。これを「未知の暗号化チェック失敗」として
+    unsafe フラグで続行すると put_object も同じ例外で失敗するだけなので、
+    早期にエラーを返してトラブルシューティングしやすくする
+    (PR #13 gemini round 5 指摘)。
+    """
+    # ClientError ではない通常の Exception (code が取れない)
+    class _LocalError(Exception):
+        pass
+
+    # フラグ無し
+    backend = storage.S3Backend(storage.S3Options())
+    fake = _attach_fake_client(backend, _FakeS3Client(
+        get_encryption_error=_LocalError(
+            "Unable to locate credentials"
+        ),
+    ))
+    with pytest.raises(storage.StorageError, match="接続・認証"):
+        backend.write_bytes("s3://bucket/k", b"x")
+    assert not any(name == 'put_object' for name, _ in fake.calls)
+
+    # unsafe フラグ有りでも同じ挙動 (続行しない)
+    backend2 = storage.S3Backend(storage.S3Options(
+        unsafe_allow_unencrypted_bucket=True,
+    ))
+    fake2 = _attach_fake_client(backend2, _FakeS3Client(
+        get_encryption_error=_LocalError(
+            "Could not connect to the endpoint URL"
+        ),
+    ))
+    with pytest.raises(storage.StorageError, match="接続・認証"):
+        backend2.write_bytes("s3://bucket/k", b"x")
+    assert not any(name == 'put_object' for name, _ in fake2.calls)
+
+
 def test_s3_backend_get_client_passes_endpoint_and_region(monkeypatch):
     """S3Options.endpoint_url / region が boto3.client へ正しく渡る"""
     backend = storage.S3Backend(storage.S3Options(

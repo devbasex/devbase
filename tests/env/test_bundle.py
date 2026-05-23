@@ -299,6 +299,116 @@ def test_make_entries_from_disk_ignores_directory_named_env(tmp_path):
     assert "env/sources.yml" in arcnames
 
 
+def test_is_valid_project_name():
+    """import/export 共通の project 名 validator の挙動を固定する"""
+    # OK ケース: 通常のディレクトリ名
+    assert bundle.is_valid_project_name("foo")
+    assert bundle.is_valid_project_name("foo-bar")
+    assert bundle.is_valid_project_name("foo.bar")
+    assert bundle.is_valid_project_name("_foo")
+    assert bundle.is_valid_project_name("p")
+    assert bundle.is_valid_project_name("project1")
+    assert bundle.is_valid_project_name("a_b-c.d")
+    # NG ケース: 空白 / 先頭 `.` / 先頭 `-` / 空文字 / `/` 含み
+    assert not bundle.is_valid_project_name("")
+    assert not bundle.is_valid_project_name(".")
+    assert not bundle.is_valid_project_name("..")
+    assert not bundle.is_valid_project_name(".hidden")
+    assert not bundle.is_valid_project_name("-foo")
+    assert not bundle.is_valid_project_name("foo bar")
+    assert not bundle.is_valid_project_name("foo/bar")
+    assert not bundle.is_valid_project_name("foo\nbar")
+
+
+def test_make_entries_from_disk_skips_invalid_project_names(tmp_path, caplog):
+    """空白 / 先頭 `.` 等の project ディレクトリは export 時に skip + warning で除外する。
+
+    import 側 (`_import_merge._PROJECT_ENV_RE`) は同じ name 規則を要求するため、
+    そのまま arcname にして export すると round-trip できない bundle が出来てしまう。
+    bundle.is_valid_project_name で validator を共有し、不正な名前は警告のみで
+    skip する (PR #13 codex round 5 指摘)。
+    """
+    root = tmp_path
+    valid = root / "projects" / "valid_proj"
+    valid.mkdir(parents=True)
+    (valid / ".env").write_text("OK=1\n")
+
+    # 各種 invalid なディレクトリ名 + .env
+    for bad_name in (".hidden", "..weird", "with space", "-leading-dash"):
+        d = root / "projects" / bad_name
+        d.mkdir(parents=True)
+        (d / ".env").write_text("BAD=1\n")
+
+    with caplog.at_level("WARNING"):
+        entries = bundle.make_entries_from_disk(root)
+
+    arcnames = {e.arcname for e in entries}
+    # 妥当な project だけが残り、`..weird` 等は arcname に出現しない
+    assert arcnames == {"env/projects/valid_proj/.env"}
+    # 各 invalid name について warning が出ていること
+    for bad_name in (".hidden", "..weird", "with space", "-leading-dash"):
+        assert any(
+            "スキップ" in r.message and bad_name in r.message
+            for r in caplog.records
+        ), f"warning が出ていない: {bad_name}"
+
+
+def test_make_entries_from_disk_invalid_name_explicitly_included_is_still_skipped(
+    tmp_path, caplog,
+):
+    """include_projects で明示指定された名前でも invalid なら skip する。
+
+    暗黙的に round-trip 不能なバンドルが作られるのを防ぐため、
+    CLI からの明示指定でも validator は適用される。
+    """
+    root = tmp_path
+    bad = root / "projects" / ".hidden"
+    bad.mkdir(parents=True)
+    (bad / ".env").write_text("X=1\n")
+
+    with caplog.at_level("WARNING"):
+        entries = bundle.make_entries_from_disk(
+            root, include_projects=[".hidden"], include_global=False,
+            include_metadata=False,
+        )
+
+    assert entries == []
+    assert any("スキップ" in r.message for r in caplog.records)
+
+
+def test_make_entries_from_disk_validator_matches_import_side():
+    """export 側 (is_valid_project_name) と import 側 (_PROJECT_ENV_RE) の
+    project 名規則が同期していることを契約として固定する。
+
+    名前を変えたい場合は両方を同時に更新する必要がある (PR #13 codex round 5)。
+    """
+    from devbase.env import _import_merge
+
+    samples = [
+        ("foo", True),
+        ("foo-bar", True),
+        ("_foo", True),
+        ("foo.bar", True),
+        ("", False),
+        (".", False),
+        ("..", False),
+        (".hidden", False),
+        ("-leading", False),
+        ("with space", False),
+    ]
+    for name, expected in samples:
+        export_ok = bundle.is_valid_project_name(name)
+        import_ok = bool(
+            _import_merge._PROJECT_ENV_RE.match(f"env/projects/{name}/.env")
+        )
+        assert export_ok == expected, f"export side: {name!r}"
+        assert import_ok == expected, f"import side: {name!r}"
+        # 重要: 両者が常に一致する (validator 同期)
+        assert export_ok == import_ok, (
+            f"export/import の project 名 validator が乖離: {name!r}"
+        )
+
+
 def test_unpack_rejects_unknown_tar_entries():
     """manifest に記載のないファイルが tar に紛れ込んでいたら BundleError"""
     import io, tarfile, yaml

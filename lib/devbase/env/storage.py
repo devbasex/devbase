@@ -190,12 +190,36 @@ class S3Backend:
           unsafe フラグがあれば警告のみ、無ければ StorageError
         - AccessDenied 等で確認できなかった場合は事故防止のため拒否
           (`--unsafe-allow-unencrypted-bucket` でのみバイパス可)
+        - NoSuchBucket / 認証・接続エラー (AWS API のレスポンスが取れない種類):
+          ``--unsafe-allow-unencrypted-bucket`` の有無にかかわらず即座に
+          StorageError を送出する。これらは暗号化未設定とは無関係な根本的失敗で、
+          unsafe フラグで「続行」しても後段の put_object が同じエラーで失敗する
+          だけなので、早期にエラーを返してユーザのトラブルシューティングを助ける
+          (PR #13 gemini round 5 指摘)。
         """
         try:
             client.get_bucket_encryption(Bucket=bucket)
             return
         except Exception as e:
             code = self._error_code(e)
+            # NoSuchBucket は暗号化設定の問題ではなくバケット不在。続行しても
+            # put_object が同じ NoSuchBucket で失敗するだけなので、unsafe フラグ
+            # の有無に関わらず即エラーで返す。
+            if code == 'NoSuchBucket':
+                raise StorageError(
+                    f"S3 バケット '{bucket}' が見つかりません "
+                    "(NoSuchBucket)。URI のバケット名・リージョン・"
+                    "エンドポイント設定を確認してください"
+                ) from e
+            # `code is None` は botocore.exceptions.ClientError ではなく
+            # NoCredentialsError / EndpointConnectionError 等の AWS API
+            # レスポンスを伴わないローカルエラー (認証・接続系)。
+            # これも続行する意味がないため即エラー。
+            if code is None:
+                raise StorageError(
+                    f"S3 への接続・認証設定に問題があります ({bucket}): {e} "
+                    "(AWS_PROFILE / 認証情報 / エンドポイント / ネットワークを確認してください)"
+                ) from e
             if code == 'ServerSideEncryptionConfigurationNotFoundError':
                 problem = f"S3 バケット '{bucket}' のデフォルト暗号化が未設定です。"
                 guidance = (

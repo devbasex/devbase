@@ -19,6 +19,7 @@ import yaml
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
 
+from devbase.env import bundle
 from devbase.env.store import EnvFile
 
 logger = get_logger(__name__)
@@ -31,7 +32,13 @@ logger = get_logger(__name__)
 #   - `.` / `..` のような特殊セグメント、空文字、`/` を含む値は弾く
 # bundle._validate_manifest や tar 展開側 (`..` のみ拒否) では塞ぎきれないため、
 # arcname を path に解決する側で project 名を制限する。
-_PROJECT_ENV_RE = re.compile(r'^env/projects/([A-Za-z0-9_][A-Za-z0-9_.\-]*)/\.env$')
+#
+# 名前部分の validator は export 側 (`bundle.is_valid_project_name`) と共有して
+# round-trip 不整合を防ぐ (PR #13 codex round 5 指摘)。ここでは arcname 全体パターン
+# (`env/projects/<name>/.env`) を捕捉するために改めて regex を組む。
+_PROJECT_ENV_RE = re.compile(
+    r'^env/projects/(' + bundle._VALID_PROJECT_NAME_RE.pattern.strip('^$') + r')/\.env$'
+)
 
 # import_bundle が許容する --merge モード一覧。CLI の choices と一致させる。
 MERGE_MODES: Tuple[str, ...] = ('keep-existing', 'prefer-incoming')
