@@ -1,9 +1,13 @@
 """Environment variable file store"""
 
+from __future__ import annotations
+
 import os
+import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, List
 
 from devbase.log import get_logger
 
@@ -49,6 +53,52 @@ def collect_key(env_file, key, *, auto_value=None, prompt=None, mask_after=10):
     return False
 
 
+@dataclass
+class EnvEntry:
+    """``.env`` ファイルの 1 行を表すトークン。
+
+    - ``kind='kv'`` のとき ``key`` / ``value`` が有効 (``raw`` は元の行全体)
+    - ``kind='comment'`` / ``kind='blank'`` のとき ``raw`` のみ有効
+
+    コメント・空行を保持してマージ出力するために使う (PR #15 gemini 指摘)。
+    """
+    kind: str  # 'kv' | 'comment' | 'blank'
+    raw: str = ''
+    key: Optional[str] = None
+    value: Optional[str] = None
+
+
+# ``EnvFile.dump_bytes`` / :meth:`EnvFile.save` で値を quote する閾値となる文字集合。
+# シェル ``source`` 時に展開・解釈されうる metachar をすべて含める。``$`` を含む値も
+# ``\$`` にエスケープして出力するため、ここで quoting 対象として捕捉する
+# (PR #15 gemini 指摘)。
+_NEEDS_QUOTE_CHARS = (' ', '"', "'", '$', '`', '\\', '<', '>', '|', '&', ';',
+                      '(', ')', '#')
+
+
+def _escape_double_quoted(value: str) -> str:
+    """``"..."`` 内で安全な escape を施す。
+
+    - ``\\`` → ``\\\\``
+    - ``"``  → ``\\"``
+    - ``\n`` → ``\\n`` (改行をリテラル化)
+    - ``$``  → ``\\$`` (``.env`` を ``source`` した際の変数展開を抑止)
+    """
+    return (value.replace('\\', '\\\\')
+                 .replace('"', '\\"')
+                 .replace('\n', '\\n')
+                 .replace('$', '\\$'))
+
+
+# ``_unescape_double_quoted`` 用の逆引きテーブル。``re.sub(r'\\.', ...)`` で
+# マッチした 2 文字を 1 文字に置換する。未知エスケープ (例: ``\x``) は
+# バックスラッシュごとそのまま残す必要があるため、``dict.get`` の default に
+# マッチ文字列自身を返す。末尾単独 ``\`` は ``\\.`` のドットが 2 文字目を
+# 要求するため自然にマッチせず、そのまま保持される。
+_DOUBLE_QUOTE_UNESCAPES = {'\\\\': '\\', '\\"': '"', '\\n': '\n', '\\$': '$'}
+_DOUBLE_QUOTE_UNESCAPE_RE = re.compile(r'\\.')
+
+
 class EnvFile:
     """
     .envファイルの読み書き・バックアップ・バリデーションを管理する。
@@ -59,48 +109,114 @@ class EnvFile:
         self._data: Dict[str, str] = {}
         self._loaded = False
 
+    @staticmethod
+    def parse_bytes(data: bytes) -> Dict[str, str]:
+        """bytes 列を load と同じ規則でパースして dict を返す (ファイル不要)
+
+        ``save`` / :meth:`EnvFile.dump_bytes` の inverse として振る舞うため、
+        ダブルクオート内の ``\\\\`` / ``\\"`` / ``\\n`` / ``\\$`` を unescape する。
+        formatter と round-trip 整合性が取れていないと、parse → format で
+        二重エスケープが発生する (PR #15 codex 指摘)。
+        """
+        result: Dict[str, str] = {}
+        for entry in EnvFile.parse_entries(data):
+            if entry.kind == 'kv' and entry.key is not None:
+                result[entry.key] = entry.value or ''
+        return result
+
+    @staticmethod
+    def parse_entries(data: bytes) -> List[EnvEntry]:
+        """``.env`` の各行をトークン化して返す。
+
+        コメント (``#`` 始まり) と空行は ``EnvEntry(kind='comment'|'blank', raw=...)``
+        として保持される。これにより merge 出力時に元のコメント/空白構造を残せる
+        (PR #15 gemini 指摘)。
+        """
+        entries: List[EnvEntry] = []
+        for raw_line in data.decode('utf-8').splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                entries.append(EnvEntry(kind='blank', raw=raw_line))
+                continue
+            if stripped.startswith('#'):
+                entries.append(EnvEntry(kind='comment', raw=raw_line))
+                continue
+            if '=' not in stripped:
+                # ``key=value`` 形式でない行は (滅多に無いが) 原文保持する
+                entries.append(EnvEntry(kind='comment', raw=raw_line))
+                continue
+            key, _, value = stripped.partition('=')
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                quote = value[0]
+                value = value[1:-1]
+                if quote == '"':
+                    value = EnvFile._unescape_double_quoted(value)
+            entries.append(EnvEntry(kind='kv', raw=raw_line, key=key, value=value))
+        return entries
+
+    @staticmethod
+    def _unescape_double_quoted(s: str) -> str:
+        """``save`` が double-quote 値に対して施した escape を 1 パスで戻す。
+
+        単純な逐次 ``replace`` は ``"\\\\n"`` (リテラル ``\\\\`` + ``n``) と
+        ``"\\n"`` (改行) の区別が付かないため、``\\<char>`` を一括で捉える
+        ``re.sub`` + 逆引き辞書で処理する。
+        """
+        return _DOUBLE_QUOTE_UNESCAPE_RE.sub(
+            lambda m: _DOUBLE_QUOTE_UNESCAPES.get(m.group(0), m.group(0)), s
+        )
+
+    @staticmethod
+    def _format_kv_line(key: str, value: str) -> str:
+        """1 つの ``key=value`` を ``.env`` 行 (末尾 ``\\n`` 含む) にフォーマットする"""
+        needs_quote = (
+            '\n' in value
+            or any(c in value for c in _NEEDS_QUOTE_CHARS)
+        )
+        if needs_quote:
+            return f'{key}="{_escape_double_quoted(value)}"\n'
+        return f'{key}={value}\n'
+
+    @staticmethod
+    def dump_bytes(data: Dict[str, str]) -> bytes:
+        """``save`` と同一フォーマットで dict をバイト列化する (ファイル不要)。
+
+        ``io_import`` 側でも merge 結果を bytes として持つ必要があるため、
+        フォーマット規則を 1 箇所 (このメソッド) に集約する (PR #15 gemini 指摘)。
+        """
+        lines = [EnvFile._format_kv_line(k, data[k]) for k in sorted(data)]
+        return ''.join(lines).encode('utf-8')
+
+    @staticmethod
+    def dump_entries_bytes(entries: List[EnvEntry]) -> bytes:
+        """``parse_entries`` で得た entries を ``.env`` バイト列に戻す。
+
+        ``kv`` エントリは現在の ``value`` を ``dump_bytes`` と同じ規則で再フォーマット
+        する。``comment`` / ``blank`` は ``raw`` をそのまま保持して出力する。
+        """
+        lines: List[str] = []
+        for e in entries:
+            if e.kind == 'kv' and e.key is not None:
+                lines.append(EnvFile._format_kv_line(e.key, e.value or ''))
+            else:
+                lines.append(e.raw + '\n')
+        return ''.join(lines).encode('utf-8')
+
     def load(self) -> Dict[str, str]:
         """ファイルを読み込みkey=valueをパースする"""
-        self._data = {}
-
         if not self.file_path.exists():
-            self._loaded = True
-            return self._data
-
-        with open(self.file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-
-                if not line or line.startswith('#'):
-                    continue
-
-                if '=' not in line:
-                    continue
-
-                key, _, value = line.partition('=')
-                key = key.strip()
-                value = value.strip()
-
-                if value and value[0] == value[-1] and value[0] in ('"', "'"):
-                    value = value[1:-1]
-
-                self._data[key] = value
-
+            self._data = {}
+        else:
+            self._data = self.parse_bytes(self.file_path.read_bytes())
         self._loaded = True
         return self._data
 
     def save(self) -> None:
         """現在のデータを.envファイルに保存する"""
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(self.file_path, 'w', encoding='utf-8') as f:
-            for key, value in sorted(self._data.items()):
-                if '\n' in value or any(c in value for c in (' ', '"', "'", '$', '`', '\\', '<', '>', '|', '&', ';', '(', ')', '#')):
-                    value = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-                    f.write(f'{key}="{value}"\n')
-                else:
-                    f.write(f'{key}={value}\n')
-
+        self.file_path.write_bytes(self.dump_bytes(self._data))
         os.chmod(self.file_path, 0o600)
 
     def backup(self) -> Optional[Path]:

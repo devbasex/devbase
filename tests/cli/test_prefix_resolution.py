@@ -48,3 +48,24 @@ def test_expand_argv_env_ex_resolves_to_export(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["devbase", "env", "ex"])
     cli._expand_argv()
     assert sys.argv == ["devbase", "env", "export"]
+
+
+def test_expand_argv_env_i_resolves_to_init(monkeypatch):
+    """`devbase env i` は `import` 追加後も `init` に解決される (後方互換 / PR #15 round5)"""
+    monkeypatch.setattr(sys, "argv", ["devbase", "env", "i"])
+    cli._expand_argv()
+    assert sys.argv == ["devbase", "env", "init"]
+
+
+def test_expand_argv_env_im_resolves_to_import(monkeypatch):
+    """`devbase env im` は唯一の候補なので `import` に解決される"""
+    monkeypatch.setattr(sys, "argv", ["devbase", "env", "im"])
+    cli._expand_argv()
+    assert sys.argv == ["devbase", "env", "import"]
+
+
+def test_expand_argv_env_in_resolves_to_init(monkeypatch):
+    """`devbase env in` も唯一の候補 (`init`) に解決される"""
+    monkeypatch.setattr(sys, "argv", ["devbase", "env", "in"])
+    cli._expand_argv()
+    assert sys.argv == ["devbase", "env", "init"]

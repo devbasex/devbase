@@ -12,7 +12,7 @@ _devbase_completions() {
 
     local commands="init status shell-rc container ct env plugin pl snapshot ss up down login build ps help"
     local container_subcommands="up down ps login logs scale build"
-    local env_subcommands="init sync list set get delete edit project export"
+    local env_subcommands="init sync list set get delete edit project export import"
     local plugin_subcommands="list install uninstall update info sync repo"
     local repo_subcommands="add remove list refresh"
     local snapshot_subcommands="create list restore copy delete rotate"
@@ -84,6 +84,11 @@ _devbase_completions() {
                     export)
                         if [[ "$cur" == -* ]]; then
                             COMPREPLY=($(compgen -W "--include-project --exclude-project --no-global --no-metadata --recipient --passphrase-env --passphrase-stdin --force-unencrypted" -- "$cur"))
+                        fi
+                        ;;
+                    import)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--merge --replace-keys --replace --dry-run --identity --passphrase-env --passphrase-stdin --include-project --exclude-project --no-global --no-metadata --merge-metadata --backup-dir --keep-last" -- "$cur"))
                         fi
                         ;;
                 esac
