@@ -45,17 +45,23 @@ class ExportOptions:
     unsafe_allow_unencrypted_bucket: bool = False
 
 
-def _default_dest(force_unencrypted: bool) -> str:
+def _generate_default_filename(force_unencrypted: bool) -> str:
+    """既定ファイル名 (prefix なし) を生成する共通ヘルパー。
+    `_default_dest` / `_default_filename` の両方から呼ぶことで結合度を下げる
+    (PR #25 cross-review round 1 gemini 指摘)。"""
     # microsecond まで含めて衝突を回避する (PR #22 codex round 3 指摘)
     ts = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     suffix = '.dbenv.tar.gz' if force_unencrypted else '.dbenv'
-    return f'./devbase-env-{ts}{suffix}'
+    return f'devbase-env-{ts}{suffix}'
+
+
+def _default_dest(force_unencrypted: bool) -> str:
+    return f'./{_generate_default_filename(force_unencrypted)}'
 
 
 def _default_filename(force_unencrypted: bool) -> str:
-    """`_default_dest` の `./` prefix を除いたファイル名部分のみを返す。
-    dest がディレクトリ的なときに append する用途。"""
-    return _default_dest(force_unencrypted).removeprefix('./')
+    """既定ファイル名 (prefix なし) を返す。dest がディレクトリ的なときに append する用途。"""
+    return _generate_default_filename(force_unencrypted)
 
 
 def _complete_dir_dest(dest: str, force_unencrypted: bool) -> str:
@@ -72,7 +78,7 @@ def _complete_dir_dest(dest: str, force_unencrypted: bool) -> str:
         return dest + name if dest.endswith('/') else dest
     # ローカル: 既存ディレクトリか末尾 `/` ならディレクトリ扱い
     p = Path(dest)
-    if dest.endswith('/') or dest.endswith(os.sep) or p.is_dir():
+    if dest.endswith(('/', os.sep)) or p.is_dir():
         return str(p / name)
     return dest
 

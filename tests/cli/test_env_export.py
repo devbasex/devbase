@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 
 import pyrage
@@ -390,8 +391,10 @@ def test_complete_dir_dest_local_trailing_slash(tmp_path, monkeypatch):
         "devbase.env.io_export._default_filename",
         lambda fu: "devbase-env-FIXED.dbenv",
     )
-    target = str(tmp_path / "nodir") + "/"
-    assert _complete_dir_dest(target, False).endswith("/nodir/devbase-env-FIXED.dbenv")
+    target_dir = tmp_path / "nodir"
+    target_path_with_slash = str(target_dir) + os.sep
+    expected_path = str(target_dir / "devbase-env-FIXED.dbenv")
+    assert _complete_dir_dest(target_path_with_slash, False) == expected_path
 
 
 def test_complete_dir_dest_local_normal_file_unchanged(tmp_path, monkeypatch):
