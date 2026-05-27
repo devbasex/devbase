@@ -140,9 +140,20 @@ def install_plugin(
                 "Use 'devbase plugin repo add <url>' to register manually."
             )
 
+    # Reject @ref on already-registered repos — the permanent clone tracks
+    # the default branch and does not support pinned refs.  This matches the
+    # validation for *unregistered* repos (line 126-133 above).
+    if source.ref:
+        raise PluginError(
+            f"Cannot use @{source.ref} with registered repository '{repo_url}'.\n"
+            "Permanent clones track the default branch and do not support pinned refs.\n"
+            f"Install without @ref:\n"
+            f"  devbase plugin install {repo_url}:{source.plugin_name}"
+        )
+
     _install_from_repo(
         registry, PluginSource(
-            repo=repo_url, plugin_name=source.plugin_name, ref=source.ref, linked=False,
+            repo=repo_url, plugin_name=source.plugin_name, ref=None, linked=False,
         ),
         install_all=install_all,
     )

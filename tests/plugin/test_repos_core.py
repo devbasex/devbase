@@ -52,9 +52,12 @@ def registry(devbase_root):
     return PluginRegistry(devbase_root)
 
 
-def _make_repo_dir(devbase_root: Path, owner_repo: str, plugins: list[dict]) -> Path:
-    """Create a fake repos/<owner>--<repo>/ with registry.yml and plugin dirs."""
-    dir_name = owner_repo.replace("/", "--")
+def _make_repo_dir(
+    devbase_root: Path, owner_repo: str, plugins: list[dict],
+    host: str = "github.com",
+) -> Path:
+    """Create a fake repos/<host>--<owner>--<repo>/ with registry.yml and plugin dirs."""
+    dir_name = f"{host}--{owner_repo.replace('/', '--')}"
     repo_dir = devbase_root / "repos" / dir_name
     repo_dir.mkdir(parents=True, exist_ok=True)
 
@@ -92,9 +95,12 @@ def _make_repo_dir(devbase_root: Path, owner_repo: str, plugins: list[dict]) -> 
     return repo_dir
 
 
-def _register_repo(registry: PluginRegistry, owner_repo: str, url: str, plugins: list[dict]):
+def _register_repo(
+    registry: PluginRegistry, owner_repo: str, url: str, plugins: list[dict],
+    host: str = "github.com",
+):
     """Register a repository in plugins.yml with local_path."""
-    dir_name = owner_repo.replace("/", "--")
+    dir_name = f"{host}--{owner_repo.replace('/', '--')}"
     repo = RegisteredRepository(
         name=owner_repo.split("/")[-1],
         url=url,
@@ -158,13 +164,27 @@ class TestGetReposDir:
 
 class TestUrlToReposDirname:
     def test_github_https(self):
-        assert _url_to_repos_dirname("https://github.com/devbasex/devbase-samples.git") == "devbasex--devbase-samples"
+        assert _url_to_repos_dirname("https://github.com/devbasex/devbase-samples.git") == "github.com--devbasex--devbase-samples"
 
     def test_github_ssh(self):
-        assert _url_to_repos_dirname("git@github.com:user/my-repo.git") == "user--my-repo"
+        assert _url_to_repos_dirname("git@github.com:user/my-repo.git") == "github.com--user--my-repo"
 
     def test_owner_with_hyphens(self):
-        assert _url_to_repos_dirname("https://github.com/takemi-ohama/devbase-ext.git") == "takemi-ohama--devbase-ext"
+        assert _url_to_repos_dirname("https://github.com/takemi-ohama/devbase-ext.git") == "github.com--takemi-ohama--devbase-ext"
+
+    def test_different_hosts_produce_different_dirnames(self):
+        """github.com and gitlab.com repos with same owner/name must not collide."""
+        gh = _url_to_repos_dirname("https://github.com/org/repo.git")
+        gl = _url_to_repos_dirname("https://gitlab.com/org/repo.git")
+        assert gh != gl
+        assert "github.com" in gh
+        assert "gitlab.com" in gl
+
+    def test_ssh_and_https_same_host_match(self):
+        """SSH and HTTPS variants of the same host produce the same dirname."""
+        https = _url_to_repos_dirname("https://github.com/user/repo.git")
+        ssh = _url_to_repos_dirname("git@github.com:user/repo.git")
+        assert https == ssh
 
 
 class TestDeriveRepoName:
@@ -205,7 +225,7 @@ class TestAddRepository:
 
             repo = registry.get_repository("testrepo")
             assert repo is not None
-            assert repo.local_path == "repos/testorg--testrepo"
+            assert repo.local_path == "repos/github.com--testorg--testrepo"
             assert repo.url == url
 
     def test_add_duplicate_url_raises(self, registry, devbase_root):
@@ -261,12 +281,12 @@ class TestRemoveRepository:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p1",
+            path="repos/github.com--testorg--testrepo/p1",
         ))
 
         projects_dir = devbase_root / "projects"
         link = projects_dir / "proj1"
-        link.symlink_to(Path("..") / "repos" / "testorg--testrepo" / "p1" / "projects" / "proj1")
+        link.symlink_to(Path("..") / "repos" / "github.com--testorg--testrepo" / "p1" / "projects" / "proj1")
 
         remove_repository(registry, "testrepo", force=True)
 
@@ -303,7 +323,7 @@ class TestRefreshRepository:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p1",
+            path="repos/github.com--testorg--testrepo/p1",
         ))
 
         with patch("devbase.plugin.repo_manager._git_pull"), \
@@ -352,13 +372,13 @@ class TestInstallPlugin:
 
         plugin = registry.get("myplugin")
         assert plugin is not None
-        assert plugin.path == "repos/testorg--testrepo/myplugin"
+        assert plugin.path == "repos/github.com--testorg--testrepo/myplugin"
         assert not plugin.linked
 
         proj_link = devbase_root / "projects" / "myproj"
         assert proj_link.is_symlink()
         target = os.readlink(str(proj_link))
-        assert "repos/testorg--testrepo/myplugin/projects/myproj" in target
+        assert "repos/github.com--testorg--testrepo/myplugin/projects/myproj" in target
 
     def test_install_all_plugins(self, registry, devbase_root):
         url = "https://github.com/testorg/testrepo.git"
@@ -384,6 +404,21 @@ class TestInstallPlugin:
         """@ref with unregistered repo raises PluginError (not NameError)."""
         with pytest.raises(PluginError, match="Cannot use @v1.0"):
             install_plugin(registry, "testorg/testrepo:myplugin@v1.0")
+
+    def test_install_ref_rejected_for_registered_repo(self, registry, devbase_root):
+        """@ref with already-registered repo also raises PluginError."""
+        url = "https://github.com/testorg/testrepo.git"
+        _make_repo_dir(devbase_root, "testorg/testrepo", [
+            {"name": "myplugin", "path": "myplugin", "projects": ["myproj"]},
+        ])
+        _register_repo(registry, "testorg/testrepo", url, [
+            {"name": "myplugin", "path": "myplugin"},
+        ])
+
+        # Use shorthand form — PluginSource.parse only extracts @ref for
+        # non-URL forms (testorg/repo:plugin@ref, not https://...@ref).
+        with pytest.raises(PluginError, match="Cannot use @v2.0"):
+            install_plugin(registry, "testorg/testrepo:myplugin@v2.0")
 
     def test_install_legacy_repo_without_local_path(self, registry, devbase_root):
         """Legacy repos (no local_path) are auto-migrated to persistent clone."""
@@ -419,12 +454,12 @@ class TestInstallPlugin:
 
             # Repo should now have local_path set
             updated = registry.get_repository_by_url(url)
-            assert updated.local_path == "repos/testorg--testrepo"
+            assert updated.local_path == "repos/github.com--testorg--testrepo"
 
             # Plugin should be installed
             plugin = registry.get("p1")
             assert plugin is not None
-            assert "repos/testorg--testrepo" in plugin.path
+            assert "repos/github.com--testorg--testrepo" in plugin.path
 
 
 class TestUninstallPlugin:
@@ -439,12 +474,12 @@ class TestUninstallPlugin:
         registry.add(InstalledPlugin(
             name="myplugin", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/myplugin",
+            path="repos/github.com--testorg--testrepo/myplugin",
         ))
 
         proj_link = devbase_root / "projects" / "myproj"
         proj_link.symlink_to(
-            Path("..") / "repos" / "testorg--testrepo" / "myplugin" / "projects" / "myproj"
+            Path("..") / "repos" / "github.com--testorg--testrepo" / "myplugin" / "projects" / "myproj"
         )
 
         uninstall_plugin(registry, "myplugin")
@@ -496,7 +531,7 @@ class TestSyncProjects:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p1",
+            path="repos/github.com--testorg--testrepo/p1",
         ))
 
         count = sync_projects(registry, verbose=False)
@@ -519,12 +554,12 @@ class TestSyncProjects:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url1,
             installed_at=registry.now_iso(),
-            path="repos/orgA--repo1/p1",
+            path="repos/github.com--orgA--repo1/p1",
         ))
         registry.add(InstalledPlugin(
             name="p2", version="1.0.0", source=url2,
             installed_at=registry.now_iso(),
-            path="repos/orgB--repo2/p2",
+            path="repos/github.com--orgB--repo2/p2",
         ))
 
         count = sync_projects(registry, verbose=False)
@@ -532,12 +567,12 @@ class TestSyncProjects:
         bare_link = devbase_root / "projects" / "shared"
         assert bare_link.is_symlink()
         target = os.readlink(str(bare_link))
-        assert "orgA--repo1" in target
+        assert "github.com--orgA--repo1" in target
 
-        suffix_link = devbase_root / "projects" / "shared.orgB--repo2"
+        suffix_link = devbase_root / "projects" / "shared.github.com--orgB--repo2"
         assert suffix_link.is_symlink()
         suffix_target = os.readlink(str(suffix_link))
-        assert "orgB--repo2" in suffix_target
+        assert "github.com--orgB--repo2" in suffix_target
 
     def test_no_collision_no_suffix(self, registry, devbase_root):
         url = "https://github.com/testorg/testrepo.git"
@@ -548,7 +583,7 @@ class TestSyncProjects:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p1",
+            path="repos/github.com--testorg--testrepo/p1",
         ))
 
         sync_projects(registry, verbose=False)
@@ -569,17 +604,17 @@ class TestSyncProjects:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url1,
             installed_at=registry.now_iso(),
-            path="repos/orgA--repo1/p1",
+            path="repos/github.com--orgA--repo1/p1",
         ))
         registry.add(InstalledPlugin(
             name="p2", version="1.0.0", source=url2,
             installed_at=registry.now_iso(),
-            path="repos/orgB--repo2/p2",
+            path="repos/github.com--orgB--repo2/p2",
         ))
 
         sync_projects(registry, verbose=False)
 
-        assert not (devbase_root / "projects" / "shared.orgA").exists()
+        assert not (devbase_root / "projects" / "shared.github.com--orgA--repo1").exists()
 
     def test_real_directory_skipped(self, registry, devbase_root):
         url = "https://github.com/testorg/testrepo.git"
@@ -590,7 +625,7 @@ class TestSyncProjects:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p1",
+            path="repos/github.com--testorg--testrepo/p1",
         ))
 
         (devbase_root / "projects" / "existing").mkdir()
@@ -605,7 +640,7 @@ class TestSyncProjects:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p1",
+            path="repos/github.com--testorg--testrepo/p1",
         ))
 
         count = sync_projects(registry, verbose=True)
@@ -621,7 +656,7 @@ class TestSyncProjects:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/orgA--repo1/p1",
+            path="repos/github.com--orgA--repo1/p1",
         ))
 
         plugins_dir = devbase_root / "plugins"
@@ -650,9 +685,9 @@ class TestExtractOwner:
     def test_repos_based(self):
         plugin = InstalledPlugin(
             name="p1", version="1.0.0", source="url",
-            installed_at="", path="repos/orgA--repo1/p1",
+            installed_at="", path="repos/github.com--orgA--repo1/p1",
         )
-        assert _extract_owner(plugin) == "orgA--repo1"
+        assert _extract_owner(plugin) == "github.com--orgA--repo1"
 
     def test_linked(self):
         plugin = InstalledPlugin(
@@ -666,10 +701,10 @@ class TestMakeRelativeTarget:
     def test_repos_based(self):
         plugin = InstalledPlugin(
             name="p1", version="1.0.0", source="url",
-            installed_at="", path="repos/orgA--repo1/p1",
+            installed_at="", path="repos/github.com--orgA--repo1/p1",
         )
         target = _make_relative_target(plugin, "myproj")
-        assert target == Path("..") / "repos" / "orgA--repo1" / "p1" / "projects" / "myproj"
+        assert target == Path("..") / "repos" / "github.com--orgA--repo1" / "p1" / "projects" / "myproj"
 
     def test_linked(self):
         plugin = InstalledPlugin(
@@ -695,7 +730,7 @@ class TestUpdatePlugin:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p1",
+            path="repos/github.com--testorg--testrepo/p1",
         ))
 
         from devbase.plugin.updater import update_plugin
@@ -732,12 +767,12 @@ class TestUpdatePlugin:
         registry.add(InstalledPlugin(
             name="p1", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p1",
+            path="repos/github.com--testorg--testrepo/p1",
         ))
         registry.add(InstalledPlugin(
             name="p2", version="1.0.0", source=url,
             installed_at=registry.now_iso(),
-            path="repos/testorg--testrepo/p2",
+            path="repos/github.com--testorg--testrepo/p2",
         ))
 
         from devbase.plugin.updater import update_plugin
@@ -745,3 +780,192 @@ class TestUpdatePlugin:
         with patch("devbase.plugin.updater._git_pull") as mock_pull:
             update_plugin(registry)
             assert mock_pull.call_count == 1
+
+
+class TestSnapshotPluginProjects:
+    """Tests for _snapshot_plugin_projects"""
+
+    def test_snapshot_captures_project_names(self, registry, devbase_root):
+        url = "https://github.com/testorg/testrepo.git"
+        _make_repo_dir(devbase_root, "testorg/testrepo", [
+            {"name": "p1", "path": "p1", "projects": ["proj1", "proj2"]},
+        ])
+        _register_repo(registry, "testorg/testrepo", url, [
+            {"name": "p1", "path": "p1"},
+        ])
+        plugin = InstalledPlugin(
+            name="p1", version="1.0.0", source=url,
+            installed_at=registry.now_iso(),
+            path="repos/github.com--testorg--testrepo/p1",
+        )
+        registry.add(plugin)
+
+        from devbase.plugin.updater import _snapshot_plugin_projects
+        snapshot = _snapshot_plugin_projects(registry, [plugin])
+
+        assert "p1" in snapshot
+        assert snapshot["p1"] == {"proj1", "proj2"}
+
+    def test_snapshot_missing_dir_returns_empty(self, registry, devbase_root):
+        """Plugin with missing directory returns empty set."""
+        url = "https://github.com/testorg/testrepo.git"
+        plugin = InstalledPlugin(
+            name="p1", version="1.0.0", source=url,
+            installed_at=registry.now_iso(),
+            path="repos/github.com--testorg--testrepo/p1",
+        )
+
+        from devbase.plugin.updater import _snapshot_plugin_projects
+        snapshot = _snapshot_plugin_projects(registry, [plugin])
+
+        assert "p1" in snapshot
+        assert snapshot["p1"] == set()
+
+
+class TestMigrateRemovedPlugin:
+    """Tests for _migrate_removed_plugin — detects project moves after rename/restructure."""
+
+    def test_migration_replaces_renamed_plugin(self, registry, devbase_root):
+        """Plugin renamed (old-name -> new-name) with same projects migrates correctly."""
+        url = "https://github.com/testorg/testrepo.git"
+
+        # Initial state: old plugin 'p1' with projects
+        old_dir = _make_repo_dir(devbase_root, "testorg/testrepo", [
+            {"name": "p1", "path": "p1", "projects": ["proj1", "proj2"]},
+        ])
+        _register_repo(registry, "testorg/testrepo", url, [
+            {"name": "p1", "path": "p1"},
+        ])
+        registry.add(InstalledPlugin(
+            name="p1", version="1.0.0", source=url,
+            installed_at=registry.now_iso(),
+            path="repos/github.com--testorg--testrepo/p1",
+        ))
+
+        # Snapshot projects BEFORE simulating pull
+        from devbase.plugin.updater import _snapshot_plugin_projects, _migrate_removed_plugin
+        plugin = registry.get("p1")
+        pre_pull = _snapshot_plugin_projects(registry, [plugin])
+
+        # Simulate git pull that renames p1 -> p1-renamed (delete old, create new)
+        import shutil
+        shutil.rmtree(old_dir / "p1")
+        new_plugin_dir = old_dir / "p1-renamed" / "projects"
+        new_plugin_dir.mkdir(parents=True)
+        (old_dir / "p1-renamed" / "plugin.yml").write_text("name: p1-renamed\nversion: 2.0.0\n")
+        (new_plugin_dir / "proj1").mkdir()
+        (new_plugin_dir / "proj2").mkdir()
+        # Update registry.yml to reflect new name
+        import yaml
+        with open(old_dir / "registry.yml", "w") as f:
+            yaml.dump({
+                "name": "testrepo",
+                "plugins": [{"name": "p1-renamed", "path": "p1-renamed", "description": "renamed"}],
+            }, f)
+
+        from devbase.plugin.installer import parse_registry_yml
+        reg_info = parse_registry_yml(old_dir)
+
+        result = _migrate_removed_plugin(
+            registry, plugin, old_dir, reg_info,
+            pre_pull_projects=pre_pull["p1"],
+        )
+
+        assert result is True
+        assert registry.get("p1") is None  # old removed
+        assert registry.get("p1-renamed") is not None  # new installed
+
+    def test_migration_no_replacement_returns_false(self, registry, devbase_root):
+        """When projects cannot be found in new plugins, migration fails gracefully."""
+        url = "https://github.com/testorg/testrepo.git"
+
+        _make_repo_dir(devbase_root, "testorg/testrepo", [
+            {"name": "p1", "path": "p1", "projects": ["proj1"]},
+        ])
+        _register_repo(registry, "testorg/testrepo", url, [
+            {"name": "p1", "path": "p1"},
+        ])
+        registry.add(InstalledPlugin(
+            name="p1", version="1.0.0", source=url,
+            installed_at=registry.now_iso(),
+            path="repos/github.com--testorg--testrepo/p1",
+        ))
+
+        from devbase.plugin.updater import _snapshot_plugin_projects, _migrate_removed_plugin
+        plugin = registry.get("p1")
+        pre_pull = _snapshot_plugin_projects(registry, [plugin])
+
+        # Simulate pull that removes all plugins (empty registry)
+        import shutil
+        clone_dir = devbase_root / "repos" / "github.com--testorg--testrepo"
+        shutil.rmtree(clone_dir / "p1")
+        import yaml
+        with open(clone_dir / "registry.yml", "w") as f:
+            yaml.dump({"name": "testrepo", "plugins": []}, f)
+
+        from devbase.plugin.installer import parse_registry_yml
+        reg_info = parse_registry_yml(clone_dir)
+
+        result = _migrate_removed_plugin(
+            registry, plugin, clone_dir, reg_info,
+            pre_pull_projects=pre_pull["p1"],
+        )
+
+        assert result is False
+
+    def test_migration_empty_projects_removes_plugin(self, registry, devbase_root):
+        """Plugin with no projects is simply removed."""
+        url = "https://github.com/testorg/testrepo.git"
+
+        _make_repo_dir(devbase_root, "testorg/testrepo", [
+            {"name": "p1", "path": "p1", "projects": []},
+        ])
+        _register_repo(registry, "testorg/testrepo", url, [
+            {"name": "p1", "path": "p1"},
+        ])
+        registry.add(InstalledPlugin(
+            name="p1", version="1.0.0", source=url,
+            installed_at=registry.now_iso(),
+            path="repos/github.com--testorg--testrepo/p1",
+        ))
+
+        from devbase.plugin.updater import _migrate_removed_plugin
+        from devbase.plugin.installer import parse_registry_yml
+        plugin = registry.get("p1")
+        clone_dir = devbase_root / "repos" / "github.com--testorg--testrepo"
+        reg_info = parse_registry_yml(clone_dir)
+
+        # No pre_pull_projects means read from disk — dir exists but no projects
+        result = _migrate_removed_plugin(registry, plugin, clone_dir, reg_info)
+
+        assert result is True
+        assert registry.get("p1") is None
+
+
+class TestRefreshWithPrePullSnapshot:
+    """Verify refresh_repository passes pre_pull snapshot to _update_repo_plugins."""
+
+    def test_refresh_passes_pre_pull_projects(self, registry, devbase_root):
+        url = "https://github.com/testorg/testrepo.git"
+        _make_repo_dir(devbase_root, "testorg/testrepo", [
+            {"name": "p1", "path": "p1", "projects": ["proj1"]},
+        ])
+        _register_repo(registry, "testorg/testrepo", url, [
+            {"name": "p1", "path": "p1"},
+        ])
+        registry.add(InstalledPlugin(
+            name="p1", version="1.0.0", source=url,
+            installed_at=registry.now_iso(),
+            path="repos/github.com--testorg--testrepo/p1",
+        ))
+
+        with patch("devbase.plugin.repo_manager._git_pull"), \
+             patch("devbase.plugin.updater._update_repo_plugins", return_value=[]) as mock_update:
+            refresh_repository(registry, "testrepo")
+
+            mock_update.assert_called_once()
+            call_kwargs = mock_update.call_args
+            assert "pre_pull_projects" in call_kwargs.kwargs
+            pre = call_kwargs.kwargs["pre_pull_projects"]
+            assert "p1" in pre
+            assert "proj1" in pre["p1"]

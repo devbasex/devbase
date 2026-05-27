@@ -53,15 +53,39 @@ def _derive_repo_name(url: str) -> str:
     return segments[-1] if segments else name
 
 
-def _url_to_repos_dirname(url: str) -> str:
-    """Convert a repo URL to a repos/ directory name using owner--repo format.
+def _extract_host(url: str) -> str:
+    """Extract the hostname from a git URL (HTTPS or SSH).
 
     Examples:
-        https://github.com/devbasex/devbase-samples.git -> devbasex--devbase-samples
-        git@github.com:user/my-repo.git -> user--my-repo
+        https://github.com/devbasex/repo.git -> github.com
+        git@gitlab.com:user/repo.git -> gitlab.com
     """
+    stripped = url.rstrip('/')
+    if '@' in stripped and ':' in stripped and not stripped.startswith('http'):
+        # SSH form: git@host:owner/repo.git
+        after_at = stripped.split('@', 1)[1]
+        return after_at.split(':', 1)[0]
+    from urllib.parse import urlparse
+    parsed = urlparse(stripped)
+    return parsed.hostname or "unknown"
+
+
+def _url_to_repos_dirname(url: str) -> str:
+    """Convert a repo URL to a repos/ directory name using host--owner--repo format.
+
+    Includes the hostname so that repos from different hosts (e.g. github.com
+    vs gitlab.com) with the same owner/repo do not collide.  SSH and HTTPS
+    variants of the same host produce the same dirname, enabling duplicate
+    detection.
+
+    Examples:
+        https://github.com/devbasex/devbase-samples.git -> github.com--devbasex--devbase-samples
+        git@github.com:user/my-repo.git -> github.com--user--my-repo
+        https://gitlab.com/user/my-repo.git -> gitlab.com--user--my-repo
+    """
+    host = _extract_host(url)
     owner_repo = _derive_repo_name(url)
-    return owner_repo.replace('/', '--')
+    return f"{host}--{owner_repo.replace('/', '--')}"
 
 
 def _is_repo_dirty(repo_dir: Path) -> tuple[bool, str]:
@@ -268,11 +292,11 @@ def add_repository(
 
     logger.info("Repository registered: %s (%s)", repo_name, repo_url)
     if plugins:
-        print("Available plugins:")
+        logger.info("Available plugins:")
         for p in plugins:
             installed = registry.get(p.name)
             status = " (installed)" if installed else ""
-            print(f"  - {p.name}: {p.description}{status}")
+            logger.info("  - %s: %s%s", p.name, p.description, status)
 
 
 def remove_repository(
@@ -329,16 +353,16 @@ def show_repositories(registry: PluginRegistry) -> None:
 
     for repo in repos:
         local_info = f" [{repo.local_path}]" if repo.local_path else ""
-        print(f"{repo.name} ({repo.url}){local_info}")
+        logger.info("%s (%s)%s", repo.name, repo.url, local_info)
         if repo.plugins:
             for p in repo.plugins:
                 status = " [installed]" if p.name in installed_names else ""
-                print(f"  - {p.name}: {p.description}{status}")
+                logger.info("  - %s: %s%s", p.name, p.description, status)
         else:
-            print("  (no plugins)")
-        print()
+            logger.info("  (no plugins)")
+        logger.info("")
 
-    print(f"Total: {len(repos)} repository(ies)")
+    logger.info("Total: %d repository(ies)", len(repos))
 
 
 def refresh_repository(
@@ -373,6 +397,14 @@ def refresh_repository(
             "Remove and re-add the repository to re-clone."
         )
 
+    # Snapshot installed plugin project names BEFORE git pull so that
+    # migration can still detect where old projects moved even after
+    # the working tree is updated by pull.
+    from .updater import _snapshot_plugin_projects
+    installed = registry.list_installed()
+    repo_installed = [p for p in installed if p.source == repo.url and not p.linked]
+    pre_pull_projects = _snapshot_plugin_projects(registry, repo_installed)
+
     try:
         _git_pull(clone_dir)
     except PluginError as e:
@@ -397,7 +429,6 @@ def refresh_repository(
     ]
     new_plugin_names = {p.name for p in plugins}
 
-    installed = registry.list_installed()
     installed_names = {p.name for p in installed}
     removed_installed = (old_plugin_names - new_plugin_names) & installed_names
     if removed_installed:
@@ -421,7 +452,10 @@ def refresh_repository(
     # paths) are reflected in the installed state.
     from .updater import _update_repo_plugins
     from .syncer import sync_projects
-    repo_errors = _update_repo_plugins(registry, repo.url, clone_dir)
+    repo_errors = _update_repo_plugins(
+        registry, repo.url, clone_dir,
+        pre_pull_projects=pre_pull_projects,
+    )
     if repo_errors:
         for err in repo_errors:
             logger.warning("  %s", err)
@@ -430,11 +464,11 @@ def refresh_repository(
 
     logger.info("Repository refreshed: %s", repo.name)
     if plugins:
-        print("Available plugins:")
+        logger.info("Available plugins:")
         for p in plugins:
             installed_p = registry.get(p.name)
             status = " (installed)" if installed_p else ""
-            print(f"  - {p.name}: {p.description}{status}")
+            logger.info("  - %s: %s%s", p.name, p.description, status)
 
 
 def add_official_repository(registry: PluginRegistry) -> bool:
