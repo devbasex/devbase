@@ -337,12 +337,15 @@ def _install_from_repo(
         )
         sync_projects(registry)
     else:
-        print(f"Available plugins in {source.repo}:")
+        logger.info("Available plugins in %s:", source.repo)
         for entry in reg_info.plugins:
             installed = registry.get(entry.name)
             status = " (installed)" if installed else ""
-            print(f"  {entry.name}: {entry.description}{status}")
-        print(f"\nUse 'devbase plugin install {source.repo}:PLUGIN_NAME' to install")
+            logger.info("  %s: %s%s", entry.name, entry.description, status)
+        logger.info(
+            "Use 'devbase plugin install %s:PLUGIN_NAME' to install",
+            source.repo,
+        )
         raise PluginError("No plugin name specified")
 
 

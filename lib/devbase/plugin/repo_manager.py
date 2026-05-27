@@ -186,6 +186,24 @@ def add_repository(
             "Use 'devbase plugin repo refresh' to update the plugin list."
         )
 
+    # Detect duplicate registration via SSH/HTTPS URL variants.
+    # _url_to_repos_dirname normalizes both forms to the same dirname,
+    # so we compare against existing repos to prevent redundant clones.
+    new_dirname = _url_to_repos_dirname(repo_url)
+    for repo in registry.list_repositories():
+        if _url_to_repos_dirname(repo.url) == new_dirname and repo.url != repo_url:
+            logger.warning(
+                "Repository '%s' (%s) appears to be the same as '%s' "
+                "(URL variant: SSH vs HTTPS). Skipping duplicate registration.",
+                repo.name, repo.url, repo_url,
+            )
+            raise RepositoryError(
+                f"Repository already registered under a different URL variant: "
+                f"{repo.name} ({repo.url})\n"
+                "Both SSH and HTTPS URLs resolve to the same repository.\n"
+                "Use 'devbase plugin repo refresh' to update the existing entry."
+            )
+
     repos_dir = registry.get_repos_dir()
     repos_dir.mkdir(exist_ok=True)
 
