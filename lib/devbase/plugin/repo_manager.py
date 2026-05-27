@@ -110,8 +110,29 @@ def _is_repo_dirty(repo_dir: Path) -> tuple[bool, str]:
 def _git_pull(repo_dir: Path) -> None:
     """Run git pull in a repository directory.
 
-    Raises PluginError on failure.
+    Raises PluginError on failure.  Detects missing upstream tracking branch
+    and provides an actionable error message.
     """
+    # Pre-check: verify an upstream tracking branch is set.
+    # Without it, `git pull` will fail with a confusing message.
+    upstream = subprocess.run(
+        ['git', 'rev-parse', '--abbrev-ref', '@{u}'],
+        capture_output=True, text=True, cwd=str(repo_dir),
+    )
+    if upstream.returncode != 0:
+        # Attempt to detect default remote branch and set it
+        branch_result = subprocess.run(
+            ['git', 'branch', '--show-current'],
+            capture_output=True, text=True, cwd=str(repo_dir),
+        )
+        current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "unknown"
+        raise PluginError(
+            f"git pull failed in {repo_dir}: no upstream tracking branch.\n"
+            f"Current branch '{current_branch}' has no remote to pull from.\n"
+            "This can happen if the branch was changed manually in repos/.\n"
+            f"Fix with: git -C {repo_dir} branch --set-upstream-to=origin/{current_branch}"
+        )
+
     try:
         subprocess.run(
             ['git', 'pull'],
@@ -345,6 +366,17 @@ def refresh_repository(
         plugins=plugins,
     )
     registry.add_repository(updated_repo)
+
+    # After pull, update installed plugin metadata (version, path) and
+    # re-sync project symlinks so that registry.yml changes (e.g. renamed
+    # paths) are reflected in the installed state.
+    from .updater import _update_repo_plugins
+    from .syncer import sync_projects
+    repo_errors = _update_repo_plugins(registry, repo.url, clone_dir)
+    if repo_errors:
+        for err in repo_errors:
+            logger.warning("  %s", err)
+    sync_projects(registry)
 
     logger.info("Repository refreshed: %s", repo.name)
     if plugins:

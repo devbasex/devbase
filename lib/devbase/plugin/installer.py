@@ -123,6 +123,14 @@ def install_plugin(
     # `devbase plugin install user/repo:plugin-name` keeps working without
     # a prior `repo add`.
     if not registry.get_repository_by_url(repo_url):
+        if source.ref:
+            raise PluginError(
+                f"Cannot use @{source.ref} with unregistered repository '{repo_url}'.\n"
+                "Permanent clones track the default branch and do not support pinned refs.\n"
+                "Register the repository first, then install without @ref:\n"
+                f"  devbase plugin repo add {url}\n"
+                f"  devbase plugin install {url}:{source.plugin_name}"
+            )
         from .repo_manager import add_repository
         try:
             add_repository(registry, repo_url)
