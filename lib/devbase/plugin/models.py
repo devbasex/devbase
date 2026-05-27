@@ -151,18 +151,22 @@ class RegisteredRepository:
     name: str
     url: str
     added_at: str = ""
+    local_path: str = ""
     plugins: list[AvailablePlugin] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             'name': self.name,
             'url': self.url,
             'added_at': self.added_at,
-            'plugins': [
-                {'name': p.name, 'description': p.description, 'path': p.path}
-                for p in self.plugins
-            ],
         }
+        if self.local_path:
+            d['local_path'] = self.local_path
+        d['plugins'] = [
+            {'name': p.name, 'description': p.description, 'path': p.path}
+            for p in self.plugins
+        ]
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> 'RegisteredRepository':
@@ -178,6 +182,7 @@ class RegisteredRepository:
             name=data.get('name', ''),
             url=data.get('url', ''),
             added_at=data.get('added_at', ''),
+            local_path=data.get('local_path', ''),
             plugins=plugins,
         )
 

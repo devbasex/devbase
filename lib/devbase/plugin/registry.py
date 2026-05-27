@@ -85,8 +85,12 @@ class PluginRegistry:
         return False
 
     def get_plugins_dir(self) -> Path:
-        """Get the plugins directory path"""
+        """Get the plugins directory path (used for --link installs only)"""
         return self.devbase_root / 'plugins'
+
+    def get_repos_dir(self) -> Path:
+        """Get the repos directory path (persistent git clones)"""
+        return self.devbase_root / 'repos'
 
     def get_projects_dir(self) -> Path:
         """Get the projects directory path"""

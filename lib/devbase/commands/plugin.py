@@ -149,7 +149,8 @@ def cmd_repo(devbase_root: Path, args) -> int:
 
     handlers = {
         'add':     lambda: add_repository(registry, args.url, name=args.name),
-        'remove':  lambda: remove_repository(registry, args.name),
+        'remove':  lambda: remove_repository(registry, args.name,
+                                               force=getattr(args, 'force', False)),
         'list':    lambda: show_repositories(registry),
         'refresh': lambda: _repo_refresh(registry, args),
     }

@@ -40,84 +40,121 @@ def discover_projects(plugin_dir: Path) -> list[str]:
     ]
 
 
+def _extract_owner(plugin: InstalledPlugin) -> str:
+    """Extract owner identifier from a plugin for suffix generation.
+
+    For repos/-based plugins: owner part from repos/<owner>--<repo>/<plugin>
+    For --link plugins: basename of the source path
+    """
+    if plugin.linked:
+        return Path(plugin.source).name if plugin.source else plugin.name
+
+    parts = plugin.path.split('/')
+    if len(parts) >= 2 and parts[0] == 'repos':
+        dir_name = parts[1]
+        if '--' in dir_name:
+            return dir_name.split('--', 1)[0]
+    return plugin.name
+
+
 def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
     """Synchronize project symlinks from all installed plugins.
 
-    Creates symlinks in projects/ pointing to plugins/*/projects/*
+    Creates symlinks in projects/ pointing to plugin directories:
+    - repos/-based plugins: projects/<proj> -> ../repos/<owner>--<repo>/<plugin>/projects/<proj>
+    - --link plugins: projects/<proj> -> ../plugins/<name>/projects/<proj>
+
+    On name collision, the winner (highest priority) gets the bare name,
+    losers get <proj>.<owner> suffix symlinks.
 
     Returns:
         Number of symlinks created
     """
-    plugins_dir = registry.get_plugins_dir()
     projects_dir = registry.get_projects_dir()
-
-    # Ensure projects/ exists
     projects_dir.mkdir(exist_ok=True)
 
-    # Collect all existing non-symlink entries in projects/ (real directories)
     real_projects = set()
     for entry in projects_dir.iterdir():
         if not entry.is_symlink() and entry.is_dir():
             real_projects.add(entry.name)
 
-    # Remove existing symlinks (clean slate)
     for entry in projects_dir.iterdir():
         if entry.is_symlink():
             entry.unlink()
 
-    if not plugins_dir.is_dir():
+    installed = registry.list_installed()
+    if not installed:
         if verbose:
-            logger.info("plugins/ directory does not exist yet")
+            logger.info("No plugins installed")
         return 0
 
-    # Build priority-sorted list of (project_name, plugin_name, plugin_priority, plugin_dir)
-    project_candidates: dict[str, list[tuple[str, int, Path]]] = {}
+    project_candidates: dict[str, list[tuple[InstalledPlugin, int, Path]]] = {}
 
-    installed = registry.list_installed()
-    installed_names = {p.name for p in installed}
-
-    for plugin_entry in sorted(plugins_dir.iterdir()):
-        if not plugin_entry.is_dir() or plugin_entry.name.startswith('.'):
-            continue
-        if plugin_entry.name not in installed_names:
+    for plugin in installed:
+        plugin_dir = registry.devbase_root / plugin.path
+        if not plugin_dir.is_dir():
+            if verbose:
+                logger.warning("Plugin directory missing: %s", plugin.path)
             continue
 
-        info = load_plugin_info(plugin_entry)
+        info = load_plugin_info(plugin_dir)
         priority = info.priority if info else 0
 
-        for proj_name in discover_projects(plugin_entry):
+        for proj_name in discover_projects(plugin_dir):
             if proj_name not in project_candidates:
                 project_candidates[proj_name] = []
             project_candidates[proj_name].append(
-                (plugin_entry.name, priority, plugin_entry)
+                (plugin, priority, plugin_dir)
             )
 
-    # Create symlinks with priority resolution
     created = 0
     for proj_name, candidates in sorted(project_candidates.items()):
-        # Skip if real directory exists
         if proj_name in real_projects:
             if verbose:
                 logger.info("  Skip: %s (real directory exists)", proj_name)
             continue
 
-        # Sort by priority (highest first), then by name (alphabetical)
-        candidates.sort(key=lambda c: (-c[1], c[0]))
+        candidates.sort(key=lambda c: (-c[1], c[0].name))
         winner_plugin, winner_priority, winner_dir = candidates[0]
 
         if len(candidates) > 1 and verbose:
             logger.warning(
                 "Project '%s' exists in multiple plugins — using '%s' (priority: %d)",
-                proj_name, winner_plugin, winner_priority,
+                proj_name, winner_plugin.name, winner_priority,
             )
+            for loser_plugin, _, _ in candidates[1:]:
+                owner = _extract_owner(loser_plugin)
+                logger.info(
+                    "  Also available as: projects/%s.%s",
+                    proj_name, owner,
+                )
 
-        # Create relative symlink
-        target = Path('..') / 'plugins' / winner_plugin / 'projects' / proj_name
+        target = _make_relative_target(winner_plugin, proj_name)
         link_path = projects_dir / proj_name
         link_path.symlink_to(target)
         created += 1
+
+        if len(candidates) > 1:
+            for loser_plugin, _, loser_dir in candidates[1:]:
+                owner = _extract_owner(loser_plugin)
+                suffix_name = f"{proj_name}.{owner}"
+
+                if suffix_name in real_projects:
+                    if verbose:
+                        logger.info("  Skip: %s (real directory exists)", suffix_name)
+                    continue
+
+                suffix_target = _make_relative_target(loser_plugin, proj_name)
+                suffix_link = projects_dir / suffix_name
+                suffix_link.symlink_to(suffix_target)
+                created += 1
 
     if verbose:
         logger.info("Synced %d project(s) from %d plugin(s)", created, len(installed))
 
     return created
+
+
+def _make_relative_target(plugin: InstalledPlugin, proj_name: str) -> Path:
+    """Build the relative symlink target from projects/ to a plugin's project."""
+    return Path('..') / plugin.path / 'projects' / proj_name

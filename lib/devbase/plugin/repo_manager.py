@@ -1,6 +1,6 @@
 """Repository management - handles repo add/remove/list/refresh operations"""
 
-import tempfile
+import subprocess
 import yaml
 from pathlib import Path
 from typing import Optional
@@ -33,18 +33,96 @@ def _get_official_registry_url() -> str:
     return DEFAULT_OFFICIAL_REGISTRY
 
 
+def _derive_repo_name(url: str) -> str:
+    """Derive a repository name from a URL using owner/repo format.
+
+    Examples:
+        https://github.com/devbasex/devbase-samples.git -> devbasex/devbase-samples
+        git@github.com:user/my-repo.git -> user/my-repo
+    """
+    name = url.rstrip('/')
+    if name.endswith('.git'):
+        name = name[:-4]
+    if ':' in name and '@' in name:
+        return name.rsplit(':', 1)[-1]
+    from urllib.parse import urlparse
+    path = urlparse(name).path.strip('/')
+    segments = path.split('/')
+    if len(segments) >= 2:
+        return f"{segments[-2]}/{segments[-1]}"
+    return segments[-1] if segments else name
+
+
+def _url_to_repos_dirname(url: str) -> str:
+    """Convert a repo URL to a repos/ directory name using owner--repo format.
+
+    Examples:
+        https://github.com/devbasex/devbase-samples.git -> devbasex--devbase-samples
+        git@github.com:user/my-repo.git -> user--my-repo
+    """
+    owner_repo = _derive_repo_name(url)
+    return owner_repo.replace('/', '--')
+
+
+def _is_repo_dirty(repo_dir: Path) -> tuple[bool, str]:
+    """Check if a git repository has uncommitted or unpushed changes.
+
+    Returns (is_dirty, description).
+    """
+    issues = []
+
+    try:
+        result = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            capture_output=True, text=True, cwd=str(repo_dir),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            issues.append("uncommitted changes")
+    except subprocess.CalledProcessError:
+        pass
+
+    try:
+        result = subprocess.run(
+            ['git', 'log', '--oneline', '@{u}..HEAD'],
+            capture_output=True, text=True, cwd=str(repo_dir),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            issues.append("unpushed commits")
+    except subprocess.CalledProcessError:
+        pass
+
+    if issues:
+        return True, ", ".join(issues)
+    return False, ""
+
+
+def _git_pull(repo_dir: Path) -> None:
+    """Run git pull in a repository directory.
+
+    Raises PluginError on failure.
+    """
+    try:
+        subprocess.run(
+            ['git', 'pull'],
+            check=True, capture_output=True, text=True, cwd=str(repo_dir),
+        )
+    except subprocess.CalledProcessError as e:
+        raise PluginError(
+            f"git pull failed in {repo_dir}: {e.stderr.strip()}"
+        )
+
+
 def add_repository(
     registry: PluginRegistry,
     url: str,
     name: Optional[str] = None,
 ) -> None:
-    """Register a repository: clone -> read registry.yml -> save to plugins.yml.
+    """Register a repository: clone to repos/ -> read registry.yml -> save to plugins.yml.
 
     Raises RepositoryError on failure.
     """
     repo_url = resolve_repo_url(url)
 
-    # Check if already registered by URL
     existing = registry.get_repository_by_url(repo_url)
     if existing:
         raise RepositoryError(
@@ -52,75 +130,101 @@ def add_repository(
             "Use 'devbase plugin repo refresh' to update the plugin list."
         )
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        clone_dir = Path(tmpdir) / 'repo'
-        try:
-            git_clone(repo_url, clone_dir)
-        except PluginError as e:
-            raise RepositoryError(str(e))
+    repos_dir = registry.get_repos_dir()
+    repos_dir.mkdir(exist_ok=True)
 
-        try:
-            reg_info = parse_registry_yml(clone_dir)
-        except PluginError as e:
-            raise RepositoryError(str(e))
-        if not reg_info:
-            raise RepositoryError(f"No registry.yml found in {repo_url}")
+    dir_name = _url_to_repos_dirname(repo_url)
+    clone_dir = repos_dir / dir_name
 
-        # Determine repo name: explicit --name > registry.yml name > owner/repo from URL
-        derived_name = _derive_repo_name(repo_url)
-        candidate_name = name or reg_info.name or derived_name
-
-        # On name collision, fall back to owner/repo format if not already used
-        if registry.get_repository(candidate_name) and candidate_name != derived_name:
-            candidate_name = derived_name
-
-        repo_name = candidate_name
-
-        # Check name collision
-        if registry.get_repository(repo_name):
-            raise RepositoryError(
-                f"Repository name '{repo_name}' already exists.\n"
-                "Use --name to specify a different name."
-            )
-
-        plugins = [
-            AvailablePlugin(
-                name=e.name,
-                description=e.description,
-                path=e.path,
-            )
-            for e in reg_info.plugins
-        ]
-
-        repo = RegisteredRepository(
-            name=repo_name,
-            url=repo_url,
-            added_at=registry.now_iso(),
-            plugins=plugins,
+    if clone_dir.exists():
+        raise RepositoryError(
+            f"Directory already exists: {clone_dir}\n"
+            "The repository may have been previously added. "
+            "Remove the directory manually or use a different --name."
         )
-        registry.add_repository(repo)
 
-        logger.info("Repository registered: %s (%s)", repo_name, repo_url)
-        if plugins:
-            print("Available plugins:")
-            for p in plugins:
-                installed = registry.get(p.name)
-                status = " (installed)" if installed else ""
-                print(f"  - {p.name}: {p.description}{status}")
+    try:
+        git_clone(repo_url, clone_dir, shallow=False)
+    except PluginError as e:
+        raise RepositoryError(str(e))
+
+    try:
+        reg_info = parse_registry_yml(clone_dir)
+    except PluginError as e:
+        raise RepositoryError(str(e))
+    if not reg_info:
+        raise RepositoryError(f"No registry.yml found in {repo_url}")
+
+    derived_name = _derive_repo_name(repo_url)
+    candidate_name = name or reg_info.name or derived_name
+
+    if registry.get_repository(candidate_name) and candidate_name != derived_name:
+        candidate_name = derived_name
+
+    repo_name = candidate_name
+
+    if registry.get_repository(repo_name):
+        raise RepositoryError(
+            f"Repository name '{repo_name}' already exists.\n"
+            "Use --name to specify a different name."
+        )
+
+    plugins = [
+        AvailablePlugin(
+            name=e.name,
+            description=e.description,
+            path=e.path,
+        )
+        for e in reg_info.plugins
+    ]
+
+    local_path = f"repos/{dir_name}"
+
+    repo = RegisteredRepository(
+        name=repo_name,
+        url=repo_url,
+        added_at=registry.now_iso(),
+        local_path=local_path,
+        plugins=plugins,
+    )
+    registry.add_repository(repo)
+
+    logger.info("Repository registered: %s (%s)", repo_name, repo_url)
+    if plugins:
+        print("Available plugins:")
+        for p in plugins:
+            installed = registry.get(p.name)
+            status = " (installed)" if installed else ""
+            print(f"  - {p.name}: {p.description}{status}")
 
 
-def remove_repository(registry: PluginRegistry, name: str) -> None:
-    """Remove a repository registration and uninstall all plugins from it.
+def remove_repository(
+    registry: PluginRegistry,
+    name: str,
+    force: bool = False,
+) -> None:
+    """Remove a repository registration, uninstall plugins, and delete repos/ clone.
 
-    Raises RepositoryError if not found.
+    Raises RepositoryError if not found or if repos/ is dirty (without --force).
     """
+    import shutil
     from .installer import uninstall_plugin
 
     repo = registry.get_repository(name)
     if not repo:
         raise RepositoryError(f"Repository '{name}' not found.")
 
-    # Uninstall all plugins installed from this repository
+    repos_dir = registry.get_repos_dir()
+    repo_clone_dir = registry.devbase_root / repo.local_path if repo.local_path else None
+
+    if repo_clone_dir and repo_clone_dir.is_dir() and not force:
+        is_dirty, description = _is_repo_dirty(repo_clone_dir)
+        if is_dirty:
+            raise RepositoryError(
+                f"Repository '{name}' has {description} in {repo_clone_dir}.\n"
+                "Commit/push your changes first, or use --force to delete anyway."
+            )
+
     installed = registry.list_installed()
     plugins_to_remove = [p for p in installed if p.source == repo.url]
     for plugin in plugins_to_remove:
@@ -128,6 +232,11 @@ def remove_repository(registry: PluginRegistry, name: str) -> None:
         uninstall_plugin(registry, plugin.name)
 
     registry.remove_repository(name)
+
+    if repo_clone_dir and repo_clone_dir.is_dir():
+        shutil.rmtree(repo_clone_dir)
+        logger.info("Removed clone directory: %s", repo_clone_dir)
+
     logger.info("Repository removed: %s", name)
 
 
@@ -142,7 +251,8 @@ def show_repositories(registry: PluginRegistry) -> None:
     installed_names = {p.name for p in registry.list_installed()}
 
     for repo in repos:
-        print(f"{repo.name} ({repo.url})")
+        local_info = f" [{repo.local_path}]" if repo.local_path else ""
+        print(f"{repo.name} ({repo.url}){local_info}")
         if repo.plugins:
             for p in repo.plugins:
                 status = " [installed]" if p.name in installed_names else ""
@@ -158,7 +268,7 @@ def refresh_repository(
     registry: PluginRegistry,
     name: str,
 ) -> None:
-    """Refresh plugin list for a registered repository (re-clone -> update cache).
+    """Refresh plugin list for a registered repository (git pull + re-read registry.yml).
 
     Raises RepositoryError if not found.
     """
@@ -166,44 +276,69 @@ def refresh_repository(
     if not repo:
         raise RepositoryError(f"Repository '{name}' not found.")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        clone_dir = Path(tmpdir) / 'repo'
-        try:
-            git_clone(repo.url, clone_dir)
-        except PluginError as e:
-            raise RepositoryError(str(e))
-
-        try:
-            reg_info = parse_registry_yml(clone_dir)
-        except PluginError as e:
-            raise RepositoryError(str(e))
-        if not reg_info:
-            raise RepositoryError(f"No registry.yml found in {repo.url}")
-
-        plugins = [
-            AvailablePlugin(
-                name=e.name,
-                description=e.description,
-                path=e.path,
-            )
-            for e in reg_info.plugins
-        ]
-
-        updated_repo = RegisteredRepository(
-            name=repo.name,
-            url=repo.url,
-            added_at=repo.added_at,
-            plugins=plugins,
+    if not repo.local_path:
+        raise RepositoryError(
+            f"Repository '{name}' has no local clone path. "
+            "Remove and re-add the repository to create a persistent clone."
         )
-        registry.add_repository(updated_repo)
 
-        logger.info("Repository refreshed: %s", repo.name)
-        if plugins:
-            print("Available plugins:")
-            for p in plugins:
-                installed = registry.get(p.name)
-                status = " (installed)" if installed else ""
-                print(f"  - {p.name}: {p.description}{status}")
+    clone_dir = registry.devbase_root / repo.local_path
+    if not clone_dir.is_dir():
+        raise RepositoryError(
+            f"Clone directory not found: {clone_dir}\n"
+            "Remove and re-add the repository to re-clone."
+        )
+
+    try:
+        _git_pull(clone_dir)
+    except PluginError as e:
+        raise RepositoryError(str(e))
+
+    try:
+        reg_info = parse_registry_yml(clone_dir)
+    except PluginError as e:
+        raise RepositoryError(str(e))
+    if not reg_info:
+        raise RepositoryError(f"No registry.yml found in {repo.url}")
+
+    old_plugin_names = {p.name for p in repo.plugins}
+
+    plugins = [
+        AvailablePlugin(
+            name=e.name,
+            description=e.description,
+            path=e.path,
+        )
+        for e in reg_info.plugins
+    ]
+    new_plugin_names = {p.name for p in plugins}
+
+    installed = registry.list_installed()
+    installed_names = {p.name for p in installed}
+    removed_installed = (old_plugin_names - new_plugin_names) & installed_names
+    if removed_installed:
+        for pname in sorted(removed_installed):
+            logger.warning(
+                "Installed plugin '%s' no longer exists in registry.yml of '%s'",
+                pname, name,
+            )
+
+    updated_repo = RegisteredRepository(
+        name=repo.name,
+        url=repo.url,
+        added_at=repo.added_at,
+        local_path=repo.local_path,
+        plugins=plugins,
+    )
+    registry.add_repository(updated_repo)
+
+    logger.info("Repository refreshed: %s", repo.name)
+    if plugins:
+        print("Available plugins:")
+        for p in plugins:
+            installed_p = registry.get(p.name)
+            status = " (installed)" if installed_p else ""
+            print(f"  - {p.name}: {p.description}{status}")
 
 
 def add_official_repository(registry: PluginRegistry) -> bool:
@@ -214,7 +349,6 @@ def add_official_repository(registry: PluginRegistry) -> bool:
     """
     official_url = _get_official_registry_url()
 
-    # Already registered?
     if registry.get_repository_by_url(official_url):
         return True
 
@@ -224,25 +358,3 @@ def add_official_repository(registry: PluginRegistry) -> bool:
     except Exception as e:
         logger.warning("Could not register official repository: %s", e)
         return False
-
-
-def _derive_repo_name(url: str) -> str:
-    """Derive a repository name from a URL using owner/repo format.
-
-    Examples:
-        https://github.com/devbasex/devbase-samples.git -> devbasex/devbase-samples
-        git@github.com:user/my-repo.git -> user/my-repo
-    """
-    name = url.rstrip('/')
-    if name.endswith('.git'):
-        name = name[:-4]
-    # Handle git@ SSH URLs (git@github.com:owner/repo)
-    if ':' in name and '@' in name:
-        return name.rsplit(':', 1)[-1]
-    # HTTPS URLs: extract owner/repo from URL path
-    from urllib.parse import urlparse
-    path = urlparse(name).path.strip('/')
-    segments = path.split('/')
-    if len(segments) >= 2:
-        return f"{segments[-2]}/{segments[-1]}"
-    return segments[-1] if segments else name
