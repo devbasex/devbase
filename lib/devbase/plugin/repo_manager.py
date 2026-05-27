@@ -134,13 +134,16 @@ def _git_pull(repo_dir: Path) -> None:
         )
         remote_name = ""
         if remote_result.returncode == 0 and remote_result.stdout.strip():
-            remote_name = remote_result.stdout.strip().splitlines()[0]
+            remotes = remote_result.stdout.strip().splitlines()
+            # Prefer "origin" when multiple remotes exist
+            remote_name = "origin" if "origin" in remotes else remotes[0]
 
         if not current_branch:
             raise PluginError(
                 f"git pull failed in {repo_dir}: HEAD is detached.\n"
                 "This can happen if the branch was changed manually in repos/.\n"
-                "Check out a branch first, then retry."
+                f"Check out a branch first, then retry:\n"
+                f"  git -C {repo_dir} checkout main"
             )
         if not remote_name:
             raise PluginError(

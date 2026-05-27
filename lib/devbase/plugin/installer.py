@@ -249,14 +249,37 @@ def _install_from_repo(
                     f"  devbase plugin repo add {repo_reg.url}"
                 )
 
+        # Validate the clone by parsing registry.yml BEFORE saving to
+        # plugins.yml.  This prevents a broken clone from polluting the
+        # persisted state.  If parsing fails, the old repository entry
+        # (without local_path) is kept so the user can retry.
+        reg_info = parse_registry_yml(clone_dir)
+        if not reg_info:
+            raise PluginError(
+                f"No registry.yml found in cloned repository '{repo_reg.name}'.\n"
+                "Remove and re-add the repository:\n"
+                f"  devbase plugin repo remove {repo_reg.name}\n"
+                f"  devbase plugin repo add {repo_reg.url}"
+            )
+
         from .models import RegisteredRepository, AvailablePlugin
         local_path = f"repos/{dir_name}"
+        # Build an up-to-date plugin list from the freshly cloned
+        # registry.yml instead of carrying over stale metadata.
+        migrated_plugins = [
+            AvailablePlugin(
+                name=e.name,
+                description=e.description,
+                path=e.path,
+            )
+            for e in reg_info.plugins
+        ]
         updated_repo = RegisteredRepository(
             name=repo_reg.name,
             url=repo_reg.url,
             added_at=repo_reg.added_at,
             local_path=local_path,
-            plugins=repo_reg.plugins,
+            plugins=migrated_plugins,
         )
         registry.add_repository(updated_repo)
         repo_reg = updated_repo
