@@ -182,9 +182,13 @@ def _repo_refresh(registry, args):
     errors = []
     for repo in repos:
         try:
-            refresh_repository(registry, repo.name)
+            refresh_repository(registry, repo.name, sync=False)
         except DevbaseError as e:
             logger.error("%s", e)
             errors.append(str(e))
+
+    # Sync once after all repos are refreshed (instead of per-repo)
+    sync_projects(registry)
+
     if errors:
         raise DevbaseError(f"{len(errors)} repository refresh(es) failed")

@@ -380,6 +380,52 @@ class TestInstallPlugin:
         with pytest.raises(PluginError, match="not found in registered"):
             install_plugin(registry, "nonexistent")
 
+    def test_install_ref_rejected_for_unregistered_repo(self, registry):
+        """@ref with unregistered repo raises PluginError (not NameError)."""
+        with pytest.raises(PluginError, match="Cannot use @v1.0"):
+            install_plugin(registry, "testorg/testrepo:myplugin@v1.0")
+
+    def test_install_legacy_repo_without_local_path(self, registry, devbase_root):
+        """Legacy repos (no local_path) are auto-migrated to persistent clone."""
+        url = "https://github.com/testorg/testrepo.git"
+        # Register a legacy repo (no local_path)
+        repo = RegisteredRepository(
+            name="testrepo", url=url,
+            added_at=registry.now_iso(),
+            local_path="",
+            plugins=[AvailablePlugin(name="p1", description="test", path="p1")],
+        )
+        registry.add_repository(repo)
+
+        with patch("devbase.plugin.installer.git_clone") as mock_clone:
+            def fake_clone(u, dest, **kwargs):
+                dest.mkdir(parents=True, exist_ok=True)
+                # Create plugin dir + registry.yml in the clone
+                pdir = dest / "p1"
+                pdir.mkdir()
+                import yaml
+                (pdir / "plugin.yml").write_text("name: p1\nversion: 2.0.0\n")
+                (pdir / "projects").mkdir()
+                (pdir / "projects" / "proj1").mkdir()
+                with open(dest / "registry.yml", "w") as f:
+                    yaml.dump({
+                        "name": "testrepo",
+                        "plugins": [{"name": "p1", "path": "p1", "description": "test"}],
+                    }, f)
+
+            mock_clone.side_effect = fake_clone
+
+            install_plugin(registry, "p1")
+
+            # Repo should now have local_path set
+            updated = registry.get_repository_by_url(url)
+            assert updated.local_path == "repos/testorg--testrepo"
+
+            # Plugin should be installed
+            plugin = registry.get("p1")
+            assert plugin is not None
+            assert "repos/testorg--testrepo" in plugin.path
+
 
 class TestUninstallPlugin:
     def test_uninstall_repos_plugin_preserves_files(self, registry, devbase_root):

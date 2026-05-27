@@ -120,17 +120,38 @@ def _git_pull(repo_dir: Path) -> None:
         capture_output=True, text=True, cwd=str(repo_dir),
     )
     if upstream.returncode != 0:
-        # Attempt to detect default remote branch and set it
+        # Detect current branch name
         branch_result = subprocess.run(
             ['git', 'branch', '--show-current'],
             capture_output=True, text=True, cwd=str(repo_dir),
         )
-        current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "unknown"
+        current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else ""
+
+        # Detect the first available remote (usually "origin")
+        remote_result = subprocess.run(
+            ['git', 'remote'],
+            capture_output=True, text=True, cwd=str(repo_dir),
+        )
+        remote_name = ""
+        if remote_result.returncode == 0 and remote_result.stdout.strip():
+            remote_name = remote_result.stdout.strip().splitlines()[0]
+
+        if not current_branch:
+            raise PluginError(
+                f"git pull failed in {repo_dir}: HEAD is detached.\n"
+                "This can happen if the branch was changed manually in repos/.\n"
+                "Check out a branch first, then retry."
+            )
+        if not remote_name:
+            raise PluginError(
+                f"git pull failed in {repo_dir}: no remote configured.\n"
+                f"Current branch '{current_branch}' has no remote to pull from."
+            )
         raise PluginError(
             f"git pull failed in {repo_dir}: no upstream tracking branch.\n"
             f"Current branch '{current_branch}' has no remote to pull from.\n"
             "This can happen if the branch was changed manually in repos/.\n"
-            f"Fix with: git -C {repo_dir} branch --set-upstream-to=origin/{current_branch}"
+            f"Fix with: git -C {repo_dir} branch --set-upstream-to={remote_name}/{current_branch}"
         )
 
     try:
@@ -302,8 +323,15 @@ def show_repositories(registry: PluginRegistry) -> None:
 def refresh_repository(
     registry: PluginRegistry,
     name: str,
+    *,
+    sync: bool = True,
 ) -> None:
     """Refresh plugin list for a registered repository (git pull + re-read registry.yml).
+
+    Args:
+        sync: If True (default), call sync_projects after updating metadata.
+            Set to False when refreshing multiple repositories in a batch to
+            avoid redundant sync calls — the caller should sync once at the end.
 
     Raises RepositoryError if not found.
     """
@@ -376,7 +404,8 @@ def refresh_repository(
     if repo_errors:
         for err in repo_errors:
             logger.warning("  %s", err)
-    sync_projects(registry)
+    if sync:
+        sync_projects(registry)
 
     logger.info("Repository refreshed: %s", repo.name)
     if plugins:

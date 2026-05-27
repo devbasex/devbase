@@ -128,8 +128,8 @@ def install_plugin(
                 f"Cannot use @{source.ref} with unregistered repository '{repo_url}'.\n"
                 "Permanent clones track the default branch and do not support pinned refs.\n"
                 "Register the repository first, then install without @ref:\n"
-                f"  devbase plugin repo add {url}\n"
-                f"  devbase plugin install {url}:{source.plugin_name}"
+                f"  devbase plugin repo add {repo_url}\n"
+                f"  devbase plugin install {repo_url}:{source.plugin_name}"
             )
         from .repo_manager import add_repository
         try:
@@ -220,11 +220,47 @@ def _install_from_repo(
     Raises PluginError on failure.
     """
     repo_reg = registry.get_repository_by_url(source.repo)
-    if not repo_reg or not repo_reg.local_path:
+    if not repo_reg:
         raise PluginError(
-            f"Repository '{source.repo}' is not registered or has no local clone.\n"
+            f"Repository '{source.repo}' is not registered.\n"
             "Use 'devbase plugin repo add <url>' first."
         )
+
+    if not repo_reg.local_path:
+        # Legacy repository registered before persistent-clone support.
+        # Auto-migrate by creating a persistent clone in repos/.
+        logger.info(
+            "Migrating repository '%s' to persistent clone...", repo_reg.name,
+        )
+        from .repo_manager import _url_to_repos_dirname
+        dir_name = _url_to_repos_dirname(repo_reg.url)
+        repos_dir = registry.get_repos_dir()
+        repos_dir.mkdir(exist_ok=True)
+        clone_dir = repos_dir / dir_name
+
+        if not clone_dir.is_dir():
+            try:
+                git_clone(repo_reg.url, clone_dir, shallow=False)
+            except PluginError as e:
+                raise PluginError(
+                    f"Failed to create persistent clone for '{repo_reg.name}': {e}\n"
+                    "Remove and re-add the repository:\n"
+                    f"  devbase plugin repo remove {repo_reg.name}\n"
+                    f"  devbase plugin repo add {repo_reg.url}"
+                )
+
+        from .models import RegisteredRepository, AvailablePlugin
+        local_path = f"repos/{dir_name}"
+        updated_repo = RegisteredRepository(
+            name=repo_reg.name,
+            url=repo_reg.url,
+            added_at=repo_reg.added_at,
+            local_path=local_path,
+            plugins=repo_reg.plugins,
+        )
+        registry.add_repository(updated_repo)
+        repo_reg = updated_repo
+        logger.info("Repository '%s' migrated to %s", repo_reg.name, local_path)
 
     clone_dir = registry.devbase_root / repo_reg.local_path
     if not clone_dir.is_dir():
