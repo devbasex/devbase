@@ -119,6 +119,19 @@ def install_plugin(
         _install_from_local(registry, source, plugins_dir)
         return
 
+    # Auto-register the repository if not already registered, so that
+    # `devbase plugin install user/repo:plugin-name` keeps working without
+    # a prior `repo add`.
+    if not registry.get_repository_by_url(repo_url):
+        from .repo_manager import add_repository
+        try:
+            add_repository(registry, repo_url)
+        except Exception as e:
+            raise PluginError(
+                f"Repository '{repo_url}' is not registered and auto-registration failed: {e}\n"
+                "Use 'devbase plugin repo add <url>' to register manually."
+            )
+
     _install_from_repo(
         registry, PluginSource(
             repo=repo_url, plugin_name=source.plugin_name, ref=source.ref, linked=False,

@@ -156,10 +156,7 @@ def add_repository(
 
     try:
         git_clone(repo_url, clone_dir, shallow=False)
-    except PluginError as e:
-        raise RepositoryError(str(e))
 
-    try:
         reg_info = parse_registry_yml(clone_dir)
         if not reg_info:
             raise RepositoryError(f"No registry.yml found in {repo_url}")
@@ -179,7 +176,8 @@ def add_repository(
             )
     except Exception:
         # Clean up the cloned directory so a retry won't fail with
-        # "Directory already exists".
+        # "Directory already exists".  This also handles partial clones
+        # (e.g. disk full, network interruption mid-clone).
         import shutil as _shutil
         if clone_dir.is_dir():
             _shutil.rmtree(clone_dir)

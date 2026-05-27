@@ -124,7 +124,6 @@ def _update_repo_plugins(
     registry: PluginRegistry,
     repo_url: str,
     clone_dir: Path,
-    repo_local_path: str,
     pre_pull_projects: Optional[dict[str, set[str]]] = None,
 ) -> list[str]:
     """Re-read registry.yml and update ALL installed plugins from the given repo.
@@ -248,7 +247,7 @@ def update_plugin(registry: PluginRegistry, name: Optional[str] = None) -> None:
             # After pull, update ALL installed plugins from this repo
             # (not just the named target) so metadata stays in sync.
             repo_errors = _update_repo_plugins(
-                registry, repo_reg.url, clone_dir, repo_reg.local_path,
+                registry, repo_reg.url, clone_dir,
                 pre_pull_projects=_pre_pull_projects,
             )
             errors.extend(repo_errors)
