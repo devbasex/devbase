@@ -82,12 +82,23 @@ def _is_repo_dirty(repo_dir: Path) -> tuple[bool, str]:
         pass
 
     try:
-        result = subprocess.run(
-            ['git', 'log', '--oneline', '@{u}..HEAD'],
+        # Check if upstream tracking branch exists
+        upstream_check = subprocess.run(
+            ['git', 'rev-parse', '--abbrev-ref', '@{u}'],
             capture_output=True, text=True, cwd=str(repo_dir),
         )
-        if result.returncode == 0 and result.stdout.strip():
-            issues.append("unpushed commits")
+        if upstream_check.returncode == 0:
+            # Upstream exists — check for unpushed commits
+            result = subprocess.run(
+                ['git', 'log', '--oneline', '@{u}..HEAD'],
+                capture_output=True, text=True, cwd=str(repo_dir),
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                issues.append("unpushed commits")
+        else:
+            # No upstream tracking branch — local commits may be lost
+            # if deleted, so treat as dirty to be safe
+            issues.append("no upstream tracking branch (local-only commits may exist)")
     except subprocess.CalledProcessError:
         pass
 

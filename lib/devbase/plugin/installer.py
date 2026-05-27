@@ -280,7 +280,9 @@ def _register_repo_plugin(
     info = load_plugin_info(plugin_path)
     version = info.version if info else '0.1.0'
 
-    rel_path = f"{repo_local_path}/{name}"
+    # Use the actual plugin_path relative to devbase_root so that
+    # subdirectory plugins (registry.yml path != name) resolve correctly.
+    rel_path = str(plugin_path.relative_to(registry.devbase_root))
 
     registry.add(InstalledPlugin(
         name=name,

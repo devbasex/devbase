@@ -488,7 +488,7 @@ class TestSyncProjects:
         target = os.readlink(str(bare_link))
         assert "orgA--repo1" in target
 
-        suffix_link = devbase_root / "projects" / "shared.orgB"
+        suffix_link = devbase_root / "projects" / "shared.orgB--repo2"
         assert suffix_link.is_symlink()
         suffix_target = os.readlink(str(suffix_link))
         assert "orgB--repo2" in suffix_target
@@ -606,7 +606,7 @@ class TestExtractOwner:
             name="p1", version="1.0.0", source="url",
             installed_at="", path="repos/orgA--repo1/p1",
         )
-        assert _extract_owner(plugin) == "orgA"
+        assert _extract_owner(plugin) == "orgA--repo1"
 
     def test_linked(self):
         plugin = InstalledPlugin(

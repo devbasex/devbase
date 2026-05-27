@@ -41,9 +41,10 @@ def discover_projects(plugin_dir: Path) -> list[str]:
 
 
 def _extract_owner(plugin: InstalledPlugin) -> str:
-    """Extract owner identifier from a plugin for suffix generation.
+    """Extract a unique suffix identifier from a plugin for collision resolution.
 
-    For repos/-based plugins: owner part from repos/<owner>--<repo>/<plugin>
+    For repos/-based plugins: full owner--repo dirname from repos/<owner>--<repo>/...
+      This ensures uniqueness when the same owner has multiple repos.
     For --link plugins: basename of the source path
     """
     if plugin.linked:
@@ -51,9 +52,9 @@ def _extract_owner(plugin: InstalledPlugin) -> str:
 
     parts = plugin.path.split('/')
     if len(parts) >= 2 and parts[0] == 'repos':
-        dir_name = parts[1]
-        if '--' in dir_name:
-            return dir_name.split('--', 1)[0]
+        # Return full dir_name (owner--repo) to avoid collision
+        # between repos from the same owner
+        return parts[1]
     return plugin.name
 
 
@@ -146,6 +147,10 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
 
                 suffix_target = _make_relative_target(loser_plugin, proj_name)
                 suffix_link = projects_dir / suffix_name
+                if suffix_link.exists() or suffix_link.is_symlink():
+                    if verbose:
+                        logger.warning("  Skip: %s (symlink already exists)", suffix_name)
+                    continue
                 suffix_link.symlink_to(suffix_target)
                 created += 1
 
