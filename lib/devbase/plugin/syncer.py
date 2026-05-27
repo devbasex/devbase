@@ -50,7 +50,7 @@ def _extract_owner(plugin: InstalledPlugin) -> str:
     if plugin.linked:
         return Path(plugin.source).name if plugin.source else plugin.name
 
-    parts = plugin.path.split('/')
+    parts = Path(plugin.path).parts
     if len(parts) >= 2 and parts[0] == 'repos':
         # Return full dir_name (owner--repo) to avoid collision
         # between repos from the same owner

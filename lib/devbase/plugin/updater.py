@@ -32,16 +32,25 @@ def _migrate_removed_plugin(
     plugin: InstalledPlugin,
     clone_dir: Path,
     reg_info: RegistryInfo,
+    pre_pull_projects: Optional[set[str]] = None,
 ) -> bool:
     """Migrate a plugin that no longer exists in the source.
 
     Detects which new plugins contain the old plugin's projects
     and replaces the old plugin with them.
+
+    Args:
+        pre_pull_projects: Project names captured BEFORE git pull.
+            If provided, used instead of reading the (now-updated) working tree
+            so that renamed/moved plugin directories are still detected.
     """
-    old_plugin_dir = registry.devbase_root / plugin.path
-    old_projects: set[str] = set()
-    if old_plugin_dir.is_dir():
-        old_projects = set(discover_projects(old_plugin_dir))
+    if pre_pull_projects is not None:
+        old_projects = pre_pull_projects
+    else:
+        old_plugin_dir = registry.devbase_root / plugin.path
+        old_projects = set()
+        if old_plugin_dir.is_dir():
+            old_projects = set(discover_projects(old_plugin_dir))
 
     if not old_projects:
         logger.info("  Plugin '%s' has no projects — removing", plugin.name)
@@ -92,6 +101,90 @@ def _migrate_removed_plugin(
     return True
 
 
+def _snapshot_plugin_projects(
+    registry: PluginRegistry,
+    plugins: list[InstalledPlugin],
+) -> dict[str, set[str]]:
+    """Snapshot project names for each plugin BEFORE git pull.
+
+    Returns {plugin_name: {project_names}} so migration can detect
+    where old projects moved even after the working tree is updated.
+    """
+    result: dict[str, set[str]] = {}
+    for plugin in plugins:
+        plugin_dir = registry.devbase_root / plugin.path
+        if plugin_dir.is_dir():
+            result[plugin.name] = set(discover_projects(plugin_dir))
+        else:
+            result[plugin.name] = set()
+    return result
+
+
+def _update_repo_plugins(
+    registry: PluginRegistry,
+    repo_url: str,
+    clone_dir: Path,
+    repo_local_path: str,
+    pre_pull_projects: Optional[dict[str, set[str]]] = None,
+) -> list[str]:
+    """Re-read registry.yml and update ALL installed plugins from the given repo.
+
+    After git pull updates the working tree, every installed plugin from the
+    same repository must have its plugins.yml metadata (version, path) refreshed
+    — not just the one the user asked for.
+
+    Args:
+        pre_pull_projects: {plugin_name: {project_names}} captured before pull.
+            Passed to _migrate_removed_plugin so it can detect project moves
+            even when the old directory was renamed/deleted by pull.
+
+    Returns a list of error messages (empty on full success).
+    """
+    reg_info = parse_registry_yml(clone_dir)
+    if not reg_info:
+        return [f"No registry.yml in source for repo '{repo_url}'"]
+
+    errors: list[str] = []
+    installed = registry.list_installed()
+    repo_plugins = [p for p in installed if p.source == repo_url and not p.linked]
+
+    for plugin in repo_plugins:
+        target_entry = next(
+            (e for e in reg_info.plugins if e.name == plugin.name), None,
+        )
+
+        if not target_entry:
+            logger.info("  Plugin '%s' no longer exists in source", plugin.name)
+            snapshot = (
+                pre_pull_projects.get(plugin.name)
+                if pre_pull_projects else None
+            )
+            if not _migrate_removed_plugin(
+                registry, plugin, clone_dir, reg_info,
+                pre_pull_projects=snapshot,
+            ):
+                errors.append(f"Migration failed for '{plugin.name}'")
+            continue
+
+        plugin_path = clone_dir / target_entry.path.rstrip('/')
+        from .syncer import load_plugin_info
+        info = load_plugin_info(plugin_path)
+        version = info.version if info else '0.1.0'
+
+        rel_path = str(plugin_path.relative_to(registry.devbase_root))
+        registry.add(InstalledPlugin(
+            name=plugin.name,
+            version=version,
+            source=plugin.source,
+            installed_at=plugin.installed_at,
+            path=rel_path,
+            linked=False,
+        ))
+        logger.info("Updated plugin '%s' (v%s)", plugin.name, version)
+
+    return errors
+
+
 def update_plugin(registry: PluginRegistry, name: Optional[str] = None) -> None:
     """Update a plugin (or all if name is None) via git pull.
 
@@ -108,6 +201,10 @@ def update_plugin(registry: PluginRegistry, name: Optional[str] = None) -> None:
 
     if name and not targets:
         raise PluginError(f"Plugin '{name}' is not installed")
+
+    # Snapshot project lists BEFORE pull so migration can detect moves
+    # even after the working tree is overwritten by git pull.
+    _pre_pull_projects = _snapshot_plugin_projects(registry, installed)
 
     updated_repos: set[str] = set()
     errors = []
@@ -147,45 +244,16 @@ def update_plugin(registry: PluginRegistry, name: Optional[str] = None) -> None:
                 errors.append(str(e))
                 continue
             updated_repos.add(repo_reg.url)
+
+            # After pull, update ALL installed plugins from this repo
+            # (not just the named target) so metadata stays in sync.
+            repo_errors = _update_repo_plugins(
+                registry, repo_reg.url, clone_dir, repo_reg.local_path,
+                pre_pull_projects=_pre_pull_projects,
+            )
+            errors.extend(repo_errors)
         else:
-            logger.info("Updating '%s' (repo already pulled)...", plugin.name)
-
-        reg_info = parse_registry_yml(clone_dir)
-        if not reg_info:
-            errors.append(f"No registry.yml in source for '{plugin.name}'")
-            continue
-
-        target_entry = None
-        for entry in reg_info.plugins:
-            if entry.name == plugin.name:
-                target_entry = entry
-                break
-
-        if not target_entry:
-            logger.info("  Plugin '%s' no longer exists in source", plugin.name)
-            if not _migrate_removed_plugin(
-                registry, plugin, clone_dir, reg_info,
-            ):
-                errors.append(f"Migration failed for '{plugin.name}'")
-            continue
-
-        plugin_path = clone_dir / target_entry.path.rstrip('/')
-        from .syncer import load_plugin_info
-        info = load_plugin_info(plugin_path)
-        version = info.version if info else '0.1.0'
-
-        # Use actual plugin_path relative to devbase_root so that
-        # subdirectory plugins (registry.yml path != name) resolve correctly.
-        rel_path = str(plugin_path.relative_to(registry.devbase_root))
-        registry.add(InstalledPlugin(
-            name=plugin.name,
-            version=version,
-            source=plugin.source,
-            installed_at=plugin.installed_at,
-            path=rel_path,
-            linked=False,
-        ))
-        logger.info("Updated plugin '%s' (v%s)", plugin.name, version)
+            logger.info("Skip: '%s' (repo already pulled and refreshed)", plugin.name)
 
     sync_projects(registry)
 

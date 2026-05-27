@@ -161,24 +161,29 @@ def add_repository(
 
     try:
         reg_info = parse_registry_yml(clone_dir)
-    except PluginError as e:
-        raise RepositoryError(str(e))
-    if not reg_info:
-        raise RepositoryError(f"No registry.yml found in {repo_url}")
+        if not reg_info:
+            raise RepositoryError(f"No registry.yml found in {repo_url}")
 
-    derived_name = _derive_repo_name(repo_url)
-    candidate_name = name or reg_info.name or derived_name
+        derived_name = _derive_repo_name(repo_url)
+        candidate_name = name or reg_info.name or derived_name
 
-    if registry.get_repository(candidate_name) and candidate_name != derived_name:
-        candidate_name = derived_name
+        if registry.get_repository(candidate_name) and candidate_name != derived_name:
+            candidate_name = derived_name
 
-    repo_name = candidate_name
+        repo_name = candidate_name
 
-    if registry.get_repository(repo_name):
-        raise RepositoryError(
-            f"Repository name '{repo_name}' already exists.\n"
-            "Use --name to specify a different name."
-        )
+        if registry.get_repository(repo_name):
+            raise RepositoryError(
+                f"Repository name '{repo_name}' already exists.\n"
+                "Use --name to specify a different name."
+            )
+    except Exception:
+        # Clean up the cloned directory so a retry won't fail with
+        # "Directory already exists".
+        import shutil as _shutil
+        if clone_dir.is_dir():
+            _shutil.rmtree(clone_dir)
+        raise
 
     plugins = [
         AvailablePlugin(
