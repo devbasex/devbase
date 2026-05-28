@@ -211,6 +211,33 @@ def _reclaim_or_protect_existing(clone_dir: Path) -> None:
     )
 
 
+def _persist_repo_local_path(
+    registry: PluginRegistry, repo: RegisteredRepository, dir_name: str,
+) -> RegisteredRepository:
+    """Record local_path = repos/<dir_name> + a refreshed plugin list for repo.
+
+    Used after a fresh clone *and* when reusing a healthy clone left by an
+    earlier run (a pre-persistent-clone registration with no local_path), so the
+    plugins.yml entry is repaired identically in both cases and future runs take
+    the local_path fast path.
+    """
+    from .installer import parse_registry_yml
+
+    local_path = f"repos/{dir_name}"
+    clone_dir = registry.devbase_root / local_path
+    reg_info = parse_registry_yml(clone_dir)
+    plugins = [
+        AvailablePlugin(name=e.name, description=e.description, path=e.path)
+        for e in reg_info.plugins
+    ] if reg_info else list(repo.plugins)
+    updated = RegisteredRepository(
+        name=repo.name, url=repo.url, added_at=repo.added_at,
+        local_path=local_path, plugins=plugins,
+    )
+    registry.add_repository(updated)
+    return updated
+
+
 def _ensure_repo_cloned(
     registry: PluginRegistry, repo: RegisteredRepository,
 ) -> tuple[Path, RegisteredRepository]:
@@ -219,7 +246,9 @@ def _ensure_repo_cloned(
     If the repo was registered before persistent-clone support (no local_path),
     the clone dir is missing, or the existing clone is broken (missing .git /
     registry.yml), perform a full clone and persist local_path + a refreshed
-    plugin list to plugins.yml.
+    plugin list to plugins.yml.  A healthy repos/<derived> clone left by an
+    earlier run is reused (and its missing local_path persisted) rather than
+    re-cloned or protected.
     """
     from .installer import git_clone, parse_registry_yml
     from .repo_manager import _url_to_repos_dirname
@@ -234,6 +263,13 @@ def _ensure_repo_cloned(
     repos_dir = registry.get_repos_dir()
     repos_dir.mkdir(exist_ok=True)
     clone_dir = repos_dir / dir_name
+
+    # A pre-persistent-clone registration (no local_path) may already have a
+    # healthy repos/<derived> clone from an earlier run; reuse it instead of
+    # protecting (raising) on its .git, just like the local_path branch above —
+    # only persist the missing local_path so future runs take the fast path.
+    if _clone_is_healthy(clone_dir):
+        return clone_dir, _persist_repo_local_path(registry, repo, dir_name)
 
     # A leftover from a previously interrupted clone (e.g. disk full or network
     # drop) would otherwise be reused forever — re-cloning is skipped while
@@ -273,17 +309,8 @@ def _ensure_repo_cloned(
             f"registry.yml') or remove the directory manually, then retry."
         )
 
-    local_path = f"repos/{dir_name}"
-    updated = RegisteredRepository(
-        name=repo.name, url=repo.url, added_at=repo.added_at,
-        local_path=local_path,
-        plugins=[
-            AvailablePlugin(name=e.name, description=e.description, path=e.path)
-            for e in reg_info.plugins
-        ],
-    )
-    registry.add_repository(updated)
-    logger.info("Repository '%s' cloned to %s", repo.name, local_path)
+    updated = _persist_repo_local_path(registry, repo, dir_name)
+    logger.info("Repository '%s' cloned to %s", repo.name, updated.local_path)
     return clone_dir, updated
 
 

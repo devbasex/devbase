@@ -797,6 +797,38 @@ class TestEnsureRepoClonedProtectsGit:
         # registry entry still legacy so a later run can retry.
         assert registry.get("adminer").path == "plugins/adminer"
 
+    def test_derived_path_with_healthy_clone_is_reused(
+        self, registry, devbase_root,
+    ):
+        # local_path is NOT recorded (pre-persistent-clone registration) but a
+        # *healthy* repos/<derived> clone (.git AND registry.yml) was left by an
+        # earlier run.  It must be reused — migration proceeds, the missing
+        # local_path is persisted — not protected (skipped) on its .git nor
+        # re-cloned.
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        _register_repo(registry, plugins, local_path=None)
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+        # Healthy clone already present (sentinel proves it is reused, not wiped).
+        clone = _make_repo_clone(devbase_root, plugins)
+        (clone / ".git" / "sentinel").write_text("kept\n")
+
+        def fake_clone(url, dest, **kwargs):  # pragma: no cover - must not run
+            raise AssertionError("must reuse a healthy clone, never re-clone")
+
+        with patch("devbase.plugin.installer.git_clone", side_effect=fake_clone):
+            result = migrate(registry)
+
+        # Migration succeeded (NOT skipped) and the existing clone survived.
+        assert result.migrated == ["adminer"]
+        assert "adminer" not in result.skipped
+        assert (clone / ".git" / "sentinel").read_text() == "kept\n"
+        # The previously-missing local_path was persisted, and the plugin now
+        # points at the reused repos/ clone.
+        repo = registry.get_repository_by_url(URL)
+        assert repo.local_path == f"repos/{DIRNAME}"
+        assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
+
     def test_clone_dir_existing_as_file_is_replaced(self, registry, devbase_root):
         # repos/<derived> is squatted on by a regular *file* (not a directory).
         # git_clone would fail; the file holds no git tree so it is removed and
