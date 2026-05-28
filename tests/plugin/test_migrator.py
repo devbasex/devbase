@@ -8,6 +8,7 @@ from unittest.mock import patch
 import yaml
 import pytest
 
+from devbase.errors import PluginError
 from devbase.plugin.models import (
     AvailablePlugin,
     InstalledPlugin,
@@ -653,3 +654,116 @@ class TestAutoMigrateOnUpdate:
         # only auto-migration removes the stale plugins/ copy; a plain pull
         # would rewrite the path but leave the old copy on disk.
         assert not (devbase_root / "plugins" / "adminer").exists()
+
+
+class TestAddManyDedup:
+    def test_duplicate_names_keep_last(self, registry):
+        # add_many is a public batch API; passing the same name twice must not
+        # leave two conflicting entries in plugins.yml — the last wins.
+        first = _installed("adminer", "repos/x/adminer")
+        second = InstalledPlugin(
+            name="adminer", version="2.0.0",
+            source="https://github.com/testorg/testrepo.git",
+            installed_at="2026-02-02T00:00:00+00:00",
+            path="repos/y/adminer", linked=False,
+        )
+        registry.add_many([first, second])
+        installed = registry.list_installed()
+        assert [p.name for p in installed] == ["adminer"]
+        # Last entry won.
+        assert registry.get("adminer").path == "repos/y/adminer"
+        assert registry.get("adminer").version == "2.0.0"
+
+    def test_duplicate_does_not_duplicate_existing(self, registry):
+        # An existing entry replaced by a batch containing duplicates of that
+        # name still results in exactly one row.
+        registry.add(_installed("adminer", "plugins/adminer"))
+        registry.add_many([
+            _installed("adminer", "repos/a/adminer"),
+            _installed("adminer", "repos/b/adminer"),
+        ])
+        installed = [p for p in registry.list_installed() if p.name == "adminer"]
+        assert len(installed) == 1
+        assert installed[0].path == "repos/b/adminer"
+
+
+class TestFilesEqualExecBitOnly:
+    """_files_equal should only care about exec bits, not full perms."""
+
+    def test_rw_perm_diff_does_not_differ(self, tmp_path):
+        # Identical bytes, both non-executable, but differing read/write bits
+        # (e.g. from a different umask) must NOT count as divergence.
+        a, b = tmp_path / "a", tmp_path / "b"
+        a.mkdir(); b.mkdir()
+        (a / "f.txt").write_text("same\n")
+        (b / "f.txt").write_text("same\n")
+        (a / "f.txt").chmod(0o644)
+        (b / "f.txt").chmod(0o640)
+        assert _dirs_differ(a, b) is False
+
+    def test_exec_bit_diff_still_differs(self, tmp_path):
+        # Functionally meaningful exec-bit change is still detected.
+        a, b = tmp_path / "a", tmp_path / "b"
+        a.mkdir(); b.mkdir()
+        (a / "f.sh").write_text("#!/bin/sh\n")
+        (b / "f.sh").write_text("#!/bin/sh\n")
+        (a / "f.sh").chmod(0o755)
+        (b / "f.sh").chmod(0o644)
+        assert _dirs_differ(a, b) is True
+
+
+class TestEnsureRepoClonedProtectsGit:
+    """A recorded local_path whose dir keeps .git must not be deleted."""
+
+    def test_local_path_with_git_missing_registry_is_not_deleted(
+        self, registry, devbase_root,
+    ):
+        # local_path recorded; clone has .git but registry.yml is gone. The dir
+        # may hold uncommitted/unpushed local work, so migration must refuse to
+        # rmtree it and raise instead of silently destroying it.
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        _register_repo(registry, plugins)  # local_path = repos/<DIRNAME>
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+        clone = devbase_root / "repos" / DIRNAME
+        clone.mkdir(parents=True)
+        (clone / ".git").mkdir()
+        (clone / "local-work.txt").write_text("uncommitted\n")
+        # No registry.yml -> _clone_is_healthy is False.
+
+        def fake_clone(url, dest, **kwargs):  # pragma: no cover - must not run
+            raise AssertionError("re-clone must not happen when .git is present")
+
+        with patch("devbase.plugin.installer.git_clone", side_effect=fake_clone):
+            result = migrate(registry)
+
+        # The plugin was skipped (not migrated) and the dir survives intact.
+        assert "adminer" in result.skipped
+        assert (clone / ".git").is_dir()
+        assert (clone / "local-work.txt").read_text() == "uncommitted\n"
+        # registry entry still points at the legacy path so it retries later.
+        assert registry.get("adminer").path == "plugins/adminer"
+
+    def test_local_path_without_git_is_still_recloned(self, registry, devbase_root):
+        # Sanity: when .git is gone the dir is genuinely broken and re-cloning
+        # (the existing behaviour) still applies.
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        _register_repo(registry, plugins)
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+        broken = devbase_root / "repos" / DIRNAME
+        broken.mkdir(parents=True)
+        (broken / "leftover.txt").write_text("broken\n")
+
+        def fake_clone(url, dest, **kwargs):
+            _make_repo_clone(dest.parent.parent, plugins)
+
+        with patch(
+            "devbase.plugin.installer.git_clone", side_effect=fake_clone,
+        ) as mock:
+            result = migrate(registry)
+
+        mock.assert_called_once()
+        assert result.migrated == ["adminer"]
+        assert (devbase_root / "repos" / DIRNAME / ".git").exists()
+        assert not (devbase_root / "repos" / DIRNAME / "leftover.txt").exists()

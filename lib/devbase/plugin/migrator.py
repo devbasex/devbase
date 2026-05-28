@@ -88,17 +88,21 @@ def _entry_kind(p: Path) -> str:
     return 'other'
 
 
+_EXEC_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+
+
 def _files_equal(fa: Path, fb: Path) -> bool:
-    """Compare two regular files by permission bits, size, then byte content.
+    """Compare two regular files by exec bits, size, then byte content.
 
     Reads in fixed-size chunks rather than slurping the whole file so a large
-    plugin asset can't exhaust memory during the migration scan.  Permission
-    bits (S_IMODE) are compared too so a local exec-bit change (e.g. an entry
-    script the user made executable) counts as divergence and is preserved
-    rather than silently lost when the copy is deleted.
+    plugin asset can't exhaust memory during the migration scan.  Only the
+    execute bits are compared (not the full S_IMODE): a local exec-bit change
+    (e.g. an entry script the user made executable) is functionally meaningful
+    and must be preserved, but read/write permission differences caused by the
+    environment's umask or group settings should not spuriously force a .bak.
     """
     sa, sb = fa.stat(), fb.stat()
-    if stat.S_IMODE(sa.st_mode) != stat.S_IMODE(sb.st_mode):
+    if (sa.st_mode & _EXEC_BITS) != (sb.st_mode & _EXEC_BITS):
         return False
     if sa.st_size != sb.st_size:
         return False
@@ -178,11 +182,22 @@ def _ensure_repo_cloned(
         clone_dir = registry.devbase_root / repo.local_path
         if _clone_is_healthy(clone_dir):
             return clone_dir, repo
-        # Recorded local_path exists but is not a valid clone (.git lost, etc.):
-        # drop it so the re-clone below repairs the tree instead of returning a
-        # path that update/pull can never recover.
         if clone_dir.is_dir():
-            shutil.rmtree(clone_dir)
+            # The dir exists but isn't fully healthy.  Only destroy it when its
+            # .git is gone (an un-pullable tree that re-cloning must repair).
+            # If .git is still present the working tree may hold uncommitted or
+            # unpushed local work, so refuse to delete it and surface an error
+            # asking the user to repair/remove it manually rather than silently
+            # losing their changes.
+            if not (clone_dir / '.git').exists():
+                shutil.rmtree(clone_dir)
+            else:
+                raise PluginError(
+                    f"Existing clone '{clone_dir}' has a .git but is missing "
+                    f"registry.yml; refusing to delete it to avoid losing local "
+                    f"changes. Restore registry.yml (e.g. 'git checkout -- "
+                    f"registry.yml') or remove the directory manually, then retry."
+                )
 
     dir_name = _url_to_repos_dirname(repo.url)
     repos_dir = registry.get_repos_dir()

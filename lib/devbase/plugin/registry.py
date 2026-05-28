@@ -72,15 +72,22 @@ class PluginRegistry:
 
         Saving plugins.yml once for a batch avoids the repeated read+atomic
         rewrite that calling add() per plugin would incur (e.g. during
-        migration of many legacy installs)."""
+        migration of many legacy installs).
+
+        Duplicate names within `plugins` are de-duplicated (last one wins) so a
+        caller passing the same plugin twice can't leave two conflicting entries
+        in plugins.yml."""
         if not plugins:
             return
+        # Keep only the last entry per name; dict preserves insertion order so
+        # the surviving entries stay in the order they were last supplied.
+        unique = list({p.name: p for p in plugins}.values())
         data = self._load()
-        names = {p.name for p in plugins}
+        names = {p.name for p in unique}
         data['installed_plugins'] = [
             p for p in data['installed_plugins'] if p['name'] not in names
         ]
-        data['installed_plugins'].extend(p.to_dict() for p in plugins)
+        data['installed_plugins'].extend(p.to_dict() for p in unique)
         self._save(data)
 
     def remove(self, name: str) -> bool:
