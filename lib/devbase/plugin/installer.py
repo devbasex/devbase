@@ -1,12 +1,9 @@
 """Plugin installer - handles install/uninstall operations"""
 
-import hashlib
 import os
 import shutil
 import subprocess
-import tempfile
 import yaml
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -49,12 +46,19 @@ def parse_registry_yml(path: Path) -> Optional[RegistryInfo]:
     )
 
 
-def git_clone(url: str, dest: Path, ref: Optional[str] = None) -> None:
+def git_clone(
+    url: str,
+    dest: Path,
+    ref: Optional[str] = None,
+    shallow: bool = True,
+) -> None:
     """Clone a git repository.
 
     Raises PluginError on failure.
     """
-    cmd = ['git', 'clone', '--depth', '1']
+    cmd = ['git', 'clone']
+    if shallow:
+        cmd.extend(['--depth', '1'])
     if ref:
         cmd.extend(['--branch', ref])
     cmd.extend([url, str(dest)])
@@ -77,6 +81,32 @@ def resolve_repo_url(repo: str) -> str:
     return f"https://github.com/{repo}.git"
 
 
+def _auto_migrate(registry: PluginRegistry) -> None:
+    """Migrate any legacy plugins/ copy installs to repos/ before proceeding.
+
+    Triggered on the first install/update after upgrading to repos/-based
+    plugin management so users do not have to run `devbase plugin migrate`
+    manually.  No-op when nothing legacy remains.
+    """
+    from .migrator import migrate, needs_migration
+    if not needs_migration(registry):
+        return
+    logger.info("Legacy plugins/ installs detected — migrating to repos/...")
+    result = migrate(registry)
+    if result.migrated:
+        logger.info("  Migrated: %s", ", ".join(result.migrated))
+    # preserved/skipped recur on every install/update until the user
+    # reconciles, so avoid re-emitting a loud per-plugin WARNING each time:
+    # surface a single concise hint pointing at the explicit command, which
+    # prints the full per-plugin detail when run.
+    if result.preserved or result.skipped:
+        pending = len(result.preserved) + len(result.skipped)
+        logger.info(
+            "  %d plugin(s) still need attention — run 'devbase plugin migrate' "
+            "for details.", pending,
+        )
+
+
 def install_plugin(
     registry: PluginRegistry,
     source_str: str,
@@ -87,21 +117,33 @@ def install_plugin(
 
     Raises PluginError on failure.
     """
+    _auto_migrate(registry)
+
     source = PluginSource.parse(source_str, link=link)
     plugins_dir = registry.get_plugins_dir()
-    plugins_dir.mkdir(exist_ok=True)
 
-    # Name-only: look up in registered repositories
     if not source.repo and source.plugin_name:
+        # Reject @ref on name-only installs too — the permanent clone tracks
+        # the default branch and does not support pinned refs.  Without this
+        # guard, `devbase plugin install myplugin@v1` would silently drop the
+        # ref in _install_from_repo() and install the default branch instead.
+        # This matches the validation for unregistered/registered repos below.
+        if source.ref:
+            raise PluginError(
+                f"Cannot use @{source.ref} with plugin '{source.plugin_name}'.\n"
+                "Permanent clones track the default branch and do not support pinned refs.\n"
+                f"Install without @ref:\n"
+                f"  devbase plugin install {source.plugin_name}"
+            )
         result = registry.find_plugin_in_repos(source.plugin_name)
         if result:
             repo, avail_plugin = result
             repo_source = PluginSource(
                 repo=repo.url, plugin_name=source.plugin_name,
-                ref=source.ref, linked=False,
+                ref=None, linked=False,
             )
             _install_from_repo(
-                registry, repo_source, plugins_dir, install_all=False,
+                registry, repo_source, install_all=False,
             )
             return
         raise PluginError(
@@ -110,20 +152,49 @@ def install_plugin(
             "Use 'devbase plugin repo list' to see registered repositories and available plugins."
         )
 
-    # Resolve repo URL
     repo_url = resolve_repo_url(source.repo)
 
-    # Local path with --link
     if link and (Path(source.repo).is_dir()):
+        plugins_dir.mkdir(exist_ok=True)
         _install_from_local(registry, source, plugins_dir)
         return
 
-    # Git repository (user/repo:plugin-name or URL:plugin-name)
+    # Auto-register the repository if not already registered, so that
+    # `devbase plugin install user/repo:plugin-name` keeps working without
+    # a prior `repo add`.
+    if not registry.get_repository_by_url(repo_url):
+        if source.ref:
+            raise PluginError(
+                f"Cannot use @{source.ref} with unregistered repository '{repo_url}'.\n"
+                "Permanent clones track the default branch and do not support pinned refs.\n"
+                "Register the repository first, then install without @ref:\n"
+                f"  devbase plugin repo add {repo_url}\n"
+                f"  devbase plugin install {repo_url}:{source.plugin_name}"
+            )
+        from .repo_manager import add_repository
+        try:
+            add_repository(registry, repo_url)
+        except Exception as e:
+            raise PluginError(
+                f"Repository '{repo_url}' is not registered and auto-registration failed: {e}\n"
+                "Use 'devbase plugin repo add <url>' to register manually."
+            )
+
+    # Reject @ref on already-registered repos — the permanent clone tracks
+    # the default branch and does not support pinned refs.  This matches the
+    # validation for *unregistered* repos (line 126-133 above).
+    if source.ref:
+        raise PluginError(
+            f"Cannot use @{source.ref} with registered repository '{repo_url}'.\n"
+            "Permanent clones track the default branch and do not support pinned refs.\n"
+            f"Install without @ref:\n"
+            f"  devbase plugin install {repo_url}:{source.plugin_name}"
+        )
+
     _install_from_repo(
         registry, PluginSource(
-            repo=repo_url, plugin_name=source.plugin_name, ref=source.ref, linked=False,
+            repo=repo_url, plugin_name=source.plugin_name, ref=None, linked=False,
         ),
-        plugins_dir,
         install_all=install_all,
     )
 
@@ -140,10 +211,8 @@ def _install_from_local(
     local_path = Path(source.repo)
 
     if source.plugin_name:
-        # Specific plugin within the repo
         plugin_path = local_path / source.plugin_name
         if not plugin_path.is_dir():
-            # Try looking at registry.yml for path mapping
             reg_info = parse_registry_yml(local_path)
             if reg_info:
                 for entry in reg_info.plugins:
@@ -165,7 +234,7 @@ def _link_plugin(
     source_display: str,
     plugins_dir: Path,
 ) -> None:
-    """Create a symlink for a local plugin"""
+    """Create a symlink for a local plugin (--link install only)"""
     dest = plugins_dir / name
     if dest.exists() or dest.is_symlink():
         logger.warning("Removing existing plugin '%s'", name)
@@ -195,269 +264,177 @@ def _link_plugin(
 def _install_from_repo(
     registry: PluginRegistry,
     source: PluginSource,
-    plugins_dir: Path,
     install_all: bool = False,
 ) -> None:
-    """Install plugin(s) from a git repository.
+    """Install plugin(s) from a registered repository via symlink to repos/.
 
     Raises PluginError on failure.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        clone_dir = Path(tmpdir) / 'repo'
-        git_clone(source.repo, clone_dir, source.ref)
+    repo_reg = registry.get_repository_by_url(source.repo)
+    if not repo_reg:
+        raise PluginError(
+            f"Repository '{source.repo}' is not registered.\n"
+            "Use 'devbase plugin repo add <url>' first."
+        )
 
+    if not repo_reg.local_path:
+        # Legacy repository registered before persistent-clone support.
+        # Auto-migrate by creating a persistent clone in repos/.
+        logger.info(
+            "Migrating repository '%s' to persistent clone...", repo_reg.name,
+        )
+        from .repo_manager import _url_to_repos_dirname
+        dir_name = _url_to_repos_dirname(repo_reg.url)
+        repos_dir = registry.get_repos_dir()
+        repos_dir.mkdir(exist_ok=True)
+        clone_dir = repos_dir / dir_name
+
+        if not clone_dir.is_dir():
+            try:
+                git_clone(repo_reg.url, clone_dir, shallow=False)
+            except PluginError as e:
+                raise PluginError(
+                    f"Failed to create persistent clone for '{repo_reg.name}': {e}\n"
+                    "Remove and re-add the repository:\n"
+                    f"  devbase plugin repo remove {repo_reg.name}\n"
+                    f"  devbase plugin repo add {repo_reg.url}"
+                )
+
+        # Validate the clone by parsing registry.yml BEFORE saving to
+        # plugins.yml.  This prevents a broken clone from polluting the
+        # persisted state.  If parsing fails, the old repository entry
+        # (without local_path) is kept so the user can retry.
         reg_info = parse_registry_yml(clone_dir)
         if not reg_info:
-            raise PluginError("No registry.yml found in repository")
-
-        if install_all:
-            # Install all plugins from the repo
-            errors = []
-            for entry in reg_info.plugins:
-                try:
-                    copy_plugin(
-                        registry, entry.name,
-                        clone_dir / entry.path.rstrip('/'),
-                        source.repo, plugins_dir
-                    )
-                except PluginError as e:
-                    errors.append(str(e))
-            sync_projects(registry)
-            if errors:
-                raise PluginError(
-                    "Some plugins failed to install:\n" + "\n".join(errors)
-                )
-            return
-
-        if source.plugin_name:
-            # Find specific plugin
-            target_entry = None
-            for entry in reg_info.plugins:
-                if entry.name == source.plugin_name:
-                    target_entry = entry
-                    break
-
-            if not target_entry:
-                available = "\n".join(
-                    f"  - {e.name}: {e.description}" for e in reg_info.plugins
-                )
-                raise PluginError(
-                    f"Plugin '{source.plugin_name}' not found in repository\n"
-                    f"Available plugins:\n{available}"
-                )
-
-            plugin_path = clone_dir / target_entry.path.rstrip('/')
-            copy_plugin(
-                registry, target_entry.name, plugin_path, source.repo, plugins_dir
+            raise PluginError(
+                f"No registry.yml found in cloned repository '{repo_reg.name}'.\n"
+                "Remove and re-add the repository:\n"
+                f"  devbase plugin repo remove {repo_reg.name}\n"
+                f"  devbase plugin repo add {repo_reg.url}"
             )
-            sync_projects(registry)
-        else:
-            # No plugin specified - show available
-            print(f"Available plugins in {source.repo}:")
-            for entry in reg_info.plugins:
-                installed = registry.get(entry.name)
-                status = " (installed)" if installed else ""
-                print(f"  {entry.name}: {entry.description}{status}")
-            print(f"\nUse 'devbase plugin install {source.repo}:PLUGIN_NAME' to install")
-            raise PluginError("No plugin name specified")
 
+        from .models import RegisteredRepository, AvailablePlugin
+        local_path = f"repos/{dir_name}"
+        # Build an up-to-date plugin list from the freshly cloned
+        # registry.yml instead of carrying over stale metadata.
+        migrated_plugins = [
+            AvailablePlugin(
+                name=e.name,
+                description=e.description,
+                path=e.path,
+            )
+            for e in reg_info.plugins
+        ]
+        updated_repo = RegisteredRepository(
+            name=repo_reg.name,
+            url=repo_reg.url,
+            added_at=repo_reg.added_at,
+            local_path=local_path,
+            plugins=migrated_plugins,
+        )
+        registry.add_repository(updated_repo)
+        repo_reg = updated_repo
+        logger.info("Repository '%s' migrated to %s", repo_reg.name, local_path)
 
-def _replace_entry(path: Path) -> None:
-    """Remove ``path`` (file, symlink, or directory) so it can be replaced."""
-    if path.is_symlink() or not path.is_dir():
-        path.unlink()
+    clone_dir = registry.devbase_root / repo_reg.local_path
+    if not clone_dir.is_dir():
+        raise PluginError(
+            f"Clone directory not found: {clone_dir}\n"
+            "Use 'devbase plugin repo remove' and 'repo add' to re-clone."
+        )
+
+    reg_info = parse_registry_yml(clone_dir)
+    if not reg_info:
+        raise PluginError("No registry.yml found in repository")
+
+    if install_all:
+        errors = []
+        for entry in reg_info.plugins:
+            try:
+                _register_repo_plugin(
+                    registry, entry.name,
+                    clone_dir / entry.path.rstrip('/'),
+                    source.repo, repo_reg.local_path,
+                )
+            except PluginError as e:
+                errors.append(str(e))
+        sync_projects(registry)
+        if errors:
+            raise PluginError(
+                "Some plugins failed to install:\n" + "\n".join(errors)
+            )
+        return
+
+    if source.plugin_name:
+        target_entry = None
+        for entry in reg_info.plugins:
+            if entry.name == source.plugin_name:
+                target_entry = entry
+                break
+
+        if not target_entry:
+            available = "\n".join(
+                f"  - {e.name}: {e.description}" for e in reg_info.plugins
+            )
+            raise PluginError(
+                f"Plugin '{source.plugin_name}' not found in repository\n"
+                f"Available plugins:\n{available}"
+            )
+
+        _register_repo_plugin(
+            registry, target_entry.name,
+            clone_dir / target_entry.path.rstrip('/'),
+            source.repo, repo_reg.local_path,
+        )
+        sync_projects(registry)
     else:
-        shutil.rmtree(path)
+        logger.info("Available plugins in %s:", source.repo)
+        for entry in reg_info.plugins:
+            installed = registry.get(entry.name)
+            status = " (installed)" if installed else ""
+            logger.info("  %s: %s%s", entry.name, entry.description, status)
+        logger.info(
+            "Use 'devbase plugin install %s:PLUGIN_NAME' to install",
+            source.repo,
+        )
+        raise PluginError("No plugin name specified")
 
 
-def _hash_file(path: Path) -> str:
-    """Return the SHA-256 hex digest of a regular file's contents."""
-    h = hashlib.sha256()
-    with path.open('rb') as f:
-        for chunk in iter(lambda: f.read(65536), b''):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-@dataclass
-class _SyncReport:
-    """Summary of an in-place plugin sync, surfaced to users after update."""
-    added: list[Path] = field(default_factory=list)
-    updated: list[Path] = field(default_factory=list)
-    kept_local: list[Path] = field(default_factory=list)
-    preserved_orphans: list[Path] = field(default_factory=list)
-
-
-# Files at the plugin root that are upstream-owned metadata: always overwritten
-# so registry version/description never desync from upstream even if a user
-# happened to edit them locally.
-_ALWAYS_OVERWRITE_AT_ROOT = frozenset({'plugin.yml'})
-
-
-def _sync_dir(src: Path, dst: Path, report: _SyncReport, rel: Path = Path('.')) -> None:
-    """Conservatively sync ``src`` → ``dst``, preserving user edits.
-
-    Semantics (per file in src/dst):
-
-    | src | dst | content | action |
-    |---|---|---|---|
-    | exists | missing |  -  | copy from src (record as ``added``) |
-    | exists | exists  | same | no-op |
-    | exists | exists  | differ | keep dst, write src as ``<name>.new`` (``kept_local``) |
-    | missing | exists |  -  | leave dst alone (``preserved_orphans``) |
-
-    Exception: files named in ``_ALWAYS_OVERWRITE_AT_ROOT`` at the plugin root
-    are always overwritten with upstream content (treated as plugin metadata,
-    not user-editable).
-
-    Preserves the inode of ``dst`` and of subdirectories present in both — a
-    user whose CWD lives inside ``dst`` (typically via a ``projects/<name>``
-    symlink resolving into the plugin tree) keeps a valid CWD across updates.
-
-    User-only files (orphans) and user-edited files are never destroyed.
-    """
-    dst.mkdir(parents=True, exist_ok=True)
-
-    src_entries = {e.name: e for e in src.iterdir()}
-    dst_entries = {e.name: e for e in dst.iterdir()}
-
-    for name, dst_entry in dst_entries.items():
-        if name in src_entries:
-            continue
-        if name.endswith('.new'):
-            # `.new` is our own conflict marker — refresh, don't preserve.
-            _replace_entry(dst_entry)
-            continue
-        report.preserved_orphans.append(rel / name)
-
-    for name, src_entry in src_entries.items():
-        dst_entry = dst / name
-        sub_rel = rel / name
-        if (
-            rel == Path('.')
-            and name in _ALWAYS_OVERWRITE_AT_ROOT
-            and not src_entry.is_symlink()
-            and not src_entry.is_dir()
-        ):
-            if dst_entry.is_symlink() or dst_entry.exists():
-                _replace_entry(dst_entry)
-            shutil.copy2(src_entry, dst_entry)
-            report.updated.append(sub_rel)
-            continue
-        if src_entry.is_symlink():
-            link_target = os.readlink(src_entry)
-            if dst_entry.is_symlink() and os.readlink(dst_entry) == link_target:
-                continue
-            if dst_entry.is_symlink() or dst_entry.exists():
-                # Conflict: leave user's, drop upstream alongside as `.new` symlink.
-                new_dst = dst_entry.with_name(dst_entry.name + '.new')
-                if new_dst.is_symlink() or new_dst.exists():
-                    _replace_entry(new_dst)
-                os.symlink(link_target, new_dst)
-                report.kept_local.append(sub_rel)
-            else:
-                os.symlink(link_target, dst_entry)
-                report.added.append(sub_rel)
-        elif src_entry.is_dir():
-            if dst_entry.is_symlink() or (dst_entry.exists() and not dst_entry.is_dir()):
-                # Type mismatch: user has a file/symlink where upstream has a dir.
-                # Drop upstream alongside as `<name>.new/`.
-                new_dst = dst_entry.with_name(dst_entry.name + '.new')
-                if new_dst.is_symlink() or (new_dst.exists() and not new_dst.is_dir()):
-                    _replace_entry(new_dst)
-                _sync_dir(src_entry, new_dst, report, sub_rel)
-                report.kept_local.append(sub_rel)
-            else:
-                already_existed = dst_entry.is_dir()
-                _sync_dir(src_entry, dst_entry, report, sub_rel)
-                if not already_existed:
-                    report.added.append(sub_rel)
-        else:
-            if not dst_entry.exists() and not dst_entry.is_symlink():
-                shutil.copy2(src_entry, dst_entry)
-                report.added.append(sub_rel)
-                continue
-            if dst_entry.is_symlink() or dst_entry.is_dir():
-                # Type mismatch: user has a symlink/dir where upstream has a file.
-                new_dst = dst_entry.with_name(dst_entry.name + '.new')
-                if new_dst.is_symlink() or new_dst.exists():
-                    _replace_entry(new_dst)
-                shutil.copy2(src_entry, new_dst)
-                report.kept_local.append(sub_rel)
-                continue
-            # Both are regular files — compare content.
-            if _hash_file(src_entry) == _hash_file(dst_entry):
-                continue
-            new_dst = dst_entry.with_name(dst_entry.name + '.new')
-            if new_dst.is_symlink() or new_dst.exists():
-                _replace_entry(new_dst)
-            shutil.copy2(src_entry, new_dst)
-            report.kept_local.append(sub_rel)
-
-
-def copy_plugin(
+def _register_repo_plugin(
     registry: PluginRegistry,
     name: str,
     plugin_path: Path,
-    source_display: str,
-    plugins_dir: Path,
+    source_url: str,
+    repo_local_path: str,
 ) -> None:
-    """Install or update a plugin from a cloned repo into ``plugins/``.
-
-    For updates, contents are synced in place (preserving directory inodes
-    and user-edited files) instead of rmtree+copytree. User-edited files
-    are kept as-is; the upstream version of a conflicting file is dropped
-    alongside with a ``.new`` suffix for the user to diff/merge manually.
-    Files present only in the user's working tree (orphans) are preserved.
-
-    Raises PluginError on failure.
-    """
+    """Register a plugin from repos/ (no file copy, just metadata)."""
     if not plugin_path.is_dir():
         raise PluginError(f"Plugin directory not found: {plugin_path}")
 
-    dest = plugins_dir / name
-    if dest.is_symlink():
-        logger.warning("Removing existing plugin '%s' (symlink)", name)
-        dest.unlink()
-        shutil.copytree(plugin_path, dest)
-    elif dest.exists():
-        logger.info("Updating existing plugin '%s'", name)
-        report = _SyncReport()
-        _sync_dir(plugin_path, dest, report)
-        if report.kept_local:
-            logger.warning(
-                "  %d local edit(s) kept; upstream saved as .new alongside:",
-                len(report.kept_local),
-            )
-            for p in report.kept_local[:10]:
-                logger.warning("    - %s (upstream: %s.new)", p, p.name)
-            if len(report.kept_local) > 10:
-                logger.warning("    ... and %d more", len(report.kept_local) - 10)
-        if report.preserved_orphans:
-            logger.info(
-                "  %d local-only file(s) preserved (not in upstream)",
-                len(report.preserved_orphans),
-            )
-    else:
-        shutil.copytree(plugin_path, dest)
-
-    info = load_plugin_info(dest)
+    info = load_plugin_info(plugin_path)
     version = info.version if info else '0.1.0'
+
+    # Use the actual plugin_path relative to devbase_root so that
+    # subdirectory plugins (registry.yml path != name) resolve correctly.
+    rel_path = str(plugin_path.relative_to(registry.devbase_root))
 
     registry.add(InstalledPlugin(
         name=name,
         version=version,
-        source=source_display,
+        source=source_url,
         installed_at=registry.now_iso(),
-        path=f"plugins/{name}",
+        path=rel_path,
         linked=False,
     ))
 
-    logger.info("Installed plugin '%s' (v%s)", name, version)
+    logger.info("Installed plugin '%s' (v%s) from repos/", name, version)
 
 
 def uninstall_plugin(registry: PluginRegistry, name: str) -> None:
     """Uninstall a plugin.
+
+    For repos/-based plugins: removes registry entry and syncs symlinks only.
+    For --link plugins: removes the symlink in plugins/.
 
     Raises PluginError if not installed.
     """
@@ -465,11 +442,12 @@ def uninstall_plugin(registry: PluginRegistry, name: str) -> None:
     if not plugin:
         raise PluginError(f"Plugin '{name}' is not installed")
 
-    plugin_dir = registry.devbase_root / plugin.path
-    if plugin_dir.is_symlink():
-        plugin_dir.unlink()
-    elif plugin_dir.is_dir():
-        shutil.rmtree(plugin_dir)
+    if plugin.linked:
+        plugin_dir = registry.devbase_root / plugin.path
+        if plugin_dir.is_symlink():
+            plugin_dir.unlink()
+        elif plugin_dir.is_dir():
+            shutil.rmtree(plugin_dir)
 
     registry.remove(name)
     logger.info("Uninstalled plugin '%s'", name)

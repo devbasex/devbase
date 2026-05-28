@@ -100,10 +100,17 @@ def _get_plugin_info(registry: PluginRegistry) -> list[dict]:
     """インストール済みプラグインとプロジェクト数を取得する"""
     results = []
     plugins = registry.list_installed()
-    plugins_dir = registry.get_plugins_dir()
 
     for plugin in plugins:
-        plugin_projects_dir = plugins_dir / plugin.name / "projects"
+        # plugin.path は devbase_root からの相対パス。
+        # repos/ ベース (repos/<repo>/<subdir>) と --link ベース
+        # (plugins/<name>) の両方を同じロジックで解決する。
+        # path が空の場合 (旧/破損エントリ) は devbase_root/projects を
+        # 誤参照してしまうため、先にガードして 0 件扱いとする。
+        if not plugin.path:
+            results.append({"name": plugin.name, "project_count": 0})
+            continue
+        plugin_projects_dir = registry.devbase_root / plugin.path / "projects"
         if plugin_projects_dir.is_dir():
             project_count = sum(
                 1 for p in plugin_projects_dir.iterdir() if p.is_dir()

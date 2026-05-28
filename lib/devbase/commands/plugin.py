@@ -9,6 +9,7 @@ from devbase.plugin.installer import install_plugin, uninstall_plugin
 from devbase.plugin.updater import update_plugin
 from devbase.plugin.info import show_plugin_info, show_available_plugins
 from devbase.plugin.syncer import sync_projects
+from devbase.plugin.migrator import migrate
 from devbase.plugin.repo_manager import (
     add_repository,
     remove_repository,
@@ -34,6 +35,7 @@ def cmd_plugin(devbase_root: Path, args) -> int:
         'update':    lambda: cmd_plugin_update(devbase_root, getattr(args, 'name', None)),
         'info':      lambda: cmd_plugin_info(devbase_root, getattr(args, 'name', '')),
         'sync':      lambda: cmd_sync(devbase_root),
+        'migrate':   lambda: cmd_plugin_migrate(devbase_root),
         'repo':      lambda: cmd_repo(devbase_root, args),
     }
 
@@ -138,6 +140,36 @@ def cmd_sync(devbase_root: Path) -> int:
     return 0
 
 
+def cmd_plugin_migrate(devbase_root: Path) -> int:
+    """Migrate legacy plugins/ copy installs to repos/ persistent clones"""
+    registry = PluginRegistry(devbase_root)
+    try:
+        result = migrate(registry)
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    if not (result.migrated or result.preserved or result.skipped):
+        logger.info("No legacy plugins/ installs to migrate.")
+        return 0
+
+    if result.migrated:
+        logger.info("Migrated %d plugin(s) to repos/: %s",
+                    len(result.migrated), ", ".join(result.migrated))
+    if result.preserved:
+        logger.warning(
+            "Preserved %d plugin(s) with local changes as plugins/<name>.bak "
+            "(reconcile manually): %s",
+            len(result.preserved), ", ".join(result.preserved))
+    if result.skipped:
+        logger.warning("Could not migrate %d plugin(s): %s",
+                       len(result.skipped), ", ".join(result.skipped))
+        for err in result.errors:
+            logger.warning("  %s", err)
+        return 1
+    return 0
+
+
 def cmd_repo(devbase_root: Path, args) -> int:
     """Dispatch repo subcommands"""
     registry = PluginRegistry(devbase_root)
@@ -149,7 +181,8 @@ def cmd_repo(devbase_root: Path, args) -> int:
 
     handlers = {
         'add':     lambda: add_repository(registry, args.url, name=args.name),
-        'remove':  lambda: remove_repository(registry, args.name),
+        'remove':  lambda: remove_repository(registry, args.name,
+                                               force=getattr(args, 'force', False)),
         'list':    lambda: show_repositories(registry),
         'refresh': lambda: _repo_refresh(registry, args),
     }
@@ -181,9 +214,13 @@ def _repo_refresh(registry, args):
     errors = []
     for repo in repos:
         try:
-            refresh_repository(registry, repo.name)
+            refresh_repository(registry, repo.name, sync=False)
         except DevbaseError as e:
             logger.error("%s", e)
             errors.append(str(e))
+
+    # Sync once after all repos are refreshed (instead of per-repo)
+    sync_projects(registry)
+
     if errors:
         raise DevbaseError(f"{len(errors)} repository refresh(es) failed")

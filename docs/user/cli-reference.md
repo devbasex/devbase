@@ -404,6 +404,24 @@ devbase plugin info <name>
 devbase plugin sync
 ```
 
+### `devbase plugin migrate`
+
+旧形式 (`plugins/<name>` へのコピー) でインストールされたプラグインを、`repos/` 配下の永続クローンへ移行します。`install` / `update` 実行時にも自動で呼び出されるため、通常は手動実行不要です。
+
+```
+devbase plugin migrate
+```
+
+移行の挙動:
+
+| 状況 | 動作 |
+|---|---|
+| コピーがクローンと一致 | 旧コピーを削除し `repos/` へ移行 (migrated) |
+| コピーにローカル変更あり | 旧コピーを `plugins/<name>.bak` として保全 (preserved、手動で reconcile) |
+| 移行できない (ソース未登録 等) | スキップしてエラーを表示 (skipped) |
+
+`--link` でインストールしたプラグインは移行対象外です。
+
 ### `devbase plugin repo add`
 
 プラグインリポジトリを登録します。
