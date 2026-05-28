@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass  # noqa: F401  (tests monkey-patch devbase.env.io_export.getpass)
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -44,11 +45,42 @@ class ExportOptions:
     unsafe_allow_unencrypted_bucket: bool = False
 
 
-def _default_dest(force_unencrypted: bool) -> str:
+def _generate_default_filename(force_unencrypted: bool) -> str:
+    """既定ファイル名 (prefix なし) を生成する共通ヘルパー。
+    `_default_dest` / `_default_filename` の両方から呼ぶことで結合度を下げる
+    (PR #25 cross-review round 1 gemini 指摘)。"""
     # microsecond まで含めて衝突を回避する (PR #22 codex round 3 指摘)
     ts = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     suffix = '.dbenv.tar.gz' if force_unencrypted else '.dbenv'
-    return f'./devbase-env-{ts}{suffix}'
+    return f'devbase-env-{ts}{suffix}'
+
+
+def _default_dest(force_unencrypted: bool) -> str:
+    return f'./{_generate_default_filename(force_unencrypted)}'
+
+
+def _default_filename(force_unencrypted: bool) -> str:
+    """既定ファイル名 (prefix なし) を返す。dest がディレクトリ的なときに append する用途。"""
+    return _generate_default_filename(force_unencrypted)
+
+
+def _complete_dir_dest(dest: str, force_unencrypted: bool) -> str:
+    """dest が「ディレクトリ的」なら既定ファイル名を補完する (`aws s3 cp` 互換、#24)。
+
+    - S3 URI で末尾が `/`: `s3://bucket/prefix/` → `s3://bucket/prefix/<default>`
+    - ローカルで既存ディレクトリ: `/tmp/out/` (または末尾 `/` なし) → `/tmp/out/<default>`
+    - それ以外 (フルキー / 通常ファイルパス / stdio `-`) はそのまま返す。
+    """
+    if _storage.is_stdio(dest):
+        return dest
+    name = _default_filename(force_unencrypted)
+    if _storage.is_s3(dest):
+        return dest + name if dest.endswith('/') else dest
+    # ローカル: 既存ディレクトリか末尾 `/` ならディレクトリ扱い
+    p = Path(dest)
+    if dest.endswith(('/', os.sep)) or p.is_dir():
+        return str(p / name)
+    return dest
 
 
 def _read_passphrase(opts: ExportOptions) -> Optional[str]:
@@ -163,6 +195,14 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
         logger.debug("暗号化後サイズ: %d bytes", len(payload))
 
     dest = opts.dest or _default_dest(opts.force_unencrypted)
+    # dest が「ディレクトリ的」なら `aws s3 cp` 互換でファイル名を自動補完する (#24)。
+    # 末尾 `/` の S3 URI で空キーオブジェクトが作られる事故と、ローカル既存
+    # ディレクトリへの OSError fail-fast の両方を救う。
+    if opts.dest:
+        completed = _complete_dir_dest(dest, opts.force_unencrypted)
+        if completed != dest:
+            logger.info("dest がディレクトリ的なためファイル名を補完: %s", completed)
+            dest = completed
     # 既定名 (opts.dest 未指定) かつローカルパスの場合、既存ファイルの上書きを拒否する
     # (microsecond 精度でも理論上は衝突しうるため防御的にチェック)
     if not opts.dest and not _storage.is_s3(dest) and not _storage.is_stdio(dest):
