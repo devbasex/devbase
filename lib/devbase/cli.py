@@ -37,7 +37,7 @@ GROUP_ALIASES = {
 SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
-    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo'],
+    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
 
@@ -233,6 +233,9 @@ def _add_plugin_parser(subparsers):
     p_info.add_argument('name', help='Plugin name')
 
     pl_sub.add_parser('sync', help='Resync project symlinks')
+
+    pl_sub.add_parser('migrate',
+                      help='Migrate legacy plugins/ installs to repos/ clones')
 
     # Plugin repo sub-subcommands
     pl_repo = pl_sub.add_parser('repo', help='Manage plugin repositories')

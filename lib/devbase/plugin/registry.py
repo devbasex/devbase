@@ -65,11 +65,79 @@ class PluginRegistry:
 
     def add(self, plugin: InstalledPlugin) -> None:
         """Add a plugin to the registry"""
-        data = self._load()
+        self.add_many([plugin])
+
+    @staticmethod
+    def _apply_plugins(data: dict, plugins: list[InstalledPlugin]) -> None:
+        """Upsert `plugins` into `data['installed_plugins']` (in place).
+
+        Duplicate names within `plugins` are de-duplicated (last one wins) so a
+        caller passing the same plugin twice can't leave two conflicting entries
+        in plugins.yml.  Does not touch disk — callers persist `data` once.
+        """
+        if not plugins:
+            return
+        # Keep only the last entry per name; dict preserves insertion order so
+        # the surviving entries stay in the order they were last supplied.
+        unique = list({p.name: p for p in plugins}.values())
+        names = {p.name for p in unique}
         data['installed_plugins'] = [
-            p for p in data['installed_plugins'] if p['name'] != plugin.name
+            p for p in data['installed_plugins'] if p['name'] not in names
         ]
-        data['installed_plugins'].append(plugin.to_dict())
+        data['installed_plugins'].extend(p.to_dict() for p in unique)
+
+    @staticmethod
+    def _apply_repositories(
+        data: dict, repos: list[RegisteredRepository],
+    ) -> None:
+        """Upsert `repos` into `data['repositories']` (in place).
+
+        Duplicate names (last one wins) are de-duplicated so accumulating the
+        same repo twice can't leave two conflicting rows.  Does not touch disk.
+        """
+        if not repos:
+            return
+        unique = list({r.name: r for r in repos}.values())
+        names = {r.name for r in unique}
+        data['repositories'] = [
+            r for r in data['repositories'] if r['name'] not in names
+        ]
+        data['repositories'].extend(r.to_dict() for r in unique)
+
+    def add_many(self, plugins: list[InstalledPlugin]) -> None:
+        """Add/replace multiple plugins with a single load+save.
+
+        Saving plugins.yml once for a batch avoids the repeated read+atomic
+        rewrite that calling add() per plugin would incur (e.g. during
+        migration of many legacy installs).
+
+        Duplicate names within `plugins` are de-duplicated (last one wins) so a
+        caller passing the same plugin twice can't leave two conflicting entries
+        in plugins.yml."""
+        if not plugins:
+            return
+        data = self._load()
+        self._apply_plugins(data, plugins)
+        self._save(data)
+
+    def save_migration(
+        self,
+        repositories: list[RegisteredRepository],
+        plugins: list[InstalledPlugin],
+    ) -> None:
+        """Persist repository + plugin updates from a migration in ONE save.
+
+        migrate() clones each legacy repo and rewrites each plugin's path; both
+        the refreshed repository rows (local_path + plugin list) and the plugin
+        path rewrites must land durably *before* any old copy is deleted.  This
+        applies both sets of upserts to a single loaded snapshot and writes
+        plugins.yml exactly once, so the save count stays O(1) regardless of how
+        many repos were cloned (rather than one save per cloned repo)."""
+        if not repositories and not plugins:
+            return
+        data = self._load()
+        self._apply_repositories(data, repositories)
+        self._apply_plugins(data, plugins)
         self._save(data)
 
     def remove(self, name: str) -> bool:
@@ -125,10 +193,7 @@ class PluginRegistry:
     def add_repository(self, repo: RegisteredRepository) -> None:
         """Add or update a repository in the registry"""
         data = self._load()
-        data['repositories'] = [
-            r for r in data['repositories'] if r['name'] != repo.name
-        ]
-        data['repositories'].append(repo.to_dict())
+        self._apply_repositories(data, [repo])
         self._save(data)
 
     def remove_repository(self, name: str) -> bool:

@@ -189,6 +189,9 @@ def update_plugin(registry: PluginRegistry, name: Optional[str] = None) -> None:
 
     Raises PluginError on failure.
     """
+    from .installer import _auto_migrate
+    _auto_migrate(registry)
+
     installed = registry.list_installed()
     if not installed:
         logger.info("No plugins installed")

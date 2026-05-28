@@ -81,6 +81,32 @@ def resolve_repo_url(repo: str) -> str:
     return f"https://github.com/{repo}.git"
 
 
+def _auto_migrate(registry: PluginRegistry) -> None:
+    """Migrate any legacy plugins/ copy installs to repos/ before proceeding.
+
+    Triggered on the first install/update after upgrading to repos/-based
+    plugin management so users do not have to run `devbase plugin migrate`
+    manually.  No-op when nothing legacy remains.
+    """
+    from .migrator import migrate, needs_migration
+    if not needs_migration(registry):
+        return
+    logger.info("Legacy plugins/ installs detected — migrating to repos/...")
+    result = migrate(registry)
+    if result.migrated:
+        logger.info("  Migrated: %s", ", ".join(result.migrated))
+    # preserved/skipped recur on every install/update until the user
+    # reconciles, so avoid re-emitting a loud per-plugin WARNING each time:
+    # surface a single concise hint pointing at the explicit command, which
+    # prints the full per-plugin detail when run.
+    if result.preserved or result.skipped:
+        pending = len(result.preserved) + len(result.skipped)
+        logger.info(
+            "  %d plugin(s) still need attention — run 'devbase plugin migrate' "
+            "for details.", pending,
+        )
+
+
 def install_plugin(
     registry: PluginRegistry,
     source_str: str,
@@ -91,6 +117,8 @@ def install_plugin(
 
     Raises PluginError on failure.
     """
+    _auto_migrate(registry)
+
     source = PluginSource.parse(source_str, link=link)
     plugins_dir = registry.get_plugins_dir()
 
