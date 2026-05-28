@@ -425,9 +425,18 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
     pending_repos: list[RegisteredRepository] = []  # cloned-repo rows to persist
     retire: list[tuple[str, Path, Path]] = []  # (plugin_name, old_dir, repo_dir)
 
+    # Index every registered repo by URL once.  registry.get_repository_by_url
+    # re-reads (and re-parses) plugins.yml on every call, so calling it per
+    # legacy plugin is O(N) disk reads over the loop; a single up-front read
+    # collapses that to O(1).  Last-wins on duplicate URLs mirrors the name-keyed
+    # upsert model used elsewhere in the registry.
+    repos_by_url = {
+        repo.url: repo for repo in registry.list_repositories() if repo.url
+    }
+
     for plugin in legacy:
         try:
-            repo = registry.get_repository_by_url(plugin.source)
+            repo = repos_by_url.get(plugin.source) if plugin.source else None
             if not repo:
                 result.skipped.append(plugin.name)
                 result.errors.append(

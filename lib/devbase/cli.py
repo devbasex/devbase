@@ -37,7 +37,7 @@ GROUP_ALIASES = {
 SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
-    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo'],
+    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
 
