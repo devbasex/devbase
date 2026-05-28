@@ -561,6 +561,85 @@ class TestMigrateBatchesRegistryWrites:
         for p in plugins:
             assert registry.get(p["name"]).path == f"repos/{DIRNAME}/{p['name']}"
 
+    def test_many_cloned_repos_persist_with_single_save(self, registry, devbase_root):
+        """O(1) saves even when every repo must be freshly cloned.
+
+        Previously _ensure_repo_cloned saved plugins.yml once per cloned repo
+        (via add_repository), so migrating N repos cost N repo-saves + 1
+        path-rewrite save.  migrate() now stages every cloned repo row and
+        flushes them together with the path rewrites in one save_migration, so
+        the save count is O(1) regardless of repo count — while still persisting
+        the clones BEFORE any copy is retired (two-phase atomicity).
+        """
+        from devbase.plugin.repo_manager import _url_to_repos_dirname
+
+        repos = [
+            ("https://github.com/testorg/repo-a.git", "alpha"),
+            ("https://github.com/testorg/repo-b.git", "beta"),
+            ("https://github.com/testorg/repo-c.git", "gamma"),
+        ]
+        dirnames = {url: _url_to_repos_dirname(url) for url, _ in repos}
+
+        for url, pname in repos:
+            # Register each repo WITHOUT local_path so _ensure_repo_cloned takes
+            # the fresh-clone path (which used to save per repo).
+            registry.add_repository(RegisteredRepository(
+                name=pname, url=url, added_at=registry.now_iso(), local_path="",
+                plugins=[AvailablePlugin(name=pname, description="", path=pname)],
+            ))
+            # Legacy plugins/<name> copy + installed entry pointing at it.
+            pdir = devbase_root / "plugins" / pname
+            pdir.mkdir(parents=True, exist_ok=True)
+            (pdir / "plugin.yml").write_text(yaml.dump({"name": pname, "version": "1.0.0"}))
+            (pdir / "projects" / pname).mkdir(parents=True, exist_ok=True)
+            (pdir / "projects" / pname / "compose.yml").write_text("services: {}\n")
+            registry.add(InstalledPlugin(
+                name=pname, version="1.0.0", source=url,
+                installed_at="2026-01-01T00:00:00+00:00",
+                path=f"plugins/{pname}", linked=False,
+            ))
+
+        def fake_clone(url, dest, **kwargs):
+            # Build a healthy clone identical (byte-for-byte) to the legacy copy
+            # so it is cleanly retired, proving the registry was persisted first.
+            pname = dest.name.split("--")[-1].replace("repo-", "")
+            # Map dest dirname back to the plugin name via the registered repos.
+            for u, p in repos:
+                if dest.name == dirnames[u]:
+                    pname = p
+                    break
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / ".git").mkdir(exist_ok=True)
+            pdir = dest / pname
+            pdir.mkdir(parents=True, exist_ok=True)
+            (pdir / "plugin.yml").write_text(yaml.dump({"name": pname, "version": "1.0.0"}))
+            (pdir / "projects" / pname).mkdir(parents=True, exist_ok=True)
+            (pdir / "projects" / pname / "compose.yml").write_text("services: {}\n")
+            (dest / "registry.yml").write_text(yaml.dump(
+                {"name": pname, "plugins": [{"name": pname, "path": pname, "description": ""}]}
+            ))
+
+        with patch("devbase.plugin.installer.git_clone", side_effect=fake_clone):
+            with patch.object(
+                PluginRegistry, "_save", autospec=True,
+                side_effect=PluginRegistry._save,
+            ) as save_spy:
+                result = migrate(registry)
+
+        assert sorted(result.migrated) == ["alpha", "beta", "gamma"]
+        # 3 cloned repos + 3 path rewrites, yet a single plugins.yml write.
+        assert save_spy.call_count == 1
+        for url, pname in repos:
+            # Each repo row got its local_path persisted (registry durably points
+            # at the clone)...
+            repo = registry.get_repository_by_url(url)
+            assert repo.local_path == f"repos/{dirnames[url]}"
+            # ...and each plugin path was rewritten to the repos/ clone.
+            assert registry.get(pname).path == f"repos/{dirnames[url]}/{pname}"
+            # The legacy copy was retired only because the registry was persisted
+            # before Phase 2 (the clone is byte-identical, so it is deleted).
+            assert not (devbase_root / "plugins" / pname).exists()
+
 
 class TestCmdPluginMigrate:
     def test_command_runs_migration(self, devbase_root):
@@ -685,6 +764,48 @@ class TestAddManyDedup:
         installed = [p for p in registry.list_installed() if p.name == "adminer"]
         assert len(installed) == 1
         assert installed[0].path == "repos/b/adminer"
+
+
+class TestSaveMigration:
+    """save_migration upserts repos + plugins in a single load+save."""
+
+    def test_repos_and_plugins_applied_in_one_save(self, registry):
+        repo = RegisteredRepository(
+            name="testrepo", url=URL, added_at=registry.now_iso(),
+            local_path=f"repos/{DIRNAME}",
+            plugins=[AvailablePlugin(name="adminer", description="", path="adminer")],
+        )
+        plugin = _installed("adminer", f"repos/{DIRNAME}/adminer")
+
+        with patch.object(
+            PluginRegistry, "_save", autospec=True, side_effect=PluginRegistry._save,
+        ) as save_spy:
+            registry.save_migration([repo], [plugin])
+
+        assert save_spy.call_count == 1
+        assert registry.get_repository_by_url(URL).local_path == f"repos/{DIRNAME}"
+        assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
+
+    def test_repo_upsert_replaces_existing_row(self, registry):
+        # A repo registered without local_path is replaced (not duplicated) by
+        # the migration row carrying local_path.
+        registry.add_repository(RegisteredRepository(
+            name="testrepo", url=URL, added_at=registry.now_iso(), local_path="",
+        ))
+        updated = RegisteredRepository(
+            name="testrepo", url=URL, added_at=registry.now_iso(),
+            local_path=f"repos/{DIRNAME}",
+        )
+        registry.save_migration([updated], [])
+
+        repos = registry.list_repositories()
+        assert len(repos) == 1
+        assert repos[0].local_path == f"repos/{DIRNAME}"
+
+    def test_empty_inputs_do_not_save(self, registry):
+        with patch.object(PluginRegistry, "_save", autospec=True) as save_spy:
+            registry.save_migration([], [])
+        save_spy.assert_not_called()
 
 
 class TestFilesEqualExecBitOnly:
@@ -860,11 +981,12 @@ class TestEnsureRepoClonedProtectsGit:
 class TestMigratePersistsRegistryBeforeRetiringCopy:
     """A registry-save failure must not leave a copy deleted with a stale path.
 
-    Round 3 batched the path rewrites into a single add_many AFTER retiring the
+    Round 3 batched the path rewrites into a single save AFTER retiring the
     copies; if that save raised, the copies were already gone/renamed while
-    plugins.yml still pointed at plugins/.  migrate() now saves the rewrites
-    BEFORE any destructive filesystem op, so a save failure aborts with every
-    copy intact.
+    plugins.yml still pointed at plugins/.  migrate() now persists the rewrites
+    (and any freshly cloned repo rows) via a single save_migration call BEFORE
+    any destructive filesystem op, so a save failure aborts with every copy
+    intact.
     """
 
     def test_save_failure_leaves_copy_intact(self, registry, devbase_root):
@@ -874,9 +996,9 @@ class TestMigratePersistsRegistryBeforeRetiringCopy:
         _make_legacy_copy(devbase_root, "adminer", plugins[0])
         registry.add(_installed("adminer", "plugins/adminer"))
 
-        # add_many blows up exactly when migrate() tries to persist the rewrite.
+        # save_migration blows up exactly when migrate() tries to persist.
         with patch.object(
-            PluginRegistry, "add_many", side_effect=OSError("disk full"),
+            PluginRegistry, "save_migration", side_effect=OSError("disk full"),
         ):
             with pytest.raises(OSError):
                 migrate(registry)
@@ -887,7 +1009,7 @@ class TestMigratePersistsRegistryBeforeRetiringCopy:
         assert not (devbase_root / "plugins" / "adminer.bak").exists()
 
     def test_copy_retired_only_after_registry_persisted(self, registry, devbase_root):
-        # The copy delete/rename must happen strictly after add_many returns.
+        # The copy delete/rename must happen strictly after save_migration returns.
         plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
         _make_repo_clone(devbase_root, plugins)
         _register_repo(registry, plugins)
@@ -895,15 +1017,15 @@ class TestMigratePersistsRegistryBeforeRetiringCopy:
         registry.add(_installed("adminer", "plugins/adminer"))
 
         copy = devbase_root / "plugins" / "adminer"
-        orig_add_many = PluginRegistry.add_many
+        orig_save_migration = PluginRegistry.save_migration
 
-        def spy_add_many(self, plugins_arg):
+        def spy_save_migration(self, repos_arg, plugins_arg):
             # At save time the copy must still exist (not yet retired).
             assert copy.is_dir(), "copy retired before registry was persisted"
-            return orig_add_many(self, plugins_arg)
+            return orig_save_migration(self, repos_arg, plugins_arg)
 
-        with patch.object(PluginRegistry, "add_many", autospec=True,
-                          side_effect=spy_add_many):
+        with patch.object(PluginRegistry, "save_migration", autospec=True,
+                          side_effect=spy_save_migration):
             result = migrate(registry)
 
         assert result.migrated == ["adminer"]

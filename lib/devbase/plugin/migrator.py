@@ -211,15 +211,20 @@ def _reclaim_or_protect_existing(clone_dir: Path) -> None:
     )
 
 
-def _persist_repo_local_path(
+def _build_persisted_repo(
     registry: PluginRegistry, repo: RegisteredRepository, dir_name: str,
 ) -> RegisteredRepository:
-    """Record local_path = repos/<dir_name> + a refreshed plugin list for repo.
+    """Build a repo row with local_path = repos/<dir_name> + a refreshed plugin
+    list, WITHOUT saving.
 
     Used after a fresh clone *and* when reusing a healthy clone left by an
     earlier run (a pre-persistent-clone registration with no local_path), so the
     plugins.yml entry is repaired identically in both cases and future runs take
     the local_path fast path.
+
+    The caller is responsible for persisting the returned row: during migration
+    every repo update is accumulated and flushed in a single plugins.yml save
+    (see migrate()), so this no longer writes per repo.
     """
     from .installer import parse_registry_yml
 
@@ -230,25 +235,31 @@ def _persist_repo_local_path(
         AvailablePlugin(name=e.name, description=e.description, path=e.path)
         for e in reg_info.plugins
     ] if reg_info else list(repo.plugins)
-    updated = RegisteredRepository(
+    return RegisteredRepository(
         name=repo.name, url=repo.url, added_at=repo.added_at,
         local_path=local_path, plugins=plugins,
     )
-    registry.add_repository(updated)
-    return updated
 
 
 def _ensure_repo_cloned(
-    registry: PluginRegistry, repo: RegisteredRepository,
+    registry: PluginRegistry,
+    repo: RegisteredRepository,
+    pending_repos: list[RegisteredRepository],
 ) -> tuple[Path, RegisteredRepository]:
     """Return the repos/ clone dir for a repo, cloning it if necessary.
 
     If the repo was registered before persistent-clone support (no local_path),
     the clone dir is missing, or the existing clone is broken (missing .git /
-    registry.yml), perform a full clone and persist local_path + a refreshed
-    plugin list to plugins.yml.  A healthy repos/<derived> clone left by an
-    earlier run is reused (and its missing local_path persisted) rather than
+    registry.yml), perform a full clone and stage local_path + a refreshed
+    plugin list for persistence.  A healthy repos/<derived> clone left by an
+    earlier run is reused (and its missing local_path staged) rather than
     re-cloned or protected.
+
+    Any repo row that needs (re)persisting is appended to `pending_repos`
+    instead of being saved here; migrate() flushes them in a single
+    plugins.yml save before any destructive cleanup, so the registry still
+    durably points at the clone before old copies are retired, but the save
+    count stays O(1) rather than one save per cloned repo.
     """
     from .installer import git_clone, parse_registry_yml
     from .repo_manager import _url_to_repos_dirname
@@ -267,9 +278,11 @@ def _ensure_repo_cloned(
     # A pre-persistent-clone registration (no local_path) may already have a
     # healthy repos/<derived> clone from an earlier run; reuse it instead of
     # protecting (raising) on its .git, just like the local_path branch above —
-    # only persist the missing local_path so future runs take the fast path.
+    # only stage the missing local_path so future runs take the fast path.
     if _clone_is_healthy(clone_dir):
-        return clone_dir, _persist_repo_local_path(registry, repo, dir_name)
+        updated = _build_persisted_repo(registry, repo, dir_name)
+        pending_repos.append(updated)
+        return clone_dir, updated
 
     # A leftover from a previously interrupted clone (e.g. disk full or network
     # drop) would otherwise be reused forever — re-cloning is skipped while
@@ -309,7 +322,8 @@ def _ensure_repo_cloned(
             f"registry.yml') or remove the directory manually, then retry."
         )
 
-    updated = _persist_repo_local_path(registry, repo, dir_name)
+    updated = _build_persisted_repo(registry, repo, dir_name)
+    pending_repos.append(updated)
     logger.info("Repository '%s' cloned to %s", repo.name, updated.local_path)
     return clone_dir, updated
 
@@ -379,8 +393,12 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
     #
     #   Phase 1 (no destructive fs ops): validate the repo/clone/entry and
     #     decide each copy's fate (delete vs preserve as .bak), collecting the
-    #     repos/ path rewrites in `pending` and the retire actions in `retire`.
-    #   Persist: write every rewrite in a single plugins.yml save.
+    #     cloned-repo rows in `pending_repos`, the repos/ path rewrites in
+    #     `pending`, and the retire actions in `retire`.  Cloning stages the
+    #     repo row in `pending_repos` rather than saving per clone, so the save
+    #     count stays O(1) regardless of how many repos are cloned.
+    #   Persist: write every repo row + path rewrite in a single plugins.yml
+    #     save (save_migration), flushing the staged clones BEFORE any cleanup.
     #   Phase 2 (destructive): only after plugins.yml is durably at repos/ do we
     #     delete/rename the old copies.
     #
@@ -391,6 +409,7 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
     # on a missing tree; a stray copy left by a phase-2 hiccup is merely surfaced
     # by _cleanup_plugins_dir, never silent data loss.
     pending: list[InstalledPlugin] = []
+    pending_repos: list[RegisteredRepository] = []  # cloned-repo rows to persist
     retire: list[tuple[str, Path, Path]] = []  # (plugin_name, old_dir, repo_dir)
 
     for plugin in legacy:
@@ -404,7 +423,7 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
                 )
                 continue
 
-            clone_dir, repo = _ensure_repo_cloned(registry, repo)
+            clone_dir, repo = _ensure_repo_cloned(registry, repo, pending_repos)
 
             reg_info = parse_registry_yml(clone_dir)
             entry = None
@@ -445,9 +464,13 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
             result.skipped.append(plugin.name)
             result.errors.append(f"{plugin.name}: {e}")
 
-    # Persist every validated path rewrite in a single save BEFORE retiring any
-    # copy.  A failure here aborts with the copies untouched (recoverable).
-    registry.add_many(pending)
+    # Persist every staged cloned-repo row AND validated path rewrite in a
+    # single save BEFORE retiring any copy.  This both (a) keeps the registry
+    # durably pointing at the repos/ clones before destructive cleanup — the
+    # two-phase atomicity invariant — and (b) collapses what used to be one save
+    # per cloned repo plus the path-rewrite save into a single O(1) write.  A
+    # failure here aborts with the copies untouched (recoverable).
+    registry.save_migration(pending_repos, pending)
 
     # Now that plugins.yml durably points at repos/, retire the old copies.
     for name, old_dir, repo_plugin_dir in retire:
