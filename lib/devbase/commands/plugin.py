@@ -149,7 +149,8 @@ def cmd_repo(devbase_root: Path, args) -> int:
 
     handlers = {
         'add':     lambda: add_repository(registry, args.url, name=args.name),
-        'remove':  lambda: remove_repository(registry, args.name),
+        'remove':  lambda: remove_repository(registry, args.name,
+                                               force=getattr(args, 'force', False)),
         'list':    lambda: show_repositories(registry),
         'refresh': lambda: _repo_refresh(registry, args),
     }
@@ -181,9 +182,13 @@ def _repo_refresh(registry, args):
     errors = []
     for repo in repos:
         try:
-            refresh_repository(registry, repo.name)
+            refresh_repository(registry, repo.name, sync=False)
         except DevbaseError as e:
             logger.error("%s", e)
             errors.append(str(e))
+
+    # Sync once after all repos are refreshed (instead of per-repo)
+    sync_projects(registry)
+
     if errors:
         raise DevbaseError(f"{len(errors)} repository refresh(es) failed")

@@ -244,6 +244,8 @@ def _add_plugin_parser(subparsers):
 
     r_remove = pl_repo_sub.add_parser('remove', help='Unregister a repository')
     r_remove.add_argument('name', help='Repository name')
+    r_remove.add_argument('--force', action='store_true',
+                          help='Force removal even if repo has uncommitted/unpushed changes')
 
     pl_repo_sub.add_parser('list', help='List repositories')
 

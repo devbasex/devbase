@@ -5,6 +5,7 @@ __pycache__/
 .gemini/
 .docker-compose.scale.yml
 plugins.yml
+repos/
 plugins/*/
 !plugins/.gitkeep
 projects/*
