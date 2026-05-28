@@ -123,12 +123,24 @@ def install_plugin(
     plugins_dir = registry.get_plugins_dir()
 
     if not source.repo and source.plugin_name:
+        # Reject @ref on name-only installs too — the permanent clone tracks
+        # the default branch and does not support pinned refs.  Without this
+        # guard, `devbase plugin install myplugin@v1` would silently drop the
+        # ref in _install_from_repo() and install the default branch instead.
+        # This matches the validation for unregistered/registered repos below.
+        if source.ref:
+            raise PluginError(
+                f"Cannot use @{source.ref} with plugin '{source.plugin_name}'.\n"
+                "Permanent clones track the default branch and do not support pinned refs.\n"
+                f"Install without @ref:\n"
+                f"  devbase plugin install {source.plugin_name}"
+            )
         result = registry.find_plugin_in_repos(source.plugin_name)
         if result:
             repo, avail_plugin = result
             repo_source = PluginSource(
                 repo=repo.url, plugin_name=source.plugin_name,
-                ref=source.ref, linked=False,
+                ref=None, linked=False,
             )
             _install_from_repo(
                 registry, repo_source, install_all=False,

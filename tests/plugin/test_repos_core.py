@@ -443,6 +443,27 @@ class TestInstallPlugin:
         with pytest.raises(PluginError, match="Cannot use @v2.0"):
             install_plugin(registry, "testorg/testrepo:myplugin@v2.0")
 
+    def test_install_ref_rejected_for_name_only(self, registry, devbase_root):
+        """@ref on a name-only install is rejected too.
+
+        Without the guard, `devbase plugin install myplugin@v1` would parse
+        to (repo='', plugin_name='myplugin', ref='v1'), enter the
+        find_plugin_in_repos branch and silently drop the ref in
+        _install_from_repo(), installing the default branch instead.
+        """
+        url = "https://github.com/testorg/testrepo.git"
+        _make_repo_dir(devbase_root, "testorg/testrepo", [
+            {"name": "myplugin", "path": "myplugin", "projects": ["myproj"]},
+        ])
+        _register_repo(registry, "testorg/testrepo", url, [
+            {"name": "myplugin", "path": "myplugin"},
+        ])
+
+        with pytest.raises(PluginError, match="Cannot use @v1"):
+            install_plugin(registry, "myplugin@v1")
+        # registry must not have installed the plugin from the default branch
+        assert registry.get("myplugin") is None
+
     def test_install_legacy_repo_without_local_path(self, registry, devbase_root):
         """Legacy repos (no local_path) are auto-migrated to persistent clone."""
         url = "https://github.com/testorg/testrepo.git"

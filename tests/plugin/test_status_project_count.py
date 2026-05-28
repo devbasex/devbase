@@ -85,3 +85,21 @@ def test_project_count_zero_when_no_projects_dir(registry, devbase_root):
 
     info = _get_plugin_info(registry)
     assert info == [{"name": "noproj", "project_count": 0}]
+
+
+def test_project_count_zero_when_path_empty(registry, devbase_root):
+    """path が空 (旧/破損エントリ) のとき環境ルートの projects を誤参照しない。"""
+    # 環境ルートに projects/ が存在し、中身があっても 0 と数えること。
+    _make_projects(devbase_root, ["root-proj-a", "root-proj-b"])
+
+    registry.add(InstalledPlugin(
+        name="brokenpath",
+        version="0.1.0",
+        source="",
+        installed_at=registry.now_iso(),
+        path="",
+        linked=False,
+    ))
+
+    info = _get_plugin_info(registry)
+    assert info == [{"name": "brokenpath", "project_count": 0}]
