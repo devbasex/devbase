@@ -95,13 +95,16 @@ def _auto_migrate(registry: PluginRegistry) -> None:
     result = migrate(registry)
     if result.migrated:
         logger.info("  Migrated: %s", ", ".join(result.migrated))
-    if result.preserved:
-        logger.warning(
-            "  Preserved with local changes (plugins/<name>.bak): %s",
-            ", ".join(result.preserved),
+    # preserved/skipped recur on every install/update until the user
+    # reconciles, so avoid re-emitting a loud per-plugin WARNING each time:
+    # surface a single concise hint pointing at the explicit command, which
+    # prints the full per-plugin detail when run.
+    if result.preserved or result.skipped:
+        pending = len(result.preserved) + len(result.skipped)
+        logger.info(
+            "  %d plugin(s) still need attention — run 'devbase plugin migrate' "
+            "for details.", pending,
         )
-    if result.skipped:
-        logger.warning("  Could not migrate: %s", ", ".join(result.skipped))
 
 
 def install_plugin(

@@ -16,7 +16,9 @@ from devbase.plugin.models import (
 from devbase.plugin.registry import PluginRegistry
 from devbase.plugin.migrator import (
     _cleanup_plugins_dir,
+    _clone_is_healthy,
     _dirs_differ,
+    _is_bak_name,
     _is_legacy_plugin,
     migrate,
     needs_migration,
@@ -211,6 +213,61 @@ class TestDirsDiffer:
         (b / "link").symlink_to("plugin.yml")
         assert _dirs_differ(a, b) is False
 
+    def test_exec_bit_change_differs(self, tmp_path):
+        # Same name, size and bytes, but the copy made the script executable.
+        # Deleting the copy would lose that mode change, so it must count as
+        # divergence (preserved as .bak) rather than a clean migration.
+        a, b = tmp_path / "a", tmp_path / "b"
+        self._write(a, "entry.sh", "#!/bin/sh\necho hi\n")
+        self._write(b, "entry.sh", "#!/bin/sh\necho hi\n")
+        (b / "entry.sh").chmod(0o644)
+        (a / "entry.sh").chmod(0o755)
+        # Sanity: bytes identical, only mode differs.
+        assert (a / "entry.sh").read_bytes() == (b / "entry.sh").read_bytes()
+        assert _dirs_differ(a, b) is True
+        # And once the modes match, the copy is treated as identical again.
+        (a / "entry.sh").chmod(0o644)
+        assert _dirs_differ(a, b) is False
+
+
+class TestIsBakName:
+    def test_plain_bak_matches(self):
+        assert _is_bak_name("carmo.bak") is True
+
+    def test_numbered_bak_matches(self):
+        assert _is_bak_name("carmo.bak-2") is True
+        assert _is_bak_name("carmo.bak-17") is True
+
+    def test_substring_bak_does_not_match(self):
+        # The previous `'.bak' in name` check wrongly flagged these.
+        assert _is_bak_name("my.bakery") is False
+        assert _is_bak_name("notes.bak.txt") is False
+        assert _is_bak_name("backup") is False
+
+
+class TestCloneIsHealthy:
+    def test_valid_clone_is_healthy(self, devbase_root):
+        plugins = [{"name": "adminer", "path": "adminer"}]
+        clone = _make_repo_clone(devbase_root, plugins)
+        assert _clone_is_healthy(clone) is True
+
+    def test_missing_git_is_unhealthy(self, devbase_root):
+        plugins = [{"name": "adminer", "path": "adminer"}]
+        clone = _make_repo_clone(devbase_root, plugins)
+        shutil_rmtree_git(clone)
+        assert _clone_is_healthy(clone) is False
+
+    def test_missing_registry_yml_is_unhealthy(self, devbase_root):
+        plugins = [{"name": "adminer", "path": "adminer"}]
+        clone = _make_repo_clone(devbase_root, plugins)
+        (clone / "registry.yml").unlink()
+        assert _clone_is_healthy(clone) is False
+
+
+def shutil_rmtree_git(clone: Path) -> None:
+    import shutil
+    shutil.rmtree(clone / ".git")
+
 
 class TestNeedsMigration:
     def test_true_when_legacy_present(self, registry):
@@ -404,6 +461,29 @@ class TestCleanupPluginsDir:
         assert _cleanup_plugins_dir(registry) is False
         assert (plugins_dir / "stray").is_dir()
 
+    def test_bak_lookalike_is_not_treated_as_preserved(self, registry, devbase_root):
+        # An entry whose name merely contains ".bak" as a substring (e.g.
+        # "my.bakery") is NOT a preserved copy; it must be reported as an
+        # unexpected leftover rather than silently retained as a .bak.
+        plugins_dir = devbase_root / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "my.bakery").mkdir()
+
+        assert _cleanup_plugins_dir(registry) is False
+        # Still present (cleanup never deletes leftovers) and not mistaken for
+        # a .bak dir.
+        assert (plugins_dir / "my.bakery").is_dir()
+
+    def test_numbered_bak_dir_is_retained(self, registry, devbase_root):
+        # A real preserved copy from a prior run (carmo.bak-2) keeps plugins/
+        # uncleaned just like carmo.bak does.
+        plugins_dir = devbase_root / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "carmo.bak-2").mkdir()
+
+        assert _cleanup_plugins_dir(registry) is False
+        assert (plugins_dir / "carmo.bak-2").is_dir()
+
 
 class TestMigratePartialCloneRecovery:
     def test_partial_clone_without_git_is_recloned(self, registry, devbase_root):
@@ -429,6 +509,56 @@ class TestMigratePartialCloneRecovery:
         assert result.migrated == ["adminer"]
         assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
         assert not (devbase_root / "repos" / DIRNAME / "junk.txt").exists()
+
+    def test_registered_local_path_without_git_is_recloned(self, registry, devbase_root):
+        # local_path is recorded (repo migrated before) but the clone lost its
+        # .git — e.g. an interrupted operation. Reusing it would leave the
+        # migrated plugin pointing at an un-pullable tree, so it must re-clone.
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        _register_repo(registry, plugins)  # local_path = repos/<DIRNAME>
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+        # Existing repos/ dir that is NOT a valid clone (no .git, no registry.yml).
+        broken = devbase_root / "repos" / DIRNAME
+        broken.mkdir(parents=True)
+        (broken / "leftover.txt").write_text("broken\n")
+
+        def fake_clone(url, dest, **kwargs):
+            _make_repo_clone(dest.parent.parent, plugins)
+
+        with patch("devbase.plugin.installer.git_clone", side_effect=fake_clone) as mock:
+            result = migrate(registry)
+
+        mock.assert_called_once()
+        assert result.migrated == ["adminer"]
+        assert (devbase_root / "repos" / DIRNAME / ".git").exists()
+        assert not (devbase_root / "repos" / DIRNAME / "leftover.txt").exists()
+
+
+class TestMigrateBatchesRegistryWrites:
+    def test_multiple_plugins_all_persisted_with_single_save(self, registry, devbase_root):
+        plugins = [
+            {"name": "adminer", "path": "adminer", "projects": ["adminer"]},
+            {"name": "carmo", "path": "carmo", "projects": ["carmo"]},
+            {"name": "redis", "path": "redis", "projects": ["redis"]},
+        ]
+        _make_repo_clone(devbase_root, plugins)
+        _register_repo(registry, plugins)
+        for p in plugins:
+            _make_legacy_copy(devbase_root, p["name"], p)
+            registry.add(_installed(p["name"], f"plugins/{p['name']}"))
+
+        with patch.object(
+            PluginRegistry, "_save", autospec=True, side_effect=PluginRegistry._save,
+        ) as save_spy:
+            result = migrate(registry)
+
+        assert sorted(result.migrated) == ["adminer", "carmo", "redis"]
+        # All three path rewrites land in a single plugins.yml save rather than
+        # one save per plugin.
+        assert save_spy.call_count == 1
+        for p in plugins:
+            assert registry.get(p["name"]).path == f"repos/{DIRNAME}/{p['name']}"
 
 
 class TestCmdPluginMigrate:
@@ -470,6 +600,41 @@ class TestAutoMigrateOnInstall:
         assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
         # the explicitly requested install also succeeds
         assert registry.get("carmo").path == f"repos/{DIRNAME}/carmo"
+
+
+class TestAutoMigrateWarningSuppression:
+    def test_preserved_does_not_emit_loud_per_plugin_warning(
+        self, registry, devbase_root, caplog,
+    ):
+        # A diverged legacy copy is preserved as .bak. _auto_migrate runs on
+        # every install/update; it must not re-emit a loud per-plugin WARNING
+        # each time — a concise INFO hint pointing at `devbase plugin migrate`
+        # is enough (the explicit command prints the full detail).
+        plugins = [
+            {"name": "carmo", "path": "carmo", "projects": ["carmo"]},
+            {"name": "redis", "path": "redis", "projects": ["redis"]},
+        ]
+        _make_repo_clone(devbase_root, plugins)
+        _register_repo(registry, plugins)
+        # carmo diverges (user-added file) -> will be preserved, not migrated.
+        _make_legacy_copy(devbase_root, "carmo", plugins[0],
+                          extra={"projects/carmo/.env": "LOCAL=1\n"})
+        registry.add(_installed("carmo", "plugins/carmo"))
+
+        from devbase.plugin.installer import _auto_migrate
+        import logging
+        with caplog.at_level(logging.INFO, logger="devbase.plugin.installer"):
+            _auto_migrate(registry)
+
+        installer_logs = [
+            r for r in caplog.records
+            if r.name == "devbase.plugin.installer"
+        ]
+        # No WARNING-level record from the auto path.
+        assert all(r.levelno < logging.WARNING for r in installer_logs)
+        # The concise hint is present.
+        joined = " ".join(r.getMessage() for r in installer_logs)
+        assert "devbase plugin migrate" in joined
 
 
 class TestAutoMigrateOnUpdate:

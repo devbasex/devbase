@@ -65,11 +65,22 @@ class PluginRegistry:
 
     def add(self, plugin: InstalledPlugin) -> None:
         """Add a plugin to the registry"""
+        self.add_many([plugin])
+
+    def add_many(self, plugins: list[InstalledPlugin]) -> None:
+        """Add/replace multiple plugins with a single load+save.
+
+        Saving plugins.yml once for a batch avoids the repeated read+atomic
+        rewrite that calling add() per plugin would incur (e.g. during
+        migration of many legacy installs)."""
+        if not plugins:
+            return
         data = self._load()
+        names = {p.name for p in plugins}
         data['installed_plugins'] = [
-            p for p in data['installed_plugins'] if p['name'] != plugin.name
+            p for p in data['installed_plugins'] if p['name'] not in names
         ]
-        data['installed_plugins'].append(plugin.to_dict())
+        data['installed_plugins'].extend(p.to_dict() for p in plugins)
         self._save(data)
 
     def remove(self, name: str) -> bool:

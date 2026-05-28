@@ -1,6 +1,8 @@
 """Plugin migrator - migrates legacy plugins/ copy installs to repos/ clones"""
 
+import re
 import shutil
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +42,19 @@ def needs_migration(registry: PluginRegistry) -> bool:
     return any(_is_legacy_plugin(p) for p in registry.list_installed())
 
 
+# Names produced by _unique_bak_path: "<name>.bak" or "<name>.bak-<N>".
+_BAK_NAME_RE = re.compile(r'\.bak(-\d+)?$')
+
+
+def _is_bak_name(name: str) -> bool:
+    """True if name matches the preserved-copy convention (<name>.bak[-N]).
+
+    A substring check like ``'.bak' in name`` would wrongly flag unrelated
+    entries such as ``my.bakery`` or ``notes.bak.txt``; anchor to the suffix.
+    """
+    return _BAK_NAME_RE.search(name) is not None
+
+
 def _unique_bak_path(old_dir: Path) -> Path:
     """Return a non-existing <name>.bak path, suffixing -2, -3, … if needed.
 
@@ -74,12 +89,18 @@ def _entry_kind(p: Path) -> str:
 
 
 def _files_equal(fa: Path, fb: Path) -> bool:
-    """Compare two regular files by size then streamed byte content.
+    """Compare two regular files by permission bits, size, then byte content.
 
     Reads in fixed-size chunks rather than slurping the whole file so a large
-    plugin asset can't exhaust memory during the migration scan.
+    plugin asset can't exhaust memory during the migration scan.  Permission
+    bits (S_IMODE) are compared too so a local exec-bit change (e.g. an entry
+    script the user made executable) counts as divergence and is preserved
+    rather than silently lost when the copy is deleted.
     """
-    if fa.stat().st_size != fb.stat().st_size:
+    sa, sb = fa.stat(), fb.stat()
+    if stat.S_IMODE(sa.st_mode) != stat.S_IMODE(sb.st_mode):
+        return False
+    if sa.st_size != sb.st_size:
         return False
     chunk = 64 * 1024
     with fa.open('rb') as a, fb.open('rb') as b:
@@ -126,22 +147,42 @@ def _dirs_differ(copy_dir: Path, repo_dir: Path) -> bool:
     return False
 
 
+def _clone_is_healthy(clone_dir: Path) -> bool:
+    """True if clone_dir looks like a usable repo clone (has .git + registry.yml).
+
+    A repos/ dir that lost its .git (or whose registry.yml went missing) points
+    migrated plugins at a tree that can never be pulled/updated again, so it
+    must be re-cloned rather than reused.
+    """
+    return (
+        clone_dir.is_dir()
+        and (clone_dir / '.git').exists()
+        and (clone_dir / 'registry.yml').is_file()
+    )
+
+
 def _ensure_repo_cloned(
     registry: PluginRegistry, repo: RegisteredRepository,
 ) -> tuple[Path, RegisteredRepository]:
     """Return the repos/ clone dir for a repo, cloning it if necessary.
 
-    If the repo was registered before persistent-clone support (no local_path)
-    or the clone dir is missing, perform a full clone and persist local_path +
-    a refreshed plugin list to plugins.yml.
+    If the repo was registered before persistent-clone support (no local_path),
+    the clone dir is missing, or the existing clone is broken (missing .git /
+    registry.yml), perform a full clone and persist local_path + a refreshed
+    plugin list to plugins.yml.
     """
     from .installer import git_clone, parse_registry_yml
     from .repo_manager import _url_to_repos_dirname
 
     if repo.local_path:
         clone_dir = registry.devbase_root / repo.local_path
-        if clone_dir.is_dir():
+        if _clone_is_healthy(clone_dir):
             return clone_dir, repo
+        # Recorded local_path exists but is not a valid clone (.git lost, etc.):
+        # drop it so the re-clone below repairs the tree instead of returning a
+        # path that update/pull can never recover.
+        if clone_dir.is_dir():
+            shutil.rmtree(clone_dir)
 
     dir_name = _url_to_repos_dirname(repo.url)
     repos_dir = registry.get_repos_dir()
@@ -208,7 +249,7 @@ def _cleanup_plugins_dir(registry: PluginRegistry) -> bool:
         return False
 
     entries = [e for e in plugins_dir.iterdir() if e.name != '.gitkeep']
-    bak_dirs = [e for e in entries if '.bak' in e.name]
+    bak_dirs = [e for e in entries if _is_bak_name(e.name)]
     if bak_dirs:
         logger.info(
             "plugins/ retained: %d preserved .bak dir(s) await manual reconciliation",
@@ -247,6 +288,13 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
     legacy = [p for p in registry.list_installed() if _is_legacy_plugin(p)]
     if not legacy:
         return result
+
+    # Accumulate path rewrites and persist them in a single plugins.yml save
+    # after the loop instead of one atomic rewrite per plugin.  Each plugin's
+    # filesystem move and its registry entry are built inside the same try
+    # block, so a failure leaves that plugin out of `pending` (still legacy ->
+    # retried next run) while completed ones are still committed together.
+    pending: list[InstalledPlugin] = []
 
     for plugin in legacy:
         try:
@@ -308,7 +356,7 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
             else:
                 result.migrated.append(plugin.name)
 
-            registry.add(InstalledPlugin(
+            pending.append(InstalledPlugin(
                 name=plugin.name,
                 version=version,
                 source=plugin.source,
@@ -319,6 +367,9 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
         except Exception as e:
             result.skipped.append(plugin.name)
             result.errors.append(f"{plugin.name}: {e}")
+
+    # Single save for every plugin whose copy was successfully retired.
+    registry.add_many(pending)
 
     if run_sync:
         sync_projects(registry)
