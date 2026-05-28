@@ -148,6 +148,12 @@ def _dirs_differ(copy_dir: Path, repo_dir: Path) -> bool:
         elif kind == 'file':
             if not _files_equal(fa, fb):
                 return True
+        elif kind == 'other':
+            # A socket / pipe / device the copy holds can't be content-compared,
+            # so it can't be proven identical — treat it as divergence and fall
+            # back to preserving the copy (.bak) rather than risk deleting data
+            # we couldn't inspect.
+            return True
     return False
 
 
@@ -162,6 +168,46 @@ def _clone_is_healthy(clone_dir: Path) -> bool:
         clone_dir.is_dir()
         and (clone_dir / '.git').exists()
         and (clone_dir / 'registry.yml').is_file()
+    )
+
+
+def _reclaim_or_protect_existing(clone_dir: Path) -> None:
+    """Clear a reusable leftover at clone_dir, or protect a .git-bearing tree.
+
+    Called before (re-)cloning into clone_dir.  Three cases:
+
+    - clone_dir is a symlink (broken, to a file, or even to a dir) -> remove
+      the link; it is never a real persistent clone and git_clone would fail.
+    - clone_dir does not exist -> nothing to do.
+    - clone_dir exists but is not a directory (a stray file squatting on the
+      path) -> remove it so git_clone can create the directory; a regular file
+      cannot hold a git working tree, so nothing is lost.
+    - clone_dir is a directory without .git -> a broken/partial clone that can
+      never be pulled; remove it so a fresh clone repairs it.
+    - clone_dir is a directory *with* .git -> it may hold uncommitted or
+      unpushed local work, so refuse to delete it and raise asking the user to
+      repair/remove it manually rather than silently destroying their changes.
+    """
+    # Check the symlink first: is_dir()/exists() both follow symlinks, so a
+    # symlink-to-dir would otherwise slip through as a "directory".
+    if clone_dir.is_symlink():
+        clone_dir.unlink()
+        return
+    if not clone_dir.exists():
+        return
+    if not clone_dir.is_dir():
+        # A regular file is squatting on the path; git_clone would fail. It can
+        # hold no git working tree, so removing it loses nothing.
+        clone_dir.unlink()
+        return
+    if not (clone_dir / '.git').exists():
+        shutil.rmtree(clone_dir)
+        return
+    raise PluginError(
+        f"Existing clone '{clone_dir}' has a .git but is missing "
+        f"registry.yml; refusing to delete it to avoid losing local "
+        f"changes. Restore registry.yml (e.g. 'git checkout -- "
+        f"registry.yml') or remove the directory manually, then retry."
     )
 
 
@@ -182,39 +228,27 @@ def _ensure_repo_cloned(
         clone_dir = registry.devbase_root / repo.local_path
         if _clone_is_healthy(clone_dir):
             return clone_dir, repo
-        if clone_dir.is_dir():
-            # The dir exists but isn't fully healthy.  Only destroy it when its
-            # .git is gone (an un-pullable tree that re-cloning must repair).
-            # If .git is still present the working tree may hold uncommitted or
-            # unpushed local work, so refuse to delete it and surface an error
-            # asking the user to repair/remove it manually rather than silently
-            # losing their changes.
-            if not (clone_dir / '.git').exists():
-                shutil.rmtree(clone_dir)
-            else:
-                raise PluginError(
-                    f"Existing clone '{clone_dir}' has a .git but is missing "
-                    f"registry.yml; refusing to delete it to avoid losing local "
-                    f"changes. Restore registry.yml (e.g. 'git checkout -- "
-                    f"registry.yml') or remove the directory manually, then retry."
-                )
+        _reclaim_or_protect_existing(clone_dir)
 
     dir_name = _url_to_repos_dirname(repo.url)
     repos_dir = registry.get_repos_dir()
     repos_dir.mkdir(exist_ok=True)
     clone_dir = repos_dir / dir_name
 
-    # A leftover directory from a previously interrupted clone (e.g. disk full
-    # or network drop) would otherwise be reused forever — re-cloning is
-    # skipped while parse_registry_yml() keeps failing, so migration can never
-    # self-heal.  Treat a dir that is not a valid clone (missing .git) as
-    # broken and remove it so the clone below re-creates it cleanly.
-    if clone_dir.is_dir() and not (clone_dir / '.git').exists():
-        shutil.rmtree(clone_dir)
+    # A leftover from a previously interrupted clone (e.g. disk full or network
+    # drop) would otherwise be reused forever — re-cloning is skipped while
+    # parse_registry_yml() keeps failing, so migration can never self-heal.
+    # Remove a leftover that is *not* a valid clone (missing .git, or a stray
+    # non-directory squatting on the path) so the clone below re-creates it
+    # cleanly; but a dir that still has .git may hold uncommitted/unpushed work
+    # and is protected (raises) rather than destroyed.
+    _reclaim_or_protect_existing(clone_dir)
 
+    freshly_cloned = False
     if not clone_dir.is_dir():
         try:
             git_clone(repo.url, clone_dir, shallow=False)
+            freshly_cloned = True
         except Exception:
             # Drop a partial clone so the next run starts from a clean slate.
             if clone_dir.is_dir():
@@ -223,11 +257,20 @@ def _ensure_repo_cloned(
 
     reg_info = parse_registry_yml(clone_dir)
     if not reg_info:
-        # The clone exists but is missing/invalid registry.yml; discard it so
-        # a subsequent migration attempt re-clones instead of looping here.
-        shutil.rmtree(clone_dir)
+        # registry.yml is missing/invalid.  Only discard a clone we just made
+        # (guaranteed to hold no local work); an existing .git-bearing dir is
+        # protected so we never delete uncommitted/unpushed changes — surface a
+        # recoverable error instead, mirroring the local_path branch.
+        if freshly_cloned:
+            shutil.rmtree(clone_dir)
+            raise PluginError(
+                f"No registry.yml found in cloned repository '{repo.name}'."
+            )
         raise PluginError(
-            f"No registry.yml found in cloned repository '{repo.name}'."
+            f"Existing clone '{clone_dir}' has a .git but is missing "
+            f"registry.yml; refusing to delete it to avoid losing local "
+            f"changes. Restore registry.yml (e.g. 'git checkout -- "
+            f"registry.yml') or remove the directory manually, then retry."
         )
 
     local_path = f"repos/{dir_name}"
@@ -304,12 +347,24 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
     if not legacy:
         return result
 
-    # Accumulate path rewrites and persist them in a single plugins.yml save
-    # after the loop instead of one atomic rewrite per plugin.  Each plugin's
-    # filesystem move and its registry entry are built inside the same try
-    # block, so a failure leaves that plugin out of `pending` (still legacy ->
-    # retried next run) while completed ones are still committed together.
+    # Two-phase migration so a registry-save failure can never leave a copy
+    # deleted while plugins.yml still points at the stale plugins/ path:
+    #
+    #   Phase 1 (no destructive fs ops): validate the repo/clone/entry and
+    #     decide each copy's fate (delete vs preserve as .bak), collecting the
+    #     repos/ path rewrites in `pending` and the retire actions in `retire`.
+    #   Persist: write every rewrite in a single plugins.yml save.
+    #   Phase 2 (destructive): only after plugins.yml is durably at repos/ do we
+    #     delete/rename the old copies.
+    #
+    # Ordering rationale: if the save raises, no copy has been touched yet, so
+    # the registry stays legacy and the next run retries cleanly with the copies
+    # intact (recoverable).  Conversely the validated repos/ clone is known good
+    # before we commit, so committing the rewrite first cannot strand a plugin
+    # on a missing tree; a stray copy left by a phase-2 hiccup is merely surfaced
+    # by _cleanup_plugins_dir, never silent data loss.
     pending: list[InstalledPlugin] = []
+    retire: list[tuple[str, Path, Path]] = []  # (plugin_name, old_dir, repo_dir)
 
     for plugin in legacy:
         try:
@@ -349,28 +404,7 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
             info = load_plugin_info(repo_plugin_dir)
             version = info.version if info else plugin.version
 
-            # Retire the old plugins/ copy FIRST, then update the registry.
-            # Updating plugins.yml before the filesystem move means a failure
-            # here would leave registry at repos/ (no longer "legacy", so never
-            # retried) while the stale copy lingers — so the path rewrite must
-            # only be committed once the copy has been removed or preserved.
             old_dir = registry.devbase_root / plugin.path
-            if old_dir.is_dir() and not old_dir.is_symlink():
-                if _dirs_differ(old_dir, repo_plugin_dir):
-                    bak = _unique_bak_path(old_dir)
-                    old_dir.rename(bak)
-                    result.preserved.append(plugin.name)
-                    logger.warning(
-                        "Plugin '%s' had local changes — preserved at %s "
-                        "(reconcile manually, then remove)",
-                        plugin.name, bak,
-                    )
-                else:
-                    shutil.rmtree(old_dir)
-                    result.migrated.append(plugin.name)
-            else:
-                result.migrated.append(plugin.name)
-
             pending.append(InstalledPlugin(
                 name=plugin.name,
                 version=version,
@@ -379,12 +413,39 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
                 path=rel_path,
                 linked=False,
             ))
+            retire.append((plugin.name, old_dir, repo_plugin_dir))
         except Exception as e:
             result.skipped.append(plugin.name)
             result.errors.append(f"{plugin.name}: {e}")
 
-    # Single save for every plugin whose copy was successfully retired.
+    # Persist every validated path rewrite in a single save BEFORE retiring any
+    # copy.  A failure here aborts with the copies untouched (recoverable).
     registry.add_many(pending)
+
+    # Now that plugins.yml durably points at repos/, retire the old copies.
+    for name, old_dir, repo_plugin_dir in retire:
+        try:
+            if old_dir.is_dir() and not old_dir.is_symlink():
+                if _dirs_differ(old_dir, repo_plugin_dir):
+                    bak = _unique_bak_path(old_dir)
+                    old_dir.rename(bak)
+                    result.preserved.append(name)
+                    logger.warning(
+                        "Plugin '%s' had local changes — preserved at %s "
+                        "(reconcile manually, then remove)",
+                        name, bak,
+                    )
+                else:
+                    shutil.rmtree(old_dir)
+                    result.migrated.append(name)
+            else:
+                result.migrated.append(name)
+        except Exception as e:
+            # Registry is already at repos/ (valid clone), so the plugin works;
+            # a copy we failed to retire just lingers under plugins/ and is
+            # surfaced by _cleanup_plugins_dir rather than lost.
+            result.migrated.append(name)
+            result.errors.append(f"{name}: copy not retired: {e}")
 
     if run_sync:
         sync_projects(registry)

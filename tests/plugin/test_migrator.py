@@ -767,3 +767,134 @@ class TestEnsureRepoClonedProtectsGit:
         assert result.migrated == ["adminer"]
         assert (devbase_root / "repos" / DIRNAME / ".git").exists()
         assert not (devbase_root / "repos" / DIRNAME / "leftover.txt").exists()
+
+    def test_derived_path_with_git_missing_registry_is_not_deleted(
+        self, registry, devbase_root,
+    ):
+        # local_path is NOT recorded (pre-persistent-clone registration) but a
+        # repos/<derived> clone already exists with .git and only registry.yml
+        # missing. It may hold uncommitted/unpushed local work, so the derived
+        # clone path must refuse to rmtree it just as the local_path branch does.
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        _register_repo(registry, plugins, local_path=None)
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+        clone = devbase_root / "repos" / DIRNAME
+        clone.mkdir(parents=True)
+        (clone / ".git").mkdir()
+        (clone / "local-work.txt").write_text("uncommitted\n")
+        # No registry.yml -> parse_registry_yml fails on the existing dir.
+
+        def fake_clone(url, dest, **kwargs):  # pragma: no cover - must not run
+            raise AssertionError("re-clone must not happen when .git is present")
+
+        with patch("devbase.plugin.installer.git_clone", side_effect=fake_clone):
+            result = migrate(registry)
+
+        assert "adminer" in result.skipped
+        assert (clone / ".git").is_dir()
+        assert (clone / "local-work.txt").read_text() == "uncommitted\n"
+        # registry entry still legacy so a later run can retry.
+        assert registry.get("adminer").path == "plugins/adminer"
+
+    def test_clone_dir_existing_as_file_is_replaced(self, registry, devbase_root):
+        # repos/<derived> is squatted on by a regular *file* (not a directory).
+        # git_clone would fail; the file holds no git tree so it is removed and
+        # a fresh clone created in its place.
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        _register_repo(registry, plugins, local_path=None)
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+        repos_dir = devbase_root / "repos"
+        repos_dir.mkdir(parents=True)
+        stray = repos_dir / DIRNAME
+        stray.write_text("not a directory\n")
+        assert stray.is_file()
+
+        def fake_clone(url, dest, **kwargs):
+            _make_repo_clone(dest.parent.parent, plugins)
+
+        with patch(
+            "devbase.plugin.installer.git_clone", side_effect=fake_clone,
+        ) as mock:
+            result = migrate(registry)
+
+        mock.assert_called_once()
+        assert result.migrated == ["adminer"]
+        assert (devbase_root / "repos" / DIRNAME).is_dir()
+        assert (devbase_root / "repos" / DIRNAME / ".git").exists()
+
+
+class TestMigratePersistsRegistryBeforeRetiringCopy:
+    """A registry-save failure must not leave a copy deleted with a stale path.
+
+    Round 3 batched the path rewrites into a single add_many AFTER retiring the
+    copies; if that save raised, the copies were already gone/renamed while
+    plugins.yml still pointed at plugins/.  migrate() now saves the rewrites
+    BEFORE any destructive filesystem op, so a save failure aborts with every
+    copy intact.
+    """
+
+    def test_save_failure_leaves_copy_intact(self, registry, devbase_root):
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        _make_repo_clone(devbase_root, plugins)
+        _register_repo(registry, plugins)
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+
+        # add_many blows up exactly when migrate() tries to persist the rewrite.
+        with patch.object(
+            PluginRegistry, "add_many", side_effect=OSError("disk full"),
+        ):
+            with pytest.raises(OSError):
+                migrate(registry)
+
+        # The copy was NOT deleted or renamed to .bak: it is still right where
+        # it was, so the next run can retry cleanly.
+        assert (devbase_root / "plugins" / "adminer" / "plugin.yml").is_file()
+        assert not (devbase_root / "plugins" / "adminer.bak").exists()
+
+    def test_copy_retired_only_after_registry_persisted(self, registry, devbase_root):
+        # The copy delete/rename must happen strictly after add_many returns.
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        _make_repo_clone(devbase_root, plugins)
+        _register_repo(registry, plugins)
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+
+        copy = devbase_root / "plugins" / "adminer"
+        orig_add_many = PluginRegistry.add_many
+
+        def spy_add_many(self, plugins_arg):
+            # At save time the copy must still exist (not yet retired).
+            assert copy.is_dir(), "copy retired before registry was persisted"
+            return orig_add_many(self, plugins_arg)
+
+        with patch.object(PluginRegistry, "add_many", autospec=True,
+                          side_effect=spy_add_many):
+            result = migrate(registry)
+
+        assert result.migrated == ["adminer"]
+        # After a successful save the clean copy is gone.
+        assert not copy.exists()
+        assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
+
+
+class TestDirsDifferOtherEntryKind:
+    """An entry of kind 'other' (fifo/socket/device) can't be content-compared
+    and must be treated as divergence so the copy is preserved, not deleted."""
+
+    def test_fifo_in_copy_differs(self, tmp_path):
+        import os
+        a, b = tmp_path / "a", tmp_path / "b"
+        a.mkdir(); b.mkdir()
+        (a / "plugin.yml").write_text("name: x\n")
+        (b / "plugin.yml").write_text("name: x\n")
+        try:
+            os.mkfifo(a / "pipe")
+            os.mkfifo(b / "pipe")
+        except (AttributeError, NotImplementedError, OSError):
+            pytest.skip("mkfifo not supported on this platform")
+        # Both sides hold a fifo at the same path; it can't be proven identical
+        # so deleting the copy is unsafe -> divergence.
+        assert _dirs_differ(a, b) is True
