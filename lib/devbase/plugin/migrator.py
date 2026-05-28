@@ -434,6 +434,12 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
         repo.url: repo for repo in registry.list_repositories() if repo.url
     }
 
+    # Cache the lazily-parsed registry.yml per repo URL. On the healthy
+    # local_path fast path _ensure_repo_cloned returns reg_info=None, so a repo
+    # with multiple legacy plugins would otherwise re-parse the same registry.yml
+    # once per plugin here; the cache collapses that to one parse per repo.
+    reg_info_by_url: dict[str, Optional["RegistryInfo"]] = {}
+
     for plugin in legacy:
         try:
             repo = repos_by_url.get(plugin.source) if plugin.source else None
@@ -450,10 +456,13 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
             )
 
             # _ensure_repo_cloned already parsed registry.yml on the clone/reuse
-            # paths; only the healthy local_path fast path returns None, so parse
-            # lazily there instead of unconditionally re-reading the same file.
+            # paths; only the healthy local_path fast path returns None. Parse
+            # lazily there, but reuse a cached parse for subsequent plugins of
+            # the same repo instead of re-reading the same file each iteration.
             if reg_info is None:
-                reg_info = parse_registry_yml(clone_dir)
+                if repo.url not in reg_info_by_url:
+                    reg_info_by_url[repo.url] = parse_registry_yml(clone_dir)
+                reg_info = reg_info_by_url[repo.url]
             entry = None
             if reg_info:
                 entry = next(

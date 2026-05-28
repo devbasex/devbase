@@ -334,6 +334,29 @@ class TestRefreshRepository:
                 "p1", "testrepo",
             )
 
+    def test_refresh_raises_when_update_repo_plugins_errors(
+        self, registry, devbase_root
+    ):
+        # A failed removal-migration leaves the stale plugins/ entry in
+        # plugins.yml; refresh must surface that as RepositoryError rather than
+        # warning-and-exiting-0 (otherwise `devbase plugin repo refresh` reports
+        # success on a broken install state).
+        url = "https://github.com/testorg/testrepo.git"
+        _make_repo_dir(devbase_root, "testorg/testrepo", [
+            {"name": "p1", "path": "p1"},
+        ])
+        _register_repo(registry, "testorg/testrepo", url, [
+            {"name": "p1", "path": "p1"},
+        ])
+
+        with patch("devbase.plugin.repo_manager._git_pull"), \
+             patch(
+                 "devbase.plugin.updater._update_repo_plugins",
+                 return_value=["Migration failed for 'p1'"],
+             ):
+            with pytest.raises(RepositoryError, match="broken state"):
+                refresh_repository(registry, "testrepo")
+
 
 # ── installer.py ────────────────────────────────────────────────
 

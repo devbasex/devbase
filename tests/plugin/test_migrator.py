@@ -415,6 +415,36 @@ class TestMigrateClonesMissingRepo:
         assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
 
 
+    def test_registry_yml_parsed_once_for_multiple_plugins_same_repo(
+        self, registry, devbase_root
+    ):
+        # Two legacy plugins from the same repo with a healthy local_path clone:
+        # _ensure_repo_cloned takes the fast path (returns reg_info=None) for
+        # both, so migrate()'s per-URL reg_info cache must collapse the lazy
+        # registry.yml parse to one per repo instead of one per plugin.
+        plugins = [
+            {"name": "p1", "path": "p1", "projects": ["p1"]},
+            {"name": "p2", "path": "p2", "projects": ["p2"]},
+        ]
+        _make_repo_clone(devbase_root, plugins)
+        _register_repo(registry, plugins)
+        for p in plugins:
+            _make_legacy_copy(devbase_root, p["name"], p)
+            registry.add(_installed(p["name"], f"plugins/{p['name']}"))
+
+        import devbase.plugin.installer as installer_mod
+        real_parse = installer_mod.parse_registry_yml
+        with patch(
+            "devbase.plugin.installer.parse_registry_yml",
+            side_effect=real_parse,
+        ) as spy_parse:
+            result = migrate(registry)
+
+        assert sorted(result.migrated) == ["p1", "p2"]
+        # Without the cache this would be 2 (one lazy parse per plugin).
+        assert spy_parse.call_count == 1
+
+
 class TestMigrateKeepsLinked:
     def test_linked_install_keeps_plugins_dir(self, registry, devbase_root):
         plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]

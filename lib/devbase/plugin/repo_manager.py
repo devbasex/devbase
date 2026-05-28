@@ -457,8 +457,17 @@ def refresh_repository(
         pre_pull_projects=pre_pull_projects,
     )
     if repo_errors:
+        # A failed removal-migration leaves the stale plugins/ entry in
+        # plugins.yml; reporting "refreshed" here would mask that broken
+        # install state. Surface it as a hard error (mirrors update_plugin,
+        # which raises on _update_repo_plugins errors) instead of warning and
+        # exiting 0.
         for err in repo_errors:
-            logger.warning("  %s", err)
+            logger.error("  %s", err)
+        raise RepositoryError(
+            f"Repository '{repo.name}' refresh left plugins in a broken state:\n"
+            + "\n".join(f"  - {e}" for e in repo_errors)
+        )
     if sync:
         sync_projects(registry)
 
