@@ -37,7 +37,7 @@ GROUP_ALIASES = {
 SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
-    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo'],
+    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
 
@@ -234,6 +234,9 @@ def _add_plugin_parser(subparsers):
 
     pl_sub.add_parser('sync', help='Resync project symlinks')
 
+    pl_sub.add_parser('migrate',
+                      help='Migrate legacy plugins/ installs to repos/ clones')
+
     # Plugin repo sub-subcommands
     pl_repo = pl_sub.add_parser('repo', help='Manage plugin repositories')
     pl_repo_sub = pl_repo.add_subparsers(dest='repo_command')
@@ -244,6 +247,8 @@ def _add_plugin_parser(subparsers):
 
     r_remove = pl_repo_sub.add_parser('remove', help='Unregister a repository')
     r_remove.add_argument('name', help='Repository name')
+    r_remove.add_argument('--force', action='store_true',
+                          help='Force removal even if repo has uncommitted/unpushed changes')
 
     pl_repo_sub.add_parser('list', help='List repositories')
 
