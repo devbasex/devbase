@@ -203,6 +203,9 @@ def generate_scaled_compose(
         if service_name != dev_service_name:
             copied = _deep_copy(service_config)
             _rewrite_depends_on(copied, dev_service_name, scale)
+            # Insert tini as PID 1 so orphaned children are reaped (no zombies).
+            # setdefault keeps an explicit `init: false` if the project set one.
+            copied.setdefault('init', True)
             scaled_config['services'][service_name] = copied
 
     # Generate a service for each instance
@@ -215,6 +218,10 @@ def generate_scaled_compose(
 
         # Update container name
         service['container_name'] = f"${{COMPOSE_PROJECT_NAME}}-{dev_service_name}-{i}"
+
+        # Insert tini as PID 1 so orphaned children are reaped (no zombies).
+        # setdefault keeps an explicit `init: false` if the project set one.
+        service.setdefault('init', True)
 
         # Remove environment section (use env_file instead to avoid exposing secrets)
         if 'environment' in service:
