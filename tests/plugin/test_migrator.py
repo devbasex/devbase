@@ -158,6 +158,47 @@ class TestDirsDiffer:
         self._write(b, "README.md", "new upstream doc\n")
         assert _dirs_differ(a, b) is True
 
+    def test_extra_symlink_in_copy_differs(self, tmp_path):
+        a, b = tmp_path / "a", tmp_path / "b"
+        self._write(a, "plugin.yml", "name: x\n")
+        self._write(b, "plugin.yml", "name: x\n")
+        # User-added symlink present only in the legacy copy
+        (a / "link").symlink_to("plugin.yml")
+        assert _dirs_differ(a, b) is True
+
+    def test_empty_dir_only_in_copy_differs(self, tmp_path):
+        a, b = tmp_path / "a", tmp_path / "b"
+        self._write(a, "plugin.yml", "name: x\n")
+        self._write(b, "plugin.yml", "name: x\n")
+        # User-added empty directory present only in the legacy copy
+        (a / "logs").mkdir(parents=True)
+        assert _dirs_differ(a, b) is True
+
+    def test_symlink_target_change_differs(self, tmp_path):
+        a, b = tmp_path / "a", tmp_path / "b"
+        self._write(a, "plugin.yml", "name: x\n")
+        self._write(b, "plugin.yml", "name: x\n")
+        (a / "link").symlink_to("a-target")
+        (b / "link").symlink_to("b-target")
+        assert _dirs_differ(a, b) is True
+
+    def test_file_vs_symlink_type_mismatch_differs(self, tmp_path):
+        a, b = tmp_path / "a", tmp_path / "b"
+        self._write(a, "plugin.yml", "name: x\n")
+        self._write(b, "plugin.yml", "name: x\n")
+        # Same name, but a regular file in the copy vs a symlink in the clone
+        self._write(a, "shared", "data\n")
+        (b / "shared").symlink_to("plugin.yml")
+        assert _dirs_differ(a, b) is True
+
+    def test_identical_symlinks_do_not_differ(self, tmp_path):
+        a, b = tmp_path / "a", tmp_path / "b"
+        self._write(a, "plugin.yml", "name: x\n")
+        self._write(b, "plugin.yml", "name: x\n")
+        (a / "link").symlink_to("plugin.yml")
+        (b / "link").symlink_to("plugin.yml")
+        assert _dirs_differ(a, b) is False
+
 
 class TestNeedsMigration:
     def test_true_when_legacy_present(self, registry):
@@ -260,6 +301,28 @@ class TestMigrateWithLocalChanges:
         assert result.plugins_dir_cleaned is False
         # path is still rewritten to repos/ even when copy is preserved
         assert registry.get("carmo").path == f"repos/{DIRNAME}/carmo"
+
+    def test_existing_bak_is_not_overwritten(self, registry, devbase_root):
+        plugins = [{"name": "carmo", "path": "carmo", "projects": ["carmo"]}]
+        _make_repo_clone(devbase_root, plugins)
+        _register_repo(registry, plugins)
+        _make_legacy_copy(devbase_root, "carmo", plugins[0],
+                          extra={"projects/carmo/.env": "LOCAL=1\n"})
+        registry.add(_installed("carmo", "plugins/carmo"))
+        # A previous migration run already preserved carmo.bak with its own data
+        prev_bak = devbase_root / "plugins" / "carmo.bak"
+        prev_bak.mkdir(parents=True)
+        (prev_bak / "old.txt").write_text("PREVIOUS\n")
+
+        result = migrate(registry)
+
+        assert result.preserved == ["carmo"]
+        # the old .bak survives untouched
+        assert (prev_bak / "old.txt").read_text() == "PREVIOUS\n"
+        # the new diverged copy lands in a distinct .bak-2 dir
+        new_bak = devbase_root / "plugins" / "carmo.bak-2"
+        assert new_bak.is_dir()
+        assert (new_bak / "projects" / "carmo" / ".env").read_text() == "LOCAL=1\n"
 
 
 class TestMigrateClonesMissingRepo:

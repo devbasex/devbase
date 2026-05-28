@@ -40,32 +40,70 @@ def needs_migration(registry: PluginRegistry) -> bool:
     return any(_is_legacy_plugin(p) for p in registry.list_installed())
 
 
+def _unique_bak_path(old_dir: Path) -> Path:
+    """Return a non-existing <name>.bak path, suffixing -2, -3, … if needed.
+
+    A previous migration run may have already preserved <name>.bak awaiting
+    manual reconciliation; never overwrite it, so each diverged copy lands in
+    its own directory.
+    """
+    bak = old_dir.with_name(old_dir.name + '.bak')
+    if not bak.exists():
+        return bak
+    n = 2
+    while True:
+        candidate = old_dir.with_name(f"{old_dir.name}.bak-{n}")
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+def _entry_kind(p: Path) -> str:
+    """Classify a path for diff purposes: symlink / dir / file / other.
+
+    Symlinks are checked first (a symlink to a dir would otherwise read as a
+    dir) so that a copy/clone type mismatch is always detected.
+    """
+    if p.is_symlink():
+        return 'symlink'
+    if p.is_dir():
+        return 'dir'
+    if p.is_file():
+        return 'file'
+    return 'other'
+
+
 def _dirs_differ(copy_dir: Path, repo_dir: Path) -> bool:
     """True if the legacy copy differs in any way from the repos/ clone dir.
 
-    Compares the set of regular files and their byte content.  Any divergence
-    (changed content, a user-added file, or an upstream-added file) is treated
-    as a difference so the copy is preserved rather than deleted — migration
-    must never silently discard data.
+    Walks *every* entry (regular files, symlinks, and directories — including
+    empty ones) and compares both the entry set and, per entry, its type plus
+    file byte content / symlink target.  Any divergence (changed content, a
+    user-added file/symlink/empty dir, a type mismatch, or an upstream-added
+    entry) is treated as a difference so the copy is preserved rather than
+    deleted — migration must never silently discard data.
     """
-    def _files(base: Path) -> set[Path]:
-        return {
-            p.relative_to(base)
-            for p in base.rglob('*')
-            if p.is_file() and not p.is_symlink()
-        }
+    def _entries(base: Path) -> set[Path]:
+        return {p.relative_to(base) for p in base.rglob('*')}
 
-    copy_files = _files(copy_dir)
-    repo_files = _files(repo_dir)
-    if copy_files != repo_files:
+    copy_entries = _entries(copy_dir)
+    repo_entries = _entries(repo_dir)
+    if copy_entries != repo_entries:
         return True
 
-    for rel in copy_files:
+    for rel in copy_entries:
         fa, fb = copy_dir / rel, repo_dir / rel
-        if fa.stat().st_size != fb.stat().st_size:
+        kind = _entry_kind(fa)
+        if kind != _entry_kind(fb):
             return True
-        if fa.read_bytes() != fb.read_bytes():
-            return True
+        if kind == 'symlink':
+            if fa.readlink() != fb.readlink():
+                return True
+        elif kind == 'file':
+            if fa.stat().st_size != fb.stat().st_size:
+                return True
+            if fa.read_bytes() != fb.read_bytes():
+                return True
     return False
 
 
@@ -134,7 +172,7 @@ def _cleanup_plugins_dir(registry: PluginRegistry) -> bool:
         return False
 
     entries = [e for e in plugins_dir.iterdir() if e.name != '.gitkeep']
-    bak_dirs = [e for e in entries if e.name.endswith('.bak')]
+    bak_dirs = [e for e in entries if '.bak' in e.name]
     if bak_dirs:
         logger.info(
             "plugins/ retained: %d preserved .bak dir(s) await manual reconciliation",
@@ -202,21 +240,15 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
             info = load_plugin_info(repo_plugin_dir)
             version = info.version if info else plugin.version
 
-            registry.add(InstalledPlugin(
-                name=plugin.name,
-                version=version,
-                source=plugin.source,
-                installed_at=plugin.installed_at,
-                path=rel_path,
-                linked=False,
-            ))
-
+            # Retire the old plugins/ copy FIRST, then update the registry.
+            # Updating plugins.yml before the filesystem move means a failure
+            # here would leave registry at repos/ (no longer "legacy", so never
+            # retried) while the stale copy lingers — so the path rewrite must
+            # only be committed once the copy has been removed or preserved.
             old_dir = registry.devbase_root / plugin.path
             if old_dir.is_dir() and not old_dir.is_symlink():
                 if _dirs_differ(old_dir, repo_plugin_dir):
-                    bak = old_dir.with_name(old_dir.name + '.bak')
-                    if bak.exists():
-                        shutil.rmtree(bak)
+                    bak = _unique_bak_path(old_dir)
                     old_dir.rename(bak)
                     result.preserved.append(plugin.name)
                     logger.warning(
@@ -229,6 +261,15 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
                     result.migrated.append(plugin.name)
             else:
                 result.migrated.append(plugin.name)
+
+            registry.add(InstalledPlugin(
+                name=plugin.name,
+                version=version,
+                source=plugin.source,
+                installed_at=plugin.installed_at,
+                path=rel_path,
+                linked=False,
+            ))
         except Exception as e:
             result.skipped.append(plugin.name)
             result.errors.append(f"{plugin.name}: {e}")
