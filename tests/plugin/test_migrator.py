@@ -15,6 +15,7 @@ from devbase.plugin.models import (
 )
 from devbase.plugin.registry import PluginRegistry
 from devbase.plugin.migrator import (
+    _cleanup_plugins_dir,
     _dirs_differ,
     _is_legacy_plugin,
     migrate,
@@ -144,6 +145,14 @@ class TestDirsDiffer:
         self._write(b, "plugin.yml", "name: x\n")
         assert _dirs_differ(a, b) is True
 
+    def test_same_size_different_content_differs(self, tmp_path):
+        # Same byte length but different content — exercises the streamed
+        # chunk comparison rather than the size fast-path.
+        a, b = tmp_path / "a", tmp_path / "b"
+        self._write(a, "plugin.yml", "name: aaaa\n")
+        self._write(b, "plugin.yml", "name: bbbb\n")
+        assert _dirs_differ(a, b) is True
+
     def test_extra_file_in_a_differs(self, tmp_path):
         a, b = tmp_path / "a", tmp_path / "b"
         self._write(a, "plugin.yml", "name: x\n")
@@ -151,12 +160,15 @@ class TestDirsDiffer:
         self._write(b, "plugin.yml", "name: x\n")
         assert _dirs_differ(a, b) is True
 
-    def test_extra_file_in_b_differs(self, tmp_path):
+    def test_upstream_only_addition_does_not_differ(self, tmp_path):
+        # A file present only upstream (in the clone) is not data the legacy
+        # copy holds, so deleting the copy loses nothing — a routine upstream
+        # addition must NOT force a manual-reconcile .bak.
         a, b = tmp_path / "a", tmp_path / "b"
         self._write(a, "plugin.yml", "name: x\n")
         self._write(b, "plugin.yml", "name: x\n")
         self._write(b, "README.md", "new upstream doc\n")
-        assert _dirs_differ(a, b) is True
+        assert _dirs_differ(a, b) is False
 
     def test_extra_symlink_in_copy_differs(self, tmp_path):
         a, b = tmp_path / "a", tmp_path / "b"
@@ -378,6 +390,45 @@ class TestMigrateSkips:
         # untouched: copy stays, path unchanged
         assert (devbase_root / "plugins" / "orphan").is_dir()
         assert registry.get("orphan").path == "plugins/orphan"
+
+
+class TestCleanupPluginsDir:
+    def test_unexpected_leftover_keeps_plugins_dir_uncleaned(self, registry, devbase_root):
+        # plugins/ holds a stray entry that is neither .gitkeep nor a .bak
+        # (e.g. left behind by an external tool); cleanup must not claim it
+        # cleaned and must leave the entry in place.
+        plugins_dir = devbase_root / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "stray").mkdir()
+
+        assert _cleanup_plugins_dir(registry) is False
+        assert (plugins_dir / "stray").is_dir()
+
+
+class TestMigratePartialCloneRecovery:
+    def test_partial_clone_without_git_is_recloned(self, registry, devbase_root):
+        plugins = [{"name": "adminer", "path": "adminer", "projects": ["adminer"]}]
+        # Repo registered without local_path so migrate() takes the clone path.
+        _register_repo(registry, plugins, local_path=None)
+        _make_legacy_copy(devbase_root, "adminer", plugins[0])
+        registry.add(_installed("adminer", "plugins/adminer"))
+        # Leftover partial clone from a prior interrupted run: a directory with
+        # no .git and no registry.yml that previously caused an infinite loop.
+        partial = devbase_root / "repos" / DIRNAME
+        partial.mkdir(parents=True)
+        (partial / "junk.txt").write_text("partial\n")
+
+        def fake_clone(url, dest, **kwargs):
+            _make_repo_clone(dest.parent.parent, plugins)
+
+        with patch("devbase.plugin.installer.git_clone", side_effect=fake_clone) as mock:
+            result = migrate(registry)
+
+        # The broken dir was removed and a fresh clone performed.
+        mock.assert_called_once()
+        assert result.migrated == ["adminer"]
+        assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
+        assert not (devbase_root / "repos" / DIRNAME / "junk.txt").exists()
 
 
 class TestCmdPluginMigrate:

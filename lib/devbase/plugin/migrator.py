@@ -73,22 +73,43 @@ def _entry_kind(p: Path) -> str:
     return 'other'
 
 
+def _files_equal(fa: Path, fb: Path) -> bool:
+    """Compare two regular files by size then streamed byte content.
+
+    Reads in fixed-size chunks rather than slurping the whole file so a large
+    plugin asset can't exhaust memory during the migration scan.
+    """
+    if fa.stat().st_size != fb.stat().st_size:
+        return False
+    chunk = 64 * 1024
+    with fa.open('rb') as a, fb.open('rb') as b:
+        while True:
+            ba, bb = a.read(chunk), b.read(chunk)
+            if ba != bb:
+                return False
+            if not ba:
+                return True
+
+
 def _dirs_differ(copy_dir: Path, repo_dir: Path) -> bool:
-    """True if the legacy copy differs in any way from the repos/ clone dir.
+    """True if deleting the legacy copy would discard data not in the clone.
 
     Walks *every* entry (regular files, symlinks, and directories — including
-    empty ones) and compares both the entry set and, per entry, its type plus
-    file byte content / symlink target.  Any divergence (changed content, a
-    user-added file/symlink/empty dir, a type mismatch, or an upstream-added
-    entry) is treated as a difference so the copy is preserved rather than
-    deleted — migration must never silently discard data.
+    empty ones).  An entry is treated as divergence only when it represents
+    data the copy holds but the clone does not: a copy-only entry (user-added
+    file/symlink/empty dir), or a common entry whose type, symlink target, or
+    file content differs.  Upstream-only additions (present in the clone but
+    not the copy) are *not* a difference — deleting the copy loses nothing — so
+    a routine upstream change no longer forces a manual-reconcile .bak.
     """
     def _entries(base: Path) -> set[Path]:
         return {p.relative_to(base) for p in base.rglob('*')}
 
     copy_entries = _entries(copy_dir)
     repo_entries = _entries(repo_dir)
-    if copy_entries != repo_entries:
+
+    # User-added entries live only in the copy and would be lost on delete.
+    if copy_entries - repo_entries:
         return True
 
     for rel in copy_entries:
@@ -100,9 +121,7 @@ def _dirs_differ(copy_dir: Path, repo_dir: Path) -> bool:
             if fa.readlink() != fb.readlink():
                 return True
         elif kind == 'file':
-            if fa.stat().st_size != fb.stat().st_size:
-                return True
-            if fa.read_bytes() != fb.read_bytes():
+            if not _files_equal(fa, fb):
                 return True
     return False
 
@@ -129,11 +148,28 @@ def _ensure_repo_cloned(
     repos_dir.mkdir(exist_ok=True)
     clone_dir = repos_dir / dir_name
 
+    # A leftover directory from a previously interrupted clone (e.g. disk full
+    # or network drop) would otherwise be reused forever — re-cloning is
+    # skipped while parse_registry_yml() keeps failing, so migration can never
+    # self-heal.  Treat a dir that is not a valid clone (missing .git) as
+    # broken and remove it so the clone below re-creates it cleanly.
+    if clone_dir.is_dir() and not (clone_dir / '.git').exists():
+        shutil.rmtree(clone_dir)
+
     if not clone_dir.is_dir():
-        git_clone(repo.url, clone_dir, shallow=False)
+        try:
+            git_clone(repo.url, clone_dir, shallow=False)
+        except Exception:
+            # Drop a partial clone so the next run starts from a clean slate.
+            if clone_dir.is_dir():
+                shutil.rmtree(clone_dir)
+            raise
 
     reg_info = parse_registry_yml(clone_dir)
     if not reg_info:
+        # The clone exists but is missing/invalid registry.yml; discard it so
+        # a subsequent migration attempt re-clones instead of looping here.
+        shutil.rmtree(clone_dir)
         raise PluginError(
             f"No registry.yml found in cloned repository '{repo.name}'."
         )
@@ -177,6 +213,16 @@ def _cleanup_plugins_dir(registry: PluginRegistry) -> bool:
         logger.info(
             "plugins/ retained: %d preserved .bak dir(s) await manual reconciliation",
             len(bak_dirs),
+        )
+        return False
+
+    # Anything left over that is neither .gitkeep nor a preserved .bak means
+    # plugins/ is not actually clean; leave it untouched and report uncleaned.
+    leftover = [e for e in entries if e not in bak_dirs]
+    if leftover:
+        logger.info(
+            "plugins/ retained: %d unexpected entr(y/ies) remain (%s)",
+            len(leftover), ", ".join(sorted(e.name for e in leftover)),
         )
         return False
 
