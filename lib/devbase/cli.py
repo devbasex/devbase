@@ -234,6 +234,9 @@ def _add_plugin_parser(subparsers):
 
     pl_sub.add_parser('sync', help='Resync project symlinks')
 
+    pl_sub.add_parser('migrate',
+                      help='Migrate legacy plugins/ installs to repos/ clones')
+
     # Plugin repo sub-subcommands
     pl_repo = pl_sub.add_parser('repo', help='Manage plugin repositories')
     pl_repo_sub = pl_repo.add_subparsers(dest='repo_command')
