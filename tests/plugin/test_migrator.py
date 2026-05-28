@@ -414,6 +414,44 @@ class TestMigrateClonesMissingRepo:
         assert repo.local_path == f"repos/{DIRNAME}"
         assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
 
+    def test_clone_and_registry_parse_reused_across_plugins_same_repo(
+        self, registry, devbase_root
+    ):
+        # Two legacy plugins from the same repo registered WITHOUT local_path.
+        # The first plugin clones the repo and stages local_path on a fresh repo
+        # row; migrate() writes that updated row back to its per-URL index so the
+        # second plugin takes the local_path fast path instead of re-entering the
+        # clone-reuse branch (which would re-parse registry.yml and append a
+        # duplicate repo row). Caching the clone-path parse lets that fast path
+        # reuse it, so registry.yml is parsed exactly once for the repo.
+        plugins = [
+            {"name": "p1", "path": "p1", "projects": ["p1"]},
+            {"name": "p2", "path": "p2", "projects": ["p2"]},
+        ]
+        _register_repo(registry, plugins, local_path=None)
+        for p in plugins:
+            _make_legacy_copy(devbase_root, p["name"], p)
+            registry.add(_installed(p["name"], f"plugins/{p['name']}"))
+
+        def fake_clone(url, dest, **kwargs):
+            _make_repo_clone(dest.parent.parent, plugins)
+
+        import devbase.plugin.installer as installer_mod
+        real_parse = installer_mod.parse_registry_yml
+        with patch(
+            "devbase.plugin.installer.git_clone", side_effect=fake_clone,
+        ) as spy_clone, patch(
+            "devbase.plugin.installer.parse_registry_yml", side_effect=real_parse,
+        ) as spy_parse:
+            result = migrate(registry)
+
+        assert sorted(result.migrated) == ["p1", "p2"]
+        # Clone once, then reuse via the staged local_path fast path.
+        assert spy_clone.call_count == 1
+        # Without the write-back + cache the second plugin re-enters the
+        # clone-reuse branch and parses registry.yml again (would be 2).
+        assert spy_parse.call_count == 1
+
 
     def test_registry_yml_parsed_once_for_multiple_plugins_same_repo(
         self, registry, devbase_root

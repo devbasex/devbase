@@ -455,6 +455,17 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
                 registry, repo, pending_repos,
             )
 
+            # _ensure_repo_cloned may hand back an updated repo row (local_path
+            # now staged after a clone/reuse). Write it back so subsequent
+            # legacy plugins of the same repo take the local_path fast path
+            # instead of re-entering the clone-reuse branch, which would
+            # re-parse registry.yml and append a duplicate pending_repos row.
+            repos_by_url[repo.url] = repo
+            # Cache the parse from the clone/reuse path too, so the fast path
+            # for sibling plugins reuses it instead of re-reading registry.yml.
+            if reg_info is not None:
+                reg_info_by_url[repo.url] = reg_info
+
             # _ensure_repo_cloned already parsed registry.yml on the clone/reuse
             # paths; only the healthy local_path fast path returns None. Parse
             # lazily there, but reuse a cached parse for subsequent plugins of
