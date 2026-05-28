@@ -5,12 +5,16 @@ import shutil
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
 from devbase.errors import PluginError
 from devbase.log import get_logger
 
 from .models import AvailablePlugin, InstalledPlugin, RegisteredRepository
 from .registry import PluginRegistry
+
+if TYPE_CHECKING:
+    from .models import RegistryInfo
 
 logger = get_logger("devbase.plugin.migrator")
 
@@ -212,7 +216,9 @@ def _reclaim_or_protect_existing(clone_dir: Path) -> None:
 
 
 def _build_persisted_repo(
-    registry: PluginRegistry, repo: RegisteredRepository, dir_name: str,
+    repo: RegisteredRepository,
+    dir_name: str,
+    reg_info: Optional["RegistryInfo"],
 ) -> RegisteredRepository:
     """Build a repo row with local_path = repos/<dir_name> + a refreshed plugin
     list, WITHOUT saving.
@@ -222,22 +228,22 @@ def _build_persisted_repo(
     plugins.yml entry is repaired identically in both cases and future runs take
     the local_path fast path.
 
+    `reg_info` is the clone's already-parsed registry.yml (the caller parses it
+    exactly once and threads it through here and on to migrate()), so this no
+    longer re-reads/re-parses the file itself.  When it is None the repo's prior
+    plugin list is kept.
+
     The caller is responsible for persisting the returned row: during migration
     every repo update is accumulated and flushed in a single plugins.yml save
     (see migrate()), so this no longer writes per repo.
     """
-    from .installer import parse_registry_yml
-
-    local_path = f"repos/{dir_name}"
-    clone_dir = registry.devbase_root / local_path
-    reg_info = parse_registry_yml(clone_dir)
     plugins = [
         AvailablePlugin(name=e.name, description=e.description, path=e.path)
         for e in reg_info.plugins
     ] if reg_info else list(repo.plugins)
     return RegisteredRepository(
         name=repo.name, url=repo.url, added_at=repo.added_at,
-        local_path=local_path, plugins=plugins,
+        local_path=f"repos/{dir_name}", plugins=plugins,
     )
 
 
@@ -245,7 +251,7 @@ def _ensure_repo_cloned(
     registry: PluginRegistry,
     repo: RegisteredRepository,
     pending_repos: list[RegisteredRepository],
-) -> tuple[Path, RegisteredRepository]:
+) -> tuple[Path, RegisteredRepository, Optional["RegistryInfo"]]:
     """Return the repos/ clone dir for a repo, cloning it if necessary.
 
     If the repo was registered before persistent-clone support (no local_path),
@@ -254,6 +260,12 @@ def _ensure_repo_cloned(
     plugin list for persistence.  A healthy repos/<derived> clone left by an
     earlier run is reused (and its missing local_path staged) rather than
     re-cloned or protected.
+
+    Returns ``(clone_dir, repo, reg_info)`` where ``reg_info`` is the clone's
+    parsed registry.yml whenever this function already had to parse it (the
+    derived-reuse and fresh-clone paths), so migrate() can reuse it instead of
+    re-reading the same file.  It is None only on the local_path fast path,
+    where no parse happened; migrate() parses lazily there.
 
     Any repo row that needs (re)persisting is appended to `pending_repos`
     instead of being saved here; migrate() flushes them in a single
@@ -267,7 +279,7 @@ def _ensure_repo_cloned(
     if repo.local_path:
         clone_dir = registry.devbase_root / repo.local_path
         if _clone_is_healthy(clone_dir):
-            return clone_dir, repo
+            return clone_dir, repo, None
         _reclaim_or_protect_existing(clone_dir)
 
     dir_name = _url_to_repos_dirname(repo.url)
@@ -280,9 +292,10 @@ def _ensure_repo_cloned(
     # protecting (raising) on its .git, just like the local_path branch above —
     # only stage the missing local_path so future runs take the fast path.
     if _clone_is_healthy(clone_dir):
-        updated = _build_persisted_repo(registry, repo, dir_name)
+        reg_info = parse_registry_yml(clone_dir)
+        updated = _build_persisted_repo(repo, dir_name, reg_info)
         pending_repos.append(updated)
-        return clone_dir, updated
+        return clone_dir, updated, reg_info
 
     # A leftover from a previously interrupted clone (e.g. disk full or network
     # drop) would otherwise be reused forever — re-cloning is skipped while
@@ -322,10 +335,10 @@ def _ensure_repo_cloned(
             f"registry.yml') or remove the directory manually, then retry."
         )
 
-    updated = _build_persisted_repo(registry, repo, dir_name)
+    updated = _build_persisted_repo(repo, dir_name, reg_info)
     pending_repos.append(updated)
     logger.info("Repository '%s' cloned to %s", repo.name, updated.local_path)
-    return clone_dir, updated
+    return clone_dir, updated, reg_info
 
 
 def _cleanup_plugins_dir(registry: PluginRegistry) -> bool:
@@ -423,9 +436,15 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
                 )
                 continue
 
-            clone_dir, repo = _ensure_repo_cloned(registry, repo, pending_repos)
+            clone_dir, repo, reg_info = _ensure_repo_cloned(
+                registry, repo, pending_repos,
+            )
 
-            reg_info = parse_registry_yml(clone_dir)
+            # _ensure_repo_cloned already parsed registry.yml on the clone/reuse
+            # paths; only the healthy local_path fast path returns None, so parse
+            # lazily there instead of unconditionally re-reading the same file.
+            if reg_info is None:
+                reg_info = parse_registry_yml(clone_dir)
             entry = None
             if reg_info:
                 entry = next(
