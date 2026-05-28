@@ -561,6 +561,46 @@ class TestMigrateBatchesRegistryWrites:
         for p in plugins:
             assert registry.get(p["name"]).path == f"repos/{DIRNAME}/{p['name']}"
 
+    def test_repo_lookup_does_not_reload_plugins_yml_per_plugin(
+        self, registry, devbase_root,
+    ):
+        """Several legacy plugins share one repo, so the per-plugin source->repo
+        lookup must hit an in-memory index, not reload plugins.yml each time.
+
+        migrate() previously called registry.get_repository_by_url per legacy
+        plugin; that re-reads (and re-parses) plugins.yml on every call, so N
+        plugins cost O(N) reads.  It now builds a URL->repo index once up front,
+        so the plugins.yml read count must stay independent of the plugin count.
+        We count _load() calls and require it to stay well below one read per
+        plugin (a per-iteration regression would push it to >= N).
+        """
+        plugins = [
+            {"name": f"demo{i}", "path": f"demo{i}", "projects": [f"demo{i}"]}
+            for i in range(8)
+        ]
+        _make_repo_clone(devbase_root, plugins)
+        _register_repo(registry, plugins)
+        for p in plugins:
+            _make_legacy_copy(devbase_root, p["name"], p)
+            registry.add(_installed(p["name"], f"plugins/{p['name']}"))
+
+        load_calls = 0
+        orig_load = registry._load
+
+        def _counting_load():
+            nonlocal load_calls
+            load_calls += 1
+            return orig_load()
+
+        with patch.object(registry, "_load", side_effect=_counting_load):
+            result = migrate(registry)
+
+        assert sorted(result.migrated) == sorted(p["name"] for p in plugins)
+        # The per-plugin get_repository_by_url is gone, so the read count does
+        # not scale with the 8 plugins; guard the regression by requiring it to
+        # stay strictly below one read per plugin.
+        assert load_calls < len(plugins)
+
     def test_many_cloned_repos_persist_with_single_save(self, registry, devbase_root):
         """O(1) saves even when every repo must be freshly cloned.
 
