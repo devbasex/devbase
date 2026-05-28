@@ -166,6 +166,16 @@ def _update_repo_plugins(
             continue
 
         plugin_path = clone_dir / target_entry.path.rstrip('/')
+        if not plugin_path.is_dir():
+            errors.append(
+                f"Plugin directory not found for '{plugin.name}': {plugin_path}"
+            )
+            logger.warning(
+                "Skipping '%s': registry.yml path '%s' does not exist",
+                plugin.name, target_entry.path,
+            )
+            continue
+
         from .syncer import load_plugin_info
         info = load_plugin_info(plugin_path)
         version = info.version if info else '0.1.0'

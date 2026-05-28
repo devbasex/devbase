@@ -804,6 +804,44 @@ class TestUpdatePlugin:
             update_plugin(registry)
             assert mock_pull.call_count == 1
 
+    def test_update_errors_when_registry_path_missing(
+        self, registry, devbase_root
+    ):
+        """registry.yml pointing at a non-existent dir must NOT be treated as
+        a successful update: the metadata must not be rewritten to a missing
+        path, and the failure must be surfaced via the error list."""
+        import yaml
+
+        url = "https://github.com/testorg/testrepo.git"
+        dir_name = "github.com--testorg--testrepo"
+        clone_dir = devbase_root / "repos" / dir_name
+        clone_dir.mkdir(parents=True)
+        (clone_dir / ".git").mkdir()
+        # registry.yml advertises p1 at "p1" but that directory does NOT exist.
+        with open(clone_dir / "registry.yml", "w") as f:
+            yaml.dump({
+                "name": "testrepo",
+                "plugins": [{"name": "p1", "path": "p1", "description": ""}],
+            }, f)
+
+        registry.add(InstalledPlugin(
+            name="p1", version="1.0.0", source=url,
+            installed_at=registry.now_iso(),
+            path=f"repos/{dir_name}/p1",
+        ))
+
+        from devbase.plugin.updater import _update_repo_plugins
+
+        errors = _update_repo_plugins(registry, url, clone_dir)
+
+        assert errors, "missing plugin directory must produce an error"
+        assert any("p1" in e for e in errors)
+        # Registry entry must be left intact (not rewritten to a missing path
+        # and not silently succeeding).
+        plugin = registry.get("p1")
+        assert plugin is not None
+        assert plugin.path == f"repos/{dir_name}/p1"
+
 
 class TestSnapshotPluginProjects:
     """Tests for _snapshot_plugin_projects"""
