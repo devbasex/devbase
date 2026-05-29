@@ -99,6 +99,10 @@ def _add_project_parser(subparsers):
     name によるディレクトリ解決 / COMPOSE_PROJECT_NAME 上書きは PLAN06 Task 2 (PR2)
     で wrapper の cd + Python フォールバックとして実装する。PR1 では parser 構造と
     name のパースまでを用意する。
+
+    例外: `login` / `build` は単一 positional が旧 `container` と同義 (index / image)
+    であり、`[name]` を足すと `project login 2` / `project build web` が誤解釈される
+    ため name を受け付けない (各 add_parser のコメント参照)。
     """
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')
@@ -109,8 +113,11 @@ def _add_project_parser(subparsers):
     pj_down = pj_sub.add_parser('down', help='Stop and remove containers')
     pj_down.add_argument('name', nargs='?', default=None, help='Project name')
 
+    # login / build は単一 positional の意味を `container` と一致させるため
+    # `[name]` を受け付けない。`project login 2` を name='2' と誤解釈して index=1 に
+    # ログインしてしまう曖昧さ (旧 `container login <index>` との非互換) を防ぐ。
+    # name 解決は PR2 で導入する際にあらためて曖昧さのない形 (例: --name) で扱う。
     pj_login = pj_sub.add_parser('login', help='Login to container')
-    pj_login.add_argument('name', nargs='?', default=None, help='Project name')
     pj_login.add_argument('index', nargs='?', default='1', help='Container index')
 
     pj_ps = pj_sub.add_parser('ps', help='Show container status')
@@ -128,8 +135,10 @@ def _add_project_parser(subparsers):
     pj_scale.add_argument('name', nargs='?', default=None, help='Project name')
     pj_scale.add_argument('new_scale', type=int, help='New number of containers')
 
+    # build も単一 positional は `image` として扱う (container build と一致)。
+    # `[name]` を許すと `project build web` が name='web', image=None となり
+    # image 指定ビルドが compose build に化けるため受け付けない (上記 login 参照)。
     pj_build = pj_sub.add_parser('build', help='Build container images')
-    pj_build.add_argument('name', nargs='?', default=None, help='Project name')
     pj_build.add_argument('image', nargs='?', default=None, help='Image name')
 
 

@@ -94,6 +94,17 @@ def _dispatch_lifecycle(args) -> int:
     subcmd = getattr(args, 'subcommand', None)
     project_name = getattr(args, 'name', None) or getattr(args, 'project_name', None)
 
+    # PR1 では name の解決は未実装で、CWD の compose.yml に対して動作する。
+    # name を黙って無視すると意図しない compose に作用しうるため、明示的に警告する
+    # (name → ディレクトリ解決 / COMPOSE_PROJECT_NAME 上書きは PR2 で実装)。
+    if project_name and subcmd not in ('up', 'scale'):
+        logger.warning(
+            "project name '%s' の解決は未実装です。"
+            "カレントディレクトリの compose に対して実行します "
+            "(name 指定は将来のリリースで対応予定)。",
+            project_name,
+        )
+
     handlers = {
         'up':    lambda: cmd_up(project_name=project_name,
                                 scale=getattr(args, 'scale', None)),
