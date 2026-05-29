@@ -18,11 +18,15 @@ logger = get_logger("devbase.cli")
 
 # Shortcuts: top-level command -> project subcommand
 # 委譲先は共有の cmd_project (PLAN06 で container は非推奨化)。
+# NOTE: `build` はここに含めない。配布入口 bin/devbase が `build` を shell の
+# cmd_build (devbase-base 依存検出 + 2 段ビルド + --no-cache 対応) に委譲しており、
+# Python の project build (単純な compose build) とは実装が異なるため。Python 側で
+# `build` を project build ショートカットとして広告すると wrapper の実経路と乖離する。
+# project build / container build サブコマンド自体は引き続き利用可能。
 SHORTCUTS = {
     'up': 'up',
     'down': 'down',
     'login': 'login',
-    'build': 'build',
     'ps': 'ps',
     'scale': 'scale',
 }
@@ -343,8 +347,9 @@ def _add_shortcuts(subparsers):
     login_sc = subparsers.add_parser('login', help='Login to container')
     login_sc.add_argument('index', nargs='?', default='1', help='Container index')
 
-    build_sc = subparsers.add_parser('build', help='Build container images')
-    build_sc.add_argument('image', nargs='?', default=None, help='Image name')
+    # NOTE: `build` はショートカットに含めない (SHORTCUTS の注記参照)。
+    # bin/devbase が build を shell 実装 (cmd_build) に委譲するため、Python 側で
+    # トップレベル build を広告すると実経路と乖離する。
 
     ps_sc = subparsers.add_parser('ps', help='Show container status')
     ps_sc.add_argument('--all', '-a', action='store_true', help='Show all containers')
@@ -367,7 +372,6 @@ def _create_parser():
             "  up            project up\n"
             "  down          project down\n"
             "  login         project login\n"
-            "  build         project build\n"
             "  ps            project ps\n"
             "  scale         project scale\n"
             "\n"
@@ -428,8 +432,11 @@ def _resolve_prefix(input_cmd, candidates, preferences=None):
 
 def _expand_argv():
     """Expand abbreviated command/subcommand names in sys.argv in-place."""
+    # `build` はトップレベルショートカットから除外 (SHORTCUTS の注記参照)。
+    # bin/devbase が build を shell 実装に委譲するため Python 側には top-level
+    # build parser が無い。project build / container build は引き続き利用可能。
     commands = ['init', 'status', 'shell-rc', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
-                'snapshot', 'ss', 'up', 'down', 'login', 'build', 'ps', 'scale', 'help']
+                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):
