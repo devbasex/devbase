@@ -17,6 +17,8 @@ except ImportError:
 logger = get_logger("devbase.cli")
 
 # Shortcuts: top-level command -> (group, subcommand)
+# 委譲先は共有の cmd_project (PLAN06 で container は非推奨化)。group 要素は歴史的経緯で
+# 残しているが dispatch では subcommand のみ参照する。
 SHORTCUTS = {
     'up': ('container', 'up'),
     'down': ('container', 'down'),
@@ -35,6 +37,7 @@ GROUP_ALIASES = {
 
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
+    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
@@ -87,6 +90,47 @@ def _add_container_parser(subparsers):
 
     ct_build = ct_sub.add_parser('build', help='Build container images')
     ct_build.add_argument('image', nargs='?', default=None, help='Image name')
+
+
+def _add_project_parser(subparsers):
+    """Project group parser (CWD 非依存のプロジェクト操作)。
+
+    `container` と同じ subcommand 群に、省略可能な `[name]` positional を加える。
+    name によるディレクトリ解決 / COMPOSE_PROJECT_NAME 上書きは PLAN06 Task 2 (PR2)
+    で wrapper の cd + Python フォールバックとして実装する。PR1 では parser 構造と
+    name のパースまでを用意する。
+    """
+    pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
+    pj_sub = pj_parser.add_subparsers(dest='subcommand')
+
+    pj_up = pj_sub.add_parser('up', help='Start containers')
+    pj_up.add_argument('name', nargs='?', default=None, help='Project name')
+
+    pj_down = pj_sub.add_parser('down', help='Stop and remove containers')
+    pj_down.add_argument('name', nargs='?', default=None, help='Project name')
+
+    pj_login = pj_sub.add_parser('login', help='Login to container')
+    pj_login.add_argument('name', nargs='?', default=None, help='Project name')
+    pj_login.add_argument('index', nargs='?', default='1', help='Container index')
+
+    pj_ps = pj_sub.add_parser('ps', help='Show container status')
+    pj_ps.add_argument('name', nargs='?', default=None, help='Project name')
+    pj_ps.add_argument('--all', '-a', action='store_true', help='Show all containers')
+
+    pj_logs = pj_sub.add_parser('logs', help='Show container logs')
+    pj_logs.add_argument('name', nargs='?', default=None, help='Project name')
+    pj_logs.add_argument('--follow', '-f', action='store_true', help='Follow log output')
+    pj_logs.add_argument('--tail', type=int, default=None, help='Number of lines')
+
+    # NOTE: `[name]` optional + `new_scale` 必須 int の順。値が 1 個なら new_scale に、
+    # 2 個なら (name, new_scale) に割り当てられ曖昧にならない (tests/cli 参照)。
+    pj_scale = pj_sub.add_parser('scale', help='Scale containers online')
+    pj_scale.add_argument('name', nargs='?', default=None, help='Project name')
+    pj_scale.add_argument('new_scale', type=int, help='New number of containers')
+
+    pj_build = pj_sub.add_parser('build', help='Build container images')
+    pj_build.add_argument('name', nargs='?', default=None, help='Project name')
+    pj_build.add_argument('image', nargs='?', default=None, help='Image name')
 
 
 def _add_env_parser(subparsers):
@@ -310,12 +354,14 @@ def _create_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Shortcuts:\n"
-            "  up            container up\n"
-            "  down          container down\n"
-            "  login         container login\n"
-            "  build         container build\n"
-            "  ps            container ps\n"
-            "  scale         container scale\n"
+            "  up            project up\n"
+            "  down          project down\n"
+            "  login         project login\n"
+            "  build         project build\n"
+            "  ps            project ps\n"
+            "  scale         project scale\n"
+            "\n"
+            "Note: `container` is deprecated; use `project` instead.\n"
         )
     )
 
@@ -342,6 +388,7 @@ def _create_parser():
         help='Print shell RC file path (e.g. source "$(devbase shell-rc)")'
     )
 
+    _add_project_parser(subparsers)
     _add_container_parser(subparsers)
     _add_env_parser(subparsers)
     _add_plugin_parser(subparsers)
@@ -371,7 +418,7 @@ def _resolve_prefix(input_cmd, candidates, preferences=None):
 
 def _expand_argv():
     """Expand abbreviated command/subcommand names in sys.argv in-place."""
-    commands = ['init', 'status', 'shell-rc', 'container', 'ct', 'env', 'plugin', 'pl',
+    commands = ['init', 'status', 'shell-rc', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
                 'snapshot', 'ss', 'up', 'down', 'login', 'build', 'ps', 'scale', 'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
@@ -418,13 +465,20 @@ def _dispatch(cmd, args):
     # Resolve group aliases
     cmd = GROUP_ALIASES.get(cmd, cmd)
 
-    # --- Shortcuts (top-level -> container subcommand) ---
+    # --- Shortcuts (top-level -> project subcommand) ---
+    # ショートカットは非推奨ではないため、warning を出す cmd_container ではなく
+    # 共有の cmd_project へ委譲する。
     if cmd in SHORTCUTS:
         args.subcommand = SHORTCUTS[cmd][1]
-        from devbase.commands.container import cmd_container
-        return cmd_container(args)
+        from devbase.commands.container import cmd_project
+        return cmd_project(args)
 
-    # --- Container group ---
+    # --- Project group (推奨) ---
+    if cmd == 'project':
+        from devbase.commands.container import cmd_project
+        return cmd_project(args)
+
+    # --- Container group (非推奨: project へ委譲 + warning) ---
     if cmd == 'container':
         from devbase.commands.container import cmd_container
         return cmd_container(args)
