@@ -87,19 +87,23 @@ def _dispatch_lifecycle(args) -> int:
     `project <sub> [name]` の `name` を解決して project_name へ畳み込む。
     `container` 経路には `name` 属性が無いため従来通り None になる。
 
-    NOTE (PLAN06): name によるディレクトリ解決 / COMPOSE_PROJECT_NAME 上書きの
-    本体は Task 2 (PR2) で wrapper の cd + Python フォールバックとして実装する。
-    PR1 では project_name 引数を取れる up / scale にのみ name を伝播する。
+    NOTE (PLAN06): name によるディレクトリ解決の本体は Task 2 (PR2) で wrapper の
+    cd + Python フォールバックとして実装する。PR1 では project_name 引数を取れる
+    up / scale にのみ name を伝播するが、その name も compose のプロジェクトラベル
+    (COMPOSE_PROJECT_NAME 相当) として使われるだけで、操作対象はあくまで CWD の
+    compose.yml である点に注意 (ディレクトリ解決は未実装)。
     """
     subcmd = getattr(args, 'subcommand', None)
     project_name = getattr(args, 'name', None) or getattr(args, 'project_name', None)
 
-    # PR1 では name の解決は未実装で、CWD の compose.yml に対して動作する。
-    # name を黙って無視すると意図しない compose に作用しうるため、明示的に警告する
-    # (name → ディレクトリ解決 / COMPOSE_PROJECT_NAME 上書きは PR2 で実装)。
-    if project_name and subcmd not in ('up', 'scale'):
+    # PR1 では name によるディレクトリ解決は未実装で、どのサブコマンドも CWD の
+    # compose.yml に対して動作する。name を指定されたまま黙って CWD に作用すると
+    # 「指定したプロジェクトに対して操作できた」と誤解させるため、明示的に警告する
+    # (name → ディレクトリ解決は PR2 で実装)。up / scale は name をプロジェクト
+    # ラベルには反映するが、対象ディレクトリは依然 CWD であるため同様に警告する。
+    if project_name:
         logger.warning(
-            "project name '%s' の解決は未実装です。"
+            "project name '%s' によるディレクトリ解決は未実装です。"
             "カレントディレクトリの compose に対して実行します "
             "(name 指定は将来のリリースで対応予定)。",
             project_name,

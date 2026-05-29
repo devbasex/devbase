@@ -16,16 +16,15 @@ except ImportError:
 
 logger = get_logger("devbase.cli")
 
-# Shortcuts: top-level command -> (group, subcommand)
-# 委譲先は共有の cmd_project (PLAN06 で container は非推奨化)。group 要素は歴史的経緯で
-# 残しているが dispatch では subcommand のみ参照する。
+# Shortcuts: top-level command -> project subcommand
+# 委譲先は共有の cmd_project (PLAN06 で container は非推奨化)。
 SHORTCUTS = {
-    'up': ('container', 'up'),
-    'down': ('container', 'down'),
-    'login': ('container', 'login'),
-    'build': ('container', 'build'),
-    'ps': ('container', 'ps'),
-    'scale': ('container', 'scale'),
+    'up': 'up',
+    'down': 'down',
+    'login': 'login',
+    'build': 'build',
+    'ps': 'ps',
+    'scale': 'scale',
 }
 
 # Group aliases
@@ -114,9 +113,11 @@ def _add_project_parser(subparsers):
     pj_down.add_argument('name', nargs='?', default=None, help='Project name')
 
     # login / build は単一 positional の意味を `container` と一致させるため
-    # `[name]` を受け付けない。`project login 2` を name='2' と誤解釈して index=1 に
-    # ログインしてしまう曖昧さ (旧 `container login <index>` との非互換) を防ぐ。
-    # name 解決は PR2 で導入する際にあらためて曖昧さのない形 (例: --name) で扱う。
+    # `[name]` を受け付けない (他サブコマンドの `[name]` positional とは意図的に
+    # 不整合)。`project login 2` を name='2' と誤解釈して index=1 にログインして
+    # しまう曖昧さ (旧 `container login <index>` との非互換) を防ぐため。
+    # PR2 で project name 解決を導入する際は、login / build にも曖昧さのない
+    # `--name` オプションを追加して他サブコマンドと整合させる方針。
     pj_login = pj_sub.add_parser('login', help='Login to container')
     pj_login.add_argument('index', nargs='?', default='1', help='Container index')
 
@@ -478,7 +479,7 @@ def _dispatch(cmd, args):
     # ショートカットは非推奨ではないため、warning を出す cmd_container ではなく
     # 共有の cmd_project へ委譲する。
     if cmd in SHORTCUTS:
-        args.subcommand = SHORTCUTS[cmd][1]
+        args.subcommand = SHORTCUTS[cmd]
         from devbase.commands.container import cmd_project
         return cmd_project(args)
 
