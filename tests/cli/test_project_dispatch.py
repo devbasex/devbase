@@ -141,6 +141,45 @@ def test_lifecycle_container_path_has_no_name(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _dispatch_lifecycle: name 未実装 warning
+# (PR1 では up/scale も含め全サブコマンドが CWD の compose に作用するため、
+#  name 指定時はサブコマンドに関わらず警告する)
+# ---------------------------------------------------------------------------
+
+def test_lifecycle_warns_for_up_with_name(monkeypatch, caplog):
+    """`project up <name>` は name 指定時に未実装 warning を出す。"""
+    from devbase.commands import container
+    monkeypatch.setattr(container, 'cmd_up', lambda project_name=None, scale=None: 0)
+    args = _args(subcommand='up', name='carmo', scale=None)
+    with caplog.at_level(logging.WARNING, logger='devbase.commands.container'):
+        assert container._dispatch_lifecycle(args) == 0
+    assert any('未実装' in r.message for r in caplog.records), \
+        'up でも name 指定時は警告しなければならない'
+
+
+def test_lifecycle_warns_for_scale_with_name(monkeypatch, caplog):
+    """`project scale <name> N` も name 指定時に未実装 warning を出す。"""
+    from devbase.commands import container
+    monkeypatch.setattr(container, 'cmd_scale',
+                        lambda new_scale=None, project_name=None: 0)
+    args = _args(subcommand='scale', name='carmo', new_scale=3)
+    with caplog.at_level(logging.WARNING, logger='devbase.commands.container'):
+        assert container._dispatch_lifecycle(args) == 0
+    assert any('未実装' in r.message for r in caplog.records), \
+        'scale でも name 指定時は警告しなければならない'
+
+
+def test_lifecycle_no_warning_without_name(monkeypatch, caplog):
+    """name 未指定なら警告を出さない。"""
+    from devbase.commands import container
+    monkeypatch.setattr(container, 'cmd_up', lambda project_name=None, scale=None: 0)
+    args = _args(subcommand='up', scale=None)  # name 属性なし
+    with caplog.at_level(logging.WARNING, logger='devbase.commands.container'):
+        assert container._dispatch_lifecycle(args) == 0
+    assert not any('未実装' in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # cli._dispatch: ルーティング
 # ---------------------------------------------------------------------------
 
