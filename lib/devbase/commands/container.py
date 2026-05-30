@@ -118,6 +118,43 @@ def _report_unknown_project(name: str, projects_dir: Path) -> None:
         logger.error("利用可能なプロジェクト: %s", listing)
 
 
+def _load_project_env(env_file: Path) -> None:
+    """プロジェクトの ``env`` ファイルを os.environ へ反映する (wrapper 同等)。
+
+    wrapper (bin/devbase) は cd 後に ``source ./env`` で env を読み込むため、
+    Python フォールバック経路でも同じ KEY=VALUE を ``os.environ`` に載せて
+    変数欠落 (例: project 固有の ``CONTAINER_SCALE``) を防ぐ。
+
+    env は環境変数定義のみを想定したファイル (bin/devbase 冒頭コメント参照) の
+    ため、ここでは ``export`` 接頭辞付き / 無しの単純な ``KEY=VALUE`` 行のみを
+    解釈する。``#`` コメント・空行は無視し、値の前後のクォートは除去する。shell
+    の変数展開やコマンド置換は意図的にサポートしない (安全側に倒す)。
+    """
+    if not env_file.is_file():
+        return
+    try:
+        lines = env_file.read_text().splitlines()
+    except OSError as e:
+        logger.warning("env ファイルを読み込めませんでした (%s): %s", env_file, e)
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[len('export '):].lstrip()
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        os.environ[key] = value
+
+
 def _resolve_project_name(project_name: str) -> bool:
     """project name を $DEVBASE_ROOT/projects/<name> へ解決し chdir する。
 
@@ -128,6 +165,10 @@ def _resolve_project_name(project_name: str) -> bool:
 
     に対する防御的フォールバックとして働く。wrapper が既に対象ディレクトリへ
     cd 済みなら chdir は no-op になる (同一パス判定)。
+
+    chdir 後は wrapper の ``source ./env`` と同等に project の ``env`` を
+    ``os.environ`` へ反映し、wrapper を経ない直接起動でも環境変数が欠落しない
+    ようにする (gemini round2 minor 指摘対応)。
 
     Returns:
         True:  解決成功 (または既に対象ディレクトリにいる)
@@ -151,7 +192,12 @@ def _resolve_project_name(project_name: str) -> bool:
     if not already_there:
         os.chdir(target)
 
+    # wrapper の `source ./env` と同等に project env を os.environ へ反映する。
+    # wrapper 経由なら既に同じ値が載っているため冪等。
+    _load_project_env(Path('env'))
+
     # COMPOSE_PROJECT_NAME を name で上書き (wrapper が設定済みでも冪等)。
+    # env 由来の COMPOSE_PROJECT_NAME より name 指定を優先するため env 反映後に行う。
     os.environ['COMPOSE_PROJECT_NAME'] = project_name
     return True
 

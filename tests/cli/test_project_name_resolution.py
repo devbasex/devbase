@@ -117,6 +117,49 @@ def test_resolve_noop_when_already_in_target(fake_root, monkeypatch):
     assert os.environ["COMPOSE_PROJECT_NAME"] == "carmo"
 
 
+def test_resolve_loads_project_env(fake_root, monkeypatch):
+    """wrapper を経ない直接起動でも project env が os.environ へ反映される。
+
+    gemini round2 minor 指摘 (wrapper の `source ./env` 相当) の回帰テスト。
+    """
+    monkeypatch.delenv("CONTAINER_SCALE", raising=False)
+    monkeypatch.delenv("CUSTOM_VAR", raising=False)
+    env_path = fake_root / "projects" / "carmo" / "env"
+    env_path.write_text(
+        "# comment line\n"
+        "\n"
+        "CONTAINER_SCALE=5\n"
+        "export CUSTOM_VAR=hello\n"
+        'QUOTED="dq value"\n'
+        "SQUOTED='sq value'\n"
+    )
+
+    assert container._resolve_project_name("carmo") is True
+    assert os.environ["CONTAINER_SCALE"] == "5"
+    assert os.environ["CUSTOM_VAR"] == "hello"
+    assert os.environ["QUOTED"] == "dq value"
+    assert os.environ["SQUOTED"] == "sq value"
+    # name 指定は env 由来値より優先される
+    assert os.environ["COMPOSE_PROJECT_NAME"] == "carmo"
+
+
+def test_resolve_env_name_overrides_env_file_compose_project_name(fake_root, monkeypatch):
+    """env に COMPOSE_PROJECT_NAME があっても name 指定が優先される。"""
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "stale")
+    env_path = fake_root / "projects" / "carmo" / "env"
+    env_path.write_text("COMPOSE_PROJECT_NAME=from_env\n")
+
+    assert container._resolve_project_name("carmo") is True
+    assert os.environ["COMPOSE_PROJECT_NAME"] == "carmo"
+
+
+def test_resolve_missing_env_file_is_noop(fake_root):
+    """env ファイルが無くても解決は成功する (フォールバックの堅牢性)。"""
+    assert not (fake_root / "projects" / "carmo" / "env").exists()
+    assert container._resolve_project_name("carmo") is True
+    assert os.environ["COMPOSE_PROJECT_NAME"] == "carmo"
+
+
 # ===========================================================================
 # wrapper: cd + argv strip + 存在性ベースの曖昧性回避
 # ===========================================================================

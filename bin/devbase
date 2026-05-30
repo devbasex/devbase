@@ -248,6 +248,16 @@ esac
 # shell cmd_build / wrapper cd だけが name 指定の手段であり、`build carmo` /
 # `login carmo` を「そのプロジェクトを操作」と解釈する設計 (存在性ベース判定)。
 _DEVBASE_ARGS=("${@:2}")
+# 同期注意 (メンテナンス性): 下記 2 リストは cli.py の parser 定義に対応する。
+#   _PROJECT_NAME_SUBCOMMANDS = `project`/`container` で `name` positional を
+#       受け付けるサブコマンド集合。cli.py の _add_project_parser で
+#       `add_argument('name', ...)` を持つもの (up/down/ps/logs/scale) と一致させる。
+#       login/build は index/image 互換のため意図的に除外 (上のコメント参照)。
+#   _NAME_RESOLVABLE_SHORTCUTS = トップレベルシノニムのうち「実在 project なら cd」
+#       を許すもの。cli.py の SHORTCUTS 経由で project サブコマンドへ写像される
+#       集合 + shell 実装の build を含む。
+# cli.py 側でサブコマンドを追加/削除した際は両リストの更新漏れに注意すること
+# (cli.py の _add_project_parser / SHORTCUTS にも対の注記あり)。
 _PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale "
 _NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build "
 case "$_resolved_cmd" in
