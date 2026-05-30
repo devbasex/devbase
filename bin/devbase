@@ -209,6 +209,15 @@ maybe_cd_project() {
     # cd 後にプロジェクトの env を再 source (初期 CWD で読んだ値を上書き)。
     # project の .env (dotfile) は CRLF / 特殊文字対策で意図的に source しない
     # 方針を踏襲する (冒頭コメント参照)。
+    #
+    # 注意: env は環境変数定義のみを想定したファイルであり subshell ではなく
+    # 現プロセスで source する。これは wrapper 冒頭 L23-24 の env 読み込みと同一
+    # 意図 — set -a で export した変数を後続の run_python / cmd_build へ引き継ぐ
+    # ため、変数が親プロセスに残らない subshell 化はできない。代償として env 内に
+    # `exit` 等があると wrapper ごと終了するが、env は (a) プロジェクト所有者が
+    # 管理する信頼境界内のファイルで (b) 元々 L24 で初期 CWD でも source される
+    # ため、ここで新たなリスクが増えるわけではない。万一 exit を含む env を読んで
+    # も「該当プロジェクトの操作が中断する」だけで他プロジェクトへ波及しない。
     [ -f "env" ] && set -a && source ./env && set +a
     return 0
 }

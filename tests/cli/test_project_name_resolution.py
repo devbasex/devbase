@@ -60,6 +60,44 @@ def test_resolve_unknown_name_errors_with_candidates(fake_root, caplog):
     assert "carmo" in messages and "shop" in messages
 
 
+def test_report_unknown_truncates_many_candidates(tmp_path, monkeypatch, caplog):
+    """候補が上限を超える場合は先頭 N 件 + 「... 他 M 件」に truncate される。"""
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    total = container._MAX_PROJECT_CANDIDATES + 5
+    # ゼロ埋めで sorted 順を安定させる (p000, p001, ...)。
+    for i in range(total):
+        (projects_dir / f"p{i:03d}").mkdir()
+
+    monkeypatch.setenv("DEVBASE_ROOT", str(tmp_path))
+    with caplog.at_level(logging.ERROR, logger="devbase.commands.container"):
+        container._report_unknown_project("nope", projects_dir)
+
+    messages = " ".join(r.message for r in caplog.records)
+    # 先頭 N 件は表示される
+    assert "p000" in messages
+    assert f"p{container._MAX_PROJECT_CANDIDATES - 1:03d}" in messages
+    # 上限超過分は表示されず、省略表記に集約される
+    assert f"p{container._MAX_PROJECT_CANDIDATES:03d}" not in messages
+    assert f"... 他 {total - container._MAX_PROJECT_CANDIDATES} 件" in messages
+
+
+def test_report_unknown_no_truncation_when_within_limit(tmp_path, monkeypatch, caplog):
+    """候補が上限以内なら省略表記は付かず全件表示される。"""
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    for n in ("carmo", "shop"):
+        (projects_dir / n).mkdir()
+
+    monkeypatch.setenv("DEVBASE_ROOT", str(tmp_path))
+    with caplog.at_level(logging.ERROR, logger="devbase.commands.container"):
+        container._report_unknown_project("nope", projects_dir)
+
+    messages = " ".join(r.message for r in caplog.records)
+    assert "carmo" in messages and "shop" in messages
+    assert "他" not in messages
+
+
 def test_resolve_without_devbase_root(tmp_path, monkeypatch, caplog):
     monkeypatch.delenv("DEVBASE_ROOT", raising=False)
     with caplog.at_level(logging.ERROR, logger="devbase.commands.container"):

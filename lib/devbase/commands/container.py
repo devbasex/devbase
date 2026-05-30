@@ -89,8 +89,17 @@ def _projects_dir() -> Optional[Path]:
     return Path(root) / 'projects'
 
 
+# 候補一覧に表示するプロジェクト数の上限。多数プロジェクト環境で iterdir 全件を
+# 出力すると 1 行が極端に長くなるため、先頭 N 件 + 「... 他 M 件」で truncate する。
+_MAX_PROJECT_CANDIDATES = 20
+
+
 def _report_unknown_project(name: str, projects_dir: Path) -> None:
-    """存在しない project name に対するエラーと候補一覧を出力する。"""
+    """存在しない project name に対するエラーと候補一覧を出力する。
+
+    候補が多数の場合は先頭 ``_MAX_PROJECT_CANDIDATES`` 件のみ表示し、残りは
+    「... 他 M 件」と省略する。
+    """
     logger.error("プロジェクト '%s' が見つかりません (%s 配下に存在しません)。",
                  name, projects_dir)
     try:
@@ -101,7 +110,12 @@ def _report_unknown_project(name: str, projects_dir: Path) -> None:
     except OSError:
         candidates = []
     if candidates:
-        logger.error("利用可能なプロジェクト: %s", ', '.join(candidates))
+        total = len(candidates)
+        shown = candidates[:_MAX_PROJECT_CANDIDATES]
+        listing = ', '.join(shown)
+        if total > _MAX_PROJECT_CANDIDATES:
+            listing += f', ... 他 {total - _MAX_PROJECT_CANDIDATES} 件'
+        logger.error("利用可能なプロジェクト: %s", listing)
 
 
 def _resolve_project_name(project_name: str) -> bool:
