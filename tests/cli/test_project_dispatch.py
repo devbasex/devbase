@@ -120,6 +120,8 @@ def test_lifecycle_passes_name_to_cmd_up(monkeypatch):
     """`project up <name>` の name は project_name として up に伝播する。"""
     from devbase.commands import container
     captured = {}
+    # name 解決 (chdir) は別テストで検証するためここでは no-op 化し、伝播のみ見る。
+    monkeypatch.setattr(container, '_resolve_project_name', lambda name: True)
     monkeypatch.setattr(container, 'cmd_up',
                         lambda project_name=None, scale=None:
                         captured.update(project_name=project_name) or 0)
@@ -141,42 +143,49 @@ def test_lifecycle_container_path_has_no_name(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _dispatch_lifecycle: name 未実装 warning
-# (PR1 では up/scale も含め全サブコマンドが CWD の compose に作用するため、
-#  name 指定時はサブコマンドに関わらず警告する)
+# _dispatch_lifecycle: name 解決 (PR2 で wrapper cd の Python フォールバックを実装)
+# name 指定時は handler 呼び出し前に _resolve_project_name で chdir する。
+# 解決失敗時は handler を呼ばずに 1 を返す。詳細な解決ロジックは
+# test_project_name_resolution.py を参照。
 # ---------------------------------------------------------------------------
 
-def test_lifecycle_warns_for_up_with_name(monkeypatch, caplog):
-    """`project up <name>` は name 指定時に未実装 warning を出す。"""
+def test_lifecycle_resolves_name_before_handler(monkeypatch):
+    """name 指定時は handler 前に _resolve_project_name を呼ぶ。"""
     from devbase.commands import container
-    monkeypatch.setattr(container, 'cmd_up', lambda project_name=None, scale=None: 0)
+    order = []
+    monkeypatch.setattr(container, '_resolve_project_name',
+                        lambda name: order.append(('resolve', name)) or True)
+    monkeypatch.setattr(container, 'cmd_up',
+                        lambda project_name=None, scale=None:
+                        order.append(('up', project_name)) or 0)
     args = _args(subcommand='up', name='carmo', scale=None)
-    with caplog.at_level(logging.WARNING, logger='devbase.commands.container'):
-        assert container._dispatch_lifecycle(args) == 0
-    assert any('未実装' in r.message for r in caplog.records), \
-        'up でも name 指定時は警告しなければならない'
+    assert container._dispatch_lifecycle(args) == 0
+    assert order == [('resolve', 'carmo'), ('up', 'carmo')]
 
 
-def test_lifecycle_warns_for_scale_with_name(monkeypatch, caplog):
-    """`project scale <name> N` も name 指定時に未実装 warning を出す。"""
+def test_lifecycle_aborts_when_name_unresolved(monkeypatch):
+    """name 解決に失敗したら handler を呼ばず 1 を返す。"""
     from devbase.commands import container
-    monkeypatch.setattr(container, 'cmd_scale',
-                        lambda new_scale=None, project_name=None: 0)
-    args = _args(subcommand='scale', name='carmo', new_scale=3)
-    with caplog.at_level(logging.WARNING, logger='devbase.commands.container'):
-        assert container._dispatch_lifecycle(args) == 0
-    assert any('未実装' in r.message for r in caplog.records), \
-        'scale でも name 指定時は警告しなければならない'
+    called = []
+    monkeypatch.setattr(container, '_resolve_project_name', lambda name: False)
+    monkeypatch.setattr(container, 'cmd_up',
+                        lambda project_name=None, scale=None:
+                        called.append('up') or 0)
+    args = _args(subcommand='up', name='bogus', scale=None)
+    assert container._dispatch_lifecycle(args) == 1
+    assert called == [], '解決失敗時は handler を呼んではならない'
 
 
-def test_lifecycle_no_warning_without_name(monkeypatch, caplog):
-    """name 未指定なら警告を出さない。"""
+def test_lifecycle_no_resolution_without_name(monkeypatch):
+    """name 未指定なら _resolve_project_name を呼ばない。"""
     from devbase.commands import container
+    resolved = []
+    monkeypatch.setattr(container, '_resolve_project_name',
+                        lambda name: resolved.append(name) or True)
     monkeypatch.setattr(container, 'cmd_up', lambda project_name=None, scale=None: 0)
     args = _args(subcommand='up', scale=None)  # name 属性なし
-    with caplog.at_level(logging.WARNING, logger='devbase.commands.container'):
-        assert container._dispatch_lifecycle(args) == 0
-    assert not any('未実装' in r.message for r in caplog.records)
+    assert container._dispatch_lifecycle(args) == 0
+    assert resolved == []
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +302,7 @@ def test_shortcut_up_propagates_name_through_dispatch(monkeypatch):
     """`devbase up <name>` の name がショートカット経由で cmd_up まで伝播する。"""
     from devbase.commands import container
     captured = {}
+    monkeypatch.setattr(container, '_resolve_project_name', lambda name: True)
     monkeypatch.setattr(container, 'cmd_up',
                         lambda project_name=None, scale=None:
                         captured.update(project_name=project_name) or 0)
@@ -306,6 +316,7 @@ def test_shortcut_scale_propagates_name_through_dispatch(monkeypatch):
     """`devbase scale <name> N` の name がショートカット経由で cmd_scale まで伝播する。"""
     from devbase.commands import container
     captured = {}
+    monkeypatch.setattr(container, '_resolve_project_name', lambda name: True)
     monkeypatch.setattr(container, 'cmd_scale',
                         lambda new_scale=None, project_name=None:
                         captured.update(project_name=project_name, new_scale=new_scale) or 0)

@@ -81,33 +81,148 @@ def _run_pre_up_hook() -> bool:
 # ディスパッチャ
 # ---------------------------------------------------------------------------
 
+def _projects_dir() -> Optional[Path]:
+    """$DEVBASE_ROOT/projects を返す。DEVBASE_ROOT 未設定なら None。"""
+    root = os.environ.get('DEVBASE_ROOT')
+    if not root:
+        return None
+    return Path(root) / 'projects'
+
+
+# 候補一覧に表示するプロジェクト数の上限。多数プロジェクト環境で iterdir 全件を
+# 出力すると 1 行が極端に長くなるため、先頭 N 件 + 「... 他 M 件」で truncate する。
+_MAX_PROJECT_CANDIDATES = 20
+
+
+def _report_unknown_project(name: str, projects_dir: Path) -> None:
+    """存在しない project name に対するエラーと候補一覧を出力する。
+
+    候補が多数の場合は先頭 ``_MAX_PROJECT_CANDIDATES`` 件のみ表示し、残りは
+    「... 他 M 件」と省略する。
+    """
+    logger.error("プロジェクト '%s' が見つかりません (%s 配下に存在しません)。",
+                 name, projects_dir)
+    try:
+        candidates = sorted(
+            p.name for p in projects_dir.iterdir()
+            if p.is_dir() or p.is_symlink()
+        )
+    except OSError:
+        candidates = []
+    if candidates:
+        total = len(candidates)
+        shown = candidates[:_MAX_PROJECT_CANDIDATES]
+        listing = ', '.join(shown)
+        if total > _MAX_PROJECT_CANDIDATES:
+            listing += f', ... 他 {total - _MAX_PROJECT_CANDIDATES} 件'
+        logger.error("利用可能なプロジェクト: %s", listing)
+
+
+def _load_project_env(env_file: Path) -> None:
+    """プロジェクトの ``env`` ファイルを os.environ へ反映する (wrapper 同等)。
+
+    wrapper (bin/devbase) は cd 後に ``source ./env`` で env を読み込むため、
+    Python フォールバック経路でも同じ KEY=VALUE を ``os.environ`` に載せて
+    変数欠落 (例: project 固有の ``CONTAINER_SCALE``) を防ぐ。
+
+    env は環境変数定義のみを想定したファイル (bin/devbase 冒頭コメント参照) の
+    ため、ここでは ``export`` 接頭辞付き / 無しの単純な ``KEY=VALUE`` 行のみを
+    解釈する。``#`` コメント・空行は無視し、値の前後のクォートは除去する。shell
+    の変数展開やコマンド置換は意図的にサポートしない (安全側に倒す)。
+    """
+    if not env_file.is_file():
+        return
+    try:
+        lines = env_file.read_text().splitlines()
+    except OSError as e:
+        logger.warning("env ファイルを読み込めませんでした (%s): %s", env_file, e)
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[len('export '):].lstrip()
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        os.environ[key] = value
+
+
+def _resolve_project_name(project_name: str) -> bool:
+    """project name を $DEVBASE_ROOT/projects/<name> へ解決し chdir する。
+
+    通常は wrapper (bin/devbase) が起動前に cd 済みのため、ここは
+
+      - `python -m devbase.cli project up <name>` の直接起動
+      - wrapper を経ない経路 (`_ensure_env_files` 等)
+
+    に対する防御的フォールバックとして働く。wrapper が既に対象ディレクトリへ
+    cd 済みなら chdir は no-op になる (同一パス判定)。
+
+    chdir 後は wrapper の ``source ./env`` と同等に project の ``env`` を
+    ``os.environ`` へ反映し、wrapper を経ない直接起動でも環境変数が欠落しない
+    ようにする (gemini round2 minor 指摘対応)。
+
+    Returns:
+        True:  解決成功 (または既に対象ディレクトリにいる)
+        False: DEVBASE_ROOT 未設定 / 対象が存在しない (呼び出し側で return 1)
+    """
+    projects_dir = _projects_dir()
+    if projects_dir is None:
+        logger.error("DEVBASE_ROOT が未設定のため project name '%s' を解決できません。",
+                     project_name)
+        return False
+
+    target = projects_dir / project_name
+    if not target.is_dir():
+        _report_unknown_project(project_name, projects_dir)
+        return False
+
+    try:
+        already_there = target.resolve() == Path.cwd().resolve()
+    except OSError:
+        already_there = False
+    if not already_there:
+        os.chdir(target)
+
+    # wrapper の `source ./env` と同等に project env を os.environ へ反映する。
+    # wrapper 経由なら既に同じ値が載っているため冪等。
+    _load_project_env(Path('env'))
+
+    # COMPOSE_PROJECT_NAME を name で上書き (wrapper が設定済みでも冪等)。
+    # env 由来の COMPOSE_PROJECT_NAME より name 指定を優先するため env 反映後に行う。
+    os.environ['COMPOSE_PROJECT_NAME'] = project_name
+    return True
+
+
 def _dispatch_lifecycle(args) -> int:
     """`project` / `container` 共有のサブコマンドディスパッチャ。
 
     `project <sub> [name]` の `name` を解決して project_name へ畳み込む。
     `container` 経路には `name` 属性が無いため従来通り None になる。
 
-    NOTE (PLAN06): name によるディレクトリ解決の本体は Task 2 (PR2) で wrapper の
-    cd + Python フォールバックとして実装する。PR1 では project_name 引数を取れる
-    up / scale にのみ name を伝播するが、その name も compose のプロジェクトラベル
-    (COMPOSE_PROJECT_NAME 相当) として使われるだけで、操作対象はあくまで CWD の
-    compose.yml である点に注意 (ディレクトリ解決は未実装)。
+    name 指定時は handler 呼び出し前に一括で `$DEVBASE_ROOT/projects/<name>` へ
+    chdir する (PLAN06 方針 A の Python 側フォールバック)。chdir を各 handler に
+    散らさずここで実施するのは、`cmd_down()` / `cmd_login()` / `cmd_logs()` 等が
+    project_name 引数を取らず、per-handler 実装では down/login/logs で名前解決が
+    効かなくなるため。build は wrapper の shell 実装で CWD 実行されるため、この
+    Python フォールバックの対象外 (name 属性も持たない)。
     """
     subcmd = getattr(args, 'subcommand', None)
     project_name = getattr(args, 'name', None) or getattr(args, 'project_name', None)
 
-    # PR1 では name によるディレクトリ解決は未実装で、どのサブコマンドも CWD の
-    # compose.yml に対して動作する。name を指定されたまま黙って CWD に作用すると
-    # 「指定したプロジェクトに対して操作できた」と誤解させるため、明示的に警告する
-    # (name → ディレクトリ解決は PR2 で実装)。up / scale は name をプロジェクト
-    # ラベルには反映するが、対象ディレクトリは依然 CWD であるため同様に警告する。
+    # name 指定時はディレクトリを解決して chdir する。解決失敗 (DEVBASE_ROOT 未設定
+    # / 存在しない name) は候補提示の上でエラー終了する。
     if project_name:
-        logger.warning(
-            "project name '%s' によるディレクトリ解決は未実装です。"
-            "カレントディレクトリの compose に対して実行します "
-            "(name 指定は将来のリリースで対応予定)。",
-            project_name,
-        )
+        if not _resolve_project_name(project_name):
+            return 1
 
     handlers = {
         'up':    lambda: cmd_up(project_name=project_name,

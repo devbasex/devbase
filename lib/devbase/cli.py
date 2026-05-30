@@ -23,6 +23,11 @@ logger = get_logger("devbase.cli")
 # Python の project build (単純な compose build) とは実装が異なるため。Python 側で
 # `build` を project build ショートカットとして広告すると wrapper の実経路と乖離する。
 # project build / container build サブコマンド自体は引き続き利用可能。
+#
+# 同期注意 (メンテナンス性): SHORTCUTS のキー集合と _add_project_parser の
+# `name` positional 付きサブコマンドは bin/devbase の _NAME_RESOLVABLE_SHORTCUTS /
+# _PROJECT_NAME_SUBCOMMANDS と対応している。サブコマンドを追加/削除する際は
+# wrapper 側 (bin/devbase の該当リスト) の更新漏れに注意すること。
 SHORTCUTS = {
     'up': 'up',
     'down': 'down',
@@ -129,6 +134,10 @@ def _add_project_parser(subparsers):
     であり、`[name]` を足すと `project login 2` / `project build web` が誤解釈される
     ため name を受け付けない。両者は project / container で定義が完全に一致するので
     `_add_login_subparser` / `_add_build_subparser` に共通化している。
+
+    同期注意: ここで `name` positional を持つサブコマンド集合 (up/down/ps/logs/scale)
+    は bin/devbase の `_PROJECT_NAME_SUBCOMMANDS` と一致させる必要がある。追加/削除時は
+    wrapper 側リストの更新漏れに注意すること。
     """
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')
