@@ -180,6 +180,39 @@ resolve_command() {
     fi
 }
 
+# ===================================================================
+# Project name resolution (PLAN06 Task 2)
+# ===================================================================
+# `devbase project <sub> <name>` および同義のトップレベルシノニム
+# `devbase <sub> <name>` の <name> が $DEVBASE_ROOT/projects/<name> に実在する
+# 場合、そのディレクトリへ cd し COMPOSE_PROJECT_NAME / env を再設定する。
+# これにより任意の CWD からプロジェクトを指定してコンテナ操作できる。
+#
+# 重要: `build` は shell 実装 (cmd_build) が CWD で動くため、この wrapper cd
+# だけが build の name 解決手段になる (PLAN06 方針 A の核心)。Python 側 chdir
+# フォールバックでは build を救えない。
+#
+# <name> 判定は projects/ 配下の実在性で行う。これにより `login <index>` /
+# `build <image>` / `scale <N>` の既存 positional と曖昧にならない: 実在する
+# プロジェクト名のときだけ name として解釈し cd + strip する。実在しなければ
+# 引数はそのまま下流 (Python パーサ) へ渡し、Python 側で index/image/scale
+# あるいは「存在しない name」エラーとして扱わせる。
+
+# name 候補を受け取り projects/ 配下に実在すれば cd + env 再設定して 0 を返す。
+maybe_cd_project() {
+    local name="${1:-}"
+    case "$name" in -*|"") return 1 ;; esac   # フラグ・空は name ではない
+    local target="${DEVBASE_ROOT}/projects/${name}"
+    [ -d "$target" ] || return 1
+    cd "$target" || return 1
+    export COMPOSE_PROJECT_NAME="$name"
+    # cd 後にプロジェクトの env を再 source (初期 CWD で読んだ値を上書き)。
+    # project の .env (dotfile) は CRLF / 特殊文字対策で意図的に source しない
+    # 方針を踏襲する (冒頭コメント参照)。
+    [ -f "env" ] && set -a && source ./env && set +a
+    return 0
+}
+
 # Resolve the command (skip flags like --version, -V, -h, --help)
 _resolved_cmd="${1:-}"
 case "$_resolved_cmd" in
@@ -187,14 +220,36 @@ case "$_resolved_cmd" in
     *) _resolved_cmd="$(resolve_command "$_resolved_cmd")" ;;
 esac
 
+# name 解決: 実在するプロジェクト名を検出したら cd し、その token を argv から
+# 取り除いた配列 _DEVBASE_ARGS を組み立てる。検出しなければ素通し。
+# name 候補の位置:
+#   project|container <sub> <name>  -> $3 (サブコマンドは保持)
+#   トップレベルシノニム <sub> <name> -> $2
+_DEVBASE_ARGS=("${@:2}")
+_NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build "
+case "$_resolved_cmd" in
+    project|container)
+        if maybe_cd_project "${3:-}"; then
+            _DEVBASE_ARGS=("${2:-}" "${@:4}")
+        fi
+        ;;
+    *)
+        if [[ "$_NAME_RESOLVABLE_SHORTCUTS" == *" $_resolved_cmd "* ]]; then
+            if maybe_cd_project "${2:-}"; then
+                _DEVBASE_ARGS=("${@:3}")
+            fi
+        fi
+        ;;
+esac
+
 case "$_resolved_cmd" in
     # Python-implemented commands
     --version|-V)
         run_python "$@" ;;
     init|status|shell-rc|project|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale)
-        run_python "${_resolved_cmd}" "${@:2}" ;;
+        run_python "${_resolved_cmd}" "${_DEVBASE_ARGS[@]}" ;;
     # Shell-implemented commands
-    build)  shift; cmd_build "$@" ;;
+    build)  cmd_build "${_DEVBASE_ARGS[@]}" ;;
     # Help and unknown
     -h|--help|help|"") run_python "--help" ;;
     *)      echo "Error: unknown command '$1'" >&2; exit 1 ;;
