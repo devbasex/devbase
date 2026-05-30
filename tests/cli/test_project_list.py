@@ -1,0 +1,396 @@
+"""PLAN06 Task 3: `project list` 一覧表示 + `--interactive` 選択起動のテスト
+
+検証対象:
+- `lib/devbase/commands/project.py`
+  - `_resolve_plugin_name`: symlink 先から plugin 名を解決する (衝突 suffix 耐性)
+  - `list_projects`: projects/ 配下を NAME/PLUGIN/STATUS で列挙する
+  - `cmd_project_list`: table 表示 / `--interactive` での選択起動
+- `lib/devbase/commands/status.py`
+  - `_container_status_for`: per-entry status 抽出後の回帰
+- `lib/devbase/cli.py`
+  - `project list` parser / dispatch ルーティング / トップレベル `list` シノニム / prefix 解決
+"""
+
+from __future__ import annotations
+
+import os
+import types
+from pathlib import Path
+
+import pytest
+
+from devbase import cli
+
+
+# ---------------------------------------------------------------------------
+# 補助: projects/ 配下に plugin project への symlink を作る
+# ---------------------------------------------------------------------------
+
+def _make_plugin_project(devbase_root: Path, plugin_path: str, proj: str) -> Path:
+    """repos/ or plugins/ 配下に plugin の projects/<proj> 実体を作って返す。"""
+    target_dir = devbase_root / plugin_path / "projects" / proj
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return target_dir
+
+
+def _link_project(devbase_root: Path, link_name: str, plugin_path: str, proj: str) -> Path:
+    """projects/<link_name> -> ../<plugin_path>/projects/<proj> の相対 symlink を作る。
+
+    syncer.sync_projects と同じ相対ターゲット形式 (衝突時は link_name に suffix が
+    付くが、ターゲット dir 名は素の proj のまま) を再現する。
+    """
+    projects_dir = devbase_root / "projects"
+    projects_dir.mkdir(exist_ok=True)
+    target = Path("..") / plugin_path / "projects" / proj
+    link = projects_dir / link_name
+    link.symlink_to(target)
+    return link
+
+
+# ---------------------------------------------------------------------------
+# _resolve_plugin_name
+# ---------------------------------------------------------------------------
+
+def test_resolve_plugin_name_repos_based(tmp_path):
+    from devbase.commands.project import _resolve_plugin_name
+
+    _make_plugin_project(tmp_path, "repos/owner--repo/myplugin", "carmo")
+    link = _link_project(tmp_path, "carmo", "repos/owner--repo/myplugin", "carmo")
+
+    assert _resolve_plugin_name(link) == "myplugin"
+
+
+def test_resolve_plugin_name_linked(tmp_path):
+    from devbase.commands.project import _resolve_plugin_name
+
+    _make_plugin_project(tmp_path, "plugins/foo", "carmo")
+    link = _link_project(tmp_path, "carmo", "plugins/foo", "carmo")
+
+    assert _resolve_plugin_name(link) == "foo"
+
+
+def test_resolve_plugin_name_collision_suffix_uses_target_not_linkname(tmp_path):
+    """衝突 suffix (carmo.takemi) はリンク名のみに付き、ターゲット dir は素の carmo。
+
+    PLUGIN 解決は link 名でなく symlink 先から行うため suffix で壊れてはならない。
+    """
+    from devbase.commands.project import _resolve_plugin_name
+
+    _make_plugin_project(tmp_path, "repos/takemi--carmo/carmo-plugin", "carmo")
+    link = _link_project(tmp_path, "carmo.takemi--carmo",
+                         "repos/takemi--carmo/carmo-plugin", "carmo")
+
+    assert _resolve_plugin_name(link) == "carmo-plugin"
+
+
+def test_resolve_plugin_name_real_dir_returns_none(tmp_path):
+    """symlink でない実ディレクトリは plugin に属さないため None。"""
+    from devbase.commands.project import _resolve_plugin_name
+
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    real = projects_dir / "standalone"
+    real.mkdir()
+
+    assert _resolve_plugin_name(real) is None
+
+
+def test_resolve_plugin_name_broken_symlink(tmp_path):
+    """ターゲットが存在しない symlink でも link テキストから plugin を解決できる。"""
+    from devbase.commands.project import _resolve_plugin_name
+
+    link = _link_project(tmp_path, "ghost", "repos/o--r/ghostplugin", "ghost")
+    # ターゲット実体は作らない (broken)
+    assert not link.exists()
+    assert _resolve_plugin_name(link) == "ghostplugin"
+
+
+# ---------------------------------------------------------------------------
+# list_projects
+# ---------------------------------------------------------------------------
+
+def test_list_projects_enumerates_name_plugin_status(tmp_path, monkeypatch):
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    _make_plugin_project(tmp_path, "plugins/beta", "beta-proj")
+    _link_project(tmp_path, "beta-proj", "plugins/beta", "beta-proj")
+
+    # status は docker に依存させず固定値を返す
+    def fake_status(entry: Path):
+        return {"name": entry.name, "status": "running (2 containers)", "count": 2}
+
+    monkeypatch.setattr(status_mod, "_container_status_for", fake_status)
+
+    rows = project_mod.list_projects(tmp_path / "projects")
+    by_name = {r["name"]: r for r in rows}
+
+    assert by_name["alpha-proj"]["plugin"] == "alpha"
+    assert by_name["alpha-proj"]["status"] == "running (2 containers)"
+    assert by_name["beta-proj"]["plugin"] == "beta"
+
+
+def test_list_projects_unknown_status_when_none(tmp_path, monkeypatch):
+    """_container_status_for が None (compose.yml 無し/docker 不在) なら 'unknown'。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+
+    rows = project_mod.list_projects(tmp_path / "projects")
+    assert rows[0]["status"] == "unknown"
+
+
+def test_list_projects_real_dir_plugin_dash(tmp_path, monkeypatch):
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    (projects_dir / "standalone").mkdir()
+
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+
+    rows = project_mod.list_projects(projects_dir)
+    assert rows[0]["name"] == "standalone"
+    assert rows[0]["plugin"] == "-"
+
+
+def test_list_projects_empty_when_no_projects_dir(tmp_path):
+    from devbase.commands import project as project_mod
+    assert project_mod.list_projects(tmp_path / "projects") == []
+
+
+# ---------------------------------------------------------------------------
+# cmd_project_list: table 出力
+# ---------------------------------------------------------------------------
+
+def test_cmd_project_list_prints_table(tmp_path, monkeypatch, capsys):
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for",
+                        lambda entry: {"name": entry.name, "status": "stopped", "count": 0})
+
+    args = types.SimpleNamespace(interactive=False)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "NAME" in out and "PLUGIN" in out and "STATUS" in out
+    assert "alpha-proj" in out
+    assert "alpha" in out
+    assert "stopped" in out
+
+
+def test_cmd_project_list_empty(tmp_path, capsys):
+    from devbase.commands import project as project_mod
+    args = types.SimpleNamespace(interactive=False)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+    assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# cmd_project_list: --interactive
+# ---------------------------------------------------------------------------
+
+def test_cmd_project_list_interactive_selects_and_ups(tmp_path, monkeypatch):
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    _make_plugin_project(tmp_path, "plugins/beta", "beta-proj")
+    _link_project(tmp_path, "beta-proj", "plugins/beta", "beta-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+
+    # 番号 "2" を選択 (sorted: alpha-proj=1, beta-proj=2)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "2")
+
+    captured = {}
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: captured.update(
+                            subcommand=args.subcommand, name=args.name) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+
+    assert rc == 0
+    assert captured["subcommand"] == "up"
+    assert captured["name"] == "beta-proj"
+
+
+def test_cmd_project_list_interactive_empty_input_aborts(tmp_path, monkeypatch):
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+    assert rc == 0
+    assert called == [], "空入力では up を起動しない"
+
+
+def test_cmd_project_list_interactive_non_tty_eof(tmp_path, monkeypatch):
+    """非対話環境 (input が EOFError) では up を起動せずエラー終了する。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+
+    def raise_eof(*a, **k):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", raise_eof)
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+    assert rc == 1
+    assert called == []
+
+
+def test_cmd_project_list_interactive_out_of_range(tmp_path, monkeypatch):
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "99")
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+    assert rc == 1
+    assert called == []
+
+
+# ---------------------------------------------------------------------------
+# parser: project list / --interactive
+# ---------------------------------------------------------------------------
+
+def test_parser_project_list():
+    parser = cli._create_parser()
+    args = parser.parse_args(["project", "list"])
+    assert args.command == "project"
+    assert args.subcommand == "list"
+    assert args.interactive is False
+
+
+def test_parser_project_list_interactive_flag():
+    parser = cli._create_parser()
+    for flag in ("--interactive", "-i"):
+        args = parser.parse_args(["project", "list", flag])
+        assert args.interactive is True
+
+
+def test_parser_top_level_list_synonym():
+    parser = cli._create_parser()
+    args = parser.parse_args(["list", "-i"])
+    assert args.command == "list"
+    assert args.interactive is True
+
+
+# ---------------------------------------------------------------------------
+# prefix 解決: project list / 単独 list
+# ---------------------------------------------------------------------------
+
+def test_expand_argv_project_list_prefix(monkeypatch):
+    """`devbase project li` は `list` に解決される。"""
+    import sys
+    monkeypatch.setattr(sys, "argv", ["devbase", "project", "li"])
+    cli._expand_argv()
+    assert sys.argv == ["devbase", "project", "list"]
+
+
+def test_expand_argv_top_level_list_prefix(monkeypatch):
+    """`devbase li` は一意に `list` へ解決される (login とは li/lo で分離)。"""
+    import sys
+    monkeypatch.setattr(sys, "argv", ["devbase", "li"])
+    cli._expand_argv()
+    assert sys.argv[1] == "list"
+
+
+# ---------------------------------------------------------------------------
+# dispatch ルーティング
+# ---------------------------------------------------------------------------
+
+def test_dispatch_project_list_routes_to_cmd_project_list(monkeypatch):
+    from devbase.commands import project as project_mod
+    monkeypatch.setenv("DEVBASE_ROOT", "/tmp/devbase-root-test")
+    calls = []
+    monkeypatch.setattr(project_mod, "cmd_project_list",
+                        lambda root, args: calls.append(str(root)) or 0)
+    args = types.SimpleNamespace(command="project", subcommand="list", interactive=False)
+    assert cli._dispatch("project", args) == 0
+    assert calls == ["/tmp/devbase-root-test"]
+
+
+def test_dispatch_project_up_still_routes_to_lifecycle(monkeypatch):
+    """project list 追加後も up 等は従来通り cmd_project (lifecycle) へ。"""
+    from devbase.commands import container as container_mod
+    calls = []
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: calls.append(args.subcommand) or 0)
+    args = types.SimpleNamespace(command="project", subcommand="up", name=None, scale=None)
+    assert cli._dispatch("project", args) == 0
+    assert calls == ["up"]
+
+
+def test_dispatch_top_level_list_routes_to_cmd_project_list(monkeypatch):
+    from devbase.commands import project as project_mod
+    monkeypatch.setenv("DEVBASE_ROOT", "/tmp/devbase-root-test")
+    calls = []
+    monkeypatch.setattr(project_mod, "cmd_project_list",
+                        lambda root, args: calls.append("list") or 0)
+    args = types.SimpleNamespace(command="list", interactive=False)
+    assert cli._dispatch("list", args) == 0
+    assert calls == ["list"]
+
+
+# ---------------------------------------------------------------------------
+# status.py リファクタ回帰: _container_status_for / _get_container_status
+# ---------------------------------------------------------------------------
+
+def test_container_status_for_none_without_compose(tmp_path):
+    from devbase.commands.status import _container_status_for
+    entry = tmp_path / "proj"
+    entry.mkdir()
+    assert _container_status_for(entry) is None
+
+
+def test_get_container_status_uses_per_entry(tmp_path, monkeypatch):
+    from devbase.commands import status as status_mod
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    (projects_dir / "a").mkdir()
+    (projects_dir / "b").mkdir()
+
+    monkeypatch.setattr(status_mod, "_container_status_for",
+                        lambda entry: {"name": entry.name, "status": "stopped", "count": 0})
+    results = status_mod._get_container_status(projects_dir)
+    names = sorted(r["name"] for r in results)
+    assert names == ["a", "b"]

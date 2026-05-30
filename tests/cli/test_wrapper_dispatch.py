@@ -90,6 +90,26 @@ class TestWrapperDispatch:
         assert "unknown command" in result.stderr.lower()
         assert result.returncode != 0
 
+    def test_top_level_list_reaches_python(self):
+        """PLAN06 Task 3: `devbase list` シノニムが Python へルーティングされる。"""
+        result = _run_wrapper("list")
+        assert "unknown command" not in result.stderr.lower(), result.stderr
+        assert "PYTHON:list" in result.stdout, result.stdout
+
+    def test_top_level_list_interactive_flag_passthrough(self):
+        result = _run_wrapper("list", "--interactive")
+        assert "PYTHON:list --interactive" in result.stdout, result.stdout
+
+    def test_project_list_reaches_python(self):
+        result = _run_wrapper("project", "list")
+        assert "unknown command" not in result.stderr.lower(), result.stderr
+        assert "PYTHON:project list" in result.stdout, result.stdout
+
+    def test_list_prefix_resolves(self):
+        # `li` は list に一意解決される (login は lo)。
+        result = _run_wrapper("li")
+        assert "PYTHON:list" in result.stdout, result.stdout
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

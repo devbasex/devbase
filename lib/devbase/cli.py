@@ -45,7 +45,7 @@ GROUP_ALIASES = {
 
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
-    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
+    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'list'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
@@ -166,6 +166,20 @@ def _add_project_parser(subparsers):
     pj_scale.add_argument('new_scale', type=int, help='New number of containers')
 
     _add_build_subparser(pj_sub)
+
+    # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
+    # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
+    _add_list_subparser(pj_sub)
+
+
+def _add_list_subparser(sub):
+    """`list` サブコマンドを登録する (project list / top-level list 共通)。
+
+    NAME / PLUGIN / STATUS の一覧表示。`--interactive` で選択 → `project up` 起動。
+    """
+    p = sub.add_parser('list', help='List projects (NAME / PLUGIN / STATUS)')
+    p.add_argument('--interactive', '-i', action='store_true',
+                   help='Select a project interactively and start it')
 
 
 def _add_env_parser(subparsers):
@@ -396,6 +410,11 @@ def _add_shortcuts(subparsers):
     scale_sc.add_argument('name', nargs='?', default=None, help='Project name')
     scale_sc.add_argument('new_scale', type=int, help='New number of containers')
 
+    # `list` は `project list` のトップレベルシノニム。lifecycle ではなく一覧表示
+    # のため SHORTCUTS (project lifecycle へ写像) ではなく _dispatch で個別に
+    # cmd_project_list へ振り分ける。
+    _add_list_subparser(subparsers)
+
 
 def _create_parser():
     """Create command line parser"""
@@ -477,7 +496,7 @@ def _expand_argv():
     # bin/devbase が build を shell 実装に委譲するため Python 側には top-level
     # build parser が無い。project build / container build は引き続き利用可能。
     commands = ['init', 'status', 'shell-rc', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
-                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'help']
+                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'list', 'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):
@@ -533,8 +552,19 @@ def _dispatch(cmd, args):
 
     # --- Project group (推奨) ---
     if cmd == 'project':
+        # `project list` は lifecycle ではなく一覧表示 (DEVBASE_ROOT 必須)。
+        if getattr(args, 'subcommand', None) == 'list':
+            devbase_root = _require_devbase_root()
+            from devbase.commands.project import cmd_project_list
+            return cmd_project_list(devbase_root, args)
         from devbase.commands.container import cmd_project
         return cmd_project(args)
+
+    # --- Top-level `list` synonym for `project list` ---
+    if cmd == 'list':
+        devbase_root = _require_devbase_root()
+        from devbase.commands.project import cmd_project_list
+        return cmd_project_list(devbase_root, args)
 
     # --- Container group (非推奨: project へ委譲 + warning) ---
     if cmd == 'container':
