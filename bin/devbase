@@ -225,19 +225,33 @@ esac
 # name 候補の位置:
 #   project|container <sub> <name>  -> $3 (サブコマンドは保持)
 #   トップレベルシノニム <sub> <name> -> $2
+#
+# 重要 (PLAN06 codex 指摘対応): `project`/`container` グループでは parser が
+# `name` positional を持つサブコマンド (`up`/`down`/`ps`/`logs`/`scale`) に限定
+# して $3 を name 解決する。`project login` / `project build` は単一 positional が
+# index / image (旧 container 互換) であり parser が name を受け付けない
+# (cli.py の _add_login_subparser / _add_build_subparser 参照)。これらで $3 を
+# name strip すると、`project build web` の image=web や `project login web` の
+# index 引数が実在プロジェクト名と一致した瞬間に消えて別操作へ化けるため除外する。
+#
+# トップレベルシノニム (`build`/`login` を含む) は従来どおり「実在 project なら
+# cd」方針を維持する: トップレベル `build`/`login` は Python parser を経由せず
+# shell cmd_build / wrapper cd だけが name 指定の手段であり、`build carmo` /
+# `login carmo` を「そのプロジェクトを操作」と解釈する設計 (存在性ベース判定)。
 _DEVBASE_ARGS=("${@:2}")
+_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale "
 _NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build "
 case "$_resolved_cmd" in
     project|container)
-        if maybe_cd_project "${3:-}"; then
+        if [[ "$_PROJECT_NAME_SUBCOMMANDS" == *" ${2:-} "* ]] \
+           && maybe_cd_project "${3:-}"; then
             _DEVBASE_ARGS=("${2:-}" "${@:4}")
         fi
         ;;
     *)
-        if [[ "$_NAME_RESOLVABLE_SHORTCUTS" == *" $_resolved_cmd "* ]]; then
-            if maybe_cd_project "${2:-}"; then
-                _DEVBASE_ARGS=("${@:3}")
-            fi
+        if [[ "$_NAME_RESOLVABLE_SHORTCUTS" == *" $_resolved_cmd "* ]] \
+           && maybe_cd_project "${2:-}"; then
+            _DEVBASE_ARGS=("${@:3}")
         fi
         ;;
 esac

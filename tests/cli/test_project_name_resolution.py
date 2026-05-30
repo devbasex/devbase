@@ -210,5 +210,29 @@ def test_wrapper_no_name_uses_cwd(wrapper_root):
     assert _python_args(r) == "project up", r.stdout
 
 
+def test_wrapper_project_build_keeps_image_positional(wrapper_root):
+    """`project build carmo` の carmo は image positional。
+
+    `project build` parser は name を持たず image を取る (cli.py 参照)。実在
+    プロジェクト名 carmo が image と衝突しても name strip せず素通しし、Python
+    側で image=carmo として解釈させる (codex 指摘の衝突回避)。
+    """
+    r = _run_wrapper(["project", "build", "carmo"], wrapper_root)
+    # cd せず (image 解決は Python 側)、carmo を strip しない
+    assert not _pwd(r).endswith("/projects/carmo"), r.stdout
+    assert _python_args(r) == "project build carmo", r.stdout
+
+
+def test_wrapper_project_login_keeps_index_positional(wrapper_root):
+    """`project login carmo` の carmo は index positional として素通しする。
+
+    `project login` parser は name を持たず index を取る。実在プロジェクト名と
+    一致しても name strip せず、Python パーサに委ねる (codex 指摘の衝突回避)。
+    """
+    r = _run_wrapper(["project", "login", "carmo"], wrapper_root)
+    assert not _pwd(r).endswith("/projects/carmo"), r.stdout
+    assert _python_args(r) == "project login carmo", r.stdout
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
