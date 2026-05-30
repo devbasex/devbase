@@ -110,6 +110,17 @@ class TestWrapperDispatch:
         result = _run_wrapper("li")
         assert "PYTHON:list" in result.stdout, result.stdout
 
+    def test_l_prefix_resolves_to_login(self):
+        # 後方互換: `list` 追加で ambiguous になった `devbase l` を login に維持する
+        # (互換性指摘 #36)。preference 無しだと unknown command 'l' になる。
+        result = _run_wrapper("l")
+        assert "unknown command" not in result.stderr.lower(), result.stderr
+        assert "PYTHON:login" in result.stdout, result.stdout
+
+    def test_lo_prefix_resolves_to_login(self):
+        result = _run_wrapper("lo")
+        assert "PYTHON:login" in result.stdout, result.stdout
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

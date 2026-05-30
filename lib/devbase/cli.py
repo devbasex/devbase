@@ -64,6 +64,14 @@ SUBCMD_PREFIX_PREFERENCES = {
     },
 }
 
+# トップレベルコマンドの ambiguous prefix 後方互換 preference。
+# `list` (PLAN06 Task 3) 追加で `l` が `login` / `list` の両方にマッチして
+# ambiguous になったため、既存ショートカット (`devbase l` → `login`) を維持する。
+# bin/devbase の resolve_command 内 preference と同期させること。
+TOP_PREFIX_PREFERENCES = {
+    'l': 'login',
+}
+
 
 def _require_devbase_root() -> Path:
     """Get DEVBASE_ROOT from environment, exiting if not set."""
@@ -500,7 +508,7 @@ def _expand_argv():
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):
-        sys.argv[1] = _resolve_prefix(sys.argv[1], commands)
+        sys.argv[1] = _resolve_prefix(sys.argv[1], commands, TOP_PREFIX_PREFERENCES)
 
     if len(sys.argv) >= 3 and not sys.argv[2].startswith('-'):
         cmd = sys.argv[1]

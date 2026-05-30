@@ -42,9 +42,14 @@ def _resolve_plugin_name(entry: Path) -> str | None:
 
     parts = Path(target).parts
     # `projects` の最後の出現位置 (proj 名の直前) を採用する。
+    # ただし直前要素が plugin 名として無効なパス区切り (`/` ルートや `..` 相対) の
+    # 場合は解決失敗扱い (None)。例: `/projects/proj` → parts[0] が `/` になる。
     for i in range(len(parts) - 1, 0, -1):
         if parts[i] == "projects":
-            return parts[i - 1]
+            candidate = parts[i - 1]
+            if candidate in (os.sep, "/", "..", "."):
+                return None
+            return candidate
     return None
 
 
@@ -62,33 +67,44 @@ def list_projects(projects_dir: Path) -> list[dict]:
     """
     # status ロジックは commands/status.py と共有する (PLAN06 リファクタで per-entry
     # 関数 _container_status_for を分離済み)。import は循環回避のため関数内で行う。
+    from concurrent.futures import ThreadPoolExecutor
+
     from devbase.commands import status as status_mod
 
-    results: list[dict] = []
     if not projects_dir.exists():
-        return results
+        return []
 
-    for entry in sorted(projects_dir.iterdir()):
+    entries = [
         # broken symlink は is_dir() が False になるため symlink 自体も拾う。
-        if not (entry.is_symlink() or entry.is_dir()):
-            continue
+        entry for entry in sorted(projects_dir.iterdir())
+        if entry.is_symlink() or entry.is_dir()
+    ]
 
-        plugin = _resolve_plugin_name(entry)
-
-        status = "unknown"
+    def _status_for(entry: Path) -> str:
         # is_dir() は symlink 先まで辿る。broken symlink は False → unknown のまま。
-        if entry.is_dir():
-            st = status_mod._container_status_for(entry)
-            if st is not None:
-                status = st["status"]
+        # _container_status_for は cwd= 引数で完結し global chdir を行わないため
+        # スレッド安全。各 `docker compose ps` は I/O バウンドで 10s timeout を
+        # 持つため、プロジェクト数が増えても並列化で総待ち時間を抑える。
+        if not entry.is_dir():
+            return "unknown"
+        st = status_mod._container_status_for(entry)
+        return st["status"] if st is not None else "unknown"
 
-        results.append({
+    # entries が空だと max_workers=0 で ValueError になるため早期 return。
+    if not entries:
+        return []
+
+    with ThreadPoolExecutor(max_workers=min(8, len(entries))) as ex:
+        statuses = list(ex.map(_status_for, entries))
+
+    return [
+        {
             "name": entry.name,
-            "plugin": plugin or "-",
+            "plugin": _resolve_plugin_name(entry) or "-",
             "status": status,
-        })
-
-    return results
+        }
+        for entry, status in zip(entries, statuses)
+    ]
 
 
 def _print_table(rows: list[dict]) -> None:
@@ -110,26 +126,31 @@ def _interactive_select_and_up(rows: list[dict]) -> int:
     for i, r in enumerate(rows, 1):
         print(f"  [{i}] {r['name']}  ({r['plugin']}, {r['status']})")
 
-    try:
-        raw = input("番号 (空で中止): ").strip()
-    except EOFError:
-        logger.error("対話入力ができません (非 TTY 環境)。"
-                     "`devbase project up <name>` で直接指定してください。")
-        return 1
+    # 一覧取得が重い場合があるため、誤入力 (数値以外 / 範囲外) では即終了せず
+    # 再入力を促す。空入力は中止、非 TTY (EOFError) はエラー終了。
+    while True:
+        try:
+            raw = input("番号 (空で中止): ").strip()
+        except EOFError:
+            logger.error("対話入力ができません (非 TTY 環境)。"
+                         "`devbase project up <name>` で直接指定してください。")
+            return 1
 
-    if not raw:
-        logger.info("中止しました。")
-        return 0
+        if not raw:
+            logger.info("中止しました。")
+            return 0
 
-    try:
-        idx = int(raw)
-    except ValueError:
-        logger.error("番号で指定してください: %r", raw)
-        return 1
+        try:
+            idx = int(raw)
+        except ValueError:
+            logger.error("番号で指定してください: %r", raw)
+            continue
 
-    if not (1 <= idx <= len(rows)):
-        logger.error("範囲外の番号です: %d (1〜%d)", idx, len(rows))
-        return 1
+        if not (1 <= idx <= len(rows)):
+            logger.error("範囲外の番号です: %d (1〜%d)", idx, len(rows))
+            continue
+
+        break
 
     name = rows[idx - 1]["name"]
     # name 解決 (chdir) + up は共有ハンドラ cmd_project に委譲する。

@@ -95,6 +95,31 @@ def test_resolve_plugin_name_real_dir_returns_none(tmp_path):
     assert _resolve_plugin_name(real) is None
 
 
+def test_resolve_plugin_name_absolute_root_target_returns_none(tmp_path):
+    """symlink 先が `/projects/proj` のような絶対パスだと parts[0] が '/' になる。
+
+    plugin 名として無効な root 区切りを返さず None にする (堅牢性指摘 #36)。
+    """
+    from devbase.commands.project import _resolve_plugin_name
+
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    link = projects_dir / "rooted"
+    link.symlink_to("/projects/proj")  # 先頭 '/' で parts[0] == '/'
+    assert _resolve_plugin_name(link) is None
+
+
+def test_resolve_plugin_name_relative_dotdot_target_returns_none(tmp_path):
+    """`../projects/proj` だと直前要素が '..' になり plugin 名として無効 → None。"""
+    from devbase.commands.project import _resolve_plugin_name
+
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    link = projects_dir / "dotdot"
+    link.symlink_to(Path("..") / "projects" / "proj")
+    assert _resolve_plugin_name(link) is None
+
+
 def test_resolve_plugin_name_broken_symlink(tmp_path):
     """ターゲットが存在しない symlink でも link テキストから plugin を解決できる。"""
     from devbase.commands.project import _resolve_plugin_name
@@ -270,7 +295,8 @@ def test_cmd_project_list_interactive_non_tty_eof(tmp_path, monkeypatch):
     assert called == []
 
 
-def test_cmd_project_list_interactive_out_of_range(tmp_path, monkeypatch):
+def test_cmd_project_list_interactive_out_of_range_reprompts(tmp_path, monkeypatch):
+    """範囲外の番号では即終了せず再入力を促す。有効入力で最終的に up する。"""
     from devbase.commands import project as project_mod
     from devbase.commands import status as status_mod
     from devbase.commands import container as container_mod
@@ -278,14 +304,41 @@ def test_cmd_project_list_interactive_out_of_range(tmp_path, monkeypatch):
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "99")
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+
+    # "99" (範囲外) → "1" (有効) の順に入力 → 再入力後に up が起動する
+    inputs = iter(["99", "1"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    captured = {}
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: captured.update(name=args.name) or 0)
 
     args = types.SimpleNamespace(interactive=True)
     rc = project_mod.cmd_project_list(tmp_path, args)
-    assert rc == 1
-    assert called == []
+    assert rc == 0
+    assert captured["name"] == "alpha-proj"
+
+
+def test_cmd_project_list_interactive_non_numeric_reprompts(tmp_path, monkeypatch):
+    """数値以外の入力では即終了せず再入力を促す。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+
+    # "abc" (数値以外) → "1" (有効)
+    inputs = iter(["abc", "1"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    captured = {}
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: captured.update(name=args.name) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+    assert rc == 0
+    assert captured["name"] == "alpha-proj"
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +385,26 @@ def test_expand_argv_top_level_list_prefix(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["devbase", "li"])
     cli._expand_argv()
     assert sys.argv[1] == "list"
+
+
+def test_expand_argv_top_level_l_resolves_to_login(monkeypatch):
+    """後方互換: `list` 追加で ambiguous になった `devbase l` を `login` に維持する。
+
+    `l` は `login` / `list` の両方にマッチするが TOP_PREFIX_PREFERENCES で
+    既存挙動 (`l` → `login`) を保つ (互換性指摘 #36)。
+    """
+    import sys
+    monkeypatch.setattr(sys, "argv", ["devbase", "l"])
+    cli._expand_argv()
+    assert sys.argv[1] == "login"
+
+
+def test_expand_argv_top_level_lo_resolves_to_login(monkeypatch):
+    """`devbase lo` は一意に `login` へ解決される (回帰確認)。"""
+    import sys
+    monkeypatch.setattr(sys, "argv", ["devbase", "lo"])
+    cli._expand_argv()
+    assert sys.argv[1] == "login"
 
 
 # ---------------------------------------------------------------------------
