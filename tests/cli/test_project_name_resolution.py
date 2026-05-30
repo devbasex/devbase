@@ -160,6 +160,30 @@ def test_resolve_missing_env_file_is_noop(fake_root):
     assert os.environ["COMPOSE_PROJECT_NAME"] == "carmo"
 
 
+def test_load_project_env_diverges_from_shell_source(tmp_path, monkeypatch):
+    """shell ``source`` との仕様乖離を固定する回帰テスト (docstring の note 対応)。
+
+    本パーサは変数展開・コマンド置換・行中クォート除去・インラインコメントを
+    解釈せず、値を安全側にリテラルとして扱う。この意図的な制約を pin する。
+    """
+    for k in ("LIT_VAR", "LIT_CMD", "INNER_Q", "INLINE_C"):
+        monkeypatch.delenv(k, raising=False)
+    env_path = tmp_path / "env"
+    env_path.write_text(
+        "LIT_VAR=$HOME\n"        # 変数展開しない (リテラル "$HOME")
+        "LIT_CMD=$(echo x)\n"    # コマンド置換しない (リテラル "$(echo x)")
+        'INNER_Q=a"b"c\n'        # 行中クォートは除去しない
+        "INLINE_C=bar # note\n"  # 行頭以外の # はコメント扱いしない
+    )
+
+    container._load_project_env(env_path)
+
+    assert os.environ["LIT_VAR"] == "$HOME"
+    assert os.environ["LIT_CMD"] == "$(echo x)"
+    assert os.environ["INNER_Q"] == 'a"b"c'
+    assert os.environ["INLINE_C"] == "bar # note"
+
+
 # ===========================================================================
 # wrapper: cd + argv strip + 存在性ベースの曖昧性回避
 # ===========================================================================
