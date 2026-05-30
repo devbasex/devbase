@@ -11,38 +11,47 @@ graph TD
     A[devbase] --> B[init]
     A --> C[status]
     A --> H[shell-rc]
-    A --> D[container / ct]
+    A --> D[project]
     A --> E[env]
     A --> F[plugin / pl]
     A --> G[snapshot / ss]
-    D --> D1[up / down / login / ps / logs / scale / build]
+    D --> D1["up / down / login / ps / logs / scale / build [name]"]
+    D --> D2["list [--interactive]"]
     E --> E1[init / sync / list / set / get / delete / edit / project]
     F --> F1[list / install / uninstall / update / info / sync]
     F --> F2[repo add / repo remove / repo list / repo refresh]
     G --> G1[create / list / restore / copy / delete / rotate]
 ```
 
+> **`container` グループは非推奨になりました。** 旧 `devbase container <sub>` は
+> `devbase project <sub>` のエイリアスとして当面動作しますが、実行時に非推奨警告を
+> 表示します（移行期間後のリリースで削除予定）。新しいコマンドは `project` を使用してください。
+
 ### グループエイリアス
 
 各グループには短縮形が用意されています。
 
-| グループ名 | エイリアス |
-|-----------|-----------|
-| `container` | `ct` |
-| `plugin` | `pl` |
-| `snapshot` | `ss` |
+| グループ名 | エイリアス | 備考 |
+|-----------|-----------|------|
+| `plugin` | `pl` | |
+| `snapshot` | `ss` | |
+| `container` | `ct` | **非推奨**（`project` へ移行してください） |
 
 ### ショートカットコマンド
 
-頻繁に使用するコンテナ操作はトップレベルから直接実行できます。これらは `container` グループに自動転送されます。
+頻繁に使用するプロジェクト操作はトップレベルから直接実行できます。これらは `project` グループに自動転送されます。
 
 | ショートカット | 転送先 |
 |--------------|--------|
-| `devbase up` | `devbase container up` |
-| `devbase down` | `devbase container down` |
-| `devbase login` | `devbase container login` |
-| `devbase build` | `devbase container build` |
-| `devbase ps` | `devbase container ps` |
+| `devbase up [name]` | `devbase project up [name]` |
+| `devbase down [name]` | `devbase project down [name]` |
+| `devbase login [index]` | `devbase project login [index]` |
+| `devbase build [image]` | `devbase project build [image]` |
+| `devbase ps [name]` | `devbase project ps [name]` |
+| `devbase scale [name] <num>` | `devbase project scale [name] <num>` |
+| `devbase list` | `devbase project list` |
+
+> **Note:** `logs` はトップレベルシノニムを持ちません。`devbase project logs` を使用してください。
 
 ### ユニークプレフィックスマッチング
 
@@ -113,17 +122,43 @@ source "$(./bin/devbase shell-rc)"
 
 > **⚠ 引用符は必須**: `source $(devbase shell-rc)` のように引用符を省くと、ホームディレクトリ名に空白を含む環境（例: `/Users/foo bar/.zshrc`）で word splitting が起き `source` が失敗します。必ず `source "$(devbase shell-rc)"` の形で書いてください。
 
-## container (ct) グループ
+## project グループ
 
-コンテナのライフサイクル管理を行うコマンド群です。
+プロジェクト（コンテナ）のライフサイクル管理と一覧表示を行うコマンド群です。
 
-### `devbase container up`
+### プロジェクト名指定（CWD 非依存）
+
+`up` / `down` / `ps` / `logs` / `scale` は省略可能な `[name]` 引数を取ります。`[name]`
+を指定すると、**現在のディレクトリに依存せず** `$DEVBASE_ROOT/projects/<name>` を対象に
+操作できます。
+
+```bash
+# 任意のディレクトリから adminer プロジェクトを起動
+devbase project up adminer
+
+# 省略時は従来どおりカレントディレクトリのプロジェクトを対象にする
+cd $DEVBASE_ROOT/projects/adminer && devbase project up
+```
+
+- `<name>` は `$DEVBASE_ROOT/projects/` 配下のプロジェクト名（`devbase project list` で確認可能）
+- 存在しない名前を指定するとエラーになり、利用可能なプロジェクト候補が表示されます
+- 名前解決はラッパー (`bin/devbase`) が対象ディレクトリへ `cd` してから実行します。
+  これにより `build`（シェル実装）を含む全操作が名前指定で成立します
+- `devbase` は PATH 上の実行ファイルとして子プロセスで起動されるため、この `cd` が
+  **呼び出し元シェルの作業ディレクトリを変えることはありません**
+
+> **`login` / `build` は `[name]` を取りません。** これらの単一引数はそれぞれ `index` /
+> `image` であり、`[name]` を許すと `project login 2` / `project build web` が誤解釈される
+> ため除外しています（トップレベルシノニム `devbase build <name>` のみラッパーの存在性判定で
+> 名前解決されます）。
+
+### `devbase project up`
 
 コンテナを起動します。
 
 ```
-devbase container up
-devbase up
+devbase project up [name]
+devbase up [name]
 ```
 
 - 起動時にスナップショットを自動作成（新世代 or 差分追加）
@@ -136,23 +171,23 @@ devbase up
     （前回 pull 日時は `${DEVBASE_ROOT}/.cache/pulls/<image>` の touch-file mtime で判定）
   - 閾値は `DEVBASE_IMAGE_MAX_AGE_DAYS` 環境変数で上書き可能（既定 7、不正値は警告して既定値）
 
-### `devbase container down`
+### `devbase project down`
 
 コンテナを停止・削除します。
 
 ```
-devbase container down
-devbase down
+devbase project down [name]
+devbase down [name]
 ```
 
 - 停止時にスナップショットのローテーションを自動実行
 
-### `devbase container login`
+### `devbase project login`
 
 コンテナにログインします。
 
 ```
-devbase container login [index]
+devbase project login [index]
 devbase login [index]
 ```
 
@@ -168,25 +203,26 @@ devbase login
 devbase login 2
 ```
 
-### `devbase container ps`
+### `devbase project ps`
 
-コンテナの状態を表示します。
+対象プロジェクトのコンテナ状態を `docker compose ps` で表示します。複数プロジェクトの
+横断一覧は `devbase project list` を使用してください。
 
 ```
-devbase container ps [-a]
-devbase ps [-a]
+devbase project ps [name] [-a]
+devbase ps [name] [-a]
 ```
 
 | オプション | 説明 |
 |-----------|------|
 | `-a` | 停止中のコンテナも表示 |
 
-### `devbase container logs`
+### `devbase project logs`
 
-コンテナのログを表示します。
+コンテナのログを表示します（トップレベルシノニムはありません）。
 
 ```
-devbase container logs [-f] [--tail N]
+devbase project logs [name] [-f] [--tail N]
 ```
 
 | オプション | 説明 |
@@ -196,41 +232,95 @@ devbase container logs [-f] [--tail N]
 
 ```bash
 # 最新50行をリアルタイムで追跡
-devbase container logs -f --tail 50
+devbase project logs -f --tail 50
 ```
 
-### `devbase container scale`
+### `devbase project scale`
 
 既存のコンテナを再起動せずにスケールします。
 
 ```
-devbase container scale <num>
+devbase project scale [name] <num>
+devbase scale [name] <num>
 ```
 
 | パラメータ | 必須 | 説明 |
 |-----------|------|------|
+| `name` | いいえ | 対象プロジェクト名（省略時はカレント） |
 | `<num>` | はい | コンテナ数 |
 
 ```bash
 # コンテナを3台に増やす
-devbase container scale 3
+devbase project scale 3
 
-# コンテナを1台に減らす
-devbase container scale 1
+# 任意のディレクトリから adminer を3台に
+devbase project scale adminer 3
 ```
 
-### `devbase container build`
+### `devbase project build`
 
 コンテナイメージをビルドします。
 
 ```
-devbase container build [image]
+devbase project build [image]
 devbase build [image]
 ```
 
 | パラメータ | 必須 | 説明 |
 |-----------|------|------|
 | `image` | いいえ | ビルドするイメージ名（省略時は全イメージ） |
+
+### `devbase project list`
+
+`$DEVBASE_ROOT/projects/` 配下のプロジェクトを `NAME` / `PLUGIN` / `STATUS` の一覧で
+表示します。
+
+```
+devbase project list [--interactive|-i]
+devbase list [--interactive|-i]
+```
+
+| オプション | 説明 |
+|-----------|------|
+| `--interactive` / `-i` | 一覧から番号で選択し、そのプロジェクトを `project up` で起動 |
+
+```bash
+# 一覧表示
+devbase list
+
+# 一覧から選んで起動（非対話環境では番号入力にフォールバック）
+devbase list -i
+```
+
+出力例:
+
+```
+NAME          PLUGIN        STATUS
+adminer       adminer       running (2 containers)
+carmo         carmo         stopped
+carmo.takemi  carmo-fork    stopped
+```
+
+- `PLUGIN` 列はシンボリックリンク先から解決するため、PLAN04 の同名衝突 suffix
+  （例 `carmo.takemi`）が付いていても正しいプラグイン名を表示します
+- `STATUS` は `running (N containers)` / `stopped` / `unknown`（docker 未起動・
+  `compose.yml` 不在等で判定不能）のいずれか
+
+## container (ct) グループ（非推奨）
+
+> **非推奨:** `container` グループは `project` グループへ移行しました。`devbase container
+> <sub>` は当面 `devbase project <sub>` のエイリアスとして動作しますが、実行時に非推奨警告を
+> 表示します（移行期間後のリリースで削除予定）。`[name]` 指定や `list` などの新機能は
+> `project` 側のみで提供されます。
+
+```bash
+# 旧（非推奨・警告が出ます）
+devbase container up
+
+# 新（推奨）
+devbase project up
+devbase up
+```
 
 ## env グループ
 

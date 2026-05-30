@@ -1,5 +1,18 @@
  # bash completion for devbase
 
+# projects/ 配下のプロジェクト名 (symlink / 実ディレクトリ) を列挙する。
+# `devbase project up <name>` やトップレベルシノニム `devbase up <name>` の
+# name 補完に使う。
+_devbase_project_names() {
+    local devbase_root
+    devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
+    local projects_dir="${devbase_root}/projects"
+    if [ -d "$projects_dir" ]; then
+        find "$projects_dir" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) 2>/dev/null \
+            | xargs -r -n1 basename 2>/dev/null
+    fi
+}
+
 _devbase_completions() {
     local cur prev words cword
     _init_completion 2>/dev/null || {
@@ -10,7 +23,9 @@ _devbase_completions() {
         cword=$COMP_CWORD
     }
 
-    local commands="init status shell-rc container ct env plugin pl snapshot ss up down login build ps help"
+    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build ps scale list help"
+    # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
+    local project_subcommands="up down ps login logs scale build list"
     local container_subcommands="up down ps login logs scale build"
     local env_subcommands="init sync list set get delete edit project export import"
     local plugin_subcommands="list install uninstall update info sync repo"
@@ -25,6 +40,19 @@ _devbase_completions() {
             case "$prev" in
                 login)
                     COMPREPLY=($(compgen -W "1 2" -- "$cur"))
+                    ;;
+                # トップレベルシノニム: up/down/ps/scale は [name] を取るため
+                # プロジェクト名を補完する (login=index / build=image は対象外)。
+                up|down|ps|scale)
+                    COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                    ;;
+                list)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "--interactive -i" -- "$cur"))
+                    fi
+                    ;;
+                project)
+                    COMPREPLY=($(compgen -W "$project_subcommands" -- "$cur"))
                     ;;
                 container|ct)
                     COMPREPLY=($(compgen -W "$container_subcommands" -- "$cur"))
@@ -42,7 +70,42 @@ _devbase_completions() {
             ;;
         3)
             local group="${words[1]}"
-            # container subcommand arguments
+            # project subcommand arguments (推奨グループ)
+            if [ "$group" = "project" ]; then
+                case "$prev" in
+                    up|down)
+                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        ;;
+                    login)
+                        COMPREPLY=($(compgen -W "1 2" -- "$cur"))
+                        ;;
+                    scale)
+                        # `project scale <name> N` / `project scale N` の両形。
+                        # name 補完を提示する (数値はユーザが直接入力)。
+                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        ;;
+                    ps)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
+                        else
+                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        fi
+                        ;;
+                    logs)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--follow -f --tail" -- "$cur"))
+                        else
+                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        fi
+                        ;;
+                    list)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--interactive -i" -- "$cur"))
+                        fi
+                        ;;
+                esac
+            fi
+            # container subcommand arguments (非推奨: project へ移行してください)
             if [ "$group" = "container" ] || [ "$group" = "ct" ]; then
                 case "$prev" in
                     login)

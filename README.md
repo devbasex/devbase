@@ -11,7 +11,7 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 - **Pluginベースのプロジェクト管理**: 外部リポジトリからプロジェクト設定をインストール・更新
 - **コンテナ化された開発環境**: Docker Composeベースで再現性の高い環境を提供
 - **豊富なツールセット**: Docker CLI、AWS CLI、gcloud SDK、Terraform、Node.js、AI CLIツールがプリインストール
-- **複数コンテナの並行開発**: `devbase container scale`で既存コンテナを再起動せずにスケール可能
+- **複数コンテナの並行開発**: `devbase project scale`で既存コンテナを再起動せずにスケール可能
 - **データ永続化**: 名前付きボリュームでコンテナ再起動後もデータを保持
 - **スナップショット管理**: `/home/ubuntu` 共通ボリュームの増分バックアップ・復元・世代管理
 - **環境変数の自動収集**: `devbase env init`でAWS/Git/GCP認証情報を対話的に設定
