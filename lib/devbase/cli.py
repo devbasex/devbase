@@ -16,14 +16,19 @@ except ImportError:
 
 logger = get_logger("devbase.cli")
 
-# Shortcuts: top-level command -> (group, subcommand)
+# Shortcuts: top-level command -> project subcommand
+# 委譲先は共有の cmd_project (PLAN06 で container は非推奨化)。
+# NOTE: `build` はここに含めない。配布入口 bin/devbase が `build` を shell の
+# cmd_build (devbase-base 依存検出 + 2 段ビルド + --no-cache 対応) に委譲しており、
+# Python の project build (単純な compose build) とは実装が異なるため。Python 側で
+# `build` を project build ショートカットとして広告すると wrapper の実経路と乖離する。
+# project build / container build サブコマンド自体は引き続き利用可能。
 SHORTCUTS = {
-    'up': ('container', 'up'),
-    'down': ('container', 'down'),
-    'login': ('container', 'login'),
-    'build': ('container', 'build'),
-    'ps': ('container', 'ps'),
-    'scale': ('container', 'scale'),
+    'up': 'up',
+    'down': 'down',
+    'login': 'login',
+    'ps': 'ps',
+    'scale': 'scale',
 }
 
 # Group aliases
@@ -35,6 +40,7 @@ GROUP_ALIASES = {
 
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
+    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
@@ -63,6 +69,30 @@ def _require_devbase_root() -> Path:
     return Path(root)
 
 
+def _add_login_subparser(sub):
+    """`login` サブコマンドを登録する (project / container 共通)。
+
+    単一 positional `index` の意味は両グループで完全に同一。`[name]` を足すと
+    `project login 2` を name='2' と誤解釈して index=1 にログインしてしまう曖昧さ
+    (旧 `container login <index>` との非互換) が生じるため、project でも name を
+    受け付けない。PR2 で project name 解決を導入する際は曖昧さのない `--name`
+    オプションで対応する方針。
+    """
+    p = sub.add_parser('login', help='Login to container')
+    p.add_argument('index', nargs='?', default='1', help='Container index')
+
+
+def _add_build_subparser(sub):
+    """`build` サブコマンドを登録する (project / container 共通)。
+
+    単一 positional `image` の意味は両グループで同一。`[name]` を許すと
+    `project build web` が name='web', image=None となり image 指定ビルドが
+    compose build に化けるため、project でも name を受け付けない (login 参照)。
+    """
+    p = sub.add_parser('build', help='Build container images')
+    p.add_argument('image', nargs='?', default=None, help='Image name')
+
+
 def _add_container_parser(subparsers):
     """Container group parser"""
     ct_parser = subparsers.add_parser('container', aliases=['ct'],
@@ -72,8 +102,7 @@ def _add_container_parser(subparsers):
     ct_sub.add_parser('up', help='Start containers')
     ct_sub.add_parser('down', help='Stop and remove containers')
 
-    ct_login = ct_sub.add_parser('login', help='Login to container')
-    ct_login.add_argument('index', nargs='?', default='1', help='Container index')
+    _add_login_subparser(ct_sub)
 
     ct_ps = ct_sub.add_parser('ps', help='Show container status')
     ct_ps.add_argument('--all', '-a', action='store_true', help='Show all containers')
@@ -85,8 +114,49 @@ def _add_container_parser(subparsers):
     ct_scale = ct_sub.add_parser('scale', help='Scale containers online')
     ct_scale.add_argument('new_scale', type=int, help='New number of containers')
 
-    ct_build = ct_sub.add_parser('build', help='Build container images')
-    ct_build.add_argument('image', nargs='?', default=None, help='Image name')
+    _add_build_subparser(ct_sub)
+
+
+def _add_project_parser(subparsers):
+    """Project group parser (CWD 非依存のプロジェクト操作)。
+
+    `container` と同じ subcommand 群に、省略可能な `[name]` positional を加える。
+    name によるディレクトリ解決 / COMPOSE_PROJECT_NAME 上書きは PLAN06 Task 2 (PR2)
+    で wrapper の cd + Python フォールバックとして実装する。PR1 では parser 構造と
+    name のパースまでを用意する。
+
+    例外: `login` / `build` は単一 positional が旧 `container` と同義 (index / image)
+    であり、`[name]` を足すと `project login 2` / `project build web` が誤解釈される
+    ため name を受け付けない。両者は project / container で定義が完全に一致するので
+    `_add_login_subparser` / `_add_build_subparser` に共通化している。
+    """
+    pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
+    pj_sub = pj_parser.add_subparsers(dest='subcommand')
+
+    pj_up = pj_sub.add_parser('up', help='Start containers')
+    pj_up.add_argument('name', nargs='?', default=None, help='Project name')
+
+    pj_down = pj_sub.add_parser('down', help='Stop and remove containers')
+    pj_down.add_argument('name', nargs='?', default=None, help='Project name')
+
+    _add_login_subparser(pj_sub)
+
+    pj_ps = pj_sub.add_parser('ps', help='Show container status')
+    pj_ps.add_argument('name', nargs='?', default=None, help='Project name')
+    pj_ps.add_argument('--all', '-a', action='store_true', help='Show all containers')
+
+    pj_logs = pj_sub.add_parser('logs', help='Show container logs')
+    pj_logs.add_argument('name', nargs='?', default=None, help='Project name')
+    pj_logs.add_argument('--follow', '-f', action='store_true', help='Follow log output')
+    pj_logs.add_argument('--tail', type=int, default=None, help='Number of lines')
+
+    # NOTE: `[name]` optional + `new_scale` 必須 int の順。値が 1 個なら new_scale に、
+    # 2 個なら (name, new_scale) に割り当てられ曖昧にならない (tests/cli 参照)。
+    pj_scale = pj_sub.add_parser('scale', help='Scale containers online')
+    pj_scale.add_argument('name', nargs='?', default=None, help='Project name')
+    pj_scale.add_argument('new_scale', type=int, help='New number of containers')
+
+    _add_build_subparser(pj_sub)
 
 
 def _add_env_parser(subparsers):
@@ -285,20 +355,36 @@ def _add_snapshot_parser(subparsers):
 
 
 def _add_shortcuts(subparsers):
-    """Top-level shortcut parsers"""
+    """Top-level shortcut parsers.
+
+    委譲先の `project` サブコマンドと引数体系を揃えるため、`up` / `down` / `ps` /
+    `scale` は `project <sub> [name]` と同じく省略可能な `[name]` positional を
+    受け付ける (`devbase up carmo` ≡ `devbase project up carmo`)。受理した name は
+    _dispatch でショートカット経由でも下流 (cmd_project → _dispatch_lifecycle) へ
+    伝播する。name の実解決は PLAN06 Task 2 (PR2) で実装するため、PR1 では up/scale
+    も含め name 指定時に未対応 warning を出す (container.py 参照)。
+
+    `login` は project login と同様に単一 positional を `index` として扱い `[name]`
+    は受け付けない (曖昧さ回避)。`build` はショートカットに含めない (SHORTCUTS の
+    注記参照): bin/devbase が build を shell 実装 (cmd_build) に委譲するため、
+    Python 側でトップレベル build を広告すると実経路と乖離する。
+    """
     login_sc = subparsers.add_parser('login', help='Login to container')
     login_sc.add_argument('index', nargs='?', default='1', help='Container index')
 
-    build_sc = subparsers.add_parser('build', help='Build container images')
-    build_sc.add_argument('image', nargs='?', default=None, help='Image name')
-
     ps_sc = subparsers.add_parser('ps', help='Show container status')
+    ps_sc.add_argument('name', nargs='?', default=None, help='Project name')
     ps_sc.add_argument('--all', '-a', action='store_true', help='Show all containers')
 
-    subparsers.add_parser('up', help='Start containers')
-    subparsers.add_parser('down', help='Stop and remove containers')
+    up_sc = subparsers.add_parser('up', help='Start containers')
+    up_sc.add_argument('name', nargs='?', default=None, help='Project name')
 
+    down_sc = subparsers.add_parser('down', help='Stop and remove containers')
+    down_sc.add_argument('name', nargs='?', default=None, help='Project name')
+
+    # `[name]` optional + `new_scale` 必須 int の順 (project scale と同じ規則)。
     scale_sc = subparsers.add_parser('scale', help='Scale containers online')
+    scale_sc.add_argument('name', nargs='?', default=None, help='Project name')
     scale_sc.add_argument('new_scale', type=int, help='New number of containers')
 
 
@@ -310,12 +396,13 @@ def _create_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Shortcuts:\n"
-            "  up            container up\n"
-            "  down          container down\n"
-            "  login         container login\n"
-            "  build         container build\n"
-            "  ps            container ps\n"
-            "  scale         container scale\n"
+            "  up            project up\n"
+            "  down          project down\n"
+            "  login         project login\n"
+            "  ps            project ps\n"
+            "  scale         project scale\n"
+            "\n"
+            "Note: `container` is deprecated; use `project` instead.\n"
         )
     )
 
@@ -342,6 +429,7 @@ def _create_parser():
         help='Print shell RC file path (e.g. source "$(devbase shell-rc)")'
     )
 
+    _add_project_parser(subparsers)
     _add_container_parser(subparsers)
     _add_env_parser(subparsers)
     _add_plugin_parser(subparsers)
@@ -371,8 +459,16 @@ def _resolve_prefix(input_cmd, candidates, preferences=None):
 
 def _expand_argv():
     """Expand abbreviated command/subcommand names in sys.argv in-place."""
-    commands = ['init', 'status', 'shell-rc', 'container', 'ct', 'env', 'plugin', 'pl',
-                'snapshot', 'ss', 'up', 'down', 'login', 'build', 'ps', 'scale', 'help']
+    # この `commands` リストの並びは _create_parser のグループ登録順と一致させる:
+    # トップレベル → グループ (各 group の直後にその alias を隣接配置: container/ct,
+    # plugin/pl, snapshot/ss) → ショートカット。`project` (推奨) を `container`
+    # (非推奨) より前に置くのは登録順と揃えた意図的な並びで、prefix 解決は
+    # _resolve_prefix が一意一致のみ採用するため順序に機能的影響はない。
+    # `build` はトップレベルショートカットから除外 (SHORTCUTS の注記参照)。
+    # bin/devbase が build を shell 実装に委譲するため Python 側には top-level
+    # build parser が無い。project build / container build は引き続き利用可能。
+    commands = ['init', 'status', 'shell-rc', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
+                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):
@@ -418,13 +514,20 @@ def _dispatch(cmd, args):
     # Resolve group aliases
     cmd = GROUP_ALIASES.get(cmd, cmd)
 
-    # --- Shortcuts (top-level -> container subcommand) ---
+    # --- Shortcuts (top-level -> project subcommand) ---
+    # ショートカットは非推奨ではないため、warning を出す cmd_container ではなく
+    # 共有の cmd_project へ委譲する。
     if cmd in SHORTCUTS:
-        args.subcommand = SHORTCUTS[cmd][1]
-        from devbase.commands.container import cmd_container
-        return cmd_container(args)
+        args.subcommand = SHORTCUTS[cmd]
+        from devbase.commands.container import cmd_project
+        return cmd_project(args)
 
-    # --- Container group ---
+    # --- Project group (推奨) ---
+    if cmd == 'project':
+        from devbase.commands.container import cmd_project
+        return cmd_project(args)
+
+    # --- Container group (非推奨: project へ委譲 + warning) ---
     if cmd == 'container':
         from devbase.commands.container import cmd_container
         return cmd_container(args)
