@@ -295,6 +295,29 @@ def test_cmd_project_list_interactive_non_tty_eof(tmp_path, monkeypatch):
     assert called == []
 
 
+def test_cmd_project_list_interactive_keyboard_interrupt_aborts(tmp_path, monkeypatch):
+    """Ctrl+C (KeyboardInterrupt) は traceback を出さず中止 (rc=0) として扱う。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+
+    def raise_interrupt(*a, **k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", raise_interrupt)
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+    assert rc == 0
+    assert called == []
+
+
 def test_cmd_project_list_interactive_out_of_range_reprompts(tmp_path, monkeypatch):
     """範囲外の番号では即終了せず再入力を促す。有効入力で最終的に up する。"""
     from devbase.commands import project as project_mod

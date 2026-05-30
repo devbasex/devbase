@@ -135,6 +135,11 @@ def _interactive_select_and_up(rows: list[dict]) -> int:
             logger.error("対話入力ができません (非 TTY 環境)。"
                          "`devbase project up <name>` で直接指定してください。")
             return 1
+        except KeyboardInterrupt:
+            # Ctrl+C は traceback を出さず中止として扱う。
+            print()
+            logger.info("中止しました。")
+            return 0
 
         if not raw:
             logger.info("中止しました。")
