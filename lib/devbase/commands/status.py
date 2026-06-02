@@ -16,6 +16,72 @@ except ImportError:
 logger = get_logger(__name__)
 
 
+def _container_status_for(entry: Path) -> dict | None:
+    """単一プロジェクトディレクトリのコンテナ状態を取得する。
+
+    `projects/<name>` (実ディレクトリ or plugin への symlink) を受け取り、
+    ``{"name", "status", "count"}`` を返す。対象外 (compose.yml が無い) や docker
+    コマンドが利用できない / タイムアウト / 異常終了の場合は ``None`` を返す。
+
+    PLAN06 で ``project list`` (commands/project.py) が同じ per-entry ロジックを
+    再利用するため、``_get_container_status`` のループ本体から分離した。挙動は
+    分離前と同一 (None を返す条件 = 旧実装で ``continue`` していた条件)。
+    """
+    compose_file = entry / "compose.yml"
+    if not compose_file.exists():
+        return None
+
+    try:
+        proc = subprocess.run(
+            ["docker", "compose", "ps", "--format", "json"],
+            cwd=str(entry),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode != 0:
+            return None
+
+        output = proc.stdout.strip()
+        if not output:
+            return {"name": entry.name, "status": "stopped", "count": 0}
+
+        # docker compose ps --format json は1行1JSONまたはJSON配列
+        containers = []
+        for line in output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+                if isinstance(parsed, list):
+                    containers.extend(parsed)
+                else:
+                    containers.append(parsed)
+            except json.JSONDecodeError:
+                continue
+
+        if not containers:
+            return {"name": entry.name, "status": "stopped", "count": 0}
+
+        running = sum(
+            1 for c in containers
+            if c.get("State", "").lower() == "running"
+        )
+        total = len(containers)
+
+        if running > 0:
+            status = f"running ({total} containers)"
+        else:
+            status = "stopped"
+
+        return {"name": entry.name, "status": status, "count": total}
+
+    except (subprocess.TimeoutExpired, OSError):
+        # dockerコマンドが利用できない、またはタイムアウト
+        return None
+
+
 def _get_container_status(projects_dir: Path) -> list[dict]:
     """projects/ 配下の各プロジェクトのコンテナ状態を取得する"""
     results = []
@@ -25,73 +91,9 @@ def _get_container_status(projects_dir: Path) -> list[dict]:
     for entry in sorted(projects_dir.iterdir()):
         if not entry.is_dir():
             continue
-        compose_file = entry / "compose.yml"
-        if not compose_file.exists():
-            continue
-
-        try:
-            proc = subprocess.run(
-                ["docker", "compose", "ps", "--format", "json"],
-                cwd=str(entry),
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if proc.returncode != 0:
-                continue
-
-            output = proc.stdout.strip()
-            if not output:
-                results.append({
-                    "name": entry.name,
-                    "status": "stopped",
-                    "count": 0,
-                })
-                continue
-
-            # docker compose ps --format json は1行1JSONまたはJSON配列
-            containers = []
-            for line in output.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    parsed = json.loads(line)
-                    if isinstance(parsed, list):
-                        containers.extend(parsed)
-                    else:
-                        containers.append(parsed)
-                except json.JSONDecodeError:
-                    continue
-
-            if not containers:
-                results.append({
-                    "name": entry.name,
-                    "status": "stopped",
-                    "count": 0,
-                })
-                continue
-
-            running = sum(
-                1 for c in containers
-                if c.get("State", "").lower() == "running"
-            )
-            total = len(containers)
-
-            if running > 0:
-                status = f"running ({total} containers)"
-            else:
-                status = "stopped"
-
-            results.append({
-                "name": entry.name,
-                "status": status,
-                "count": total,
-            })
-
-        except (subprocess.TimeoutExpired, OSError):
-            # dockerコマンドが利用できない、またはタイムアウト
-            continue
+        status = _container_status_for(entry)
+        if status is not None:
+            results.append(status)
 
     return results
 
