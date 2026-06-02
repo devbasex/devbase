@@ -75,12 +75,14 @@ devbaseのコマンドは4つのグループにまとめられています。
 
 | グループ | 略記 | 説明 |
 |---------|------|------|
-| `container` | `ct` | コンテナ管理（up / down / login / ps / logs / scale / build） |
+| `project` | — | プロジェクト管理（up / down / login / ps / logs / scale / build / list） |
 | `env` | — | 環境変数管理（init / sync / list / set / get / delete / edit / project / export / import） |
 | `plugin` | `pl` | プラグイン管理（list / install / uninstall / update / info / sync / repo） |
 | `snapshot` | `ss` | スナップショット管理（create / list / restore / copy / delete / rotate） |
 
-- **ショートカット**: `up`, `down`, `login`, `build`, `ps` はトップレベルから直接使用可能
+> **`container`（略記 `ct`）グループは非推奨です。** `devbase project <sub>` のエイリアスとして当面動作しますが、非推奨警告を表示します。新しいコマンドは `project` を使用してください。
+
+- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）
 - **プレフィックス略記**: `devbase p l` → `devbase plugin list`
 - **トップレベルコマンド**: `init`, `status`, `shell-rc`
 

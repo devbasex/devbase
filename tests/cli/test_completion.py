@@ -47,6 +47,27 @@ def fake_root(tmp_path):
     return tmp_path
 
 
+@pytest.fixture
+def fake_root_with_bad_links(tmp_path):
+    """壊れた symlink / ファイルへの symlink を含む projects/ を作る。
+
+    ディレクトリ / ディレクトリへの symlink のみが補完候補に出ることを検証するため。
+    """
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    (projects / "web").mkdir()
+    # ディレクトリへの symlink (候補に出るべき)
+    (tmp_path / "target").mkdir()
+    (projects / "linked").symlink_to(tmp_path / "target")
+    # ファイルへの symlink (候補に出ない)
+    a_file = tmp_path / "afile"
+    a_file.write_text("x")
+    (projects / "file_link").symlink_to(a_file)
+    # 壊れた symlink (候補に出ない)
+    (projects / "broken_link").symlink_to(tmp_path / "does_not_exist")
+    return tmp_path
+
+
 # ---------------------------------------------------------------------------
 # bash: 構文 / 動作
 # ---------------------------------------------------------------------------
@@ -82,6 +103,33 @@ def test_bash_top_level_ps_name_completion(fake_root):
 def test_bash_top_level_ps_flag_completion(fake_root):
     """`devbase ps -<TAB>` は -a / --all を補完する (project ps と対称)。"""
     out = _bash_complete("devbase ps '-'", 2, fake_root)
+    assert set(out) == {"--all", "-a"}
+
+
+def test_bash_project_name_excludes_bad_symlinks(fake_root_with_bad_links):
+    """壊れた symlink / ファイルへの symlink は name 補完候補に出ない。
+
+    実ディレクトリ (web) とディレクトリへの symlink (linked) のみ。zsh 側と整合。
+    """
+    out = _bash_complete("devbase project up ''", 3, fake_root_with_bad_links)
+    assert sorted(out) == ["linked", "web"]
+
+
+def test_bash_project_ps_flag_after_name(fake_root):
+    """`devbase project ps web -<TAB>` (cword 4) で -a / --all を補完する。"""
+    out = _bash_complete("devbase project ps web '-'", 4, fake_root)
+    assert set(out) == {"--all", "-a"}
+
+
+def test_bash_project_logs_flag_after_name(fake_root):
+    """`devbase project logs web -<TAB>` (cword 4) で -f/--follow/--tail を補完する。"""
+    out = _bash_complete("devbase project logs web '-'", 4, fake_root)
+    assert set(out) == {"--follow", "-f", "--tail"}
+
+
+def test_bash_top_level_ps_flag_after_name(fake_root):
+    """`devbase ps web -<TAB>` (cword 3) で -a / --all を補完する (project ps と対称)。"""
+    out = _bash_complete("devbase ps web '-'", 3, fake_root)
     assert set(out) == {"--all", "-a"}
 
 

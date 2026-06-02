@@ -8,7 +8,11 @@ _devbase_project_names() {
     devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
     local projects_dir="${devbase_root}/projects"
     if [ -d "$projects_dir" ]; then
-        find "$projects_dir" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) 2>/dev/null \
+        # -L で symlink を辿り -type d で判定することで、実ディレクトリと
+        # 「ディレクトリへの symlink」のみを列挙する (壊れた symlink / ファイルへの
+        # symlink は除外)。zsh 側 (*(N-/:t)) と挙動を揃える。GNU 専用の -xtype は
+        # BSD/macOS find で動かないため避け、POSIX/BSD/GNU 共通の -L を使う。
+        find -L "$projects_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
             | xargs -r -n1 basename 2>/dev/null
     fi
 }
@@ -78,6 +82,13 @@ _devbase_completions() {
             ;;
         3)
             local group="${words[1]}"
+            # トップレベルシノニム ps: `devbase ps web -<TAB>` (group=ps, cword=3)
+            # でも name 位置が埋まった後にフラグを補完する。project ps と対称化。
+            if [ "$group" = "ps" ]; then
+                if [[ "$cur" == -* ]]; then
+                    COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
+                fi
+            fi
             # project subcommand arguments (推奨グループ)
             if [ "$group" = "project" ]; then
                 case "$prev" in
@@ -213,6 +224,22 @@ _devbase_completions() {
             ;;
         4)
             local group="${words[1]}"
+            # project ps/logs: name 位置が埋まった後 (例: `project ps web -<TAB>`)
+            # でもフラグを補完する。subcommand は words[2]。
+            if [ "$group" = "project" ]; then
+                case "${words[2]}" in
+                    ps)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
+                        fi
+                        ;;
+                    logs)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--follow -f --tail" -- "$cur"))
+                        fi
+                        ;;
+                esac
+            fi
             # plugin install flags after source argument
             if [ "$group" = "plugin" ] || [ "$group" = "pl" ]; then
                 if [ "${words[2]}" = "install" ]; then
