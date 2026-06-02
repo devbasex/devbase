@@ -41,10 +41,18 @@ _devbase_completions() {
                 login)
                     COMPREPLY=($(compgen -W "1 2" -- "$cur"))
                     ;;
-                # トップレベルシノニム: up/down/ps/scale は [name] を取るため
+                # トップレベルシノニム: up/down/scale は [name] を取るため
                 # プロジェクト名を補完する (login=index / build=image は対象外)。
-                up|down|ps|scale)
+                up|down|scale)
                     COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                    ;;
+                # ps は [name] と -a フラグの両方を取る (project ps と同じ挙動)。
+                ps)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
+                    else
+                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                    fi
                     ;;
                 list)
                     if [[ "$cur" == -* ]]; then

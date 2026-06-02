@@ -73,6 +73,18 @@ def test_bash_top_level_synonym_name_completion(fake_root):
     assert sorted(out) == ["api", "linked", "web"]
 
 
+def test_bash_top_level_ps_name_completion(fake_root):
+    """`devbase ps <TAB>` (フラグなし) はプロジェクト名を補完する。"""
+    out = _bash_complete("devbase ps ''", 2, fake_root)
+    assert sorted(out) == ["api", "linked", "web"]
+
+
+def test_bash_top_level_ps_flag_completion(fake_root):
+    """`devbase ps -<TAB>` は -a / --all を補完する (project ps と対称)。"""
+    out = _bash_complete("devbase ps '-'", 2, fake_root)
+    assert set(out) == {"--all", "-a"}
+
+
 def test_bash_project_list_flags(fake_root):
     out = _bash_complete("devbase project list '-'", 3, fake_root)
     assert set(out) == {"--interactive", "-i"}
