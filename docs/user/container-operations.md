@@ -2,6 +2,13 @@
 
 devbase のコンテナ管理機能について、ライフサイクル、並行開発、ボリューム構造、イメージ階層を解説します。
 
+> **コマンド体系について:** コンテナ操作は `devbase project <sub>` グループ（および
+> トップレベルショートカット `devbase up` 等）で行います。旧 `devbase container <sub>` は
+> 非推奨となり、`project` へのエイリアスとして警告付きで当面動作します。`project` では
+> `up` / `down` / `ps` / `logs` / `scale` に `[name]` を指定することで **任意のディレクトリ
+> から** 対象プロジェクトを操作できます。プロジェクト一覧は `devbase project list` を参照
+> してください。詳細は [CLI リファレンス](cli-reference.md#project-グループ) を参照。
+
 ## コンテナライフサイクル
 
 devbase のコンテナは以下のライフサイクルで管理されます。
@@ -75,10 +82,13 @@ CONTAINER_SCALE=2
 
 ```bash
 # コンテナを3台に増やす（既存コンテナは再起動しない）
-devbase container scale 3
+devbase project scale 3
 
 # コンテナを1台に減らす
-devbase container scale 1
+devbase project scale 1
+
+# 任意のディレクトリから adminer を3台に
+devbase project scale adminer 3
 ```
 
 ### 各コンテナへのログイン
@@ -216,14 +226,27 @@ devbase ps -a
 
 ```bash
 # 最新のログを表示
-devbase container logs
+devbase project logs
 
 # リアルタイムでログを追跡
-devbase container logs -f
+devbase project logs -f
 
 # 末尾100行のみ追跡
-devbase container logs -f --tail 100
+devbase project logs -f --tail 100
 ```
+
+### プロジェクト一覧
+
+```bash
+# 全プロジェクトを NAME / PLUGIN / STATUS で一覧表示
+devbase list
+
+# 一覧から選択して起動（非対話環境では番号入力にフォールバック）
+devbase list -i
+```
+
+`devbase project ps` が「対象プロジェクト 1 つのコンテナ状態」を表示するのに対し、
+`devbase list` は「全プロジェクトの横断一覧」を表示します。
 
 ### 環境の全体像
 

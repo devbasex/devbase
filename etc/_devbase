@@ -13,6 +13,19 @@ _devbase_plugin_names() {
     fi
 }
 
+_devbase_project_names() {
+    local devbase_root projects_dir
+    devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
+    projects_dir="${devbase_root}/projects"
+    if [[ -d "$projects_dir" ]]; then
+        local -a projects
+        # 実ディレクトリ + symlink 先がディレクトリのものを対象
+        # (N: nullglob, -: symlink 追従, /: ディレクトリのみ, :t: tail)。
+        projects=(${projects_dir}/*(N-/:t))
+        _describe 'project' projects
+    fi
+}
+
 _devbase_repo_names() {
     local devbase_root yml
     devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
@@ -32,15 +45,16 @@ except Exception:
 }
 
 _devbase() {
-    local -a commands container_subcommands env_subcommands
+    local -a commands project_subcommands container_subcommands env_subcommands
     local -a plugin_subcommands repo_subcommands snapshot_subcommands
 
     commands=(
         'init:Initialize devbase environment'
         'status:Show overall status'
         'shell-rc:Print shell RC file path (for source ...)'
-        'container:Manage containers'
-        'ct:Manage containers (alias)'
+        'project:Manage projects (CWD-independent)'
+        'container:Manage containers (deprecated: use project)'
+        'ct:Manage containers (deprecated alias)'
         'env:Manage environment variables'
         'plugin:Manage plugins'
         'pl:Manage plugins (alias)'
@@ -51,7 +65,20 @@ _devbase() {
         'login:Login to container (shortcut)'
         'build:Build container images'
         'ps:Show container status (shortcut)'
+        'scale:Scale containers online (shortcut)'
+        'list:List projects (shortcut)'
         'help:Show help'
+    )
+
+    project_subcommands=(
+        'up:Start containers'
+        'down:Stop and remove containers'
+        'ps:Show container status'
+        'login:Login to container'
+        'logs:Show container logs'
+        'scale:Scale containers online'
+        'build:Build container images'
+        'list:List projects (NAME / PLUGIN / STATUS)'
     )
 
     container_subcommands=(
@@ -106,6 +133,65 @@ _devbase() {
     case "$words[2]" in
         login)
             _values 'index' 1 2
+            ;;
+        # トップレベルシノニム: up/down/ps/scale は [name] を取るためプロジェクト名を補完。
+        up|down)
+            _devbase_project_names
+            ;;
+        ps)
+            if [[ "$words[3]" == -* || -n "$words[3]" ]]; then
+                _arguments '--all[Show all containers]' '-a[Show all containers]'
+            else
+                _devbase_project_names
+            fi
+            ;;
+        scale)
+            _devbase_project_names
+            ;;
+        list)
+            _arguments \
+                '--interactive[Select a project interactively and start it]' \
+                '-i[Select a project interactively and start it]'
+            ;;
+        project)
+            case "$words[3]" in
+                up|down)
+                    _devbase_project_names
+                    ;;
+                login)
+                    _values 'index' 1 2
+                    ;;
+                scale)
+                    _devbase_project_names
+                    ;;
+                ps)
+                    # name (positional) と -a フラグを _arguments に統合。
+                    # name 入力済みなら positional は補完されず、フラグのみ残る
+                    # (bash 側の排他分岐と挙動を揃える)。
+                    _arguments \
+                        '--all[Show all containers]' \
+                        '-a[Show all containers]' \
+                        '1:name:_devbase_project_names'
+                    ;;
+                logs)
+                    _arguments \
+                        '--follow[Follow log output]' \
+                        '-f[Follow log output]' \
+                        '--tail[Number of lines]:lines:' \
+                        '1:name:_devbase_project_names'
+                    ;;
+                build)
+                    _arguments '1:image:'
+                    ;;
+                list)
+                    _arguments \
+                        '--interactive[Select a project interactively and start it]' \
+                        '-i[Select a project interactively and start it]'
+                    ;;
+                *)
+                    _describe -t project-commands 'project command' project_subcommands
+                    ;;
+            esac
             ;;
         container|ct)
             case "$words[3]" in

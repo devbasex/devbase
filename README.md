@@ -11,7 +11,7 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 - **Pluginベースのプロジェクト管理**: 外部リポジトリからプロジェクト設定をインストール・更新
 - **コンテナ化された開発環境**: Docker Composeベースで再現性の高い環境を提供
 - **豊富なツールセット**: Docker CLI、AWS CLI、gcloud SDK、Terraform、Node.js、AI CLIツールがプリインストール
-- **複数コンテナの並行開発**: `devbase container scale`で既存コンテナを再起動せずにスケール可能
+- **複数コンテナの並行開発**: `devbase project scale`で既存コンテナを再起動せずにスケール可能
 - **データ永続化**: 名前付きボリュームでコンテナ再起動後もデータを保持
 - **スナップショット管理**: `/home/ubuntu` 共通ボリュームの増分バックアップ・復元・世代管理
 - **環境変数の自動収集**: `devbase env init`でAWS/Git/GCP認証情報を対話的に設定
@@ -75,12 +75,14 @@ devbaseのコマンドは4つのグループにまとめられています。
 
 | グループ | 略記 | 説明 |
 |---------|------|------|
-| `container` | `ct` | コンテナ管理（up / down / login / ps / logs / scale / build） |
+| `project` | — | プロジェクト管理（up / down / login / ps / logs / scale / build / list） |
 | `env` | — | 環境変数管理（init / sync / list / set / get / delete / edit / project / export / import） |
 | `plugin` | `pl` | プラグイン管理（list / install / uninstall / update / info / sync / repo） |
 | `snapshot` | `ss` | スナップショット管理（create / list / restore / copy / delete / rotate） |
 
-- **ショートカット**: `up`, `down`, `login`, `build`, `ps` はトップレベルから直接使用可能
+> **`container`（略記 `ct`）グループは非推奨です。** `devbase project <sub>` のエイリアスとして当面動作しますが、非推奨警告を表示します。新しいコマンドは `project` を使用してください。
+
+- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。ただし `build` のみ例外で、`project` グループ（Python 実装）ではなく `bin/devbase` のシェル実装 `cmd_build` へ直接委譲されます（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
 - **プレフィックス略記**: `devbase p l` → `devbase plugin list`
 - **トップレベルコマンド**: `init`, `status`, `shell-rc`
 
