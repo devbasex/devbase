@@ -12,8 +12,12 @@ _devbase_project_names() {
         # 「ディレクトリへの symlink」のみを列挙する (壊れた symlink / ファイルへの
         # symlink は除外)。zsh 側 (*(N-/:t)) と挙動を揃える。GNU 専用の -xtype は
         # BSD/macOS find で動かないため避け、POSIX/BSD/GNU 共通の -L を使う。
+        # basename 化は `xargs -r`(GNU 拡張) を避け、各行を POSIX パラメータ展開
+        # ${p##*/} で処理する (外部プロセス不要・空入力でも安全・BSD/macOS 互換)。
         find -L "$projects_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
-            | xargs -r -n1 basename 2>/dev/null
+            | while IFS= read -r p; do
+                printf '%s\n' "${p##*/}"
+            done
     fi
 }
 

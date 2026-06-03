@@ -147,10 +147,11 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 - `devbase` は PATH 上の実行ファイルとして子プロセスで起動されるため、この `cd` が
   **呼び出し元シェルの作業ディレクトリを変えることはありません**
 
-> **`login` / `build` は `[name]` を取りません。** これらの単一引数はそれぞれ `index` /
-> `image` であり、`[name]` を許すと `project login 2` / `project build web` が誤解釈される
-> ため除外しています（トップレベルシノニム `devbase build <name>` のみラッパーの存在性判定で
-> 名前解決されます）。
+> **`project login` / `project build` は `[name]` を取りません。** これらの単一引数はそれぞれ
+> `index` / `image` であり、`[name]` を許すと `project login 2` / `project build web` が誤解釈される
+> ため除外しています。一方、トップレベルシノニム `devbase build <name>` / `devbase login <name>` は
+> ラッパー (`bin/devbase`) の存在性判定（`$DEVBASE_ROOT/projects/<name>` が実在すれば cd）で
+> 名前解決されます（実在しない場合は従来どおり `index` / `image` として下流へ渡されます）。
 
 ### `devbase project up`
 
