@@ -165,15 +165,20 @@ _devbase() {
                     _devbase_project_names
                     ;;
                 ps)
-                    _arguments '--all[Show all containers]' '-a[Show all containers]'
-                    _devbase_project_names
+                    # name (positional) と -a フラグを _arguments に統合。
+                    # name 入力済みなら positional は補完されず、フラグのみ残る
+                    # (bash 側の排他分岐と挙動を揃える)。
+                    _arguments \
+                        '--all[Show all containers]' \
+                        '-a[Show all containers]' \
+                        '1:name:_devbase_project_names'
                     ;;
                 logs)
                     _arguments \
                         '--follow[Follow log output]' \
                         '-f[Follow log output]' \
-                        '--tail[Number of lines]:lines:'
-                    _devbase_project_names
+                        '--tail[Number of lines]:lines:' \
+                        '1:name:_devbase_project_names'
                     ;;
                 build)
                     _arguments '1:image:'

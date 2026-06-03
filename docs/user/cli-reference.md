@@ -15,7 +15,9 @@ graph TD
     A --> E[env]
     A --> F[plugin / pl]
     A --> G[snapshot / ss]
-    D --> D1["up / down / login / ps / logs / scale / build [name]"]
+    D --> D1["up / down / ps / logs / scale [name]"]
+    D --> D3["login [index]"]
+    D --> D4["build [image]"]
     D --> D2["list [--interactive]"]
     E --> E1[init / sync / list / set / get / delete / edit / project]
     F --> F1[list / install / uninstall / update / info / sync]
@@ -46,12 +48,17 @@ graph TD
 | `devbase up [name]` | `devbase project up [name]` |
 | `devbase down [name]` | `devbase project down [name]` |
 | `devbase login [index]` | `devbase project login [index]` |
-| `devbase build [image]` | `devbase project build [image]` |
+| `devbase build [image]` | `bin/devbase` の `cmd_build`（シェル実装）※ |
 | `devbase ps [name]` | `devbase project ps [name]` |
 | `devbase scale [name] <num>` | `devbase project scale [name] <num>` |
 | `devbase list` | `devbase project list` |
 
 > **Note:** `logs` はトップレベルシノニムを持ちません。`devbase project logs` を使用してください。
+>
+> **※ `build` の転送先について:** `devbase build` は他のショートカットのように `project` グループ
+> （Python 実装）へ転送されるのではなく、`bin/devbase` のシェル実装 `cmd_build` に直接委譲されます。
+> base イメージの段階ビルド等を CWD で行う必要があるためで、`devbase project build` とは実装経路が
+> 異なります（名前指定はラッパーの `cd` で解決）。挙動上の入出力は同等ですが、実装は別物です。
 
 ### ユニークプレフィックスマッチング
 

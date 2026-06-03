@@ -62,10 +62,10 @@ _devbase_completions() {
                         COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
                     fi
                     ;;
+                # list は位置引数を取らず --interactive のみ。`-*` ガードを外し
+                # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
                 list)
-                    if [[ "$cur" == -* ]]; then
-                        COMPREPLY=($(compgen -W "--interactive -i" -- "$cur"))
-                    fi
+                    COMPREPLY=($(compgen -W "--interactive -i" -- "$cur"))
                     ;;
                 project)
                     COMPREPLY=($(compgen -W "$project_subcommands" -- "$cur"))
@@ -121,10 +121,10 @@ _devbase_completions() {
                             COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
                         fi
                         ;;
+                    # list は位置引数を取らず --interactive のみ。`-*` ガードを外し
+                    # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
                     list)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--interactive -i" -- "$cur"))
-                        fi
+                        COMPREPLY=($(compgen -W "--interactive -i" -- "$cur"))
                         ;;
                 esac
             fi
