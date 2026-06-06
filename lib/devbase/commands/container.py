@@ -118,6 +118,35 @@ def _report_unknown_project(name: str, projects_dir: Path) -> None:
         logger.error("利用可能なプロジェクト: %s", listing)
 
 
+def _env_var_keys(env_file: Path) -> set:
+    """env ファイルが定義する変数キー名の集合を返す (値は読まない)。
+
+    project 切替時に「呼び出し元プロジェクト固有の env キー」を unset するために
+    使う。パース前提は :func:`_load_project_env` と同一 (wrapper の env_var_keys
+    とも揃える): 行頭空白除去 → 先頭 ``#`` はコメント → ``export`` 接頭辞除去 →
+    ``=`` の左辺をキーとして採用。
+    """
+    keys: set = set()
+    if not env_file.is_file():
+        return keys
+    try:
+        lines = env_file.read_text().splitlines()
+    except OSError:
+        return keys
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[len('export '):].lstrip()
+        if '=' not in line:
+            continue
+        key = line.split('=', 1)[0].strip()
+        if key:
+            keys.add(key)
+    return keys
+
+
 def _load_project_env(env_file: Path) -> None:
     """プロジェクトの ``env`` ファイルを os.environ へ反映する (wrapper 同等)。
 
@@ -207,8 +236,21 @@ def _resolve_project_name(project_name: str) -> bool:
         already_there = target.resolve() == Path.cwd().resolve()
     except OSError:
         already_there = False
+
+    # chdir 前に呼び出し元 (現 CWD) の env が定義するキーを記録しておく。
+    # 別プロジェクトから `project up other` を直接起動した場合、呼び出し元 env に
+    # しか無いキー (例: DEV_SERVICE_NAME) が os.environ に残留し対象へ誤って
+    # 引き継がれるため、対象 env を読む前に unset してクリーンにする
+    # (codex 指摘 / wrapper の _CALLER_ENV_KEYS と同等のフォールバック)。
+    # already_there (= 既に対象ディレクトリ。通常 wrapper 経由) の場合は呼び出し元
+    # ＝対象であり、wrapper 側で既にクリーン化済みのため何もしない。
+    caller_env_keys: set = set()
     if not already_there:
+        caller_env_keys = _env_var_keys(Path('env'))
         os.chdir(target)
+        target_env_keys = _env_var_keys(Path('env'))
+        for key in caller_env_keys - target_env_keys:
+            os.environ.pop(key, None)
 
     # wrapper の `source ./env` と同等に project env を os.environ へ反映する。
     # wrapper 経由なら既に同じ値が載っているため冪等。

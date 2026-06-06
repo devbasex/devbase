@@ -12,6 +12,27 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 DEVBASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# env ファイルから「定義されている変数キー名」だけを抽出する (値は読まない)。
+# project 切替時に呼び出し元プロジェクト固有の env キーを unset するために使う。
+# Python フォールバック側 (_load_project_env) の KEY=VALUE パーサと同じ前提で
+# 解釈する: 行頭の空白除去 → 先頭 `#` はコメント → 任意の `export ` 接頭辞除去 →
+# `=` の左辺をキーとして採用。シェル展開やコマンド置換は解釈しない (値は無視)。
+env_var_keys() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    local raw line key
+    while IFS= read -r raw || [ -n "$raw" ]; do
+        line="${raw#"${raw%%[![:space:]]*}"}"   # 行頭空白除去
+        case "$line" in ''|'#'*) continue ;; esac
+        line="${line#export }"
+        line="${line#"${line%%[![:space:]]*}"}"  # export 後の空白除去
+        case "$line" in *=*) ;; *) continue ;; esac
+        key="${line%%=*}"
+        key="${key%"${key##*[![:space:]]}"}"     # キー末尾空白除去
+        [ -n "$key" ] && printf '%s\n' "$key"
+    done < "$file"
+}
+
 # Environment setup
 export DOCKER_GID=$( [ "$(uname)" = "Darwin" ] && echo "0" || grep docker /etc/group | cut -d: -f3 )
 export COMPOSE_PROJECT_NAME=$(basename "$PWD")
@@ -21,6 +42,16 @@ export COMPOSE_PROJECT_NAME=$(basename "$PWD")
 # なる。compose は同階層の .env を自動で読むため wrapper 側で project .env を
 # source する必要は無い。
 [ -f "${DEVBASE_ROOT}/.env" ] && set -a && source "${DEVBASE_ROOT}/.env" && set +a
+
+# 呼び出し元 (初期 CWD) の env で定義された変数キーを記録しておく。
+# project 切替 (maybe_cd_project) 時に「呼び出し元プロジェクトにしか無い変数」を
+# unset してから対象 env を source するために使う。これをしないと、対象 env に
+# 同名キーが無い場合に呼び出し元プロジェクト固有の値 (例: DEV_SERVICE_NAME) が
+# 残留し、`devbase project up other` を別プロジェクト内から実行した際に誤って
+# 引き継がれてしまう (codex 指摘 / PR#33 bin/devbase:235)。
+# env パース仕様は env_var_keys() のコメント参照。
+_CALLER_ENV_KEYS=""
+[ -f "env" ] && _CALLER_ENV_KEYS="$(env_var_keys ./env)"
 [ -f "env" ] && set -a && source ./env && set +a
 
 # Export for Python modules
@@ -232,6 +263,16 @@ maybe_cd_project() {
     # 管理する信頼境界内のファイルで (b) 元々 L24 で初期 CWD でも source される
     # ため、ここで新たなリスクが増えるわけではない。万一 exit を含む env を読んで
     # も「該当プロジェクトの操作が中断する」だけで他プロジェクトへ波及しない。
+    #
+    # 重要 (codex 指摘 / PR#33 bin/devbase:235): 単に対象 env を source するだけ
+    # では、呼び出し元プロジェクトの env にしか無いキー (例: DEV_SERVICE_NAME) が
+    # 残留し、対象プロジェクトへ誤って引き継がれる。対象 env を読む前に、起動時に
+    # 記録した呼び出し元 env 固有キーを unset してクリーンな状態を作る。
+    # (対象 env が同名キーを定義していれば直後の source で再設定される。)
+    local _k
+    for _k in $_CALLER_ENV_KEYS; do
+        unset "$_k"
+    done
     [ -f "env" ] && set -a && source ./env && set +a
     return 0
 }

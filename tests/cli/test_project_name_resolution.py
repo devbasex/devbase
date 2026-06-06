@@ -160,6 +160,35 @@ def test_resolve_missing_env_file_is_noop(fake_root):
     assert os.environ["COMPOSE_PROJECT_NAME"] == "carmo"
 
 
+def test_resolve_clears_caller_only_env_keys(fake_root, monkeypatch):
+    """別プロジェクトから直接起動した際、呼び出し元固有の env キーが残留しない。
+
+    codex 指摘 (bin/devbase:235 / _load_project_env) の回帰テスト。呼び出し元
+    プロジェクト caller の env にしか無い ``DEV_SERVICE_NAME`` が対象プロジェクト
+    other へ誤って引き継がれないこと、共通キーは対象側の値が勝つことを固定する。
+    """
+    for k in ("DEV_SERVICE_NAME", "SHARED"):
+        monkeypatch.delenv(k, raising=False)
+    caller = fake_root / "projects" / "caller"
+    caller.mkdir()
+    (caller / "env").write_text("DEV_SERVICE_NAME=caller_svc\nSHARED=caller_shared\n")
+    other = fake_root / "projects" / "other"
+    other.mkdir()
+    (other / "env").write_text("SHARED=other_shared\n")
+
+    # 呼び出し元プロジェクト内から起動した状況を再現 (env を os.environ へ反映)。
+    monkeypatch.chdir(caller)
+    container._load_project_env(Path("env"))
+    assert os.environ["DEV_SERVICE_NAME"] == "caller_svc"
+
+    assert container._resolve_project_name("other") is True
+    # 呼び出し元固有キーは unset され残留しない
+    assert "DEV_SERVICE_NAME" not in os.environ
+    # 共通キーは対象プロジェクトの値が勝つ
+    assert os.environ["SHARED"] == "other_shared"
+    assert os.environ["COMPOSE_PROJECT_NAME"] == "other"
+
+
 def test_load_project_env_diverges_from_shell_source(tmp_path, monkeypatch):
     """shell ``source`` との仕様乖離を固定する回帰テスト (docstring の note 対応)。
 
@@ -244,6 +273,69 @@ def _build_args(result):
         if line.startswith("BUILD:"):
             return line[len("BUILD:"):]
     return None
+
+
+def _run_wrapper_from(args, devbase_root, cwd):
+    """`_run_wrapper` と同じだが任意の CWD から起動し env 残留を検証できる版。
+
+    run_python スタブが ``DEV_SERVICE_NAME`` の値も出力するため、呼び出し元 env の
+    残留有無を判定できる。
+    """
+    harness = (
+        'run_python() { echo "PWD:$PWD"; echo "PYTHON:$*"; '
+        'echo "DEV_SERVICE_NAME:${DEV_SERVICE_NAME:-<unset>}"; '
+        'echo "SHARED:${SHARED:-<unset>}"; exit 0; }\n'
+        'cmd_build() { echo "PWD:$PWD"; echo "BUILD:$*"; exit 0; }\n'
+        'ensure_uv() { :; }\n'
+        'eval "$(sed -e \'/^run_python()/,/^}/d\' '
+        '            -e \'/^ensure_uv()/,/^}/d\' '
+        '            -e \'/^cmd_build()/,/^}/d\' '
+        '            -e \'/^DEVBASE_ROOT=/d\' "$WRAPPER_PATH")"\n'
+    )
+    env = {
+        **os.environ,
+        "DEVBASE_ROOT": str(devbase_root),
+        "WRAPPER_PATH": str(WRAPPER),
+    }
+    env.pop("DEV_SERVICE_NAME", None)
+    env.pop("SHARED", None)
+    return subprocess.run(
+        ["bash", "-c", harness, "devbase", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(cwd),
+    )
+
+
+def _stdout_field(result, prefix):
+    for line in result.stdout.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix):]
+    return None
+
+
+def test_wrapper_clears_caller_only_env_on_project_switch(tmp_path):
+    """別プロジェクト内から `up <name>` した際、呼び出し元固有 env が残らない。
+
+    codex 指摘 (bin/devbase:235) の回帰テスト。呼び出し元 caller の env にしか無い
+    ``DEV_SERVICE_NAME`` が対象 carmo へ引き継がれず、共通キー ``SHARED`` は対象側の
+    値が勝つことを wrapper 経路で固定する。
+    """
+    root = tmp_path
+    carmo = root / "projects" / "carmo"
+    carmo.mkdir(parents=True)
+    (carmo / "env").write_text("SHARED=carmo_shared\n")
+    caller = root / "projects" / "caller"
+    caller.mkdir(parents=True)
+    (caller / "env").write_text("DEV_SERVICE_NAME=caller_svc\nSHARED=caller_shared\n")
+
+    r = _run_wrapper_from(["up", "carmo"], root, caller)
+    assert _pwd(r).endswith("/projects/carmo"), r.stdout
+    # 呼び出し元固有キーは残留しない
+    assert _stdout_field(r, "DEV_SERVICE_NAME:") == "<unset>", r.stdout
+    # 共通キーは対象プロジェクトの値が勝つ
+    assert _stdout_field(r, "SHARED:") == "carmo_shared", r.stdout
 
 
 def test_wrapper_project_up_name_cds_and_strips(wrapper_root):
