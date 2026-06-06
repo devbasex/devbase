@@ -177,7 +177,9 @@ def cmd_project_list(devbase_root: Path, args) -> int:
 
     # 対話選択はデフォルト ON。ただし非 TTY (パイプ / CI / リダイレクト) では
     # input() が EOFError になり実用にならないため、自動的に一覧表示へフォールバック。
-    if getattr(args, "interactive", True) and sys.stdin.isatty():
+    # stdin / stdout のいずれかが非 TTY (`devbase list | cat`, `> out.txt` 等) なら
+    # 対話プロンプトが表示できない / 読めないため、確実に一覧表示へフォールバックする。
+    if getattr(args, "interactive", True) and sys.stdin.isatty() and sys.stdout.isatty():
         return _interactive_select_and_up(rows)
 
     _print_table(rows)
