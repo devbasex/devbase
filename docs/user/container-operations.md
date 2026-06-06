@@ -238,12 +238,16 @@ devbase project logs -f --tail 100
 ### プロジェクト一覧
 
 ```bash
-# 全プロジェクトを NAME / PLUGIN / STATUS で一覧表示
+# 一覧を表示し、番号で選択して起動（TTY ではこれがデフォルト）
 devbase list
 
-# 一覧から選択して起動（非対話環境では番号入力にフォールバック）
-devbase list -i
+# 選択せず NAME / PLUGIN / STATUS の一覧表示のみ
+devbase list --no-interactive   # --plain / -P も同義
 ```
+
+> TTY（端末）では `devbase list` はデフォルトで対話選択になり、番号入力で
+> そのプロジェクトを起動します。パイプ・リダイレクト・CI などの非 TTY 環境では
+> 自動的に一覧表示のみにフォールバックします。
 
 `devbase project ps` が「対象プロジェクト 1 つのコンテナ状態」を表示するのに対し、
 `devbase list` は「全プロジェクトの横断一覧」を表示します。

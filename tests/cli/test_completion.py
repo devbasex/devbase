@@ -135,7 +135,7 @@ def test_bash_top_level_ps_flag_after_name(fake_root):
 
 def test_bash_project_list_flags(fake_root):
     out = _bash_complete("devbase project list '-'", 3, fake_root)
-    assert set(out) == {"--interactive", "-i"}
+    assert set(out) == {"--no-interactive", "--plain", "-P", "--interactive", "-i"}
 
 
 def test_bash_top_level_commands_include_project_and_list(fake_root):

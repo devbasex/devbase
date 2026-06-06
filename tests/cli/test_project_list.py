@@ -222,6 +222,30 @@ def test_cmd_project_list_empty(tmp_path, capsys):
     assert rc == 0
 
 
+def test_cmd_project_list_non_tty_falls_back_to_table(tmp_path, monkeypatch, capsys):
+    """interactive=True (デフォルト) でも非 TTY では一覧表示にフォールバックする。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for",
+                        lambda entry: {"name": entry.name, "status": "stopped", "count": 0})
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: False)
+
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert called == [], "非 TTY では対話起動しない"
+    assert "alpha-proj" in out
+
+
 # ---------------------------------------------------------------------------
 # cmd_project_list: --interactive
 # ---------------------------------------------------------------------------
@@ -237,6 +261,8 @@ def test_cmd_project_list_interactive_selects_and_ups(tmp_path, monkeypatch):
     _link_project(tmp_path, "beta-proj", "plugins/beta", "beta-proj")
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
 
+    # 対話選択は TTY 環境でのみ起動するため isatty を True に固定する。
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     # 番号 "2" を選択 (sorted: alpha-proj=1, beta-proj=2)
     monkeypatch.setattr("builtins.input", lambda *a, **k: "2")
 
@@ -261,6 +287,7 @@ def test_cmd_project_list_interactive_empty_input_aborts(tmp_path, monkeypatch):
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda *a, **k: "")
 
     called = []
@@ -285,6 +312,7 @@ def test_cmd_project_list_interactive_non_tty_eof(tmp_path, monkeypatch):
     def raise_eof(*a, **k):
         raise EOFError
 
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", raise_eof)
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
@@ -308,6 +336,7 @@ def test_cmd_project_list_interactive_keyboard_interrupt_aborts(tmp_path, monkey
     def raise_interrupt(*a, **k):
         raise KeyboardInterrupt
 
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", raise_interrupt)
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
@@ -328,6 +357,7 @@ def test_cmd_project_list_interactive_out_of_range_reprompts(tmp_path, monkeypat
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
 
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     # "99" (範囲外) → "1" (有効) の順に入力 → 再入力後に up が起動する
     inputs = iter(["99", "1"])
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
@@ -351,6 +381,7 @@ def test_cmd_project_list_interactive_non_numeric_reprompts(tmp_path, monkeypatc
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
 
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     # "abc" (数値以外) → "1" (有効)
     inputs = iter(["abc", "1"])
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
@@ -369,18 +400,28 @@ def test_cmd_project_list_interactive_non_numeric_reprompts(tmp_path, monkeypatc
 # ---------------------------------------------------------------------------
 
 def test_parser_project_list():
+    # 対話選択はデフォルト ON (フラグ無しで interactive=True)。
     parser = cli._create_parser()
     args = parser.parse_args(["project", "list"])
     assert args.command == "project"
     assert args.subcommand == "list"
-    assert args.interactive is False
+    assert args.interactive is True
 
 
 def test_parser_project_list_interactive_flag():
+    # `-i` / `--interactive` は後方互換で受け付ける (実質 no-op、True のまま)。
     parser = cli._create_parser()
     for flag in ("--interactive", "-i"):
         args = parser.parse_args(["project", "list", flag])
         assert args.interactive is True
+
+
+def test_parser_project_list_no_interactive_flag():
+    # `--no-interactive` / `--plain` / `-P` で一覧表示のみ (interactive=False)。
+    parser = cli._create_parser()
+    for flag in ("--no-interactive", "--plain", "-P"):
+        args = parser.parse_args(["project", "list", flag])
+        assert args.interactive is False
 
 
 def test_parser_top_level_list_synonym():

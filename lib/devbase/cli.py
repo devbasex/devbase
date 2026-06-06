@@ -183,11 +183,18 @@ def _add_project_parser(subparsers):
 def _add_list_subparser(sub):
     """`list` サブコマンドを登録する (project list / top-level list 共通)。
 
-    NAME / PLUGIN / STATUS の一覧表示。`--interactive` で選択 → `project up` 起動。
+    NAME / PLUGIN / STATUS の一覧表示。デフォルトで対話選択 → `project up` 起動。
+    `--no-interactive` (`--plain`) で一覧表示のみ。非 TTY では自動的に一覧のみ。
     """
     p = sub.add_parser('list', help='List projects (NAME / PLUGIN / STATUS)')
-    p.add_argument('--interactive', '-i', action='store_true',
-                   help='Select a project interactively and start it')
+    # 対話選択をデフォルト ON にする。`-i` / `--interactive` は後方互換のため
+    # 引き続き受け付ける (既に default=True なので実質 no-op)。
+    p.add_argument('--interactive', '-i', dest='interactive',
+                   action='store_true', default=True,
+                   help='Select a project interactively and start it (default)')
+    p.add_argument('--no-interactive', '--plain', '-P', dest='interactive',
+                   action='store_false',
+                   help='Just print the table without interactive selection')
 
 
 def _add_env_parser(subparsers):
