@@ -163,7 +163,7 @@ devbase login
 devbase ps
 
 # ログの確認
-devbase container logs -f
+devbase project logs -f
 
 # 2番目のコンテナにログイン（並行作業）
 devbase login 2

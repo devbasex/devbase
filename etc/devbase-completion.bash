@@ -1,5 +1,26 @@
  # bash completion for devbase
 
+# projects/ 配下のプロジェクト名 (symlink / 実ディレクトリ) を列挙する。
+# `devbase project up <name>` やトップレベルシノニム `devbase up <name>` の
+# name 補完に使う。
+_devbase_project_names() {
+    local devbase_root
+    devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
+    local projects_dir="${devbase_root}/projects"
+    if [ -d "$projects_dir" ]; then
+        # -L で symlink を辿り -type d で判定することで、実ディレクトリと
+        # 「ディレクトリへの symlink」のみを列挙する (壊れた symlink / ファイルへの
+        # symlink は除外)。zsh 側 (*(N-/:t)) と挙動を揃える。GNU 専用の -xtype は
+        # BSD/macOS find で動かないため避け、POSIX/BSD/GNU 共通の -L を使う。
+        # basename 化は `xargs -r`(GNU 拡張) を避け、各行を POSIX パラメータ展開
+        # ${p##*/} で処理する (外部プロセス不要・空入力でも安全・BSD/macOS 互換)。
+        find -L "$projects_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+            | while IFS= read -r p; do
+                printf '%s\n' "${p##*/}"
+            done
+    fi
+}
+
 _devbase_completions() {
     local cur prev words cword
     _init_completion 2>/dev/null || {
@@ -10,7 +31,9 @@ _devbase_completions() {
         cword=$COMP_CWORD
     }
 
-    local commands="init status shell-rc container ct env plugin pl snapshot ss up down login build ps help"
+    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build ps scale list help"
+    # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
+    local project_subcommands="up down ps login logs scale build list"
     local container_subcommands="up down ps login logs scale build"
     local env_subcommands="init sync list set get delete edit project export import"
     local plugin_subcommands="list install uninstall update info sync repo"
@@ -25,6 +48,27 @@ _devbase_completions() {
             case "$prev" in
                 login)
                     COMPREPLY=($(compgen -W "1 2" -- "$cur"))
+                    ;;
+                # トップレベルシノニム: up/down/scale は [name] を取るため
+                # プロジェクト名を補完する (login=index / build=image は対象外)。
+                up|down|scale)
+                    COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                    ;;
+                # ps は [name] と -a フラグの両方を取る (project ps と同じ挙動)。
+                ps)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
+                    else
+                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                    fi
+                    ;;
+                # list は位置引数を取らず --interactive のみ。`-*` ガードを外し
+                # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
+                list)
+                    COMPREPLY=($(compgen -W "--interactive -i" -- "$cur"))
+                    ;;
+                project)
+                    COMPREPLY=($(compgen -W "$project_subcommands" -- "$cur"))
                     ;;
                 container|ct)
                     COMPREPLY=($(compgen -W "$container_subcommands" -- "$cur"))
@@ -42,7 +86,49 @@ _devbase_completions() {
             ;;
         3)
             local group="${words[1]}"
-            # container subcommand arguments
+            # トップレベルシノニム ps: `devbase ps web -<TAB>` (group=ps, cword=3)
+            # でも name 位置が埋まった後にフラグを補完する。project ps と対称化。
+            if [ "$group" = "ps" ]; then
+                if [[ "$cur" == -* ]]; then
+                    COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
+                fi
+            fi
+            # project subcommand arguments (推奨グループ)
+            if [ "$group" = "project" ]; then
+                case "$prev" in
+                    up|down)
+                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        ;;
+                    login)
+                        COMPREPLY=($(compgen -W "1 2" -- "$cur"))
+                        ;;
+                    scale)
+                        # `project scale <name> N` / `project scale N` の両形。
+                        # name 補完を提示する (数値はユーザが直接入力)。
+                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        ;;
+                    ps)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
+                        else
+                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        fi
+                        ;;
+                    logs)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--follow -f --tail" -- "$cur"))
+                        else
+                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        fi
+                        ;;
+                    # list は位置引数を取らず --interactive のみ。`-*` ガードを外し
+                    # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
+                    list)
+                        COMPREPLY=($(compgen -W "--interactive -i" -- "$cur"))
+                        ;;
+                esac
+            fi
+            # container subcommand arguments (非推奨: project へ移行してください)
             if [ "$group" = "container" ] || [ "$group" = "ct" ]; then
                 case "$prev" in
                     login)
@@ -142,6 +228,22 @@ _devbase_completions() {
             ;;
         4)
             local group="${words[1]}"
+            # project ps/logs: name 位置が埋まった後 (例: `project ps web -<TAB>`)
+            # でもフラグを補完する。subcommand は words[2]。
+            if [ "$group" = "project" ]; then
+                case "${words[2]}" in
+                    ps)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
+                        fi
+                        ;;
+                    logs)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--follow -f --tail" -- "$cur"))
+                        fi
+                        ;;
+                esac
+            fi
             # plugin install flags after source argument
             if [ "$group" = "plugin" ] || [ "$group" = "pl" ]; then
                 if [ "${words[2]}" = "install" ]; then

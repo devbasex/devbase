@@ -12,6 +12,27 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 DEVBASE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# env ファイルから「定義されている変数キー名」だけを抽出する (値は読まない)。
+# project 切替時に呼び出し元プロジェクト固有の env キーを unset するために使う。
+# Python フォールバック側 (_load_project_env) の KEY=VALUE パーサと同じ前提で
+# 解釈する: 行頭の空白除去 → 先頭 `#` はコメント → 任意の `export ` 接頭辞除去 →
+# `=` の左辺をキーとして採用。シェル展開やコマンド置換は解釈しない (値は無視)。
+env_var_keys() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    local raw line key
+    while IFS= read -r raw || [ -n "$raw" ]; do
+        line="${raw#"${raw%%[![:space:]]*}"}"   # 行頭空白除去
+        case "$line" in ''|'#'*) continue ;; esac
+        line="${line#export }"
+        line="${line#"${line%%[![:space:]]*}"}"  # export 後の空白除去
+        case "$line" in *=*) ;; *) continue ;; esac
+        key="${line%%=*}"
+        key="${key%"${key##*[![:space:]]}"}"     # キー末尾空白除去
+        [ -n "$key" ] && printf '%s\n' "$key"
+    done < "$file"
+}
+
 # Environment setup
 export DOCKER_GID=$( [ "$(uname)" = "Darwin" ] && echo "0" || grep docker /etc/group | cut -d: -f3 )
 export COMPOSE_PROJECT_NAME=$(basename "$PWD")
@@ -21,6 +42,16 @@ export COMPOSE_PROJECT_NAME=$(basename "$PWD")
 # なる。compose は同階層の .env を自動で読むため wrapper 側で project .env を
 # source する必要は無い。
 [ -f "${DEVBASE_ROOT}/.env" ] && set -a && source "${DEVBASE_ROOT}/.env" && set +a
+
+# 呼び出し元 (初期 CWD) の env で定義された変数キーを記録しておく。
+# project 切替 (maybe_cd_project) 時に「呼び出し元プロジェクトにしか無い変数」を
+# unset してから対象 env を source するために使う。これをしないと、対象 env に
+# 同名キーが無い場合に呼び出し元プロジェクト固有の値 (例: DEV_SERVICE_NAME) が
+# 残留し、`devbase project up other` を別プロジェクト内から実行した際に誤って
+# 引き継がれてしまう (codex 指摘 / PR#33 bin/devbase:235)。
+# env パース仕様は env_var_keys() のコメント参照。
+_CALLER_ENV_KEYS=""
+[ -f "env" ] && _CALLER_ENV_KEYS="$(env_var_keys ./env)"
 [ -f "env" ] && set -a && source ./env && set +a
 
 # Export for Python modules
@@ -168,16 +199,82 @@ run_python() {
 # Resolve abbreviated command to full command name via unique prefix matching
 resolve_command() {
     local input="$1"
-    local commands="init status shell-rc container ct env plugin pl snapshot ss up down login build ps scale help"
+    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build ps scale list help"
     local matches=()
     for cmd in $commands; do
         [[ "$cmd" == "$input"* ]] && matches+=("$cmd")
     done
     if [ ${#matches[@]} -eq 1 ]; then
         echo "${matches[0]}"
-    else
-        echo "$input"  # no match or ambiguous -> return as-is
+        return
     fi
+    # ambiguous の場合の後方互換 preference。`list` 追加で `l` が login/list の
+    # 両方にマッチするようになったため、既存の `devbase l` → `login` を維持する。
+    # cli.py の TOP_PREFIX_PREFERENCES と同期させること。
+    if [ ${#matches[@]} -gt 1 ]; then
+        local preferred=""
+        case "$input" in
+            l) preferred="login" ;;
+        esac
+        if [ -n "$preferred" ]; then
+            for m in "${matches[@]}"; do
+                [ "$m" = "$preferred" ] && { echo "$preferred"; return; }
+            done
+        fi
+    fi
+    echo "$input"  # no match or ambiguous -> return as-is
+}
+
+# ===================================================================
+# Project name resolution (PLAN06 Task 2)
+# ===================================================================
+# `devbase project <sub> <name>` および同義のトップレベルシノニム
+# `devbase <sub> <name>` の <name> が $DEVBASE_ROOT/projects/<name> に実在する
+# 場合、そのディレクトリへ cd し COMPOSE_PROJECT_NAME / env を再設定する。
+# これにより任意の CWD からプロジェクトを指定してコンテナ操作できる。
+#
+# 重要: `build` は shell 実装 (cmd_build) が CWD で動くため、この wrapper cd
+# だけが build の name 解決手段になる (PLAN06 方針 A の核心)。Python 側 chdir
+# フォールバックでは build を救えない。
+#
+# <name> 判定は projects/ 配下の実在性で行う。これにより `login <index>` /
+# `build <image>` / `scale <N>` の既存 positional と曖昧にならない: 実在する
+# プロジェクト名のときだけ name として解釈し cd + strip する。実在しなければ
+# 引数はそのまま下流 (Python パーサ) へ渡し、Python 側で index/image/scale
+# あるいは「存在しない name」エラーとして扱わせる。
+
+# name 候補を受け取り projects/ 配下に実在すれば cd + env 再設定して 0 を返す。
+maybe_cd_project() {
+    local name="${1:-}"
+    case "$name" in -*|"") return 1 ;; esac   # フラグ・空は name ではない
+    local target="${DEVBASE_ROOT}/projects/${name}"
+    [ -d "$target" ] || return 1
+    cd "$target" || return 1
+    export COMPOSE_PROJECT_NAME="$name"
+    # cd 後にプロジェクトの env を再 source (初期 CWD で読んだ値を上書き)。
+    # project の .env (dotfile) は CRLF / 特殊文字対策で意図的に source しない
+    # 方針を踏襲する (冒頭コメント参照)。
+    #
+    # 注意: env は環境変数定義のみを想定したファイルであり subshell ではなく
+    # 現プロセスで source する。これは wrapper 冒頭 L23-24 の env 読み込みと同一
+    # 意図 — set -a で export した変数を後続の run_python / cmd_build へ引き継ぐ
+    # ため、変数が親プロセスに残らない subshell 化はできない。代償として env 内に
+    # `exit` 等があると wrapper ごと終了するが、env は (a) プロジェクト所有者が
+    # 管理する信頼境界内のファイルで (b) 元々 L24 で初期 CWD でも source される
+    # ため、ここで新たなリスクが増えるわけではない。万一 exit を含む env を読んで
+    # も「該当プロジェクトの操作が中断する」だけで他プロジェクトへ波及しない。
+    #
+    # 重要 (codex 指摘 / PR#33 bin/devbase:235): 単に対象 env を source するだけ
+    # では、呼び出し元プロジェクトの env にしか無いキー (例: DEV_SERVICE_NAME) が
+    # 残留し、対象プロジェクトへ誤って引き継がれる。対象 env を読む前に、起動時に
+    # 記録した呼び出し元 env 固有キーを unset してクリーンな状態を作る。
+    # (対象 env が同名キーを定義していれば直後の source で再設定される。)
+    local _k
+    for _k in $_CALLER_ENV_KEYS; do
+        unset "$_k"
+    done
+    [ -f "env" ] && set -a && source ./env && set +a
+    return 0
 }
 
 # Resolve the command (skip flags like --version, -V, -h, --help)
@@ -187,14 +284,81 @@ case "$_resolved_cmd" in
     *) _resolved_cmd="$(resolve_command "$_resolved_cmd")" ;;
 esac
 
+# name 解決: 実在するプロジェクト名を検出したら cd し、その token を argv から
+# 取り除いた配列 _DEVBASE_ARGS を組み立てる。検出しなければ素通し。
+# name 候補の位置:
+#   project|container <sub> <name>  -> $3 (サブコマンドは保持)
+#   トップレベルシノニム <sub> <name> -> $2
+#
+# 重要 (PLAN06 codex 指摘対応): `project`/`container` グループでは parser が
+# `name` positional を持つサブコマンド (`up`/`down`/`ps`/`logs`/`scale`) に限定
+# して $3 を name 解決する。`project login` / `project build` は単一 positional が
+# index / image (旧 container 互換) であり parser が name を受け付けない
+# (cli.py の _add_login_subparser / _add_build_subparser 参照)。これらで $3 を
+# name strip すると、`project build web` の image=web や `project login web` の
+# index 引数が実在プロジェクト名と一致した瞬間に消えて別操作へ化けるため除外する。
+#
+# トップレベルシノニム (`build`/`login` を含む) は従来どおり「実在 project なら
+# cd」方針を維持する: トップレベル `build`/`login` は Python parser を経由せず
+# shell cmd_build / wrapper cd だけが name 指定の手段であり、`build carmo` /
+# `login carmo` を「そのプロジェクトを操作」と解釈する設計 (存在性ベース判定)。
+_DEVBASE_ARGS=("${@:2}")
+# 同期注意 (メンテナンス性): 下記 2 リストは cli.py の parser 定義に対応する。
+#   _PROJECT_NAME_SUBCOMMANDS = `project`/`container` で `name` positional を
+#       受け付けるサブコマンド集合。cli.py の _add_project_parser で
+#       `add_argument('name', ...)` を持つもの (up/down/ps/logs/scale) と一致させる。
+#       login/build は index/image 互換のため意図的に除外 (上のコメント参照)。
+#   _NAME_RESOLVABLE_SHORTCUTS = トップレベルシノニムのうち「実在 project なら cd」
+#       を許すもの。cli.py の SHORTCUTS 経由で project サブコマンドへ写像される
+#       集合 + shell 実装の build を含む。
+# cli.py 側でサブコマンドを追加/削除した際は両リストの更新漏れに注意すること
+# (cli.py の _add_project_parser / SHORTCUTS にも対の注記あり)。
+#
+# ⚠ 衝突注意 (footgun): トップレベルシノニムの name 解決は「存在性ベース」で
+# 行うため、本来 positional 引数として渡したい値が実在プロジェクト名
+# ($DEVBASE_ROOT/projects/<name>) と一致した場合、その引数が name と解釈され
+# project 解決 (cd) が優先されて引数の意味が変わる。具体的には:
+#   - `devbase login <index>` の index が実在プロジェクト名と一致
+#       (例: projects/2 が存在する状態で `devbase login 2`) → index=2 ではなく
+#       project `2` への cd になり、login の対象が変わる。
+#   - `devbase build <image>` の image が実在プロジェクト名と一致
+#       (例: projects/web が存在する状態で `devbase build web`) → image=web では
+#       なく project `web` への cd になり、ビルド対象が変わる。
+#   - `devbase scale <service>` の service 引数も同様に化けうる。
+# これはトップレベル build/login/scale を「そのプロジェクトを操作」と解釈する
+# 意図的設計 (存在性ベース判定) のトレードオフであり、挙動としては仕様である。
+# 回避策: 衝突時は対象プロジェクトのディレクトリ内で実行するか、明示的に
+# そのプロジェクトへ切り替えてから (cd 済みの状態で) コマンドを実行すること。
+# こうすれば name 解決トークンを与える必要がなくなり、index/image/service を
+# 意図どおり渡せる。
+_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale "
+_NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build "
+case "$_resolved_cmd" in
+    project|container|ct)
+        # `ct` は container の alias (cli.py: add_parser('container', aliases=['ct']))。
+        # name 解決経路でも container と同じ strip/chdir を通すため分岐に含める。
+        # _resolved_cmd は `ct` のまま python に渡してよい (cli.py 側で alias 解決済み)。
+        if [[ "$_PROJECT_NAME_SUBCOMMANDS" == *" ${2:-} "* ]] \
+           && maybe_cd_project "${3:-}"; then
+            _DEVBASE_ARGS=("${2:-}" "${@:4}")
+        fi
+        ;;
+    *)
+        if [[ "$_NAME_RESOLVABLE_SHORTCUTS" == *" $_resolved_cmd "* ]] \
+           && maybe_cd_project "${2:-}"; then
+            _DEVBASE_ARGS=("${@:3}")
+        fi
+        ;;
+esac
+
 case "$_resolved_cmd" in
     # Python-implemented commands
     --version|-V)
         run_python "$@" ;;
-    init|status|shell-rc|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale)
-        run_python "${_resolved_cmd}" "${@:2}" ;;
+    init|status|shell-rc|project|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale|list)
+        run_python "${_resolved_cmd}" "${_DEVBASE_ARGS[@]}" ;;
     # Shell-implemented commands
-    build)  shift; cmd_build "$@" ;;
+    build)  cmd_build "${_DEVBASE_ARGS[@]}" ;;
     # Help and unknown
     -h|--help|help|"") run_python "--help" ;;
     *)      echo "Error: unknown command '$1'" >&2; exit 1 ;;
