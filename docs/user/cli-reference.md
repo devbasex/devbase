@@ -160,6 +160,15 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 > ラッパー (`bin/devbase`) の存在性判定（`$DEVBASE_ROOT/projects/<name>` が実在すれば cd）で
 > 名前解決されます（実在しない場合は従来どおり `index` / `image` として下流へ渡されます）。
 
+> **⚠ 衝突注意（footgun）:** トップレベルシノニムの名前解決は「存在性ベース」のため、本来
+> positional 引数として渡したい値が実在プロジェクト名と一致すると、その引数が名前解決の対象と
+> なり project への `cd` が優先されて引数の意味が変わります。例えば `projects/2` が存在する状態の
+> `devbase login 2` は index=2 ではなく project `2` への操作に、`projects/web` が存在する状態の
+> `devbase build web` は image=web ではなく project `web` のビルドに化けます（`scale` の service 引数
+> も同様）。これは「`build carmo` / `login carmo` でそのプロジェクトを操作する」意図的設計の
+> トレードオフです。**回避策:** 衝突する場合は対象プロジェクトのディレクトリ内で実行するか、
+> 明示的にそのプロジェクトへ切り替えてから（`cd` 済みの状態で）コマンドを実行してください。
+
 ### `devbase project up`
 
 コンテナを起動します。

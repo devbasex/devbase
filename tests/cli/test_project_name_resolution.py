@@ -420,6 +420,21 @@ def test_wrapper_project_build_keeps_image_positional(wrapper_root):
     assert _python_args(r) == "project build carmo", r.stdout
 
 
+def test_wrapper_ct_up_name_cds_and_strips(wrapper_root):
+    """`ct up carmo` は container alias として name 解決される (codex 指摘 #319)。
+
+    `ct` は cli.py で container の alias (add_parser('container', aliases=['ct']))
+    のため、wrapper の name 解決 case でも `container` と同じ strip/chdir 経路を
+    通す。`ct` 自体は strip せず Python へ渡し、name のみ strip する。
+    """
+    r = _run_wrapper(["ct", "up", "carmo"], wrapper_root)
+    assert "unknown command" not in r.stderr.lower(), r.stderr
+    assert "unrecognized arguments" not in r.stderr.lower(), r.stderr
+    assert _pwd(r).endswith("/projects/carmo"), r.stdout
+    # name は strip されるが alias `ct` は保持して Python へ渡す
+    assert _python_args(r) == "ct up", r.stdout
+
+
 def test_wrapper_project_login_keeps_index_positional(wrapper_root):
     """`project login carmo` の carmo は index positional として素通しする。
 

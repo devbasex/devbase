@@ -313,10 +313,31 @@ _DEVBASE_ARGS=("${@:2}")
 #       集合 + shell 実装の build を含む。
 # cli.py 側でサブコマンドを追加/削除した際は両リストの更新漏れに注意すること
 # (cli.py の _add_project_parser / SHORTCUTS にも対の注記あり)。
+#
+# ⚠ 衝突注意 (footgun): トップレベルシノニムの name 解決は「存在性ベース」で
+# 行うため、本来 positional 引数として渡したい値が実在プロジェクト名
+# ($DEVBASE_ROOT/projects/<name>) と一致した場合、その引数が name と解釈され
+# project 解決 (cd) が優先されて引数の意味が変わる。具体的には:
+#   - `devbase login <index>` の index が実在プロジェクト名と一致
+#       (例: projects/2 が存在する状態で `devbase login 2`) → index=2 ではなく
+#       project `2` への cd になり、login の対象が変わる。
+#   - `devbase build <image>` の image が実在プロジェクト名と一致
+#       (例: projects/web が存在する状態で `devbase build web`) → image=web では
+#       なく project `web` への cd になり、ビルド対象が変わる。
+#   - `devbase scale <service>` の service 引数も同様に化けうる。
+# これはトップレベル build/login/scale を「そのプロジェクトを操作」と解釈する
+# 意図的設計 (存在性ベース判定) のトレードオフであり、挙動としては仕様である。
+# 回避策: 衝突時は対象プロジェクトのディレクトリ内で実行するか、明示的に
+# そのプロジェクトへ切り替えてから (cd 済みの状態で) コマンドを実行すること。
+# こうすれば name 解決トークンを与える必要がなくなり、index/image/service を
+# 意図どおり渡せる。
 _PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale "
 _NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build "
 case "$_resolved_cmd" in
-    project|container)
+    project|container|ct)
+        # `ct` は container の alias (cli.py: add_parser('container', aliases=['ct']))。
+        # name 解決経路でも container と同じ strip/chdir を通すため分岐に含める。
+        # _resolved_cmd は `ct` のまま python に渡してよい (cli.py 側で alias 解決済み)。
         if [[ "$_PROJECT_NAME_SUBCOMMANDS" == *" ${2:-} "* ]] \
            && maybe_cd_project "${3:-}"; then
             _DEVBASE_ARGS=("${2:-}" "${@:4}")
