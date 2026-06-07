@@ -144,7 +144,7 @@ def test_list_projects_enumerates_name_plugin_status(tmp_path, monkeypatch):
     _link_project(tmp_path, "beta-proj", "plugins/beta", "beta-proj")
 
     # status は docker に依存させず固定値を返す
-    def fake_status(entry: Path):
+    def fake_status(entry, counts=None):
         return {"name": entry.name, "status": "running (2 containers)", "count": 2}
 
     monkeypatch.setattr(status_mod, "_container_status_for", fake_status)
@@ -165,7 +165,7 @@ def test_list_projects_unknown_status_when_none(tmp_path, monkeypatch):
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
 
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
 
     rows = project_mod.list_projects(tmp_path / "projects")
     assert rows[0]["status"] == "unknown"
@@ -179,7 +179,7 @@ def test_list_projects_real_dir_plugin_dash(tmp_path, monkeypatch):
     projects_dir.mkdir()
     (projects_dir / "standalone").mkdir()
 
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
 
     rows = project_mod.list_projects(projects_dir)
     assert rows[0]["name"] == "standalone"
@@ -202,7 +202,7 @@ def test_cmd_project_list_prints_table(tmp_path, monkeypatch, capsys):
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
     monkeypatch.setattr(status_mod, "_container_status_for",
-                        lambda entry: {"name": entry.name, "status": "stopped", "count": 0})
+                        lambda entry, counts=None: {"name": entry.name, "status": "stopped", "count": 0})
 
     args = types.SimpleNamespace(interactive=False)
     rc = project_mod.cmd_project_list(tmp_path, args)
@@ -231,7 +231,7 @@ def test_cmd_project_list_non_tty_falls_back_to_table(tmp_path, monkeypatch, cap
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
     monkeypatch.setattr(status_mod, "_container_status_for",
-                        lambda entry: {"name": entry.name, "status": "stopped", "count": 0})
+                        lambda entry, counts=None: {"name": entry.name, "status": "stopped", "count": 0})
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: False)
 
     called = []
@@ -256,7 +256,7 @@ def test_cmd_project_list_stdout_non_tty_falls_back_to_table(tmp_path, monkeypat
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
     monkeypatch.setattr(status_mod, "_container_status_for",
-                        lambda entry: {"name": entry.name, "status": "stopped", "count": 0})
+                        lambda entry, counts=None: {"name": entry.name, "status": "stopped", "count": 0})
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: False)
 
@@ -285,7 +285,7 @@ def test_cmd_project_list_interactive_selects_and_ups(tmp_path, monkeypatch):
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
     _make_plugin_project(tmp_path, "plugins/beta", "beta-proj")
     _link_project(tmp_path, "beta-proj", "plugins/beta", "beta-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
 
     # 対話選択は TTY 環境でのみ起動するため isatty を True に固定する。
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
@@ -313,7 +313,7 @@ def test_cmd_project_list_interactive_empty_input_aborts(tmp_path, monkeypatch):
 
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda *a, **k: "")
@@ -335,7 +335,7 @@ def test_cmd_project_list_interactive_non_tty_eof(tmp_path, monkeypatch):
 
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
 
     def raise_eof(*a, **k):
         raise EOFError
@@ -360,7 +360,7 @@ def test_cmd_project_list_interactive_keyboard_interrupt_aborts(tmp_path, monkey
 
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
 
     def raise_interrupt(*a, **k):
         raise KeyboardInterrupt
@@ -385,7 +385,7 @@ def test_cmd_project_list_interactive_out_of_range_reprompts(tmp_path, monkeypat
 
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
@@ -410,7 +410,7 @@ def test_cmd_project_list_interactive_non_numeric_reprompts(tmp_path, monkeypatc
 
     _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
     _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry: None)
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
@@ -559,7 +559,7 @@ def test_get_container_status_uses_per_entry(tmp_path, monkeypatch):
     (projects_dir / "b").mkdir()
 
     monkeypatch.setattr(status_mod, "_container_status_for",
-                        lambda entry: {"name": entry.name, "status": "stopped", "count": 0})
+                        lambda entry, counts=None: {"name": entry.name, "status": "stopped", "count": 0})
     results = status_mod._get_container_status(projects_dir)
     names = sorted(r["name"] for r in results)
     assert names == ["a", "b"]

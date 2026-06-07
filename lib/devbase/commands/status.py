@@ -1,6 +1,5 @@
 """devbase status - 環境ステータスの一覧表示"""
 
-import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -16,70 +15,78 @@ except ImportError:
 logger = get_logger(__name__)
 
 
-def _container_status_for(entry: Path) -> dict | None:
-    """単一プロジェクトディレクトリのコンテナ状態を取得する。
+_COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 
-    `projects/<name>` (実ディレクトリ or plugin への symlink) を受け取り、
-    ``{"name", "status", "count"}`` を返す。対象外 (compose.yml が無い) や docker
-    コマンドが利用できない / タイムアウト / 異常終了の場合は ``None`` を返す。
+# `counts` 引数の「未指定」を docker 不在 (None) と区別するための sentinel。
+_UNSET = object()
 
-    PLAN06 で ``project list`` (commands/project.py) が同じ per-entry ロジックを
-    再利用するため、``_get_container_status`` のループ本体から分離した。挙動は
-    分離前と同一 (None を返す条件 = 旧実装で ``continue`` していた条件)。
+
+def _running_counts_by_project() -> dict[str, int] | None:
+    """全 running コンテナを単一の ``docker ps`` で取得し、compose project 名
+    ごとの running 数を返す。docker が使えない / 取得失敗時は ``None``。
+
+    プロジェクト数ぶん ``docker compose ps`` を起動する代わりに ``docker ps``
+    1 回で全コンテナのラベルを集計し、サブプロセス起動コストを N→1 に削減する。
+    compose project は ``com.docker.compose.project`` ラベル (= devbase up 時の
+    COMPOSE_PROJECT_NAME = プロジェクト名) で識別するため、呼び出し側プロセスが
+    継承する COMPOSE_PROJECT_NAME に一切影響されない (一覧が一律同一状態になる
+    回帰を構造的に回避する)。``docker ps`` は既定で running のみを列挙する。
     """
-    compose_file = entry / "compose.yml"
-    if not compose_file.exists():
-        return None
-
     try:
         proc = subprocess.run(
-            ["docker", "compose", "ps", "--format", "json"],
-            cwd=str(entry),
+            ["docker", "ps",
+             "--filter", f"label={_COMPOSE_PROJECT_LABEL}",
+             "--format", f'{{{{.Label "{_COMPOSE_PROJECT_LABEL}"}}}}'],
             capture_output=True,
             text=True,
             timeout=10,
         )
         if proc.returncode != 0:
             return None
-
-        output = proc.stdout.strip()
-        if not output:
-            return {"name": entry.name, "status": "stopped", "count": 0}
-
-        # docker compose ps --format json は1行1JSONまたはJSON配列
-        containers = []
-        for line in output.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                parsed = json.loads(line)
-                if isinstance(parsed, list):
-                    containers.extend(parsed)
-                else:
-                    containers.append(parsed)
-            except json.JSONDecodeError:
-                continue
-
-        if not containers:
-            return {"name": entry.name, "status": "stopped", "count": 0}
-
-        running = sum(
-            1 for c in containers
-            if c.get("State", "").lower() == "running"
-        )
-        total = len(containers)
-
-        if running > 0:
-            status = f"running ({total} containers)"
-        else:
-            status = "stopped"
-
-        return {"name": entry.name, "status": status, "count": total}
-
     except (subprocess.TimeoutExpired, OSError):
-        # dockerコマンドが利用できない、またはタイムアウト
+        # docker コマンドが利用できない、またはタイムアウト
         return None
+
+    counts: dict[str, int] = {}
+    for line in proc.stdout.splitlines():
+        name = line.strip()
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _container_status_for(entry: Path, counts=_UNSET) -> dict | None:
+    """単一プロジェクトディレクトリのコンテナ状態を取得する。
+
+    `projects/<name>` (実ディレクトリ or plugin への symlink) を受け取り、
+    ``{"name", "status", "count"}`` を返す。対象外 (compose.yml が無い) や docker
+    コマンドが利用できない場合は ``None`` を返す。
+
+    ``counts`` には ``_running_counts_by_project()`` の戻り値 (compose project 名
+    → running 数) を渡す。一覧表示では呼び出し側が 1 回だけ集計して全 entry で
+    使い回すことで docker サブプロセスの起動を 1 回に抑える。``counts`` を省略
+    した単発呼び出しでは本関数内で都度集計する。``None`` (docker 不在) が明示的に
+    渡された場合は再集計せず ``None`` を返す。
+    """
+    compose_file = entry / "compose.yml"
+    if not compose_file.exists():
+        return None
+
+    if counts is _UNSET:
+        counts = _running_counts_by_project()
+    if counts is None:
+        # docker が利用できない / 取得失敗
+        return None
+
+    # devbase up は COMPOSE_PROJECT_NAME = entry.name でコンテナを起動するため、
+    # compose project ラベルが entry.name の running 数がこのプロジェクトの稼働数。
+    running = counts.get(entry.name, 0)
+    if running > 0:
+        status = f"running ({running} containers)"
+    else:
+        status = "stopped"
+
+    return {"name": entry.name, "status": status, "count": running}
 
 
 def _get_container_status(projects_dir: Path) -> list[dict]:
@@ -88,10 +95,13 @@ def _get_container_status(projects_dir: Path) -> list[dict]:
     if not projects_dir.exists():
         return results
 
+    # docker ps は 1 回だけ実行し、全 entry で使い回す。
+    counts = _running_counts_by_project()
+
     for entry in sorted(projects_dir.iterdir()):
         if not entry.is_dir():
             continue
-        status = _container_status_for(entry)
+        status = _container_status_for(entry, counts)
         if status is not None:
             results.append(status)
 
