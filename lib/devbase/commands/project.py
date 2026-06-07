@@ -27,9 +27,11 @@ except ImportError:  # pragma: no cover - 未導入環境のフォールバッ�
     TerminalMenu = None
     _HAVE_TERMINAL_MENU = False
 
-# STATUS 色付けの有効/無効。simple_term_menu の桁計算と ANSI が衝突する端末では
-# False に倒してプレーン表示にする (機能 > 装飾)。
-_STATUS_COLOR = True
+# STATUS 色付けの有効/無効。menu entry に ANSI を埋め込むと simple_term_menu の
+# wcswidth() が -1 を返し、表示幅計算とハイライト消去が崩れる。実機検証が完了する
+# まではメニューでは色を付けず False を既定とする (機能 > 装飾)。テーブル表示
+# (_print_table) は端末へ直接書くため影響を受けず、色付けは別途検討する。
+_STATUS_COLOR = False
 
 
 def _resolve_plugin_name(entry: Path) -> str | None:
@@ -150,9 +152,11 @@ def _build_menu_entries(rows: list[dict], colorize: bool = False) -> list[str]:
 
     返り値の index は rows の index と 1:1 対応する (entry i ↔ rows[i])。
     先頭 9 件には simple_term_menu のショートカット記法 ``[n]`` (n=1..9) を付与し、
-    数字キーで即ジャンプできるようにする。10 件目以降は ``[n] `` と同じ 4 文字幅
-    (スペース) で字下げして桁を揃える。``colorize`` が True のとき STATUS に
-    ANSI 色を付ける (検索/桁計算が崩れる端末向けに呼び出し側で False にできる)。
+    数字キーで即ジャンプできるようにする。simple_term_menu はショートカットが 1 件
+    でも定義されると全行に 4 文字幅のショートカットガターを自前描画するため、
+    10 件目以降は body のまま渡し、桁揃えはライブラリ側のガターに委ねる
+    (手前で字下げすると二重インデントになる)。``colorize`` が True のとき STATUS
+    に ANSI 色を付ける (検索/桁計算が崩れる端末向けに呼び出し側で False にできる)。
     """
     name_w = max(len("NAME"), *(len(r["name"]) for r in rows))
     plugin_w = max(len("PLUGIN"), *(len(r["plugin"]) for r in rows))
@@ -163,7 +167,9 @@ def _build_menu_entries(rows: list[dict], colorize: bool = False) -> list[str]:
         if i < 9:
             entries.append(f"[{i + 1}] {body}")
         else:
-            entries.append(f"    {body}")  # "[n] " と同じ 4 文字幅で字下げ
+            # ショートカット無し行はライブラリ側のガターが 4 文字ぶん字下げするため
+            # body をそのまま渡す (手前で字下げすると二重インデントになる)。
+            entries.append(body)
     return entries
 
 

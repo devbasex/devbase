@@ -586,10 +586,12 @@ def test_build_menu_entries_shortcuts_and_mapping():
     for i in range(9):
         assert entries[i].startswith(f"[{i + 1}] ")
         assert f"p{i}" in entries[i]
-    # 10 件目以降はショートカット無し (4 スペース始まりで桁を揃える)
-    assert entries[9].startswith("    ")
+    # 10 件目以降はショートカット無し。桁揃え (4 文字ガター) は simple_term_menu の
+    # ライブラリ側が描画するため、ここでは body をそのまま渡す (手前で字下げすると
+    # 二重インデントになる)。先頭にショートカット記法も手動字下げも付けない。
+    assert not entries[9].startswith(" ")
     assert not entries[9].lstrip().startswith("[")
-    assert "p9" in entries[9]
+    assert entries[9].startswith("p9")
     assert "p10" in entries[10]
 
 
