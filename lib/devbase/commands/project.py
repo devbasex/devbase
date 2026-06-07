@@ -112,6 +112,48 @@ def _print_table(rows: list[dict]) -> None:
         print(f"{r['name']:<{name_w}}  {r['plugin']:<{plugin_w}}  {r['status']}")
 
 
+# STATUS 色付け用 ANSI。実機で桁崩れ等が出る場合は _STATUS_COLOR を False にする。
+_ANSI_GREEN = "\033[32m"
+_ANSI_GREY = "\033[90m"
+_ANSI_RESET = "\033[0m"
+
+
+def _color_status(status: str) -> str:
+    """STATUS 文字列に色を付ける。running 系=緑 / stopped=灰 / その他=無装飾。
+
+    color 対象の文字列は status._container_status_for が返す
+    ``running (N containers)`` / ``stopped`` と、project.list_projects が補う
+    ``unknown`` を想定する。
+    """
+    if status.startswith("running"):
+        return f"{_ANSI_GREEN}{status}{_ANSI_RESET}"
+    if status == "stopped":
+        return f"{_ANSI_GREY}{status}{_ANSI_RESET}"
+    return status
+
+
+def _build_menu_entries(rows: list[dict], colorize: bool = False) -> list[str]:
+    """rows を simple_term_menu 用の表示文字列へ変換する。
+
+    返り値の index は rows の index と 1:1 対応する (entry i ↔ rows[i])。
+    先頭 9 件には simple_term_menu のショートカット記法 ``[n]`` (n=1..9) を付与し、
+    数字キーで即ジャンプできるようにする。10 件目以降は ``[n] `` と同じ 4 文字幅
+    (スペース) で字下げして桁を揃える。``colorize`` が True のとき STATUS に
+    ANSI 色を付ける (検索/桁計算が崩れる端末向けに呼び出し側で False にできる)。
+    """
+    name_w = max(len("NAME"), *(len(r["name"]) for r in rows))
+    plugin_w = max(len("PLUGIN"), *(len(r["plugin"]) for r in rows))
+    entries: list[str] = []
+    for i, r in enumerate(rows):
+        status = _color_status(r["status"]) if colorize else r["status"]
+        body = f"{r['name']:<{name_w}}  {r['plugin']:<{plugin_w}}  {status}"
+        if i < 9:
+            entries.append(f"[{i + 1}] {body}")
+        else:
+            entries.append(f"    {body}")  # "[n] " と同じ 4 文字幅で字下げ
+    return entries
+
+
 def _interactive_select_and_up(rows: list[dict]) -> int:
     """一覧から番号入力で 1 件選択し ``project up <name>`` を起動する。
 

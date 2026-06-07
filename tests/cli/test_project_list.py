@@ -563,3 +563,49 @@ def test_get_container_status_uses_per_entry(tmp_path, monkeypatch):
     results = status_mod._get_container_status(projects_dir)
     names = sorted(r["name"] for r in results)
     assert names == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# TUI: _build_menu_entries / _color_status
+# ---------------------------------------------------------------------------
+
+def test_build_menu_entries_shortcuts_and_mapping():
+    from devbase.commands.project import _build_menu_entries
+
+    rows = [{"name": f"p{i}", "plugin": "-", "status": "stopped"} for i in range(11)]
+    entries = _build_menu_entries(rows)
+
+    assert len(entries) == 11
+    # 先頭 9 件は [1]..[9] ショートカット付き (entry index と rows index は 1:1)
+    for i in range(9):
+        assert entries[i].startswith(f"[{i + 1}] ")
+        assert f"p{i}" in entries[i]
+    # 10 件目以降はショートカット無し (4 スペース始まりで桁を揃える)
+    assert entries[9].startswith("    ")
+    assert not entries[9].lstrip().startswith("[")
+    assert "p9" in entries[9]
+    assert "p10" in entries[10]
+
+
+def test_build_menu_entries_colorize_wraps_status():
+    from devbase.commands.project import _build_menu_entries
+
+    rows = [
+        {"name": "a", "plugin": "-", "status": "running (1 containers)"},
+        {"name": "b", "plugin": "-", "status": "stopped"},
+        {"name": "c", "plugin": "-", "status": "unknown"},
+    ]
+    entries = _build_menu_entries(rows, colorize=True)
+
+    assert "\033[32m" in entries[0] and "\033[0m" in entries[0]   # running=緑
+    assert "\033[90m" in entries[1]                                # stopped=灰
+    assert "\033[" not in entries[2]                               # unknown=無装飾
+
+
+def test_build_menu_entries_plain_has_no_ansi():
+    from devbase.commands.project import _build_menu_entries
+
+    rows = [{"name": "a", "plugin": "-", "status": "running (1 containers)"}]
+    entries = _build_menu_entries(rows, colorize=False)
+
+    assert "\033[" not in entries[0]
