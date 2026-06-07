@@ -32,8 +32,16 @@ def _container_status_for(entry: Path) -> dict | None:
         return None
 
     try:
+        # `--project-name entry.name` で明示 scope する。bin/devbase が常に
+        # COMPOSE_PROJECT_NAME を export しており、これを継承したまま
+        # `docker compose ps` を叩くと docker compose は継承 env を
+        # ディレクトリ由来名より優先するため、全プロジェクトがカレント
+        # プロジェクトの状態を返してしまう (一覧が一律 running / 同一コンテナ数
+        # になる回帰)。devbase up は COMPOSE_PROJECT_NAME = 各プロジェクト名
+        # (= entry.name) でコンテナを起動するため、同じ名前で scope する。
         proc = subprocess.run(
-            ["docker", "compose", "ps", "--format", "json"],
+            ["docker", "compose", "--project-name", entry.name,
+             "ps", "--format", "json"],
             cwd=str(entry),
             capture_output=True,
             text=True,
