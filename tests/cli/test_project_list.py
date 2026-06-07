@@ -290,6 +290,7 @@ def test_cmd_project_list_interactive_selects_and_ups(tmp_path, monkeypatch):
     # 対話選択は TTY 環境でのみ起動するため isatty を True に固定する。
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
     # 番号 "2" を選択 (sorted: alpha-proj=1, beta-proj=2)
     monkeypatch.setattr("builtins.input", lambda *a, **k: "2")
 
@@ -316,6 +317,7 @@ def test_cmd_project_list_interactive_empty_input_aborts(tmp_path, monkeypatch):
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
     monkeypatch.setattr("builtins.input", lambda *a, **k: "")
 
     called = []
@@ -342,6 +344,7 @@ def test_cmd_project_list_interactive_non_tty_eof(tmp_path, monkeypatch):
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
     monkeypatch.setattr("builtins.input", raise_eof)
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
@@ -367,6 +370,7 @@ def test_cmd_project_list_interactive_keyboard_interrupt_aborts(tmp_path, monkey
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
     monkeypatch.setattr("builtins.input", raise_interrupt)
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
@@ -389,6 +393,7 @@ def test_cmd_project_list_interactive_out_of_range_reprompts(tmp_path, monkeypat
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
     # "99" (範囲外) → "1" (有効) の順に入力 → 再入力後に up が起動する
     inputs = iter(["99", "1"])
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
@@ -414,6 +419,7 @@ def test_cmd_project_list_interactive_non_numeric_reprompts(tmp_path, monkeypatc
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
     # "abc" (数値以外) → "1" (有効)
     inputs = iter(["abc", "1"])
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
