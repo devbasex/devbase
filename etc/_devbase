@@ -150,8 +150,11 @@ _devbase() {
             ;;
         list)
             _arguments \
-                '--interactive[Select a project interactively and start it]' \
-                '-i[Select a project interactively and start it]'
+                '--no-interactive[Just print the table without interactive selection]' \
+                '--plain[Just print the table without interactive selection]' \
+                '-P[Just print the table without interactive selection]' \
+                '--interactive[(compat) interactive selection, default]' \
+                '-i[(compat) interactive selection, default]'
             ;;
         project)
             case "$words[3]" in
@@ -185,8 +188,11 @@ _devbase() {
                     ;;
                 list)
                     _arguments \
-                        '--interactive[Select a project interactively and start it]' \
-                        '-i[Select a project interactively and start it]'
+                        '--no-interactive[Just print the table without interactive selection]' \
+                        '--plain[Just print the table without interactive selection]' \
+                        '-P[Just print the table without interactive selection]' \
+                        '--interactive[(compat) interactive selection, default]' \
+                        '-i[(compat) interactive selection, default]'
                     ;;
                 *)
                     _describe -t project-commands 'project command' project_subcommands

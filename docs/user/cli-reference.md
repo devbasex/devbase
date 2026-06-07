@@ -18,7 +18,7 @@ graph TD
     D --> D1["up / down / ps / logs / scale [name]"]
     D --> D3["login [index]"]
     D --> D4["build [image]"]
-    D --> D2["list [--interactive]"]
+    D --> D2["list [--no-interactive]"]
     E --> E1[init / sync / list / set / get / delete / edit / project]
     F --> F1[list / install / uninstall / update / info / sync]
     F --> F2[repo add / repo remove / repo list / repo refresh]
@@ -292,21 +292,26 @@ devbase build [image]
 `$DEVBASE_ROOT/projects/` 配下のプロジェクトを `NAME` / `PLUGIN` / `STATUS` の一覧で
 表示します。
 
+TTY（端末）では**デフォルトで対話選択**になり、番号入力で選んだプロジェクトを
+`project up` で起動します。パイプ・リダイレクト・CI などの非 TTY 環境では自動的に
+一覧表示のみへフォールバックします。
+
 ```
-devbase project list [--interactive|-i]
-devbase list [--interactive|-i]
+devbase project list [--no-interactive|--plain|-P]
+devbase list [--no-interactive|--plain|-P]
 ```
 
 | オプション | 説明 |
 |-----------|------|
-| `--interactive` / `-i` | 一覧から番号で選択し、そのプロジェクトを `project up` で起動 |
+| `--no-interactive` / `--plain` / `-P` | 対話選択せず一覧表示のみ |
+| `--interactive` / `-i` | （後方互換）対話選択。デフォルトのため通常は不要 |
 
 ```bash
-# 一覧表示
+# 一覧を表示して番号で選択・起動（TTY デフォルト）
 devbase list
 
-# 一覧から選んで起動（非対話環境では番号入力にフォールバック）
-devbase list -i
+# 一覧表示のみ（選択しない）
+devbase list --no-interactive
 ```
 
 出力例:
