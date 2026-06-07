@@ -68,8 +68,6 @@ def list_projects(projects_dir: Path) -> list[dict]:
     """
     # status ロジックは commands/status.py と共有する (PLAN06 リファクタで per-entry
     # 関数 _container_status_for を分離済み)。import は循環回避のため関数内で行う。
-    from concurrent.futures import ThreadPoolExecutor
-
     from devbase.commands import status as status_mod
 
     if not projects_dir.exists():
@@ -80,31 +78,28 @@ def list_projects(projects_dir: Path) -> list[dict]:
         entry for entry in sorted(projects_dir.iterdir())
         if entry.is_symlink() or entry.is_dir()
     ]
-
-    def _status_for(entry: Path) -> str:
-        # is_dir() は symlink 先まで辿る。broken symlink は False → unknown のまま。
-        # _container_status_for は cwd= 引数で完結し global chdir を行わないため
-        # スレッド安全。各 `docker compose ps` は I/O バウンドで 10s timeout を
-        # 持つため、プロジェクト数が増えても並列化で総待ち時間を抑える。
-        if not entry.is_dir():
-            return "unknown"
-        st = status_mod._container_status_for(entry)
-        return st["status"] if st is not None else "unknown"
-
-    # entries が空だと max_workers=0 で ValueError になるため早期 return。
     if not entries:
         return []
 
-    with ThreadPoolExecutor(max_workers=min(8, len(entries))) as ex:
-        statuses = list(ex.map(_status_for, entries))
+    # コンテナ状態は docker ps 1 回で全プロジェクトぶん集計し (counts)、各 entry で
+    # 使い回す。プロジェクト数ぶん docker compose ps を起動していた旧実装の
+    # サブプロセスコストを N→1 に削減するため、並列化 (ThreadPoolExecutor) も不要。
+    counts = status_mod._running_counts_by_project()
+
+    def _status_for(entry: Path) -> str:
+        # is_dir() は symlink 先まで辿る。broken symlink は False → unknown のまま。
+        if not entry.is_dir():
+            return "unknown"
+        st = status_mod._container_status_for(entry, counts)
+        return st["status"] if st is not None else "unknown"
 
     return [
         {
             "name": entry.name,
             "plugin": _resolve_plugin_name(entry) or "-",
-            "status": status,
+            "status": _status_for(entry),
         }
-        for entry, status in zip(entries, statuses)
+        for entry in entries
     ]
 
 
