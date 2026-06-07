@@ -609,3 +609,86 @@ def test_build_menu_entries_plain_has_no_ansi():
     entries = _build_menu_entries(rows, colorize=False)
 
     assert "\033[" not in entries[0]
+
+
+# ---------------------------------------------------------------------------
+# TUI: _interactive_select_and_up のディスパッチ (TUI 経路)
+# ---------------------------------------------------------------------------
+
+def test_cmd_project_list_tui_selects_and_ups(tmp_path, monkeypatch):
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    _make_plugin_project(tmp_path, "plugins/beta", "beta-proj")
+    _link_project(tmp_path, "beta-proj", "plugins/beta", "beta-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+
+    # simple_term_menu 導入済み相当にし、メニューは index=1 (beta-proj) を返すよう差し替え
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", True)
+    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 1)
+
+    captured = {}
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: captured.update(
+                            subcommand=args.subcommand, name=args.name) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+
+    assert rc == 0
+    assert captured["subcommand"] == "up"
+    assert captured["name"] == "beta-proj"
+
+
+def test_cmd_project_list_tui_abort_returns_zero(tmp_path, monkeypatch):
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", True)
+    # ESC 等での中止は _show_menu が None を返す
+    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: None)
+
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+
+    assert rc == 0
+    assert called == [], "中止時は up を起動しない"
+
+
+def test_interactive_falls_back_when_no_terminal_menu(tmp_path, monkeypatch):
+    """simple_term_menu 未導入時は input() 番号入力にフォールバックして up する。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import status as status_mod
+    from devbase.commands import container as container_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
+    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
+    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
+    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "1")
+
+    captured = {}
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: captured.update(name=args.name) or 0)
+
+    args = types.SimpleNamespace(interactive=True)
+    rc = project_mod.cmd_project_list(tmp_path, args)
+
+    assert rc == 0
+    assert captured["name"] == "alpha-proj"

@@ -18,6 +18,19 @@ from devbase.log import get_logger
 
 logger = get_logger(__name__)
 
+# simple_term_menu は Unix 専用の任意依存。未導入/非対応環境では番号入力に
+# フォールバックするため、import 失敗を許容する。
+try:
+    from simple_term_menu import TerminalMenu
+    _HAVE_TERMINAL_MENU = True
+except ImportError:  # pragma: no cover - 未導入環境のフォールバック経路
+    TerminalMenu = None
+    _HAVE_TERMINAL_MENU = False
+
+# STATUS 色付けの有効/無効。simple_term_menu の桁計算と ANSI が衝突する端末では
+# False に倒してプレーン表示にする (機能 > 装飾)。
+_STATUS_COLOR = True
+
 
 def _resolve_plugin_name(entry: Path) -> str | None:
     """projects/ 配下の entry が属する plugin 名を解決する。
@@ -154,8 +167,57 @@ def _build_menu_entries(rows: list[dict], colorize: bool = False) -> list[str]:
     return entries
 
 
+def _start_project_up(name: str) -> int:
+    """``project up <name>`` を共有ハンドラ cmd_project 経由で起動する。"""
+    import types
+
+    from devbase.commands.container import cmd_project
+    return cmd_project(types.SimpleNamespace(subcommand="up", name=name, scale=None))
+
+
+def _show_menu(rows: list[dict]) -> int | None:
+    """TerminalMenu を起動し、選択された rows の index を返す (中止時 None)。
+
+    テストではこの関数自体を monkeypatch して TerminalMenu の実起動を避ける。
+    """
+    entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
+    menu = TerminalMenu(
+        entries,
+        title=("起動するプロジェクトを選択 "
+               "(↑↓ 移動 / 1-9 ジャンプ / / 検索 / Enter 決定 / Esc 中止):"),
+        cycle_cursor=True,
+        clear_screen=False,
+        show_search_hint=True,
+    )
+    return menu.show()
+
+
+def _tui_select_and_up(rows: list[dict]) -> int:
+    """TUI メニューで 1 件選択し ``project up <name>`` を起動する。"""
+    idx = _show_menu(rows)
+    if idx is None:
+        logger.info("中止しました。")
+        return 0
+    return _start_project_up(rows[idx]["name"])
+
+
 def _interactive_select_and_up(rows: list[dict]) -> int:
-    """一覧から番号入力で 1 件選択し ``project up <name>`` を起動する。
+    """一覧から 1 件選択して ``project up`` を起動する (TTY 専用)。
+
+    simple_term_menu が利用可能なら矢印キー対応の TUI メニューを使う。未導入環境
+    では現行の番号入力方式 (_fallback_select_and_up) にフォールバックする。
+    """
+    if _HAVE_TERMINAL_MENU:
+        return _tui_select_and_up(rows)
+    logger.warning(
+        "simple_term_menu が未導入のため番号入力にフォールバックします "
+        "(`uv sync` で導入すると矢印キー選択が使えます)。"
+    )
+    return _fallback_select_and_up(rows)
+
+
+def _fallback_select_and_up(rows: list[dict]) -> int:
+    """番号入力で 1 件選択し ``project up <name>`` を起動する (simple_term_menu 未導入時のフォールバック)。
 
     外部依存 (simple_term_menu 等) を増やさず stdlib の ``input()`` で実装する。
     非対話環境 (stdin が閉じている等で EOFError) ではエラー終了する。空入力は中止。
@@ -195,12 +257,7 @@ def _interactive_select_and_up(rows: list[dict]) -> int:
 
         break
 
-    name = rows[idx - 1]["name"]
-    # name 解決 (chdir) + up は共有ハンドラ cmd_project に委譲する。
-    import types
-
-    from devbase.commands.container import cmd_project
-    return cmd_project(types.SimpleNamespace(subcommand="up", name=name, scale=None))
+    return _start_project_up(rows[idx - 1]["name"])
 
 
 def cmd_project_list(devbase_root: Path, args) -> int:
