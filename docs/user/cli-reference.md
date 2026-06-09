@@ -10,7 +10,6 @@ devbase のコマンドは 4 つのグループとトップレベルコマンド
 graph TD
     A[devbase] --> B[init]
     A --> C[status]
-    A --> H[shell-rc]
     A --> D[project]
     A --> E[env]
     A --> F[plugin / pl]
@@ -103,31 +102,16 @@ devbase status
 - 環境変数の設定状況
 - スナップショットの状態
 
-### `devbase shell-rc`
+### `bin/rc`（いまのシェルで有効化）
 
-`devbase init` が書き込んだシェル設定ファイル（rc ファイル）のフルパスを stdout に 1 行だけ出力します。`source` のコマンド置換と組み合わせ、ユーザーが zsh / bash on Linux / bash on macOS のどれを使っているかを意識せずに rc ファイルを再読み込みするためのユーティリティです。
-
-```
-devbase shell-rc
-```
-
-判定ロジックは `devbase init` と同一なので、書き込み先と完全に一致します。
-
-| 環境 | 出力例 |
-|------|--------|
-| zsh | `/Users/<user>/.zshrc` |
-| bash on macOS | `/Users/<user>/.bash_profile` |
-| bash on Linux | `/home/<user>/.bashrc` |
-
-使用例:
+`devbase init` 後に **いま開いているシェル**で devbase（PATH / 補完）を即時有効化するための source 用スクリプトです。`devbase` のサブコマンドではなく、`bin/rc` を直接 source して使います。
 
 ```bash
-# 初期化直後に rc を再読み込み（環境差を吸収）
 ./bin/devbase init
-source "$(./bin/devbase shell-rc)"
+. ./bin/rc        # = source ./bin/rc （bash / zsh 共通）
 ```
 
-> **⚠ 引用符は必須**: `source $(devbase shell-rc)` のように引用符を省くと、ホームディレクトリ名に空白を含む環境（例: `/Users/foo bar/.zshrc`）で word splitting が起き `source` が失敗します。必ず `source "$(devbase shell-rc)"` の形で書いてください。
+`bin/rc` は自身の場所から `DEVBASE_ROOT` を解決し、`DEVBASE_ROOT/bin` を PATH へ追加（冪等）したうえで、シェル補完を読み込みます（`init` が rc ファイルへ追記する有効化と同じ内容）。新しく開くシェルは init が rc に追記したブロックで自動有効化されるため、この手順は不要です。
 
 ## project グループ
 
