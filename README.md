@@ -15,20 +15,24 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 - **データ永続化**: 名前付きボリュームでコンテナ再起動後もデータを保持
 - **スナップショット管理**: `/home/ubuntu` 共通ボリュームの増分バックアップ・復元・世代管理
 - **環境変数の自動収集**: `devbase env init`でAWS/Git/GCP認証情報を対話的に設定
-- **対話的なプロジェクト選択**: `devbase list` で矢印キー移動・名前での絞り込みに対応した TUI メニューから起動対象を選べます。起動中のプロジェクトは「再起動 (up) / 再ビルド (rebuild) / 停止 (down)」を選択できます
+- **対話的なプロジェクト選択**: `devbase list` の TUI メニュー（矢印キー移動・名前絞り込み対応）から起動対象を選択。起動中なら再起動 (up) / 再ビルド (rebuild) / 停止 (down) も選べます
 - **キャッシュ無効リビルド**: `devbase rebuild [name]` で `docker compose build --no-cache` 相当のイメージ再ビルドができます
 
 ## クイックスタート
 
-### ワンライナーインストール（推奨）
+devbase 本体を**インストール**し、続けて**プラグインを導入してプロジェクトを起動**します。インストールはワンライナー（推奨）か手動のどちらかを選んでください。
+
+### 1. インストール
+
+#### ワンライナー（推奨）
 
 ```bash
 curl -fsSL https://dl.basex.jp/i | bash && . ~/devbase/bin/rc
 ```
 
-`~/devbase` に clone（既存なら更新）し `devbase init` まで自動実行（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）したうえで、末尾の `&& . ~/devbase/bin/rc` で**いま開いている端末**にも devbase を通します（`&&` 以降はパイプのサブシェルではなく呼び出し元シェルで実行されるため、その場で `devbase` が使えます）。新しく開くターミナルは init の rc 追記により自動で有効です。
+`~/devbase` に clone（既存なら更新）して `devbase init` まで自動実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。末尾の `. ~/devbase/bin/rc` で**いま開いている端末**でも `devbase` が即使えます（新しく開くターミナルは自動で有効）。
 
-> 配置先を `DEVBASE_INSTALL_DIR` で変えた場合は後半の `~/devbase/bin/rc` も同じパスに合わせてください。`. ~/devbase/bin/rc` を省いた `... | bash` だけでも導入は完了します（その場合は完了メッセージの案内に従ってください）。
+> 配置先を `DEVBASE_INSTALL_DIR` で変えた場合は `~/devbase/bin/rc` も同じパスに合わせてください。`. ~/devbase/bin/rc` を省いた `... | bash` だけでも導入は完了します。
 
 環境変数で挙動を上書きできます。
 
@@ -44,29 +48,26 @@ DEVBASE_INSTALL_DIR=~/work/devbase DEVBASE_INSTALL_REF=v1.2.3 \
   bash -c "$(curl -fsSL https://dl.basex.jp/i)"
 ```
 
-> **⚠ `curl | bash` を実行する前に**: 中身を確認したい場合は、いったん保存してから実行してください。
->
-> ```bash
-> curl -fsSL https://dl.basex.jp/i -o install.sh
-> less install.sh    # 内容を確認
-> bash install.sh
-> ```
-
-### 手動セットアップ
+#### 手動
 
 ```bash
-# 1. クローンと初期化
 git clone https://github.com/devbasex/devbase.git
 cd devbase
 ./bin/devbase init
 . ./bin/rc                            # いまのシェルで devbase を有効化（PATH / 補完）
+```
 
-# 2. Pluginのインストール
+### 2. プラグインの導入とプロジェクト起動
+
+インストール方法を問わず、以降の手順は共通です。
+
+```bash
+# プラグインのインストール
 devbase plugin repo add user/repo    # リポジトリ登録（init でサンプルレジストリ devbasex/devbase-samples は自動登録済み）
 devbase plugin install <name>        # Plugin名でインストール
 
-# 3. プロジェクトの起動
-cd projects/your-project
+# プロジェクトの起動
+cd ~/devbase/projects/your-project   # 手動セットアップでは clone 先 (例: ./projects/your-project)
 devbase env init                     # 環境変数の設定（初回のみ）
 devbase up                           # コンテナを起動（初回はイメージビルドを含むため時間がかかります）
 devbase login                        # コンテナにログイン
@@ -118,7 +119,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 
 > **`container`（略記 `ct`）グループは非推奨です。** `devbase project <sub>` のエイリアスとして当面動作しますが、非推奨警告を表示します。新しいコマンドは `project` を使用してください。
 
-- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。ただし `build` のみ例外で、`project` グループ（Python 実装）ではなく `bin/devbase` のシェル実装 `cmd_build` へ直接委譲されます（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
+- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。なお `build` のみ挙動が一部異なります（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
 - **プレフィックス略記**: `devbase p l` → `devbase plugin list`
 - **トップレベルコマンド**: `init`, `status`
 
