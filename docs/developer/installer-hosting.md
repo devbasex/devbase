@@ -10,7 +10,6 @@
   短い HTTPS URL で配信する。
 - 配信 URL を `https://raw.githubusercontent.com/devbasex/devbase/main/install.sh`
   （約 73 文字）から `https://dl.basex.jp/i`（約 21 文字）へ短縮する。
-  後方互換のため `https://dl.basex.jp/install.sh` も同一内容のエイリアスとして配信する。
 - スコープ外: installer 自体の挙動（`issues/PLAN31_1_devbase-installer.md` 参照）。
 
 ## 2. 決定事項
@@ -49,7 +48,7 @@ flowchart LR
     U -->|"1. 名前解決"| R
     R -->|"basex.jp を委譲"| O
     O -->|"2. dl.basex.jp CNAME → devbasex.github.io"| GP
-    GP -->|"3. /install.sh を HTTPS で配信"| F
+    GP -->|"3. /i を HTTPS で配信"| F
     F -->|"4. 本文を bash に渡す"| U
 ```
 
@@ -79,8 +78,7 @@ flowchart LR
   正本（single source of truth）であり、Pages 用に複製しない。
 - 成果物に `CNAME`（内容 `dl.basex.jp`）を含め、custom domain を固定する。
 - ルート（`/`）には簡単な案内 HTML を置く（任意）。
-- 配信パスは `/i` を正規とし、後方互換のため `/install.sh` も同一内容で配信する
-  （ワークフローで `install.sh` を `_site/i` と `_site/install.sh` の両方へコピー）。
+- 配信パスは `/i` のみ（ワークフローで `install.sh` を `_site/i` へコピー）。
 
 ### 5.2 配信ワークフロー（`.github/workflows/pages.yml`）
 

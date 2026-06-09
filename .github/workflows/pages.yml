@@ -37,8 +37,7 @@ jobs:
       - name: Assemble site (install.sh only)
         run: |
           mkdir -p _site
-          cp install.sh _site/i            # 正規の短縮パス (https://dl.basex.jp/i)
-          cp install.sh _site/install.sh   # 後方互換エイリアス
+          cp install.sh _site/i            # 配信パス (https://dl.basex.jp/i)
           echo 'dl.basex.jp' > _site/CNAME
           cat > _site/index.html <<'HTML'
           <!doctype html>
