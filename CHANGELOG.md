@@ -5,6 +5,18 @@
 ## [Unreleased]
 
 ### Added
+- **ワンライナー installer (`install.sh`) を新設**しました (PLAN31_1)。
+  `curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh | bash`
+  で `~/devbase` への clone（既存なら `git pull --ff-only`）と `devbase init` まで
+  自動完了します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。
+  - 配置先 / clone 元 / ref を `DEVBASE_INSTALL_DIR` / `DEVBASE_INSTALL_REPO` /
+    `DEVBASE_INSTALL_REF` で上書きできます。`DEVBASE_INSTALL_REF` は branch/tag 名
+    として妥当な文字のみ許可し、オプション注入を防ぎます。
+  - 非 TTY (`curl | bash`) で対話プロンプトを出しません。`env init` は対話必須のため
+    実行せず、完了後に次の手順（`shell-rc` 再読み込み / `plugin install` / `env init`
+    / `build` / `up` / `login`）を案内します。
+  - 配置先が devbase 以外の非空ディレクトリの場合は誤上書きを避けて中止します。
+  - CI に `install.sh` の ShellCheck (`severity=error`) を追加しました。
 - **`devbase list` の対話選択を TUI 化**しました。`questionary` 導入により、↑↓ の
   矢印キーで行移動、文字入力でプロジェクト名のインクリメンタル絞り込みができます
   (全項目に通し番号を表示)。Enter で決定、Ctrl-C で中止します。

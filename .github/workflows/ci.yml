@@ -41,3 +41,5 @@ jobs:
         with:
           scandir: ./bin
           severity: error
+      - name: Run ShellCheck on install.sh
+        run: shellcheck --severity=error install.sh
