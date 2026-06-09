@@ -170,9 +170,13 @@ curl -fsSL https://dl.basex.jp/install.sh | head -20
 
 ## 11. ステータス
 
-- DNS（`dl.basex.jp` CNAME）: **設定済み・確認済み**（GitHub Pages IP に解決）。
-- GitHub Pages 有効化 / custom domain / Enforce HTTPS: **未（§6 の #3〜#5）**。
-- URL 更新（README/docs/install.sh）: **配信開始後に実施**。
+- DNS（`dl.basex.jp` CNAME）: **完了**（GitHub Pages IP に解決・確認済み）。
+- GitHub Pages 有効化 / custom domain / Enforce HTTPS: **完了**。
+  `https://dl.basex.jp/install.sh` が HTTP 200・証明書一致・`http→https` 301 を確認済み。
+- URL 更新（README / docs / install.sh）: **完了**（#49）。配信内容の sha256 が
+  `main:install.sh` と一致することを確認済み。
+- ドメイン検証 TXT（§4・乗っ取り防止）: **未**（推奨）。GitHub の Verify domains で
+  発行されるトークンを、お名前.com に TXT `_github-pages-challenge-devbasex` として登録する。
 
 ## 12. 出典
 
