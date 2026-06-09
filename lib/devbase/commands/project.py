@@ -190,13 +190,16 @@ def _start_project_up(name: str) -> int:
     return _start_project_action(name, "up")
 
 
-def _with_escape_cancel(question):
-    """questionary の select に Esc 単独押下での中止を後付けする。
+# サブメニュー (_show_action_menu) で Esc を押した際の「トップメニューへ戻る」
+# シグナル。``None`` (= Ctrl-C による全体中止) と区別するための番兵。
+_MENU_BACK = object()
 
-    questionary 2.x の select は Ctrl-C / Ctrl-Q しか中止に割り当てないため、
-    生成済み ``Question.application`` の key_bindings に Escape ハンドラを足す。
-    Ctrl-C と同じく ``KeyboardInterrupt`` で抜けるので ``ask()`` は ``None``
-    (= 中止) を返す。
+
+def _add_escape_binding(question, handler):
+    """questionary の select に Esc 単独押下のハンドラを後付けする共通処理。
+
+    questionary 2.x の select は Ctrl-C / Ctrl-Q しか割り当てないため、生成済み
+    ``Question.application`` の key_bindings に Escape ハンドラを足す。
 
     Escape は矢印キー等のエスケープシーケンス (``\\x1b[A`` 等) の先頭バイトでも
     あるため、``eager=False`` で登録し prompt_toolkit のフラッシュ待ちで単独 Esc
@@ -204,11 +207,32 @@ def _with_escape_cancel(question):
     """
     from prompt_toolkit.keys import Keys
 
-    @question.application.key_bindings.add(Keys.Escape)
-    def _(event):
+    question.application.key_bindings.add(Keys.Escape)(handler)
+    return question
+
+
+def _with_escape_cancel(question):
+    """Esc 単独押下で中止する select を返す。
+
+    Ctrl-C と同じく ``KeyboardInterrupt`` で抜けるので ``ask()`` は ``None``
+    (= 中止) を返す。トップメニュー (戻り先が無い) 用。
+    """
+    def _cancel(event):
         event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
 
-    return question
+    return _add_escape_binding(question, _cancel)
+
+
+def _with_escape_back(question):
+    """Esc 単独押下で ``_MENU_BACK`` を返す select を返す。
+
+    Ctrl-C は questionary 既定どおり中止 (``ask()`` が ``None``) のまま残し、Esc
+    だけを「1 つ前のメニューへ戻る」シグナルに割り当てる。サブメニュー用。
+    """
+    def _back(event):
+        event.app.exit(result=_MENU_BACK)
+
+    return _add_escape_binding(question, _back)
 
 
 def _show_menu(rows: list[dict]) -> int | None:
@@ -230,11 +254,15 @@ def _show_menu(rows: list[dict]) -> int | None:
     return _with_escape_cancel(question).ask()  # value (= rows index) / 中止時 None
 
 
-def _show_action_menu(name: str) -> str | None:
+def _show_action_menu(name: str):
     """running 中プロジェクトの操作 (up/rebuild/down) を選ぶサブメニュー。
 
-    選択された action 文字列 (``"up"`` / ``"rebuild"`` / ``"down"``) を返す。
-    中止 (Esc / Ctrl-C) 時は None。テストではこの関数を monkeypatch する。
+    戻り値:
+    - action 文字列 (``"up"`` / ``"rebuild"`` / ``"down"``): 操作を選択
+    - ``_MENU_BACK``: Esc 押下 → トップメニューへ戻る
+    - ``None``: Ctrl-C 押下 → 全体中止
+
+    テストではこの関数を monkeypatch する。
     """
     choices = [
         questionary.Choice(title="再起動 (up)", value="up"),
@@ -242,12 +270,13 @@ def _show_action_menu(name: str) -> str | None:
         questionary.Choice(title="停止 (down)", value="down"),
     ]
     question = questionary.select(
-        f"'{name}' は起動中です。操作を選択 (↑↓ 移動 / Enter 決定 / Esc・Ctrl-C 中止):",
+        f"'{name}' は起動中です。操作を選択 "
+        "(↑↓ 移動 / Enter 決定 / Esc 戻る / Ctrl-C 中止):",
         choices=choices,
         use_arrow_keys=True,
         use_shortcuts=False,
     )
-    return _with_escape_cancel(question).ask()
+    return _with_escape_back(question).ask()
 
 
 def _tui_select_and_up(rows: list[dict]) -> int:
@@ -255,22 +284,26 @@ def _tui_select_and_up(rows: list[dict]) -> int:
 
     選択行が running 中なら ``_show_action_menu`` で up/rebuild/down を選ばせ、
     それ以外 (stopped / unknown 等) は従来どおり直接 ``project up`` を起動する。
+    サブメニューで Esc を押すと (``_MENU_BACK``) トップメニューへ戻る。
     """
-    idx = _show_menu(rows)
-    if idx is None:
-        logger.info("中止しました。")
-        return 0
-
-    row = rows[idx]
-    name = row["name"]
-    if str(row.get("status", "")).startswith("running"):
-        action = _show_action_menu(name)
-        if action is None:
+    while True:
+        idx = _show_menu(rows)
+        if idx is None:
             logger.info("中止しました。")
             return 0
-        return _start_project_action(name, action)
 
-    return _start_project_action(name, "up")
+        row = rows[idx]
+        name = row["name"]
+        if str(row.get("status", "")).startswith("running"):
+            action = _show_action_menu(name)
+            if action is _MENU_BACK:
+                continue                      # Esc → トップメニューへ戻る
+            if action is None:
+                logger.info("中止しました。")   # Ctrl-C → 全体中止
+                return 0
+            return _start_project_action(name, action)
+
+        return _start_project_action(name, "up")
 
 
 def _interactive_select_and_up(rows: list[dict]) -> int:

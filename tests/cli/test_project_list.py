@@ -769,8 +769,8 @@ def test_with_escape_cancel_registers_escape_binding():
     lambda m: m._show_menu([{"name": "carmo", "plugin": "-", "status": "stopped"}]),
     lambda m: m._show_action_menu("carmo"),
 ])
-def test_select_menus_wire_escape_cancel(monkeypatch, call):
-    """_show_menu / _show_action_menu が select に Esc 中止を仕込んでから ask する。"""
+def test_select_menus_wire_escape_binding(monkeypatch, call):
+    """_show_menu / _show_action_menu が select に Esc バインドを仕込んでから ask する。"""
     pytest.importorskip("questionary")
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.keys import Keys
@@ -786,7 +786,59 @@ def test_select_menus_wire_escape_cancel(monkeypatch, call):
 
     assert call(project_mod) == "sentinel"
     esc = [b for b in kb.bindings if Keys.Escape in b.keys]
-    assert len(esc) == 1, "Esc 中止バインドが登録されていない"
+    assert len(esc) == 1, "Esc バインドが登録されていない"
+
+
+def test_with_escape_back_returns_sentinel_on_escape():
+    """_with_escape_back の Esc ハンドラは _MENU_BACK を result として返すこと。"""
+    questionary = pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    from devbase.commands import project as project_mod
+
+    q = questionary.select("t", choices=[questionary.Choice(title="a", value="a")])
+    assert project_mod._with_escape_back(q) is q
+
+    esc = [b for b in q.application.key_bindings.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1
+    assert esc[0].eager() is False  # 矢印キーのエスケープシーケンスと衝突させない
+
+    # ハンドラは Ctrl-C (KeyboardInterrupt=全体中止) と異なり _MENU_BACK を返す
+    captured = {}
+    fake_app = types.SimpleNamespace(exit=lambda **kw: captured.update(kw))
+    esc[0].handler(types.SimpleNamespace(app=fake_app))
+    assert captured == {"result": project_mod._MENU_BACK}
+
+
+def test_tui_running_action_escape_returns_to_top_menu(monkeypatch):
+    """running 行のサブメニューで Esc (_MENU_BACK) を押すとトップメニューへ戻る。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import container as container_mod
+
+    rows = [
+        {"name": "carmo", "plugin": "-", "status": "running (1 containers)"},
+        {"name": "beta", "plugin": "-", "status": "stopped"},
+    ]
+    # 1 回目: running 行 (idx0) を選ぶ / 2 回目: stopped 行 (idx1) を選ぶ
+    menu_calls = []
+    monkeypatch.setattr(
+        project_mod, "_show_menu",
+        lambda rows: (menu_calls.append(1), 0 if len(menu_calls) == 1 else 1)[1])
+    # サブメニューでは Esc → _MENU_BACK (トップメニューへ戻る)
+    monkeypatch.setattr(project_mod, "_show_action_menu",
+                        lambda name: project_mod._MENU_BACK)
+
+    captured = {}
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: captured.update(
+                            subcommand=args.subcommand, name=args.name) or 0)
+
+    rc = project_mod._tui_select_and_up(rows)
+    assert rc == 0
+    assert len(menu_calls) == 2, "Esc でトップメニューが再表示される"
+    # 2 回目に選んだ stopped 行が直接 up される
+    assert captured["name"] == "beta"
+    assert captured["subcommand"] == "up"
 
 
 def test_interactive_falls_back_when_no_terminal_menu(tmp_path, monkeypatch):
