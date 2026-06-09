@@ -5,12 +5,21 @@
 ## [Unreleased]
 
 ### Added
-- **`devbase list` の対話選択を TUI 化**しました。`simple-term-menu` 導入により、
-  ↑↓ の矢印キーで行移動、先頭 9 件は `1`〜`9` の数字キーで即ジャンプ、`/` で
-  名前のインクリメンタル検索ができます。Enter で選択プロジェクトを `up` 起動し、
-  Esc で中止します。非 TTY（パイプ/CI/リダイレクト）では従来どおりプレーンな
-  一覧表示にフォールバックし、`simple-term-menu` 未導入環境では番号入力方式に
-  フォールバックします（macOS / Linux 対応）。
+- **`devbase list` の対話選択を TUI 化**しました。`questionary` 導入により、↑↓ の
+  矢印キーで行移動、文字入力でプロジェクト名のインクリメンタル絞り込みができます
+  (全項目に通し番号を表示)。Enter で決定、Ctrl-C で中止します。
+  - **選択行が起動中 (running) の場合**は「再起動 (up) / 再ビルド (rebuild --no-cache) /
+    停止 (down)」を選ぶサブメニューを表示します。それ以外 (stopped / unknown) は
+    従来どおり `up` を起動します。
+  - 非 TTY（パイプ/CI/リダイレクト）では従来どおりプレーンな一覧表示にフォールバック
+    し、`questionary` 未導入環境では番号入力方式にフォールバックします。
+  - 入力ライブラリを `simple-term-menu` から `questionary` (prompt_toolkit ベース) へ
+    移行し、↑長押し時にスクロールが取りこぼされて遅くなる問題を解消しました。
+- **`devbase rebuild` コマンドを新設**しました。`docker compose build --no-cache` 相当で、
+  キャッシュを無効化してプロジェクト (compose) イメージを作り直します。`devbase rebuild
+  [name]` / `devbase project rebuild [name]` として任意のディレクトリから利用できます
+  (`devbase list` の running サブメニューからも起動できます)。なお `devbase-base` まで
+  作り直す 2 段ビルドは従来どおり `devbase build --no-cache` を使用してください。
 - **`devbase project` サブコマンド群を新設**しました (PLAN06)。CWD に依存せずプロジェクト名でコンテナ操作ができます。
   - `devbase project up/down/ps/logs/scale [name]` で、任意のディレクトリから `$DEVBASE_ROOT/projects/<name>` を対象に操作できます。名前解決はラッパー (`bin/devbase`) が対象ディレクトリへ `cd` してから実行するため、シェル実装の `build` を含む全操作が名前指定で成立します（呼び出し元シェルの作業ディレクトリは変わりません）。存在しない名前はエラーになり候補が提示されます。
   - `devbase project list` で `$DEVBASE_ROOT/projects/` 配下を `NAME` / `PLUGIN` / `STATUS` の一覧表示します。`PLUGIN` 列はシンボリックリンク先から解決するため、PLAN04 の同名衝突 suffix（例 `carmo.takemi`）が付いていても正しいプラグイン名を表示します。**TTY ではデフォルトで対話選択**になり、一覧から番号で選んだプロジェクトを `project up` で起動します。`--no-interactive`（`--plain` / `-P`）で一覧表示のみに切り替えられ、パイプ・リダイレクト・CI などの非 TTY 環境では自動的に一覧表示へフォールバックします（`--interactive` / `-i` は後方互換として引き続き受け付けます）。

@@ -31,10 +31,10 @@ _devbase_completions() {
         cword=$COMP_CWORD
     }
 
-    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build ps scale list help"
+    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale list help"
     # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
-    local project_subcommands="up down ps login logs scale build list"
-    local container_subcommands="up down ps login logs scale build"
+    local project_subcommands="up down ps login logs scale build rebuild list"
+    local container_subcommands="up down ps login logs scale build rebuild"
     local env_subcommands="init sync list set get delete edit project export import"
     local plugin_subcommands="list install uninstall update info sync repo"
     local repo_subcommands="add remove list refresh"
@@ -49,9 +49,9 @@ _devbase_completions() {
                 login)
                     COMPREPLY=($(compgen -W "1 2" -- "$cur"))
                     ;;
-                # トップレベルシノニム: up/down/scale は [name] を取るため
+                # トップレベルシノニム: up/down/scale/rebuild は [name] を取るため
                 # プロジェクト名を補完する (login=index / build=image は対象外)。
-                up|down|scale)
+                up|down|scale|rebuild)
                     COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
                     ;;
                 # ps は [name] と -a フラグの両方を取る (project ps と同じ挙動)。
@@ -96,7 +96,7 @@ _devbase_completions() {
             # project subcommand arguments (推奨グループ)
             if [ "$group" = "project" ]; then
                 case "$prev" in
-                    up|down)
+                    up|down|rebuild)
                         COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
                         ;;
                     login)

@@ -199,7 +199,7 @@ run_python() {
 # Resolve abbreviated command to full command name via unique prefix matching
 resolve_command() {
     local input="$1"
-    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build ps scale list help"
+    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale list help"
     local matches=()
     for cmd in $commands; do
         [[ "$cmd" == "$input"* ]] && matches+=("$cmd")
@@ -331,8 +331,8 @@ _DEVBASE_ARGS=("${@:2}")
 # そのプロジェクトへ切り替えてから (cd 済みの状態で) コマンドを実行すること。
 # こうすれば name 解決トークンを与える必要がなくなり、index/image/service を
 # 意図どおり渡せる。
-_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale "
-_NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build "
+_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale rebuild "
+_NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build rebuild "
 case "$_resolved_cmd" in
     project|container|ct)
         # `ct` は container の alias (cli.py: add_parser('container', aliases=['ct']))。
@@ -355,7 +355,7 @@ case "$_resolved_cmd" in
     # Python-implemented commands
     --version|-V)
         run_python "$@" ;;
-    init|status|shell-rc|project|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale|list)
+    init|status|shell-rc|project|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale|rebuild|list)
         run_python "${_resolved_cmd}" "${_DEVBASE_ARGS[@]}" ;;
     # Shell-implemented commands
     build)  cmd_build "${_DEVBASE_ARGS[@]}" ;;

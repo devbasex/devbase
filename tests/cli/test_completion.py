@@ -80,12 +80,20 @@ def test_bash_completion_syntax_ok():
 
 def test_bash_project_subcommands(fake_root):
     out = _bash_complete("devbase project ''", 2, fake_root)
-    assert set(out) >= {"up", "down", "ps", "login", "logs", "scale", "build", "list"}
+    assert set(out) >= {"up", "down", "ps", "login", "logs", "scale", "build", "rebuild", "list"}
 
 
 def test_bash_project_name_completion(fake_root):
     out = _bash_complete("devbase project up ''", 3, fake_root)
     assert sorted(out) == ["api", "linked", "web"]
+
+
+def test_bash_rebuild_name_completion(fake_root):
+    """`devbase rebuild <TAB>` / `devbase project rebuild <TAB>` がプロジェクト名を補完する。"""
+    top = _bash_complete("devbase rebuild ''", 2, fake_root)
+    assert sorted(top) == ["api", "linked", "web"]
+    proj = _bash_complete("devbase project rebuild ''", 3, fake_root)
+    assert sorted(proj) == ["api", "linked", "web"]
 
 
 def test_bash_top_level_synonym_name_completion(fake_root):

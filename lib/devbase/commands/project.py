@@ -18,19 +18,22 @@ from devbase.log import get_logger
 
 logger = get_logger(__name__)
 
-# simple_term_menu は Unix 専用の任意依存。未導入/非対応環境では番号入力に
-# フォールバックするため、import 失敗を許容する。
+# questionary (prompt_toolkit ベース) は任意依存。未導入環境では番号入力に
+# フォールバックするため、import 失敗を許容する。questionary は矢印キー移動 +
+# 文字入力での絞り込み (use_search_filter) に対応し、prompt_toolkit が入力を
+# 1 イベントずつ分解するため、旧 simple_term_menu のような ↑長押し時の入力
+# 取りこぼし (連結エスケープシーケンスの破棄) が構造的に発生しない。
 try:
-    from simple_term_menu import TerminalMenu
-    _HAVE_TERMINAL_MENU = True
+    import questionary
+    _HAVE_QUESTIONARY = True
 except ImportError:  # pragma: no cover - 未導入環境のフォールバック経路
-    TerminalMenu = None
-    _HAVE_TERMINAL_MENU = False
+    questionary = None
+    _HAVE_QUESTIONARY = False
 
-# STATUS 色付けの有効/無効。menu entry に ANSI を埋め込むと simple_term_menu の
-# wcswidth() が -1 を返し、表示幅計算とハイライト消去が崩れる。実機検証が完了する
-# まではメニューでは色を付けず False を既定とする (機能 > 装飾)。テーブル表示
-# (_print_table) は端末へ直接書くため影響を受けず、色付けは別途検討する。
+# STATUS 色付けの有効/無効。menu entry に生 ANSI を埋め込むと prompt_toolkit の
+# 表示幅計算と干渉しうるため、実機検証が完了するまではメニューでは色を付けず
+# False を既定とする (機能 > 装飾)。テーブル表示 (_print_table) は端末へ直接書く
+# ため影響を受けず、色付けは別途 questionary の style で検討する。
 _STATUS_COLOR = False
 
 
@@ -148,84 +151,124 @@ def _color_status(status: str) -> str:
 
 
 def _build_menu_entries(rows: list[dict], colorize: bool = False) -> list[str]:
-    """rows を simple_term_menu 用の表示文字列へ変換する。
+    """rows を questionary メニュー用の表示文字列へ変換する。
 
     返り値の index は rows の index と 1:1 対応する (entry i ↔ rows[i])。
-    先頭 9 件には simple_term_menu のショートカット記法 ``[n]`` (n=1..9) を付与し、
-    数字キーで即ジャンプできるようにする。simple_term_menu はショートカットが 1 件
-    でも定義されると全行に 4 文字幅のショートカットガターを自前描画するため、
-    10 件目以降は body のまま渡し、桁揃えはライブラリ側のガターに委ねる
-    (手前で字下げすると二重インデントになる)。``colorize`` が True のとき STATUS
-    に ANSI 色を付ける (検索/桁計算が崩れる端末向けに呼び出し側で False にできる)。
+    各行に**右寄せの番号ラベル** (``1``〜``N``) を付け、全件に通し番号を振る
+    (旧 ``[1]``〜``[9]`` ショートカットは先頭 9 件しかカバーできず低カバレッジ
+    だったため廃止)。番号は視認用で、選択は矢印キー / 文字入力での絞り込みで行う。
+    ``colorize`` が True のとき STATUS に ANSI 色を付ける (表示幅が崩れる端末向けに
+    呼び出し側で False にできる)。
     """
     name_w = max(len("NAME"), *(len(r["name"]) for r in rows))
     plugin_w = max(len("PLUGIN"), *(len(r["plugin"]) for r in rows))
+    num_w = len(str(len(rows)))
     entries: list[str] = []
     for i, r in enumerate(rows):
         status = _color_status(r["status"]) if colorize else r["status"]
         body = f"{r['name']:<{name_w}}  {r['plugin']:<{plugin_w}}  {status}"
-        if i < 9:
-            entries.append(f"[{i + 1}] {body}")
-        else:
-            # ショートカット無し行はライブラリ側のガターが 4 文字ぶん字下げするため
-            # body をそのまま渡す (手前で字下げすると二重インデントになる)。
-            entries.append(body)
+        entries.append(f"{i + 1:>{num_w}}  {body}")
     return entries
 
 
-def _start_project_up(name: str) -> int:
-    """``project up <name>`` を共有ハンドラ cmd_project 経由で起動する。"""
+def _start_project_action(name: str, action: str) -> int:
+    """``project <action> <name>`` を共有ハンドラ cmd_project 経由で起動する。
+
+    ``action`` は ``"up"`` / ``"down"`` / ``"rebuild"``。共有ハンドラ
+    (_dispatch_lifecycle) が ``name`` でディレクトリ解決 (chdir) してから各
+    サブコマンドを実行する。``scale`` は up のみが参照するが、常に付与しても
+    他コマンドは無視するため一律 None を渡す。
+    """
     import types
 
     from devbase.commands.container import cmd_project
-    return cmd_project(types.SimpleNamespace(subcommand="up", name=name, scale=None))
+    return cmd_project(types.SimpleNamespace(subcommand=action, name=name, scale=None))
+
+
+def _start_project_up(name: str) -> int:
+    """``project up <name>`` を起動する (後方互換の薄いラッパ)。"""
+    return _start_project_action(name, "up")
 
 
 def _show_menu(rows: list[dict]) -> int | None:
-    """TerminalMenu を起動し、選択された rows の index を返す (中止時 None)。
+    """questionary の select を起動し、選択された rows の index を返す (中止時 None)。
 
-    テストではこの関数自体を monkeypatch して TerminalMenu の実起動を避ける。
+    テストではこの関数自体を monkeypatch して questionary の実起動を避ける。
     """
     entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
-    menu = TerminalMenu(
-        entries,
-        title=("起動するプロジェクトを選択 "
-               "(↑↓ 移動 / 1-9 ジャンプ / / 検索 / Enter 決定 / Esc 中止):"),
-        cycle_cursor=True,
-        clear_screen=False,
-        show_search_hint=True,
-    )
-    return menu.show()
+    choices = [questionary.Choice(title=entry, value=i)
+               for i, entry in enumerate(entries)]
+    return questionary.select(
+        "起動するプロジェクトを選択 (↑↓ 移動 / 名前で絞り込み / Enter 決定 / Ctrl-C 中止):",
+        choices=choices,
+        use_arrow_keys=True,
+        use_jk_keys=False,        # use_search_filter と併用不可のため False
+        use_search_filter=True,   # 文字入力でプロジェクト名等を部分一致絞り込み
+        use_shortcuts=False,      # 単一キーショートカットは使わない
+    ).ask()                       # 選択された value (= rows の index) / 中止時 None
+
+
+def _show_action_menu(name: str) -> str | None:
+    """running 中プロジェクトの操作 (up/rebuild/down) を選ぶサブメニュー。
+
+    選択された action 文字列 (``"up"`` / ``"rebuild"`` / ``"down"``) を返す。
+    中止 (Ctrl-C) 時は None。テストではこの関数を monkeypatch する。
+    """
+    choices = [
+        questionary.Choice(title="再起動 (up)", value="up"),
+        questionary.Choice(title="再ビルド (rebuild --no-cache)", value="rebuild"),
+        questionary.Choice(title="停止 (down)", value="down"),
+    ]
+    return questionary.select(
+        f"'{name}' は起動中です。操作を選択 (↑↓ 移動 / Enter 決定 / Ctrl-C 中止):",
+        choices=choices,
+        use_arrow_keys=True,
+        use_shortcuts=False,
+    ).ask()
 
 
 def _tui_select_and_up(rows: list[dict]) -> int:
-    """TUI メニューで 1 件選択し ``project up <name>`` を起動する。"""
+    """TUI メニューで 1 件選択して操作を起動する。
+
+    選択行が running 中なら ``_show_action_menu`` で up/rebuild/down を選ばせ、
+    それ以外 (stopped / unknown 等) は従来どおり直接 ``project up`` を起動する。
+    """
     idx = _show_menu(rows)
     if idx is None:
         logger.info("中止しました。")
         return 0
-    return _start_project_up(rows[idx]["name"])
+
+    row = rows[idx]
+    name = row["name"]
+    if str(row.get("status", "")).startswith("running"):
+        action = _show_action_menu(name)
+        if action is None:
+            logger.info("中止しました。")
+            return 0
+        return _start_project_action(name, action)
+
+    return _start_project_action(name, "up")
 
 
 def _interactive_select_and_up(rows: list[dict]) -> int:
     """一覧から 1 件選択して ``project up`` を起動する (TTY 専用)。
 
-    simple_term_menu が利用可能なら矢印キー対応の TUI メニューを使う。未導入環境
-    では現行の番号入力方式 (_fallback_select_and_up) にフォールバックする。
+    questionary が利用可能なら矢印キー + 絞り込み対応の TUI メニューを使う。未導入
+    環境では現行の番号入力方式 (_fallback_select_and_up) にフォールバックする。
     """
-    if _HAVE_TERMINAL_MENU:
+    if _HAVE_QUESTIONARY:
         return _tui_select_and_up(rows)
     logger.warning(
-        "simple_term_menu が未導入のため番号入力にフォールバックします "
+        "questionary が未導入のため番号入力にフォールバックします "
         "(`uv sync` で導入すると矢印キー選択が使えます)。"
     )
     return _fallback_select_and_up(rows)
 
 
 def _fallback_select_and_up(rows: list[dict]) -> int:
-    """番号入力で 1 件選択し ``project up <name>`` を起動する (simple_term_menu 未導入時のフォールバック)。
+    """番号入力で 1 件選択し ``project up <name>`` を起動する (questionary 未導入時のフォールバック)。
 
-    外部依存 (simple_term_menu 等) を増やさず stdlib の ``input()`` で実装する。
+    外部依存 (questionary 等) を増やさず stdlib の ``input()`` で実装する。
     非対話環境 (stdin が閉じている等で EOFError) ではエラー終了する。空入力は中止。
     """
     print("起動するプロジェクトを選択してください:")
