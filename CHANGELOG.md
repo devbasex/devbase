@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### Changed
+- **シェル有効化を `bin/rc` の source に統一**しました (PLAN31_1)。`devbase init` 後に
+  いま開いているシェルへ devbase（PATH / 補完）を即時適用するには
+  `. ~/devbase/bin/rc`（= `source ~/devbase/bin/rc`）を使います。`bin/rc` は自身の
+  場所から `DEVBASE_ROOT` を解決するため、Python（uv）起動もコマンド置換 `$(...)`
+  も不要になり、ワンライナーは
+  `curl -fsSL https://dl.basex.jp/i | bash && . ~/devbase/bin/rc` で現在のシェルまで
+  有効化できます。
+
+### Removed
+- **`devbase shell-rc` サブコマンドを廃止**しました (PLAN31_1, 破壊的変更)。rc ファイル
+  パスを print して `source "$(devbase shell-rc)"` する方式は、上記の `. bin/rc` に
+  置き換えました。`source "$(devbase shell-rc)"` を使っているスクリプトは
+  `. <DEVBASE_ROOT>/bin/rc` に書き換えてください。
+
 ### Added
 - **ワンライナー installer (`install.sh`) を新設**しました (PLAN31_1)。
   `curl -fsSL https://dl.basex.jp/i | bash`

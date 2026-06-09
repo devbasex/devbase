@@ -23,12 +23,12 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 ### ワンライナーインストール（推奨）
 
 ```bash
-curl -fsSL https://dl.basex.jp/i | bash
+curl -fsSL https://dl.basex.jp/i | bash && . ~/devbase/bin/rc
 ```
 
-`~/devbase` に clone（既存なら更新）し、`devbase init` まで自動実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。**新しく開くターミナルでは自動で有効**です。
+`~/devbase` に clone（既存なら更新）し `devbase init` まで自動実行（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）したうえで、末尾の `&& . ~/devbase/bin/rc` で**いま開いている端末**にも devbase を通します（`&&` 以降はパイプのサブシェルではなく呼び出し元シェルで実行されるため、その場で `devbase` が使えます）。新しく開くターミナルは init の rc 追記により自動で有効です。
 
-**いま開いている端末で即使う**なら、末尾に `&& source "$(~/devbase/bin/devbase shell-rc)"` を付けます（`&&` 以降は呼び出し元シェルで実行されるため、その場で PATH が通ります）。配置先を `DEVBASE_INSTALL_DIR` で変えた場合は同パスに合わせてください。
+> 配置先を `DEVBASE_INSTALL_DIR` で変えた場合は後半の `~/devbase/bin/rc` も同じパスに合わせてください。`. ~/devbase/bin/rc` を省いた `... | bash` だけでも導入は完了します（その場合は完了メッセージの案内に従ってください）。
 
 環境変数で挙動を上書きできます。
 
@@ -59,7 +59,7 @@ DEVBASE_INSTALL_DIR=~/work/devbase DEVBASE_INSTALL_REF=v1.2.3 \
 git clone https://github.com/devbasex/devbase.git
 cd devbase
 ./bin/devbase init
-source "$(./bin/devbase shell-rc)"   # rc ファイル（zsh/bash on Linux/macOS）を自動判定して再読み込み
+. ./bin/rc                            # いまのシェルで devbase を有効化（PATH / 補完）
 
 # 2. Pluginのインストール
 devbase plugin repo add user/repo    # リポジトリ登録（init でサンプルレジストリ devbasex/devbase-samples は自動登録済み）
@@ -120,7 +120,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 
 - **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。ただし `build` のみ例外で、`project` グループ（Python 実装）ではなく `bin/devbase` のシェル実装 `cmd_build` へ直接委譲されます（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
 - **プレフィックス略記**: `devbase p l` → `devbase plugin list`
-- **トップレベルコマンド**: `init`, `status`, `shell-rc`
+- **トップレベルコマンド**: `init`, `status`
 
 全コマンドの構文・オプション・使用例は [CLIリファレンス](docs/user/cli-reference.md) を参照してください。
 

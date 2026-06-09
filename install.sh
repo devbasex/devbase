@@ -79,8 +79,8 @@ print_next_steps() {
    配置先: ${INSTALL_DIR}
 ------------------------------------------------------------
  次の手順:
-   1. シェルを再読み込み:
-        source "\$("${INSTALL_DIR}/bin/devbase" shell-rc)"
+   1. いまのシェルで有効化:
+        . "${INSTALL_DIR}/bin/rc"
    2. plugin を導入:
         devbase plugin install <name>
    3. プロジェクトへ移動して env を初期化 (対話):

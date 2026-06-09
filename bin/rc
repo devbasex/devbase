@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# devbase: いま開いているシェルで devbase を有効化する (source して使う)。
+#
+#   . ~/devbase/bin/rc        # bash / zsh 共通
+#
+# `devbase init` が rc ファイルに書き込む有効化 (DEVBASE_ROOT / PATH / 補完) を、
+# 現在のシェルへ即時適用する。新しく開くシェルは init が rc に追記したブロックで
+# 自動有効化されるため、本ファイルは「今のシェルにも通す」ためのもの。
+#
+# 注意: 実行ではなく source して使う。exit せず、シェルのオプションも変更しない。
+
+# このファイル自身の場所から DEVBASE_ROOT を解決する。
+# bash は ${BASH_SOURCE[0]}、zsh は $0 (FUNCTION_ARGZERO 既定で source 元のパス)。
+_devbase_rc_src="${BASH_SOURCE[0]:-$0}"
+_devbase_bin="$(CDPATH='' cd -- "$(dirname -- "$_devbase_rc_src")" && pwd)"
+DEVBASE_ROOT="$(CDPATH='' cd -- "$_devbase_bin/.." && pwd)"
+export DEVBASE_ROOT
+
+# DEVBASE_ROOT/bin を PATH 先頭へ追加 (冪等)。
+case ":$PATH:" in
+    *":$_devbase_bin:"*) ;;
+    *) PATH="$_devbase_bin:$PATH"; export PATH ;;
+esac
+
+# シェル補完を現在のシェルへ読み込む (init が rc に書く内容と同一)。
+if [ -n "${ZSH_VERSION:-}" ]; then
+    # zsh の fpath は配列。$fpath は要素展開させたいので意図的に非クォート。
+    # shellcheck disable=SC2206
+    fpath=("$DEVBASE_ROOT/etc" $fpath)
+    autoload -Uz compinit && compinit
+elif [ -n "${BASH_VERSION:-}" ]; then
+    if [ -f "$DEVBASE_ROOT/etc/devbase-completion.bash" ]; then
+        # shellcheck source=/dev/null
+        . "$DEVBASE_ROOT/etc/devbase-completion.bash"
+    fi
+fi
+
+unset _devbase_rc_src _devbase_bin

@@ -22,16 +22,14 @@ devbase を利用するには、以下のソフトウェアがホストマシン
 手順 1〜2（クローンと初期化）を 1 コマンドで自動化できます。`git` と `curl` があれば実行できます。
 
 ```bash
-curl -fsSL https://dl.basex.jp/i | bash
+curl -fsSL https://dl.basex.jp/i | bash && . ~/devbase/bin/rc
 ```
 
 このコマンドは次を行います。
 
 1. `~/devbase` に devbase を clone します（既に devbase が clone 済みなら `git pull --ff-only` で更新）。
 2. clone 先で `devbase init` を 1 回実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。
-3. 完了後、シェル再読み込み（手順 3）以降の次の手順を表示します。**新しく開くターミナルでは自動で有効**です。
-
-**いま開いている端末で即使う**なら、末尾に `&& source "$(~/devbase/bin/devbase shell-rc)"` を付けます（`&&` 以降は呼び出し元シェルで実行されるため、その場で PATH が通ります）。
+3. 末尾の `&& . ~/devbase/bin/rc` を**いま開いている端末**で実行し（`&&` 以降はパイプのサブシェルではなく呼び出し元シェルで動くため）、その端末で即座に `devbase`（PATH / 補完）が使える状態にします。新しく開くターミナルは init の rc 追記により自動で有効です。
 
 `env init`（手順 7）は対話が必要なため、ワンライナーでは**実行せず案内のみ**です。完了後に手動で実行してください。配置先を `DEVBASE_INSTALL_DIR` で変えた場合は、`~/devbase/...` を同じパスに合わせてください。
 
@@ -78,17 +76,15 @@ cd devbase
 
 書き込み先は現在のシェル種別と OS から自動判定されます（zsh → `~/.zshrc`、bash on macOS → `~/.bash_profile`、bash on Linux → `~/.bashrc`）。
 
-### 3. シェルの再読み込み
+### 3. シェルで有効化
 
 ```bash
-source "$(./bin/devbase shell-rc)"
+. ./bin/rc
 ```
 
-`devbase shell-rc` は `init` が書き込んだ rc ファイルのパスを 1 行で出力します。コマンド置換と組み合わせることで、環境差を意識せずに 1 行で再読み込みできます。
+`bin/rc` を source すると、いま開いているシェルに devbase の PATH と補完がその場で適用されます（`init` が rc ファイルに追記する内容と同じ有効化を、現在のシェルへ即時反映します）。`devbase` 前提シェルである bash / zsh のどちらでも同じく `.`（= `source`）で読み込めます。
 
-> **⚠ 引用符は必須**: `source $(./bin/devbase shell-rc)` のように引用符を省くと、ホームディレクトリ名に空白を含む環境（例: `/Users/foo bar/.zshrc`）で word splitting が起き `source` が失敗します。必ず `source "$(...)"` の形で書いてください。
-
-> **Note:** 新しいターミナルを開いても同様に反映されます。
+> **Note:** 新しいターミナルを開いた場合は `init` が rc に追記したブロックで自動的に有効化されるため、この手順は不要です。
 
 ### 4. プラグインリポジトリの登録
 
