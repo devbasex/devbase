@@ -2,7 +2,7 @@
 #
 # devbase ワンライナー installer (PLAN31_1)
 #
-#   curl -fsSL https://dl.basex.jp/install.sh | bash
+#   curl -fsSL https://dl.basex.jp/i | bash
 #
 # clone (または pull) して `bin/devbase init` を 1 回呼ぶだけの薄い導入スクリプト。
 # uv の自動導入・rc 追記・補完登録・plugins.yml 生成・冪等性・旧版移行はすべて

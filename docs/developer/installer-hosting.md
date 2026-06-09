@@ -9,7 +9,8 @@
 - `curl -fsSL <URL> | bash` で実行する静的ファイル `install.sh` を、安定した
   短い HTTPS URL で配信する。
 - 配信 URL を `https://raw.githubusercontent.com/devbasex/devbase/main/install.sh`
-  （約 73 文字）から `https://dl.basex.jp/install.sh`（約 33 文字）へ短縮する。
+  （約 73 文字）から `https://dl.basex.jp/i`（約 21 文字）へ短縮する。
+  後方互換のため `https://dl.basex.jp/install.sh` も同一内容のエイリアスとして配信する。
 - スコープ外: installer 自体の挙動（`issues/PLAN31_1_devbase-installer.md` 参照）。
 
 ## 2. 決定事項
@@ -18,7 +19,7 @@
 |---|---|
 | ホスティング | **GitHub Pages**（devbasex/devbase リポジトリ） |
 | カスタムドメイン | **`dl.basex.jp`** |
-| 配信 URL | **`https://dl.basex.jp/install.sh`** |
+| 配信 URL | **`https://dl.basex.jp/i`** |
 | ドメインレジストラ | お名前.com（basex.jp） |
 | DNS | お名前.com DNS（`01〜04.dnsv.jp`）に `dl` の CNAME |
 | 月額コスト | **$0**（GitHub Pages 無料枠） |
@@ -39,7 +40,7 @@ installer 程度のトラフィックでは GitHub Pages の無料枠で十分�
 
 ```mermaid
 flowchart LR
-    U["ユーザー<br/>curl -fsSL https://dl.basex.jp/install.sh | bash"]
+    U["ユーザー<br/>curl -fsSL https://dl.basex.jp/i | bash"]
     R[".jp レジストリ"]
     O["お名前.com DNS<br/>01〜04.dnsv.jp"]
     GP["GitHub Pages<br/>185.199.108-111.153"]
@@ -78,6 +79,8 @@ flowchart LR
   正本（single source of truth）であり、Pages 用に複製しない。
 - 成果物に `CNAME`（内容 `dl.basex.jp`）を含め、custom domain を固定する。
 - ルート（`/`）には簡単な案内 HTML を置く（任意）。
+- 配信パスは `/i` を正規とし、後方互換のため `/install.sh` も同一内容で配信する
+  （ワークフローで `install.sh` を `_site/i` と `_site/install.sh` の両方へコピー）。
 
 ### 5.2 配信ワークフロー（`.github/workflows/pages.yml`）
 
@@ -87,7 +90,7 @@ flowchart TD
     B --> C["_site/ 組み立て<br/>install.sh / CNAME / index.html"]
     C --> D["upload-pages-artifact"]
     D --> E["deploy-pages"]
-    E --> F["https://dl.basex.jp/install.sh 更新"]
+    E --> F["https://dl.basex.jp/i 更新"]
 ```
 
 要点:
@@ -143,10 +146,10 @@ curl -fsS 'https://dns.google/resolve?name=dl.basex.jp&type=CNAME'
 
 # 配信: install.sh が 200 で取得でき、HTTPS 証明書が一致するか
 curl -fsSL -o /dev/null -w 'HTTP %{http_code} ssl_verify=%{ssl_verify_result}\n' \
-  https://dl.basex.jp/install.sh
+  https://dl.basex.jp/i
 
 # 中身の先頭確認
-curl -fsSL https://dl.basex.jp/install.sh | head -20
+curl -fsSL https://dl.basex.jp/i | head -20
 ```
 
 - DNS 成功時は `Status:0` で `data` が `devbasex.github.io.`。
@@ -172,7 +175,7 @@ curl -fsSL https://dl.basex.jp/install.sh | head -20
 
 - DNS（`dl.basex.jp` CNAME）: **完了**（GitHub Pages IP に解決・確認済み）。
 - GitHub Pages 有効化 / custom domain / Enforce HTTPS: **完了**。
-  `https://dl.basex.jp/install.sh` が HTTP 200・証明書一致・`http→https` 301 を確認済み。
+  `https://dl.basex.jp/i` が HTTP 200・証明書一致・`http→https` 301 を確認済み。
 - URL 更新（README / docs / install.sh）: **完了**（#49）。配信内容の sha256 が
   `main:install.sh` と一致することを確認済み。
 - ドメイン検証 TXT（§4・乗っ取り防止）: **未**（推奨）。GitHub の Verify domains で
