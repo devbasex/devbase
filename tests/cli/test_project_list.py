@@ -290,7 +290,7 @@ def test_cmd_project_list_interactive_selects_and_ups(tmp_path, monkeypatch):
     # 対話選択は TTY 環境でのみ起動するため isatty を True に固定する。
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
     # 番号 "2" を選択 (sorted: alpha-proj=1, beta-proj=2)
     monkeypatch.setattr("builtins.input", lambda *a, **k: "2")
 
@@ -317,7 +317,7 @@ def test_cmd_project_list_interactive_empty_input_aborts(tmp_path, monkeypatch):
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
     monkeypatch.setattr("builtins.input", lambda *a, **k: "")
 
     called = []
@@ -344,7 +344,7 @@ def test_cmd_project_list_interactive_non_tty_eof(tmp_path, monkeypatch):
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
     monkeypatch.setattr("builtins.input", raise_eof)
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
@@ -370,7 +370,7 @@ def test_cmd_project_list_interactive_keyboard_interrupt_aborts(tmp_path, monkey
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
     monkeypatch.setattr("builtins.input", raise_interrupt)
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
@@ -393,7 +393,7 @@ def test_cmd_project_list_interactive_out_of_range_reprompts(tmp_path, monkeypat
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
     # "99" (範囲外) → "1" (有効) の順に入力 → 再入力後に up が起動する
     inputs = iter(["99", "1"])
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
@@ -419,7 +419,7 @@ def test_cmd_project_list_interactive_non_numeric_reprompts(tmp_path, monkeypatc
 
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
     # "abc" (数値以外) → "1" (有効)
     inputs = iter(["abc", "1"])
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
@@ -575,24 +575,25 @@ def test_get_container_status_uses_per_entry(tmp_path, monkeypatch):
 # TUI: _build_menu_entries / _color_status
 # ---------------------------------------------------------------------------
 
-def test_build_menu_entries_shortcuts_and_mapping():
+def test_build_menu_entries_number_label_and_mapping():
     from devbase.commands.project import _build_menu_entries
 
     rows = [{"name": f"p{i}", "plugin": "-", "status": "stopped"} for i in range(11)]
     entries = _build_menu_entries(rows)
 
     assert len(entries) == 11
-    # 先頭 9 件は [1]..[9] ショートカット付き (entry index と rows index は 1:1)
-    for i in range(9):
-        assert entries[i].startswith(f"[{i + 1}] ")
-        assert f"p{i}" in entries[i]
-    # 10 件目以降はショートカット無し。桁揃え (4 文字ガター) は simple_term_menu の
-    # ライブラリ側が描画するため、ここでは body をそのまま渡す (手前で字下げすると
-    # 二重インデントになる)。先頭にショートカット記法も手動字下げも付けない。
-    assert not entries[9].startswith(" ")
-    assert not entries[9].lstrip().startswith("[")
-    assert entries[9].startswith("p9")
+    # 全行に右寄せ番号ラベル (1..N) が付く。旧 [1]..[9] ショートカットは廃止。
+    # 11 件なので桁数は 2、番号は右寄せ ("  1", " 11" 等)。
+    assert entries[0].startswith(" 1  ")     # 2 桁右寄せ → " 1"
+    assert "p0" in entries[0]
+    assert entries[8].startswith(" 9  ")
+    assert entries[9].startswith("10  ")
+    assert "p9" in entries[9]
+    assert entries[10].startswith("11  ")
     assert "p10" in entries[10]
+    # [n] 形式のショートカット記法は残っていない。
+    for e in entries:
+        assert not e.lstrip().startswith("[")
 
 
 def test_build_menu_entries_colorize_wraps_status():
@@ -636,8 +637,8 @@ def test_cmd_project_list_tui_selects_and_ups(tmp_path, monkeypatch):
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
 
-    # simple_term_menu 導入済み相当にし、メニューは index=1 (beta-proj) を返すよう差し替え
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", True)
+    # questionary 導入済み相当にし、メニューは index=1 (beta-proj) を返すよう差し替え
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", True)
     monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 1)
 
     captured = {}
@@ -663,7 +664,7 @@ def test_cmd_project_list_tui_abort_returns_zero(tmp_path, monkeypatch):
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", True)
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", True)
     # ESC 等での中止は _show_menu が None を返す
     monkeypatch.setattr(project_mod, "_show_menu", lambda rows: None)
 
@@ -677,8 +678,73 @@ def test_cmd_project_list_tui_abort_returns_zero(tmp_path, monkeypatch):
     assert called == [], "中止時は up を起動しない"
 
 
+@pytest.mark.parametrize("action", ["up", "rebuild", "down"])
+def test_tui_running_row_shows_action_menu(monkeypatch, action):
+    """running 行を選ぶとサブメニューで up/rebuild/down を選び、その subcommand で起動する。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import container as container_mod
+
+    rows = [{"name": "carmo", "plugin": "-", "status": "running (2 containers)"}]
+    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 0)
+    seen = {}
+    monkeypatch.setattr(project_mod, "_show_action_menu",
+                        lambda name: seen.update(name=name) or action)
+
+    captured = {}
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: captured.update(
+                            subcommand=args.subcommand, name=args.name) or 0)
+
+    rc = project_mod._tui_select_and_up(rows)
+    assert rc == 0
+    assert seen["name"] == "carmo"            # action menu に対象名が渡る
+    assert captured["subcommand"] == action
+    assert captured["name"] == "carmo"
+
+
+def test_tui_running_action_abort_starts_nothing(monkeypatch):
+    """running 行のサブメニューを中止 (None) したら何も起動しない。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import container as container_mod
+
+    rows = [{"name": "carmo", "plugin": "-", "status": "running (1 containers)"}]
+    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 0)
+    monkeypatch.setattr(project_mod, "_show_action_menu", lambda name: None)
+
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+
+    assert project_mod._tui_select_and_up(rows) == 0
+    assert called == []
+
+
+@pytest.mark.parametrize("status", ["stopped", "unknown"])
+def test_tui_non_running_row_direct_up(monkeypatch, status):
+    """非 running 行はサブメニューを出さず従来どおり直接 up する。"""
+    from devbase.commands import project as project_mod
+    from devbase.commands import container as container_mod
+
+    rows = [{"name": "carmo", "plugin": "-", "status": status}]
+    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 0)
+
+    action_menu_calls = []
+    monkeypatch.setattr(project_mod, "_show_action_menu",
+                        lambda name: action_menu_calls.append(name) or "down")
+
+    captured = {}
+    monkeypatch.setattr(container_mod, "cmd_project",
+                        lambda args: captured.update(
+                            subcommand=args.subcommand, name=args.name) or 0)
+
+    rc = project_mod._tui_select_and_up(rows)
+    assert rc == 0
+    assert action_menu_calls == [], "非 running ではサブメニューを出さない"
+    assert captured["subcommand"] == "up"
+    assert captured["name"] == "carmo"
+
+
 def test_interactive_falls_back_when_no_terminal_menu(tmp_path, monkeypatch):
-    """simple_term_menu 未導入時は input() 番号入力にフォールバックして up する。"""
+    """questionary 未導入時は input() 番号入力にフォールバックして up する。"""
     from devbase.commands import project as project_mod
     from devbase.commands import status as status_mod
     from devbase.commands import container as container_mod
@@ -688,7 +754,7 @@ def test_interactive_falls_back_when_no_terminal_menu(tmp_path, monkeypatch):
     monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
     monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_TERMINAL_MENU", False)
+    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
     monkeypatch.setattr("builtins.input", lambda *a, **k: "1")
 
     captured = {}

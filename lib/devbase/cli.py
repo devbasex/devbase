@@ -34,6 +34,10 @@ SHORTCUTS = {
     'login': 'login',
     'ps': 'ps',
     'scale': 'scale',
+    # `rebuild` は Python 実装 (cmd_rebuild = docker compose build --no-cache) で
+    # 完結するため `build` と異なりトップレベルショートカットに含めてよい
+    # (build は shell 実装に委譲するため除外している。上の NOTE 参照)。
+    'rebuild': 'rebuild',
 }
 
 # Group aliases
@@ -45,8 +49,8 @@ GROUP_ALIASES = {
 
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
-    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'list'],
-    ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build'],
+    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list'],
+    ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
@@ -129,6 +133,8 @@ def _add_container_parser(subparsers):
 
     _add_build_subparser(ct_sub)
 
+    ct_sub.add_parser('rebuild', help='Rebuild images without cache (docker compose build --no-cache)')
+
 
 def _add_project_parser(subparsers):
     """Project group parser (CWD 非依存のプロジェクト操作)。
@@ -174,6 +180,14 @@ def _add_project_parser(subparsers):
     pj_scale.add_argument('new_scale', type=int, help='New number of containers')
 
     _add_build_subparser(pj_sub)
+
+    # `rebuild` は Python 実装 (docker compose build --no-cache)。up/down 同様に
+    # 省略可能な `[name]` を取り、name 指定時は _dispatch_lifecycle が chdir してから
+    # 実行する。wrapper の _PROJECT_NAME_SUBCOMMANDS / _NAME_RESOLVABLE_SHORTCUTS にも
+    # 追加すること。
+    pj_rebuild = pj_sub.add_parser(
+        'rebuild', help='Rebuild images without cache (docker compose build --no-cache)')
+    pj_rebuild.add_argument('name', nargs='?', default=None, help='Project name')
 
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
@@ -425,6 +439,12 @@ def _add_shortcuts(subparsers):
     scale_sc.add_argument('name', nargs='?', default=None, help='Project name')
     scale_sc.add_argument('new_scale', type=int, help='New number of containers')
 
+    # `rebuild` は project rebuild のトップレベルシノニム (Python 実装のため build と
+    # 異なりショートカット可)。up/down と同じく `[name]` を受け付ける。
+    rebuild_sc = subparsers.add_parser(
+        'rebuild', help='Rebuild images without cache (docker compose build --no-cache)')
+    rebuild_sc.add_argument('name', nargs='?', default=None, help='Project name')
+
     # `list` は `project list` のトップレベルシノニム。lifecycle ではなく一覧表示
     # のため SHORTCUTS (project lifecycle へ写像) ではなく _dispatch で個別に
     # cmd_project_list へ振り分ける。
@@ -444,6 +464,7 @@ def _create_parser():
             "  login         project login\n"
             "  ps            project ps\n"
             "  scale         project scale\n"
+            "  rebuild       project rebuild (docker compose build --no-cache)\n"
             "\n"
             "Note: `container` is deprecated; use `project` instead.\n"
         )
@@ -511,7 +532,7 @@ def _expand_argv():
     # bin/devbase が build を shell 実装に委譲するため Python 側には top-level
     # build parser が無い。project build / container build は引き続き利用可能。
     commands = ['init', 'status', 'shell-rc', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
-                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'list', 'help']
+                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'list', 'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):

@@ -295,6 +295,7 @@ def _dispatch_lifecycle(args) -> int:
         'scale': lambda: cmd_scale(new_scale=getattr(args, 'new_scale', None),
                                    project_name=project_name),
         'build': lambda: cmd_build(image=getattr(args, 'image', None)),
+        'rebuild': lambda: cmd_rebuild(),
     }
 
     handler = handlers.get(subcmd)
@@ -596,6 +597,35 @@ def cmd_build(image: str = None) -> int:
     logger.info("Building images from compose.yml ...")
     result = subprocess.run(
         ['docker', 'compose', 'build'],
+        check=False
+    )
+    return result.returncode
+
+
+# ---------------------------------------------------------------------------
+# cmd_rebuild
+# ---------------------------------------------------------------------------
+
+def cmd_rebuild() -> int:
+    """Rebuild project images without cache (``docker compose build --no-cache``).
+
+    cmd_build がレイヤーキャッシュを使うのに対し、こちらはキャッシュを無効化して
+    プロジェクト (compose) イメージを作り直す。``devbase rebuild`` / ``devbase project
+    rebuild [name]`` のエントリ。
+
+    注意: シェルラッパー (``bin/devbase`` の ``build --no-cache``) のような
+    devbase-base の 2 段ビルドは行わず、compose の build 対象サービスのみを
+    no-cache で再ビルドする。base まで作り直す場合は ``devbase build --no-cache``
+    を使う。
+    """
+    compose_file = Path('compose.yml')
+    if not compose_file.exists():
+        logger.error("compose.yml not found in current directory")
+        return 1
+
+    logger.info("Rebuilding images without cache from compose.yml ...")
+    result = subprocess.run(
+        ['docker', 'compose', 'build', '--no-cache'],
         check=False
     )
     return result.returncode

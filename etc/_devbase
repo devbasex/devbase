@@ -64,6 +64,7 @@ _devbase() {
         'down:Stop containers (shortcut)'
         'login:Login to container (shortcut)'
         'build:Build container images'
+        'rebuild:Rebuild images without cache (shortcut)'
         'ps:Show container status (shortcut)'
         'scale:Scale containers online (shortcut)'
         'list:List projects (shortcut)'
@@ -78,6 +79,7 @@ _devbase() {
         'logs:Show container logs'
         'scale:Scale containers online'
         'build:Build container images'
+        'rebuild:Rebuild images without cache (docker compose build --no-cache)'
         'list:List projects (NAME / PLUGIN / STATUS)'
     )
 
@@ -89,6 +91,7 @@ _devbase() {
         'logs:Show container logs'
         'scale:Scale containers online'
         'build:Build container images'
+        'rebuild:Rebuild images without cache (docker compose build --no-cache)'
     )
 
     env_subcommands=(
@@ -134,8 +137,8 @@ _devbase() {
         login)
             _values 'index' 1 2
             ;;
-        # トップレベルシノニム: up/down/ps/scale は [name] を取るためプロジェクト名を補完。
-        up|down)
+        # トップレベルシノニム: up/down/ps/scale/rebuild は [name] を取るためプロジェクト名を補完。
+        up|down|rebuild)
             _devbase_project_names
             ;;
         ps)
@@ -158,7 +161,7 @@ _devbase() {
             ;;
         project)
             case "$words[3]" in
-                up|down)
+                up|down|rebuild)
                     _devbase_project_names
                     ;;
                 login)
