@@ -1,6 +1,7 @@
 __pycache__/
 .venv/
 .env
+.env.bak
 .env.backup
 .gemini/
 .docker-compose.scale.yml

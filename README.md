@@ -23,7 +23,7 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 ### ワンライナーインストール（推奨）
 
 ```bash
-curl -fsSL https://dl.basex.jp/install.sh | bash
+curl -fsSL https://dl.basex.jp/i | bash
 ```
 
 `~/devbase` に clone（既存なら更新）し、`devbase init` まで自動実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。**新しく開くターミナルでは自動で有効**です。
@@ -41,13 +41,13 @@ curl -fsSL https://dl.basex.jp/install.sh | bash
 ```bash
 # 例: 別ディレクトリへ特定タグを入れる（パイプではなく保存実行でも env は同様に効きます）
 DEVBASE_INSTALL_DIR=~/work/devbase DEVBASE_INSTALL_REF=v1.2.3 \
-  bash -c "$(curl -fsSL https://dl.basex.jp/install.sh)"
+  bash -c "$(curl -fsSL https://dl.basex.jp/i)"
 ```
 
 > **⚠ `curl | bash` を実行する前に**: 中身を確認したい場合は、いったん保存してから実行してください。
 >
 > ```bash
-> curl -fsSL https://dl.basex.jp/install.sh -o install.sh
+> curl -fsSL https://dl.basex.jp/i -o install.sh
 > less install.sh    # 内容を確認
 > bash install.sh
 > ```

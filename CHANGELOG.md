@@ -6,7 +6,7 @@
 
 ### Added
 - **ワンライナー installer (`install.sh`) を新設**しました (PLAN31_1)。
-  `curl -fsSL https://dl.basex.jp/install.sh | bash`
+  `curl -fsSL https://dl.basex.jp/i | bash`
   で `~/devbase` への clone（既存なら `git pull --ff-only`）と `devbase init` まで
   自動完了します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。
   - 配置先 / clone 元 / ref を `DEVBASE_INSTALL_DIR` / `DEVBASE_INSTALL_REPO` /

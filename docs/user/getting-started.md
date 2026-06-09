@@ -22,7 +22,7 @@ devbase を利用するには、以下のソフトウェアがホストマシン
 手順 1〜2（クローンと初期化）を 1 コマンドで自動化できます。`git` と `curl` があれば実行できます。
 
 ```bash
-curl -fsSL https://dl.basex.jp/install.sh | bash
+curl -fsSL https://dl.basex.jp/i | bash
 ```
 
 このコマンドは次を行います。
@@ -48,7 +48,7 @@ curl -fsSL https://dl.basex.jp/install.sh | bash
 > **⚠ `curl | bash` を実行する前に**: 信頼できないスクリプトをそのままパイプ実行するのが不安な場合は、保存して内容を確認してから実行してください。
 >
 > ```bash
-> curl -fsSL https://dl.basex.jp/install.sh -o install.sh
+> curl -fsSL https://dl.basex.jp/i -o install.sh
 > less install.sh    # 内容を確認
 > bash install.sh
 > ```

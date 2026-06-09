@@ -37,7 +37,8 @@ jobs:
       - name: Assemble site (install.sh only)
         run: |
           mkdir -p _site
-          cp install.sh _site/install.sh
+          cp install.sh _site/i            # 正規の短縮パス (https://dl.basex.jp/i)
+          cp install.sh _site/install.sh   # 後方互換エイリアス
           echo 'dl.basex.jp' > _site/CNAME
           cat > _site/index.html <<'HTML'
           <!doctype html>
@@ -46,7 +47,7 @@ jobs:
           <body style="font-family:system-ui;max-width:42rem;margin:3rem auto;padding:0 1rem">
             <h1>devbase installer</h1>
             <p>ワンライナーインストール:</p>
-            <pre><code>curl -fsSL https://dl.basex.jp/install.sh | bash</code></pre>
+            <pre><code>curl -fsSL https://dl.basex.jp/i | bash</code></pre>
             <p>ソース: <a href="https://github.com/devbasex/devbase">github.com/devbasex/devbase</a></p>
           </body>
           </html>
