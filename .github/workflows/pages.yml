@@ -1,0 +1,54 @@
+name: Deploy installer to Pages
+
+# install.sh を GitHub Pages (dl.basex.jp) で配信する。
+# 配信仕様: docs/developer/installer-hosting.md
+# リポジトリ全体は晒さず、install.sh のみを成果物として公開する。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - install.sh
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site (install.sh only)
+        run: |
+          mkdir -p _site
+          cp install.sh _site/install.sh
+          echo 'dl.basex.jp' > _site/CNAME
+          cat > _site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ja">
+          <head><meta charset="utf-8"><title>devbase installer</title></head>
+          <body style="font-family:system-ui;max-width:42rem;margin:3rem auto;padding:0 1rem">
+            <h1>devbase installer</h1>
+            <p>ワンライナーインストール:</p>
+            <pre><code>curl -fsSL https://dl.basex.jp/install.sh | bash</code></pre>
+            <p>ソース: <a href="https://github.com/devbasex/devbase">github.com/devbasex/devbase</a></p>
+          </body>
+          </html>
+          HTML
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
