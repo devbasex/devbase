@@ -17,6 +17,11 @@ permissions:
   pages: write
   id-token: write
 
+# Node.js 20 で動く JS アクションの deprecation 警告 (2026-06-16 以降は Node 24 が
+# 既定) を回避するため、ランナーで Node 24 実行を強制する。
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 concurrency:
   group: pages
   cancel-in-progress: true
