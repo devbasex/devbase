@@ -19,20 +19,21 @@ devbase を利用するには、以下のソフトウェアがホストマシン
 
 ## クイックインストール（ワンライナー）
 
-手順 1〜3（クローン・初期化・シェル再読み込み）を 1 コマンドで自動化できます。`git` と `curl` があれば実行できます。
+手順 1〜2（クローンと初期化）を 1 コマンドで自動化できます。`git` と `curl` があれば実行できます。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh | bash \
-  && source "$(~/devbase/bin/devbase shell-rc)"
+curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh | bash
 ```
 
 このコマンドは次を行います。
 
 1. `~/devbase` に devbase を clone します（既に devbase が clone 済みなら `git pull --ff-only` で更新）。
 2. clone 先で `devbase init` を 1 回実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。
-3. 後半の `&& source ...` を**いま開いている端末そのもの**で実行し（`&&` 以降はパイプのサブシェルではなく呼び出し元シェルで動くため）、その端末で即座に `devbase` が使える状態にします。新しく開くターミナルは init の rc 追記により自動で有効です。
+3. 完了後、シェル再読み込み（手順 3）以降の次の手順を表示します。**新しく開くターミナルでは自動で有効**です。
 
-`env init`（手順 7）は対話が必要なため、ワンライナーでは**実行せず案内のみ**です。完了後に手動で実行してください。配置先を `DEVBASE_INSTALL_DIR` で変えた場合は、後半の `~/devbase/...` も同じパスに合わせてください。`source` を省いた `... | bash` だけでも導入は完了し、その場合は完了メッセージの案内に従って手動で `source` します。
+**いま開いている端末で即使う**なら、末尾に `&& source "$(~/devbase/bin/devbase shell-rc)"` を付けます（`&&` 以降は呼び出し元シェルで実行されるため、その場で PATH が通ります）。
+
+`env init`（手順 7）は対話が必要なため、ワンライナーでは**実行せず案内のみ**です。完了後に手動で実行してください。配置先を `DEVBASE_INSTALL_DIR` で変えた場合は、`~/devbase/...` を同じパスに合わせてください。
 
 環境変数で挙動を上書きできます。
 
