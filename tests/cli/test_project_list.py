@@ -743,6 +743,52 @@ def test_tui_non_running_row_direct_up(monkeypatch, status):
     assert captured["name"] == "carmo"
 
 
+def test_with_escape_cancel_registers_escape_binding():
+    """_with_escape_cancel が select に単独 Esc 中止バインドを後付けすること。"""
+    questionary = pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    from devbase.commands import project as project_mod
+
+    q = questionary.select("t", choices=[questionary.Choice(title="a", value=0)])
+    assert project_mod._with_escape_cancel(q) is q  # 同じ question を返す
+
+    esc = [b for b in q.application.key_bindings.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1
+    # eager=False: 矢印キー等のエスケープシーケンス (\x1b[A 等) の先頭と衝突させない
+    assert esc[0].eager() is False
+
+    # ハンドラは Ctrl-C と同様 KeyboardInterrupt で app を抜ける (= ask() が None)
+    captured = {}
+    fake_app = types.SimpleNamespace(exit=lambda **kw: captured.update(kw))
+    esc[0].handler(types.SimpleNamespace(app=fake_app))
+    assert captured["exception"] is KeyboardInterrupt
+
+
+@pytest.mark.parametrize("call", [
+    lambda m: m._show_menu([{"name": "carmo", "plugin": "-", "status": "stopped"}]),
+    lambda m: m._show_action_menu("carmo"),
+])
+def test_select_menus_wire_escape_cancel(monkeypatch, call):
+    """_show_menu / _show_action_menu が select に Esc 中止を仕込んでから ask する。"""
+    pytest.importorskip("questionary")
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+
+    from devbase.commands import project as project_mod
+
+    kb = KeyBindings()
+    fake_q = types.SimpleNamespace(
+        application=types.SimpleNamespace(key_bindings=kb),
+        ask=lambda: "sentinel",
+    )
+    monkeypatch.setattr(project_mod.questionary, "select", lambda *a, **k: fake_q)
+
+    assert call(project_mod) == "sentinel"
+    esc = [b for b in kb.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1, "Esc 中止バインドが登録されていない"
+
+
 def test_interactive_falls_back_when_no_terminal_menu(tmp_path, monkeypatch):
     """questionary 未導入時は input() 番号入力にフォールバックして up する。"""
     from devbase.commands import project as project_mod
