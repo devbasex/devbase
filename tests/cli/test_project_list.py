@@ -809,6 +809,13 @@ def test_with_escape_back_returns_sentinel_on_escape():
     esc[0].handler(types.SimpleNamespace(app=fake_app))
     assert captured == {"result": project_mod._MENU_BACK}
 
+    # ← (Left) も「戻る」に割り当て、Esc のフラッシュ待ち遅延を回避して即応させる
+    left = [b for b in q.application.key_bindings.bindings if Keys.Left in b.keys]
+    assert len(left) == 1
+    captured.clear()
+    left[0].handler(types.SimpleNamespace(app=fake_app))
+    assert captured == {"result": project_mod._MENU_BACK}
+
 
 def test_tui_running_action_escape_returns_to_top_menu(monkeypatch):
     """running 行のサブメニューで Esc (_MENU_BACK) を押すとトップメニューへ戻る。"""
