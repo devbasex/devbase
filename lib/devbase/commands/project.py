@@ -190,6 +190,27 @@ def _start_project_up(name: str) -> int:
     return _start_project_action(name, "up")
 
 
+def _with_escape_cancel(question):
+    """questionary の select に Esc 単独押下での中止を後付けする。
+
+    questionary 2.x の select は Ctrl-C / Ctrl-Q しか中止に割り当てないため、
+    生成済み ``Question.application`` の key_bindings に Escape ハンドラを足す。
+    Ctrl-C と同じく ``KeyboardInterrupt`` で抜けるので ``ask()`` は ``None``
+    (= 中止) を返す。
+
+    Escape は矢印キー等のエスケープシーケンス (``\\x1b[A`` 等) の先頭バイトでも
+    あるため、``eager=False`` で登録し prompt_toolkit のフラッシュ待ちで単独 Esc
+    のみを拾う (矢印キー移動と衝突させない)。
+    """
+    from prompt_toolkit.keys import Keys
+
+    @question.application.key_bindings.add(Keys.Escape)
+    def _(event):
+        event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
+    return question
+
+
 def _show_menu(rows: list[dict]) -> int | None:
     """questionary の select を起動し、選択された rows の index を返す (中止時 None)。
 
@@ -198,33 +219,35 @@ def _show_menu(rows: list[dict]) -> int | None:
     entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
     choices = [questionary.Choice(title=entry, value=i)
                for i, entry in enumerate(entries)]
-    return questionary.select(
-        "起動するプロジェクトを選択 (↑↓ 移動 / 名前で絞り込み / Enter 決定 / Ctrl-C 中止):",
+    question = questionary.select(
+        "起動するプロジェクトを選択 (↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc・Ctrl-C 中止):",
         choices=choices,
         use_arrow_keys=True,
         use_jk_keys=False,        # use_search_filter と併用不可のため False
         use_search_filter=True,   # 文字入力でプロジェクト名等を部分一致絞り込み
         use_shortcuts=False,      # 単一キーショートカットは使わない
-    ).ask()                       # 選択された value (= rows の index) / 中止時 None
+    )
+    return _with_escape_cancel(question).ask()  # value (= rows index) / 中止時 None
 
 
 def _show_action_menu(name: str) -> str | None:
     """running 中プロジェクトの操作 (up/rebuild/down) を選ぶサブメニュー。
 
     選択された action 文字列 (``"up"`` / ``"rebuild"`` / ``"down"``) を返す。
-    中止 (Ctrl-C) 時は None。テストではこの関数を monkeypatch する。
+    中止 (Esc / Ctrl-C) 時は None。テストではこの関数を monkeypatch する。
     """
     choices = [
         questionary.Choice(title="再起動 (up)", value="up"),
         questionary.Choice(title="再ビルド (rebuild --no-cache)", value="rebuild"),
         questionary.Choice(title="停止 (down)", value="down"),
     ]
-    return questionary.select(
-        f"'{name}' は起動中です。操作を選択 (↑↓ 移動 / Enter 決定 / Ctrl-C 中止):",
+    question = questionary.select(
+        f"'{name}' は起動中です。操作を選択 (↑↓ 移動 / Enter 決定 / Esc・Ctrl-C 中止):",
         choices=choices,
         use_arrow_keys=True,
         use_shortcuts=False,
-    ).ask()
+    )
+    return _with_escape_cancel(question).ask()
 
 
 def _tui_select_and_up(rows: list[dict]) -> int:
