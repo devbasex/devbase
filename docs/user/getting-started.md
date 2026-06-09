@@ -29,7 +29,7 @@ curl -fsSL https://dl.basex.jp/i | bash && . ~/devbase/bin/rc
 
 1. `~/devbase` に devbase を clone します（既に devbase が clone 済みなら `git pull --ff-only` で更新）。
 2. clone 先で `devbase init` を 1 回実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。
-3. 末尾の `&& . ~/devbase/bin/rc` を**いま開いている端末**で実行し（`&&` 以降はパイプのサブシェルではなく呼び出し元シェルで動くため）、その端末で即座に `devbase`（PATH / 補完）が使える状態にします。新しく開くターミナルは init の rc 追記により自動で有効です。
+3. 末尾の `&& . ~/devbase/bin/rc` を**いま開いている端末**で実行し、その端末で即座に `devbase`（PATH / 補完）が使える状態にします。新しく開くターミナルは init の rc 追記により自動で有効です。
 
 `env init`（手順 7）は対話が必要なため、ワンライナーでは**実行せず案内のみ**です。完了後に手動で実行してください。配置先を `DEVBASE_INSTALL_DIR` で変えた場合は、`~/devbase/...` を同じパスに合わせてください。
 
@@ -82,7 +82,7 @@ cd devbase
 . ./bin/rc
 ```
 
-`bin/rc` を source すると、いま開いているシェルに devbase の PATH と補完がその場で適用されます（`init` が rc ファイルに追記する内容と同じ有効化を、現在のシェルへ即時反映します）。`devbase` 前提シェルである bash / zsh のどちらでも同じく `.`（= `source`）で読み込めます。
+`bin/rc` を source すると、`init` が rc ファイルに追記するのと同じ有効化（devbase の PATH と補完）が現在のシェルへ即時反映されます。bash / zsh のどちらでも `.`（= `source`）で読み込めます。
 
 > **Note:** 新しいターミナルを開いた場合は `init` が rc に追記したブロックで自動的に有効化されるため、この手順は不要です。
 
