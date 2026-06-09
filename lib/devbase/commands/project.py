@@ -224,15 +224,25 @@ def _with_escape_cancel(question):
 
 
 def _with_escape_back(question):
-    """Esc 単独押下で ``_MENU_BACK`` を返す select を返す。
+    """← / Esc 押下で ``_MENU_BACK`` を返す select を返す。
 
-    Ctrl-C は questionary 既定どおり中止 (``ask()`` が ``None``) のまま残し、Esc
-    だけを「1 つ前のメニューへ戻る」シグナルに割り当てる。サブメニュー用。
+    Ctrl-C は questionary 既定どおり中止 (``ask()`` が ``None``) のまま残し、← と
+    Esc を「1 つ前のメニューへ戻る」シグナルに割り当てる。サブメニュー用。
+
+    Esc (``\\x1b``) は矢印キーのエスケープシーケンスの先頭バイトと衝突するため
+    prompt_toolkit のフラッシュ待ち分の遅延が体感される。左矢印 (``\\x1b[D``) は
+    完結した曖昧さの無いシーケンスなので、これを主たる「戻る」キーとして即時に
+    反応させ、Esc は互換のため残す。サブメニューは検索絞り込み (use_search_filter)
+    を使わないため、← をカーソル移動と衝突させずに割り当てられる。
     """
+    from prompt_toolkit.keys import Keys
+
     def _back(event):
         event.app.exit(result=_MENU_BACK)
 
-    return _add_escape_binding(question, _back)
+    _add_escape_binding(question, _back)            # Esc（互換・低速）
+    question.application.key_bindings.add(Keys.Left)(_back)  # ←（即時）
+    return question
 
 
 def _show_menu(rows: list[dict]) -> int | None:
@@ -271,7 +281,7 @@ def _show_action_menu(name: str):
     ]
     question = questionary.select(
         f"'{name}' は起動中です。操作を選択 "
-        "(↑↓ 移動 / Enter 決定 / Esc 戻る / Ctrl-C 中止):",
+        "(↑↓ 移動 / Enter 決定 / ← ・Esc 戻る / Ctrl-C 中止):",
         choices=choices,
         use_arrow_keys=True,
         use_shortcuts=False,
