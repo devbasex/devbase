@@ -20,6 +20,38 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 
 ## クイックスタート
 
+### ワンライナーインストール（推奨）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh | bash
+```
+
+`~/devbase` に clone（既存なら更新）し、`devbase init` まで自動実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。完了後に表示される手順に従い、`source "$(~/devbase/bin/devbase shell-rc)"` でシェルを再読み込みしてください。`env init` は対話が必要なため案内のみで、自動実行はしません。
+
+環境変数で挙動を上書きできます。
+
+| 変数 | 既定値 | 用途 |
+|------|--------|------|
+| `DEVBASE_INSTALL_DIR` | `$HOME/devbase` | 配置先ディレクトリ |
+| `DEVBASE_INSTALL_REPO` | `https://github.com/devbasex/devbase.git` | clone 元（fork / テスト用） |
+| `DEVBASE_INSTALL_REF` | `main` | チェックアウトする branch / tag |
+
+```bash
+# 例: 別ディレクトリへ特定タグを入れる（パイプではなく保存実行でも env は同様に効きます）
+DEVBASE_INSTALL_DIR=~/work/devbase DEVBASE_INSTALL_REF=v1.2.3 \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh)"
+```
+
+> **⚠ `curl | bash` を実行する前に**: 中身を確認したい場合は、いったん保存してから実行してください。
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh -o install.sh
+> less install.sh    # 内容を確認
+> bash install.sh
+> ```
+
+### 手動セットアップ
+
 ```bash
 # 1. クローンと初期化
 git clone https://github.com/devbasex/devbase.git

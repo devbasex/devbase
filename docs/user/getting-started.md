@@ -17,6 +17,42 @@ devbase を利用するには、以下のソフトウェアがホストマシン
 
 > **Note:** Docker Desktop を使用している場合、Docker Engine と Docker Compose の両方が含まれています。Linux では Docker Engine を直接インストールし、Docker Compose プラグインを追加してください。
 
+## クイックインストール（ワンライナー）
+
+手順 1〜2（クローンと初期化）を 1 コマンドで自動化できます。`git` と `curl` があれば実行できます。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh | bash
+```
+
+このスクリプトは次を行います。
+
+1. `~/devbase` に devbase を clone します（既に devbase が clone 済みなら `git pull --ff-only` で更新）。
+2. clone 先で `devbase init` を 1 回実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。
+3. 完了後、シェル再読み込み（手順 3）以降の次の手順を表示します。
+
+`env init`（手順 7）は対話が必要なため、ワンライナーでは**実行せず案内のみ**です。完了後に手動で実行してください。
+
+環境変数で挙動を上書きできます。
+
+| 変数 | 既定値 | 用途 |
+|------|--------|------|
+| `DEVBASE_INSTALL_DIR` | `$HOME/devbase` | 配置先ディレクトリ |
+| `DEVBASE_INSTALL_REPO` | `https://github.com/devbasex/devbase.git` | clone 元（fork / テスト用） |
+| `DEVBASE_INSTALL_REF` | `main` | チェックアウトする branch / tag |
+
+> **既存ディレクトリの扱い**: 配置先が devbase 以外の非空ディレクトリだった場合、誤上書きを避けるためスクリプトは中止します。別の場所に入れるには `DEVBASE_INSTALL_DIR=/path/to/dir` を指定してください。
+
+> **⚠ `curl | bash` を実行する前に**: 信頼できないスクリプトをそのままパイプ実行するのが不安な場合は、保存して内容を確認してから実行してください。
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh -o install.sh
+> less install.sh    # 内容を確認
+> bash install.sh
+> ```
+
+ワンライナーを使わず手動で進める場合は、以下の手順に従ってください。
+
 ## セットアップ手順
 
 ### 1. リポジトリのクローン
