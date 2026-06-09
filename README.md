@@ -23,10 +23,13 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 ### ワンライナーインストール（推奨）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh | bash \
+  && source "$(~/devbase/bin/devbase shell-rc)"
 ```
 
-`~/devbase` に clone（既存なら更新）し、`devbase init` まで自動実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。完了後に表示される手順に従い、`source "$(~/devbase/bin/devbase shell-rc)"` でシェルを再読み込みしてください。
+`~/devbase` に clone（既存なら更新）し、`devbase init` まで自動実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。後半の `&& source ...` は**いま開いている端末そのもの**で実行されるため（パイプのサブシェルではなく、`&&` 以降は呼び出し元シェルで動く）、インストール直後からそのターミナルで `devbase` が使えます。新しく開くターミナルは init の rc 追記により自動で有効になります。
+
+> 配置先を `DEVBASE_INSTALL_DIR` で変えた場合は、後半の `~/devbase/...` も同じパスに合わせてください。`source` を省いた `... | bash` だけでも導入は完了し、その場合は完了メッセージの案内に従って手動で `source` してください。
 
 環境変数で挙動を上書きできます。
 
