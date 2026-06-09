@@ -26,7 +26,7 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 curl -fsSL https://raw.githubusercontent.com/devbasex/devbase/main/install.sh | bash
 ```
 
-`~/devbase` に clone（既存なら更新）し、`devbase init` まで自動実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。完了後に表示される手順に従い、`source "$(~/devbase/bin/devbase shell-rc)"` でシェルを再読み込みしてください。`env init` は対話が必要なため案内のみで、自動実行はしません。
+`~/devbase` に clone（既存なら更新）し、`devbase init` まで自動実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。完了後に表示される手順に従い、`source "$(~/devbase/bin/devbase shell-rc)"` でシェルを再読み込みしてください。
 
 環境変数で挙動を上書きできます。
 
