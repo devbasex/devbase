@@ -290,7 +290,8 @@ def test_run_operation_down_cancelled_does_not_dispatch(monkeypatch, tmp_path, c
 
 def test_run_operation_login_collects_index(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: "3")
+    # menu.integer で正の整数を保証し、index は文字列契約のため str 化して渡す。
+    monkeypatch.setattr(menu, "integer", lambda *a, **k: 3)
     assert actions_project._run_operation(tmp_path, "carmo", "login") == 0
     assert captured["subcommand"] == "login" and captured["index"] == "3"
 
@@ -299,7 +300,7 @@ def test_run_operation_login_cancel(monkeypatch, tmp_path):
     from devbase.commands import container as container_mod
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)   # Esc/Ctrl-C
+    monkeypatch.setattr(menu, "integer", lambda *a, **k: None)   # Esc/Ctrl-C
     assert actions_project._run_operation(tmp_path, "carmo", "login") is actions_project._ARG_CANCEL
     assert called == []
 
@@ -384,6 +385,13 @@ def test_optional_int_reprompts_non_numeric(monkeypatch):
     vals = iter(["abc", "7"])
     monkeypatch.setattr(menu, "text", lambda *a, **k: next(vals))
     assert actions_project._optional_int("tail") == 7
+
+
+def test_optional_int_reprompts_negative(monkeypatch):
+    """負数 (min_value=0 未満) は弾いて再入力を促す (logs --tail への負数防止)。"""
+    vals = iter(["-5", "10"])
+    monkeypatch.setattr(menu, "text", lambda *a, **k: next(vals))
+    assert actions_project._optional_int("tail") == 10
 
 
 def test_select_build_image_lists_containers(monkeypatch, tmp_path):

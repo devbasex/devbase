@@ -74,12 +74,13 @@ def _select_action(name: str):
         list(_RUNNING_OPS), back=True, search=False)
 
 
-def _optional_int(message: str):
+def _optional_int(message: str, *, min_value: int = 0):
     """空入力を許す整数収集 (logs --tail 等)。
 
     戻り値: ``int`` / ``None`` (空入力 = 既定動作) / ``_ARG_CANCEL`` (Esc・Ctrl-C 中止)。
-    非数値は再入力を促す。``menu.integer`` は空入力で既定値を返す仕様のため、空 = None を
-    表現したい optional な数値はこちらで扱う。
+    非数値・``min_value`` 未満は再入力を促す。``menu.integer`` は空入力で既定値を返す
+    仕様のため、空 = None を表現したい optional な数値はこちらで扱う。``min_value`` の
+    既定は 0 で、logs --tail に負数を渡して docker compose をエラーにするのを防ぐ。
     """
     while True:
         raw = menu.text(message, allow_empty=True)
@@ -88,9 +89,14 @@ def _optional_int(message: str):
         if raw == "":
             return None
         try:
-            return int(raw)
+            value = int(raw)
         except ValueError:
             logger.error("整数で指定してください: %r", raw)
+            continue
+        if value < min_value:
+            logger.error("%d 以上で指定してください。", min_value)
+            continue
+        return value
 
 
 def _select_build_image(devbase_root: Path):
@@ -138,10 +144,13 @@ def _run_operation(devbase_root: Path, name: str, op: str):
         return dispatch_lifecycle("down", name)
 
     if op == "login":
-        index = menu.text("ログインするコンテナ番号", default="1")
+        # menu.text は空入力 (既定値を消して確定) で "" を返し、wrapper で --index=
+        # と展開されてコマンドが失敗する。menu.integer なら空入力は default=1 を返し、
+        # min_value=1 で正の整数を保証する。cmd_login の index は文字列契約なので str 化。
+        index = menu.integer("ログインするコンテナ番号", default=1, min_value=1)
         if index is None:
             return _ARG_CANCEL
-        return dispatch_lifecycle("login", name, index=index)
+        return dispatch_lifecycle("login", name, index=str(index))
 
     if op == "ps":
         all_c = menu.confirm("停止中も含め全コンテナを表示しますか (--all)?", default=False)
