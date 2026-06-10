@@ -1,39 +1,28 @@
-"""Project listing commands (`devbase project list` / `devbase list`).
+"""Project listing helpers (`devbase project list` / `devbase list`).
 
-PLAN06 Task 3。`$DEVBASE_ROOT/projects/` 配下を NAME / PLUGIN / STATUS で一覧表示し、
-``--interactive`` で選択 → `project up` 起動を行う。
+PLAN06 Task 3 で追加した ``$DEVBASE_ROOT/projects/`` の一覧 (NAME / PLUGIN / STATUS)
+表示と整形ロジックを担う。PLAN31_2 で **対話 TUI 部分は ``devbase.tui`` パッケージへ
+分離**し、本モジュールは listing と整形 (table / メニュー表示文字列) の純粋ロジックに
+専念する (TUI からも CLI table からも共有される)。
 
 ライフサイクル操作 (up/down/ps/login/logs/scale/build) は引き続き
-``commands/container.py`` の共有ハンドラが担当し、本モジュールは listing と
-interactive 起動のみを担う。
+``commands/container.py`` の共有ハンドラが担当する。``cmd_project_list`` は
+``devbase.tui.run`` を入口として呼ぶだけの薄いラッパになった。
 """
 
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 from devbase.log import get_logger
 
 logger = get_logger(__name__)
 
-# questionary (prompt_toolkit ベース) は任意依存。未導入環境では番号入力に
-# フォールバックするため、import 失敗を許容する。questionary は矢印キー移動 +
-# 文字入力での絞り込み (use_search_filter) に対応し、prompt_toolkit が入力を
-# 1 イベントずつ分解するため、旧 simple_term_menu のような ↑長押し時の入力
-# 取りこぼし (連結エスケープシーケンスの破棄) が構造的に発生しない。
-try:
-    import questionary
-    _HAVE_QUESTIONARY = True
-except ImportError:  # pragma: no cover - 未導入環境のフォールバック経路
-    questionary = None
-    _HAVE_QUESTIONARY = False
-
-# STATUS 色付けの有効/無効。menu entry に生 ANSI を埋め込むと prompt_toolkit の
-# 表示幅計算と干渉しうるため、実機検証が完了するまではメニューでは色を付けず
-# False を既定とする (機能 > 装飾)。テーブル表示 (_print_table) は端末へ直接書く
-# ため影響を受けず、色付けは別途 questionary の style で検討する。
+# STATUS 色付けの有効/無効。メニュー entry に生 ANSI を埋め込むと prompt_toolkit の
+# 表示幅計算と干渉しうるため、実機検証が完了するまではメニューでは色を付けず False を
+# 既定とする (機能 > 装飾)。テーブル表示 (_print_table) は端末へ直接書くため影響を
+# 受けない。tui.actions_project が _build_menu_entries 呼び出し時に参照する。
 _STATUS_COLOR = False
 
 
@@ -171,225 +160,12 @@ def _build_menu_entries(rows: list[dict], colorize: bool = False) -> list[str]:
     return entries
 
 
-def _start_project_action(name: str, action: str) -> int:
-    """``project <action> <name>`` を共有ハンドラ cmd_project 経由で起動する。
-
-    ``action`` は ``"up"`` / ``"down"`` / ``"rebuild"``。共有ハンドラ
-    (_dispatch_lifecycle) が ``name`` でディレクトリ解決 (chdir) してから各
-    サブコマンドを実行する。``scale`` は up のみが参照するが、常に付与しても
-    他コマンドは無視するため一律 None を渡す。
-    """
-    import types
-
-    from devbase.commands.container import cmd_project
-    return cmd_project(types.SimpleNamespace(subcommand=action, name=name, scale=None))
-
-
-def _start_project_up(name: str) -> int:
-    """``project up <name>`` を起動する (後方互換の薄いラッパ)。"""
-    return _start_project_action(name, "up")
-
-
-# サブメニュー (_show_action_menu) で Esc を押した際の「トップメニューへ戻る」
-# シグナル。``None`` (= Ctrl-C による全体中止) と区別するための番兵。
-_MENU_BACK = object()
-
-
-def _add_escape_binding(question, handler):
-    """questionary の select に Esc 単独押下のハンドラを後付けする共通処理。
-
-    questionary 2.x の select は Ctrl-C / Ctrl-Q しか割り当てないため、生成済み
-    ``Question.application`` の key_bindings に Escape ハンドラを足す。
-
-    Escape は矢印キー等のエスケープシーケンス (``\\x1b[A`` 等) の先頭バイトでも
-    あるため、``eager=False`` で登録し prompt_toolkit のフラッシュ待ちで単独 Esc
-    のみを拾う (矢印キー移動と衝突させない)。
-    """
-    from prompt_toolkit.keys import Keys
-
-    question.application.key_bindings.add(Keys.Escape)(handler)
-    return question
-
-
-def _with_escape_cancel(question):
-    """Esc 単独押下で中止する select を返す。
-
-    Ctrl-C と同じく ``KeyboardInterrupt`` で抜けるので ``ask()`` は ``None``
-    (= 中止) を返す。トップメニュー (戻り先が無い) 用。
-    """
-    def _cancel(event):
-        event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
-
-    return _add_escape_binding(question, _cancel)
-
-
-def _with_escape_back(question):
-    """← / Esc 押下で ``_MENU_BACK`` を返す select を返す。
-
-    Ctrl-C は questionary 既定どおり中止 (``ask()`` が ``None``) のまま残し、← と
-    Esc を「1 つ前のメニューへ戻る」シグナルに割り当てる。サブメニュー用。
-
-    Esc (``\\x1b``) は矢印キーのエスケープシーケンスの先頭バイトと衝突するため
-    prompt_toolkit のフラッシュ待ち分の遅延が体感される。左矢印 (``\\x1b[D``) は
-    完結した曖昧さの無いシーケンスなので、これを主たる「戻る」キーとして即時に
-    反応させ、Esc は互換のため残す。サブメニューは検索絞り込み (use_search_filter)
-    を使わないため、← をカーソル移動と衝突させずに割り当てられる。
-    """
-    from prompt_toolkit.keys import Keys
-
-    def _back(event):
-        event.app.exit(result=_MENU_BACK)
-
-    _add_escape_binding(question, _back)            # Esc（互換・低速）
-    question.application.key_bindings.add(Keys.Left)(_back)  # ←（即時）
-    return question
-
-
-def _show_menu(rows: list[dict]) -> int | None:
-    """questionary の select を起動し、選択された rows の index を返す (中止時 None)。
-
-    テストではこの関数自体を monkeypatch して questionary の実起動を避ける。
-    """
-    entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
-    choices = [questionary.Choice(title=entry, value=i)
-               for i, entry in enumerate(entries)]
-    question = questionary.select(
-        "起動するプロジェクトを選択 (↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc・Ctrl-C 中止):",
-        choices=choices,
-        use_arrow_keys=True,
-        use_jk_keys=False,        # use_search_filter と併用不可のため False
-        use_search_filter=True,   # 文字入力でプロジェクト名等を部分一致絞り込み
-        use_shortcuts=False,      # 単一キーショートカットは使わない
-    )
-    return _with_escape_cancel(question).ask()  # value (= rows index) / 中止時 None
-
-
-def _show_action_menu(name: str):
-    """running 中プロジェクトの操作 (up/rebuild/down) を選ぶサブメニュー。
-
-    戻り値:
-    - action 文字列 (``"up"`` / ``"rebuild"`` / ``"down"``): 操作を選択
-    - ``_MENU_BACK``: Esc 押下 → トップメニューへ戻る
-    - ``None``: Ctrl-C 押下 → 全体中止
-
-    テストではこの関数を monkeypatch する。
-    """
-    choices = [
-        questionary.Choice(title="再起動 (up)", value="up"),
-        questionary.Choice(title="再ビルド (rebuild --no-cache)", value="rebuild"),
-        questionary.Choice(title="停止 (down)", value="down"),
-    ]
-    question = questionary.select(
-        f"'{name}' は起動中です。操作を選択 "
-        "(↑↓ 移動 / Enter 決定 / ← ・Esc 戻る / Ctrl-C 中止):",
-        choices=choices,
-        use_arrow_keys=True,
-        use_shortcuts=False,
-    )
-    return _with_escape_back(question).ask()
-
-
-def _tui_select_and_up(rows: list[dict]) -> int:
-    """TUI メニューで 1 件選択して操作を起動する。
-
-    選択行が running 中なら ``_show_action_menu`` で up/rebuild/down を選ばせ、
-    それ以外 (stopped / unknown 等) は従来どおり直接 ``project up`` を起動する。
-    サブメニューで Esc を押すと (``_MENU_BACK``) トップメニューへ戻る。
-    """
-    while True:
-        idx = _show_menu(rows)
-        if idx is None:
-            logger.info("中止しました。")
-            return 0
-
-        row = rows[idx]
-        name = row["name"]
-        if str(row.get("status", "")).startswith("running"):
-            action = _show_action_menu(name)
-            if action is _MENU_BACK:
-                continue                      # Esc → トップメニューへ戻る
-            if action is None:
-                logger.info("中止しました。")   # Ctrl-C → 全体中止
-                return 0
-            return _start_project_action(name, action)
-
-        return _start_project_action(name, "up")
-
-
-def _interactive_select_and_up(rows: list[dict]) -> int:
-    """一覧から 1 件選択して ``project up`` を起動する (TTY 専用)。
-
-    questionary が利用可能なら矢印キー + 絞り込み対応の TUI メニューを使う。未導入
-    環境では現行の番号入力方式 (_fallback_select_and_up) にフォールバックする。
-    """
-    if _HAVE_QUESTIONARY:
-        return _tui_select_and_up(rows)
-    logger.warning(
-        "questionary が未導入のため番号入力にフォールバックします "
-        "(`uv sync` で導入すると矢印キー選択が使えます)。"
-    )
-    return _fallback_select_and_up(rows)
-
-
-def _fallback_select_and_up(rows: list[dict]) -> int:
-    """番号入力で 1 件選択し ``project up <name>`` を起動する (questionary 未導入時のフォールバック)。
-
-    外部依存 (questionary 等) を増やさず stdlib の ``input()`` で実装する。
-    非対話環境 (stdin が閉じている等で EOFError) ではエラー終了する。空入力は中止。
-    """
-    print("起動するプロジェクトを選択してください:")
-    for i, r in enumerate(rows, 1):
-        print(f"  [{i}] {r['name']}  ({r['plugin']}, {r['status']})")
-
-    # 一覧取得が重い場合があるため、誤入力 (数値以外 / 範囲外) では即終了せず
-    # 再入力を促す。空入力は中止、非 TTY (EOFError) はエラー終了。
-    while True:
-        try:
-            raw = input("番号 (空で中止): ").strip()
-        except EOFError:
-            logger.error("対話入力ができません (非 TTY 環境)。"
-                         "`devbase project up <name>` で直接指定してください。")
-            return 1
-        except KeyboardInterrupt:
-            # Ctrl+C は traceback を出さず中止として扱う。
-            print()
-            logger.info("中止しました。")
-            return 0
-
-        if not raw:
-            logger.info("中止しました。")
-            return 0
-
-        try:
-            idx = int(raw)
-        except ValueError:
-            logger.error("番号で指定してください: %r", raw)
-            continue
-
-        if not (1 <= idx <= len(rows)):
-            logger.error("範囲外の番号です: %d (1〜%d)", idx, len(rows))
-            continue
-
-        break
-
-    return _start_project_up(rows[idx - 1]["name"])
-
-
 def cmd_project_list(devbase_root: Path, args) -> int:
-    """`devbase project list [--interactive]` / `devbase list [--interactive]`。"""
-    projects_dir = Path(devbase_root) / "projects"
-    rows = list_projects(projects_dir)
+    """`devbase project list [--interactive]` / `devbase list [--interactive]`。
 
-    if not rows:
-        logger.info("プロジェクトがありません (%s)。", projects_dir)
-        return 0
+    実体は ``devbase.tui.run`` (トップ階層メニュー) へ委譲する。非 TTY /
+    ``--no-interactive`` / questionary 不在時のフォールバックは tui 側で処理する。
+    """
+    from devbase.tui import run as tui_run
 
-    # 対話選択はデフォルト ON。ただし非 TTY (パイプ / CI / リダイレクト) では
-    # input() が EOFError になり実用にならないため、自動的に一覧表示へフォールバック。
-    # stdin / stdout のいずれかが非 TTY (`devbase list | cat`, `> out.txt` 等) なら
-    # 対話プロンプトが表示できない / 読めないため、確実に一覧表示へフォールバックする。
-    if getattr(args, "interactive", True) and sys.stdin.isatty() and sys.stdout.isatty():
-        return _interactive_select_and_up(rows)
-
-    _print_table(rows)
-    return 0
+    return tui_run(Path(devbase_root), args)

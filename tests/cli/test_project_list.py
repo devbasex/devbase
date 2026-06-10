@@ -1,23 +1,24 @@
-"""PLAN06 Task 3: `project list` 一覧表示 + `--interactive` 選択起動のテスト
+"""PLAN06 Task 3 / PLAN31_2: `project list` 一覧表示 + 整形ロジックのテスト
 
-検証対象:
+検証対象 (listing / 整形の純粋ロジック。対話 TUI は tests/cli/tui/ に分離):
 - `lib/devbase/commands/project.py`
   - `_resolve_plugin_name`: symlink 先から plugin 名を解決する (衝突 suffix 耐性)
   - `list_projects`: projects/ 配下を NAME/PLUGIN/STATUS で列挙する
-  - `cmd_project_list`: table 表示 / `--interactive` での選択起動
+  - `_build_menu_entries` / `_color_status`: メニュー表示文字列の整形
+  - `cmd_project_list`: table 表示 (非対話) / tui.run への委譲
 - `lib/devbase/commands/status.py`
   - `_container_status_for`: per-entry status 抽出後の回帰
 - `lib/devbase/cli.py`
   - `project list` parser / dispatch ルーティング / トップレベル `list` シノニム / prefix 解決
+
+PLAN31_2 で対話メニュー (questionary ベース) は `devbase.tui` パッケージへ移送した。
+それらのテストは `tests/cli/tui/` を参照。
 """
 
 from __future__ import annotations
 
-import os
 import types
 from pathlib import Path
-
-import pytest
 
 from devbase import cli
 
@@ -192,7 +193,7 @@ def test_list_projects_empty_when_no_projects_dir(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# cmd_project_list: table 出力
+# cmd_project_list: table 出力 (非対話) / 委譲
 # ---------------------------------------------------------------------------
 
 def test_cmd_project_list_prints_table(tmp_path, monkeypatch, capsys):
@@ -222,215 +223,21 @@ def test_cmd_project_list_empty(tmp_path, capsys):
     assert rc == 0
 
 
-def test_cmd_project_list_non_tty_falls_back_to_table(tmp_path, monkeypatch, capsys):
-    """interactive=True (デフォルト) でも非 TTY では一覧表示にフォールバックする。"""
+def test_cmd_project_list_delegates_to_tui_run(tmp_path, monkeypatch):
+    """cmd_project_list は devbase.tui.run へ委譲する薄いラッパであること。"""
     from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for",
-                        lambda entry, counts=None: {"name": entry.name, "status": "stopped", "count": 0})
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: False)
-
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-    out = capsys.readouterr().out
-
-    assert rc == 0
-    assert called == [], "非 TTY では対話起動しない"
-    assert "alpha-proj" in out
-
-
-def test_cmd_project_list_stdout_non_tty_falls_back_to_table(tmp_path, monkeypatch, capsys):
-    """stdin が TTY でも stdout が非 TTY (`devbase list | cat` / `> out.txt`) なら
-    対話起動せず一覧表示へフォールバックする。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for",
-                        lambda entry, counts=None: {"name": entry.name, "status": "stopped", "count": 0})
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: False)
-
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-    out = capsys.readouterr().out
-
-    assert rc == 0
-    assert called == [], "stdout 非 TTY では対話起動しない"
-    assert "alpha-proj" in out
-
-
-# ---------------------------------------------------------------------------
-# cmd_project_list: --interactive
-# ---------------------------------------------------------------------------
-
-def test_cmd_project_list_interactive_selects_and_ups(tmp_path, monkeypatch):
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    _make_plugin_project(tmp_path, "plugins/beta", "beta-proj")
-    _link_project(tmp_path, "beta-proj", "plugins/beta", "beta-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-
-    # 対話選択は TTY 環境でのみ起動するため isatty を True に固定する。
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
-    # 番号 "2" を選択 (sorted: alpha-proj=1, beta-proj=2)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "2")
+    from devbase import tui as tui_pkg
 
     captured = {}
-    monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(
-                            subcommand=args.subcommand, name=args.name) or 0)
+    monkeypatch.setattr(tui_pkg, "run",
+                        lambda root, args: captured.update(root=root, args=args) or 0)
 
     args = types.SimpleNamespace(interactive=True)
     rc = project_mod.cmd_project_list(tmp_path, args)
 
     assert rc == 0
-    assert captured["subcommand"] == "up"
-    assert captured["name"] == "beta-proj"
-
-
-def test_cmd_project_list_interactive_empty_input_aborts(tmp_path, monkeypatch):
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
-
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-    assert rc == 0
-    assert called == [], "空入力では up を起動しない"
-
-
-def test_cmd_project_list_interactive_non_tty_eof(tmp_path, monkeypatch):
-    """非対話環境 (input が EOFError) では up を起動せずエラー終了する。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-
-    def raise_eof(*a, **k):
-        raise EOFError
-
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
-    monkeypatch.setattr("builtins.input", raise_eof)
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-    assert rc == 1
-    assert called == []
-
-
-def test_cmd_project_list_interactive_keyboard_interrupt_aborts(tmp_path, monkeypatch):
-    """Ctrl+C (KeyboardInterrupt) は traceback を出さず中止 (rc=0) として扱う。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-
-    def raise_interrupt(*a, **k):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
-    monkeypatch.setattr("builtins.input", raise_interrupt)
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-    assert rc == 0
-    assert called == []
-
-
-def test_cmd_project_list_interactive_out_of_range_reprompts(tmp_path, monkeypatch):
-    """範囲外の番号では即終了せず再入力を促す。有効入力で最終的に up する。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
-    # "99" (範囲外) → "1" (有効) の順に入力 → 再入力後に up が起動する
-    inputs = iter(["99", "1"])
-    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
-    captured = {}
-    monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(name=args.name) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-    assert rc == 0
-    assert captured["name"] == "alpha-proj"
-
-
-def test_cmd_project_list_interactive_non_numeric_reprompts(tmp_path, monkeypatch):
-    """数値以外の入力では即終了せず再入力を促す。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
-    # "abc" (数値以外) → "1" (有効)
-    inputs = iter(["abc", "1"])
-    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
-    captured = {}
-    monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(name=args.name) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-    assert rc == 0
-    assert captured["name"] == "alpha-proj"
+    assert captured["root"] == Path(tmp_path)
+    assert captured["args"] is args
 
 
 # ---------------------------------------------------------------------------
@@ -572,7 +379,7 @@ def test_get_container_status_uses_per_entry(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# TUI: _build_menu_entries / _color_status
+# 整形: _build_menu_entries / _color_status
 # ---------------------------------------------------------------------------
 
 def test_build_menu_entries_number_label_and_mapping():
@@ -618,256 +425,3 @@ def test_build_menu_entries_plain_has_no_ansi():
     entries = _build_menu_entries(rows, colorize=False)
 
     assert "\033[" not in entries[0]
-
-
-# ---------------------------------------------------------------------------
-# TUI: _interactive_select_and_up のディスパッチ (TUI 経路)
-# ---------------------------------------------------------------------------
-
-def test_cmd_project_list_tui_selects_and_ups(tmp_path, monkeypatch):
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    _make_plugin_project(tmp_path, "plugins/beta", "beta-proj")
-    _link_project(tmp_path, "beta-proj", "plugins/beta", "beta-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-
-    # questionary 導入済み相当にし、メニューは index=1 (beta-proj) を返すよう差し替え
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", True)
-    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 1)
-
-    captured = {}
-    monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(
-                            subcommand=args.subcommand, name=args.name) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-
-    assert rc == 0
-    assert captured["subcommand"] == "up"
-    assert captured["name"] == "beta-proj"
-
-
-def test_cmd_project_list_tui_abort_returns_zero(tmp_path, monkeypatch):
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", True)
-    # ESC 等での中止は _show_menu が None を返す
-    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: None)
-
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-
-    assert rc == 0
-    assert called == [], "中止時は up を起動しない"
-
-
-@pytest.mark.parametrize("action", ["up", "rebuild", "down"])
-def test_tui_running_row_shows_action_menu(monkeypatch, action):
-    """running 行を選ぶとサブメニューで up/rebuild/down を選び、その subcommand で起動する。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import container as container_mod
-
-    rows = [{"name": "carmo", "plugin": "-", "status": "running (2 containers)"}]
-    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 0)
-    seen = {}
-    monkeypatch.setattr(project_mod, "_show_action_menu",
-                        lambda name: seen.update(name=name) or action)
-
-    captured = {}
-    monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(
-                            subcommand=args.subcommand, name=args.name) or 0)
-
-    rc = project_mod._tui_select_and_up(rows)
-    assert rc == 0
-    assert seen["name"] == "carmo"            # action menu に対象名が渡る
-    assert captured["subcommand"] == action
-    assert captured["name"] == "carmo"
-
-
-def test_tui_running_action_abort_starts_nothing(monkeypatch):
-    """running 行のサブメニューを中止 (None) したら何も起動しない。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import container as container_mod
-
-    rows = [{"name": "carmo", "plugin": "-", "status": "running (1 containers)"}]
-    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 0)
-    monkeypatch.setattr(project_mod, "_show_action_menu", lambda name: None)
-
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-
-    assert project_mod._tui_select_and_up(rows) == 0
-    assert called == []
-
-
-@pytest.mark.parametrize("status", ["stopped", "unknown"])
-def test_tui_non_running_row_direct_up(monkeypatch, status):
-    """非 running 行はサブメニューを出さず従来どおり直接 up する。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import container as container_mod
-
-    rows = [{"name": "carmo", "plugin": "-", "status": status}]
-    monkeypatch.setattr(project_mod, "_show_menu", lambda rows: 0)
-
-    action_menu_calls = []
-    monkeypatch.setattr(project_mod, "_show_action_menu",
-                        lambda name: action_menu_calls.append(name) or "down")
-
-    captured = {}
-    monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(
-                            subcommand=args.subcommand, name=args.name) or 0)
-
-    rc = project_mod._tui_select_and_up(rows)
-    assert rc == 0
-    assert action_menu_calls == [], "非 running ではサブメニューを出さない"
-    assert captured["subcommand"] == "up"
-    assert captured["name"] == "carmo"
-
-
-def test_with_escape_cancel_registers_escape_binding():
-    """_with_escape_cancel が select に単独 Esc 中止バインドを後付けすること。"""
-    questionary = pytest.importorskip("questionary")
-    from prompt_toolkit.keys import Keys
-
-    from devbase.commands import project as project_mod
-
-    q = questionary.select("t", choices=[questionary.Choice(title="a", value=0)])
-    assert project_mod._with_escape_cancel(q) is q  # 同じ question を返す
-
-    esc = [b for b in q.application.key_bindings.bindings if Keys.Escape in b.keys]
-    assert len(esc) == 1
-    # eager=False: 矢印キー等のエスケープシーケンス (\x1b[A 等) の先頭と衝突させない
-    assert esc[0].eager() is False
-
-    # ハンドラは Ctrl-C と同様 KeyboardInterrupt で app を抜ける (= ask() が None)
-    captured = {}
-    fake_app = types.SimpleNamespace(exit=lambda **kw: captured.update(kw))
-    esc[0].handler(types.SimpleNamespace(app=fake_app))
-    assert captured["exception"] is KeyboardInterrupt
-
-
-@pytest.mark.parametrize("call", [
-    lambda m: m._show_menu([{"name": "carmo", "plugin": "-", "status": "stopped"}]),
-    lambda m: m._show_action_menu("carmo"),
-])
-def test_select_menus_wire_escape_binding(monkeypatch, call):
-    """_show_menu / _show_action_menu が select に Esc バインドを仕込んでから ask する。"""
-    pytest.importorskip("questionary")
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.keys import Keys
-
-    from devbase.commands import project as project_mod
-
-    kb = KeyBindings()
-    fake_q = types.SimpleNamespace(
-        application=types.SimpleNamespace(key_bindings=kb),
-        ask=lambda: "sentinel",
-    )
-    monkeypatch.setattr(project_mod.questionary, "select", lambda *a, **k: fake_q)
-
-    assert call(project_mod) == "sentinel"
-    esc = [b for b in kb.bindings if Keys.Escape in b.keys]
-    assert len(esc) == 1, "Esc バインドが登録されていない"
-
-
-def test_with_escape_back_returns_sentinel_on_escape():
-    """_with_escape_back の Esc ハンドラは _MENU_BACK を result として返すこと。"""
-    questionary = pytest.importorskip("questionary")
-    from prompt_toolkit.keys import Keys
-
-    from devbase.commands import project as project_mod
-
-    q = questionary.select("t", choices=[questionary.Choice(title="a", value="a")])
-    assert project_mod._with_escape_back(q) is q
-
-    esc = [b for b in q.application.key_bindings.bindings if Keys.Escape in b.keys]
-    assert len(esc) == 1
-    assert esc[0].eager() is False  # 矢印キーのエスケープシーケンスと衝突させない
-
-    # ハンドラは Ctrl-C (KeyboardInterrupt=全体中止) と異なり _MENU_BACK を返す
-    captured = {}
-    fake_app = types.SimpleNamespace(exit=lambda **kw: captured.update(kw))
-    esc[0].handler(types.SimpleNamespace(app=fake_app))
-    assert captured == {"result": project_mod._MENU_BACK}
-
-    # ← (Left) も「戻る」に割り当て、Esc のフラッシュ待ち遅延を回避して即応させる
-    left = [b for b in q.application.key_bindings.bindings if Keys.Left in b.keys]
-    assert len(left) == 1
-    captured.clear()
-    left[0].handler(types.SimpleNamespace(app=fake_app))
-    assert captured == {"result": project_mod._MENU_BACK}
-
-
-def test_tui_running_action_escape_returns_to_top_menu(monkeypatch):
-    """running 行のサブメニューで Esc (_MENU_BACK) を押すとトップメニューへ戻る。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import container as container_mod
-
-    rows = [
-        {"name": "carmo", "plugin": "-", "status": "running (1 containers)"},
-        {"name": "beta", "plugin": "-", "status": "stopped"},
-    ]
-    # 1 回目: running 行 (idx0) を選ぶ / 2 回目: stopped 行 (idx1) を選ぶ
-    menu_calls = []
-    monkeypatch.setattr(
-        project_mod, "_show_menu",
-        lambda rows: (menu_calls.append(1), 0 if len(menu_calls) == 1 else 1)[1])
-    # サブメニューでは Esc → _MENU_BACK (トップメニューへ戻る)
-    monkeypatch.setattr(project_mod, "_show_action_menu",
-                        lambda name: project_mod._MENU_BACK)
-
-    captured = {}
-    monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(
-                            subcommand=args.subcommand, name=args.name) or 0)
-
-    rc = project_mod._tui_select_and_up(rows)
-    assert rc == 0
-    assert len(menu_calls) == 2, "Esc でトップメニューが再表示される"
-    # 2 回目に選んだ stopped 行が直接 up される
-    assert captured["name"] == "beta"
-    assert captured["subcommand"] == "up"
-
-
-def test_interactive_falls_back_when_no_terminal_menu(tmp_path, monkeypatch):
-    """questionary 未導入時は input() 番号入力にフォールバックして up する。"""
-    from devbase.commands import project as project_mod
-    from devbase.commands import status as status_mod
-    from devbase.commands import container as container_mod
-
-    _make_plugin_project(tmp_path, "repos/o--r/alpha", "alpha-proj")
-    _link_project(tmp_path, "alpha-proj", "repos/o--r/alpha", "alpha-proj")
-    monkeypatch.setattr(status_mod, "_container_status_for", lambda entry, counts=None: None)
-    monkeypatch.setattr(project_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod.sys.stdout, "isatty", lambda: True)
-    monkeypatch.setattr(project_mod, "_HAVE_QUESTIONARY", False)
-    monkeypatch.setattr("builtins.input", lambda *a, **k: "1")
-
-    captured = {}
-    monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(name=args.name) or 0)
-
-    args = types.SimpleNamespace(interactive=True)
-    rc = project_mod.cmd_project_list(tmp_path, args)
-
-    assert rc == 0
-    assert captured["name"] == "alpha-proj"
