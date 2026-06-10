@@ -1,7 +1,7 @@
 # PLAN31_2: `devbase list` TUI の統合UI化
 
 > 元 issue: `issues/i31.md` 第2項
-> ステータス: 着手可（設計確定 2026-06-09・既存コード精読済み）
+> ステータス: 実行中（2026-06-10 PR1 #56 実装+cross-review approved→release へ merge 済み / PR2〜5 未着手）
 > 関連: PLAN31_1 (init は installer に吸収)、PLAN06 (`project` 群)
 > 関連 skill: `/ndf:issue-plan-strategy`, `/ndf:implementation-plan`
 
@@ -194,3 +194,41 @@ base branch: main
   「プロジェクト操作」既定ハイライトと `--plain` 維持により muscle-memory を保全。
 - **切り出しの競合**: `project.py` は i29〜i32 で頻繁に更新。PR1 は現行ロジックを保全
   移送し、差分レビューしやすい単位を維持する。
+
+## 7. 実装進捗 (2026-06-10 更新)
+
+`/ndf:issue-plan-strategy` の実行フェーズで release ブランチ + 個別 PR を先行作成し、
+ユーザー指示により全 PR を Draft 解除 (open) 済み。
+
+- release branch: `release/PLAN31_2` (base: `main`) 作成・push 済み
+- release PR: **#55** (open)
+- 個別 PR (release base・先行作成・全 open):
+
+| PR | 番号 | branch | 状態 |
+|---|---|---|---|
+| PR1 | #56 | `feature/PLAN31_2-tui-framework` | **merged** (release へ統合 `50ab9c2`) |
+| PR2 | #57 | `feature/PLAN31_2-project-ops` | open / 着手可 (PR1 土台あり) |
+| PR3 | #58 | `feature/PLAN31_2-env-ops` | open / 着手可 (PR1 土台あり) |
+| PR4 | #59 | `feature/PLAN31_2-plugin-ops` | open / 着手可 (PR1 土台あり) |
+| PR5 | #60 | `feature/PLAN31_2-snapshot-status` | open / 着手可 (PR1 土台あり) |
+
+### PR1 (#56) 完了サマリ
+
+- 実装: `lib/devbase/tui/` 新設 (`menu` / `dispatch` / `app` / `actions_project`)。
+  トップ階層メニュー化、既存 project up/down/rebuild の非回帰移送、`cmd_project_list`
+  → `tui.run` 委譲。`commands/project.py` は listing/整形へ縮約。
+- cross-review: **2 round で approved** (codex/gemini)。round1 で 3 件修正
+  (rc 伝搬欠落=major / text・path 再帰除去=minor / questionary text・confirm・path の
+  Esc バインド=minor)。最終 head `5948c08`、open thread 0。
+- テスト: 520 passed / 1 skipped (基準 510 から +10、退行なし)。
+
+### PR2〜5 への申し送り (土台の配線方法)
+
+- 各カテゴリは別ファイル `tui/actions_<cat>.py` を新設し、`tui/app.py:_route` に
+  1 行 (`if category == "<cat>": return actions_<cat>.run(...)`) を追加するだけで配線できる
+  (現状 env/plugin/snapshot/status はプレースホルダ案内)。
+- 属性収集は `tui/menu.py` の `text` / `confirm` / `integer` / `path` を使う。
+- グループハンドラ (env/plugin/snapshot) への委譲は `tui/dispatch.py:dispatch_group`
+  (`handler(devbase_root, args)` 形式) を使う。project 系は `dispatch_lifecycle`。
+- 破壊的操作 (down/delete/uninstall/repo remove/restore) は `menu.confirm()` を挟む (plan 3.4)。
+- project スコープ依存 (`env set --project` / `env project` / `env edit`) は事前 chdir (plan 3.3)。
