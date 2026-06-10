@@ -1,0 +1,242 @@
+"""PLAN31_2 PR1: tui.menu (メニューエンジン) のテスト。
+
+旧 commands/project.py の Esc/← バインド・select 起動テストを移送し、引数収集
+ヘルパ (text/confirm/integer/path) のフォールバック挙動を追加検証する。
+"""
+
+from __future__ import annotations
+
+import types
+
+import pytest
+
+from devbase.tui import menu
+
+
+# ---------------------------------------------------------------------------
+# Esc / ← キーバインド
+# ---------------------------------------------------------------------------
+
+def test_with_escape_cancel_registers_escape_binding():
+    """with_escape_cancel が select に単独 Esc 中止バインドを後付けすること。"""
+    questionary = pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    q = questionary.select("t", choices=[questionary.Choice(title="a", value=0)])
+    assert menu.with_escape_cancel(q) is q  # 同じ question を返す
+
+    esc = [b for b in q.application.key_bindings.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1
+    # eager=False: 矢印キー等のエスケープシーケンス (\x1b[A 等) の先頭と衝突させない
+    assert esc[0].eager() is False
+
+    # ハンドラは Ctrl-C と同様 KeyboardInterrupt で app を抜ける (= ask() が None)
+    captured = {}
+    fake_app = types.SimpleNamespace(exit=lambda **kw: captured.update(kw))
+    esc[0].handler(types.SimpleNamespace(app=fake_app))
+    assert captured["exception"] is KeyboardInterrupt
+
+
+def test_with_escape_back_returns_sentinel_on_escape_and_left():
+    """with_escape_back の Esc / ← ハンドラは MENU_BACK を result として返すこと。"""
+    questionary = pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    q = questionary.select("t", choices=[questionary.Choice(title="a", value="a")])
+    assert menu.with_escape_back(q) is q
+
+    esc = [b for b in q.application.key_bindings.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1
+    assert esc[0].eager() is False  # 矢印キーのエスケープシーケンスと衝突させない
+
+    captured = {}
+    fake_app = types.SimpleNamespace(exit=lambda **kw: captured.update(kw))
+    esc[0].handler(types.SimpleNamespace(app=fake_app))
+    assert captured == {"result": menu.MENU_BACK}
+
+    # ← (Left) も「戻る」に割り当て、Esc のフラッシュ待ち遅延を回避して即応させる
+    left = [b for b in q.application.key_bindings.bindings if Keys.Left in b.keys]
+    assert len(left) == 1
+    captured.clear()
+    left[0].handler(types.SimpleNamespace(app=fake_app))
+    assert captured == {"result": menu.MENU_BACK}
+
+
+def test_with_escape_back_bind_left_false_skips_left():
+    """bind_left=False (検索絞り込みメニュー) のとき ← はバインドしない。"""
+    questionary = pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    q = questionary.select("t", choices=[questionary.Choice(title="a", value="a")])
+    menu.with_escape_back(q, bind_left=False)
+
+    esc = [b for b in q.application.key_bindings.bindings if Keys.Escape in b.keys]
+    left = [b for b in q.application.key_bindings.bindings if Keys.Left in b.keys]
+    assert len(esc) == 1
+    assert left == [], "search 有効メニューでは ← を入力カーソル用に空ける"
+
+
+# ---------------------------------------------------------------------------
+# select: バインドの仕込みと戻り値
+# ---------------------------------------------------------------------------
+
+def _fake_select(monkeypatch, *, ask_result="sentinel"):
+    """questionary.select を差し替え、生成された fake question を返すヘルパ。"""
+    from prompt_toolkit.key_binding import KeyBindings
+
+    holder = {}
+
+    def _factory(message, **kwargs):
+        kb = KeyBindings()
+        q = types.SimpleNamespace(
+            application=types.SimpleNamespace(key_bindings=kb),
+            ask=lambda: ask_result,
+        )
+        holder["question"] = q
+        holder["kwargs"] = kwargs
+        return q
+
+    monkeypatch.setattr(menu.questionary, "select", _factory)
+    return holder
+
+
+def test_select_back_false_wires_escape_cancel(monkeypatch):
+    """back=False のトップメニューは Esc 中止バインドを仕込んでから ask する。"""
+    pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    holder = _fake_select(monkeypatch)
+    result = menu.select("t", [("a", 0)], back=False)
+    assert result == "sentinel"
+
+    kb = holder["question"].application.key_bindings
+    esc = [b for b in kb.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1
+    # 中止ハンドラ: KeyboardInterrupt で抜ける
+    captured = {}
+    esc[0].handler(types.SimpleNamespace(
+        app=types.SimpleNamespace(exit=lambda **kw: captured.update(kw))))
+    assert captured["exception"] is KeyboardInterrupt
+
+
+def test_select_back_true_search_false_binds_left(monkeypatch):
+    """back=True / search=False (サブメニュー) は Esc と ← を戻るに割り当てる。"""
+    pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    holder = _fake_select(monkeypatch)
+    menu.select("t", [("a", 0)], back=True, search=False)
+
+    kb = holder["question"].application.key_bindings
+    assert [b for b in kb.bindings if Keys.Escape in b.keys]
+    assert [b for b in kb.bindings if Keys.Left in b.keys]
+    assert holder["kwargs"]["use_search_filter"] is False
+
+
+def test_select_back_true_search_true_no_left(monkeypatch):
+    """back=True / search=True (一覧) は ← を空け Esc のみ戻る、filter を有効化。"""
+    pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    holder = _fake_select(monkeypatch)
+    menu.select("t", [("a", 0)], back=True, search=True)
+
+    kb = holder["question"].application.key_bindings
+    assert [b for b in kb.bindings if Keys.Escape in b.keys]
+    assert [b for b in kb.bindings if Keys.Left in b.keys] == []
+    assert holder["kwargs"]["use_search_filter"] is True
+
+
+def test_select_converts_tuple_choices(monkeypatch):
+    """(title, value) タプルは questionary.Choice に変換されて渡る。"""
+    questionary = pytest.importorskip("questionary")
+
+    holder = _fake_select(monkeypatch)
+    menu.select("t", [("ラベルA", "va"), ("ラベルB", "vb")], back=False)
+
+    choices = holder["kwargs"]["choices"]
+    assert all(isinstance(c, questionary.Choice) for c in choices)
+    assert [c.value for c in choices] == ["va", "vb"]
+
+
+# ---------------------------------------------------------------------------
+# 引数収集ヘルパ: input() フォールバック (questionary 不在経路)
+# ---------------------------------------------------------------------------
+
+def test_text_fallback_returns_input(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "  hello  ")
+    assert menu.text("名前") == "hello"
+
+
+def test_text_fallback_default_on_empty(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+    assert menu.text("名前", default="dflt") == "dflt"
+
+
+def test_text_fallback_abort_on_eof(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+
+    def _eof(*a, **k):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _eof)
+    assert menu.text("名前") is None
+
+
+def test_confirm_fallback_yes_no(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+    answers = iter(["y"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(answers))
+    assert menu.confirm("本当に?") is True
+
+    answers = iter(["n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(answers))
+    assert menu.confirm("本当に?") is False
+
+
+def test_confirm_fallback_empty_uses_default(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+    assert menu.confirm("本当に?", default=True) is True
+    assert menu.confirm("本当に?", default=False) is False
+
+
+def test_confirm_fallback_abort_on_ctrl_c(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+
+    def _interrupt(*a, **k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", _interrupt)
+    assert menu.confirm("本当に?") is None
+
+
+def test_integer_fallback_valid(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "3")
+    assert menu.integer("scale") == 3
+
+
+def test_integer_fallback_reprompts_on_non_numeric_and_range(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+    inputs = iter(["abc", "0", "5"])  # 非数値 → 範囲外(min=1) → 有効
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    assert menu.integer("scale", min_value=1) == 5
+
+
+def test_integer_fallback_default_on_empty(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+    assert menu.integer("keep", default=3) == 3
+
+
+def test_integer_fallback_abort(monkeypatch):
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", False)
+
+    def _eof(*a, **k):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _eof)
+    assert menu.integer("scale") is None
