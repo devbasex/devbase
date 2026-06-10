@@ -153,6 +153,36 @@ def test_top_menu_routes_project_then_back_to_top(monkeypatch, tmp_path):
     assert routed == [tmp_path], "project カテゴリへ 1 回 routing される"
 
 
+def test_top_menu_propagates_executed_rc(monkeypatch, tmp_path):
+    """カテゴリ実行で非0 rc が返ると、その後トップで中止しても rc がループ戻り値へ伝搬する。"""
+    selects = iter(["project", None])  # 1 回目 project 実行、2 回目 Esc 中止
+    monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
+    # actions_project.run が rc=1 (実行・失敗) を返す
+    monkeypatch.setattr(actions_project, "run", lambda root: 1)
+
+    assert app._top_menu_loop(tmp_path) == 1
+
+
+def test_top_menu_back_does_not_overwrite_last_rc(monkeypatch, tmp_path):
+    """実行 rc を記憶後、別カテゴリが MENU_BACK を返しても last_rc は上書きされない。"""
+    selects = iter(["project", "env", None])
+    monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
+    runs = iter([1])  # project 実行 → rc=1
+    monkeypatch.setattr(actions_project, "run", lambda root: next(runs))
+    # env は未実装カテゴリ (_route が MENU_BACK) → last_rc を維持
+
+    assert app._top_menu_loop(tmp_path) == 1
+
+
+def test_top_menu_zero_rc_propagates(monkeypatch, tmp_path):
+    """rc=0 が int として正しく扱われる (None/MENU_BACK と誤マッチしない)。"""
+    selects = iter(["project", None])
+    monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
+    monkeypatch.setattr(actions_project, "run", lambda root: 0)
+
+    assert app._top_menu_loop(tmp_path) == 0
+
+
 def test_top_menu_escape_aborts(monkeypatch, tmp_path):
     """トップメニューで Esc/Ctrl-C (None) を押すと即終了 (rc=0)。"""
     monkeypatch.setattr(menu, "select", lambda *a, **k: None)

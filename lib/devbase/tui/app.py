@@ -44,10 +44,15 @@ _LABELS = dict(TOP_CATEGORIES)
 
 
 def _route(category: str, devbase_root: Path):
-    """選択カテゴリのハンドラを呼ぶ。戻り値は ``menu.MENU_BACK`` / ``None``。
+    """選択カテゴリのハンドラを呼ぶ。
+
+    戻り値は各カテゴリの戻り値プロトコルに従う:
+    - 操作実行時はその rc (``int``)
+    - 操作なしでトップへ戻るときは ``menu.MENU_BACK``
+    - Ctrl-C 全体中止のときは ``None``
 
     後続 PR は対応する ``actions_*`` の呼び出しをここに 1 行追加する
-    (各カテゴリ別ファイルのため衝突しにくい)。
+    (各カテゴリ別ファイルのため衝突しにくい)。未実装カテゴリは ``MENU_BACK``。
     """
     if category == "project":
         return actions_project.run(devbase_root)
@@ -57,21 +62,34 @@ def _route(category: str, devbase_root: Path):
 
 
 def _top_menu_loop(devbase_root: Path) -> int:
-    """トップ階層メニューのループ。Esc / Ctrl-C で中止 (rc=0)。"""
+    """トップ階層メニューのループ。
+
+    最後に実行した操作の rc (``last_rc``) を記憶し、中止時はそれを返すことで
+    ``project up/down/rebuild`` の失敗が ``devbase list`` の終了コードへ伝搬する。
+    操作を何もしなかった場合 (Esc/Ctrl-C のみ) は ``last_rc`` の初期値 0。
+
+    判定は必ず ``is`` 同一性で行う (rc=0 を ``None`` / ``MENU_BACK`` と誤マッチさせない)。
+    """
+    last_rc = 0
     while True:
         choice = menu.select(
             "操作カテゴリを選択 (↑↓ 移動 / Enter 決定 / Esc・Ctrl-C 中止):",
             list(TOP_CATEGORIES), back=False, search=False)
         if choice is None:
+            # トップで Esc / Ctrl-C → これまでの実行 rc を返して終了
             logger.info("中止しました。")
-            return 0
+            return last_rc
 
         result = _route(choice, devbase_root)
         if result is None:
-            # カテゴリ内で Ctrl-C → 全体中止
+            # カテゴリ内で Ctrl-C → 全体中止 (直近の実行 rc を返す)
             logger.info("中止しました。")
-            return 0
-        # MENU_BACK → トップメニューへ戻り再表示
+            return last_rc
+        if result is menu.MENU_BACK:
+            # 操作なしでトップへ戻り再表示 (rc は更新しない)
+            continue
+        # int rc: 操作を実行した → rc を記憶してトップ再表示
+        last_rc = result
 
 
 def run(devbase_root: Path, args) -> int:

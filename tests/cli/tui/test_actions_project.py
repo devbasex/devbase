@@ -52,9 +52,27 @@ def test_run_running_row_shows_action_menu(monkeypatch, tmp_path, action):
                             subcommand=args.subcommand, name=args.name) or 0)
 
     result = actions_project.run(tmp_path)
-    assert result is menu.MENU_BACK          # 操作完了でトップへ戻る
+    assert result == 0                       # 操作完了 → dispatch の rc を返す
     assert seen["name"] == "carmo"
     assert captured == {"subcommand": action, "name": "carmo"}
+
+
+def test_run_propagates_nonzero_dispatch_rc(monkeypatch, tmp_path):
+    """dispatch が非0 (失敗) を返したら run() もその rc を返す (終了コード伝搬)。"""
+    from devbase.commands import container as container_mod
+    from devbase.commands import status as status_mod
+
+    _make_plugin_project(tmp_path, "repos/o--r/p", "carmo")
+    _link_project(tmp_path, "carmo", "repos/o--r/p", "carmo")
+    monkeypatch.setattr(status_mod, "_container_status_for",
+                        lambda entry, counts=None: {"name": entry.name,
+                                                    "status": "running (1 containers)", "count": 1})
+    monkeypatch.setattr(actions_project, "_select_project", lambda rows: 0)
+    monkeypatch.setattr(actions_project, "_select_action", lambda name: "down")
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: 1)
+
+    result = actions_project.run(tmp_path)
+    assert result == 1, "非0 rc がトップへ伝搬する"
 
 
 @pytest.mark.parametrize("status", ["stopped", "unknown"])
@@ -80,7 +98,7 @@ def test_run_non_running_row_direct_up(monkeypatch, tmp_path, status):
                             subcommand=args.subcommand, name=args.name) or 0)
 
     result = actions_project.run(tmp_path)
-    assert result is menu.MENU_BACK
+    assert result == 0                       # 直接 up の rc を返す
     assert action_calls == [], "非 running ではサブメニューを出さない"
     assert captured == {"subcommand": "up", "name": "carmo"}
 
@@ -150,7 +168,7 @@ def test_run_action_menu_back_returns_to_list(monkeypatch, tmp_path):
                             subcommand=args.subcommand, name=args.name) or 0)
 
     result = actions_project.run(tmp_path)
-    assert result is menu.MENU_BACK
+    assert result == 0                       # 2 回目の直接 up の rc を返す
     assert len(select_calls) == 2, "MENU_BACK で一覧が再表示される"
     assert captured == {"subcommand": "up", "name": "beta"}
 

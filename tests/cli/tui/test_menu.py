@@ -160,6 +160,106 @@ def test_select_converts_tuple_choices(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 引数収集ヘルパ: questionary 経路の Esc バインドと再入力ループ
+# ---------------------------------------------------------------------------
+
+def _fake_question(monkeypatch, factory_name, *, ask_result):
+    """questionary.<factory_name> を差し替え、生成 question を holder に集めるヘルパ。"""
+    from prompt_toolkit.key_binding import KeyBindings
+
+    holder = {"questions": []}
+
+    def _factory(message, **kwargs):
+        kb = KeyBindings()
+        ans = ask_result.pop(0) if isinstance(ask_result, list) else ask_result
+        q = types.SimpleNamespace(
+            application=types.SimpleNamespace(key_bindings=kb),
+            ask=lambda ans=ans: ans,
+        )
+        holder["questions"].append(q)
+        return q
+
+    monkeypatch.setattr(menu.questionary, factory_name, _factory)
+    return holder
+
+
+def test_text_questionary_binds_escape_cancel(monkeypatch):
+    """questionary 経路の text に Esc→中止 (KeyboardInterrupt) バインドが付くこと。"""
+    pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    holder = _fake_question(monkeypatch, "text", ask_result="hello")
+    assert menu.text("名前") == "hello"
+
+    kb = holder["questions"][0].application.key_bindings
+    esc = [b for b in kb.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1
+    captured = {}
+    esc[0].handler(types.SimpleNamespace(
+        app=types.SimpleNamespace(exit=lambda **kw: captured.update(kw))))
+    assert captured["exception"] is KeyboardInterrupt
+
+
+def test_confirm_questionary_binds_escape_cancel(monkeypatch):
+    """questionary 経路の confirm に Esc→中止バインドが付くこと。"""
+    pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    holder = _fake_question(monkeypatch, "confirm", ask_result=True)
+    assert menu.confirm("本当に?") is True
+
+    kb = holder["questions"][0].application.key_bindings
+    esc = [b for b in kb.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1
+    captured = {}
+    esc[0].handler(types.SimpleNamespace(
+        app=types.SimpleNamespace(exit=lambda **kw: captured.update(kw))))
+    assert captured["exception"] is KeyboardInterrupt
+
+
+def test_path_questionary_binds_escape_cancel(monkeypatch):
+    """questionary 経路の path に Esc→中止バインドが付くこと。"""
+    pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    holder = _fake_question(monkeypatch, "path", ask_result="/tmp/x")
+    assert menu.path("dest") == "/tmp/x"
+
+    kb = holder["questions"][0].application.key_bindings
+    esc = [b for b in kb.bindings if Keys.Escape in b.keys]
+    assert len(esc) == 1
+
+
+def test_text_questionary_escape_returns_none(monkeypatch):
+    """questionary 経路の text で Esc/Ctrl-C 相当 (ask が None) のとき None を返す。"""
+    pytest.importorskip("questionary")
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    _fake_question(monkeypatch, "text", ask_result=None)
+    assert menu.text("名前") is None
+
+
+def test_text_questionary_reprompts_on_empty_via_loop(monkeypatch):
+    """allow_empty=False で空入力は while ループで再入力を促す (自己再帰しない)。"""
+    pytest.importorskip("questionary")
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    holder = _fake_question(monkeypatch, "text", ask_result=["", "  valid  "])
+    assert menu.text("名前", allow_empty=False) == "valid"
+    assert len(holder["questions"]) == 2, "空入力で 1 度再プロンプトされる"
+
+
+def test_path_questionary_reprompts_on_empty_via_loop(monkeypatch):
+    """path も allow_empty=False の空入力で while ループ再入力する。"""
+    pytest.importorskip("questionary")
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    holder = _fake_question(monkeypatch, "path", ask_result=["", "/tmp/ok"])
+    assert menu.path("dest", allow_empty=False) == "/tmp/ok"
+    assert len(holder["questions"]) == 2
+
+
+# ---------------------------------------------------------------------------
 # 引数収集ヘルパ: input() フォールバック (questionary 不在経路)
 # ---------------------------------------------------------------------------
 

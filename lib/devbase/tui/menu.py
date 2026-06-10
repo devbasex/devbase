@@ -60,15 +60,25 @@ def _add_escape_binding(question, handler):
 
 
 def with_escape_cancel(question):
-    """Esc 単独押下で中止する select を返す (トップメニュー用)。
+    """Esc 単独押下で中止する question を返す (トップメニュー / text・confirm・path 用)。
 
     Ctrl-C と同じく ``KeyboardInterrupt`` で抜けるので ``ask()`` は ``None``
-    (= 中止) を返す。戻り先が無い最上位メニューで使う。
+    (= 中止) を返す。戻り先が無い最上位メニューや引数収集プロンプトで使う。
+    select だけでなく ``question.application`` を持つ text/confirm/path にも適用できる。
     """
     def _cancel(event):
         event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
 
     return _add_escape_binding(question, _cancel)
+
+
+def _ask_with_escape(question):
+    """Esc→中止 (None) を仕込んでから ``ask()`` する共通ヘルパ (text/confirm/path 用)。
+
+    questionary の text/confirm/path は既定で Esc バインドを持たないため、選択メニューの
+    ナビ規約 (Esc=中止) と整合させるべく ``with_escape_cancel`` を適用してから問い合わせる。
+    """
+    return with_escape_cancel(question).ask()
 
 
 def with_escape_back(question, *, bind_left: bool = True):
@@ -154,14 +164,15 @@ def text(message: str, *, default: str | None = None,
     stdlib ``input()`` で代替する。
     """
     if HAVE_QUESTIONARY:
-        ans = questionary.text(message, default=default or "").ask()
-        if ans is None:
-            return None
-        ans = ans.strip()
-        if not ans and not allow_empty:
-            logger.error("値を入力してください。")
-            return text(message, default=default, allow_empty=allow_empty)
-        return ans
+        while True:  # 空 (allow_empty=False) は再入力。自己再帰を避け while で回す。
+            ans = _ask_with_escape(questionary.text(message, default=default or ""))
+            if ans is None:
+                return None
+            ans = ans.strip()
+            if not ans and not allow_empty:
+                logger.error("値を入力してください。")
+                continue
+            return ans
     return _input_text(message, default=default, allow_empty=allow_empty)
 
 
@@ -171,7 +182,7 @@ def confirm(message: str, *, default: bool = False) -> bool | None:
     破壊的操作 (down / delete / uninstall 等) の実行前確認に使う。
     """
     if HAVE_QUESTIONARY:
-        return questionary.confirm(message, default=default).ask()
+        return _ask_with_escape(questionary.confirm(message, default=default))
     return _input_confirm(message, default=default)
 
 
@@ -207,14 +218,15 @@ def path(message: str, *, default: str | None = None,
     存在チェックは呼び出し側 (各ハンドラ) に委ねる。中止は ``None``。
     """
     if HAVE_QUESTIONARY:
-        ans = questionary.path(message, default=default or "").ask()
-        if ans is None:
-            return None
-        ans = ans.strip()
-        if not ans and not allow_empty:
-            logger.error("パスを入力してください。")
-            return path(message, default=default, allow_empty=allow_empty)
-        return ans
+        while True:  # 空 (allow_empty=False) は再入力。自己再帰を避け while で回す。
+            ans = _ask_with_escape(questionary.path(message, default=default or ""))
+            if ans is None:
+                return None
+            ans = ans.strip()
+            if not ans and not allow_empty:
+                logger.error("パスを入力してください。")
+                continue
+            return ans
     return _input_text(message, default=default, allow_empty=allow_empty)
 
 

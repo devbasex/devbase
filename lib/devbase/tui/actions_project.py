@@ -60,9 +60,12 @@ def _select_action(name: str):
 def run(devbase_root: Path):
     """プロジェクト操作カテゴリ。一覧選択 → up/rebuild/down を起動する。
 
-    戻り値:
-    - ``menu.MENU_BACK``: Esc/← または操作完了でトップメニューへ戻る
-    - ``None``: Ctrl-C による全体中止
+    戻り値プロトコル (トップループが ``is`` 同一性で判定する):
+    - **操作を実行した場合**: ``dispatch_lifecycle`` の rc (``int``) を返す。
+      「実行したのでトップへ戻る、rc は呼び出し側が記憶」の意味。これにより
+      ``project up/down/rebuild`` の失敗が ``devbase list`` の終了コードへ伝搬する。
+    - ``menu.MENU_BACK``: 一覧で Esc/← (操作なしでトップへ) / プロジェクト無し。
+    - ``None``: 一覧・サブメニューで Ctrl-C による全体中止。
 
     選択行が running 中なら ``_select_action`` で up/rebuild/down を選ばせ、それ以外
     (stopped / unknown 等) は従来どおり直接 ``project up`` を起動する。サブメニューで
@@ -90,11 +93,13 @@ def run(devbase_root: Path):
                 continue          # 一覧へ戻る
             if action is None:
                 return None       # Ctrl-C → 全体中止
-            dispatch_lifecycle(action, name, scale=None)
+            rc = dispatch_lifecycle(action, name, scale=None)
         else:
-            dispatch_lifecycle("up", name, scale=None)
+            rc = dispatch_lifecycle("up", name, scale=None)
 
-        return menu.MENU_BACK     # 操作完了 → トップメニューへ復帰
+        # 操作完了 → トップメニューへ復帰。rc は呼び出し側 (top loop) が記憶し
+        # 最終的な devbase の終了コードへ伝搬させる。
+        return rc
 
 
 def fallback_select_and_up(rows: list[dict]) -> int:
