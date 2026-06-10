@@ -28,9 +28,9 @@ def _link_project(root, link_name, plugin_path, proj):
 # run(): 一覧選択 → up/rebuild/down
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("action", ["up", "rebuild", "down"])
+@pytest.mark.parametrize("action", ["up", "rebuild"])
 def test_run_running_row_shows_action_menu(monkeypatch, tmp_path, action):
-    """running 行を選ぶとサブメニューで up/rebuild/down を選び、その subcommand で起動する。"""
+    """running 行を選ぶとサブメニューで操作を選び、引数不要の up/rebuild は即起動する。"""
     from devbase.commands import container as container_mod
     from devbase.commands import status as status_mod
 
@@ -68,7 +68,7 @@ def test_run_propagates_nonzero_dispatch_rc(monkeypatch, tmp_path):
                         lambda entry, counts=None: {"name": entry.name,
                                                     "status": "running (1 containers)", "count": 1})
     monkeypatch.setattr(actions_project, "_select_project", lambda rows: 0)
-    monkeypatch.setattr(actions_project, "_select_action", lambda name: "down")
+    monkeypatch.setattr(actions_project, "_select_action", lambda name: "up")
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: 1)
 
     result = actions_project.run(tmp_path)
@@ -218,19 +218,240 @@ def test_select_project_uses_search_back_menu(monkeypatch):
     assert captured == {"back": True, "search": True, "n": 1}
 
 
-def test_select_action_lists_three_ops(monkeypatch):
+def test_select_action_lists_all_ops(monkeypatch):
     captured = {}
 
     def fake_select(message, choices, *, back, search):
         captured.update(back=back, search=search,
                         values=[c[1] for c in choices])
-        return "rebuild"
+        return "logs"
 
     monkeypatch.setattr(menu, "select", fake_select)
-    assert actions_project._select_action("carmo") == "rebuild"
+    assert actions_project._select_action("carmo") == "logs"
     assert captured["back"] is True
     assert captured["search"] is False
-    assert captured["values"] == ["up", "rebuild", "down"]
+    # up を先頭にしつつ全8操作を提示する (PR2)。
+    assert captured["values"] == [
+        "up", "down", "login", "ps", "logs", "scale", "build", "rebuild"]
+    assert captured["values"][0] == "up", "Enter 連打で up に到達できる"
+
+
+# ---------------------------------------------------------------------------
+# _run_operation: 各操作の引数収集 + dispatch 契約 (plan 2.3)
+# ---------------------------------------------------------------------------
+
+def _capture_dispatch(monkeypatch):
+    """cmd_project の呼び出し引数を全属性キャプチャするヘルパ。"""
+    from devbase.commands import container as container_mod
+    captured = {}
+
+    def _spy(args):
+        captured["subcommand"] = args.subcommand
+        captured["name"] = args.name
+        for k in ("scale", "index", "all", "follow", "tail", "new_scale", "image"):
+            if hasattr(args, k):
+                captured[k] = getattr(args, k)
+        return 0
+
+    monkeypatch.setattr(container_mod, "cmd_project", _spy)
+    return captured
+
+
+def test_run_operation_up_passes_scale_none(monkeypatch, tmp_path):
+    captured = _capture_dispatch(monkeypatch)
+    assert actions_project._run_operation(tmp_path, "carmo", "up") == 0
+    assert captured["subcommand"] == "up" and captured["scale"] is None
+
+
+def test_run_operation_rebuild(monkeypatch, tmp_path):
+    captured = _capture_dispatch(monkeypatch)
+    assert actions_project._run_operation(tmp_path, "carmo", "rebuild") == 0
+    assert captured["subcommand"] == "rebuild" and captured["name"] == "carmo"
+
+
+def test_run_operation_down_confirmed(monkeypatch, tmp_path):
+    """down は confirm=True で停止を実行する (plan 3.4)。"""
+    captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    assert actions_project._run_operation(tmp_path, "carmo", "down") == 0
+    assert captured["subcommand"] == "down"
+
+
+@pytest.mark.parametrize("confirm_ret", [False, None])
+def test_run_operation_down_cancelled_does_not_dispatch(monkeypatch, tmp_path, confirm_ret):
+    """down の confirm を拒否 (False) / 中止 (None) したら停止しない (_ARG_CANCEL)。"""
+    from devbase.commands import container as container_mod
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: confirm_ret)
+    assert actions_project._run_operation(tmp_path, "carmo", "down") is actions_project._ARG_CANCEL
+    assert called == [], "確認を拒否/中止したら down しない"
+
+
+def test_run_operation_login_collects_index(monkeypatch, tmp_path):
+    captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "text", lambda *a, **k: "3")
+    assert actions_project._run_operation(tmp_path, "carmo", "login") == 0
+    assert captured["subcommand"] == "login" and captured["index"] == "3"
+
+
+def test_run_operation_login_cancel(monkeypatch, tmp_path):
+    from devbase.commands import container as container_mod
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+    monkeypatch.setattr(menu, "text", lambda *a, **k: None)   # Esc/Ctrl-C
+    assert actions_project._run_operation(tmp_path, "carmo", "login") is actions_project._ARG_CANCEL
+    assert called == []
+
+
+def test_run_operation_ps_all_flag(monkeypatch, tmp_path):
+    captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    assert actions_project._run_operation(tmp_path, "carmo", "ps") == 0
+    assert captured["subcommand"] == "ps" and captured["all"] is True
+
+
+def test_run_operation_logs_follow_and_tail(monkeypatch, tmp_path):
+    captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)          # follow
+    monkeypatch.setattr(actions_project, "_optional_int", lambda msg: 50)  # tail=50
+    assert actions_project._run_operation(tmp_path, "carmo", "logs") == 0
+    assert captured["subcommand"] == "logs"
+    assert captured["follow"] is True and captured["tail"] == 50
+
+
+def test_run_operation_logs_tail_empty_is_none(monkeypatch, tmp_path):
+    captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: False)
+    monkeypatch.setattr(actions_project, "_optional_int", lambda msg: None)  # 空 = 全件
+    assert actions_project._run_operation(tmp_path, "carmo", "logs") == 0
+    assert captured["follow"] is False and captured["tail"] is None
+
+
+def test_run_operation_scale_collects_int(monkeypatch, tmp_path):
+    captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "integer", lambda *a, **k: 4)
+    assert actions_project._run_operation(tmp_path, "carmo", "scale") == 0
+    assert captured["subcommand"] == "scale" and captured["new_scale"] == 4
+
+
+def test_run_operation_scale_cancel(monkeypatch, tmp_path):
+    from devbase.commands import container as container_mod
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+    monkeypatch.setattr(menu, "integer", lambda *a, **k: None)
+    assert actions_project._run_operation(tmp_path, "carmo", "scale") is actions_project._ARG_CANCEL
+    assert called == []
+
+
+def test_run_operation_build_selects_image(monkeypatch, tmp_path):
+    captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(actions_project, "_select_build_image", lambda root: "web")
+    assert actions_project._run_operation(tmp_path, "carmo", "build") == 0
+    assert captured["subcommand"] == "build" and captured["image"] == "web"
+
+
+def test_run_operation_build_cancel(monkeypatch, tmp_path):
+    from devbase.commands import container as container_mod
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+    monkeypatch.setattr(actions_project, "_select_build_image",
+                        lambda root: actions_project._ARG_CANCEL)
+    assert actions_project._run_operation(tmp_path, "carmo", "build") is actions_project._ARG_CANCEL
+    assert called == []
+
+
+# ---------------------------------------------------------------------------
+# _optional_int / _select_build_image
+# ---------------------------------------------------------------------------
+
+def test_optional_int_value(monkeypatch):
+    monkeypatch.setattr(menu, "text", lambda *a, **k: "20")
+    assert actions_project._optional_int("tail") == 20
+
+
+def test_optional_int_empty_is_none(monkeypatch):
+    monkeypatch.setattr(menu, "text", lambda *a, **k: "")
+    assert actions_project._optional_int("tail") is None
+
+
+def test_optional_int_cancel(monkeypatch):
+    monkeypatch.setattr(menu, "text", lambda *a, **k: None)
+    assert actions_project._optional_int("tail") is actions_project._ARG_CANCEL
+
+
+def test_optional_int_reprompts_non_numeric(monkeypatch):
+    vals = iter(["abc", "7"])
+    monkeypatch.setattr(menu, "text", lambda *a, **k: next(vals))
+    assert actions_project._optional_int("tail") == 7
+
+
+def test_select_build_image_lists_containers(monkeypatch, tmp_path):
+    """containers/<img>/Dockerfile を列挙し、選択値をそのまま返す。"""
+    for img in ("web", "db"):
+        d = tmp_path / "containers" / img
+        d.mkdir(parents=True)
+        (d / "Dockerfile").write_text("FROM scratch\n")
+    # Dockerfile 無しのディレクトリは除外される
+    (tmp_path / "containers" / "nodockerfile").mkdir()
+
+    captured = {}
+
+    def fake_select(message, choices, *, back, search):
+        captured["values"] = [c[1] for c in choices]
+        return "db"
+
+    monkeypatch.setattr(menu, "select", fake_select)
+    assert actions_project._select_build_image(tmp_path) == "db"
+    # 先頭は compose 全体 (value="")、続いて sorted な img 名
+    assert captured["values"] == ["", "db", "web"]
+
+
+def test_select_build_image_compose_all_is_none(monkeypatch, tmp_path):
+    """『compose.yml 全体』(value='') を選ぶと None を返す。"""
+    d = tmp_path / "containers" / "web"
+    d.mkdir(parents=True)
+    (d / "Dockerfile").write_text("FROM scratch\n")
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "")
+    assert actions_project._select_build_image(tmp_path) is None
+
+
+def test_select_build_image_no_containers_returns_none(tmp_path):
+    """containers/ が無ければ選択メニューを出さず compose 全体 (None)。"""
+    assert actions_project._select_build_image(tmp_path) is None
+
+
+def test_select_build_image_cancel(monkeypatch, tmp_path):
+    d = tmp_path / "containers" / "web"
+    d.mkdir(parents=True)
+    (d / "Dockerfile").write_text("FROM scratch\n")
+    monkeypatch.setattr(menu, "select", lambda *a, **k: menu.MENU_BACK)
+    assert actions_project._select_build_image(tmp_path) is actions_project._ARG_CANCEL
+
+
+# ---------------------------------------------------------------------------
+# _operation_menu: 引数収集中止 → サブメニュー再表示
+# ---------------------------------------------------------------------------
+
+def test_operation_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
+    """引数収集を中止 (_ARG_CANCEL) するとサブメニューを再表示し、再選択で実行する。"""
+    select_calls = []
+    # 1 回目: scale を選ぶ (→ 引数収集中止) / 2 回目: up を選ぶ (→ 実行)
+    monkeypatch.setattr(actions_project, "_select_action",
+                        lambda name: (select_calls.append(1),
+                                      "scale" if len(select_calls) == 1 else "up")[1])
+
+    run_calls = []
+
+    def fake_run_op(root, name, op):
+        run_calls.append(op)
+        return actions_project._ARG_CANCEL if op == "scale" else 0
+
+    monkeypatch.setattr(actions_project, "_run_operation", fake_run_op)
+
+    assert actions_project._operation_menu(tmp_path, "carmo") == 0
+    assert run_calls == ["scale", "up"]
+    assert len(select_calls) == 2, "引数中止でサブメニューが再表示される"
 
 
 # ---------------------------------------------------------------------------

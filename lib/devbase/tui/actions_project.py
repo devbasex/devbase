@@ -4,8 +4,12 @@
 ``_show_action_menu`` / ``_fallback_select_and_up`` をこのモジュールへ移送し、
 メニュー部品は ``tui.menu`` に、ハンドラ委譲は ``tui.dispatch`` に一般化した。
 
-PR1 で扱うのは既存の **一覧選択 → (running なら up/rebuild/down サブメニュー) →
-それ以外は直接 up** までで、login/ps/logs/scale/build の追加は PR2 で行う。
+PR1 で **一覧選択 → (running なら操作サブメニュー) → それ以外は直接 up** を移送し、
+PR2 で running 操作サブメニューを **up/down/login/ps/logs/scale/build/rebuild の全操作**
+へ拡張した。login/ps/logs/scale は running 中コンテナを対象とするため running 行限定、
+stopped/unknown は従来どおり直接 up (PR1 非回帰)。引数を要する操作は ``tui.menu`` の
+収集ヘルパで CLI と同じ属性値を集め、破壊的な down は ``menu.confirm`` で確認する
+(plan 2.3 契約表 / 3.4 破壊的操作確認)。
 
 一覧表示・整形 (``list_projects`` / ``_build_menu_entries``) は ``commands/project``
 の純粋ロジックを再利用する (TUI からも CLI(table) からも共有)。
@@ -41,36 +45,171 @@ def _select_project(rows: list[dict]):
         choices, back=True, search=True)
 
 
-def _select_action(name: str):
-    """running 中プロジェクトの操作 (up/rebuild/down) を選ぶサブメニュー。
+# running 行で選べる操作 (表示順 = ハイライト既定順)。up を先頭に置き、PR1 同様
+# Enter 連打で再起動へ到達できるようにする。各 value は cmd_project のサブコマンド名。
+_RUNNING_OPS: list[tuple[str, str]] = [
+    ("再起動 (up)", "up"),
+    ("停止 (down)", "down"),
+    ("ログイン (login)", "login"),
+    ("コンテナ状態 (ps)", "ps"),
+    ("ログ表示 (logs)", "logs"),
+    ("スケール変更 (scale)", "scale"),
+    ("イメージビルド (build)", "build"),
+    ("再ビルド (rebuild --no-cache)", "rebuild"),
+]
 
-    戻り値: action 文字列 / ``MENU_BACK`` (Esc・← → 一覧へ戻る) / ``None`` (Ctrl-C 中止)。
+# 引数収集を Esc/Ctrl-C で中止したことを示す番兵 (= サブメニューへ戻る)。
+# dispatch の rc (int) や ``None`` (= 全体中止) と区別する。
+_ARG_CANCEL = object()
+
+
+def _select_action(name: str):
+    """running 中プロジェクトの操作を選ぶサブメニュー。
+
+    戻り値: サブコマンド文字列 / ``MENU_BACK`` (Esc・← → 一覧へ戻る) / ``None`` (Ctrl-C 中止)。
     """
-    choices = [
-        ("再起動 (up)", "up"),
-        ("再ビルド (rebuild --no-cache)", "rebuild"),
-        ("停止 (down)", "down"),
-    ]
     return menu.select(
         f"'{name}' は起動中です。操作を選択 "
         "(↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
+        list(_RUNNING_OPS), back=True, search=False)
+
+
+def _optional_int(message: str):
+    """空入力を許す整数収集 (logs --tail 等)。
+
+    戻り値: ``int`` / ``None`` (空入力 = 既定動作) / ``_ARG_CANCEL`` (Esc・Ctrl-C 中止)。
+    非数値は再入力を促す。``menu.integer`` は空入力で既定値を返す仕様のため、空 = None を
+    表現したい optional な数値はこちらで扱う。
+    """
+    while True:
+        raw = menu.text(message, allow_empty=True)
+        if raw is None:
+            return _ARG_CANCEL
+        if raw == "":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            logger.error("整数で指定してください: %r", raw)
+
+
+def _select_build_image(devbase_root: Path):
+    """build 対象イメージを選ぶ。``containers/<image>/Dockerfile`` を列挙する。
+
+    戻り値: イメージ名 (``str``) / ``None`` (compose.yml 全体ビルド) / ``_ARG_CANCEL``
+    (Esc・Ctrl-C 中止)。``containers/`` が無い / 空なら compose.yml 全体ビルド (None) に
+    フォールバックする。
+    """
+    containers_dir = Path(devbase_root) / "containers"
+    images = sorted(
+        d.name for d in containers_dir.iterdir()
+        if d.is_dir() and (d / "Dockerfile").exists()
+    ) if containers_dir.is_dir() else []
+
+    if not images:
+        # 個別イメージが無ければ compose.yml 全体ビルド (image=None) のみ。
+        return None
+
+    # value="" を「compose.yml 全体」に割り当て、選択メニューの None (Ctrl-C) と衝突
+    # させない。呼び出し側で空文字 → None へ変換する。
+    choices = [("compose.yml 全体をビルド", "")] + [(img, img) for img in images]
+    sel = menu.select(
+        "ビルドするイメージを選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
         choices, back=True, search=False)
+    if sel is menu.MENU_BACK or sel is None:
+        return _ARG_CANCEL
+    return sel or None  # "" → None (compose 全体)
+
+
+def _run_operation(devbase_root: Path, name: str, op: str):
+    """選択された操作の引数を収集して ``dispatch_lifecycle`` で起動する。
+
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 = サブメニューへ戻る)。
+    引数を要さない up/rebuild は即実行。down は破壊的のため ``menu.confirm`` で確認する。
+    """
+    if op in ("up", "rebuild"):
+        # up は scale 属性を参照する (常に None。他コマンドは無視する)。
+        return dispatch_lifecycle(op, name, scale=None)
+
+    if op == "down":
+        ok = menu.confirm(f"'{name}' のコンテナを停止しますか?", default=False)
+        if not ok:                     # False (拒否) / None (中止) → 実行しない
+            return _ARG_CANCEL
+        return dispatch_lifecycle("down", name)
+
+    if op == "login":
+        index = menu.text("ログインするコンテナ番号", default="1")
+        if index is None:
+            return _ARG_CANCEL
+        return dispatch_lifecycle("login", name, index=index)
+
+    if op == "ps":
+        all_c = menu.confirm("停止中も含め全コンテナを表示しますか (--all)?", default=False)
+        if all_c is None:
+            return _ARG_CANCEL
+        return dispatch_lifecycle("ps", name, all=all_c)
+
+    if op == "logs":
+        follow = menu.confirm("ログを追従表示しますか (--follow)?", default=False)
+        if follow is None:
+            return _ARG_CANCEL
+        tail = _optional_int("末尾何行を表示しますか (空で全件)")
+        if tail is _ARG_CANCEL:
+            return _ARG_CANCEL
+        return dispatch_lifecycle("logs", name, follow=follow, tail=tail)
+
+    if op == "scale":
+        new_scale = menu.integer(f"'{name}' の新しいコンテナ数", min_value=1)
+        if new_scale is None:
+            return _ARG_CANCEL
+        return dispatch_lifecycle("scale", name, new_scale=new_scale)
+
+    if op == "build":
+        image = _select_build_image(devbase_root)
+        if image is _ARG_CANCEL:
+            return _ARG_CANCEL
+        return dispatch_lifecycle("build", name, image=image)
+
+    # 到達しない (メニュー値は _RUNNING_OPS に限定される)。保守的に no-op。
+    logger.error("未知の操作です: %s", op)
+    return _ARG_CANCEL
+
+
+def _operation_menu(devbase_root: Path, name: str):
+    """running 行の操作サブメニューを回す。
+
+    戻り値プロトコル (run と同じ ``is`` 同一性判定):
+    - dispatch の rc (``int``): 操作を実行 → 呼び出し元へ (最終的にトップへ復帰)。
+    - ``menu.MENU_BACK``: Esc/← で一覧へ戻る。
+    - ``None``: Ctrl-C で全体中止。
+
+    引数収集を中止 (``_ARG_CANCEL``) した場合はサブメニューを再表示する。
+    """
+    while True:
+        op = _select_action(name)
+        if op is menu.MENU_BACK:
+            return menu.MENU_BACK
+        if op is None:
+            return None
+        rc = _run_operation(devbase_root, name, op)
+        if rc is _ARG_CANCEL:
+            continue                   # 引数収集を中止 → サブメニューへ戻る
+        return rc                      # 実行 rc → 呼び出し元へ
 
 
 def run(devbase_root: Path):
-    """プロジェクト操作カテゴリ。一覧選択 → up/rebuild/down を起動する。
+    """プロジェクト操作カテゴリ。一覧選択 → (running は操作サブメニュー / 他は up)。
 
     戻り値プロトコル (トップループが ``is`` 同一性で判定する):
     - **操作を実行した場合**: ``dispatch_lifecycle`` の rc (``int``) を返す。
       「実行したのでトップへ戻る、rc は呼び出し側が記憶」の意味。これにより
-      ``project up/down/rebuild`` の失敗が ``devbase list`` の終了コードへ伝搬する。
+      project 操作の失敗が ``devbase list`` の終了コードへ伝搬する。
     - ``menu.MENU_BACK``: 一覧で Esc/← (操作なしでトップへ) / プロジェクト無し。
     - ``None``: 一覧・サブメニューで Ctrl-C による全体中止。
 
-    選択行が running 中なら ``_select_action`` で up/rebuild/down を選ばせ、それ以外
-    (stopped / unknown 等) は従来どおり直接 ``project up`` を起動する。サブメニューで
-    Esc/← を押すと (``MENU_BACK``) 一覧へ戻る。操作完了後はトップメニューへ復帰する
-    (plan 3.5 状態遷移: Exec → Top)。
+    選択行が running 中なら ``_operation_menu`` で全操作を選ばせ、それ以外
+    (stopped / unknown) は従来どおり直接 ``project up`` を起動する (PR1 非回帰)。
+    操作完了後はトップメニューへ復帰する (plan 3.5 状態遷移: Exec → Top)。
     """
     projects_dir = Path(devbase_root) / "projects"
     while True:
@@ -88,12 +227,11 @@ def run(devbase_root: Path):
         row = rows[idx]
         name = row["name"]
         if str(row.get("status", "")).startswith("running"):
-            action = _select_action(name)
-            if action is menu.MENU_BACK:
+            rc = _operation_menu(devbase_root, name)
+            if rc is menu.MENU_BACK:
                 continue          # 一覧へ戻る
-            if action is None:
+            if rc is None:
                 return None       # Ctrl-C → 全体中止
-            rc = dispatch_lifecycle(action, name, scale=None)
         else:
             rc = dispatch_lifecycle("up", name, scale=None)
 
