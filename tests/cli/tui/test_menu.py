@@ -183,8 +183,8 @@ def _fake_question(monkeypatch, factory_name, *, ask_result):
     return holder
 
 
-def test_text_questionary_binds_escape_cancel(monkeypatch):
-    """questionary 経路の text に Esc→中止 (KeyboardInterrupt) バインドが付くこと。"""
+def test_text_questionary_binds_escape_back(monkeypatch):
+    """questionary 経路の text に Esc→戻る (MENU_BACK) バインドが付き、← は空けること。"""
     pytest.importorskip("questionary")
     from prompt_toolkit.keys import Keys
 
@@ -198,11 +198,13 @@ def test_text_questionary_binds_escape_cancel(monkeypatch):
     captured = {}
     esc[0].handler(types.SimpleNamespace(
         app=types.SimpleNamespace(exit=lambda **kw: captured.update(kw))))
-    assert captured["exception"] is KeyboardInterrupt
+    assert captured == {"result": menu.MENU_BACK}
+    # ← は入力カーソル移動に使うためバインドしない (bind_left=False)
+    assert [b for b in kb.bindings if Keys.Left in b.keys] == []
 
 
-def test_confirm_questionary_binds_escape_cancel(monkeypatch):
-    """questionary 経路の confirm に Esc→中止バインドが付くこと。"""
+def test_confirm_questionary_binds_escape_back(monkeypatch):
+    """questionary 経路の confirm に Esc→戻る (MENU_BACK) バインドが付くこと。"""
     pytest.importorskip("questionary")
     from prompt_toolkit.keys import Keys
 
@@ -216,11 +218,11 @@ def test_confirm_questionary_binds_escape_cancel(monkeypatch):
     captured = {}
     esc[0].handler(types.SimpleNamespace(
         app=types.SimpleNamespace(exit=lambda **kw: captured.update(kw))))
-    assert captured["exception"] is KeyboardInterrupt
+    assert captured == {"result": menu.MENU_BACK}
 
 
-def test_path_questionary_binds_escape_cancel(monkeypatch):
-    """questionary 経路の path に Esc→中止バインドが付くこと。"""
+def test_path_questionary_binds_escape_back(monkeypatch):
+    """questionary 経路の path に Esc バインドが付くこと。"""
     pytest.importorskip("questionary")
     from prompt_toolkit.keys import Keys
 
@@ -233,12 +235,48 @@ def test_path_questionary_binds_escape_cancel(monkeypatch):
     assert len(esc) == 1
 
 
-def test_text_questionary_escape_returns_none(monkeypatch):
-    """questionary 経路の text で Esc/Ctrl-C 相当 (ask が None) のとき None を返す。"""
+def test_text_questionary_ctrl_c_returns_none(monkeypatch):
+    """questionary 経路の text で Ctrl-C (ask が None) のとき None (全体中止) を返す。"""
     pytest.importorskip("questionary")
     monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
     _fake_question(monkeypatch, "text", ask_result=None)
     assert menu.text("名前") is None
+
+
+def test_text_questionary_escape_returns_menu_back(monkeypatch):
+    """questionary 経路の text で Esc (ask が MENU_BACK) のとき MENU_BACK を返す。
+
+    allow_empty=False でも番兵を strip せずそのまま返す (PR #55 round4 major:
+    Esc=戻る と Ctrl-C=全体中止 を呼び出し側で区別できるようにする)。
+    """
+    pytest.importorskip("questionary")
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    _fake_question(monkeypatch, "text", ask_result=menu.MENU_BACK)
+    assert menu.text("名前", allow_empty=False) is menu.MENU_BACK
+
+
+def test_confirm_questionary_escape_returns_menu_back(monkeypatch):
+    """questionary 経路の confirm で Esc のとき MENU_BACK を返す (None=Ctrl-C と区別)。"""
+    pytest.importorskip("questionary")
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    _fake_question(monkeypatch, "confirm", ask_result=menu.MENU_BACK)
+    assert menu.confirm("本当に?") is menu.MENU_BACK
+
+
+def test_path_questionary_escape_returns_menu_back(monkeypatch):
+    """questionary 経路の path で Esc のとき MENU_BACK を返す (None=Ctrl-C と区別)。"""
+    pytest.importorskip("questionary")
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    _fake_question(monkeypatch, "path", ask_result=menu.MENU_BACK)
+    assert menu.path("dest", allow_empty=False) is menu.MENU_BACK
+
+
+def test_integer_questionary_escape_returns_menu_back(monkeypatch):
+    """integer は text の MENU_BACK (Esc) を int 変換せずそのまま伝搬する。"""
+    pytest.importorskip("questionary")
+    monkeypatch.setattr(menu, "HAVE_QUESTIONARY", True)
+    _fake_question(monkeypatch, "text", ask_result=menu.MENU_BACK)
+    assert menu.integer("scale") is menu.MENU_BACK
 
 
 def test_text_questionary_reprompts_on_empty_via_loop(monkeypatch):

@@ -58,9 +58,13 @@ _RUNNING_OPS: list[tuple[str, str]] = [
     ("再ビルド (rebuild --no-cache)", "rebuild"),
 ]
 
-# 引数収集を Esc/Ctrl-C で中止したことを示す番兵 (= サブメニューへ戻る)。
-# dispatch の rc (int) や ``None`` (= 全体中止) と区別する。
+# 引数収集を Esc で中止したことを示す番兵 (= サブメニューへ戻る)。
+# dispatch の rc (int) や ``None`` (= Ctrl-C 全体中止) と区別する。
 _ARG_CANCEL = object()
+
+# _optional_int の Ctrl-C 番兵。「空入力 (None = 既定動作)」と衝突するため
+# ``None`` を直接返せず、専用番兵で返して呼び出し側で ``None`` (全体中止) へ変換する。
+_ABORT = object()
 
 
 def _select_action(name: str):
@@ -77,7 +81,9 @@ def _select_action(name: str):
 def _optional_int(message: str, *, min_value: int = 0):
     """空入力を許す整数収集 (logs --tail 等)。
 
-    戻り値: ``int`` / ``None`` (空入力 = 既定動作) / ``_ARG_CANCEL`` (Esc・Ctrl-C 中止)。
+    戻り値: ``int`` / ``None`` (空入力 = 既定動作) / ``_ARG_CANCEL`` (Esc → サブ
+    メニューへ戻る) / ``_ABORT`` (Ctrl-C → 全体中止。空入力の ``None`` と衝突する
+    ため専用番兵で返し、呼び出し側で ``None`` へ変換する)。
     非数値・``min_value`` 未満は再入力を促す。``menu.integer`` は空入力で既定値を返す
     仕様のため、空 = None を表現したい optional な数値はこちらで扱う。``min_value`` の
     既定は 0 で、logs --tail に負数を渡して docker compose をエラーにするのを防ぐ。
@@ -85,7 +91,9 @@ def _optional_int(message: str, *, min_value: int = 0):
     while True:
         raw = menu.text(message, allow_empty=True)
         if raw is None:
-            return _ARG_CANCEL
+            return _ABORT              # Ctrl-C → 全体中止 (呼び出し側で None へ変換)
+        if raw is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         if raw == "":
             return None
         try:
@@ -133,8 +141,8 @@ def _select_build_image(devbase_root: Path):
 def _run_operation(devbase_root: Path, name: str, op: str):
     """選択された操作の引数を収集して ``dispatch_lifecycle`` で起動する。
 
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 = サブメニューへ
-    戻る) / ``None`` (選択メニューで Ctrl-C → 全体中止)。
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc で引数収集を中止 =
+    サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
     引数を要さない up/rebuild は即実行。down は破壊的のため ``menu.confirm`` で確認する。
     """
     if op in ("up", "rebuild"):
@@ -143,8 +151,10 @@ def _run_operation(devbase_root: Path, name: str, op: str):
 
     if op == "down":
         ok = menu.confirm(f"'{name}' のコンテナを停止しますか?", default=False)
-        if not ok:                     # False (拒否) / None (中止) → 実行しない
-            return _ARG_CANCEL
+        if ok is None:
+            return None                # Ctrl-C → 全体中止
+        if ok is menu.MENU_BACK or not ok:
+            return _ARG_CANCEL         # Esc / 拒否 → 実行しない
         return dispatch_lifecycle("down", name)
 
     if op == "login":
@@ -153,28 +163,38 @@ def _run_operation(devbase_root: Path, name: str, op: str):
         # min_value=1 で正の整数を保証する。cmd_login の index は文字列契約なので str 化。
         index = menu.integer("ログインするコンテナ番号", default=1, min_value=1)
         if index is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if index is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return dispatch_lifecycle("login", name, index=str(index))
 
     if op == "ps":
         all_c = menu.confirm("停止中も含め全コンテナを表示しますか (--all)?", default=False)
         if all_c is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if all_c is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return dispatch_lifecycle("ps", name, all=all_c)
 
     if op == "logs":
         follow = menu.confirm("ログを追従表示しますか (--follow)?", default=False)
         if follow is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if follow is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         tail = _optional_int("末尾何行を表示しますか (空で全件)")
+        if tail is _ABORT:
+            return None                # Ctrl-C → 全体中止
         if tail is _ARG_CANCEL:
-            return _ARG_CANCEL
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return dispatch_lifecycle("logs", name, follow=follow, tail=tail)
 
     if op == "scale":
         new_scale = menu.integer(f"'{name}' の新しいコンテナ数", min_value=1)
         if new_scale is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if new_scale is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return dispatch_lifecycle("scale", name, new_scale=new_scale)
 
     if op == "build":

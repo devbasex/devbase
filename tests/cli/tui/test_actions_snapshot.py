@@ -139,20 +139,26 @@ def test_run_operation_create_empty_name_is_none(monkeypatch, tmp_path):
     assert captured["name"] is None and captured["full"] is False
 
 
-def test_run_operation_create_name_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("text_ret", ["BACK", None])
+def test_run_operation_create_name_cancel(monkeypatch, tmp_path, text_ret):
+    """name 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     called = _no_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)      # Esc/Ctrl-C
-    assert actions_snapshot._run_operation(
-        tmp_path, "create") is actions_snapshot._ARG_CANCEL
+    ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
+    expected = actions_snapshot._ARG_CANCEL if text_ret == "BACK" else None
+    assert actions_snapshot._run_operation(tmp_path, "create") is expected
     assert called == []
 
 
-def test_run_operation_create_full_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("confirm_ret", ["BACK", None])
+def test_run_operation_create_full_cancel(monkeypatch, tmp_path, confirm_ret):
+    """--full の confirm で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "text", lambda *a, **k: "snap1")
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: None)   # Esc/Ctrl-C
-    assert actions_snapshot._run_operation(
-        tmp_path, "create") is actions_snapshot._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = actions_snapshot._ARG_CANCEL if confirm_ret == "BACK" else None
+    assert actions_snapshot._run_operation(tmp_path, "create") is expected
     assert called == []
 
 
@@ -178,17 +184,21 @@ def test_run_operation_restore_point_empty_is_none(monkeypatch, tmp_path):
     assert captured["point"] is None
 
 
-@pytest.mark.parametrize("confirm_ret", [False, None])
+@pytest.mark.parametrize("confirm_ret", [False, "BACK", None])
 def test_run_operation_restore_cancelled_does_not_dispatch(
         monkeypatch, tmp_path, confirm_ret):
-    """restore の confirm を拒否 (False) / 中止 (None) したら実行しない (plan 3.4)。"""
+    """restore の confirm を拒否 (False) / Esc / Ctrl-C したら実行しない (plan 3.4)。
+
+    拒否と Esc は操作メニュー再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。
+    """
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(actions_snapshot, "_select_snapshot_name",
                         lambda root, msg: "snap1")
     monkeypatch.setattr(actions_snapshot, "_optional_point", lambda msg: None)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: confirm_ret)
-    assert actions_snapshot._run_operation(
-        tmp_path, "restore") is actions_snapshot._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else confirm_ret
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = None if confirm_ret is None else actions_snapshot._ARG_CANCEL
+    assert actions_snapshot._run_operation(tmp_path, "restore") is expected
     assert called == [], "確認を拒否/中止したら restore しない"
 
 
@@ -223,6 +233,19 @@ def test_run_operation_restore_point_cancel(monkeypatch, tmp_path):
     assert called == []
 
 
+def test_run_operation_restore_point_ctrl_c_aborts(monkeypatch, tmp_path):
+    """point 入力中の Ctrl-C (_ABORT) は None を伝搬して全体中止する (round4 major)。"""
+    called = _no_dispatch(monkeypatch)
+    monkeypatch.setattr(actions_snapshot, "_select_snapshot_name",
+                        lambda root, msg: "snap1")
+    monkeypatch.setattr(actions_snapshot, "_optional_point",
+                        lambda msg: actions_snapshot._ABORT)
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("Ctrl-C 後に確認を求めない"))
+    assert actions_snapshot._run_operation(tmp_path, "restore") is None
+    assert called == []
+
+
 def test_run_operation_copy_collects_new_name(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(actions_snapshot, "_select_snapshot_name",
@@ -233,13 +256,16 @@ def test_run_operation_copy_collects_new_name(monkeypatch, tmp_path):
     assert captured["name"] == "snap1" and captured["new_name"] == "snap1-copy"
 
 
-def test_run_operation_copy_new_name_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("text_ret", ["BACK", None])
+def test_run_operation_copy_new_name_cancel(monkeypatch, tmp_path, text_ret):
+    """new_name 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(actions_snapshot, "_select_snapshot_name",
                         lambda root, msg: "snap1")
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)      # Esc/Ctrl-C
-    assert actions_snapshot._run_operation(
-        tmp_path, "copy") is actions_snapshot._ARG_CANCEL
+    ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
+    expected = actions_snapshot._ARG_CANCEL if text_ret == "BACK" else None
+    assert actions_snapshot._run_operation(tmp_path, "copy") is expected
     assert called == []
 
 
@@ -253,16 +279,20 @@ def test_run_operation_delete_confirmed(monkeypatch, tmp_path):
     assert captured["subcommand"] == "delete" and captured["name"] == "snap1"
 
 
-@pytest.mark.parametrize("confirm_ret", [False, None])
+@pytest.mark.parametrize("confirm_ret", [False, "BACK", None])
 def test_run_operation_delete_cancelled_does_not_dispatch(
         monkeypatch, tmp_path, confirm_ret):
-    """delete の confirm を拒否 (False) / 中止 (None) したら削除しない (plan 3.4)。"""
+    """delete の confirm を拒否 (False) / Esc / Ctrl-C したら削除しない (plan 3.4)。
+
+    拒否と Esc は操作メニュー再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。
+    """
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(actions_snapshot, "_select_snapshot_name",
                         lambda root, msg: "snap1")
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: confirm_ret)
-    assert actions_snapshot._run_operation(
-        tmp_path, "delete") is actions_snapshot._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else confirm_ret
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = None if confirm_ret is None else actions_snapshot._ARG_CANCEL
+    assert actions_snapshot._run_operation(tmp_path, "delete") is expected
     assert called == [], "確認を拒否/中止したら delete しない"
 
 
@@ -281,11 +311,14 @@ def test_run_operation_rotate_collects_keep(monkeypatch, tmp_path):
     assert seen == {"default": 3, "min_value": 1}
 
 
-def test_run_operation_rotate_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("int_ret", ["BACK", None])
+def test_run_operation_rotate_cancel(monkeypatch, tmp_path, int_ret):
+    """keep 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     called = _no_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "integer", lambda *a, **k: None)
-    assert actions_snapshot._run_operation(
-        tmp_path, "rotate") is actions_snapshot._ARG_CANCEL
+    ret = menu.MENU_BACK if int_ret == "BACK" else None
+    monkeypatch.setattr(menu, "integer", lambda *a, **k: ret)
+    expected = actions_snapshot._ARG_CANCEL if int_ret == "BACK" else None
+    assert actions_snapshot._run_operation(tmp_path, "rotate") is expected
     assert called == []
 
 
@@ -368,12 +401,15 @@ def test_select_snapshot_name_list_failure_falls_back_to_text(monkeypatch, tmp_p
     assert actions_snapshot._select_snapshot_name(tmp_path, "選択") == "typed-name"
 
 
-def test_select_snapshot_name_text_fallback_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("text_ret", ["BACK", None])
+def test_select_snapshot_name_text_fallback_cancel(monkeypatch, tmp_path, text_ret):
+    """text 縮退でも Esc は _ARG_CANCEL、Ctrl-C は None (全体中止) を返す。"""
     _FakeManager.snapshots = RuntimeError("boom")
     monkeypatch.setattr(actions_snapshot, "SnapshotManager", _FakeManager)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)
-    assert actions_snapshot._select_snapshot_name(
-        tmp_path, "選択") is actions_snapshot._ARG_CANCEL
+    ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
+    expected = actions_snapshot._ARG_CANCEL if text_ret == "BACK" else None
+    assert actions_snapshot._select_snapshot_name(tmp_path, "選択") is expected
 
 
 # ---------------------------------------------------------------------------
@@ -391,9 +427,16 @@ def test_optional_point_empty_is_none(monkeypatch):
 
 
 def test_optional_point_cancel(monkeypatch):
+    """Ctrl-C (None) は _ABORT、Esc (MENU_BACK) は _ARG_CANCEL を返す。
+
+    空入力の ``None`` (= 全差分適用) と Ctrl-C を区別するため、Ctrl-C は専用番兵
+    ``_ABORT`` で返す (PR #55 round4 major)。
+    """
     monkeypatch.setattr(menu, "text", lambda *a, **k: None)
-    assert actions_snapshot._optional_point(
-        "point") is actions_snapshot._ARG_CANCEL
+    assert actions_snapshot._optional_point("point") is actions_snapshot._ABORT
+
+    monkeypatch.setattr(menu, "text", lambda *a, **k: menu.MENU_BACK)
+    assert actions_snapshot._optional_point("point") is actions_snapshot._ARG_CANCEL
 
 
 def test_optional_point_reprompts_non_numeric(monkeypatch):

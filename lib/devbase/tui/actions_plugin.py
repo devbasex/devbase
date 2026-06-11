@@ -172,8 +172,8 @@ def _select_repo_operation():
 def _run_operation(devbase_root: Path, op: str):
     """選択された plugin 操作の引数を収集して ``cmd_plugin`` へ委譲する。
 
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 =
-    サブメニューへ戻る) / ``None`` (選択メニューで Ctrl-C → 全体中止)。
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc で引数収集を中止 =
+    サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
     破壊的な uninstall は ``menu.confirm`` で確認する (plan 3.4)。
     """
     if op == "list":
@@ -181,7 +181,9 @@ def _run_operation(devbase_root: Path, op: str):
         available = menu.confirm(
             "未導入の利用可能 plugin を表示しますか (--available)?", default=False)
         if available is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if available is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return _dispatch(devbase_root, "list", available=available)
 
     if op == "install":
@@ -189,15 +191,21 @@ def _run_operation(devbase_root: Path, op: str):
             "インストールする plugin の source (名前 / URL / パス)",
             allow_empty=False)
         if source is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if source is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         link = menu.confirm(
             "symlink としてインストールしますか (--link)?", default=False)
         if link is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if link is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         install_all = menu.confirm(
             "リポジトリ内の全 plugin をインストールしますか (--all)?", default=False)
         if install_all is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if install_all is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return _dispatch(devbase_root, "install",
                          source=source, link=link, install_all=install_all)
 
@@ -209,8 +217,10 @@ def _run_operation(devbase_root: Path, op: str):
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         ok = menu.confirm(f"plugin '{name}' をアンインストールしますか?", default=False)
-        if not ok:                     # False (拒否) / None (中止) → 実行しない
-            return _ARG_CANCEL
+        if ok is None:
+            return None                # Ctrl-C → 全体中止
+        if ok is menu.MENU_BACK or not ok:
+            return _ARG_CANCEL         # Esc / 拒否 → 実行しない
         return _dispatch(devbase_root, "uninstall", name=name)
 
     if op == "update":
@@ -257,11 +267,15 @@ def _run_repo_operation(devbase_root: Path, op: str):
             "登録するリポジトリの URL (GitHub は owner/repo 短縮形も可)",
             allow_empty=False)
         if url is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if url is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         # --name は任意 (空で URL から自動命名)。空文字は None へ変換して渡す。
         name = menu.text("カスタム名 (--name 空で自動)", allow_empty=True)
         if name is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if name is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return _dispatch(devbase_root, "repo",
                          repo_command="add", url=url, name=name or None)
 
@@ -272,13 +286,17 @@ def _run_repo_operation(devbase_root: Path, op: str):
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         ok = menu.confirm(f"リポジトリ '{name}' を削除しますか?", default=False)
-        if not ok:                     # False (拒否) / None (中止) → 実行しない
-            return _ARG_CANCEL
+        if ok is None:
+            return None                # Ctrl-C → 全体中止
+        if ok is menu.MENU_BACK or not ok:
+            return _ARG_CANCEL         # Esc / 拒否 → 実行しない
         force = menu.confirm(
             "未 commit / 未 push の変更があっても強制削除しますか (--force)?",
             default=False)
         if force is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if force is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return _dispatch(devbase_root, "repo",
                          repo_command="remove", name=name, force=force)
 

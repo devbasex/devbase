@@ -190,10 +190,14 @@ def test_run_operation_list_available_flag(monkeypatch, tmp_path, available):
     assert captured["available"] is available
 
 
-def test_run_operation_list_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("confirm_ret", ["BACK", None])
+def test_run_operation_list_cancel(monkeypatch, tmp_path, confirm_ret):
+    """confirm で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     called = _no_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: None)   # Esc/Ctrl-C
-    assert actions_plugin._run_operation(tmp_path, "list") is actions_plugin._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = actions_plugin._ARG_CANCEL if confirm_ret == "BACK" else None
+    assert actions_plugin._run_operation(tmp_path, "list") is expected
     assert called == []
 
 
@@ -208,20 +212,28 @@ def test_run_operation_install_collects_source_link_all(monkeypatch, tmp_path):
     assert captured["link"] is True and captured["install_all"] is False
 
 
-def test_run_operation_install_source_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("text_ret", ["BACK", None])
+def test_run_operation_install_source_cancel(monkeypatch, tmp_path, text_ret):
+    """source 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     called = _no_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)      # Esc/Ctrl-C
-    assert actions_plugin._run_operation(tmp_path, "install") is actions_plugin._ARG_CANCEL
+    ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
+    expected = actions_plugin._ARG_CANCEL if text_ret == "BACK" else None
+    assert actions_plugin._run_operation(tmp_path, "install") is expected
     assert called == []
 
 
-def test_run_operation_install_confirm_cancel_midway(monkeypatch, tmp_path):
-    """install の途中 (install_all) で中止したら実行しない。"""
+@pytest.mark.parametrize("confirm_ret", ["BACK", None])
+def test_run_operation_install_confirm_cancel_midway(monkeypatch, tmp_path,
+                                                     confirm_ret):
+    """install の途中 (install_all) で Esc / Ctrl-C したら実行しない。"""
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "text", lambda *a, **k: "owner/repo")
-    confirms = iter([True, None])            # link=True, install_all で中止
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
+    confirms = iter([True, ret])             # link=True, install_all で中止
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
-    assert actions_plugin._run_operation(tmp_path, "install") is actions_plugin._ARG_CANCEL
+    expected = actions_plugin._ARG_CANCEL if confirm_ret == "BACK" else None
+    assert actions_plugin._run_operation(tmp_path, "install") is expected
     assert called == []
 
 
@@ -235,15 +247,20 @@ def test_run_operation_uninstall_confirmed(monkeypatch, tmp_path):
     assert captured["subcommand"] == "uninstall" and captured["name"] == "ndf"
 
 
-@pytest.mark.parametrize("confirm_ret", [False, None])
+@pytest.mark.parametrize("confirm_ret", [False, "BACK", None])
 def test_run_operation_uninstall_cancelled_does_not_dispatch(
         monkeypatch, tmp_path, confirm_ret):
-    """uninstall の confirm を拒否 (False) / 中止 (None) したら実行しない。"""
+    """uninstall の confirm を拒否 (False) / Esc / Ctrl-C したら実行しない。
+
+    拒否と Esc はサブメニュー再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。
+    """
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(actions_plugin, "_select_installed_plugin",
                         lambda root, msg, **k: "ndf")
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: confirm_ret)
-    assert actions_plugin._run_operation(tmp_path, "uninstall") is actions_plugin._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else confirm_ret
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = None if confirm_ret is None else actions_plugin._ARG_CANCEL
+    assert actions_plugin._run_operation(tmp_path, "uninstall") is expected
     assert called == [], "確認を拒否/中止したら uninstall しない"
 
 
@@ -358,10 +375,14 @@ def test_run_repo_operation_add_empty_name_is_none(monkeypatch, tmp_path):
     assert captured["url"] == "o/r" and captured["name"] is None
 
 
-def test_run_repo_operation_add_url_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("text_ret", ["BACK", None])
+def test_run_repo_operation_add_url_cancel(monkeypatch, tmp_path, text_ret):
+    """url 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     called = _no_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)      # Esc/Ctrl-C
-    assert actions_plugin._run_repo_operation(tmp_path, "add") is actions_plugin._ARG_CANCEL
+    ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
+    expected = actions_plugin._ARG_CANCEL if text_ret == "BACK" else None
+    assert actions_plugin._run_repo_operation(tmp_path, "add") is expected
     assert called == []
 
 
@@ -379,26 +400,34 @@ def test_run_repo_operation_remove_confirmed(monkeypatch, tmp_path, force):
     assert captured["name"] == "r1" and captured["force"] is force
 
 
-@pytest.mark.parametrize("confirm_ret", [False, None])
+@pytest.mark.parametrize("confirm_ret", [False, "BACK", None])
 def test_run_repo_operation_remove_cancelled_does_not_dispatch(
         monkeypatch, tmp_path, confirm_ret):
-    """repo remove の confirm を拒否 (False) / 中止 (None) したら実行しない。"""
+    """repo remove の confirm を拒否 (False) / Esc / Ctrl-C したら実行しない。
+
+    拒否と Esc はサブメニュー再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。
+    """
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(actions_plugin, "_select_repository",
                         lambda root, msg, **k: "r1")
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: confirm_ret)
-    assert actions_plugin._run_repo_operation(tmp_path, "remove") is actions_plugin._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else confirm_ret
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = None if confirm_ret is None else actions_plugin._ARG_CANCEL
+    assert actions_plugin._run_repo_operation(tmp_path, "remove") is expected
     assert called == [], "確認を拒否/中止したら remove しない"
 
 
-def test_run_repo_operation_remove_force_cancel(monkeypatch, tmp_path):
-    """force の確認を中止 (None) したら実行しない。"""
+@pytest.mark.parametrize("confirm_ret", ["BACK", None])
+def test_run_repo_operation_remove_force_cancel(monkeypatch, tmp_path, confirm_ret):
+    """force の確認で Esc / Ctrl-C したら実行しない。"""
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(actions_plugin, "_select_repository",
                         lambda root, msg, **k: "r1")
-    confirms = iter([True, None])            # 削除確認=True, force で中止
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
+    confirms = iter([True, ret])             # 削除確認=True, force で中止
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
-    assert actions_plugin._run_repo_operation(tmp_path, "remove") is actions_plugin._ARG_CANCEL
+    expected = actions_plugin._ARG_CANCEL if confirm_ret == "BACK" else None
+    assert actions_plugin._run_repo_operation(tmp_path, "remove") is expected
     assert called == []
 
 

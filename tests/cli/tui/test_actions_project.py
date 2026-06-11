@@ -277,14 +277,19 @@ def test_run_operation_down_confirmed(monkeypatch, tmp_path):
     assert captured["subcommand"] == "down"
 
 
-@pytest.mark.parametrize("confirm_ret", [False, None])
+@pytest.mark.parametrize("confirm_ret", [False, "BACK", None])
 def test_run_operation_down_cancelled_does_not_dispatch(monkeypatch, tmp_path, confirm_ret):
-    """down の confirm を拒否 (False) / 中止 (None) したら停止しない (_ARG_CANCEL)。"""
+    """down の confirm を拒否 (False) / Esc / Ctrl-C したら停止しない。
+
+    拒否と Esc はサブメニュー再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。
+    """
     from devbase.commands import container as container_mod
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: confirm_ret)
-    assert actions_project._run_operation(tmp_path, "carmo", "down") is actions_project._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else confirm_ret
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = None if confirm_ret is None else actions_project._ARG_CANCEL
+    assert actions_project._run_operation(tmp_path, "carmo", "down") is expected
     assert called == [], "確認を拒否/中止したら down しない"
 
 
@@ -296,12 +301,16 @@ def test_run_operation_login_collects_index(monkeypatch, tmp_path):
     assert captured["subcommand"] == "login" and captured["index"] == "3"
 
 
-def test_run_operation_login_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("int_ret", ["BACK", None])
+def test_run_operation_login_cancel(monkeypatch, tmp_path, int_ret):
+    """番号入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import container as container_mod
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "integer", lambda *a, **k: None)   # Esc/Ctrl-C
-    assert actions_project._run_operation(tmp_path, "carmo", "login") is actions_project._ARG_CANCEL
+    ret = menu.MENU_BACK if int_ret == "BACK" else None
+    monkeypatch.setattr(menu, "integer", lambda *a, **k: ret)
+    expected = actions_project._ARG_CANCEL if int_ret == "BACK" else None
+    assert actions_project._run_operation(tmp_path, "carmo", "login") is expected
     assert called == []
 
 
@@ -329,6 +338,18 @@ def test_run_operation_logs_tail_empty_is_none(monkeypatch, tmp_path):
     assert captured["follow"] is False and captured["tail"] is None
 
 
+def test_run_operation_logs_tail_ctrl_c_aborts(monkeypatch, tmp_path):
+    """tail 入力中の Ctrl-C (_ABORT) は None を伝搬して全体中止する (round4 major)。"""
+    from devbase.commands import container as container_mod
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(actions_project, "_optional_int",
+                        lambda msg: actions_project._ABORT)
+    assert actions_project._run_operation(tmp_path, "carmo", "logs") is None
+    assert called == []
+
+
 def test_run_operation_scale_collects_int(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "integer", lambda *a, **k: 4)
@@ -336,12 +357,16 @@ def test_run_operation_scale_collects_int(monkeypatch, tmp_path):
     assert captured["subcommand"] == "scale" and captured["new_scale"] == 4
 
 
-def test_run_operation_scale_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("int_ret", ["BACK", None])
+def test_run_operation_scale_cancel(monkeypatch, tmp_path, int_ret):
+    """コンテナ数入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import container as container_mod
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "integer", lambda *a, **k: None)
-    assert actions_project._run_operation(tmp_path, "carmo", "scale") is actions_project._ARG_CANCEL
+    ret = menu.MENU_BACK if int_ret == "BACK" else None
+    monkeypatch.setattr(menu, "integer", lambda *a, **k: ret)
+    expected = actions_project._ARG_CANCEL if int_ret == "BACK" else None
+    assert actions_project._run_operation(tmp_path, "carmo", "scale") is expected
     assert called == []
 
 
@@ -395,7 +420,15 @@ def test_optional_int_empty_is_none(monkeypatch):
 
 
 def test_optional_int_cancel(monkeypatch):
+    """Ctrl-C (None) は _ABORT、Esc (MENU_BACK) は _ARG_CANCEL を返す。
+
+    空入力の ``None`` (= 既定動作) と Ctrl-C を区別するため、Ctrl-C は専用番兵
+    ``_ABORT`` で返す (PR #55 round4 major)。
+    """
     monkeypatch.setattr(menu, "text", lambda *a, **k: None)
+    assert actions_project._optional_int("tail") is actions_project._ABORT
+
+    monkeypatch.setattr(menu, "text", lambda *a, **k: menu.MENU_BACK)
     assert actions_project._optional_int("tail") is actions_project._ARG_CANCEL
 
 

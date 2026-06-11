@@ -175,12 +175,16 @@ def test_run_operation_init_collects_reset(monkeypatch, tmp_path, reset):
     assert captured["attrs"] == {"subcommand": "init", "reset": reset}
 
 
-def test_run_operation_init_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("confirm_ret", ["BACK", None])
+def test_run_operation_init_cancel(monkeypatch, tmp_path, confirm_ret):
+    """init の confirm で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: None)   # Esc/Ctrl-C
-    assert actions_env._run_operation(tmp_path, "init") is actions_env._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = actions_env._ARG_CANCEL if confirm_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "init") is expected
     assert called == []
 
 
@@ -295,14 +299,17 @@ def test_run_operation_list_scope_cancel(monkeypatch, tmp_path, scope_ret):
     assert called == []
 
 
-def test_run_operation_list_confirm_cancel(monkeypatch, tmp_path):
-    """reveal の confirm を中止 (None) したら実行しない。"""
+@pytest.mark.parametrize("confirm_ret", ["BACK", None])
+def test_run_operation_list_confirm_cancel(monkeypatch, tmp_path, confirm_ret):
+    """reveal の confirm で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
     monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: None)
-    assert actions_env._run_operation(tmp_path, "list") is actions_env._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = actions_env._ARG_CANCEL if confirm_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "list") is expected
     assert called == []
 
 
@@ -375,13 +382,17 @@ def test_run_operation_get_scope_cancel(monkeypatch, tmp_path, scope_ret):
     assert called == []
 
 
-def test_run_operation_get_key_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("text_ret", ["BACK", None])
+def test_run_operation_get_key_cancel(monkeypatch, tmp_path, text_ret):
+    """キー入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
     monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)
-    assert actions_env._run_operation(tmp_path, "get") is actions_env._ARG_CANCEL
+    ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
+    expected = actions_env._ARG_CANCEL if text_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "get") is expected
     assert called == []
 
 
@@ -394,28 +405,36 @@ def test_run_operation_delete_confirmed(monkeypatch, tmp_path):
     assert captured["attrs"] == {"subcommand": "delete", "key": "OLD_KEY"}
 
 
-@pytest.mark.parametrize("confirm_ret", [False, None])
+@pytest.mark.parametrize("confirm_ret", [False, "BACK", None])
 def test_run_operation_delete_cancelled_does_not_dispatch(monkeypatch, tmp_path,
                                                           confirm_ret):
-    """delete の confirm を拒否 (False) / 中止 (None) したら削除しない。"""
+    """delete の confirm を拒否 (False) / Esc / Ctrl-C したら削除しない。
+
+    拒否と Esc はサブメニュー再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。
+    """
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
     monkeypatch.setattr(menu, "text", lambda *a, **k: "OLD_KEY")
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: confirm_ret)
-    assert actions_env._run_operation(tmp_path, "delete") is actions_env._ARG_CANCEL
+    ret = menu.MENU_BACK if confirm_ret == "BACK" else confirm_ret
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
+    expected = None if confirm_ret is None else actions_env._ARG_CANCEL
+    assert actions_env._run_operation(tmp_path, "delete") is expected
     assert called == [], "確認を拒否/中止したら delete しない"
 
 
-def test_run_operation_delete_key_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("text_ret", ["BACK", None])
+def test_run_operation_delete_key_cancel(monkeypatch, tmp_path, text_ret):
     """delete のキー入力を中止したら confirm にも進まない。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)
+    ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
     monkeypatch.setattr(menu, "confirm",
                         lambda *a, **k: pytest.fail("キー未入力で confirm しない"))
-    assert actions_env._run_operation(tmp_path, "delete") is actions_env._ARG_CANCEL
+    expected = actions_env._ARG_CANCEL if text_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "delete") is expected
     assert called == []
 
 
@@ -485,13 +504,17 @@ def test_run_operation_set_scope_cancel(monkeypatch, tmp_path, scope_ret):
     assert called == []
 
 
-def test_run_operation_set_assignment_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("text_ret", ["BACK", None])
+def test_run_operation_set_assignment_cancel(monkeypatch, tmp_path, text_ret):
+    """assignment 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
     monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
-    monkeypatch.setattr(menu, "text", lambda *a, **k: None)
-    assert actions_env._run_operation(tmp_path, "set") is actions_env._ARG_CANCEL
+    ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
+    expected = actions_env._ARG_CANCEL if text_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "set") is expected
     assert called == []
 
 
@@ -603,12 +626,16 @@ def test_run_operation_export_explicit_dest(monkeypatch, tmp_path):
     assert captured["attrs"]["dest"] == "/tmp/bundle.dbenv"
 
 
-def test_run_operation_export_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("path_ret", ["BACK", None])
+def test_run_operation_export_cancel(monkeypatch, tmp_path, path_ret):
+    """dest 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "path", lambda *a, **k: None)
-    assert actions_env._run_operation(tmp_path, "export") is actions_env._ARG_CANCEL
+    ret = menu.MENU_BACK if path_ret == "BACK" else None
+    monkeypatch.setattr(menu, "path", lambda *a, **k: ret)
+    expected = actions_env._ARG_CANCEL if path_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "export") is expected
     assert called == []
 
 
@@ -628,12 +655,16 @@ def test_run_operation_import_collects_source(monkeypatch, tmp_path):
     }
 
 
-def test_run_operation_import_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("path_ret", ["BACK", None])
+def test_run_operation_import_cancel(monkeypatch, tmp_path, path_ret):
+    """source 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "path", lambda *a, **k: None)
-    assert actions_env._run_operation(tmp_path, "import") is actions_env._ARG_CANCEL
+    ret = menu.MENU_BACK if path_ret == "BACK" else None
+    monkeypatch.setattr(menu, "path", lambda *a, **k: ret)
+    expected = actions_env._ARG_CANCEL if path_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "import") is expected
     assert called == []
 
 
@@ -672,8 +703,12 @@ def test_collect_assignment_reprompts_invalid(monkeypatch):
 
 
 def test_collect_assignment_cancel(monkeypatch):
+    """Ctrl-C (None) は None、Esc (MENU_BACK) は MENU_BACK をそのまま返す。"""
     monkeypatch.setattr(menu, "text", lambda *a, **k: None)
     assert actions_env._collect_assignment() is None
+
+    monkeypatch.setattr(menu, "text", lambda *a, **k: menu.MENU_BACK)
+    assert actions_env._collect_assignment() is menu.MENU_BACK
 
 
 def test_select_project_returns_name(monkeypatch, tmp_path):

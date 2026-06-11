@@ -43,9 +43,14 @@ _SNAPSHOT_OPS: list[tuple[str, str]] = [
     ("ローテーション (rotate)", "rotate"),
 ]
 
-# 引数収集を Esc/Ctrl-C で中止したことを示す番兵 (= サブメニューへ戻る)。
-# dispatch の rc (int) や ``None`` (= 全体中止) と区別する (actions_project と同じ規約)。
+# 引数収集を Esc で中止したことを示す番兵 (= サブメニューへ戻る)。
+# dispatch の rc (int) や ``None`` (= Ctrl-C 全体中止) と区別する (actions_project と同じ規約)。
 _ARG_CANCEL = object()
+
+# _optional_point の Ctrl-C 番兵。「空入力 (None = 全差分適用)」と衝突するため
+# ``None`` を直接返せず、専用番兵で返して呼び出し側で ``None`` (全体中止) へ変換する
+# (actions_project._ABORT と同じ理由)。
+_ABORT = object()
 
 
 def _select_operation():
@@ -65,8 +70,7 @@ def _select_snapshot_name(devbase_root: Path, message: str):
     戻り値: スナップショット名 (``str``) / ``None`` (Ctrl-C → 全体中止を呼び出し元へ
     伝搬) / ``_ARG_CANCEL`` (Esc → 操作メニューへ戻る、または対象が 1 件もない)。
     一覧の取得に失敗した場合は自由入力へ縮退する (存在チェックは委譲先の
-    ``SnapshotManager`` が行う。text 入力は Esc/Ctrl-C を区別できないため中止は
-    どちらも ``_ARG_CANCEL``)。
+    ``SnapshotManager`` が行う。text 入力も Esc=戻る / Ctrl-C=全体中止を区別する)。
     """
     try:
         snapshots = SnapshotManager(Path(devbase_root)).list()
@@ -75,9 +79,13 @@ def _select_snapshot_name(devbase_root: Path, message: str):
         snapshots = None
 
     if snapshots is None:
-        # 一覧が取れない環境では名前を直接入力させる (中止は None → _ARG_CANCEL)。
+        # 一覧が取れない環境では名前を直接入力させる。
         name = menu.text(message, allow_empty=False)
-        return _ARG_CANCEL if name is None else name
+        if name is None:
+            return None                # Ctrl-C → 全体中止 (ナビ規約)
+        if name is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → 操作メニューを再表示
+        return name
 
     if not snapshots:
         logger.info("スナップショットがありません。先に作成 (create) してください。")
@@ -104,7 +112,9 @@ def _select_snapshot_name(devbase_root: Path, message: str):
 def _optional_point(message: str):
     """restore の ``--point`` を収集する (空入力 = 全差分適用 = None)。
 
-    戻り値: ``int`` / ``None`` (空入力) / ``_ARG_CANCEL`` (Esc・Ctrl-C 中止)。
+    戻り値: ``int`` / ``None`` (空入力) / ``_ARG_CANCEL`` (Esc → 操作メニューへ
+    戻る) / ``_ABORT`` (Ctrl-C → 全体中止。空入力の ``None`` と衝突するため専用
+    番兵で返し、呼び出し側で ``None`` へ変換する)。
     ``menu.integer`` は空入力で既定値を返す仕様のため、空 = None を表現したい
     optional な数値はこちらで扱う (actions_project._optional_int と同じ理由)。
     ``SnapshotManager.restore`` は point に正の整数のみ受理するため 1 以上を要求する。
@@ -112,7 +122,9 @@ def _optional_point(message: str):
     while True:
         raw = menu.text(message, allow_empty=True)
         if raw is None:
-            return _ARG_CANCEL
+            return _ABORT              # Ctrl-C → 全体中止 (呼び出し側で None へ変換)
+        if raw is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → 操作メニューへ戻る
         if raw == "":
             return None
         try:
@@ -129,8 +141,8 @@ def _optional_point(message: str):
 def _run_operation(devbase_root: Path, op: str):
     """選択された操作の引数を収集して ``dispatch_group`` で ``cmd_snapshot`` へ委譲する。
 
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 = サブメニューへ
-    戻る) / ``None`` (選択メニューで Ctrl-C → 全体中止)。
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc で引数収集を中止 =
+    サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
     破壊的な restore / delete は ``menu.confirm`` で確認し、拒否時は実行しない (plan 3.4)。
     """
     if op == "list":
@@ -140,10 +152,14 @@ def _run_operation(devbase_root: Path, op: str):
         name = menu.text("スナップショット名 (空でタイムスタンプ自動命名)",
                          allow_empty=True)
         if name is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if name is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → 操作メニューへ戻る
         full = menu.confirm("フルバックアップを強制しますか (--full)?", default=False)
         if full is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if full is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → 操作メニューへ戻る
         # 空入力は CLI の --name 省略と同じ None (自動命名) に正規化する。
         return dispatch_group(cmd_snapshot, devbase_root, "create",
                               name=name or None, full=full)
@@ -155,14 +171,18 @@ def _run_operation(devbase_root: Path, op: str):
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         point = _optional_point("適用する差分番号 incr-N の上限 (--point / 空で全差分適用)")
+        if point is _ABORT:
+            return None                # Ctrl-C → 全体中止
         if point is _ARG_CANCEL:
-            return _ARG_CANCEL
+            return _ARG_CANCEL         # Esc → 操作メニューへ戻る
         point_msg = f" (incr-{point:03d} まで)" if point is not None else ""
         ok = menu.confirm(
             f"'{name}'{point_msg} から復元しますか? 現在のボリュームデータは上書きされます。",
             default=False)
-        if not ok:                     # False (拒否) / None (中止) → 実行しない
-            return _ARG_CANCEL
+        if ok is None:
+            return None                # Ctrl-C → 全体中止
+        if ok is menu.MENU_BACK or not ok:
+            return _ARG_CANCEL         # Esc / 拒否 → 実行しない
         return dispatch_group(cmd_snapshot, devbase_root, "restore",
                               name=name, point=point)
 
@@ -174,7 +194,9 @@ def _run_operation(devbase_root: Path, op: str):
             return _ARG_CANCEL
         new_name = menu.text("複製先のスナップショット名", allow_empty=False)
         if new_name is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if new_name is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → 操作メニューへ戻る
         return dispatch_group(cmd_snapshot, devbase_root, "copy",
                               name=name, new_name=new_name)
 
@@ -185,15 +207,19 @@ def _run_operation(devbase_root: Path, op: str):
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         ok = menu.confirm(f"スナップショット '{name}' を削除しますか?", default=False)
-        if not ok:                     # False (拒否) / None (中止) → 実行しない
-            return _ARG_CANCEL
+        if ok is None:
+            return None                # Ctrl-C → 全体中止
+        if ok is menu.MENU_BACK or not ok:
+            return _ARG_CANCEL         # Esc / 拒否 → 実行しない
         return dispatch_group(cmd_snapshot, devbase_root, "delete", name=name)
 
     if op == "rotate":
         # keep=0 は manager 実装上 no-op (空スライス) のため 1 以上を要求する。
         keep = menu.integer("保持する世代数 (--keep)", default=3, min_value=1)
         if keep is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if keep is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → 操作メニューへ戻る
         return dispatch_group(cmd_snapshot, devbase_root, "rotate", keep=keep)
 
     # 到達しない (メニュー値は _SNAPSHOT_OPS に限定される)。保守的に no-op。

@@ -13,9 +13,13 @@ questionary (prompt_toolkit ベース) は任意依存。未導入環境では `
 縮退する)。引数収集ヘルパは questionary 不在時 stdlib ``input()`` で代替する。
 
 ナビ規約 (旧 project.py から踏襲):
-- Esc = 1 つ前のメニューへ戻る (サブメニュー) / 中止 (トップメニュー)
+- Esc = 1 つ前のメニューへ戻る (サブメニュー / 引数入力プロンプト) / 中止 (トップメニュー)
 - ← (Left) = 1 つ前のメニューへ戻る (検索絞り込みを使わないメニューのみ即時応答)
 - Ctrl-C = 全体中止 (questionary 既定で ``ask()`` が ``None`` を返す)
+
+引数収集ヘルパ (text/confirm/path/integer) も選択メニューと同じく Esc (``MENU_BACK``)
+と Ctrl-C (``None``) を区別して返す。呼び出し側 (actions_*) は ``None`` をトップ
+ループまで伝搬して全体中止し、``MENU_BACK`` でサブメニューを再表示する。
 
 テストではこのモジュールの関数を monkeypatch して questionary の実起動を避ける。
 """
@@ -60,11 +64,10 @@ def _add_escape_binding(question, handler):
 
 
 def with_escape_cancel(question):
-    """Esc 単独押下で中止する question を返す (トップメニュー / text・confirm・path 用)。
+    """Esc 単独押下で中止する question を返す (トップメニュー用)。
 
     Ctrl-C と同じく ``KeyboardInterrupt`` で抜けるので ``ask()`` は ``None``
-    (= 中止) を返す。戻り先が無い最上位メニューや引数収集プロンプトで使う。
-    select だけでなく ``question.application`` を持つ text/confirm/path にも適用できる。
+    (= 中止) を返す。戻り先が無い最上位メニューで使う。
     """
     def _cancel(event):
         event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
@@ -73,16 +76,19 @@ def with_escape_cancel(question):
 
 
 def _ask_with_escape(question):
-    """Esc→中止 (None) を仕込んでから ``ask()`` する共通ヘルパ (text/confirm/path 用)。
+    """Esc→``MENU_BACK`` を仕込んでから ``ask()`` する共通ヘルパ (text/confirm/path 用)。
 
-    questionary の text/confirm/path は既定で Esc バインドを持たないため、選択メニューの
-    ナビ規約 (Esc=中止) と整合させるべく ``with_escape_cancel`` を適用してから問い合わせる。
+    questionary の text/confirm/path は既定で Esc バインドを持たないため、サブメニューの
+    ナビ規約 (Esc=1 つ前へ戻る / Ctrl-C=全体中止) と整合させるべく ``with_escape_back``
+    を適用してから問い合わせる。← は入力カーソル移動と衝突するためバインドしない。
+    戻り値: 入力値 / ``MENU_BACK`` (Esc) / ``None`` (Ctrl-C)。
     """
-    return with_escape_cancel(question).ask()
+    return with_escape_back(question, bind_left=False).ask()
 
 
 def with_escape_back(question, *, bind_left: bool = True):
-    """Esc (と任意で ←) 押下で ``MENU_BACK`` を返す select を返す (サブメニュー用)。
+    """Esc (と任意で ←) 押下で ``MENU_BACK`` を返す question を返す (サブメニュー /
+    引数収集プロンプト用)。
 
     Ctrl-C は questionary 既定どおり中止 (``ask()`` が ``None``) のまま残し、Esc
     (と ←) を「1 つ前のメニューへ戻る」シグナルに割り当てる。
@@ -157,17 +163,19 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
 # ---------------------------------------------------------------------------
 
 def text(message: str, *, default: str | None = None,
-         allow_empty: bool = True) -> str | None:
-    """自由入力 (1 行) を収集する。中止 (Ctrl-C / Esc) は ``None`` を返す。
+         allow_empty: bool = True):
+    """自由入力 (1 行) を収集する。
 
-    ``allow_empty=False`` のとき空文字は受け付けず再入力を促す。questionary 不在時は
-    stdlib ``input()`` で代替する。
+    戻り値: 入力文字列 / ``MENU_BACK`` (Esc → 1 つ前のメニューへ戻る) / ``None``
+    (Ctrl-C → 全体中止)。``allow_empty=False`` のとき空文字は受け付けず再入力を促す。
+    questionary 不在時は stdlib ``input()`` で代替する (Esc は検出できないため
+    EOF / Ctrl-C のどちらも ``None`` = 中止)。
     """
     if HAVE_QUESTIONARY:
         while True:  # 空 (allow_empty=False) は再入力。自己再帰を避け while で回す。
             ans = _ask_with_escape(questionary.text(message, default=default or ""))
-            if ans is None:
-                return None
+            if ans is None or ans is MENU_BACK:
+                return ans             # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
             ans = ans.strip()
             if not ans and not allow_empty:
                 logger.error("値を入力してください。")
@@ -176,10 +184,13 @@ def text(message: str, *, default: str | None = None,
     return _input_text(message, default=default, allow_empty=allow_empty)
 
 
-def confirm(message: str, *, default: bool = False) -> bool | None:
-    """y/n 確認を取る。中止 (Ctrl-C / Esc) は ``None`` を返す。
+def confirm(message: str, *, default: bool = False):
+    """y/n 確認を取る。
 
-    破壊的操作 (down / delete / uninstall 等) の実行前確認に使う。
+    戻り値: ``bool`` / ``MENU_BACK`` (Esc → 1 つ前のメニューへ戻る) / ``None``
+    (Ctrl-C → 全体中止)。破壊的操作 (down / delete / uninstall 等) の実行前確認に
+    使う。``MENU_BACK`` は truthy のため、呼び出し側は ``not ok`` 判定の前に必ず
+    ``is`` 同一性で番兵を判定すること。
     """
     if HAVE_QUESTIONARY:
         return _ask_with_escape(questionary.confirm(message, default=default))
@@ -187,13 +198,17 @@ def confirm(message: str, *, default: bool = False) -> bool | None:
 
 
 def integer(message: str, *, default: int | None = None,
-            min_value: int | None = None, max_value: int | None = None) -> int | None:
-    """整数を収集する (scale 等)。範囲外・非数値は再入力を促す。中止は ``None``。"""
+            min_value: int | None = None, max_value: int | None = None):
+    """整数を収集する (scale 等)。範囲外・非数値は再入力を促す。
+
+    戻り値: ``int`` / ``MENU_BACK`` (Esc → 1 つ前のメニューへ戻る) / ``None``
+    (Ctrl-C → 全体中止)。
+    """
     default_str = "" if default is None else str(default)
     while True:
         raw = text(message, default=default_str, allow_empty=default is not None)
-        if raw is None:
-            return None
+        if raw is None or raw is MENU_BACK:
+            return raw                 # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
         if raw == "" and default is not None:
             return default
         try:
@@ -211,17 +226,18 @@ def integer(message: str, *, default: int | None = None,
 
 
 def path(message: str, *, default: str | None = None,
-         allow_empty: bool = True) -> str | None:
+         allow_empty: bool = True):
     """ファイル / ディレクトリパスを収集する (export/import の dest/source 等)。
 
     questionary 利用時は ``path`` プロンプト (補完付き)、不在時は ``input()`` 代替。
-    存在チェックは呼び出し側 (各ハンドラ) に委ねる。中止は ``None``。
+    存在チェックは呼び出し側 (各ハンドラ) に委ねる。戻り値: パス文字列 /
+    ``MENU_BACK`` (Esc → 1 つ前のメニューへ戻る) / ``None`` (Ctrl-C → 全体中止)。
     """
     if HAVE_QUESTIONARY:
         while True:  # 空 (allow_empty=False) は再入力。自己再帰を避け while で回す。
             ans = _ask_with_escape(questionary.path(message, default=default or ""))
-            if ans is None:
-                return None
+            if ans is None or ans is MENU_BACK:
+                return ans             # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
             ans = ans.strip()
             if not ans and not allow_empty:
                 logger.error("パスを入力してください。")

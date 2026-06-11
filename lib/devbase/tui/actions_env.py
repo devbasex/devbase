@@ -150,12 +150,13 @@ def _collect_assignment():
     """``env set`` の KEY=VALUE を収集する。
 
     形式エラー (``=`` 無し / キー名空) は ``cmd_env_set`` でも弾かれるが、TUI では
-    実行前に再入力を促す。戻り値: 入力文字列 / ``None`` (Esc・Ctrl-C 中止)。
+    実行前に再入力を促す。戻り値: 入力文字列 / ``MENU_BACK`` (Esc → サブメニューへ
+    戻る) / ``None`` (Ctrl-C → 全体中止)。
     """
     while True:
         raw = menu.text("設定する変数 (KEY=VALUE 形式)", allow_empty=False)
-        if raw is None:
-            return None
+        if raw is None or raw is menu.MENU_BACK:
+            return raw                 # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
         if "=" not in raw or not raw.partition("=")[0].strip():
             logger.error("形式: KEY=VALUE (キー名は必須)")
             continue
@@ -232,10 +233,14 @@ def _run_list(devbase_root: Path):
 
     reveal = menu.confirm("機密値を伏せ字にせず表示しますか (--reveal)?", default=False)
     if reveal is None:
-        return _ARG_CANCEL
+        return None                    # Ctrl-C → 全体中止
+    if reveal is menu.MENU_BACK:
+        return _ARG_CANCEL             # Esc → サブメニューへ戻る
     keys_only = menu.confirm("キー名のみ表示しますか (--keys)?", default=False)
     if keys_only is None:
-        return _ARG_CANCEL
+        return None                    # Ctrl-C → 全体中止
+    if keys_only is menu.MENU_BACK:
+        return _ARG_CANCEL             # Esc → サブメニューへ戻る
 
     if scope in ("both", "project"):
         return _run_in_project(
@@ -274,7 +279,9 @@ def _run_set(devbase_root: Path):
 
     assignment = _collect_assignment()
     if assignment is None:
-        return _ARG_CANCEL
+        return None                    # Ctrl-C → 全体中止
+    if assignment is menu.MENU_BACK:
+        return _ARG_CANCEL             # Esc → サブメニューへ戻る
 
     if scope == "project":
         return _run_in_project(
@@ -312,7 +319,9 @@ def _run_get(devbase_root: Path):
 
     key = menu.text("取得する変数名", allow_empty=False)
     if key is None:
-        return _ARG_CANCEL
+        return None                    # Ctrl-C → 全体中止
+    if key is menu.MENU_BACK:
+        return _ARG_CANCEL             # Esc → サブメニューへ戻る
 
     if scope == "project":
         return _run_in_project(
@@ -324,8 +333,8 @@ def _run_get(devbase_root: Path):
 def _run_operation(devbase_root: Path, op: str):
     """選択された env 操作の引数を収集して ``cmd_env`` へ委譲する。
 
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 =
-    サブメニューへ戻る) / ``None`` (選択メニューで Ctrl-C → 全体中止)。
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc で引数収集を中止 =
+    サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
     属性は plan 2.3 の契約表 (cli.py parser と同期確認済み) に従う。
     """
     if op == "sync":
@@ -342,7 +351,9 @@ def _run_operation(devbase_root: Path, op: str):
         reset = menu.confirm(
             "既存の設定をバックアップしてやり直しますか (--reset)?", default=False)
         if reset is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if reset is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return _dispatch(devbase_root, "init", reset=reset)
 
     if op == "list":
@@ -357,13 +368,17 @@ def _run_operation(devbase_root: Path, op: str):
     if op == "delete":
         key = menu.text("削除する変数名", allow_empty=False)
         if key is None:
-            return _ARG_CANCEL
-        # 破壊的操作のため実行前に確認する (plan 3.4)。拒否 (False) / 中止 (None)
-        # は実行せずサブメニューへ戻る。
+            return None                # Ctrl-C → 全体中止
+        if key is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
+        # 破壊的操作のため実行前に確認する (plan 3.4)。拒否 (False) / Esc は実行せず
+        # サブメニューへ戻る。MENU_BACK は truthy のため is 判定を not より先に行う。
         ok = menu.confirm(f"変数 '{key}' をグローバル .env から削除しますか?",
                           default=False)
-        if not ok:
-            return _ARG_CANCEL
+        if ok is None:
+            return None                # Ctrl-C → 全体中止
+        if ok is menu.MENU_BACK or not ok:
+            return _ARG_CANCEL         # Esc / 拒否 → 実行しない
         return _dispatch(devbase_root, "delete", key=key)
 
     if op == "project":
@@ -382,7 +397,9 @@ def _run_operation(devbase_root: Path, op: str):
         dest = menu.path("出力先パス (空で既定: ./devbase-env-<タイムスタンプ>.dbenv)",
                          allow_empty=True)
         if dest is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if dest is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return _dispatch(devbase_root, "export", dest=(dest or None),
                          **_export_default_attrs())
 
@@ -392,7 +409,9 @@ def _run_operation(devbase_root: Path, op: str):
         # バックアップされる。
         source = menu.path("インポートするバンドルのパス", allow_empty=False)
         if source is None:
-            return _ARG_CANCEL
+            return None                # Ctrl-C → 全体中止
+        if source is menu.MENU_BACK:
+            return _ARG_CANCEL         # Esc → サブメニューへ戻る
         return _dispatch(devbase_root, "import", source=source,
                          **_import_default_attrs())
 
