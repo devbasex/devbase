@@ -7,7 +7,8 @@ export/import) をトップ階層メニューから実行できるようにす�
 (plan 2.3 契約表 / ロジック二重実装なし)。
 
 project スコープ依存の扱い (plan 3.3):
-- ``set --project`` / ``project`` は CWD (環境変数 ``PWD``) のプロジェクト
+- ``set --project`` / ``project`` / ``list --project`` は CWD (環境変数 ``PWD``)
+  のプロジェクト
   ディレクトリで動くため、先にプロジェクト選択メニューで対象を選ばせて
   chdir + ``PWD`` 差し替えしてからハンドラを呼び、実行後は必ず元へ復帰する
   (``_run_in_project``)。``cmd_env_*`` は ``os.environ.get('PWD', os.getcwd())``
@@ -201,8 +202,11 @@ def _import_default_attrs() -> dict:
 def _run_list(devbase_root: Path):
     """``env list``: 表示範囲 + 表示オプションを収集して一覧表示する。
 
-    プロジェクト欄は CLI と同じく CWD (PWD) が projects/ 配下のときのみ表示される
-    (TUI は通常 DEVBASE_ROOT で動くためグローバルのみになることが多い)。
+    「プロジェクトのみ」はハンドラ (``cmd_env_list``) が CWD (PWD) でプロジェクト
+    .env を判定するため、対象プロジェクトを選ばせて chdir + ``PWD`` 切替後に
+    実行する (plan 3.3。TUI は通常 DEVBASE_ROOT で動くので切替なしでは何も
+    表示されない)。「グローバル + プロジェクト」は CLI 既定と同じ CWD 判定の
+    ままとする (TUI ではグローバルのみになることが多い)。
     """
     scope = menu.select(
         "表示範囲を選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
@@ -213,6 +217,12 @@ def _run_list(devbase_root: Path):
     if scope is menu.MENU_BACK or scope is None:
         return _ARG_CANCEL
 
+    name = None
+    if scope == "project":
+        name = _select_project(devbase_root)
+        if name is _ARG_CANCEL:
+            return _ARG_CANCEL
+
     reveal = menu.confirm("機密値を伏せ字にせず表示しますか (--reveal)?", default=False)
     if reveal is None:
         return _ARG_CANCEL
@@ -220,9 +230,14 @@ def _run_list(devbase_root: Path):
     if keys_only is None:
         return _ARG_CANCEL
 
+    if scope == "project":
+        return _run_in_project(
+            devbase_root, name,
+            lambda: _dispatch(devbase_root, "list",
+                              global_only=False, project_only=True,
+                              reveal=reveal, keys_only=keys_only))
     return _dispatch(devbase_root, "list",
-                     global_only=(scope == "global"),
-                     project_only=(scope == "project"),
+                     global_only=(scope == "global"), project_only=False,
                      reveal=reveal, keys_only=keys_only)
 
 
