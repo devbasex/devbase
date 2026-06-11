@@ -7,8 +7,8 @@ export/import) をトップ階層メニューから実行できるようにす�
 (plan 2.3 契約表 / ロジック二重実装なし)。
 
 project スコープ依存の扱い (plan 3.3):
-- ``set --project`` / ``project`` / ``list --project`` は CWD (環境変数 ``PWD``)
-  のプロジェクト
+- ``set --project`` / ``project`` / ``list --project`` / ``get`` (プロジェクト
+  取得) は CWD (環境変数 ``PWD``) のプロジェクト
   ディレクトリで動くため、先にプロジェクト選択メニューで対象を選ばせて
   chdir + ``PWD`` 差し替えしてからハンドラを呼び、実行後は必ず元へ復帰する
   (``_run_in_project``)。``cmd_env_*`` は ``os.environ.get('PWD', os.getcwd())``
@@ -272,6 +272,39 @@ def _run_set(devbase_root: Path):
     return _dispatch(devbase_root, "set", assignment=assignment, project=False)
 
 
+def _run_get(devbase_root: Path):
+    """``env get``: 取得元 (グローバル / プロジェクト) と変数名を収集して値を表示する。
+
+    ``cmd_env_get`` はグローバル .env に無いキーを CWD (PWD) のプロジェクト .env へ
+    フォールバックして探すが、TUI は常に DEVBASE_ROOT で動くため、そのままでは
+    プロジェクト固有キーを取得できない。list/set と同様に取得元を選ばせ、
+    プロジェクト選択時は chdir + ``PWD`` 切替後に実行する (codex round2 指摘)。
+    """
+    scope = menu.select(
+        "取得元を選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
+        [("グローバル ($DEVBASE_ROOT/.env)", "global"),
+         ("プロジェクト (グローバルに無ければ projects/<name>/.env)", "project")],
+        back=True, search=False)
+    if scope is menu.MENU_BACK or scope is None:
+        return _ARG_CANCEL
+
+    name = None
+    if scope == "project":
+        name = _select_project(devbase_root)
+        if name is _ARG_CANCEL:
+            return _ARG_CANCEL
+
+    key = menu.text("取得する変数名", allow_empty=False)
+    if key is None:
+        return _ARG_CANCEL
+
+    if scope == "project":
+        return _run_in_project(
+            devbase_root, name,
+            lambda: _dispatch(devbase_root, "get", key=key))
+    return _dispatch(devbase_root, "get", key=key)
+
+
 def _run_operation(devbase_root: Path, op: str):
     """選択された env 操作の引数を収集して ``cmd_env`` へ委譲する。
 
@@ -303,10 +336,7 @@ def _run_operation(devbase_root: Path, op: str):
         return _run_set(devbase_root)
 
     if op == "get":
-        key = menu.text("取得する変数名", allow_empty=False)
-        if key is None:
-            return _ARG_CANCEL
-        return _dispatch(devbase_root, "get", key=key)
+        return _run_get(devbase_root)
 
     if op == "delete":
         key = menu.text("削除する変数名", allow_empty=False)

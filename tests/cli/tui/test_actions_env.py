@@ -269,17 +269,75 @@ def test_run_operation_list_confirm_cancel(monkeypatch, tmp_path):
 # _run_operation: get / delete
 # ---------------------------------------------------------------------------
 
-def test_run_operation_get_collects_key(monkeypatch, tmp_path):
+def test_run_operation_get_global_collects_key(monkeypatch, tmp_path):
+    """グローバル取得は chdir せず key のみ渡して委譲する。"""
     captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
     monkeypatch.setattr(menu, "text", lambda *a, **k: "MY_KEY")
+
+    before = os.getcwd()
     assert actions_env._run_operation(tmp_path, "get") == 0
     assert captured["attrs"] == {"subcommand": "get", "key": "MY_KEY"}
+    assert captured["cwd"] == before, "グローバル取得は chdir しない"
 
 
-def test_run_operation_get_cancel(monkeypatch, tmp_path):
+def test_run_operation_get_project_chdirs_and_restores(monkeypatch, tmp_path):
+    """get のプロジェクト取得は対象へ chdir + PWD 切替後に実行し、復帰する。
+
+    cmd_env_get はグローバル .env に無いキーを CWD (PWD) のプロジェクト .env へ
+    フォールバックして探すため、切替なしではプロジェクト固有キーを取得できない
+    (codex round2 指摘の回帰テスト)。
+    """
+    captured = _capture_dispatch(monkeypatch)
+    target = tmp_path / "projects" / "carmo"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "project")
+    monkeypatch.setattr(actions_env, "_select_project", lambda root: "carmo")
+    monkeypatch.setattr(menu, "text", lambda *a, **k: "DB_HOST")
+    monkeypatch.setenv("PWD", str(tmp_path))
+
+    before = os.getcwd()
+    assert actions_env._run_operation(tmp_path, "get") == 0
+    assert captured["attrs"] == {"subcommand": "get", "key": "DB_HOST"}
+    # ハンドラ実行中は projects/carmo に居る (CWD と PWD の両方を切り替える)
+    assert captured["cwd"] == str(target)
+    assert captured["pwd"] == str(target)
+    # 実行後は元の CWD / PWD へ復帰する (try/finally)
+    assert os.getcwd() == before
+    assert os.environ["PWD"] == str(tmp_path)
+
+
+def test_run_operation_get_project_select_cancel(monkeypatch, tmp_path):
+    """get のプロジェクト選択を中止したらキー入力にも進まない。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "project")
+    monkeypatch.setattr(actions_env, "_select_project",
+                        lambda root: actions_env._ARG_CANCEL)
+    monkeypatch.setattr(menu, "text",
+                        lambda *a, **k: pytest.fail("選択中止後に入力を求めない"))
+    assert actions_env._run_operation(tmp_path, "get") is actions_env._ARG_CANCEL
+    assert called == []
+
+
+@pytest.mark.parametrize("scope_ret", ["BACK", None])
+def test_run_operation_get_scope_cancel(monkeypatch, tmp_path, scope_ret):
+    """取得元選択で Esc/← (MENU_BACK) / Ctrl-C (None) したら実行しない。"""
+    from devbase.commands import env as env_mod
+    called = []
+    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
+    ret = menu.MENU_BACK if scope_ret == "BACK" else None
+    monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
+    assert actions_env._run_operation(tmp_path, "get") is actions_env._ARG_CANCEL
+    assert called == []
+
+
+def test_run_operation_get_key_cancel(monkeypatch, tmp_path):
+    from devbase.commands import env as env_mod
+    called = []
+    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
     monkeypatch.setattr(menu, "text", lambda *a, **k: None)
     assert actions_env._run_operation(tmp_path, "get") is actions_env._ARG_CANCEL
     assert called == []
