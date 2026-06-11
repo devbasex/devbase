@@ -195,7 +195,7 @@ base branch: main
 - **切り出しの競合**: `project.py` は i29〜i32 で頻繁に更新。PR1 は現行ロジックを保全
   移送し、差分レビューしやすい単位を維持する。
 
-## 7. 実装進捗 (2026-06-10 更新)
+## 7. 実装進捗 (2026-06-11 更新)
 
 `/ndf:issue-plan-strategy` の実行フェーズで release ブランチ + 個別 PR を先行作成し、
 ユーザー指示により全 PR を Draft 解除 (open) 済み。
@@ -207,10 +207,10 @@ base branch: main
 | PR | 番号 | branch | 状態 |
 |---|---|---|---|
 | PR1 | #56 | `feature/PLAN31_2-tui-framework` | **merged** (release へ統合 `50ab9c2`) |
-| PR2 | #57 | `feature/PLAN31_2-project-ops` | open / 着手可 (PR1 土台あり) |
-| PR3 | #58 | `feature/PLAN31_2-env-ops` | open / 着手可 (PR1 土台あり) |
-| PR4 | #59 | `feature/PLAN31_2-plugin-ops` | open / 着手可 (PR1 土台あり) |
-| PR5 | #60 | `feature/PLAN31_2-snapshot-status` | open / 着手可 (PR1 土台あり) |
+| PR2 | #57 | `feature/PLAN31_2-project-ops` | **merged** (release へ統合 `29f4d9c`) |
+| PR3 | #58 | `feature/PLAN31_2-env-ops` | **merged** (release へ統合 `56dc0f5`) |
+| PR4 | #59 | `feature/PLAN31_2-plugin-ops` | **merged** (release へ統合 `7a1e763`) |
+| PR5 | #60 | `feature/PLAN31_2-snapshot-status` | **merged** (release へ統合 `8db78e5`) |
 
 ### PR1 (#56) 完了サマリ
 
@@ -232,3 +232,24 @@ base branch: main
   (`handler(devbase_root, args)` 形式) を使う。project 系は `dispatch_lifecycle`。
 - 破壊的操作 (down/delete/uninstall/repo remove/restore) は `menu.confirm()` を挟む (plan 3.4)。
 - project スコープ依存 (`env set --project` / `env project` / `env edit`) は事前 chdir (plan 3.3)。
+
+### PR3〜5 (#58/#59/#60) 完了サマリ (2026-06-11)
+
+- **PR3 env (#58)**: env 全 10 操作。cross-review 3 round で approved。codex major 2 件を
+  修正 — ① `env list`「プロジェクトのみ」/ ② `env get` に取得元選択を追加し、
+  プロジェクト選択 → chdir + `PWD` 切替 (`_run_in_project`) 経由で実行するよう統一。
+  `cmd_env_*` は `PWD` 環境変数で現在地判定するため chdir 単独では不十分な点に注意。
+- **PR4 plugin (#59)**: plugin 全操作 + repo サブ階層。1 round・指摘 0 で approved。
+  uninstall/update/info/repo remove/refresh の name は plugins.yml レジストリから選択。
+- **PR5 snapshot/status (#60)**: snapshot 全 6 操作 + status 閲覧。1 round・指摘 0 で
+  approved。restore/copy/delete の対象は `SnapshotManager.list()` の実一覧から選択。
+- **テスト**: release 統合後 690 passed / 1 skipped (基準 544 collected から退行なし)。
+- **plan 2.3/3.3 の訂正**: `env edit` は CWD スコープではなく常にグローバル
+  `$DEVBASE_ROOT/.env` を開く実装 (`cmd_env_edit`) のため、TUI でも chdir しない
+  (実装を正とした)。
+- **配線の競合解消**: PR3〜5 は全て `tui/app.py:_route` と `tests/cli/tui/test_app.py`
+  に触れるため、マージ順 (#58→#59→#60) に release を都度取り込み統合。全カテゴリ
+  配線済みに伴い「未実装カテゴリ」前提のテストは MENU_BACK mock / 未知カテゴリ
+  fallback 検証へ書き換えた。
+
+残作業: release PR #55 の結合レビュー (Step 7: PR 間整合・E2E 観点のみ) → main へ merge。
