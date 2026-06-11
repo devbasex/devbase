@@ -188,14 +188,12 @@ def test_run_operation_init_cancel(monkeypatch, tmp_path):
 # _run_operation: list (表示範囲 + reveal/keys)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("scope,global_only", [
-    ("both", False),
-    ("global", True),
-])
-def test_run_operation_list_scope_flags(monkeypatch, tmp_path, scope, global_only):
-    """list は表示範囲選択を --global フラグへ写像する (plan 2.3)。chdir しない。"""
+def test_run_operation_list_global_scope_no_chdir(monkeypatch, tmp_path):
+    """list の「グローバルのみ」は --global へ写像し、プロジェクト選択も chdir もしない。"""
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "select", lambda *a, **k: scope)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
+    monkeypatch.setattr(actions_env, "_select_project",
+                        lambda root: pytest.fail("global でプロジェクト選択してはいけない"))
     confirms = iter([True, False])     # reveal=True, keys_only=False
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
 
@@ -203,10 +201,41 @@ def test_run_operation_list_scope_flags(monkeypatch, tmp_path, scope, global_onl
     assert actions_env._run_operation(tmp_path, "list") == 0
     assert captured["attrs"] == {
         "subcommand": "list",
-        "global_only": global_only, "project_only": False,
+        "global_only": True, "project_only": False,
         "reveal": True, "keys_only": False,
     }
-    assert captured["cwd"] == before, "global/both スコープは chdir しない"
+    assert captured["cwd"] == before, "global スコープは chdir しない"
+
+
+def test_run_operation_list_both_scope_chdirs_and_restores(monkeypatch, tmp_path):
+    """list の「グローバル + プロジェクト」も対象を選ばせて chdir + PWD 切替後に実行する。
+
+    cmd_env_list は PWD が projects/ 配下のときだけプロジェクト .env を表示する
+    ため、DEVBASE_ROOT のまま global_only=False で呼んでもグローバルしか表示
+    されない (codex round3 指摘の回帰テスト)。
+    """
+    captured = _capture_dispatch(monkeypatch)
+    target = tmp_path / "projects" / "carmo"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "both")
+    monkeypatch.setattr(actions_env, "_select_project", lambda root: "carmo")
+    confirms = iter([True, False])     # reveal=True, keys_only=False
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
+    monkeypatch.setenv("PWD", str(tmp_path))
+
+    before = os.getcwd()
+    assert actions_env._run_operation(tmp_path, "list") == 0
+    assert captured["attrs"] == {
+        "subcommand": "list",
+        "global_only": False, "project_only": False,
+        "reveal": True, "keys_only": False,
+    }
+    # ハンドラ実行中は projects/carmo に居る (グローバル + プロジェクト両方が出る)
+    assert captured["cwd"] == str(target)
+    assert captured["pwd"] == str(target)
+    # 実行後は元の CWD / PWD へ復帰する (try/finally)
+    assert os.getcwd() == before
+    assert os.environ["PWD"] == str(tmp_path)
 
 
 def test_run_operation_list_project_chdirs_and_restores(monkeypatch, tmp_path):
@@ -271,7 +300,7 @@ def test_run_operation_list_confirm_cancel(monkeypatch, tmp_path):
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "select", lambda *a, **k: "both")
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: None)
     assert actions_env._run_operation(tmp_path, "list") is actions_env._ARG_CANCEL
     assert called == []

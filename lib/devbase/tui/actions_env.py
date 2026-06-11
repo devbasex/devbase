@@ -7,8 +7,8 @@ export/import) をトップ階層メニューから実行できるようにす�
 (plan 2.3 契約表 / ロジック二重実装なし)。
 
 project スコープ依存の扱い (plan 3.3):
-- ``set --project`` / ``project`` / ``list --project`` / ``get`` (プロジェクト
-  取得) は CWD (環境変数 ``PWD``) のプロジェクト
+- ``set --project`` / ``project`` / ``list`` (プロジェクトを含む表示範囲) /
+  ``get`` (プロジェクト取得) は CWD (環境変数 ``PWD``) のプロジェクト
   ディレクトリで動くため、先にプロジェクト選択メニューで対象を選ばせて
   chdir + ``PWD`` 差し替えしてからハンドラを呼び、実行後は必ず元へ復帰する
   (``_run_in_project``)。``cmd_env_*`` は ``os.environ.get('PWD', os.getcwd())``
@@ -204,15 +204,16 @@ def _import_default_attrs() -> dict:
 def _run_list(devbase_root: Path):
     """``env list``: 表示範囲 + 表示オプションを収集して一覧表示する。
 
-    「プロジェクトのみ」はハンドラ (``cmd_env_list``) が CWD (PWD) でプロジェクト
-    .env を判定するため、対象プロジェクトを選ばせて chdir + ``PWD`` 切替後に
-    実行する (plan 3.3。TUI は通常 DEVBASE_ROOT で動くので切替なしでは何も
-    表示されない)。「グローバル + プロジェクト」は CLI 既定と同じ CWD 判定の
-    ままとする (TUI ではグローバルのみになることが多い)。
+    ハンドラ (``cmd_env_list``) は CWD (PWD) が projects/ 配下のときだけ
+    プロジェクト .env を表示するため、プロジェクトを含む表示範囲
+    (「グローバル + プロジェクト」「プロジェクトのみ」) は対象プロジェクトを
+    選ばせて chdir + ``PWD`` 切替後に実行する (plan 3.3 / codex round3 指摘。
+    TUI は通常 DEVBASE_ROOT で動くので、切替なしではプロジェクト分が表示
+    されない)。「グローバルのみ」だけが切替なしで実行できる。
     """
     scope = menu.select(
         "表示範囲を選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
-        [("グローバル + プロジェクト (既定)", "both"),
+        [("グローバル + プロジェクト", "both"),
          ("グローバルのみ (--global)", "global"),
          ("プロジェクトのみ (--project)", "project")],
         back=True, search=False)
@@ -222,7 +223,7 @@ def _run_list(devbase_root: Path):
         return _ARG_CANCEL
 
     name = None
-    if scope == "project":
+    if scope in ("both", "project"):
         name = _select_project(devbase_root)
         if name is None:
             return None                # Ctrl-C → 全体中止
@@ -236,14 +237,15 @@ def _run_list(devbase_root: Path):
     if keys_only is None:
         return _ARG_CANCEL
 
-    if scope == "project":
+    if scope in ("both", "project"):
         return _run_in_project(
             devbase_root, name,
             lambda: _dispatch(devbase_root, "list",
-                              global_only=False, project_only=True,
+                              global_only=False,
+                              project_only=(scope == "project"),
                               reveal=reveal, keys_only=keys_only))
     return _dispatch(devbase_root, "list",
-                     global_only=(scope == "global"), project_only=False,
+                     global_only=True, project_only=False,
                      reveal=reveal, keys_only=keys_only)
 
 
