@@ -201,6 +201,17 @@ def test_run_operation_restore_name_cancel(monkeypatch, tmp_path):
     assert called == []
 
 
+def test_run_operation_restore_name_ctrl_c_aborts(monkeypatch, tmp_path):
+    """対象選択中の Ctrl-C は None を伝搬して全体中止する (codex round2 指摘)。"""
+    called = _no_dispatch(monkeypatch)
+    monkeypatch.setattr(actions_snapshot, "_select_snapshot_name",
+                        lambda root, msg: None)
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("Ctrl-C 後に確認を求めない"))
+    assert actions_snapshot._run_operation(tmp_path, "restore") is None
+    assert called == []
+
+
 def test_run_operation_restore_point_cancel(monkeypatch, tmp_path):
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(actions_snapshot, "_select_snapshot_name",
@@ -328,13 +339,13 @@ def test_select_snapshot_name_lists_and_returns_value(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("sel", ["BACK", None])
 def test_select_snapshot_name_cancel(monkeypatch, tmp_path, sel):
-    """Esc (MENU_BACK) / Ctrl-C (None) は _ARG_CANCEL に正規化する。"""
+    """Esc (MENU_BACK) は _ARG_CANCEL、Ctrl-C (None) は None (全体中止) を返す。"""
     _FakeManager.snapshots = [{"name": "snap1", "created_at": "2026-06-10"}]
     monkeypatch.setattr(actions_snapshot, "SnapshotManager", _FakeManager)
     ret = menu.MENU_BACK if sel == "BACK" else None
     monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
-    assert actions_snapshot._select_snapshot_name(
-        tmp_path, "選択") is actions_snapshot._ARG_CANCEL
+    expected = actions_snapshot._ARG_CANCEL if sel == "BACK" else None
+    assert actions_snapshot._select_snapshot_name(tmp_path, "選択") is expected
 
 
 def test_select_snapshot_name_empty_list_cancels(monkeypatch, tmp_path):

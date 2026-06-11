@@ -352,6 +352,14 @@ def test_run_operation_build_selects_image(monkeypatch, tmp_path):
     assert captured["subcommand"] == "build" and captured["image"] == "web"
 
 
+def test_run_operation_build_compose_all_is_image_none(monkeypatch, tmp_path):
+    """compose.yml 全体 ('') は image=None で委譲する (CLI の引数省略と同じ)。"""
+    captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(actions_project, "_select_build_image", lambda root: "")
+    assert actions_project._run_operation(tmp_path, "carmo", "build") == 0
+    assert captured["subcommand"] == "build" and captured["image"] is None
+
+
 def test_run_operation_build_cancel(monkeypatch, tmp_path):
     from devbase.commands import container as container_mod
     called = []
@@ -359,6 +367,16 @@ def test_run_operation_build_cancel(monkeypatch, tmp_path):
     monkeypatch.setattr(actions_project, "_select_build_image",
                         lambda root: actions_project._ARG_CANCEL)
     assert actions_project._run_operation(tmp_path, "carmo", "build") is actions_project._ARG_CANCEL
+    assert called == []
+
+
+def test_run_operation_build_ctrl_c_aborts(monkeypatch, tmp_path):
+    """イメージ選択中の Ctrl-C は None を伝搬して全体中止する (codex round2 指摘)。"""
+    from devbase.commands import container as container_mod
+    called = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
+    monkeypatch.setattr(actions_project, "_select_build_image", lambda root: None)
+    assert actions_project._run_operation(tmp_path, "carmo", "build") is None
     assert called == []
 
 
@@ -415,26 +433,30 @@ def test_select_build_image_lists_containers(monkeypatch, tmp_path):
     assert captured["values"] == ["", "db", "web"]
 
 
-def test_select_build_image_compose_all_is_none(monkeypatch, tmp_path):
-    """『compose.yml 全体』(value='') を選ぶと None を返す。"""
+def test_select_build_image_compose_all_is_empty(monkeypatch, tmp_path):
+    """『compose.yml 全体』(value='') を選ぶと '' を返す (呼び出し側で None へ変換)。"""
     d = tmp_path / "containers" / "web"
     d.mkdir(parents=True)
     (d / "Dockerfile").write_text("FROM scratch\n")
     monkeypatch.setattr(menu, "select", lambda *a, **k: "")
-    assert actions_project._select_build_image(tmp_path) is None
+    assert actions_project._select_build_image(tmp_path) == ""
 
 
-def test_select_build_image_no_containers_returns_none(tmp_path):
-    """containers/ が無ければ選択メニューを出さず compose 全体 (None)。"""
-    assert actions_project._select_build_image(tmp_path) is None
+def test_select_build_image_no_containers_returns_empty(tmp_path):
+    """containers/ が無ければ選択メニューを出さず compose 全体 ('')。"""
+    assert actions_project._select_build_image(tmp_path) == ""
 
 
-def test_select_build_image_cancel(monkeypatch, tmp_path):
+@pytest.mark.parametrize("sel", ["BACK", None])
+def test_select_build_image_cancel(monkeypatch, tmp_path, sel):
+    """Esc/← (MENU_BACK) は _ARG_CANCEL、Ctrl-C (None) は None (全体中止) を返す。"""
     d = tmp_path / "containers" / "web"
     d.mkdir(parents=True)
     (d / "Dockerfile").write_text("FROM scratch\n")
-    monkeypatch.setattr(menu, "select", lambda *a, **k: menu.MENU_BACK)
-    assert actions_project._select_build_image(tmp_path) is actions_project._ARG_CANCEL
+    ret = menu.MENU_BACK if sel == "BACK" else None
+    monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
+    expected = actions_project._ARG_CANCEL if sel == "BACK" else None
+    assert actions_project._select_build_image(tmp_path) is expected
 
 
 # ---------------------------------------------------------------------------

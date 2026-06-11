@@ -62,9 +62,11 @@ def _select_operation():
 def _select_snapshot_name(devbase_root: Path, message: str):
     """restore/copy/delete の対象スナップショット名を既存一覧から選ばせる。
 
-    戻り値: スナップショット名 (``str``) / ``_ARG_CANCEL`` (Esc・Ctrl-C 中止、
-    または対象が 1 件もない)。一覧の取得に失敗した場合は自由入力へ縮退する
-    (存在チェックは委譲先の ``SnapshotManager`` が行う)。
+    戻り値: スナップショット名 (``str``) / ``None`` (Ctrl-C → 全体中止を呼び出し元へ
+    伝搬) / ``_ARG_CANCEL`` (Esc → 操作メニューへ戻る、または対象が 1 件もない)。
+    一覧の取得に失敗した場合は自由入力へ縮退する (存在チェックは委譲先の
+    ``SnapshotManager`` が行う。text 入力は Esc/Ctrl-C を区別できないため中止は
+    どちらも ``_ARG_CANCEL``)。
     """
     try:
         snapshots = SnapshotManager(Path(devbase_root)).list()
@@ -92,8 +94,10 @@ def _select_snapshot_name(devbase_root: Path, message: str):
     sel = menu.select(
         f"{message} (↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻る / Ctrl-C 中止):",
         choices, back=True, search=True)
-    if sel is menu.MENU_BACK or sel is None:
-        return _ARG_CANCEL
+    if sel is None:
+        return None                    # Ctrl-C → 全体中止 (ナビ規約)
+    if sel is menu.MENU_BACK:
+        return _ARG_CANCEL             # Esc → 操作メニューを再表示
     return sel
 
 
@@ -125,7 +129,8 @@ def _optional_point(message: str):
 def _run_operation(devbase_root: Path, op: str):
     """選択された操作の引数を収集して ``dispatch_group`` で ``cmd_snapshot`` へ委譲する。
 
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 = サブメニューへ戻る)。
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 = サブメニューへ
+    戻る) / ``None`` (選択メニューで Ctrl-C → 全体中止)。
     破壊的な restore / delete は ``menu.confirm`` で確認し、拒否時は実行しない (plan 3.4)。
     """
     if op == "list":
@@ -145,6 +150,8 @@ def _run_operation(devbase_root: Path, op: str):
 
     if op == "restore":
         name = _select_snapshot_name(devbase_root, "復元するスナップショットを選択")
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         point = _optional_point("適用する差分番号 incr-N の上限 (--point / 空で全差分適用)")
@@ -161,6 +168,8 @@ def _run_operation(devbase_root: Path, op: str):
 
     if op == "copy":
         name = _select_snapshot_name(devbase_root, "複製元のスナップショットを選択")
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         new_name = menu.text("複製先のスナップショット名", allow_empty=False)
@@ -171,6 +180,8 @@ def _run_operation(devbase_root: Path, op: str):
 
     if op == "delete":
         name = _select_snapshot_name(devbase_root, "削除するスナップショットを選択")
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         ok = menu.confirm(f"スナップショット '{name}' を削除しますか?", default=False)

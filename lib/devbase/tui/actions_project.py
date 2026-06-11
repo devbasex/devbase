@@ -102,9 +102,10 @@ def _optional_int(message: str, *, min_value: int = 0):
 def _select_build_image(devbase_root: Path):
     """build 対象イメージを選ぶ。``containers/<image>/Dockerfile`` を列挙する。
 
-    戻り値: イメージ名 (``str``) / ``None`` (compose.yml 全体ビルド) / ``_ARG_CANCEL``
-    (Esc・Ctrl-C 中止)。``containers/`` が無い / 空なら compose.yml 全体ビルド (None) に
-    フォールバックする。
+    戻り値: イメージ名 (``str``) / ``""`` (compose.yml 全体ビルド。呼び出し側で
+    ``None`` へ変換) / ``None`` (Ctrl-C → 全体中止を呼び出し元へ伝搬) /
+    ``_ARG_CANCEL`` (Esc・← → サブメニューへ戻る)。``containers/`` が無い / 空なら
+    compose.yml 全体ビルド (``""``) にフォールバックする。
     """
     containers_dir = Path(devbase_root) / "containers"
     images = sorted(
@@ -113,24 +114,27 @@ def _select_build_image(devbase_root: Path):
     ) if containers_dir.is_dir() else []
 
     if not images:
-        # 個別イメージが無ければ compose.yml 全体ビルド (image=None) のみ。
-        return None
+        # 個別イメージが無ければ compose.yml 全体ビルド ("" = image なし) のみ。
+        return ""
 
-    # value="" を「compose.yml 全体」に割り当て、選択メニューの None (Ctrl-C) と衝突
-    # させない。呼び出し側で空文字 → None へ変換する。
+    # value="" を「compose.yml 全体」に割り当て、選択メニューの None (Ctrl-C =
+    # 全体中止) と衝突させない。呼び出し側で空文字 → None へ変換する。
     choices = [("compose.yml 全体をビルド", "")] + [(img, img) for img in images]
     sel = menu.select(
         "ビルドするイメージを選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
         choices, back=True, search=False)
-    if sel is menu.MENU_BACK or sel is None:
-        return _ARG_CANCEL
-    return sel or None  # "" → None (compose 全体)
+    if sel is None:
+        return None                    # Ctrl-C → 全体中止 (ナビ規約)
+    if sel is menu.MENU_BACK:
+        return _ARG_CANCEL             # Esc/← → サブメニューを再表示
+    return sel                         # "" = compose 全体 (呼び出し側で None へ変換)
 
 
 def _run_operation(devbase_root: Path, name: str, op: str):
     """選択された操作の引数を収集して ``dispatch_lifecycle`` で起動する。
 
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 = サブメニューへ戻る)。
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 = サブメニューへ
+    戻る) / ``None`` (選択メニューで Ctrl-C → 全体中止)。
     引数を要さない up/rebuild は即実行。down は破壊的のため ``menu.confirm`` で確認する。
     """
     if op in ("up", "rebuild"):
@@ -175,9 +179,11 @@ def _run_operation(devbase_root: Path, name: str, op: str):
 
     if op == "build":
         image = _select_build_image(devbase_root)
+        if image is None:
+            return None                # Ctrl-C → 全体中止
         if image is _ARG_CANCEL:
             return _ARG_CANCEL
-        return dispatch_lifecycle("build", name, image=image)
+        return dispatch_lifecycle("build", name, image=image or None)
 
     # 到達しない (メニュー値は _RUNNING_OPS に限定される)。保守的に no-op。
     logger.error("未知の操作です: %s", op)

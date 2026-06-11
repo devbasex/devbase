@@ -268,11 +268,11 @@ def test_run_operation_update_named(monkeypatch, tmp_path):
 
 
 def test_run_operation_update_all_is_name_none(monkeypatch, tmp_path):
-    """「全 plugin を更新」は name=None で委譲する (CLI の引数省略と同じ)。"""
+    """「全 plugin を更新」('') は name=None で委譲する (CLI の引数省略と同じ)。"""
     captured = _capture_dispatch(monkeypatch)
     seen = {}
     monkeypatch.setattr(actions_plugin, "_select_installed_plugin",
-                        lambda root, msg, **k: seen.update(k) or None)
+                        lambda root, msg, **k: seen.update(k) or "")
     assert actions_plugin._run_operation(tmp_path, "update") == 0
     assert captured["subcommand"] == "update" and captured["name"] is None
     assert seen.get("all_label"), "update では全 plugin 選択肢を提示する"
@@ -283,6 +283,15 @@ def test_run_operation_update_cancel(monkeypatch, tmp_path):
     monkeypatch.setattr(actions_plugin, "_select_installed_plugin",
                         lambda root, msg, **k: actions_plugin._ARG_CANCEL)
     assert actions_plugin._run_operation(tmp_path, "update") is actions_plugin._ARG_CANCEL
+    assert called == []
+
+
+def test_run_operation_update_ctrl_c_aborts(monkeypatch, tmp_path):
+    """name 選択中の Ctrl-C は None を伝搬して全体中止する (codex round2 指摘)。"""
+    called = _no_dispatch(monkeypatch)
+    monkeypatch.setattr(actions_plugin, "_select_installed_plugin",
+                        lambda root, msg, **k: None)
+    assert actions_plugin._run_operation(tmp_path, "update") is None
     assert called == []
 
 
@@ -411,11 +420,11 @@ def test_run_repo_operation_refresh_named(monkeypatch, tmp_path):
 
 
 def test_run_repo_operation_refresh_all_is_name_none(monkeypatch, tmp_path):
-    """「全リポジトリを更新」は name=None で委譲する (CLI の引数省略と同じ)。"""
+    """「全リポジトリを更新」('') は name=None で委譲する (CLI の引数省略と同じ)。"""
     captured = _capture_dispatch(monkeypatch)
     seen = {}
     monkeypatch.setattr(actions_plugin, "_select_repository",
-                        lambda root, msg, **k: seen.update(k) or None)
+                        lambda root, msg, **k: seen.update(k) or "")
     assert actions_plugin._run_repo_operation(tmp_path, "refresh") == 0
     assert captured["repo_command"] == "refresh" and captured["name"] is None
     assert seen.get("all_label"), "refresh では全リポジトリ選択肢を提示する"
@@ -426,6 +435,17 @@ def test_run_repo_operation_refresh_cancel(monkeypatch, tmp_path):
     monkeypatch.setattr(actions_plugin, "_select_repository",
                         lambda root, msg, **k: actions_plugin._ARG_CANCEL)
     assert actions_plugin._run_repo_operation(tmp_path, "refresh") is actions_plugin._ARG_CANCEL
+    assert called == []
+
+
+def test_run_repo_operation_remove_ctrl_c_aborts(monkeypatch, tmp_path):
+    """リポジトリ選択中の Ctrl-C は None を伝搬して全体中止する (codex round2 指摘)。"""
+    called = _no_dispatch(monkeypatch)
+    monkeypatch.setattr(actions_plugin, "_select_repository",
+                        lambda root, msg, **k: None)
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("Ctrl-C 後に確認を求めない"))
+    assert actions_plugin._run_repo_operation(tmp_path, "remove") is None
     assert called == []
 
 
@@ -489,8 +509,8 @@ def test_select_name_lists_names(monkeypatch):
     assert captured["values"] == ["a", "b"]
 
 
-def test_select_name_all_label_first_and_maps_to_none(monkeypatch):
-    """all_label は value='' で先頭に置き、選択時は None に変換する。"""
+def test_select_name_all_label_first_and_returns_empty(monkeypatch):
+    """all_label は value='' で先頭に置き、選択時は '' を返す (呼び出し側で None へ変換)。"""
     captured = {}
 
     def fake_select(message, choices, *, back, search):
@@ -498,15 +518,17 @@ def test_select_name_all_label_first_and_maps_to_none(monkeypatch):
         return ""
 
     monkeypatch.setattr(menu, "select", fake_select)
-    assert actions_plugin._select_name("選択", ["a"], all_label="全対象") is None
+    assert actions_plugin._select_name("選択", ["a"], all_label="全対象") == ""
     assert captured["values"] == ["", "a"]
 
 
 @pytest.mark.parametrize("sel", [None, "BACK"])
-def test_select_name_back_or_ctrl_c_is_cancel(monkeypatch, sel):
+def test_select_name_back_or_ctrl_c(monkeypatch, sel):
+    """Esc/← (MENU_BACK) は _ARG_CANCEL、Ctrl-C (None) は None (全体中止) を返す。"""
     ret = menu.MENU_BACK if sel == "BACK" else None
     monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
-    assert actions_plugin._select_name("選択", ["a"]) is actions_plugin._ARG_CANCEL
+    expected = actions_plugin._ARG_CANCEL if sel == "BACK" else None
+    assert actions_plugin._select_name("選択", ["a"]) is expected
 
 
 def test_select_installed_plugin_reads_registry(monkeypatch, tmp_path):

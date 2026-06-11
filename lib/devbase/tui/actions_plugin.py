@@ -96,11 +96,12 @@ def _select_name(message: str, names: list[str], *, all_label: str | None = None
     """名前一覧から 1 件選ばせる共通ヘルパ。
 
     ``all_label`` 指定時は「全対象」(value="") を先頭に置く。選択メニューの ``None``
-    (Ctrl-C) と衝突させないため空文字を番兵にし、呼び出し側へは ``None`` に変換して
-    返す (_select_build_image と同じ流儀)。
+    (Ctrl-C → 全体中止) と衝突させないため空文字を番兵にし、``None`` への変換は
+    呼び出し側で行う (_select_build_image と同じ流儀)。
 
-    戻り値: 名前 (``str``) / ``None`` (all_label 選択 = 全対象) / ``_ARG_CANCEL``
-    (Esc・←・Ctrl-C 中止)。
+    戻り値: 名前 (``str``) / ``""`` (all_label 選択 = 全対象。呼び出し側で ``None``
+    へ変換) / ``None`` (Ctrl-C → 全体中止を呼び出し元へ伝搬) / ``_ARG_CANCEL``
+    (Esc・← → サブメニューへ戻る)。
     """
     choices: list[tuple[str, str]] = []
     if all_label is not None:
@@ -109,9 +110,11 @@ def _select_name(message: str, names: list[str], *, all_label: str | None = None
     sel = menu.select(
         f"{message} (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
         choices, back=True, search=False)
-    if sel is menu.MENU_BACK or sel is None:
-        return _ARG_CANCEL
-    return sel or None  # "" → None (全対象)
+    if sel is None:
+        return None                    # Ctrl-C → 全体中止 (ナビ規約)
+    if sel is menu.MENU_BACK:
+        return _ARG_CANCEL             # Esc/← → サブメニューを再表示
+    return sel                         # "" = 全対象 (呼び出し側で None へ変換)
 
 
 def _select_installed_plugin(devbase_root: Path, message: str, *,
@@ -170,7 +173,8 @@ def _run_operation(devbase_root: Path, op: str):
     """選択された plugin 操作の引数を収集して ``cmd_plugin`` へ委譲する。
 
     戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 =
-    サブメニューへ戻る)。破壊的な uninstall は ``menu.confirm`` で確認する (plan 3.4)。
+    サブメニューへ戻る) / ``None`` (選択メニューで Ctrl-C → 全体中止)。
+    破壊的な uninstall は ``menu.confirm`` で確認する (plan 3.4)。
     """
     if op == "list":
         # --available: 導入済み一覧の代わりに未導入の利用可能 plugin を表示する。
@@ -200,6 +204,8 @@ def _run_operation(devbase_root: Path, op: str):
     if op == "uninstall":
         name = _select_installed_plugin(
             devbase_root, "アンインストールする plugin を選択")
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         ok = menu.confirm(f"plugin '{name}' をアンインストールしますか?", default=False)
@@ -212,13 +218,17 @@ def _run_operation(devbase_root: Path, op: str):
         name = _select_installed_plugin(
             devbase_root, "更新する plugin を選択",
             all_label="全 plugin を更新")
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
-        return _dispatch(devbase_root, "update", name=name)
+        return _dispatch(devbase_root, "update", name=name or None)
 
     if op == "info":
         name = _select_installed_plugin(
             devbase_root, "詳細を表示する plugin を選択")
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         return _dispatch(devbase_root, "info", name=name)
@@ -257,6 +267,8 @@ def _run_repo_operation(devbase_root: Path, op: str):
 
     if op == "remove":
         name = _select_repository(devbase_root, "削除するリポジトリを選択")
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         ok = menu.confirm(f"リポジトリ '{name}' を削除しますか?", default=False)
@@ -275,9 +287,12 @@ def _run_repo_operation(devbase_root: Path, op: str):
         name = _select_repository(
             devbase_root, "更新するリポジトリを選択",
             all_label="全リポジトリを更新")
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
-        return _dispatch(devbase_root, "repo", repo_command="refresh", name=name)
+        return _dispatch(devbase_root, "repo",
+                         repo_command="refresh", name=name or None)
 
     # 到達しない (メニュー値は _REPO_OPS に限定される)。保守的に no-op。
     logger.error("未知のリポジトリ操作です: %s", op)

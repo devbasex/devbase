@@ -110,6 +110,17 @@ def test_run_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     assert len(select_calls) == 2, "引数中止でサブメニューが再表示される"
 
 
+def test_run_propagates_ctrl_c_from_operation(monkeypatch, tmp_path):
+    """引数収集中の Ctrl-C (None) はサブメニューを再表示せず全体中止を伝搬する。"""
+    select_calls = []
+    monkeypatch.setattr(actions_env, "_select_action",
+                        lambda: select_calls.append(1) or "list")
+    monkeypatch.setattr(actions_env, "_run_operation", lambda root, op: None)
+
+    assert actions_env.run(tmp_path) is None
+    assert len(select_calls) == 1, "Ctrl-C でサブメニューを再表示しない"
+
+
 # ---------------------------------------------------------------------------
 # _select_action: menu.select への委譲 (全 10 サブコマンドの提示)
 # ---------------------------------------------------------------------------
@@ -244,13 +255,14 @@ def test_run_operation_list_project_select_cancel(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("scope_ret", ["BACK", None])
 def test_run_operation_list_scope_cancel(monkeypatch, tmp_path, scope_ret):
-    """表示範囲選択で Esc/← (MENU_BACK) / Ctrl-C (None) したら実行しない。"""
+    """表示範囲選択で Esc/← は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
     ret = menu.MENU_BACK if scope_ret == "BACK" else None
     monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
-    assert actions_env._run_operation(tmp_path, "list") is actions_env._ARG_CANCEL
+    expected = actions_env._ARG_CANCEL if scope_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "list") is expected
     assert called == []
 
 
@@ -323,13 +335,14 @@ def test_run_operation_get_project_select_cancel(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("scope_ret", ["BACK", None])
 def test_run_operation_get_scope_cancel(monkeypatch, tmp_path, scope_ret):
-    """取得元選択で Esc/← (MENU_BACK) / Ctrl-C (None) したら実行しない。"""
+    """取得元選択で Esc/← は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
     ret = menu.MENU_BACK if scope_ret == "BACK" else None
     monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
-    assert actions_env._run_operation(tmp_path, "get") is actions_env._ARG_CANCEL
+    expected = actions_env._ARG_CANCEL if scope_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "get") is expected
     assert called == []
 
 
@@ -432,12 +445,14 @@ def test_run_operation_set_project_select_cancel(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("scope_ret", ["BACK", None])
 def test_run_operation_set_scope_cancel(monkeypatch, tmp_path, scope_ret):
+    """設定先選択で Esc/← は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
     ret = menu.MENU_BACK if scope_ret == "BACK" else None
     monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
-    assert actions_env._run_operation(tmp_path, "set") is actions_env._ARG_CANCEL
+    expected = actions_env._ARG_CANCEL if scope_ret == "BACK" else None
+    assert actions_env._run_operation(tmp_path, "set") is expected
     assert called == []
 
 
@@ -479,6 +494,16 @@ def test_run_operation_project_select_cancel(monkeypatch, tmp_path):
     monkeypatch.setattr(actions_env, "_select_project",
                         lambda root: actions_env._ARG_CANCEL)
     assert actions_env._run_operation(tmp_path, "project") is actions_env._ARG_CANCEL
+    assert called == []
+
+
+def test_run_operation_project_select_ctrl_c_aborts(monkeypatch, tmp_path):
+    """プロジェクト選択中の Ctrl-C は None を伝搬して全体中止する (codex round2 指摘)。"""
+    from devbase.commands import env as env_mod
+    called = []
+    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
+    monkeypatch.setattr(actions_env, "_select_project", lambda root: None)
+    assert actions_env._run_operation(tmp_path, "project") is None
     assert called == []
 
 
@@ -643,6 +668,7 @@ def test_select_project_returns_name(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("sel_ret", ["BACK", None])
 def test_select_project_cancel(monkeypatch, tmp_path, sel_ret):
+    """Esc (MENU_BACK) は _ARG_CANCEL、Ctrl-C (None) は None (全体中止) を返す。"""
     from devbase.commands import status as status_mod
     _make_plugin_project(tmp_path, "repos/o--r/p", "carmo")
     _link_project(tmp_path, "carmo", "repos/o--r/p", "carmo")
@@ -650,7 +676,8 @@ def test_select_project_cancel(monkeypatch, tmp_path, sel_ret):
                         lambda entry, counts=None: None)
     ret = menu.MENU_BACK if sel_ret == "BACK" else None
     monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
-    assert actions_env._select_project(tmp_path) is actions_env._ARG_CANCEL
+    expected = actions_env._ARG_CANCEL if sel_ret == "BACK" else None
+    assert actions_env._select_project(tmp_path) is expected
 
 
 def test_select_project_empty_cancels(monkeypatch, tmp_path):

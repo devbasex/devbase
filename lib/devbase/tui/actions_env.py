@@ -93,8 +93,8 @@ def _select_project(devbase_root: Path):
     """project スコープ操作の対象プロジェクトを選ぶ。
 
     actions_project と同じ一覧取得 (``list_projects`` + ``_build_menu_entries``) を
-    流用する。戻り値: プロジェクト名 (``str``) / ``_ARG_CANCEL`` (Esc・Ctrl-C 中止、
-    またはプロジェクト無し)。
+    流用する。戻り値: プロジェクト名 (``str``) / ``None`` (Ctrl-C → 全体中止を呼び
+    出し元へ伝搬) / ``_ARG_CANCEL`` (Esc → サブメニューへ戻る、またはプロジェクト無し)。
     """
     projects_dir = Path(devbase_root) / "projects"
     rows = list_projects(projects_dir)
@@ -108,8 +108,10 @@ def _select_project(devbase_root: Path):
         "対象プロジェクトを選択 "
         "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻る / Ctrl-C 中止):",
         choices, back=True, search=True)
-    if idx is menu.MENU_BACK or idx is None:
-        return _ARG_CANCEL
+    if idx is None:
+        return None                    # Ctrl-C → 全体中止 (ナビ規約)
+    if idx is menu.MENU_BACK:
+        return _ARG_CANCEL             # Esc → サブメニューを再表示
     return rows[idx]["name"]
 
 
@@ -214,12 +216,16 @@ def _run_list(devbase_root: Path):
          ("グローバルのみ (--global)", "global"),
          ("プロジェクトのみ (--project)", "project")],
         back=True, search=False)
-    if scope is menu.MENU_BACK or scope is None:
+    if scope is None:
+        return None                    # Ctrl-C → 全体中止
+    if scope is menu.MENU_BACK:
         return _ARG_CANCEL
 
     name = None
     if scope == "project":
         name = _select_project(devbase_root)
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
 
@@ -251,12 +257,16 @@ def _run_set(devbase_root: Path):
         [("グローバル ($DEVBASE_ROOT/.env)", "global"),
          ("プロジェクト (projects/<name>/.env, --project)", "project")],
         back=True, search=False)
-    if scope is menu.MENU_BACK or scope is None:
+    if scope is None:
+        return None                    # Ctrl-C → 全体中止
+    if scope is menu.MENU_BACK:
         return _ARG_CANCEL
 
     name = None
     if scope == "project":
         name = _select_project(devbase_root)
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
 
@@ -285,12 +295,16 @@ def _run_get(devbase_root: Path):
         [("グローバル ($DEVBASE_ROOT/.env)", "global"),
          ("プロジェクト (グローバルに無ければ projects/<name>/.env)", "project")],
         back=True, search=False)
-    if scope is menu.MENU_BACK or scope is None:
+    if scope is None:
+        return None                    # Ctrl-C → 全体中止
+    if scope is menu.MENU_BACK:
         return _ARG_CANCEL
 
     name = None
     if scope == "project":
         name = _select_project(devbase_root)
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
 
@@ -309,8 +323,8 @@ def _run_operation(devbase_root: Path, op: str):
     """選択された env 操作の引数を収集して ``cmd_env`` へ委譲する。
 
     戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (引数収集を中止 =
-    サブメニューへ戻る)。属性は plan 2.3 の契約表 (cli.py parser と同期確認済み)
-    に従う。
+    サブメニューへ戻る) / ``None`` (選択メニューで Ctrl-C → 全体中止)。
+    属性は plan 2.3 の契約表 (cli.py parser と同期確認済み) に従う。
     """
     if op == "sync":
         # 引数なし。ソースファイルから認証情報を再同期する。
@@ -354,6 +368,8 @@ def _run_operation(devbase_root: Path, op: str):
         # プロジェクト固有変数の対話設定。projects/ 配下で動く CWD スコープ操作の
         # ため、対象を選ばせて chdir してから実行する (plan 3.3)。
         name = _select_project(devbase_root)
+        if name is None:
+            return None                # Ctrl-C → 全体中止
         if name is _ARG_CANCEL:
             return _ARG_CANCEL
         return _run_in_project(devbase_root, name,
