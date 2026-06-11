@@ -91,6 +91,18 @@ def with_escape_cancel(question):
     return _add_escape_binding(question, _cancel)
 
 
+def _ask_erased(question):
+    """``erase_when_done`` を立ててから ``ask()`` する共通ヘルパ (全プロンプト用)。
+
+    questionary は回答確定時に「質問 + 回答」の collapse 行を画面へ残す。TUI は
+    ループでメニューを再描画するため、回答のたびにこの行が蓄積して画面全体が
+    下へずれていく (実 TTY でのみ再現する残留・行ずれ不具合)。回答後に描画ごと
+    消去することで、メニューを常に同じ位置へ再描画する。
+    """
+    question.application.erase_when_done = True
+    return question.ask()
+
+
 def _ask_with_escape(question):
     """Esc→``MENU_BACK`` を仕込んでから ``ask()`` する共通ヘルパ (text/confirm/path 用)。
 
@@ -99,7 +111,7 @@ def _ask_with_escape(question):
     を適用してから問い合わせる。← は入力カーソル移動と衝突するためバインドしない。
     戻り値: 入力値 / ``MENU_BACK`` (Esc) / ``None`` (Ctrl-C)。
     """
-    return with_escape_back(question, bind_left=False).ask()
+    return _ask_erased(with_escape_back(question, bind_left=False))
 
 
 def with_escape_back(question, *, bind_left: bool = True):
@@ -120,7 +132,8 @@ def with_escape_back(question, *, bind_left: bool = True):
     def _back(event):
         # 戻る操作で残る「質問行 (未回答のまま collapse した行)」は次のメニュー描画と
         # 重なり 1 行ずれの原因になるため、exit 前に erase_when_done を立てて
-        # プロンプト描画ごと消去する (Enter での通常回答行は従来どおり残る)。
+        # プロンプト描画ごと消去する。通常回答時も ``_ask_erased`` が同フラグを立てる
+        # ため冗長だが、本関数を ``ask()`` 直呼びと組み合わせても安全なよう残す。
         event.app.erase_when_done = True
         event.app.exit(result=MENU_BACK)
 
@@ -175,7 +188,7 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
         question = with_escape_back(question, bind_left=not search)
     else:
         question = with_escape_cancel(question)
-    return question.ask()
+    return _ask_erased(question)
 
 
 # ---------------------------------------------------------------------------
