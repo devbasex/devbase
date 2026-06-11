@@ -11,38 +11,19 @@ stopped/unknown は従来どおり直接 up (PR1 非回帰)。引数を要する
 収集ヘルパで CLI と同じ属性値を集め、破壊的な down は ``menu.confirm`` で確認する
 (plan 2.3 契約表 / 3.4 破壊的操作確認)。
 
-一覧表示・整形 (``list_projects`` / ``_build_menu_entries``) は ``commands/project``
-の純粋ロジックを再利用する (TUI からも CLI(table) からも共有)。
+プロジェクト一覧の表示・選択は ``tui.app`` (トップ画面) が担い、本モジュールは
+選択された 1 行の処理 (``handle_row``) と questionary 不在時のフォールバックを提供する。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from devbase.commands.project import (
-    _STATUS_COLOR,
-    _build_menu_entries,
-    list_projects,
-)
 from devbase.log import get_logger
 from devbase.tui import menu
 from devbase.tui.dispatch import dispatch_lifecycle
 
 logger = get_logger(__name__)
-
-
-def _select_project(rows: list[dict]):
-    """一覧から 1 件選ばせ rows の index を返す。Esc → ``MENU_BACK`` / Ctrl-C → ``None``。
-
-    件数が多いため文字入力での絞り込み (search=True) を有効にする。search 有効時は
-    ← が入力カーソル移動と衝突するため戻る操作は Esc のみ (menu.select が調整する)。
-    """
-    entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
-    choices = [(entry, i) for i, entry in enumerate(entries)]
-    return menu.select(
-        "操作するプロジェクトを選択 "
-        "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻る / Ctrl-C 中止):",
-        choices, back=True, search=True)
 
 
 # running 行で選べる操作 (表示順 = ハイライト既定順)。up を先頭に置き、PR1 同様
@@ -232,47 +213,23 @@ def _operation_menu(devbase_root: Path, name: str):
         return rc                      # 実行 rc → 呼び出し元へ
 
 
-def run(devbase_root: Path):
-    """プロジェクト操作カテゴリ。一覧選択 → (running は操作サブメニュー / 他は up)。
+def handle_row(devbase_root: Path, row: dict):
+    """一覧で選択された 1 プロジェクト行を処理する (トップ画面から呼ばれる)。
 
     戻り値プロトコル (トップループが ``is`` 同一性で判定する):
     - **操作を実行した場合**: ``dispatch_lifecycle`` の rc (``int``) を返す。
-      「実行したのでトップへ戻る、rc は呼び出し側が記憶」の意味。これにより
+      「実行したので一覧へ戻る、rc は呼び出し側が記憶」の意味。これにより
       project 操作の失敗が ``devbase list`` の終了コードへ伝搬する。
-    - ``menu.MENU_BACK``: 一覧で Esc/← (操作なしでトップへ) / プロジェクト無し。
-    - ``None``: 一覧・サブメニューで Ctrl-C による全体中止。
+    - ``menu.MENU_BACK``: 操作サブメニューで Esc/← (操作なしで一覧へ)。
+    - ``None``: サブメニューで Ctrl-C による全体中止。
 
     選択行が running 中なら ``_operation_menu`` で全操作を選ばせ、それ以外
     (stopped / unknown) は従来どおり直接 ``project up`` を起動する (PR1 非回帰)。
-    操作完了後はトップメニューへ復帰する (plan 3.5 状態遷移: Exec → Top)。
     """
-    projects_dir = Path(devbase_root) / "projects"
-    while True:
-        rows = list_projects(projects_dir)
-        if not rows:
-            logger.info("プロジェクトがありません (%s)。", projects_dir)
-            return menu.MENU_BACK
-
-        idx = _select_project(rows)
-        if idx is menu.MENU_BACK:
-            return menu.MENU_BACK
-        if idx is None:
-            return None  # Ctrl-C → 全体中止
-
-        row = rows[idx]
-        name = row["name"]
-        if str(row.get("status", "")).startswith("running"):
-            rc = _operation_menu(devbase_root, name)
-            if rc is menu.MENU_BACK:
-                continue          # 一覧へ戻る
-            if rc is None:
-                return None       # Ctrl-C → 全体中止
-        else:
-            rc = dispatch_lifecycle("up", name, scale=None)
-
-        # 操作完了 → トップメニューへ復帰。rc は呼び出し側 (top loop) が記憶し
-        # 最終的な devbase の終了コードへ伝搬させる。
-        return rc
+    name = row["name"]
+    if str(row.get("status", "")).startswith("running"):
+        return _operation_menu(devbase_root, name)
+    return dispatch_lifecycle("up", name, scale=None)
 
 
 def fallback_select_and_up(rows: list[dict]) -> int:

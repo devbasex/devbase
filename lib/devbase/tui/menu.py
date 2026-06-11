@@ -47,10 +47,27 @@ MENU_BACK = object()
 # キーバインド (Esc / ←)
 # ---------------------------------------------------------------------------
 
-def _add_escape_binding(question, handler):
-    """questionary の select に Esc 単独押下のハンドラを後付けする共通処理。
+def _add_key_binding(question, key, handler):
+    """生成済み ``Question.application`` にキーハンドラを後付けする共通処理。
 
-    questionary 2.x の select は Ctrl-C / Ctrl-Q しか割り当てないため、生成済み
+    select の application は素の ``KeyBindings`` を持つが、confirm/text/path は
+    ``merge_key_bindings`` 済みの ``_MergedKeyBindings`` (``add`` を持たない) の
+    ため、直接 ``add`` せず新しい ``KeyBindings`` を作って再マージする。
+    """
+    from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+
+    kb = KeyBindings()
+    kb.add(key)(handler)
+    existing = question.application.key_bindings
+    question.application.key_bindings = (
+        merge_key_bindings([existing, kb]) if existing is not None else kb)
+    return question
+
+
+def _add_escape_binding(question, handler):
+    """questionary の question に Esc 単独押下のハンドラを後付けする共通処理。
+
+    questionary 2.x は Ctrl-C / Ctrl-Q しか割り当てないため、生成済み
     ``Question.application`` の key_bindings に Escape ハンドラを足す。
 
     Escape は矢印キー等のエスケープシーケンス (``\\x1b[A`` 等) の先頭バイトでも
@@ -59,8 +76,7 @@ def _add_escape_binding(question, handler):
     """
     from prompt_toolkit.keys import Keys
 
-    question.application.key_bindings.add(Keys.Escape)(handler)
-    return question
+    return _add_key_binding(question, Keys.Escape, handler)
 
 
 def with_escape_cancel(question):
@@ -102,11 +118,15 @@ def with_escape_back(question, *, bind_left: bool = True):
     from prompt_toolkit.keys import Keys
 
     def _back(event):
+        # 戻る操作で残る「質問行 (未回答のまま collapse した行)」は次のメニュー描画と
+        # 重なり 1 行ずれの原因になるため、exit 前に erase_when_done を立てて
+        # プロンプト描画ごと消去する (Enter での通常回答行は従来どおり残る)。
+        event.app.erase_when_done = True
         event.app.exit(result=MENU_BACK)
 
-    _add_escape_binding(question, _back)                         # Esc（互換・低速）
+    _add_escape_binding(question, _back)                  # Esc（互換・低速）
     if bind_left:
-        question.application.key_bindings.add(Keys.Left)(_back)  # ←（即時）
+        _add_key_binding(question, Keys.Left, _back)      # ←（即時）
     return question
 
 
