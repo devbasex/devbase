@@ -131,90 +131,116 @@ def test_run_interactive_opens_top_menu(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# トップ階層メニュー: routing
+# トップ画面: プロジェクト一覧 + カテゴリ項目
 # ---------------------------------------------------------------------------
 
-def test_top_menu_project_first_highlighted():
-    """「プロジェクト操作」が先頭 (既定ハイライト) で従来フローへ Enter 連打到達できる。"""
-    assert app.TOP_CATEGORIES[0] == ("project", "プロジェクト操作")
+_ROWS = [{"name": "carmo", "plugin": "p", "status": "stopped"},
+         {"name": "beta", "plugin": "q", "status": "running (1 containers)"}]
 
 
-def test_top_menu_routes_project_then_back_to_top(monkeypatch, tmp_path):
-    """カテゴリ選択 → project 実行 (MENU_BACK) → トップ再表示 → Esc (None) で終了。"""
-    selects = iter(["project", None])  # 1 回目 project、2 回目 Esc 中止
-    monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
+def _patch_loop(monkeypatch, selects, rows=None):
+    """_top_menu_loop の入力 (一覧と選択値) を注入する共通ヘルパ。"""
+    monkeypatch.setattr(app, "list_projects",
+                        lambda projects_dir: list(_ROWS) if rows is None else rows)
+    it = iter(selects)
+    monkeypatch.setattr(app, "_select_top", lambda r: next(it))
 
-    routed = []
-    monkeypatch.setattr(actions_project, "run",
-                        lambda root: routed.append(root) or menu.MENU_BACK)
+
+def test_select_top_appends_categories_after_projects(monkeypatch):
+    """トップ一覧はプロジェクト行が先頭、カテゴリ項目が末尾に並ぶ。"""
+    captured = {}
+
+    def fake_select(message, choices, *, back, search):
+        captured.update(back=back, search=search,
+                        titles=[c[0] for c in choices],
+                        values=[c[1] for c in choices])
+        return 0
+
+    monkeypatch.setattr(menu, "select", fake_select)
+    assert app._select_top(_ROWS) == 0
+    assert captured["back"] is False, "トップは Esc=終了 (戻り先なし)"
+    assert captured["search"] is True, "名前絞り込みを有効化"
+    assert captured["values"][:2] == [0, 1], "プロジェクトは rows index"
+    assert captured["values"][2:] == ["env", "plugin", "snapshot", "status"]
+    assert captured["titles"][2] == "環境変数 (env)", "ラベル (key) 形式で表示"
+
+
+def test_top_loop_project_selection_delegates_handle_row(monkeypatch, tmp_path):
+    """プロジェクト選択 (int) は actions_project.handle_row へ該当行を渡す。"""
+    _patch_loop(monkeypatch, [1, None])
+    handled = []
+    monkeypatch.setattr(actions_project, "handle_row",
+                        lambda root, row: handled.append((root, row["name"])) or 0)
 
     rc = app._top_menu_loop(tmp_path)
     assert rc == 0
-    assert routed == [tmp_path], "project カテゴリへ 1 回 routing される"
+    assert handled == [(tmp_path, "beta")], "選択 index の行が handle_row へ渡る"
 
 
-def test_top_menu_propagates_executed_rc(monkeypatch, tmp_path):
-    """カテゴリ実行で非0 rc が返ると、その後トップで中止しても rc がループ戻り値へ伝搬する。"""
-    selects = iter(["project", None])  # 1 回目 project 実行、2 回目 Esc 中止
-    monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
-    # actions_project.run が rc=1 (実行・失敗) を返す
-    monkeypatch.setattr(actions_project, "run", lambda root: 1)
+def test_top_loop_propagates_executed_rc(monkeypatch, tmp_path):
+    """操作実行で非0 rc が返ると、その後トップで中止しても rc がループ戻り値へ伝搬する。"""
+    _patch_loop(monkeypatch, [0, None])
+    monkeypatch.setattr(actions_project, "handle_row", lambda root, row: 1)
 
     assert app._top_menu_loop(tmp_path) == 1
 
 
-def test_top_menu_back_does_not_overwrite_last_rc(monkeypatch, tmp_path):
-    """実行 rc を記憶後、別カテゴリが MENU_BACK を返しても last_rc は上書きされない。"""
-    selects = iter(["project", "snapshot", None])
-    monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
-    runs = iter([1])  # project 実行 → rc=1
-    monkeypatch.setattr(actions_project, "run", lambda root: next(runs))
-    # snapshot は操作なしで戻る (MENU_BACK) → last_rc を維持
+def test_top_loop_back_does_not_overwrite_last_rc(monkeypatch, tmp_path):
+    """実行 rc を記憶後、カテゴリが MENU_BACK を返しても last_rc は上書きされない。"""
+    _patch_loop(monkeypatch, [0, "snapshot", None])
+    monkeypatch.setattr(actions_project, "handle_row", lambda root, row: 1)
     from devbase.tui import actions_snapshot
     monkeypatch.setattr(actions_snapshot, "run", lambda root: menu.MENU_BACK)
 
     assert app._top_menu_loop(tmp_path) == 1
 
 
-def test_top_menu_zero_rc_propagates(monkeypatch, tmp_path):
+def test_top_loop_zero_rc_propagates(monkeypatch, tmp_path):
     """rc=0 が int として正しく扱われる (None/MENU_BACK と誤マッチしない)。"""
-    selects = iter(["project", None])
-    monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
-    monkeypatch.setattr(actions_project, "run", lambda root: 0)
+    _patch_loop(monkeypatch, [0, None])
+    monkeypatch.setattr(actions_project, "handle_row", lambda root, row: 0)
 
     assert app._top_menu_loop(tmp_path) == 0
 
 
-def test_top_menu_escape_aborts(monkeypatch, tmp_path):
-    """トップメニューで Esc/Ctrl-C (None) を押すと即終了 (rc=0)。"""
-    monkeypatch.setattr(menu, "select", lambda *a, **k: None)
-    routed = []
-    monkeypatch.setattr(actions_project, "run", lambda root: routed.append(1) or menu.MENU_BACK)
+def test_top_loop_escape_exits(monkeypatch, tmp_path):
+    """トップ (一覧) で Esc/Ctrl-C (None) を押すと即終了 (rc=0)。"""
+    _patch_loop(monkeypatch, [None])
+    handled = []
+    monkeypatch.setattr(actions_project, "handle_row",
+                        lambda root, row: handled.append(1) or 0)
+
     assert app._top_menu_loop(tmp_path) == 0
-    assert routed == []
+    assert handled == []
 
 
-def test_top_menu_category_ctrl_c_aborts_whole_app(monkeypatch, tmp_path):
+def test_top_loop_category_ctrl_c_aborts_whole_app(monkeypatch, tmp_path):
     """カテゴリ内で Ctrl-C (None) を受けたら全体中止する。"""
-    monkeypatch.setattr(menu, "select", lambda *a, **k: "project")
-    monkeypatch.setattr(actions_project, "run", lambda root: None)  # Ctrl-C
+    _patch_loop(monkeypatch, ["env"])
+    from devbase.tui import actions_env
+    monkeypatch.setattr(actions_env, "run", lambda root: None)  # Ctrl-C
+
     assert app._top_menu_loop(tmp_path) == 0
 
 
-def test_top_menu_menu_back_category_returns_to_top(monkeypatch, tmp_path):
-    """カテゴリが操作なし (MENU_BACK) で戻ったらトップメニューを再表示する。"""
-    selects = iter(["snapshot", None])
-    monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
+def test_top_loop_category_back_redisplays_list(monkeypatch, tmp_path):
+    """カテゴリが操作なし (MENU_BACK) で戻ったら一覧を再表示する。"""
+    _patch_loop(monkeypatch, ["snapshot", None])
     from devbase.tui import actions_snapshot
     monkeypatch.setattr(actions_snapshot, "run", lambda root: menu.MENU_BACK)
-    # _route が MENU_BACK を返してループ継続 → 2 回目 None で終了
-    rc = app._top_menu_loop(tmp_path)
-    assert rc == 0
+
+    assert app._top_menu_loop(tmp_path) == 0
 
 
-def test_route_project_delegates(monkeypatch, tmp_path):
-    monkeypatch.setattr(actions_project, "run", lambda root: "RESULT")
-    assert app._route("project", tmp_path) == "RESULT"
+def test_top_loop_empty_projects_still_offers_categories(monkeypatch, tmp_path):
+    """プロジェクト 0 件でも終了せず、カテゴリ操作 (status 等) が選べる。"""
+    _patch_loop(monkeypatch, ["status", None], rows=[])
+    from devbase.tui import actions_status
+    ran = []
+    monkeypatch.setattr(actions_status, "run", lambda root: ran.append(1) or 0)
+
+    assert app._top_menu_loop(tmp_path) == 0
+    assert ran == [1], "プロジェクト無しでもカテゴリへ遷移できる"
 
 
 def test_route_plugin_delegates(monkeypatch, tmp_path):

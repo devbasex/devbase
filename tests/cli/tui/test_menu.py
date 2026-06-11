@@ -76,6 +76,42 @@ def test_with_escape_back_bind_left_false_skips_left():
     assert left == [], "search 有効メニューでは ← を入力カーソル用に空ける"
 
 
+def test_with_escape_back_works_on_merged_key_bindings(monkeypatch):
+    """confirm/text/path の application は ``_MergedKeyBindings`` (``add`` 無し) を
+    持つため、直接 ``add`` せず再マージ方式で Esc を後付けできること
+    (実 TTY での AttributeError クラッシュの回帰検証。monkeypatch なしの実 question)。"""
+    questionary = pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    monkeypatch.setenv("TERM", "dumb")  # CI 等の端末差異を吸収
+    for q in (questionary.confirm("ok?", default=False),
+              questionary.text("name?"),
+              questionary.path("path?")):
+        menu.with_escape_back(q, bind_left=False)  # AttributeError を出さないこと
+        # text/path は auto-suggest 由来の (Escape, f) を持つため単独 Esc のみ数える
+        esc = [b for b in q.application.key_bindings.bindings
+               if tuple(b.keys) == (Keys.Escape,)]
+        assert len(esc) == 1, f"{type(q)} に Esc が後付けされる"
+
+
+def test_back_handler_sets_erase_when_done():
+    """Esc/← の戻りは erase_when_done を立ててから exit し、未回答のまま collapse
+    した質問行が残って次メニューと重なる「1 行ずれ」を防ぐこと。"""
+    questionary = pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    q = questionary.select("t", choices=[questionary.Choice(title="a", value="a")])
+    menu.with_escape_back(q)
+
+    esc = [b for b in q.application.key_bindings.bindings if Keys.Escape in b.keys]
+    captured = {}
+    fake_app = types.SimpleNamespace(exit=lambda **kw: captured.update(kw),
+                                     erase_when_done=False)
+    esc[0].handler(types.SimpleNamespace(app=fake_app))
+    assert fake_app.erase_when_done is True, "戻る時は描画を消去する"
+    assert captured == {"result": menu.MENU_BACK}
+
+
 # ---------------------------------------------------------------------------
 # select: バインドの仕込みと戻り値
 # ---------------------------------------------------------------------------
