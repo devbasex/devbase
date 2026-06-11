@@ -165,11 +165,11 @@ def test_top_menu_propagates_executed_rc(monkeypatch, tmp_path):
 
 def test_top_menu_back_does_not_overwrite_last_rc(monkeypatch, tmp_path):
     """実行 rc を記憶後、別カテゴリが MENU_BACK を返しても last_rc は上書きされない。"""
-    selects = iter(["project", "env", None])
+    selects = iter(["project", "snapshot", None])
     monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
     runs = iter([1])  # project 実行 → rc=1
     monkeypatch.setattr(actions_project, "run", lambda root: next(runs))
-    # env は未実装カテゴリ (_route が MENU_BACK) → last_rc を維持
+    # snapshot は未実装カテゴリ (_route が MENU_BACK) → last_rc を維持
 
     assert app._top_menu_loop(tmp_path) == 1
 
@@ -200,8 +200,8 @@ def test_top_menu_category_ctrl_c_aborts_whole_app(monkeypatch, tmp_path):
 
 
 def test_top_menu_unimplemented_category_returns_to_top(monkeypatch, tmp_path):
-    """未実装カテゴリ (env 等) はプレースホルダ案内を出してトップへ戻る。"""
-    selects = iter(["env", None])
+    """未実装カテゴリ (snapshot 等) はプレースホルダ案内を出してトップへ戻る。"""
+    selects = iter(["snapshot", None])
     monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
     # _route が MENU_BACK を返してループ継続 → 2 回目 None で終了
     rc = app._top_menu_loop(tmp_path)
@@ -217,6 +217,13 @@ def test_route_plugin_delegates(monkeypatch, tmp_path):
     """PR4: plugin カテゴリは actions_plugin.run へ routing される。"""
     monkeypatch.setattr(actions_plugin, "run", lambda root: "RESULT")
     assert app._route("plugin", tmp_path) == "RESULT"
+
+
+def test_route_env_delegates(monkeypatch, tmp_path):
+    """env カテゴリは actions_env.run へ routing される (PR3)。"""
+    from devbase.tui import actions_env
+    monkeypatch.setattr(actions_env, "run", lambda root: "ENV_RESULT")
+    assert app._route("env", tmp_path) == "ENV_RESULT"
 
 
 def test_route_unimplemented_returns_menu_back(tmp_path):
