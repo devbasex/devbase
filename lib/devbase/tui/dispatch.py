@@ -16,9 +16,33 @@ TUI は CLI のロジックを再実装せず、``types.SimpleNamespace`` を組
 
 from __future__ import annotations
 
+import contextlib
+import os
 import types
 from pathlib import Path
 from typing import Callable
+
+
+@contextlib.contextmanager
+def _preserve_cwd_env():
+    """ハンドラ実行前後で CWD と ``os.environ`` を保存・復元する。
+
+    CLI 経路は 1 コマンド = 1 プロセスのため、``_resolve_project_name`` が行う
+    ``os.chdir`` / env 反映 / ``COMPOSE_PROJECT_NAME`` 上書きはプロセス終了で消える。
+    一方 TUI は同一プロセスでトップメニューへ復帰し操作を続行するため、復元しないと
+    直前プロジェクトの CWD / 環境変数 (PWD 含む) を後続操作 (env get 等) が参照して
+    しまう (PR #55 round1 codex/gemini major 指摘)。委譲チョークポイントである本層で
+    一括復元し、各 actions_* / 共有ハンドラへ復元処理を散らさない。
+    """
+    old_cwd = os.getcwd()
+    old_env = os.environ.copy()
+    try:
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            os.chdir(old_cwd)
+        os.environ.clear()
+        os.environ.update(old_env)
 
 
 def dispatch_lifecycle(subcommand: str, name: str | None = None, **attrs) -> int:
@@ -26,12 +50,14 @@ def dispatch_lifecycle(subcommand: str, name: str | None = None, **attrs) -> int
 
     ``name`` が指定されると ``_dispatch_lifecycle`` が対象ディレクトリへ chdir して
     から実行する。``up`` の ``scale`` など各サブコマンド固有の属性は ``attrs`` で渡す
-    (未指定でも getattr の既定で吸収される)。
+    (未指定でも getattr の既定で吸収される)。chdir / env 変更は TUI セッションへ
+    残留させないよう ``_preserve_cwd_env`` で実行後に復元する。
     """
     from devbase.commands.container import cmd_project
 
     ns = types.SimpleNamespace(subcommand=subcommand, name=name, **attrs)
-    return cmd_project(ns)
+    with _preserve_cwd_env():
+        return cmd_project(ns)
 
 
 def dispatch_group(handler: Callable[[Path, object], int], devbase_root: Path,
@@ -40,7 +66,9 @@ def dispatch_group(handler: Callable[[Path, object], int], devbase_root: Path,
 
     env / plugin / snapshot の各 ``cmd_*`` は ``(devbase_root, args)`` を取り、
     ``args.subcommand`` で分岐する。TUI はサブコマンドと属性を ``SimpleNamespace`` に
-    詰めてそのまま委譲する (PR3 以降の actions_* が利用)。
+    詰めてそのまま委譲する (PR3 以降の actions_* が利用)。現行ハンドラは CWD /
+    environ を変更しないが、lifecycle 側と契約を揃えるため同じく復元境界を張る。
     """
     ns = types.SimpleNamespace(subcommand=subcommand, **attrs)
-    return handler(devbase_root, ns)
+    with _preserve_cwd_env():
+        return handler(devbase_root, ns)
