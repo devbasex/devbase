@@ -35,16 +35,20 @@ from devbase.tui import (actions_env, actions_plugin, actions_project,
 
 logger = get_logger(__name__)
 
-# プロジェクト一覧の末尾に並べるカテゴリ (表示順)。``(key, label)`` で保持し、
+# プロジェクト一覧の末尾に並べるカテゴリの SSoT (表示順 / ラベル / 実装モジュール)。
 # 一覧メニューには ``label (key)`` 形式で表示する (key 入力での絞り込みも効く)。
-TOP_CATEGORIES: list[tuple[str, str]] = [
-    ("env", "環境変数"),
-    ("plugin", "プラグイン"),
-    ("snapshot", "スナップショット"),
-    ("status", "ステータス"),
+# モジュール参照を保持し ``run`` の解決を呼び出し時まで遅らせる
+# (テストが ``actions_*.run`` を monkeypatch できるようにするため)。
+_CATEGORIES: list[tuple[str, str, object]] = [
+    ("env", "環境変数", actions_env),
+    ("plugin", "プラグイン", actions_plugin),
+    ("snapshot", "スナップショット", actions_snapshot),
+    ("status", "ステータス", actions_status),
 ]
 
+TOP_CATEGORIES: list[tuple[str, str]] = [(k, label) for k, label, _ in _CATEGORIES]
 _LABELS = dict(TOP_CATEGORIES)
+_CATEGORY_MODULES = {k: mod for k, _, mod in _CATEGORIES}
 
 
 def _route(category: str, devbase_root: Path):
@@ -55,16 +59,11 @@ def _route(category: str, devbase_root: Path):
     - 操作なしで一覧へ戻るときは ``menu.MENU_BACK``
     - Ctrl-C 全体中止のときは ``None``
     """
-    if category == "env":
-        return actions_env.run(devbase_root)
-    if category == "plugin":
-        return actions_plugin.run(devbase_root)
-    if category == "snapshot":
-        return actions_snapshot.run(devbase_root)
-    if category == "status":
-        return actions_status.run(devbase_root)
-    logger.error("未知のカテゴリです: %s", _LABELS.get(category, category))
-    return menu.MENU_BACK
+    module = _CATEGORY_MODULES.get(category)
+    if module is None:
+        logger.error("未知のカテゴリです: %s", _LABELS.get(category, category))
+        return menu.MENU_BACK
+    return module.run(devbase_root)
 
 
 def _select_top(rows: list[dict]):

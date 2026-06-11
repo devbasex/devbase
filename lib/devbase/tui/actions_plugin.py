@@ -66,30 +66,25 @@ def _dispatch(devbase_root: Path, subcommand: str, **attrs) -> int:
 # 名前選択 (registry から一覧を取得して選ばせる)
 # ---------------------------------------------------------------------------
 
-def _installed_plugin_names(devbase_root: Path) -> list[str]:
-    """導入済み plugin 名の一覧を registry (plugins.yml) から取得する。"""
+def _registry_names(devbase_root: Path, lister: str) -> list[str]:
+    """registry (plugins.yml) から名前一覧を取得する。
+
+    ``lister`` は ``PluginRegistry`` の一覧メソッド名 (``list_installed`` /
+    ``list_repositories``)。取得に失敗したら案内して空リストを返す。
+    """
     from devbase.plugin.registry import PluginRegistry
 
     try:
-        return [p.name for p in PluginRegistry(Path(devbase_root)).list_installed()]
+        registry = PluginRegistry(Path(devbase_root))
+        return [item.name for item in getattr(registry, lister)()]
     except DevbaseError as e:
         logger.error("%s", e)
         return []
 
 
-def _repository_names(devbase_root: Path) -> list[str]:
-    """登録済みリポジトリ名の一覧を registry (plugins.yml) から取得する。"""
-    from devbase.plugin.registry import PluginRegistry
-
-    try:
-        return [r.name for r in PluginRegistry(Path(devbase_root)).list_repositories()]
-    except DevbaseError as e:
-        logger.error("%s", e)
-        return []
-
-
-def _select_name(message: str, names: list[str], *, all_label: str | None = None):
-    """名前一覧から 1 件選ばせる共通ヘルパ。
+def _select_name(message: str, names: list[str], *,
+                 all_label: str | None = None, empty_hint: str = "対象がありません。"):
+    """名前一覧から 1 件選ばせる共通ヘルパ。対象が無ければ案内して ``_ARG_CANCEL``。
 
     ``all_label`` 指定時は「全対象」(value="") を先頭に置く。選択メニューの ``None``
     (Ctrl-C → 全体中止) と衝突させないため空文字を番兵にし、``None`` への変換は
@@ -97,40 +92,33 @@ def _select_name(message: str, names: list[str], *, all_label: str | None = None
 
     戻り値: 名前 (``str``) / ``""`` (all_label 選択 = 全対象。呼び出し側で ``None``
     へ変換) / ``None`` (Ctrl-C → 全体中止を呼び出し元へ伝搬) / ``_ARG_CANCEL``
-    (Esc・← → サブメニューへ戻る)。
+    (Esc・← → サブメニューへ戻る、または対象が 1 件もない)。
     """
-    choices: list[tuple[str, str]] = []
-    if all_label is not None:
-        choices.append((all_label, ""))
+    if not names:
+        logger.info("%s", empty_hint)
+        return _ARG_CANCEL
+    choices = ([(all_label, "")] if all_label is not None else [])
     choices += [(n, n) for n in names]
-    sel = menu.select(f"{message} {menu.HINT_BACK}:", choices, back=True, search=False)
-    if sel is None:
-        return None                    # Ctrl-C → 全体中止 (ナビ規約)
-    if sel is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc/← → サブメニューを再表示
-    return sel                         # "" = 全対象 (呼び出し側で None へ変換)
+    return flow.back_as_cancel(menu.select(
+        f"{message} {menu.HINT_BACK}:", choices, back=True, search=False))
 
 
 def _select_installed_plugin(devbase_root: Path, message: str, *,
                              all_label: str | None = None):
     """導入済み plugin から 1 件選ばせる。対象が無ければ案内して ``_ARG_CANCEL``。"""
-    names = _installed_plugin_names(devbase_root)
-    if not names:
-        logger.info("導入済みの plugin がありません。"
-                    "`plugin install` で導入してください。")
-        return _ARG_CANCEL
-    return _select_name(message, names, all_label=all_label)
+    return _select_name(
+        message, _registry_names(devbase_root, "list_installed"),
+        all_label=all_label,
+        empty_hint="導入済みの plugin がありません。`plugin install` で導入してください。")
 
 
 def _select_repository(devbase_root: Path, message: str, *,
                        all_label: str | None = None):
     """登録済みリポジトリから 1 件選ばせる。対象が無ければ案内して ``_ARG_CANCEL``。"""
-    names = _repository_names(devbase_root)
-    if not names:
-        logger.info("登録済みのリポジトリがありません。"
-                    "`plugin repo add` で登録してください。")
-        return _ARG_CANCEL
-    return _select_name(message, names, all_label=all_label)
+    return _select_name(
+        message, _registry_names(devbase_root, "list_repositories"),
+        all_label=all_label,
+        empty_hint="登録済みのリポジトリがありません。`plugin repo add` で登録してください。")
 
 
 # ---------------------------------------------------------------------------

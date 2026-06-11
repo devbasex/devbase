@@ -56,6 +56,16 @@ def need(value):
     return value
 
 
+def back_as_cancel(value):
+    """``MENU_BACK`` を ``ARG_CANCEL`` へ読み替える (選択ヘルパの番兵契約用)。
+
+    actions_* の選択ヘルパは「Esc = 呼び出し元メニューの再表示」を ``ARG_CANCEL``
+    で表現する契約を持つ (メニューループ自身の ``MENU_BACK`` = 1 つ上の階層へ、
+    と区別するため)。実値と ``None`` (Ctrl-C) はそのまま通す。
+    """
+    return ARG_CANCEL if value is menu.MENU_BACK else value
+
+
 def need_optional(value):
     """``optional_int`` の番兵 (``ABORT`` / ``ARG_CANCEL``) を例外へ変換する。
 

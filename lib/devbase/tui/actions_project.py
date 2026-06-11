@@ -84,13 +84,9 @@ def _select_build_image(devbase_root: Path):
     # value="" を「compose.yml 全体」に割り当て、選択メニューの None (Ctrl-C =
     # 全体中止) と衝突させない。呼び出し側で空文字 → None へ変換する。
     choices = [("compose.yml 全体をビルド", "")] + [(img, img) for img in images]
-    sel = menu.select(f"ビルドするイメージを選択 {menu.HINT_BACK}:",
-                      choices, back=True, search=False)
-    if sel is None:
-        return None                    # Ctrl-C → 全体中止 (ナビ規約)
-    if sel is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc/← → サブメニューを再表示
-    return sel                         # "" = compose 全体 (呼び出し側で None へ変換)
+    return flow.back_as_cancel(menu.select(
+        f"ビルドするイメージを選択 {menu.HINT_BACK}:",
+        choices, back=True, search=False))
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +129,10 @@ def _op_build(devbase_root: Path, name: str):
 
 
 _OP_HANDLERS = {
+    # up/rebuild は引数なしで即実行。up は scale 属性を参照する (常に None。
+    # 他コマンドは無視する)。
+    "up": lambda root, name: dispatch_lifecycle("up", name, scale=None),
+    "rebuild": lambda root, name: dispatch_lifecycle("rebuild", name, scale=None),
     "down": _op_down,
     "login": _op_login,
     "ps": _op_ps,
@@ -149,10 +149,6 @@ def _run_operation(devbase_root: Path, name: str, op: str):
     戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc・確認拒否で引数収集を
     中止 = サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
     """
-    if op in ("up", "rebuild"):
-        # 引数なしで即実行。up は scale 属性を参照する (常に None。他コマンドは無視)。
-        return dispatch_lifecycle(op, name, scale=None)
-
     handler = _OP_HANDLERS.get(op)
     if handler is None:
         # 到達しない (メニュー値は _RUNNING_OPS に限定される)。保守的に no-op。

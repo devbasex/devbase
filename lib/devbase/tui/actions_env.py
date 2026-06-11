@@ -100,11 +100,9 @@ def _select_project(devbase_root: Path):
     choices = [(entry, i) for i, entry in enumerate(entries)]
     idx = menu.select(f"対象プロジェクトを選択 {menu.HINT_SEARCH}:",
                       choices, back=True, search=True)
-    if idx is None:
-        return None                    # Ctrl-C → 全体中止 (ナビ規約)
-    if idx is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc → サブメニューを再表示
-    return rows[idx]["name"]
+    if isinstance(idx, int):
+        return rows[idx]["name"]
+    return flow.back_as_cancel(idx)    # None=Ctrl-C / MENU_BACK=Esc → 再表示
 
 
 def _run_in_project(devbase_root: Path, project_name: str, fn):
@@ -213,17 +211,6 @@ def _select_scoped_project(devbase_root: Path, message: str, choices):
 # 各操作の引数収集 + dispatch (plan 2.3 契約)
 # ---------------------------------------------------------------------------
 
-def _op_sync(devbase_root: Path):
-    # 引数なし。ソースファイルから認証情報を再同期する。
-    return _dispatch(devbase_root, "sync")
-
-
-def _op_edit(devbase_root: Path):
-    # 引数なし。$DEVBASE_ROOT/.env を $EDITOR で開く (グローバル操作。
-    # plan 3.3 は CWD スコープとするが実装はグローバルのため chdir しない)。
-    return _dispatch(devbase_root, "edit")
-
-
 def _op_init(devbase_root: Path):
     # 既存設定がある場合は --reset でやり直し (既存はバックアップされる)。
     reset = flow.need(menu.confirm(
@@ -331,8 +318,11 @@ def _op_import(devbase_root: Path):
 
 
 _OP_HANDLERS = {
-    "sync": _op_sync,
-    "edit": _op_edit,
+    # sync は引数なしで即実行 (ソースファイルから認証情報を再同期する)。
+    # edit も引数なし。$DEVBASE_ROOT/.env を $EDITOR で開くグローバル操作のため
+    # chdir しない (plan 3.3 は CWD スコープとするが実装を正とする)。
+    "sync": lambda root: _dispatch(root, "sync"),
+    "edit": lambda root: _dispatch(root, "edit"),
     "init": _op_init,
     "list": _op_list,
     "set": _op_set,

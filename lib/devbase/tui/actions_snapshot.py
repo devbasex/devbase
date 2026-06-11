@@ -74,12 +74,7 @@ def _select_snapshot_name(devbase_root: Path, message: str):
 
     if snapshots is None:
         # 一覧が取れない環境では名前を直接入力させる。
-        name = menu.text(message, allow_empty=False)
-        if name is None:
-            return None                # Ctrl-C → 全体中止 (ナビ規約)
-        if name is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → 操作メニューを再表示
-        return name
+        return flow.back_as_cancel(menu.text(message, allow_empty=False))
 
     if not snapshots:
         logger.info("スナップショットがありません。先に作成 (create) してください。")
@@ -93,13 +88,8 @@ def _select_snapshot_name(devbase_root: Path, message: str):
          s.get("name"))
         for s in snapshots
     ]
-    sel = menu.select(f"{message} {menu.HINT_SEARCH}:", choices,
-                      back=True, search=True)
-    if sel is None:
-        return None                    # Ctrl-C → 全体中止 (ナビ規約)
-    if sel is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc → 操作メニューを再表示
-    return sel
+    return flow.back_as_cancel(menu.select(
+        f"{message} {menu.HINT_SEARCH}:", choices, back=True, search=True))
 
 
 def _optional_point(message: str):
