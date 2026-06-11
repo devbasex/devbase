@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import types
 
-from devbase.tui import actions_project, app, menu
+from devbase.tui import actions_plugin, actions_project, app, menu
 
 
 def _make_plugin_project(root, plugin_path, proj):
@@ -213,5 +213,12 @@ def test_route_project_delegates(monkeypatch, tmp_path):
     assert app._route("project", tmp_path) == "RESULT"
 
 
+def test_route_plugin_delegates(monkeypatch, tmp_path):
+    """PR4: plugin カテゴリは actions_plugin.run へ routing される。"""
+    monkeypatch.setattr(actions_plugin, "run", lambda root: "RESULT")
+    assert app._route("plugin", tmp_path) == "RESULT"
+
+
 def test_route_unimplemented_returns_menu_back(tmp_path):
-    assert app._route("plugin", tmp_path) is menu.MENU_BACK
+    # snapshot は PR5 で配線されるまでプレースホルダ (MENU_BACK)。
+    assert app._route("snapshot", tmp_path) is menu.MENU_BACK
