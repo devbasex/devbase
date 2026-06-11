@@ -215,3 +215,17 @@ def test_route_project_delegates(monkeypatch, tmp_path):
 
 def test_route_unimplemented_returns_menu_back(tmp_path):
     assert app._route("plugin", tmp_path) is menu.MENU_BACK
+
+
+def test_route_snapshot_delegates(monkeypatch, tmp_path):
+    """PR5: snapshot カテゴリは actions_snapshot.run へ配線される。"""
+    from devbase.tui import actions_snapshot
+    monkeypatch.setattr(actions_snapshot, "run", lambda root: "SNAP")
+    assert app._route("snapshot", tmp_path) == "SNAP"
+
+
+def test_route_status_delegates(monkeypatch, tmp_path):
+    """PR5: status カテゴリは actions_status.run へ配線される。"""
+    from devbase.tui import actions_status
+    monkeypatch.setattr(actions_status, "run", lambda root: "STATUS")
+    assert app._route("status", tmp_path) == "STATUS"
