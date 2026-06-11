@@ -42,6 +42,11 @@ except ImportError:  # pragma: no cover - 未導入環境のフォールバッ�
 # ``None`` (= Ctrl-C による全体中止) と区別するための番兵。
 MENU_BACK = object()
 
+# 選択メニューのプロンプト文言に添えるキー操作ヒント (各 actions_* で共通)。
+# search 有効メニューは ← が入力カーソルと衝突するため Esc のみを案内する。
+HINT_BACK = "(↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止)"
+HINT_SEARCH = "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻る / Ctrl-C 中止)"
+
 
 # ---------------------------------------------------------------------------
 # キーバインド (Esc / ←)
@@ -195,6 +200,24 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
 # 引数収集ヘルパ (PR2 以降の各カテゴリ操作が CLI 相当の属性値を集めるのに使う)
 # ---------------------------------------------------------------------------
 
+def _collect_stripped(make_question, *, allow_empty: bool, empty_error: str):
+    """text/path 共通の収集ループ。strip した入力を返す。
+
+    ``allow_empty=False`` のとき空文字は受け付けず再入力を促す
+    (自己再帰を避け while で回す)。戻り値: 入力文字列 / ``MENU_BACK`` (Esc →
+    1 つ前のメニューへ戻る) / ``None`` (Ctrl-C → 全体中止)。
+    """
+    while True:
+        ans = _ask_with_escape(make_question())
+        if ans is None or ans is MENU_BACK:
+            return ans                 # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
+        ans = ans.strip()
+        if not ans and not allow_empty:
+            logger.error(empty_error)
+            continue
+        return ans
+
+
 def text(message: str, *, default: str | None = None,
          allow_empty: bool = True):
     """自由入力 (1 行) を収集する。
@@ -205,15 +228,9 @@ def text(message: str, *, default: str | None = None,
     EOF / Ctrl-C のどちらも ``None`` = 中止)。
     """
     if HAVE_QUESTIONARY:
-        while True:  # 空 (allow_empty=False) は再入力。自己再帰を避け while で回す。
-            ans = _ask_with_escape(questionary.text(message, default=default or ""))
-            if ans is None or ans is MENU_BACK:
-                return ans             # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
-            ans = ans.strip()
-            if not ans and not allow_empty:
-                logger.error("値を入力してください。")
-                continue
-            return ans
+        return _collect_stripped(
+            lambda: questionary.text(message, default=default or ""),
+            allow_empty=allow_empty, empty_error="値を入力してください。")
     return _input_text(message, default=default, allow_empty=allow_empty)
 
 
@@ -267,15 +284,9 @@ def path(message: str, *, default: str | None = None,
     ``MENU_BACK`` (Esc → 1 つ前のメニューへ戻る) / ``None`` (Ctrl-C → 全体中止)。
     """
     if HAVE_QUESTIONARY:
-        while True:  # 空 (allow_empty=False) は再入力。自己再帰を避け while で回す。
-            ans = _ask_with_escape(questionary.path(message, default=default or ""))
-            if ans is None or ans is MENU_BACK:
-                return ans             # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
-            ans = ans.strip()
-            if not ans and not allow_empty:
-                logger.error("パスを入力してください。")
-                continue
-            return ans
+        return _collect_stripped(
+            lambda: questionary.path(message, default=default or ""),
+            allow_empty=allow_empty, empty_error="パスを入力してください。")
     return _input_text(message, default=default, allow_empty=allow_empty)
 
 

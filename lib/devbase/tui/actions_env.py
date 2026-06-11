@@ -17,16 +17,13 @@ project スコープ依存の扱い (plan 3.3):
   常に ``$DEVBASE_ROOT/.env`` を開くグローバル操作のため、プロジェクト選択は
   行わない (plan 表と実装の乖離。parser / 実装を正とする)。
 
-破壊的操作 ``delete`` は実行前に ``menu.confirm`` で確認する (plan 3.4)。
+破壊的操作 ``delete`` は実行前に確認する (plan 3.4)。
 
 export/import は引数が多いため TUI では主要引数 (``dest`` / ``source``) のみ
 収集し、残りは CLI parser の既定値と同一の属性を明示的に渡す (既定値の乖離を
 防ぐ。細かい制御が必要な場合は CLI を使う想定)。
 
-ナビ規約は actions_project と同一:
-- サブメニューで Esc/← → カテゴリメニューへ戻る → (呼び出し元へ ``MENU_BACK``)
-- Ctrl-C → ``None`` を伝搬して全体中止
-- 引数収集の中止 (``_ARG_CANCEL``) → サブメニューを再表示
+中止系の伝搬 (Ctrl-C / Esc / ``_ARG_CANCEL``) は ``tui.flow`` のナビ規約に従う。
 """
 
 from __future__ import annotations
@@ -40,7 +37,7 @@ from devbase.commands.project import (
     list_projects,
 )
 from devbase.log import get_logger
-from devbase.tui import menu
+from devbase.tui import flow, menu
 from devbase.tui.dispatch import dispatch_group
 
 logger = get_logger(__name__)
@@ -61,9 +58,8 @@ _ENV_OPS: list[tuple[str, str]] = [
     ("バンドルからインポート (import)", "import"),
 ]
 
-# 引数収集を Esc/Ctrl-C で中止したことを示す番兵 (= サブメニューへ戻る)。
-# dispatch の rc (int) や ``None`` (= 全体中止) と区別する (actions_project と同じ)。
-_ARG_CANCEL = object()
+# 中止系番兵は flow と同一オブジェクトを再公開する (呼び出し側・テストの契約)。
+_ARG_CANCEL = flow.ARG_CANCEL
 
 
 def _dispatch(devbase_root: Path, subcommand: str, **attrs):
@@ -83,10 +79,8 @@ def _select_action():
     戻り値: サブコマンド文字列 / ``MENU_BACK`` (Esc・← → トップへ戻る) / ``None``
     (Ctrl-C 中止)。
     """
-    return menu.select(
-        "環境変数の操作を選択 "
-        "(↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
-        list(_ENV_OPS), back=True, search=False)
+    return menu.select(f"環境変数の操作を選択 {menu.HINT_BACK}:",
+                       list(_ENV_OPS), back=True, search=False)
 
 
 def _select_project(devbase_root: Path):
@@ -104,10 +98,8 @@ def _select_project(devbase_root: Path):
 
     entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
     choices = [(entry, i) for i, entry in enumerate(entries)]
-    idx = menu.select(
-        "対象プロジェクトを選択 "
-        "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻る / Ctrl-C 中止):",
-        choices, back=True, search=True)
+    idx = menu.select(f"対象プロジェクトを選択 {menu.HINT_SEARCH}:",
+                      choices, back=True, search=True)
     if idx is None:
         return None                    # Ctrl-C → 全体中止 (ナビ規約)
     if idx is menu.MENU_BACK:
@@ -202,7 +194,44 @@ def _import_default_attrs() -> dict:
     }
 
 
-def _run_list(devbase_root: Path):
+def _select_scoped_project(devbase_root: Path, message: str, choices):
+    """スコープ選択 + プロジェクトスコープなら対象プロジェクトも選ぶ共通フロー。
+
+    list/set/get が共有する「グローバル or プロジェクトを選び、プロジェクトを
+    含むスコープなら対象名も選ぶ」の前半 2 プロンプト。``(scope, name)`` を返す
+    (グローバルのみのとき ``name`` は ``None``)。中止系は flow 例外で伝搬する。
+    """
+    scope = flow.need(menu.select(f"{message} {menu.HINT_BACK}:",
+                                  choices, back=True, search=False))
+    name = None
+    if scope != "global":
+        name = flow.need(_select_project(devbase_root))
+    return scope, name
+
+
+# ---------------------------------------------------------------------------
+# 各操作の引数収集 + dispatch (plan 2.3 契約)
+# ---------------------------------------------------------------------------
+
+def _op_sync(devbase_root: Path):
+    # 引数なし。ソースファイルから認証情報を再同期する。
+    return _dispatch(devbase_root, "sync")
+
+
+def _op_edit(devbase_root: Path):
+    # 引数なし。$DEVBASE_ROOT/.env を $EDITOR で開く (グローバル操作。
+    # plan 3.3 は CWD スコープとするが実装はグローバルのため chdir しない)。
+    return _dispatch(devbase_root, "edit")
+
+
+def _op_init(devbase_root: Path):
+    # 既存設定がある場合は --reset でやり直し (既存はバックアップされる)。
+    reset = flow.need(menu.confirm(
+        "既存の設定をバックアップしてやり直しますか (--reset)?", default=False))
+    return _dispatch(devbase_root, "init", reset=reset)
+
+
+def _op_list(devbase_root: Path):
     """``env list``: 表示範囲 + 表示オプションを収集して一覧表示する。
 
     ハンドラ (``cmd_env_list``) は CWD (PWD) が projects/ 配下のときだけ
@@ -212,86 +241,43 @@ def _run_list(devbase_root: Path):
     TUI は通常 DEVBASE_ROOT で動くので、切替なしではプロジェクト分が表示
     されない)。「グローバルのみ」だけが切替なしで実行できる。
     """
-    scope = menu.select(
-        "表示範囲を選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
+    scope, name = _select_scoped_project(
+        devbase_root, "表示範囲を選択",
         [("グローバル + プロジェクト", "both"),
          ("グローバルのみ (--global)", "global"),
-         ("プロジェクトのみ (--project)", "project")],
-        back=True, search=False)
-    if scope is None:
-        return None                    # Ctrl-C → 全体中止
-    if scope is menu.MENU_BACK:
-        return _ARG_CANCEL
+         ("プロジェクトのみ (--project)", "project")])
+    reveal = flow.need(menu.confirm(
+        "機密値を伏せ字にせず表示しますか (--reveal)?", default=False))
+    keys_only = flow.need(menu.confirm("キー名のみ表示しますか (--keys)?", default=False))
 
-    name = None
-    if scope in ("both", "project"):
-        name = _select_project(devbase_root)
-        if name is None:
-            return None                # Ctrl-C → 全体中止
-        if name is _ARG_CANCEL:
-            return _ARG_CANCEL
-
-    reveal = menu.confirm("機密値を伏せ字にせず表示しますか (--reveal)?", default=False)
-    if reveal is None:
-        return None                    # Ctrl-C → 全体中止
-    if reveal is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc → サブメニューへ戻る
-    keys_only = menu.confirm("キー名のみ表示しますか (--keys)?", default=False)
-    if keys_only is None:
-        return None                    # Ctrl-C → 全体中止
-    if keys_only is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc → サブメニューへ戻る
-
-    if scope in ("both", "project"):
-        return _run_in_project(
-            devbase_root, name,
-            lambda: _dispatch(devbase_root, "list",
-                              global_only=False,
-                              project_only=(scope == "project"),
-                              reveal=reveal, keys_only=keys_only))
-    return _dispatch(devbase_root, "list",
-                     global_only=True, project_only=False,
-                     reveal=reveal, keys_only=keys_only)
+    attrs = {"global_only": scope == "global",
+             "project_only": scope == "project",
+             "reveal": reveal, "keys_only": keys_only}
+    if name is None:
+        return _dispatch(devbase_root, "list", **attrs)
+    return _run_in_project(devbase_root, name,
+                           lambda: _dispatch(devbase_root, "list", **attrs))
 
 
-def _run_set(devbase_root: Path):
+def _op_set(devbase_root: Path):
     """``env set``: 設定先 (グローバル / プロジェクト) と KEY=VALUE を収集して設定する。
 
     プロジェクト設定 (--project) は対象を選ばせて chdir してから実行する (plan 3.3)。
     """
-    scope = menu.select(
-        "設定先を選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
+    _, name = _select_scoped_project(
+        devbase_root, "設定先を選択",
         [("グローバル ($DEVBASE_ROOT/.env)", "global"),
-         ("プロジェクト (projects/<name>/.env, --project)", "project")],
-        back=True, search=False)
-    if scope is None:
-        return None                    # Ctrl-C → 全体中止
-    if scope is menu.MENU_BACK:
-        return _ARG_CANCEL
+         ("プロジェクト (projects/<name>/.env, --project)", "project")])
+    assignment = flow.need(_collect_assignment())
 
-    name = None
-    if scope == "project":
-        name = _select_project(devbase_root)
-        if name is None:
-            return None                # Ctrl-C → 全体中止
-        if name is _ARG_CANCEL:
-            return _ARG_CANCEL
-
-    assignment = _collect_assignment()
-    if assignment is None:
-        return None                    # Ctrl-C → 全体中止
-    if assignment is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc → サブメニューへ戻る
-
-    if scope == "project":
-        return _run_in_project(
-            devbase_root, name,
-            lambda: _dispatch(devbase_root, "set",
-                              assignment=assignment, project=True))
-    return _dispatch(devbase_root, "set", assignment=assignment, project=False)
+    if name is None:
+        return _dispatch(devbase_root, "set", assignment=assignment, project=False)
+    return _run_in_project(
+        devbase_root, name,
+        lambda: _dispatch(devbase_root, "set", assignment=assignment, project=True))
 
 
-def _run_get(devbase_root: Path):
+def _op_get(devbase_root: Path):
     """``env get``: 取得元 (グローバル / プロジェクト) と変数名を収集して値を表示する。
 
     ``cmd_env_get`` はグローバル .env に無いキーを CWD (PWD) のプロジェクト .env へ
@@ -299,131 +285,85 @@ def _run_get(devbase_root: Path):
     プロジェクト固有キーを取得できない。list/set と同様に取得元を選ばせ、
     プロジェクト選択時は chdir + ``PWD`` 切替後に実行する (codex round2 指摘)。
     """
-    scope = menu.select(
-        "取得元を選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
+    _, name = _select_scoped_project(
+        devbase_root, "取得元を選択",
         [("グローバル ($DEVBASE_ROOT/.env)", "global"),
-         ("プロジェクト (グローバルに無ければ projects/<name>/.env)", "project")],
-        back=True, search=False)
-    if scope is None:
-        return None                    # Ctrl-C → 全体中止
-    if scope is menu.MENU_BACK:
-        return _ARG_CANCEL
+         ("プロジェクト (グローバルに無ければ projects/<name>/.env)", "project")])
+    key = flow.need(menu.text("取得する変数名", allow_empty=False))
 
-    name = None
-    if scope == "project":
-        name = _select_project(devbase_root)
-        if name is None:
-            return None                # Ctrl-C → 全体中止
-        if name is _ARG_CANCEL:
-            return _ARG_CANCEL
-
-    key = menu.text("取得する変数名", allow_empty=False)
-    if key is None:
-        return None                    # Ctrl-C → 全体中止
-    if key is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc → サブメニューへ戻る
-
-    if scope == "project":
-        return _run_in_project(
-            devbase_root, name,
-            lambda: _dispatch(devbase_root, "get", key=key))
-    return _dispatch(devbase_root, "get", key=key)
+    if name is None:
+        return _dispatch(devbase_root, "get", key=key)
+    return _run_in_project(devbase_root, name,
+                           lambda: _dispatch(devbase_root, "get", key=key))
 
 
+def _op_delete(devbase_root: Path):
+    key = flow.need(menu.text("削除する変数名", allow_empty=False))
+    # 破壊的操作のため実行前に確認する (plan 3.4)。拒否 / Esc は実行せず戻る。
+    flow.confirm_or_back(f"変数 '{key}' をグローバル .env から削除しますか?")
+    return _dispatch(devbase_root, "delete", key=key)
+
+
+def _op_project(devbase_root: Path):
+    # プロジェクト固有変数の対話設定。projects/ 配下で動く CWD スコープ操作の
+    # ため、対象を選ばせて chdir してから実行する (plan 3.3)。
+    name = flow.need(_select_project(devbase_root))
+    return _run_in_project(devbase_root, name,
+                           lambda: _dispatch(devbase_root, "project"))
+
+
+def _op_export(devbase_root: Path):
+    # 主要引数 dest のみ収集。空入力は parser 既定 (./devbase-env-<TS>.dbenv)。
+    dest = flow.need(menu.path(
+        "出力先パス (空で既定: ./devbase-env-<タイムスタンプ>.dbenv)",
+        allow_empty=True))
+    return _dispatch(devbase_root, "export", dest=(dest or None),
+                     **_export_default_attrs())
+
+
+def _op_import(devbase_root: Path):
+    # 主要引数 source のみ収集 (必須 positional)。merge は parser 既定の
+    # keep-existing (既存キー優先) で安全側。既存 .env はハンドラ側で
+    # バックアップされる。
+    source = flow.need(menu.path("インポートするバンドルのパス", allow_empty=False))
+    return _dispatch(devbase_root, "import", source=source,
+                     **_import_default_attrs())
+
+
+_OP_HANDLERS = {
+    "sync": _op_sync,
+    "edit": _op_edit,
+    "init": _op_init,
+    "list": _op_list,
+    "set": _op_set,
+    "get": _op_get,
+    "delete": _op_delete,
+    "project": _op_project,
+    "export": _op_export,
+    "import": _op_import,
+}
+
+
+@flow.collect_args
 def _run_operation(devbase_root: Path, op: str):
     """選択された env 操作の引数を収集して ``cmd_env`` へ委譲する。
 
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc で引数収集を中止 =
-    サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc・確認拒否で引数収集を
+    中止 = サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
     属性は plan 2.3 の契約表 (cli.py parser と同期確認済み) に従う。
     """
-    if op == "sync":
-        # 引数なし。ソースファイルから認証情報を再同期する。
-        return _dispatch(devbase_root, "sync")
-
-    if op == "edit":
-        # 引数なし。$DEVBASE_ROOT/.env を $EDITOR で開く (グローバル操作。
-        # plan 3.3 は CWD スコープとするが実装はグローバルのため chdir しない)。
-        return _dispatch(devbase_root, "edit")
-
-    if op == "init":
-        # 既存設定がある場合は --reset でやり直し (既存はバックアップされる)。
-        reset = menu.confirm(
-            "既存の設定をバックアップしてやり直しますか (--reset)?", default=False)
-        if reset is None:
-            return None                # Ctrl-C → 全体中止
-        if reset is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        return _dispatch(devbase_root, "init", reset=reset)
-
-    if op == "list":
-        return _run_list(devbase_root)
-
-    if op == "set":
-        return _run_set(devbase_root)
-
-    if op == "get":
-        return _run_get(devbase_root)
-
-    if op == "delete":
-        key = menu.text("削除する変数名", allow_empty=False)
-        if key is None:
-            return None                # Ctrl-C → 全体中止
-        if key is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        # 破壊的操作のため実行前に確認する (plan 3.4)。拒否 (False) / Esc は実行せず
-        # サブメニューへ戻る。MENU_BACK は truthy のため is 判定を not より先に行う。
-        ok = menu.confirm(f"変数 '{key}' をグローバル .env から削除しますか?",
-                          default=False)
-        if ok is None:
-            return None                # Ctrl-C → 全体中止
-        if ok is menu.MENU_BACK or not ok:
-            return _ARG_CANCEL         # Esc / 拒否 → 実行しない
-        return _dispatch(devbase_root, "delete", key=key)
-
-    if op == "project":
-        # プロジェクト固有変数の対話設定。projects/ 配下で動く CWD スコープ操作の
-        # ため、対象を選ばせて chdir してから実行する (plan 3.3)。
-        name = _select_project(devbase_root)
-        if name is None:
-            return None                # Ctrl-C → 全体中止
-        if name is _ARG_CANCEL:
-            return _ARG_CANCEL
-        return _run_in_project(devbase_root, name,
-                               lambda: _dispatch(devbase_root, "project"))
-
-    if op == "export":
-        # 主要引数 dest のみ収集。空入力は parser 既定 (./devbase-env-<TS>.dbenv)。
-        dest = menu.path("出力先パス (空で既定: ./devbase-env-<タイムスタンプ>.dbenv)",
-                         allow_empty=True)
-        if dest is None:
-            return None                # Ctrl-C → 全体中止
-        if dest is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        return _dispatch(devbase_root, "export", dest=(dest or None),
-                         **_export_default_attrs())
-
-    if op == "import":
-        # 主要引数 source のみ収集 (必須 positional)。merge は parser 既定の
-        # keep-existing (既存キー優先) で安全側。既存 .env はハンドラ側で
-        # バックアップされる。
-        source = menu.path("インポートするバンドルのパス", allow_empty=False)
-        if source is None:
-            return None                # Ctrl-C → 全体中止
-        if source is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        return _dispatch(devbase_root, "import", source=source,
-                         **_import_default_attrs())
-
-    # 到達しない (メニュー値は _ENV_OPS に限定される)。保守的に no-op。
-    logger.error("未知の操作です: %s", op)
-    return _ARG_CANCEL
+    handler = _OP_HANDLERS.get(op)
+    if handler is None:
+        # 到達しない (メニュー値は _ENV_OPS に限定される)。保守的に no-op。
+        logger.error("未知の操作です: %s", op)
+        raise flow.BackOut
+    return handler(devbase_root)
 
 
 def run(devbase_root: Path):
     """環境変数カテゴリのエントリ。操作選択 → 引数収集 → cmd_env へ委譲。
 
-    戻り値プロトコル (トップループが ``is`` 同一性で判定する。actions_project と同一):
+    戻り値プロトコル (``flow.menu_loop``。トップループが ``is`` 同一性で判定する):
     - **操作を実行した場合**: dispatch の rc (``int``) を返す。「実行したのでトップへ
       戻る、rc は呼び出し側が記憶」の意味で、失敗が ``devbase list`` の終了コードへ
       伝搬する。
@@ -432,13 +372,5 @@ def run(devbase_root: Path):
 
     引数収集を中止 (``_ARG_CANCEL``) した場合はサブメニューを再表示する。
     """
-    while True:
-        op = _select_action()
-        if op is menu.MENU_BACK:
-            return menu.MENU_BACK
-        if op is None:
-            return None
-        rc = _run_operation(devbase_root, op)
-        if rc is _ARG_CANCEL:
-            continue                   # 引数収集を中止 → サブメニューへ戻る
-        return rc                      # 実行 rc → トップへ復帰 (呼び出し側が記憶)
+    return flow.menu_loop(_select_action,
+                          lambda op: _run_operation(devbase_root, op))
