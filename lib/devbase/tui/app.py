@@ -4,8 +4,8 @@
 プロジェクト一覧の選択だけだった旧挙動を、全カテゴリ
 (project / env / plugin / snapshot / status) を束ねるトップ階層メニューへ拡張する。
 
-PR1 で project、PR3 で env、PR4 で plugin カテゴリを配線済み。snapshot/status は
-後続 PR (PR5) で各 ``actions_*`` を ``_route`` に足すまでプレースホルダ案内を出す。
+PR1 で project、PR3 で env、PR4 で plugin、PR5 で snapshot/status を配線済みで、
+全カテゴリがトップ階層メニューから実行できる。
 
 後方互換 (plan 3.2):
 - ``--no-interactive`` / ``--plain`` (interactive=False) と非 TTY は従来どおり一覧
@@ -26,7 +26,8 @@ from pathlib import Path
 
 from devbase.commands.project import _print_table, list_projects
 from devbase.log import get_logger
-from devbase.tui import actions_env, actions_plugin, actions_project, menu
+from devbase.tui import (actions_env, actions_plugin, actions_project,
+                         actions_snapshot, actions_status, menu)
 
 logger = get_logger(__name__)
 
@@ -60,7 +61,10 @@ def _route(category: str, devbase_root: Path):
         return actions_env.run(devbase_root)
     if category == "plugin":
         return actions_plugin.run(devbase_root)
-    # PR5: snapshot/status をここに追加する。
+    if category == "snapshot":
+        return actions_snapshot.run(devbase_root)
+    if category == "status":
+        return actions_status.run(devbase_root)
     logger.info("「%s」は後続 PR で実装予定です。", _LABELS.get(category, category))
     return menu.MENU_BACK
 

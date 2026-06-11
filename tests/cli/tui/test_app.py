@@ -169,7 +169,9 @@ def test_top_menu_back_does_not_overwrite_last_rc(monkeypatch, tmp_path):
     monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
     runs = iter([1])  # project 実行 → rc=1
     monkeypatch.setattr(actions_project, "run", lambda root: next(runs))
-    # snapshot は未実装カテゴリ (_route が MENU_BACK) → last_rc を維持
+    # snapshot は操作なしで戻る (MENU_BACK) → last_rc を維持
+    from devbase.tui import actions_snapshot
+    monkeypatch.setattr(actions_snapshot, "run", lambda root: menu.MENU_BACK)
 
     assert app._top_menu_loop(tmp_path) == 1
 
@@ -199,10 +201,12 @@ def test_top_menu_category_ctrl_c_aborts_whole_app(monkeypatch, tmp_path):
     assert app._top_menu_loop(tmp_path) == 0
 
 
-def test_top_menu_unimplemented_category_returns_to_top(monkeypatch, tmp_path):
-    """未実装カテゴリ (snapshot 等) はプレースホルダ案内を出してトップへ戻る。"""
+def test_top_menu_menu_back_category_returns_to_top(monkeypatch, tmp_path):
+    """カテゴリが操作なし (MENU_BACK) で戻ったらトップメニューを再表示する。"""
     selects = iter(["snapshot", None])
     monkeypatch.setattr(menu, "select", lambda *a, **k: next(selects))
+    from devbase.tui import actions_snapshot
+    monkeypatch.setattr(actions_snapshot, "run", lambda root: menu.MENU_BACK)
     # _route が MENU_BACK を返してループ継続 → 2 回目 None で終了
     rc = app._top_menu_loop(tmp_path)
     assert rc == 0
@@ -226,6 +230,20 @@ def test_route_env_delegates(monkeypatch, tmp_path):
     assert app._route("env", tmp_path) == "ENV_RESULT"
 
 
-def test_route_unimplemented_returns_menu_back(tmp_path):
-    # snapshot は PR5 で配線されるまでプレースホルダ (MENU_BACK)。
-    assert app._route("snapshot", tmp_path) is menu.MENU_BACK
+def test_route_unknown_category_returns_menu_back(tmp_path):
+    # 全カテゴリ配線済みのため、未知カテゴリへの防御的 fallback (MENU_BACK) を検証。
+    assert app._route("unknown", tmp_path) is menu.MENU_BACK
+
+
+def test_route_snapshot_delegates(monkeypatch, tmp_path):
+    """PR5: snapshot カテゴリは actions_snapshot.run へ配線される。"""
+    from devbase.tui import actions_snapshot
+    monkeypatch.setattr(actions_snapshot, "run", lambda root: "SNAP")
+    assert app._route("snapshot", tmp_path) == "SNAP"
+
+
+def test_route_status_delegates(monkeypatch, tmp_path):
+    """PR5: status カテゴリは actions_status.run へ配線される。"""
+    from devbase.tui import actions_status
+    monkeypatch.setattr(actions_status, "run", lambda root: "STATUS")
+    assert app._route("status", tmp_path) == "STATUS"
