@@ -27,9 +27,11 @@ logger = get_logger(__name__)
 
 # plugin サブコマンド (表示順 = ハイライト既定順)。閲覧系の list を先頭に置き、
 # Enter 連打で安全な一覧表示へ到達できるようにする。value は cmd_plugin の subcommand 名
-# (repo のみサブ階層メニューへの分岐)。
+# (repo のみサブ階層メニューへの分岐)。--available は y/N で聞かず独立した
+# メニュー項目にする (非破壊操作の確認プロンプト廃止)。
 _PLUGIN_OPS: list[tuple[str, str]] = [
-    ("一覧表示 (list)", "list"),
+    ("導入済み一覧 (list)", "list"),
+    ("利用可能一覧 (list --available)", "list-available"),
     ("インストール (install)", "install"),
     ("アンインストール (uninstall)", "uninstall"),
     ("更新 (update)", "update"),
@@ -149,22 +151,13 @@ def _select_repo_operation():
 # 各操作の引数収集 + dispatch (plan 2.3 契約)
 # ---------------------------------------------------------------------------
 
-def _op_list(devbase_root: Path):
-    # --available: 導入済み一覧の代わりに未導入の利用可能 plugin を表示する。
-    available = flow.need(menu.confirm(
-        "未導入の利用可能 plugin を表示しますか (--available)?", default=False))
-    return _dispatch(devbase_root, "list", available=available)
-
-
 def _op_install(devbase_root: Path):
+    # --link / --all は CLI 既定 (False) で実行する。指定が必要な場合は CLI
+    # (`plugin install --link/--all`) を使う想定 (非破壊操作の確認プロンプト廃止)。
     source = flow.need(menu.text(
         "インストールする plugin の source (名前 / URL / パス)", allow_empty=False))
-    link = flow.need(menu.confirm(
-        "symlink としてインストールしますか (--link)?", default=False))
-    install_all = flow.need(menu.confirm(
-        "リポジトリ内の全 plugin をインストールしますか (--all)?", default=False))
     return _dispatch(devbase_root, "install",
-                     source=source, link=link, install_all=install_all)
+                     source=source, link=False, install_all=False)
 
 
 def _op_uninstall(devbase_root: Path):
@@ -188,7 +181,9 @@ def _op_info(devbase_root: Path):
 
 
 _OP_HANDLERS = {
-    "list": _op_list,
+    # list 系は引数収集なしで即実行 (--available はメニュー項目で分岐)。
+    "list": lambda root: _dispatch(root, "list", available=False),
+    "list-available": lambda root: _dispatch(root, "list", available=True),
     "install": _op_install,
     "uninstall": _op_uninstall,
     "update": _op_update,

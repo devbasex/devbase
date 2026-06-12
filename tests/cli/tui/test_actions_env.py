@@ -166,30 +166,21 @@ def test_run_operation_edit_is_global_no_project_select(monkeypatch, tmp_path):
     assert captured["cwd"] == before, "edit は chdir しない"
 
 
-@pytest.mark.parametrize("reset", [True, False])
-def test_run_operation_init_collects_reset(monkeypatch, tmp_path, reset):
-    """init は confirm の結果を --reset として渡す (plan 2.3: reset 既定 False)。"""
+def test_run_operation_init_runs_without_confirm(monkeypatch, tmp_path):
+    """init は確認プロンプトなしで reset=False (CLI 既定) のまま即実行する。
+
+    セットアップ済みの環境では cmd_env_init が案内を出して安全に終了する。
+    やり直しは CLI (`env init --reset`) を使う想定。
+    """
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: reset)
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("init で確認を求めない"))
     assert actions_env._run_operation(tmp_path, "init") == 0
-    assert captured["attrs"] == {"subcommand": "init", "reset": reset}
-
-
-@pytest.mark.parametrize("confirm_ret", ["BACK", None])
-def test_run_operation_init_cancel(monkeypatch, tmp_path, confirm_ret):
-    """init の confirm で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
-    from devbase.commands import env as env_mod
-    called = []
-    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
-    expected = actions_env._ARG_CANCEL if confirm_ret == "BACK" else None
-    assert actions_env._run_operation(tmp_path, "init") is expected
-    assert called == []
+    assert captured["attrs"] == {"subcommand": "init", "reset": False}
 
 
 # ---------------------------------------------------------------------------
-# _run_operation: list (表示範囲 + reveal/keys)
+# _run_operation: list (表示範囲のみ収集。reveal/keys は CLI 既定の False)
 # ---------------------------------------------------------------------------
 
 def test_run_operation_list_global_scope_no_chdir(monkeypatch, tmp_path):
@@ -198,15 +189,15 @@ def test_run_operation_list_global_scope_no_chdir(monkeypatch, tmp_path):
     monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
     monkeypatch.setattr(actions_env, "_select_project",
                         lambda root: pytest.fail("global でプロジェクト選択してはいけない"))
-    confirms = iter([True, False])     # reveal=True, keys_only=False
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("list で確認を求めない"))
 
     before = os.getcwd()
     assert actions_env._run_operation(tmp_path, "list") == 0
     assert captured["attrs"] == {
         "subcommand": "list",
         "global_only": True, "project_only": False,
-        "reveal": True, "keys_only": False,
+        "reveal": False, "keys_only": False,
     }
     assert captured["cwd"] == before, "global スコープは chdir しない"
 
@@ -223,8 +214,6 @@ def test_run_operation_list_both_scope_chdirs_and_restores(monkeypatch, tmp_path
     target.mkdir(parents=True)
     monkeypatch.setattr(menu, "select", lambda *a, **k: "both")
     monkeypatch.setattr(actions_env, "_select_project", lambda root: "carmo")
-    confirms = iter([True, False])     # reveal=True, keys_only=False
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
     monkeypatch.setenv("PWD", str(tmp_path))
 
     before = os.getcwd()
@@ -232,7 +221,7 @@ def test_run_operation_list_both_scope_chdirs_and_restores(monkeypatch, tmp_path
     assert captured["attrs"] == {
         "subcommand": "list",
         "global_only": False, "project_only": False,
-        "reveal": True, "keys_only": False,
+        "reveal": False, "keys_only": False,
     }
     # ハンドラ実行中は projects/carmo に居る (グローバル + プロジェクト両方が出る)
     assert captured["cwd"] == str(target)
@@ -253,8 +242,6 @@ def test_run_operation_list_project_chdirs_and_restores(monkeypatch, tmp_path):
     target.mkdir(parents=True)
     monkeypatch.setattr(menu, "select", lambda *a, **k: "project")
     monkeypatch.setattr(actions_env, "_select_project", lambda root: "carmo")
-    confirms = iter([False, True])     # reveal=False, keys_only=True
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
     monkeypatch.setenv("PWD", str(tmp_path))
 
     before = os.getcwd()
@@ -262,7 +249,7 @@ def test_run_operation_list_project_chdirs_and_restores(monkeypatch, tmp_path):
     assert captured["attrs"] == {
         "subcommand": "list",
         "global_only": False, "project_only": True,
-        "reveal": False, "keys_only": True,
+        "reveal": False, "keys_only": False,
     }
     # ハンドラ実行中は projects/carmo に居る (CWD と PWD の両方を切り替える)
     assert captured["cwd"] == str(target)
@@ -273,15 +260,13 @@ def test_run_operation_list_project_chdirs_and_restores(monkeypatch, tmp_path):
 
 
 def test_run_operation_list_project_select_cancel(monkeypatch, tmp_path):
-    """list のプロジェクト選択を中止したら表示オプション収集にも進まない。"""
+    """list のプロジェクト選択を中止したら実行しない。"""
     from devbase.commands import env as env_mod
     called = []
     monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
     monkeypatch.setattr(menu, "select", lambda *a, **k: "project")
     monkeypatch.setattr(actions_env, "_select_project",
                         lambda root: actions_env._ARG_CANCEL)
-    monkeypatch.setattr(menu, "confirm",
-                        lambda *a, **k: pytest.fail("選択中止後に確認を求めない"))
     assert actions_env._run_operation(tmp_path, "list") is actions_env._ARG_CANCEL
     assert called == []
 
@@ -295,20 +280,6 @@ def test_run_operation_list_scope_cancel(monkeypatch, tmp_path, scope_ret):
     ret = menu.MENU_BACK if scope_ret == "BACK" else None
     monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
     expected = actions_env._ARG_CANCEL if scope_ret == "BACK" else None
-    assert actions_env._run_operation(tmp_path, "list") is expected
-    assert called == []
-
-
-@pytest.mark.parametrize("confirm_ret", ["BACK", None])
-def test_run_operation_list_confirm_cancel(monkeypatch, tmp_path, confirm_ret):
-    """reveal の confirm で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
-    from devbase.commands import env as env_mod
-    called = []
-    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "select", lambda *a, **k: "global")
-    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
-    expected = actions_env._ARG_CANCEL if confirm_ret == "BACK" else None
     assert actions_env._run_operation(tmp_path, "list") is expected
     assert called == []
 

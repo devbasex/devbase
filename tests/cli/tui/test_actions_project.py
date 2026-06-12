@@ -147,28 +147,13 @@ def test_run_operation_rebuild(monkeypatch, tmp_path):
     assert captured["subcommand"] == "rebuild" and captured["name"] == "carmo"
 
 
-def test_run_operation_down_confirmed(monkeypatch, tmp_path):
-    """down は confirm=True で停止を実行する (plan 3.4)。"""
+def test_run_operation_down_runs_without_confirm(monkeypatch, tmp_path):
+    """down は確認プロンプトなしで即実行する (volume 保持・up で復旧可能)。"""
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("down で確認を求めない"))
     assert actions_project._run_operation(tmp_path, "carmo", "down") == 0
     assert captured["subcommand"] == "down"
-
-
-@pytest.mark.parametrize("confirm_ret", [False, "BACK", None])
-def test_run_operation_down_cancelled_does_not_dispatch(monkeypatch, tmp_path, confirm_ret):
-    """down の confirm を拒否 (False) / Esc / Ctrl-C したら停止しない。
-
-    拒否と Esc はサブメニュー再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。
-    """
-    from devbase.commands import container as container_mod
-    called = []
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-    ret = menu.MENU_BACK if confirm_ret == "BACK" else confirm_ret
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
-    expected = None if confirm_ret is None else actions_project._ARG_CANCEL
-    assert actions_project._run_operation(tmp_path, "carmo", "down") is expected
-    assert called == [], "確認を拒否/中止したら down しない"
 
 
 def test_run_operation_login_collects_index(monkeypatch, tmp_path):
@@ -192,25 +177,28 @@ def test_run_operation_login_cancel(monkeypatch, tmp_path, int_ret):
     assert called == []
 
 
-def test_run_operation_ps_all_flag(monkeypatch, tmp_path):
+def test_run_operation_ps_runs_without_confirm(monkeypatch, tmp_path):
+    """ps は確認プロンプトなしで即実行する (--all は CLI 既定の False)。"""
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("ps で確認を求めない"))
     assert actions_project._run_operation(tmp_path, "carmo", "ps") == 0
-    assert captured["subcommand"] == "ps" and captured["all"] is True
+    assert captured["subcommand"] == "ps" and captured["all"] is False
 
 
-def test_run_operation_logs_follow_and_tail(monkeypatch, tmp_path):
+def test_run_operation_logs_collects_tail_only(monkeypatch, tmp_path):
+    """logs は tail のみ収集し、--follow は CLI 既定 (False) で実行する。"""
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)          # follow
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("logs で確認を求めない"))
     monkeypatch.setattr(actions_project, "_optional_int", lambda msg: 50)  # tail=50
     assert actions_project._run_operation(tmp_path, "carmo", "logs") == 0
     assert captured["subcommand"] == "logs"
-    assert captured["follow"] is True and captured["tail"] == 50
+    assert captured["follow"] is False and captured["tail"] == 50
 
 
 def test_run_operation_logs_tail_empty_is_none(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: False)
     monkeypatch.setattr(actions_project, "_optional_int", lambda msg: None)  # 空 = 全件
     assert actions_project._run_operation(tmp_path, "carmo", "logs") == 0
     assert captured["follow"] is False and captured["tail"] is None
@@ -221,7 +209,6 @@ def test_run_operation_logs_tail_ctrl_c_aborts(monkeypatch, tmp_path):
     from devbase.commands import container as container_mod
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
     monkeypatch.setattr(actions_project, "_optional_int",
                         lambda msg: actions_project._ABORT)
     assert actions_project._run_operation(tmp_path, "carmo", "logs") is None

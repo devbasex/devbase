@@ -8,8 +8,8 @@ PR1 で **一覧選択 → (running なら操作サブメニュー) → それ�
 PR2 で running 操作サブメニューを **up/down/login/ps/logs/scale/build/rebuild の全操作**
 へ拡張した。login/ps/logs/scale は running 中コンテナを対象とするため running 行限定、
 stopped/unknown は従来どおり直接 up (PR1 非回帰)。引数を要する操作は ``tui.menu`` の
-収集ヘルパで CLI と同じ属性値を集め、破壊的な down は実行前に確認する
-(plan 2.3 契約表 / 3.4 破壊的操作確認)。
+収集ヘルパで CLI と同じ属性値を集める (plan 2.3 契約表)。down はデータを失わない
+(volume 保持) ためメニュー選択を意思表示とみなし、確認プロンプトは出さない。
 
 プロジェクト一覧の表示・選択は ``tui.app`` (トップ画面) が担い、本モジュールは
 選択された 1 行の処理 (``handle_row``) と questionary 不在時のフォールバックを提供する。
@@ -93,11 +93,6 @@ def _select_build_image(devbase_root: Path):
 # 各操作の引数収集 + dispatch (引数を要する操作のみ。up/rebuild は即実行)
 # ---------------------------------------------------------------------------
 
-def _op_down(devbase_root: Path, name: str):
-    flow.confirm_or_back(f"'{name}' のコンテナを停止しますか?")
-    return dispatch_lifecycle("down", name)
-
-
 def _op_login(devbase_root: Path, name: str):
     # menu.text は空入力 (既定値を消して確定) で "" を返し、wrapper で --index=
     # と展開されてコマンドが失敗する。menu.integer なら空入力は default=1 を返し、
@@ -106,16 +101,11 @@ def _op_login(devbase_root: Path, name: str):
     return dispatch_lifecycle("login", name, index=str(index))
 
 
-def _op_ps(devbase_root: Path, name: str):
-    all_c = flow.need(menu.confirm(
-        "停止中も含め全コンテナを表示しますか (--all)?", default=False))
-    return dispatch_lifecycle("ps", name, all=all_c)
-
-
 def _op_logs(devbase_root: Path, name: str):
-    follow = flow.need(menu.confirm("ログを追従表示しますか (--follow)?", default=False))
+    # --follow は CLI 既定 (False) で実行する (非破壊操作の確認プロンプト廃止)。
+    # 追従が必要な場合は CLI (`project logs --follow`) を使う想定。
     tail = flow.need_optional(_optional_int("末尾何行を表示しますか (空で全件)"))
-    return dispatch_lifecycle("logs", name, follow=follow, tail=tail)
+    return dispatch_lifecycle("logs", name, follow=False, tail=tail)
 
 
 def _op_scale(devbase_root: Path, name: str):
@@ -129,13 +119,15 @@ def _op_build(devbase_root: Path, name: str):
 
 
 _OP_HANDLERS = {
-    # up/rebuild は引数なしで即実行。up は scale 属性を参照する (常に None。
-    # 他コマンドは無視する)。
+    # up/down/rebuild/ps は引数なしで即実行。up/rebuild は scale 属性を参照する
+    # (常に None。他コマンドは無視する)。down はデータを失わない (volume 保持・
+    # up で復旧可能) ためメニュー選択を意思表示とみなし、確認プロンプトを出さない。
+    # ps の --all は CLI 既定 (False) に揃える。
     "up": lambda root, name: dispatch_lifecycle("up", name, scale=None),
     "rebuild": lambda root, name: dispatch_lifecycle("rebuild", name, scale=None),
-    "down": _op_down,
+    "down": lambda root, name: dispatch_lifecycle("down", name),
     "login": _op_login,
-    "ps": _op_ps,
+    "ps": lambda root, name: dispatch_lifecycle("ps", name, all=False),
     "logs": _op_logs,
     "scale": _op_scale,
     "build": _op_build,

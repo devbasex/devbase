@@ -121,20 +121,21 @@ def test_run_operation_list_no_extra_attrs(monkeypatch, tmp_path):
     assert captured == {"devbase_root": tmp_path, "subcommand": "list"}
 
 
-def test_run_operation_create_collects_name_and_full(monkeypatch, tmp_path):
+def test_run_operation_create_collects_name_only(monkeypatch, tmp_path):
+    """create は name のみ収集し、--full は CLI 既定 (False = 増分) で実行する。"""
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "text", lambda *a, **k: "snap1")
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)   # --full
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("create で確認を求めない"))
     assert actions_snapshot._run_operation(tmp_path, "create") == 0
     assert captured["subcommand"] == "create"
-    assert captured["name"] == "snap1" and captured["full"] is True
+    assert captured["name"] == "snap1" and captured["full"] is False
 
 
 def test_run_operation_create_empty_name_is_none(monkeypatch, tmp_path):
     """空入力の name は CLI の --name 省略と同じ None (自動命名) に正規化する。"""
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "text", lambda *a, **k: "")
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: False)
     assert actions_snapshot._run_operation(tmp_path, "create") == 0
     assert captured["name"] is None and captured["full"] is False
 
@@ -146,18 +147,6 @@ def test_run_operation_create_name_cancel(monkeypatch, tmp_path, text_ret):
     ret = menu.MENU_BACK if text_ret == "BACK" else None
     monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
     expected = actions_snapshot._ARG_CANCEL if text_ret == "BACK" else None
-    assert actions_snapshot._run_operation(tmp_path, "create") is expected
-    assert called == []
-
-
-@pytest.mark.parametrize("confirm_ret", ["BACK", None])
-def test_run_operation_create_full_cancel(monkeypatch, tmp_path, confirm_ret):
-    """--full の confirm で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
-    called = _no_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: "snap1")
-    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
-    expected = actions_snapshot._ARG_CANCEL if confirm_ret == "BACK" else None
     assert actions_snapshot._run_operation(tmp_path, "create") is expected
     assert called == []
 

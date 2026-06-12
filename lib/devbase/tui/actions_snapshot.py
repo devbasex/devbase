@@ -106,13 +106,13 @@ def _optional_point(message: str):
 # ---------------------------------------------------------------------------
 
 def _op_create(devbase_root: Path):
+    # --full は CLI 既定 (False = 増分) で実行する (非破壊操作の確認プロンプト
+    # 廃止)。フルバックアップ強制は CLI (`snapshot create --full`) を使う想定。
     name = flow.need(menu.text("スナップショット名 (空でタイムスタンプ自動命名)",
                                allow_empty=True))
-    full = flow.need(menu.confirm("フルバックアップを強制しますか (--full)?",
-                                  default=False))
     # 空入力は CLI の --name 省略と同じ None (自動命名) に正規化する。
     return dispatch_group(cmd_snapshot, devbase_root, "create",
-                          name=name or None, full=full)
+                          name=name or None, full=False)
 
 
 def _op_restore(devbase_root: Path):
