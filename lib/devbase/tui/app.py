@@ -15,7 +15,8 @@ env / plugin / snapshot / status は一覧の末尾に並ぶカテゴリ項目�
 
 ナビ規約: トップ (プロジェクト一覧) は Esc / Ctrl-C で中止 (戻り先なし)。
 各カテゴリ・サブメニュー内では Esc / ← で 1 つ前へ戻る (``menu.MENU_BACK``)、
-Ctrl-C で全体中止 (``None``)。
+Ctrl-C で全体中止 (``None``)。操作を実行した後は出力を読めるよう Enter を
+待ってから一覧を再表示する (``_pause_for_review``)。
 """
 
 from __future__ import annotations
@@ -64,6 +65,26 @@ def _route(category: str, devbase_root: Path):
         logger.error("未知のカテゴリです: %s", _LABELS.get(category, category))
         return menu.MENU_BACK
     return module.run(devbase_root)
+
+
+def _pause_for_review() -> bool:
+    """操作出力を読めるよう、一覧の再表示前に Enter を待つ。
+
+    操作実行直後にトップ一覧を再描画すると、plugin list 等の表示系操作の出力が
+    一瞬で流れて読めない。questionary 系プロンプトは画面を書き換えるため、
+    stdlib の ``input()`` で素朴に待ち、出力をそのまま画面に残す。
+
+    戻り値: ``True`` = 一覧へ戻る / ``False`` = Ctrl-C (全体中止)。
+    非 TTY 等で stdin を読めない場合 (EOFError/OSError) は待たずに戻る。
+    """
+    try:
+        input("Enter キーで一覧へ戻ります...")
+    except KeyboardInterrupt:
+        print()
+        return False
+    except (EOFError, OSError):
+        pass
+    return True
 
 
 def _select_top(rows: list[dict]):
@@ -118,8 +139,12 @@ def _top_menu_loop(devbase_root: Path) -> int:
         if result is menu.MENU_BACK:
             # 操作なしで一覧へ戻り再表示 (rc は更新しない)
             continue
-        # int rc: 操作を実行した → rc を記憶して一覧を再表示
+        # int rc: 操作を実行した → rc を記憶し、出力を読めるよう Enter を
+        # 待ってから一覧を再表示する (即時再描画で出力が流れるのを防ぐ)。
         last_rc = result
+        if not _pause_for_review():
+            logger.info("中止しました。")
+            return last_rc
 
 
 def run(devbase_root: Path, args) -> int:

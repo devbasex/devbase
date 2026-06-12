@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import types
 
+import pytest
+
 from devbase.tui import actions_plugin, actions_project, app, menu
 
 
@@ -139,11 +141,18 @@ _ROWS = [{"name": "carmo", "plugin": "p", "status": "stopped"},
 
 
 def _patch_loop(monkeypatch, selects, rows=None):
-    """_top_menu_loop の入力 (一覧と選択値) を注入する共通ヘルパ。"""
+    """_top_menu_loop の入力 (一覧と選択値) を注入する共通ヘルパ。
+
+    操作実行後の Enter 待ち (`_pause_for_review`) は即継続にスタブし、
+    呼び出し回数を返す (pause 自体の挙動は専用テストで検証する)。
+    """
     monkeypatch.setattr(app, "list_projects",
                         lambda projects_dir: list(_ROWS) if rows is None else rows)
     it = iter(selects)
     monkeypatch.setattr(app, "_select_top", lambda r: next(it))
+    pauses = []
+    monkeypatch.setattr(app, "_pause_for_review", lambda: pauses.append(1) or True)
+    return pauses
 
 
 def test_select_top_appends_categories_after_projects(monkeypatch):
@@ -241,6 +250,63 @@ def test_top_loop_empty_projects_still_offers_categories(monkeypatch, tmp_path):
 
     assert app._top_menu_loop(tmp_path) == 0
     assert ran == [1], "プロジェクト無しでもカテゴリへ遷移できる"
+
+
+# ---------------------------------------------------------------------------
+# 操作実行後の Enter 待ち (_pause_for_review): 出力が流れる前に読めるようにする
+# ---------------------------------------------------------------------------
+
+def test_top_loop_pauses_after_execution(monkeypatch, tmp_path):
+    """操作を実行したら一覧の再表示前に Enter を待つ (出力を読めるようにする)。"""
+    pauses = _patch_loop(monkeypatch, ["plugin", None])
+    from devbase.tui import actions_plugin
+    monkeypatch.setattr(actions_plugin, "run", lambda root: 0)
+
+    assert app._top_menu_loop(tmp_path) == 0
+    assert pauses == [1], "実行後は一覧再表示の前に Enter を待つ"
+
+
+def test_top_loop_no_pause_on_menu_back(monkeypatch, tmp_path):
+    """操作なし (MENU_BACK) で戻ったときは Enter を待たない (出力がないため)。"""
+    pauses = _patch_loop(monkeypatch, ["plugin", None])
+    from devbase.tui import actions_plugin
+    monkeypatch.setattr(actions_plugin, "run", lambda root: menu.MENU_BACK)
+
+    assert app._top_menu_loop(tmp_path) == 0
+    assert pauses == [], "MENU_BACK では Enter を待たない"
+
+
+def test_top_loop_pause_ctrl_c_exits_with_last_rc(monkeypatch, tmp_path):
+    """Enter 待ちで Ctrl-C (False) を受けたら直近の実行 rc で全体中止する。"""
+    _patch_loop(monkeypatch, ["plugin"])
+    from devbase.tui import actions_plugin
+    monkeypatch.setattr(actions_plugin, "run", lambda root: 1)
+    monkeypatch.setattr(app, "_pause_for_review", lambda: False)
+
+    assert app._top_menu_loop(tmp_path) == 1
+
+
+def test_pause_for_review_enter_returns_true(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    assert app._pause_for_review() is True
+
+
+def test_pause_for_review_ctrl_c_returns_false(monkeypatch):
+    def _interrupt(*a):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", _interrupt)
+    assert app._pause_for_review() is False
+
+
+@pytest.mark.parametrize("exc", [EOFError, OSError])
+def test_pause_for_review_unreadable_stdin_returns_true(monkeypatch, exc):
+    """非 TTY 等で stdin を読めない場合は待たずに一覧へ戻る (ハングしない)。"""
+    def _unreadable(*a):
+        raise exc
+
+    monkeypatch.setattr("builtins.input", _unreadable)
+    assert app._pause_for_review() is True
 
 
 def test_route_plugin_delegates(monkeypatch, tmp_path):
