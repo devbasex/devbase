@@ -1,6 +1,6 @@
 """Project symlink synchronization for plugins"""
 
-import os
+import yaml
 from pathlib import Path
 from typing import Optional
 
@@ -14,7 +14,6 @@ logger = get_logger("devbase.plugin.syncer")
 
 def load_plugin_info(plugin_dir: Path) -> Optional[PluginInfo]:
     """Load plugin.yml from a plugin directory"""
-    import yaml
     yml_path = plugin_dir / 'plugin.yml'
     if not yml_path.exists():
         return None
@@ -58,6 +57,59 @@ def _extract_owner(plugin: InstalledPlugin) -> str:
     return plugin.name
 
 
+def _collect_project_candidates(
+    registry: PluginRegistry,
+    installed: list[InstalledPlugin],
+    verbose: bool,
+) -> dict[str, list[tuple[InstalledPlugin, int]]]:
+    """全 plugin のプロジェクトを project 名 -> [(plugin, priority)] へ集約する。"""
+    candidates: dict[str, list[tuple[InstalledPlugin, int]]] = {}
+    for plugin in installed:
+        plugin_dir = registry.devbase_root / plugin.path
+        if not plugin_dir.is_dir():
+            if verbose:
+                logger.warning("Plugin directory missing: %s", plugin.path)
+            continue
+
+        info = load_plugin_info(plugin_dir)
+        priority = info.priority if info else 0
+
+        for proj_name in discover_projects(plugin_dir):
+            candidates.setdefault(proj_name, []).append((plugin, priority))
+    return candidates
+
+
+def _link_loser_projects(
+    projects_dir: Path,
+    proj_name: str,
+    losers: list[tuple[InstalledPlugin, int]],
+    real_projects: set,
+    verbose: bool,
+) -> int:
+    """衝突に敗れた plugin のプロジェクトを <proj>.<owner> サフィックスで symlink する。
+
+    Returns the number of symlinks created.
+    """
+    created = 0
+    for loser_plugin, _ in losers:
+        owner = _extract_owner(loser_plugin)
+        suffix_name = f"{proj_name}.{owner}"
+
+        if suffix_name in real_projects:
+            if verbose:
+                logger.info("  Skip: %s (real directory exists)", suffix_name)
+            continue
+
+        suffix_link = projects_dir / suffix_name
+        if suffix_link.exists() or suffix_link.is_symlink():
+            if verbose:
+                logger.warning("  Skip: %s (symlink already exists)", suffix_name)
+            continue
+        suffix_link.symlink_to(_make_relative_target(loser_plugin, proj_name))
+        created += 1
+    return created
+
+
 def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
     """Synchronize project symlinks from all installed plugins.
 
@@ -74,10 +126,10 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
     projects_dir = registry.get_projects_dir()
     projects_dir.mkdir(exist_ok=True)
 
-    real_projects = set()
-    for entry in projects_dir.iterdir():
-        if not entry.is_symlink() and entry.is_dir():
-            real_projects.add(entry.name)
+    real_projects = {
+        entry.name for entry in projects_dir.iterdir()
+        if not entry.is_symlink() and entry.is_dir()
+    }
 
     for entry in projects_dir.iterdir():
         if entry.is_symlink():
@@ -89,24 +141,7 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
             logger.info("No plugins installed")
         return 0
 
-    project_candidates: dict[str, list[tuple[InstalledPlugin, int, Path]]] = {}
-
-    for plugin in installed:
-        plugin_dir = registry.devbase_root / plugin.path
-        if not plugin_dir.is_dir():
-            if verbose:
-                logger.warning("Plugin directory missing: %s", plugin.path)
-            continue
-
-        info = load_plugin_info(plugin_dir)
-        priority = info.priority if info else 0
-
-        for proj_name in discover_projects(plugin_dir):
-            if proj_name not in project_candidates:
-                project_candidates[proj_name] = []
-            project_candidates[proj_name].append(
-                (plugin, priority, plugin_dir)
-            )
+    project_candidates = _collect_project_candidates(registry, installed, verbose)
 
     created = 0
     for proj_name, candidates in sorted(project_candidates.items()):
@@ -115,44 +150,28 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
                 logger.info("  Skip: %s (real directory exists)", proj_name)
             continue
 
+        # 優先度降順 → plugin 名昇順。先頭が bare 名を獲得する winner。
         candidates.sort(key=lambda c: (-c[1], c[0].name))
-        winner_plugin, winner_priority, winner_dir = candidates[0]
+        (winner_plugin, winner_priority), losers = candidates[0], candidates[1:]
 
-        if len(candidates) > 1 and verbose:
+        if losers and verbose:
             logger.warning(
                 "Project '%s' exists in multiple plugins — using '%s' (priority: %d)",
                 proj_name, winner_plugin.name, winner_priority,
             )
-            for loser_plugin, _, _ in candidates[1:]:
-                owner = _extract_owner(loser_plugin)
+            for loser_plugin, _ in losers:
                 logger.info(
                     "  Also available as: projects/%s.%s",
-                    proj_name, owner,
+                    proj_name, _extract_owner(loser_plugin),
                 )
 
-        target = _make_relative_target(winner_plugin, proj_name)
         link_path = projects_dir / proj_name
-        link_path.symlink_to(target)
+        link_path.symlink_to(_make_relative_target(winner_plugin, proj_name))
         created += 1
 
-        if len(candidates) > 1:
-            for loser_plugin, _, loser_dir in candidates[1:]:
-                owner = _extract_owner(loser_plugin)
-                suffix_name = f"{proj_name}.{owner}"
-
-                if suffix_name in real_projects:
-                    if verbose:
-                        logger.info("  Skip: %s (real directory exists)", suffix_name)
-                    continue
-
-                suffix_target = _make_relative_target(loser_plugin, proj_name)
-                suffix_link = projects_dir / suffix_name
-                if suffix_link.exists() or suffix_link.is_symlink():
-                    if verbose:
-                        logger.warning("  Skip: %s (symlink already exists)", suffix_name)
-                    continue
-                suffix_link.symlink_to(suffix_target)
-                created += 1
+        created += _link_loser_projects(
+            projects_dir, proj_name, losers, real_projects, verbose,
+        )
 
     if verbose:
         logger.info("Synced %d project(s) from %d plugin(s)", created, len(installed))

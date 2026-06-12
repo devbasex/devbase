@@ -118,33 +118,43 @@ def _report_unknown_project(name: str, projects_dir: Path) -> None:
         logger.error("利用可能なプロジェクト: %s", listing)
 
 
+def _parse_env_assignment(raw_line: str) -> Optional[tuple[str, str]]:
+    """env ファイルの 1 行を ``(key, raw_value)`` にパースする。
+
+    パース規則 (wrapper の env_var_keys とも揃える): 行頭空白除去 → 先頭 ``#`` は
+    コメント → ``export`` 接頭辞除去 → ``=`` の左辺をキーとして採用。
+    コメント / 空行 / 代入でない行 / キーが空の行は None。
+    """
+    line = raw_line.strip()
+    if not line or line.startswith('#'):
+        return None
+    if line.startswith('export '):
+        line = line[len('export '):].lstrip()
+    if '=' not in line:
+        return None
+    key, value = line.split('=', 1)
+    key = key.strip()
+    return (key, value) if key else None
+
+
 def _env_var_keys(env_file: Path) -> set:
     """env ファイルが定義する変数キー名の集合を返す (値は読まない)。
 
     project 切替時に「呼び出し元プロジェクト固有の env キー」を unset するために
-    使う。パース前提は :func:`_load_project_env` と同一 (wrapper の env_var_keys
-    とも揃える): 行頭空白除去 → 先頭 ``#`` はコメント → ``export`` 接頭辞除去 →
-    ``=`` の左辺をキーとして採用。
+    使う。パース前提は :func:`_load_project_env` と同一 (:func:`_parse_env_assignment`
+    を共有)。
     """
-    keys: set = set()
     if not env_file.is_file():
-        return keys
+        return set()
     try:
         lines = env_file.read_text().splitlines()
     except OSError:
-        return keys
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith('#'):
-            continue
-        if line.startswith('export '):
-            line = line[len('export '):].lstrip()
-        if '=' not in line:
-            continue
-        key = line.split('=', 1)[0].strip()
-        if key:
-            keys.add(key)
-    return keys
+        return set()
+    return {
+        assignment[0]
+        for assignment in map(_parse_env_assignment, lines)
+        if assignment
+    }
 
 
 def _load_project_env(env_file: Path) -> None:
@@ -184,18 +194,10 @@ def _load_project_env(env_file: Path) -> None:
     except OSError as e:
         logger.warning("env ファイルを読み込めませんでした (%s): %s", env_file, e)
         return
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith('#'):
+    for assignment in map(_parse_env_assignment, lines):
+        if not assignment:
             continue
-        if line.startswith('export '):
-            line = line[len('export '):].lstrip()
-        if '=' not in line:
-            continue
-        key, value = line.split('=', 1)
-        key = key.strip()
-        if not key:
-            continue
+        key, value = assignment
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
             value = value[1:-1]
@@ -328,6 +330,29 @@ def cmd_container(args) -> int:
 # cmd_up  (deploy.py の cmd_deploy を移植)
 # ---------------------------------------------------------------------------
 
+def _auto_snapshot() -> None:
+    """デプロイ前の自動スナップショット (差分世代数ベース世代管理)。
+
+    失敗してもデプロイは続行する (warning のみ)。DEVBASE_ROOT 未設定なら no-op。
+    """
+    devbase_root = os.environ.get('DEVBASE_ROOT')
+    if not devbase_root:
+        return
+    try:
+        from devbase.snapshot.manager import SnapshotManager
+        mgr = SnapshotManager(Path(devbase_root))
+        if mgr.should_start_new_generation():
+            logger.info("[0/6] 新しいスナップショット世代を作成中...")
+            mgr.create()
+        else:
+            latest = mgr.list()[-1]['name']
+            logger.info("[0/6] スナップショットを差分更新中: %s", latest)
+            mgr.create(name=latest, full=False)
+        mgr.rotate()
+    except Exception as e:
+        logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
+
+
 def cmd_up(project_name: str = None, scale: int = None) -> int:
     """Deploy containers with specified scale"""
     if project_name is None:
@@ -360,21 +385,7 @@ def cmd_up(project_name: str = None, scale: int = None) -> int:
         return 1
 
     # Pre-step: Auto snapshot（差分世代数ベース世代管理）
-    devbase_root_env = os.environ.get('DEVBASE_ROOT')
-    if devbase_root_env:
-        try:
-            from devbase.snapshot.manager import SnapshotManager
-            mgr = SnapshotManager(Path(devbase_root_env))
-            if mgr.should_start_new_generation():
-                logger.info("[0/6] 新しいスナップショット世代を作成中...")
-                mgr.create()
-            else:
-                latest = mgr.list()[-1]['name']
-                logger.info("[0/6] スナップショットを差分更新中: %s", latest)
-                mgr.create(name=latest, full=False)
-            mgr.rotate()
-        except Exception as e:
-            logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
+    _auto_snapshot()
 
     try:
         logger.info("[1/6] Ensuring volumes exist...")
@@ -766,60 +777,75 @@ def _ensure_images() -> bool:
         )
 
         if inspect.returncode != 0:
-            if has_build:
-                logger.info("Container image '%s' not found", image_name)
-                logger.info("Running 'devbase container build' to create it...")
-                return _run_build()
-            logger.info("Container image '%s' not found, pulling...", image_name)
-            ok = _run_pull(image_name)
-            if ok:
-                _mark_pulled(image_name)
-            return ok
-
-        max_age = _image_max_age_days()
-
-        # Image-only services: use local touch-file mtime, since image
-        # 'Created' reflects upstream build time, not local pull time.
+            return _fetch_missing_image(image_name, has_build)
         if not has_build:
-            pull_age = _pull_age_days(image_name)
-            if pull_age is None:
-                # Pre-existing image with no marker (e.g., upgrade from a
-                # devbase version without touch-file tracking). Bootstrap a
-                # marker now so future runs can apply the threshold. We do
-                # not auto-pull here to avoid surprising network calls on
-                # the first `up` after upgrade.
-                logger.info(
-                    "First time tracking image '%s'; recording marker (no pull this run)",
-                    image_name
-                )
-                _mark_pulled(image_name)
-                return True
-            if pull_age < max_age:
-                return True
-            logger.info(
-                "Image '%s' last pulled %d days ago (>= %d days threshold), re-pulling...",
-                image_name, pull_age, max_age
-            )
-            ok = _run_pull(image_name)
-            if ok:
-                _mark_pulled(image_name)
-            return ok
-
-        age_days = _get_image_age_days(inspect.stdout)
-        if age_days is None or age_days < max_age:
-            return True
-
-        logger.info(
-            "Container image '%s' is %d days old (>= %d days threshold)",
-            image_name, age_days, max_age
-        )
-        logger.info("Rebuilding with --no-cache...")
-        return _run_build(no_cache=True)
+            return _repull_if_stale(image_name)
+        return _rebuild_if_stale(image_name, inspect.stdout)
 
     except Exception as e:
         logger.warning("Error checking image: %s", e)
         logger.info("Attempting to build anyway...")
         return _run_build()
+
+
+def _fetch_missing_image(image_name: str, has_build: bool) -> bool:
+    """存在しないイメージを取得する: build 定義があればビルド、なければ pull。"""
+    if has_build:
+        logger.info("Container image '%s' not found", image_name)
+        logger.info("Running 'devbase container build' to create it...")
+        return _run_build()
+    logger.info("Container image '%s' not found, pulling...", image_name)
+    return _pull_and_mark(image_name)
+
+
+def _repull_if_stale(image_name: str) -> bool:
+    """image-only サービスの鮮度チェック: pull マーカーが閾値超過なら再 pull。
+
+    Image-only services: use local touch-file mtime, since image 'Created'
+    reflects upstream build time, not local pull time.
+    """
+    pull_age = _pull_age_days(image_name)
+    if pull_age is None:
+        # Pre-existing image with no marker (e.g., upgrade from a devbase
+        # version without touch-file tracking). Bootstrap a marker now so
+        # future runs can apply the threshold. We do not auto-pull here to
+        # avoid surprising network calls on the first `up` after upgrade.
+        logger.info(
+            "First time tracking image '%s'; recording marker (no pull this run)",
+            image_name
+        )
+        _mark_pulled(image_name)
+        return True
+    max_age = _image_max_age_days()
+    if pull_age < max_age:
+        return True
+    logger.info(
+        "Image '%s' last pulled %d days ago (>= %d days threshold), re-pulling...",
+        image_name, pull_age, max_age
+    )
+    return _pull_and_mark(image_name)
+
+
+def _rebuild_if_stale(image_name: str, inspect_json: str) -> bool:
+    """build 定義のあるサービスの鮮度チェック: イメージ作成日が閾値超過なら no-cache 再ビルド。"""
+    max_age = _image_max_age_days()
+    age_days = _get_image_age_days(inspect_json)
+    if age_days is None or age_days < max_age:
+        return True
+    logger.info(
+        "Container image '%s' is %d days old (>= %d days threshold)",
+        image_name, age_days, max_age
+    )
+    logger.info("Rebuilding with --no-cache...")
+    return _run_build(no_cache=True)
+
+
+def _pull_and_mark(image_name: str) -> bool:
+    """docker pull を実行し、成功時は pull マーカーを更新する。"""
+    ok = _run_pull(image_name)
+    if ok:
+        _mark_pulled(image_name)
+    return ok
 
 
 def _get_image_age_days(inspect_json: str) -> Optional[int]:
@@ -936,25 +962,18 @@ def _update_scale_in_env(new_scale: int) -> bool:
         logger.error("env file not found: %s", env_file)
         return False
 
+    def _is_scale_line(line: str) -> bool:
+        return line.strip().startswith('CONTAINER_SCALE=')
+
     try:
-        with open(env_file, 'r') as f:
-            lines = f.readlines()
-
-        updated = False
-        new_lines = []
-        for line in lines:
-            if line.strip().startswith('CONTAINER_SCALE='):
-                new_lines.append(f'CONTAINER_SCALE={new_scale}\n')
-                updated = True
-            else:
-                new_lines.append(line)
-
-        if not updated:
+        lines = env_file.read_text().splitlines(keepends=True)
+        new_lines = [
+            f'CONTAINER_SCALE={new_scale}\n' if _is_scale_line(line) else line
+            for line in lines
+        ]
+        if not any(map(_is_scale_line, lines)):
             new_lines.append(f'\n# Added by devbase scale command\nCONTAINER_SCALE={new_scale}\n')
-
-        with open(env_file, 'w') as f:
-            f.writelines(new_lines)
-
+        env_file.write_text(''.join(new_lines))
         return True
 
     except Exception as e:

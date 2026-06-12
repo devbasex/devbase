@@ -1,7 +1,6 @@
 """Volume management functions for devbase"""
 
 import subprocess
-from typing import Optional
 
 from devbase.errors import DockerError
 from devbase.log import get_logger

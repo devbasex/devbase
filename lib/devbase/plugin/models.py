@@ -96,6 +96,20 @@ class RegistryInfo:
     official: bool = False
     plugins: list[RegistryEntry] = field(default_factory=list)
 
+    def available_plugins(self) -> list['AvailablePlugin']:
+        """registry.yml のエントリを plugins.yml 用の AvailablePlugin 一覧へ変換する。
+
+        installer / repo_manager / migrator が persist 時に共通で使う変換の SSoT。
+        """
+        return [
+            AvailablePlugin(name=e.name, description=e.description, path=e.path)
+            for e in self.plugins
+        ]
+
+    def find_plugin(self, plugin_name: str) -> Optional[RegistryEntry]:
+        """Find a registry entry by plugin name."""
+        return next((e for e in self.plugins if e.name == plugin_name), None)
+
 
 @dataclass
 class InstalledPlugin:
@@ -188,7 +202,4 @@ class RegisteredRepository:
 
     def find_plugin(self, plugin_name: str) -> Optional[AvailablePlugin]:
         """Find a plugin by name in this repository"""
-        for p in self.plugins:
-            if p.name == plugin_name:
-                return p
-        return None
+        return next((p for p in self.plugins if p.name == plugin_name), None)

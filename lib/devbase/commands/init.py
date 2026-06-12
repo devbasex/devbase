@@ -170,7 +170,6 @@ def _migrate_rc_devbase_block(rc_file: Path, devbase_root: Path) -> bool:
 
     # Remove old hardcoded PATH lines that don't use ${DEVBASE_ROOT} variable
     # Keep lines using ${DEVBASE_ROOT} or matching current devbase_root
-    escaped_root = re.escape(devbase_root_str)
     lines = content.split('\n')
     filtered = []
     for line in lines:

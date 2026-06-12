@@ -3,14 +3,14 @@
 import re
 import shutil
 import stat
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from devbase.errors import PluginError
 from devbase.log import get_logger
 
-from .models import AvailablePlugin, InstalledPlugin, RegisteredRepository
+from .models import InstalledPlugin, RegisteredRepository
 from .registry import PluginRegistry
 
 if TYPE_CHECKING:
@@ -237,14 +237,8 @@ def _build_persisted_repo(
     every repo update is accumulated and flushed in a single plugins.yml save
     (see migrate()), so this no longer writes per repo.
     """
-    plugins = [
-        AvailablePlugin(name=e.name, description=e.description, path=e.path)
-        for e in reg_info.plugins
-    ] if reg_info else list(repo.plugins)
-    return RegisteredRepository(
-        name=repo.name, url=repo.url, added_at=repo.added_at,
-        local_path=f"repos/{dir_name}", plugins=plugins,
-    )
+    plugins = reg_info.available_plugins() if reg_info else list(repo.plugins)
+    return replace(repo, local_path=f"repos/{dir_name}", plugins=plugins)
 
 
 def _ensure_repo_cloned(
@@ -385,42 +379,25 @@ def _cleanup_plugins_dir(registry: PluginRegistry) -> bool:
     return True
 
 
-def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResult:
-    """Migrate legacy plugins/<name> copy installs to repos/ clones.
+def _plan_migration(
+    registry: PluginRegistry,
+    legacy: list[InstalledPlugin],
+    result: MigrationResult,
+) -> tuple[
+    list[InstalledPlugin], list[RegisteredRepository], list[tuple[str, Path, Path]],
+]:
+    """Phase 1 (no destructive fs ops): 各 legacy plugin の移行内容を決定する.
 
-    For each legacy plugin: ensure its source repo is cloned to repos/, rewrite
-    InstalledPlugin.path to the repos/ location, then delete the old copy when
-    byte-identical or preserve it as <name>.bak when it diverged.  Finally
-    re-sync project symlinks and empty plugins/ to .gitkeep when safe.
+    Validate the repo/clone/entry and decide each copy's fate, collecting the
+    cloned-repo rows in `pending_repos`, the repos/ path rewrites in `pending`,
+    and the retire actions in `retire` (plugin_name, old_dir, repo_dir).
+    Cloning stages the repo row in `pending_repos` rather than saving per
+    clone, so the save count stays O(1) regardless of how many repos are
+    cloned.  Failures are recorded in `result` (skipped + errors) per plugin.
     """
     from .installer import parse_registry_yml
-    from .syncer import load_plugin_info, sync_projects
+    from .syncer import load_plugin_info
 
-    result = MigrationResult()
-    legacy = [p for p in registry.list_installed() if _is_legacy_plugin(p)]
-    if not legacy:
-        return result
-
-    # Two-phase migration so a registry-save failure can never leave a copy
-    # deleted while plugins.yml still points at the stale plugins/ path:
-    #
-    #   Phase 1 (no destructive fs ops): validate the repo/clone/entry and
-    #     decide each copy's fate (delete vs preserve as .bak), collecting the
-    #     cloned-repo rows in `pending_repos`, the repos/ path rewrites in
-    #     `pending`, and the retire actions in `retire`.  Cloning stages the
-    #     repo row in `pending_repos` rather than saving per clone, so the save
-    #     count stays O(1) regardless of how many repos are cloned.
-    #   Persist: write every repo row + path rewrite in a single plugins.yml
-    #     save (save_migration), flushing the staged clones BEFORE any cleanup.
-    #   Phase 2 (destructive): only after plugins.yml is durably at repos/ do we
-    #     delete/rename the old copies.
-    #
-    # Ordering rationale: if the save raises, no copy has been touched yet, so
-    # the registry stays legacy and the next run retries cleanly with the copies
-    # intact (recoverable).  Conversely the validated repos/ clone is known good
-    # before we commit, so committing the rewrite first cannot strand a plugin
-    # on a missing tree; a stray copy left by a phase-2 hiccup is merely surfaced
-    # by _cleanup_plugins_dir, never silent data loss.
     pending: list[InstalledPlugin] = []
     pending_repos: list[RegisteredRepository] = []  # cloned-repo rows to persist
     retire: list[tuple[str, Path, Path]] = []  # (plugin_name, old_dir, repo_dir)
@@ -444,12 +421,10 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
         try:
             repo = repos_by_url.get(plugin.source) if plugin.source else None
             if not repo:
-                result.skipped.append(plugin.name)
-                result.errors.append(
-                    f"{plugin.name}: source repository not registered "
+                raise PluginError(
+                    "source repository not registered "
                     f"({plugin.source or 'no source URL'})"
                 )
-                continue
 
             clone_dir, repo, reg_info = _ensure_repo_cloned(
                 registry, repo, pending_repos,
@@ -474,53 +449,39 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
                 if repo.url not in reg_info_by_url:
                     reg_info_by_url[repo.url] = parse_registry_yml(clone_dir)
                 reg_info = reg_info_by_url[repo.url]
-            entry = None
-            if reg_info:
-                entry = next(
-                    (e for e in reg_info.plugins if e.name == plugin.name), None,
-                )
+
+            entry = reg_info.find_plugin(plugin.name) if reg_info else None
             if not entry:
-                result.skipped.append(plugin.name)
-                result.errors.append(
-                    f"{plugin.name}: not found in registry.yml of '{repo.name}'"
-                )
-                continue
+                raise PluginError(f"not found in registry.yml of '{repo.name}'")
 
             repo_plugin_dir = clone_dir / entry.path.rstrip('/')
             if not repo_plugin_dir.is_dir():
-                result.skipped.append(plugin.name)
-                result.errors.append(
-                    f"{plugin.name}: plugin dir missing in clone: {repo_plugin_dir}"
-                )
-                continue
+                raise PluginError(f"plugin dir missing in clone: {repo_plugin_dir}")
 
             rel_path = str(repo_plugin_dir.relative_to(registry.devbase_root))
             info = load_plugin_info(repo_plugin_dir)
             version = info.version if info else plugin.version
 
-            old_dir = registry.devbase_root / plugin.path
-            pending.append(InstalledPlugin(
-                name=plugin.name,
-                version=version,
-                source=plugin.source,
-                installed_at=plugin.installed_at,
-                path=rel_path,
-                linked=False,
+            pending.append(replace(
+                plugin, version=version, path=rel_path, linked=False,
             ))
-            retire.append((plugin.name, old_dir, repo_plugin_dir))
+            retire.append((
+                plugin.name, registry.devbase_root / plugin.path, repo_plugin_dir,
+            ))
         except Exception as e:
             result.skipped.append(plugin.name)
             result.errors.append(f"{plugin.name}: {e}")
 
-    # Persist every staged cloned-repo row AND validated path rewrite in a
-    # single save BEFORE retiring any copy.  This both (a) keeps the registry
-    # durably pointing at the repos/ clones before destructive cleanup — the
-    # two-phase atomicity invariant — and (b) collapses what used to be one save
-    # per cloned repo plus the path-rewrite save into a single O(1) write.  A
-    # failure here aborts with the copies untouched (recoverable).
-    registry.save_migration(pending_repos, pending)
+    return pending, pending_repos, retire
 
-    # Now that plugins.yml durably points at repos/, retire the old copies.
+
+def _retire_legacy_copies(
+    retire: list[tuple[str, Path, Path]], result: MigrationResult,
+) -> None:
+    """Phase 2 (destructive): 旧 plugins/ コピーを削除または .bak として保全する。
+
+    Only call this AFTER plugins.yml durably points at repos/ (save_migration).
+    """
     for name, old_dir, repo_plugin_dir in retire:
         try:
             if old_dir.is_dir() and not old_dir.is_symlink():
@@ -544,6 +505,51 @@ def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResu
             # surfaced by _cleanup_plugins_dir rather than lost.
             result.migrated.append(name)
             result.errors.append(f"{name}: copy not retired: {e}")
+
+
+def migrate(registry: PluginRegistry, *, run_sync: bool = True) -> MigrationResult:
+    """Migrate legacy plugins/<name> copy installs to repos/ clones.
+
+    For each legacy plugin: ensure its source repo is cloned to repos/, rewrite
+    InstalledPlugin.path to the repos/ location, then delete the old copy when
+    byte-identical or preserve it as <name>.bak when it diverged.  Finally
+    re-sync project symlinks and empty plugins/ to .gitkeep when safe.
+
+    Two-phase migration so a registry-save failure can never leave a copy
+    deleted while plugins.yml still points at the stale plugins/ path:
+
+      Phase 1 (_plan_migration, no destructive fs ops): decide each copy's
+        fate (delete vs preserve as .bak) and stage every row to persist.
+      Persist: write every repo row + path rewrite in a single plugins.yml
+        save (save_migration), flushing the staged clones BEFORE any cleanup.
+      Phase 2 (_retire_legacy_copies, destructive): only after plugins.yml is
+        durably at repos/ do we delete/rename the old copies.
+
+    Ordering rationale: if the save raises, no copy has been touched yet, so
+    the registry stays legacy and the next run retries cleanly with the copies
+    intact (recoverable).  Conversely the validated repos/ clone is known good
+    before we commit, so committing the rewrite first cannot strand a plugin
+    on a missing tree; a stray copy left by a phase-2 hiccup is merely surfaced
+    by _cleanup_plugins_dir, never silent data loss.
+    """
+    from .syncer import sync_projects
+
+    result = MigrationResult()
+    legacy = [p for p in registry.list_installed() if _is_legacy_plugin(p)]
+    if not legacy:
+        return result
+
+    pending, pending_repos, retire = _plan_migration(registry, legacy, result)
+
+    # Persist every staged cloned-repo row AND validated path rewrite in a
+    # single save BEFORE retiring any copy.  This both (a) keeps the registry
+    # durably pointing at the repos/ clones before destructive cleanup — the
+    # two-phase atomicity invariant — and (b) collapses what used to be one save
+    # per cloned repo plus the path-rewrite save into a single O(1) write.  A
+    # failure here aborts with the copies untouched (recoverable).
+    registry.save_migration(pending_repos, pending)
+
+    _retire_legacy_copies(retire, result)
 
     if run_sync:
         sync_projects(registry)
