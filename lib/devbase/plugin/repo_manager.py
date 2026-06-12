@@ -1,9 +1,12 @@
 """Repository management - handles repo add/remove/list/refresh operations"""
 
+import shutil
 import subprocess
 import yaml
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from devbase.errors import PluginError, RepositoryError
 from devbase.log import get_logger
@@ -45,7 +48,6 @@ def _derive_repo_name(url: str) -> str:
         name = name[:-4]
     if ':' in name and '@' in name:
         return name.rsplit(':', 1)[-1]
-    from urllib.parse import urlparse
     path = urlparse(name).path.strip('/')
     segments = path.split('/')
     if len(segments) >= 2:
@@ -65,9 +67,7 @@ def _extract_host(url: str) -> str:
         # SSH form: git@host:owner/repo.git
         after_at = stripped.split('@', 1)[1]
         return after_at.split(':', 1)[0]
-    from urllib.parse import urlparse
-    parsed = urlparse(stripped)
-    return parsed.hostname or "unknown"
+    return urlparse(stripped).hostname or "unknown"
 
 
 def _url_to_repos_dirname(url: str) -> str:
@@ -88,6 +88,14 @@ def _url_to_repos_dirname(url: str) -> str:
     return f"{host}--{owner_repo.replace('/', '--')}"
 
 
+def _run_git(repo_dir: Path, *args: str) -> subprocess.CompletedProcess:
+    """repo_dir で git コマンドを実行し CompletedProcess を返す (check なし)。"""
+    return subprocess.run(
+        ['git', *args],
+        capture_output=True, text=True, cwd=str(repo_dir),
+    )
+
+
 def _is_repo_dirty(repo_dir: Path) -> tuple[bool, str]:
     """Check if a git repository has uncommitted or unpushed changes.
 
@@ -95,40 +103,57 @@ def _is_repo_dirty(repo_dir: Path) -> tuple[bool, str]:
     """
     issues = []
 
-    try:
-        result = subprocess.run(
-            ['git', 'status', '--porcelain'],
-            capture_output=True, text=True, cwd=str(repo_dir),
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            issues.append("uncommitted changes")
-    except subprocess.CalledProcessError:
-        pass
+    status = _run_git(repo_dir, 'status', '--porcelain')
+    if status.returncode == 0 and status.stdout.strip():
+        issues.append("uncommitted changes")
 
-    try:
-        # Check if upstream tracking branch exists
-        upstream_check = subprocess.run(
-            ['git', 'rev-parse', '--abbrev-ref', '@{u}'],
-            capture_output=True, text=True, cwd=str(repo_dir),
-        )
-        if upstream_check.returncode == 0:
-            # Upstream exists — check for unpushed commits
-            result = subprocess.run(
-                ['git', 'log', '--oneline', '@{u}..HEAD'],
-                capture_output=True, text=True, cwd=str(repo_dir),
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                issues.append("unpushed commits")
-        else:
-            # No upstream tracking branch — local commits may be lost
-            # if deleted, so treat as dirty to be safe
-            issues.append("no upstream tracking branch (local-only commits may exist)")
-    except subprocess.CalledProcessError:
-        pass
+    # Check if upstream tracking branch exists
+    upstream_check = _run_git(repo_dir, 'rev-parse', '--abbrev-ref', '@{u}')
+    if upstream_check.returncode == 0:
+        # Upstream exists — check for unpushed commits
+        unpushed = _run_git(repo_dir, 'log', '--oneline', '@{u}..HEAD')
+        if unpushed.returncode == 0 and unpushed.stdout.strip():
+            issues.append("unpushed commits")
+    else:
+        # No upstream tracking branch — local commits may be lost
+        # if deleted, so treat as dirty to be safe
+        issues.append("no upstream tracking branch (local-only commits may exist)")
 
-    if issues:
-        return True, ", ".join(issues)
-    return False, ""
+    return (True, ", ".join(issues)) if issues else (False, "")
+
+
+def _missing_upstream_error(repo_dir: Path) -> PluginError:
+    """upstream 不在時の git pull エラーを、原因別の対処付きメッセージで組み立てる。"""
+    # Detect current branch name
+    branch_result = _run_git(repo_dir, 'branch', '--show-current')
+    current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else ""
+
+    # Detect the first available remote (usually "origin")
+    remote_result = _run_git(repo_dir, 'remote')
+    remote_name = ""
+    if remote_result.returncode == 0 and remote_result.stdout.strip():
+        remotes = remote_result.stdout.strip().splitlines()
+        # Prefer "origin" when multiple remotes exist
+        remote_name = "origin" if "origin" in remotes else remotes[0]
+
+    if not current_branch:
+        return PluginError(
+            f"git pull failed in {repo_dir}: HEAD is detached.\n"
+            "This can happen if the branch was changed manually in repos/.\n"
+            f"Check out a branch first, then retry:\n"
+            f"  git -C {repo_dir} checkout main"
+        )
+    if not remote_name:
+        return PluginError(
+            f"git pull failed in {repo_dir}: no remote configured.\n"
+            f"Current branch '{current_branch}' has no remote to pull from."
+        )
+    return PluginError(
+        f"git pull failed in {repo_dir}: no upstream tracking branch.\n"
+        f"Current branch '{current_branch}' has no remote to pull from.\n"
+        "This can happen if the branch was changed manually in repos/.\n"
+        f"Fix with: git -C {repo_dir} branch --set-upstream-to={remote_name}/{current_branch}"
+    )
 
 
 def _git_pull(repo_dir: Path) -> None:
@@ -139,47 +164,9 @@ def _git_pull(repo_dir: Path) -> None:
     """
     # Pre-check: verify an upstream tracking branch is set.
     # Without it, `git pull` will fail with a confusing message.
-    upstream = subprocess.run(
-        ['git', 'rev-parse', '--abbrev-ref', '@{u}'],
-        capture_output=True, text=True, cwd=str(repo_dir),
-    )
+    upstream = _run_git(repo_dir, 'rev-parse', '--abbrev-ref', '@{u}')
     if upstream.returncode != 0:
-        # Detect current branch name
-        branch_result = subprocess.run(
-            ['git', 'branch', '--show-current'],
-            capture_output=True, text=True, cwd=str(repo_dir),
-        )
-        current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else ""
-
-        # Detect the first available remote (usually "origin")
-        remote_result = subprocess.run(
-            ['git', 'remote'],
-            capture_output=True, text=True, cwd=str(repo_dir),
-        )
-        remote_name = ""
-        if remote_result.returncode == 0 and remote_result.stdout.strip():
-            remotes = remote_result.stdout.strip().splitlines()
-            # Prefer "origin" when multiple remotes exist
-            remote_name = "origin" if "origin" in remotes else remotes[0]
-
-        if not current_branch:
-            raise PluginError(
-                f"git pull failed in {repo_dir}: HEAD is detached.\n"
-                "This can happen if the branch was changed manually in repos/.\n"
-                f"Check out a branch first, then retry:\n"
-                f"  git -C {repo_dir} checkout main"
-            )
-        if not remote_name:
-            raise PluginError(
-                f"git pull failed in {repo_dir}: no remote configured.\n"
-                f"Current branch '{current_branch}' has no remote to pull from."
-            )
-        raise PluginError(
-            f"git pull failed in {repo_dir}: no upstream tracking branch.\n"
-            f"Current branch '{current_branch}' has no remote to pull from.\n"
-            "This can happen if the branch was changed manually in repos/.\n"
-            f"Fix with: git -C {repo_dir} branch --set-upstream-to={remote_name}/{current_branch}"
-        )
+        raise _missing_upstream_error(repo_dir)
 
     try:
         subprocess.run(
@@ -192,17 +179,24 @@ def _git_pull(repo_dir: Path) -> None:
         )
 
 
-def add_repository(
-    registry: PluginRegistry,
-    url: str,
-    name: Optional[str] = None,
+def _log_available_plugins(
+    registry: PluginRegistry, plugins: list[AvailablePlugin],
 ) -> None:
-    """Register a repository: clone to repos/ -> read registry.yml -> save to plugins.yml.
+    """Available plugins 一覧をインストール済みマーク付きで出力する。"""
+    if not plugins:
+        return
+    logger.info("Available plugins:")
+    for p in plugins:
+        status = " (installed)" if registry.get(p.name) else ""
+        logger.info("  - %s: %s%s", p.name, p.description, status)
 
-    Raises RepositoryError on failure.
+
+def _reject_duplicate_registration(registry: PluginRegistry, repo_url: str) -> None:
+    """同一 URL / URL variant (SSH vs HTTPS) の二重登録を拒否する。
+
+    _url_to_repos_dirname normalizes both forms to the same dirname,
+    so we compare against existing repos to prevent redundant clones.
     """
-    repo_url = resolve_repo_url(url)
-
     existing = registry.get_repository_by_url(repo_url)
     if existing:
         raise RepositoryError(
@@ -210,9 +204,6 @@ def add_repository(
             "Use 'devbase plugin repo refresh' to update the plugin list."
         )
 
-    # Detect duplicate registration via SSH/HTTPS URL variants.
-    # _url_to_repos_dirname normalizes both forms to the same dirname,
-    # so we compare against existing repos to prevent redundant clones.
     new_dirname = _url_to_repos_dirname(repo_url)
     for repo in registry.list_repositories():
         if _url_to_repos_dirname(repo.url) == new_dirname and repo.url != repo_url:
@@ -227,6 +218,41 @@ def add_repository(
                 "Both SSH and HTTPS URLs resolve to the same repository.\n"
                 "Use 'devbase plugin repo refresh' to update the existing entry."
             )
+
+
+def _resolve_new_repo_name(
+    registry: PluginRegistry, repo_url: str, name: Optional[str], reg_info,
+) -> str:
+    """新規登録リポジトリの名前を決定する (--name > registry.yml > derived)。
+
+    候補名が既存と衝突する場合は derived 名へフォールバックし、それでも
+    衝突するなら RepositoryError。
+    """
+    derived_name = _derive_repo_name(repo_url)
+    candidate_name = name or reg_info.name or derived_name
+
+    if registry.get_repository(candidate_name) and candidate_name != derived_name:
+        candidate_name = derived_name
+
+    if registry.get_repository(candidate_name):
+        raise RepositoryError(
+            f"Repository name '{candidate_name}' already exists.\n"
+            "Use --name to specify a different name."
+        )
+    return candidate_name
+
+
+def add_repository(
+    registry: PluginRegistry,
+    url: str,
+    name: Optional[str] = None,
+) -> None:
+    """Register a repository: clone to repos/ -> read registry.yml -> save to plugins.yml.
+
+    Raises RepositoryError on failure.
+    """
+    repo_url = resolve_repo_url(url)
+    _reject_duplicate_registration(registry, repo_url)
 
     repos_dir = registry.get_repos_dir()
     repos_dir.mkdir(exist_ok=True)
@@ -248,55 +274,26 @@ def add_repository(
         if not reg_info:
             raise RepositoryError(f"No registry.yml found in {repo_url}")
 
-        derived_name = _derive_repo_name(repo_url)
-        candidate_name = name or reg_info.name or derived_name
-
-        if registry.get_repository(candidate_name) and candidate_name != derived_name:
-            candidate_name = derived_name
-
-        repo_name = candidate_name
-
-        if registry.get_repository(repo_name):
-            raise RepositoryError(
-                f"Repository name '{repo_name}' already exists.\n"
-                "Use --name to specify a different name."
-            )
+        repo_name = _resolve_new_repo_name(registry, repo_url, name, reg_info)
     except Exception:
         # Clean up the cloned directory so a retry won't fail with
         # "Directory already exists".  This also handles partial clones
         # (e.g. disk full, network interruption mid-clone).
-        import shutil as _shutil
         if clone_dir.is_dir():
-            _shutil.rmtree(clone_dir)
+            shutil.rmtree(clone_dir)
         raise
-
-    plugins = [
-        AvailablePlugin(
-            name=e.name,
-            description=e.description,
-            path=e.path,
-        )
-        for e in reg_info.plugins
-    ]
-
-    local_path = f"repos/{dir_name}"
 
     repo = RegisteredRepository(
         name=repo_name,
         url=repo_url,
         added_at=registry.now_iso(),
-        local_path=local_path,
-        plugins=plugins,
+        local_path=f"repos/{dir_name}",
+        plugins=reg_info.available_plugins(),
     )
     registry.add_repository(repo)
 
     logger.info("Repository registered: %s (%s)", repo_name, repo_url)
-    if plugins:
-        logger.info("Available plugins:")
-        for p in plugins:
-            installed = registry.get(p.name)
-            status = " (installed)" if installed else ""
-            logger.info("  - %s: %s%s", p.name, p.description, status)
+    _log_available_plugins(registry, repo.plugins)
 
 
 def remove_repository(
@@ -308,14 +305,12 @@ def remove_repository(
 
     Raises RepositoryError if not found or if repos/ is dirty (without --force).
     """
-    import shutil
     from .installer import uninstall_plugin
 
     repo = registry.get_repository(name)
     if not repo:
         raise RepositoryError(f"Repository '{name}' not found.")
 
-    repos_dir = registry.get_repos_dir()
     repo_clone_dir = registry.devbase_root / repo.local_path if repo.local_path else None
 
     if repo_clone_dir and repo_clone_dir.is_dir() and not force:
@@ -417,35 +412,19 @@ def refresh_repository(
     if not reg_info:
         raise RepositoryError(f"No registry.yml found in {repo.url}")
 
+    plugins = reg_info.available_plugins()
+
+    # registry.yml から消えたインストール済み plugin を警告する
     old_plugin_names = {p.name for p in repo.plugins}
-
-    plugins = [
-        AvailablePlugin(
-            name=e.name,
-            description=e.description,
-            path=e.path,
-        )
-        for e in reg_info.plugins
-    ]
     new_plugin_names = {p.name for p in plugins}
-
     installed_names = {p.name for p in installed}
-    removed_installed = (old_plugin_names - new_plugin_names) & installed_names
-    if removed_installed:
-        for pname in sorted(removed_installed):
-            logger.warning(
-                "Installed plugin '%s' no longer exists in registry.yml of '%s'",
-                pname, name,
-            )
+    for pname in sorted((old_plugin_names - new_plugin_names) & installed_names):
+        logger.warning(
+            "Installed plugin '%s' no longer exists in registry.yml of '%s'",
+            pname, name,
+        )
 
-    updated_repo = RegisteredRepository(
-        name=repo.name,
-        url=repo.url,
-        added_at=repo.added_at,
-        local_path=repo.local_path,
-        plugins=plugins,
-    )
-    registry.add_repository(updated_repo)
+    registry.add_repository(replace(repo, plugins=plugins))
 
     # After pull, update installed plugin metadata (version, path) and
     # re-sync project symlinks so that registry.yml changes (e.g. renamed
@@ -472,12 +451,7 @@ def refresh_repository(
         sync_projects(registry)
 
     logger.info("Repository refreshed: %s", repo.name)
-    if plugins:
-        logger.info("Available plugins:")
-        for p in plugins:
-            installed_p = registry.get(p.name)
-            status = " (installed)" if installed_p else ""
-            logger.info("  - %s: %s%s", p.name, p.description, status)
+    _log_available_plugins(registry, plugins)
 
 
 def add_official_repository(registry: PluginRegistry) -> bool:

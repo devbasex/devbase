@@ -8,11 +8,12 @@ PR1 で **一覧選択 → (running なら操作サブメニュー) → それ�
 PR2 で running 操作サブメニューを **up/down/login/ps/logs/scale/build/rebuild の全操作**
 へ拡張した。login/ps/logs/scale は running 中コンテナを対象とするため running 行限定、
 stopped/unknown は従来どおり直接 up (PR1 非回帰)。引数を要する操作は ``tui.menu`` の
-収集ヘルパで CLI と同じ属性値を集め、破壊的な down は ``menu.confirm`` で確認する
+収集ヘルパで CLI と同じ属性値を集め、破壊的な down は実行前に確認する
 (plan 2.3 契約表 / 3.4 破壊的操作確認)。
 
 プロジェクト一覧の表示・選択は ``tui.app`` (トップ画面) が担い、本モジュールは
 選択された 1 行の処理 (``handle_row``) と questionary 不在時のフォールバックを提供する。
+中止系の伝搬 (Ctrl-C / Esc) は ``tui.flow`` のナビ規約に従う。
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from devbase.log import get_logger
-from devbase.tui import menu
+from devbase.tui import flow, menu
 from devbase.tui.dispatch import dispatch_lifecycle
 
 logger = get_logger(__name__)
@@ -39,13 +40,9 @@ _RUNNING_OPS: list[tuple[str, str]] = [
     ("再ビルド (rebuild --no-cache)", "rebuild"),
 ]
 
-# 引数収集を Esc で中止したことを示す番兵 (= サブメニューへ戻る)。
-# dispatch の rc (int) や ``None`` (= Ctrl-C 全体中止) と区別する。
-_ARG_CANCEL = object()
-
-# _optional_int の Ctrl-C 番兵。「空入力 (None = 既定動作)」と衝突するため
-# ``None`` を直接返せず、専用番兵で返して呼び出し側で ``None`` (全体中止) へ変換する。
-_ABORT = object()
+# 中止系番兵は flow と同一オブジェクトを再公開する (呼び出し側・テストの契約)。
+_ARG_CANCEL = flow.ARG_CANCEL
+_ABORT = flow.ABORT
 
 
 def _select_action(name: str):
@@ -53,39 +50,17 @@ def _select_action(name: str):
 
     戻り値: サブコマンド文字列 / ``MENU_BACK`` (Esc・← → 一覧へ戻る) / ``None`` (Ctrl-C 中止)。
     """
-    return menu.select(
-        f"'{name}' は起動中です。操作を選択 "
-        "(↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
-        list(_RUNNING_OPS), back=True, search=False)
+    return menu.select(f"'{name}' は起動中です。操作を選択 {menu.HINT_BACK}:",
+                       list(_RUNNING_OPS), back=True, search=False)
 
 
 def _optional_int(message: str, *, min_value: int = 0):
-    """空入力を許す整数収集 (logs --tail 等)。
+    """空入力を許す整数収集 (logs --tail 等)。``flow.optional_int`` の再公開。
 
-    戻り値: ``int`` / ``None`` (空入力 = 既定動作) / ``_ARG_CANCEL`` (Esc → サブ
-    メニューへ戻る) / ``_ABORT`` (Ctrl-C → 全体中止。空入力の ``None`` と衝突する
-    ため専用番兵で返し、呼び出し側で ``None`` へ変換する)。
-    非数値・``min_value`` 未満は再入力を促す。``menu.integer`` は空入力で既定値を返す
-    仕様のため、空 = None を表現したい optional な数値はこちらで扱う。``min_value`` の
-    既定は 0 で、logs --tail に負数を渡して docker compose をエラーにするのを防ぐ。
+    ``min_value`` の既定は 0 で、logs --tail に負数を渡して docker compose を
+    エラーにするのを防ぐ。戻り値の番兵契約は ``flow.optional_int`` 参照。
     """
-    while True:
-        raw = menu.text(message, allow_empty=True)
-        if raw is None:
-            return _ABORT              # Ctrl-C → 全体中止 (呼び出し側で None へ変換)
-        if raw is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        if raw == "":
-            return None
-        try:
-            value = int(raw)
-        except ValueError:
-            logger.error("整数で指定してください: %r", raw)
-            continue
-        if value < min_value:
-            logger.error("%d 以上で指定してください。", min_value)
-            continue
-        return value
+    return flow.optional_int(message, min_value=min_value)
 
 
 def _select_build_image(devbase_root: Path):
@@ -109,108 +84,89 @@ def _select_build_image(devbase_root: Path):
     # value="" を「compose.yml 全体」に割り当て、選択メニューの None (Ctrl-C =
     # 全体中止) と衝突させない。呼び出し側で空文字 → None へ変換する。
     choices = [("compose.yml 全体をビルド", "")] + [(img, img) for img in images]
-    sel = menu.select(
-        "ビルドするイメージを選択 (↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止):",
-        choices, back=True, search=False)
-    if sel is None:
-        return None                    # Ctrl-C → 全体中止 (ナビ規約)
-    if sel is menu.MENU_BACK:
-        return _ARG_CANCEL             # Esc/← → サブメニューを再表示
-    return sel                         # "" = compose 全体 (呼び出し側で None へ変換)
+    return flow.back_as_cancel(menu.select(
+        f"ビルドするイメージを選択 {menu.HINT_BACK}:",
+        choices, back=True, search=False))
 
 
+# ---------------------------------------------------------------------------
+# 各操作の引数収集 + dispatch (引数を要する操作のみ。up/rebuild は即実行)
+# ---------------------------------------------------------------------------
+
+def _op_down(devbase_root: Path, name: str):
+    flow.confirm_or_back(f"'{name}' のコンテナを停止しますか?")
+    return dispatch_lifecycle("down", name)
+
+
+def _op_login(devbase_root: Path, name: str):
+    # menu.text は空入力 (既定値を消して確定) で "" を返し、wrapper で --index=
+    # と展開されてコマンドが失敗する。menu.integer なら空入力は default=1 を返し、
+    # min_value=1 で正の整数を保証する。cmd_login の index は文字列契約なので str 化。
+    index = flow.need(menu.integer("ログインするコンテナ番号", default=1, min_value=1))
+    return dispatch_lifecycle("login", name, index=str(index))
+
+
+def _op_ps(devbase_root: Path, name: str):
+    all_c = flow.need(menu.confirm(
+        "停止中も含め全コンテナを表示しますか (--all)?", default=False))
+    return dispatch_lifecycle("ps", name, all=all_c)
+
+
+def _op_logs(devbase_root: Path, name: str):
+    follow = flow.need(menu.confirm("ログを追従表示しますか (--follow)?", default=False))
+    tail = flow.need_optional(_optional_int("末尾何行を表示しますか (空で全件)"))
+    return dispatch_lifecycle("logs", name, follow=follow, tail=tail)
+
+
+def _op_scale(devbase_root: Path, name: str):
+    new_scale = flow.need(menu.integer(f"'{name}' の新しいコンテナ数", min_value=1))
+    return dispatch_lifecycle("scale", name, new_scale=new_scale)
+
+
+def _op_build(devbase_root: Path, name: str):
+    image = flow.need(_select_build_image(devbase_root))
+    return dispatch_lifecycle("build", name, image=image or None)
+
+
+_OP_HANDLERS = {
+    # up/rebuild は引数なしで即実行。up は scale 属性を参照する (常に None。
+    # 他コマンドは無視する)。
+    "up": lambda root, name: dispatch_lifecycle("up", name, scale=None),
+    "rebuild": lambda root, name: dispatch_lifecycle("rebuild", name, scale=None),
+    "down": _op_down,
+    "login": _op_login,
+    "ps": _op_ps,
+    "logs": _op_logs,
+    "scale": _op_scale,
+    "build": _op_build,
+}
+
+
+@flow.collect_args
 def _run_operation(devbase_root: Path, name: str, op: str):
     """選択された操作の引数を収集して ``dispatch_lifecycle`` で起動する。
 
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc で引数収集を中止 =
-    サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
-    引数を要さない up/rebuild は即実行。down は破壊的のため ``menu.confirm`` で確認する。
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc・確認拒否で引数収集を
+    中止 = サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
     """
-    if op in ("up", "rebuild"):
-        # up は scale 属性を参照する (常に None。他コマンドは無視する)。
-        return dispatch_lifecycle(op, name, scale=None)
-
-    if op == "down":
-        ok = menu.confirm(f"'{name}' のコンテナを停止しますか?", default=False)
-        if ok is None:
-            return None                # Ctrl-C → 全体中止
-        if ok is menu.MENU_BACK or not ok:
-            return _ARG_CANCEL         # Esc / 拒否 → 実行しない
-        return dispatch_lifecycle("down", name)
-
-    if op == "login":
-        # menu.text は空入力 (既定値を消して確定) で "" を返し、wrapper で --index=
-        # と展開されてコマンドが失敗する。menu.integer なら空入力は default=1 を返し、
-        # min_value=1 で正の整数を保証する。cmd_login の index は文字列契約なので str 化。
-        index = menu.integer("ログインするコンテナ番号", default=1, min_value=1)
-        if index is None:
-            return None                # Ctrl-C → 全体中止
-        if index is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        return dispatch_lifecycle("login", name, index=str(index))
-
-    if op == "ps":
-        all_c = menu.confirm("停止中も含め全コンテナを表示しますか (--all)?", default=False)
-        if all_c is None:
-            return None                # Ctrl-C → 全体中止
-        if all_c is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        return dispatch_lifecycle("ps", name, all=all_c)
-
-    if op == "logs":
-        follow = menu.confirm("ログを追従表示しますか (--follow)?", default=False)
-        if follow is None:
-            return None                # Ctrl-C → 全体中止
-        if follow is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        tail = _optional_int("末尾何行を表示しますか (空で全件)")
-        if tail is _ABORT:
-            return None                # Ctrl-C → 全体中止
-        if tail is _ARG_CANCEL:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        return dispatch_lifecycle("logs", name, follow=follow, tail=tail)
-
-    if op == "scale":
-        new_scale = menu.integer(f"'{name}' の新しいコンテナ数", min_value=1)
-        if new_scale is None:
-            return None                # Ctrl-C → 全体中止
-        if new_scale is menu.MENU_BACK:
-            return _ARG_CANCEL         # Esc → サブメニューへ戻る
-        return dispatch_lifecycle("scale", name, new_scale=new_scale)
-
-    if op == "build":
-        image = _select_build_image(devbase_root)
-        if image is None:
-            return None                # Ctrl-C → 全体中止
-        if image is _ARG_CANCEL:
-            return _ARG_CANCEL
-        return dispatch_lifecycle("build", name, image=image or None)
-
-    # 到達しない (メニュー値は _RUNNING_OPS に限定される)。保守的に no-op。
-    logger.error("未知の操作です: %s", op)
-    return _ARG_CANCEL
+    handler = _OP_HANDLERS.get(op)
+    if handler is None:
+        # 到達しない (メニュー値は _RUNNING_OPS に限定される)。保守的に no-op。
+        logger.error("未知の操作です: %s", op)
+        raise flow.BackOut
+    return handler(devbase_root, name)
 
 
 def _operation_menu(devbase_root: Path, name: str):
     """running 行の操作サブメニューを回す。
 
-    戻り値プロトコル (run と同じ ``is`` 同一性判定):
-    - dispatch の rc (``int``): 操作を実行 → 呼び出し元へ (最終的にトップへ復帰)。
-    - ``menu.MENU_BACK``: Esc/← で一覧へ戻る。
-    - ``None``: Ctrl-C で全体中止。
-
+    戻り値 (``flow.menu_loop`` のプロトコル): dispatch の rc (``int``) /
+    ``menu.MENU_BACK`` (Esc・← で一覧へ戻る) / ``None`` (Ctrl-C 全体中止)。
     引数収集を中止 (``_ARG_CANCEL``) した場合はサブメニューを再表示する。
     """
-    while True:
-        op = _select_action(name)
-        if op is menu.MENU_BACK:
-            return menu.MENU_BACK
-        if op is None:
-            return None
-        rc = _run_operation(devbase_root, name, op)
-        if rc is _ARG_CANCEL:
-            continue                   # 引数収集を中止 → サブメニューへ戻る
-        return rc                      # 実行 rc → 呼び出し元へ
+    return flow.menu_loop(
+        lambda: _select_action(name),
+        lambda op: _run_operation(devbase_root, name, op))
 
 
 def handle_row(devbase_root: Path, row: dict):

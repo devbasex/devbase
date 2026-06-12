@@ -42,6 +42,11 @@ except ImportError:  # pragma: no cover - 未導入環境のフォールバッ�
 # ``None`` (= Ctrl-C による全体中止) と区別するための番兵。
 MENU_BACK = object()
 
+# 選択メニューのプロンプト文言に添えるキー操作ヒント (各 actions_* で共通)。
+# search 有効メニューは ← が入力カーソルと衝突するため Esc のみを案内する。
+HINT_BACK = "(↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止)"
+HINT_SEARCH = "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻る / Ctrl-C 中止)"
+
 
 # ---------------------------------------------------------------------------
 # キーバインド (Esc / ←)
@@ -91,6 +96,18 @@ def with_escape_cancel(question):
     return _add_escape_binding(question, _cancel)
 
 
+def _ask_erased(question):
+    """``erase_when_done`` を立ててから ``ask()`` する共通ヘルパ (全プロンプト用)。
+
+    questionary は回答確定時に「質問 + 回答」の collapse 行を画面へ残す。TUI は
+    ループでメニューを再描画するため、回答のたびにこの行が蓄積して画面全体が
+    下へずれていく (実 TTY でのみ再現する残留・行ずれ不具合)。回答後に描画ごと
+    消去することで、メニューを常に同じ位置へ再描画する。
+    """
+    question.application.erase_when_done = True
+    return question.ask()
+
+
 def _ask_with_escape(question):
     """Esc→``MENU_BACK`` を仕込んでから ``ask()`` する共通ヘルパ (text/confirm/path 用)。
 
@@ -99,7 +116,7 @@ def _ask_with_escape(question):
     を適用してから問い合わせる。← は入力カーソル移動と衝突するためバインドしない。
     戻り値: 入力値 / ``MENU_BACK`` (Esc) / ``None`` (Ctrl-C)。
     """
-    return with_escape_back(question, bind_left=False).ask()
+    return _ask_erased(with_escape_back(question, bind_left=False))
 
 
 def with_escape_back(question, *, bind_left: bool = True):
@@ -120,7 +137,8 @@ def with_escape_back(question, *, bind_left: bool = True):
     def _back(event):
         # 戻る操作で残る「質問行 (未回答のまま collapse した行)」は次のメニュー描画と
         # 重なり 1 行ずれの原因になるため、exit 前に erase_when_done を立てて
-        # プロンプト描画ごと消去する (Enter での通常回答行は従来どおり残る)。
+        # プロンプト描画ごと消去する。通常回答時も ``_ask_erased`` が同フラグを立てる
+        # ため冗長だが、本関数を ``ask()`` 直呼びと組み合わせても安全なよう残す。
         event.app.erase_when_done = True
         event.app.exit(result=MENU_BACK)
 
@@ -175,12 +193,30 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
         question = with_escape_back(question, bind_left=not search)
     else:
         question = with_escape_cancel(question)
-    return question.ask()
+    return _ask_erased(question)
 
 
 # ---------------------------------------------------------------------------
 # 引数収集ヘルパ (PR2 以降の各カテゴリ操作が CLI 相当の属性値を集めるのに使う)
 # ---------------------------------------------------------------------------
+
+def _collect_stripped(make_question, *, allow_empty: bool, empty_error: str):
+    """text/path 共通の収集ループ。strip した入力を返す。
+
+    ``allow_empty=False`` のとき空文字は受け付けず再入力を促す
+    (自己再帰を避け while で回す)。戻り値: 入力文字列 / ``MENU_BACK`` (Esc →
+    1 つ前のメニューへ戻る) / ``None`` (Ctrl-C → 全体中止)。
+    """
+    while True:
+        ans = _ask_with_escape(make_question())
+        if ans is None or ans is MENU_BACK:
+            return ans                 # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
+        ans = ans.strip()
+        if not ans and not allow_empty:
+            logger.error(empty_error)
+            continue
+        return ans
+
 
 def text(message: str, *, default: str | None = None,
          allow_empty: bool = True):
@@ -192,15 +228,9 @@ def text(message: str, *, default: str | None = None,
     EOF / Ctrl-C のどちらも ``None`` = 中止)。
     """
     if HAVE_QUESTIONARY:
-        while True:  # 空 (allow_empty=False) は再入力。自己再帰を避け while で回す。
-            ans = _ask_with_escape(questionary.text(message, default=default or ""))
-            if ans is None or ans is MENU_BACK:
-                return ans             # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
-            ans = ans.strip()
-            if not ans and not allow_empty:
-                logger.error("値を入力してください。")
-                continue
-            return ans
+        return _collect_stripped(
+            lambda: questionary.text(message, default=default or ""),
+            allow_empty=allow_empty, empty_error="値を入力してください。")
     return _input_text(message, default=default, allow_empty=allow_empty)
 
 
@@ -254,15 +284,9 @@ def path(message: str, *, default: str | None = None,
     ``MENU_BACK`` (Esc → 1 つ前のメニューへ戻る) / ``None`` (Ctrl-C → 全体中止)。
     """
     if HAVE_QUESTIONARY:
-        while True:  # 空 (allow_empty=False) は再入力。自己再帰を避け while で回す。
-            ans = _ask_with_escape(questionary.path(message, default=default or ""))
-            if ans is None or ans is MENU_BACK:
-                return ans             # None=Ctrl-C 全体中止 / MENU_BACK=Esc 戻る
-            ans = ans.strip()
-            if not ans and not allow_empty:
-                logger.error("パスを入力してください。")
-                continue
-            return ans
+        return _collect_stripped(
+            lambda: questionary.path(message, default=default or ""),
+            allow_empty=allow_empty, empty_error="パスを入力してください。")
     return _input_text(message, default=default, allow_empty=allow_empty)
 
 

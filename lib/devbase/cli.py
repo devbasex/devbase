@@ -4,6 +4,7 @@
 import argparse
 import os
 import sys
+from importlib import import_module
 from pathlib import Path
 
 from devbase.errors import DevbaseError
@@ -86,6 +87,14 @@ def _require_devbase_root() -> Path:
     return Path(root)
 
 
+def _add_name_arg(parser):
+    """省略可能な `[name]` positional (プロジェクト名) を登録する。
+
+    `project <sub> [name]` とトップレベルショートカットで同一定義を共有する。
+    """
+    parser.add_argument('name', nargs='?', default=None, help='Project name')
+
+
 def _add_login_subparser(sub):
     """`login` サブコマンドを登録する (project / container 共通)。
 
@@ -156,27 +165,24 @@ def _add_project_parser(subparsers):
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')
 
-    pj_up = pj_sub.add_parser('up', help='Start containers')
-    pj_up.add_argument('name', nargs='?', default=None, help='Project name')
-
-    pj_down = pj_sub.add_parser('down', help='Stop and remove containers')
-    pj_down.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(pj_sub.add_parser('up', help='Start containers'))
+    _add_name_arg(pj_sub.add_parser('down', help='Stop and remove containers'))
 
     _add_login_subparser(pj_sub)
 
     pj_ps = pj_sub.add_parser('ps', help='Show container status')
-    pj_ps.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(pj_ps)
     pj_ps.add_argument('--all', '-a', action='store_true', help='Show all containers')
 
     pj_logs = pj_sub.add_parser('logs', help='Show container logs')
-    pj_logs.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(pj_logs)
     pj_logs.add_argument('--follow', '-f', action='store_true', help='Follow log output')
     pj_logs.add_argument('--tail', type=int, default=None, help='Number of lines')
 
     # NOTE: `[name]` optional + `new_scale` 必須 int の順。値が 1 個なら new_scale に、
     # 2 個なら (name, new_scale) に割り当てられ曖昧にならない (tests/cli 参照)。
     pj_scale = pj_sub.add_parser('scale', help='Scale containers online')
-    pj_scale.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(pj_scale)
     pj_scale.add_argument('new_scale', type=int, help='New number of containers')
 
     _add_build_subparser(pj_sub)
@@ -185,9 +191,8 @@ def _add_project_parser(subparsers):
     # 省略可能な `[name]` を取り、name 指定時は _dispatch_lifecycle が chdir してから
     # 実行する。wrapper の _PROJECT_NAME_SUBCOMMANDS / _NAME_RESOLVABLE_SHORTCUTS にも
     # 追加すること。
-    pj_rebuild = pj_sub.add_parser(
-        'rebuild', help='Rebuild images without cache (docker compose build --no-cache)')
-    pj_rebuild.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(pj_sub.add_parser(
+        'rebuild', help='Rebuild images without cache (docker compose build --no-cache)'))
 
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
@@ -243,6 +248,12 @@ def _add_env_parser(subparsers):
     env_sub.add_parser('edit', help='Open .env in editor')
     env_sub.add_parser('project', help='Setup project-specific variables')
 
+    _add_env_export_parser(env_sub)
+    _add_env_import_parser(env_sub)
+
+
+def _add_env_export_parser(env_sub):
+    """`env export` サブコマンドを登録する。"""
     env_export = env_sub.add_parser(
         'export',
         help='Export .env files as an encrypted bundle (age)',
@@ -278,6 +289,9 @@ def _add_env_parser(subparsers):
                                  '(per-object SSE is always applied regardless of this flag). '
                                  'Has no effect for non-s3:// destinations.')
 
+
+def _add_env_import_parser(env_sub):
+    """`env import` サブコマンドを登録する。"""
     env_import = env_sub.add_parser(
         'import',
         help='Import .env files from a bundle (age-encrypted or plaintext tar.gz)',
@@ -421,29 +435,24 @@ def _add_shortcuts(subparsers):
     注記参照): bin/devbase が build を shell 実装 (cmd_build) に委譲するため、
     Python 側でトップレベル build を広告すると実経路と乖離する。
     """
-    login_sc = subparsers.add_parser('login', help='Login to container')
-    login_sc.add_argument('index', nargs='?', default='1', help='Container index')
+    _add_login_subparser(subparsers)
 
     ps_sc = subparsers.add_parser('ps', help='Show container status')
-    ps_sc.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(ps_sc)
     ps_sc.add_argument('--all', '-a', action='store_true', help='Show all containers')
 
-    up_sc = subparsers.add_parser('up', help='Start containers')
-    up_sc.add_argument('name', nargs='?', default=None, help='Project name')
-
-    down_sc = subparsers.add_parser('down', help='Stop and remove containers')
-    down_sc.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(subparsers.add_parser('up', help='Start containers'))
+    _add_name_arg(subparsers.add_parser('down', help='Stop and remove containers'))
 
     # `[name]` optional + `new_scale` 必須 int の順 (project scale と同じ規則)。
     scale_sc = subparsers.add_parser('scale', help='Scale containers online')
-    scale_sc.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(scale_sc)
     scale_sc.add_argument('new_scale', type=int, help='New number of containers')
 
     # `rebuild` は project rebuild のトップレベルシノニム (Python 実装のため build と
     # 異なりショートカット可)。up/down と同じく `[name]` を受け付ける。
-    rebuild_sc = subparsers.add_parser(
-        'rebuild', help='Rebuild images without cache (docker compose build --no-cache)')
-    rebuild_sc.add_argument('name', nargs='?', default=None, help='Project name')
+    _add_name_arg(subparsers.add_parser(
+        'rebuild', help='Rebuild images without cache (docker compose build --no-cache)'))
 
     # `list` は `project list` のトップレベルシノニム。lifecycle ではなく一覧表示
     # のため SHORTCUTS (project lifecycle へ写像) ではなく _dispatch で個別に
@@ -569,6 +578,17 @@ def main():
         return 1
 
 
+# DEVBASE_ROOT 必須コマンドの定義: cmd -> (module, function, args を渡すか)。
+# 起動コストを抑えるため import は dispatch 時に遅延させる (従来の関数内 import と同等)。
+_ROOT_COMMANDS = {
+    'init':     ('devbase.commands.init',     'cmd_init',     False),
+    'status':   ('devbase.commands.status',   'cmd_status',   False),
+    'env':      ('devbase.commands.env',      'cmd_env',      True),
+    'plugin':   ('devbase.commands.plugin',   'cmd_plugin',   True),
+    'snapshot': ('devbase.commands.snapshot', 'cmd_snapshot', True),
+}
+
+
 def _dispatch(cmd, args):
     """Dispatch command to handler."""
     # Resolve group aliases
@@ -604,30 +624,14 @@ def _dispatch(cmd, args):
         return cmd_container(args)
 
     # --- Commands requiring DEVBASE_ROOT ---
+    spec = _ROOT_COMMANDS.get(cmd)
+    if spec is None:
+        logger.error("Unknown command: '%s'", cmd)
+        return 1
+    module_name, func_name, takes_args = spec
+    func = getattr(import_module(module_name), func_name)
     devbase_root = _require_devbase_root()
-
-    if cmd == 'init':
-        from devbase.commands.init import cmd_init
-        return cmd_init(devbase_root)
-
-    if cmd == 'status':
-        from devbase.commands.status import cmd_status
-        return cmd_status(devbase_root)
-
-    if cmd == 'env':
-        from devbase.commands.env import cmd_env
-        return cmd_env(devbase_root, args)
-
-    if cmd == 'plugin':
-        from devbase.commands.plugin import cmd_plugin
-        return cmd_plugin(devbase_root, args)
-
-    if cmd == 'snapshot':
-        from devbase.commands.snapshot import cmd_snapshot
-        return cmd_snapshot(devbase_root, args)
-
-    logger.error("Unknown command: '%s'", cmd)
-    return 1
+    return func(devbase_root, args) if takes_args else func(devbase_root)
 
 
 if __name__ == '__main__':
