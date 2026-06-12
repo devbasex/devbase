@@ -211,15 +211,8 @@ def _select_scoped_project(devbase_root: Path, message: str, choices):
 # 各操作の引数収集 + dispatch (plan 2.3 契約)
 # ---------------------------------------------------------------------------
 
-def _op_init(devbase_root: Path):
-    # 既存設定がある場合は --reset でやり直し (既存はバックアップされる)。
-    reset = flow.need(menu.confirm(
-        "既存の設定をバックアップしてやり直しますか (--reset)?", default=False))
-    return _dispatch(devbase_root, "init", reset=reset)
-
-
 def _op_list(devbase_root: Path):
-    """``env list``: 表示範囲 + 表示オプションを収集して一覧表示する。
+    """``env list``: 表示範囲を収集して一覧表示する。
 
     ハンドラ (``cmd_env_list``) は CWD (PWD) が projects/ 配下のときだけ
     プロジェクト .env を表示するため、プロジェクトを含む表示範囲
@@ -233,13 +226,12 @@ def _op_list(devbase_root: Path):
         [("グローバル + プロジェクト", "both"),
          ("グローバルのみ (--global)", "global"),
          ("プロジェクトのみ (--project)", "project")])
-    reveal = flow.need(menu.confirm(
-        "機密値を伏せ字にせず表示しますか (--reveal)?", default=False))
-    keys_only = flow.need(menu.confirm("キー名のみ表示しますか (--keys)?", default=False))
 
+    # --reveal / --keys は CLI 既定 (False = 機密値は伏せ字・通常表示) で実行する
+    # (非破壊操作の確認プロンプト廃止)。必要な場合は CLI を使う想定。
     attrs = {"global_only": scope == "global",
              "project_only": scope == "project",
-             "reveal": reveal, "keys_only": keys_only}
+             "reveal": False, "keys_only": False}
     if name is None:
         return _dispatch(devbase_root, "list", **attrs)
     return _run_in_project(devbase_root, name,
@@ -321,9 +313,11 @@ _OP_HANDLERS = {
     # sync は引数なしで即実行 (ソースファイルから認証情報を再同期する)。
     # edit も引数なし。$DEVBASE_ROOT/.env を $EDITOR で開くグローバル操作のため
     # chdir しない (plan 3.3 は CWD スコープとするが実装を正とする)。
+    # init は --reset なし (CLI 既定) で即実行。セットアップ済みなら
+    # cmd_env_init が案内を出して安全に終了し、やり直しは CLI --reset を使う。
     "sync": lambda root: _dispatch(root, "sync"),
     "edit": lambda root: _dispatch(root, "edit"),
-    "init": _op_init,
+    "init": lambda root: _dispatch(root, "init", reset=False),
     "list": _op_list,
     "set": _op_set,
     "get": _op_get,

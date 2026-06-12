@@ -159,9 +159,11 @@ def test_select_operation_lists_all_ops(monkeypatch):
     assert actions_plugin._select_operation() == "list"
     assert captured["back"] is True
     assert captured["search"] is False
-    # 閲覧系の list を先頭にしつつ全 8 操作 (repo 含む) を提示する。
+    # 閲覧系の list 2 種を先頭にしつつ全 9 操作 (repo 含む) を提示する。
+    # --available は y/N で聞かず独立したメニュー項目で提供する。
     assert captured["values"] == [
-        "list", "install", "uninstall", "update", "info", "sync", "migrate", "repo"]
+        "list", "list-available", "install", "uninstall", "update", "info",
+        "sync", "migrate", "repo"]
 
 
 def test_select_repo_operation_lists_all_ops(monkeypatch):
@@ -181,35 +183,27 @@ def test_select_repo_operation_lists_all_ops(monkeypatch):
 # _run_operation: 各操作の引数収集 + dispatch 契約 (plan 2.3)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("available", [True, False])
-def test_run_operation_list_available_flag(monkeypatch, tmp_path, available):
+@pytest.mark.parametrize("op,available", [("list", False), ("list-available", True)])
+def test_run_operation_list_available_flag(monkeypatch, tmp_path, op, available):
+    """list 系は確認プロンプトなしで即実行する (--available はメニュー項目で分岐)。"""
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: available)
-    assert actions_plugin._run_operation(tmp_path, "list") == 0
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("list で確認を求めない"))
+    assert actions_plugin._run_operation(tmp_path, op) == 0
     assert captured["subcommand"] == "list"
     assert captured["available"] is available
 
 
-@pytest.mark.parametrize("confirm_ret", ["BACK", None])
-def test_run_operation_list_cancel(monkeypatch, tmp_path, confirm_ret):
-    """confirm で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
-    called = _no_dispatch(monkeypatch)
-    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: ret)
-    expected = actions_plugin._ARG_CANCEL if confirm_ret == "BACK" else None
-    assert actions_plugin._run_operation(tmp_path, "list") is expected
-    assert called == []
-
-
-def test_run_operation_install_collects_source_link_all(monkeypatch, tmp_path):
+def test_run_operation_install_collects_source_only(monkeypatch, tmp_path):
+    """install は source のみ収集し、--link/--all は CLI 既定 (False) で実行する。"""
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "text", lambda *a, **k: "owner/repo")
-    confirms = iter([True, False])           # link=True, install_all=False
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
+    monkeypatch.setattr(menu, "confirm",
+                        lambda *a, **k: pytest.fail("install で確認を求めない"))
     assert actions_plugin._run_operation(tmp_path, "install") == 0
     assert captured["subcommand"] == "install"
     assert captured["source"] == "owner/repo"
-    assert captured["link"] is True and captured["install_all"] is False
+    assert captured["link"] is False and captured["install_all"] is False
 
 
 @pytest.mark.parametrize("text_ret", ["BACK", None])
@@ -219,20 +213,6 @@ def test_run_operation_install_source_cancel(monkeypatch, tmp_path, text_ret):
     ret = menu.MENU_BACK if text_ret == "BACK" else None
     monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
     expected = actions_plugin._ARG_CANCEL if text_ret == "BACK" else None
-    assert actions_plugin._run_operation(tmp_path, "install") is expected
-    assert called == []
-
-
-@pytest.mark.parametrize("confirm_ret", ["BACK", None])
-def test_run_operation_install_confirm_cancel_midway(monkeypatch, tmp_path,
-                                                     confirm_ret):
-    """install の途中 (install_all) で Esc / Ctrl-C したら実行しない。"""
-    called = _no_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "text", lambda *a, **k: "owner/repo")
-    ret = menu.MENU_BACK if confirm_ret == "BACK" else None
-    confirms = iter([True, ret])             # link=True, install_all で中止
-    monkeypatch.setattr(menu, "confirm", lambda *a, **k: next(confirms))
-    expected = actions_plugin._ARG_CANCEL if confirm_ret == "BACK" else None
     assert actions_plugin._run_operation(tmp_path, "install") is expected
     assert called == []
 
