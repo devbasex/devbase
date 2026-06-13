@@ -10,9 +10,15 @@
   応じた正しいクライアントへ開ける。
 - コンテナ attach URI は ``{"containerName":"/<実コンテナ名>"}`` を hex 化した
   authority を持つ (:func:`build_attach_uri`)。
-- ``ssh-remote+host`` と ``attached-container+...`` を 1 本に合成する記法は
-  公式未サポート (microsoft/vscode#242489)。よって VS Code 外の plain SSH では
-  クライアントへ push できず、手元で叩くコマンドを提示する degrade に留める。
+- **跨ホスト (手元 VS Code → Remote-SSH(host) → ssh 先の Docker 上コンテナ) では
+  ネスト authority ``attached-container+...@ssh-remote+<host>`` を用いる**。これは
+  実機で動作する (VS Code 1.124 / Dev Containers 0.459 で確認。当初 microsoft/vscode#242489
+  を「未サポート」と解釈していたが誤りだった)。``<host>`` は手元クライアントの ssh 接続
+  ラベルで、env には現れないため ssh 先の ``~/.vscode-server`` 等の File History から
+  自動検出する (:func:`resolve_editor_ssh_host`)。``settings.context`` で ssh 先 docker
+  context を指定する。
+- VS Code 外の plain SSH は既存 ExecServer を前提にできずネスト URI が動かないため、
+  自動検出は行わず (明示設定時のみ)、手元で叩くコマンドを提示する degrade に留める。
 
 本モジュールの関数は実 docker / VS Code を必要とせず、``environ`` 等を引数で
 差し替えてテストできるよう副作用を :func:`open_editor` に集約している。
