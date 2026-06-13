@@ -96,6 +96,27 @@ def with_escape_cancel(question):
     return _add_escape_binding(question, _cancel)
 
 
+def _guard_after_done(question):
+    """回答確定後 (``Application.exit`` 済み) のキー処理を無効化する。
+
+    prompt_toolkit は 1 回の読み取りで複数キーを同一バッチとして処理するため、
+    確定キーの直後に入力が溜まっていると (例: Ctrl-C 連打 / Enter 直後の Ctrl-C)、
+    1 つ目のキーで exit して戻り値が確定した後も残りのキーが同じバッチ内で
+    処理され、questionary 組み込みの Ctrl-C ハンドラ等が再度 exit を呼んで
+    「Return value already set. Application.exit() failed.」のクラッシュになる
+    (実 TTY でのみ再現)。アプリ単位の key_bindings (questionary 組み込み + 本
+    モジュールが後付けする Esc/← を含む) を ``~is_done`` でガードし、確定後の
+    キーは無視する。
+    """
+    from prompt_toolkit.filters import is_done
+    from prompt_toolkit.key_binding import ConditionalKeyBindings
+
+    kb = question.application.key_bindings
+    if kb is not None:
+        question.application.key_bindings = ConditionalKeyBindings(kb, ~is_done)
+    return question
+
+
 def _ask_erased(question):
     """``erase_when_done`` を立ててから ``ask()`` する共通ヘルパ (全プロンプト用)。
 
@@ -103,9 +124,12 @@ def _ask_erased(question):
     ループでメニューを再描画するため、回答のたびにこの行が蓄積して画面全体が
     下へずれていく (実 TTY でのみ再現する残留・行ずれ不具合)。回答後に描画ごと
     消去することで、メニューを常に同じ位置へ再描画する。
+
+    併せて ``_guard_after_done`` で確定後のキー処理を無効化する (全プロンプトが
+    本ヘルパを通るため、ここが単一の適用点)。
     """
     question.application.erase_when_done = True
-    return question.ask()
+    return _guard_after_done(question).ask()
 
 
 def _ask_with_escape(question):

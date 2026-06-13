@@ -112,6 +112,25 @@ def test_back_handler_sets_erase_when_done():
     assert captured == {"result": menu.MENU_BACK}
 
 
+def test_guard_after_done_wraps_app_key_bindings():
+    """_guard_after_done が app の key_bindings を ~is_done 条件でラップすること。
+
+    回答確定 (Application.exit) 後に同一バッチへ溜まったキー (Ctrl-C 連打 /
+    Enter 直後の Ctrl-C 等) が questionary 組み込みハンドラへ届くと exit が
+    二重に呼ばれ「Return value already set」でクラッシュする (実 TTY のみで
+    再現)。ガード適用で確定後のキーが無視されることの構造検証。
+    """
+    questionary = pytest.importorskip("questionary")
+    from prompt_toolkit.key_binding import ConditionalKeyBindings
+
+    q = questionary.select("t", choices=[questionary.Choice(title="a", value="a")])
+    inner = q.application.key_bindings
+    assert menu._guard_after_done(q) is q
+    wrapped = q.application.key_bindings
+    assert isinstance(wrapped, ConditionalKeyBindings)
+    assert wrapped.key_bindings is inner, "既存バインドを内包したままガードする"
+
+
 # ---------------------------------------------------------------------------
 # select: バインドの仕込みと戻り値
 # ---------------------------------------------------------------------------
