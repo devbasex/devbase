@@ -129,6 +129,93 @@ def test_build_attach_uri_adds_leading_slash():
     assert uri.endswith("/work/p")
 
 
+def test_build_attach_uri_nested_ssh_remote_and_context():
+    """ssh_host / docker_context 指定でネスト authority + settings.context を組む。"""
+    uri = opener.build_attach_uri("adminer-dev-1", "/work/adminer",
+                                  ssh_host="mac2", docker_context="desktop-linux")
+    prefix = "vscode-remote://attached-container+"
+    assert uri.startswith(prefix)
+    authority, _, path = uri[len(prefix):].partition("/")
+    assert path == "work/adminer"
+    hexpart, sep, ssh = authority.partition("@")
+    assert sep == "@"
+    assert ssh == "ssh-remote+mac2"
+    decoded = json.loads(bytes.fromhex(hexpart).decode("utf-8"))
+    assert decoded == {"containerName": "/adminer-dev-1",
+                       "settings": {"context": "desktop-linux"}}
+
+
+def test_build_attach_uri_ssh_host_only_no_settings():
+    """docker_context 無しなら settings は付けず @ssh-remote のみ付く。"""
+    uri = opener.build_attach_uri("p-dev-1", "/work/p", ssh_host="mac2")
+    assert "@ssh-remote+mac2/work/p" in uri
+    hexpart = uri.split("attached-container+")[1].split("@")[0]
+    assert json.loads(bytes.fromhex(hexpart).decode()) == {"containerName": "/p-dev-1"}
+
+
+# ---------------------------------------------------------------------------
+# resolve_editor_ssh_host / resolve_docker_context
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("value,expected", [
+    (None, None), ("", None), ("   ", None), ("mac2", "mac2"), (" mac2 ", "mac2"),
+])
+def test_resolve_editor_ssh_host(value, expected):
+    env = {} if value is None else {"DEVBASE_EDITOR_SSH_HOST": value}
+    assert opener.resolve_editor_ssh_host(env) == expected
+
+
+def test_resolve_docker_context_explicit_wins():
+    assert opener.resolve_docker_context({"DEVBASE_EDITOR_DOCKER_CONTEXT": " desktop-linux "}) \
+        == "desktop-linux"
+
+
+def test_resolve_docker_context_from_docker_show():
+    def runner(cmd, **kw):
+        assert cmd == ["docker", "context", "show"]
+        return _Proc(returncode=0, stdout="desktop-linux\n")
+
+    assert opener.resolve_docker_context({}, runner=runner) == "desktop-linux"
+
+
+def test_resolve_docker_context_none_when_docker_fails():
+    assert opener.resolve_docker_context(
+        {}, runner=lambda cmd, **kw: _Proc(returncode=1, stdout="")) is None
+
+
+def test_resolve_docker_context_none_when_docker_absent():
+    def boom(cmd, **kw):
+        raise FileNotFoundError("docker")
+
+    assert opener.resolve_docker_context({}, runner=boom) is None
+
+
+# ---------------------------------------------------------------------------
+# is_open_terminal_enabled (既定 ON)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("value,expected", [
+    (None, True), ("", False), ("0", False), ("false", False), ("no", False),
+    ("1", True), ("true", True), ("on", True), ("YES", True),
+])
+def test_is_open_terminal_enabled(value, expected):
+    env = {} if value is None else {"DEVBASE_OPEN_TERMINAL": value}
+    assert opener.is_open_terminal_enabled(env) is expected
+
+
+# ---------------------------------------------------------------------------
+# build_folder_open_tasks_json
+# ---------------------------------------------------------------------------
+
+def test_build_folder_open_tasks_json_is_valid_folderopen_task():
+    data = json.loads(opener.build_folder_open_tasks_json())
+    assert data["version"] == "2.0.0"
+    task = data["tasks"][0]
+    assert task["runOptions"]["runOn"] == "folderOpen"
+    assert task["presentation"]["reveal"] == "always"
+    assert task["type"] == "shell"
+
+
 # ---------------------------------------------------------------------------
 # resolve_container_name / resolve_workdir
 # ---------------------------------------------------------------------------
@@ -309,6 +396,42 @@ def test_open_editor_launch_invokes_launcher(monkeypatch):
     assert cmd[1] == "--folder-uri"
     assert cmd[2].startswith("vscode-remote://attached-container+")
     assert cmd[2].endswith("/work/carmo")
+
+
+def test_open_editor_launch_nested_uri_under_remote_ssh(monkeypatch):
+    """Remote-SSH (in_vscode + ssh) かつ DEVBASE_EDITOR_SSH_HOST 設定時はネスト URI で launch。"""
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    # docker context show を実行させず固定値に差し替え
+    monkeypatch.setattr(opener, "resolve_docker_context",
+                        lambda *a, **kw: "desktop-linux")
+    calls = []
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
+                 "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22",
+                 "DEVBASE_EDITOR_SSH_HOST": "mac2"},
+        isatty=True, launcher=lambda cmd, env: calls.append(cmd),
+    )
+    assert result == "launch"
+    uri = calls[0][2]
+    assert "@ssh-remote+mac2/work/adminer" in uri
+    hexpart = uri.split("attached-container+")[1].split("@")[0]
+    decoded = json.loads(bytes.fromhex(hexpart).decode())
+    assert decoded["containerName"] == "/adminer-dev-1"
+    assert decoded["settings"]["context"] == "desktop-linux"
+
+
+def test_open_editor_flat_uri_when_ssh_host_unset(monkeypatch):
+    """Remote-SSH でも DEVBASE_EDITOR_SSH_HOST 未設定なら従来のフラット URI のまま。"""
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    calls = []
+    opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
+                 "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22"},
+        isatty=True, launcher=lambda cmd, env: calls.append(cmd),
+    )
+    assert "@ssh-remote" not in calls[0][2]
 
 
 def test_open_editor_skip_when_no_editor(monkeypatch):

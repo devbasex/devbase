@@ -290,7 +290,8 @@ def _dispatch_lifecycle(args) -> int:
         'up':    lambda: cmd_up(project_name=project_name,
                                 scale=getattr(args, 'scale', None),
                                 open_editor=getattr(args, 'open_editor', None),
-                                open_index=getattr(args, 'open_index', None)),
+                                open_index=getattr(args, 'open_index', None),
+                                open_terminal=getattr(args, 'open_terminal', None)),
         'down':  lambda: cmd_down(),
         'login': lambda: cmd_login(index=getattr(args, 'index', '1')),
         'ps':    lambda: cmd_ps(all_containers=getattr(args, 'all', False)),
@@ -412,9 +413,72 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
         logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
 
 
+def _maybe_place_terminal_task(project_name: str, open_flag: Optional[bool],
+                               open_index: Optional[int], scale: int,
+                               compose_file=None) -> None:
+    """`up` 後、開く dev コンテナの作業ディレクトリへ folderOpen ターミナル tasks.json を配置。
+
+    フォルダを開いた時に統合ターミナルを自動表示するための ``.vscode/tasks.json`` を、
+    対象 dev インスタンスのワークスペース (``/work/$GIT_REPO``) に置く。作業ディレクトリは
+    コンテナ内 (named volume) のためホストから直接書けず、起動済みコンテナへ ``docker exec``
+    で書き込む。**既存の ``.vscode/tasks.json`` があれば一切触らない**。
+
+    有効判定は ``open_flag`` (CLI ``--open-terminal``/``--no-open-terminal``) が優先、None なら
+    env ``DEVBASE_OPEN_TERMINAL`` (既定 ON)。配置失敗は warning に握り潰し ``up`` を倒さない。
+    ``open_index`` は開くインスタンスに合わせる (範囲外は 1 へフォールバック)。
+    """
+    from devbase.editor import opener
+
+    enabled = open_flag if open_flag is not None else opener.is_open_terminal_enabled()
+    if not enabled:
+        return
+
+    if open_index is None:
+        raw = os.environ.get('DEVBASE_OPEN_INDEX')
+        try:
+            open_index = int(raw) if raw else 1
+        except ValueError:
+            open_index = 1
+    if not (1 <= open_index <= scale):
+        open_index = 1
+
+    if compose_file is None and _SCALE_COMPOSE_FILE.exists():
+        compose_file = _SCALE_COMPOSE_FILE
+
+    dev_service_name = get_dev_service_name()
+    container = opener.resolve_container_name(dev_service_name, project_name,
+                                              open_index, compose_file=compose_file)
+    workdir = opener.resolve_workdir(os.environ, project_name)
+    content = opener.build_folder_open_tasks_json()
+
+    # 既存があれば書かず、無ければ stdin から書き込む (冪等)。workdir は引数で渡し
+    # シェル内クォートを避ける ($1)。
+    script = (
+        'set -e; d="$1/.vscode"; mkdir -p "$d"; '
+        'if [ -e "$d/tasks.json" ]; then echo keep; '
+        'else cat > "$d/tasks.json"; echo placed; fi'
+    )
+    try:
+        proc = subprocess.run(
+            ["docker", "exec", "-i", container, "sh", "-c", script, "_", workdir],
+            input=content, text=True, capture_output=True, timeout=15,
+        )
+    except Exception as e:  # noqa: BLE001 - 配置失敗で up を倒さない
+        logger.warning("ターミナル用 tasks.json の配置に失敗しましたが続行します: %s", e)
+        return
+    if proc.returncode != 0:
+        logger.warning("ターミナル用 tasks.json の配置に失敗しましたが続行します: %s",
+                       (proc.stderr or "").strip())
+        return
+    if (proc.stdout or "").strip() == "placed":
+        logger.info("[6/6] 統合ターミナル自動表示用 tasks.json を配置: %s/.vscode/tasks.json",
+                    workdir)
+
+
 def cmd_up(project_name: str = None, scale: int = None,
            open_editor: Optional[bool] = None,
-           open_index: Optional[int] = None) -> int:
+           open_index: Optional[int] = None,
+           open_terminal: Optional[bool] = None) -> int:
     """Deploy containers with specified scale"""
     if project_name is None:
         project_name = get_project_name()
@@ -481,6 +545,9 @@ def cmd_up(project_name: str = None, scale: int = None,
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(1, scale + 1))
 
+        # エディタを開く前に tasks.json を置く (開いた瞬間に folderOpen が効くように)。
+        _maybe_place_terminal_task(project_name, open_terminal, open_index, scale,
+                                   compose_file=override_file)
         _maybe_open_editor(project_name, open_editor, open_index, scale,
                            compose_file=override_file)
 

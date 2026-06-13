@@ -149,8 +149,22 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 | `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く（既定: OFF） |
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
+| `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。下記「跨ホスト」参照 |
+| `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |
+| `DEVBASE_OPEN_TERMINAL` | 真で `up` 後に folderOpen ターミナル用 `.vscode/tasks.json` を配置（**既定: ON**） |
 
-都度の上書きは CLI フラグで行います: `devbase up --open` / `devbase up --no-open` / `devbase up --open-index N`（env より優先）。
+都度の上書きは CLI フラグで行います: `devbase up --open` / `--no-open` / `--open-index N` / `--open-terminal` / `--no-open-terminal`（env より優先）。
+
+### 起動時に統合ターミナルを自動表示（`DEVBASE_OPEN_TERMINAL`）
+
+`up` 時に、開く dev コンテナのワークスペース（`/work/$GIT_REPO`）へ folderOpen タスク（`.vscode/tasks.json`）を `docker exec` で配置します（既存があれば変更しません）。VS Code はフォルダを開いた時にこのタスクで統合ターミナルを前面表示します。
+
+VS Code 公式には「起動時にターミナルを開く」専用設定が無く、folderOpen タスクが唯一の方法です。なお自動実行には次の 2 つの **VS Code クライアント側ユーザー設定**が関わり、devbase からは制御できません（いずれも application/user スコープ専用）:
+
+- **Workspace Trust**: 信頼していないフォルダではタスクは自動実行されません（初回は「フォルダを信頼」が必要）。
+- **`task.allowAutomaticTasks`**: 既定 `off` ではフォルダごとに 1 回「自動タスクを許可」を尋ねます。`on` にするとプロンプト無しで実行されます。
+
+→ 実際は「初回のみ信頼（＋許可）クリック、以降は自動でターミナルが開く」挙動になります。無効化は `DEVBASE_OPEN_TERMINAL=0` または `devbase up --no-open-terminal`。
 
 ### 実行コンテキスト別の挙動
 
@@ -158,11 +172,25 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 |------|------|
 | ローカル端末（Mac/Linux） | ローカル VS Code が開く |
 | WSL 端末 | Windows 側 VS Code が開く（`code` ラッパ経由） |
-| VS Code の Remote-SSH 統合ターミナル | **クライアント側（手元）の VS Code** が開く（`code` シムが委譲） |
+| VS Code の Remote-SSH 統合ターミナル（同一ホストの Docker） | **クライアント側（手元）の VS Code** が開く（`code` シムが委譲） |
+| VS Code の Remote-SSH 統合ターミナル（**跨ホスト**: ssh 先の Docker にコンテナ） | `DEVBASE_EDITOR_SSH_HOST` 設定時にネスト URI で開く（下記「跨ホスト」参照） |
 | 手元から素の SSH（VS Code 外）で接続中 | クライアントへ自動で開く公式手段が無いため、手元で実行する `code --folder-uri ...` コマンドを提示 |
 | CI / 非対話（非 TTY） / `code` 不在 | 理由を表示してスキップ（`up` 自体は成功） |
 
-> SSH 越しに「手元の VS Code」を自動で開きたい場合は、手元の VS Code から **Remote-SSH で接続した統合ターミナル内**で `devbase up` を実行してください。そのターミナルの `code` はクライアント側 VS Code に委譲するため、リモートホスト上のコンテナへ接続した窓が手元に開きます。
+#### 跨ホスト（Windows VS Code → Remote-SSH → Mac のコンテナ）
+
+手元（例 Windows）の VS Code から Remote-SSH で別ホスト（例 Mac）へ入り、その統合ターミナルで `devbase up` を実行する構成では、コンテナは **ssh 先（Mac）の Docker** 上にあります。このとき `code` の開く要求はクライアント（Windows）へ委譲されるため、フラットな attach URI のままだと **クライアント側の Docker** を見に行きコンテナが見つかりません（「コンテナーにアタッチできません。すでに存在しません」）。
+
+これを解決するには、ssh-remote ホスト名（手元 `~/.ssh/config` の `Host` 別名。VS Code はこの別名を ssh 先の端末 env に渡さないため自動取得不可）を明示します:
+
+```sh
+# $DEVBASE_ROOT/env など（全プロジェクト共通にしたい場合）
+DEVBASE_EDITOR_SSH_HOST=mac2
+```
+
+これで devbase は `vscode-remote://attached-container+<hex>@ssh-remote+mac2/work/...`（必要に応じ payload に `settings.context` を埋める）というネスト URI を生成し、docker ルックアップが ssh 先（コンテナのある Mac）で行われて正しくアタッチします。docker context は `docker context show` から自動取得し、`DEVBASE_EDITOR_DOCKER_CONTEXT` で上書きできます。
+
+> 同一ホスト構成（手元 Mac/Linux で直接、または ssh 先の Docker にコンテナが無い場合）では `DEVBASE_EDITOR_SSH_HOST` は不要で、従来どおりフラット URI で開きます。
 
 ## ソースファイル変更検出
 

@@ -104,6 +104,52 @@ def is_open_enabled(environ=None) -> bool:
     return value.strip().lower() in _TRUTHY
 
 
+def is_open_terminal_enabled(environ=None) -> bool:
+    """``DEVBASE_OPEN_TERMINAL`` env が真か (**未設定は True = 既定 ON**)。
+
+    ``DEVBASE_OPEN_EDITOR`` (既定 OFF) と既定が逆である点に注意。up 時の tasks.json 配置は
+    暴発リスクが低く、ユーザ要望で既定 ON とする (PLAN31_3)。
+    """
+    env = os.environ if environ is None else environ
+    value = env.get("DEVBASE_OPEN_TERMINAL")
+    if value is None:
+        return True
+    return value.strip().lower() in _TRUTHY
+
+
+def build_folder_open_tasks_json() -> str:
+    """フォルダを開いた時に統合ターミナルを表示する folderOpen タスク (.vscode/tasks.json)。
+
+    VS Code 公式には「起動時にターミナルを開く」単独設定が無く (``hideOnStartup`` は復元
+    された永続セッションを隠すか否かに過ぎず新規生成はしない)、``runOn: folderOpen`` の
+    タスクが新規ターミナルを出せる唯一の方法 (docs/terminal/*, docs/debugtest/tasks)。
+    ``reveal: always`` でパネルを前面に出し、対話シェル (``$SHELL``) を起動する。
+
+    .. note:: 自動実行には2つの user 設定ゲートがあり devbase からは制御できない:
+       Workspace Trust (信頼済みフォルダのみ自動実行) と ``task.allowAutomaticTasks``
+       (既定 off = フォルダ毎に1回許可確認)。いずれも application/user スコープ専用。
+    """
+    tasks = {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "devbase: open terminal",
+                "type": "shell",
+                "command": "${env:SHELL}",
+                "isBackground": True,
+                "problemMatcher": [],
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "dedicated",
+                    "focus": True,
+                },
+                "runOptions": {"runOn": "folderOpen"},
+            }
+        ],
+    }
+    return json.dumps(tasks, indent=2, ensure_ascii=False) + "\n"
+
+
 def resolve_editor_cmd(environ=None) -> Optional[list]:
     """起動に使うエディタコマンド (argv list) を解決する。
 
@@ -143,16 +189,33 @@ def resolve_editor_display(environ=None) -> list:
     return ["code"]
 
 
-def build_attach_uri(container_name: str, workdir: str) -> str:
-    """``vscode-remote://attached-container+<hex>/<workdir>`` を組む。
+def build_attach_uri(container_name: str, workdir: str,
+                     ssh_host: Optional[str] = None,
+                     docker_context: Optional[str] = None) -> str:
+    """``vscode-remote://attached-container+<hex>[@ssh-remote+<host>]/<workdir>`` を組む。
 
-    ``<hex>`` は ``{"containerName":"/<container_name>"}`` を UTF-8 hex 化したもの
-    (Docker 内部のコンテナ名は先頭 ``/`` 付き)。
+    ``<hex>`` は ``{"containerName":"/<container_name>"[,"settings":{"context":<ctx>}]}``
+    を UTF-8 hex 化したもの (Docker 内部のコンテナ名は先頭 ``/`` 付き)。
+
+    ``ssh_host`` を渡すと authority に ``@ssh-remote+<host>`` を付ける。**Windows VS Code
+    → Remote-SSH(<host>) → Mac 上のコンテナ** のような跨ホスト構成では、フラットな
+    ``attached-container+...`` だけだと委譲先クライアント (Windows) のローカル Docker を
+    見に行きコンテナが見つからない。``@ssh-remote+<host>`` を付けると docker ルックアップが
+    ssh 先 (コンテナのある Mac) で行われ解決できる (実機検証済み。PLAN31_3 §2.3/§2.4 を
+    更新)。``docker_context`` を渡すと payload に ``settings.context`` を埋め、ssh 先で
+    使う docker context を明示する。
+
+    いずれも省略すると従来のフラット URI (ローカル / WSL / Remote-SSH 同一ホスト) を返す。
     """
-    payload = json.dumps({"containerName": f"/{container_name}"}, separators=(",", ":"))
-    hexname = payload.encode("utf-8").hex()
+    payload: dict = {"containerName": f"/{container_name}"}
+    if docker_context:
+        payload["settings"] = {"context": docker_context}
+    hexname = json.dumps(payload, separators=(",", ":")).encode("utf-8").hex()
+    authority = f"attached-container+{hexname}"
+    if ssh_host:
+        authority += f"@ssh-remote+{ssh_host}"
     path = workdir if workdir.startswith("/") else f"/{workdir}"
-    return f"vscode-remote://attached-container+{hexname}{path}"
+    return f"vscode-remote://{authority}{path}"
 
 
 def _parse_compose_ps_name(stdout: str) -> Optional[str]:
@@ -260,6 +323,43 @@ def resolve_workdir(environ=None, project_name: Optional[str] = None) -> str:
     return f"/work/{repo}" if repo else "/work"
 
 
+def resolve_editor_ssh_host(environ=None) -> Optional[str]:
+    """Remote-SSH ネスト URI 用の ssh ホスト名 (``DEVBASE_EDITOR_SSH_HOST``)。
+
+    値はクライアント (手元 VS Code) の ``~/.ssh/config`` の Host 別名 (例 ``mac2``)。
+    VS Code はこの別名を Remote-SSH 先 (Mac) の端末 env に渡さない (SSH_CONNECTION は
+    IP のみ) ため自動取得できず、明示設定が要る (PLAN31_3 §2.4 / 実機調査)。未設定なら
+    None を返し、:func:`build_attach_uri` はフラット URI にフォールバックする。
+    """
+    env = os.environ if environ is None else environ
+    value = env.get("DEVBASE_EDITOR_SSH_HOST")
+    value = value.strip() if value else ""
+    return value or None
+
+
+def resolve_docker_context(environ=None, runner: Optional[Callable] = None) -> Optional[str]:
+    """ssh 先で使う docker context を解決する。
+
+    ``DEVBASE_EDITOR_DOCKER_CONTEXT`` 明示があればそれ。無ければ devbase up を実行して
+    いるホスト (= コンテナのある Mac) の現在の docker context を ``docker context show``
+    で取得する。docker 不在・非0・例外・空はすべて None (settings.context を付けない)。
+    """
+    env = os.environ if environ is None else environ
+    explicit = env.get("DEVBASE_EDITOR_DOCKER_CONTEXT")
+    if explicit and explicit.strip():
+        return explicit.strip()
+    run = runner or subprocess.run
+    try:
+        proc = run(["docker", "context", "show"],
+                   capture_output=True, text=True, timeout=10)
+    except Exception:  # noqa: BLE001 - docker 不在等は best-effort
+        return None
+    if getattr(proc, "returncode", 1) != 0:
+        return None
+    out = (proc.stdout or "").strip()
+    return out or None
+
+
 _NO_EDITOR_REASON = (
     "エディタ (code) が見つかりません。VS Code の `code` コマンドを PATH に "
     "通すか DEVBASE_EDITOR を設定してください"
@@ -322,7 +422,13 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
 
     container = resolve_container_name(dev_service_name, project_name, index,
                                        compose_file=compose_file)
-    uri = build_attach_uri(container, workdir)
+    # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。ssh_host が
+    # 設定されていれば跨ホスト構成と見なし docker context も解決して埋める。非 SSH では
+    # 従来のフラット URI (ローカル/WSL/同一ホスト Remote-SSH) を維持する。
+    ssh_host = resolve_editor_ssh_host(env) if ctx.is_ssh else None
+    docker_context = resolve_docker_context(env) if ssh_host else None
+    uri = build_attach_uri(container, workdir,
+                           ssh_host=ssh_host, docker_context=docker_context)
 
     if plan.action == "skip":
         logger.info("エディタの自動オープンをスキップ: %s", plan.reason)
