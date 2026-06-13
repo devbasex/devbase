@@ -46,3 +46,7 @@ def gcp_credentials_key(profile: str) -> str:
 # --- Slack ---
 SLACK_KEYS = ("SLACK_BOT_TOKEN", "SLACK_TEAM_ID",
               "SLACK_CHANNEL_ID", "SLACK_USER_MENTION")
+
+# --- Host (コンテナ→ホスト SSH 接続) ---
+HOST_SSH_USER = "HOST_SSH_USER"
+HOST_SSH_HOST = "HOST_SSH_HOST"  # 任意。default: host.docker.internal

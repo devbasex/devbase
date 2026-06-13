@@ -116,6 +116,9 @@ def cmd_env_sync(devbase_root: Path) -> int:
     # GCP（プロファイル管理があるため個別処理）
     updated += _sync_gcp(sources, env_file)
 
+    # Host 接続情報（ソースファイルを持たないため hash 比較せず欠落キーを補完）
+    updated += _sync_host(env_file)
+
     if updated > 0:
         env_file.save()
         _update_source_metadata(devbase_root, env_file)
@@ -127,6 +130,29 @@ def cmd_env_sync(devbase_root: Path) -> int:
             logger.info("同期完了 (変更なし)")
 
     return 0
+
+
+def _sync_host(env_file):
+    """ホスト接続情報の同期。更新件数を返す。
+
+    ホスト情報はソースファイルを持たないため hash 比較は使わず、**欠落キーのみ既定値で
+    補完**する。既存値 (WSL2 等での手動上書き) は尊重して上書きしない。これにより本機能
+    導入前の ``.env`` への後付け backfill として機能する。
+    """
+    from devbase.env.collectors.host import _default_host_user, DEFAULT_HOST_SSH_HOST
+
+    updated = 0
+    if not env_file.get(keys.HOST_SSH_USER):
+        user = _default_host_user()
+        if user:
+            env_file.set(keys.HOST_SSH_USER, user)
+            logger.info("%s: %s を設定", keys.HOST_SSH_USER, user)
+            updated += 1
+    if not env_file.get(keys.HOST_SSH_HOST):
+        env_file.set(keys.HOST_SSH_HOST, DEFAULT_HOST_SSH_HOST)
+        logger.info("%s: %s を設定", keys.HOST_SSH_HOST, DEFAULT_HOST_SSH_HOST)
+        updated += 1
+    return updated
 
 
 def _sync_source(sources, env_file, name, label, encode_fn):
