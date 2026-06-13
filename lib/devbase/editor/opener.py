@@ -123,6 +123,26 @@ def resolve_editor_cmd(environ=None) -> Optional[list]:
     return None
 
 
+def resolve_editor_display(environ=None) -> list:
+    """コマンド提示 (print_command) 用のエディタ argv を解決する。
+
+    :func:`resolve_editor_cmd` と異なり ``shutil.which`` による実在チェックは
+    行わない。plain SSH では提示コマンドを実行するのは「ユーザの手元 (ローカル)」
+    であり、コマンドを実行している側 (リモート) に ``code`` が存在する必要は無い
+    ため、リモートの実在に依存せず必ず非 None を返す。
+
+    ``DEVBASE_EDITOR`` があればそれを (シェル風に分割して) 用い、無ければ既定の
+    ``["code"]`` を返す。
+    """
+    env = os.environ if environ is None else environ
+    explicit = env.get("DEVBASE_EDITOR")
+    if explicit:
+        parts = shlex.split(explicit)
+        if parts:
+            return parts
+    return ["code"]
+
+
 def build_attach_uri(container_name: str, workdir: str) -> str:
     """``vscode-remote://attached-container+<hex>/<workdir>`` を組む。
 
@@ -175,19 +195,28 @@ def _parse_compose_ps_name(stdout: str) -> Optional[str]:
 
 
 def _query_container_name(dev_service_name: str, index: int,
+                          compose_file=None,
                           runner: Optional[Callable] = None) -> Optional[str]:
     """実 docker へ問い合わせて dev インスタンスの実コンテナ名を取得する (保険)。
 
     scale 生成 compose ではサービス名が ``{dev}-{index}`` (例 ``dev-1``) になるため
     その service token を指定して ``docker compose ps --format json`` を実行する。
+    ``{dev}-{index}`` サービスは override compose (``.docker-compose.scale.yml``)
+    側にしか存在しないため、``compose_file`` が与えられた場合は起動時と同じ
+    ``-f <compose_file>`` を付与しないと base ``compose.yml`` には無いサービスを
+    見に行きほぼ常にフォールバックになる。
     取得できなければ None。docker 不在・非0・例外・空はすべて None に握り潰し、
     呼び出し側が決定的名へフォールバックできるようにする。
     """
     run = runner or subprocess.run
     service_token = f"{dev_service_name}-{index}"
+    cmd = ["docker", "compose"]
+    if compose_file is not None:
+        cmd += ["-f", str(compose_file)]
+    cmd += ["ps", "--format", "json", service_token]
     try:
         proc = run(
-            ["docker", "compose", "ps", "--format", "json", service_token],
+            cmd,
             capture_output=True, text=True, timeout=10,
         )
     except Exception:  # noqa: BLE001 - docker 不在等は保険なので握り潰す
@@ -201,6 +230,7 @@ def _query_container_name(dev_service_name: str, index: int,
 
 
 def resolve_container_name(dev_service_name: str, project_name: str, index: int = 1,
+                           compose_file=None,
                            runner: Optional[Callable] = None) -> str:
     """dev コンテナの実コンテナ名を返す。
 
@@ -213,7 +243,8 @@ def resolve_container_name(dev_service_name: str, project_name: str, index: int 
     を全インスタンスへ設定する (volume/compose.py)。COMPOSE_PROJECT_NAME は
     project_name と一致するため、docker 問い合わせに失敗しても決定的に組み立てられる。
     """
-    queried = _query_container_name(dev_service_name, index, runner=runner)
+    queried = _query_container_name(dev_service_name, index,
+                                    compose_file=compose_file, runner=runner)
     if queried:
         return queried
     return f"{project_name}-{dev_service_name}-{index}"
@@ -229,24 +260,37 @@ def resolve_workdir(environ=None, project_name: Optional[str] = None) -> str:
     return f"/work/{repo}" if repo else "/work"
 
 
-def decide_action(ctx: EditorContext, editor_cmd: Optional[list]) -> OpenPlan:
-    """コンテキストとエディタ可用性から起動方針を決める (§2.4 マトリクス)。"""
-    if not editor_cmd:
-        return OpenPlan(
-            "skip",
-            "エディタ (code) が見つかりません。VS Code の `code` コマンドを PATH に "
-            "通すか DEVBASE_EDITOR を設定してください",
-        )
+_NO_EDITOR_REASON = (
+    "エディタ (code) が見つかりません。VS Code の `code` コマンドを PATH に "
+    "通すか DEVBASE_EDITOR を設定してください"
+)
+
+
+def decide_action(ctx: EditorContext, editor_available: bool) -> OpenPlan:
+    """コンテキストとエディタ可用性から起動方針を決める (§2.4 マトリクス)。
+
+    ``editor_available`` はローカルに launch 可能な ``code`` 系コマンドが実在するか
+    (``resolve_editor_cmd`` が非 None か) を表す。plain SSH の print_command 経路は
+    「ユーザの手元 (ローカル) でコマンドを実行する」前提のため、コマンドを実行して
+    いる側 (リモート) の editor 実在には依存させない (``editor_available`` を見ない)。
+    """
     if not ctx.is_tty:
         return OpenPlan("skip", "非対話 (非TTY/CI) 環境のため")
     if ctx.in_vscode:
         # VS Code 統合ターミナル (ローカル / WSL / Remote-SSH シム)。code が
-        # クライアント側へ委譲するため直接起動でよい。
+        # クライアント側へ委譲するため直接起動でよい。code シムが無いと委譲
+        # できないため editor が無ければ skip。
+        if not editor_available:
+            return OpenPlan("skip", _NO_EDITOR_REASON)
         return OpenPlan("launch", "VS Code 統合ターミナル経由")
     if ctx.is_ssh:
         # plain SSH (VS Code 外)。クライアントへ push する公式手段が無いため
-        # コマンドを提示する degrade。
+        # 手元で叩くコマンドを提示する degrade。提示先はローカルなのでリモートの
+        # editor 実在には依存しない。
         return OpenPlan("print_command", "SSH セッション (VS Code 外) のため")
+    # ローカル/WSL 端末。直接 launch するため editor が無ければ skip。
+    if not editor_available:
+        return OpenPlan("skip", _NO_EDITOR_REASON)
     return OpenPlan("launch", "ローカル/WSL 端末")
 
 
@@ -259,29 +303,34 @@ def _launch(cmd: list, env: dict) -> None:
 
 
 def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
-                index: int = 1, environ=None,
+                index: int = 1, compose_file=None, environ=None,
                 isatty: Optional[bool] = None, system: Optional[str] = None,
                 launcher: Optional[Callable[[list, dict], None]] = None) -> str:
     """dev コンテナへ接続した VS Code を開く / コマンド提示 / スキップする。
 
     戻り値は実行された action ('launch' | 'print_command' | 'skip')。例外は
     握り潰して warning にし、``up`` 本体を絶対に失敗させない。``isatty`` /
-    ``system`` は :func:`detect_context` への差し替え口 (テスト用)。
+    ``system`` は :func:`detect_context` への差し替え口 (テスト用)。``compose_file``
+    は実コンテナ名問い合わせ時に起動と同じ override compose を ``-f`` で渡すため。
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system)
-    editor = resolve_editor_cmd(env)
-    plan = decide_action(ctx, editor)
+    editor = resolve_editor_cmd(env)        # launch 用 (which 込み・None あり得る)
+    display = resolve_editor_display(env)   # print 用 (必ず非 None)
+    plan = decide_action(ctx, editor_available=bool(editor))
 
-    container = resolve_container_name(dev_service_name, project_name, index)
+    container = resolve_container_name(dev_service_name, project_name, index,
+                                       compose_file=compose_file)
     uri = build_attach_uri(container, workdir)
 
     if plan.action == "skip":
         logger.info("エディタの自動オープンをスキップ: %s", plan.reason)
         return "skip"
 
-    quoted = " ".join(shlex.quote(c) for c in editor)
     if plan.action == "print_command":
+        # 提示コマンドは手元 (ローカル) で実行する前提。ローカルに code が無くても
+        # 提示できるよう display (which 非依存) を用いる。
+        quoted = " ".join(shlex.quote(c) for c in display)
         logger.info("SSH セッションを検出しました (%s)。", plan.reason)
         logger.info(
             "手元の VS Code で次を実行するか、VS Code の Remote-SSH 統合ターミナルから "
@@ -290,6 +339,7 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
         logger.info("  %s --folder-uri '%s'", quoted, uri)
         return "print_command"
 
+    quoted = " ".join(shlex.quote(c) for c in editor)
     logger.info("[editor] %s を起動します (%s)", quoted, plan.reason)
     cmd = [*editor, "--folder-uri", uri]
     try:

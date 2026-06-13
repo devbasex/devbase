@@ -356,7 +356,8 @@ def _auto_snapshot() -> None:
 
 
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
-                       open_index: Optional[int], scale: int) -> None:
+                       open_index: Optional[int], scale: int,
+                       compose_file=None) -> None:
     """`up` 完了後に dev コンテナへ接続したエディタを開く ([6/6])。
 
     有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら env
@@ -365,6 +366,10 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
     ``open_index`` は起動済みインスタンス範囲 ``1..scale`` 内である必要がある。
     0・負数・``scale`` 超過は存在しないコンテナ URI になり原因不明な起動失敗を招くため、
     警告を出して既定 (1) へフォールバックする。
+
+    ``compose_file`` は実コンテナ名問い合わせ用の override compose。``up`` 起動時と
+    同じファイルを渡さないと ``{dev}-{index}`` サービスが見えず実名取得に失敗する。
+    未指定なら ``.docker-compose.scale.yml`` が存在すればそれ、無ければ None。
     """
     from devbase.editor import opener
 
@@ -387,6 +392,11 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
         )
         open_index = 1
 
+    # 実コンテナ名問い合わせ用の compose file: 明示指定がなければ override が
+    # 存在すればそれを使う (起動時と同じ file を docker compose ps へ渡す)。
+    if compose_file is None and _SCALE_COMPOSE_FILE.exists():
+        compose_file = _SCALE_COMPOSE_FILE
+
     dev_service_name = get_dev_service_name()
     workdir = opener.resolve_workdir(os.environ, project_name)
     logger.info("[6/6] Opening editor attached to the dev container...")
@@ -396,6 +406,7 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
             dev_service_name=dev_service_name,
             workdir=workdir,
             index=open_index,
+            compose_file=compose_file,
         )
     except Exception as e:  # noqa: BLE001 - エディタ起動で up を倒さない
         logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
@@ -470,7 +481,8 @@ def cmd_up(project_name: str = None, scale: int = None,
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(1, scale + 1))
 
-        _maybe_open_editor(project_name, open_editor, open_index, scale)
+        _maybe_open_editor(project_name, open_editor, open_index, scale,
+                           compose_file=override_file)
 
         logger.info("=== Deploy completed successfully ===")
         return 0

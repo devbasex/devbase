@@ -94,6 +94,23 @@ def test_resolve_editor_cmd_explicit_missing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# resolve_editor_display (print_command 用・which 非依存)
+# ---------------------------------------------------------------------------
+
+def test_resolve_editor_display_default_code(monkeypatch):
+    # ローカルに code が無くても (which=None) 既定の ["code"] を返す
+    monkeypatch.setattr(opener.shutil, "which", lambda c: None)
+    assert opener.resolve_editor_display({}) == ["code"]
+
+
+def test_resolve_editor_display_explicit_without_which(monkeypatch):
+    # DEVBASE_EDITOR があれば実在チェックなしでそのまま分割して返す
+    monkeypatch.setattr(opener.shutil, "which", lambda c: None)
+    assert opener.resolve_editor_display({"DEVBASE_EDITOR": "cursor --reuse-window"}) \
+        == ["cursor", "--reuse-window"]
+
+
+# ---------------------------------------------------------------------------
 # build_attach_uri
 # ---------------------------------------------------------------------------
 
@@ -157,6 +174,55 @@ def test_resolve_container_name_prefers_docker_name_json_array():
         == "real-dev-1"
 
 
+def test_query_container_name_passes_compose_file_f_flag():
+    """compose_file を渡すと docker compose ps argv に -f <file> が差し込まれる。"""
+    captured = {}
+
+    def runner(cmd, **kw):
+        captured["cmd"] = cmd
+        return _Proc(returncode=0, stdout='{"Name":"real-dev-1"}\n')
+
+    name = opener._query_container_name(
+        "dev", 1, compose_file=".docker-compose.scale.yml", runner=runner)
+    assert name == "real-dev-1"
+    cmd = captured["cmd"]
+    assert cmd[:2] == ["docker", "compose"]
+    assert "-f" in cmd
+    assert cmd[cmd.index("-f") + 1] == ".docker-compose.scale.yml"
+    # service token は最後尾に置かれる
+    assert cmd[-1] == "dev-1"
+    # -f は ps サブコマンドより前
+    assert cmd.index("-f") < cmd.index("ps")
+
+
+def test_query_container_name_omits_f_flag_when_no_compose_file():
+    """compose_file 未指定なら -f を付けない (従来挙動)。"""
+    captured = {}
+
+    def runner(cmd, **kw):
+        captured["cmd"] = cmd
+        return _Proc(returncode=0, stdout='{"Name":"real-dev-1"}\n')
+
+    opener._query_container_name("dev", 1, runner=runner)
+    assert "-f" not in captured["cmd"]
+
+
+def test_resolve_container_name_forwards_compose_file():
+    """resolve_container_name が compose_file を _query_container_name へ伝播する。"""
+    captured = {}
+
+    def runner(cmd, **kw):
+        captured["cmd"] = cmd
+        return _Proc(returncode=0, stdout='{"Name":"real-dev-2"}\n')
+
+    name = opener.resolve_container_name(
+        "dev", "carmo", 2, compose_file="override.yml", runner=runner)
+    assert name == "real-dev-2"
+    cmd = captured["cmd"]
+    assert "-f" in cmd
+    assert cmd[cmd.index("-f") + 1] == "override.yml"
+
+
 def test_parse_compose_ps_name_empty_and_invalid():
     assert opener._parse_compose_ps_name("") is None
     assert opener._parse_compose_ps_name("not json") is None
@@ -185,30 +251,43 @@ def _ctx(**kw):
     return opener.EditorContext(**base)
 
 
-def test_decide_skip_no_editor():
-    assert opener.decide_action(_ctx(), None).action == "skip"
+def test_decide_skip_no_editor_local():
+    # ローカル (launch 経路) で editor が無ければ skip
+    assert opener.decide_action(_ctx(), editor_available=False).action == "skip"
+
+
+def test_decide_skip_no_editor_in_vscode():
+    # VS Code 統合端末でも code シムが無ければ委譲できないため skip
+    plan = opener.decide_action(_ctx(in_vscode=True), editor_available=False)
+    assert plan.action == "skip"
 
 
 def test_decide_skip_non_tty():
-    assert opener.decide_action(_ctx(is_tty=False), ["code"]).action == "skip"
+    assert opener.decide_action(_ctx(is_tty=False), editor_available=True).action == "skip"
 
 
 def test_decide_launch_local():
-    assert opener.decide_action(_ctx(), ["code"]).action == "launch"
+    assert opener.decide_action(_ctx(), editor_available=True).action == "launch"
 
 
 def test_decide_launch_wsl():
-    assert opener.decide_action(_ctx(is_wsl=True), ["code"]).action == "launch"
+    assert opener.decide_action(_ctx(is_wsl=True), editor_available=True).action == "launch"
 
 
 def test_decide_launch_in_vscode_even_under_ssh():
     # Remote-SSH 統合端末: in_vscode が ssh より優先され launch
-    plan = opener.decide_action(_ctx(in_vscode=True, is_ssh=True), ["code"])
+    plan = opener.decide_action(_ctx(in_vscode=True, is_ssh=True), editor_available=True)
     assert plan.action == "launch"
 
 
 def test_decide_print_command_plain_ssh():
-    plan = opener.decide_action(_ctx(is_ssh=True), ["code"])
+    plan = opener.decide_action(_ctx(is_ssh=True), editor_available=True)
+    assert plan.action == "print_command"
+
+
+def test_decide_print_command_plain_ssh_without_local_editor():
+    # plain SSH の提示は手元で実行する前提のためローカル editor 不在でも print_command
+    plan = opener.decide_action(_ctx(is_ssh=True), editor_available=False)
     assert plan.action == "print_command"
 
 
@@ -253,6 +332,40 @@ def test_open_editor_print_command_under_plain_ssh(monkeypatch):
     )
     assert result == "print_command"
     assert calls == []
+
+
+def test_open_editor_print_command_without_local_editor(monkeypatch, caplog):
+    """plain SSH でローカルに code が無くても print_command になり提示コマンドを出す。"""
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: None)  # ローカルに code なし
+    calls = []
+    with caplog.at_level(logging.INFO):
+        result = opener.open_editor(
+            project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+            environ={"SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22"}, isatty=True,
+            launcher=lambda cmd, env: calls.append(cmd),
+        )
+    assert result == "print_command"
+    assert calls == []
+    # 提示コマンドに code --folder-uri が含まれる
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "code --folder-uri" in text
+
+
+def test_open_editor_print_command_uses_explicit_display_editor(monkeypatch, caplog):
+    """DEVBASE_EDITOR があれば print_command でも which 非依存でそれを提示する。"""
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: None)
+    with caplog.at_level(logging.INFO):
+        result = opener.open_editor(
+            project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+            environ={"SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22",
+                     "DEVBASE_EDITOR": "cursor"},
+            isatty=True, launcher=lambda cmd, env: None,
+        )
+    assert result == "print_command"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "cursor --folder-uri" in text
 
 
 def test_open_editor_launch_failure_is_swallowed(monkeypatch):

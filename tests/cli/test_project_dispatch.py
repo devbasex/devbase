@@ -417,3 +417,17 @@ def test_maybe_open_editor_valid_index_within_scale(monkeypatch):
                         lambda **kw: called.append(kw) or 'launch')
     container._maybe_open_editor('carmo', True, 2, 3)
     assert called[0]['index'] == 2
+
+
+def test_maybe_open_editor_forwards_compose_file(monkeypatch):
+    """compose_file 引数が open_editor まで伝播する (実コンテナ名問い合わせ用)。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    called = []
+    monkeypatch.setattr(opener, 'open_editor',
+                        lambda **kw: called.append(kw) or 'launch')
+    container._maybe_open_editor('carmo', True, 1, 1,
+                                 compose_file='override.yml')
+    assert called[0]['compose_file'] == 'override.yml'
