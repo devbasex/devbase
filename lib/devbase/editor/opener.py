@@ -342,24 +342,28 @@ def _detect_ssh_host_from_vscode(vscode_server_dir: str) -> Optional[str]:
     history = os.path.join(vscode_server_dir, "data", "User", "History")
     if not os.path.isdir(history):
         return None
-    best: dict = {}  # host -> 最新 mtime
+    # entries.json 候補を mtime 降順で集め、**新しい方から 1 ファイルずつ読み、最初に
+    # ssh-remote ホストが見つかった時点で即 return** する (History が数千ファイルに
+    # 膨れても全読み込みを避け、devbase up の遅延を防ぐ)。mtime 収集は stat のみで安価。
+    candidates = []
     for root, _dirs, files in os.walk(history):
-        for name in files:
-            if name != "entries.json":  # resource authority は entries.json に載る
-                continue
-            path = os.path.join(root, name)
-            try:
-                mtime = os.path.getmtime(path)
-                with open(path, encoding="utf-8", errors="ignore") as f:
-                    text = f.read()
-            except OSError:
-                continue
-            for host in _SSH_REMOTE_RE.findall(text):
-                if host and (host not in best or mtime > best[host]):
-                    best[host] = mtime
-    if not best:
-        return None
-    return max(best, key=best.get)
+        if "entries.json" not in files:  # resource authority は entries.json に載る
+            continue
+        path = os.path.join(root, "entries.json")
+        try:
+            candidates.append((os.path.getmtime(path), path))
+        except OSError:
+            continue
+    for _mtime, path in sorted(candidates, key=lambda t: t[0], reverse=True):
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+        except OSError:
+            continue
+        match = _SSH_REMOTE_RE.search(text)
+        if match:
+            return match.group(1)
+    return None
 
 
 def resolve_editor_ssh_host(environ=None,
