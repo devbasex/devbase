@@ -505,6 +505,12 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     display = resolve_editor_display(env)   # print 用 (必ず非 None)
     plan = decide_action(ctx, editor_available=bool(editor))
 
+    # skip は URI 解決の前に early return する。skip 経路 (非 TTY/CI・code 不在等) で
+    # docker compose ps / docker context show 等の外部コマンドを無駄に叩かないため。
+    if plan.action == "skip":
+        logger.info("エディタの自動オープンをスキップ: %s", plan.reason)
+        return "skip"
+
     container = resolve_container_name(dev_service_name, project_name, index,
                                        compose_file=compose_file)
     # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。ssh_host が
@@ -514,10 +520,6 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     docker_context = resolve_docker_context(env) if ssh_host else None
     uri = build_attach_uri(container, workdir,
                            ssh_host=ssh_host, docker_context=docker_context)
-
-    if plan.action == "skip":
-        logger.info("エディタの自動オープンをスキップ: %s", plan.reason)
-        return "skip"
 
     if plan.action == "print_command":
         # 提示コマンドは手元 (ローカル) で実行する前提。ローカルに code が無くても
