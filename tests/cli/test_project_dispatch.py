@@ -471,11 +471,13 @@ def test_maybe_place_terminal_task_runs_docker_exec(monkeypatch):
         return _DockerProc(returncode=0, stdout="placed")
 
     monkeypatch.setattr(container.subprocess, 'run', fake_run)
-    container._maybe_place_terminal_task('carmo', None, 1, 1)
+    result = container._maybe_place_terminal_task('carmo', None, 1, 1)
     cmd = captured['cmd']
     assert cmd[:4] == ['docker', 'exec', '-i', 'carmo-dev-1']
     assert cmd[-1] == '/work/carmo'  # workdir は $1 として末尾に渡す
     assert '"runOn": "folderOpen"' in captured['input']
+    # 解決済みコンテナ名を返し editor 側で再利用させる (docker compose ps 二重実行回避)
+    assert result == 'carmo-dev-1'
 
 
 def test_maybe_place_terminal_task_failure_does_not_raise(monkeypatch):

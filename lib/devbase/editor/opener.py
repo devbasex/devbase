@@ -493,7 +493,8 @@ def _launch(cmd: list, env: dict) -> None:
 
 
 def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
-                index: int = 1, compose_file=None, environ=None,
+                index: int = 1, compose_file=None, container_name: Optional[str] = None,
+                environ=None,
                 isatty: Optional[bool] = None, system: Optional[str] = None,
                 launcher: Optional[Callable[[list, dict], None]] = None) -> str:
     """dev コンテナへ接続した VS Code を開く / コマンド提示 / スキップする。
@@ -502,6 +503,8 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     握り潰して warning にし、``up`` 本体を絶対に失敗させない。``isatty`` /
     ``system`` は :func:`detect_context` への差し替え口 (テスト用)。``compose_file``
     は実コンテナ名問い合わせ時に起動と同じ override compose を ``-f`` で渡すため。
+    ``container_name`` が渡されれば :func:`resolve_container_name` (= ``docker compose
+    ps``) をスキップしてそれを使う (呼び出し側で解決済みの名前を使い回す)。
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system)
@@ -515,8 +518,8 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
         logger.info("エディタの自動オープンをスキップ: %s", plan.reason)
         return "skip"
 
-    container = resolve_container_name(dev_service_name, project_name, index,
-                                       compose_file=compose_file)
+    container = container_name or resolve_container_name(
+        dev_service_name, project_name, index, compose_file=compose_file)
     # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。ssh_host が
     # 設定されていれば跨ホスト構成と見なし docker context も解決して埋める。非 SSH では
     # 従来のフラット URI (ローカル/WSL/同一ホスト Remote-SSH) を維持する。

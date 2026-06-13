@@ -517,6 +517,25 @@ def test_open_editor_flat_uri_when_ssh_host_unset(monkeypatch):
     assert "@ssh-remote" not in calls[0][2]
 
 
+def test_open_editor_uses_given_container_name(monkeypatch):
+    """container_name を渡すと resolve_container_name を呼ばずそれを使う。"""
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+
+    def boom(*a, **k):
+        raise AssertionError("resolve_container_name should not be called")
+
+    monkeypatch.setattr(opener, "resolve_container_name", boom)
+    calls = []
+    opener.open_editor(
+        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        container_name="preresolved-dev-1", environ={}, isatty=True,
+        launcher=lambda cmd, env: calls.append(cmd),
+    )
+    uri = calls[0][2]
+    hexpart = uri.split("attached-container+")[1].split("/work")[0]
+    assert json.loads(bytes.fromhex(hexpart).decode())["containerName"] == "/preresolved-dev-1"
+
+
 def test_open_editor_skip_when_no_editor(monkeypatch):
     monkeypatch.setattr(opener.shutil, "which", lambda c: None)
     calls = []
