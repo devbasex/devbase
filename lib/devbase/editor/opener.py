@@ -51,6 +51,10 @@ _SERVER_DIR_CANDIDATES = (
     "~/.windsurf-server",
 )
 
+# ssh host 自動検出で内容を読む entries.json の上限 (mtime 降順で新しい方から)。
+# 該当ホストは直近接続のファイルにあるため、無マッチ時に全件 read するのを防ぐ。
+_HISTORY_SCAN_LIMIT = 200
+
 
 @dataclass(frozen=True)
 class EditorContext:
@@ -367,7 +371,8 @@ def _detect_ssh_host_from_dirs(server_dirs) -> Optional[str]:
                 candidates.append((os.path.getmtime(path), path))
             except OSError:
                 continue
-    for _mtime, path in sorted(candidates, key=lambda t: t[0], reverse=True):
+    newest_first = sorted(candidates, key=lambda t: t[0], reverse=True)
+    for _mtime, path in newest_first[:_HISTORY_SCAN_LIMIT]:
         try:
             with open(path, encoding="utf-8", errors="ignore") as f:
                 text = f.read()
