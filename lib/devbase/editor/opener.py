@@ -365,12 +365,15 @@ def _detect_ssh_host_from_dirs(server_dirs) -> Optional[str]:
     candidates = []  # (mtime, path)
     for base in server_dirs:
         history = os.path.join(base, "data", "User", "History")
-        if not os.path.isdir(history):
+        # ローカル履歴は History/<hash>/entries.json の固定深さなので、os.walk で
+        # 全階層を再帰せず os.scandir で 1 階層下のみ走査して I/O を抑える。
+        try:
+            with os.scandir(history) as it:
+                subdirs = [e.path for e in it if e.is_dir()]
+        except OSError:
             continue
-        for root, _dirs, files in os.walk(history):
-            if "entries.json" not in files:  # resource authority は entries.json に載る
-                continue
-            path = os.path.join(root, "entries.json")
+        for sub in subdirs:
+            path = os.path.join(sub, "entries.json")  # resource authority はここに載る
             try:
                 candidates.append((os.path.getmtime(path), path))
             except OSError:
@@ -394,7 +397,8 @@ def _detect_ssh_host_from_vscode(vscode_server_dir: str) -> Optional[str]:
 
 
 def resolve_editor_ssh_host(environ=None,
-                            vscode_server_dir: Optional[str] = None) -> Optional[str]:
+                            vscode_server_dir: Optional[str] = None,
+                            auto_detect: bool = True) -> Optional[str]:
     """Remote-SSH ネスト URI 用の ssh ホスト名 (authority ラベル) を解決する。
 
     優先順位:
@@ -411,6 +415,9 @@ def resolve_editor_ssh_host(environ=None,
     どちらでも得られなければ None で :func:`build_attach_uri` はフラット URI に degrade する。
 
     ``vscode_server_dir`` はテスト用の単一ディレクトリ差し替え口 (指定時はそれだけを探索)。
+    ``auto_detect`` を False にすると 2 (自動推測) を行わず明示設定のみで判定する。plain SSH
+    (VS Code 外) は既存 ExecServer を前提にできずネスト URI が動かないため、呼び出し側
+    (:func:`open_editor`) は ``in_vscode`` の時だけ ``auto_detect=True`` で呼ぶ。
     """
     env = os.environ if environ is None else environ
     explicit = env.get("DEVBASE_EDITOR_SSH_HOST")
@@ -418,6 +425,8 @@ def resolve_editor_ssh_host(environ=None,
         # 明示設定を最優先。空文字 ("") は **自動推測のオプトアウト** (= None →
         # フラット URI 強制) として扱い、`~/.vscode-server` 探索へ進ませない。
         return explicit.strip() or None
+    if not auto_detect:
+        return None
     if vscode_server_dir is not None:
         server_dirs = [vscode_server_dir]
     else:
@@ -524,10 +533,11 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
 
     container = container_name or resolve_container_name(
         dev_service_name, project_name, index, compose_file=compose_file)
-    # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。ssh_host が
-    # 設定されていれば跨ホスト構成と見なし docker context も解決して埋める。非 SSH では
-    # 従来のフラット URI (ローカル/WSL/同一ホスト Remote-SSH) を維持する。
-    ssh_host = resolve_editor_ssh_host(env) if ctx.is_ssh else None
+    # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。自動推測は
+    # VS Code Remote-SSH 統合端末 (in_vscode) の時だけ有効にする — plain SSH (VS Code 外)
+    # は既存 ExecServer を前提にできずネスト URI が動かないため、明示設定時のみ採用する。
+    ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
+                if ctx.is_ssh else None)
     docker_context = resolve_docker_context(env) if ssh_host else None
     uri = build_attach_uri(container, workdir,
                            ssh_host=ssh_host, docker_context=docker_context)

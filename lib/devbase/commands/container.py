@@ -356,6 +356,28 @@ def _auto_snapshot() -> None:
         logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
 
 
+def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
+    """開く dev インスタンス番号を解決する (CLI 引数 → env ``DEVBASE_OPEN_INDEX`` → 既定 1)。
+
+    ``1..scale`` の範囲外 (0・負数・``scale`` 超過) は存在しないコンテナを指し原因不明な
+    起動失敗を招くため、警告を出して 1 へフォールバックする。:func:`_maybe_place_terminal_task`
+    と :func:`_maybe_open_editor` で共有し env フォールバック・範囲チェックの重複を避ける。
+    """
+    if open_index is None:
+        raw = os.environ.get('DEVBASE_OPEN_INDEX')
+        try:
+            open_index = int(raw) if raw else 1
+        except ValueError:
+            open_index = 1
+    if not (1 <= open_index <= scale):
+        logger.warning(
+            "open index %d is out of range (1..%d); falling back to 1",
+            open_index, scale,
+        )
+        open_index = 1
+    return open_index
+
+
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
                        open_index: Optional[int], scale: int,
                        compose_file=None, container_name: Optional[str] = None) -> None:
@@ -382,20 +404,7 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
     if not enabled:
         return
 
-    if open_index is None:
-        raw = os.environ.get('DEVBASE_OPEN_INDEX')
-        try:
-            open_index = int(raw) if raw else 1
-        except ValueError:
-            open_index = 1
-
-    # 起動済みインスタンス範囲 (1..scale) の検証。範囲外は既定 (1) へフォールバック。
-    if not (1 <= open_index <= scale):
-        logger.warning(
-            "open index %d is out of range (1..%d); falling back to 1",
-            open_index, scale,
-        )
-        open_index = 1
+    open_index = _resolve_open_index(open_index, scale)
 
     # 実コンテナ名問い合わせ用の compose file: 明示指定がなければ override が
     # 存在すればそれを使う (起動時と同じ file を docker compose ps へ渡す)。
@@ -441,14 +450,7 @@ def _maybe_place_terminal_task(project_name: str, open_flag: Optional[bool],
     if not enabled:
         return None
 
-    if open_index is None:
-        raw = os.environ.get('DEVBASE_OPEN_INDEX')
-        try:
-            open_index = int(raw) if raw else 1
-        except ValueError:
-            open_index = 1
-    if not (1 <= open_index <= scale):
-        open_index = 1
+    open_index = _resolve_open_index(open_index, scale)
 
     if compose_file is None and _SCALE_COMPOSE_FILE.exists():
         compose_file = _SCALE_COMPOSE_FILE

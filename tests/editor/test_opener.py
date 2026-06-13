@@ -211,6 +211,23 @@ def test_resolve_editor_ssh_host_autodetect_none_when_absent(tmp_path):
         {}, vscode_server_dir=str(tmp_path / "nope")) is None
 
 
+def test_resolve_editor_ssh_host_auto_detect_false_skips_history(tmp_path):
+    """auto_detect=False (plain SSH 相当) は history を見ず None (明示が無ければ)。"""
+    base = str(tmp_path / ".vscode-server")
+    _write_history(base, "a", "ssh-remote%2Bmac2/work")
+    assert opener.resolve_editor_ssh_host(
+        {}, vscode_server_dir=base, auto_detect=False) is None
+    # auto_detect=True なら拾える (対比)
+    assert opener.resolve_editor_ssh_host(
+        {}, vscode_server_dir=base, auto_detect=True) == "mac2"
+
+
+def test_resolve_editor_ssh_host_auto_detect_false_honors_explicit(tmp_path):
+    """auto_detect=False でも明示設定は尊重する。"""
+    assert opener.resolve_editor_ssh_host(
+        {"DEVBASE_EDITOR_SSH_HOST": "mac2"}, auto_detect=False) == "mac2"
+
+
 def test_detect_ssh_host_across_multiple_server_dirs(tmp_path):
     """cursor-server / vscode-server を横断し最新 mtime のホストを返す。"""
     vsc = str(tmp_path / ".vscode-server")
