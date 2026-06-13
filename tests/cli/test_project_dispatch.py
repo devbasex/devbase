@@ -359,7 +359,7 @@ def test_maybe_open_editor_disabled_by_default(monkeypatch):
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', None, None)
+    container._maybe_open_editor('carmo', None, None, 1)
     assert called == []
 
 
@@ -372,7 +372,7 @@ def test_maybe_open_editor_flag_overrides_env(monkeypatch):
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
-    container._maybe_open_editor('carmo', True, 1)
+    container._maybe_open_editor('carmo', True, 1, 1)
     assert len(called) == 1
     assert called[0]['project_name'] == 'carmo'
 
@@ -388,4 +388,32 @@ def test_maybe_open_editor_failure_does_not_raise(monkeypatch):
         raise RuntimeError("x")
 
     monkeypatch.setattr(opener, 'open_editor', boom)
-    container._maybe_open_editor('carmo', None, None)  # 例外が出なければ OK
+    container._maybe_open_editor('carmo', None, None, 1)  # 例外が出なければ OK
+
+
+@pytest.mark.parametrize('bad_index', [0, -1, 3])
+def test_maybe_open_editor_out_of_range_index_falls_back(monkeypatch, bad_index):
+    """0・負数・scale 超過の index は既定 (1) へフォールバックする (scale=2)。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    called = []
+    monkeypatch.setattr(opener, 'open_editor',
+                        lambda **kw: called.append(kw) or 'launch')
+    container._maybe_open_editor('carmo', True, bad_index, 2)
+    assert len(called) == 1
+    assert called[0]['index'] == 1
+
+
+def test_maybe_open_editor_valid_index_within_scale(monkeypatch):
+    """範囲内 (1..scale) の index はそのまま使われる。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    called = []
+    monkeypatch.setattr(opener, 'open_editor',
+                        lambda **kw: called.append(kw) or 'launch')
+    container._maybe_open_editor('carmo', True, 2, 3)
+    assert called[0]['index'] == 2

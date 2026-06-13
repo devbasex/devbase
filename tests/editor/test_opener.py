@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 import pytest
 
 from devbase.editor import opener
+
+
+@dataclass
+class _Proc:
+    """subprocess.run 互換の軽量スタブ (returncode / stdout のみ)。"""
+    returncode: int = 0
+    stdout: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -109,8 +117,50 @@ def test_build_attach_uri_adds_leading_slash():
 # ---------------------------------------------------------------------------
 
 def test_resolve_container_name_deterministic():
+    """docker 問い合わせが失敗 (非0) する場合は決定的名へフォールバックする。"""
+    def failing_runner(cmd, **kw):
+        return _Proc(returncode=1, stdout="")
+
+    assert opener.resolve_container_name("dev", "carmo", 1, runner=failing_runner) \
+        == "carmo-dev-1"
+    assert opener.resolve_container_name("app", "carmo", 3, runner=failing_runner) \
+        == "carmo-app-3"
+
+
+def test_resolve_container_name_falls_back_when_docker_absent(monkeypatch):
+    """docker 不在 (例外) でも決定的名で必ず動く。"""
+    monkeypatch.setattr(opener, "_query_container_name",
+                        lambda *a, **kw: None)
     assert opener.resolve_container_name("dev", "carmo", 1) == "carmo-dev-1"
-    assert opener.resolve_container_name("app", "carmo", 3) == "carmo-app-3"
+
+
+def test_resolve_container_name_prefers_docker_name_ndjson():
+    """docker から取得できた実 Name (NDJSON) を決定的名より優先する。"""
+    def runner(cmd, **kw):
+        # service token は dev-2 を指定しているはず
+        assert cmd[:4] == ["docker", "compose", "ps", "--format"]
+        assert cmd[-1] == "dev-2"
+        return _Proc(returncode=0,
+                     stdout='{"Name":"real-dev-2","Service":"dev-2"}\n')
+
+    assert opener.resolve_container_name("dev", "carmo", 2, runner=runner) \
+        == "real-dev-2"
+
+
+def test_resolve_container_name_prefers_docker_name_json_array():
+    """JSON 配列形式の docker compose ps 出力にも対応する。"""
+    def runner(cmd, **kw):
+        return _Proc(returncode=0,
+                     stdout='[{"Name":"real-dev-1","Service":"dev-1"}]')
+
+    assert opener.resolve_container_name("dev", "carmo", 1, runner=runner) \
+        == "real-dev-1"
+
+
+def test_parse_compose_ps_name_empty_and_invalid():
+    assert opener._parse_compose_ps_name("") is None
+    assert opener._parse_compose_ps_name("not json") is None
+    assert opener._parse_compose_ps_name("[]") is None
 
 
 def test_resolve_workdir_prefers_work_dir_env():

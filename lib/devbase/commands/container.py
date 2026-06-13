@@ -356,11 +356,15 @@ def _auto_snapshot() -> None:
 
 
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
-                       open_index: Optional[int]) -> None:
+                       open_index: Optional[int], scale: int) -> None:
     """`up` 完了後に dev コンテナへ接続したエディタを開く ([6/6])。
 
     有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら env
     ``DEVBASE_OPEN_EDITOR``。エディタ起動の成否は ``up`` の戻り値に影響させない。
+
+    ``open_index`` は起動済みインスタンス範囲 ``1..scale`` 内である必要がある。
+    0・負数・``scale`` 超過は存在しないコンテナ URI になり原因不明な起動失敗を招くため、
+    警告を出して既定 (1) へフォールバックする。
     """
     from devbase.editor import opener
 
@@ -374,6 +378,14 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
             open_index = int(raw) if raw else 1
         except ValueError:
             open_index = 1
+
+    # 起動済みインスタンス範囲 (1..scale) の検証。範囲外は既定 (1) へフォールバック。
+    if not (1 <= open_index <= scale):
+        logger.warning(
+            "open index %d is out of range (1..%d); falling back to 1",
+            open_index, scale,
+        )
+        open_index = 1
 
     dev_service_name = get_dev_service_name()
     workdir = opener.resolve_workdir(os.environ, project_name)
@@ -458,7 +470,7 @@ def cmd_up(project_name: str = None, scale: int = None,
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(1, scale + 1))
 
-        _maybe_open_editor(project_name, open_editor, open_index)
+        _maybe_open_editor(project_name, open_editor, open_index, scale)
 
         logger.info("=== Deploy completed successfully ===")
         return 0

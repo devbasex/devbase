@@ -135,13 +135,87 @@ def build_attach_uri(container_name: str, workdir: str) -> str:
     return f"vscode-remote://attached-container+{hexname}{path}"
 
 
-def resolve_container_name(dev_service_name: str, project_name: str, index: int = 1) -> str:
+def _parse_compose_ps_name(stdout: str) -> Optional[str]:
+    """``docker compose ps --format json`` の出力から ``.Name`` を 1 件取り出す。
+
+    docker compose のバージョン差で出力形式が異なる:
+
+    - 新しめ: 1 行 1 JSON オブジェクト (改行区切り NDJSON)
+    - 古め:   JSON 配列 ``[{...}, ...]``
+
+    どちらでも先頭インスタンスの ``Name`` を返す。解釈不能・空なら None。
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return None
+    # まず JSON 配列としてのパースを試す。
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        obj = None
+    if isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, dict) and item.get("Name"):
+                return item["Name"]
+        return None
+    if isinstance(obj, dict) and obj.get("Name"):
+        return obj["Name"]
+    # NDJSON (1 行 1 JSON) として行ごとにパース。
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict) and item.get("Name"):
+            return item["Name"]
+    return None
+
+
+def _query_container_name(dev_service_name: str, index: int,
+                          runner: Optional[Callable] = None) -> Optional[str]:
+    """実 docker へ問い合わせて dev インスタンスの実コンテナ名を取得する (保険)。
+
+    scale 生成 compose ではサービス名が ``{dev}-{index}`` (例 ``dev-1``) になるため
+    その service token を指定して ``docker compose ps --format json`` を実行する。
+    取得できなければ None。docker 不在・非0・例外・空はすべて None に握り潰し、
+    呼び出し側が決定的名へフォールバックできるようにする。
+    """
+    run = runner or subprocess.run
+    service_token = f"{dev_service_name}-{index}"
+    try:
+        proc = run(
+            ["docker", "compose", "ps", "--format", "json", service_token],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:  # noqa: BLE001 - docker 不在等は保険なので握り潰す
+        return None
+    if getattr(proc, "returncode", 1) != 0:
+        return None
+    try:
+        return _parse_compose_ps_name(proc.stdout)
+    except Exception:  # noqa: BLE001 - パース失敗も決定的名へフォールバック
+        return None
+
+
+def resolve_container_name(dev_service_name: str, project_name: str, index: int = 1,
+                           runner: Optional[Callable] = None) -> str:
     """dev コンテナの実コンテナ名を返す。
 
-    scale 生成 compose が ``container_name = ${COMPOSE_PROJECT_NAME}-{dev}-{index}``
+    PLAN31_3 §3: compose バージョン差異への保険として、まず実 docker へ
+    ``docker compose ps --format json`` で問い合わせて実 ``Name`` を取得する。
+    取得できなければ決定的名 ``{project_name}-{dev_service_name}-{index}`` へ
+    フォールバックする。
+
+    scale 生成 compose は ``container_name = ${COMPOSE_PROJECT_NAME}-{dev}-{index}``
     を全インスタンスへ設定する (volume/compose.py)。COMPOSE_PROJECT_NAME は
-    project_name と一致するため決定的に組み立てられる。
+    project_name と一致するため、docker 問い合わせに失敗しても決定的に組み立てられる。
     """
+    queried = _query_container_name(dev_service_name, index, runner=runner)
+    if queried:
+        return queried
     return f"{project_name}-{dev_service_name}-{index}"
 
 
