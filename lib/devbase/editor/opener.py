@@ -141,7 +141,10 @@ def build_folder_open_tasks_json() -> str:
     VS Code 公式には「起動時にターミナルを開く」単独設定が無く (``hideOnStartup`` は復元
     された永続セッションを隠すか否かに過ぎず新規生成はしない)、``runOn: folderOpen`` の
     タスクが新規ターミナルを出せる唯一の方法 (docs/terminal/*, docs/debugtest/tasks)。
-    ``reveal: always`` でパネルを前面に出し、対話シェル (``$SHELL``) を起動する。
+    ``reveal: always`` でパネルを前面に出し対話シェルを起動する。``type: process`` で
+    ``/bin/sh -lc 'exec "${SHELL:-/bin/sh}"'`` を直接起動し、``$SHELL`` 未設定のコンテナでも
+    ``/bin/sh`` にフォールバックして必ずシェルが立ち上がるようにする (``type: shell`` +
+    ``${env:SHELL}`` だと未設定時に command が空になりタスクが即失敗する)。
 
     .. note:: 自動実行には2つの user 設定ゲートがあり devbase からは制御できない:
        Workspace Trust (信頼済みフォルダのみ自動実行) と ``task.allowAutomaticTasks``
@@ -152,8 +155,9 @@ def build_folder_open_tasks_json() -> str:
         "tasks": [
             {
                 "label": "devbase: open terminal",
-                "type": "shell",
-                "command": "${env:SHELL}",
+                "type": "process",
+                "command": "/bin/sh",
+                "args": ["-lc", 'exec "${SHELL:-/bin/sh}"'],
                 "isBackground": True,
                 "problemMatcher": [],
                 "presentation": {

@@ -296,7 +296,10 @@ def test_build_folder_open_tasks_json_is_valid_folderopen_task():
     task = data["tasks"][0]
     assert task["runOptions"]["runOn"] == "folderOpen"
     assert task["presentation"]["reveal"] == "always"
-    assert task["type"] == "shell"
+    # SHELL 未設定でも /bin/sh にフォールバックして必ずシェルを起動する (空 command 回避)
+    assert task["type"] == "process"
+    assert task["command"] == "/bin/sh"
+    assert "SHELL:-/bin/sh" in " ".join(task["args"])
 
 
 # ---------------------------------------------------------------------------
