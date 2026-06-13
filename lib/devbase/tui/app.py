@@ -3,7 +3,8 @@
 ``run(devbase_root, args)`` が ``cmd_project_list`` から呼ばれる入口。
 利用頻度が最も高い **プロジェクト一覧を起動直後のトップ画面** とし、
 プロジェクト選択 → (running なら操作サブメニュー / それ以外は up) を最短経路にする。
-env / plugin / snapshot / status は一覧の末尾に並ぶカテゴリ項目から遷移する。
+env / plugin / snapshot / status は画面最下部に横並びで常設するメニューバー
+(``menu.select_with_menubar``) から遷移する (←→ で項目間を移動、Enter で決定)。
 
 後方互換 (plan 3.2):
 - ``--no-interactive`` / ``--plain`` (interactive=False) と非 TTY は従来どおり一覧
@@ -87,20 +88,33 @@ def _pause_for_review() -> bool:
     return True
 
 
+# プロジェクト 0 件時に一覧へ置くプレースホルダの value 番兵。questionary の
+# select は選択可能な choice が 1 件も無いと構築できないため、案内行を 1 件
+# 置き、Enter されたらトップを再表示する (rows index の int と区別する)。
+_NO_PROJECTS = object()
+
+
 def _select_top(rows: list[dict]):
-    """トップ画面: プロジェクト一覧 + カテゴリ項目から 1 件選ばせる。
+    """トップ画面: プロジェクト一覧 + 最下部の常設カテゴリメニューから 1 件選ばせる。
+
+    カテゴリ (env/plugin/snapshot/status) は一覧の行ではなく、画面最下部に
+    横並びで常設するメニューバーに置く (←→ で項目間を移動、Enter で決定)。
 
     戻り値: rows の index (``int`` = プロジェクト選択) / カテゴリ key (``str``) /
-    ``None`` (Esc・Ctrl-C → 終了)。プロジェクトとカテゴリは値の型で判別する。
-    件数が多いため文字入力での絞り込み (search=True) を有効にする。
+    ``_NO_PROJECTS`` (プレースホルダ選択 = 再表示) / ``None`` (Esc・Ctrl-C → 終了)。
+    プロジェクトとカテゴリは値の型で判別する。件数が多いため文字入力での
+    絞り込み (search) を有効にする。
     """
-    entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
-    choices: list[tuple[str, object]] = [(entry, i) for i, entry in enumerate(entries)]
-    choices += [(f"{label} ({key})", key) for key, label in TOP_CATEGORIES]
-    return menu.select(
+    if rows:
+        entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
+        choices: list[tuple[str, object]] = [(e, i) for i, e in enumerate(entries)]
+    else:
+        # _build_menu_entries は 0 件を想定しない (max() が落ちる) ため迂回する。
+        choices = [("(プロジェクトがありません)", _NO_PROJECTS)]
+    return menu.select_with_menubar(
         "プロジェクトまたは操作を選択 "
-        "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc・Ctrl-C 終了):",
-        choices, back=False, search=True)
+        "(↑↓ 移動 / 名前で絞り込み / ←→ 下部メニュー / Enter 決定 / Esc・Ctrl-C 終了):",
+        choices, [(label, key) for key, label in TOP_CATEGORIES])
 
 
 def _top_menu_loop(devbase_root: Path) -> int:
@@ -126,6 +140,9 @@ def _top_menu_loop(devbase_root: Path) -> int:
             # トップで Esc / Ctrl-C → これまでの実行 rc を返して終了
             logger.info("中止しました。")
             return last_rc
+        if sel is _NO_PROJECTS:
+            # プロジェクト 0 件のプレースホルダ行 → 何もせず再表示
+            continue
 
         if isinstance(sel, str):
             result = _route(sel, devbase_root)

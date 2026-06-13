@@ -216,3 +216,66 @@ def test_buffered_key_after_answer_does_not_crash(rapid_session):
     raw = bytes(rapid_session._buf).decode("utf-8", errors="replace")
     assert "Application.exit() failed" not in raw
     assert "Unhandled exception" not in raw
+
+
+_MENUBAR_DRIVER = """
+from devbase.tui import menu
+
+ROWS = [("alpha", 0), ("beta", 1)]
+TABS = [("環境変数", "env"), ("プラグイン", "plugin"),
+        ("スナップショット", "snapshot"), ("ステータス", "status")]
+
+r = menu.select_with_menubar("TOPBAR1 を選択:", ROWS, TABS)
+print(f"@R1={r!r}", flush=True)
+
+r = menu.select_with_menubar("TOPBAR2 を選択:", ROWS, TABS)
+print(f"@R2={r!r}", flush=True)
+
+r = menu.select_with_menubar("TOPBAR3 を選択:", ROWS, TABS)
+print(f"@R3={r!r}", flush=True)
+
+print("@END", flush=True)
+"""
+
+
+@pytest.fixture
+def menubar_session():
+    s = _PtySession(_MENUBAR_DRIVER)
+    yield s
+    if s.proc.poll() is None:
+        s.proc.kill()
+
+
+def test_menubar_keys_and_rendering(menubar_session):
+    """最下部メニューバーの ←→ 移動・Enter 確定・↑↓ での一覧復帰 (実 TTY)。"""
+    s = menubar_session
+
+    # 1) → → Enter: バーへ入り 2 項目目 (plugin) を確定
+    s.wait_for("TOPBAR1")
+    s.send("\x1b[C")                 # → でバー先頭 (env)
+    s.send("\x1b[C")                 # → で plugin
+    s.send("\r")
+    s.wait_for("@R1='plugin'")
+
+    # 2) ← Enter: 一覧から ← は末尾 (status) へ入る
+    s.wait_for("TOPBAR2")
+    s.send("\x1b[D")                 # ← で末尾 (status)
+    s.send("\r")
+    s.wait_for("@R2='status'")
+
+    # 3) → ↓ ↓ Enter: バーへ入った後 ↓ で一覧へ戻り、beta を確定
+    s.wait_for("TOPBAR3")
+    s.send("\x1b[C")                 # → でバーへ
+    s.send("\x1b[B")                 # ↓ で一覧へ復帰 (alpha のまま)
+    s.send("\x1b[B")                 # ↓ で beta へ
+    s.send("\r")
+    s.wait_for("@R3=1")
+    s.wait_for("@END")
+
+    s.finish()
+    raw = bytes(s._buf).decode("utf-8", errors="replace")
+    # バーの 4 項目が描画されていること (最下部の常設メニュー)
+    for label in ("環境変数", "プラグイン", "スナップショット", "ステータス"):
+        assert label in raw, f"メニューバーに {label} が描画されていない"
+    assert "Application.exit() failed" not in raw
+    assert "Unhandled exception" not in raw

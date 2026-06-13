@@ -155,23 +155,51 @@ def _patch_loop(monkeypatch, selects, rows=None):
     return pauses
 
 
-def test_select_top_appends_categories_after_projects(monkeypatch):
-    """トップ一覧はプロジェクト行が先頭、カテゴリ項目が末尾に並ぶ。"""
+def test_select_top_projects_in_list_categories_in_menubar(monkeypatch):
+    """トップは一覧にプロジェクト行のみ、カテゴリは最下部メニューバーに並ぶ。"""
     captured = {}
 
-    def fake_select(message, choices, *, back, search):
-        captured.update(back=back, search=search,
-                        titles=[c[0] for c in choices],
-                        values=[c[1] for c in choices])
+    def fake_menubar(message, choices, menu_items):
+        captured.update(values=[c[1] for c in choices],
+                        menu_labels=[m[0] for m in menu_items],
+                        menu_values=[m[1] for m in menu_items])
         return 0
 
-    monkeypatch.setattr(menu, "select", fake_select)
+    monkeypatch.setattr(menu, "select_with_menubar", fake_menubar)
     assert app._select_top(_ROWS) == 0
-    assert captured["back"] is False, "トップは Esc=終了 (戻り先なし)"
-    assert captured["search"] is True, "名前絞り込みを有効化"
-    assert captured["values"][:2] == [0, 1], "プロジェクトは rows index"
-    assert captured["values"][2:] == ["env", "plugin", "snapshot", "status"]
-    assert captured["titles"][2] == "環境変数 (env)", "ラベル (key) 形式で表示"
+    assert captured["values"] == [0, 1], "一覧はプロジェクトの rows index のみ"
+    assert captured["menu_values"] == ["env", "plugin", "snapshot", "status"]
+    assert captured["menu_labels"] == [
+        "環境変数", "プラグイン", "スナップショット", "ステータス"]
+
+
+def test_select_top_empty_projects_uses_placeholder(monkeypatch):
+    """プロジェクト 0 件は選択不能エラーを避けるためプレースホルダ行を 1 件置く。
+
+    questionary の select は選択可能な choice が 0 件だと構築できない。
+    """
+    captured = {}
+
+    def fake_menubar(message, choices, menu_items):
+        captured.update(titles=[c[0] for c in choices],
+                        values=[c[1] for c in choices])
+        return captured["values"][0]
+
+    monkeypatch.setattr(menu, "select_with_menubar", fake_menubar)
+    assert app._select_top([]) is app._NO_PROJECTS
+    assert captured["values"] == [app._NO_PROJECTS]
+    assert "プロジェクトがありません" in captured["titles"][0]
+
+
+def test_top_loop_no_projects_placeholder_redisplays(monkeypatch, tmp_path):
+    """プレースホルダ行 (_NO_PROJECTS) を Enter しても何も起動せず再表示する。"""
+    _patch_loop(monkeypatch, [app._NO_PROJECTS, None], rows=[])
+    handled = []
+    monkeypatch.setattr(actions_project, "handle_row",
+                        lambda root, row: handled.append(1) or 0)
+
+    assert app._top_menu_loop(tmp_path) == 0
+    assert handled == [], "プレースホルダでは何も起動しない"
 
 
 def test_top_loop_project_selection_delegates_handle_row(monkeypatch, tmp_path):
