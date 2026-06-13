@@ -41,6 +41,16 @@ _TRUTHY = {"1", "true", "yes", "on"}
 # resource URI 中の ssh-remote authority ラベルを拾う ('+' は URL エンコードで %2B)。
 _SSH_REMOTE_RE = re.compile(r"ssh-remote(?:\+|%2[Bb])([A-Za-z0-9._@-]+)")
 
+# ssh host 自動検出で探索する VS Code 系サーバーディレクトリ (DEVBASE_EDITOR で
+# code / code-insiders / cursor / vscodium 等を使い分けても拾えるよう横断する)。
+_SERVER_DIR_CANDIDATES = (
+    "~/.vscode-server",
+    "~/.vscode-server-insiders",
+    "~/.cursor-server",
+    "~/.vscodium-server",
+    "~/.windsurf-server",
+)
+
 
 @dataclass(frozen=True)
 class EditorContext:
@@ -327,33 +337,36 @@ def resolve_workdir(environ=None, project_name: Optional[str] = None) -> str:
     return f"/work/{repo}" if repo else "/work"
 
 
-def _detect_ssh_host_from_vscode(vscode_server_dir: str) -> Optional[str]:
-    """``~/.vscode-server`` の File History から ssh-remote authority ラベルを推測する。
+def _detect_ssh_host_from_dirs(server_dirs) -> Optional[str]:
+    """複数の VS Code 系サーバーディレクトリの File History を横断して ssh-remote
+    authority ラベルを推測する。
 
     Remote-SSH / attached-container 窓で開いたファイルの resource URI が
-    ``data/User/History/*/entries.json`` に ``ssh-remote%2B<host>`` (URL エンコード) /
-    ``ssh-remote+<host>`` 形で残るため、そこから ``<host>`` (= クライアントの接続ラベル。
-    例 ``mac2``) を回収する。複数ホストが見つかった場合は **最後に使われた (entries.json
-    の mtime が最新の) ホスト**を返す。見つからなければ None。
+    ``<server>/data/User/History/*/entries.json`` に ``ssh-remote%2B<host>`` (URL
+    エンコード) / ``ssh-remote+<host>`` 形で残るため、そこから ``<host>`` (= クライアントの
+    接続ラベル。例 ``mac2``) を回収する。
+
+    全ディレクトリの ``entries.json`` 候補を **mtime 降順**で集め、**新しい方から 1 ファイル
+    ずつ読み、最初に ssh-remote ホストが見つかった時点で即 return** する (History が数千
+    ファイルに膨れても全読み込みを避け、devbase up の遅延を防ぐ)。mtime 収集は stat のみで安価。
+    見つからなければ None。
 
     .. note:: VS Code 内部データ依存のヒューリスティックで、バージョン差や multi-host 運用で
        外し得る。確実性が要る場合は ``DEVBASE_EDITOR_SSH_HOST`` を明示する (本関数より優先)。
     """
-    history = os.path.join(vscode_server_dir, "data", "User", "History")
-    if not os.path.isdir(history):
-        return None
-    # entries.json 候補を mtime 降順で集め、**新しい方から 1 ファイルずつ読み、最初に
-    # ssh-remote ホストが見つかった時点で即 return** する (History が数千ファイルに
-    # 膨れても全読み込みを避け、devbase up の遅延を防ぐ)。mtime 収集は stat のみで安価。
-    candidates = []
-    for root, _dirs, files in os.walk(history):
-        if "entries.json" not in files:  # resource authority は entries.json に載る
+    candidates = []  # (mtime, path)
+    for base in server_dirs:
+        history = os.path.join(base, "data", "User", "History")
+        if not os.path.isdir(history):
             continue
-        path = os.path.join(root, "entries.json")
-        try:
-            candidates.append((os.path.getmtime(path), path))
-        except OSError:
-            continue
+        for root, _dirs, files in os.walk(history):
+            if "entries.json" not in files:  # resource authority は entries.json に載る
+                continue
+            path = os.path.join(root, "entries.json")
+            try:
+                candidates.append((os.path.getmtime(path), path))
+            except OSError:
+                continue
     for _mtime, path in sorted(candidates, key=lambda t: t[0], reverse=True):
         try:
             with open(path, encoding="utf-8", errors="ignore") as f:
@@ -366,6 +379,11 @@ def _detect_ssh_host_from_vscode(vscode_server_dir: str) -> Optional[str]:
     return None
 
 
+def _detect_ssh_host_from_vscode(vscode_server_dir: str) -> Optional[str]:
+    """単一サーバーディレクトリ版 (:func:`_detect_ssh_host_from_dirs` の薄ラッパ)。"""
+    return _detect_ssh_host_from_dirs([vscode_server_dir])
+
+
 def resolve_editor_ssh_host(environ=None,
                             vscode_server_dir: Optional[str] = None) -> Optional[str]:
     """Remote-SSH ネスト URI 用の ssh ホスト名 (authority ラベル) を解決する。
@@ -373,22 +391,28 @@ def resolve_editor_ssh_host(environ=None,
     優先順位:
 
     1. ``DEVBASE_EDITOR_SSH_HOST`` 明示 (最優先・確実)
-    2. ``~/.vscode-server`` の File History からの自動推測
-       (:func:`_detect_ssh_host_from_vscode`)
+    2. VS Code 系サーバーディレクトリ (``~/.vscode-server`` / ``~/.cursor-server`` /
+       ``~/.vscode-server-insiders`` 等) の File History からの自動推測
+       (:func:`_detect_ssh_host_from_dirs`)
 
     ネスト attach は新規 ssh 接続を張らず **既存 Remote-SSH 接続 (ExecServer) の authority
     ラベルと完全一致**する必要がある (実機確認: IP / user@IP は "Parent authority found
     without ExecServer" で不可)。そのラベル (例 ``mac2``) はクライアント側の名前で SSH_CONNECTION
     等の env には現れない (IP のみ) ため、自動取得は VS Code が残す痕跡からの回収に頼る。
     どちらでも得られなければ None で :func:`build_attach_uri` はフラット URI に degrade する。
+
+    ``vscode_server_dir`` はテスト用の単一ディレクトリ差し替え口 (指定時はそれだけを探索)。
     """
     env = os.environ if environ is None else environ
     explicit = env.get("DEVBASE_EDITOR_SSH_HOST")
     if explicit and explicit.strip():
         return explicit.strip()
-    base = vscode_server_dir or os.path.expanduser("~/.vscode-server")
+    if vscode_server_dir is not None:
+        server_dirs = [vscode_server_dir]
+    else:
+        server_dirs = [os.path.expanduser(d) for d in _SERVER_DIR_CANDIDATES]
     try:
-        return _detect_ssh_host_from_vscode(base)
+        return _detect_ssh_host_from_dirs(server_dirs)
     except Exception:  # noqa: BLE001 - 自動推測失敗で up を倒さない
         return None
 
