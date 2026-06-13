@@ -119,7 +119,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 
 > **`container`（略記 `ct`）グループは非推奨です。** `devbase project <sub>` のエイリアスとして当面動作しますが、非推奨警告を表示します。新しいコマンドは `project` を使用してください。
 
-- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。なお `build` のみ挙動が一部異なります（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
+- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `rebuild [name]`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。なお `build` のみ挙動が一部異なります（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
 - **プレフィックス略記**: `devbase p l` → `devbase plugin list`
 - **トップレベルコマンド**: `init`, `status`
 

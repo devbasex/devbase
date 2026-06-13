@@ -16,7 +16,7 @@ graph TD
     A --> G[snapshot / ss]
     D --> D1["up / down / ps / logs / scale [name]"]
     D --> D3["login [index]"]
-    D --> D4["build [image] / rebuild"]
+    D --> D4["build [image] / rebuild [name]"]
     D --> D2["list [--no-interactive]"]
     E --> E1[init / sync / list / set / get / delete / edit / project / export / import]
     F --> F1[list / install / uninstall / update / info / sync / migrate]
@@ -50,6 +50,7 @@ graph TD
 | `devbase build [image]` | `bin/devbase` の `cmd_build`（シェル実装）※ |
 | `devbase ps [name]` | `devbase project ps [name]` |
 | `devbase scale [name] <num>` | `devbase project scale [name] <num>` |
+| `devbase rebuild [name]` | `devbase project rebuild [name]` |
 | `devbase list` | `devbase project list` |
 
 > **Note:** `logs` はトップレベルシノニムを持ちません。`devbase project logs` を使用してください。
@@ -271,6 +272,20 @@ devbase build [image]
 |-----------|------|------|
 | `image` | いいえ | ビルドするイメージ名（省略時は全イメージ） |
 
+### `devbase project rebuild`
+
+キャッシュを使わずにコンテナイメージを再ビルドします（`docker compose build --no-cache`）。
+`build` と異なり Python 実装で完結するため、トップレベルショートカット `devbase rebuild` を持ちます。
+
+```
+devbase project rebuild [name]
+devbase rebuild [name]
+```
+
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| `name` | いいえ | 対象プロジェクト名（省略時はカレント） |
+
 ### `devbase project list`
 
 `$DEVBASE_ROOT/projects/` 配下のプロジェクトを `NAME` / `PLUGIN` / `STATUS` の一覧で
@@ -305,7 +320,7 @@ devbase list [--no-interactive|--plain|-P]
 |------|------|
 | ↑↓ / 文字入力 | プロジェクト一覧の移動・名前での絞り込み |
 | ← → | 最下部の常設カテゴリメニューへ移動し項目間を巡回（バー上の ↑↓ で一覧へ戻る） |
-| Enter | 決定。停止中プロジェクトはそのまま起動 (up)、起動中プロジェクトは操作サブメニューを表示 |
+| Enter | 決定。プロジェクト行では停止中はそのまま起動 (up)、起動中は操作サブメニューを表示。最下部のカテゴリメニューにフォーカスがある場合は、選択中カテゴリの操作画面へ遷移 |
 | Esc / ← | サブメニューでは 1 つ前の画面へ戻る（トップでは Esc で終了） |
 | Ctrl-C | どの画面でも全体を中止 |
 
@@ -468,6 +483,28 @@ devbase env edit
 ```
 devbase env project
 ```
+
+### `devbase env export`
+
+複数プロジェクトの `.env` 群を暗号化したまま 1 つのバンドルにまとめて書き出します。
+
+```
+devbase env export <bundle>
+```
+
+オプション（age 鍵 / passphrase / S3 入出力など）の詳細は
+[環境変数の export / import ガイド](env-export-import.md#devbase-env-export-リファレンス)を参照してください。
+
+### `devbase env import`
+
+`devbase env export` で作成したバンドルを復号し、環境変数を取り込みます。
+
+```
+devbase env import <bundle>
+```
+
+`--dry-run` での確認や identity 鍵指定などの詳細は
+[環境変数の export / import ガイド](env-export-import.md#devbase-env-import-リファレンス)を参照してください。
 
 ## plugin (pl) グループ
 

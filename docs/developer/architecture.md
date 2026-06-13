@@ -55,7 +55,7 @@ Python 側のエントリーポイント。以下の責務を持つ。
 
 | 定数 | 役割 |
 |------|------|
-| `SHORTCUTS` | トップレベルショートカット → (グループ, サブコマンド) のマッピング。`up`, `down`, `login`, `build`, `ps` が `container` グループに転送される |
+| `SHORTCUTS` | トップレベルショートカット → サブコマンドのマッピング。`up`, `down`, `login`, `ps`, `scale`, `rebuild` が `project` グループへ転送される（`build` は shell 実装へ委譲するため除外、`list` は lifecycle ではないため `_dispatch` で個別 routing） |
 | `GROUP_ALIASES` | グループのエイリアス。`ct` → `container`, `pl` → `plugin`, `ss` → `snapshot` |
 | `SUBCMD_MAP` | 各グループが受け付けるサブコマンド一覧。プレフィックスマッチの候補として使用される |
 
