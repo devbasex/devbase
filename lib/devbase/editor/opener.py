@@ -298,6 +298,7 @@ def _launch(cmd: list, env: dict) -> None:
     """エディタを非ブロッキングで起動する (up プロセスを待たせない)。"""
     subprocess.Popen(  # noqa: S603 - argv はコード生成で外部入力を渡さない
         cmd, env=env,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
