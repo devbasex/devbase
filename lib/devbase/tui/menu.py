@@ -52,21 +52,29 @@ HINT_SEARCH = "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻�
 # キーバインド (Esc / ←)
 # ---------------------------------------------------------------------------
 
-def _add_key_binding(question, key, handler):
-    """生成済み ``Question.application`` にキーハンドラを後付けする共通処理。
+def _merge_app_bindings(question, kb):
+    """生成済み ``Question.application`` に ``KeyBindings`` を後付けマージする。
 
     select の application は素の ``KeyBindings`` を持つが、confirm/text/path は
     ``merge_key_bindings`` 済みの ``_MergedKeyBindings`` (``add`` を持たない) の
-    ため、直接 ``add`` せず新しい ``KeyBindings`` を作って再マージする。
+    ため、直接 ``add`` せず再マージする。後からマージしたバインドは同一キーで
+    既存より優先される (prompt_toolkit は ``matches[-1]`` を呼ぶ)。
     """
-    from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+    from prompt_toolkit.key_binding import merge_key_bindings
 
-    kb = KeyBindings()
-    kb.add(key)(handler)
     existing = question.application.key_bindings
     question.application.key_bindings = (
         merge_key_bindings([existing, kb]) if existing is not None else kb)
     return question
+
+
+def _add_key_binding(question, key, handler):
+    """生成済み ``Question.application`` にキーハンドラを 1 つ後付けする共通処理。"""
+    from prompt_toolkit.key_binding import KeyBindings
+
+    kb = KeyBindings()
+    kb.add(key)(handler)
+    return _merge_app_bindings(question, kb)
 
 
 def _add_escape_binding(question, handler):
@@ -218,6 +226,119 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
     else:
         question = with_escape_cancel(question)
     return _ask_erased(question)
+
+
+# ---------------------------------------------------------------------------
+# 最下部メニューバー付き select (トップ画面用)
+# ---------------------------------------------------------------------------
+
+def _build_menubar_question(message: str, choices, menu_items):
+    """一覧 select の最下部に横並びメニューバーを組み込んだ question を構築する。
+
+    ``select_with_menubar`` の構築部分。テストが実 TTY なしでキーバインドと
+    バー描画を検証できるよう、ask せずに ``(question, focus)`` を返す。
+    ``focus["tab"]`` が ``None`` なら一覧、``int`` ならバーの該当項目に
+    フォーカスがある。
+    """
+    from prompt_toolkit.filters import Condition
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+    from prompt_toolkit.layout import HSplit, Layout, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+
+    norm = [
+        c if isinstance(c, questionary.Choice)
+        else questionary.Choice(title=c[0], value=c[1])
+        for c in choices
+    ]
+    question = questionary.select(
+        message,
+        choices=norm,
+        use_arrow_keys=True,
+        use_jk_keys=False,
+        use_search_filter=True,
+        use_shortcuts=False,
+    )
+
+    count = len(menu_items)
+    focus: dict = {"tab": None}
+    tab_focused = Condition(lambda: focus["tab"] is not None)
+
+    kb = KeyBindings()
+
+    # questionary select は ←/→ を明示バインドしない (Keys.Any の catch-all のみ)
+    # ため、後付けマージで安全に奪える。search 絞り込みの入力カーソル移動は
+    # 失われるが、絞り込みは短文入力なので追記・Backspace で十分。
+    @kb.add(Keys.Right, eager=True)
+    def _tab_next(event):
+        focus["tab"] = 0 if focus["tab"] is None else (focus["tab"] + 1) % count
+        event.app.invalidate()
+
+    @kb.add(Keys.Left, eager=True)
+    def _tab_prev(event):
+        focus["tab"] = (count - 1 if focus["tab"] is None
+                        else (focus["tab"] - 1) % count)
+        event.app.invalidate()
+
+    # バーから ↑/↓ で一覧へフォーカスを戻す (一覧内の移動は questionary 既定)。
+    @kb.add(Keys.Up, filter=tab_focused, eager=True)
+    @kb.add(Keys.Down, filter=tab_focused, eager=True)
+    def _tab_leave(event):
+        focus["tab"] = None
+        event.app.invalidate()
+
+    # バーにフォーカスがあるときの Enter はバー項目の value で確定する
+    # (一覧フォーカス時は questionary 既定の Enter が choice value を返す)。
+    @kb.add(Keys.ControlM, filter=tab_focused, eager=True)
+    def _tab_accept(event):
+        event.app.exit(result=menu_items[focus["tab"]][1])
+
+    def _bar_fragments():
+        frags = [("", " ")]
+        for i, (label, _value) in enumerate(menu_items):
+            style = "bold reverse" if focus["tab"] == i else "class:text"
+            frags.append((style, f" {label} "))
+            if i < count - 1:
+                frags.append(("", "  "))
+        return frags
+
+    app = question.application
+    bar = HSplit([
+        Window(height=1, char="─", style="class:separator"),
+        Window(FormattedTextControl(_bar_fragments), height=1,
+               dont_extend_height=True),
+    ])
+    # 既存レイアウト全体の下にバーを常設する (一覧の件数・絞り込みに関わらず
+    # プロンプト描画の最下部に固定される)。フォーカス可能要素は一覧のみなので
+    # Layout の既定フォーカス解決に任せる。
+    app.layout = Layout(HSplit([app.layout.container, bar]))
+    _merge_app_bindings(question, kb)
+    return question, focus
+
+
+def select_with_menubar(message: str, choices, menu_items):
+    """最下部に常設メニューバーを付けた選択メニュー (トップ画面用)。
+
+    Parameters
+    ----------
+    message:    プロンプト文言。
+    choices:    一覧部分の選択肢 (``select`` と同じ形式)。
+    menu_items: バー項目の ``(label, value)`` リスト。
+
+    キー操作:
+    - ↑↓ / 文字入力: 一覧の移動・絞り込み (questionary 既定)
+    - ← →: バーへフォーカスを移して項目間を巡回 (← は末尾から、→ は先頭から)
+    - ↑↓ (バー上): 一覧へフォーカスを戻す
+    - Enter: フォーカス位置で確定
+    - Esc / Ctrl-C: 中止 (トップ画面専用のため戻り先なし)
+
+    Returns
+    -------
+    一覧の choice value / バー項目の value / ``None`` (Esc・Ctrl-C 中止)。
+    テストではこの関数自体を monkeypatch して questionary の実起動を避ける。
+    """
+    question, _focus = _build_menubar_question(message, choices, menu_items)
+    return _ask_erased(with_escape_cancel(question))
 
 
 # ---------------------------------------------------------------------------

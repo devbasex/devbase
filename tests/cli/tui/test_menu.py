@@ -132,6 +132,132 @@ def test_guard_after_done_wraps_app_key_bindings():
 
 
 # ---------------------------------------------------------------------------
+# select_with_menubar: 最下部メニューバーのフォーカス遷移と確定
+# ---------------------------------------------------------------------------
+
+_TABS = [("環境変数", "env"), ("プラグイン", "plugin"), ("ステータス", "status")]
+
+
+def _menubar_question():
+    pytest.importorskip("questionary")
+    return menu._build_menubar_question(
+        "t:", [("p1", 0), ("p2", 1)], _TABS)
+
+
+def _handler_for(question, key, *, filtered=None):
+    """マージ済み key_bindings から該当キーのハンドラを取り出す。
+
+    同一キーに questionary 既定とバー用の両方が居る場合は、後勝ち
+    (matches[-1]) の規約に合わせ最後のものを返す。filtered=True なら
+    filter() が真のもののみを対象にする (prompt_toolkit の適用条件と同じ)。
+    """
+    matches = [b for b in question.application.key_bindings.bindings
+               if tuple(b.keys) == (key,)]
+    if filtered is not None:
+        matches = [b for b in matches if bool(b.filter()) is filtered]
+    return matches[-1]
+
+
+def test_menubar_right_left_cycles_tabs():
+    """→ はバーへ入り順方向へ巡回、← は逆方向 (一覧からは末尾へ入る)。"""
+    import types
+    from prompt_toolkit.keys import Keys
+
+    question, focus = _menubar_question()
+    event = types.SimpleNamespace(app=types.SimpleNamespace(invalidate=lambda: None))
+
+    right = _handler_for(question, Keys.Right)
+    left = _handler_for(question, Keys.Left)
+
+    assert focus["tab"] is None, "初期フォーカスは一覧"
+    right.handler(event)
+    assert focus["tab"] == 0, "→ でバーの先頭へ"
+    right.handler(event)
+    assert focus["tab"] == 1
+    left.handler(event)
+    assert focus["tab"] == 0
+    left.handler(event)
+    assert focus["tab"] == len(_TABS) - 1, "先頭から ← は末尾へ巡回"
+
+    focus["tab"] = None
+    left.handler(event)
+    assert focus["tab"] == len(_TABS) - 1, "一覧から ← は末尾タブへ入る"
+
+
+def test_menubar_up_down_returns_focus_to_list():
+    """バー上の ↑/↓ は一覧へフォーカスを戻す (バインドは tab_focused 条件付き)。"""
+    import types
+    from prompt_toolkit.keys import Keys
+
+    question, focus = _menubar_question()
+    event = types.SimpleNamespace(app=types.SimpleNamespace(invalidate=lambda: None))
+
+    # 一覧フォーカス時はバー用 Up/Down バインドが無効 (questionary 既定が効く)
+    assert _handler_for(question, Keys.Down, filtered=True) is not None
+    focus["tab"] = 1
+    down = _handler_for(question, Keys.Down, filtered=True)
+    down.handler(event)
+    assert focus["tab"] is None, "↓ で一覧へ戻る"
+
+
+def test_menubar_enter_on_tab_exits_with_menu_value():
+    """バーにフォーカスがあるときの Enter はバー項目の value で確定する。"""
+    import types
+    from prompt_toolkit.keys import Keys
+
+    question, focus = _menubar_question()
+    focus["tab"] = 1
+    enter = _handler_for(question, Keys.ControlM, filtered=True)
+
+    captured = {}
+    event = types.SimpleNamespace(
+        app=types.SimpleNamespace(exit=lambda **kw: captured.update(kw)))
+    enter.handler(event)
+    assert captured == {"result": "plugin"}
+
+
+def test_menubar_enter_on_list_uses_questionary_default():
+    """一覧フォーカス時 (tab=None) はバー用 Enter バインドが無効になる。"""
+    from prompt_toolkit.keys import Keys
+
+    question, focus = _menubar_question()
+    assert focus["tab"] is None
+    matches = [b for b in question.application.key_bindings.bindings
+               if tuple(b.keys) == (Keys.ControlM,)]
+    # questionary 既定 (filter なし=真) + バー用 (tab_focused=偽) の 2 件
+    assert [bool(b.filter()) for b in matches] == [True, False], \
+        "一覧フォーカス時はバー用 Enter が無効で questionary 既定が効く"
+
+
+def test_menubar_bar_highlights_focused_tab():
+    """バー描画はフォーカス中の項目だけ反転 (bold reverse) で強調する。"""
+    question, focus = _menubar_question()
+
+    # レイアウト最下部のバー (FormattedTextControl) を探す
+    from prompt_toolkit.layout.controls import FormattedTextControl
+
+    controls = []
+
+    def _collect(container):
+        for child in container.get_children():
+            _collect(child)
+        content = getattr(container, "content", None)
+        if isinstance(content, FormattedTextControl):
+            controls.append(content)
+
+    _collect(question.application.layout.container)
+    bar = controls[-1]
+
+    def styles_for(label):
+        return [style for style, text in bar.text() if label in text]
+
+    assert styles_for("プラグイン") == ["class:text"], "非フォーカスは通常表示"
+    focus["tab"] = 1
+    assert styles_for("プラグイン") == ["bold reverse"], "フォーカス項目は反転表示"
+    assert styles_for("環境変数") == ["class:text"]
+
+
+# ---------------------------------------------------------------------------
 # select: バインドの仕込みと戻り値
 # ---------------------------------------------------------------------------
 
