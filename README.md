@@ -15,7 +15,7 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 - **データ永続化**: 名前付きボリュームでコンテナ再起動後もデータを保持
 - **スナップショット管理**: `/home/ubuntu` 共通ボリュームの増分バックアップ・復元・世代管理
 - **環境変数の自動収集**: `devbase env init`でAWS/Git/GCP認証情報を対話的に設定
-- **対話的なプロジェクト選択**: `devbase list` の TUI メニュー（矢印キー移動・名前絞り込み対応）から起動対象を選択。起動中なら再起動 (up) / 再ビルド (rebuild) / 停止 (down) も選べます
+- **階層メニュー TUI**: `devbase list` のプロジェクト一覧（矢印キー移動・名前絞り込み対応）から起動・操作（up / down / login / ps / logs / scale / build / rebuild）を選択。画面最下部の常設メニュー（環境変数 / プラグイン / スナップショット / ステータス）へは ←→ キーで移動できます
 - **キャッシュ無効リビルド**: `devbase rebuild [name]` で `docker compose build --no-cache` 相当のイメージ再ビルドができます
 
 ## クイックスタート
@@ -112,14 +112,14 @@ devbaseのコマンドは4つのグループにまとめられています。
 
 | グループ | 略記 | 説明 |
 |---------|------|------|
-| `project` | — | プロジェクト管理（up / down / login / ps / logs / scale / build / list） |
+| `project` | — | プロジェクト管理（up / down / login / ps / logs / scale / build / rebuild / list） |
 | `env` | — | 環境変数管理（init / sync / list / set / get / delete / edit / project / export / import） |
-| `plugin` | `pl` | プラグイン管理（list / install / uninstall / update / info / sync / repo） |
+| `plugin` | `pl` | プラグイン管理（list / install / uninstall / update / info / sync / migrate / repo） |
 | `snapshot` | `ss` | スナップショット管理（create / list / restore / copy / delete / rotate） |
 
 > **`container`（略記 `ct`）グループは非推奨です。** `devbase project <sub>` のエイリアスとして当面動作しますが、非推奨警告を表示します。新しいコマンドは `project` を使用してください。
 
-- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。なお `build` のみ挙動が一部異なります（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
+- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `rebuild [name]`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。なお `build` のみ挙動が一部異なります（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
 - **プレフィックス略記**: `devbase p l` → `devbase plugin list`
 - **トップレベルコマンド**: `init`, `status`
 
