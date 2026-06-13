@@ -67,14 +67,17 @@ hex = {"containerName":"/<name>","settings":{"context":"desktop-linux"}}
 | Mac/Linux ローカル端末 | ✓ | ローカル `code` が attach URI を解決 |
 | WSL 端末 | ✓ (Windows VS Code) | `code` ラッパ→`code.exe`、Docker Desktop のコンテナへ attach |
 | VS Code **Remote-SSH 統合端末**（リモート=Mac・**同一ホストの Docker**） | ✓ (クライアント側) | `code` シムが委譲。同一ホストの Docker にコンテナがある場合はフラット URI で解決 |
-| VS Code **Remote-SSH 統合端末**（**跨ホスト**: ssh 先 Mac の Docker にコンテナ） | ✓ (要 `DEVBASE_EDITOR_SSH_HOST`) | フラット URI だとクライアント(Windows)の Docker を見て失敗。**ネスト URI `@ssh-remote+<host>`（§2.3）で ssh 先の Docker を解決**。ssh ホスト名は env から取得不可のため明示設定が要る |
+| VS Code **Remote-SSH 統合端末**（**跨ホスト**: ssh 先 Mac の Docker にコンテナ） | ✓ (host 自動検出) | フラット URI だとクライアント(Windows)の Docker を見て失敗。**ネスト URI `@ssh-remote+<host>`（§2.3）で ssh 先の Docker を解決**。`<host>` は **ssh 先 `~/.vscode-server` の File History から自動検出**（`DEVBASE_EDITOR_SSH_HOST` で上書き可）。IP/`user@IP` は既存 ExecServer 不一致で不可、別名一致が必須 |
 | plain SSH（WSL→ssh→Mac 等、VS Code 外） | ✗ → コマンド表示 | IPC hook 無し。手元で叩く `code` コマンドを提示するのが上限 |
 | CI / 非TTY / `code` 不在 | ✗ → info スキップ | エディタ起動の前提を満たさない |
 
 → 跨ホスト（手元 Windows VS Code → Remote-SSH→Mac で `devbase up`、コンテナは Mac の
-Docker）が最頻ユースケース。**`DEVBASE_EDITOR_SSH_HOST`（例 `mac2`）の設定で自動成立**。
-ssh ホスト名（クライアント `~/.ssh/config` の Host 別名）は VS Code が ssh 先端末 env に
-渡さない（`SSH_CONNECTION` は IP のみ）ため自動取得できず、明示が必須（実機調査で確認）。
+Docker）が最頻ユースケース。ssh ホスト名（クライアント `~/.ssh/config` の Host 別名）は
+VS Code が ssh 先端末 env に渡さない（`SSH_CONNECTION` は IP のみ）が、**ssh 先 Mac の
+`~/.vscode-server` の File History（resource URI の `ssh-remote%2B<host>`）から自動検出**
+できるため**通常は設定不要で自動成立**する。検出が外れる場合のみ `DEVBASE_EDITOR_SSH_HOST`
+で上書き。IP/`user@IP` は「ネスト attach は新規 ssh 接続を張らず既存 ExecServer の authority
+と一致が必須」のため不可（実機: "Parent authority found without ExecServer"）。
 plain ssh はコマンド提示で degrade。
 
 ## 3. 既存コード調査結果
@@ -178,9 +181,12 @@ env 解釈は既存 `_parse_env_assignment`（`container.py:121`）に合わせ�
 - ~~VS Code Remote-SSH 統合端末でのクライアント側 attach は実機検証が必要~~
   → **検証済み（2026-06-13）**。跨ホストではフラット URI だと失敗し、ネスト URI
   `@ssh-remote+<host>` + `settings.context` で成立することを確認（§2.3/§2.4 を訂正）。
-- ssh ホスト名（`DEVBASE_EDITOR_SSH_HOST`）は env 自動取得不可のため**ユーザ明示が前提**。
-  未設定の跨ホストではフラット URI にフォールバックし、従来同様アタッチ失敗ダイアログが出る
-  （実害は無いが体験は劣化）。`$DEVBASE_ROOT/env` への 1 行設定を案内する。
+- ssh ホスト名は env には来ないが **`~/.vscode-server` の File History から自動検出**する
+  ようにした（実機: ホストは `ssh-remote%2Bmac2` の 1 種のみで一意に取れた）。検出は VS Code
+  内部データ依存のヒューリスティック（multi-host / バージョン差で外し得る）で、最新 mtime の
+  entries.json を優先し、外れる場合は `DEVBASE_EDITOR_SSH_HOST` 明示・最終的にフラット URI へ degrade。
+- IP / `user@IP` でのネスト attach は不可（既存 Remote-SSH 接続=ExecServer の authority ラベルと
+  完全一致が必須。新規 ssh 接続は張らない）。実機で "Parent authority found without ExecServer" を確認。
 - **plain SSH（VS Code 外）では自動オープン不可**。コマンド提示で degrade（変更なし）。
 - 統合ターミナル自動表示は `.vscode/tasks.json`(folderOpen) 配置で実現。VS Code 公式に
   起動時ターミナル設定は無く（`hideOnStartup` は復元セッションの表示制御のみ）folderOpen

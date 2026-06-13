@@ -149,7 +149,7 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 | `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く（既定: OFF） |
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
-| `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。下記「跨ホスト」参照 |
+| `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「跨ホスト」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |
 | `DEVBASE_OPEN_TERMINAL` | 真で `up` 後に folderOpen ターミナル用 `.vscode/tasks.json` を配置（**既定: ON**） |
 
@@ -181,16 +181,22 @@ VS Code 公式には「起動時にターミナルを開く」専用設定が無
 
 手元（例 Windows）の VS Code から Remote-SSH で別ホスト（例 Mac）へ入り、その統合ターミナルで `devbase up` を実行する構成では、コンテナは **ssh 先（Mac）の Docker** 上にあります。このとき `code` の開く要求はクライアント（Windows）へ委譲されるため、フラットな attach URI のままだと **クライアント側の Docker** を見に行きコンテナが見つかりません（「コンテナーにアタッチできません。すでに存在しません」）。
 
-これを解決するには、ssh-remote ホスト名（手元 `~/.ssh/config` の `Host` 別名。VS Code はこの別名を ssh 先の端末 env に渡さないため自動取得不可）を明示します:
+これを解決するには、ネスト URI `vscode-remote://attached-container+<hex>@ssh-remote+<host>/work/...` を使い、docker ルックアップを ssh 先（コンテナのある Mac）で行わせます。`<host>` は **手元 `~/.ssh/config` の `Host` 別名**（例 `mac2`）で、これは「今の VS Code 接続の authority ラベル」と完全一致する必要があります（ネスト attach は新規 ssh 接続を張らず既存接続を再利用するため。IP や `user@IP` は "Parent authority found without ExecServer" で不可）。
+
+このラベルは VS Code が ssh 先の端末 env に渡さない（`SSH_CONNECTION` は IP のみ）ものの、**devbase は ssh 先（Mac）の `~/.vscode-server` の File History から自動検出**します。よって**通常は設定不要**です。docker context は `docker context show` から自動取得します。
+
+自動検出が外れる場合（複数 ssh-remote ホストを使い分けている等）のみ明示します:
 
 ```sh
 # $DEVBASE_ROOT/env など（全プロジェクト共通にしたい場合）
 DEVBASE_EDITOR_SSH_HOST=mac2
+# 必要なら docker context も明示
+# DEVBASE_EDITOR_DOCKER_CONTEXT=desktop-linux
 ```
 
-これで devbase は `vscode-remote://attached-container+<hex>@ssh-remote+mac2/work/...`（必要に応じ payload に `settings.context` を埋める）というネスト URI を生成し、docker ルックアップが ssh 先（コンテナのある Mac）で行われて正しくアタッチします。docker context は `docker context show` から自動取得し、`DEVBASE_EDITOR_DOCKER_CONTEXT` で上書きできます。
+解決順は **`DEVBASE_EDITOR_SSH_HOST` 明示 → `~/.vscode-server` 自動検出 → フラット URI**。
 
-> 同一ホスト構成（手元 Mac/Linux で直接、または ssh 先の Docker にコンテナが無い場合）では `DEVBASE_EDITOR_SSH_HOST` は不要で、従来どおりフラット URI で開きます。
+> 同一ホスト構成（手元 Mac/Linux で直接、または ssh 先の Docker にコンテナが無い場合）では ssh-remote ホストは付かず、従来どおりフラット URI で開きます。
 
 ## ソースファイル変更検出
 

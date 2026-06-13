@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -36,6 +37,9 @@ logger = get_logger(__name__)
 
 # DEVBASE_OPEN_EDITOR を真と解釈する値 (大小無視)
 _TRUTHY = {"1", "true", "yes", "on"}
+
+# resource URI 中の ssh-remote authority ラベルを拾う ('+' は URL エンコードで %2B)。
+_SSH_REMOTE_RE = re.compile(r"ssh-remote(?:\+|%2[Bb])([A-Za-z0-9._@-]+)")
 
 
 @dataclass(frozen=True)
@@ -323,18 +327,66 @@ def resolve_workdir(environ=None, project_name: Optional[str] = None) -> str:
     return f"/work/{repo}" if repo else "/work"
 
 
-def resolve_editor_ssh_host(environ=None) -> Optional[str]:
-    """Remote-SSH ネスト URI 用の ssh ホスト名 (``DEVBASE_EDITOR_SSH_HOST``)。
+def _detect_ssh_host_from_vscode(vscode_server_dir: str) -> Optional[str]:
+    """``~/.vscode-server`` の File History から ssh-remote authority ラベルを推測する。
 
-    値はクライアント (手元 VS Code) の ``~/.ssh/config`` の Host 別名 (例 ``mac2``)。
-    VS Code はこの別名を Remote-SSH 先 (Mac) の端末 env に渡さない (SSH_CONNECTION は
-    IP のみ) ため自動取得できず、明示設定が要る (PLAN31_3 §2.4 / 実機調査)。未設定なら
-    None を返し、:func:`build_attach_uri` はフラット URI にフォールバックする。
+    Remote-SSH / attached-container 窓で開いたファイルの resource URI が
+    ``data/User/History/*/entries.json`` に ``ssh-remote%2B<host>`` (URL エンコード) /
+    ``ssh-remote+<host>`` 形で残るため、そこから ``<host>`` (= クライアントの接続ラベル。
+    例 ``mac2``) を回収する。複数ホストが見つかった場合は **最後に使われた (entries.json
+    の mtime が最新の) ホスト**を返す。見つからなければ None。
+
+    .. note:: VS Code 内部データ依存のヒューリスティックで、バージョン差や multi-host 運用で
+       外し得る。確実性が要る場合は ``DEVBASE_EDITOR_SSH_HOST`` を明示する (本関数より優先)。
+    """
+    history = os.path.join(vscode_server_dir, "data", "User", "History")
+    if not os.path.isdir(history):
+        return None
+    best: dict = {}  # host -> 最新 mtime
+    for root, _dirs, files in os.walk(history):
+        for name in files:
+            if name != "entries.json":  # resource authority は entries.json に載る
+                continue
+            path = os.path.join(root, name)
+            try:
+                mtime = os.path.getmtime(path)
+                with open(path, encoding="utf-8", errors="ignore") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            for host in _SSH_REMOTE_RE.findall(text):
+                if host and (host not in best or mtime > best[host]):
+                    best[host] = mtime
+    if not best:
+        return None
+    return max(best, key=best.get)
+
+
+def resolve_editor_ssh_host(environ=None,
+                            vscode_server_dir: Optional[str] = None) -> Optional[str]:
+    """Remote-SSH ネスト URI 用の ssh ホスト名 (authority ラベル) を解決する。
+
+    優先順位:
+
+    1. ``DEVBASE_EDITOR_SSH_HOST`` 明示 (最優先・確実)
+    2. ``~/.vscode-server`` の File History からの自動推測
+       (:func:`_detect_ssh_host_from_vscode`)
+
+    ネスト attach は新規 ssh 接続を張らず **既存 Remote-SSH 接続 (ExecServer) の authority
+    ラベルと完全一致**する必要がある (実機確認: IP / user@IP は "Parent authority found
+    without ExecServer" で不可)。そのラベル (例 ``mac2``) はクライアント側の名前で SSH_CONNECTION
+    等の env には現れない (IP のみ) ため、自動取得は VS Code が残す痕跡からの回収に頼る。
+    どちらでも得られなければ None で :func:`build_attach_uri` はフラット URI に degrade する。
     """
     env = os.environ if environ is None else environ
-    value = env.get("DEVBASE_EDITOR_SSH_HOST")
-    value = value.strip() if value else ""
-    return value or None
+    explicit = env.get("DEVBASE_EDITOR_SSH_HOST")
+    if explicit and explicit.strip():
+        return explicit.strip()
+    base = vscode_server_dir or os.path.expanduser("~/.vscode-server")
+    try:
+        return _detect_ssh_host_from_vscode(base)
+    except Exception:  # noqa: BLE001 - 自動推測失敗で up を倒さない
+        return None
 
 
 def resolve_docker_context(environ=None, runner: Optional[Callable] = None) -> Optional[str]:

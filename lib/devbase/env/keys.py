@@ -58,6 +58,6 @@ DEVBASE_OPEN_EDITOR = "DEVBASE_OPEN_EDITOR"  # 真偽。up 後にエディタを
 DEVBASE_EDITOR = "DEVBASE_EDITOR"            # 任意。起動コマンド (既定 code)
 DEVBASE_OPEN_INDEX = "DEVBASE_OPEN_INDEX"    # 任意。開く dev インスタンス番号 (既定 1)
 # Remote-SSH 跨ホスト構成 (Windows VS Code → ssh → Mac のコンテナ) 用。
-DEVBASE_EDITOR_SSH_HOST = "DEVBASE_EDITOR_SSH_HOST"            # 任意。ssh-remote ホスト名 (例 mac2)
+DEVBASE_EDITOR_SSH_HOST = "DEVBASE_EDITOR_SSH_HOST"            # 任意。ssh-remote ホスト名 (例 mac2)。通常は ~/.vscode-server から自動検出
 DEVBASE_EDITOR_DOCKER_CONTEXT = "DEVBASE_EDITOR_DOCKER_CONTEXT"  # 任意。ssh 先 docker context (既定: docker context show)
 DEVBASE_OPEN_TERMINAL = "DEVBASE_OPEN_TERMINAL"  # 真偽。up 後に folderOpen ターミナル tasks.json を配置 (既定 ON)

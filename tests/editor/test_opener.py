@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 
 import pytest
@@ -15,6 +16,23 @@ class _Proc:
     """subprocess.run 互換の軽量スタブ (returncode / stdout のみ)。"""
     returncode: int = 0
     stdout: str = ""
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vscode_home(monkeypatch, tmp_path):
+    """``~/.vscode-server`` からの ssh host 自動推測がテスト実行環境に依存しないよう
+    HOME を空の tmp に隔離する (このリポジトリの dev コンテナ自体が実 .vscode-server を
+    持つため、隔離しないと resolve_editor_ssh_host が実ホスト名を拾ってしまう)。"""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+
+def _write_history(base: str, subdir: str, content: str) -> str:
+    """``<base>/data/User/History/<subdir>/entries.json`` を書いてパスを返す。"""
+    path = os.path.join(base, "data", "User", "History", subdir, "entries.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +178,44 @@ def test_build_attach_uri_ssh_host_only_no_settings():
 @pytest.mark.parametrize("value,expected", [
     (None, None), ("", None), ("   ", None), ("mac2", "mac2"), (" mac2 ", "mac2"),
 ])
-def test_resolve_editor_ssh_host(value, expected):
+def test_resolve_editor_ssh_host_explicit_or_none(value, expected):
+    # HOME は autouse fixture で空 tmp に隔離済みのため自動推測は None。
     env = {} if value is None else {"DEVBASE_EDITOR_SSH_HOST": value}
     assert opener.resolve_editor_ssh_host(env) == expected
+
+
+def test_resolve_editor_ssh_host_autodetect_single(tmp_path):
+    base = str(tmp_path / ".vscode-server")
+    _write_history(base, "abc", json.dumps(
+        {"resource": "vscode-remote://attached-container%2Bxx@ssh-remote%2Bmac2/work/x"}))
+    assert opener.resolve_editor_ssh_host({}, vscode_server_dir=base) == "mac2"
+
+
+def test_resolve_editor_ssh_host_autodetect_plus_form(tmp_path):
+    base = str(tmp_path / ".vscode-server")
+    _write_history(base, "abc", '"vscode-remote://ssh-remote+devbox/work/p"')
+    assert opener.resolve_editor_ssh_host({}, vscode_server_dir=base) == "devbox"
+
+
+def test_resolve_editor_ssh_host_autodetect_picks_newest(tmp_path):
+    base = str(tmp_path / ".vscode-server")
+    old = _write_history(base, "a", "ssh-remote%2BmacOLD/work")
+    new = _write_history(base, "b", "ssh-remote%2BmacNEW/work")
+    os.utime(old, (1000, 1000))
+    os.utime(new, (2000, 2000))
+    assert opener.resolve_editor_ssh_host({}, vscode_server_dir=base) == "macNEW"
+
+
+def test_resolve_editor_ssh_host_autodetect_none_when_absent(tmp_path):
+    assert opener.resolve_editor_ssh_host(
+        {}, vscode_server_dir=str(tmp_path / "nope")) is None
+
+
+def test_resolve_editor_ssh_host_explicit_beats_autodetect(tmp_path):
+    base = str(tmp_path / ".vscode-server")
+    _write_history(base, "a", "ssh-remote%2Bauto/work")
+    assert opener.resolve_editor_ssh_host(
+        {"DEVBASE_EDITOR_SSH_HOST": "explicit"}, vscode_server_dir=base) == "explicit"
 
 
 def test_resolve_docker_context_explicit_wins():
