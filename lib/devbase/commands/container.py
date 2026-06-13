@@ -288,7 +288,9 @@ def _dispatch_lifecycle(args) -> int:
 
     handlers = {
         'up':    lambda: cmd_up(project_name=project_name,
-                                scale=getattr(args, 'scale', None)),
+                                scale=getattr(args, 'scale', None),
+                                open_editor=getattr(args, 'open_editor', None),
+                                open_index=getattr(args, 'open_index', None)),
         'down':  lambda: cmd_down(),
         'login': lambda: cmd_login(index=getattr(args, 'index', '1')),
         'ps':    lambda: cmd_ps(all_containers=getattr(args, 'all', False)),
@@ -353,7 +355,43 @@ def _auto_snapshot() -> None:
         logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
 
 
-def cmd_up(project_name: str = None, scale: int = None) -> int:
+def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
+                       open_index: Optional[int]) -> None:
+    """`up` 完了後に dev コンテナへ接続したエディタを開く ([6/6])。
+
+    有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら env
+    ``DEVBASE_OPEN_EDITOR``。エディタ起動の成否は ``up`` の戻り値に影響させない。
+    """
+    from devbase.editor import opener
+
+    enabled = open_flag if open_flag is not None else opener.is_open_enabled()
+    if not enabled:
+        return
+
+    if open_index is None:
+        raw = os.environ.get('DEVBASE_OPEN_INDEX')
+        try:
+            open_index = int(raw) if raw else 1
+        except ValueError:
+            open_index = 1
+
+    dev_service_name = get_dev_service_name()
+    workdir = opener.resolve_workdir(os.environ, project_name)
+    logger.info("[6/6] Opening editor attached to the dev container...")
+    try:
+        opener.open_editor(
+            project_name=project_name,
+            dev_service_name=dev_service_name,
+            workdir=workdir,
+            index=open_index,
+        )
+    except Exception as e:  # noqa: BLE001 - エディタ起動で up を倒さない
+        logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
+
+
+def cmd_up(project_name: str = None, scale: int = None,
+           open_editor: Optional[bool] = None,
+           open_index: Optional[int] = None) -> int:
     """Deploy containers with specified scale"""
     if project_name is None:
         project_name = get_project_name()
@@ -419,6 +457,8 @@ def cmd_up(project_name: str = None, scale: int = None) -> int:
         deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(1, scale + 1))
+
+        _maybe_open_editor(project_name, open_editor, open_index)
 
         logger.info("=== Deploy completed successfully ===")
         return 0

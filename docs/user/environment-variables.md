@@ -138,6 +138,32 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 
 ユーザー名のみで秘密情報ではありません。SSH 鍵やリモートログインの有効化はホスト側でユーザーが別途設定する前提です。`devbase env sync` 実行時には、未設定のキーのみ既定値で補完されます（既存値は上書きしません）。
 
+## `devbase up` 後のエディタ自動オープン
+
+`devbase up` 完了後、dev コンテナへ接続した VS Code を自動で開けます（VS Code の「Attach to Running Container」を CLI から起動）。`/work/$GIT_REPO` をワークスペースとして開きます。
+
+これらは `devbase env init` の収集対象外で、プロジェクトの `env` か `$DEVBASE_ROOT/.env` に手書きする devbase 動作設定です。
+
+| キー | 説明 |
+|------|------|
+| `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く（既定: OFF） |
+| `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
+| `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
+
+都度の上書きは CLI フラグで行います: `devbase up --open` / `devbase up --no-open` / `devbase up --open-index N`（env より優先）。
+
+### 実行コンテキスト別の挙動
+
+| コンテキスト | 挙動 |
+|------|------|
+| ローカル端末（Mac/Linux） | ローカル VS Code が開く |
+| WSL 端末 | Windows 側 VS Code が開く（`code` ラッパ経由） |
+| VS Code の Remote-SSH 統合ターミナル | **クライアント側（手元）の VS Code** が開く（`code` シムが委譲） |
+| 手元から素の SSH（VS Code 外）で接続中 | クライアントへ自動で開く公式手段が無いため、手元で実行する `code --folder-uri ...` コマンドを提示 |
+| CI / 非対話（非 TTY） / `code` 不在 | 理由を表示してスキップ（`up` 自体は成功） |
+
+> SSH 越しに「手元の VS Code」を自動で開きたい場合は、手元の VS Code から **Remote-SSH で接続した統合ターミナル内**で `devbase up` を実行してください。そのターミナルの `code` はクライアント側 VS Code に委譲するため、リモートホスト上のコンテナへ接続した窓が手元に開きます。
+
 ## ソースファイル変更検出
 
 devbase はソースファイル（`~/.aws/config` 等）のハッシュを `.env.sources.yml` で管理しています。
