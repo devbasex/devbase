@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added
+- **`devbase up` 後に dev コンテナへ接続した VS Code を自動オープン**できるように
+  しました (PLAN31_3)。`DEVBASE_OPEN_EDITOR=1`（既定 OFF）で有効化、`devbase up
+  --open` / `--no-open` で都度上書き。`/work/$GIT_REPO` をワークスペースとして開きます。
+  ローカル / WSL（Windows 側）/ VS Code Remote-SSH 統合ターミナル（手元クライアント側）
+  を自動判別し、素の SSH では手元で実行するコマンドを提示します。エディタは
+  `DEVBASE_EDITOR`（既定 `code`）で変更可能。詳細: `docs/user/environment-variables.md`。
+
 ### Changed
 - **シェル有効化を `bin/rc` の source に統一**しました (PLAN31_1)。`devbase init` 後に
   いま開いているシェルへ devbase（PATH / 補完）を即時適用するには

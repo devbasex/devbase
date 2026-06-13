@@ -288,7 +288,9 @@ def _dispatch_lifecycle(args) -> int:
 
     handlers = {
         'up':    lambda: cmd_up(project_name=project_name,
-                                scale=getattr(args, 'scale', None)),
+                                scale=getattr(args, 'scale', None),
+                                open_editor=getattr(args, 'open_editor', None),
+                                open_index=getattr(args, 'open_index', None)),
         'down':  lambda: cmd_down(),
         'login': lambda: cmd_login(index=getattr(args, 'index', '1')),
         'ps':    lambda: cmd_ps(all_containers=getattr(args, 'all', False)),
@@ -353,7 +355,66 @@ def _auto_snapshot() -> None:
         logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
 
 
-def cmd_up(project_name: str = None, scale: int = None) -> int:
+def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
+                       open_index: Optional[int], scale: int,
+                       compose_file=None) -> None:
+    """`up` 完了後に dev コンテナへ接続したエディタを開く ([6/6])。
+
+    有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら env
+    ``DEVBASE_OPEN_EDITOR``。エディタ起動の成否は ``up`` の戻り値に影響させない。
+
+    ``open_index`` は起動済みインスタンス範囲 ``1..scale`` 内である必要がある。
+    0・負数・``scale`` 超過は存在しないコンテナ URI になり原因不明な起動失敗を招くため、
+    警告を出して既定 (1) へフォールバックする。
+
+    ``compose_file`` は実コンテナ名問い合わせ用の override compose。``up`` 起動時と
+    同じファイルを渡さないと ``{dev}-{index}`` サービスが見えず実名取得に失敗する。
+    未指定なら ``.docker-compose.scale.yml`` が存在すればそれ、無ければ None。
+    """
+    from devbase.editor import opener
+
+    enabled = open_flag if open_flag is not None else opener.is_open_enabled()
+    if not enabled:
+        return
+
+    if open_index is None:
+        raw = os.environ.get('DEVBASE_OPEN_INDEX')
+        try:
+            open_index = int(raw) if raw else 1
+        except ValueError:
+            open_index = 1
+
+    # 起動済みインスタンス範囲 (1..scale) の検証。範囲外は既定 (1) へフォールバック。
+    if not (1 <= open_index <= scale):
+        logger.warning(
+            "open index %d is out of range (1..%d); falling back to 1",
+            open_index, scale,
+        )
+        open_index = 1
+
+    # 実コンテナ名問い合わせ用の compose file: 明示指定がなければ override が
+    # 存在すればそれを使う (起動時と同じ file を docker compose ps へ渡す)。
+    if compose_file is None and _SCALE_COMPOSE_FILE.exists():
+        compose_file = _SCALE_COMPOSE_FILE
+
+    dev_service_name = get_dev_service_name()
+    workdir = opener.resolve_workdir(os.environ, project_name)
+    logger.info("[6/6] Opening editor attached to the dev container...")
+    try:
+        opener.open_editor(
+            project_name=project_name,
+            dev_service_name=dev_service_name,
+            workdir=workdir,
+            index=open_index,
+            compose_file=compose_file,
+        )
+    except Exception as e:  # noqa: BLE001 - エディタ起動で up を倒さない
+        logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
+
+
+def cmd_up(project_name: str = None, scale: int = None,
+           open_editor: Optional[bool] = None,
+           open_index: Optional[int] = None) -> int:
     """Deploy containers with specified scale"""
     if project_name is None:
         project_name = get_project_name()
@@ -419,6 +480,9 @@ def cmd_up(project_name: str = None, scale: int = None) -> int:
         deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(1, scale + 1))
+
+        _maybe_open_editor(project_name, open_editor, open_index, scale,
+                           compose_file=override_file)
 
         logger.info("=== Deploy completed successfully ===")
         return 0

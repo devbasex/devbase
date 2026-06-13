@@ -93,6 +93,26 @@ def _add_name_arg(parser):
     `project <sub> [name]` とトップレベルショートカットで同一定義を共有する。
     """
     parser.add_argument('name', nargs='?', default=None, help='Project name')
+    return parser
+
+
+def _add_open_args(parser):
+    """`up` に エディタ自動オープン関連フラグを登録する (PLAN31_3)。
+
+    三状態フラグ: ``--open`` (True) / ``--no-open`` (False) / 未指定 (None →
+    env ``DEVBASE_OPEN_EDITOR`` に委ねる)。``project up`` / ``container up`` /
+    トップレベル ``up`` で共有する。
+    """
+    parser.add_argument('--open', dest='open_editor', action='store_true',
+                        default=None,
+                        help='Open editor attached to the dev container after start '
+                             '(overrides DEVBASE_OPEN_EDITOR)')
+    parser.add_argument('--no-open', dest='open_editor', action='store_false',
+                        help='Do not open editor (overrides DEVBASE_OPEN_EDITOR)')
+    parser.add_argument('--open-index', dest='open_index', type=int, default=None,
+                        metavar='N',
+                        help='Container index to open (default: 1)')
+    return parser
 
 
 def _add_login_subparser(sub):
@@ -125,7 +145,7 @@ def _add_container_parser(subparsers):
                                       help='Manage containers')
     ct_sub = ct_parser.add_subparsers(dest='subcommand')
 
-    ct_sub.add_parser('up', help='Start containers')
+    _add_open_args(ct_sub.add_parser('up', help='Start containers'))
     ct_sub.add_parser('down', help='Stop and remove containers')
 
     _add_login_subparser(ct_sub)
@@ -165,7 +185,7 @@ def _add_project_parser(subparsers):
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')
 
-    _add_name_arg(pj_sub.add_parser('up', help='Start containers'))
+    _add_open_args(_add_name_arg(pj_sub.add_parser('up', help='Start containers')))
     _add_name_arg(pj_sub.add_parser('down', help='Stop and remove containers'))
 
     _add_login_subparser(pj_sub)
@@ -441,7 +461,7 @@ def _add_shortcuts(subparsers):
     _add_name_arg(ps_sc)
     ps_sc.add_argument('--all', '-a', action='store_true', help='Show all containers')
 
-    _add_name_arg(subparsers.add_parser('up', help='Start containers'))
+    _add_open_args(_add_name_arg(subparsers.add_parser('up', help='Start containers')))
     _add_name_arg(subparsers.add_parser('down', help='Stop and remove containers'))
 
     # `[name]` optional + `new_scale` 必須 int の順 (project scale と同じ規則)。

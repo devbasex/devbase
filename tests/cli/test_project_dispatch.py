@@ -123,7 +123,7 @@ def test_lifecycle_passes_name_to_cmd_up(monkeypatch):
     # name 解決 (chdir) は別テストで検証するためここでは no-op 化し、伝播のみ見る。
     monkeypatch.setattr(container, '_resolve_project_name', lambda name: True)
     monkeypatch.setattr(container, 'cmd_up',
-                        lambda project_name=None, scale=None:
+                        lambda project_name=None, scale=None, **kwargs:
                         captured.update(project_name=project_name) or 0)
     args = _args(subcommand='up', name='carmo', scale=None)
     assert container._dispatch_lifecycle(args) == 0
@@ -135,7 +135,7 @@ def test_lifecycle_container_path_has_no_name(monkeypatch):
     from devbase.commands import container
     captured = {}
     monkeypatch.setattr(container, 'cmd_up',
-                        lambda project_name=None, scale=None:
+                        lambda project_name=None, scale=None, **kwargs:
                         captured.update(project_name=project_name) or 0)
     args = _args(subcommand='up', scale=None)  # name 属性なし
     assert container._dispatch_lifecycle(args) == 0
@@ -156,7 +156,7 @@ def test_lifecycle_resolves_name_before_handler(monkeypatch):
     monkeypatch.setattr(container, '_resolve_project_name',
                         lambda name: order.append(('resolve', name)) or True)
     monkeypatch.setattr(container, 'cmd_up',
-                        lambda project_name=None, scale=None:
+                        lambda project_name=None, scale=None, **kwargs:
                         order.append(('up', project_name)) or 0)
     args = _args(subcommand='up', name='carmo', scale=None)
     assert container._dispatch_lifecycle(args) == 0
@@ -169,7 +169,7 @@ def test_lifecycle_aborts_when_name_unresolved(monkeypatch):
     called = []
     monkeypatch.setattr(container, '_resolve_project_name', lambda name: False)
     monkeypatch.setattr(container, 'cmd_up',
-                        lambda project_name=None, scale=None:
+                        lambda project_name=None, scale=None, **kwargs:
                         called.append('up') or 0)
     args = _args(subcommand='up', name='bogus', scale=None)
     assert container._dispatch_lifecycle(args) == 1
@@ -182,7 +182,7 @@ def test_lifecycle_no_resolution_without_name(monkeypatch):
     resolved = []
     monkeypatch.setattr(container, '_resolve_project_name',
                         lambda name: resolved.append(name) or True)
-    monkeypatch.setattr(container, 'cmd_up', lambda project_name=None, scale=None: 0)
+    monkeypatch.setattr(container, 'cmd_up', lambda project_name=None, scale=None, **kwargs: 0)
     args = _args(subcommand='up', scale=None)  # name 属性なし
     assert container._dispatch_lifecycle(args) == 0
     assert resolved == []
@@ -304,7 +304,7 @@ def test_shortcut_up_propagates_name_through_dispatch(monkeypatch):
     captured = {}
     monkeypatch.setattr(container, '_resolve_project_name', lambda name: True)
     monkeypatch.setattr(container, 'cmd_up',
-                        lambda project_name=None, scale=None:
+                        lambda project_name=None, scale=None, **kwargs:
                         captured.update(project_name=project_name) or 0)
     # ショートカット parser が生成する namespace を再現 (name 属性を持つ)
     args = _args(command='up', name='carmo', scale=None)
@@ -324,3 +324,110 @@ def test_shortcut_scale_propagates_name_through_dispatch(monkeypatch):
     assert cli._dispatch('scale', args) == 0
     assert captured['project_name'] == 'carmo'
     assert captured['new_scale'] == 3
+
+
+# ---------------------------------------------------------------------------
+# PLAN31_3: up のエディタ自動オープン引数の伝播 / gating
+# ---------------------------------------------------------------------------
+
+def test_up_parser_open_flags_tri_state():
+    """`--open` / `--no-open` / 未指定 が open_editor=True/False/None になる。"""
+    parser = cli._create_parser()
+    assert parser.parse_args(['up', '--open']).open_editor is True
+    assert parser.parse_args(['up', '--no-open']).open_editor is False
+    assert parser.parse_args(['up']).open_editor is None
+    assert parser.parse_args(['up', '--open-index', '2']).open_index == 2
+
+
+def test_lifecycle_propagates_open_args_to_cmd_up(monkeypatch):
+    """up の open_editor / open_index が cmd_up まで伝播する。"""
+    from devbase.commands import container
+    captured = {}
+    monkeypatch.setattr(container, 'cmd_up',
+                        lambda project_name=None, scale=None, open_editor=None, open_index=None:
+                        captured.update(open_editor=open_editor, open_index=open_index) or 0)
+    args = _args(subcommand='up', scale=None, open_editor=True, open_index=2)
+    assert container._dispatch_lifecycle(args) == 0
+    assert captured == {'open_editor': True, 'open_index': 2}
+
+
+def test_maybe_open_editor_disabled_by_default(monkeypatch):
+    """open_flag=None かつ env 未設定なら open_editor を呼ばない。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: False)
+    called = []
+    monkeypatch.setattr(opener, 'open_editor',
+                        lambda **kw: called.append(kw) or 'launch')
+    container._maybe_open_editor('carmo', None, None, 1)
+    assert called == []
+
+
+def test_maybe_open_editor_flag_overrides_env(monkeypatch):
+    """open_flag=True なら env が False でも開く。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: False)
+    called = []
+    monkeypatch.setattr(opener, 'open_editor',
+                        lambda **kw: called.append(kw) or 'launch')
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    container._maybe_open_editor('carmo', True, 1, 1)
+    assert len(called) == 1
+    assert called[0]['project_name'] == 'carmo'
+
+
+def test_maybe_open_editor_failure_does_not_raise(monkeypatch):
+    """open_editor が例外でも _maybe_open_editor は伝播させない (up を倒さない)。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+
+    def boom(**kw):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(opener, 'open_editor', boom)
+    container._maybe_open_editor('carmo', None, None, 1)  # 例外が出なければ OK
+
+
+@pytest.mark.parametrize('bad_index', [0, -1, 3])
+def test_maybe_open_editor_out_of_range_index_falls_back(monkeypatch, bad_index):
+    """0・負数・scale 超過の index は既定 (1) へフォールバックする (scale=2)。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    called = []
+    monkeypatch.setattr(opener, 'open_editor',
+                        lambda **kw: called.append(kw) or 'launch')
+    container._maybe_open_editor('carmo', True, bad_index, 2)
+    assert len(called) == 1
+    assert called[0]['index'] == 1
+
+
+def test_maybe_open_editor_valid_index_within_scale(monkeypatch):
+    """範囲内 (1..scale) の index はそのまま使われる。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    called = []
+    monkeypatch.setattr(opener, 'open_editor',
+                        lambda **kw: called.append(kw) or 'launch')
+    container._maybe_open_editor('carmo', True, 2, 3)
+    assert called[0]['index'] == 2
+
+
+def test_maybe_open_editor_forwards_compose_file(monkeypatch):
+    """compose_file 引数が open_editor まで伝播する (実コンテナ名問い合わせ用)。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    called = []
+    monkeypatch.setattr(opener, 'open_editor',
+                        lambda **kw: called.append(kw) or 'launch')
+    container._maybe_open_editor('carmo', True, 1, 1,
+                                 compose_file='override.yml')
+    assert called[0]['compose_file'] == 'override.yml'
