@@ -410,8 +410,10 @@ def resolve_editor_ssh_host(environ=None,
     """
     env = os.environ if environ is None else environ
     explicit = env.get("DEVBASE_EDITOR_SSH_HOST")
-    if explicit and explicit.strip():
-        return explicit.strip()
+    if explicit is not None:
+        # 明示設定を最優先。空文字 ("") は **自動推測のオプトアウト** (= None →
+        # フラット URI 強制) として扱い、`~/.vscode-server` 探索へ進ませない。
+        return explicit.strip() or None
     if vscode_server_dir is not None:
         server_dirs = [vscode_server_dir]
     else:
@@ -431,8 +433,10 @@ def resolve_docker_context(environ=None, runner: Optional[Callable] = None) -> O
     """
     env = os.environ if environ is None else environ
     explicit = env.get("DEVBASE_EDITOR_DOCKER_CONTEXT")
-    if explicit and explicit.strip():
-        return explicit.strip()
+    if explicit is not None:
+        # 空文字 ("") は明示的オプトアウト (settings.context を付けない) として扱い、
+        # `docker context show` を呼ばない。
+        return explicit.strip() or None
     run = runner or subprocess.run
     try:
         proc = run(["docker", "context", "show"],

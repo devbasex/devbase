@@ -229,6 +229,25 @@ def test_resolve_editor_ssh_host_explicit_beats_autodetect(tmp_path):
         {"DEVBASE_EDITOR_SSH_HOST": "explicit"}, vscode_server_dir=base) == "explicit"
 
 
+def test_resolve_editor_ssh_host_empty_string_opts_out(tmp_path):
+    """空文字は自動推測のオプトアウト (None) として扱い、history 探索しない。"""
+    base = str(tmp_path / ".vscode-server")
+    _write_history(base, "a", "ssh-remote%2Bauto/work")
+    assert opener.resolve_editor_ssh_host(
+        {"DEVBASE_EDITOR_SSH_HOST": ""}, vscode_server_dir=base) is None
+    assert opener.resolve_editor_ssh_host(
+        {"DEVBASE_EDITOR_SSH_HOST": "  "}, vscode_server_dir=base) is None
+
+
+def test_resolve_docker_context_empty_string_opts_out():
+    """空文字は settings.context を付けないオプトアウト。runner を呼ばない。"""
+    def boom(cmd, **kw):
+        raise AssertionError("docker context show should not run")
+
+    assert opener.resolve_docker_context(
+        {"DEVBASE_EDITOR_DOCKER_CONTEXT": ""}, runner=boom) is None
+
+
 def test_resolve_docker_context_explicit_wins():
     assert opener.resolve_docker_context({"DEVBASE_EDITOR_DOCKER_CONTEXT": " desktop-linux "}) \
         == "desktop-linux"
