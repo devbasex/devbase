@@ -175,3 +175,44 @@ def test_answered_prompts_are_erased(session):
         if not ln.startswith("@") and _CPR_WARNING not in ln
     ]
     assert residue == [], f"プロンプト行が画面に残留: {residue}"
+
+
+_RAPID_KEYS_DRIVER = """
+from devbase.tui import menu
+
+OPS = [("再起動 (up)", "up"), ("停止 (down)", "down")]
+
+sel = menu.select("SELECT-RAPID を選択:", OPS, back=True)
+print("@SEL=" + ("BACK" if sel is menu.MENU_BACK else repr(sel)), flush=True)
+print("@END", flush=True)
+"""
+
+
+@pytest.fixture
+def rapid_session():
+    s = _PtySession(_RAPID_KEYS_DRIVER)
+    yield s
+    if s.proc.poll() is None:
+        s.proc.kill()
+
+
+def test_buffered_key_after_answer_does_not_crash(rapid_session):
+    """Esc 確定と同時に届いた Ctrl-C で exit が二重に呼ばれないこと。
+
+    Esc バインドは矢印キーのシーケンスと区別するため eager=False (確定待ち)
+    なので、Esc + Ctrl-C を 1 回の write で送ると prompt_toolkit は 1 回の
+    キー処理の中で「Esc ハンドラ (exit 確定) → 残りバッファ再処理で Ctrl-C
+    ハンドラ」を連続実行する。``_guard_after_done`` が無いと questionary
+    組み込みの Ctrl-C ハンドラが確定後に再度 ``Application.exit()`` を呼び、
+    「Return value already set. Application.exit() failed.」のクラッシュ画面が
+    出て入力待ちで固まる (実 TTY でのみ再現。Ctrl-C 連打でも同様)。
+    """
+    rapid_session.wait_for("SELECT-RAPID")
+    rapid_session.send("\x1b\x03")   # Esc 確定 + 直後の Ctrl-C を同一 write で送出
+    rapid_session.wait_for("@SEL=BACK")
+    rapid_session.wait_for("@END")
+
+    rapid_session.finish()
+    raw = bytes(rapid_session._buf).decode("utf-8", errors="replace")
+    assert "Application.exit() failed" not in raw
+    assert "Unhandled exception" not in raw
