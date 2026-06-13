@@ -20,10 +20,13 @@ flowchart TB
 
     CliPy --> Init["commands/init.py"]
     CliPy --> Status["commands/status.py"]
-    CliPy --> Container["commands/container.py"]
+    CliPy --> Project["commands/project.py<br/>(list)"]
+    CliPy --> Container["commands/container.py<br/>(project ライフサイクル / 非推奨 container)"]
     CliPy --> Env["commands/env.py"]
     CliPy --> Plugin["commands/plugin.py"]
     CliPy --> Snapshot["commands/snapshot.py"]
+
+    Project -->|"list (TTY)"| Tui["tui/<br/>(階層メニュー TUI)"]
 
     CmdBuild --> Docker["docker buildx build / docker compose build"]
 ```
@@ -33,7 +36,7 @@ flowchart TB
 | 層 | 担当 | 利点 |
 |----|------|------|
 | **Bash** (`bin/devbase`) | PATH 設定、シェル補完登録、環境変数エクスポート、`build` コマンド | シェル環境へのネイティブ統合。`source` で `.env` を読み込み、`DEVBASE_ROOT` を確定してから Python に渡せる |
-| **Python** (`lib/devbase/`) | init, status, container, env, plugin, snapshot | 複雑なロジック（YAML パース、Git 操作、差分バックアップ等）を安全かつ保守的に実装できる |
+| **Python** (`lib/devbase/`) | init, status, project, env, plugin, snapshot, tui | 複雑なロジック（YAML パース、Git 操作、差分バックアップ等）を安全かつ保守的に実装できる |
 
 `build` コマンドだけが Bash 側に残っている理由は、Docker buildx の制御と compose.yml のパース処理がシェルスクリプトで完結するためである。
 
@@ -64,10 +67,27 @@ Python 側のエントリーポイント。以下の責務を持つ。
 |-----------|---------|------|
 | `init.py` | `cmd_init` | PATH 追加、シェル補完設定、plugins.yml 初期化 |
 | `status.py` | `cmd_status` | コンテナ・プラグイン・環境変数の状態表示 |
-| `container.py` | `cmd_container` | docker compose を操作。up/down/ps/login/logs/scale/build |
-| `env.py` | `cmd_env` | 環境変数の管理。init/sync/list/set/get/delete/edit/project |
-| `plugin.py` | `cmd_plugin` | プラグインの管理。list/install/uninstall/update/info/sync/repo |
+| `project.py` | `cmd_project_list` ほか | プロジェクト一覧の表示と、TTY での `tui/` 階層メニュー起動 |
+| `container.py` | `cmd_project` / `cmd_container` | `project` / `container` グループのディスパッチと docker compose 操作の実体（up/down/ps/login/logs/scale/build/rebuild）。`container` は非推奨エイリアス（警告を出して転送） |
+| `env.py` | `cmd_env` | 環境変数の管理。init/sync/list/set/get/delete/edit/project/export/import |
+| `plugin.py` | `cmd_plugin` | プラグインの管理。list/install/uninstall/update/info/sync/migrate/repo |
 | `snapshot.py` | `cmd_snapshot` | スナップショットの管理。create/list/restore/copy/delete/rotate |
+
+### tui/ -- 階層メニュー TUI
+
+`devbase list`（= `project list`）が TTY で起動する対話メニュー。questionary
+(prompt_toolkit ベース) を任意依存とし、未導入時は番号入力フォールバックへ縮退する。
+各 `actions_*.py` は引数を収集して既存の `commands/*.py` ハンドラへ委譲するだけで、
+コマンドロジックを二重実装しない。
+
+| モジュール | 役割 |
+|-----------|------|
+| `app.py` | トップ画面のループ。プロジェクト一覧 + 最下部の常設カテゴリメニューバー（`menu.select_with_menubar`）を表示し、選択を各カテゴリへ routing する |
+| `menu.py` | questionary ラッパ（`select` / `select_with_menubar` / `text` / `confirm` / `integer` / `path`）と Esc/← キーバインド・回答後ガード |
+| `flow.py` | 中止系番兵（Ctrl-C=`None` / Esc=`MENU_BACK` / 確認拒否）を例外へ変換する共通ナビ制御 |
+| `dispatch.py` | 収集した属性を Namespace に詰めて `cmd_*` ハンドラを呼ぶ薄い委譲層 |
+| `actions_project.py` | プロジェクト行の処理（up / 起動中は操作サブメニュー） |
+| `actions_env.py` / `actions_plugin.py` / `actions_snapshot.py` / `actions_status.py` | 各カテゴリの操作フロー |
 
 ### env/ -- 環境変数管理システム
 

@@ -16,10 +16,10 @@ graph TD
     A --> G[snapshot / ss]
     D --> D1["up / down / ps / logs / scale [name]"]
     D --> D3["login [index]"]
-    D --> D4["build [image]"]
+    D --> D4["build [image] / rebuild"]
     D --> D2["list [--no-interactive]"]
-    E --> E1[init / sync / list / set / get / delete / edit / project]
-    F --> F1[list / install / uninstall / update / info / sync]
+    E --> E1[init / sync / list / set / get / delete / edit / project / export / import]
+    F --> F1[list / install / uninstall / update / info / sync / migrate]
     F --> F2[repo add / repo remove / repo list / repo refresh]
     G --> G1[create / list / restore / copy / delete / rotate]
 ```
@@ -276,9 +276,10 @@ devbase build [image]
 `$DEVBASE_ROOT/projects/` 配下のプロジェクトを `NAME` / `PLUGIN` / `STATUS` の一覧で
 表示します。
 
-TTY（端末）では**デフォルトで対話選択**になり、番号入力で選んだプロジェクトを
-`project up` で起動します。パイプ・リダイレクト・CI などの非 TTY 環境では自動的に
-一覧表示のみへフォールバックします。
+TTY（端末）では**デフォルトで階層メニュー TUI** が起動し、プロジェクトの起動・操作と
+カテゴリ操作（環境変数 / プラグイン / スナップショット / ステータス）を 1 画面から
+実行できます。パイプ・リダイレクト・CI などの非 TTY 環境では自動的に一覧表示のみへ
+フォールバックします。
 
 ```
 devbase project list [--no-interactive|--plain|-P]
@@ -287,18 +288,55 @@ devbase list [--no-interactive|--plain|-P]
 
 | オプション | 説明 |
 |-----------|------|
-| `--no-interactive` / `--plain` / `-P` | 対話選択せず一覧表示のみ |
-| `--interactive` / `-i` | （後方互換）対話選択。デフォルトのため通常は不要 |
+| `--no-interactive` / `--plain` / `-P` | TUI を起動せず一覧表示のみ |
+| `--interactive` / `-i` | （後方互換）TUI 起動。デフォルトのため通常は不要 |
+
+#### TUI の画面構成とキー操作
+
+```
+? プロジェクトまたは操作を選択 (↑↓ 移動 / 名前で絞り込み / ←→ 下部メニュー / Enter 決定 / Esc・Ctrl-C 終了):
+ » [1] adminer    (adminer, running (2 containers))
+   [2] carmo      (carmo, stopped)
+──────────────────────────────────────────────────────────────
+  環境変数    プラグイン    スナップショット    ステータス
+```
+
+| キー | 動作 |
+|------|------|
+| ↑↓ / 文字入力 | プロジェクト一覧の移動・名前での絞り込み |
+| ← → | 最下部の常設カテゴリメニューへ移動し項目間を巡回（バー上の ↑↓ で一覧へ戻る） |
+| Enter | 決定。停止中プロジェクトはそのまま起動 (up)、起動中プロジェクトは操作サブメニューを表示 |
+| Esc / ← | サブメニューでは 1 つ前の画面へ戻る（トップでは Esc で終了） |
+| Ctrl-C | どの画面でも全体を中止 |
+
+起動中プロジェクトの操作サブメニューでは up / down / login / ps / logs / scale /
+build / rebuild を選べます。最下部のカテゴリメニューから実行できる操作
+（実体は対応する CLI コマンドへの委譲）:
+
+| カテゴリ | 選べる操作 |
+|---------|-----------|
+| 環境変数 | 変数一覧（グローバル）/ edit / sync / project / init |
+| プラグイン | 導入済み一覧 / 利用可能一覧 / install / uninstall / update / info / sync / migrate / repo 管理 |
+| スナップショット | list / create / restore / copy / delete / rotate |
+| ステータス | 環境全体の状態を表示（`devbase status` 相当） |
+
+- 確認プロンプト (y/N) が出るのは破壊的操作（plugin uninstall / plugin repo remove /
+  snapshot restore / snapshot delete）のみで、その他は CLI 既定値で即実行します
+- 操作の出力後は Enter キーで一覧へ戻ります（出力が流れて読めなくなるのを防ぐため）
+- TUI が提供しない細かいオプション（`env get/set/delete/export/import`、
+  `plugin install --link/--all`、`snapshot create --full`、`logs --follow` 等）は
+  CLI を使用してください
+- questionary 未導入時は従来の番号入力（選択 → up）にフォールバックします
 
 ```bash
-# 一覧を表示して番号で選択・起動（TTY デフォルト）
+# 階層メニュー TUI を起動（TTY デフォルト）
 devbase list
 
-# 一覧表示のみ（選択しない）
+# 一覧表示のみ（TUI を起動しない）
 devbase list --no-interactive
 ```
 
-出力例:
+出力例（`--no-interactive` / 非 TTY）:
 
 ```
 NAME          PLUGIN        STATUS

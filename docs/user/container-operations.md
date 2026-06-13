@@ -238,16 +238,20 @@ devbase project logs -f --tail 100
 ### プロジェクト一覧
 
 ```bash
-# 一覧を表示し、番号で選択して起動（TTY ではこれがデフォルト）
+# 階層メニュー TUI を起動（TTY ではこれがデフォルト）
 devbase list
 
 # 選択せず NAME / PLUGIN / STATUS の一覧表示のみ
 devbase list --no-interactive   # --plain / -P も同義
 ```
 
-> TTY（端末）では `devbase list` はデフォルトで対話選択になり、番号入力で
-> そのプロジェクトを起動します。パイプ・リダイレクト・CI などの非 TTY 環境では
-> 自動的に一覧表示のみにフォールバックします。
+> TTY（端末）では `devbase list` はデフォルトで階層メニュー TUI になり、
+> プロジェクトを選んで起動・操作（up / down / login / ps / logs / scale /
+> build / rebuild）できるほか、画面最下部の常設メニュー（環境変数 / プラグイン /
+> スナップショット / ステータス）へ ←→ キーで移動して各管理操作を実行できます。
+> パイプ・リダイレクト・CI などの非 TTY 環境では自動的に一覧表示のみに
+> フォールバックします。画面構成とキー操作の詳細は
+> [CLI リファレンス](cli-reference.md#devbase-project-list) を参照してください。
 
 `devbase project ps` が「対象プロジェクト 1 つのコンテナ状態」を表示するのに対し、
 `devbase list` は「全プロジェクトの横断一覧」を表示します。
