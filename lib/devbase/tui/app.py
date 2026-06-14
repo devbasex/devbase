@@ -68,6 +68,20 @@ def _route(category: str, devbase_root: Path):
     return module.run(devbase_root)
 
 
+def _clear_screen() -> None:
+    """端末をクリアしてカーソルを先頭行へ戻す。
+
+    トップ一覧 (メニュープロンプト) を画面の先頭行から表示するため、再描画の
+    直前に呼ぶ。``\\033[2J`` で表示領域を消去、``\\033[3J`` でスクロールバック
+    も消去、``\\033[H`` でカーソルを左上へ移動する。stdout が非 TTY の場合は
+    何もしない。
+    """
+    if not sys.stdout.isatty():
+        return
+    sys.stdout.write("\033[3J\033[2J\033[H")
+    sys.stdout.flush()
+
+
 def _pause_for_review() -> bool:
     """操作出力を読めるよう、一覧の再表示前に Enter を待つ。
 
@@ -129,6 +143,7 @@ def _top_menu_loop(devbase_root: Path) -> int:
     last_rc = 0
     projects_dir = Path(devbase_root) / "projects"
     while True:
+        _clear_screen()
         rows = list_projects(projects_dir)
         if not rows:
             # プロジェクト未作成でもカテゴリ操作 (env/plugin/...) は使えるため
