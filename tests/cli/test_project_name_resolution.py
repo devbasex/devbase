@@ -28,6 +28,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = REPO_ROOT / "bin" / "devbase"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_os_environ():
+    """各テストの os.environ 変更を in-place で退避・復元する (後続テストへの漏出防止)。
+
+    os.environ を os._Environ のまま扱う (dict で置換しない) ため putenv 同期は保たれ、
+    subprocess へ環境が伝わらなくなる問題を避ける。
+    """
+    saved = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
 # ===========================================================================
 # Python: _resolve_project_name
 # ===========================================================================
@@ -192,14 +207,13 @@ def test_resolve_clears_caller_only_env_keys(fake_root, monkeypatch):
 def test_load_project_env_diverges_from_shell_source(tmp_path, monkeypatch):
     """shell ``source`` との仕様乖離を固定する回帰テスト (docstring の note 対応)。
 
-    本パーサは変数展開・コマンド置換・行中クォート除去・インラインコメントを
-    解釈せず、値を安全側にリテラルとして扱う。この意図的な制約を pin する。
+    変数展開 (``$VAR`` / ``${VAR}``) は shell ``source`` 同様にサポートするが、
+    コマンド置換・行中クォート除去・インラインコメントは解釈しない。この境界を pin する。
     """
-    for k in ("LIT_VAR", "LIT_CMD", "INNER_Q", "INLINE_C"):
+    for k in ("LIT_CMD", "INNER_Q", "INLINE_C"):
         monkeypatch.delenv(k, raising=False)
     env_path = tmp_path / "env"
     env_path.write_text(
-        "LIT_VAR=$HOME\n"        # 変数展開しない (リテラル "$HOME")
         "LIT_CMD=$(echo x)\n"    # コマンド置換しない (リテラル "$(echo x)")
         'INNER_Q=a"b"c\n'        # 行中クォートは除去しない
         "INLINE_C=bar # note\n"  # 行頭以外の # はコメント扱いしない
@@ -207,10 +221,52 @@ def test_load_project_env_diverges_from_shell_source(tmp_path, monkeypatch):
 
     container._load_project_env(env_path)
 
-    assert os.environ["LIT_VAR"] == "$HOME"
     assert os.environ["LIT_CMD"] == "$(echo x)"
     assert os.environ["INNER_Q"] == 'a"b"c'
     assert os.environ["INLINE_C"] == "bar # note"
+
+
+def test_load_project_env_expands_variable_references(tmp_path, monkeypatch):
+    """``$VAR`` / ``${VAR}`` を shell ``source`` 同様に展開する回帰テスト。
+
+    実 env の ``WORK_DIR=/work/$GIT_REPO`` (同一ファイル内で先に定義した変数を参照)
+    が TUI (``list``) 経路で未展開のまま VS Code に渡る不具合の回帰防止。
+    単一引用符値はリテラル扱いで展開しないことも併せて pin する。
+    """
+    for k in ("GIT_REPO", "WORK_DIR", "WORK_DIR_BRACE", "SINGLE_Q"):
+        monkeypatch.delenv(k, raising=False)
+    env_path = tmp_path / "env"
+    env_path.write_text(
+        "GIT_REPO=adminer\n"
+        "WORK_DIR=/work/$GIT_REPO\n"        # 行順に解決済みの GIT_REPO を展開
+        "WORK_DIR_BRACE=/work/${GIT_REPO}\n"  # ${VAR} 形式も展開
+        "SINGLE_Q='/work/$GIT_REPO'\n"      # 単一引用符はリテラル
+    )
+
+    container._load_project_env(env_path)
+
+    assert os.environ["GIT_REPO"] == "adminer"
+    assert os.environ["WORK_DIR"] == "/work/adminer"
+    assert os.environ["WORK_DIR_BRACE"] == "/work/adminer"
+    assert os.environ["SINGLE_Q"] == "/work/$GIT_REPO"
+
+
+def test_load_project_env_escaped_dollar_and_undefined(tmp_path, monkeypatch):
+    """`\\$` はリテラル `$`、未定義参照は空 (shell source 準拠)。$(...) は別テストで担保。"""
+    for k in ("DEFINED", "ESCAPED", "UNDEF_REF", "NOPE"):
+        monkeypatch.delenv(k, raising=False)
+    env_path = tmp_path / "env"
+    env_path.write_text(
+        "DEFINED=x\n"
+        "ESCAPED=a\\$DEFINED\n"     # \\$ → リテラル $ (展開しない)
+        "UNDEF_REF=/p/$NOPE/q\n"    # 未定義は空
+    )
+
+    container._load_project_env(env_path)
+
+    assert os.environ["DEFINED"] == "x"
+    assert os.environ["ESCAPED"] == "a$DEFINED"
+    assert os.environ["UNDEF_REF"] == "/p//q"
 
 
 # ===========================================================================

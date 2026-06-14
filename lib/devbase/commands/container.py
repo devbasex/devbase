@@ -157,6 +157,23 @@ def _env_var_keys(env_file: Path) -> set:
     }
 
 
+# env 値中の変数参照を shell `source ./env` 相当に展開する。
+# - `$VAR` / `${VAR}` を environ から展開 (未定義は空文字 = shell source 準拠)
+# - `\$` はリテラル `$` にデエスケープ (shell の `\$` と同じ。EnvFile が `$` を
+#   保護するため書く `\$` 付き値を壊さない)
+# - `$(...)` 等 変数名にならない `$` は素通し (コマンド置換は非対応のまま)
+_ENV_VAR_REF = re.compile(r'\\\$|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)')
+
+
+def _expand_env_vars(value: str, environ) -> str:
+    def _repl(m):
+        if m.group(0) == '\\$':
+            return '$'
+        name = m.group(1) or m.group(2)
+        return environ.get(name, '')
+    return _ENV_VAR_REF.sub(_repl, value)
+
+
 def _load_project_env(env_file: Path) -> None:
     """プロジェクトの ``env`` ファイルを os.environ へ反映する (wrapper 同等)。
 
@@ -166,26 +183,32 @@ def _load_project_env(env_file: Path) -> None:
 
     env は環境変数定義のみを想定したファイル (bin/devbase 冒頭コメント参照) の
     ため、ここでは ``export`` 接頭辞付き / 無しの単純な ``KEY=VALUE`` 行のみを
-    解釈する。``#`` コメント・空行は無視し、値の前後のクォートは除去する。shell
-    の変数展開やコマンド置換は意図的にサポートしない (安全側に倒す)。
+    解釈する。``#`` コメント・空行は無視し、値の前後のクォートは除去する。
+
+    変数参照 (``$VAR`` / ``${VAR}``) は shell ``source ./env`` (wrapper 経路) と
+    同様に展開する。実 env が ``WORK_DIR=/work/$GIT_REPO`` のように同一ファイル内で
+    先に定義した変数を参照しており、展開しないと TUI (``list``) 経路でワークスペース
+    パスが ``$GIT_REPO`` 等の未展開文字列のまま VS Code で開いてしまうため
+    (行は file 順に ``os.environ`` へ載せるので、参照時には先行行の値が解決済み)。
+    単一引用符 ``'...'`` の値は shell 同様リテラル扱いで展開しない。
 
     .. note:: shell ``source`` との仕様乖離について
 
-       本パーサは完全な POSIX shell パーサではなく、shell ``source ./env``
-       (wrapper 経路) とは以下のケースで挙動が乖離する。env は単純な
+       本パーサは完全な POSIX shell パーサではなく、変数展開はサポートするが
+       以下のケースでは shell ``source ./env`` と挙動が乖離する。env は単純な
        ``KEY=VALUE`` 定義に限定する運用前提のため、これらは意図的な制約として
-       受容し、ファイル側で利用しない方針とする (仕様統一ではなく制約の明示)::
+       受容する (仕様統一ではなく制約の明示)::
 
-         FOO=$BAR        # shell: 展開 → 本実装: リテラル文字列 "$BAR"
          FOO=$(cmd)      # shell: コマンド置換 → 本実装: リテラル "$(cmd)"
+                         #        (_expand_env_vars は $(...) を変数とみなさず素通し)
          FOO=a"b"c       # shell: クォート除去で "abc" → 本実装: 行頭/行末以外の
                          #        クォートは除去せず "a\"b\"c"
-         FOO=bar # x     # shell: インラインコメント無効 (値は "bar # x") →
-                         #        本実装も値は "bar # x" (行頭 # のみコメント扱い)
+         FOO=bar # x     # shell: インラインコメント有効 (値は "bar") →
+                         #        本実装: 行頭 # のみコメント扱いのため値は "bar # x"
 
        いずれも wrapper を経ない直接起動 (例:
-       ``python -m devbase.cli project up <name>``) のフォールバック時のみ影響し、
-       通常運用の wrapper 経路では shell が env を解釈するため差異は生じない。
+       ``python -m devbase.cli project up <name>`` / TUI ``list``) 経路で用いる。
+       通常の wrapper 経路では shell が env を解釈する。
     """
     if not env_file.is_file():
         return
@@ -199,8 +222,22 @@ def _load_project_env(env_file: Path) -> None:
             continue
         key, value = assignment
         value = value.strip()
+        single_quoted = False
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            single_quoted = value[0] == "'"
             value = value[1:-1]
+        # shell `source ./env` 相当の変数展開 ($VAR / ${VAR}) を行う。実 env は
+        # `WORK_DIR=/work/$GIT_REPO` のように同一ファイル内で先に定義した変数を
+        # 参照しており (行順に os.environ へ載せるため参照時には解決済み)、展開
+        # しないと TUI (list) 経路でワークスペースパスが未展開のまま開いてしまう。
+        # 単一引用符はリテラル ($BAR を展開しない) という shell 規則に合わせ、
+        # `'...'` の場合のみ展開しない。展開は _expand_env_vars に委ね、`$VAR` /
+        # `${VAR}` のみ展開し (未定義は空文字 = shell source 準拠)、`\$` はリテラル
+        # `$` にデエスケープする (shell の `\$` と同じ。EnvFile が `$` を保護する
+        # ため書く `\$` 付き値を壊さない)。`$(...)` 等 変数名にならない `$` は素通し
+        # するため、コマンド置換は従来どおりリテラルのまま残る。
+        if not single_quoted:
+            value = _expand_env_vars(value, os.environ)
         os.environ[key] = value
 
 
