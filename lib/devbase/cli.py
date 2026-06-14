@@ -112,6 +112,13 @@ def _add_open_args(parser):
     parser.add_argument('--open-index', dest='open_index', type=int, default=None,
                         metavar='N',
                         help='Container index to open (default: 1)')
+    parser.add_argument('--open-terminal', dest='open_terminal', action='store_true',
+                        default=None,
+                        help='Place .vscode/tasks.json so the integrated terminal '
+                             'auto-opens on folder open (overrides DEVBASE_OPEN_TERMINAL)')
+    parser.add_argument('--no-open-terminal', dest='open_terminal', action='store_false',
+                        help='Do not place the folderOpen terminal tasks.json '
+                             '(overrides DEVBASE_OPEN_TERMINAL)')
     return parser
 
 

@@ -10,9 +10,15 @@
   応じた正しいクライアントへ開ける。
 - コンテナ attach URI は ``{"containerName":"/<実コンテナ名>"}`` を hex 化した
   authority を持つ (:func:`build_attach_uri`)。
-- ``ssh-remote+host`` と ``attached-container+...`` を 1 本に合成する記法は
-  公式未サポート (microsoft/vscode#242489)。よって VS Code 外の plain SSH では
-  クライアントへ push できず、手元で叩くコマンドを提示する degrade に留める。
+- **跨ホスト (手元 VS Code → Remote-SSH(host) → ssh 先の Docker 上コンテナ) では
+  ネスト authority ``attached-container+...@ssh-remote+<host>`` を用いる**。これは
+  実機で動作する (VS Code 1.124 / Dev Containers 0.459 で確認。当初 microsoft/vscode#242489
+  を「未サポート」と解釈していたが誤りだった)。``<host>`` は手元クライアントの ssh 接続
+  ラベルで、env には現れないため ssh 先の ``~/.vscode-server`` 等の File History から
+  自動検出する (:func:`resolve_editor_ssh_host`)。``settings.context`` で ssh 先 docker
+  context を指定する。
+- VS Code 外の plain SSH は既存 ExecServer を前提にできずネスト URI が動かないため、
+  自動検出は行わず (明示設定時のみ)、手元で叩くコマンドを提示する degrade に留める。
 
 本モジュールの関数は実 docker / VS Code を必要とせず、``environ`` 等を引数で
 差し替えてテストできるよう副作用を :func:`open_editor` に集約している。
@@ -23,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -36,6 +43,23 @@ logger = get_logger(__name__)
 
 # DEVBASE_OPEN_EDITOR を真と解釈する値 (大小無視)
 _TRUTHY = {"1", "true", "yes", "on"}
+
+# resource URI 中の ssh-remote authority ラベルを拾う ('+' は URL エンコードで %2B)。
+_SSH_REMOTE_RE = re.compile(r"ssh-remote(?:\+|%2[Bb])([A-Za-z0-9._@-]+)")
+
+# ssh host 自動検出で探索する VS Code 系サーバーディレクトリ (DEVBASE_EDITOR で
+# code / code-insiders / cursor / vscodium 等を使い分けても拾えるよう横断する)。
+_SERVER_DIR_CANDIDATES = (
+    "~/.vscode-server",
+    "~/.vscode-server-insiders",
+    "~/.cursor-server",
+    "~/.vscodium-server",
+    "~/.windsurf-server",
+)
+
+# ssh host 自動検出で内容を読む entries.json の上限 (mtime 降順で新しい方から)。
+# 該当ホストは直近接続のファイルにあるため、無マッチ時に全件 read するのを防ぐ。
+_HISTORY_SCAN_LIMIT = 200
 
 
 @dataclass(frozen=True)
@@ -104,6 +128,56 @@ def is_open_enabled(environ=None) -> bool:
     return value.strip().lower() in _TRUTHY
 
 
+def is_open_terminal_enabled(environ=None) -> bool:
+    """``DEVBASE_OPEN_TERMINAL`` env が真か (**未設定は True = 既定 ON**)。
+
+    ``DEVBASE_OPEN_EDITOR`` (既定 OFF) と既定が逆である点に注意。up 時の tasks.json 配置は
+    暴発リスクが低く、ユーザ要望で既定 ON とする (PLAN31_3)。
+    """
+    env = os.environ if environ is None else environ
+    value = env.get("DEVBASE_OPEN_TERMINAL")
+    if value is None:
+        return True
+    return value.strip().lower() in _TRUTHY
+
+
+def build_folder_open_tasks_json() -> str:
+    """フォルダを開いた時に統合ターミナルを表示する folderOpen タスク (.vscode/tasks.json)。
+
+    VS Code 公式には「起動時にターミナルを開く」単独設定が無く (``hideOnStartup`` は復元
+    された永続セッションを隠すか否かに過ぎず新規生成はしない)、``runOn: folderOpen`` の
+    タスクが新規ターミナルを出せる唯一の方法 (docs/terminal/*, docs/debugtest/tasks)。
+    ``reveal: always`` でパネルを前面に出し対話シェルを起動する。``type: process`` で
+    ``/bin/sh -lc 'exec "${SHELL:-/bin/sh}"'`` を直接起動し、``$SHELL`` 未設定のコンテナでも
+    ``/bin/sh`` にフォールバックして必ずシェルが立ち上がるようにする (``type: shell`` +
+    ``${env:SHELL}`` だと未設定時に command が空になりタスクが即失敗する)。
+
+    .. note:: 自動実行には2つの user 設定ゲートがあり devbase からは制御できない:
+       Workspace Trust (信頼済みフォルダのみ自動実行) と ``task.allowAutomaticTasks``
+       (既定 off = フォルダ毎に1回許可確認)。いずれも application/user スコープ専用。
+    """
+    tasks = {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "devbase: open terminal",
+                "type": "process",
+                "command": "/bin/sh",
+                "args": ["-lc", 'exec "${SHELL:-/bin/sh}"'],
+                "isBackground": True,
+                "problemMatcher": [],
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "dedicated",
+                    "focus": True,
+                },
+                "runOptions": {"runOn": "folderOpen"},
+            }
+        ],
+    }
+    return json.dumps(tasks, indent=2, ensure_ascii=False) + "\n"
+
+
 def resolve_editor_cmd(environ=None) -> Optional[list]:
     """起動に使うエディタコマンド (argv list) を解決する。
 
@@ -143,16 +217,33 @@ def resolve_editor_display(environ=None) -> list:
     return ["code"]
 
 
-def build_attach_uri(container_name: str, workdir: str) -> str:
-    """``vscode-remote://attached-container+<hex>/<workdir>`` を組む。
+def build_attach_uri(container_name: str, workdir: str,
+                     ssh_host: Optional[str] = None,
+                     docker_context: Optional[str] = None) -> str:
+    """``vscode-remote://attached-container+<hex>[@ssh-remote+<host>]/<workdir>`` を組む。
 
-    ``<hex>`` は ``{"containerName":"/<container_name>"}`` を UTF-8 hex 化したもの
-    (Docker 内部のコンテナ名は先頭 ``/`` 付き)。
+    ``<hex>`` は ``{"containerName":"/<container_name>"[,"settings":{"context":<ctx>}]}``
+    を UTF-8 hex 化したもの (Docker 内部のコンテナ名は先頭 ``/`` 付き)。
+
+    ``ssh_host`` を渡すと authority に ``@ssh-remote+<host>`` を付ける。**Windows VS Code
+    → Remote-SSH(<host>) → Mac 上のコンテナ** のような跨ホスト構成では、フラットな
+    ``attached-container+...`` だけだと委譲先クライアント (Windows) のローカル Docker を
+    見に行きコンテナが見つからない。``@ssh-remote+<host>`` を付けると docker ルックアップが
+    ssh 先 (コンテナのある Mac) で行われ解決できる (実機検証済み。PLAN31_3 §2.3/§2.4 を
+    更新)。``docker_context`` を渡すと payload に ``settings.context`` を埋め、ssh 先で
+    使う docker context を明示する。
+
+    いずれも省略すると従来のフラット URI (ローカル / WSL / Remote-SSH 同一ホスト) を返す。
     """
-    payload = json.dumps({"containerName": f"/{container_name}"}, separators=(",", ":"))
-    hexname = payload.encode("utf-8").hex()
+    payload: dict = {"containerName": f"/{container_name}"}
+    if docker_context:
+        payload["settings"] = {"context": docker_context}
+    hexname = json.dumps(payload, separators=(",", ":")).encode("utf-8").hex()
+    authority = f"attached-container+{hexname}"
+    if ssh_host:
+        authority += f"@ssh-remote+{ssh_host}"
     path = workdir if workdir.startswith("/") else f"/{workdir}"
-    return f"vscode-remote://attached-container+{hexname}{path}"
+    return f"vscode-remote://{authority}{path}"
 
 
 def _parse_compose_ps_name(stdout: str) -> Optional[str]:
@@ -260,6 +351,123 @@ def resolve_workdir(environ=None, project_name: Optional[str] = None) -> str:
     return f"/work/{repo}" if repo else "/work"
 
 
+def _detect_ssh_host_from_dirs(server_dirs) -> Optional[str]:
+    """複数の VS Code 系サーバーディレクトリの File History を横断して ssh-remote
+    authority ラベルを推測する。
+
+    Remote-SSH / attached-container 窓で開いたファイルの resource URI が
+    ``<server>/data/User/History/*/entries.json`` に ``ssh-remote%2B<host>`` (URL
+    エンコード) / ``ssh-remote+<host>`` 形で残るため、そこから ``<host>`` (= クライアントの
+    接続ラベル。例 ``mac2``) を回収する。
+
+    全ディレクトリの ``entries.json`` 候補を **mtime 降順**で集め、**新しい方から 1 ファイル
+    ずつ読み、最初に ssh-remote ホストが見つかった時点で即 return** する (History が数千
+    ファイルに膨れても全読み込みを避け、devbase up の遅延を防ぐ)。mtime 収集は stat のみで安価。
+    見つからなければ None。
+
+    .. note:: VS Code 内部データ依存のヒューリスティックで、バージョン差や multi-host 運用で
+       外し得る。確実性が要る場合は ``DEVBASE_EDITOR_SSH_HOST`` を明示する (本関数より優先)。
+    """
+    candidates = []  # (mtime, path)
+    for base in server_dirs:
+        history = os.path.join(base, "data", "User", "History")
+        # ローカル履歴は History/<hash>/entries.json の固定深さなので、os.walk で
+        # 全階層を再帰せず os.scandir で 1 階層下のみ走査して I/O を抑える。
+        try:
+            with os.scandir(history) as it:
+                subdirs = [e.path for e in it if e.is_dir()]
+        except OSError:
+            continue
+        for sub in subdirs:
+            path = os.path.join(sub, "entries.json")  # resource authority はここに載る
+            try:
+                candidates.append((os.path.getmtime(path), path))
+            except OSError:
+                continue
+    newest_first = sorted(candidates, key=lambda t: t[0], reverse=True)
+    for _mtime, path in newest_first[:_HISTORY_SCAN_LIMIT]:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+        except OSError:
+            continue
+        match = _SSH_REMOTE_RE.search(text)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _detect_ssh_host_from_vscode(vscode_server_dir: str) -> Optional[str]:
+    """単一サーバーディレクトリ版 (:func:`_detect_ssh_host_from_dirs` の薄ラッパ)。"""
+    return _detect_ssh_host_from_dirs([vscode_server_dir])
+
+
+def resolve_editor_ssh_host(environ=None,
+                            vscode_server_dir: Optional[str] = None,
+                            auto_detect: bool = True) -> Optional[str]:
+    """Remote-SSH ネスト URI 用の ssh ホスト名 (authority ラベル) を解決する。
+
+    優先順位:
+
+    1. ``DEVBASE_EDITOR_SSH_HOST`` 明示 (最優先・確実)
+    2. VS Code 系サーバーディレクトリ (``~/.vscode-server`` / ``~/.cursor-server`` /
+       ``~/.vscode-server-insiders`` 等) の File History からの自動推測
+       (:func:`_detect_ssh_host_from_dirs`)
+
+    ネスト attach は新規 ssh 接続を張らず **既存 Remote-SSH 接続 (ExecServer) の authority
+    ラベルと完全一致**する必要がある (実機確認: IP / user@IP は "Parent authority found
+    without ExecServer" で不可)。そのラベル (例 ``mac2``) はクライアント側の名前で SSH_CONNECTION
+    等の env には現れない (IP のみ) ため、自動取得は VS Code が残す痕跡からの回収に頼る。
+    どちらでも得られなければ None で :func:`build_attach_uri` はフラット URI に degrade する。
+
+    ``vscode_server_dir`` はテスト用の単一ディレクトリ差し替え口 (指定時はそれだけを探索)。
+    ``auto_detect`` を False にすると 2 (自動推測) を行わず明示設定のみで判定する。plain SSH
+    (VS Code 外) は既存 ExecServer を前提にできずネスト URI が動かないため、呼び出し側
+    (:func:`open_editor`) は ``in_vscode`` の時だけ ``auto_detect=True`` で呼ぶ。
+    """
+    env = os.environ if environ is None else environ
+    explicit = env.get("DEVBASE_EDITOR_SSH_HOST")
+    if explicit is not None:
+        # 明示設定を最優先。空文字 ("") は **自動推測のオプトアウト** (= None →
+        # フラット URI 強制) として扱い、`~/.vscode-server` 探索へ進ませない。
+        return explicit.strip() or None
+    if not auto_detect:
+        return None
+    if vscode_server_dir is not None:
+        server_dirs = [vscode_server_dir]
+    else:
+        server_dirs = [os.path.expanduser(d) for d in _SERVER_DIR_CANDIDATES]
+    try:
+        return _detect_ssh_host_from_dirs(server_dirs)
+    except Exception:  # noqa: BLE001 - 自動推測失敗で up を倒さない
+        return None
+
+
+def resolve_docker_context(environ=None, runner: Optional[Callable] = None) -> Optional[str]:
+    """ssh 先で使う docker context を解決する。
+
+    ``DEVBASE_EDITOR_DOCKER_CONTEXT`` 明示があればそれ。無ければ devbase up を実行して
+    いるホスト (= コンテナのある Mac) の現在の docker context を ``docker context show``
+    で取得する。docker 不在・非0・例外・空はすべて None (settings.context を付けない)。
+    """
+    env = os.environ if environ is None else environ
+    explicit = env.get("DEVBASE_EDITOR_DOCKER_CONTEXT")
+    if explicit is not None:
+        # 空文字 ("") は明示的オプトアウト (settings.context を付けない) として扱い、
+        # `docker context show` を呼ばない。
+        return explicit.strip() or None
+    run = runner or subprocess.run
+    try:
+        proc = run(["docker", "context", "show"],
+                   capture_output=True, text=True, timeout=10)
+    except Exception:  # noqa: BLE001 - docker 不在等は best-effort
+        return None
+    if getattr(proc, "returncode", 1) != 0:
+        return None
+    out = (proc.stdout or "").strip()
+    return out or None
+
+
 _NO_EDITOR_REASON = (
     "エディタ (code) が見つかりません。VS Code の `code` コマンドを PATH に "
     "通すか DEVBASE_EDITOR を設定してください"
@@ -304,7 +512,8 @@ def _launch(cmd: list, env: dict) -> None:
 
 
 def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
-                index: int = 1, compose_file=None, environ=None,
+                index: int = 1, compose_file=None, container_name: Optional[str] = None,
+                environ=None,
                 isatty: Optional[bool] = None, system: Optional[str] = None,
                 launcher: Optional[Callable[[list, dict], None]] = None) -> str:
     """dev コンテナへ接続した VS Code を開く / コマンド提示 / スキップする。
@@ -313,6 +522,8 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     握り潰して warning にし、``up`` 本体を絶対に失敗させない。``isatty`` /
     ``system`` は :func:`detect_context` への差し替え口 (テスト用)。``compose_file``
     は実コンテナ名問い合わせ時に起動と同じ override compose を ``-f`` で渡すため。
+    ``container_name`` が渡されれば :func:`resolve_container_name` (= ``docker compose
+    ps``) をスキップしてそれを使う (呼び出し側で解決済みの名前を使い回す)。
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system)
@@ -320,13 +531,22 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     display = resolve_editor_display(env)   # print 用 (必ず非 None)
     plan = decide_action(ctx, editor_available=bool(editor))
 
-    container = resolve_container_name(dev_service_name, project_name, index,
-                                       compose_file=compose_file)
-    uri = build_attach_uri(container, workdir)
-
+    # skip は URI 解決の前に early return する。skip 経路 (非 TTY/CI・code 不在等) で
+    # docker compose ps / docker context show 等の外部コマンドを無駄に叩かないため。
     if plan.action == "skip":
         logger.info("エディタの自動オープンをスキップ: %s", plan.reason)
         return "skip"
+
+    container = container_name or resolve_container_name(
+        dev_service_name, project_name, index, compose_file=compose_file)
+    # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。自動推測は
+    # VS Code Remote-SSH 統合端末 (in_vscode) の時だけ有効にする — plain SSH (VS Code 外)
+    # は既存 ExecServer を前提にできずネスト URI が動かないため、明示設定時のみ採用する。
+    ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
+                if ctx.is_ssh else None)
+    docker_context = resolve_docker_context(env) if ssh_host else None
+    uri = build_attach_uri(container, workdir,
+                           ssh_host=ssh_host, docker_context=docker_context)
 
     if plan.action == "print_command":
         # 提示コマンドは手元 (ローカル) で実行する前提。ローカルに code が無くても

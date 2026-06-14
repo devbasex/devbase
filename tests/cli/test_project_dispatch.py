@@ -340,15 +340,19 @@ def test_up_parser_open_flags_tri_state():
 
 
 def test_lifecycle_propagates_open_args_to_cmd_up(monkeypatch):
-    """up の open_editor / open_index が cmd_up まで伝播する。"""
+    """up の open_editor / open_index / open_terminal が cmd_up まで伝播する。"""
     from devbase.commands import container
     captured = {}
-    monkeypatch.setattr(container, 'cmd_up',
-                        lambda project_name=None, scale=None, open_editor=None, open_index=None:
-                        captured.update(open_editor=open_editor, open_index=open_index) or 0)
-    args = _args(subcommand='up', scale=None, open_editor=True, open_index=2)
+    monkeypatch.setattr(
+        container, 'cmd_up',
+        lambda project_name=None, scale=None, open_editor=None, open_index=None,
+        open_terminal=None: captured.update(
+            open_editor=open_editor, open_index=open_index,
+            open_terminal=open_terminal) or 0)
+    args = _args(subcommand='up', scale=None, open_editor=True, open_index=2,
+                 open_terminal=False)
     assert container._dispatch_lifecycle(args) == 0
-    assert captured == {'open_editor': True, 'open_index': 2}
+    assert captured == {'open_editor': True, 'open_index': 2, 'open_terminal': False}
 
 
 def test_maybe_open_editor_disabled_by_default(monkeypatch):
@@ -417,6 +421,79 @@ def test_maybe_open_editor_valid_index_within_scale(monkeypatch):
                         lambda **kw: called.append(kw) or 'launch')
     container._maybe_open_editor('carmo', True, 2, 3)
     assert called[0]['index'] == 2
+
+
+class _DockerProc:
+    """subprocess.run 互換スタブ (docker exec 用)。"""
+    def __init__(self, returncode=0, stdout="placed", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_maybe_place_terminal_task_disabled(monkeypatch):
+    """DEVBASE_OPEN_TERMINAL 無効時は docker exec を呼ばない。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_terminal_enabled', lambda environ=None: False)
+    calls = []
+    monkeypatch.setattr(container.subprocess, 'run',
+                        lambda *a, **k: calls.append(a) or _DockerProc())
+    container._maybe_place_terminal_task('carmo', None, None, 1)
+    assert calls == []
+
+
+def test_maybe_place_terminal_task_flag_off_overrides_env(monkeypatch):
+    """open_flag=False なら env が ON でも置かない。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_terminal_enabled', lambda environ=None: True)
+    calls = []
+    monkeypatch.setattr(container.subprocess, 'run',
+                        lambda *a, **k: calls.append(a) or _DockerProc())
+    container._maybe_place_terminal_task('carmo', False, None, 1)
+    assert calls == []
+
+
+def test_maybe_place_terminal_task_runs_docker_exec(monkeypatch):
+    """既定 ON で docker exec -i <container> へ tasks.json を stdin 投入する。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_terminal_enabled', lambda environ=None: True)
+    monkeypatch.setattr(opener, 'resolve_container_name', lambda *a, **k: 'carmo-dev-1')
+    monkeypatch.setattr(opener, 'resolve_workdir', lambda *a, **k: '/work/carmo')
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    captured = {}
+
+    def fake_run(cmd, **kw):
+        captured['cmd'] = cmd
+        captured['input'] = kw.get('input')
+        return _DockerProc(returncode=0, stdout="placed")
+
+    monkeypatch.setattr(container.subprocess, 'run', fake_run)
+    result = container._maybe_place_terminal_task('carmo', None, 1, 1)
+    cmd = captured['cmd']
+    assert cmd[:4] == ['docker', 'exec', '-i', 'carmo-dev-1']
+    assert cmd[-1] == '/work/carmo'  # workdir は $1 として末尾に渡す
+    assert '"runOn": "folderOpen"' in captured['input']
+    # 解決済みコンテナ名を返し editor 側で再利用させる (docker compose ps 二重実行回避)
+    assert result == 'carmo-dev-1'
+
+
+def test_maybe_place_terminal_task_failure_does_not_raise(monkeypatch):
+    """docker exec が例外でも up を倒さない (握り潰す)。"""
+    from devbase.commands import container
+    from devbase.editor import opener
+    monkeypatch.setattr(opener, 'is_open_terminal_enabled', lambda environ=None: True)
+    monkeypatch.setattr(opener, 'resolve_container_name', lambda *a, **k: 'carmo-dev-1')
+    monkeypatch.setattr(opener, 'resolve_workdir', lambda *a, **k: '/work/carmo')
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+
+    def boom(*a, **k):
+        raise OSError("docker missing")
+
+    monkeypatch.setattr(container.subprocess, 'run', boom)
+    container._maybe_place_terminal_task('carmo', None, 1, 1)  # 例外が出なければ OK
 
 
 def test_maybe_open_editor_forwards_compose_file(monkeypatch):
