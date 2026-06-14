@@ -52,9 +52,10 @@ HOST_SSH_USER = "HOST_SSH_USER"
 HOST_SSH_HOST = "HOST_SSH_HOST"  # 任意。default: host.docker.internal
 
 # --- Editor (devbase up 後の自動オープン / PLAN31_3) ---
-# いずれも env collection (env init) の対象外で、プロジェクト env / グローバル
-# .env に手書きする devbase 動作設定。詳細: docs/user/environment-variables.md
-DEVBASE_OPEN_EDITOR = "DEVBASE_OPEN_EDITOR"  # 真偽。up 後にエディタを開くか (既定 OFF)
+# DEVBASE_OPEN_EDITOR は env init (collectors/editor.py) で対話設定する (既定 1)。
+# 他はプロジェクト env / グローバル .env に手書きする devbase 動作設定。
+# 詳細: docs/user/environment-variables.md
+DEVBASE_OPEN_EDITOR = "DEVBASE_OPEN_EDITOR"  # 真偽。up 後にエディタを開くか (env init 既定 1)
 DEVBASE_EDITOR = "DEVBASE_EDITOR"            # 任意。起動コマンド (既定 code)
 DEVBASE_OPEN_INDEX = "DEVBASE_OPEN_INDEX"    # 任意。開く dev インスタンス番号 (既定 1)
 # Remote-SSH 跨ホスト構成 (Windows VS Code → ssh → Mac のコンテナ) 用。
