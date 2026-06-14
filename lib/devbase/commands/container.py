@@ -203,8 +203,8 @@ def _load_project_env(env_file: Path) -> None:
                          #        (_expand_env_vars は $(...) を変数とみなさず素通し)
          FOO=a"b"c       # shell: クォート除去で "abc" → 本実装: 行頭/行末以外の
                          #        クォートは除去せず "a\"b\"c"
-         FOO=bar # x     # shell: インラインコメント無効 (値は "bar # x") →
-                         #        本実装も値は "bar # x" (行頭 # のみコメント扱い)
+         FOO=bar # x     # shell: インラインコメント有効 (値は "bar") →
+                         #        本実装: 行頭 # のみコメント扱いのため値は "bar # x"
 
        いずれも wrapper を経ない直接起動 (例:
        ``python -m devbase.cli project up <name>`` / TUI ``list``) 経路で用いる。
