@@ -157,6 +157,23 @@ def _env_var_keys(env_file: Path) -> set:
     }
 
 
+# env 値中の変数参照を shell `source ./env` 相当に展開する。
+# - `$VAR` / `${VAR}` を environ から展開 (未定義は空文字 = shell source 準拠)
+# - `\$` はリテラル `$` にデエスケープ (shell の `\$` と同じ。EnvFile が `$` を
+#   保護するため書く `\$` 付き値を壊さない)
+# - `$(...)` 等 変数名にならない `$` は素通し (コマンド置換は非対応のまま)
+_ENV_VAR_REF = re.compile(r'\\\$|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)')
+
+
+def _expand_env_vars(value: str, environ) -> str:
+    def _repl(m):
+        if m.group(0) == '\\$':
+            return '$'
+        name = m.group(1) or m.group(2)
+        return environ.get(name, '')
+    return _ENV_VAR_REF.sub(_repl, value)
+
+
 def _load_project_env(env_file: Path) -> None:
     """プロジェクトの ``env`` ファイルを os.environ へ反映する (wrapper 同等)。
 
@@ -183,7 +200,7 @@ def _load_project_env(env_file: Path) -> None:
        受容する (仕様統一ではなく制約の明示)::
 
          FOO=$(cmd)      # shell: コマンド置換 → 本実装: リテラル "$(cmd)"
-                         #        (os.path.expandvars は $(...) を変数とみなさない)
+                         #        (_expand_env_vars は $(...) を変数とみなさず素通し)
          FOO=a"b"c       # shell: クォート除去で "abc" → 本実装: 行頭/行末以外の
                          #        クォートは除去せず "a\"b\"c"
          FOO=bar # x     # shell: インラインコメント無効 (値は "bar # x") →
@@ -214,10 +231,13 @@ def _load_project_env(env_file: Path) -> None:
         # 参照しており (行順に os.environ へ載せるため参照時には解決済み)、展開
         # しないと TUI (list) 経路でワークスペースパスが未展開のまま開いてしまう。
         # 単一引用符はリテラル ($BAR を展開しない) という shell 規則に合わせ、
-        # `'...'` の場合のみ展開しない。os.path.expandvars は `$(...)` を変数とは
-        # みなさず素通しするため、コマンド置換は従来どおりリテラルのまま残る。
+        # `'...'` の場合のみ展開しない。展開は _expand_env_vars に委ね、`$VAR` /
+        # `${VAR}` のみ展開し (未定義は空文字 = shell source 準拠)、`\$` はリテラル
+        # `$` にデエスケープする (shell の `\$` と同じ。EnvFile が `$` を保護する
+        # ため書く `\$` 付き値を壊さない)。`$(...)` 等 変数名にならない `$` は素通し
+        # するため、コマンド置換は従来どおりリテラルのまま残る。
         if not single_quoted:
-            value = os.path.expandvars(value)
+            value = _expand_env_vars(value, os.environ)
         os.environ[key] = value
 
 

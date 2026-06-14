@@ -28,6 +28,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = REPO_ROOT / "bin" / "devbase"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_os_environ():
+    """各テストの os.environ 変更を in-place で退避・復元する (後続テストへの漏出防止)。
+
+    os.environ を os._Environ のまま扱う (dict で置換しない) ため putenv 同期は保たれ、
+    subprocess へ環境が伝わらなくなる問題を避ける。
+    """
+    saved = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
 # ===========================================================================
 # Python: _resolve_project_name
 # ===========================================================================
@@ -195,7 +210,6 @@ def test_load_project_env_diverges_from_shell_source(tmp_path, monkeypatch):
     変数展開 (``$VAR`` / ``${VAR}``) は shell ``source`` 同様にサポートするが、
     コマンド置換・行中クォート除去・インラインコメントは解釈しない。この境界を pin する。
     """
-    monkeypatch.setattr(os, "environ", os.environ.copy())
     for k in ("LIT_CMD", "INNER_Q", "INLINE_C"):
         monkeypatch.delenv(k, raising=False)
     env_path = tmp_path / "env"
@@ -219,7 +233,6 @@ def test_load_project_env_expands_variable_references(tmp_path, monkeypatch):
     が TUI (``list``) 経路で未展開のまま VS Code に渡る不具合の回帰防止。
     単一引用符値はリテラル扱いで展開しないことも併せて pin する。
     """
-    monkeypatch.setattr(os, "environ", os.environ.copy())
     for k in ("GIT_REPO", "WORK_DIR", "WORK_DIR_BRACE", "SINGLE_Q"):
         monkeypatch.delenv(k, raising=False)
     env_path = tmp_path / "env"
@@ -236,6 +249,24 @@ def test_load_project_env_expands_variable_references(tmp_path, monkeypatch):
     assert os.environ["WORK_DIR"] == "/work/adminer"
     assert os.environ["WORK_DIR_BRACE"] == "/work/adminer"
     assert os.environ["SINGLE_Q"] == "/work/$GIT_REPO"
+
+
+def test_load_project_env_escaped_dollar_and_undefined(tmp_path, monkeypatch):
+    """`\\$` はリテラル `$`、未定義参照は空 (shell source 準拠)。$(...) は別テストで担保。"""
+    for k in ("DEFINED", "ESCAPED", "UNDEF_REF", "NOPE"):
+        monkeypatch.delenv(k, raising=False)
+    env_path = tmp_path / "env"
+    env_path.write_text(
+        "DEFINED=x\n"
+        "ESCAPED=a\\$DEFINED\n"     # \\$ → リテラル $ (展開しない)
+        "UNDEF_REF=/p/$NOPE/q\n"    # 未定義は空
+    )
+
+    container._load_project_env(env_path)
+
+    assert os.environ["DEFINED"] == "x"
+    assert os.environ["ESCAPED"] == "a$DEFINED"
+    assert os.environ["UNDEF_REF"] == "/p//q"
 
 
 # ===========================================================================
