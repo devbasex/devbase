@@ -151,20 +151,8 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
 | `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「跨ホスト」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |
-| `DEVBASE_OPEN_TERMINAL` | 真で `up` 後に folderOpen ターミナル用 `.vscode/tasks.json` を配置（**既定: ON**） |
 
-都度の上書きは CLI フラグで行います: `devbase up --open` / `--no-open` / `--open-index N` / `--open-terminal` / `--no-open-terminal`（env より優先）。
-
-### 起動時に統合ターミナルを自動表示（`DEVBASE_OPEN_TERMINAL`）
-
-`up` 時に、開く dev コンテナのワークスペース（`/work/$GIT_REPO`）へ folderOpen タスク（`.vscode/tasks.json`）を `docker exec` で配置します（既存があれば変更しません）。VS Code はフォルダを開いた時にこのタスクで統合ターミナルを前面表示します。
-
-VS Code 公式には「起動時にターミナルを開く」専用設定が無く、folderOpen タスクが唯一の方法です。なお自動実行には次の 2 つの **VS Code クライアント側ユーザー設定**が関わり、devbase からは制御できません（いずれも application/user スコープ専用）:
-
-- **Workspace Trust**: 信頼していないフォルダではタスクは自動実行されません（初回は「フォルダを信頼」が必要）。
-- **`task.allowAutomaticTasks`**: 既定 `off` ではフォルダごとに 1 回「自動タスクを許可」を尋ねます。`on` にするとプロンプト無しで実行されます。
-
-→ 実際は「初回のみ信頼（＋許可）クリック、以降は自動でターミナルが開く」挙動になります。無効化は `DEVBASE_OPEN_TERMINAL=0` または `devbase up --no-open-terminal`。
+都度の上書きは CLI フラグで行います: `devbase up --open` / `--no-open` / `--open-index N`（env より優先）。
 
 ### 実行コンテキスト別の挙動
 

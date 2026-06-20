@@ -291,35 +291,6 @@ def test_resolve_docker_context_none_when_docker_absent():
 
 
 # ---------------------------------------------------------------------------
-# is_open_terminal_enabled (既定 ON)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("value,expected", [
-    (None, True), ("", False), ("0", False), ("false", False), ("no", False),
-    ("1", True), ("true", True), ("on", True), ("YES", True),
-])
-def test_is_open_terminal_enabled(value, expected):
-    env = {} if value is None else {"DEVBASE_OPEN_TERMINAL": value}
-    assert opener.is_open_terminal_enabled(env) is expected
-
-
-# ---------------------------------------------------------------------------
-# build_folder_open_tasks_json
-# ---------------------------------------------------------------------------
-
-def test_build_folder_open_tasks_json_is_valid_folderopen_task():
-    data = json.loads(opener.build_folder_open_tasks_json())
-    assert data["version"] == "2.0.0"
-    task = data["tasks"][0]
-    assert task["runOptions"]["runOn"] == "folderOpen"
-    assert task["presentation"]["reveal"] == "always"
-    # SHELL 未設定でも /bin/sh にフォールバックして必ずシェルを起動する (空 command 回避)
-    assert task["type"] == "process"
-    assert task["command"] == "/bin/sh"
-    assert "SHELL:-/bin/sh" in " ".join(task["args"])
-
-
-# ---------------------------------------------------------------------------
 # resolve_container_name / resolve_workdir
 # ---------------------------------------------------------------------------
 
@@ -535,25 +506,6 @@ def test_open_editor_flat_uri_when_ssh_host_unset(monkeypatch):
         isatty=True, launcher=lambda cmd, env: calls.append(cmd),
     )
     assert "@ssh-remote" not in calls[0][2]
-
-
-def test_open_editor_uses_given_container_name(monkeypatch):
-    """container_name を渡すと resolve_container_name を呼ばずそれを使う。"""
-    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
-
-    def boom(*a, **k):
-        raise AssertionError("resolve_container_name should not be called")
-
-    monkeypatch.setattr(opener, "resolve_container_name", boom)
-    calls = []
-    opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
-        container_name="preresolved-dev-1", environ={}, isatty=True,
-        launcher=lambda cmd, env: calls.append(cmd),
-    )
-    uri = calls[0][2]
-    hexpart = uri.split("attached-container+")[1].split("/work")[0]
-    assert json.loads(bytes.fromhex(hexpart).decode())["containerName"] == "/preresolved-dev-1"
 
 
 def test_open_editor_skip_when_no_editor(monkeypatch):

@@ -128,56 +128,6 @@ def is_open_enabled(environ=None) -> bool:
     return value.strip().lower() in _TRUTHY
 
 
-def is_open_terminal_enabled(environ=None) -> bool:
-    """``DEVBASE_OPEN_TERMINAL`` env が真か (**未設定は True = 既定 ON**)。
-
-    ``DEVBASE_OPEN_EDITOR`` (既定 OFF) と既定が逆である点に注意。up 時の tasks.json 配置は
-    暴発リスクが低く、ユーザ要望で既定 ON とする (PLAN31_3)。
-    """
-    env = os.environ if environ is None else environ
-    value = env.get("DEVBASE_OPEN_TERMINAL")
-    if value is None:
-        return True
-    return value.strip().lower() in _TRUTHY
-
-
-def build_folder_open_tasks_json() -> str:
-    """フォルダを開いた時に統合ターミナルを表示する folderOpen タスク (.vscode/tasks.json)。
-
-    VS Code 公式には「起動時にターミナルを開く」単独設定が無く (``hideOnStartup`` は復元
-    された永続セッションを隠すか否かに過ぎず新規生成はしない)、``runOn: folderOpen`` の
-    タスクが新規ターミナルを出せる唯一の方法 (docs/terminal/*, docs/debugtest/tasks)。
-    ``reveal: always`` でパネルを前面に出し対話シェルを起動する。``type: process`` で
-    ``/bin/sh -lc 'exec "${SHELL:-/bin/sh}"'`` を直接起動し、``$SHELL`` 未設定のコンテナでも
-    ``/bin/sh`` にフォールバックして必ずシェルが立ち上がるようにする (``type: shell`` +
-    ``${env:SHELL}`` だと未設定時に command が空になりタスクが即失敗する)。
-
-    .. note:: 自動実行には2つの user 設定ゲートがあり devbase からは制御できない:
-       Workspace Trust (信頼済みフォルダのみ自動実行) と ``task.allowAutomaticTasks``
-       (既定 off = フォルダ毎に1回許可確認)。いずれも application/user スコープ専用。
-    """
-    tasks = {
-        "version": "2.0.0",
-        "tasks": [
-            {
-                "label": "devbase: open terminal",
-                "type": "process",
-                "command": "/bin/sh",
-                "args": ["-lc", 'exec "${SHELL:-/bin/sh}"'],
-                "isBackground": True,
-                "problemMatcher": [],
-                "presentation": {
-                    "reveal": "always",
-                    "panel": "dedicated",
-                    "focus": True,
-                },
-                "runOptions": {"runOn": "folderOpen"},
-            }
-        ],
-    }
-    return json.dumps(tasks, indent=2, ensure_ascii=False) + "\n"
-
-
 def resolve_editor_cmd(environ=None) -> Optional[list]:
     """起動に使うエディタコマンド (argv list) を解決する。
 
@@ -512,7 +462,7 @@ def _launch(cmd: list, env: dict) -> None:
 
 
 def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
-                index: int = 1, compose_file=None, container_name: Optional[str] = None,
+                index: int = 1, compose_file=None,
                 environ=None,
                 isatty: Optional[bool] = None, system: Optional[str] = None,
                 launcher: Optional[Callable[[list, dict], None]] = None) -> str:
@@ -522,8 +472,6 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     握り潰して warning にし、``up`` 本体を絶対に失敗させない。``isatty`` /
     ``system`` は :func:`detect_context` への差し替え口 (テスト用)。``compose_file``
     は実コンテナ名問い合わせ時に起動と同じ override compose を ``-f`` で渡すため。
-    ``container_name`` が渡されれば :func:`resolve_container_name` (= ``docker compose
-    ps``) をスキップしてそれを使う (呼び出し側で解決済みの名前を使い回す)。
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system)
@@ -537,7 +485,7 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
         logger.info("エディタの自動オープンをスキップ: %s", plan.reason)
         return "skip"
 
-    container = container_name or resolve_container_name(
+    container = resolve_container_name(
         dev_service_name, project_name, index, compose_file=compose_file)
     # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。自動推測は
     # VS Code Remote-SSH 統合端末 (in_vscode) の時だけ有効にする — plain SSH (VS Code 外)
