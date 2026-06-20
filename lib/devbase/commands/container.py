@@ -416,7 +416,7 @@ def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
 
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
                        open_index: Optional[int], scale: int,
-                       compose_file=None, container_name: Optional[str] = None) -> None:
+                       compose_file=None) -> None:
     """`up` 完了後に dev コンテナへ接続したエディタを開く ([6/6])。
 
     有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら env
@@ -429,9 +429,6 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
     ``compose_file`` は実コンテナ名問い合わせ用の override compose。``up`` 起動時と
     同じファイルを渡さないと ``{dev}-{index}`` サービスが見えず実名取得に失敗する。
     未指定なら ``.docker-compose.scale.yml`` が存在すればそれ、無ければ None。
-
-    ``container_name`` が渡されれば :func:`opener.open_editor` 内の
-    ``resolve_container_name`` (= ``docker compose ps``) をスキップして再利用する。
     """
     from devbase.editor import opener
 
@@ -456,7 +453,6 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
             workdir=workdir,
             index=open_index,
             compose_file=compose_file,
-            container_name=container_name,
         )
     except Exception as e:  # noqa: BLE001 - エディタ起動で up を倒さない
         logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
