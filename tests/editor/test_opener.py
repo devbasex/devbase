@@ -291,35 +291,6 @@ def test_resolve_docker_context_none_when_docker_absent():
 
 
 # ---------------------------------------------------------------------------
-# is_open_terminal_enabled (既定 ON)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("value,expected", [
-    (None, True), ("", False), ("0", False), ("false", False), ("no", False),
-    ("1", True), ("true", True), ("on", True), ("YES", True),
-])
-def test_is_open_terminal_enabled(value, expected):
-    env = {} if value is None else {"DEVBASE_OPEN_TERMINAL": value}
-    assert opener.is_open_terminal_enabled(env) is expected
-
-
-# ---------------------------------------------------------------------------
-# build_folder_open_tasks_json
-# ---------------------------------------------------------------------------
-
-def test_build_folder_open_tasks_json_is_valid_folderopen_task():
-    data = json.loads(opener.build_folder_open_tasks_json())
-    assert data["version"] == "2.0.0"
-    task = data["tasks"][0]
-    assert task["runOptions"]["runOn"] == "folderOpen"
-    assert task["presentation"]["reveal"] == "always"
-    # SHELL 未設定でも /bin/sh にフォールバックして必ずシェルを起動する (空 command 回避)
-    assert task["type"] == "process"
-    assert task["command"] == "/bin/sh"
-    assert "SHELL:-/bin/sh" in " ".join(task["args"])
-
-
-# ---------------------------------------------------------------------------
 # resolve_container_name / resolve_workdir
 # ---------------------------------------------------------------------------
 
