@@ -704,6 +704,11 @@ def cmd_build(image: str = None, no_cache: bool = False,
     に統一する。``image`` 指定の単体ビルドのみ直接 ``docker build`` する。
     """
     if image is not None:
+        # 単体ビルド (image 指定) では期限判定を行わないため --expires は無視される。
+        # 誤併用に気付けるよう警告を出す。
+        if expires is not None:
+            logger.warning(
+                "--expires is ignored when building a single image ('%s')", image)
         devbase_root = os.environ.get('DEVBASE_ROOT', '')
         if not devbase_root:
             logger.error("DEVBASE_ROOT not set")
@@ -1095,7 +1100,9 @@ def _get_base_image_ref(dev_service: dict) -> Optional[str]:
     except OSError:
         return None
     for line in text.splitlines():
-        m = re.match(r'\s*FROM\s+(devbase-\S+)', line)
+        # FROM は小文字 (`from`) も許容され、`--platform=...` が前置されることがある。
+        m = re.match(r'\s*FROM\s+(?:--platform=\S+\s+)?(devbase-\S+)',
+                     line, re.IGNORECASE)
         if m:
             ref = m.group(1)
             if ':' not in ref:
