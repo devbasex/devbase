@@ -1,9 +1,9 @@
-"""i30: `devbase rebuild` (docker compose build --no-cache 相当) のテスト。
+"""i30/i07: `devbase rebuild` (= `devbase build --expires=7` のシノニム) のテスト。
 
 - parser: `project rebuild [name]` / `container rebuild` / top-level `rebuild [name]`
 - SHORTCUTS / SUBCMD_MAP への登録
 - `_dispatch_lifecycle` が rebuild を cmd_rebuild へ振り分ける
-- cmd_rebuild の振る舞い (compose.yml 不在=1 / 存在時に docker compose build --no-cache)
+- cmd_rebuild の振る舞い (compose.yml 不在=1 / 既定 expires で _build_resolved へ委譲)
 - wrapper (bin/devbase) が rebuild を Python 経路へ流す (shell build 経路ではない)
 """
 
@@ -101,28 +101,21 @@ def test_cmd_rebuild_missing_compose(tmp_path, monkeypatch):
     assert container.cmd_rebuild() == 1
 
 
-def test_cmd_rebuild_runs_no_cache_build(tmp_path, monkeypatch):
+def test_cmd_rebuild_delegates_to_build_resolved_with_default_expires(monkeypatch):
+    """rebuild は build --expires=<default> のシノニム: 既定日数で _build_resolved に委譲する。"""
     from devbase.commands import container
-    (tmp_path / 'compose.yml').write_text('services: {}\n')
-    monkeypatch.chdir(tmp_path)
-
     captured = {}
-
-    def fake_run(cmd, check=False):
-        captured['cmd'] = cmd
-        return types.SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(container.subprocess, 'run', fake_run)
+    monkeypatch.setattr(container, '_image_max_age_days', lambda: 7)
+    monkeypatch.setattr(container, '_build_resolved',
+                        lambda expires, no_cache: captured.update(expires=expires,
+                                                                  no_cache=no_cache) or 0)
     assert container.cmd_rebuild() == 0
-    assert captured['cmd'] == ['docker', 'compose', 'build', '--no-cache']
+    assert captured == {'expires': 7, 'no_cache': False}
 
 
-def test_cmd_rebuild_propagates_returncode(tmp_path, monkeypatch):
+def test_cmd_rebuild_propagates_returncode(monkeypatch):
     from devbase.commands import container
-    (tmp_path / 'compose.yml').write_text('services: {}\n')
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(container.subprocess, 'run',
-                        lambda cmd, check=False: types.SimpleNamespace(returncode=2))
+    monkeypatch.setattr(container, '_build_resolved', lambda expires, no_cache: 2)
     assert container.cmd_rebuild() == 2
 
 

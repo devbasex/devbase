@@ -137,6 +137,14 @@ def _add_build_subparser(sub):
     """
     p = sub.add_parser('build', help='Build container images')
     p.add_argument('image', nargs='?', default=None, help='Image name')
+    p.add_argument('--no-cache', action='store_true',
+                   help='Rebuild base and project images without cache')
+    # `--expires` 単独 (値なし) は const=-1 を渡し、cmd_build 側で既定日数
+    # (_image_max_age_days, 環境変数 DEVBASE_IMAGE_MAX_AGE_DAYS 既定 7) に解決する。
+    p.add_argument('--expires', nargs='?', type=int, const=-1, default=None,
+                   metavar='DAYS',
+                   help='Rebuild without cache only if the image is older than '
+                        'DAYS days (default 7). Base image is judged independently.')
 
 
 def _add_container_parser(subparsers):

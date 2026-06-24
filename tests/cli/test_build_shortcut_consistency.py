@@ -52,14 +52,21 @@ def test_project_build_subcommand_still_available():
     assert ns.image == "myimage"
 
 
-def test_wrapper_routes_build_to_shell_not_python():
-    # bin/devbase の dispatch で build は shell の cmd_build に委譲され、
-    # Python 用 run_python の case には含まれないことを確認する。
+def test_wrapper_routes_build_default_to_shell():
+    # bin/devbase の dispatch で build の既定経路 (--expires なし) は shell の
+    # cmd_build に委譲される (i07: --expires のみ Python へ委譲)。
     wrapper = (Path(__file__).resolve().parents[2] / "bin" / "devbase").read_text()
-    # build は専用の shell ケースへ (PLAN06 Task 2 で name strip 後の _DEVBASE_ARGS
-    # を渡す形に変更。引数は wrapper 側の name 解決で既にコマンド/名を除去済み)。
-    assert "build)  cmd_build" in wrapper or "build) cmd_build" in wrapper
-    # run_python に委譲する case 行に build が紛れ込んでいないこと
+    # build) ケース内に既定経路の cmd_build 委譲が存在する。
+    assert 'cmd_build "${_DEVBASE_ARGS[@]}"' in wrapper
+    # 既定の run_python 委譲 (`run_python "${_resolved_cmd}"`) の case 行には
+    # build が含まれない (build は専用ケースで処理する)。
     for line in wrapper.splitlines():
         if "run_python" in line and "${_resolved_cmd}" in line:
             assert "build" not in line
+
+
+def test_wrapper_routes_build_expires_to_python():
+    # build --expires は作成日判定のため Python (project build) へ委譲する。
+    wrapper = (Path(__file__).resolve().parents[2] / "bin" / "devbase").read_text()
+    assert "--expires|--expires=*) _has_expires=1" in wrapper
+    assert 'run_python project build "${_DEVBASE_ARGS[@]}"' in wrapper
