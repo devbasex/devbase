@@ -95,6 +95,25 @@ class SnapshotManager:
                 snap['size_bytes'] = 0
         return snapshots
 
+    def last_snapshot_time(self) -> Optional[datetime]:
+        """直近のスナップショット取得 (フル/差分) 日時を返す。
+
+        スナップショットが存在しない、または日時が解釈できない場合は None。
+        """
+        meta = self._load_metadata()
+        latest: Optional[datetime] = None
+        for snap in meta.get('snapshots', []):
+            ts = snap.get('updated_at') or snap.get('created_at')
+            if not ts:
+                continue
+            try:
+                dt = datetime.fromisoformat(ts)
+            except (ValueError, TypeError):
+                continue
+            if latest is None or dt > latest:
+                latest = dt
+        return latest
+
     def restore(self, name: str, point: int | None = None) -> None:
         """スナップショットから復元する。
 

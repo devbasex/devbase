@@ -371,6 +371,32 @@ def cmd_container(args) -> int:
 # cmd_up  (deploy.py の cmd_deploy を移植)
 # ---------------------------------------------------------------------------
 
+_SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT = 60
+
+
+def _snapshot_min_interval_minutes() -> int:
+    """自動スナップショットをスキップする最小間隔 (分)。
+
+    直近のスナップショット取得からこの分数未満なら ``_auto_snapshot`` はスキップする。
+    DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES で上書き可能 (0 で無効化＝毎回取得)。
+    値が不正な場合は既定値にフォールバックする。
+    """
+    raw = os.environ.get('DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES')
+    if not raw:
+        return _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError
+        return value
+    except ValueError:
+        logger.warning(
+            "Invalid DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES=%r, using default %d",
+            raw, _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
+        )
+        return _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
+
+
 def _auto_snapshot() -> None:
     """デプロイ前の自動スナップショット (差分世代数ベース世代管理)。
 
@@ -380,8 +406,22 @@ def _auto_snapshot() -> None:
     if not devbase_root:
         return
     try:
+        from datetime import datetime, timedelta
+
         from devbase.snapshot.manager import SnapshotManager
         mgr = SnapshotManager(Path(devbase_root))
+        min_interval = _snapshot_min_interval_minutes()
+        last = mgr.last_snapshot_time()
+        if (
+            min_interval > 0
+            and last is not None
+            and datetime.now() - last < timedelta(minutes=min_interval)
+        ):
+            logger.info(
+                "[0/6] 直近のスナップショット (%s) から%d分以内のためスキップします",
+                last.strftime('%Y-%m-%d %H:%M:%S'), min_interval,
+            )
+            return
         if mgr.should_start_new_generation():
             logger.info("[0/6] 新しいスナップショット世代を作成中...")
             mgr.create()
