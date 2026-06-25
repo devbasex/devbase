@@ -98,10 +98,16 @@ class SnapshotManager:
     def last_snapshot_time(self) -> Optional[datetime]:
         """直近のスナップショット取得 (フル/差分) 日時を返す。
 
-        各スナップショットディレクトリ内のアーカイブファイルの mtime のうち
-        最新のものを採用する。差分更新は既存ディレクトリ名を再利用するため
-        (ディレクトリ名の日付は世代作成時のまま) ファイルの mtime を実測する方が
-        正確で、メタデータの整合性にも依存しない。
+        各スナップショットディレクトリ内のアーカイブ実体
+        (``full.tar.zst`` / ``incr-*.tar.zst``) の mtime のうち最新のものを採用する。
+        差分更新は既存ディレクトリ名を再利用するため (ディレクトリ名の日付は世代
+        作成時のまま) ファイルの mtime を実測する方が正確で、メタデータの整合性にも
+        依存しない。
+
+        ``meta.yml`` / ``snapshot.snar`` (listed-incremental 状態ファイル) や
+        ``.bak`` 等の付随ファイルは集計対象から除外する。これらはバックアップ本体の
+        作成に失敗 (コピーや差分作成失敗) しても残りうるため、これらの mtime を採用
+        すると「成功したバックアップ本体が無いのに up がスキップされる」状態を招く。
 
         スナップショットが存在しない場合は None。
         """
@@ -113,6 +119,12 @@ class SnapshotManager:
                 continue
             for f in snap_dir.iterdir():
                 if not f.is_file():
+                    continue
+                # アーカイブ実体 (full.tar.zst / incr-NNN.tar.zst) のみを対象とし、
+                # meta.yml / snapshot.snar / *.bak 等は除外する。
+                if f.name != 'full.tar.zst' and not (
+                    f.name.startswith('incr-') and f.name.endswith('.tar.zst')
+                ):
                     continue
                 mtime = f.stat().st_mtime
                 if latest is None or mtime > latest:

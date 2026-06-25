@@ -412,16 +412,18 @@ def _auto_snapshot() -> None:
         mgr = SnapshotManager(Path(devbase_root))
         min_interval = _snapshot_min_interval_minutes()
         last = mgr.last_snapshot_time()
-        if (
-            min_interval > 0
-            and last is not None
-            and datetime.now() - last < timedelta(minutes=min_interval)
-        ):
-            logger.info(
-                "[0/6] 直近のスナップショット (%s) から%d分以内のためスキップします",
-                last.strftime('%Y-%m-%d %H:%M:%S'), min_interval,
-            )
-            return
+        if min_interval > 0 and last is not None:
+            # 経過時間が負 (last が未来) の場合はスキップしない。システム時計の
+            # ズレや他環境からのリストアで last が未来になると delta が負になり、
+            # 常に閾値未満と判定されて無期限にスキップされてしまうため、
+            # timedelta(0) <= delta の下限ガードを設ける。
+            delta = datetime.now() - last
+            if timedelta(0) <= delta < timedelta(minutes=min_interval):
+                logger.info(
+                    "[0/6] 直近のスナップショット (%s) から%d分以内のためスキップします",
+                    last.strftime('%Y-%m-%d %H:%M:%S'), min_interval,
+                )
+                return
         if mgr.should_start_new_generation():
             logger.info("[0/6] 新しいスナップショット世代を作成中...")
             mgr.create()
