@@ -35,7 +35,7 @@ SHORTCUTS = {
     'login': 'login',
     'ps': 'ps',
     'scale': 'scale',
-    # `rebuild` は Python 実装 (cmd_rebuild = docker compose build --no-cache) で
+    # `rebuild` は Python 実装 (cmd_rebuild = build --expires=7 相当の期限判定ビルド) で
     # 完結するため `build` と異なりトップレベルショートカットに含めてよい
     # (build は shell 実装に委譲するため除外している。上の NOTE 参照)。
     'rebuild': 'rebuild',
@@ -137,6 +137,18 @@ def _add_build_subparser(sub):
     """
     p = sub.add_parser('build', help='Build container images')
     p.add_argument('image', nargs='?', default=None, help='Image name')
+    # `--no-cache` と `--expires` は仕様上併用しない (無条件 no-cache か期限判定の
+    # いずれか)。併用すると no-cache が優先され --expires が黙殺されるため、
+    # add_mutually_exclusive_group で CLI レベルの排他制御を行い usage error で落とす。
+    build_mode = p.add_mutually_exclusive_group()
+    build_mode.add_argument('--no-cache', action='store_true',
+                            help='Rebuild base and project images without cache')
+    # `--expires` 単独 (値なし) は const=-1 を渡し、cmd_build 側で既定日数
+    # (_image_max_age_days, 環境変数 DEVBASE_IMAGE_MAX_AGE_DAYS 既定 7) に解決する。
+    build_mode.add_argument('--expires', nargs='?', type=int, const=-1, default=None,
+                            metavar='DAYS',
+                            help='Rebuild without cache only if the image is older than '
+                                 'DAYS days (default 7). Base image is judged independently.')
 
 
 def _add_container_parser(subparsers):
@@ -162,7 +174,7 @@ def _add_container_parser(subparsers):
 
     _add_build_subparser(ct_sub)
 
-    ct_sub.add_parser('rebuild', help='Rebuild images without cache (docker compose build --no-cache)')
+    ct_sub.add_parser('rebuild', help='Rebuild stale images (= build --expires=7)')
 
 
 def _add_project_parser(subparsers):
@@ -207,12 +219,12 @@ def _add_project_parser(subparsers):
 
     _add_build_subparser(pj_sub)
 
-    # `rebuild` は Python 実装 (docker compose build --no-cache)。up/down 同様に
+    # `rebuild` は Python 実装 (`build --expires=7` 相当の期限判定ビルド)。up/down 同様に
     # 省略可能な `[name]` を取り、name 指定時は _dispatch_lifecycle が chdir してから
     # 実行する。wrapper の _PROJECT_NAME_SUBCOMMANDS / _NAME_RESOLVABLE_SHORTCUTS にも
     # 追加すること。
     _add_name_arg(pj_sub.add_parser(
-        'rebuild', help='Rebuild images without cache (docker compose build --no-cache)'))
+        'rebuild', help='Rebuild stale images (= build --expires=7)'))
 
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
@@ -472,7 +484,7 @@ def _add_shortcuts(subparsers):
     # `rebuild` は project rebuild のトップレベルシノニム (Python 実装のため build と
     # 異なりショートカット可)。up/down と同じく `[name]` を受け付ける。
     _add_name_arg(subparsers.add_parser(
-        'rebuild', help='Rebuild images without cache (docker compose build --no-cache)'))
+        'rebuild', help='Rebuild stale images (= build --expires=7)'))
 
     # `list` は `project list` のトップレベルシノニム。lifecycle ではなく一覧表示
     # のため SHORTCUTS (project lifecycle へ写像) ではなく _dispatch で個別に
@@ -493,7 +505,7 @@ def _create_parser():
             "  login         project login\n"
             "  ps            project ps\n"
             "  scale         project scale\n"
-            "  rebuild       project rebuild (docker compose build --no-cache)\n"
+            "  rebuild       project rebuild (= build --expires=7)\n"
             "\n"
             "Note: `container` is deprecated; use `project` instead.\n"
         )

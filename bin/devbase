@@ -64,6 +64,22 @@ export DEVBASE_ROOT
 cmd_build() {
     echo "=== Building devbase images ==="
 
+    # devbase build modes:
+    #   --no-cache          : rebuild base and project without cache
+    #   --project-no-cache  : prepare base with cache, rebuild project without cache
+    # The latter is used by the automatic staleness refresh path after it has
+    # already determined that the base image is still fresh.
+    local project_no_cache=0
+    local -a build_args=()
+    local _arg
+    for _arg in "$@"; do
+        case "$_arg" in
+            --project-no-cache) project_no_cache=1 ;;
+            *) build_args+=("$_arg") ;;
+        esac
+    done
+    set -- "${build_args[@]}"
+
     # Helper: Check if Dockerfile uses devbase-* base images
     check_base_image_dependency() {
         local dockerfile_path="$1"
@@ -118,11 +134,43 @@ cmd_build() {
         fi
     fi
 
-    # --no-cache specified: always rebuild base first
+    local base_image_name=$(check_base_image_dependency "$dockerfile_path")
+    local base_image_to_build="${base_image_name:-devbase-base}"
+
+    if [ "$project_no_cache" = "1" ]; then
+        echo ""
+        local -a base_cached_args=()
+        local _ba
+        for _ba in "$@"; do
+            if [ "$_ba" = "--no-cache" ]; then
+                continue
+            fi
+            base_cached_args+=("$_ba")
+        done
+        echo "[1/2] Building ${base_image_to_build} (using cache)..."
+        if ! build_base_image "$base_image_to_build" "${base_cached_args[@]}"; then
+            exit 1
+        fi
+
+        echo ""
+        echo "[2/2] Building project image without cache..."
+        if docker compose build "${DEV_SERVICE_NAME:-dev}" --no-cache "$@"; then
+            echo ""
+            echo "✓ All images built successfully"
+        else
+            echo ""
+            echo "✗ Failed to build project image"
+            exit 1
+        fi
+        return
+    fi
+
+    # --no-cache specified: rebuild base first without cache, then rebuild
+    # project without cache.
     if [[ "$*" == *"--no-cache"* ]]; then
         echo ""
-        echo "[1/2] Building devbase-base..."
-        if ! build_base_image "devbase-base" "$@"; then
+        echo "[1/2] Building ${base_image_to_build}..."
+        if ! build_base_image "$base_image_to_build" "$@"; then
             exit 1
         fi
 
@@ -140,7 +188,6 @@ cmd_build() {
     fi
 
     # Normal build: check if project uses devbase-* base image
-    local base_image_name=$(check_base_image_dependency "$dockerfile_path")
     if [ -n "$base_image_name" ]; then
         echo ""
         echo "[1/2] Project uses ${base_image_name}, building base image..."
@@ -358,7 +405,24 @@ case "$_resolved_cmd" in
     init|status|project|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale|rebuild|list)
         run_python "${_resolved_cmd}" "${_DEVBASE_ARGS[@]}" ;;
     # Shell-implemented commands
-    build)  cmd_build "${_DEVBASE_ARGS[@]}" ;;
+    #
+    # build: 既定 / --no-cache / <image> は shell の cmd_build (devbase-base の
+    # 2 段ビルド) で処理する。--expires はイメージ作成日の判定が必要で、shell では
+    # RFC3339 日付パースが非可搬なため Python (project build) へ委譲する
+    # (i07: build --expires=N / rebuild / up が共通の期限リゾルバを使う)。
+    build)
+        _has_expires=0
+        for _ba in "${_DEVBASE_ARGS[@]}"; do
+            case "$_ba" in
+                --expires|--expires=*) _has_expires=1 ;;
+            esac
+        done
+        if [ "$_has_expires" = 1 ]; then
+            run_python project build "${_DEVBASE_ARGS[@]}"
+        else
+            cmd_build "${_DEVBASE_ARGS[@]}"
+        fi
+        ;;
     # Help and unknown
     -h|--help|help|"") run_python "--help" ;;
     *)      echo "Error: unknown command '$1'" >&2; exit 1 ;;

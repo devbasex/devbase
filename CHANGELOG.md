@@ -11,8 +11,24 @@
   ローカル / WSL（Windows 側）/ VS Code Remote-SSH 統合ターミナル（手元クライアント側）
   を自動判別し、素の SSH では手元で実行するコマンドを提示します。エディタは
   `DEVBASE_EDITOR`（既定 `code`）で変更可能。詳細: `docs/user/environment-variables.md`。
+- **`devbase build` に `--expires[=DAYS]` を追加**しました (i07)。イメージ作成日が
+  DAYS 日（既定 7、`DEVBASE_IMAGE_MAX_AGE_DAYS` で上書き可）以上のときのみ no-cache で
+  再ビルドし、未満なら再ビルドしません（既存イメージを使用）。親イメージ（`FROM devbase-*`）の
+  作成日は独立して判定します。`devbase build` の `--no-cache` も明示フラグとして整理しました。
 
 ### Changed
+- **`build` / `rebuild` / `up` の再ビルド仕様を統一**しました (i07)。キャッシュの
+  扱いを 3 モード（既定=キャッシュビルド / `--no-cache`=無条件 no-cache / `--expires=N`=
+  期限切れ時のみ no-cache・期限内は再ビルドしない）に整理し、`devbase rebuild` を
+  `devbase build --expires=7` のシノニムに、`devbase up` の自動準備をその `rebuild` 相当に
+  集約しました。`devbase rebuild` は従来の素の `docker compose build --no-cache` をやめ、
+  devbase-base の 2 段ビルドと期限判定（期限内はスキップ）を行うようになりました。`devbase up`
+  の「7 日未満は再ビルドしない」挙動は従来どおり維持されます。
+- **`devbase up` の自動再ビルドで base イメージの日付判定を分離**しました。
+  プロジェクトイメージが閾値（既定 7 日）超過で `--no-cache` 再ビルドされる際、
+  ベースの作成日を独立して判定し、ベースが閾値内（新しい）であればベースを no-cache で
+  作り直さず、プロジェクトイメージのみ no-cache で再ビルドします。ベースが古い、または
+  判定できない場合はベースも含めて no-cache で再ビルドします。
 - **シェル有効化を `bin/rc` の source に統一**しました (PLAN31_1)。`devbase init` 後に
   いま開いているシェルへ devbase（PATH / 補完）を即時適用するには
   `. ~/devbase/bin/rc`（= `source ~/devbase/bin/rc`）を使います。`bin/rc` は自身の

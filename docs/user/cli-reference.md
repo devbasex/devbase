@@ -55,10 +55,11 @@ graph TD
 
 > **Note:** `logs` はトップレベルシノニムを持ちません。`devbase project logs` を使用してください。
 >
-> **※ `build` の転送先について:** `devbase build` は他のショートカットのように `project` グループ
-> （Python 実装）へ転送されるのではなく、`bin/devbase` のシェル実装 `cmd_build` に直接委譲されます。
-> base イメージの段階ビルド等を CWD で行う必要があるためで、`devbase project build` とは実装経路が
-> 異なります（名前指定はラッパーの `cd` で解決）。挙動上の入出力は同等ですが、実装は別物です。
+> **※ `build` の転送先について:** `devbase build`（既定 / `--no-cache` / `<image>`）は他の
+> ショートカットのように `project` グループ（Python 実装）へ転送されるのではなく、`bin/devbase` の
+> シェル実装 `cmd_build` に直接委譲されます。base イメージの段階ビルド等を CWD で行う必要があるため
+> です（名前指定はラッパーの `cd` で解決）。ただし `devbase build --expires[=DAYS]` のみ、作成日の
+> 判定が必要なため例外的に Python 経路（`project build`）へ委譲されます。挙動上の入出力は同等です。
 
 ### ユニークプレフィックスマッチング
 
@@ -165,9 +166,13 @@ devbase up [name]
 
 - 起動時にスナップショットを自動作成（新世代 or 差分追加）
 - `CONTAINER_SCALE` の値に基づいてコンテナ数を決定
-- イメージの自動準備:
+- イメージの自動準備（`devbase up` は `devbase rebuild`＝`devbase build --expires=7` 相当を実行）:
   - `build:` 定義あり、イメージ未存在 → `devbase build` を自動実行
-  - `build:` 定義あり、イメージが7日以上古い → `devbase build --no-cache` で再ビルド
+  - `build:` 定義あり、イメージ存在 → プロジェクトイメージの作成日で再ビルドの要否を判定:
+    - 7日未満 → 再ビルドしない（既存イメージをそのまま使用）
+    - 7日以上 + ベースが閾値内＝新しい → プロジェクトのみ no-cache（ベースはキャッシュ）
+    - 7日以上 + ベースが古い/判定不能 → ベースも含めて no-cache
+    - ベースイメージ `FROM devbase-*` の作成日はプロジェクトと独立して判定します
   - `image:` のみ（公開イメージ）、未存在 → `docker pull` を自動実行
   - `image:` のみ、前回 pull から7日以上経過 → `docker pull` で再取得
     （前回 pull 日時は `${DEVBASE_ROOT}/.cache/pulls/<image>` の touch-file mtime で判定）
@@ -261,21 +266,34 @@ devbase project scale adminer 3
 
 ### `devbase project build`
 
-コンテナイメージをビルドします。
+コンテナイメージをビルドします。キャッシュの扱いは 3 モードあります。
 
 ```
 devbase project build [image]
-devbase build [image]
+devbase build [image] [--no-cache | --expires[=DAYS]]
 ```
+
+| モード | 子イメージ | 親イメージ（`FROM devbase-*`） |
+|--------|-----------|-------------------------------|
+| `devbase build` | キャッシュがあれば使う | キャッシュがあれば使う |
+| `devbase build --no-cache` | 無条件で no-cache | 無条件で no-cache |
+| `devbase build --expires[=DAYS]` | DAYS 日以上古ければ no-cache、未満なら再ビルドしない | 親の作成日で独立に同判定 |
 
 | パラメータ | 必須 | 説明 |
 |-----------|------|------|
-| `image` | いいえ | ビルドするイメージ名（省略時は全イメージ） |
+| `image` | いいえ | 単体ビルドするイメージ名（`$DEVBASE_ROOT/containers/<image>` を直接ビルド。省略時は compose イメージ） |
+| `--no-cache` | いいえ | base / project とも無条件でキャッシュ無視 |
+| `--expires[=DAYS]` | いいえ | 作成日が DAYS 日以上のときのみ no-cache 再ビルド、未満なら再ビルドしない（既定 7、`DEVBASE_IMAGE_MAX_AGE_DAYS` で上書き可）。`--no-cache` とは併用しません |
+
+> **`--no-cache` / `--expires` は compose ビルド（`image` 省略時）に適用されます。** `image` 指定の
+> 単体ビルドでは `--no-cache` のみ反映され、`--expires` は対象外です。`--expires` 付きビルドは
+> 作成日判定のため Python 経路（`project build`）で処理されます。
 
 ### `devbase project rebuild`
 
-キャッシュを使わずにコンテナイメージを再ビルドします（`docker compose build --no-cache`）。
-`build` と異なり Python 実装で完結するため、トップレベルショートカット `devbase rebuild` を持ちます。
+`devbase build --expires=7` のシノニムです（既定 7 日）。プロジェクトイメージが 7 日以上古ければ
+no-cache で再ビルドし、未満なら再ビルドしません（既存イメージを使用）。親イメージ（`FROM devbase-*`）の
+作成日は独立して判定します。トップレベルショートカット `devbase rebuild` を持ちます。
 
 ```
 devbase project rebuild [name]

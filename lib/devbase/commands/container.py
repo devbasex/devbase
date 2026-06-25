@@ -335,7 +335,9 @@ def _dispatch_lifecycle(args) -> int:
                                   tail=getattr(args, 'tail', None)),
         'scale': lambda: cmd_scale(new_scale=getattr(args, 'new_scale', None),
                                    project_name=project_name),
-        'build': lambda: cmd_build(image=getattr(args, 'image', None)),
+        'build': lambda: cmd_build(image=getattr(args, 'image', None),
+                                   no_cache=getattr(args, 'no_cache', False),
+                                   expires=getattr(args, 'expires', None)),
         'rebuild': lambda: cmd_rebuild(),
     }
 
@@ -685,9 +687,28 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
 # cmd_build
 # ---------------------------------------------------------------------------
 
-def cmd_build(image: str = None) -> int:
-    """Build container images"""
+def cmd_build(image: str = None, no_cache: bool = False,
+              expires: Optional[int] = None) -> int:
+    """Build container images.
+
+    引数の意味 (i07 の 3 モード):
+      - ``image`` 指定: ``$DEVBASE_ROOT/containers/<image>`` を直接 ``docker build``
+        する単体ビルド (``--no-cache`` のみ反映、``--expires`` は対象外)。
+      - ``image`` なし + フラグなし: 通常のキャッシュビルド。
+      - ``image`` なし + ``--no-cache``: base / project とも無条件 no-cache。
+      - ``image`` なし + ``--expires=N``: project の作成日で期限判定し、N 日以上なら
+        no-cache (base は独立判定)、N 日未満なら再ビルドしない (既存イメージを使用)。
+
+    フラグなしの compose ビルドも、devbase-base の 2 段ビルドを行う shell
+    ``cmd_build`` (``bin/devbase``) 経由 (:func:`_build_resolved` → :func:`_run_build`)
+    に統一する。``image`` 指定の単体ビルドのみ直接 ``docker build`` する。
+    """
     if image is not None:
+        # 単体ビルド (image 指定) では期限判定を行わないため --expires は無視される。
+        # 誤併用に気付けるよう警告を出す。
+        if expires is not None:
+            logger.warning(
+                "--expires is ignored when building a single image ('%s')", image)
         devbase_root = os.environ.get('DEVBASE_ROOT', '')
         if not devbase_root:
             logger.error("DEVBASE_ROOT not set")
@@ -704,52 +725,92 @@ def cmd_build(image: str = None) -> int:
             return 1
 
         logger.info("Building image '%s' from %s ...", image, image_dir)
-        result = subprocess.run(
-            ['docker', 'build', '-t', image, str(image_dir)],
-            check=False
-        )
+        cmd = ['docker', 'build', '-t', image, str(image_dir)]
+        if no_cache:
+            cmd.append('--no-cache')
+        result = subprocess.run(cmd, check=False)
         return result.returncode
 
-    compose_file = Path('compose.yml')
-    if not compose_file.exists():
-        logger.error("compose.yml not found in current directory")
-        return 1
-
-    logger.info("Building images from compose.yml ...")
-    result = subprocess.run(
-        ['docker', 'compose', 'build'],
-        check=False
-    )
-    return result.returncode
+    # `--expires` 単独 (値なし) は sentinel -1。既定日数へ解決する。
+    if expires is not None and expires < 0:
+        expires = _image_max_age_days()
+    return _build_resolved(expires=expires, no_cache=no_cache)
 
 
 # ---------------------------------------------------------------------------
 # cmd_rebuild
 # ---------------------------------------------------------------------------
 
-def cmd_rebuild() -> int:
-    """Rebuild project images without cache (``docker compose build --no-cache``).
+def _resolve_dev_service() -> Optional[dict]:
+    """compose config から dev サービス定義を取得する。失敗時は None。"""
+    result = subprocess.run(
+        ['docker', 'compose', 'config', '--format', 'json'],
+        capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        config = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return config.get('services', {}).get(get_dev_service_name(), {})
 
-    cmd_build がレイヤーキャッシュを使うのに対し、こちらはキャッシュを無効化して
-    プロジェクト (compose) イメージを作り直す。``devbase rebuild`` / ``devbase project
-    rebuild [name]`` のエントリ。
 
-    注意: シェルラッパー (``bin/devbase`` の ``build --no-cache``) のような
-    devbase-base の 2 段ビルドは行わず、compose の build 対象サービスのみを
-    no-cache で再ビルドする。base まで作り直す場合は ``devbase build --no-cache``
-    を使う。
+def _build_resolved(expires: Optional[int], no_cache: bool) -> int:
+    """``devbase build [--expires N | --no-cache]`` / ``rebuild`` の共通エントリ。
+
+    - ``no_cache=True``          : 無条件で base / project とも no-cache 再ビルド
+    - ``expires`` 指定           : project の作成日で期限判定し、:func:`_build_with_expires`
+                                   に委譲 (base は独立判定)
+    - どちらも無し               : 通常のキャッシュビルド
+
+    プロセス互換の終了コードを返す (0=成功)。
     """
-    compose_file = Path('compose.yml')
-    if not compose_file.exists():
+    if not Path('compose.yml').exists():
         logger.error("compose.yml not found in current directory")
         return 1
 
-    logger.info("Rebuilding images without cache from compose.yml ...")
-    result = subprocess.run(
-        ['docker', 'compose', 'build', '--no-cache'],
-        check=False
+    if no_cache:
+        return 0 if _run_build(no_cache=True) else 1
+    if expires is None:
+        return 0 if _run_build() else 1
+
+    # expires 指定: project イメージの作成日と dev サービス定義 (base 判定用) が必要。
+    dev_service = _resolve_dev_service()
+    if not dev_service:
+        logger.info("Unable to read compose config; building with cache")
+        return 0 if _run_build() else 1
+    image_name = dev_service.get('image', '')
+    if not image_name:
+        return 0 if _run_build() else 1
+    inspect = subprocess.run(
+        ['docker', 'image', 'inspect', image_name],
+        capture_output=True, text=True, check=False
     )
-    return result.returncode
+    if inspect.returncode != 0:
+        # イメージ未存在 → キャッシュビルドで作成する。
+        logger.info("Container image '%s' not found; building...", image_name)
+        return 0 if _run_build() else 1
+    return 0 if _build_with_expires(expires, image_name, inspect.stdout, dev_service) else 1
+
+
+def cmd_rebuild(expires: int = None) -> int:
+    """Rebuild project images honoring an expiry window (``build --expires=N`` synonym).
+
+    ``devbase rebuild`` は ``devbase build --expires=7`` のシノニム (既定 7 日)。
+    shell ラッパー (``bin/devbase`` の ``cmd_build``) を経由して devbase-base の
+    2 段ビルドと期限判定を行う:
+
+      - project が期限内 → 再ビルドしない (既存イメージを使用)
+      - project が期限超過 + base 新しい → project のみ no-cache (base はキャッシュ)
+      - project が期限超過 + base 古い/判定不能 → base も含めて no-cache
+
+    ``devbase rebuild`` / ``devbase project rebuild [name]`` のエントリ。
+    """
+    if expires is None:
+        expires = _image_max_age_days()
+    logger.info("Rebuilding images (expires=%d days) from compose.yml ...", expires)
+    return _build_resolved(expires=expires, no_cache=False)
 
 
 # ---------------------------------------------------------------------------
@@ -839,8 +900,13 @@ def _ensure_images() -> bool:
     Behavior (threshold = DEVBASE_IMAGE_MAX_AGE_DAYS or 7):
       - Image missing + has build: → run `devbase build`
       - Image missing + image-only (no build:) → run `docker pull`
-      - Image present and >= threshold days old + has build:
-        → rebuild with `--no-cache` (uses image 'Created' timestamp)
+      - Image present + has build: → run the shared expiry resolver
+        (`devbase up` = `devbase rebuild` 相当, i07). Rebuild is gated by the
+        project image 'Created' age:
+          * younger than threshold → no rebuild (existing image kept)
+          * >= threshold, base fresh → project no-cache, base cached
+          * >= threshold, base stale/unknown → both no-cache
+        Base image (`FROM devbase-*`) freshness is judged independently.
       - Image present + image-only + last-pull >= threshold days old
         → run `docker pull` (uses local touch-file mtime, since image
         'Created' reflects upstream build time and is not a meaningful
@@ -890,7 +956,11 @@ def _ensure_images() -> bool:
             return _fetch_missing_image(image_name, has_build)
         if not has_build:
             return _repull_if_stale(image_name)
-        return _rebuild_if_stale(image_name, inspect.stdout)
+        # build 定義あり + イメージ存在 → rebuild と同じ期限リゾルバへ委譲する
+        # (devbase up = devbase rebuild 相当。i07 仕様統一)。
+        return _build_with_expires(
+            _image_max_age_days(), image_name, inspect.stdout, dev_service
+        )
 
     except Exception as e:
         logger.warning("Error checking image: %s", e)
@@ -936,18 +1006,109 @@ def _repull_if_stale(image_name: str) -> bool:
     return _pull_and_mark(image_name)
 
 
-def _rebuild_if_stale(image_name: str, inspect_json: str) -> bool:
-    """build 定義のあるサービスの鮮度チェック: イメージ作成日が閾値超過なら no-cache 再ビルド。"""
-    max_age = _image_max_age_days()
+def _build_with_expires(expires: int, image_name: str, inspect_json: str,
+                        dev_service: dict) -> bool:
+    """期限ウィンドウに従って build 定義のあるサービスを再ビルドする共通リゾルバ。
+
+    ``devbase build --expires=N`` / ``devbase rebuild`` (= ``build --expires=7``) /
+    ``devbase up`` の自動準備経路が共有する。project イメージの作成日で再ビルドの
+    要否とキャッシュの扱いを切り替える:
+
+      - project が ``expires`` 日未満 (または判定不能) → 再ビルドしない (既存
+        イメージをそのまま使う)
+      - project が ``expires`` 日以上 + base が閾値内 (新しい) → project のみ
+        no-cache、base はキャッシュ利用 (``--project-no-cache``)
+      - project が ``expires`` 日以上 + base が古い/判定不能 → base も含めて
+        no-cache (``--no-cache``)
+
+    base イメージ (``FROM devbase-*``) の作成日は project とは独立して判定する。
+    """
     age_days = _get_image_age_days(inspect_json)
-    if age_days is None or age_days < max_age:
+    if age_days is None or age_days < expires:
+        if age_days is not None:
+            logger.info(
+                "Container image '%s' is %d days old (< %d days threshold); "
+                "skipping rebuild (existing image is fresh)",
+                image_name, age_days, expires
+            )
         return True
     logger.info(
         "Container image '%s' is %d days old (>= %d days threshold)",
-        image_name, age_days, max_age
+        image_name, age_days, expires
     )
-    logger.info("Rebuilding with --no-cache...")
+    if _base_image_is_fresh(dev_service, expires):
+        logger.info("Rebuilding project without cache (base is fresh)...")
+        return _run_build(project_no_cache=True)
+    logger.info("Rebuilding base and project without cache...")
     return _run_build(no_cache=True)
+
+
+def _base_image_is_fresh(dev_service: dict, max_age: int) -> bool:
+    """ベースイメージ (``FROM devbase-*``) が閾値内に作成されたものか判定する。
+
+    True なら base は新しいため project だけ no-cache で再ビルドする。判定不能
+    (ベース未検出 / inspect 失敗 / 日付解析失敗) の場合は False を返し、base も
+    含めて no-cache で再ビルドする。
+    """
+    base_ref = _get_base_image_ref(dev_service)
+    if not base_ref:
+        return False
+    inspect = subprocess.run(
+        ['docker', 'image', 'inspect', base_ref],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    if inspect.returncode != 0:
+        return False
+    age_days = _get_image_age_days(inspect.stdout)
+    if age_days is None:
+        return False
+    if age_days < max_age:
+        logger.info(
+            "Base image '%s' is %d days old (< %d days threshold)",
+            base_ref, age_days, max_age
+        )
+        return True
+    logger.info(
+        "Base image '%s' is %d days old (>= %d days threshold)",
+        base_ref, age_days, max_age
+    )
+    return False
+
+
+def _get_base_image_ref(dev_service: dict) -> Optional[str]:
+    """dev サービスの Dockerfile の ``FROM devbase-*`` からベースイメージ参照を得る。
+
+    例: ``FROM devbase-base:latest`` -> ``devbase-base:latest``
+        ``FROM devbase-base``        -> ``devbase-base:latest`` (tag 補完)
+    見つからない / 読めない場合は None。
+    """
+    build = dev_service.get('build')
+    if not build:
+        return None
+    if isinstance(build, str):
+        context, dockerfile = build, 'Dockerfile'
+    else:
+        context = build.get('context', '.')
+        dockerfile = build.get('dockerfile', 'Dockerfile')
+    df_path = Path(dockerfile)
+    if not df_path.is_absolute():
+        df_path = Path(context) / dockerfile
+    try:
+        text = df_path.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return None
+    for line in text.splitlines():
+        # FROM は小文字 (`from`) も許容され、`--platform=...` が前置されることがある。
+        m = re.match(r'\s*FROM\s+(?:--platform=\S+\s+)?(devbase-\S+)',
+                     line, re.IGNORECASE)
+        if m:
+            ref = m.group(1)
+            if ':' not in ref:
+                ref += ':latest'
+            return ref
+    return None
 
 
 def _pull_and_mark(image_name: str) -> bool:
@@ -979,8 +1140,12 @@ def _get_image_age_days(inspect_json: str) -> Optional[int]:
         return None
 
 
-def _run_build(no_cache: bool = False) -> bool:
-    """Run the build command (optionally with --no-cache)."""
+def _run_build(no_cache: bool = False, project_no_cache: bool = False) -> bool:
+    """Run the build command.
+
+    no_cache=True rebuilds base and project without cache.
+    project_no_cache=True rebuilds only the project image without cache.
+    """
     devbase_root = Path(os.environ.get('DEVBASE_ROOT', ''))
     if not devbase_root.exists():
         logger.error("DEVBASE_ROOT not set")
@@ -992,7 +1157,9 @@ def _run_build(no_cache: bool = False) -> bool:
         return False
 
     cmd = ['bash', str(devbase_bin), 'build']
-    if no_cache:
+    if project_no_cache:
+        cmd.append('--project-no-cache')
+    elif no_cache:
         cmd.append('--no-cache')
 
     try:
