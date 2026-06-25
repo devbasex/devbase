@@ -98,21 +98,28 @@ class SnapshotManager:
     def last_snapshot_time(self) -> Optional[datetime]:
         """直近のスナップショット取得 (フル/差分) 日時を返す。
 
-        スナップショットが存在しない、または日時が解釈できない場合は None。
+        各スナップショットディレクトリ内のアーカイブファイルの mtime のうち
+        最新のものを採用する。差分更新は既存ディレクトリ名を再利用するため
+        (ディレクトリ名の日付は世代作成時のまま) ファイルの mtime を実測する方が
+        正確で、メタデータの整合性にも依存しない。
+
+        スナップショットが存在しない場合は None。
         """
-        meta = self._load_metadata()
-        latest: Optional[datetime] = None
-        for snap in meta.get('snapshots', []):
-            ts = snap.get('updated_at') or snap.get('created_at')
-            if not ts:
+        if not self.backups_dir.exists():
+            return None
+        latest: Optional[float] = None
+        for snap_dir in self.backups_dir.iterdir():
+            if not snap_dir.is_dir():
                 continue
-            try:
-                dt = datetime.fromisoformat(ts)
-            except (ValueError, TypeError):
-                continue
-            if latest is None or dt > latest:
-                latest = dt
-        return latest
+            for f in snap_dir.iterdir():
+                if not f.is_file():
+                    continue
+                mtime = f.stat().st_mtime
+                if latest is None or mtime > latest:
+                    latest = mtime
+        if latest is None:
+            return None
+        return datetime.fromtimestamp(latest)
 
     def restore(self, name: str, point: int | None = None) -> None:
         """スナップショットから復元する。
