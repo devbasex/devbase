@@ -13,3 +13,7 @@ projects/*
 !projects/.gitkeep
 .env.sources.yml
 .cache/
+
+# クロスレビュー (ndf:cross-review) の作業生成物
+.cross_review/
+gh-payload.json
