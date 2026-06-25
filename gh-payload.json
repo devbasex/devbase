@@ -1,0 +1,17 @@
+{
+  "commit_id": "f99f050fb2cb1d1d1d2609be1cab5b73a4ff2f7d",
+  "event": "COMMENT",
+  "body": "## 🤖 cross-review | round 2 | gemini | REQUEST_CHANGES\n\n- 新機能 `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES` に関するテストコードが追加されていません。設定値のパースロジック（`0`、負の値、不正な文字列）および `last_snapshot_time()` の挙動について、単体テストの追加をお願いします。",
+  "comments": [
+    {
+      "path": "lib/devbase/commands/container.py",
+      "line": 397,
+      "body": "[major / テスト]\n環境変数 `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES` のパース処理について、`tests/cli/test_...` 等に単体テストがありません。負の値やパース不能な文字列のフォールバック挙動が期待通り動作することを保証するテストを追加してください。"
+    },
+    {
+      "path": "lib/devbase/snapshot/manager.py",
+      "line": 122,
+      "body": "[minor / テスト]\n`last_snapshot_time()` メソッドについて、スナップショットディレクトリが空の場合や存在しない場合の挙動を確認するテストケースの追加を検討してください。"
+    }
+  ]
+}

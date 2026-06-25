@@ -1,0 +1,12 @@
+{
+  "event": "APPROVE",
+  "posted_as": "COMMENT",
+  "comments_count": 0,
+  "review_url": "https://github.com/devbasex/devbase/pull/75#pullrequestreview-4571614169",
+  "by_severity": {
+    "critical": 0,
+    "major": 0,
+    "minor": 0,
+    "nit": 0
+  }
+}

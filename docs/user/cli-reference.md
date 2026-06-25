@@ -165,6 +165,8 @@ devbase up [name]
 ```
 
 - 起動時にスナップショットを自動作成（新世代 or 差分追加）
+  - 直近のスナップショット取得から既定 60 分以内のときはスキップします
+  - 間隔は `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES` 環境変数で上書き可能（既定 60、`0` で無効化＝毎回取得、不正値は警告して既定値）
 - `CONTAINER_SCALE` の値に基づいてコンテナ数を決定
 - イメージの自動準備（`devbase up` は `devbase rebuild`＝`devbase build --expires=7` 相当を実行）:
   - `build:` 定義あり、イメージ未存在 → `devbase build` を自動実行
