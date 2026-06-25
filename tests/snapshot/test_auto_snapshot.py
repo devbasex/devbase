@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -95,7 +95,12 @@ def test_last_snapshot_time_uses_newest_archive(tmp_path):
     _touch(snap_dir / 'incr-001.tar.zst', new)
 
     result = mgr.last_snapshot_time()
-    assert result == datetime.fromtimestamp(new)
+    # last_snapshot_time は aware な UTC を返す (DST ズレ回避)。tz 非依存に
+    # 比較するため timestamp で突き合わせる。
+    assert result is not None
+    assert result.tzinfo is not None
+    assert result == datetime.fromtimestamp(new, tz=timezone.utc)
+    assert result.timestamp() == new
 
 
 def test_last_snapshot_time_ignores_meta_and_snar(tmp_path):
@@ -114,7 +119,9 @@ def test_last_snapshot_time_ignores_meta_and_snar(tmp_path):
 
     result = mgr.last_snapshot_time()
     # 付随ファイルは除外され、アーカイブ実体の古い mtime が返るはず。
-    assert result == datetime.fromtimestamp(archive_old)
+    assert result is not None
+    assert result == datetime.fromtimestamp(archive_old, tz=timezone.utc)
+    assert result.timestamp() == archive_old
 
 
 def test_last_snapshot_time_only_noise_returns_none(tmp_path):

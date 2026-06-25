@@ -3,7 +3,7 @@
 import re
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -131,7 +131,7 @@ class SnapshotManager:
                     latest = mtime
         if latest is None:
             return None
-        return datetime.fromtimestamp(latest)
+        return datetime.fromtimestamp(latest, tz=timezone.utc)
 
     def restore(self, name: str, point: int | None = None) -> None:
         """スナップショットから復元する。

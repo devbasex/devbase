@@ -1,0 +1,10 @@
+PR #75 に `gh api` で review 投稿しました。
+
+- intent: `APPROVE`
+- posted_as: `COMMENT`
+- inline comments: `0`
+- review: https://github.com/devbasex/devbase/pull/75#pullrequestreview-4571614169
+- result: `.cross_review/codex-review-pr75-result.json`
+- payload: `.cross_review/codex-review-pr75-round3-payload.json`
+
+確認として `uv run pytest tests/snapshot/test_auto_snapshot.py tests/cli/test_project_dispatch.py` を実行し、54 件すべて通過しました。

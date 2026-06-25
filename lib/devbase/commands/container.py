@@ -406,7 +406,7 @@ def _auto_snapshot() -> None:
     if not devbase_root:
         return
     try:
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         from devbase.snapshot.manager import SnapshotManager
         mgr = SnapshotManager(Path(devbase_root))
@@ -417,11 +417,11 @@ def _auto_snapshot() -> None:
             # ズレや他環境からのリストアで last が未来になると delta が負になり、
             # 常に閾値未満と判定されて無期限にスキップされてしまうため、
             # timedelta(0) <= delta の下限ガードを設ける。
-            delta = datetime.now() - last
+            delta = datetime.now(timezone.utc) - last
             if timedelta(0) <= delta < timedelta(minutes=min_interval):
                 logger.info(
                     "[0/6] 直近のスナップショット (%s) から%d分以内のためスキップします",
-                    last.strftime('%Y-%m-%d %H:%M:%S'), min_interval,
+                    last.astimezone().strftime('%Y-%m-%d %H:%M:%S'), min_interval,
                 )
                 return
         if mgr.should_start_new_generation():

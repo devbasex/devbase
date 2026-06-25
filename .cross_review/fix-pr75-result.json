@@ -1,0 +1,14 @@
+{
+  "commit_sha": "f8231341fb4dfa044e1b27ee4e698058b7ff28b2",
+  "fixed": [
+    "修正1: last_snapshot_time() の mtime 集計対象を full.tar.zst / incr-*.tar.zst に限定 (meta.yml / snapshot.snar / *.bak 等を除外。docstring 更新済み)",
+    "修正2: _auto_snapshot() で delta = datetime.now() - last を変数化し timedelta(0) <= delta < timedelta(minutes=min_interval) の未来日時ガードを追加",
+    "修正3: テスト追加 (tests/snapshot/test_auto_snapshot.py, tests/snapshot/__init__.py 新規)"
+  ],
+  "stale_resolved": ["3474835202", "3474838653"],
+  "tests_passed": true,
+  "test_output_tail": "837 passed in 34.72s (新規 tests/snapshot/ は 10 passed)",
+  "threads_resolved": 6,
+  "remaining_open_threads": 0,
+  "notes": "pytest はシステム python に無いため uv run pytest で実行。tests/snapshot/ ディレクトリは新規作成し __init__.py も追加 (既存 tests/cli 等の構成に倣う)。各 review comment に返信は replies エンドポイントで成功 (重複なし=各1件)、6スレッド全て resolveReviewThread で解決済み。"
+}

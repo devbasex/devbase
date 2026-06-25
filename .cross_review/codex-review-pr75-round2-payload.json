@@ -1,0 +1,10 @@
+{
+  "comments": [
+    {
+      "path": "lib/devbase/snapshot/manager.py",
+      "line": 114,
+      "body": "[major / 正確性] 判定対象を `full.tar.zst` と `incr-*.tar.zst` に限定してください。現状は `meta.yml` や `snapshot.snar`/`.bak` の mtime でも直近スナップショット扱いになるため、コピーや失敗した差分作成後に成功したバックアップが無いまま `up` がスキップされます。",
+      "severity": "major"
+    }
+  ]
+}

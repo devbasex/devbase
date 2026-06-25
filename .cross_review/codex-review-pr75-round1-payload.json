@@ -1,0 +1,10 @@
+{
+  "comments": [
+    {
+      "path": "lib/devbase/snapshot/manager.py",
+      "line": 110,
+      "body": "[minor / 正確性] `fromisoformat()` は `2026-06-25T12:00:00+09:00` のような offset-aware な日時も返すため、既存の naive な `created_at` と混在すると `dt > latest` や `_auto_snapshot()` 側の `datetime.now() - last` が `TypeError` になります。比較前に naive/aware を同じ基準へ正規化するか、offset-aware な日時を明示的に無視する処理にしてください。",
+      "severity": "minor"
+    }
+  ]
+}
