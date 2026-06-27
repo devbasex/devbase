@@ -402,6 +402,20 @@ def test_resolve_workdir_fallback_project_name():
     assert opener.resolve_workdir({}, "proj") == "/work/proj"
 
 
+def test_resolve_workspace_none_when_unset():
+    assert opener.resolve_workspace({}) is None
+
+
+def test_resolve_workspace_blank_is_none():
+    assert opener.resolve_workspace({"DEVBASE_WORKSPACE": "   "}) is None
+
+
+def test_resolve_workspace_returns_path():
+    env = {"DEVBASE_WORKSPACE": "/home/ubuntu/share/work/uttarov2-doc.workspace"}
+    assert opener.resolve_workspace(env) == \
+        "/home/ubuntu/share/work/uttarov2-doc.workspace"
+
+
 # ---------------------------------------------------------------------------
 # decide_action (§2.4 マトリクス全分岐)
 # ---------------------------------------------------------------------------
@@ -470,6 +484,43 @@ def test_open_editor_launch_invokes_launcher(monkeypatch):
     assert cmd[1] == "--folder-uri"
     assert cmd[2].startswith("vscode-remote://attached-container+")
     assert cmd[2].endswith("/work/carmo")
+
+
+def test_open_editor_launch_uses_file_uri_for_workspace(monkeypatch):
+    """DEVBASE_WORKSPACE 指定時は --file-uri でワークスペースファイルを開く。"""
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    calls = []
+    result = opener.open_editor(
+        project_name="uttarov2-doc", dev_service_name="dev",
+        workdir="/work/uttarov2-doc",
+        environ={"DEVBASE_WORKSPACE":
+                 "/home/ubuntu/share/work/uttarov2-doc.workspace"},
+        isatty=True, launcher=lambda cmd, env: calls.append(cmd),
+    )
+    assert result == "launch"
+    cmd = calls[0]
+    assert cmd[1] == "--file-uri"
+    assert cmd[2].startswith("vscode-remote://attached-container+")
+    assert cmd[2].endswith("/home/ubuntu/share/work/uttarov2-doc.workspace")
+
+
+def test_open_editor_print_command_file_uri_for_workspace(monkeypatch, caplog):
+    """plain SSH の提示コマンドも DEVBASE_WORKSPACE 指定時は --file-uri になる。"""
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    with caplog.at_level(logging.INFO):
+        result = opener.open_editor(
+            project_name="uttarov2-doc", dev_service_name="dev",
+            workdir="/work/uttarov2-doc",
+            environ={"SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22",
+                     "DEVBASE_WORKSPACE":
+                     "/home/ubuntu/share/work/uttarov2-doc.workspace"},
+            isatty=True, launcher=lambda cmd, env: None,
+        )
+    assert result == "print_command"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "code --file-uri" in text
+    assert "uttarov2-doc.workspace" in text
 
 
 def test_open_editor_launch_nested_uri_under_remote_ssh(monkeypatch):
