@@ -301,6 +301,26 @@ def resolve_workdir(environ=None, project_name: Optional[str] = None) -> str:
     return f"/work/{repo}" if repo else "/work"
 
 
+def resolve_workspace(environ=None) -> Optional[str]:
+    """開く VS Code ワークスペースファイル (``*.code-workspace``) のコンテナ内パス。
+
+    ``DEVBASE_WORKSPACE`` env にコンテナ内の絶対パス (例
+    ``/home/ubuntu/share/work/uttarov2-doc.workspace``) が指定されていればそれを返す。
+    未設定・空文字なら None を返し、呼び出し側 (:func:`open_editor`) は従来どおり
+    :func:`resolve_workdir` のフォルダを ``--folder-uri`` で開く。
+
+    ワークスペースファイルはコンテナ内に実在するパスを指す前提 (attach 先は
+    コンテナ authority のため)。``/home/ubuntu/share`` 等の共有マウント配下に置けば
+    全コンテナで共用できる。env 名はホスト CI が設定し得る汎用 ``WORKSPACE`` との
+    衝突を避けるため ``DEVBASE_*`` 接頭辞付きにしている。
+    """
+    env = os.environ if environ is None else environ
+    value = env.get("DEVBASE_WORKSPACE")
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 def _detect_ssh_host_from_dirs(server_dirs) -> Optional[str]:
     """複数の VS Code 系サーバーディレクトリの File History を横断して ssh-remote
     authority ラベルを推測する。
@@ -493,7 +513,13 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
                 if ctx.is_ssh else None)
     docker_context = resolve_docker_context(env) if ssh_host else None
-    uri = build_attach_uri(container, workdir,
+    # DEVBASE_WORKSPACE があれば *.code-workspace をワークスペースとして開く。VS Code は
+    # `--file-uri` に渡したパスが .code-workspace 拡張子なら multi-root ワークスペースとして
+    # 開くため、フォルダを開く `--folder-uri` と URI ターゲット・フラグの両方を切り替える。
+    workspace = resolve_workspace(env)
+    open_target = workspace or workdir
+    uri_flag = "--file-uri" if workspace else "--folder-uri"
+    uri = build_attach_uri(container, open_target,
                            ssh_host=ssh_host, docker_context=docker_context)
 
     if plan.action == "print_command":
@@ -505,12 +531,12 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
             "手元の VS Code で次を実行するか、VS Code の Remote-SSH 統合ターミナルから "
             "`devbase up` を実行すると自動で開きます:"
         )
-        logger.info("  %s --folder-uri '%s'", quoted, uri)
+        logger.info("  %s %s '%s'", quoted, uri_flag, uri)
         return "print_command"
 
     quoted = " ".join(shlex.quote(c) for c in editor)
     logger.info("[editor] %s を起動します (%s)", quoted, plan.reason)
-    cmd = [*editor, "--folder-uri", uri]
+    cmd = [*editor, uri_flag, uri]
     try:
         (launcher or _launch)(cmd, dict(env))
     except Exception as e:  # noqa: BLE001 - 起動失敗で up を倒さない

@@ -211,6 +211,8 @@ AI_SETTINGS=(
     ".gemini"
     ".serena"
     ".ssh"
+    ".kiro"
+    "share"
 )
 
 # Ensure /persistent/ai directory exists
