@@ -180,6 +180,12 @@ devbase up [name]
     （前回 pull 日時は `${DEVBASE_ROOT}/.cache/pulls/<image>` の touch-file mtime で判定）
   - 閾値は `DEVBASE_IMAGE_MAX_AGE_DAYS` 環境変数で上書き可能（既定 7、不正値は警告して既定値）
 
+> **Note (entrypoint / Dockerfile を変更したとき):** `containers/` 配下の `entrypoint.sh` や
+> Dockerfile はビルド時にイメージへ焼き込まれます。これらを変更しても、上記のとおり
+> `devbase up` はイメージが 7 日より新しいと再ビルドをスキップするため、変更が反映されない
+> ことがあります。確実に反映するには **`devbase build [name] --no-cache`** で再ビルドしてから
+> `devbase up` してください（`--no-cache` は `build` のオプションで、`rebuild` にはありません）。
+
 ### `devbase project down`
 
 コンテナを停止・削除します。
