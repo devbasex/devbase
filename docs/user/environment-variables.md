@@ -148,7 +148,7 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 |------|------|
 | `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く（既定: OFF） |
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
-| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。指定時はフォルダではなくワークスペースを開く。未設定なら従来どおり `/work/$GIT_REPO` フォルダ。共有マウント `/home/ubuntu/share` 配下に置けば全コンテナで共用可 |
+| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。指定時はフォルダではなくワークスペースを開く。未設定なら従来どおり `/work/$GIT_REPO` フォルダ。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
 | `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「跨ホスト」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |

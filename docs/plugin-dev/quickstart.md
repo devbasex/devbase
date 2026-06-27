@@ -252,12 +252,12 @@ flowchart LR
 
 ### 5.3 ボリューム設計
 
-| 用途 | ボリューム名パターン | 共有範囲 |
-|------|---------------------|----------|
-| ホームディレクトリ | `devbase_home_ubuntu` | 全コンテナ共有 |
-| 作業ディレクトリ | `${COMPOSE_PROJECT_NAME}_work_${CONTAINER_INDEX:-1}` | コンテナ専用 |
+| 用途 | ボリューム名パターン | マウント先 | 共有範囲 |
+|------|---------------------|-----------|----------|
+| AI 設定・共有ファイル | `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナ共有 |
+| 作業ディレクトリ | `${COMPOSE_PROJECT_NAME}_work_${CONTAINER_INDEX:-1}` | `/work` | コンテナ専用 |
 
-- ホームディレクトリボリュームはシェル設定やSSH鍵など、コンテナ横断で共有したい設定の永続化に使用
+- `devbase_home_ubuntu`（`/persistent/ai`）は AI CLI 設定・SSH 鍵・共有ファイルなど、コンテナ横断で共有したい設定の永続化に使用（`~/.claude` 等は entrypoint が symlink。旧 `/home/ubuntu` 直接マウントは廃止）
 - 作業ディレクトリボリュームはプロジェクトごと・コンテナインデックスごとに独立
 
 ### 5.4 コンテナイメージの選択

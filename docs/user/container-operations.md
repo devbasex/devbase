@@ -117,7 +117,7 @@ graph LR
     subgraph devbase
         C[コンテナ 1<br/>/work 専用]
         D[コンテナ 2<br/>/work 専用]
-        E[共有ホーム<br/>/home/ubuntu]
+        E[共有AI設定<br/>/persistent/ai]
     end
     A --> C
     B --> D
@@ -126,7 +126,7 @@ graph LR
 ```
 
 - 各コンテナは独立した `/work` ボリュームを持つ
-- `/home/ubuntu` は全コンテナで共有される
+- `/persistent/ai`（AI 設定・共有ファイル）は全コンテナで共有される（`/home/ubuntu` 直下のうち永続化されるのは symlink 対象のみ。下記「AI 設定の永続化」参照）
 - 異なるブランチでの並行作業に便利
 
 ## ボリューム構造
@@ -135,8 +135,10 @@ devbase のコンテナは 2 種類のボリュームを使用します。
 
 | ボリューム名 | マウント先 | 共有範囲 | 用途 |
 |-------------|-----------|---------|------|
-| `devbase_home_ubuntu` | `/home/ubuntu` | 全コンテナで共有 | ユーザー設定、SSH 鍵、シェル履歴等 |
+| `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | AI CLI 設定（`.claude` / `.codex` / `.gemini` 等）、SSH 鍵、共有ファイル置き場（`share`）。詳細は「AI 設定の永続化」参照 |
 | `{project}_work_{index}` | `/work` | 各コンテナ専用 | プロジェクトのソースコード、作業ファイル |
+
+> **Note:** `devbase_home_ubuntu` は **`/persistent/ai`** にマウントされます（`/home/ubuntu` への直接マウントは廃止）。`/home/ubuntu` 直下はコンテナ層（揮発）で、永続化されるのは entrypoint が `/persistent/ai` 配下へ symlink する設定ファイルのみです。シェル履歴など symlink 対象外のファイルは再生成で失われます。
 
 ### ボリュームの永続性
 
@@ -154,7 +156,32 @@ docker volume ls | grep devbase
 docker volume inspect devbase_home_ubuntu
 ```
 
-> **Warning:** `devbase_home_ubuntu` ボリュームは全プロジェクトで共有されます。ここにプロジェクト固有のファイルを置くと、他のプロジェクトにも影響します。プロジェクト固有のファイルは `/work` に配置してください。
+> **Warning:** `devbase_home_ubuntu` ボリューム（`/persistent/ai`、および symlink 経由でアクセスする `~/.claude` / `~/share` 等）は全プロジェクトで共有されます。ここにプロジェクト固有のファイルを置くと、他のプロジェクトにも影響します。プロジェクト固有のファイルは `/work` に配置してください。
+
+## AI 設定の永続化
+
+AI CLI ツールの設定や認証情報は、コンテナを再生成しても保持されるよう
+`devbase_home_ubuntu` ボリューム（`/persistent/ai`）に永続化されます。
+
+仕組みは **symlink** です。コンテナ起動時、entrypoint（`containers/base/entrypoint.sh`）が
+以下の各エントリについて `/home/ubuntu/<name> -> /persistent/ai/<name>` の symlink を作成します。
+
+| エントリ | 内容 |
+|---------|------|
+| `.claude.json` / `.claude` | Claude Code の設定・認証 |
+| `.codex` | Codex CLI の設定 |
+| `.gemini` | Gemini CLI の設定 |
+| `.serena` | Serena MCP の設定 |
+| `.kiro` | Kiro CLI の設定 |
+| `.ssh` | SSH 鍵 |
+| `share` | 全コンテナ共有のファイル置き場（任意用途） |
+
+- `/persistent/ai` は全コンテナ共通の `devbase_home_ubuntu` ボリュームなので、**どのコンテナからも同じ実体**を参照します（例: `~/share` は全コンテナで共有）。
+- symlink **対象外**のホーム配下ファイル（シェル履歴など）はコンテナ層に置かれ、再生成で失われます。永続化したいものは `/persistent/ai` 配下（= 上記 symlink 先）か `/work` に置いてください。
+- `share` 配下に置いた VS Code ワークスペースファイルは `DEVBASE_WORKSPACE` で開けます（[環境変数](environment-variables.md) 参照）。
+
+> **Note:** symlink 対象は entrypoint にビルド時 `COPY` で焼き込まれます。エントリを増減した場合は
+> イメージの再ビルドが必要です（`devbase up` 単体では反映されない場合があります。[CLI リファレンス](cli-reference.md) の `devbase project up` の注記参照）。
 
 ## コンテナイメージ階層
 
@@ -265,7 +292,7 @@ devbase status
 
 ## ベストプラクティス
 
-1. **プロジェクト固有のファイルは `/work` に配置する** -- `/home/ubuntu` は全コンテナで共有されるため
+1. **プロジェクト固有のファイルは `/work` に配置する** -- `/persistent/ai`（`~/.claude` 等の symlink 先・`~/share`）は全コンテナで共有されるため
 2. **`CONTAINER_SCALE` は必要最小限に設定する** -- リソース消費を抑制
 3. **作業終了後は `devbase down` を実行する** -- 自動ローテーションでディスク容量を管理
 4. **`devbase ps` で状態を確認してからログインする** -- 異常終了したコンテナへのログイン試行を避ける

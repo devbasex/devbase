@@ -103,14 +103,18 @@ devbaseでは2種類のボリュームパターンを使い分けます。
 
 ```yaml
 volumes:
-  - devbase_home_ubuntu:/home/ubuntu                              # 全コンテナ共有
+  - devbase_home_ubuntu:/persistent/ai                            # 全コンテナ共有（AI設定）
   - ${COMPOSE_PROJECT_NAME}_work_${CONTAINER_INDEX:-1}:/work      # コンテナ専用
 ```
 
 | ボリューム | マウント先 | 共有範囲 | 用途 |
 |-----------|-----------|----------|------|
-| `devbase_home_ubuntu` | `/home/ubuntu` | 全コンテナ | シェル設定、SSH鍵、Git設定 |
+| `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナ | AI CLI 設定（`.claude` 等）、SSH鍵、共有ファイル置き場（`share`）。`~/.claude` 等は entrypoint が symlink |
 | `${COMPOSE_PROJECT_NAME}_work_${CONTAINER_INDEX:-1}` | `/work` | コンテナ専用 | ソースコード、ビルド成果物 |
+
+> **Note:** マウント先は **`/persistent/ai`** です（旧 `/home/ubuntu` 直接マウントは廃止）。
+> これらの標準ボリュームは compose.yml に明記しなくても devbase がスケール用 compose 生成時に
+> 自動注入します。明記する場合も必ず `/persistent/ai` を使ってください。
 
 ### 3.2 Docker Socketのマウント
 

@@ -13,10 +13,10 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 - **豊富なツールセット**: Docker CLI、AWS CLI、gcloud SDK、Terraform、Node.js、AI CLIツールがプリインストール
 - **複数コンテナの並行開発**: `devbase project scale`で既存コンテナを再起動せずにスケール可能
 - **データ永続化**: 名前付きボリュームでコンテナ再起動後もデータを保持
-- **スナップショット管理**: `/home/ubuntu` 共通ボリュームの増分バックアップ・復元・世代管理
+- **スナップショット管理**: 共通ボリューム `devbase_home_ubuntu`（コンテナ内 `/persistent/ai`。AI 設定・共有ファイル）の増分バックアップ・復元・世代管理
 - **環境変数の自動収集**: `devbase env init`でAWS/Git/GCP認証情報を対話的に設定
 - **階層メニュー TUI**: `devbase list` のプロジェクト一覧（矢印キー移動・名前絞り込み対応）から起動・操作（up / down / login / ps / logs / scale / build / rebuild）を選択。画面最下部の常設メニュー（環境変数 / プラグイン / スナップショット / ステータス）へは ←→ キーで移動できます
-- **キャッシュ無効リビルド**: `devbase rebuild [name]` で `docker compose build --no-cache` 相当のイメージ再ビルドができます
+- **イメージ再ビルド**: `devbase build [name] --no-cache` でキャッシュ無効の完全再ビルド。`devbase rebuild [name]`（= `build --expires=7`）はイメージが既定 7 日より古いときのみ再ビルドします
 
 ## クイックスタート
 
