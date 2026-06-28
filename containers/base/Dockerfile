@@ -65,6 +65,15 @@ RUN set -eux; \
     unzip -q /tmp/awscliv2.zip -d /tmp; \
     /tmp/aws/install; \
     rm -rf /tmp/awscliv2.zip /tmp/aws; \
+    # AWS Session Manager plugin
+    case "$(dpkg --print-architecture)" in \
+    amd64) ssm_arch="ubuntu_64bit" ;; \
+    arm64) ssm_arch="ubuntu_arm64" ;; \
+    *) echo "Unsupported architecture for session-manager-plugin: $(dpkg --print-architecture)" && exit 1 ;; \
+    esac; \
+    curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/${ssm_arch}/session-manager-plugin.deb" -o /tmp/session-manager-plugin.deb; \
+    dpkg -i /tmp/session-manager-plugin.deb; \
+    rm -f /tmp/session-manager-plugin.deb; \
     # gcloud SDK
     arch="$(uname -m)"; \
     case "${arch}" in \
@@ -100,7 +109,7 @@ RUN set -eux; \
 ENV PATH="/root/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
 
 # 確認
-RUN gh --version && node --version && npm --version && aws --version && gcloud --version
+RUN gh --version && node --version && npm --version && aws --version && gcloud --version && session-manager-plugin --version
 
 # ユーザー設定
 ARG USERNAME="ubuntu"
