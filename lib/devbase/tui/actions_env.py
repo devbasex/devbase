@@ -179,13 +179,11 @@ def run(devbase_root: Path):
     """環境変数カテゴリのエントリ。操作選択 → 引数収集 → cmd_env へ委譲。
 
     戻り値プロトコル (``flow.menu_loop``。トップループが ``is`` 同一性で判定する):
-    - **操作を実行した場合**: dispatch の rc (``int``) を返す。「実行したのでトップへ
-      戻る、rc は呼び出し側が記憶」の意味で、失敗が ``devbase list`` の終了コードへ
-      伝搬する。
-    - ``menu.MENU_BACK``: サブメニューで Esc/← (操作なしでトップへ)。
+    - ``menu.MENU_BACK``: サブメニューで Esc/← (トップへ戻る)。操作を実行しても
+      (出力確認の一時停止後) サブメニューに留まり、Esc/← で初めてトップへ戻る。
     - ``None``: Ctrl-C による全体中止。
 
-    引数収集を中止 (``_ARG_CANCEL``) した場合はサブメニューを再表示する。
+    操作実行後・引数収集中止 (``_ARG_CANCEL``) のいずれもサブメニューを再表示する。
     """
     return flow.menu_loop(_select_action,
                           lambda op: _run_operation(devbase_root, op))

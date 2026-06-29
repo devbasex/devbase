@@ -232,13 +232,16 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
 # 最下部メニューバー付き select (トップ画面用)
 # ---------------------------------------------------------------------------
 
-def _build_menubar_question(message: str, choices, menu_items):
+def _build_menubar_question(message: str, choices, menu_items, default=None):
     """一覧 select の最下部に横並びメニューバーを組み込んだ question を構築する。
 
     ``select_with_menubar`` の構築部分。テストが実 TTY なしでキーバインドと
     バー描画を検証できるよう、ask せずに ``(question, focus)`` を返す。
     ``focus["tab"]`` が ``None`` なら一覧、``int`` ならバーの該当項目に
     フォーカスがある。
+
+    ``default`` は一覧で初期ハイライトする choice の value (一覧へ戻ったときの
+    カーソル復元用)。``None`` なら questionary 既定の先頭ハイライト。
     """
     from prompt_toolkit.filters import Condition
     from prompt_toolkit.key_binding import KeyBindings
@@ -251,6 +254,10 @@ def _build_menubar_question(message: str, choices, menu_items):
         else questionary.Choice(title=c[0], value=c[1])
         for c in choices
     ]
+    # questionary.select の default は choice の value で初期カーソルを指定する。
+    # 一致する value が無いと例外になるため、呼び出し側 (app) で範囲検証済みの
+    # value のみ渡す契約とし、ここでは None のとき引数を省く。
+    select_kwargs = {} if default is None else {"default": default}
     question = questionary.select(
         message,
         choices=norm,
@@ -258,6 +265,7 @@ def _build_menubar_question(message: str, choices, menu_items):
         use_jk_keys=False,
         use_search_filter=True,
         use_shortcuts=False,
+        **select_kwargs,
     )
 
     count = len(menu_items)
@@ -316,7 +324,7 @@ def _build_menubar_question(message: str, choices, menu_items):
     return question, focus
 
 
-def select_with_menubar(message: str, choices, menu_items):
+def select_with_menubar(message: str, choices, menu_items, default=None):
     """最下部に常設メニューバーを付けた選択メニュー (トップ画面用)。
 
     Parameters
@@ -324,6 +332,8 @@ def select_with_menubar(message: str, choices, menu_items):
     message:    プロンプト文言。
     choices:    一覧部分の選択肢 (``select`` と同じ形式)。
     menu_items: バー項目の ``(label, value)`` リスト。
+    default:    一覧で初期ハイライトする choice の value (カーソル復元用。``None``
+                なら先頭)。
 
     キー操作:
     - ↑↓ / 文字入力: 一覧の移動・絞り込み (questionary 既定)
@@ -337,7 +347,8 @@ def select_with_menubar(message: str, choices, menu_items):
     一覧の choice value / バー項目の value / ``None`` (Esc・Ctrl-C 中止)。
     テストではこの関数自体を monkeypatch して questionary の実起動を避ける。
     """
-    question, _focus = _build_menubar_question(message, choices, menu_items)
+    question, _focus = _build_menubar_question(message, choices, menu_items,
+                                               default=default)
     return _ask_erased(with_escape_cancel(question))
 
 

@@ -178,13 +178,11 @@ def run(devbase_root: Path):
     """スナップショット操作カテゴリ。操作選択 → 引数収集 → 実行。
 
     戻り値プロトコル (``flow.menu_loop``。トップループが ``is`` 同一性で判定する):
-    - **操作を実行した場合**: ``dispatch_group`` の rc (``int``) を返す。
-      「実行したのでトップへ戻る、rc は呼び出し側が記憶」の意味。
-    - ``menu.MENU_BACK``: 操作メニューで Esc/← (操作なしでトップへ)。
+    - ``menu.MENU_BACK``: 操作メニューで Esc/← (トップへ戻る)。操作を実行しても
+      (出力確認の一時停止後) 操作メニューに留まり、Esc/← で初めてトップへ戻る。
     - ``None``: Ctrl-C による全体中止。
 
-    引数収集を中止 (``_ARG_CANCEL``) した場合は操作メニューを再表示する。
-    操作完了後はトップメニューへ復帰する (plan 3.5 状態遷移: Exec → Top)。
+    操作実行後・引数収集中止 (``_ARG_CANCEL``) のいずれも操作メニューを再表示する。
     """
     return flow.menu_loop(_select_operation,
                           lambda op: _run_operation(devbase_root, op))

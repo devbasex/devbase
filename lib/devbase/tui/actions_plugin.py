@@ -269,9 +269,9 @@ def _run_repo_operation(devbase_root: Path, op: str):
 def _repo_menu(devbase_root: Path):
     """plugin repo のサブ階層メニューを回す。
 
-    戻り値 (``flow.menu_loop`` のプロトコル): dispatch の rc (``int``) /
-    ``menu.MENU_BACK`` (Esc・← で plugin メニューへ戻る) / ``None`` (Ctrl-C 全体中止)。
-    引数収集を中止 (``_ARG_CANCEL``) した場合はサブ階層メニューを再表示する。
+    戻り値 (``flow.menu_loop`` のプロトコル): ``menu.MENU_BACK`` (Esc・← で plugin
+    メニューへ戻る) / ``None`` (Ctrl-C 全体中止)。操作実行後は (出力確認の一時停止
+    後) サブ階層メニューに留まり、引数収集を中止 (``_ARG_CANCEL``) した場合も再表示する。
     """
     return flow.menu_loop(_select_repo_operation,
                           lambda op: _run_repo_operation(devbase_root, op))
@@ -281,19 +281,20 @@ def run(devbase_root: Path):
     """プラグイン操作カテゴリ。操作選択 → 引数収集 → ``cmd_plugin`` へ委譲。
 
     戻り値プロトコル (トップループが ``is`` 同一性で判定する。actions_project と同じ):
-    - **操作を実行した場合**: dispatch の rc (``int``) を返す。失敗 (非0) は
-      ``devbase list`` の終了コードへ伝搬する。
-    - ``menu.MENU_BACK``: 操作なしでトップメニューへ戻る (Esc/←)。
+    - ``menu.MENU_BACK``: plugin メニューで Esc/← (トップメニューへ戻る)。操作を
+      実行しても (出力確認の一時停止後) plugin メニューに留まり、Esc/← で初めて
+      トップへ戻る。
     - ``None``: Ctrl-C による全体中止。
 
-    repo はサブ階層メニュー (``_repo_menu``) へ分岐し、Esc/← で plugin メニューへ
-    戻れる (``MENU_BACK`` を ``_ARG_CANCEL`` 相当に読み替えて再表示する)。
-    操作完了後はトップメニューへ復帰する (plan 3.5 状態遷移: Exec → Top)。
+    repo はサブ階層メニュー (``_repo_menu``) へ分岐する。repo 側も実行後はそこに
+    留まり、Esc/← (``MENU_BACK``) で plugin メニューへ戻る (``_ARG_CANCEL`` 相当に
+    読み替えて再表示する)。
     """
     def _run(op):
         if op == "repo":
             rc = _repo_menu(devbase_root)
-            # repo 階層から Esc で戻ったら plugin メニューを再表示する。
+            # repo 階層は自身で操作を完結する。Esc/← (MENU_BACK) で戻ったら plugin
+            # メニューを再表示し、Ctrl-C (None) はそのまま全体中止へ伝搬する。
             return _ARG_CANCEL if rc is menu.MENU_BACK else rc
         return _run_operation(devbase_root, op)
 

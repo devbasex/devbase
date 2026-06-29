@@ -133,6 +133,26 @@ def optional_int(message: str, *, min_value: int = 0):
         return value
 
 
+def pause_for_review() -> bool:
+    """操作出力を読めるよう、メニュー再表示の前に Enter を待つ。
+
+    操作実行直後にメニューを再描画すると、list 等の表示系操作の出力が一瞬で
+    流れて読めない。questionary 系プロンプトは画面を書き換えるため、stdlib の
+    ``input()`` で素朴に待ち、出力をそのまま画面に残す。
+
+    戻り値: ``True`` = 続行 (メニュー再表示) / ``False`` = Ctrl-C (全体中止)。
+    非 TTY 等で stdin を読めない場合 (EOFError/OSError) は待たずに続行する。
+    """
+    try:
+        input("Enter キーで操作メニューへ戻ります...")
+    except KeyboardInterrupt:
+        print()
+        return False
+    except (EOFError, OSError):
+        pass
+    return True
+
+
 def menu_loop(select_op, run_op):
     """「操作選択 → 実行」のサブメニューループ (actions_* の ``run`` 共通骨格)。
 
@@ -143,8 +163,12 @@ def menu_loop(select_op, run_op):
 
     Returns
     -------
-    rc (``int``, 操作を実行) / ``menu.MENU_BACK`` (Esc・← で 1 つ上へ) / ``None``
-    (Ctrl-C 全体中止)。``run_op`` が ``ARG_CANCEL`` を返したら同じメニューを再表示する。
+    ``menu.MENU_BACK`` (Esc・← で 1 つ上へ戻る) / ``None`` (Ctrl-C 全体中止)。
+
+    操作を実行した後はトップへ戻らず、出力を読めるよう ``pause_for_review`` で
+    Enter を待ってから**同じサブメニューを再表示する** (サブメニューに留まる)。
+    上位 (トップ一覧) へ戻るのは Esc/← (``MENU_BACK``) を押したときだけ。
+    ``run_op`` が ``ARG_CANCEL`` を返したら一時停止せず同じメニューを再表示する。
     判定は必ず ``is`` 同一性で行う (rc=0 を番兵と誤マッチさせない)。
     """
     while True:
@@ -155,5 +179,10 @@ def menu_loop(select_op, run_op):
             return None
         rc = run_op(op)
         if rc is ARG_CANCEL:
-            continue
-        return rc
+            continue           # 引数収集中止 → 一時停止せず同じメニューを再表示
+        if rc is None:
+            return None        # run_op 内の Ctrl-C → 全体中止
+        # 操作を実行した: 出力を読めるよう一時停止し、同じサブメニューを再表示する
+        # (実行のたびにトップ一覧へ戻らない)。一時停止中の Ctrl-C は全体中止。
+        if not pause_for_review():
+            return None

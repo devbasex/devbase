@@ -156,9 +156,10 @@ def _run_operation(devbase_root: Path, name: str, op: str):
 def _operation_menu(devbase_root: Path, name: str):
     """running 行の操作サブメニューを回す。
 
-    戻り値 (``flow.menu_loop`` のプロトコル): dispatch の rc (``int``) /
-    ``menu.MENU_BACK`` (Esc・← で一覧へ戻る) / ``None`` (Ctrl-C 全体中止)。
-    引数収集を中止 (``_ARG_CANCEL``) した場合はサブメニューを再表示する。
+    戻り値 (``flow.menu_loop`` のプロトコル): ``menu.MENU_BACK`` (Esc・← で一覧へ
+    戻る) / ``None`` (Ctrl-C 全体中止)。操作を実行した後はトップ一覧へ戻らず、
+    出力を読めるよう一時停止してから**同じサブメニューを再表示する** (留まる)。
+    引数収集を中止 (``_ARG_CANCEL``) した場合も同じサブメニューを再表示する。
     """
     return flow.menu_loop(
         lambda: _select_action(name),
@@ -169,14 +170,17 @@ def handle_row(devbase_root: Path, row: dict):
     """一覧で選択された 1 プロジェクト行を処理する (トップ画面から呼ばれる)。
 
     戻り値プロトコル (トップループが ``is`` 同一性で判定する):
-    - **操作を実行した場合**: ``dispatch_lifecycle`` の rc (``int``) を返す。
-      「実行したので一覧へ戻る、rc は呼び出し側が記憶」の意味。これにより
-      project 操作の失敗が ``devbase list`` の終了コードへ伝搬する。
-    - ``menu.MENU_BACK``: 操作サブメニューで Esc/← (操作なしで一覧へ)。
+    - ``menu.MENU_BACK``: 操作サブメニューで Esc/← (一覧へ戻る)。running 行は操作を
+      実行しても (出力確認の一時停止後) サブメニューに留まり、Esc/← で初めて一覧へ
+      戻るため、この値を返す。
+    - **直接 up を実行した場合** (stopped / unknown 行): ``dispatch_lifecycle`` の
+      rc (``int``) を返す。トップループが rc を記憶し ``devbase list`` の終了コードへ
+      伝搬する。
     - ``None``: サブメニューで Ctrl-C による全体中止。
 
-    選択行が running 中なら ``_operation_menu`` で全操作を選ばせ、それ以外
-    (stopped / unknown) は従来どおり直接 ``project up`` を起動する (PR1 非回帰)。
+    選択行が running 中なら ``_operation_menu`` で全操作を選ばせ (実行後もサブ
+    メニューに留まる)、それ以外 (stopped / unknown) は従来どおり直接 ``project up``
+    を起動して一覧へ戻る (PR1 非回帰)。
     """
     name = row["name"]
     if str(row.get("status", "")).startswith("running"):

@@ -9,7 +9,28 @@ from __future__ import annotations
 
 import pytest
 
-from devbase.tui import actions_snapshot, menu
+from devbase.tui import actions_snapshot, flow, menu
+
+
+@pytest.fixture(autouse=True)
+def _no_pause(monkeypatch):
+    """サブメニューは実行後に留まる。各テストの一時停止 (Enter 待ち) は無効化する。"""
+    monkeypatch.setattr(flow, "pause_for_review", lambda: True)
+
+
+def _seq(*values):
+    """呼ばれるたび values を順に返し、尽きたら最後の値を返すコールバックを作る。
+
+    操作メニューは実行後に再表示されるため、選択スタブは末尾に MENU_BACK を置く。
+    """
+    box = {"i": 0}
+
+    def _next(*_a, **_k):
+        i = box["i"]
+        box["i"] = min(i + 1, len(values) - 1)
+        return values[i]
+
+    return _next
 
 
 def _capture_dispatch(monkeypatch):
@@ -82,20 +103,23 @@ def test_run_ctrl_c_aborts(monkeypatch, tmp_path):
     assert called == []
 
 
-def test_run_executes_and_returns_rc(monkeypatch, tmp_path):
-    """操作を実行したら dispatch の rc を返す (非0 もそのまま伝搬)。"""
-    monkeypatch.setattr(actions_snapshot, "_select_operation", lambda: "list")
-    monkeypatch.setattr(actions_snapshot, "_run_operation", lambda root, op: 1)
-    assert actions_snapshot.run(tmp_path) == 1
+def test_run_executes_then_stays_in_submenu(monkeypatch, tmp_path):
+    """操作を実行 → 操作メニューに留まり、Esc/← (MENU_BACK) で初めてトップへ戻る。"""
+    monkeypatch.setattr(actions_snapshot, "_select_operation", _seq("list", menu.MENU_BACK))
+    calls = []
+    monkeypatch.setattr(actions_snapshot, "_run_operation",
+                        lambda root, op: calls.append(op) or 1)
+    assert actions_snapshot.run(tmp_path) is menu.MENU_BACK
+    assert calls == ["list"], "操作は実行される (rc は終了コードへは伝搬しない)"
 
 
 def test_run_arg_cancel_reshows_menu(monkeypatch, tmp_path):
     """引数収集を中止 (_ARG_CANCEL) すると操作メニューを再表示し、再選択で実行する。"""
+    # 1 回目: delete (→ 引数収集中止) / 2 回目: list (→ 実行) / 3 回目: MENU_BACK
+    select = _seq("delete", "list", menu.MENU_BACK)
     select_calls = []
-    # 1 回目: delete (→ 引数収集中止) / 2 回目: list (→ 実行)
     monkeypatch.setattr(actions_snapshot, "_select_operation",
-                        lambda: (select_calls.append(1),
-                                 "delete" if len(select_calls) == 1 else "list")[1])
+                        lambda: select_calls.append(1) or select())
 
     run_calls = []
 
@@ -105,9 +129,9 @@ def test_run_arg_cancel_reshows_menu(monkeypatch, tmp_path):
 
     monkeypatch.setattr(actions_snapshot, "_run_operation", fake_run_op)
 
-    assert actions_snapshot.run(tmp_path) == 0
+    assert actions_snapshot.run(tmp_path) is menu.MENU_BACK
     assert run_calls == ["delete", "list"]
-    assert len(select_calls) == 2, "引数中止で操作メニューが再表示される"
+    assert len(select_calls) == 3, "引数中止と実行後に操作メニューが再表示される"
 
 
 # ---------------------------------------------------------------------------

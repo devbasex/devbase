@@ -8,7 +8,29 @@ from __future__ import annotations
 
 import pytest
 
-from devbase.tui import actions_project, menu
+from devbase.tui import actions_project, flow, menu
+
+
+@pytest.fixture(autouse=True)
+def _no_pause(monkeypatch):
+    """サブメニューは実行後に留まる。各テストの一時停止 (Enter 待ち) は無効化する。"""
+    monkeypatch.setattr(flow, "pause_for_review", lambda: True)
+
+
+def _seq(*values):
+    """呼ばれるたび values を順に返し、尽きたら最後の値を返すコールバックを作る。
+
+    サブメニューは操作実行後に再表示されるため、選択スタブは末尾に MENU_BACK を
+    置いてループを終わらせる。
+    """
+    box = {"i": 0}
+
+    def _next(*_a, **_k):
+        i = box["i"]
+        box["i"] = min(i + 1, len(values) - 1)
+        return values[i]
+
+    return _next
 
 
 # ---------------------------------------------------------------------------
@@ -23,31 +45,38 @@ def _row(status):
 @pytest.mark.parametrize("action,expected_subcommand", [("up", "up"), ("rebuild", "build")])
 def test_handle_row_running_shows_action_menu(monkeypatch, tmp_path, action,
                                               expected_subcommand):
-    """running 行はサブメニューで操作を選び、引数不要の up/rebuild は即起動する。"""
+    """running 行はサブメニューで操作を選び、引数不要の up/rebuild は即起動する。
+
+    実行後はサブメニューに留まり、Esc/← (MENU_BACK) で初めて一覧へ戻る。
+    """
     from devbase.commands import container as container_mod
 
     seen = {}
+    _sel = _seq(action, menu.MENU_BACK)
     monkeypatch.setattr(actions_project, "_select_action",
-                        lambda name: seen.update(name=name) or action)
+                        lambda name: seen.update(name=name) or _sel())
     captured = {}
     monkeypatch.setattr(container_mod, "cmd_project",
                         lambda args: captured.update(
                             subcommand=args.subcommand, name=args.name) or 0)
 
     result = actions_project.handle_row(tmp_path, _row("running (2 containers)"))
-    assert result == 0                       # 操作完了 → dispatch の rc を返す
+    assert result is menu.MENU_BACK          # 実行後サブメニューに留まり、戻りは MENU_BACK
     assert seen["name"] == "carmo"
     assert captured == {"subcommand": expected_subcommand, "name": "carmo"}
 
 
-def test_handle_row_propagates_nonzero_dispatch_rc(monkeypatch, tmp_path):
-    """dispatch が非0 (失敗) を返したら handle_row もその rc を返す (終了コード伝搬)。"""
+def test_handle_row_executes_then_stays_in_submenu(monkeypatch, tmp_path):
+    """非0 を返す操作でも実行後はサブメニューに留まり、戻りは MENU_BACK。"""
     from devbase.commands import container as container_mod
 
-    monkeypatch.setattr(actions_project, "_select_action", lambda name: "up")
-    monkeypatch.setattr(container_mod, "cmd_project", lambda args: 1)
+    monkeypatch.setattr(actions_project, "_select_action", _seq("up", menu.MENU_BACK))
+    calls = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: calls.append(1) or 1)
 
-    assert actions_project.handle_row(tmp_path, _row("running (1 containers)")) == 1
+    result = actions_project.handle_row(tmp_path, _row("running (1 containers)"))
+    assert result is menu.MENU_BACK
+    assert calls == [1], "操作は実行される (rc は終了コードへは伝搬しない)"
 
 
 @pytest.mark.parametrize("status", ["stopped", "unknown"])
@@ -368,11 +397,11 @@ def test_select_build_image_cancel(monkeypatch, tmp_path, sel):
 
 def test_operation_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     """引数収集を中止 (_ARG_CANCEL) するとサブメニューを再表示し、再選択で実行する。"""
+    # 1 回目: scale (→ 引数収集中止) / 2 回目: up (→ 実行) / 3 回目: MENU_BACK
+    select = _seq("scale", "up", menu.MENU_BACK)
     select_calls = []
-    # 1 回目: scale を選ぶ (→ 引数収集中止) / 2 回目: up を選ぶ (→ 実行)
     monkeypatch.setattr(actions_project, "_select_action",
-                        lambda name: (select_calls.append(1),
-                                      "scale" if len(select_calls) == 1 else "up")[1])
+                        lambda name: select_calls.append(1) or select())
 
     run_calls = []
 
@@ -382,9 +411,9 @@ def test_operation_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
 
     monkeypatch.setattr(actions_project, "_run_operation", fake_run_op)
 
-    assert actions_project._operation_menu(tmp_path, "carmo") == 0
+    assert actions_project._operation_menu(tmp_path, "carmo") is menu.MENU_BACK
     assert run_calls == ["scale", "up"]
-    assert len(select_calls) == 2, "引数中止でサブメニューが再表示される"
+    assert len(select_calls) == 3, "引数中止と実行後にサブメニューが再表示される"
 
 
 # ---------------------------------------------------------------------------
