@@ -19,8 +19,10 @@ def _row(status):
     return {"name": "carmo", "plugin": "p", "status": status}
 
 
-@pytest.mark.parametrize("action", ["up", "rebuild"])
-def test_handle_row_running_shows_action_menu(monkeypatch, tmp_path, action):
+# rebuild メニューは build --no-cache へ委譲するため subcommand は "build" になる。
+@pytest.mark.parametrize("action,expected_subcommand", [("up", "up"), ("rebuild", "build")])
+def test_handle_row_running_shows_action_menu(monkeypatch, tmp_path, action,
+                                              expected_subcommand):
     """running 行はサブメニューで操作を選び、引数不要の up/rebuild は即起動する。"""
     from devbase.commands import container as container_mod
 
@@ -35,7 +37,7 @@ def test_handle_row_running_shows_action_menu(monkeypatch, tmp_path, action):
     result = actions_project.handle_row(tmp_path, _row("running (2 containers)"))
     assert result == 0                       # 操作完了 → dispatch の rc を返す
     assert seen["name"] == "carmo"
-    assert captured == {"subcommand": action, "name": "carmo"}
+    assert captured == {"subcommand": expected_subcommand, "name": "carmo"}
 
 
 def test_handle_row_propagates_nonzero_dispatch_rc(monkeypatch, tmp_path):
@@ -126,7 +128,8 @@ def _capture_dispatch(monkeypatch):
     def _spy(args):
         captured["subcommand"] = args.subcommand
         captured["name"] = args.name
-        for k in ("scale", "index", "all", "follow", "tail", "new_scale", "image"):
+        for k in ("scale", "index", "all", "follow", "tail", "new_scale", "image",
+                  "no_cache"):
             if hasattr(args, k):
                 captured[k] = getattr(args, k)
         return 0
@@ -142,9 +145,11 @@ def test_run_operation_up_passes_scale_none(monkeypatch, tmp_path):
 
 
 def test_run_operation_rebuild(monkeypatch, tmp_path):
+    """「再ビルド (rebuild --no-cache)」は build --no-cache へ委譲する (no-cache 正規経路)。"""
     captured = _capture_dispatch(monkeypatch)
     assert actions_project._run_operation(tmp_path, "carmo", "rebuild") == 0
-    assert captured["subcommand"] == "rebuild" and captured["name"] == "carmo"
+    assert captured["subcommand"] == "build" and captured["name"] == "carmo"
+    assert captured["no_cache"] is True
 
 
 def test_run_operation_down_runs_without_confirm(monkeypatch, tmp_path):

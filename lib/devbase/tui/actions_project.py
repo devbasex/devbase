@@ -119,12 +119,16 @@ def _op_build(devbase_root: Path, name: str):
 
 
 _OP_HANDLERS = {
-    # up/down/rebuild/ps は引数なしで即実行。up/rebuild は scale 属性を参照する
-    # (常に None。他コマンドは無視する)。down はデータを失わない (volume 保持・
-    # up で復旧可能) ためメニュー選択を意思表示とみなし、確認プロンプトを出さない。
+    # up/down/ps は引数なしで即実行。up は scale 属性を参照する (常に None。他
+    # コマンドは無視する)。down はデータを失わない (volume 保持・up で復旧可能)
+    # ためメニュー選択を意思表示とみなし、確認プロンプトを出さない。
     # ps の --all は CLI 既定 (False) に揃える。
     "up": lambda root, name: dispatch_lifecycle("up", name, scale=None),
-    "rebuild": lambda root, name: dispatch_lifecycle("rebuild", name, scale=None),
+    # 「再ビルド (rebuild --no-cache)」はラベル通り base/project とも無条件 no-cache
+    # で再ビルドする。CLI の `rebuild` は期限判定 (= build --expires=7) でキャッシュ
+    # を使い、新しいイメージはスキップするため --no-cache を満たさない。no-cache の
+    # 正規経路は `build --no-cache` なので build に no_cache=True を渡して委譲する。
+    "rebuild": lambda root, name: dispatch_lifecycle("build", name, no_cache=True),
     "down": lambda root, name: dispatch_lifecycle("down", name),
     "login": _op_login,
     "ps": lambda root, name: dispatch_lifecycle("ps", name, all=False),
