@@ -40,6 +40,11 @@ _RUNNING_OPS: list[tuple[str, str]] = [
     ("再ビルド (rebuild --no-cache)", "rebuild"),
 ]
 
+# 実行後にサブメニューへ留まらずトップ一覧へ戻る操作。up/down はコンテナの
+# 起動状態が大きく変わるため、最新状態の一覧を見せる方が自然 (それ以外の
+# login/ps/logs/scale/build/rebuild は連続操作できるようサブメニューに留まる)。
+_BACK_TO_TOP_OPS = frozenset({"up", "down"})
+
 # 中止系番兵は flow と同一オブジェクトを再公開する (呼び出し側・テストの契約)。
 _ARG_CANCEL = flow.ARG_CANCEL
 _ABORT = flow.ABORT
@@ -119,12 +124,16 @@ def _op_build(devbase_root: Path, name: str):
 
 
 _OP_HANDLERS = {
-    # up/down/rebuild/ps は引数なしで即実行。up/rebuild は scale 属性を参照する
-    # (常に None。他コマンドは無視する)。down はデータを失わない (volume 保持・
-    # up で復旧可能) ためメニュー選択を意思表示とみなし、確認プロンプトを出さない。
+    # up/down/ps は引数なしで即実行。up は scale 属性を参照する (常に None。他
+    # コマンドは無視する)。down はデータを失わない (volume 保持・up で復旧可能)
+    # ためメニュー選択を意思表示とみなし、確認プロンプトを出さない。
     # ps の --all は CLI 既定 (False) に揃える。
     "up": lambda root, name: dispatch_lifecycle("up", name, scale=None),
-    "rebuild": lambda root, name: dispatch_lifecycle("rebuild", name, scale=None),
+    # 「再ビルド (rebuild --no-cache)」はラベル通り base/project とも無条件 no-cache
+    # で再ビルドする。CLI の `rebuild` は期限判定 (= build --expires=7) でキャッシュ
+    # を使い、新しいイメージはスキップするため --no-cache を満たさない。no-cache の
+    # 正規経路は `build --no-cache` なので build に no_cache=True を渡して委譲する。
+    "rebuild": lambda root, name: dispatch_lifecycle("build", name, no_cache=True),
     "down": lambda root, name: dispatch_lifecycle("down", name),
     "login": _op_login,
     "ps": lambda root, name: dispatch_lifecycle("ps", name, all=False),
@@ -152,27 +161,34 @@ def _run_operation(devbase_root: Path, name: str, op: str):
 def _operation_menu(devbase_root: Path, name: str):
     """running 行の操作サブメニューを回す。
 
-    戻り値 (``flow.menu_loop`` のプロトコル): dispatch の rc (``int``) /
-    ``menu.MENU_BACK`` (Esc・← で一覧へ戻る) / ``None`` (Ctrl-C 全体中止)。
-    引数収集を中止 (``_ARG_CANCEL``) した場合はサブメニューを再表示する。
+    戻り値 (``flow.menu_loop`` のプロトコル): ``menu.MENU_BACK`` (Esc・← で一覧へ
+    戻る) / ``None`` (Ctrl-C 全体中止)。多くの操作は実行後もトップ一覧へ戻らず、
+    出力を読めるよう一時停止してから**同じサブメニューを再表示する** (留まる)。
+    ただし up/down (``_BACK_TO_TOP_OPS``) は状態が大きく変わるため実行後はトップ
+    一覧へ戻り最新状態を再表示する。引数収集を中止 (``_ARG_CANCEL``) した場合も
+    同じサブメニューを再表示する。
     """
     return flow.menu_loop(
         lambda: _select_action(name),
-        lambda op: _run_operation(devbase_root, name, op))
+        lambda op: _run_operation(devbase_root, name, op),
+        back_after=lambda op: op in _BACK_TO_TOP_OPS)
 
 
 def handle_row(devbase_root: Path, row: dict):
     """一覧で選択された 1 プロジェクト行を処理する (トップ画面から呼ばれる)。
 
     戻り値プロトコル (トップループが ``is`` 同一性で判定する):
-    - **操作を実行した場合**: ``dispatch_lifecycle`` の rc (``int``) を返す。
-      「実行したので一覧へ戻る、rc は呼び出し側が記憶」の意味。これにより
-      project 操作の失敗が ``devbase list`` の終了コードへ伝搬する。
-    - ``menu.MENU_BACK``: 操作サブメニューで Esc/← (操作なしで一覧へ)。
+    - ``menu.MENU_BACK``: 操作サブメニューで Esc/← (一覧へ戻る)。running 行は操作を
+      実行しても (出力確認の一時停止後) サブメニューに留まり、Esc/← で初めて一覧へ
+      戻るため、この値を返す。
+    - **直接 up を実行した場合** (stopped / unknown 行): ``dispatch_lifecycle`` の
+      rc (``int``) を返す。トップループが rc を記憶し ``devbase list`` の終了コードへ
+      伝搬する。
     - ``None``: サブメニューで Ctrl-C による全体中止。
 
-    選択行が running 中なら ``_operation_menu`` で全操作を選ばせ、それ以外
-    (stopped / unknown) は従来どおり直接 ``project up`` を起動する (PR1 非回帰)。
+    選択行が running 中なら ``_operation_menu`` で全操作を選ばせ (実行後もサブ
+    メニューに留まる)、それ以外 (stopped / unknown) は従来どおり直接 ``project up``
+    を起動して一覧へ戻る (PR1 非回帰)。
     """
     name = row["name"]
     if str(row.get("status", "")).startswith("running"):

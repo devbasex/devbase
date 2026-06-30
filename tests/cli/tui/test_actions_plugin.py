@@ -11,7 +11,28 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from devbase.tui import actions_plugin, menu
+from devbase.tui import actions_plugin, flow, menu
+
+
+@pytest.fixture(autouse=True)
+def _no_pause(monkeypatch):
+    """サブメニューは実行後に留まる。各テストの一時停止 (Enter 待ち) は無効化する。"""
+    monkeypatch.setattr(flow, "pause_for_review", lambda: True)
+
+
+def _seq(*values):
+    """呼ばれるたび values を順に返し、尽きたら最後の値を返すコールバックを作る。
+
+    操作メニューは実行後に再表示されるため、選択スタブは末尾に MENU_BACK を置く。
+    """
+    box = {"i": 0}
+
+    def _next(*_a, **_k):
+        i = box["i"]
+        box["i"] = min(i + 1, len(values) - 1)
+        return values[i]
+
+    return _next
 
 
 def _seed_registry(root, plugins=(), repos=()):
@@ -63,21 +84,23 @@ def _no_dispatch(monkeypatch):
 # run(): plugin メニューのループと戻り値プロトコル
 # ---------------------------------------------------------------------------
 
-def test_run_executes_and_returns_rc(monkeypatch, tmp_path):
-    """操作を実行したら dispatch の rc を返してトップへ復帰する。"""
+def test_run_executes_then_stays_in_submenu(monkeypatch, tmp_path):
+    """操作を実行 → plugin メニューに留まり、Esc/← (MENU_BACK) で初めてトップへ戻る。"""
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(actions_plugin, "_select_operation", lambda: "sync")
-    assert actions_plugin.run(tmp_path) == 0
+    monkeypatch.setattr(actions_plugin, "_select_operation", _seq("sync", menu.MENU_BACK))
+    assert actions_plugin.run(tmp_path) is menu.MENU_BACK
     assert captured["subcommand"] == "sync"
     assert captured["devbase_root"] == tmp_path
 
 
-def test_run_propagates_nonzero_dispatch_rc(monkeypatch, tmp_path):
-    """dispatch が非0 (失敗) を返したら run() もその rc を返す (終了コード伝搬)。"""
+def test_run_executes_nonzero_then_back(monkeypatch, tmp_path):
+    """非0 を返す操作でも実行後は plugin メニューに留まり、戻りは MENU_BACK。"""
     from devbase.commands import plugin as plugin_mod
-    monkeypatch.setattr(plugin_mod, "cmd_plugin", lambda root, args: 1)
-    monkeypatch.setattr(actions_plugin, "_select_operation", lambda: "sync")
-    assert actions_plugin.run(tmp_path) == 1
+    calls = []
+    monkeypatch.setattr(plugin_mod, "cmd_plugin", lambda root, args: calls.append(1) or 1)
+    monkeypatch.setattr(actions_plugin, "_select_operation", _seq("sync", menu.MENU_BACK))
+    assert actions_plugin.run(tmp_path) is menu.MENU_BACK
+    assert calls == [1], "操作は実行される (rc は終了コードへは伝搬しない)"
 
 
 def test_run_back_returns_menu_back(monkeypatch, tmp_path):
@@ -98,11 +121,11 @@ def test_run_ctrl_c_aborts(monkeypatch, tmp_path):
 
 def test_run_arg_cancel_reshows_menu(monkeypatch, tmp_path):
     """引数収集を中止 (_ARG_CANCEL) すると plugin メニューを再表示し、再選択で実行する。"""
+    # 1 回目: install (→ 引数収集中止) / 2 回目: sync (→ 実行) / 3 回目: MENU_BACK
+    select = _seq("install", "sync", menu.MENU_BACK)
     select_calls = []
-    # 1 回目: install (→ 引数収集中止) / 2 回目: sync (→ 実行)
     monkeypatch.setattr(actions_plugin, "_select_operation",
-                        lambda: (select_calls.append(1),
-                                 "install" if len(select_calls) == 1 else "sync")[1])
+                        lambda: select_calls.append(1) or select())
 
     run_calls = []
 
@@ -112,9 +135,9 @@ def test_run_arg_cancel_reshows_menu(monkeypatch, tmp_path):
 
     monkeypatch.setattr(actions_plugin, "_run_operation", fake_run_op)
 
-    assert actions_plugin.run(tmp_path) == 0
+    assert actions_plugin.run(tmp_path) is menu.MENU_BACK
     assert run_calls == ["install", "sync"]
-    assert len(select_calls) == 2, "引数中止で plugin メニューが再表示される"
+    assert len(select_calls) == 3, "引数中止と実行後に plugin メニューが再表示される"
 
 
 def test_run_repo_back_reshows_plugin_menu(monkeypatch, tmp_path):
@@ -129,11 +152,19 @@ def test_run_repo_back_reshows_plugin_menu(monkeypatch, tmp_path):
     assert len(select_calls) == 2, "repo から戻ると plugin メニューが再表示される"
 
 
-def test_run_repo_rc_propagates(monkeypatch, tmp_path):
-    """repo サブ階層で操作を実行したらその rc を返してトップへ復帰する。"""
-    monkeypatch.setattr(actions_plugin, "_select_operation", lambda: "repo")
-    monkeypatch.setattr(actions_plugin, "_repo_menu", lambda root: 1)
-    assert actions_plugin.run(tmp_path) == 1
+def test_run_repo_back_then_plugin_back(monkeypatch, tmp_path):
+    """repo サブ階層は自身で操作を完結し、戻ると plugin メニューを再表示する。
+
+    新仕様では repo サブ階層 (``_repo_menu``) は操作実行後もそこに留まり、戻りは
+    MENU_BACK のみ (rc を上位へ伝搬しない)。plugin 側はそれを受けてメニューを
+    再表示し、さらに MENU_BACK でトップへ戻る。
+    """
+    repo_calls = []
+    monkeypatch.setattr(actions_plugin, "_select_operation", _seq("repo", menu.MENU_BACK))
+    monkeypatch.setattr(actions_plugin, "_repo_menu",
+                        lambda root: repo_calls.append(1) or menu.MENU_BACK)
+    assert actions_plugin.run(tmp_path) is menu.MENU_BACK
+    assert repo_calls == [1], "repo サブ階層へ 1 度遷移してから plugin メニューへ戻る"
 
 
 def test_run_repo_ctrl_c_aborts(monkeypatch, tmp_path):
@@ -475,11 +506,11 @@ def test_repo_menu_ctrl_c_aborts(monkeypatch, tmp_path):
 
 def test_repo_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     """引数収集を中止 (_ARG_CANCEL) するとサブ階層メニューを再表示し、再選択で実行する。"""
+    # 1 回目: add (→ 引数収集中止) / 2 回目: list (→ 実行) / 3 回目: MENU_BACK
+    select = _seq("add", "list", menu.MENU_BACK)
     select_calls = []
-    # 1 回目: add (→ 引数収集中止) / 2 回目: list (→ 実行)
     monkeypatch.setattr(actions_plugin, "_select_repo_operation",
-                        lambda: (select_calls.append(1),
-                                 "add" if len(select_calls) == 1 else "list")[1])
+                        lambda: select_calls.append(1) or select())
 
     run_calls = []
 
@@ -489,15 +520,20 @@ def test_repo_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
 
     monkeypatch.setattr(actions_plugin, "_run_repo_operation", fake_run_op)
 
-    assert actions_plugin._repo_menu(tmp_path) == 0
+    assert actions_plugin._repo_menu(tmp_path) is menu.MENU_BACK
     assert run_calls == ["add", "list"]
-    assert len(select_calls) == 2, "引数中止でサブ階層メニューが再表示される"
+    assert len(select_calls) == 3, "引数中止と実行後にサブ階層メニューが再表示される"
 
 
-def test_repo_menu_returns_rc(monkeypatch, tmp_path):
-    monkeypatch.setattr(actions_plugin, "_select_repo_operation", lambda: "list")
-    monkeypatch.setattr(actions_plugin, "_run_repo_operation", lambda root, op: 1)
-    assert actions_plugin._repo_menu(tmp_path) == 1
+def test_repo_menu_executes_then_stays(monkeypatch, tmp_path):
+    """repo 操作を実行 → サブ階層に留まり、Esc/← (MENU_BACK) で plugin メニューへ。"""
+    monkeypatch.setattr(actions_plugin, "_select_repo_operation",
+                        _seq("list", menu.MENU_BACK))
+    calls = []
+    monkeypatch.setattr(actions_plugin, "_run_repo_operation",
+                        lambda root, op: calls.append(op) or 1)
+    assert actions_plugin._repo_menu(tmp_path) is menu.MENU_BACK
+    assert calls == ["list"], "操作は実行される (rc は終了コードへは伝搬しない)"
 
 
 # ---------------------------------------------------------------------------

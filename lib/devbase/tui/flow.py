@@ -133,18 +133,47 @@ def optional_int(message: str, *, min_value: int = 0):
         return value
 
 
-def menu_loop(select_op, run_op):
+def pause_for_review() -> bool:
+    """操作出力を読めるよう、メニュー再表示の前に Enter を待つ。
+
+    操作実行直後にメニューを再描画すると、list 等の表示系操作の出力が一瞬で
+    流れて読めない。questionary 系プロンプトは画面を書き換えるため、stdlib の
+    ``input()`` で素朴に待ち、出力をそのまま画面に残す。
+
+    戻り値: ``True`` = 続行 (メニュー再表示) / ``False`` = Ctrl-C (全体中止)。
+    非 TTY 等で stdin を読めない場合 (EOFError/OSError) は待たずに続行する。
+    """
+    try:
+        input("Enter キーで操作メニューへ戻ります...")
+    except KeyboardInterrupt:
+        print()
+        return False
+    except (EOFError, OSError):
+        pass
+    return True
+
+
+def menu_loop(select_op, run_op, *, back_after=None):
     """「操作選択 → 実行」のサブメニューループ (actions_* の ``run`` 共通骨格)。
 
     Parameters
     ----------
-    select_op: 操作値 / ``MENU_BACK`` / ``None`` を返す選択関数。
-    run_op:    選択された操作値を受け取り rc / ``ARG_CANCEL`` / ``None`` を返す実行関数。
+    select_op:  操作値 / ``MENU_BACK`` / ``None`` を返す選択関数。
+    run_op:     選択された操作値を受け取り rc / ``ARG_CANCEL`` / ``None`` を返す実行関数。
+    back_after: ``op -> bool`` の述語 (省略可)。``True`` を返す操作は実行後に
+                サブメニューへ留まらず**上位 (トップ一覧) へ戻る**。状態が大きく
+                変わる操作 (project の up/down 等) で最新状態を再表示するために使う。
 
     Returns
     -------
-    rc (``int``, 操作を実行) / ``menu.MENU_BACK`` (Esc・← で 1 つ上へ) / ``None``
-    (Ctrl-C 全体中止)。``run_op`` が ``ARG_CANCEL`` を返したら同じメニューを再表示する。
+    ``menu.MENU_BACK`` (Esc・← で 1 つ上へ戻る / back_after な操作の実行後) /
+    ``None`` (Ctrl-C 全体中止)。
+
+    既定 (``back_after=None``) では、操作を実行した後もトップへ戻らず、出力を
+    読めるよう ``pause_for_review`` で Enter を待ってから**同じサブメニューを
+    再表示する** (サブメニューに留まる)。上位へ戻るのは Esc/← を押したときか、
+    ``back_after(op)`` が ``True`` の操作を実行したとき。``run_op`` が
+    ``ARG_CANCEL`` を返したら一時停止せず同じメニューを再表示する。
     判定は必ず ``is`` 同一性で行う (rc=0 を番兵と誤マッチさせない)。
     """
     while True:
@@ -155,5 +184,16 @@ def menu_loop(select_op, run_op):
             return None
         rc = run_op(op)
         if rc is ARG_CANCEL:
-            continue
-        return rc
+            continue           # 引数収集中止 → 一時停止せず同じメニューを再表示
+        if rc is None:
+            return None        # run_op 内の Ctrl-C → 全体中止
+        # 操作を実行した: まず出力を読めるよう一時停止する (Ctrl-C は全体中止)。
+        if not pause_for_review():
+            return None
+        if back_after is not None and back_after(op):
+            # up/down 等は状態が大きく変わるため、サブメニューに留まらずトップ一覧へ
+            # 戻り、最新状態を再表示する (トップ側が画面クリア + 一覧描画を行う)。
+            return menu.MENU_BACK
+        # それ以外はサブメニューに留まる。直前の操作出力 (image build 等) の下に
+        # メニューが埋もれないよう、再表示の前に画面をクリアして先頭行から描き直す。
+        menu.clear_screen()

@@ -15,7 +15,29 @@ from pathlib import Path
 
 import pytest
 
-from devbase.tui import actions_env, menu
+from devbase.tui import actions_env, flow, menu
+
+
+@pytest.fixture(autouse=True)
+def _no_pause(monkeypatch):
+    """サブメニューは実行後に留まる。各テストの一時停止 (Enter 待ち) は無効化する。"""
+    monkeypatch.setattr(flow, "pause_for_review", lambda: True)
+
+
+def _seq(*values):
+    """呼ばれるたび values を順に返し、尽きたら最後の値を返すコールバックを作る。
+
+    サブメニューは操作実行後に再表示されるため、選択スタブは「操作 → … →
+    MENU_BACK」のように最後に MENU_BACK を置いてループを終わらせる。
+    """
+    box = {"i": 0}
+
+    def _next(*_a, **_k):
+        i = box["i"]
+        box["i"] = min(i + 1, len(values) - 1)
+        return values[i]
+
+    return _next
 
 
 def _make_plugin_project(root, plugin_path, proj):
@@ -50,23 +72,26 @@ def _capture_dispatch(monkeypatch):
 # run(): 操作選択 → 実行 / Esc / Ctrl-C / 引数収集中止
 # ---------------------------------------------------------------------------
 
-def test_run_executes_and_returns_rc(monkeypatch, tmp_path):
-    """操作を選んで実行したら dispatch の rc を返す (トップへ復帰)。"""
+def test_run_executes_and_stays_in_submenu(monkeypatch, tmp_path):
+    """操作を選んで実行 → サブメニューに留まり、Esc/← で初めてトップへ戻る。"""
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(actions_env, "_select_action", lambda: "sync")
+    # sync を実行 → サブメニュー再表示 → MENU_BACK でトップへ。
+    monkeypatch.setattr(actions_env, "_select_action", _seq("sync", menu.MENU_BACK))
 
-    assert actions_env.run(tmp_path) == 0
+    assert actions_env.run(tmp_path) is menu.MENU_BACK
     assert captured["root"] == tmp_path
     assert captured["attrs"] == {"subcommand": "sync"}
 
 
-def test_run_propagates_nonzero_dispatch_rc(monkeypatch, tmp_path):
-    """dispatch が非0 (失敗) を返したら run() もその rc を返す (終了コード伝搬)。"""
+def test_run_executes_then_back_runs_operation(monkeypatch, tmp_path):
+    """非0 を返す操作でも実行後はサブメニューに留まり、戻りは MENU_BACK。"""
     from devbase.commands import env as env_mod
-    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: 1)
-    monkeypatch.setattr(actions_env, "_select_action", lambda: "sync")
+    calls = []
+    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: calls.append(1) or 1)
+    monkeypatch.setattr(actions_env, "_select_action", _seq("sync", menu.MENU_BACK))
 
-    assert actions_env.run(tmp_path) == 1
+    assert actions_env.run(tmp_path) is menu.MENU_BACK
+    assert calls == [1], "操作は実行される (rc は終了コードへは伝搬しない)"
 
 
 def test_run_back_returns_to_top(monkeypatch, tmp_path):
@@ -93,11 +118,11 @@ def test_run_ctrl_c_aborts(monkeypatch, tmp_path):
 
 def test_run_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     """引数収集を中止 (_ARG_CANCEL) するとサブメニューを再表示し、再選択で実行する。"""
+    # 1 回目: project (→ 引数収集中止) / 2 回目: sync (→ 実行) / 3 回目: MENU_BACK
+    select = _seq("project", "sync", menu.MENU_BACK)
     select_calls = []
-    # 1 回目: project を選ぶ (→ 引数収集中止) / 2 回目: sync を選ぶ (→ 実行)
     monkeypatch.setattr(actions_env, "_select_action",
-                        lambda: (select_calls.append(1),
-                                 "project" if len(select_calls) == 1 else "sync")[1])
+                        lambda: select_calls.append(1) or select())
 
     run_calls = []
 
@@ -107,9 +132,9 @@ def test_run_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
 
     monkeypatch.setattr(actions_env, "_run_operation", fake_run_op)
 
-    assert actions_env.run(tmp_path) == 0
+    assert actions_env.run(tmp_path) is menu.MENU_BACK
     assert run_calls == ["project", "sync"]
-    assert len(select_calls) == 2, "引数中止でサブメニューが再表示される"
+    assert len(select_calls) == 3, "引数中止と実行後にサブメニューが再表示される"
 
 
 def test_run_propagates_ctrl_c_from_operation(monkeypatch, tmp_path):

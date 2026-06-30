@@ -149,7 +149,7 @@ def _patch_loop(monkeypatch, selects, rows=None):
     monkeypatch.setattr(app, "list_projects",
                         lambda projects_dir: list(_ROWS) if rows is None else rows)
     it = iter(selects)
-    monkeypatch.setattr(app, "_select_top", lambda r: next(it))
+    monkeypatch.setattr(app, "_select_top", lambda r, default=None: next(it))
     pauses = []
     monkeypatch.setattr(app, "_pause_for_review", lambda: pauses.append(1) or True)
     return pauses
@@ -159,7 +159,7 @@ def test_select_top_projects_in_list_categories_in_menubar(monkeypatch):
     """トップは一覧にプロジェクト行のみ、カテゴリは最下部メニューバーに並ぶ。"""
     captured = {}
 
-    def fake_menubar(message, choices, menu_items):
+    def fake_menubar(message, choices, menu_items, default=None):
         captured.update(values=[c[1] for c in choices],
                         menu_labels=[m[0] for m in menu_items],
                         menu_values=[m[1] for m in menu_items])
@@ -180,7 +180,7 @@ def test_select_top_empty_projects_uses_placeholder(monkeypatch):
     """
     captured = {}
 
-    def fake_menubar(message, choices, menu_items):
+    def fake_menubar(message, choices, menu_items, default=None):
         captured.update(titles=[c[0] for c in choices],
                         values=[c[1] for c in choices])
         return captured["values"][0]
@@ -212,6 +212,22 @@ def test_top_loop_project_selection_delegates_handle_row(monkeypatch, tmp_path):
     rc = app._top_menu_loop(tmp_path)
     assert rc == 0
     assert handled == [(tmp_path, "beta")], "選択 index の行が handle_row へ渡る"
+
+
+def test_top_loop_restores_cursor_to_selected_project(monkeypatch, tmp_path):
+    """プロジェクト選択 → サブメニューから戻ると同じ行 (index) へカーソルを復元する。"""
+    monkeypatch.setattr(app, "list_projects", lambda projects_dir: list(_ROWS))
+    monkeypatch.setattr(app, "_pause_for_review", lambda: True)
+    # サブメニュー (handle_row) は MENU_BACK で一覧へ戻る。
+    monkeypatch.setattr(actions_project, "handle_row", lambda root, row: menu.MENU_BACK)
+
+    defaults = []
+    selects = iter([1, None])    # index 1 を選択 → 戻り → トップで終了
+    monkeypatch.setattr(app, "_select_top",
+                        lambda r, default=None: defaults.append(default) or next(selects))
+
+    assert app._top_menu_loop(tmp_path) == 0
+    assert defaults == [None, 1], "初回は先頭、戻った後は選択した index=1 を既定にする"
 
 
 def test_top_loop_propagates_executed_rc(monkeypatch, tmp_path):

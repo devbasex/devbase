@@ -16,8 +16,12 @@ env / plugin / snapshot / status は画面最下部に横並びで常設する�
 
 ナビ規約: トップ (プロジェクト一覧) は Esc / Ctrl-C で中止 (戻り先なし)。
 各カテゴリ・サブメニュー内では Esc / ← で 1 つ前へ戻る (``menu.MENU_BACK``)、
-Ctrl-C で全体中止 (``None``)。操作を実行した後は出力を読めるよう Enter を
-待ってから一覧を再表示する (``_pause_for_review``)。
+Ctrl-C で全体中止 (``None``)。サブメニューで操作を実行した後はトップへ戻らず、
+出力を読めるよう Enter を待ってから**同じサブメニューを再表示する** (実行を
+繰り返せる。``flow.pause_for_review`` / ``flow.menu_loop``)。Esc / ← で一覧へ
+戻ると、直前に選んだプロジェクト行へカーソルを復元する。直接 up する stopped/
+unknown 行と status 表示だけは実行後に Enter を待って一覧へ戻る
+(``_pause_for_review``)。
 """
 
 from __future__ import annotations
@@ -69,17 +73,9 @@ def _route(category: str, devbase_root: Path):
 
 
 def _clear_screen() -> None:
-    """端末をクリアしてカーソルを先頭行へ戻す。
-
-    トップ一覧 (メニュープロンプト) を画面の先頭行から表示するため、再描画の
-    直前に呼ぶ。``\\033[2J`` で表示領域を消去、``\\033[3J`` でスクロールバック
-    も消去、``\\033[H`` でカーソルを左上へ移動する。stdout が非 TTY の場合は
-    何もしない。
-    """
-    if not sys.stdout.isatty():
-        return
-    sys.stdout.write("\033[3J\033[2J\033[H")
-    sys.stdout.flush()
+    """端末をクリアしてカーソルを先頭行へ戻す (トップ一覧の再描画前)。実体は
+    ``menu.clear_screen`` に集約 (サブメニュー再表示と同じ消去処理)。"""
+    menu.clear_screen()
 
 
 def _pause_for_review() -> bool:
@@ -108,11 +104,14 @@ def _pause_for_review() -> bool:
 _NO_PROJECTS = object()
 
 
-def _select_top(rows: list[dict]):
+def _select_top(rows: list[dict], default=None):
     """トップ画面: プロジェクト一覧 + 最下部の常設カテゴリメニューから 1 件選ばせる。
 
     カテゴリ (env/plugin/snapshot/status) は一覧の行ではなく、画面最下部に
     横並びで常設するメニューバーに置く (←→ で項目間を移動、Enter で決定)。
+
+    ``default`` には前回選択したプロジェクトの rows index を渡し、サブメニュー
+    から一覧へ戻ったときに同じ行へカーソルを復元する (範囲外なら無視)。
 
     戻り値: rows の index (``int`` = プロジェクト選択) / カテゴリ key (``str``) /
     ``_NO_PROJECTS`` (プレースホルダ選択 = 再表示) / ``None`` (Esc・Ctrl-C → 終了)。
@@ -125,10 +124,13 @@ def _select_top(rows: list[dict]):
     else:
         # _build_menu_entries は 0 件を想定しない (max() が落ちる) ため迂回する。
         choices = [("(プロジェクトがありません)", _NO_PROJECTS)]
+    # default は choice value (= rows index) と一致したときだけハイライト初期値に
+    # 使う。行数が変わって範囲外になった場合は先頭ハイライト (None) に戻す。
+    initial = default if isinstance(default, int) and 0 <= default < len(rows) else None
     return menu.select_with_menubar(
         "プロジェクトまたは操作を選択 "
         "(↑↓ 移動 / 名前で絞り込み / ←→ 下部メニュー / Enter 決定 / Esc・Ctrl-C 終了):",
-        choices, [(label, key) for key, label in TOP_CATEGORIES])
+        choices, [(label, key) for key, label in TOP_CATEGORIES], default=initial)
 
 
 def _top_menu_loop(devbase_root: Path) -> int:
@@ -141,6 +143,7 @@ def _top_menu_loop(devbase_root: Path) -> int:
     判定は必ず ``is`` 同一性で行う (rc=0 を ``None`` / ``MENU_BACK`` と誤マッチさせない)。
     """
     last_rc = 0
+    cursor = None    # 直近に選んだプロジェクトの rows index (一覧再表示時のカーソル復元用)
     projects_dir = Path(devbase_root) / "projects"
     while True:
         _clear_screen()
@@ -150,7 +153,7 @@ def _top_menu_loop(devbase_root: Path) -> int:
             # 終了せず案内だけ出して一覧 (カテゴリのみ) を表示する。
             logger.info("プロジェクトがありません (%s)。", projects_dir)
 
-        sel = _select_top(rows)
+        sel = _select_top(rows, default=cursor)
         if sel is None:
             # トップで Esc / Ctrl-C → これまでの実行 rc を返して終了
             logger.info("中止しました。")
@@ -162,6 +165,9 @@ def _top_menu_loop(devbase_root: Path) -> int:
         if isinstance(sel, str):
             result = _route(sel, devbase_root)
         else:
+            # 選択したプロジェクト位置を記憶し、サブメニューから戻ったとき同じ行へ
+            # カーソルを復元する。
+            cursor = sel
             result = actions_project.handle_row(devbase_root, rows[sel])
 
         if result is None:

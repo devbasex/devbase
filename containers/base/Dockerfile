@@ -36,8 +36,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     > /etc/apt/sources.list.d/github-cli.list; \
-    # NodeSource リポジトリ
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; \
+    # NodeSource リポジトリ (Active LTS を追従。バージョン固定しない)
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -; \
     # ブラウザ: amd64はChrome+Chromium、arm64はChromium
     arch="$(dpkg --print-architecture)"; \
     BROWSER_PKG=""; \
@@ -144,8 +144,10 @@ RUN set -eux; \
     fi; \
     # Playwright browsers
     npx playwright install --with-deps chromium; \
-    # クリーンアップ
-    rm -rf /tmp/* \
+    # クリーンアップ。--with-deps の sudo apt や Node24/npm11 の
+    # /tmp/node-compile-cache が root 所有ファイルを残すため sudo で削除する
+    # (非 root の rm では Permission denied になりビルドが失敗する)。
+    sudo rm -rf /tmp/* \
     ~/.cache \
     ~/.npm \
     ~/.config/yarn \
