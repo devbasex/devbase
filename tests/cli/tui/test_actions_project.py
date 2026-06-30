@@ -66,17 +66,40 @@ def test_handle_row_running_shows_action_menu(monkeypatch, tmp_path, action,
     assert captured == {"subcommand": expected_subcommand, "name": "carmo"}
 
 
-def test_handle_row_executes_then_stays_in_submenu(monkeypatch, tmp_path):
-    """非0 を返す操作でも実行後はサブメニューに留まり、戻りは MENU_BACK。"""
+def test_handle_row_stays_in_submenu_for_non_updown_op(monkeypatch, tmp_path):
+    """up/down 以外 (例: build) は実行後もサブメニューに留まり再表示される。"""
     from devbase.commands import container as container_mod
 
-    monkeypatch.setattr(actions_project, "_select_action", _seq("up", menu.MENU_BACK))
+    select_calls = []
+    sel = _seq("build", menu.MENU_BACK)
+    monkeypatch.setattr(actions_project, "_select_action",
+                        lambda name: select_calls.append(1) or sel())
     calls = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: calls.append(1) or 1)
 
     result = actions_project.handle_row(tmp_path, _row("running (1 containers)"))
     assert result is menu.MENU_BACK
     assert calls == [1], "操作は実行される (rc は終了コードへは伝搬しない)"
+    assert len(select_calls) == 2, "build 実行後はサブメニューを再表示する (留まる)"
+
+
+@pytest.mark.parametrize("op", ["up", "down"])
+def test_handle_row_up_down_return_to_top(monkeypatch, tmp_path, op):
+    """再起動 (up) / 停止 (down) は実行後サブメニューに留まらずトップ一覧へ戻る。"""
+    from devbase.commands import container as container_mod
+
+    select_calls = []
+    # MENU_BACK を後ろに置くが、up/down は 1 回の実行でトップへ戻るため使われない。
+    sel = _seq(op, menu.MENU_BACK)
+    monkeypatch.setattr(actions_project, "_select_action",
+                        lambda name: select_calls.append(1) or sel())
+    calls = []
+    monkeypatch.setattr(container_mod, "cmd_project", lambda args: calls.append(1) or 0)
+
+    result = actions_project.handle_row(tmp_path, _row("running (1 containers)"))
+    assert result is menu.MENU_BACK
+    assert calls == [1]
+    assert len(select_calls) == 1, "up/down は実行後トップへ戻り再選択させない"
 
 
 @pytest.mark.parametrize("status", ["stopped", "unknown"])
@@ -397,8 +420,9 @@ def test_select_build_image_cancel(monkeypatch, tmp_path, sel):
 
 def test_operation_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     """引数収集を中止 (_ARG_CANCEL) するとサブメニューを再表示し、再選択で実行する。"""
-    # 1 回目: scale (→ 引数収集中止) / 2 回目: up (→ 実行) / 3 回目: MENU_BACK
-    select = _seq("scale", "up", menu.MENU_BACK)
+    # 1 回目: scale (→ 引数収集中止) / 2 回目: build (→ 実行・留まる) / 3 回目: MENU_BACK
+    # build は up/down と違いサブメニューに留まるため、再表示で 3 回目の選択が起きる。
+    select = _seq("scale", "build", menu.MENU_BACK)
     select_calls = []
     monkeypatch.setattr(actions_project, "_select_action",
                         lambda name: select_calls.append(1) or select())
@@ -412,7 +436,7 @@ def test_operation_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     monkeypatch.setattr(actions_project, "_run_operation", fake_run_op)
 
     assert actions_project._operation_menu(tmp_path, "carmo") is menu.MENU_BACK
-    assert run_calls == ["scale", "up"]
+    assert run_calls == ["scale", "build"]
     assert len(select_calls) == 3, "引数中止と実行後にサブメニューが再表示される"
 
 

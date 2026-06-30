@@ -40,6 +40,11 @@ _RUNNING_OPS: list[tuple[str, str]] = [
     ("再ビルド (rebuild --no-cache)", "rebuild"),
 ]
 
+# 実行後にサブメニューへ留まらずトップ一覧へ戻る操作。up/down はコンテナの
+# 起動状態が大きく変わるため、最新状態の一覧を見せる方が自然 (それ以外の
+# login/ps/logs/scale/build/rebuild は連続操作できるようサブメニューに留まる)。
+_BACK_TO_TOP_OPS = frozenset({"up", "down"})
+
 # 中止系番兵は flow と同一オブジェクトを再公開する (呼び出し側・テストの契約)。
 _ARG_CANCEL = flow.ARG_CANCEL
 _ABORT = flow.ABORT
@@ -157,13 +162,16 @@ def _operation_menu(devbase_root: Path, name: str):
     """running 行の操作サブメニューを回す。
 
     戻り値 (``flow.menu_loop`` のプロトコル): ``menu.MENU_BACK`` (Esc・← で一覧へ
-    戻る) / ``None`` (Ctrl-C 全体中止)。操作を実行した後はトップ一覧へ戻らず、
+    戻る) / ``None`` (Ctrl-C 全体中止)。多くの操作は実行後もトップ一覧へ戻らず、
     出力を読めるよう一時停止してから**同じサブメニューを再表示する** (留まる)。
-    引数収集を中止 (``_ARG_CANCEL``) した場合も同じサブメニューを再表示する。
+    ただし up/down (``_BACK_TO_TOP_OPS``) は状態が大きく変わるため実行後はトップ
+    一覧へ戻り最新状態を再表示する。引数収集を中止 (``_ARG_CANCEL``) した場合も
+    同じサブメニューを再表示する。
     """
     return flow.menu_loop(
         lambda: _select_action(name),
-        lambda op: _run_operation(devbase_root, name, op))
+        lambda op: _run_operation(devbase_root, name, op),
+        back_after=lambda op: op in _BACK_TO_TOP_OPS)
 
 
 def handle_row(devbase_root: Path, row: dict):
