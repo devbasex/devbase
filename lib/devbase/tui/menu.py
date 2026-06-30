@@ -26,9 +26,24 @@ questionary (prompt_toolkit ベース) は任意依存。未導入環境では `
 
 from __future__ import annotations
 
+import sys
+
 from devbase.log import get_logger
 
 logger = get_logger(__name__)
+
+
+def clear_screen() -> None:
+    """端末をクリアしてカーソルを先頭行へ戻す。
+
+    メニュー (トップ一覧 / サブメニュー) を画面の先頭行から表示するため、再描画の
+    直前に呼ぶ。``\\033[2J`` で表示領域を消去、``\\033[3J`` でスクロールバックも
+    消去、``\\033[H`` でカーソルを左上へ移動する。stdout が非 TTY の場合は何もしない。
+    """
+    if not sys.stdout.isatty():
+        return
+    sys.stdout.write("\033[3J\033[2J\033[H")
+    sys.stdout.flush()
 
 # questionary は任意依存。未導入時は選択メニュー不可 / 引数収集は input() 代替。
 try:

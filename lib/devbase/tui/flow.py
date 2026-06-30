@@ -186,3 +186,6 @@ def menu_loop(select_op, run_op):
         # (実行のたびにトップ一覧へ戻らない)。一時停止中の Ctrl-C は全体中止。
         if not pause_for_review():
             return None
+        # 直前の操作出力 (image build 等) の下にメニューが埋もれないよう、再表示の
+        # 前に画面をクリアしてサブメニューを先頭行から描き直す。
+        menu.clear_screen()

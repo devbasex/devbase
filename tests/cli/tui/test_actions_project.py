@@ -416,6 +416,23 @@ def test_operation_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     assert len(select_calls) == 3, "引数中止と実行後にサブメニューが再表示される"
 
 
+def test_operation_menu_clears_screen_after_execution(monkeypatch, tmp_path):
+    """操作実行 (image build 等) の後、サブメニュー再表示の前に画面をクリアする。
+
+    引数収集中止 (_ARG_CANCEL) では出力が無いためクリアしない。
+    """
+    select = _seq("scale", "build", menu.MENU_BACK)
+    monkeypatch.setattr(actions_project, "_select_action", lambda name: select())
+    monkeypatch.setattr(actions_project, "_run_operation",
+                        lambda root, name, op:
+                        actions_project._ARG_CANCEL if op == "scale" else 0)
+    clears = []
+    monkeypatch.setattr(menu, "clear_screen", lambda: clears.append(1))
+
+    assert actions_project._operation_menu(tmp_path, "carmo") is menu.MENU_BACK
+    assert clears == [1], "実行 (build) の 1 回のみクリア (scale の中止ではしない)"
+
+
 # ---------------------------------------------------------------------------
 # fallback_select_and_up: 番号入力 (questionary 不在) の非回帰
 # ---------------------------------------------------------------------------
