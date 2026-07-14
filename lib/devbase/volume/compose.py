@@ -22,6 +22,13 @@ _DEPRECATED_TARGET = '/home/ubuntu'
 # 絞り込む必須条件として参照する。ENABLE_SSH 有効時に :22 publish と同時に付与する。
 DEVBASE_SSH_LABEL = 'dev.devbase.ssh'
 
+# dev インスタンス番号 (1..N) を保持する devbase 専用ラベル。
+# generate_scaled_compose は各 dev-<index> を「別サービス」として展開するため、
+# compose が付与する `com.docker.compose.container-number` は全インスタンスで 1 と
+# なり index の識別に使えない。Orca 隔離 config 生成が Host 名の重複を避けられるよう、
+# ENABLE_SSH 有効時に SSH ラベルと同時にこのラベルで実 index を明示する。
+DEVBASE_INDEX_LABEL = 'dev.devbase.index'
+
 
 def get_dev_service_name() -> str:
     """Get development service name from environment variable or default to 'dev'"""
@@ -236,6 +243,9 @@ def _build_dev_instance(
         service.setdefault('ports', []).append(f"{bind}:{port}:22")
         # devbase の SSH publish コンテナを識別する専用ラベル (Orca 隔離の必須条件)。
         _add_ssh_label(service, DEVBASE_SSH_LABEL)
+        # dev インスタンス番号を明示するラベル (compose の container-number は別サービス
+        # 展開のため全て 1 になり index 識別に使えないので、実 index をここで持たせる)。
+        _add_ssh_label(service, DEVBASE_INDEX_LABEL, str(index))
 
     return service
 

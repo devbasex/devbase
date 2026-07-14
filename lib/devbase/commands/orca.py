@@ -25,7 +25,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 from devbase.env import keys
 from devbase.log import get_logger
-from devbase.volume.compose import DEVBASE_SSH_LABEL
+from devbase.volume.compose import DEVBASE_INDEX_LABEL, DEVBASE_SSH_LABEL
 
 logger = get_logger(__name__)
 
@@ -66,7 +66,7 @@ def _config_path() -> Path:
 # ---------------------------------------------------------------------------
 
 def _parse_index(raw) -> int:
-    """compose の container-number ラベルを 1 始まり index に変換する。"""
+    """devbase index ラベルを 1 始まり index に変換する (不正値は 1 にフォールバック)。"""
     try:
         return int(raw)
     except (TypeError, ValueError):
@@ -127,7 +127,14 @@ def _parse_inspect(containers, bind: Optional[str] = None) -> List[SSHTarget]:
         host_port = _pick_host_port(port_bindings, bind)
         if host_port is None:
             continue
-        index = _parse_index(labels.get("com.docker.compose.container-number"))
+        # index は devbase 専用ラベルから読む。generate_scaled_compose は dev-1..N を
+        # 別サービスとして展開するため compose の container-number は全て 1 となり、
+        # それに頼ると scale>=2 で Host 名が衝突する (`dev.devbase.index` を SSH ラベルと
+        # 同時に付与している。念のため未設定時は container-number へフォールバック)。
+        index = _parse_index(
+            labels.get(DEVBASE_INDEX_LABEL)
+            or labels.get("com.docker.compose.container-number")
+        )
         targets.append(SSHTarget(project=project, index=index, port=host_port))
     return targets
 
@@ -214,7 +221,10 @@ def _write_config(targets: Sequence[SSHTarget]) -> Path:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     hostname = os.environ.get(keys.DEVBASE_ORCA_HOSTNAME) or DEFAULT_HOSTNAME
-    user = os.environ.get("USERNAME") or DEFAULT_USER
+    # コンテナのログインユーザーは常に ubuntu。ホストの ambient な USERNAME
+    # (Windows のアカウント名など) は読まない (User <windows-user> となり SSH 失敗する)。
+    # コンテナ側で USERNAME build arg を上書きした場合のみ DEVBASE_ORCA_USER で明示上書きする。
+    user = os.environ.get(keys.DEVBASE_ORCA_USER) or DEFAULT_USER
     path.write_text(_render_config(targets, hostname, user), encoding="utf-8")
     return path
 

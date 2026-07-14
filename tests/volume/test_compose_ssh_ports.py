@@ -11,7 +11,7 @@ import yaml
 import pytest
 
 from devbase.volume import compose
-from devbase.volume.compose import DEVBASE_SSH_LABEL
+from devbase.volume.compose import DEVBASE_INDEX_LABEL, DEVBASE_SSH_LABEL
 from devbase.volume.ports import ssh_host_port, allocate_ssh_host_port, _stable_hash
 
 
@@ -114,6 +114,32 @@ def test_ssh_label_absent_when_disabled(in_tmp_cwd):
     scaled = _load_scaled(in_tmp_cwd)["services"]
 
     assert DEVBASE_SSH_LABEL not in _labels_dict(scaled["dev-1"])
+
+
+def test_index_label_injected_per_instance(in_tmp_cwd, monkeypatch):
+    """ENABLE_SSH=true なら各 dev-<index> に実 index を持つ専用ラベルが付く。
+
+    compose の container-number は別サービス展開のため全て 1 になるので、Orca 隔離
+    config が Host 名の重複を避けられるよう index を明示するラベルを持たせる。
+    """
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=3, project_name="proj")
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+
+    for i in (1, 2, 3):
+        assert _labels_dict(scaled[f"dev-{i}"]).get(DEVBASE_INDEX_LABEL) == str(i)
+
+
+def test_index_label_absent_when_disabled(in_tmp_cwd):
+    """ENABLE_SSH 未設定なら index ラベルも付かない。"""
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=1, project_name="proj")
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+
+    assert DEVBASE_INDEX_LABEL not in _labels_dict(scaled["dev-1"])
 
 
 @pytest.mark.parametrize("truthy", ["true", "True", "TRUE", "1"])

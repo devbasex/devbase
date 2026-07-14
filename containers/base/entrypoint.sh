@@ -298,7 +298,11 @@ if [ "$ENABLE_SSH" = "true" ] || [ "$ENABLE_SSH" = "1" ]; then
         chmod 600 ~/.ssh/authorized_keys
         echo "authorized_keys installed"
     else
-        echo "Warning: SSH_AUTHORIZED_KEYS is empty; public-key login will not work"
+        # ~/.ssh は永続ストレージへの symlink のため、空にしただけでは前回書いた
+        # authorized_keys が残り、失効させたはずの鍵で login できてしまう。
+        # env を空にしたら永続化された鍵を確実に削除して失効を反映する。
+        rm -f ~/.ssh/authorized_keys
+        echo "Warning: SSH_AUTHORIZED_KEYS is empty; cleared persisted authorized_keys (public-key login disabled)"
     fi
 
     # sshd 起動（daemonize するため exec "$@" をブロックしない）

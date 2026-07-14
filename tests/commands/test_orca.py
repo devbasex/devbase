@@ -29,6 +29,7 @@ def home_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("DEVBASE_ORCA_HOSTNAME", raising=False)
     monkeypatch.delenv("DEVBASE_SSH_BIND", raising=False)
+    monkeypatch.delenv("DEVBASE_ORCA_USER", raising=False)
     monkeypatch.delenv("USERNAME", raising=False)
     return tmp_path
 
@@ -108,8 +109,9 @@ def test_hostname_defaults_to_loopback_when_unset(home_in_tmp):
     assert "  HostName 127.0.0.1" in path.read_text(encoding="utf-8")
 
 
-def test_username_env_overrides_user(home_in_tmp, monkeypatch):
-    monkeypatch.setenv("USERNAME", "devuser")
+def test_orca_user_env_overrides_user(home_in_tmp, monkeypatch):
+    """devbase 専用の DEVBASE_ORCA_USER で User を上書きできる。"""
+    monkeypatch.setenv("DEVBASE_ORCA_USER", "devuser")
     path = orca._write_config([SSHTarget(project="carmo", index=1, port=2231)])
     assert "  User devuser" in path.read_text(encoding="utf-8")
 
@@ -117,6 +119,19 @@ def test_username_env_overrides_user(home_in_tmp, monkeypatch):
 def test_user_defaults_to_ubuntu_when_unset(home_in_tmp):
     path = orca._write_config([SSHTarget(project="carmo", index=1, port=2231)])
     assert "  User ubuntu" in path.read_text(encoding="utf-8")
+
+
+def test_host_username_is_ignored_for_user(home_in_tmp, monkeypatch):
+    """ホストの ambient な USERNAME (Windows アカウント名等) は User に使わない。
+
+    Windows 上の Orca ホストでは USERNAME が Windows アカウント名になるが、
+    コンテナのログインユーザーは常に ubuntu。ホスト USERNAME を読むと SSH 失敗する。
+    """
+    monkeypatch.setenv("USERNAME", "windows-account")
+    path = orca._write_config([SSHTarget(project="carmo", index=1, port=2231)])
+    content = path.read_text(encoding="utf-8")
+    assert "  User ubuntu" in content
+    assert "windows-account" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +222,7 @@ def test_cmd_orca_unknown_subcommand_returns_1(home_in_tmp):
 # ---------------------------------------------------------------------------
 
 def _container(project=None, number="1", ssh_port="2231", extra_ports=None,
-               ssh_label=True):
+               ssh_label=True, index=None):
     labels = {}
     if project is not None:
         labels["com.docker.compose.project"] = project
@@ -215,6 +230,8 @@ def _container(project=None, number="1", ssh_port="2231", extra_ports=None,
     if ssh_label:
         # devbase が SSH publish 時に付ける専用ラベル (隔離の必須条件)。
         labels["dev.devbase.ssh"] = "1"
+        # dev インスタンス番号を保持する専用ラベル (未指定なら number をそのまま使う)。
+        labels["dev.devbase.index"] = number if index is None else str(index)
     ports = dict(extra_ports or {})
     if ssh_port is not None:
         ports["22/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": ssh_port}]
@@ -277,3 +294,40 @@ def test_parse_inspect_prefers_bind_matching_host_ip():
     }]
     targets = orca._parse_inspect(containers, bind="127.0.0.1")
     assert targets == [SSHTarget(project="carmo", index=1, port=2231)]
+
+
+def test_parse_inspect_uses_devbase_index_label_not_container_number():
+    """別サービス展開で container-number が全て 1 でも index が衝突しない。
+
+    generate_scaled_compose は dev-1..N を「別サービス」として展開するため、
+    compose の container-number は全インスタンスで 1 になる。`dev.devbase.index` を
+    読むことで scale>=2 でも Host devbase-<project>-1 / -2 と正しく分離できる。
+    """
+    containers = [
+        _container(project="carmo", number="1", index=1, ssh_port="2231"),
+        _container(project="carmo", number="1", index=2, ssh_port="2232"),
+    ]
+    targets = sorted(orca._parse_inspect(containers), key=lambda t: t.index)
+    assert targets == [
+        SSHTarget(project="carmo", index=1, port=2231),
+        SSHTarget(project="carmo", index=2, port=2232),
+    ]
+    out = orca._render_config(targets, hostname="127.0.0.1", user="ubuntu")
+    host_lines = [ln for ln in out.splitlines() if ln.startswith("Host ")]
+    assert host_lines == ["Host devbase-carmo-1", "Host devbase-carmo-2"]
+
+
+def test_parse_inspect_falls_back_to_container_number_without_index_label():
+    """index ラベルが無い場合は従来どおり container-number へフォールバックする。"""
+    container = {
+        "Config": {"Labels": {
+            "com.docker.compose.project": "carmo",
+            "com.docker.compose.container-number": "3",
+            "dev.devbase.ssh": "1",
+        }},
+        "NetworkSettings": {"Ports": {"22/tcp": [
+            {"HostIp": "127.0.0.1", "HostPort": "2233"},
+        ]}},
+    }
+    assert orca._parse_inspect([container]) == [
+        SSHTarget(project="carmo", index=3, port=2233)]

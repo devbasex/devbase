@@ -150,6 +150,7 @@ Orca 連携に関わる環境変数です。`ENABLE_SSH` / `SSH_AUTHORIZED_KEYS`
 | `DEVBASE_SSH_BIND` | `127.0.0.1` | publish の bind 先。既定は外部非公開。LAN/Tailscale 直結時に上書きする |
 | `DEVBASE_SSH_PORT_BASE` | `2200` | publish ポートの算出起点。プロジェクト + index からのオフセットを加算する |
 | `DEVBASE_ORCA_HOSTNAME` | `127.0.0.1` | 生成 config の `HostName`。Tailscale 名や Mac の LAN IP へ上書きすると Windows から直結できる |
+| `DEVBASE_ORCA_USER` | `ubuntu` | 生成 config の `User`。コンテナのログインユーザーは常に `ubuntu` なので通常は設定不要。コンテナの `USERNAME` build arg を上書きしたプロジェクトでのみ設定する（ホストの `USERNAME` は参照しない） |
 
 ## 接続パターン
 
