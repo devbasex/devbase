@@ -161,17 +161,25 @@ def _add_ssh_label(service: dict, label: str, value: str = '1') -> None:
         service['labels'] = {label: value}
 
 
-def _running_published_host_ports() -> Set[int]:
+def _running_published_host_ports(exclude_project: Optional[str] = None) -> Set[int]:
     """稼働中コンテナが publish 済みのホストポート集合を best-effort で返す。
 
     別プロジェクトのコンテナが既に握っているホストポートとの衝突を避けるため、
     compose 生成時に docker から現況を収集して :func:`allocate_ssh_host_port` の
     ``used_ports`` に混ぜる。docker が無い / 失敗しても空集合を返して生成を止めない
     (その場合は決定的ポートにそのままフォールバックする)。
+
+    ``exclude_project`` を指定すると、``com.docker.compose.project`` ラベルが一致する
+    コンテナ (= 現在のプロジェクト自身の dev-1..N) のポートは集合から除外する。
+    これがないと ``devbase scale`` で稼働中の自コンテナの決定的ポートまで「衝突」と
+    誤判定されて +1 ずれ、``--no-recreate`` で残る実コンテナと生成 compose が不一致に
+    なり (意図せぬ recreate / bind 失敗) を招くため、外部プロジェクトのポートだけを
+    衝突回避シードにする。
     """
     try:
         result = subprocess.run(
-            ['docker', 'ps', '--format', '{{.Ports}}'],
+            ['docker', 'ps', '--format',
+             '{{.Label "com.docker.compose.project"}}\t{{.Ports}}'],
             capture_output=True, text=True, check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -179,9 +187,14 @@ def _running_published_host_ports() -> Set[int]:
     if result.returncode != 0:
         return set()
     ports: Set[int] = set()
-    # 例: "127.0.0.1:2231->22/tcp, 0.0.0.0:8080->80/tcp"
-    for match in re.finditer(r":(\d+)->", result.stdout):
-        ports.add(int(match.group(1)))
+    # 例: "otherproj\t127.0.0.1:2231->22/tcp, 0.0.0.0:8080->80/tcp"
+    for line in result.stdout.splitlines():
+        project, _, ports_field = line.partition('\t')
+        # 現在のプロジェクト自身の publish は衝突回避シードから除外する。
+        if exclude_project is not None and project == exclude_project:
+            continue
+        for match in re.finditer(r":(\d+)->", ports_field):
+            ports.add(int(match.group(1)))
     return ports
 
 

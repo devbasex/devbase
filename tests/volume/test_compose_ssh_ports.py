@@ -266,3 +266,111 @@ def test_no_external_collision_keeps_deterministic_ports(in_tmp_cwd, monkeypatch
     for i in (1, 2):
         port = ssh_host_port("proj", i, 2200)
         assert _ssh_ports(scaled[f"dev-{i}"]) == [f"127.0.0.1:{port}:22"]
+
+
+# --- _running_published_host_ports(): 自プロジェクト除外 (scale 誤 recreate 回避) ---
+
+class _FakePS:
+    """docker ps の CompletedProcess を模す軽量スタブ。"""
+
+    def __init__(self, stdout: str, returncode: int = 0):
+        self.stdout = stdout
+        self.returncode = returncode
+
+
+def _fake_docker_ps(monkeypatch, stdout: str, returncode: int = 0):
+    """compose.subprocess.run を差し替えて docker ps 出力を固定する。"""
+    def _run(cmd, *args, **kwargs):
+        return _FakePS(stdout, returncode)
+    monkeypatch.setattr(compose.subprocess, "run", _run)
+
+
+def test_running_ports_excludes_own_project(monkeypatch):
+    """exclude_project に一致するコンテナ (自プロジェクト) のポートは除外される。
+
+    scale 再生成で自コンテナの決定的ポートを「衝突」と誤判定させないための要。
+    """
+    # 出力形式: '<project>\t<ports>'
+    stdout = (
+        "proj\t127.0.0.1:2231->22/tcp\n"
+        "proj\t127.0.0.1:2232->22/tcp\n"
+    )
+    _fake_docker_ps(monkeypatch, stdout)
+
+    got = compose._running_published_host_ports(exclude_project="proj")
+    assert got == set()  # 自プロジェクトのポートはシードに含めない
+
+
+def test_running_ports_includes_foreign_project(monkeypatch):
+    """他プロジェクトのポートは (exclude 指定があっても) 収集される。"""
+    stdout = (
+        "proj\t127.0.0.1:2231->22/tcp\n"       # 自プロジェクト → 除外
+        "otherproj\t127.0.0.1:2299->22/tcp\n"  # 他プロジェクト → 収集
+    )
+    _fake_docker_ps(monkeypatch, stdout)
+
+    got = compose._running_published_host_ports(exclude_project="proj")
+    assert got == {2299}
+
+
+def test_running_ports_no_exclude_collects_all(monkeypatch):
+    """exclude_project 未指定なら全コンテナのポートを収集する (up 経路の従来挙動)。"""
+    stdout = (
+        "proj\t127.0.0.1:2231->22/tcp\n"
+        "otherproj\t0.0.0.0:8080->80/tcp\n"
+    )
+    _fake_docker_ps(monkeypatch, stdout)
+
+    got = compose._running_published_host_ports()
+    assert got == {2231, 8080}
+
+
+def test_running_ports_empty_on_docker_failure(monkeypatch):
+    """docker ps が失敗 (returncode != 0) なら空集合を返し生成を止めない。"""
+    _fake_docker_ps(monkeypatch, stdout="", returncode=1)
+    assert compose._running_published_host_ports(exclude_project="proj") == set()
+
+
+def test_scale_same_project_port_does_not_shift(in_tmp_cwd, monkeypatch):
+    """自プロジェクトの稼働ポートを除外するため既存 dev-N は決定的ポートを維持する。
+
+    docker ps が dev-1..2 の決定的ポートを publish 済みと報告しても、exclude により
+    シードから外れ、再生成 compose のポートは元の決定的値のまま (= recreate されない)。
+    """
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    det1 = ssh_host_port("proj", 1, 2200)
+    det2 = ssh_host_port("proj", 2, 2200)
+    stdout = (
+        f"proj\t127.0.0.1:{det1}->22/tcp\n"
+        f"proj\t127.0.0.1:{det2}->22/tcp\n"
+    )
+    _fake_docker_ps(monkeypatch, stdout)
+
+    compose.generate_scaled_compose(
+        scale=2, project_name="proj",
+        external_ports_provider=lambda: compose._running_published_host_ports(
+            exclude_project="proj"),
+    )
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+    assert _ssh_ports(scaled["dev-1"]) == [f"127.0.0.1:{det1}:22"]
+    assert _ssh_ports(scaled["dev-2"]) == [f"127.0.0.1:{det2}:22"]
+
+
+def test_scale_foreign_project_port_still_shifts(in_tmp_cwd, monkeypatch):
+    """他プロジェクトが dev-1 の決定的ポートを握る場合は従来どおり +1 へずらす。"""
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    det1 = ssh_host_port("proj", 1, 2200)
+    stdout = f"otherproj\t127.0.0.1:{det1}->22/tcp\n"
+    _fake_docker_ps(monkeypatch, stdout)
+
+    compose.generate_scaled_compose(
+        scale=1, project_name="proj",
+        external_ports_provider=lambda: compose._running_published_host_ports(
+            exclude_project="proj"),
+    )
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+    assert _ssh_ports(scaled["dev-1"]) == [f"127.0.0.1:{det1 + 1}:22"]

@@ -50,7 +50,8 @@ def test_render_config_basic_fields():
     assert "  HostName 127.0.0.1" in out
     assert "  Port 2231" in out
     assert "  User ubuntu" in out
-    assert "  IdentityFile ~/.ssh/id_ed25519" in out
+    # IdentityFile は出力しない (id_ed25519 / id_rsa 両対応のため既定解決に委ねる)。
+    assert "IdentityFile" not in out
     assert "  StrictHostKeyChecking accept-new" in out
 
 

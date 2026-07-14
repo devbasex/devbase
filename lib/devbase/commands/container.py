@@ -591,10 +591,12 @@ def cmd_up(project_name: str = None, scale: int = None,
 
         logger.info("[3/6] Generating scaled compose file...")
         # 他プロジェクトが稼働 publish 済みのホストポートを best-effort でシードし、
-        # SSH publish ポートの跨ぎ衝突 (bind 失敗) を回避する。
+        # SSH publish ポートの跨ぎ衝突 (bind 失敗) を回避する。自プロジェクトの
+        # 稼働ポートは除外し、既存 dev-1..N の決定的ポートがずれないようにする。
         override_file = generate_scaled_compose(
             scale, project_name,
-            external_ports_provider=_running_published_host_ports,
+            external_ports_provider=lambda: _running_published_host_ports(
+                exclude_project=project_name),
         )
         logger.info("Generated: %s", override_file)
 
@@ -733,9 +735,13 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
+        # scale では稼働中の自コンテナ (dev-1..現行数) が残ったまま compose を
+        # 再生成し --no-recreate する。自プロジェクトの publish を除外しないと
+        # 既存 dev-N の決定的ポートが「衝突」扱いでずれ、実コンテナと不一致になる。
         override_file = generate_scaled_compose(
             new_scale, project_name,
-            external_ports_provider=_running_published_host_ports,
+            external_ports_provider=lambda: _running_published_host_ports(
+                exclude_project=project_name),
         )
         logger.info("Generated: %s", override_file)
 
@@ -763,6 +769,10 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(current_scale + 1, new_scale + 1))
+
+        # Orca 連携: SSH 有効時に隔離 SSH config を再生成し、追加インスタンスを
+        # 反映する (up 経路と同様 best-effort。失敗しても scale の戻り値は変えない)。
+        _maybe_orca_sync()
 
         logger.info("=== Scale completed successfully ===")
         logger.info("Container scale: %d -> %d", current_scale, new_scale)

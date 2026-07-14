@@ -200,7 +200,10 @@ def _render_config(targets: Sequence[SSHTarget], hostname: str, user: str) -> st
         lines.append(f"  HostName {hostname}")
         lines.append(f"  Port {t.port}")
         lines.append(f"  User {user}")
-        lines.append("  IdentityFile ~/.ssh/id_ed25519")
+        # IdentityFile はあえて出力しない。env init 側は id_ed25519 / id_rsa の
+        # いずれも公開鍵として収集するため、鍵種別を固定するとどちらか一方しか
+        # 持たないユーザーで不一致が起きる。SSH クライアント / Orca の既定の
+        # 秘密鍵解決 (id_ed25519, id_rsa, ... の順に試行) に委ねる。
         lines.append("  StrictHostKeyChecking accept-new")
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"

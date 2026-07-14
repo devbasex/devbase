@@ -81,7 +81,7 @@ flowchart TD
 
 > **Note:** すでに `env init` 済みで公開鍵だけ追加・更新したい場合は `devbase env sync` を実行するか、`devbase env set SSH_AUTHORIZED_KEYS=...` で直接設定できます。**複数行（複数鍵）に対応**するため、Mac と Windows の両方から接続する場合は 1 行に 1 鍵ずつ両方を登録できます。
 >
-> 生成 config の `IdentityFile`（既定 `~/.ssh/id_ed25519`）は **Orca を動かすマシン上の秘密鍵パス**です。Windows から接続する場合は Windows のホームにある秘密鍵を指すため、登録した Windows の公開鍵と対応します。
+> 生成 config には `IdentityFile` を出力しません。SSH クライアント / Orca が既定の秘密鍵（`~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, …）を順に試行するため、`id_ed25519` でも `id_rsa` でも登録した公開鍵と対応する秘密鍵が使われます。特定の鍵を強制したい場合は、接続元マシンの `~/.ssh/config` で該当 `Host` に `IdentityFile` を追記してください。
 
 ### 2. SSH を有効にして起動する（`ENABLE_SSH=true`）
 
@@ -118,7 +118,6 @@ Host devbase-carmo-1
   HostName 127.0.0.1
   Port 2231
   User ubuntu
-  IdentityFile ~/.ssh/id_ed25519
   StrictHostKeyChecking accept-new
 ```
 
