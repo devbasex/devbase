@@ -13,6 +13,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update; \
     apt-get install -y --no-install-recommends \
     locales git wget vim sudo nano jq make unzip \
+    openssh-server \
     curl ca-certificates gnupg lsb-release \
     libnss3 libxrandr2 libxss1 \
     fonts-noto-cjk fonts-noto-cjk-extra; \
@@ -122,6 +123,12 @@ RUN groupadd -f users; \
     echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users; \
     echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME; \
     chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME
+
+# sshd 設定（Orca 向け: 公開鍵認証のみ・Password 無効・TcpForwarding 有効）
+RUN set -eux; \
+    mkdir -p /run/sshd /etc/ssh/sshd_config.d; \
+    printf 'PasswordAuthentication no\nPubkeyAuthentication yes\nAllowTcpForwarding yes\nX11Forwarding no\nPermitRootLogin no\n' \
+    > /etc/ssh/sshd_config.d/10-devbase-orca.conf
 
 USER ${USERNAME}
 WORKDIR /tmp

@@ -218,6 +218,15 @@ graph TD
 | **go** | base | Go 開発環境 | Go 開発 |
 | **snapshot** | Ubuntu Noble | zstd のみ（約 80MB） | スナップショット専用 |
 
+### SSH サーバー（Orca 連携）
+
+base イメージには `openssh-server` が含まれます。環境変数 `ENABLE_SSH=true`（または `1`）を指定してコンテナを起動すると、entrypoint が sshd を起動します（既定は無効）。
+
+- 認証は公開鍵のみ（`SSH_AUTHORIZED_KEYS` に手元の公開鍵を設定）。
+- host key は初回起動時に install ごとに新規生成され（イメージ焼き込みの共通鍵は破棄）、`/persistent/ai/ssh/` に永続化されて再ビルド/再作成後も維持されます（Orca の known_hosts が壊れない）。
+
+> **Note:** `openssh-server` の追加は base イメージの変更のため、既存イメージには `devbase build --no-cache`（base 再ビルド）が必要です。
+
 ### AI CLI エイリアス
 
 general イメージ以降のコンテナ内では、以下の AI CLI ツールがエイリアスとして利用可能です。

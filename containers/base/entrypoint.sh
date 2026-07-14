@@ -261,6 +261,55 @@ done
 echo "AI agent settings symlinks setup completed"
 # ========================================
 
+# ========================================
+# SSH server (Orca 連携) — enabled by ENABLE_SSH=true
+# ========================================
+# NOTE: ~/.ssh は上の symlink setup で /persistent/ai/.ssh に張り替え済みのため、
+# authorized_keys の書き込みはこのブロック（symlink 生成後）で行う必要がある。
+if [ "$ENABLE_SSH" = "true" ] || [ "$ENABLE_SSH" = "1" ]; then
+    echo "Starting sshd for Orca..."
+
+    # host key を永続領域から復元、無ければ生成して保存する。
+    # 再ビルド/再作成で host key が変わると Orca 側 known_hosts が壊れるのを防ぐ。
+    # HOST_KEY_DIR は .ssh symlink とは別の独立ディレクトリ（ドット無し）。
+    HOST_KEY_DIR="/persistent/ai/ssh"
+    sudo mkdir -p "$HOST_KEY_DIR" || true
+    # host key の生成/復元と永続化を flock で直列化する。
+    # 同一ボリュームを共有する複数インスタンス間の競合 (TOCTOU) を防ぐ。
+    # flock は root 権限で lockfile を生成/取得する (HOST_KEY_DIR は root 所有)。
+    sudo flock "$HOST_KEY_DIR/.hostkey.lock" -c '
+        if ! ls /persistent/ai/ssh/ssh_host_*_key >/dev/null 2>&1; then
+            echo "Generating new install-unique sshd host keys..."
+            # イメージにビルド時焼き込みされた host key を先に除去してから再生成する。
+            # 除去しないと ssh-keygen -A が既存キーを検出して何も生成せず、
+            # イメージ由来の同一 (予測可能) な host key を全 install が共有してしまう。
+            rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+            ssh-keygen -A
+            cp /etc/ssh/ssh_host_*_key* /persistent/ai/ssh/ 2>/dev/null || true
+        fi
+        # 永続領域から /etc/ssh へ復元（毎回）
+        cp /persistent/ai/ssh/ssh_host_*_key* /etc/ssh/ 2>/dev/null || true
+    ' || true
+
+    # authorized_keys の展開（.ssh は /persistent/ai/.ssh へ symlink 済み）
+    if [ -n "$SSH_AUTHORIZED_KEYS" ]; then
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        printf '%s\n' "$SSH_AUTHORIZED_KEYS" > ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+        echo "authorized_keys installed"
+    else
+        # ~/.ssh は永続ストレージへの symlink のため、空にしただけでは前回書いた
+        # authorized_keys が残り、失効させたはずの鍵で login できてしまう。
+        # env を空にしたら永続化された鍵を確実に削除して失効を反映する。
+        rm -f ~/.ssh/authorized_keys
+        echo "Warning: SSH_AUTHORIZED_KEYS is empty; cleared persisted authorized_keys (public-key login disabled)"
+    fi
+
+    # sshd 起動（daemonize するため exec "$@" をブロックしない）
+    sudo /usr/sbin/sshd -e
+    echo "sshd started"
+fi
+
 # Git operations (optional, don't fail if they error)
 if [ -n "$GIT_USER" ] && [ -n "$GIT_REPO" ]; then
     # Clone repository only if it doesn't exist

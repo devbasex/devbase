@@ -14,7 +14,11 @@ from typing import Optional
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.volume.manager import ensure_volumes
-from devbase.volume.compose import generate_scaled_compose, get_dev_service_name
+from devbase.volume.compose import (
+    generate_scaled_compose,
+    get_dev_service_name,
+    get_running_published_host_ports,
+)
 from devbase.utils.docker import (
     docker_compose_down,
     docker_compose_up,
@@ -436,6 +440,50 @@ def _auto_snapshot() -> None:
         logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
 
 
+def _ssh_enabled() -> bool:
+    """ENABLE_SSH が真値 (true/1) かどうか (compose.py の判定と揃える)。"""
+    return os.environ.get('ENABLE_SSH', '').lower() in ('true', '1')
+
+
+def _maybe_orca_sync() -> None:
+    """up 完了後に Orca 用 SSH config を best-effort で再生成する (PLAN33)。
+
+    再生成の条件は「ENABLE_SSH が有効」または「Orca config が既に存在する」。
+    後者は ENABLE_SSH を true→false に切り替えて再 up した場合に、停止した
+    コンテナのエントリが古いまま残るのを剪定するため (config が存在する = 以前
+    Orca を設定済み)。ENABLE_SSH の gate を無条件に外すと、Orca を一切使わない
+    ユーザーの up でも毎回 config ファイルを新規生成してしまうため、config 未作成
+    (= 純粋な非 Orca ユーザー) のときは従来どおり何もしない。失敗しても warning
+    のみで up の戻り値には影響させない。import は遅延させて起動コストを避ける。
+    """
+    from devbase.commands.orca import config_exists, regenerate_config
+    if not _ssh_enabled() and not config_exists():
+        return
+    try:
+        targets, path = regenerate_config()
+        logger.info("Orca SSH config を同期しました (%d 件): %s", len(targets), path)
+    except Exception as e:  # noqa: BLE001 - Orca 同期で up を倒さない
+        logger.warning("Orca SSH config の同期に失敗しましたがデプロイは成功しています: %s", e)
+
+
+def _maybe_orca_prune() -> None:
+    """down 後に Orca 用 SSH config を best-effort で剪定する (PLAN33)。
+
+    稼働中コンテナから再生成するだけで停止済みエントリは自然に落ちる (prune ≡
+    regenerate)。ただし config が未作成の純粋な非 Orca ユーザーでは、剪定と称して
+    毎回 config ファイル (親ディレクトリ + ヘッダ) を新規生成してしまうため、
+    config が既に存在するときのみ実行する (_maybe_orca_sync と同じゲート)。
+    失敗しても warning のみで down の戻り値には影響させない。
+    """
+    try:
+        from devbase.commands.orca import config_exists, regenerate_config
+        if not config_exists():
+            return
+        regenerate_config()
+    except Exception as e:  # noqa: BLE001 - Orca 剪定で down を倒さない
+        logger.warning("Orca SSH config の剪定に失敗しました: %s", e)
+
+
 def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     """開く dev インスタンス番号を解決する (CLI 引数 → env ``DEVBASE_OPEN_INDEX`` → 既定 1)。
 
@@ -552,7 +600,14 @@ def cmd_up(project_name: str = None, scale: int = None,
             docker_compose_down()
 
         logger.info("[3/6] Generating scaled compose file...")
-        override_file = generate_scaled_compose(scale, project_name)
+        # 他プロジェクトが稼働 publish 済みのホストポートを best-effort でシードし、
+        # SSH publish ポートの跨ぎ衝突 (bind 失敗) を回避する。自プロジェクトの
+        # 稼働ポートは除外し、既存 dev-1..N の決定的ポートがずれないようにする。
+        override_file = generate_scaled_compose(
+            scale, project_name,
+            external_ports_provider=lambda: get_running_published_host_ports(
+                exclude_project=project_name),
+        )
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/6] Starting containers...")
@@ -573,6 +628,9 @@ def cmd_up(project_name: str = None, scale: int = None,
 
         _maybe_open_editor(project_name, open_editor, open_index, scale,
                            compose_file=override_file)
+
+        # Orca 連携: SSH 有効時に隔離 SSH config を再生成する (PLAN33)。
+        _maybe_orca_sync()
 
         logger.info("=== Deploy completed successfully ===")
         return 0
@@ -602,6 +660,9 @@ def cmd_down() -> int:
             mgr.rotate()
         except Exception as e:
             logger.warning("スナップショットのローテーションに失敗: %s", e)
+
+    # Orca 連携: 停止したコンテナのエントリを隔離 SSH config から剪定する (PLAN33)。
+    _maybe_orca_prune()
 
     return 0
 
@@ -684,7 +745,14 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
-        override_file = generate_scaled_compose(new_scale, project_name)
+        # scale では稼働中の自コンテナ (dev-1..現行数) が残ったまま compose を
+        # 再生成し --no-recreate する。自プロジェクトの publish を除外しないと
+        # 既存 dev-N の決定的ポートが「衝突」扱いでずれ、実コンテナと不一致になる。
+        override_file = generate_scaled_compose(
+            new_scale, project_name,
+            external_ports_provider=lambda: get_running_published_host_ports(
+                exclude_project=project_name),
+        )
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
@@ -711,6 +779,10 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(current_scale + 1, new_scale + 1))
+
+        # Orca 連携: SSH 有効時に隔離 SSH config を再生成し、追加インスタンスを
+        # 反映する (up 経路と同様 best-effort。失敗しても scale の戻り値は変えない)。
+        _maybe_orca_sync()
 
         logger.info("=== Scale completed successfully ===")
         logger.info("Container scale: %d -> %d", current_scale, new_scale)
