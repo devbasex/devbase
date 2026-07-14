@@ -58,6 +58,8 @@ HOST_SSH_HOST = "HOST_SSH_HOST"  # 任意。default: host.docker.internal
 ENABLE_SSH = "ENABLE_SSH"                        # 真偽。sshd を起動し :22 を publish するか
 DEVBASE_SSH_BIND = "DEVBASE_SSH_BIND"            # 任意。publish の bind 先 (既定 127.0.0.1)
 DEVBASE_SSH_PORT_BASE = "DEVBASE_SSH_PORT_BASE"  # 任意。ポート算出の起点 (既定 2200)
+SSH_AUTHORIZED_KEYS = "SSH_AUTHORIZED_KEYS"      # laptop 公開鍵。entrypoint が ~/.ssh/authorized_keys へ展開 (複数行可)
+DEVBASE_ORCA_HOSTNAME = "DEVBASE_ORCA_HOSTNAME"  # 任意。生成 config の HostName (既定 127.0.0.1。Tailscale 名 / LAN IP)
 
 # --- Editor (devbase up 後の自動オープン / PLAN31_3) ---
 # DEVBASE_OPEN_EDITOR は env init (collectors/editor.py) で対話設定する (既定 1)。
