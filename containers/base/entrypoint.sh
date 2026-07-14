@@ -261,6 +261,42 @@ done
 echo "AI agent settings symlinks setup completed"
 # ========================================
 
+# ========================================
+# SSH server (Orca 連携) — enabled by ENABLE_SSH=true
+# ========================================
+# NOTE: ~/.ssh は上の symlink setup で /persistent/ai/.ssh に張り替え済みのため、
+# authorized_keys の書き込みはこのブロック（symlink 生成後）で行う必要がある。
+if [ "$ENABLE_SSH" = "true" ] || [ "$ENABLE_SSH" = "1" ]; then
+    echo "Starting sshd for Orca..."
+
+    # host key を永続領域から復元、無ければ生成して保存する。
+    # 再ビルド/再作成で host key が変わると Orca 側 known_hosts が壊れるのを防ぐ。
+    # HOST_KEY_DIR は .ssh symlink とは別の独立ディレクトリ（ドット無し）。
+    HOST_KEY_DIR="/persistent/ai/ssh"
+    sudo mkdir -p "$HOST_KEY_DIR" || true
+    if ! sudo ls "$HOST_KEY_DIR"/ssh_host_*_key >/dev/null 2>&1; then
+        echo "Generating new sshd host keys..."
+        sudo ssh-keygen -A
+        sudo cp /etc/ssh/ssh_host_*_key* "$HOST_KEY_DIR"/ 2>/dev/null || true
+    fi
+    # 永続領域から /etc/ssh へ復元（毎回）
+    sudo cp "$HOST_KEY_DIR"/ssh_host_*_key* /etc/ssh/ 2>/dev/null || true
+
+    # authorized_keys の展開（.ssh は /persistent/ai/.ssh へ symlink 済み）
+    if [ -n "$SSH_AUTHORIZED_KEYS" ]; then
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        printf '%s\n' "$SSH_AUTHORIZED_KEYS" > ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+        echo "authorized_keys installed"
+    else
+        echo "Warning: SSH_AUTHORIZED_KEYS is empty; public-key login will not work"
+    fi
+
+    # sshd 起動（daemonize するため exec "$@" をブロックしない）
+    sudo /usr/sbin/sshd -e
+    echo "sshd started"
+fi
+
 # Git operations (optional, don't fail if they error)
 if [ -n "$GIT_USER" ] && [ -n "$GIT_REPO" ]; then
     # Clone repository only if it doesn't exist
