@@ -25,7 +25,9 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 from devbase.env import keys
 from devbase.log import get_logger
-from devbase.volume.compose import DEVBASE_INDEX_LABEL, DEVBASE_SSH_LABEL
+from devbase.volume.compose import (
+    DEVBASE_INDEX_LABEL, DEVBASE_SSH_LABEL, DEVBASE_USER_LABEL,
+)
 
 logger = get_logger(__name__)
 
@@ -50,15 +52,30 @@ _HEADER = (
 
 @dataclass(frozen=True)
 class SSHTarget:
-    """1 コンテナぶんの Orca SSH target。"""
+    """1 コンテナぶんの Orca SSH target。
+
+    ``user`` は各コンテナ自身のログインユーザー。sync は稼働中の全プロジェクトを
+    横断集約するため、集約側で一律ユーザーを適用すると container user が異なる別
+    プロジェクトのエントリで User が食い違う。そこで生成時に compose が焼き込んだ
+    ``dev.devbase.user`` ラベルから per-target で読み取り、エントリ毎に持たせる。
+    """
     project: str
     index: int
     port: int
+    user: str = DEFAULT_USER
 
 
 def _config_path() -> Path:
     """Orca 用隔離 SSH config の絶対パス (``~/.config/devbase/orca/ssh_config``)。"""
     return Path.home() / ".config" / "devbase" / "orca" / "ssh_config"
+
+
+def config_exists() -> bool:
+    """Orca 用 SSH config が既に存在するか (= 以前 Orca を設定済みか) を返す。
+
+    up フックが ENABLE_SSH 無効化後も剪定すべきかの判定に使う。
+    """
+    return _config_path().exists()
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +152,12 @@ def _parse_inspect(containers, bind: Optional[str] = None) -> List[SSHTarget]:
             labels.get(DEVBASE_INDEX_LABEL)
             or labels.get("com.docker.compose.container-number")
         )
-        targets.append(SSHTarget(project=project, index=index, port=host_port))
+        # ログインユーザーは各コンテナ自身のラベルから読む (集約側で一律適用しない)。
+        # ラベル未設定の旧コンテナは既定 ubuntu へフォールバックする。
+        user = labels.get(DEVBASE_USER_LABEL) or DEFAULT_USER
+        targets.append(
+            SSHTarget(project=project, index=index, port=host_port, user=user)
+        )
     return targets
 
 
@@ -195,18 +217,19 @@ def _running_ssh_targets() -> Optional[List[SSHTarget]]:
 # config レンダリング / 書き込み
 # ---------------------------------------------------------------------------
 
-def _render_config(targets: Sequence[SSHTarget], hostname: str, user: str) -> str:
+def _render_config(targets: Sequence[SSHTarget], hostname: str) -> str:
     """SSH target 群から config テキストを生成する純関数。
 
-    エントリは (project, index) 昇順で安定ソートする。target が空でもヘッダのみの
-    安全な空ファイルを返す。
+    エントリは (project, index) 昇順で安定ソートする。``User`` は各 target 自身の
+    値を出力する (プロジェクト毎に container user が異なりうるため一律適用しない)。
+    target が空でもヘッダのみの安全な空ファイルを返す。
     """
     lines = [_HEADER, ""]
     for t in sorted(targets, key=lambda x: (x.project, x.index)):
         lines.append(f"Host devbase-{t.project}-{t.index}")
         lines.append(f"  HostName {hostname}")
         lines.append(f"  Port {t.port}")
-        lines.append(f"  User {user}")
+        lines.append(f"  User {t.user}")
         # IdentityFile はあえて出力しない。env init 側は id_ed25519 / id_rsa の
         # いずれも公開鍵として収集するため、鍵種別を固定するとどちらか一方しか
         # 持たないユーザーで不一致が起きる。SSH クライアント / Orca の既定の
@@ -217,15 +240,15 @@ def _render_config(targets: Sequence[SSHTarget], hostname: str, user: str) -> st
 
 
 def _write_config(targets: Sequence[SSHTarget]) -> Path:
-    """config を全再生成して書き込み、パスを返す。親ディレクトリは作成する。"""
+    """config を全再生成して書き込み、パスを返す。親ディレクトリは作成する。
+
+    User は各 target が自プロジェクトの ``dev.devbase.user`` ラベルから既に持って
+    いるため、集約側 (ここ) ではユーザーを解決しない。HostName のみ env で調整する。
+    """
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     hostname = os.environ.get(keys.DEVBASE_ORCA_HOSTNAME) or DEFAULT_HOSTNAME
-    # コンテナのログインユーザーは常に ubuntu。ホストの ambient な USERNAME
-    # (Windows のアカウント名など) は読まない (User <windows-user> となり SSH 失敗する)。
-    # コンテナ側で USERNAME build arg を上書きした場合のみ DEVBASE_ORCA_USER で明示上書きする。
-    user = os.environ.get(keys.DEVBASE_ORCA_USER) or DEFAULT_USER
-    path.write_text(_render_config(targets, hostname, user), encoding="utf-8")
+    path.write_text(_render_config(targets, hostname), encoding="utf-8")
     return path
 
 

@@ -448,13 +448,18 @@ def _ssh_enabled() -> bool:
 def _maybe_orca_sync() -> None:
     """up 完了後に Orca 用 SSH config を best-effort で再生成する (PLAN33)。
 
-    ENABLE_SSH が有効なときのみ実行する (SSH 無効なら同期不要)。失敗しても
-    warning のみで up の戻り値には影響させない。import は遅延させて起動コストを避ける。
+    再生成の条件は「ENABLE_SSH が有効」または「Orca config が既に存在する」。
+    後者は ENABLE_SSH を true→false に切り替えて再 up した場合に、停止した
+    コンテナのエントリが古いまま残るのを剪定するため (config が存在する = 以前
+    Orca を設定済み)。ENABLE_SSH の gate を無条件に外すと、Orca を一切使わない
+    ユーザーの up でも毎回 config ファイルを新規生成してしまうため、config 未作成
+    (= 純粋な非 Orca ユーザー) のときは従来どおり何もしない。失敗しても warning
+    のみで up の戻り値には影響させない。import は遅延させて起動コストを避ける。
     """
-    if not _ssh_enabled():
+    from devbase.commands.orca import config_exists, regenerate_config
+    if not _ssh_enabled() and not config_exists():
         return
     try:
-        from devbase.commands.orca import regenerate_config
         targets, path = regenerate_config()
         logger.info("Orca SSH config を同期しました (%d 件): %s", len(targets), path)
     except Exception as e:  # noqa: BLE001 - Orca 同期で up を倒さない

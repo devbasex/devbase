@@ -10,8 +10,11 @@ from __future__ import annotations
 import yaml
 import pytest
 
+from devbase.errors import DockerError
 from devbase.volume import compose
-from devbase.volume.compose import DEVBASE_INDEX_LABEL, DEVBASE_SSH_LABEL
+from devbase.volume.compose import (
+    DEVBASE_INDEX_LABEL, DEVBASE_SSH_LABEL, DEVBASE_USER_LABEL,
+)
 from devbase.volume.ports import ssh_host_port, allocate_ssh_host_port, _stable_hash
 
 
@@ -36,6 +39,7 @@ def in_tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.delenv("ENABLE_SSH", raising=False)
     monkeypatch.delenv("DEVBASE_SSH_BIND", raising=False)
     monkeypatch.delenv("DEVBASE_SSH_PORT_BASE", raising=False)
+    monkeypatch.delenv("DEVBASE_ORCA_USER", raising=False)
     return tmp_path
 
 
@@ -140,6 +144,68 @@ def test_index_label_absent_when_disabled(in_tmp_cwd):
     scaled = _load_scaled(in_tmp_cwd)["services"]
 
     assert DEVBASE_INDEX_LABEL not in _labels_dict(scaled["dev-1"])
+
+
+# --- user ラベル (Orca per-target User の元データ) ---
+
+def test_user_label_defaults_to_ubuntu(in_tmp_cwd, monkeypatch):
+    """ENABLE_SSH=true で DEVBASE_ORCA_USER 未設定なら user ラベルは既定 ubuntu。"""
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=2, project_name="proj")
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+
+    for i in (1, 2):
+        assert _labels_dict(scaled[f"dev-{i}"]).get(DEVBASE_USER_LABEL) == "ubuntu"
+
+
+def test_user_label_reflects_orca_user_env(in_tmp_cwd, monkeypatch):
+    """DEVBASE_ORCA_USER を上書きすると user ラベルにそのプロジェクトの値が焼き込まれる。"""
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    monkeypatch.setenv("DEVBASE_ORCA_USER", "devuser")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=1, project_name="proj")
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+
+    assert _labels_dict(scaled["dev-1"]).get(DEVBASE_USER_LABEL) == "devuser"
+
+
+def test_user_label_absent_when_disabled(in_tmp_cwd):
+    """ENABLE_SSH 未設定なら user ラベルも付かない。"""
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=1, project_name="proj")
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+
+    assert DEVBASE_USER_LABEL not in _labels_dict(scaled["dev-1"])
+
+
+# --- DEVBASE_SSH_PORT_BASE のバリデーション ---
+
+def test_non_integer_port_base_raises_docker_error(in_tmp_cwd, monkeypatch):
+    """非整数の DEVBASE_SSH_PORT_BASE は stacktrace ではなく DockerError にする。"""
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    monkeypatch.setenv("DEVBASE_SSH_PORT_BASE", "not-a-number")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    with pytest.raises(DockerError) as exc:
+        compose.generate_scaled_compose(scale=1, project_name="proj")
+    # 変数名と不正値をメッセージに含める。
+    assert "DEVBASE_SSH_PORT_BASE" in str(exc.value)
+    assert "not-a-number" in str(exc.value)
+
+
+def test_port_base_over_max_raises_docker_error(in_tmp_cwd, monkeypatch):
+    """算出ホストポートが 65535 を超える巨大 base は DockerError にする。"""
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    monkeypatch.setenv("DEVBASE_SSH_PORT_BASE", "70000")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    with pytest.raises(DockerError) as exc:
+        compose.generate_scaled_compose(scale=1, project_name="proj")
+    assert "65535" in str(exc.value)
 
 
 @pytest.mark.parametrize("truthy", ["true", "True", "TRUE", "1"])

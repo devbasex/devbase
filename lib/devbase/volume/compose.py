@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Set
 
 from devbase.errors import DockerError
-from devbase.env.keys import ENABLE_SSH, DEVBASE_SSH_BIND, DEVBASE_SSH_PORT_BASE
+from devbase.env.keys import (
+    ENABLE_SSH, DEVBASE_SSH_BIND, DEVBASE_SSH_PORT_BASE, DEVBASE_ORCA_USER,
+)
 
 from .manager import get_work_volume_for_index, get_ai_volume_for_index
 from .ports import allocate_ssh_host_port
@@ -28,6 +30,17 @@ DEVBASE_SSH_LABEL = 'dev.devbase.ssh'
 # なり index の識別に使えない。Orca 隔離 config 生成が Host 名の重複を避けられるよう、
 # ENABLE_SSH 有効時に SSH ラベルと同時にこのラベルで実 index を明示する。
 DEVBASE_INDEX_LABEL = 'dev.devbase.index'
+
+# コンテナのログインユーザー (SSH の User) を保持する devbase 専用ラベル。
+# Orca 隔離 config は稼働中の全プロジェクトを横断集約するため、実行プロジェクトの
+# DEVBASE_ORCA_USER を全エントリに一律適用すると、container user が異なる別プロジェクト
+# のエントリで User が食い違いログインできなくなる。生成時に各プロジェクト自身の
+# 解決済みユーザーをこのラベルへ焼き込み、`_parse_inspect` が per-target で読み取る。
+DEVBASE_USER_LABEL = 'dev.devbase.user'
+
+# SSH publish のホストポートとして許容する範囲 (TCP ポート番号)。
+_MIN_TCP_PORT = 1
+_MAX_TCP_PORT = 65535
 
 
 def get_dev_service_name() -> str:
@@ -235,10 +248,27 @@ def _build_dev_instance(
     # can attach as a plain SSH host (PLAN33). Opt-in via ENABLE_SSH.
     if os.environ.get(ENABLE_SSH, '').lower() in ('true', '1'):
         bind = os.environ.get(DEVBASE_SSH_BIND, '127.0.0.1')
-        base = int(os.environ.get(DEVBASE_SSH_PORT_BASE, '2200'))
+        # base が整数でないと int() が ValueError を送出し up がスタックトレースで
+        # 落ちるため、明示的に握って変数名と値を含む DockerError に変換する。
+        base_raw = os.environ.get(DEVBASE_SSH_PORT_BASE, '2200')
+        try:
+            base = int(base_raw)
+        except (TypeError, ValueError):
+            raise DockerError(
+                f"{DEVBASE_SSH_PORT_BASE} は整数で指定してください "
+                f"(指定値: {base_raw!r})"
+            )
         # 決定的ポートを優先しつつ、同一生成内の他インスタンスや他プロジェクトの
         # 稼働 publish と衝突する場合は空きポートへずらして bind 失敗を避ける。
         port = allocate_ssh_host_port(project_name, index, base, used_ports)
+        # 巨大な base (や衝突回避で +N ずれた結果) が 65535 を超えると compose が
+        # 無効になり up 時に bind 失敗するため、確保後のポートを範囲検証する。
+        if not (_MIN_TCP_PORT <= port <= _MAX_TCP_PORT):
+            raise DockerError(
+                f"SSH publish のホストポート {port} が有効範囲 "
+                f"({_MIN_TCP_PORT}..{_MAX_TCP_PORT}) を超えました。"
+                f"{DEVBASE_SSH_PORT_BASE} を調整してください。"
+            )
         used_ports.add(port)
         service.setdefault('ports', []).append(f"{bind}:{port}:22")
         # devbase の SSH publish コンテナを識別する専用ラベル (Orca 隔離の必須条件)。
@@ -246,6 +276,11 @@ def _build_dev_instance(
         # dev インスタンス番号を明示するラベル (compose の container-number は別サービス
         # 展開のため全て 1 になり index 識別に使えないので、実 index をここで持たせる)。
         _add_ssh_label(service, DEVBASE_INDEX_LABEL, str(index))
+        # このプロジェクト自身の解決済みログインユーザーをラベルへ焼き込む。Orca 同期は
+        # 全プロジェクトを横断集約するため、集約側で一律ユーザーを適用せず各エントリが
+        # 自プロジェクトの値を持てるよう per-target で保持する。
+        resolved_user = os.environ.get(DEVBASE_ORCA_USER) or 'ubuntu'
+        _add_ssh_label(service, DEVBASE_USER_LABEL, resolved_user)
 
     return service
 

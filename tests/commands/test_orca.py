@@ -44,7 +44,7 @@ def _args(subcommand):
 
 def test_render_config_basic_fields():
     targets = [SSHTarget(project="carmo", index=1, port=2231)]
-    out = orca._render_config(targets, hostname="127.0.0.1", user="ubuntu")
+    out = orca._render_config(targets, hostname="127.0.0.1")
 
     assert out.startswith("# Managed by devbase")
     assert "Host devbase-carmo-1" in out
@@ -62,7 +62,7 @@ def test_render_config_sorts_by_project_then_index():
         SSHTarget(project="alpha", index=2, port=2211),
         SSHTarget(project="alpha", index=1, port=2210),
     ]
-    out = orca._render_config(targets, hostname="127.0.0.1", user="ubuntu")
+    out = orca._render_config(targets, hostname="127.0.0.1")
 
     order = [
         out.index("Host devbase-alpha-1"),
@@ -78,7 +78,7 @@ def test_render_config_isolation_only_devbase_hosts():
         SSHTarget(project="carmo", index=1, port=2231),
         SSHTarget(project="orca-web", index=1, port=2251),
     ]
-    out = orca._render_config(targets, hostname="127.0.0.1", user="ubuntu")
+    out = orca._render_config(targets, hostname="127.0.0.1")
 
     host_lines = [ln for ln in out.splitlines() if ln.startswith("Host ")]
     assert host_lines == ["Host devbase-carmo-1", "Host devbase-orca-web-1"]
@@ -86,13 +86,13 @@ def test_render_config_isolation_only_devbase_hosts():
 
 
 def test_render_config_empty_targets_is_header_only():
-    out = orca._render_config([], hostname="127.0.0.1", user="ubuntu")
+    out = orca._render_config([], hostname="127.0.0.1")
     assert out.strip() == orca._HEADER
     assert "Host " not in out
 
 
 # ---------------------------------------------------------------------------
-# HostName / User の env 上書き (書き込み経由で確認)
+# HostName の env 上書き / User の per-target 出力
 # ---------------------------------------------------------------------------
 
 def test_orca_hostname_env_overrides_hostname(home_in_tmp, monkeypatch):
@@ -109,14 +109,38 @@ def test_hostname_defaults_to_loopback_when_unset(home_in_tmp):
     assert "  HostName 127.0.0.1" in path.read_text(encoding="utf-8")
 
 
-def test_orca_user_env_overrides_user(home_in_tmp, monkeypatch):
-    """devbase 専用の DEVBASE_ORCA_USER で User を上書きできる。"""
-    monkeypatch.setenv("DEVBASE_ORCA_USER", "devuser")
-    path = orca._write_config([SSHTarget(project="carmo", index=1, port=2231)])
-    assert "  User devuser" in path.read_text(encoding="utf-8")
+def test_render_uses_per_target_user():
+    """User は各 target 自身の値を出力する (集約側で一律適用しない)。"""
+    out = orca._render_config(
+        [SSHTarget(project="carmo", index=1, port=2231, user="devuser")],
+        hostname="127.0.0.1",
+    )
+    assert "  User devuser" in out
 
 
-def test_user_defaults_to_ubuntu_when_unset(home_in_tmp):
+def test_render_distinct_users_per_target():
+    """container user の異なる 2 プロジェクトはそれぞれ別の User 行を出力する。
+
+    sync が全プロジェクトを横断集約しても、実行プロジェクトのユーザーを全エントリに
+    一律適用せず各エントリが自プロジェクトの User を持つことを保証する。
+    """
+    out = orca._render_config(
+        [
+            SSHTarget(project="alpha", index=1, port=2231, user="ubuntu"),
+            SSHTarget(project="bravo", index=1, port=2331, user="devuser"),
+        ],
+        hostname="127.0.0.1",
+    )
+    lines = out.splitlines()
+    alpha_i = lines.index("Host devbase-alpha-1")
+    bravo_i = lines.index("Host devbase-bravo-1")
+    # 各 Host ブロック内の User 行がそれぞれのユーザーになっている。
+    assert "  User ubuntu" in lines[alpha_i:bravo_i]
+    assert "  User devuser" in lines[bravo_i:]
+
+
+def test_user_defaults_to_ubuntu_when_label_absent(home_in_tmp):
+    """user 未指定の target (ラベル無し旧コンテナ相当) は既定 ubuntu を出力する。"""
     path = orca._write_config([SSHTarget(project="carmo", index=1, port=2231)])
     assert "  User ubuntu" in path.read_text(encoding="utf-8")
 
@@ -124,8 +148,8 @@ def test_user_defaults_to_ubuntu_when_unset(home_in_tmp):
 def test_host_username_is_ignored_for_user(home_in_tmp, monkeypatch):
     """ホストの ambient な USERNAME (Windows アカウント名等) は User に使わない。
 
-    Windows 上の Orca ホストでは USERNAME が Windows アカウント名になるが、
-    コンテナのログインユーザーは常に ubuntu。ホスト USERNAME を読むと SSH 失敗する。
+    Windows 上の Orca ホストでは USERNAME が Windows アカウント名になるが、User は
+    各 target 自身の値 (既定 ubuntu) を使うため、ホスト USERNAME は一切参照しない。
     """
     monkeypatch.setenv("USERNAME", "windows-account")
     path = orca._write_config([SSHTarget(project="carmo", index=1, port=2231)])
@@ -222,7 +246,7 @@ def test_cmd_orca_unknown_subcommand_returns_1(home_in_tmp):
 # ---------------------------------------------------------------------------
 
 def _container(project=None, number="1", ssh_port="2231", extra_ports=None,
-               ssh_label=True, index=None):
+               ssh_label=True, index=None, user=None):
     labels = {}
     if project is not None:
         labels["com.docker.compose.project"] = project
@@ -232,6 +256,9 @@ def _container(project=None, number="1", ssh_port="2231", extra_ports=None,
         labels["dev.devbase.ssh"] = "1"
         # dev インスタンス番号を保持する専用ラベル (未指定なら number をそのまま使う)。
         labels["dev.devbase.index"] = number if index is None else str(index)
+        # ログインユーザーラベル (user 指定時のみ付与。未指定は旧コンテナ相当)。
+        if user is not None:
+            labels["dev.devbase.user"] = user
     ports = dict(extra_ports or {})
     if ssh_port is not None:
         ports["22/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": ssh_port}]
@@ -312,7 +339,7 @@ def test_parse_inspect_uses_devbase_index_label_not_container_number():
         SSHTarget(project="carmo", index=1, port=2231),
         SSHTarget(project="carmo", index=2, port=2232),
     ]
-    out = orca._render_config(targets, hostname="127.0.0.1", user="ubuntu")
+    out = orca._render_config(targets, hostname="127.0.0.1")
     host_lines = [ln for ln in out.splitlines() if ln.startswith("Host ")]
     assert host_lines == ["Host devbase-carmo-1", "Host devbase-carmo-2"]
 
@@ -331,3 +358,33 @@ def test_parse_inspect_falls_back_to_container_number_without_index_label():
     }
     assert orca._parse_inspect([container]) == [
         SSHTarget(project="carmo", index=3, port=2233)]
+
+
+def test_parse_inspect_reads_user_label_per_target():
+    """各コンテナの dev.devbase.user ラベルを per-target で読み取り User に反映する。
+
+    container user の異なる 2 プロジェクトを集約しても、実行プロジェクトのユーザーを
+    一律適用せず各エントリが自プロジェクトの User を持つ (round5 の major fix)。
+    """
+    containers = [
+        _container(project="alpha", number="1", ssh_port="2231", user="ubuntu"),
+        _container(project="bravo", number="1", ssh_port="2331", user="devuser"),
+    ]
+    targets = {t.project: t for t in orca._parse_inspect(containers)}
+    assert targets["alpha"].user == "ubuntu"
+    assert targets["bravo"].user == "devuser"
+
+    out = orca._render_config(list(targets.values()), hostname="127.0.0.1")
+    lines = out.splitlines()
+    alpha_i = lines.index("Host devbase-alpha-1")
+    bravo_i = lines.index("Host devbase-bravo-1")
+    assert "  User ubuntu" in lines[alpha_i:bravo_i]
+    assert "  User devuser" in lines[bravo_i:]
+
+
+def test_parse_inspect_missing_user_label_defaults_ubuntu():
+    """dev.devbase.user ラベルが無い (旧コンテナ) 場合は既定 ubuntu になる。"""
+    containers = [_container(project="carmo", number="1", ssh_port="2231")]
+    targets = orca._parse_inspect(containers)
+    assert targets == [SSHTarget(project="carmo", index=1, port=2231, user="ubuntu")]
+    assert targets[0].user == "ubuntu"
