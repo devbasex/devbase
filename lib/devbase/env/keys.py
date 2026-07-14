@@ -51,6 +51,14 @@ SLACK_KEYS = ("SLACK_BOT_TOKEN", "SLACK_TEAM_ID",
 HOST_SSH_USER = "HOST_SSH_USER"
 HOST_SSH_HOST = "HOST_SSH_HOST"  # 任意。default: host.docker.internal
 
+# --- SSH server (Orca 連携 / PLAN33) ---
+# ENABLE_SSH=true のとき entrypoint が sshd を起動し、compose 生成が :22 を publish する。
+# publish ポートはプロジェクト名+index から決定的に算出する (lib/devbase/volume/ports.py)。
+# 詳細: docs/user/orca.md
+ENABLE_SSH = "ENABLE_SSH"                        # 真偽。sshd を起動し :22 を publish するか
+DEVBASE_SSH_BIND = "DEVBASE_SSH_BIND"            # 任意。publish の bind 先 (既定 127.0.0.1)
+DEVBASE_SSH_PORT_BASE = "DEVBASE_SSH_PORT_BASE"  # 任意。ポート算出の起点 (既定 2200)
+
 # --- Editor (devbase up 後の自動オープン / PLAN31_3) ---
 # DEVBASE_OPEN_EDITOR は env init (collectors/editor.py) で対話設定する (既定 1)。
 # 他はプロジェクト env / グローバル .env に手書きする devbase 動作設定。

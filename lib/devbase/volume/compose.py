@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from devbase.errors import DockerError
+from devbase.env.keys import ENABLE_SSH, DEVBASE_SSH_BIND, DEVBASE_SSH_PORT_BASE
 
 from .manager import get_work_volume_for_index, get_ai_volume_for_index
+from .ports import ssh_host_port
 
 # 旧 /home/ubuntu マウントは非推奨のため scale 生成時に除去する
 _DEPRECATED_TARGET = '/home/ubuntu'
@@ -142,7 +144,7 @@ def _load_compose_config(compose_file: Path) -> dict:
 
 
 def _build_dev_instance(
-    dev_service: dict, dev_service_name: str, index: int,
+    dev_service: dict, dev_service_name: str, index: int, project_name: str,
 ) -> dict:
     """Build the service definition for one scaled dev instance (dev-<index>)."""
     service = copy.deepcopy(dev_service)
@@ -161,11 +163,21 @@ def _build_dev_instance(
     service['volumes'] = _replace_volumes_for_instance(
         service.get('volumes', []), ai_volume, work_volume,
     )
+
+    # Publish the container's sshd (:22) to a deterministic host port so Orca
+    # can attach as a plain SSH host (PLAN33). Opt-in via ENABLE_SSH.
+    if os.environ.get(ENABLE_SSH, '').lower() in ('true', '1'):
+        bind = os.environ.get(DEVBASE_SSH_BIND, '127.0.0.1')
+        base = int(os.environ.get(DEVBASE_SSH_PORT_BASE, '2200'))
+        port = ssh_host_port(project_name, index, base)
+        service.setdefault('ports', []).append(f"{bind}:{port}:22")
+
     return service
 
 
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
+    project_name: str,
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances."""
     scaled_services = {}
@@ -186,7 +198,7 @@ def _build_scaled_services(
     # Generate a service for each instance
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i,
+            dev_service, dev_service_name, i, project_name,
         )
     return scaled_services
 
@@ -202,7 +214,8 @@ def generate_scaled_compose(
 
     Args:
         scale: Number of container instances
-        project_name: Project name (unused, kept for backward compatibility)
+        project_name: Project name. Used for deterministic SSH port allocation
+            (PLAN33) when ENABLE_SSH is set.
         compose_file: Source compose file path (default: compose.yml)
         dev_service_name: Name of the development service to scale (default: from DEV_SERVICE_NAME env or 'dev')
 
@@ -224,7 +237,7 @@ def generate_scaled_compose(
 
     scaled_config = {
         'services': _build_scaled_services(
-            services, dev_service, dev_service_name, scale,
+            services, dev_service, dev_service_name, scale, project_name,
         ),
         'volumes': _build_volumes_section(config, scale),
         'networks': _build_networks_section(config),
