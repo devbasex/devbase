@@ -470,10 +470,15 @@ def _maybe_orca_prune() -> None:
     """down 後に Orca 用 SSH config を best-effort で剪定する (PLAN33)。
 
     稼働中コンテナから再生成するだけで停止済みエントリは自然に落ちる (prune ≡
-    regenerate)。ENABLE_SSH の有無に依らず実行してよい。失敗しても warning のみ。
+    regenerate)。ただし config が未作成の純粋な非 Orca ユーザーでは、剪定と称して
+    毎回 config ファイル (親ディレクトリ + ヘッダ) を新規生成してしまうため、
+    config が既に存在するときのみ実行する (_maybe_orca_sync と同じゲート)。
+    失敗しても warning のみで down の戻り値には影響させない。
     """
     try:
-        from devbase.commands.orca import regenerate_config
+        from devbase.commands.orca import config_exists, regenerate_config
+        if not config_exists():
+            return
         regenerate_config()
     except Exception as e:  # noqa: BLE001 - Orca 剪定で down を倒さない
         logger.warning("Orca SSH config の剪定に失敗しました: %s", e)

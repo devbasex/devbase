@@ -74,3 +74,41 @@ def test_sync_never_raises_on_regenerate_failure(monkeypatch):
 
     # 例外が伝播しないこと。
     container._maybe_orca_sync()
+
+
+def test_prune_skipped_when_no_config(monkeypatch):
+    """down 後の剪定: config 未作成 (純粋な非 Orca ユーザー) なら再生成しない。
+
+    _maybe_orca_prune が無条件に regenerate_config を呼ぶと、Orca を一切使わない
+    ユーザーの down でも毎回 config ファイル (親ディレクトリ + ヘッダ) を生成して
+    しまう。config が存在しないときは何もしないことを保証する (round6)。
+    """
+    monkeypatch.setattr(orca, "config_exists", lambda: False)
+    calls = _stub_regenerate(monkeypatch)
+
+    container._maybe_orca_prune()
+
+    assert calls["n"] == 0
+
+
+def test_prune_runs_when_config_exists(monkeypatch):
+    """down 後の剪定: config が既に存在すれば再生成し停止済みエントリを剪定する。"""
+    monkeypatch.setattr(orca, "config_exists", lambda: True)
+    calls = _stub_regenerate(monkeypatch)
+
+    container._maybe_orca_prune()
+
+    assert calls["n"] == 1
+
+
+def test_prune_never_raises_on_regenerate_failure(monkeypatch):
+    """剪定の再生成が例外を投げても best-effort で握り潰し down を倒さない。"""
+    monkeypatch.setattr(orca, "config_exists", lambda: True)
+
+    def _boom():
+        raise RuntimeError("docker down")
+
+    monkeypatch.setattr(orca, "regenerate_config", _boom)
+
+    # 例外が伝播しないこと。
+    container._maybe_orca_prune()
