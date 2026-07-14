@@ -216,6 +216,8 @@ devbase がコンテナ内 `sshd` を publish して「普通の SSH host」と�
 
 sshd の host key はコンテナの `/persistent/ai/ssh/` に**永続化**され、再ビルド / 再作成時も同じ key が復元されます。したがって、再ビルド後も Orca 側 `known_hosts` の不一致警告は出ません。
 
+host key は初回起動時に、イメージに焼き込まれた鍵を破棄したうえで install ごとに新規生成されます（イメージ由来の予測可能な共通鍵は使いません）。生成と永続化は `flock` で直列化しているため、同一ボリュームを共有する複数インスタンスの競合でも安全です。
+
 初回接続時は生成 config の `StrictHostKeyChecking accept-new` により、host key が自動で登録されます。
 
 ### 接続できないときの確認順

@@ -223,7 +223,7 @@ graph TD
 base イメージには `openssh-server` が含まれます。環境変数 `ENABLE_SSH=true`（または `1`）を指定してコンテナを起動すると、entrypoint が sshd を起動します（既定は無効）。
 
 - 認証は公開鍵のみ（`SSH_AUTHORIZED_KEYS` に手元の公開鍵を設定）。
-- host key は `/persistent/ai/ssh/` に永続化され、再ビルド/再作成後も維持されます（Orca の known_hosts が壊れない）。
+- host key は初回起動時に install ごとに新規生成され（イメージ焼き込みの共通鍵は破棄）、`/persistent/ai/ssh/` に永続化されて再ビルド/再作成後も維持されます（Orca の known_hosts が壊れない）。
 
 > **Note:** `openssh-server` の追加は base イメージの変更のため、既存イメージには `devbase build --no-cache`（base 再ビルド）が必要です。
 

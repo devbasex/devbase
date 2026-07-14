@@ -268,7 +268,7 @@ def test_no_external_collision_keeps_deterministic_ports(in_tmp_cwd, monkeypatch
         assert _ssh_ports(scaled[f"dev-{i}"]) == [f"127.0.0.1:{port}:22"]
 
 
-# --- _running_published_host_ports(): 自プロジェクト除外 (scale 誤 recreate 回避) ---
+# --- get_running_published_host_ports(): 自プロジェクト除外 (scale 誤 recreate 回避) ---
 
 class _FakePS:
     """docker ps の CompletedProcess を模す軽量スタブ。"""
@@ -297,7 +297,7 @@ def test_running_ports_excludes_own_project(monkeypatch):
     )
     _fake_docker_ps(monkeypatch, stdout)
 
-    got = compose._running_published_host_ports(exclude_project="proj")
+    got = compose.get_running_published_host_ports(exclude_project="proj")
     assert got == set()  # 自プロジェクトのポートはシードに含めない
 
 
@@ -309,7 +309,7 @@ def test_running_ports_includes_foreign_project(monkeypatch):
     )
     _fake_docker_ps(monkeypatch, stdout)
 
-    got = compose._running_published_host_ports(exclude_project="proj")
+    got = compose.get_running_published_host_ports(exclude_project="proj")
     assert got == {2299}
 
 
@@ -321,14 +321,14 @@ def test_running_ports_no_exclude_collects_all(monkeypatch):
     )
     _fake_docker_ps(monkeypatch, stdout)
 
-    got = compose._running_published_host_ports()
+    got = compose.get_running_published_host_ports()
     assert got == {2231, 8080}
 
 
 def test_running_ports_empty_on_docker_failure(monkeypatch):
     """docker ps が失敗 (returncode != 0) なら空集合を返し生成を止めない。"""
     _fake_docker_ps(monkeypatch, stdout="", returncode=1)
-    assert compose._running_published_host_ports(exclude_project="proj") == set()
+    assert compose.get_running_published_host_ports(exclude_project="proj") == set()
 
 
 def test_scale_same_project_port_does_not_shift(in_tmp_cwd, monkeypatch):
@@ -350,7 +350,7 @@ def test_scale_same_project_port_does_not_shift(in_tmp_cwd, monkeypatch):
 
     compose.generate_scaled_compose(
         scale=2, project_name="proj",
-        external_ports_provider=lambda: compose._running_published_host_ports(
+        external_ports_provider=lambda: compose.get_running_published_host_ports(
             exclude_project="proj"),
     )
     scaled = _load_scaled(in_tmp_cwd)["services"]
@@ -369,7 +369,7 @@ def test_scale_foreign_project_port_still_shifts(in_tmp_cwd, monkeypatch):
 
     compose.generate_scaled_compose(
         scale=1, project_name="proj",
-        external_ports_provider=lambda: compose._running_published_host_ports(
+        external_ports_provider=lambda: compose.get_running_published_host_ports(
             exclude_project="proj"),
     )
     scaled = _load_scaled(in_tmp_cwd)["services"]

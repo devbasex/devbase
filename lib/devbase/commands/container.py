@@ -17,7 +17,7 @@ from devbase.volume.manager import ensure_volumes
 from devbase.volume.compose import (
     generate_scaled_compose,
     get_dev_service_name,
-    _running_published_host_ports,
+    get_running_published_host_ports,
 )
 from devbase.utils.docker import (
     docker_compose_down,
@@ -595,7 +595,7 @@ def cmd_up(project_name: str = None, scale: int = None,
         # 稼働ポートは除外し、既存 dev-1..N の決定的ポートがずれないようにする。
         override_file = generate_scaled_compose(
             scale, project_name,
-            external_ports_provider=lambda: _running_published_host_ports(
+            external_ports_provider=lambda: get_running_published_host_ports(
                 exclude_project=project_name),
         )
         logger.info("Generated: %s", override_file)
@@ -740,7 +740,7 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         # 既存 dev-N の決定的ポートが「衝突」扱いでずれ、実コンテナと不一致になる。
         override_file = generate_scaled_compose(
             new_scale, project_name,
-            external_ports_provider=lambda: _running_published_host_ports(
+            external_ports_provider=lambda: get_running_published_host_ports(
                 exclude_project=project_name),
         )
         logger.info("Generated: %s", override_file)

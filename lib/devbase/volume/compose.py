@@ -161,7 +161,7 @@ def _add_ssh_label(service: dict, label: str, value: str = '1') -> None:
         service['labels'] = {label: value}
 
 
-def _running_published_host_ports(exclude_project: Optional[str] = None) -> Set[int]:
+def get_running_published_host_ports(exclude_project: Optional[str] = None) -> Set[int]:
     """稼働中コンテナが publish 済みのホストポート集合を best-effort で返す。
 
     別プロジェクトのコンテナが既に握っているホストポートとの衝突を避けるため、
@@ -293,7 +293,7 @@ def generate_scaled_compose(
         external_ports_provider: 他プロジェクトが稼働 publish 済みのホストポート集合を
             返す関数 (SSH ポート衝突回避のシード)。None (既定) のときは外部ポートを
             シードしない (= 決定的ポートをそのまま使う。単体テストは docker 非依存)。
-            実行時の up 経路は :func:`_running_published_host_ports` を注入して
+            実行時の up 経路は :func:`get_running_published_host_ports` を注入して
             他プロジェクトとの衝突を best-effort で回避する。
 
     Returns:

@@ -282,7 +282,7 @@ def _cmd_status() -> int:
 
 def cmd_orca(
     devbase_root: Path, args,
-    targets_provider: Optional[Callable[[], List[SSHTarget]]] = None,
+    targets_provider: Optional[Callable[[], Optional[List[SSHTarget]]]] = None,
 ) -> int:
     """``devbase orca <sub>`` ディスパッチャ。
 

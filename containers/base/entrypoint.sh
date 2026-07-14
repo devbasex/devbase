@@ -274,13 +274,22 @@ if [ "$ENABLE_SSH" = "true" ] || [ "$ENABLE_SSH" = "1" ]; then
     # HOST_KEY_DIR は .ssh symlink とは別の独立ディレクトリ（ドット無し）。
     HOST_KEY_DIR="/persistent/ai/ssh"
     sudo mkdir -p "$HOST_KEY_DIR" || true
-    if ! sudo ls "$HOST_KEY_DIR"/ssh_host_*_key >/dev/null 2>&1; then
-        echo "Generating new sshd host keys..."
-        sudo ssh-keygen -A
-        sudo cp /etc/ssh/ssh_host_*_key* "$HOST_KEY_DIR"/ 2>/dev/null || true
-    fi
-    # 永続領域から /etc/ssh へ復元（毎回）
-    sudo cp "$HOST_KEY_DIR"/ssh_host_*_key* /etc/ssh/ 2>/dev/null || true
+    # host key の生成/復元と永続化を flock で直列化する。
+    # 同一ボリュームを共有する複数インスタンス間の競合 (TOCTOU) を防ぐ。
+    # flock は root 権限で lockfile を生成/取得する (HOST_KEY_DIR は root 所有)。
+    sudo flock "$HOST_KEY_DIR/.hostkey.lock" -c '
+        if ! ls /persistent/ai/ssh/ssh_host_*_key >/dev/null 2>&1; then
+            echo "Generating new install-unique sshd host keys..."
+            # イメージにビルド時焼き込みされた host key を先に除去してから再生成する。
+            # 除去しないと ssh-keygen -A が既存キーを検出して何も生成せず、
+            # イメージ由来の同一 (予測可能) な host key を全 install が共有してしまう。
+            rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+            ssh-keygen -A
+            cp /etc/ssh/ssh_host_*_key* /persistent/ai/ssh/ 2>/dev/null || true
+        fi
+        # 永続領域から /etc/ssh へ復元（毎回）
+        cp /persistent/ai/ssh/ssh_host_*_key* /etc/ssh/ 2>/dev/null || true
+    ' || true
 
     # authorized_keys の展開（.ssh は /persistent/ai/.ssh へ symlink 済み）
     if [ -n "$SSH_AUTHORIZED_KEYS" ]; then
