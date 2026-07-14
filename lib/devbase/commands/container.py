@@ -436,6 +436,40 @@ def _auto_snapshot() -> None:
         logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
 
 
+def _ssh_enabled() -> bool:
+    """ENABLE_SSH が真値 (true/1) かどうか (compose.py の判定と揃える)。"""
+    return os.environ.get('ENABLE_SSH', '').lower() in ('true', '1')
+
+
+def _maybe_orca_sync() -> None:
+    """up 完了後に Orca 用 SSH config を best-effort で再生成する (PLAN33)。
+
+    ENABLE_SSH が有効なときのみ実行する (SSH 無効なら同期不要)。失敗しても
+    warning のみで up の戻り値には影響させない。import は遅延させて起動コストを避ける。
+    """
+    if not _ssh_enabled():
+        return
+    try:
+        from devbase.commands.orca import regenerate_config
+        targets, path = regenerate_config()
+        logger.info("Orca SSH config を同期しました (%d 件): %s", len(targets), path)
+    except Exception as e:  # noqa: BLE001 - Orca 同期で up を倒さない
+        logger.warning("Orca SSH config の同期に失敗しましたがデプロイは成功しています: %s", e)
+
+
+def _maybe_orca_prune() -> None:
+    """down 後に Orca 用 SSH config を best-effort で剪定する (PLAN33)。
+
+    稼働中コンテナから再生成するだけで停止済みエントリは自然に落ちる (prune ≡
+    regenerate)。ENABLE_SSH の有無に依らず実行してよい。失敗しても warning のみ。
+    """
+    try:
+        from devbase.commands.orca import regenerate_config
+        regenerate_config()
+    except Exception as e:  # noqa: BLE001 - Orca 剪定で down を倒さない
+        logger.warning("Orca SSH config の剪定に失敗しました: %s", e)
+
+
 def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     """開く dev インスタンス番号を解決する (CLI 引数 → env ``DEVBASE_OPEN_INDEX`` → 既定 1)。
 
@@ -574,6 +608,9 @@ def cmd_up(project_name: str = None, scale: int = None,
         _maybe_open_editor(project_name, open_editor, open_index, scale,
                            compose_file=override_file)
 
+        # Orca 連携: SSH 有効時に隔離 SSH config を再生成する (PLAN33)。
+        _maybe_orca_sync()
+
         logger.info("=== Deploy completed successfully ===")
         return 0
 
@@ -602,6 +639,9 @@ def cmd_down() -> int:
             mgr.rotate()
         except Exception as e:
             logger.warning("スナップショットのローテーションに失敗: %s", e)
+
+    # Orca 連携: 停止したコンテナのエントリを隔離 SSH config から剪定する (PLAN33)。
+    _maybe_orca_prune()
 
     return 0
 
