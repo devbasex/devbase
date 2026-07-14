@@ -25,11 +25,21 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 from devbase.env import keys
 from devbase.log import get_logger
+from devbase.volume.compose import DEVBASE_SSH_LABEL
 
 logger = get_logger(__name__)
 
 DEFAULT_HOSTNAME = "127.0.0.1"
 DEFAULT_USER = "ubuntu"
+
+
+class OrcaEnumerationError(RuntimeError):
+    """稼働中コンテナの列挙 (docker 照会) に失敗したことを表す。
+
+    「稼働 target 0 件」(docker は成功、SSH コンテナが無い) とは区別する。この例外が
+    上がった場合は既存 config を **上書きしない** ことで、docker の一時的失敗により
+    有効なエントリが消えるのを防ぐ。
+    """
 
 # 生成ファイル先頭に置く管理ブロックのヘッダ (docs/user/orca.md と一致させる)。
 _HEADER = (
@@ -90,10 +100,12 @@ def _pick_host_port(port_bindings: Sequence[dict], bind: Optional[str]) -> Optio
 def _parse_inspect(containers, bind: Optional[str] = None) -> List[SSHTarget]:
     """``docker inspect`` の JSON (コンテナ配列) から SSH target を抽出する純関数。
 
-    compose project ラベルを持ち、かつ ``22/tcp`` を publish しているコンテナだけを
-    対象にする。この 2 条件によるフィルタが隔離を担保する (devbase の SSH 有効
-    コンテナだけが Orca config に現れる)。project ラベルが無い / ``22/tcp`` を
-    publish しないコンテナ (= Orca SSH target ではない) は除外する。
+    devbase 専用ラベル (``dev.devbase.ssh``) を持ち、かつ compose project ラベルを
+    持ち、かつ ``22/tcp`` を publish しているコンテナだけを対象にする。この 3 条件に
+    よるフィルタが隔離を担保する (devbase が SSH publish した dev コンテナだけが Orca
+    config に現れる)。専用ラベルを必須にすることで、同じ Docker daemon 上にある
+    devbase 以外の Compose SSH コンテナ (たまたま ``22/tcp`` を publish するもの) が
+    混入するのを防ぐ。
 
     コンテナ名を dash で split して project/index を得る方式は取らない
     (project 名自体が dash を含みうるため)。ラベルから直接読む。
@@ -102,6 +114,9 @@ def _parse_inspect(containers, bind: Optional[str] = None) -> List[SSHTarget]:
     for container in containers or []:
         config = container.get("Config") or {}
         labels = config.get("Labels") or {}
+        # devbase 専用ラベルが無いコンテナは対象外 (他 Compose プロジェクトの隔離)。
+        if not labels.get(DEVBASE_SSH_LABEL):
+            continue
         project = labels.get("com.docker.compose.project")
         if not project:
             continue
@@ -139,26 +154,32 @@ def _docker_json(args: Sequence[str]) -> Optional[str]:
     return result.stdout
 
 
-def _running_ssh_targets() -> List[SSHTarget]:
+def _running_ssh_targets() -> Optional[List[SSHTarget]]:
     """稼働中の devbase SSH コンテナを docker から列挙する (best-effort)。
 
     ``docker ps -q`` で稼働中コンテナ id を集め、``docker inspect`` の JSON を
-    :func:`_parse_inspect` に渡す。docker が無い / 失敗した場合は空リストを返す。
+    :func:`_parse_inspect` に渡す。
+
+    Returns:
+        - ``List[SSHTarget]``: 列挙に成功した場合 (0 件なら空リスト)。
+        - ``None``: docker が無い / 実行失敗 / 出力解析失敗など、**列挙自体に失敗**
+          した場合。「稼働 0 件」(空リスト) と区別し、呼び出し側が既存 config を
+          保持できるようにする。
     """
     ps_out = _docker_json(["ps", "-q"])
     if ps_out is None:
-        return []
+        return None
     ids = ps_out.split()
     if not ids:
         return []
     inspect_out = _docker_json(["inspect", *ids])
     if inspect_out is None:
-        return []
+        return None
     try:
         containers = json.loads(inspect_out)
     except json.JSONDecodeError as e:
         logger.warning("docker inspect の出力を解析できませんでした (Orca 同期をスキップ): %s", e)
-        return []
+        return None
     bind = os.environ.get(keys.DEVBASE_SSH_BIND) or None
     return _parse_inspect(containers, bind=bind)
 
@@ -196,14 +217,24 @@ def _write_config(targets: Sequence[SSHTarget]) -> Path:
 
 
 def regenerate_config(
-    targets_provider: Optional[Callable[[], List[SSHTarget]]] = None,
+    targets_provider: Optional[Callable[[], Optional[List[SSHTarget]]]] = None,
 ) -> Tuple[List[SSHTarget], Path]:
     """稼働中コンテナを列挙して config を全再生成する。``(targets, path)`` を返す。
 
     up/down フックからも呼べる共通エントリ。``targets_provider`` はテスト注入用。
+
+    列挙が失敗した (provider が ``None`` を返した) 場合は :class:`OrcaEnumerationError`
+    を送出し、**既存 config を上書きしない**。docker の一時的失敗で有効なエントリが
+    ヘッダのみに消えるのを防ぐため、「稼働 0 件」(空リスト → ヘッダのみ書き出し) とは
+    明確に区別する。
     """
     provider = targets_provider or _running_ssh_targets
-    targets = list(provider())
+    result = provider()
+    if result is None:
+        raise OrcaEnumerationError(
+            "稼働中コンテナの列挙に失敗しました (docker 応答なし)。既存 config を保持します。"
+        )
+    targets = list(result)
     path = _write_config(targets)
     return targets, path
 
@@ -212,9 +243,17 @@ def regenerate_config(
 # サブコマンド
 # ---------------------------------------------------------------------------
 
-def _cmd_regenerate(targets_provider: Optional[Callable[[], List[SSHTarget]]]) -> int:
-    """sync / prune 共通の再生成処理。停止済みは列挙から外れるため両者は同義。"""
-    targets, path = regenerate_config(targets_provider)
+def _cmd_regenerate(targets_provider: Optional[Callable[[], Optional[List[SSHTarget]]]]) -> int:
+    """sync / prune 共通の再生成処理。停止済みは列挙から外れるため両者は同義。
+
+    列挙に失敗した場合は既存 config を保持したまま非ゼロで終了する (既存エントリを
+    ヘッダのみに消さない)。
+    """
+    try:
+        targets, path = regenerate_config(targets_provider)
+    except OrcaEnumerationError as e:
+        logger.error("Orca SSH config の再生成に失敗しました (既存 config は保持しました): %s", e)
+        return 1
     if targets:
         logger.info("Orca SSH config を生成しました (%d 件): %s", len(targets), path)
     else:

@@ -2,18 +2,25 @@
 
 import copy
 import os
+import re
+import subprocess
 import yaml
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Set
 
 from devbase.errors import DockerError
 from devbase.env.keys import ENABLE_SSH, DEVBASE_SSH_BIND, DEVBASE_SSH_PORT_BASE
 
 from .manager import get_work_volume_for_index, get_ai_volume_for_index
-from .ports import ssh_host_port
+from .ports import allocate_ssh_host_port
 
 # 旧 /home/ubuntu マウントは非推奨のため scale 生成時に除去する
 _DEPRECATED_TARGET = '/home/ubuntu'
+
+# devbase が SSH publish する dev コンテナを他 Compose プロジェクトと識別するための
+# 専用ラベル。Orca 隔離 config 生成 (commands/orca.py `_parse_inspect`) が対象を
+# 絞り込む必須条件として参照する。ENABLE_SSH 有効時に :22 publish と同時に付与する。
+DEVBASE_SSH_LABEL = 'dev.devbase.ssh'
 
 
 def get_dev_service_name() -> str:
@@ -143,10 +150,50 @@ def _load_compose_config(compose_file: Path) -> dict:
         raise DockerError(f"Failed to parse compose file: {e}")
 
 
+def _add_ssh_label(service: dict, label: str, value: str = '1') -> None:
+    """service へラベルを付与する (labels の dict / list どちらの形式にも対応)。"""
+    labels = service.get('labels')
+    if isinstance(labels, list):
+        labels.append(f"{label}={value}")
+    elif isinstance(labels, dict):
+        labels[label] = value
+    else:
+        service['labels'] = {label: value}
+
+
+def _running_published_host_ports() -> Set[int]:
+    """稼働中コンテナが publish 済みのホストポート集合を best-effort で返す。
+
+    別プロジェクトのコンテナが既に握っているホストポートとの衝突を避けるため、
+    compose 生成時に docker から現況を収集して :func:`allocate_ssh_host_port` の
+    ``used_ports`` に混ぜる。docker が無い / 失敗しても空集合を返して生成を止めない
+    (その場合は決定的ポートにそのままフォールバックする)。
+    """
+    try:
+        result = subprocess.run(
+            ['docker', 'ps', '--format', '{{.Ports}}'],
+            capture_output=True, text=True, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if result.returncode != 0:
+        return set()
+    ports: Set[int] = set()
+    # 例: "127.0.0.1:2231->22/tcp, 0.0.0.0:8080->80/tcp"
+    for match in re.finditer(r":(\d+)->", result.stdout):
+        ports.add(int(match.group(1)))
+    return ports
+
+
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int, project_name: str,
+    used_ports: Set[int],
 ) -> dict:
-    """Build the service definition for one scaled dev instance (dev-<index>)."""
+    """Build the service definition for one scaled dev instance (dev-<index>).
+
+    ``used_ports`` は既に割り当て済み / 使用中のホストポート集合。SSH publish の
+    ポートを確保したら、この集合に追加して後続インスタンスとの衝突を防ぐ。
+    """
     service = copy.deepcopy(dev_service)
     service['container_name'] = f"${{COMPOSE_PROJECT_NAME}}-{dev_service_name}-{index}"
 
@@ -169,17 +216,28 @@ def _build_dev_instance(
     if os.environ.get(ENABLE_SSH, '').lower() in ('true', '1'):
         bind = os.environ.get(DEVBASE_SSH_BIND, '127.0.0.1')
         base = int(os.environ.get(DEVBASE_SSH_PORT_BASE, '2200'))
-        port = ssh_host_port(project_name, index, base)
+        # 決定的ポートを優先しつつ、同一生成内の他インスタンスや他プロジェクトの
+        # 稼働 publish と衝突する場合は空きポートへずらして bind 失敗を避ける。
+        port = allocate_ssh_host_port(project_name, index, base, used_ports)
+        used_ports.add(port)
         service.setdefault('ports', []).append(f"{bind}:{port}:22")
+        # devbase の SSH publish コンテナを識別する専用ラベル (Orca 隔離の必須条件)。
+        _add_ssh_label(service, DEVBASE_SSH_LABEL)
 
     return service
 
 
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
-    project_name: str,
+    project_name: str, used_ports: Optional[Set[int]] = None,
 ) -> dict:
-    """Build the services section: non-dev services + dev-1..dev-N instances."""
+    """Build the services section: non-dev services + dev-1..dev-N instances.
+
+    ``used_ports`` は SSH publish のホストポート衝突回避に使う共有集合
+    (省略時は空集合から開始)。dev-1..N の生成を通じて割り当て済みポートを蓄積する。
+    """
+    if used_ports is None:
+        used_ports = set()
     scaled_services = {}
 
     # Copy non-dev services (mysql, valkey, etc.) — rewriting any
@@ -198,7 +256,7 @@ def _build_scaled_services(
     # Generate a service for each instance
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i, project_name,
+            dev_service, dev_service_name, i, project_name, used_ports,
         )
     return scaled_services
 
@@ -207,7 +265,8 @@ def generate_scaled_compose(
     scale: int,
     project_name: str,
     compose_file: Path = None,
-    dev_service_name: str = None
+    dev_service_name: str = None,
+    external_ports_provider: Optional[Callable[[], Set[int]]] = None,
 ) -> Path:
     """
     Generate scaled docker-compose file with per-instance volumes
@@ -218,6 +277,11 @@ def generate_scaled_compose(
             (PLAN33) when ENABLE_SSH is set.
         compose_file: Source compose file path (default: compose.yml)
         dev_service_name: Name of the development service to scale (default: from DEV_SERVICE_NAME env or 'dev')
+        external_ports_provider: 他プロジェクトが稼働 publish 済みのホストポート集合を
+            返す関数 (SSH ポート衝突回避のシード)。None (既定) のときは外部ポートを
+            シードしない (= 決定的ポートをそのまま使う。単体テストは docker 非依存)。
+            実行時の up 経路は :func:`_running_published_host_ports` を注入して
+            他プロジェクトとの衝突を best-effort で回避する。
 
     Returns:
         Path to generated .docker-compose.scale.yml
@@ -235,9 +299,14 @@ def generate_scaled_compose(
     if not dev_service:
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
 
+    # SSH publish のポート衝突回避シード: 呼び出し側 (up 経路) が他プロジェクトの
+    # 稼働 publish ポートを注入した場合はそれを初期集合にする。既定 (None) では
+    # シードせず、決定的ポートをそのまま使う (単体テストを docker 非依存に保つ)。
+    used_ports: Set[int] = set(external_ports_provider()) if external_ports_provider else set()
+
     scaled_config = {
         'services': _build_scaled_services(
-            services, dev_service, dev_service_name, scale, project_name,
+            services, dev_service, dev_service_name, scale, project_name, used_ports,
         ),
         'volumes': _build_volumes_section(config, scale),
         'networks': _build_networks_section(config),

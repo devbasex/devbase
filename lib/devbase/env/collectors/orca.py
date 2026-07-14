@@ -45,8 +45,11 @@ def collect_orca_info(env_file: EnvFile) -> None:
     """Orca 連携情報 (SSH 公開鍵 / HostName) を対話的に収集する"""
     print("\n=== Orca 連携 (SSH 公開鍵) ===")
 
-    # SSH_AUTHORIZED_KEYS: 既存値 > laptop の公開鍵 を既定として提示する。
-    # 公開鍵が見つからず既存値も無い場合はスキップ (公開鍵認証は鍵設定まで不可)。
+    # SSH_AUTHORIZED_KEYS: 既存値 > laptop (Mac) の公開鍵 を既定として提示する。
+    # 登録すべきは「Orca を動かすマシンの公開鍵」。同一 Mac の Orca なら自動収集した
+    # Mac の鍵で足りるが、Windows の Orca からは Windows の公開鍵を登録する必要がある
+    # (詳細: docs/user/orca.md)。公開鍵が見つからず既存値も無い場合はスキップ。
+    print("  ※ 登録するのは Orca を動かすマシンの公開鍵です (Windows の Orca なら Windows 側の鍵)。")
     default_keys = env_file.get(keys.SSH_AUTHORIZED_KEYS) or _default_public_key()
     if default_keys:
         value = safe_input(f"{keys.SSH_AUTHORIZED_KEYS} [{default_keys}]: ", default_keys)

@@ -11,7 +11,20 @@ import yaml
 import pytest
 
 from devbase.volume import compose
-from devbase.volume.ports import ssh_host_port, _stable_hash
+from devbase.volume.compose import DEVBASE_SSH_LABEL
+from devbase.volume.ports import ssh_host_port, allocate_ssh_host_port, _stable_hash
+
+
+def _labels_dict(service: dict) -> dict:
+    """service の labels を dict 化して返す (list / dict / 未設定に対応)。"""
+    labels = service.get("labels")
+    if isinstance(labels, list):
+        out = {}
+        for item in labels:
+            k, _, v = str(item).partition("=")
+            out[k] = v
+        return out
+    return dict(labels or {})
 
 
 @pytest.fixture
@@ -79,6 +92,28 @@ def test_ssh_ports_injected_when_enabled(in_tmp_cwd, monkeypatch):
     for i in (1, 2):
         port = ssh_host_port("proj", i, 2200)
         assert _ssh_ports(scaled[f"dev-{i}"]) == [f"127.0.0.1:{port}:22"]
+
+
+def test_ssh_label_injected_when_enabled(in_tmp_cwd, monkeypatch):
+    """ENABLE_SSH=true なら各 dev-<index> に devbase 専用ラベルが付く (Orca 隔離用)。"""
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=2, project_name="proj")
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+
+    for i in (1, 2):
+        assert _labels_dict(scaled[f"dev-{i}"]).get(DEVBASE_SSH_LABEL) == "1"
+
+
+def test_ssh_label_absent_when_disabled(in_tmp_cwd):
+    """ENABLE_SSH 未設定なら devbase 専用ラベルは付かない。"""
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=1, project_name="proj")
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+
+    assert DEVBASE_SSH_LABEL not in _labels_dict(scaled["dev-1"])
 
 
 @pytest.mark.parametrize("truthy", ["true", "True", "TRUE", "1"])
@@ -172,3 +207,62 @@ def test_index_shifts_port_within_project():
 def test_base_offsets_port():
     """base を変えるとポートも同じ差分だけずれる。"""
     assert ssh_host_port("proj", 1, 3000) == ssh_host_port("proj", 1, 2200) + 800
+
+
+# --- allocate_ssh_host_port(): 衝突回避付き確保 ---
+
+def test_allocate_returns_deterministic_when_free():
+    """used_ports に無ければ決定的ポートをそのまま返す (決定性を保つ)。"""
+    expected = ssh_host_port("proj", 1, 2200)
+    assert allocate_ssh_host_port("proj", 1, 2200, set()) == expected
+
+
+def test_allocate_probes_upward_when_deterministic_port_taken():
+    """決定的ポートが used_ports にあれば空きが見つかるまで +1 ずつずらす。"""
+    det = ssh_host_port("proj", 1, 2200)
+    used = {det}
+    got = allocate_ssh_host_port("proj", 1, 2200, used)
+    assert got == det + 1
+    assert got not in used
+
+
+def test_allocate_skips_run_of_taken_ports():
+    """連続して埋まっている場合は最初の空きまで飛ばす。"""
+    det = ssh_host_port("proj", 1, 2200)
+    used = {det, det + 1, det + 2}
+    assert allocate_ssh_host_port("proj", 1, 2200, used) == det + 3
+
+
+def test_cross_project_collision_avoided_via_external_ports(in_tmp_cwd, monkeypatch):
+    """他プロジェクトが握るポートを external_ports_provider で渡すと衝突を避ける。
+
+    別プロジェクトの稼働 publish が dev-1 の決定的ポートを占有している状況を模し、
+    dev-1 が別ポートへずれること (かつ決定性は衝突が無い限り保たれること) を確認する。
+    """
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    det1 = ssh_host_port("proj", 1, 2200)
+    # 他プロジェクトが det1 を占有中。
+    compose.generate_scaled_compose(
+        scale=1, project_name="proj",
+        external_ports_provider=lambda: {det1},
+    )
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+    ports = _ssh_ports(scaled["dev-1"])
+    assert ports == [f"127.0.0.1:{det1 + 1}:22"]  # 衝突回避で +1 へずれる
+
+
+def test_no_external_collision_keeps_deterministic_ports(in_tmp_cwd, monkeypatch):
+    """外部ポートと衝突しなければ決定的ポートがそのまま使われる。"""
+    monkeypatch.setenv("ENABLE_SSH", "true")
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(
+        scale=2, project_name="proj",
+        external_ports_provider=lambda: {9999},  # 無関係なポート
+    )
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+    for i in (1, 2):
+        port = ssh_host_port("proj", i, 2200)
+        assert _ssh_ports(scaled[f"dev-{i}"]) == [f"127.0.0.1:{port}:22"]

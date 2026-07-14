@@ -57,13 +57,31 @@ flowchart TD
 
 ### 1. 公開鍵を収集する（`devbase env init`）
 
-`devbase env init` を実行すると、手元の公開鍵（`~/.ssh/id_ed25519.pub` など）を `SSH_AUTHORIZED_KEYS` として収集します。この値は entrypoint がコンテナ内の `~/.ssh/authorized_keys` へ展開し、Orca からの公開鍵認証に使われます。
+`SSH_AUTHORIZED_KEYS` には **Orca を動かすマシンの公開鍵**を登録します。この値は entrypoint がコンテナ内の `~/.ssh/authorized_keys` へ展開し、Orca からの公開鍵認証に使われます。認証に使う秘密鍵は Orca 側（下記 config の `IdentityFile`）にあるため、両者が対になっている必要があります。
 
-```bash
-devbase env init
-```
+`devbase env init` は **Mac 上で実行される**ため、自動収集されるのは Mac の公開鍵（`~/.ssh/id_ed25519.pub` など）です。したがって登録手順は接続元によって変わります。
 
-> **Note:** すでに `env init` 済みで公開鍵だけ追加・更新したい場合は `devbase env sync` を実行するか、`devbase env set SSH_AUTHORIZED_KEYS=...` で直接設定できます。複数行（複数鍵）に対応します。
+- **パターン A: macOS 上の Orca**（同一 Mac） — 自動収集された Mac の公開鍵がそのまま Orca の鍵になるため、`devbase env init` だけで完了します。
+
+  ```bash
+  devbase env init
+  ```
+
+- **パターン B: Windows 上の Orca** — Orca は Windows 側の秘密鍵で接続するため、**Windows の公開鍵**を登録する必要があります（Mac の公開鍵では認証できません）。Windows 側で公開鍵を取得し、`SSH_AUTHORIZED_KEYS` に設定してください。
+
+  ```powershell
+  # Windows (PowerShell) — 公開鍵の内容を確認
+  type $env:USERPROFILE\.ssh\id_ed25519.pub
+  ```
+
+  ```bash
+  # Mac 側 — 上で表示された Windows の公開鍵を登録
+  devbase env set SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAA... user@windows"
+  ```
+
+> **Note:** すでに `env init` 済みで公開鍵だけ追加・更新したい場合は `devbase env sync` を実行するか、`devbase env set SSH_AUTHORIZED_KEYS=...` で直接設定できます。**複数行（複数鍵）に対応**するため、Mac と Windows の両方から接続する場合は 1 行に 1 鍵ずつ両方を登録できます。
+>
+> 生成 config の `IdentityFile`（既定 `~/.ssh/id_ed25519`）は **Orca を動かすマシン上の秘密鍵パス**です。Windows から接続する場合は Windows のホームにある秘密鍵を指すため、登録した Windows の公開鍵と対応します。
 
 ### 2. SSH を有効にして起動する（`ENABLE_SSH=true`）
 

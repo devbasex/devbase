@@ -14,7 +14,11 @@ from typing import Optional
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.volume.manager import ensure_volumes
-from devbase.volume.compose import generate_scaled_compose, get_dev_service_name
+from devbase.volume.compose import (
+    generate_scaled_compose,
+    get_dev_service_name,
+    _running_published_host_ports,
+)
 from devbase.utils.docker import (
     docker_compose_down,
     docker_compose_up,
@@ -586,7 +590,12 @@ def cmd_up(project_name: str = None, scale: int = None,
             docker_compose_down()
 
         logger.info("[3/6] Generating scaled compose file...")
-        override_file = generate_scaled_compose(scale, project_name)
+        # 他プロジェクトが稼働 publish 済みのホストポートを best-effort でシードし、
+        # SSH publish ポートの跨ぎ衝突 (bind 失敗) を回避する。
+        override_file = generate_scaled_compose(
+            scale, project_name,
+            external_ports_provider=_running_published_host_ports,
+        )
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/6] Starting containers...")
@@ -724,7 +733,10 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
-        override_file = generate_scaled_compose(new_scale, project_name)
+        override_file = generate_scaled_compose(
+            new_scale, project_name,
+            external_ports_provider=_running_published_host_ports,
+        )
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)

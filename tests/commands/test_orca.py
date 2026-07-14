@@ -123,10 +123,41 @@ def test_user_defaults_to_ubuntu_when_unset(home_in_tmp):
 # ---------------------------------------------------------------------------
 
 def test_regenerate_zero_targets_writes_header_only(home_in_tmp):
+    """docker 成功で稼働 0 件 (空リスト) のときはヘッダのみを書き出す (正常系)。"""
     targets, path = orca.regenerate_config(targets_provider=lambda: [])
     assert targets == []
     assert path == orca._config_path()
     assert path.read_text(encoding="utf-8").strip() == orca._HEADER
+
+
+def test_regenerate_enumeration_failure_preserves_existing_config(home_in_tmp):
+    """列挙失敗 (provider が None) のときは既存 config を上書きせず例外を送出する。
+
+    docker の一時的失敗で有効なエントリがヘッダのみに消える事故を防ぐ。
+    """
+    # まず有効なエントリを書き込んでおく。
+    orca.regenerate_config(targets_provider=lambda: [
+        SSHTarget(project="carmo", index=1, port=2231)])
+    before = orca._config_path().read_text(encoding="utf-8")
+    assert "Host devbase-carmo-1" in before
+
+    # 列挙失敗 → OrcaEnumerationError。ファイルは一切変更されない。
+    with pytest.raises(orca.OrcaEnumerationError):
+        orca.regenerate_config(targets_provider=lambda: None)
+
+    after = orca._config_path().read_text(encoding="utf-8")
+    assert after == before
+
+
+def test_cmd_regenerate_returns_nonzero_on_enumeration_failure(home_in_tmp):
+    """列挙失敗時 `devbase orca sync` は既存 config を保持したまま非ゼロで終了する。"""
+    orca.regenerate_config(targets_provider=lambda: [
+        SSHTarget(project="carmo", index=1, port=2231)])
+    before = orca._config_path().read_text(encoding="utf-8")
+
+    rc = orca.cmd_orca(home_in_tmp, _args("sync"), targets_provider=lambda: None)
+    assert rc == 1
+    assert orca._config_path().read_text(encoding="utf-8") == before
 
 
 def test_prune_drops_stale_entries(home_in_tmp):
@@ -174,11 +205,15 @@ def test_cmd_orca_unknown_subcommand_returns_1(home_in_tmp):
 # _parse_inspect: 22/tcp publish + compose ラベルで隔離
 # ---------------------------------------------------------------------------
 
-def _container(project=None, number="1", ssh_port="2231", extra_ports=None):
+def _container(project=None, number="1", ssh_port="2231", extra_ports=None,
+               ssh_label=True):
     labels = {}
     if project is not None:
         labels["com.docker.compose.project"] = project
         labels["com.docker.compose.container-number"] = number
+    if ssh_label:
+        # devbase が SSH publish 時に付ける専用ラベル (隔離の必須条件)。
+        labels["dev.devbase.ssh"] = "1"
     ports = dict(extra_ports or {})
     if ssh_port is not None:
         ports["22/tcp"] = [{"HostIp": "127.0.0.1", "HostPort": ssh_port}]
@@ -205,7 +240,18 @@ def test_parse_inspect_excludes_container_without_ssh_port():
 
 def test_parse_inspect_excludes_container_without_compose_project():
     """compose project ラベルが無いコンテナは除外 (隔離)。"""
-    containers = [_container(project=None, ssh_port="2231")]
+    containers = [_container(project=None, ssh_port="2231", ssh_label=False)]
+    assert orca._parse_inspect(containers) == []
+
+
+def test_parse_inspect_excludes_container_without_devbase_label():
+    """22/tcp を publish し compose project を持っても devbase 専用ラベルが無ければ除外。
+
+    同じ Docker daemon 上の devbase 以外の Compose SSH コンテナ (たまたま 22/tcp を
+    publish するもの) が Orca config に混入しないことを保証する。
+    """
+    containers = [_container(project="other-app", number="1", ssh_port="2231",
+                             ssh_label=False)]
     assert orca._parse_inspect(containers) == []
 
 
@@ -221,6 +267,7 @@ def test_parse_inspect_prefers_bind_matching_host_ip():
         "Config": {"Labels": {
             "com.docker.compose.project": "carmo",
             "com.docker.compose.container-number": "1",
+            "dev.devbase.ssh": "1",
         }},
         "NetworkSettings": {"Ports": {"22/tcp": [
             {"HostIp": "0.0.0.0", "HostPort": "9999"},
