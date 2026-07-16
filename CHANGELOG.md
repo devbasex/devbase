@@ -5,6 +5,11 @@
 ## [Unreleased]
 
 ### Added
+- **bi-tools プロジェクト用コンテナ (`containers/bi-tools`)** を追加しました。
+  `devbase-base` に dbt-core + dbt-bigquery（1.12 系 / Python 3.11）と Lightdash CLI
+  (`@lightdash/cli`) を追加し、BigQuery 上の共有 dbt プロジェクト（`dbt build` / `test`）と
+  `lightdash deploy` / `preview` をホストから実行できます。Evidence / Superset は各自の
+  docker-compose・プロジェクトローカル npm で動くためホスト CLI は追加していません。
 - **`devbase up` 後に dev コンテナへ接続した VS Code を自動オープン**できるように
   しました (PLAN31_3)。`DEVBASE_OPEN_EDITOR=1`（既定 OFF）で有効化、`devbase up
   --open` / `--no-open` で都度上書き。`/work/$GIT_REPO` をワークスペースとして開きます。
