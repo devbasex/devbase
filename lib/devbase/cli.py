@@ -55,7 +55,6 @@ SUBCMD_MAP = {
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
-    ('orca',):           ['sync', 'prune', 'status'],
 }
 
 # 後方互換: prefix が複数候補にマッチする場合に、特定の入力を特定のサブコマンドに
@@ -453,20 +452,6 @@ def _add_snapshot_parser(subparsers):
     s_rotate.add_argument('--keep', type=int, default=3, help='Generations to keep')
 
 
-def _add_orca_parser(subparsers):
-    """Orca group parser (PLAN33)。
-
-    Orca 用の隔離 SSH config を生成/剪定/表示する。sync/prune/status いずれも
-    追加の引数を取らない (稼働中コンテナから毎回全再生成する)。
-    """
-    orca_parser = subparsers.add_parser('orca', help='Manage the Orca SSH config')
-    orca_sub = orca_parser.add_subparsers(dest='subcommand')
-
-    orca_sub.add_parser('sync', help='Regenerate the Orca SSH config from running containers')
-    orca_sub.add_parser('prune', help='Remove stopped-container entries (= regenerate)')
-    orca_sub.add_parser('status', help='Show the Orca SSH config path, contents, and import steps')
-
-
 def _add_shortcuts(subparsers):
     """Top-level shortcut parsers.
 
@@ -550,7 +535,6 @@ def _create_parser():
     _add_env_parser(subparsers)
     _add_plugin_parser(subparsers)
     _add_snapshot_parser(subparsers)
-    _add_orca_parser(subparsers)
     _add_shortcuts(subparsers)
 
     return parser
@@ -585,7 +569,7 @@ def _expand_argv():
     # bin/devbase が build を shell 実装に委譲するため Python 側には top-level
     # build parser が無い。project build / container build は引き続き利用可能。
     commands = ['init', 'status', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
-                'snapshot', 'ss', 'orca', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'list', 'help']
+                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'list', 'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):
@@ -634,7 +618,6 @@ _ROOT_COMMANDS = {
     'env':      ('devbase.commands.env',      'cmd_env',      True),
     'plugin':   ('devbase.commands.plugin',   'cmd_plugin',   True),
     'snapshot': ('devbase.commands.snapshot', 'cmd_snapshot', True),
-    'orca':     ('devbase.commands.orca',     'cmd_orca',     True),
 }
 
 
