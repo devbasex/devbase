@@ -5,7 +5,13 @@
 > 改訂: 2026-07-17（レビュー反映: 削除順序の後置、Windows 移行、LSP trade-off、metadata 分割）  
 > 結論: **CLI を制御基盤、単一ウィンドウの VS Code Extension を主 UI とする二層構成**を推奨する。
 > ただし「単一 window（仮想 FS）」は手段であり、LSP 喪失が目的に見合わなければ「attach を残す
-> dashboard」路線へ切り替える。破壊的な sshd/Orca 削除は Phase 0 の Go 判定後に独立 PR で行う。
+> dashboard」路線へ切り替える。
+>
+> 削除順序について（実施済み・当初方針からの変更）: 当初は「破壊的な sshd/Orca 削除は Phase 0 の
+> Go 判定後に独立 PR で行う」方針だったが、接続性インシデントと base image／entrypoint／compose を
+> 複雑化させる維持コストを機に、**sshd/Orca 経路の削除を先行して実施した（本対応で撤去済み）**。
+> tmux + FileSystemProvider の feasibility spike は削除とは独立に Phase 0 で行う。理想は Go 判定後の
+> 削除だったが、代替が未実装の間 Windows Orca 利用者には Remote-SSH への移行を案内する（§3.1）。
 
 ## 1. 結論
 
@@ -88,11 +94,14 @@ Issue 33 の Orca 対応は再利用しない。Orca relay の prebuilt バイ�
 依存し、sshd と公開ポートも base image／entrypoint／compose を複雑化する。最終的には
 これらを削除して `docker exec` 経路へ一本化する。
 
-**ただし削除の実行タイミングは Phase 0 の Go 判定後とする。** sshd/Orca 対応は現に稼働中の
-ワークフロー（Windows Orca → Mac → コンテナへ SSH トンネル接続する運用）を支えている。
-tmux + FileSystemProvider の代替が feasible だと確認する前に削除すると、代替なしで既存機能だけを
-失うリスクがある。削除は agent orchestration の実装とは**独立した PR** に切り出し、Go 判定通過を
-条件にマージする。詳細な順序は §8 Phase 0 を参照。
+**削除は Go 判定を待たず先行して実施した（本対応で撤去済み）。** 当初方針は「Phase 0 の Go 判定後に
+独立 PR で削除」だったが、接続性インシデントと、sshd/公開ポートが base image／entrypoint／compose を
+複雑化させ続ける維持コストを踏まえ、agent orchestration の実装とは**独立した削除 PR** を先行させた。
+sshd/Orca 対応は稼働中のワークフロー（Windows Orca → Mac → コンテナへ SSH トンネル接続する運用）を
+支えていたため、削除により Windows Orca 利用者は一時的に代替（tmux + FileSystemProvider）が未実装の
+状態となる。この利用者には Remote-SSH への移行を案内する（§3.1）。tmux + FileSystemProvider の
+feasibility spike は削除とは独立に Phase 0 で行う（§8 Phase 0）。理想は Go 判定後の削除だったという
+教訓は残すが、本 doc は実施済みの判断（先行削除）に整合させている。
 
 ### 3.1 コンテナ SSH／Orca 対応の削除方針
 
@@ -127,7 +136,9 @@ sshd を削除すると、現行の「Windows Orca → SSH トンネル → コ�
 
 - Phase 0 の Go 条件に「Windows → Mac Remote-SSH 経由で `agent attach` が動く」ことを含める（§8）。
 - 現行 Orca 運用から新方式への移行手順を breaking change note に紐付けて残す。
-- 移行が完了するまでは §3.1 の削除 PR をマージしない、という順序制約を明示する。
+- sshd/Orca 経路は既に撤去済みのため、Windows Orca 利用者は代替 UI の完成を待たずに Remote-SSH
+  への移行が必要になる。移行が完了するまで削除を保留する当初制約は、先行削除の判断により解除した。
+  影響を受ける利用者へは breaking change note で Remote-SSH 移行手順を優先的に案内する。
 
 ## 4. 提案アーキテクチャ
 
@@ -415,10 +426,13 @@ devbase worktree remove <id>
 
 ### Phase 0: feasibility spike
 
-**この Phase では sshd／Orca 対応を削除しない。** 既存機能は残したまま代替の feasibility のみを
-検証し、Go 判定を通過してから §3.1 の削除を独立 PR で実行する（順序が本設計のリスク管理の要）。
+**この Phase では代替（tmux + FileSystemProvider）の feasibility のみを検証する。** sshd／Orca 経路の
+削除は、当初「Go 判定後に独立 PR で」実行する方針だったが、接続性インシデント等を機に**先行して
+実施済み**（§3.1）。したがって本 spike は削除の可否を判断するものではなく、撤去後の代替経路が
+成立するかを確認するものである。
 
-- base image に `tmux` を追加して arm64/amd64 で確認（削除ではなく追加なので既存機能に影響しない）。
+- base image に `tmux` を追加して arm64/amd64 で確認（この `tmux` 追加は Phase 0/1 の作業であり、
+  本削除 PR には含まれない。追加なので既存機能に影響しない）。
 - Codex／Claude／Gemini を detached 起動し、attach、detach、resize、capture、send、exit code を確認。
 - container stop/restart/recreate の境界を文書化。
 - VS Code local、WSL、Remote-SSH から `agent attach` を terminal で実行確認。
@@ -431,9 +445,11 @@ devbase worktree remove <id>
 **Go 条件:** 3 agent で detach 後も継続し、再 attach と終了コード取得が安定すること。加えて、
 別 window を開かず2つ以上の container のファイルを同じ editor area で安全に編集できること。
 
-**Go 後（別 PR）:** §3.1 に従い sshd／Orca relay を削除し、base build と既存 project の回帰、
-および Windows 利用者の移行完了を確認する。Go 条件を満たせなかった場合は削除を行わず、
-既存 SSH/Orca 経路を維持したまま設計を見直す。
+**削除との関係:** sshd／Orca relay の削除（§3.1）は本 spike の結果を待たず先行実施済みである。
+そのため Phase 0 は「削除の Go/No-Go 判定」ではなく、撤去後の代替（tmux + FileSystemProvider）が
+feasible かを確認する検証に位置づけが変わった。spike が成立しない場合でも sshd/Orca は復活させず、
+Windows 利用者向けには Remote-SSH 経由の attach を代替経路として維持しつつ設計を見直す。base build と
+既存 project の回帰、および Windows 利用者の Remote-SSH 移行状況は継続して確認する。
 
 ### Phase 1: 共通 CLI MVP
 
@@ -470,7 +486,7 @@ devbase worktree remove <id>
 
 | パス | 内容 |
 |---|---|
-| `containers/base/Dockerfile` | sshd／Orca relay 削除、`tmux` 追加 |
+| `containers/base/Dockerfile` | sshd／Orca relay 削除（本 PR で実施済み）。`tmux` 追加は Phase 0/1 の別作業でありこの削除 PR には含まない |
 | `containers/base/entrypoint.sh` | `ENABLE_SSH` と sshd 起動処理を削除 |
 | `lib/devbase/commands/orca.py` | 削除 |
 | `lib/devbase/volume/ports.py` | 削除（内容は SSH publish 専用。利用元は `compose.py` の `allocate_ssh_host_port` のみと確認済み） |
@@ -518,8 +534,8 @@ devbase worktree remove <id>
 | 仮想 filesystem で一部 extension が動かない | MVP の対応範囲を明示し、頻出言語だけ container Language Server adapter を追加 |
 | **LSP／デバッグ喪失が単一 window の目的と衝突** | 本設計の中心論点。Phase 0 で欠落度を実測し、フル仮想 FS 路線と「Dev Containers attach を残し既存 window に focus する dashboard」路線を比較（§6.4） |
 | **CLI と Extension の同時書き込みで metadata lost-update** | 単一 JSON をやめ session 単位ファイルにして書き込み衝突を回避。真実は Docker/tmux（§4.3） |
-| 既存 Windows Orca 利用者の運用断絶 | Remote-SSH 経由の代替を Phase 0 Go 条件に含め、移行完了まで sshd 削除 PR をマージしない（§3.1） |
-| Go 判定前に既存機能を削除して後戻り不能 | sshd/Orca 削除を Go 判定後の独立 PR に分離。spike 失敗時は削除しない（§8） |
+| 既存 Windows Orca 利用者の運用断絶 | sshd 削除を先行実施したため、代替 UI 完成前でも Remote-SSH 移行が必要。breaking change note で移行手順を優先案内し、Remote-SSH 経由の attach を Phase 0 Go 条件に含める（§3.1） |
+| Go 判定前に既存機能を削除した（後戻りコスト） | 当初は Go 判定後の独立 PR に分離し spike 失敗時は削除しない方針だったが、接続性インシデントと維持コストを機に先行削除。spike 失敗時も sshd は復活させず Remote-SSH 経路で縮退（§8） |
 | Docker 経由の file I/O が遅い | directory cache、差分更新、size 上限、bounded polling。計測してから最適化 |
 | Orca と重複開発になる | Monaco 自体は VS Code を使い、filesystem/Git/terminal の中継に限定 |
 
@@ -554,7 +570,7 @@ devbase worktree remove <id>
 ### 全体（回帰・削除）
 
 - [ ] 既存 `devbase up/login/list` と Issue 31 の editor open に回帰がない。
-- [ ] （Go 判定後の削除 PR 完了時）base image／entrypoint／生成 compose に sshd、Orca relay、
+- [x] （先行削除 PR で実施済み）base image／entrypoint／生成 compose に sshd、Orca relay、
       container `:22` publish が残っていない。
 
 ## 13. 最終判断
@@ -574,5 +590,7 @@ Extension を実装する。Extension は単なる launcher ではなく、単�
    LSP・補完・デバッグを失う。これが「window 切替負担の軽減」という目的に見合うかを Phase 0 で
    実測し、見合わなければ「attach を残し既存 window に focus する dashboard」路線（§6.4）へ
    切り替える。単一 window は手段であって目的ではない。
-2. **破壊的削除は Go 判定後。** sshd／Orca 対応は稼働中の Windows 運用を支えている。代替の
-   feasibility を確認する前に削除しない。削除は独立 PR とし、spike 失敗時は既存経路を維持する。
+2. **破壊的削除は先行実施済み（当初は Go 判定後の方針）。** sshd／Orca 対応は稼働中の Windows 運用を
+   支えていたが、接続性インシデントと維持コストを機に、代替の feasibility 確認を待たず独立 PR で
+   先行削除した。理想は Go 判定後の削除だったが、この判断により Windows Orca 利用者には代替 UI 完成
+   前でも Remote-SSH 移行を案内する。spike 失敗時も sshd は復活させず Remote-SSH 経路で縮退する。

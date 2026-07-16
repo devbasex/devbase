@@ -555,7 +555,7 @@ def cmd_up(project_name: str = None, scale: int = None,
             docker_compose_down()
 
         logger.info("[3/6] Generating scaled compose file...")
-        override_file = generate_scaled_compose(scale, project_name)
+        override_file = generate_scaled_compose(scale)
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/6] Starting containers...")
@@ -687,7 +687,7 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
-        override_file = generate_scaled_compose(new_scale, project_name)
+        override_file = generate_scaled_compose(new_scale)
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)

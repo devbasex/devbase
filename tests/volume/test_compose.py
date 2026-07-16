@@ -42,7 +42,7 @@ def test_dev_and_non_dev_services_get_init_true(in_tmp_cwd):
         "mysql": {"image": "mysql:8"},
     })
 
-    compose.generate_scaled_compose(scale=1, project_name="proj")
+    compose.generate_scaled_compose(scale=1)
     scaled = _load_scaled(in_tmp_cwd)["services"]
 
     assert scaled["dev-1"]["init"] is True
@@ -53,7 +53,7 @@ def test_init_injected_for_every_scaled_instance(in_tmp_cwd):
     """scale>1 でも各 dev-i 全てに init: true が付く。"""
     _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
 
-    compose.generate_scaled_compose(scale=3, project_name="proj")
+    compose.generate_scaled_compose(scale=3)
     scaled = _load_scaled(in_tmp_cwd)["services"]
 
     for i in (1, 2, 3):
@@ -67,7 +67,7 @@ def test_explicit_init_false_is_preserved(in_tmp_cwd):
         "mysql": {"image": "mysql:8", "init": False},
     })
 
-    compose.generate_scaled_compose(scale=1, project_name="proj")
+    compose.generate_scaled_compose(scale=1)
     scaled = _load_scaled(in_tmp_cwd)["services"]
 
     assert scaled["dev-1"]["init"] is False

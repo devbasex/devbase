@@ -142,7 +142,7 @@ def _load_compose_config(compose_file: Path) -> dict:
 
 
 def _build_dev_instance(
-    dev_service: dict, dev_service_name: str, index: int, project_name: str,
+    dev_service: dict, dev_service_name: str, index: int,
 ) -> dict:
     """Build the service definition for one scaled dev instance (dev-<index>)."""
     service = copy.deepcopy(dev_service)
@@ -167,7 +167,6 @@ def _build_dev_instance(
 
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
-    project_name: str,
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances."""
     scaled_services = {}
@@ -188,14 +187,13 @@ def _build_scaled_services(
     # Generate a service for each instance
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i, project_name,
+            dev_service, dev_service_name, i,
         )
     return scaled_services
 
 
 def generate_scaled_compose(
     scale: int,
-    project_name: str,
     compose_file: Path = None,
     dev_service_name: str = None,
 ) -> Path:
@@ -204,7 +202,6 @@ def generate_scaled_compose(
 
     Args:
         scale: Number of container instances
-        project_name: Project name.
         compose_file: Source compose file path (default: compose.yml)
         dev_service_name: Name of the development service to scale (default: from DEV_SERVICE_NAME env or 'dev')
 
@@ -226,7 +223,7 @@ def generate_scaled_compose(
 
     scaled_config = {
         'services': _build_scaled_services(
-            services, dev_service, dev_service_name, scale, project_name,
+            services, dev_service, dev_service_name, scale,
         ),
         'volumes': _build_volumes_section(config, scale),
         'networks': _build_networks_section(config),
