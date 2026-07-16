@@ -1,0 +1,7 @@
+services:
+
+  dev:
+    image: devbase-bi-tools:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
