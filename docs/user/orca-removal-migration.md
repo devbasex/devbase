@@ -19,8 +19,15 @@ base image から **sshd を廃止**し、`devbase orca` 連携および `ENABLE
 1. Mac 側で **Remote Login (sshd)** を有効化する（システム設定 > 一般 > 共有 > リモートログイン。
    既に有効な環境なら不要）。
 2. Windows の VS Code に **Remote-SSH 拡張**を入れ、Mac（`takemi_ohama@<Mac-LAN-IP>`）へ接続する。
-3. 接続した Mac 上で `devbase list` でプロジェクト/インデックスを確認し、
-   `devbase login <project> <index>` でコンテナに入る。従来どおり git worktree / AI CLI が使える。
+3. 接続した Mac 上で対象プロジェクトに移動してコンテナへ入る。従来どおり git worktree / AI CLI が使える。
+
+   ```bash
+   cd $DEVBASE_ROOT/projects/<project>
+   devbase up      # 未起動なら
+   devbase login   # 既定は index 1。複数コンテナなら `devbase login 2` のように index を指定
+   ```
+
+   （または `devbase list` の TUI からプロジェクト/コンテナを選んで login することもできる。）
 
 ## 今後
 
