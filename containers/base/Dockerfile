@@ -13,6 +13,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update; \
     apt-get install -y --no-install-recommends \
     locales git wget vim sudo nano jq make unzip \
+    openssh-client \
     curl ca-certificates gnupg lsb-release \
     libnss3 libxrandr2 libxss1 \
     fonts-noto-cjk fonts-noto-cjk-extra; \
