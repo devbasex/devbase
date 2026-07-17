@@ -48,8 +48,8 @@ graph TD
 | [環境変数ガイド](user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [コンテナ操作ガイド](user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
-| [Orca 接続ガイド](user/orca.md) | コンテナを SSH target として Orca から接続する手順 |
 | [トラブルシューティング](user/troubleshooting.md) | カテゴリ別の問題と解決策 |
+| [Orca 削除の移行ガイド](user/orca-removal-migration.md) | 旧 Orca(SSH) 接続の廃止と Remote-SSH への移行手順 |
 
 **推奨の読み順:**
 
@@ -96,7 +96,6 @@ docs/
 │   ├── environment-variables.md       ← 環境変数ガイド
 │   ├── container-operations.md        ← コンテナ操作ガイド
 │   ├── snapshot-guide.md              ← スナップショットガイド
-│   ├── orca.md                        ← Orca 接続ガイド
 │   └── troubleshooting.md             ← トラブルシューティング
 ├── plugin-dev/                        ← プラグイン開発者向け
 │   ├── quickstart.md                  ← クイックスタート
@@ -119,8 +118,8 @@ docs/
 | 環境変数を設定する | [環境変数ガイド](user/environment-variables.md#環境変数の操作) |
 | 複数コンテナで並行開発する | [コンテナ操作ガイド](user/container-operations.md#並行開発) |
 | データをバックアップ・復元する | [スナップショットガイド](user/snapshot-guide.md) |
-| Orca からコンテナへ接続する | [Orca 接続ガイド](user/orca.md) |
 | エラーが発生した | [トラブルシューティング](user/troubleshooting.md) |
+| 旧 Orca 接続から移行する | [Orca 削除の移行ガイド](user/orca-removal-migration.md) |
 | プラグインを作りたい | [プラグイン開発クイックスタート](plugin-dev/quickstart.md) |
 | devbase 本体に貢献したい | [コントリビューション](developer/contributing.md) |
 

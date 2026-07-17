@@ -246,7 +246,7 @@ run_python() {
 # Resolve abbreviated command to full command name via unique prefix matching
 resolve_command() {
     local input="$1"
-    local commands="init status project container ct env plugin pl snapshot ss orca up down login build rebuild ps scale list help"
+    local commands="init status project container ct env plugin pl snapshot ss up down login build rebuild ps scale list help"
     local matches=()
     for cmd in $commands; do
         [[ "$cmd" == "$input"* ]] && matches+=("$cmd")
@@ -402,7 +402,7 @@ case "$_resolved_cmd" in
     # Python-implemented commands
     --version|-V)
         run_python "$@" ;;
-    init|status|project|container|ct|env|plugin|pl|snapshot|ss|orca|up|down|login|ps|scale|rebuild|list)
+    init|status|project|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale|rebuild|list)
         run_python "${_resolved_cmd}" "${_DEVBASE_ARGS[@]}" ;;
     # Shell-implemented commands
     #

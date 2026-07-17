@@ -17,7 +17,6 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 - **環境変数の自動収集**: `devbase env init`でAWS/Git/GCP認証情報を対話的に設定
 - **階層メニュー TUI**: `devbase list` のプロジェクト一覧（矢印キー移動・名前絞り込み対応）から起動・操作（up / down / login / ps / logs / scale / build / rebuild）を選択。画面最下部の常設メニュー（環境変数 / プラグイン / スナップショット / ステータス）へは ←→ キーで移動できます
 - **イメージ再ビルド**: `devbase build [name] --no-cache` でキャッシュ無効の完全再ビルド。`devbase rebuild [name]`（= `build --expires=7`）はイメージが既定 7 日より古いときのみ再ビルドします
-- **Orca 対応**: `ENABLE_SSH=true` でコンテナ内 sshd を publish し、[Orca](https://www.onorca.dev/) の SSH target として接続。`devbase orca sync` が隔離 SSH config を生成し、コンテナ内で worktree / AI エージェントを動かせます（[Orca 接続ガイド](docs/user/orca.md)）
 
 ## クイックスタート
 
@@ -149,8 +148,8 @@ devbaseのコマンドは4つのグループにまとめられています。
 | [環境変数の export/import ガイド](docs/user/env-export-import.md) | バンドル形式・age 暗号化・S3 連携・merge/replace の運用 |
 | [コンテナ操作ガイド](docs/user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](docs/user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
-| [Orca 接続ガイド](docs/user/orca.md) | コンテナを SSH target として Orca から接続する手順 |
 | [トラブルシューティング](docs/user/troubleshooting.md) | カテゴリ別の問題と解決策 |
+| [Orca 削除の移行ガイド](docs/user/orca-removal-migration.md) | 旧 Orca(SSH) 接続の廃止と Remote-SSH への移行手順 |
 
 ### プラグイン開発者向け
 
