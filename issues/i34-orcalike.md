@@ -136,6 +136,7 @@ sshd を削除すると、現行の「Windows Orca → SSH トンネル → コ�
 
 - Phase 0 の Go 条件に「Windows → Mac Remote-SSH 経由で `agent attach` が動く」ことを含める（§8）。
 - 現行 Orca 運用から新方式への移行手順を breaking change note に紐付けて残す。
+  移行ガイド: [`docs/user/orca-removal-migration.md`](../docs/user/orca-removal-migration.md)。
 - sshd/Orca 経路は既に撤去済みのため、Windows Orca 利用者は代替 UI の完成を待たずに Remote-SSH
   への移行が必要になる。移行が完了するまで削除を保留する当初制約は、先行削除の判断により解除した。
   影響を受ける利用者へは breaking change note で Remote-SSH 移行手順を優先的に案内する。
