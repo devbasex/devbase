@@ -49,6 +49,7 @@ graph TD
 | [コンテナ操作ガイド](user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
 | [トラブルシューティング](user/troubleshooting.md) | カテゴリ別の問題と解決策 |
+| [Orca 削除の移行ガイド](user/orca-removal-migration.md) | 旧 Orca(SSH) 接続の廃止と Remote-SSH への移行手順 |
 
 **推奨の読み順:**
 
@@ -118,6 +119,7 @@ docs/
 | 複数コンテナで並行開発する | [コンテナ操作ガイド](user/container-operations.md#並行開発) |
 | データをバックアップ・復元する | [スナップショットガイド](user/snapshot-guide.md) |
 | エラーが発生した | [トラブルシューティング](user/troubleshooting.md) |
+| 旧 Orca 接続から移行する | [Orca 削除の移行ガイド](user/orca-removal-migration.md) |
 | プラグインを作りたい | [プラグイン開発クイックスタート](plugin-dev/quickstart.md) |
 | devbase 本体に貢献したい | [コントリビューション](developer/contributing.md) |
 

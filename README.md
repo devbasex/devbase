@@ -149,6 +149,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 | [コンテナ操作ガイド](docs/user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](docs/user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
 | [トラブルシューティング](docs/user/troubleshooting.md) | カテゴリ別の問題と解決策 |
+| [Orca 削除の移行ガイド](docs/user/orca-removal-migration.md) | 旧 Orca(SSH) 接続の廃止と Remote-SSH への移行手順 |
 
 ### プラグイン開発者向け
 
