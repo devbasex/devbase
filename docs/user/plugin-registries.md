@@ -62,6 +62,6 @@ devbase plugin repo refresh
 ## 関連ドキュメント
 
 - [はじめに](getting-started.md)
-- [CLI リファレンス](cli-reference.md) -- `plugin repo` サブコマンドの詳細
+- [CLI リファレンス: plugin グループ](cli-reference/04-plugin.md) -- `plugin repo` サブコマンドの詳細
 - [プラグイン開発クイックスタート](../plugin-dev/quickstart.md)
 - [plugin.yml リファレンス](../plugin-dev/plugin-yml-reference.md)

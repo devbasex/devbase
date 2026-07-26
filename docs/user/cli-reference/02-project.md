@@ -1,125 +1,10 @@
-# CLI リファレンス
+# project グループ
 
-devbase の全コマンドの構文、オプション、使用例をまとめたリファレンスです。
-
-## コマンド体系
-
-devbase のコマンドは 4 つのグループとトップレベルコマンドで構成されています。
-
-```mermaid
-graph TD
-    A[devbase] --> B[init]
-    A --> C[status]
-    A --> D[project]
-    A --> E[env]
-    A --> F[plugin / pl]
-    A --> G[snapshot / ss]
-    D --> D1["up / down / ps / logs / scale [name]"]
-    D --> D3["login [index]"]
-    D --> D4["build [image] / rebuild [name]"]
-    D --> D2["list [--no-interactive]"]
-    E --> E1[init / sync / list / set / get / delete / edit / project / export / import]
-    F --> F1[list / install / uninstall / update / info / sync / migrate]
-    F --> F2[repo add / repo remove / repo list / repo refresh]
-    G --> G1[create / list / restore / copy / delete / rotate]
-```
-
-> **`container` グループは非推奨になりました。** 旧 `devbase container <sub>` は
-> `devbase project <sub>` のエイリアスとして当面動作しますが、実行時に非推奨警告を
-> 表示します（移行期間後のリリースで削除予定）。新しいコマンドは `project` を使用してください。
-
-### グループエイリアス
-
-各グループには短縮形が用意されています。
-
-| グループ名 | エイリアス | 備考 |
-|-----------|-----------|------|
-| `plugin` | `pl` | |
-| `snapshot` | `ss` | |
-| `container` | `ct` | **非推奨**（`project` へ移行してください） |
-
-### ショートカットコマンド
-
-頻繁に使用するプロジェクト操作はトップレベルから直接実行できます。これらは `project` グループに自動転送されます。
-
-| ショートカット | 転送先 |
-|--------------|--------|
-| `devbase up [name]` | `devbase project up [name]` |
-| `devbase down [name]` | `devbase project down [name]` |
-| `devbase login [index]` | `devbase project login [index]` |
-| `devbase build [image]` | `bin/devbase` の `cmd_build`（シェル実装）※ |
-| `devbase ps [name]` | `devbase project ps [name]` |
-| `devbase scale [name] <num>` | `devbase project scale [name] <num>` |
-| `devbase rebuild [name]` | `devbase project rebuild [name]` |
-| `devbase list` | `devbase project list` |
-
-> **Note:** `logs` はトップレベルシノニムを持ちません。`devbase project logs` を使用してください。
->
-> **※ `build` の転送先について:** `devbase build`（既定 / `--no-cache` / `<image>`）は他の
-> ショートカットのように `project` グループ（Python 実装）へ転送されるのではなく、`bin/devbase` の
-> シェル実装 `cmd_build` に直接委譲されます。base イメージの段階ビルド等を CWD で行う必要があるため
-> です（名前指定はラッパーの `cd` で解決）。ただし `devbase build --expires[=DAYS]` のみ、作成日の
-> 判定が必要なため例外的に Python 経路（`project build`）へ委譲されます。挙動上の入出力は同等です。
-
-### ユニークプレフィックスマッチング
-
-コマンド名が一意に特定できる場合、先頭の数文字だけで実行できます。
-
-```bash
-# 以下は全て同じコマンド
-devbase plugin list
-devbase pl list
-devbase p l
-devbase pl l
-```
-
-> **Note:** 一意に特定できない場合は候補が表示されます。
-
-## トップレベルコマンド
-
-### `devbase init`
-
-devbase の初期セットアップを実行します。
-
-```
-devbase init
-```
-
-実行内容:
-- `bin/devbase` を PATH に追加（`~/.bashrc` / `~/.zshrc`）
-- シェル補完スクリプトの登録
-- `plugins.yml` の作成（存在しない場合）
-
-### `devbase status`
-
-現在の環境の状態をまとめて表示します。
-
-```
-devbase status
-```
-
-表示項目:
-- コンテナの状態（起動中 / 停止中 / 未ビルド）
-- インストール済みプラグイン一覧
-- 環境変数の設定状況
-- スナップショットの状態
-
-### `bin/rc`（いまのシェルで有効化）
-
-`devbase init` 後に **いま開いているシェル**で devbase（PATH / 補完）を即時有効化するための source 用スクリプトです。`devbase` のサブコマンドではなく、`bin/rc` を直接 source して使います。
-
-```bash
-./bin/devbase init
-. ./bin/rc        # = source ./bin/rc （bash / zsh 共通）
-```
-
-`bin/rc` は自身の場所から `DEVBASE_ROOT` を解決し、`DEVBASE_ROOT/bin` を PATH へ追加（冪等）したうえで、シェル補完を読み込みます（`init` が rc ファイルへ追記する有効化と同じ内容）。新しく開くシェルは init が rc に追記したブロックで自動有効化されるため、この手順は不要です。
-
-## project グループ
+[CLI リファレンス目次に戻る](README.md)
 
 プロジェクト（コンテナ）のライフサイクル管理と一覧表示を行うコマンド群です。
 
-### プロジェクト名指定（CWD 非依存）
+## プロジェクト名指定（CWD 非依存）
 
 `up` / `down` / `ps` / `logs` / `scale` は省略可能な `[name]` 引数を取ります。`[name]`
 を指定すると、**現在のディレクトリに依存せず** `$DEVBASE_ROOT/projects/<name>` を対象に
@@ -155,7 +40,7 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 > トレードオフです。**回避策:** 衝突する場合は対象プロジェクトのディレクトリ内で実行するか、
 > 明示的にそのプロジェクトへ切り替えてから（`cd` 済みの状態で）コマンドを実行してください。
 
-### `devbase project up`
+## `devbase project up`
 
 コンテナを起動します。
 
@@ -186,7 +71,7 @@ devbase up [name]
 > ことがあります。確実に反映するには **`devbase build [name] --no-cache`** で再ビルドしてから
 > `devbase up` してください（`--no-cache` は `build` のオプションで、`rebuild` にはありません）。
 
-### `devbase project down`
+## `devbase project down`
 
 コンテナを停止・削除します。
 
@@ -197,7 +82,7 @@ devbase down [name]
 
 - 停止時にスナップショットのローテーションを自動実行
 
-### `devbase project login`
+## `devbase project login`
 
 コンテナにログインします。
 
@@ -218,7 +103,7 @@ devbase login
 devbase login 2
 ```
 
-### `devbase project ps`
+## `devbase project ps`
 
 対象プロジェクトのコンテナ状態を `docker compose ps` で表示します。複数プロジェクトの
 横断一覧は `devbase project list` を使用してください。
@@ -232,7 +117,7 @@ devbase ps [name] [-a]
 |-----------|------|
 | `-a` | 停止中のコンテナも表示 |
 
-### `devbase project logs`
+## `devbase project logs`
 
 コンテナのログを表示します（トップレベルシノニムはありません）。
 
@@ -250,7 +135,7 @@ devbase project logs [name] [-f] [--tail N]
 devbase project logs -f --tail 50
 ```
 
-### `devbase project scale`
+## `devbase project scale`
 
 既存のコンテナを再起動せずにスケールします。
 
@@ -272,7 +157,7 @@ devbase project scale 3
 devbase project scale adminer 3
 ```
 
-### `devbase project build`
+## `devbase project build`
 
 コンテナイメージをビルドします。キャッシュの扱いは 3 モードあります。
 
@@ -297,7 +182,7 @@ devbase build [image] [--no-cache | --expires[=DAYS]]
 > 単体ビルドでは `--no-cache` のみ反映され、`--expires` は対象外です。`--expires` 付きビルドは
 > 作成日判定のため Python 経路（`project build`）で処理されます。
 
-### `devbase project rebuild`
+## `devbase project rebuild`
 
 `devbase build --expires=7` のシノニムです（既定 7 日）。プロジェクトイメージが 7 日以上古ければ
 no-cache で再ビルドし、未満なら再ビルドしません（既存イメージを使用）。親イメージ（`FROM devbase-*`）の
@@ -312,7 +197,7 @@ devbase rebuild [name]
 |-----------|------|------|
 | `name` | いいえ | 対象プロジェクト名（省略時はカレント） |
 
-### `devbase project list`
+## `devbase project list`
 
 `$DEVBASE_ROOT/projects/` 配下のプロジェクトを `NAME` / `PLUGIN` / `STATUS` の一覧で
 表示します。
@@ -332,7 +217,7 @@ devbase list [--no-interactive|--plain|-P]
 | `--no-interactive` / `--plain` / `-P` | TUI を起動せず一覧表示のみ |
 | `--interactive` / `-i` | （後方互換）TUI 起動。デフォルトのため通常は不要 |
 
-#### TUI の画面構成とキー操作
+### TUI の画面構成とキー操作
 
 ```
 ? プロジェクトまたは操作を選択 (↑↓ 移動 / 名前で絞り込み / ←→ 下部メニュー / Enter 決定 / Esc・Ctrl-C 終了):
@@ -406,335 +291,3 @@ devbase container up
 devbase project up
 devbase up
 ```
-
-## env グループ
-
-環境変数の管理を行うコマンド群です。詳細は [環境変数ガイド](environment-variables.md) を参照してください。
-
-### `devbase env init`
-
-環境変数の対話式初期セットアップを実行します。
-
-```
-devbase env init [--reset]
-```
-
-| オプション | 説明 |
-|-----------|------|
-| `--reset` | 既存の設定をリセットして再設定 |
-
-### `devbase env sync`
-
-ソースファイル（`~/.aws/config` 等）の変更を検出し、環境変数を再同期します。
-
-```
-devbase env sync
-```
-
-### `devbase env list`
-
-設定済みの環境変数を一覧表示します。
-
-```
-devbase env list [-g|-p] [-r] [-k]
-```
-
-| オプション | 説明 |
-|-----------|------|
-| `-g` | グローバル変数のみ表示 |
-| `-p` | プロジェクト変数のみ表示 |
-| `-r` | 値も表示（デフォルトではキーのみ） |
-| `-k` | キー名でソート |
-
-```bash
-# グローバル変数のみ、値付きで表示
-devbase env list -g -r
-
-# プロジェクト変数をキー名順で表示
-devbase env list -p -k
-```
-
-### `devbase env set`
-
-環境変数を設定します。
-
-```
-devbase env set KEY=VALUE [-p]
-```
-
-| オプション | 説明 |
-|-----------|------|
-| `-p` | プロジェクトレベルに設定（デフォルトはグローバル） |
-
-```bash
-# グローバルに設定
-devbase env set ANTHROPIC_API_KEY=sk-xxx
-
-# プロジェクトレベルに設定
-devbase env set GCP_ACTIVE_PROFILE=my-project -p
-```
-
-### `devbase env get`
-
-環境変数の値を取得します。
-
-```
-devbase env get KEY
-```
-
-```bash
-devbase env get AWS_PROFILE
-```
-
-### `devbase env delete`
-
-環境変数を削除します。
-
-```
-devbase env delete KEY
-```
-
-### `devbase env edit`
-
-デフォルトエディタで `.env` ファイルを開きます。
-
-```
-devbase env edit
-```
-
-### `devbase env project`
-
-プロジェクト固有の環境変数を対話式で設定します。
-
-```
-devbase env project
-```
-
-### `devbase env export`
-
-複数プロジェクトの `.env` 群を暗号化したまま 1 つのバンドルにまとめて書き出します。
-
-```
-devbase env export <bundle>
-```
-
-オプション（age 鍵 / passphrase / S3 入出力など）の詳細は
-[環境変数の export / import ガイド](env-export-import.md#devbase-env-export-リファレンス)を参照してください。
-
-### `devbase env import`
-
-`devbase env export` で作成したバンドルを復号し、環境変数を取り込みます。
-
-```
-devbase env import <bundle>
-```
-
-`--dry-run` での確認や identity 鍵指定などの詳細は
-[環境変数の export / import ガイド](env-export-import.md#devbase-env-import-リファレンス)を参照してください。
-
-## plugin (pl) グループ
-
-プラグインの管理を行うコマンド群です。
-
-### `devbase plugin list`
-
-インストール済み、または利用可能なプラグインを一覧表示します。
-
-```
-devbase plugin list [--available]
-```
-
-| オプション | 説明 |
-|-----------|------|
-| `--available` | リポジトリから取得可能なプラグインを表示 |
-
-### `devbase plugin install`
-
-プラグインをインストールします。
-
-```
-devbase plugin install <source>
-```
-
-ソースの指定形式:
-
-| 形式 | 説明 | 例 |
-|------|------|----|
-| 名前のみ | 登録済みリポジトリから検索 | `devbase plugin install adminer` |
-| リポジトリ直接指定 | 特定リポジトリのプラグイン | `devbase plugin install user/repo:plugin-name` |
-| 全プラグイン一括 | リポジトリの全プラグインをインストール | `devbase plugin install user/repo --all` |
-| ローカルリンク | ローカルディレクトリからリンク | `devbase plugin install /path:plugin-name --link` |
-
-### `devbase plugin uninstall`
-
-プラグインをアンインストールします。
-
-```
-devbase plugin uninstall <name>
-```
-
-### `devbase plugin update`
-
-プラグインを最新バージョンに更新します。
-
-```
-devbase plugin update [name]
-```
-
-| パラメータ | 必須 | 説明 |
-|-----------|------|------|
-| `name` | いいえ | 更新するプラグイン名（省略時は全プラグイン） |
-
-### `devbase plugin info`
-
-プラグインの詳細情報を表示します。
-
-```
-devbase plugin info <name>
-```
-
-### `devbase plugin sync`
-
-プロジェクトのシンボリックリンクを再同期します。
-
-```
-devbase plugin sync
-```
-
-### `devbase plugin migrate`
-
-旧形式 (`plugins/<name>` へのコピー) でインストールされたプラグインを、`repos/` 配下の永続クローンへ移行します。`install` / `update` 実行時にも自動で呼び出されるため、通常は手動実行不要です。
-
-```
-devbase plugin migrate
-```
-
-移行の挙動:
-
-| 状況 | 動作 |
-|---|---|
-| コピーがクローンと一致 | 旧コピーを削除し `repos/` へ移行 (migrated) |
-| コピーにローカル変更あり | 旧コピーを `plugins/<name>.bak` として保全 (preserved、手動で reconcile) |
-| 移行できない (ソース未登録 等) | スキップしてエラーを表示 (skipped) |
-
-`--link` でインストールしたプラグインは移行対象外です。
-
-### `devbase plugin repo add`
-
-プラグインリポジトリを登録します。
-
-```
-devbase plugin repo add <url>
-```
-
-```bash
-# GitHub ショートハンド
-devbase plugin repo add user/repo
-
-# 完全な URL
-devbase plugin repo add https://github.com/user/repo.git
-```
-
-### `devbase plugin repo remove`
-
-リポジトリの登録を削除します。
-
-```
-devbase plugin repo remove <name>
-```
-
-### `devbase plugin repo list`
-
-登録済みリポジトリの一覧を表示します。
-
-```
-devbase plugin repo list
-```
-
-### `devbase plugin repo refresh`
-
-プラグイン一覧をリポジトリから再取得します。
-
-```
-devbase plugin repo refresh [name]
-```
-
-| パラメータ | 必須 | 説明 |
-|-----------|------|------|
-| `name` | いいえ | 更新するリポジトリ名（省略時は全リポジトリ） |
-
-## snapshot (ss) グループ
-
-スナップショットの管理を行うコマンド群です。詳細は [スナップショットガイド](snapshot-guide.md) を参照してください。
-
-### `devbase snapshot create`
-
-スナップショットを作成します。
-
-```
-devbase snapshot create [--name NAME] [--full]
-```
-
-| オプション | 説明 |
-|-----------|------|
-| `--name NAME` | スナップショット名を指定（デフォルトはタイムスタンプ） |
-| `--full` | フルバックアップを強制作成 |
-
-```bash
-# 自動命名で差分スナップショット
-devbase snapshot create
-
-# 名前付きフルバックアップ
-devbase snapshot create --name before-upgrade --full
-```
-
-### `devbase snapshot list`
-
-スナップショットの一覧を表示します。
-
-```
-devbase snapshot list
-```
-
-### `devbase snapshot restore`
-
-スナップショットから復元します。
-
-```
-devbase snapshot restore <name> [--point N]
-```
-
-| パラメータ / オプション | 必須 | 説明 |
-|----------------------|------|------|
-| `<name>` | はい | 復元するスナップショット名 |
-| `--point N` | いいえ | N 番目の差分まで復元（省略時は最新まで全適用） |
-
-> **Warning:** 復元前に現在の状態が `pre-restore-<timestamp>` として自動バックアップされます。
-
-### `devbase snapshot copy`
-
-スナップショットをコピーします。
-
-```
-devbase snapshot copy <name> <new_name>
-```
-
-### `devbase snapshot delete`
-
-スナップショットを削除します。
-
-```
-devbase snapshot delete <name>
-```
-
-### `devbase snapshot rotate`
-
-古い世代のスナップショットを削除します。
-
-```
-devbase snapshot rotate [--keep N]
-```
-
-| オプション | 説明 |
-|-----------|------|
-| `--keep N` | 保持する世代数（デフォルト: `3`） |

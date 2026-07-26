@@ -20,8 +20,17 @@
   DAYS 日（既定 7、`DEVBASE_IMAGE_MAX_AGE_DAYS` で上書き可）以上のときのみ no-cache で
   再ビルドし、未満なら再ビルドしません（既存イメージを使用）。親イメージ（`FROM devbase-*`）の
   作成日は独立して判定します。`devbase build` の `--no-cache` も明示フラグとして整理しました。
+- **外部リポジトリ連携プロジェクト向けドキュメント (`docs/plugin-dev/repo-backed-projects.md`)**
+  を追加しました。アプリ本体のリポジトリを共有 work ボリュームへ取り込み、複数コンテナで動かす
+  プロジェクトのための `pre-up` populate パターン（初回のみ populate し、2 回目以降はコンテナ側の
+  ソース・環境ファイルを上書きしない冪等スキップ）と、その設計意図・更新運用・チェックリストを
+  解説しています。
 
 ### Changed
+- **CLI リファレンス (`docs/user/cli-reference.md`) をコマンドグループ別ディレクトリ
+  (`docs/user/cli-reference/`) に分割**しました。目次 (`README.md`) とトップレベル / project /
+  env / plugin / snapshot の各ファイルに再編し、1 ファイルあたりの分量を抑えて目的のコマンドへ
+  辿りやすくしました。他ドキュメントからの参照リンクも新パスへ更新しています。
 - **`build` / `rebuild` / `up` の再ビルド仕様を統一**しました (i07)。キャッシュの
   扱いを 3 モード（既定=キャッシュビルド / `--no-cache`=無条件 no-cache / `--expires=N`=
   期限切れ時のみ no-cache・期限内は再ビルドしない）に整理し、`devbase rebuild` を

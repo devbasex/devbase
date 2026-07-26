@@ -452,5 +452,5 @@ Phase 2 (commit) の途中で異常終了した可能性があります。次回
 ## 関連ドキュメント
 
 - [環境変数ガイド](environment-variables.md) — 3 レベル構造とコレクター
-- [CLI リファレンス](cli-reference.md) — 全コマンド一覧
+- [CLI リファレンス](cli-reference/README.md) — 全コマンド一覧
 - [はじめに](getting-started.md) — 初回セットアップ

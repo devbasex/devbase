@@ -7,7 +7,7 @@ devbase のコンテナ管理機能について、ライフサイクル、並行
 > 非推奨となり、`project` へのエイリアスとして警告付きで当面動作します。`project` では
 > `up` / `down` / `ps` / `logs` / `scale` に `[name]` を指定することで **任意のディレクトリ
 > から** 対象プロジェクトを操作できます。プロジェクト一覧は `devbase project list` を参照
-> してください。詳細は [CLI リファレンス](cli-reference.md#project-グループ) を参照。
+> してください。詳細は [CLI リファレンス: project グループ](cli-reference/02-project.md) を参照。
 
 ## コンテナライフサイクル
 
@@ -181,7 +181,7 @@ AI CLI ツールの設定や認証情報は、コンテナを再生成しても�
 - `share` 配下に置いた VS Code ワークスペースファイルは `DEVBASE_WORKSPACE` で開けます（[環境変数](environment-variables.md) 参照）。
 
 > **Note:** symlink 対象は entrypoint にビルド時 `COPY` で焼き込まれます。エントリを増減した場合は
-> イメージの再ビルドが必要です（`devbase up` 単体では反映されない場合があります。[CLI リファレンス](cli-reference.md) の `devbase project up` の注記参照）。
+> イメージの再ビルドが必要です（`devbase up` 単体では反映されない場合があります。[CLI リファレンス: project グループ](cli-reference/02-project.md#devbase-project-up) の `devbase project up` の注記参照）。
 
 ## コンテナイメージ階層
 
@@ -278,7 +278,7 @@ devbase list --no-interactive   # --plain / -P も同義
 > スナップショット / ステータス）へ ←→ キーで移動して各管理操作を実行できます。
 > パイプ・リダイレクト・CI などの非 TTY 環境では自動的に一覧表示のみに
 > フォールバックします。画面構成とキー操作の詳細は
-> [CLI リファレンス](cli-reference.md#devbase-project-list) を参照してください。
+> [CLI リファレンス: project グループ](cli-reference/02-project.md#devbase-project-list) を参照してください。
 
 `devbase project ps` が「対象プロジェクト 1 つのコンテナ状態」を表示するのに対し、
 `devbase list` は「全プロジェクトの横断一覧」を表示します。
