@@ -136,7 +136,7 @@ devbase のコンテナは 2 種類のボリュームを使用します。
 | ボリューム名 | マウント先 | 共有範囲 | 用途 |
 |-------------|-----------|---------|------|
 | `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | AI CLI 設定（`.claude` / `.codex` / `.gemini` 等）、SSH 鍵、共有ファイル置き場（`share`）。詳細は「AI 設定の永続化」参照 |
-| `{project}_work_{index}` | `/work` | 各コンテナ専用 | プロジェクトのソースコード、作業ファイル |
+| `devbase_work_{index}` | `/work` | 同じ index のコンテナで共有（プロジェクト間も共有） | プロジェクトのソースコード、作業ファイル |
 
 > **Note:** `devbase_home_ubuntu` は **`/persistent/ai`** にマウントされます（`/home/ubuntu` への直接マウントは廃止）。`/home/ubuntu` 直下はコンテナ層（揮発）で、永続化されるのは entrypoint が `/persistent/ai` 配下へ symlink する設定ファイルのみです。シェル履歴など symlink 対象外のファイルは再生成で失われます。
 
@@ -145,6 +145,8 @@ devbase のコンテナは 2 種類のボリュームを使用します。
 - ボリュームは `devbase down` でもコンテナが削除されても保持されます
 - コンテナの再起動（`devbase up`）で同じボリュームが再マウントされます
 - ボリュームを明示的に削除するには `docker volume rm` を使用します
+
+> **Warning:** `devbase_work_{index}` は `COMPOSE_PROJECT_NAME` の接頭辞が付かない **external ボリューム**です。同じ index（コンテナ 1 なら `devbase_work_1`）を使う限り **別プロジェクトからも同じ実体**を参照するため、`docker volume rm devbase_work_1` は停止中の他プロジェクトの作業ファイルまで削除します。削除前に `docker ps -a --filter volume=devbase_work_1` で利用コンテナを確認してください。
 
 ### ボリュームの確認
 

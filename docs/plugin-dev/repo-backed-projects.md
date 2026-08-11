@@ -73,7 +73,12 @@ volumes:
 - **`pre-up` はインデックスなしで 1 回しか実行されない。** devbase が `DEVBASE_INSTANCE_INDEX` を環境変数として渡すのは、インスタンスごとに実行される `deploy` フックだけです。`pre-up` には渡らないため、populate されるのは `.env`（または既定値 `1`）で解決される **単一の work ボリュームのみ**で、`devbase_work_2` 以降は空のまま残ります。
 - **scale 生成が書き換えるのは dev サービスの `/work` だけ。** `.docker-compose.scale.yml` の生成では `dev-<index>` の `/work` マウントが `devbase_work_<index>` へ固定で差し替えられる一方、app / nginx / mysql などの非 dev サービスは `compose.yml` に書いた共有 work ボリュームを参照し続けます。結果として dev-2 以降だけが別（空の）ボリュームを見ることになります。
 
-複数インスタンスを並行して動かしたい場合は `devbase scale` ではなく、**プロジェクトディレクトリごと複製**（別ディレクトリ = 別 `COMPOSE_PROJECT_NAME`）し、`DEVBASE_WORK_VOLUME` で work ボリューム名を分けてください。
+さらに、**同一リポジトリを複数インスタンスへ分離して並行稼働させることは現行実装では未サポート**です。回避策として思いつく 2 つの手はいずれも成立しません。
+
+- **`DEVBASE_WORK_VOLUME` で名前を分ける。** scale 生成は dev サービスの `/work` を `devbase_work_<index>`（scale=1 なら常に `devbase_work_1`）へ無条件に差し替えます（`compose.yml` に `/work` マウントを書いていなくても追加されます）。`DEVBASE_WORK_VOLUME` が効くのは app / nginx など非 dev サービスだけなので、既定名以外を指定すると dev だけが別ボリュームを見る分裂状態になります。
+- **プロジェクトディレクトリごと複製する。** work ボリュームは `COMPOSE_PROJECT_NAME` の接頭辞が付かない[グローバルな external ボリューム](#クリーンに作り直す再-populate)なので、複製先も同じ `devbase_work_1` を共有します。分離になりません。
+
+同一リポジトリを同時に複数環境で動かす必要がある場合は、Docker ホスト（`docker context`）そのものを分けてください。なお **別リポジトリ**の repo 連携プロジェクト同士は、populate 先が `/work/<GIT_REPO>` とサブディレクトリで分かれるため、同じ work ボリュームを共有したまま共存できます。
 
 ---
 
@@ -136,16 +141,38 @@ git pull origin main
 
 ### クリーンに作り直す（再 populate）
 
-`.env` やソースを S3 / `repo/` の内容からやり直したい場合は、work ボリュームを削除して次回 `up` で populate を再実行させます。
+`.env` やソースを S3 / `repo/` の内容からやり直したい場合は、populate 済み判定に使われる `/work/<GIT_REPO>` を消して、次回 `up` で populate を再実行させます。
+
+> **Warning:** work ボリューム（既定 `devbase_work_1`）は `COMPOSE_PROJECT_NAME` の接頭辞が付かない **グローバルな external ボリューム**で、同じインスタンス index を使う **すべての devbase プロジェクトが共有**します。`docker volume rm` でボリュームごと消すと、停止中の別プロジェクトのソースや生成物まで巻き添えで失われます。プロジェクトの分離単位はボリュームではなく `/work/<GIT_REPO>` サブディレクトリなので、**通常はサブディレクトリだけを削除**してください。
+
+**推奨: このプロジェクトのサブディレクトリだけを削除する**
 
 ```bash
 devbase down
-docker volume rm devbase_work_1   # external volume のため project 名の接頭辞は付かない
-                                  # DEVBASE_WORK_VOLUME を設定している場合はその名前
+
+# 何が入っているか（＝他プロジェクトが同居していないか）を確認
+docker run --rm -v devbase_work_1:/work alpine ls -la /work
+
+# このプロジェクトのソースだけを削除（<GIT_REPO> は env の値）
+docker run --rm -v devbase_work_1:/work alpine rm -rf /work/<GIT_REPO>
+
 devbase up                        # pre-up が ②③④ を再実行
 ```
 
-> **Warning:** work ボリュームには実行時ソースと `.env`、コンテナ内生成物が含まれます。削除前に必要な変更をコミット / 退避してください。DB 等の `sail-*` ボリュームは別管理なので、work ボリュームだけを消してもデータは残ります。
+**ボリュームごと作り直す場合**（他プロジェクトが同じ work ボリュームを使っていないことを確認してから）
+
+```bash
+devbase down
+
+# このボリュームをマウントしているコンテナを列挙（停止中も含む）
+docker ps -a --filter volume=devbase_work_1 --format '{{.Names}}'
+
+docker volume rm devbase_work_1   # external volume のため project 名の接頭辞は付かない
+                                  # DEVBASE_WORK_VOLUME を設定している場合はその名前
+devbase up
+```
+
+> **Note:** どちらの手順でも、削除前にコンテナ内で加えた変更（未コミットのソース変更、編集した `.env`）をコミット / 退避してください。DB 等の `sail-*` ボリュームは別管理なので、work ボリュームを消してもデータは残ります。
 
 ---
 
@@ -155,7 +182,7 @@ devbase up                        # pre-up が ②③④ を再実行
 |------|------|------|
 | `DEVBASE_REPO_PULL` | `1` | `0` にすると ①（`repo/` の `git pull`）を抑止。オフラインや意図的にビルドコンテキストを固定したいとき |
 | `DEVBASE_ENV_OVERWRITE` | `backup` | 未 populate 時の既存ホスト `.env` の扱い。`backup`（`.env.bak.<ts>` に退避して上書き）/ `skip`（既存があれば S3 取得しない）/ `force`（退避せず上書き） |
-| `DEVBASE_WORK_VOLUME` | `devbase_work_<index>` | `compose.yml` が参照する共有 work ボリューム名の明示指定。未指定なら `DEVBASE_INSTANCE_INDEX` から解決。**dev サービスの `/work` は scale 生成時に `devbase_work_<index>` へ固定で書き換えられる**ため、既定名以外を指定すると dev だけが別ボリュームを見ます |
+| `DEVBASE_WORK_VOLUME` | `devbase_work_<index>` | `compose.yml` が参照する共有 work ボリューム名の明示指定。未指定なら `DEVBASE_INSTANCE_INDEX` から解決。ただし効くのは **app / nginx など非 dev サービスだけ**で、dev サービスの `/work` は scale 生成時に `devbase_work_<index>` へ無条件に差し替えられます。dev から実行時ソースを触る本パターンでは **既定名のまま**にしてください（[スケール前提](#スケール前提-container_scale1) を参照） |
 | `DEVBASE_INSTANCE_INDEX` | `1` | work ボリューム名のインデックス。**devbase 本体が渡すのは `deploy` フックに対してのみ**で、`pre-up` や `docker compose` のプロセス環境には渡りません。`compose.yml` の `${DEVBASE_INSTANCE_INDEX:-1}` は `.env` に書かれた値、無ければ `1` に解決されます（[スケール前提](#スケール前提-container_scale1) を参照） |
 
 > **Note:** `.env` の環境選択（例: `s3://.../env/local.env` の `local` 部分）など、S3 パスやプロファイルはプロジェクト固有の変数（例: `CARMO_ENV`）で制御することがあります。プロジェクトの `pre-up` 冒頭コメントを参照してください。
