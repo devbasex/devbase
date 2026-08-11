@@ -119,11 +119,11 @@ devbaseのコマンドは4つのグループにまとめられています。
 
 > **`container`（略記 `ct`）グループは非推奨です。** `devbase project <sub>` のエイリアスとして当面動作しますが、非推奨警告を表示します。新しいコマンドは `project` を使用してください。
 
-- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `rebuild [name]`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。なお `build` のみ挙動が一部異なります（詳細は [CLI リファレンス](docs/user/cli-reference.md#ショートカットコマンド)）
+- **ショートカット**: `up [name]`, `down [name]`, `login [index]`, `build [image]`, `ps [name]`, `scale [name] <num>`, `rebuild [name]`, `list` はトップレベルから直接使用可能（`project` グループへ自動転送。`logs` はシノニムを持ちません）。なお `build` のみ挙動が一部異なります（詳細は [CLI リファレンス](docs/user/cli-reference/README.md#ショートカットコマンド)）
 - **プレフィックス略記**: `devbase p l` → `devbase plugin list`
 - **トップレベルコマンド**: `init`, `status`
 
-全コマンドの構文・オプション・使用例は [CLIリファレンス](docs/user/cli-reference.md) を参照してください。
+全コマンドの構文・オプション・使用例は [CLIリファレンス](docs/user/cli-reference/README.md) を参照してください。
 
 ## 前提条件
 
@@ -142,7 +142,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 | ドキュメント | 内容 |
 |-------------|------|
 | [はじめに](docs/user/getting-started.md) | 前提条件、初回セットアップ、日常ワークフロー |
-| [CLIリファレンス](docs/user/cli-reference.md) | 全コマンドの構文・オプション・使用例 |
+| [CLIリファレンス](docs/user/cli-reference/README.md) | 全コマンドの構文・オプション・使用例（コマンドグループ別） |
 | [プラグインレジストリ](docs/user/plugin-registries.md) | 公開・社内レジストリの一覧と追加方法 |
 | [環境変数ガイド](docs/user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [環境変数の export/import ガイド](docs/user/env-export-import.md) | バンドル形式・age 暗号化・S3 連携・merge/replace の運用 |

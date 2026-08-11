@@ -24,13 +24,16 @@
   を追加しました。アプリ本体のリポジトリを共有 work ボリュームへ取り込み、複数コンテナで動かす
   プロジェクトのための `pre-up` populate パターン（初回のみ populate し、2 回目以降はコンテナ側の
   ソース・環境ファイルを上書きしない冪等スキップ）と、その設計意図・更新運用・チェックリストを
-  解説しています。
+  解説しています。あわせて、本パターンが `CONTAINER_SCALE=1` 前提である理由（`pre-up` は
+  インデックスなしで 1 回しか実行されず、scale 生成で `/work` が差し替わるのは dev サービス
+  のみ）も明記しています。
 
 ### Changed
 - **CLI リファレンス (`docs/user/cli-reference.md`) をコマンドグループ別ディレクトリ
   (`docs/user/cli-reference/`) に分割**しました。目次 (`README.md`) とトップレベル / project /
   env / plugin / snapshot の各ファイルに再編し、1 ファイルあたりの分量を抑えて目的のコマンドへ
-  辿りやすくしました。他ドキュメントからの参照リンクも新パスへ更新しています。
+  辿りやすくしました。ルート `README.md`（3 箇所）を含む他ドキュメントからの参照リンクも
+  新パス (`docs/user/cli-reference/README.md`) へ更新しています。
 - **`build` / `rebuild` / `up` の再ビルド仕様を統一**しました (i07)。キャッシュの
   扱いを 3 モード（既定=キャッシュビルド / `--no-cache`=無条件 no-cache / `--expires=N`=
   期限切れ時のみ no-cache・期限内は再ビルドしない）に整理し、`devbase rebuild` を
@@ -90,7 +93,7 @@
   - `devbase project list` で `$DEVBASE_ROOT/projects/` 配下を `NAME` / `PLUGIN` / `STATUS` の一覧表示します。`PLUGIN` 列はシンボリックリンク先から解決するため、PLAN04 の同名衝突 suffix（例 `carmo.takemi`）が付いていても正しいプラグイン名を表示します。**TTY ではデフォルトで対話選択**になり、一覧から番号で選んだプロジェクトを `project up` で起動します。`--no-interactive`（`--plain` / `-P`）で一覧表示のみに切り替えられ、パイプ・リダイレクト・CI などの非 TTY 環境では自動的に一覧表示へフォールバックします（`--interactive` / `-i` は後方互換として引き続き受け付けます）。
   - トップレベルシノニム `devbase up/down/ps/scale [name]` / `devbase build [image]` / `devbase login [index]` / `devbase list` を整備しました（`logs` はシノニムを持たず `devbase project logs` のみ）。
   - bash / zsh のシェル補完に `project` グループとプロジェクト名補完（`$DEVBASE_ROOT/projects/` 配下を列挙）を追加しました。
-  - 利用者向けドキュメント [`docs/user/cli-reference.md`](docs/user/cli-reference.md) / [`docs/user/container-operations.md`](docs/user/container-operations.md) を `project` 体系に更新しました。
+  - 利用者向けドキュメント `docs/user/cli-reference.md`（現 [`docs/user/cli-reference/`](docs/user/cli-reference/README.md)） / [`docs/user/container-operations.md`](docs/user/container-operations.md) を `project` 体系に更新しました。
 - `devbase env export` / `devbase env import` で **S3 URI (`s3://bucket/key`) を入出力先として指定**できるようになりました (PLAN03-1 PR3)。
   - 既定でオブジェクト単位の SSE (`aws:kms` または `AES256`) を強制し、export 時はバケット側のデフォルト暗号化も `GetBucketEncryption` で事前確認します。
   - 暗号化が未設定のバケットへ export する場合は `--unsafe-allow-unencrypted-bucket` の明示が必要です (オブジェクト単位の SSE はこのフラグに関係なく常に付与されます)。

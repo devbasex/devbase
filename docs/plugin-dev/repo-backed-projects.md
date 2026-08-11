@@ -2,7 +2,7 @@
 
 外部リポジトリ（アプリ本体）を丸ごと取り込み、複数コンテナ（app / nginx / db 等）で共有して動かすタイプのプロジェクト向けのガイドです。`pre-up` ライフサイクルフックで **ホスト側リポジトリの clone/pull** と **共有 work ボリュームへの populate** を行い、2 回目以降の `devbase up` では populate 済みを検出して同期をスキップする冪等パターンを解説します。
 
-リファレンス実装は `projects/carmo-system-console`（Laravel Sail ベース）です。
+リファレンス実装は Laravel Sail ベースの `carmo-system-console` プラグインです。**このリポジトリには含まれません** — 社内向けの private プラグインレジストリで配布されており、`devbase plugin install` 後に `projects/carmo-system-console/`（`projects/` は `.gitignore` 対象）へ展開されます。アクセス権が無い場合でも、本書のコード断片と [チェックリスト](#7-チェックリスト新規に-repo-連携プロジェクトを作るとき) だけでパターンを再現できます。
 
 > **前提:** ライフサイクルフック自体の基本は [プラグイン開発クイックスタート](quickstart.md#25-ライフサイクルフック任意) を、共有ボリュームや `CONTAINER_SCALE` の一般論は [compose.yml ガイドライン](compose-yml-guidelines.md) と [コンテナ操作ガイド](../user/container-operations.md#並行開発) を参照してください。本書はそれらを組み合わせた「repo 連携」パターンに絞って説明します。
 
@@ -63,6 +63,17 @@ volumes:
 ```
 
 > **Note:** `pre-up` は子プロセスのため `export DEVBASE_WORK_VOLUME` しても後続の `docker compose up` へは伝播しません。`compose.yml` 側は `${DEVBASE_WORK_VOLUME:-devbase_work_${DEVBASE_INSTANCE_INDEX:-1}}` のフォールバック式で解決し、加えて `pre-up` が同じ値を `.env` に書き出すことで整合を取ります。
+
+### スケール前提: `CONTAINER_SCALE=1`
+
+**このパターンは scale=1（1 プロジェクト = 1 work ボリューム）を前提としています。** devbase の既定は `CONTAINER_SCALE=2` なので、プロジェクトの `env` に `CONTAINER_SCALE=1` を明示してください。
+
+現行実装では、scale>1 にすると「全コンテナが同一のソースツリーを共有する」という本パターンの前提が次の 2 点で崩れます。
+
+- **`pre-up` はインデックスなしで 1 回しか実行されない。** devbase が `DEVBASE_INSTANCE_INDEX` を環境変数として渡すのは、インスタンスごとに実行される `deploy` フックだけです。`pre-up` には渡らないため、populate されるのは `.env`（または既定値 `1`）で解決される **単一の work ボリュームのみ**で、`devbase_work_2` 以降は空のまま残ります。
+- **scale 生成が書き換えるのは dev サービスの `/work` だけ。** `.docker-compose.scale.yml` の生成では `dev-<index>` の `/work` マウントが `devbase_work_<index>` へ固定で差し替えられる一方、app / nginx / mysql などの非 dev サービスは `compose.yml` に書いた共有 work ボリュームを参照し続けます。結果として dev-2 以降だけが別（空の）ボリュームを見ることになります。
+
+複数インスタンスを並行して動かしたい場合は `devbase scale` ではなく、**プロジェクトディレクトリごと複製**（別ディレクトリ = 別 `COMPOSE_PROJECT_NAME`）し、`DEVBASE_WORK_VOLUME` で work ボリューム名を分けてください。
 
 ---
 
@@ -129,8 +140,9 @@ git pull origin main
 
 ```bash
 devbase down
-docker volume rm <project>_devbase_work_1   # インスタンス番号は環境に応じて
-devbase up                                  # pre-up が ②③④ を再実行
+docker volume rm devbase_work_1   # external volume のため project 名の接頭辞は付かない
+                                  # DEVBASE_WORK_VOLUME を設定している場合はその名前
+devbase up                        # pre-up が ②③④ を再実行
 ```
 
 > **Warning:** work ボリュームには実行時ソースと `.env`、コンテナ内生成物が含まれます。削除前に必要な変更をコミット / 退避してください。DB 等の `sail-*` ボリュームは別管理なので、work ボリュームだけを消してもデータは残ります。
@@ -143,8 +155,8 @@ devbase up                                  # pre-up が ②③④ を再実行
 |------|------|------|
 | `DEVBASE_REPO_PULL` | `1` | `0` にすると ①（`repo/` の `git pull`）を抑止。オフラインや意図的にビルドコンテキストを固定したいとき |
 | `DEVBASE_ENV_OVERWRITE` | `backup` | 未 populate 時の既存ホスト `.env` の扱い。`backup`（`.env.bak.<ts>` に退避して上書き）/ `skip`（既存があれば S3 取得しない）/ `force`（退避せず上書き） |
-| `DEVBASE_WORK_VOLUME` | `devbase_work_<index>` | 共有 work ボリューム名の明示指定。未指定なら `DEVBASE_INSTANCE_INDEX` から解決 |
-| `DEVBASE_INSTANCE_INDEX` | `1` | `devbase scale` 時にインスタンスごとの work ボリューム名を切り替えるためのインデックス（devbase 本体が付与） |
+| `DEVBASE_WORK_VOLUME` | `devbase_work_<index>` | `compose.yml` が参照する共有 work ボリューム名の明示指定。未指定なら `DEVBASE_INSTANCE_INDEX` から解決。**dev サービスの `/work` は scale 生成時に `devbase_work_<index>` へ固定で書き換えられる**ため、既定名以外を指定すると dev だけが別ボリュームを見ます |
+| `DEVBASE_INSTANCE_INDEX` | `1` | work ボリューム名のインデックス。**devbase 本体が渡すのは `deploy` フックに対してのみ**で、`pre-up` や `docker compose` のプロセス環境には渡りません。`compose.yml` の `${DEVBASE_INSTANCE_INDEX:-1}` は `.env` に書かれた値、無ければ `1` に解決されます（[スケール前提](#スケール前提-container_scale1) を参照） |
 
 > **Note:** `.env` の環境選択（例: `s3://.../env/local.env` の `local` 部分）など、S3 パスやプロファイルはプロジェクト固有の変数（例: `CARMO_ENV`）で制御することがあります。プロジェクトの `pre-up` 冒頭コメントを参照してください。
 
@@ -153,6 +165,7 @@ devbase up                                  # pre-up が ②③④ を再実行
 ## 7. チェックリスト（新規に repo 連携プロジェクトを作るとき）
 
 - [ ] `env` に `GIT_USER` / `GIT_REPO` を定義した
+- [ ] `env` に `CONTAINER_SCALE=1` を明記した（既定は `2`。[スケール前提](#スケール前提-container_scale1) を参照）
 - [ ] `compose.yml` で work ボリュームを `external: true` + `name: ${DEVBASE_WORK_VOLUME:-devbase_work_${DEVBASE_INSTANCE_INDEX:-1}}` で宣言した
 - [ ] app サービスの `build.context` をホスト `./repo` にした
 - [ ] `pre-up` で ①clone/pull → ②`.env`取得 → ③populate → ④`.env`配置 を実装した
@@ -165,7 +178,7 @@ devbase up                                  # pre-up が ②③④ を再実行
 
 ## 参考
 
-- リファレンス実装: `projects/carmo-system-console/pre-up` / `compose.yml` / `README.md`
+- リファレンス実装: `carmo-system-console` プラグインの `pre-up` / `compose.yml` / `README.md`（社内 private レジストリ配布。インストール後は `projects/carmo-system-console/` 配下に展開され、このリポジトリには含まれません）
 - [プラグイン開発クイックスタート](quickstart.md) — ライフサイクルフックの基本
 - [compose.yml ガイドライン](compose-yml-guidelines.md) — 共有ボリューム・スケール構成
 - [コンテナ操作ガイド](../user/container-operations.md) — `/work` ボリュームの一般論
