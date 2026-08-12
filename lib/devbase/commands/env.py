@@ -36,7 +36,6 @@ def cmd_env(devbase_root: Path, args) -> int:
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
         'keygen':  lambda: cmd_env_keygen(devbase_root,
-                                          key_file=getattr(args, 'key_file', None),
                                           force=getattr(args, 'force', False),
                                           assume_yes=getattr(args, 'assume_yes', False)),
     }
@@ -519,13 +518,21 @@ def _restore_file(path: Path, snapshot) -> bool:
         return False
 
 
-def cmd_env_keygen(devbase_root: Path, key_file=None, force: bool = False,
+def cmd_env_keygen(devbase_root: Path, force: bool = False,
                    assume_yes: bool = False) -> int:
-    """devbase 専用の age 鍵を生成する"""
+    """devbase 専用の age 鍵を生成する
+
+    生成先は必ず ``agekeys.key_file_path()`` (= ``DEVBASE_AGE_KEY_FILE`` があれば
+    それ、無ければ ``~/.config/devbase/age/keys.txt``) にする。生成先を CLI 引数で
+    自由に選べるようにすると、復号側の ``agekeys.resolve_identities()`` はそのパスを
+    探索しないため「生成した鍵で保存した機密を復号できない」状態を作れてしまう。
+    場所を変えたい場合は ``DEVBASE_AGE_KEY_FILE`` を設定してから実行してもらい、
+    生成先と探索先が構造的に一致する契約を保つ。
+    """
     from devbase.env import agekeys
     from devbase.errors import DevbaseError
 
-    path = Path(key_file).expanduser() if key_file else agekeys.key_file_path()
+    path = agekeys.key_file_path()
 
     if path.exists() and not force:
         try:
@@ -538,47 +545,39 @@ def cmd_env_keygen(devbase_root: Path, key_file=None, force: bool = False,
         print("  作り直す場合: devbase env keygen --force")
         return 0
 
-    old_public = None
-    if path.exists():
-        # 上書き前に旧公開鍵を控えておき、受信者リストから差し替えられるようにする
-        try:
-            old_public = agekeys.read_public_key(path)
-        except DevbaseError:
-            old_public = None
+    # ここへ来るのは「鍵が無い」か「--force で作り直す」場合だけ。後者で既に暗号文が
+    # あるなら、旧鍵でしか復号できない機密を失う操作なので明示的な同意を取る。
+    if path.exists() and _has_encrypted_secrets(devbase_root) and not assume_yes:
+        print("暗号化済みの機密が存在します。鍵を作り直すと、"
+              "旧鍵でしか復号できない機密は失われます。")
+        print(f"  鍵ファイル: {path}")
+        answer = safe_input("続行しますか? (yes と入力): ")
+        if answer != 'yes':
+            print("中止しました")
+            return 1
 
-        if _has_encrypted_secrets(devbase_root) and not assume_yes:
-            print("暗号化済みの機密が存在します。鍵を作り直すと、"
-                  "旧鍵でしか復号できない機密は失われます。")
-            print(f"  鍵ファイル: {path}")
-            answer = safe_input("続行しますか? (yes と入力): ")
-            if answer != 'yes':
-                print("中止しました")
-                return 1
-
-    # 鍵の差し替えと受信者リストの更新は「まとめて成功するか、何も変わらないか」の
-    # どちらかでなければならない。片方だけ適用されると、旧鍵は失われたのに新公開鍵は
-    # 受信者に載っていない、という復旧不能な状態になりうる。個々の書き込みは atomic
-    # でも複数ファイルにまたがる更新はそうならないため、事前に中身を控えて巻き戻す。
-    recipients_path = agekeys.recipients_file(devbase_root)
+    # keygen はワークスペース固有の受信者リスト (secrets/recipients.txt) を触らない。
+    # 鍵はグローバル (~/.config/devbase/age/keys.txt) なのに受信者リストは
+    # ワークスペースごとに存在するため、ここで書き込むと別ワークスペースには旧公開鍵が
+    # 取り残され、既に失われた秘密鍵に対応する公開鍵で暗号化してしまう。
+    # agekeys.resolve_recipients() は recipients.txt が無ければ鍵ファイルの公開鍵へ
+    # フォールバックするので、単独利用ではリストを作る必要がない。チーム運用で明示的に
+    # 受信者を足す経路 (rekey) だけが recipients.txt を作る。
+    #
+    # 触るファイルが鍵 1 つになったので、ロールバックも鍵ファイルだけで足りる。
+    # それでも巻き戻しは必要で、--force の途中失敗で旧鍵が消えると既存の暗号文を
+    # 誰も復号できなくなるため。
     key_snapshot = _snapshot_file(path)
-    recipients_snapshot = _snapshot_file(recipients_path)
 
     try:
         path, public = agekeys.generate_key_file(path, force=True)
-        agekeys.add_recipient(devbase_root, public)
-        if old_public and old_public != public:
-            agekeys.remove_recipient(devbase_root, old_public)
-            logger.info("受信者リストから旧公開鍵を削除しました: %s", old_public)
     except (DevbaseError, OSError) as e:
         logger.error("%s", e)
-        restored = _restore_file(path, key_snapshot)
-        restored |= _restore_file(recipients_path, recipients_snapshot)
-        if restored:
-            logger.error("鍵と受信者リストを元の状態へ戻しました")
+        if _restore_file(path, key_snapshot):
+            logger.error("鍵ファイルを元の状態へ戻しました")
         return 1
 
     logger.info("鍵を生成しました: %s", path)
-    logger.info("受信者リスト: %s", agekeys.recipients_file(devbase_root))
     _print_key_backup_notice(path, public)
     return 0
 

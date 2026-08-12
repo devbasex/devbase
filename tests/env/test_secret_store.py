@@ -221,3 +221,89 @@ def test_plaintext_load_of_binary_reports_a_useful_error(store):
     path.write_bytes(b'\xff\xfe\x00binary')
     with pytest.raises(SecretStoreError, match='UTF-8'):
         store.plaintext.load(GLOBAL)
+
+
+# ---------------------------------------------------------------------------
+# 保存の原子性
+#
+# 暗号文を失うと機密は復旧できない。既存ファイルを直接 truncate せず、一時ファイル
+# → os.replace で差し替えているので、書き込みの途中で落ちても旧内容が残る。
+# ---------------------------------------------------------------------------
+
+def _fail_replace(monkeypatch, exc):
+    """``os.replace`` だけを失敗させる (差し替え直前までは正常に進む)"""
+    from devbase.env import io_common
+
+    def boom(src, dst):
+        raise exc
+
+    monkeypatch.setattr(io_common.os, 'replace', boom)
+
+
+def test_age_save_keeps_the_old_ciphertext_when_replace_fails(store, monkeypatch):
+    store.age.save(GLOBAL, SAMPLE)
+    path = store.age.path(GLOBAL)
+    before = path.read_bytes()
+
+    _fail_replace(monkeypatch, OSError(28, 'No space left on device'))
+
+    with pytest.raises(SecretStoreError, match='書き込みに失敗'):
+        store.age.save(GLOBAL, {**SAMPLE, 'NEW': '1'})
+
+    # 旧 ciphertext が無傷 = まだ旧内容を復号できる
+    assert path.read_bytes() == before
+    monkeypatch.undo()
+    assert store.age.load(GLOBAL) == SAMPLE
+
+
+def test_age_save_leaves_no_temp_file_when_replace_fails(store, monkeypatch):
+    store.age.save(GLOBAL, SAMPLE)
+    path = store.age.path(GLOBAL)
+
+    _fail_replace(monkeypatch, OSError(28, 'No space left on device'))
+
+    with pytest.raises(SecretStoreError):
+        store.age.save(GLOBAL, {**SAMPLE, 'NEW': '1'})
+
+    # 書きかけの一時ファイル (中身は新しい暗号文) を放置しない
+    assert sorted(p.name for p in path.parent.iterdir()) == [path.name]
+
+
+def test_age_save_keeps_the_old_ciphertext_when_interrupted(store, monkeypatch):
+    """KeyboardInterrupt のような BaseException でも旧内容と後始末は変わらない"""
+    store.age.save(GLOBAL, SAMPLE)
+    path = store.age.path(GLOBAL)
+    before = path.read_bytes()
+
+    _fail_replace(monkeypatch, KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        store.age.save(GLOBAL, {**SAMPLE, 'NEW': '1'})
+
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in path.parent.iterdir()) == [path.name]
+
+
+def test_plaintext_save_keeps_the_old_content_when_replace_fails(store,
+                                                                 monkeypatch):
+    store.plaintext.save(GLOBAL, SAMPLE)
+    path = store.plaintext.path(GLOBAL)
+    before = path.read_bytes()
+
+    _fail_replace(monkeypatch, OSError(28, 'No space left on device'))
+
+    with pytest.raises(SecretStoreError, match='書き込みに失敗'):
+        store.plaintext.save(GLOBAL, {**SAMPLE, 'NEW': '1'})
+
+    assert path.read_bytes() == before
+
+
+def test_age_save_is_atomic_across_updates(store):
+    """通常経路では差し替えが成功し、一時ファイルも残らない"""
+    store.age.save(GLOBAL, SAMPLE)
+    store.age.save(GLOBAL, {**SAMPLE, 'NEW': '1'})
+
+    path = store.age.path(GLOBAL)
+    assert sorted(p.name for p in path.parent.iterdir()) == [path.name]
+    assert store.age.load(GLOBAL)['NEW'] == '1'
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600

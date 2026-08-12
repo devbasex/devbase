@@ -281,7 +281,6 @@ _devbase() {
                     ;;
                 keygen)
                     _arguments \
-                        '--key-file[Key file path]:file:_files' \
                         '--force[Overwrite an existing key]' \
                         '--yes[Skip the confirmation prompt for --force]' '-y[Skip the confirmation prompt for --force]'
                     ;;

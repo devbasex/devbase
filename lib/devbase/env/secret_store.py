@@ -124,7 +124,10 @@ class PlaintextBackend:
     def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
         path = self.path(ref)
         try:
-            _io_common.write_secure_bytes(path, EnvFile.dump_bytes(data))
+            # 平文とはいえ機密の入れ物なので、暗号化側と同じく atomic に差し替える。
+            # 直接 O_TRUNC すると書き込み途中の失敗で旧値も新値も失った空ファイルが
+            # 残り、その状態で暗号化すると中身の無い機密を保存してしまう。
+            _io_common.write_secure_bytes_atomic(path, EnvFile.dump_bytes(data))
         except OSError as e:
             raise SecretStoreError(f"書き込みに失敗しました ({path}): {e}") from e
         return path
@@ -211,7 +214,10 @@ class AgeBackend:
                 f"{ref.label()}の機密を暗号化できませんでした: {e}"
             ) from e
         try:
-            _io_common.write_secure_bytes(path, blob)
+            # 暗号文は失うと復旧不能なので、既存ファイルを直接 O_TRUNC せず
+            # 一時ファイル → fsync → os.replace で差し替える。ディスク枯渇や中断が
+            # 起きても旧 ciphertext はそのまま残り、書きかけの一時ファイルも消える。
+            _io_common.write_secure_bytes_atomic(path, blob)
         except OSError as e:
             raise SecretStoreError(f"書き込みに失敗しました ({path}): {e}") from e
         return path

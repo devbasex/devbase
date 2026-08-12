@@ -280,14 +280,17 @@ def _add_env_parser(subparsers):
     env_sub.add_parser('edit', help='Open .env in editor')
     env_sub.add_parser('project', help='Setup project-specific variables')
 
+    # 生成先を選ぶオプションは置かない。復号側は $DEVBASE_AGE_KEY_FILE か既定パスしか
+    # 探索しないため、任意のパスへ生成できると「その鍵で保存した機密を復号できない」
+    # 状態を作れてしまう。場所を変えたい場合は環境変数を設定してから実行してもらう。
+    # 説明中の環境変数名は devbase.env.agekeys.KEY_FILE_ENV と対。agekeys は pyrage を
+    # 引き込むため、parser 構築時に import せず文字列で持つ (暗号機能を使わない
+    # コマンドまで pyrage のロード失敗に巻き込まないため)。
     env_keygen = env_sub.add_parser(
-        'keygen', help='Generate the devbase age key used by the secret store')
-    # 既定パスの説明にある環境変数名は devbase.env.agekeys.KEY_FILE_ENV と対。
-    # agekeys は pyrage を引き込むため、parser 構築時に import せず文字列で持つ
-    # (暗号機能を使わないコマンドまで pyrage のロード失敗に巻き込まないため)。
-    env_keygen.add_argument('--key-file', metavar='PATH', default=None,
-                            help='Key file path (default: $DEVBASE_AGE_KEY_FILE '
-                                 'or ~/.config/devbase/age/keys.txt)')
+        'keygen',
+        help='Generate the devbase age key used by the secret store '
+             '(written to $DEVBASE_AGE_KEY_FILE or ~/.config/devbase/age/keys.txt; '
+             'set $DEVBASE_AGE_KEY_FILE before running to use another location)')
     env_keygen.add_argument('--force', action='store_true',
                             help='Overwrite an existing key (previously encrypted '
                                  'secrets may become unrecoverable)')
