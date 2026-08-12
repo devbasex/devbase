@@ -51,16 +51,32 @@ def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Opt
     - ``.resolve()`` だけだと、プラグイン経由で ``projects/<name>`` が
       シンボリックリンクになっているプロジェクト配下で実行したときに
       リンク先の実体を指してしまい、``projects/`` の外と判定される。
-    - 論理パスだけだと、``..`` を含むパスやリンク先の実体パスで入ったときに
-      ``projects/`` 配下と判定できない。
+    - 論理パスだけだと、リンク先の実体パスで入ったときに ``projects/`` 配下と
+      判定できない。
 
     ``PWD`` 由来のパスはシェルがシンボリックリンクを保った論理パスなので、
     まず ``resolve()`` せずそのまま突き合わせる。
+
+    2 段で使う正規化が違うのは、それぞれ守りたい性質が違うため:
+
+    - 論理パス側は ``os.path.abspath`` (= ``normpath``) で ``..`` を **文字列として**
+      畳む。シンボリックリンクを解いてしまうと上記の症状が戻るので解かない。一方
+      ``..`` を畳まないと ``projects/web/../../outside`` のような
+      ``projects/`` の外を指すパスが ``relative_to`` を通ってしまい、プロジェクト外
+      からの ``--project`` が ``web`` の設定を書き換える。``..`` を textual に畳む
+      のはシェルの ``cd`` / ``PWD`` の意味論そのものなので、論理パス扱いと矛盾しない。
+    - 物理パス側は ``.resolve()`` でリンクも ``..`` も実体まで解く。こちらは
+      「実体パスで入られた場合」を拾うためのフォールバックなので、リンクを
+      保つ理由が無い。
     """
     current = Path(cwd) if cwd is not None else Path(os.environ.get('PWD', os.getcwd()))
     projects_dir = Path(devbase_root) / 'projects'
 
-    for to_path in (Path.absolute, Path.resolve):
+    def to_logical(path: Path) -> Path:
+        """シンボリックリンクは解かず、絶対パス化と ``..`` の畳み込みだけ行う"""
+        return Path(os.path.abspath(path))
+
+    for to_path in (to_logical, Path.resolve):
         try:
             relative = to_path(current).relative_to(to_path(projects_dir))
         except (ValueError, OSError):

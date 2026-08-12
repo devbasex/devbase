@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import os
-import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -72,60 +71,15 @@ def recipients_file(devbase_root: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 def _ensure_private_dir(path: Path) -> None:
-    """ディレクトリを用意し、**自分が新規作成した階層だけ** ``0700`` にする。
+    """鍵 / 受信者リストの置き場を ``0700`` で用意する。
 
-    既存ディレクトリまで chmod すると、``DEVBASE_AGE_KEY_FILE=/tmp/devbase-key``
-    のように共有ディレクトリを鍵の置き場に指定されたとき、その共有ディレクトリ
-    ごと他ユーザーやサービスから読めなくしてしまう。devbase が作っていない
-    ディレクトリの権限はその所有者の管轄なので触らず、緩い場合は警告に留める。
-
-    ``mkdir(parents=True)`` で一括作成してから chmod すると、作成から chmod まで
-    の間だけ umask 依存の緩い権限 (例 0755) が見えてしまう。その隙に開いた fd は
-    後から chmod しても閉じないため、**作成前に** 未存在の階層を控えておき、親→子
-    の順に ``mkdir(mode=0o700)`` で 1 階層ずつ作る。こうすれば最初から 0700 で、
-    緩い権限が一瞬も露出しない。
-
-    ``mode`` は umask でビットが削られることはあっても広がることはなく、``0o700``
-    には group / other ビットが無いので umask の影響を受けない。「umask で緩く
-    なるのでは」と後追いの chmod を足す必要は無い。
+    実装は ``io_common.ensure_private_dir`` にある。機密ファイルの書き出し
+    (``write_secure_bytes``) と同じ規則でディレクトリを掘る必要があり、実装を
+    2 箇所に持つと片方だけ緩む。ここでは「置き場を利用者が明示的に選べる経路」
+    なので、既存ディレクトリが緩いときの警告を有効にして呼ぶ
+    (``DEVBASE_AGE_KEY_FILE`` に共有ディレクトリを指された場合に気づけるように)。
     """
-    path = Path(path)
-    missing: List[Path] = []
-    probe = path
-    while not probe.exists():
-        missing.append(probe)
-        parent = probe.parent
-        if parent == probe:   # ルートまで到達 (通常は起こらない)
-            break
-        probe = parent
-
-    if not missing:
-        _warn_if_world_accessible(path)
-        return
-
-    # missing は子→親の順に積んであるので、逆順 (親→子) に作る
-    for target in reversed(missing):
-        try:
-            target.mkdir(mode=0o700)
-        except FileExistsError:
-            # 並行して他プロセスが先に作った場合。既存ディレクトリは
-            # 所有者の管轄として権限を触らない方針に合わせ、chmod しない。
-            continue
-
-
-def _warn_if_world_accessible(path: Path) -> None:
-    """既存ディレクトリの権限が緩ければ警告する (権限は変更しない)"""
-    try:
-        mode = stat.S_IMODE(path.stat().st_mode)
-    except OSError:
-        return
-    if mode & 0o077:
-        logger.warning(
-            "%s は他ユーザーからアクセスできます (mode %04o)。"
-            "devbase が作成したディレクトリではないため権限は変更しません。"
-            "機密を置く場所なら chmod 700 を検討してください",
-            path, mode,
-        )
+    _io_common.ensure_private_dir(path, warn_if_permissive=True)
 
 
 def _key_exists_error(path: Path) -> AgeKeyError:

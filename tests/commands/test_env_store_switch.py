@@ -99,10 +99,50 @@ def test_project_name_is_none_from_the_symlink_target_path(devbase_root, linked_
 
 
 def test_project_name_resolves_through_a_dot_dot_path(devbase_root):
-    """``..`` を含むパスは物理パス側のフォールバックで拾える"""
+    """``..`` を含むパスも正規化して拾える"""
     sub = devbase_root / 'projects' / 'web' / 'src'
     sub.mkdir(parents=True)
     assert env_cmd._current_project_name(devbase_root, sub / '..' / 'src') == 'web'
+
+
+def test_project_name_resolves_when_dot_dot_stays_inside_the_project(devbase_root):
+    """``projects/web/sub/..`` のようにプロジェクト内へ戻る ``..`` は web のまま"""
+    sub = devbase_root / 'projects' / 'web' / 'sub'
+    sub.mkdir(parents=True)
+    assert env_cmd._current_project_name(devbase_root, sub / '..') == 'web'
+
+
+def test_project_name_is_none_when_dot_dot_escapes_projects(devbase_root):
+    """``..`` で ``projects/`` の外へ抜けるパスは ``None``。
+
+    ``..`` を畳まずに突き合わせると ``projects/web/../../outside`` が
+    「``projects/web`` 配下」と誤判定され、プロジェクト外で実行した
+    ``--project`` が web の設定を書き換えてしまう。
+    """
+    outside = devbase_root / 'outside'
+    outside.mkdir()
+    escaped = devbase_root / 'projects' / 'web' / '..' / '..' / 'outside'
+
+    assert env_cmd._current_project_name(devbase_root, escaped) is None
+
+
+def test_project_name_is_none_when_dot_dot_escapes_from_a_deeper_path(devbase_root):
+    """途中の階層が実在しても ``..`` の畳み込み結果で判定する"""
+    (devbase_root / 'projects' / 'web' / 'src').mkdir(parents=True)
+    escaped = devbase_root / 'projects' / 'web' / 'src' / '..' / '..' / '..'
+
+    assert env_cmd._current_project_name(devbase_root, escaped) is None
+
+
+def test_project_name_handles_dot_dot_inside_a_symlinked_project(devbase_root,
+                                                                 linked_project):
+    """``..`` の畳み込みはシンボリックリンク対応を壊さない。
+
+    論理パス側で ``..`` を解決しても (``resolve()`` ではなく文字列として畳む)、
+    リンク名 ``linked`` は保たれる。
+    """
+    sub = devbase_root / 'projects' / 'linked' / 'sub'
+    assert env_cmd._current_project_name(devbase_root, sub / '..') == 'linked'
 
 
 # ---------------------------------------------------------------------------

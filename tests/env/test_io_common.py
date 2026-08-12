@@ -169,3 +169,100 @@ def test_write_secure_bytes_atomic_keeps_old_content_on_failure(tmp_path,
     assert path.read_bytes() == b"old"
     # 書きかけの一時ファイルも残さない
     assert [p.name for p in tmp_path.iterdir()] == [path.name]
+
+
+# ---------------------------------------------------------------------------
+# 親ディレクトリの権限 (ensure_private_dir)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def no_umask():
+    """umask 0 (= 権限が一切削られない状態) で書き込ませる。
+
+    ``mkdir`` の既定モードは umask 依存なので、umask で偶然絞られている環境では
+    「0700 を明示している」ことを確認できない。
+    """
+    import os
+
+    old = os.umask(0)
+    try:
+        yield
+    finally:
+        os.umask(old)
+
+
+@pytest.mark.parametrize("write", ["write_secure_bytes",
+                                   "write_secure_bytes_atomic"])
+def test_write_secure_bytes_creates_parent_dirs_with_0700(tmp_path, no_umask,
+                                                          write):
+    """新規に掘る親ディレクトリは umask 0 でも 0700。
+
+    ファイルが 0600 でも、置き場 (``secrets/`` 等) が 0755 だと保存している
+    ファイル名の一覧が他ユーザーから見えてしまう。
+    """
+    import stat
+
+    path = tmp_path / "secrets" / "deep" / "secret.bin"
+    getattr(io_common, write)(path, b"payload")
+
+    assert path.read_bytes() == b"payload"
+    assert stat.S_IMODE((tmp_path / "secrets").stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize("write", ["write_secure_bytes",
+                                   "write_secure_bytes_atomic"])
+def test_write_secure_bytes_does_not_chmod_an_existing_dir(tmp_path, write):
+    """既存ディレクトリの権限は変えない。
+
+    export 先の CWD のように devbase が作っていないディレクトリを 0700 へ
+    落とすと、他ユーザーやサービスのアクセスを壊す。
+    """
+    import os
+    import stat
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    os.chmod(shared, 0o755)
+
+    getattr(io_common, write)(shared / "secret.bin", b"payload")
+
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o755
+    # ディレクトリを緩いままにする代わり、ファイル自体は 0600 で守る
+    assert stat.S_IMODE((shared / "secret.bin").stat().st_mode) == 0o600
+
+
+def test_ensure_private_dir_is_quiet_about_an_existing_dir_by_default(tmp_path,
+                                                                     caplog):
+    """既定では緩い既存ディレクトリを警告しない。
+
+    ``$DEVBASE_ROOT`` 直下や CWD のような「緩くて当たり前」の場所へ毎回書くため、
+    常時警告すると本当の警告 (鍵の置き場が緩い等) が埋もれる。
+    """
+    import os
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    os.chmod(shared, 0o777)
+
+    with caplog.at_level("WARNING"):
+        io_common.write_secure_bytes(shared / "secret.bin", b"payload")
+
+    assert not [r for r in caplog.records if "shared" in r.getMessage()]
+
+
+def test_ensure_private_dir_warns_when_asked(tmp_path, caplog):
+    """``warn_if_permissive=True`` なら緩い既存ディレクトリを警告する (agekeys 経路)"""
+    import os
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    os.chmod(shared, 0o777)
+
+    with caplog.at_level("WARNING"):
+        io_common.ensure_private_dir(shared, warn_if_permissive=True)
+
+    assert any("shared" in r.getMessage() for r in caplog.records)
+    # 警告するだけで権限は変えない
+    import stat
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o777
