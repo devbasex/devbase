@@ -150,6 +150,14 @@ def _resolve_identity(path_spec: str):
         ) from e
 
 
+def validate_recipient(spec: str) -> None:
+    """recipient 仕様文字列が解釈可能かを検証する (不正なら CipherError)。
+
+    受信者リストへの登録時など、実際に暗号化する前に形式不正を弾くために使う。
+    """
+    _resolve_recipient(spec)
+
+
 def encrypt(data: bytes,
             recipients: Sequence[str] = (),
             passphrase: Optional[str] = None) -> bytes:

@@ -35,6 +35,10 @@ def cmd_env(devbase_root: Path, args) -> int:
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
+        'keygen':  lambda: cmd_env_keygen(devbase_root,
+                                          key_file=getattr(args, 'key_file', None),
+                                          force=getattr(args, 'force', False),
+                                          assume_yes=getattr(args, 'assume_yes', False)),
     }
 
     handler = handlers.get(subcmd)
@@ -456,6 +460,81 @@ def cmd_env_import(devbase_root: Path, args) -> int:
         keep_last=getattr(args, 'keep_last', 10),
     )
     return import_bundle(devbase_root, opts)
+
+
+def _has_encrypted_secrets(devbase_root: Path) -> bool:
+    """暗号化済みの機密が 1 つでも存在するか"""
+    from devbase.env.secret_store import SecretStore, SecretRef
+
+    store = SecretStore(devbase_root)
+    if store.age.exists(SecretRef.for_global()):
+        return True
+    return bool(store.project_names())
+
+
+def _print_key_backup_notice(path, public: str) -> None:
+    print()
+    print("=" * 60)
+    print("鍵のバックアップを必ず取ってください")
+    print("=" * 60)
+    print(f"  鍵ファイル: {path}")
+    print(f"  公開鍵    : {public}")
+    print()
+    print("  この鍵を失うと、暗号化した機密は誰にも復号できません。")
+    print("  パスワード管理ツールなど、端末とは別の場所へ複製を保管してください。")
+    print("=" * 60)
+
+
+def cmd_env_keygen(devbase_root: Path, key_file=None, force: bool = False,
+                   assume_yes: bool = False) -> int:
+    """devbase 専用の age 鍵を生成する"""
+    from devbase.env import agekeys
+    from devbase.errors import DevbaseError
+
+    path = Path(key_file).expanduser() if key_file else agekeys.key_file_path()
+
+    if path.exists() and not force:
+        try:
+            public = agekeys.read_public_key(path)
+        except DevbaseError as e:
+            logger.error("%s", e)
+            return 1
+        print(f"鍵は既に存在します: {path}")
+        print(f"  公開鍵: {public}")
+        print("  作り直す場合: devbase env keygen --force")
+        return 0
+
+    old_public = None
+    if path.exists():
+        # 上書き前に旧公開鍵を控えておき、受信者リストから差し替えられるようにする
+        try:
+            old_public = agekeys.read_public_key(path)
+        except DevbaseError:
+            old_public = None
+
+        if _has_encrypted_secrets(devbase_root) and not assume_yes:
+            print("暗号化済みの機密が存在します。鍵を作り直すと、"
+                  "旧鍵でしか復号できない機密は失われます。")
+            print(f"  鍵ファイル: {path}")
+            answer = safe_input("続行しますか? (yes と入力): ")
+            if answer != 'yes':
+                print("中止しました")
+                return 1
+
+    try:
+        path, public = agekeys.generate_key_file(path, force=True)
+        agekeys.add_recipient(devbase_root, public)
+        if old_public and old_public != public:
+            agekeys.remove_recipient(devbase_root, old_public)
+            logger.info("受信者リストから旧公開鍵を削除しました: %s", old_public)
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    logger.info("鍵を生成しました: %s", path)
+    logger.info("受信者リスト: %s", agekeys.recipients_file(devbase_root))
+    _print_key_backup_notice(path, public)
+    return 0
 
 
 def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:

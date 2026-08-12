@@ -14,6 +14,9 @@ projects/*
 .env.sources.yml
 .cache/
 
+# 暗号化した機密の保存先 (PLAN35)。暗号文とはいえリポジトリには載せない。
+secrets/
+
 # クロスレビュー (ndf:cross-review) の作業生成物
 .cross_review/
 gh-payload.json

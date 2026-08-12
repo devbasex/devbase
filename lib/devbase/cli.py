@@ -280,6 +280,20 @@ def _add_env_parser(subparsers):
     env_sub.add_parser('edit', help='Open .env in editor')
     env_sub.add_parser('project', help='Setup project-specific variables')
 
+    env_keygen = env_sub.add_parser(
+        'keygen', help='Generate the devbase age key used by the secret store')
+    # 既定パスの説明にある環境変数名は devbase.env.agekeys.KEY_FILE_ENV と対。
+    # agekeys は pyrage を引き込むため、parser 構築時に import せず文字列で持つ
+    # (暗号機能を使わないコマンドまで pyrage のロード失敗に巻き込まないため)。
+    env_keygen.add_argument('--key-file', metavar='PATH', default=None,
+                            help='Key file path (default: $DEVBASE_AGE_KEY_FILE '
+                                 'or ~/.config/devbase/age/keys.txt)')
+    env_keygen.add_argument('--force', action='store_true',
+                            help='Overwrite an existing key (previously encrypted '
+                                 'secrets may become unrecoverable)')
+    env_keygen.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
+                            help='Skip the confirmation prompt for --force')
+
     _add_env_export_parser(env_sub)
     _add_env_import_parser(env_sub)
 
