@@ -4,11 +4,14 @@ import copy
 import os
 import yaml
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from devbase.errors import DockerError
+from devbase.log import get_logger
 
 from .manager import get_work_volume_for_index, get_ai_volume_for_index
+
+logger = get_logger(__name__)
 
 # 旧 /home/ubuntu マウントは非推奨のため scale 生成時に除去する
 _DEPRECATED_TARGET = '/home/ubuntu'
@@ -143,6 +146,7 @@ def _load_compose_config(compose_file: Path) -> dict:
 
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int,
+    secret_env_names: Sequence[str] = (),
 ) -> dict:
     """Build the service definition for one scaled dev instance (dev-<index>)."""
     service = copy.deepcopy(dev_service)
@@ -152,8 +156,12 @@ def _build_dev_instance(
     # setdefault keeps an explicit `init: false` if the project set one.
     service.setdefault('init', True)
 
-    # Remove environment section (use env_file instead to avoid exposing secrets)
+    # 値を持つ environment は落とす。生成ファイルに秘密の値が残らないようにする
+    # ためで、代わりに「変数名だけ」を列挙して devbase 自身の環境変数から
+    # 解決させる (plan35 §4.3)。
     service.pop('environment', None)
+    if secret_env_names:
+        service['environment'] = list(secret_env_names)
 
     # Update volume mounts for /persistent/ai and /work
     ai_volume = get_ai_volume_for_index(index)
@@ -167,6 +175,7 @@ def _build_dev_instance(
 
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
+    secret_env_names: Sequence[str] = (),
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances."""
     scaled_services = {}
@@ -187,15 +196,62 @@ def _build_scaled_services(
     # Generate a service for each instance
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i,
+            dev_service, dev_service_name, i, secret_env_names,
         )
     return scaled_services
+
+
+def _resolve_env_file_path(entry: Any, base_dir: Path) -> Optional[Path]:
+    """``env_file`` の 1 エントリを実パスへ解決する (解釈できなければ None)"""
+    if isinstance(entry, dict):
+        entry = entry.get('path')
+    if not isinstance(entry, str):
+        return None
+    expanded = os.path.expandvars(entry)
+    if '$' in expanded:
+        # 未定義の変数が残っている = ここでは存在判定できない。触らずに残す。
+        return None
+    path = Path(expanded)
+    return path if path.is_absolute() else base_dir / path
+
+
+def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) -> None:
+    """実在しない ``env_file`` エントリを落とす。
+
+    機密を暗号化すると、それまで参照していた平文ファイルは無くなる。参照を
+    残したままだと Docker Compose が起動時に落ちるため、生成する構成からは
+    外す。値は環境変数として別途注入されるので失われない。
+
+    移行コマンドが ``compose.yml`` を書き換え済みなら、ここに来る時点で該当
+    エントリは無い。手で書いた構成や書き換え前の状態に対する保険として働く。
+    """
+    entries = service.get('env_file')
+    if entries is None:
+        return
+    if not isinstance(entries, list):
+        entries = [entries]
+
+    kept = []
+    for entry in entries:
+        resolved = _resolve_env_file_path(entry, base_dir)
+        if resolved is not None and not resolved.exists():
+            logger.info(
+                "%s: 実在しない env_file 参照を除きました (%s)。"
+                "機密は環境変数として渡されます", service_name, resolved)
+            continue
+        kept.append(entry)
+
+    if kept:
+        service['env_file'] = kept
+    else:
+        service.pop('env_file', None)
 
 
 def generate_scaled_compose(
     scale: int,
     compose_file: Path = None,
     dev_service_name: str = None,
+    secret_env_names: Sequence[str] = (),
 ) -> Path:
     """
     Generate scaled docker-compose file with per-instance volumes
@@ -217,6 +273,10 @@ def generate_scaled_compose(
 
     # Extract dev service (configurable via DEV_SERVICE_NAME)
     services = config.get('services', {})
+    base_dir = compose_file.resolve().parent
+    for service_name, service_config in services.items():
+        if isinstance(service_config, dict):
+            _drop_missing_env_files(service_config, base_dir, service_name)
     dev_service = services.get(dev_service_name)
     if not dev_service:
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
@@ -224,6 +284,7 @@ def generate_scaled_compose(
     scaled_config = {
         'services': _build_scaled_services(
             services, dev_service, dev_service_name, scale,
+            secret_env_names=secret_env_names,
         ),
         'volumes': _build_volumes_section(config, scale),
         'networks': _build_networks_section(config),

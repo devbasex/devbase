@@ -39,52 +39,13 @@ def _global_env(devbase_root: Path):
 
 
 def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
-    """CWD が ``projects/<name>`` 配下ならプロジェクト名を返す。
+    """CWD からプロジェクト名を解決する (実体は :mod:`devbase.env.runtime`)。
 
-    ``projects/<name>/sub/dir`` のような下位ディレクトリから実行された場合も
-    ``<name>`` を返す。保存先はプロジェクトの直下に固定したい (コンテナ構成が
-    参照するのはそこであり、実行時の CWD ではない) ため、末尾ではなく先頭の
-    パス要素を採用する。
-
-    判定は論理パス → 物理パスの順に 2 段で行う。両方が要るのは:
-
-    - ``.resolve()`` だけだと、プラグイン経由で ``projects/<name>`` が
-      シンボリックリンクになっているプロジェクト配下で実行したときに
-      リンク先の実体を指してしまい、``projects/`` の外と判定される。
-    - 論理パスだけだと、リンク先の実体パスで入ったときに ``projects/`` 配下と
-      判定できない。
-
-    ``PWD`` 由来のパスはシェルがシンボリックリンクを保った論理パスなので、
-    まず ``resolve()`` せずそのまま突き合わせる。
-
-    2 段で使う正規化が違うのは、それぞれ守りたい性質が違うため:
-
-    - 論理パス側は ``os.path.abspath`` (= ``normpath``) で ``..`` を **文字列として**
-      畳む。シンボリックリンクを解いてしまうと上記の症状が戻るので解かない。一方
-      ``..`` を畳まないと ``projects/web/../../outside`` のような
-      ``projects/`` の外を指すパスが ``relative_to`` を通ってしまい、プロジェクト外
-      からの ``--project`` が ``web`` の設定を書き換える。``..`` を textual に畳む
-      のはシェルの ``cd`` / ``PWD`` の意味論そのものなので、論理パス扱いと矛盾しない。
-    - 物理パス側は ``.resolve()`` でリンクも ``..`` も実体まで解く。こちらは
-      「実体パスで入られた場合」を拾うためのフォールバックなので、リンクを
-      保つ理由が無い。
+    同じ判定をコンテナ起動側 (機密の合成) でも使うため、実装は 1 箇所に置く。
     """
-    current = Path(cwd) if cwd is not None else Path(os.environ.get('PWD', os.getcwd()))
-    projects_dir = Path(devbase_root) / 'projects'
+    from devbase.env import runtime as _runtime
 
-    def to_logical(path: Path) -> Path:
-        """シンボリックリンクは解かず、絶対パス化と ``..`` の畳み込みだけ行う"""
-        return Path(os.path.abspath(path))
-
-    for to_path in (to_logical, Path.resolve):
-        try:
-            relative = to_path(current).relative_to(to_path(projects_dir))
-        except (ValueError, OSError):
-            continue
-        parts = relative.parts
-        if parts:
-            return parts[0]
-    return None
+    return _runtime.current_project_name(devbase_root, cwd)
 
 
 def _project_env(devbase_root: Path, cwd: Optional[Path] = None):
@@ -140,6 +101,18 @@ def cmd_env(devbase_root: Path, args) -> int:
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
+        'exec':    lambda: cmd_env_exec(devbase_root,
+                                        list(getattr(args, 'argv', []) or [])),
+        'encrypt': lambda: _migrate(args).cmd_env_encrypt(
+            devbase_root,
+            dry_run=getattr(args, 'dry_run', False),
+            assume_yes=getattr(args, 'assume_yes', False),
+            projects=list(getattr(args, 'projects', []) or []) or None),
+        'decrypt': lambda: _migrate(args).cmd_env_decrypt(
+            devbase_root,
+            dry_run=getattr(args, 'dry_run', False),
+            assume_yes=getattr(args, 'assume_yes', False),
+            projects=list(getattr(args, 'projects', []) or []) or None),
         'keygen':  lambda: cmd_env_keygen(devbase_root,
                                           force=getattr(args, 'force', False),
                                           assume_yes=getattr(args, 'assume_yes', False)),
@@ -151,6 +124,44 @@ def cmd_env(devbase_root: Path, args) -> int:
 
     logger.error("サブコマンドを指定してください: %s", ', '.join(handlers))
     return 1
+
+
+def _migrate(_args=None):
+    """移行コマンドの実装モジュール (import を遅延させる)"""
+    from devbase.commands import env_migrate
+
+    return env_migrate
+
+
+def cmd_env_exec(devbase_root: Path, argv) -> int:
+    """機密を環境変数として渡した状態でコマンドを実行する。
+
+    起動ラッパーは共通の機密ファイルを読み込まなくなったため、ホスト側で動く
+    処理のうち値を必要とするもの (Docker Compose の変数展開など) は、この
+    コマンドを通して実行する (plan35 §4.4)。復号結果は子プロセスの環境変数
+    としてのみ渡り、ファイルには書き出さない。
+    """
+    from devbase.env import runtime as _runtime
+
+    # argparse.REMAINDER は区切りの `--` も残すため、先頭のものだけ取り除く。
+    # 2 つ目以降はコマンド自身への引数なのでそのまま渡す。
+    if argv and argv[0] == '--':
+        argv = argv[1:]
+
+    if not argv:
+        logger.error("実行するコマンドを指定してください: devbase env exec -- CMD [ARGS...]")
+        return 1
+
+    env = _runtime.child_env(devbase_root,
+                             _runtime.current_project_name(devbase_root))
+    try:
+        return subprocess.run(argv, env=env).returncode
+    except FileNotFoundError:
+        logger.error("コマンドが見つかりません: %s", argv[0])
+        return 127
+    except OSError as e:
+        logger.error("コマンドを実行できませんでした (%s): %s", argv[0], e)
+        return 1
 
 
 def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:

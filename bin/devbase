@@ -36,12 +36,18 @@ env_var_keys() {
 # Environment setup
 export DOCKER_GID=$( [ "$(uname)" = "Darwin" ] && echo "0" || grep docker /etc/group | cut -d: -f3 )
 export COMPOSE_PROJECT_NAME=$(basename "$PWD")
-# devbase root の .env (AWS / BigQuery 等の devbase ツール用変数) を読み込む。
+# devbase root の非機密設定 (env) を読み込む。
+#
+# 機密 (認証情報) はここでは読まない。暗号化された機密は Python 本体が必要に
+# なった時点で復号し、値を必要とする処理へ環境変数として渡す (plan35 §4.4)。
+# シェルから読める場所に機密を置かないことが暗号化の前提なので、ここで
+# `${DEVBASE_ROOT}/.env` を source すると意味が無くなる。
+#
 # project ディレクトリで実行された場合に Laravel ランタイム用 .env を bash で
 # source すると、CRLF 改行や `|` / `&` 等の特殊文字を含む値で syntax error に
 # なる。compose は同階層の .env を自動で読むため wrapper 側で project .env を
 # source する必要は無い。
-[ -f "${DEVBASE_ROOT}/.env" ] && set -a && source "${DEVBASE_ROOT}/.env" && set +a
+[ -f "${DEVBASE_ROOT}/env" ] && set -a && source "${DEVBASE_ROOT}/env" && set +a
 
 # 呼び出し元 (初期 CWD) の env で定義された変数キーを記録しておく。
 # project 切替 (maybe_cd_project) 時に「呼び出し元プロジェクトにしか無い変数」を
@@ -60,6 +66,15 @@ export DEVBASE_ROOT
 # ===================================================================
 # Function definitions
 # ===================================================================
+
+# Docker Compose の変数展開が機密を必要とする場合があるため、compose の呼び出しは
+# Python 経由で機密を注入して実行する (plan35 §4.4 / §11.2)。復号結果は子プロセスの
+# 環境変数としてだけ渡り、ファイルには書き出されない。
+compose_with_secrets() {
+    ensure_uv
+    PYTHONPATH="${DEVBASE_ROOT}/lib:$PYTHONPATH" \
+        uv run --project "$DEVBASE_ROOT" python -m devbase.cli env exec -- "$@"
+}
 
 cmd_build() {
     echo "=== Building devbase images ==="
@@ -154,7 +169,7 @@ cmd_build() {
 
         echo ""
         echo "[2/2] Building project image without cache..."
-        if docker compose build "${DEV_SERVICE_NAME:-dev}" --no-cache "$@"; then
+        if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" --no-cache "$@"; then
             echo ""
             echo "✓ All images built successfully"
         else
@@ -176,7 +191,7 @@ cmd_build() {
 
         echo ""
         echo "[2/2] Building project image..."
-        if docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
+        if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
             echo ""
             echo "✓ All images built successfully"
         else
@@ -209,7 +224,7 @@ cmd_build() {
 
     echo ""
     echo "[2/2] Building project image..."
-    if docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
+    if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
         echo ""
         echo "✓ All images built successfully"
     else

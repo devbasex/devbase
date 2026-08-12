@@ -35,8 +35,42 @@ _SCALE_COMPOSE_FILE = Path('.docker-compose.scale.yml')
 # 共通ヘルパー
 # ---------------------------------------------------------------------------
 
+def _devbase_root() -> Optional[Path]:
+    root = os.environ.get('DEVBASE_ROOT')
+    return Path(root) if root else None
+
+
+def _inject_secrets(*, required: bool) -> list:
+    """機密を復号して自プロセスの環境変数へ載せ、変数名の一覧を返す。
+
+    ``docker compose`` は自分を起動したプロセスの環境変数から値を解決するため、
+    Compose を呼ぶ前にここを通す。生成する構成には変数名しか書かないので、
+    暗号文も平文ファイルも Compose には渡らない (plan35 §4.3)。
+
+    ``required=False`` の経路 (down / ps / logs など) では、鍵が無い・復号に
+    失敗したというだけでコンテナを止められなくなるのは困るため、警告に留めて
+    続行する。値が要るのは主に起動時の変数展開であり、停止や状態確認には
+    要らない。
+    """
+    from devbase.env import runtime as _runtime
+    from devbase.errors import DevbaseError
+
+    root = _devbase_root()
+    if root is None:
+        return []
+    try:
+        resolved = _runtime.inject(root, _runtime.current_project_name(root))
+    except DevbaseError as e:
+        if required:
+            raise
+        logger.warning("機密を読み込めませんでした (続行します): %s", e)
+        return []
+    return resolved.names
+
+
 def _compose_run(subcommand: str, *extra_args: str) -> int:
     """docker compose コマンドを実行する共通関数"""
+    _inject_secrets(required=False)
     cmd = ['docker', 'compose']
     if _SCALE_COMPOSE_FILE.exists():
         cmd.extend(['-f', str(_SCALE_COMPOSE_FILE)])
@@ -555,7 +589,8 @@ def cmd_up(project_name: str = None, scale: int = None,
             docker_compose_down()
 
         logger.info("[3/6] Generating scaled compose file...")
-        override_file = generate_scaled_compose(scale)
+        secret_names = _inject_secrets(required=True)
+        override_file = generate_scaled_compose(scale, secret_env_names=secret_names)
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/6] Starting containers...")
@@ -594,6 +629,7 @@ def cmd_up(project_name: str = None, scale: int = None,
 
 def cmd_down() -> int:
     """Stop and remove containers"""
+    _inject_secrets(required=False)
     compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
     docker_compose_down(compose_file=compose_file)
 
@@ -615,6 +651,7 @@ def cmd_down() -> int:
 
 def cmd_login(index: str = '1') -> int:
     """Login to container"""
+    _inject_secrets(required=False)
     dev_service = get_dev_service_name()
 
     if _SCALE_COMPOSE_FILE.exists():
@@ -687,7 +724,8 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
-        override_file = generate_scaled_compose(new_scale)
+        secret_names = _inject_secrets(required=True)
+        override_file = generate_scaled_compose(new_scale, secret_env_names=secret_names)
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
@@ -871,13 +909,27 @@ def _ensure_env_files() -> bool:
         return False
     devbase_root_env = devbase_root / '.env'
 
-    if project_env.exists() and devbase_root_env.exists():
+    # 機密が暗号化されていれば平文の .env は存在しない。ファイルの有無ではなく
+    # 秘密ストアに設定があるかで判定しないと、移行済みの環境で毎回 env init が
+    # 走ってしまう。
+    from devbase.env import runtime as _runtime
+    from devbase.env.secret_store import SecretRef, SecretStore
+
+    store = SecretStore(devbase_root)
+    has_global = store.exists(SecretRef.for_global())
+
+    project_name = _runtime.current_project_name(devbase_root)
+    has_project = project_env.exists()
+    if not has_project and project_name:
+        has_project = store.exists(SecretRef.for_project(project_name))
+
+    if has_project and has_global:
         return True
 
     missing_files = []
-    if not project_env.exists():
+    if not has_project:
         missing_files.append("project .env")
-    if not devbase_root_env.exists():
+    if not has_global:
         missing_files.append(f"devbase root .env ({devbase_root_env})")
 
     logger.info("Missing: %s", ', '.join(missing_files))
@@ -886,7 +938,7 @@ def _ensure_env_files() -> bool:
     success = True
     child_env = {**os.environ, 'PYTHONPATH': str(devbase_root / 'lib')}
 
-    if not devbase_root_env.exists():
+    if not has_global:
         logger.info("Creating devbase root .env...")
         try:
             result = subprocess.run(
@@ -902,7 +954,7 @@ def _ensure_env_files() -> bool:
             logger.error("Running env init for devbase root: %s", e)
             success = False
 
-    if not project_env.exists():
+    if not has_project:
         logger.info("Creating project .env...")
         try:
             project_env.touch()
