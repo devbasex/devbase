@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -71,12 +72,52 @@ def recipients_file(devbase_root: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 def _ensure_private_dir(path: Path) -> None:
-    """ディレクトリを ``0700`` で用意する (chmod 非対応環境では黙って続行)"""
+    """ディレクトリを用意し、**自分が新規作成した階層だけ** ``0700`` にする。
+
+    既存ディレクトリまで chmod すると、``DEVBASE_AGE_KEY_FILE=/tmp/devbase-key``
+    のように共有ディレクトリを鍵の置き場に指定されたとき、その共有ディレクトリ
+    ごと他ユーザーやサービスから読めなくしてしまう。devbase が作っていない
+    ディレクトリの権限はその所有者の管轄なので触らず、緩い場合は警告に留める。
+
+    ``mkdir(parents=True)`` は途中階層もまとめて作るため、作成後に見ただけでは
+    どこを自分が作ったのか区別できない。そこで **作成前に** 未存在の階層を控えて
+    おき、その分だけを後追いで chmod する (umask で 0700 が削られても確実に効く)。
+    """
+    path = Path(path)
+    missing: List[Path] = []
+    probe = path
+    while not probe.exists():
+        missing.append(probe)
+        parent = probe.parent
+        if parent == probe:   # ルートまで到達 (通常は起こらない)
+            break
+        probe = parent
+
+    if not missing:
+        _warn_if_world_accessible(path)
+        return
+
     path.mkdir(parents=True, exist_ok=True)
+    for created in missing:
+        try:
+            os.chmod(created, 0o700)
+        except OSError:
+            pass
+
+
+def _warn_if_world_accessible(path: Path) -> None:
+    """既存ディレクトリの権限が緩ければ警告する (権限は変更しない)"""
     try:
-        os.chmod(path, 0o700)
+        mode = stat.S_IMODE(path.stat().st_mode)
     except OSError:
-        pass
+        return
+    if mode & 0o077:
+        logger.warning(
+            "%s は他ユーザーからアクセスできます (mode %04o)。"
+            "devbase が作成したディレクトリではないため権限は変更しません。"
+            "機密を置く場所なら chmod 700 を検討してください",
+            path, mode,
+        )
 
 
 def generate_key_file(path: Optional[Path] = None, *,
@@ -183,6 +224,10 @@ def save_recipients(devbase_root: Path, recipients: List[str]) -> Path:
 
     書き込みは鍵ファイルと同じく atomic に行う。途中失敗で受信者が欠けたリストが
     残ると、以後の暗号化から一部の受信者が黙って外れてしまうため。
+
+    置き場 (``secrets/``) の扱いも鍵ファイルと揃えて ``_ensure_private_dir`` に
+    任せる。既に存在する ``secrets/`` — 例えば git clone 直後の 0755 — を勝手に
+    0700 へ落とすと、ワークスペースを共有している他ユーザーの参照を壊すため。
     """
     path = recipients_file(devbase_root)
     _ensure_private_dir(path.parent)

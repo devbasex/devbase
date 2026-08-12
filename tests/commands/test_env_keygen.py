@@ -9,6 +9,7 @@ import pytest
 
 from devbase.commands import env as env_cmd
 from devbase.env import agekeys
+from devbase.env.secret_store import SecretRef, SecretStore
 from devbase.errors import DevbaseError
 
 
@@ -102,6 +103,109 @@ def test_keygen_force_replaces_the_key(devbase_root):
     new_public = agekeys.read_public_key(agekeys.key_file_path())
 
     assert new_public != old_public
+
+
+# ---------------------------------------------------------------------------
+# --force の確認プロンプト
+#
+# 鍵はグローバル (全ワークスペース共通) なので、確認の要否をカレントの
+# DEVBASE_ROOT に機密があるかで決めてはいけない。機密がまだ無いプロジェクトから
+# --force しても、他プロジェクトの機密は旧鍵でしか復号できないため。
+# ---------------------------------------------------------------------------
+
+def _answers(monkeypatch, *values):
+    """safe_input の応答をスクリプト化し、実際に聞かれた回数を返す"""
+    asked = []
+
+    def fake_input(prompt, default=''):
+        asked.append(prompt)
+        return values[len(asked) - 1] if len(asked) <= len(values) else default
+
+    monkeypatch.setattr(env_cmd, 'safe_input', fake_input)
+    return asked
+
+
+def test_keygen_force_prompts_even_without_encrypted_secrets(devbase_root,
+                                                             monkeypatch):
+    """機密がまだ無いワークスペースでも --force は必ず確認する"""
+    assert _keygen(devbase_root) == 0
+    before = agekeys.key_file_path().read_bytes()
+
+    asked = _answers(monkeypatch, 'yes')
+    assert env_cmd.cmd_env_keygen(devbase_root, force=True) == 0
+
+    assert asked, "確認プロンプトが出ていない"
+    assert agekeys.key_file_path().read_bytes() != before
+
+
+def test_keygen_force_prompt_mentions_other_workspaces(devbase_root,
+                                                       monkeypatch, capsys):
+    """鍵がグローバルで他ワークスペースにも影響する旨をプロンプトで明示する"""
+    assert _keygen(devbase_root) == 0
+
+    _answers(monkeypatch, 'yes')
+    assert env_cmd.cmd_env_keygen(devbase_root, force=True) == 0
+
+    out = capsys.readouterr().out
+    assert '全プロジェクト共通' in out
+    assert 'ワークスペース' in out
+
+
+def test_keygen_force_aborts_and_keeps_the_key_when_not_confirmed(devbase_root,
+                                                                  monkeypatch):
+    """yes 以外を入力したら中止し、鍵は 1 バイトも変えない"""
+    assert _keygen(devbase_root) == 0
+    before = agekeys.key_file_path().read_bytes()
+
+    _answers(monkeypatch, 'y')
+    assert env_cmd.cmd_env_keygen(devbase_root, force=True) == 1
+
+    assert agekeys.key_file_path().read_bytes() == before
+
+
+def test_keygen_force_aborts_on_empty_answer(devbase_root, monkeypatch):
+    """非対話 (EOF → 空文字) でも黙って上書きせず中止する"""
+    assert _keygen(devbase_root) == 0
+    before = agekeys.key_file_path().read_bytes()
+
+    _answers(monkeypatch, '')
+    assert env_cmd.cmd_env_keygen(devbase_root, force=True) == 1
+
+    assert agekeys.key_file_path().read_bytes() == before
+
+
+def test_keygen_force_skips_the_prompt_with_assume_yes(devbase_root, monkeypatch):
+    """--yes / -y でのみ確認を飛ばせる"""
+    assert _keygen(devbase_root) == 0
+    before = agekeys.key_file_path().read_bytes()
+
+    asked = _answers(monkeypatch)
+    assert env_cmd.cmd_env_keygen(devbase_root, force=True, assume_yes=True) == 0
+
+    assert asked == []
+    assert agekeys.key_file_path().read_bytes() != before
+
+
+def test_keygen_does_not_prompt_when_no_key_exists(devbase_root, monkeypatch):
+    """初回生成は失うものが無いので確認しない"""
+    asked = _answers(monkeypatch)
+    assert env_cmd.cmd_env_keygen(devbase_root, force=True) == 0
+    assert asked == []
+
+
+def test_keygen_force_prompt_is_stronger_when_local_secrets_exist(devbase_root,
+                                                                  monkeypatch,
+                                                                  capsys):
+    """カレントに機密があるときは、その旨も併せて警告する"""
+    assert _keygen(devbase_root) == 0
+    store = SecretStore(devbase_root)
+    store.age.save(SecretRef.for_global(), {'TOKEN': 'x'})
+
+    _answers(monkeypatch, 'yes')
+    assert env_cmd.cmd_env_keygen(devbase_root, force=True) == 0
+
+    out = capsys.readouterr().out
+    assert 'このワークスペースには暗号化済みの機密があり' in out
 
 
 def test_keygen_force_rolls_back_when_generation_fails(devbase_root, monkeypatch):

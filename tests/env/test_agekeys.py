@@ -56,6 +56,88 @@ def test_generate_key_file_creates_dir_with_0700(isolated_home):
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 
 
+def test_generate_key_file_creates_every_missing_level_with_0700(isolated_home,
+                                                                 monkeypatch):
+    """親を複数階層まとめて作る場合、作った階層はすべて 0700 になる"""
+    key_path = isolated_home / 'a' / 'b' / 'c' / 'keys.txt'
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(key_path))
+
+    agekeys.generate_key_file()
+
+    for level in (key_path.parent, key_path.parent.parent,
+                  key_path.parent.parent.parent):
+        assert stat.S_IMODE(level.stat().st_mode) == 0o700
+
+
+def test_generate_key_file_does_not_chmod_an_existing_dir(isolated_home,
+                                                          monkeypatch):
+    """既存の共有ディレクトリを鍵の置き場に指定しても、その権限を変えない。
+
+    ``DEVBASE_AGE_KEY_FILE=/tmp/devbase-key`` のように既に在る共有ディレクトリを
+    指されたとき、そこを 0700 に落とすと他ユーザーやサービスのアクセスを壊す。
+    devbase が作っていないディレクトリは devbase の管轄外として触らない。
+    """
+    shared = isolated_home / 'shared'
+    shared.mkdir()
+    os.chmod(shared, 0o755)
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(shared / 'devbase-key'))
+
+    path, _ = agekeys.generate_key_file()
+
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o755
+    # ディレクトリを緩いままにする代わり、鍵ファイル自体は 0600 で守る
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_generate_key_file_warns_about_a_permissive_existing_dir(isolated_home,
+                                                                 monkeypatch,
+                                                                 caplog):
+    """権限を変えない代わりに、緩い既存ディレクトリは警告で知らせる"""
+    shared = isolated_home / 'shared'
+    shared.mkdir()
+    os.chmod(shared, 0o777)
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(shared / 'devbase-key'))
+
+    with caplog.at_level('WARNING'):
+        agekeys.generate_key_file()
+
+    assert any('shared' in r.getMessage() for r in caplog.records)
+
+
+def test_generate_key_file_keeps_quiet_for_an_already_tight_existing_dir(
+        isolated_home, monkeypatch, caplog):
+    """既存でも 0700 なら警告しない (毎回鳴ると本当の警告が埋もれる)"""
+    tight = isolated_home / 'tight'
+    tight.mkdir()
+    os.chmod(tight, 0o700)
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tight / 'devbase-key'))
+
+    with caplog.at_level('WARNING'):
+        agekeys.generate_key_file()
+
+    assert caplog.records == []
+
+
+def test_save_recipients_does_not_chmod_an_existing_secrets_dir(tmp_path):
+    """受信者リスト側も既存ディレクトリの権限を変えない (鍵ファイルと一貫)"""
+    secrets = tmp_path / 'secrets'
+    secrets.mkdir(parents=True)
+    os.chmod(secrets, 0o755)
+
+    path = agekeys.save_recipients(
+        tmp_path, [str(pyrage.x25519.Identity.generate().to_public())])
+
+    assert stat.S_IMODE(secrets.stat().st_mode) == 0o755
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_save_recipients_creates_the_secrets_dir_with_0700(tmp_path):
+    """自分で作った secrets/ は 0700 にする"""
+    agekeys.save_recipients(
+        tmp_path, [str(pyrage.x25519.Identity.generate().to_public())])
+    assert stat.S_IMODE((tmp_path / 'secrets').stat().st_mode) == 0o700
+
+
 def test_generate_key_file_refuses_overwrite_without_force(isolated_home):
     path, _ = agekeys.generate_key_file()
     before = path.read_bytes()

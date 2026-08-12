@@ -545,12 +545,23 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
         print("  作り直す場合: devbase env keygen --force")
         return 0
 
-    # ここへ来るのは「鍵が無い」か「--force で作り直す」場合だけ。後者で既に暗号文が
-    # あるなら、旧鍵でしか復号できない機密を失う操作なので明示的な同意を取る。
-    if path.exists() and _has_encrypted_secrets(devbase_root) and not assume_yes:
-        print("暗号化済みの機密が存在します。鍵を作り直すと、"
-              "旧鍵でしか復号できない機密は失われます。")
+    # ここへ来るのは「鍵が無い」か「--force で作り直す」場合だけ。後者は既存鍵を
+    # 捨てる操作なので、常に明示的な同意を取る。
+    #
+    # 鍵は ~/.config/devbase/age/keys.txt = 全ワークスペース共通のグローバル資産
+    # なのに対し、暗号化された機密はワークスペースごとに散らばっている。同意の要否を
+    # カレントの DEVBASE_ROOT に機密があるか (_has_encrypted_secrets) で決めると、
+    # まだ機密の無い別プロジェクトで --force した瞬間に無警告で鍵が消え、他プロジェクトの
+    # 機密が復旧不能になる。カレントの状況は「文言をどれだけ強くするか」にだけ使う。
+    if path.exists() and not assume_yes:
+        print("鍵ファイルを作り直します。この鍵は全プロジェクト共通です。")
         print(f"  鍵ファイル: {path}")
+        if _has_encrypted_secrets(devbase_root):
+            print("  このワークスペースには暗号化済みの機密があり、"
+                  "旧鍵でしか復号できないものは失われます。")
+        print("  他のワークスペースで暗号化した機密も、"
+              "旧鍵を失うと復号できなくなります。")
+        print("  続行前に旧鍵のバックアップがあるか確認してください。")
         answer = safe_input("続行しますか? (yes と入力): ")
         if answer != 'yes':
             print("中止しました")

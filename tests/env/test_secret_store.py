@@ -112,6 +112,28 @@ def test_age_load_with_wrong_identity_raises(tmp_path, keypair):
         reader.load(GLOBAL)
 
 
+def test_age_load_wraps_invalid_utf8_plaintext(tmp_path, keypair):
+    """復号は通ったが中身が UTF-8 でない場合も SecretStoreError にする。
+
+    素の UnicodeDecodeError が漏れると、呼び出し側は DevbaseError だけを捕まえて
+    いるためトレースバックのまま落ちる。PlaintextBackend.load と例外を揃える。
+    """
+    from devbase.env import cipher as _cipher
+
+    public, secret = keypair
+    id_path = tmp_path / 'identity.key'
+    id_path.write_text(secret)
+
+    backend = AgeBackend(tmp_path, recipients=[public],
+                         identities=[str(id_path)])
+    path = backend.path(GLOBAL)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_cipher.encrypt(b'\xff\xfe not utf-8', recipients=[public]))
+
+    with pytest.raises(SecretStoreError, match='UTF-8'):
+        backend.load(GLOBAL)
+
+
 # ---------------------------------------------------------------------------
 # 自動判定
 # ---------------------------------------------------------------------------

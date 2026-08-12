@@ -202,7 +202,17 @@ class AgeBackend:
             raise SecretStoreError(
                 f"{ref.label()}の機密を復号できませんでした ({path}): {e}"
             ) from e
-        return EnvFile.parse_bytes(plain)
+        try:
+            return EnvFile.parse_bytes(plain)
+        except UnicodeDecodeError as e:
+            # 復号は成功したのに中身が UTF-8 でない = 元々 .env ではない
+            # バイナリを暗号化していた、というケース。PlaintextBackend.load と
+            # 同じく SecretStoreError へ包み、呼び出し側が扱う例外を 1 種類に保つ。
+            raise SecretStoreError(
+                f"{ref.label()}の機密を復号しましたが、UTF-8 として読めませんでした "
+                f"({path}): {e}\n"
+                "KEY=VALUE 形式以外のファイルを暗号化していないか確認してください"
+            ) from e
 
     def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
         path = self.path(ref)
