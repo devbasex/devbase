@@ -105,6 +105,7 @@ _devbase() {
         'project:Setup project-specific variables'
         'export:Export .env files as an encrypted bundle (age)'
         'import:Import .env bundle (age decrypt + merge)'
+        'keygen:Generate the devbase age key used by the secret store'
     )
 
     plugin_subcommands=(
@@ -277,6 +278,11 @@ _devbase() {
                         '--merge-metadata[Add only new sources entries from bundle]' \
                         '--backup-dir[Override backup directory]:dir:_files -/' \
                         '--keep-last[Keep only the last N backup directories]:n:'
+                    ;;
+                keygen)
+                    _arguments \
+                        '--force[Overwrite an existing key]' \
+                        '--yes[Skip the confirmation prompt for --force]' '-y[Skip the confirmation prompt for --force]'
                     ;;
                 *)
                     _describe -t env-commands 'env command' env_subcommands

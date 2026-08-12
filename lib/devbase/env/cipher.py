@@ -8,6 +8,9 @@ from typing import List, Optional, Sequence
 import pyrage
 
 from devbase.errors import DevbaseError
+from devbase.log import get_logger
+
+logger = get_logger(__name__)
 
 
 class CipherError(DevbaseError):
@@ -150,6 +153,14 @@ def _resolve_identity(path_spec: str):
         ) from e
 
 
+def validate_recipient(spec: str) -> None:
+    """recipient 仕様文字列が解釈可能かを検証する (不正なら CipherError)。
+
+    受信者リストへの登録時など、実際に暗号化する前に形式不正を弾くために使う。
+    """
+    _resolve_recipient(spec)
+
+
 def encrypt(data: bytes,
             recipients: Sequence[str] = (),
             passphrase: Optional[str] = None) -> bytes:
@@ -198,7 +209,36 @@ def decrypt(data: bytes,
     if not identities:
         raise CipherError("identity または passphrase を指定してください")
 
-    resolved = [_resolve_identity(p) for p in identities]
+    # identities は「devbase 専用鍵 → ~/.ssh の既定鍵」のように複数候補を並べて
+    # 渡される (agekeys.resolve_identities)。ここで 1 つでも解決に失敗した時点で
+    # 例外にすると、壊れた / 読めない鍵ファイルが 1 つ混ざっているだけで後続の
+    # 有効な鍵を試せず、旧来 ~/.ssh の鍵で暗号化した暗号文を移行期間中に復号
+    # できるという意図が壊れる。そこで候補ごとに解決を試し、失敗した候補は
+    # 理由を warning に残したうえで読み飛ばす。黙って捨てると「鍵を指定したのに
+    # 復号できない」原因を利用者が追えなくなるため、ログは必須。
+    resolved = []
+    failures: List[str] = []
+    for spec in identities:
+        try:
+            resolved.append(_resolve_identity(spec))
+        except Exception as e:
+            # 想定外の例外もここで握り潰さず失敗理由として蓄積する。全滅時には
+            # 下で CipherError に含めて送出するので、情報は失われない。
+            failures.append(f"{spec}: {e}")
+            logger.warning(
+                "identity を解決できなかったため復号候補から除外します (%s): %s",
+                spec, e,
+            )
+
+    # 全候補が解決できなかったときだけ失敗させる。どの候補がなぜ駄目だったかを
+    # 並べて示し、鍵の置き場所・権限・形式のどれが原因かを切り分けられるようにする。
+    if not resolved:
+        detail = '\n'.join(f"  - {f}" for f in failures)
+        raise CipherError(
+            "復号に使える identity がありません "
+            f"(候補 {len(failures)} 件をいずれも解決できませんでした):\n{detail}"
+        )
+
     try:
         return pyrage.decrypt(data, resolved)
     except Exception as e:

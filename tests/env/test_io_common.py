@@ -120,3 +120,52 @@ def test_decrypt_uses_correct_identity_from_multiple_defaults(tmp_path, fake_hom
     # 両 identity を渡して復号 → pyrage が正しい鍵 (id2) を選んで復号する
     plain = cipher.decrypt(blob, identities=identities)
     assert plain == b"team-secret"
+
+
+# ---------------------------------------------------------------------------
+# write_secure_bytes_atomic
+# ---------------------------------------------------------------------------
+
+def test_write_secure_bytes_atomic_creates_file_with_0600(tmp_path):
+    import os
+    import stat
+
+    path = tmp_path / "nested" / "secret.bin"
+    old = os.umask(0)
+    try:
+        io_common.write_secure_bytes_atomic(path, b"payload")
+    finally:
+        os.umask(old)
+
+    assert path.read_bytes() == b"payload"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_write_secure_bytes_atomic_replaces_and_leaves_no_temp(tmp_path):
+    path = tmp_path / "secret.bin"
+    io_common.write_secure_bytes_atomic(path, b"old")
+    io_common.write_secure_bytes_atomic(path, b"new")
+
+    assert path.read_bytes() == b"new"
+    assert [p.name for p in tmp_path.iterdir()] == [path.name]
+
+
+def test_write_secure_bytes_atomic_keeps_old_content_on_failure(tmp_path,
+                                                                monkeypatch):
+    """差し替えに失敗しても旧内容は残る (直接上書きなら失われる差分)"""
+    import os
+
+    path = tmp_path / "secret.bin"
+    io_common.write_secure_bytes_atomic(path, b"old")
+
+    def boom(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", boom)
+
+    with pytest.raises(OSError):
+        io_common.write_secure_bytes_atomic(path, b"new")
+
+    assert path.read_bytes() == b"old"
+    # 書きかけの一時ファイルも残さない
+    assert [p.name for p in tmp_path.iterdir()] == [path.name]

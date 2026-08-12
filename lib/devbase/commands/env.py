@@ -35,6 +35,9 @@ def cmd_env(devbase_root: Path, args) -> int:
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
+        'keygen':  lambda: cmd_env_keygen(devbase_root,
+                                          force=getattr(args, 'force', False),
+                                          assume_yes=getattr(args, 'assume_yes', False)),
     }
 
     handler = handlers.get(subcmd)
@@ -456,6 +459,124 @@ def cmd_env_import(devbase_root: Path, args) -> int:
         keep_last=getattr(args, 'keep_last', 10),
     )
     return import_bundle(devbase_root, opts)
+
+
+def _has_encrypted_secrets(devbase_root: Path) -> bool:
+    """暗号化済みの機密が 1 つでも存在するか"""
+    from devbase.env.secret_store import SecretStore, SecretRef
+
+    store = SecretStore(devbase_root)
+    if store.age.exists(SecretRef.for_global()):
+        return True
+    return bool(store.project_names())
+
+
+def _print_key_backup_notice(path, public: str) -> None:
+    print()
+    print("=" * 60)
+    print("鍵のバックアップを必ず取ってください")
+    print("=" * 60)
+    print(f"  鍵ファイル: {path}")
+    print(f"  公開鍵    : {public}")
+    print()
+    print("  この鍵を失うと、暗号化した機密は誰にも復号できません。")
+    print("  パスワード管理ツールなど、端末とは別の場所へ複製を保管してください。")
+    print("=" * 60)
+
+
+def cmd_env_keygen(devbase_root: Path, force: bool = False,
+                   assume_yes: bool = False) -> int:
+    """devbase 専用の age 鍵を生成する
+
+    生成先は必ず ``agekeys.key_file_path()`` (= ``DEVBASE_AGE_KEY_FILE`` があれば
+    それ、無ければ ``~/.config/devbase/age/keys.txt``) にする。生成先を CLI 引数で
+    自由に選べるようにすると、復号側の ``agekeys.resolve_identities()`` はそのパスを
+    探索しないため「生成した鍵で保存した機密を復号できない」状態を作れてしまう。
+    場所を変えたい場合は ``DEVBASE_AGE_KEY_FILE`` を設定してから実行してもらい、
+    生成先と探索先が構造的に一致する契約を保つ。
+    """
+    from devbase.env import agekeys
+    from devbase.errors import DevbaseError
+
+    path = agekeys.key_file_path()
+
+    if path.exists() and not force:
+        try:
+            public = agekeys.read_public_key(path)
+        except DevbaseError as e:
+            logger.error("%s", e)
+            return 1
+        print(f"鍵は既に存在します: {path}")
+        print(f"  公開鍵: {public}")
+        print("  作り直す場合: devbase env keygen --force")
+        return 0
+
+    # keygen はワークスペース固有の受信者リスト (secrets/recipients.txt) を触らない。
+    # 鍵はグローバル (~/.config/devbase/age/keys.txt) なのに受信者リストは
+    # ワークスペースごとに存在するため、ここで書き込むと別ワークスペースには旧公開鍵が
+    # 取り残され、既に失われた秘密鍵に対応する公開鍵で暗号化してしまう。
+    # agekeys.resolve_recipients() は recipients.txt が無ければ鍵ファイルの公開鍵へ
+    # フォールバックするので、単独利用ではリストを作る必要がない。チーム運用で明示的に
+    # 受信者を足す経路 (rekey) だけが recipients.txt を作る。
+    #
+    # 書き込みの原子性は agekeys.generate_key_file →
+    # io_common.write_secure_bytes_atomic (一時ファイル + fsync + os.replace) が
+    # 担保しており、生成が途中で失敗しても既存の鍵ファイルは元のまま残る。
+    # したがってこの層で「内容をメモリへ退避して書き戻す」手動ロールバックは重ねない。
+    # 重ねてもリストア自体が失敗しうるぶん壊れ方の種類が増えるだけで、守れるものが
+    # 増えないため。将来ここへロールバックを足したくなったら、まず io 層の原子性が
+    # 破れていないかを疑うこと。
+    #
+    # 一方で「既存鍵が在るのに読めない」ときに中止するガードは、原子性とは別の目的で
+    # 残す。読めないだけなら権限を直せば回収できる可能性があるのに、生成が成功すると
+    # 旧鍵は上書きで確実に消えるため。判定は確認プロンプトより前に置き、
+    # 「同意させてから中止する」空振りを避ける。
+    if path.exists() and not os.access(path, os.R_OK):
+        logger.error(
+            "既存の鍵ファイルを読めないため、上書きを中止しました: %s", path)
+        logger.error(
+            "権限を確認するか、不要と判断できる場合は手動で退避してから"
+            "再実行してください")
+        return 1
+
+    # ここへ来るのは「鍵が無い」か「--force で作り直す」場合だけ。後者は既存鍵を
+    # 捨てる操作なので、常に明示的な同意を取る。
+    #
+    # 鍵は ~/.config/devbase/age/keys.txt = 全ワークスペース共通のグローバル資産
+    # なのに対し、暗号化された機密はワークスペースごとに散らばっている。同意の要否を
+    # カレントの DEVBASE_ROOT に機密があるか (_has_encrypted_secrets) で決めると、
+    # まだ機密の無い別プロジェクトで --force した瞬間に無警告で鍵が消え、他プロジェクトの
+    # 機密が復旧不能になる。カレントの状況は「文言をどれだけ強くするか」にだけ使う。
+    if path.exists() and not assume_yes:
+        print("鍵ファイルを作り直します。この鍵は全プロジェクト共通です。")
+        print(f"  鍵ファイル: {path}")
+        if _has_encrypted_secrets(devbase_root):
+            print("  このワークスペースには暗号化済みの機密があり、"
+                  "旧鍵でしか復号できないものは失われます。")
+        print("  他のワークスペースで暗号化した機密も、"
+              "旧鍵を失うと復号できなくなります。")
+        print("  続行前に旧鍵のバックアップがあるか確認してください。")
+        answer = safe_input("続行しますか? (yes と入力): ")
+        if answer != 'yes':
+            print("中止しました")
+            return 1
+
+    # force はコマンドの --force をそのまま渡す。ここで無条件に force=True に
+    # すると、上の path.exists() 判定から実際の書き込みまでの隙間に他プロセスが
+    # 鍵を作っていた場合、利用者が上書きを要求していないのにその鍵を消してしまう
+    # (TOCTOU)。force=False なら agekeys 側が O_CREAT|O_EXCL で作るため、隙間に
+    # 現れた鍵は上書きされずエラーで止まる。
+    try:
+        path, public = agekeys.generate_key_file(path, force=force)
+    except (DevbaseError, OSError) as e:
+        # 新規生成は排他作成、--force の差し替えは atomic なので、いずれの失敗でも
+        # 既に在る鍵はそのまま残っている。
+        logger.error("%s", e)
+        return 1
+
+    logger.info("鍵を生成しました: %s", path)
+    _print_key_backup_notice(path, public)
+    return 0
 
 
 def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:

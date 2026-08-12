@@ -10,6 +10,7 @@ from __future__ import annotations
 import getpass
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Optional, Sequence, Type
 
@@ -120,3 +121,62 @@ def write_secure_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
         os.chmod(path, mode)
     except OSError:
         pass
+
+
+def _fsync_dir(directory: Path) -> None:
+    """ディレクトリエントリを fsync する (対応しない環境では黙って諦める)。
+
+    ``os.replace`` 自体は atomic でも、rename の記録がディスクへ届く前に電源断
+    すると差し替えが失われうる。ディレクトリを fsync して rename を永続化する。
+    Windows などディレクトリを開けない環境では何もしない。
+    """
+    try:
+        fd = os.open(str(directory), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def write_secure_bytes_atomic(path: Path, data: bytes, *, mode: int = 0o600) -> None:
+    """``path`` の中身を ``data`` へ **atomic に** 差し替える (``mode`` を強制)。
+
+    ``write_secure_bytes`` は既存ファイルを ``O_TRUNC`` で直接上書きするため、
+    ディスク枯渇やプロセス中断が起きると「旧内容は消えたが新内容も揃っていない」
+    中途半端なファイルが残る。age 鍵のように失うと復旧不能なファイルでは、
+
+      - 同一ディレクトリの一時ファイルへ ``0600`` で書く (別 FS だと rename が
+        atomic にならないため、必ず同じディレクトリに作る)
+      - ``fsync`` して中身をディスクへ確定させる
+      - ``os.replace`` で差し替え、ディレクトリも ``fsync`` する
+
+    という順序にして、途中のどこで失敗しても旧内容がそのまま残るようにする。
+    失敗時は一時ファイルを掃除してから例外を送出する。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # mkstemp は 0600 で作成するため、作成時点から権限が広がらない。
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f'.{path.name}.', suffix='.tmp', dir=str(path.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        # mkstemp の mode が無視される環境 (Windows 等) に備えて明示的に揃える
+        try:
+            os.chmod(tmp, mode)
+        except OSError:
+            pass
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    _fsync_dir(path.parent)
