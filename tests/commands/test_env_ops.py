@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
+import subprocess
 
 import pyrage
 import pytest
@@ -17,12 +19,26 @@ GLOBAL = SecretRef.for_global()
 WEB = SecretRef.for_project('web')
 
 
+def git_init(path):
+    """点検用に Git リポジトリを作る。
+
+    除外設定の点検は ``git check-ignore`` に委ねているため、テストも実際に
+    ``git init`` したリポジトリで確かめる。利用者の global / system の除外設定に
+    左右されないよう、設定ファイルは空に固定する。
+    """
+    subprocess.run(['git', 'init', '-q'], cwd=str(path), check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 @pytest.fixture
 def root(tmp_path, monkeypatch):
     (tmp_path / 'projects' / 'web').mkdir(parents=True)
     monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
     monkeypatch.setenv('PWD', str(tmp_path))
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_SYSTEM', os.devnull)
     monkeypatch.chdir(tmp_path)
+    git_init(tmp_path)
     return tmp_path
 
 
@@ -296,14 +312,15 @@ def test_doctor_reports_stale_plaintext_copies(root, with_key, capsys):
     assert '平文の控えファイルが残っています' in capsys.readouterr().out
 
 
-def test_doctor_reports_missing_ignore_patterns(root, with_key, capsys):
+def test_doctor_reports_which_paths_are_not_ignored(root, with_key, capsys):
+    """不足はパターン名ではなく、除外されない実パスで報告する"""
     seed_encrypted(root)
     (root / '.gitignore').write_text('.env\n.env.bak*\n')   # secrets/ が無い
 
     assert env_ops.cmd_env_doctor(root) == 1
     out = capsys.readouterr().out
-    assert '除外設定に不足があります' in out
-    assert 'secrets/' in out
+    assert '除外設定から漏れているパスがあります' in out
+    assert 'secrets/global.env.age' in out
 
 
 def test_doctor_reports_wildcardless_backup_pattern(root, with_key, capsys):
@@ -312,19 +329,20 @@ def test_doctor_reports_wildcardless_backup_pattern(root, with_key, capsys):
     (root / '.gitignore').write_text('.env\n.env.bak\nsecrets/\n')
 
     assert env_ops.cmd_env_doctor(root) == 1
-    assert '日時付きの控えファイルが除外されません' in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert '除外設定から漏れているパスがあります' in out
+    assert '.env.bak-20260807172231' in out
 
 
 @pytest.mark.parametrize('body', [
-    '/.env\n/.env.bak*\n/secrets/\n',                     # ルート指定
+    '/.env\n/.env.bak*\n/secrets/\n/projects/*\n',        # ルート指定
     '.env\n.env.bak*\nsecrets\n',                         # 末尾スラッシュ無し
-    '.env   # 機密\n.env.bak*  # 日時付きの控え\nsecrets/ # 暗号化した機密\n',   # 行末コメント
-    '  .env  \n\t.env.bak*\n\nsecrets/\n',                # 空白・空行混じり
     '**/.env\n**/.env.bak*\n/secrets/\n',                 # 任意階層
     '.env\n.env*\nsecrets/\n',                            # 控えを広く拾う指定
+    '# 機密は暗号化して secrets/ へ\n\n.env\n.env.bak*\nsecrets/\n',   # 行頭コメント・空行
 ])
 def test_doctor_accepts_equivalent_ignore_notations(root, with_key, capsys, body):
-    """実運用で現れる書き方を「不足」と誤検知しない"""
+    """Git が実際に除外できている書き方は「漏れ」と誤検知しない"""
     seed_encrypted(root)
     (root / '.gitignore').write_text(body)
 
@@ -332,24 +350,47 @@ def test_doctor_accepts_equivalent_ignore_notations(root, with_key, capsys, body
     assert '問題は見つかりませんでした' in capsys.readouterr().out
 
 
-def test_doctor_still_reports_a_genuine_gap_with_root_anchors(root, with_key, capsys):
-    """ルート指定でも、本当に不足していれば従来どおり報告する"""
+@pytest.mark.parametrize('body', [
+    # Git は行頭の `#` だけをコメントとして扱う。`.env # 機密` は
+    # 「`.env # 機密`」というパターンであって `.env` を除外しない
+    '.env # 機密\n.env.bak*\nsecrets/\n',
+    # 後段の `!` で再包含されると除外は取り消される
+    '.env\n!.env\n.env.bak*\nsecrets/\n',
+    # 行頭の空白は落とされない (落ちるのは行末だけ)
+    '  .env\n.env.bak*\nsecrets/\n',
+])
+def test_doctor_reports_patterns_git_does_not_honor(root, with_key, capsys, body):
+    """Git の解釈では除外できていない書き方を「問題なし」にしない"""
     seed_encrypted(root)
-    (root / '.gitignore').write_text('/.env\n/.env.bak*\n')   # secrets が無い
+    (root / '.gitignore').write_text(body)
 
     assert env_ops.cmd_env_doctor(root) == 1
     out = capsys.readouterr().out
-    assert '除外設定に不足があります' in out
-    assert 'secrets/' in out
+    assert '除外設定から漏れているパスがあります' in out
+    assert '除外されない: .env' in out
 
 
-def test_doctor_ignores_reincluded_patterns(root, with_key, capsys):
-    """`!` の再包含は「除外している根拠」として数えない"""
+def test_doctor_reports_partially_ignored_secrets_dir(root, with_key, capsys):
+    """`secrets/*.age` だけでは配下の平文が漏れる"""
     seed_encrypted(root)
-    (root / '.gitignore').write_text('!secrets/\n.env\n.env.bak*\n')
+    (root / '.gitignore').write_text('.env\n.env.bak*\nsecrets/*.age\n')
 
     assert env_ops.cmd_env_doctor(root) == 1
-    assert '除外設定に不足があります' in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert '除外設定から漏れているパスがあります' in out
+    assert 'secrets/leftover.env' in out
+
+
+def test_doctor_cannot_check_ignores_without_a_git_repository(root, with_key, capsys):
+    """Git リポジトリでなければ「確認できなかった」と言う (成功にしない)"""
+    seed_encrypted(root)
+    write_gitignore(root)
+    shutil.rmtree(root / '.git')
+
+    assert env_ops.cmd_env_doctor(root) == 1
+    out = capsys.readouterr().out
+    assert '除外設定を確認できませんでした' in out
+    assert '問題は見つかりませんでした' not in out
 
 
 def test_doctor_reports_a_world_readable_key(root, with_key, capsys):

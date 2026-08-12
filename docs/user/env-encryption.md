@@ -86,7 +86,7 @@ devbase env doctor
 - 暗号化ファイルと平文が同時に存在していないか
 - 移行時・取り込み時に退避された平文が残っていないか
 - 日時付きの控えファイル（`.env.bak-20260807172231` など）が残っていないか
-- 除外設定（`.gitignore`）に `.env` / `secrets/` / `.env.bak*` が入っているか
+- `.env` / `secrets/` 配下 / `.env.bak-<日時>` / `projects/<name>/.env` が実際に Git から除外されるか（`git check-ignore` で Git 自身に判定させます。`DEVBASE_ROOT` が Git リポジトリでなければ「確認できませんでした」と報告します）
 
 ## チームで共有する
 

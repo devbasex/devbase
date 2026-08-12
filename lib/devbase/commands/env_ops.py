@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-import fnmatch
 import stat
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -291,12 +291,23 @@ _PLAINTEXT_GLOBS = (
     '.env.save',
 )
 
-#: 除外設定に必ず入っていてほしいパターン
-_REQUIRED_IGNORE_PATTERNS = ('.env', 'secrets/')
+#: 除外できているかを Git に確かめてもらう代表パス (``DEVBASE_ROOT`` からの相対)。
+#: パターンの書き方ではなく「このパスが実際に除外されるか」で見る。
+_IGNORE_PROBE_PATHS = (
+    # 共通の平文
+    '.env',
+    # 日時付きの控え。実際に未追跡のまま検出された名前をそのまま使う
+    '.env.bak-20260807172231',
+    # 暗号文の保存先
+    'secrets/global.env.age',
+    'secrets/projects/sample.env.age',
+    # ``secrets/*.age`` のように配下の一部だけを除外していると漏れる位置
+    'secrets/leftover.env',
+)
 
-#: 日時付きの控えが除外されるかを試すサンプル名。実際に未追跡で検出された
-#: ``.env.bak-20260807172231`` を代表として使う。
-_BACKUP_SAMPLE_NAME = '.env.bak-20260807172231'
+#: ``projects/`` が空のときに使うプロジェクト名。``projects/<name>/.env`` が
+#: 除外されるかは実在のプロジェクトが無くても確かめたい。
+_SAMPLE_PROJECT_NAME = 'sample'
 
 
 def _mode_of(path: Path) -> Optional[int]:
@@ -374,79 +385,80 @@ def _check_leftovers(root: Path, store: SecretStore, report: Report) -> None:
                    '不要なら削除してください')
 
 
-def _normalize_ignore_pattern(line: str) -> Optional[str]:
-    """``.gitignore`` の 1 行を比較用に正規化する (対象外なら ``None``)。
+def _git_check_ignore(root: Path, rel_path: str) -> Optional[bool]:
+    """``rel_path`` が Git の除外設定で無視されるか (判定できなければ ``None``)。
 
-    点検コマンドは「疑わしきは報告」でよいが、**正しく除外できている設定を毎回
-    叱るのは害になる**。無視されて当然と分かる書き方は同じものとして扱う:
+    ``.gitignore`` の解釈は Git の実装が正であり、独自に真似ると必ず食い違う。
+    たとえば Git は行頭の ``#`` だけをコメントとして扱うので ``.env # 機密`` は
+    「``.env # 機密`` というパターン」であって ``.env`` を除外しないし、後ろに
+    ``!.env`` があれば再包含されて除外は取り消される。文字列を自前で正規化して
+    「除外できている」と誤って判定すると平文の誤コミットに直結するため、判定は
+    Git 自身に任せる。
 
-    - 前後の空白を落とす (``.env  `` は git も末尾空白を無視する)
-    - 空行と ``#`` 始まりのコメント行は対象外
-    - 行末コメント (`` #`` 以降) を落とす。gitignore の厳密な文法では ``#`` 以降も
-      パターンの一部だが、実運用では ``.env    # 機密`` のように書かれるため許容する
-    - 先頭の ``/`` (リポジトリルート指定) と ``**/`` (任意階層) を落とす。
-      ``/.env`` は ``$DEVBASE_ROOT/.env`` を確実に除外できており、不足ではない
-    - 末尾の ``/`` (ディレクトリ指定) を落とす。``secrets`` と ``secrets/`` は
-      ここで見たい「secrets を除外しているか」に関しては同じ意味になる
-
-    逆に、次は **検出漏れとして受け入れる** (判定を素朴に保つほうが利益が大きい):
-
-    - ``!`` 始まりの再包含は「除外している根拠」にならないので対象外にするが、
-      ``.env`` と ``!.env`` が両方ある矛盾した設定までは追わない
-    - ``secrets/*.age`` のように配下の一部だけを除外する書き方は不足として報告する
-      (実際に平文が漏れうるので、報告する側に倒す)
-    - ``\\`` のエスケープや文字クラスは解釈しない
+    - ``--no-index``: まだ存在しないパスや、すでに追跡済みのパスであっても
+      除外設定だけで評価させる (追跡済みだと既定では何も報告されない)
+    - 作業ディレクトリは ``DEVBASE_ROOT``。除外設定は評価するパスの位置で
+      決まるため、必ず点検対象のリポジトリの中で実行する
+    - 終了コード 0 = 除外される / 1 = 除外されない / それ以外 (128 など) は
+      git が無い・Git リポジトリでないといった「判定できない」状態
     """
-    text = line.strip()
-    if not text or text.startswith('#'):
+    try:
+        proc = subprocess.run(
+            ['git', 'check-ignore', '--no-index', '-q', '--', rel_path],
+            cwd=str(root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (OSError, ValueError):
+        # git が入っていない / 実行できない。例外で点検全体を落とさない。
         return None
-    if text.startswith('!'):
-        return None
-    comment = text.find(' #')
-    if comment >= 0:
-        text = text[:comment].strip()
-    if not text:
-        return None
-    while text.startswith('**/'):
-        text = text[3:]
-    text = text.lstrip('/')
-    text = text.rstrip('/')
-    return text or None
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    return None
+
+
+def _ignore_probe_paths(root: Path) -> List[str]:
+    """除外されているか確かめる代表パスを組み立てる"""
+    paths = list(_IGNORE_PROBE_PATHS)
+
+    # プロジェクトごとの平文。実在するものがあればその名前で確かめるほうが、
+    # 報告をそのまま直す手がかりにできる。
+    names: List[str] = []
+    projects_dir = root / 'projects'
+    if projects_dir.is_dir():
+        names = [p.name for p in sorted(projects_dir.iterdir()) if p.is_dir()]
+    paths.extend(f'projects/{name}/.env' for name in names or [_SAMPLE_PROJECT_NAME])
+    return paths
 
 
 def _check_gitignore(root: Path, report: Report) -> None:
+    """平文が置かれうるパスが実際に除外されるかを Git に確かめてもらう"""
     path = root / '.gitignore'
-    report.checked.append(f"除外設定: {path}")
-    if not path.is_file():
-        report.add('warning', '除外設定がありません', str(path))
-        return
-    try:
-        raw_lines = path.read_text(encoding='utf-8').splitlines()
-    except (OSError, UnicodeDecodeError) as e:
-        report.add('warning', '除外設定を読めませんでした', f'{path}: {e}')
-        return
+    report.checked.append(f"除外設定: {path} (git check-ignore で確認)")
 
-    patterns = [p for p in (_normalize_ignore_pattern(line) for line in raw_lines)
-                if p is not None]
+    exposed: List[str] = []
+    for rel in _ignore_probe_paths(root):
+        ignored = _git_check_ignore(root, rel)
+        if ignored is None:
+            # 「確認できなかった」と「問題なし」を混同しない。ここで独自の
+            # 文字列判定へ落とすと、Git と食い違う判定が復活してしまう。
+            report.add('warning', '除外設定を確認できませんでした',
+                       f'{root} で git check-ignore を実行できません '
+                       '(git が無い、または Git リポジトリではありません)',
+                       'Git 管理下で `git check-ignore -v .env secrets/global.env.age` '
+                       'を実行し、除外されることを確かめてください')
+            return
+        if not ignored:
+            exposed.append(rel)
 
-    # 必須パターン側も同じ規則で正規化してから突き合わせる。報告に出す名前は
-    # 利用者が追記しやすいよう元の表記 (`secrets/`) のままにしておく。
-    missing = [p for p in _REQUIRED_IGNORE_PATTERNS
-               if _normalize_ignore_pattern(p) not in patterns]
-    if missing:
-        report.add('error', '除外設定に不足があります',
-                   '不足: ' + ', '.join(missing),
-                   f'{path} へ追記してください')
-
-    # 日時付きバックアップは `.env.bak` の完全一致では弾けない。実際に
-    # `.env.bak-20260807172231` のようなファイルが未追跡で検出された経緯がある。
-    # 「`.env.bak` で始まり `*` で終わる」かどうかではなく、代表的な名前に実際に
-    # マッチするかで見る。`.env.bak*` だけでなく `.env*` のような広い指定も
-    # ちゃんと除外できており、不足として叱る理由がないため。
-    if not any(fnmatch.fnmatch(_BACKUP_SAMPLE_NAME, p) for p in patterns):
-        report.add('warning', '日時付きの控えファイルが除外されません',
-                   '`.env.bak*` のようなパターンがありません',
-                   f'{path} へ `.env.bak*` を追加してください')
+    if exposed:
+        report.add('error', '除外設定から漏れているパスがあります',
+                   '除外されない: ' + '\n    '.join(exposed),
+                   f'{path} へ `.env` / `.env.bak*` / `secrets/` などを追記し、'
+                   '`git check-ignore -v <パス>` で除外されることを確かめてください')
 
 
 def cmd_env_doctor(devbase_root: Path) -> int:
