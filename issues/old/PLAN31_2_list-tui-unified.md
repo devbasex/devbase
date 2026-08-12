@@ -1,6 +1,6 @@
 # PLAN31_2: `devbase list` TUI の統合UI化
 
-> 元 issue: `issues/i31.md` 第2項
+> 元 issue: `issues/old/i31.md` 第2項
 > ステータス: 実行中（2026-06-10 PR1 #56 実装+cross-review approved→release へ merge 済み / PR2〜5 未着手）
 > 関連: PLAN31_1 (init は installer に吸収)、PLAN06 (`project` 群)
 > 関連 skill: `/ndf:issue-plan-strategy`, `/ndf:implementation-plan`

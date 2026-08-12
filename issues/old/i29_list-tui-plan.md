@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.10+ / simple-term-menu (Unix 専用) / pytest / uv
 
-設計書: `issues/i29_list-tui-simple-term-menu.md`
+設計書: `issues/old/i29_list-tui-simple-term-menu.md`
 
 ---
 

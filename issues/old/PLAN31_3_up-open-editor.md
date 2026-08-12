@@ -1,6 +1,6 @@
 # PLAN31_3: `devbase up` 後に dev コンテナへ接続した VS Code を自動で開く
 
-> 元 issue: `issues/i31.md` 第3項
+> 元 issue: `issues/old/i31.md` 第3項
 > ステータス: 計画（2026-06-13 作成 / 未着手）
 > 関連: PLAN31_1 (installer)、PLAN31_2 (list TUI 統合)、PLAN06 (`project` 群)
 > 関連 skill: `/ndf:issue-plan-strategy`, `/ndf:implementation-plan`, `/ndf:investigation-rules`

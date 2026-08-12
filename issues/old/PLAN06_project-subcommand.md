@@ -2,7 +2,7 @@
 
 ## 関連リンク
 
-- 元 issue: `issues/i06.md`
+- 元 issue: `issues/old/i06.md`
 - 依存: PLAN04 (repos/ 永続クローン + 同名衝突 suffix) — #26 / #29 / #31 で **merge 済み**
 
 ## 進捗状況

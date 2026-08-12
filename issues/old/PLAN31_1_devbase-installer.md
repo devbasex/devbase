@@ -1,6 +1,6 @@
 # PLAN31_1: devbase ワンライナー installer (`curl | bash`)
 
-> 元 issue: `issues/i31.md` 第1項
+> 元 issue: `issues/old/i31.md` 第1項
 > ステータス: 着手可（設計確定 2026-06-09・既存コード精読済み）
 > 関連 skill: `/ndf:issue-plan-strategy`, `/ndf:implementation-plan`
 

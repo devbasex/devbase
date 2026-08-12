@@ -10,7 +10,7 @@
   短い HTTPS URL で配信する。
 - 配信 URL を `https://raw.githubusercontent.com/devbasex/devbase/main/install.sh`
   （約 73 文字）から `https://dl.basex.jp/i`（約 21 文字）へ短縮する。
-- スコープ外: installer 自体の挙動（`issues/PLAN31_1_devbase-installer.md` 参照）。
+- スコープ外: installer 自体の挙動（`issues/old/PLAN31_1_devbase-installer.md` 参照）。
 
 ## 2. 決定事項
 
@@ -160,7 +160,7 @@ curl -fsSL https://dl.basex.jp/i | head -20
 - `curl | bash` の一般的注意（実行前にスクリプトを確認する代替手順）は
   README / getting-started に記載済み。
 - installer 自身の安全策（前提チェック・REF サニタイズ・誤上書き防止）は
-  `issues/PLAN31_1_devbase-installer.md` を参照。
+  `issues/old/PLAN31_1_devbase-installer.md` を参照。
 
 ## 10. 既知の制約・代替
 
