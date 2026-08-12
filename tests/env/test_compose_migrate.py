@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import yaml
+
 from devbase.env import compose_migrate as cm
 
 
@@ -431,7 +433,7 @@ def test_secret_inline_lines_are_separated_from_harmless_ones():
     # 対応していない記法としては 3 行すべてが挙がる
     assert [n for n, _ in cm.unsupported_env_file_lines(text)] == [3, 5, 7]
     # そのうち機密を指しているのは worker と batch だけ
-    assert [n for n, _ in cm.secret_inline_env_file_lines(text)] == [5, 7]
+    assert [n for n, _ in cm.secret_unsupported_env_file_lines(text)] == [5, 7]
 
 
 def test_secret_inline_lines_respect_the_requested_targets():
@@ -440,8 +442,8 @@ def test_secret_inline_lines_respect_the_requested_targets():
   dev:
     env_file: [ "${DEVBASE_ROOT}/.env" ]
 """
-    assert cm.secret_inline_env_file_lines(text, {cm.TARGET_PROJECT}) == []
-    assert len(cm.secret_inline_env_file_lines(text, {cm.TARGET_GLOBAL})) == 1
+    assert cm.secret_unsupported_env_file_lines(text, {cm.TARGET_PROJECT}) == []
+    assert len(cm.secret_unsupported_env_file_lines(text, {cm.TARGET_GLOBAL})) == 1
 
 
 def test_disabled_inline_lines_are_not_reported_again():
@@ -450,7 +452,7 @@ def test_disabled_inline_lines_are_not_reported_again():
   dev:
     {cm.DISABLED_MARK}env_file: .env
 """
-    assert cm.secret_inline_env_file_lines(text) == []
+    assert cm.secret_unsupported_env_file_lines(text) == []
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +576,245 @@ def test_services_with_secret_env_file_respects_targets():
     assert cm.services_with_secret_env_file(
         MULTI_SERVICE, {cm.TARGET_PROJECT}) == {
             'db': {cm.TARGET_PROJECT}, 'worker': {cm.TARGET_PROJECT}}
+
+
+# ---------------------------------------------------------------------------
+# long syntax (`- path: .env`)
+# ---------------------------------------------------------------------------
+
+LONG_SYNTAX = """services:
+  dev:
+    env_file:
+      - path: ${DEVBASE_ROOT}/.env
+      - path: env
+      - .env
+"""
+
+
+def test_single_line_long_syntax_is_disabled_and_restored():
+    """1 行で閉じている long syntax は通常のエントリと同じように扱える"""
+    after, touched = cm.disable(LONG_SYNTAX)
+
+    assert touched == ['${DEVBASE_ROOT}/.env', '.env']
+    assert f'{cm.DISABLED_MARK}- path: ${{DEVBASE_ROOT}}/.env' in after
+    # 機密と無関係な long syntax は触らない
+    assert '      - path: env\n' in after
+    assert cm.enable(after)[0] == LONG_SYNTAX
+
+
+def test_single_line_long_syntax_is_not_reported_as_unsupported():
+    assert cm.unsupported_env_file_lines(LONG_SYNTAX) == []
+
+
+def test_quoted_long_syntax_is_recognised():
+    text = """services:
+  dev:
+    env_file:
+      - "path": ".env"   # プロジェクト設定
+      - env
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == ['.env']
+    assert cm.enable(after)[0] == text
+
+
+MULTI_LINE_LONG_SYNTAX = """services:
+  dev:
+    env_file:
+      - path: .env
+        required: false
+      - env
+"""
+
+
+def test_multi_line_long_syntax_is_reported_and_blocks_the_migration():
+    """`required: false` が続く形は行単位で無効化できない (契約 2.)"""
+    assert cm.unsupported_env_file_lines(MULTI_LINE_LONG_SYNTAX) == [
+        (4, '- path: .env')]
+    assert [n for n, _ in
+            cm.secret_unsupported_env_file_lines(MULTI_LINE_LONG_SYNTAX)] == [4]
+
+
+def test_multi_line_long_syntax_is_left_untouched():
+    """行だけ落とすと `required: false` が宙に浮いて YAML が壊れる"""
+    after, touched = cm.disable(MULTI_LINE_LONG_SYNTAX)
+
+    assert touched == []
+    assert after == MULTI_LINE_LONG_SYNTAX
+
+
+def test_entries_after_a_multi_line_entry_are_still_scanned():
+    """続きの行で走査を打ち切ると、後ろの機密参照が有効なまま残る"""
+    text = """services:
+  dev:
+    env_file:
+      - path: config/app.env
+        required: false
+      - ${DEVBASE_ROOT}/.env
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == ['${DEVBASE_ROOT}/.env']
+    assert cm.enable(after)[0] == text
+    # 機密と無関係な long syntax は警告だけで、移行は止めない
+    assert [n for n, _ in cm.unsupported_env_file_lines(text)] == [4]
+    assert cm.secret_unsupported_env_file_lines(text) == []
+
+
+def test_multi_line_entry_without_a_path_on_the_dash_line_is_still_seen():
+    """`-` の行に参照が現れない書き方でも機密を見落とさない"""
+    text = """services:
+  dev:
+    env_file:
+      -
+        path: .env
+        required: false
+"""
+    assert len(cm.secret_unsupported_env_file_lines(text)) == 1
+    assert cm.disable(text)[0] == text
+
+
+def test_flow_mapping_entry_blocks_the_migration():
+    """1 行に複数の指定が同居するフロー記法は書き換えの対象外 (契約 2.)"""
+    text = """services:
+  dev:
+    env_file:
+      - { path: .env, required: false }
+"""
+    assert cm.unsupported_env_file_lines(text) == [
+        (4, '- { path: .env, required: false }')]
+    assert len(cm.secret_unsupported_env_file_lines(text)) == 1
+    assert cm.disable(text)[0] == text
+
+
+def test_env_file_that_is_not_a_sequence_is_not_passed_silently():
+    """シーケンスでない値 (Compose としては不正) も黙って通さない"""
+    text = """services:
+  dev:
+    env_file:
+      path: .env
+      required: false
+"""
+    assert [n for n, _ in cm.unsupported_env_file_lines(text)] == [4]
+    assert len(cm.secret_unsupported_env_file_lines(text)) == 1
+    assert cm.disable(text)[0] == text
+
+
+def test_inline_flow_mapping_is_seen_as_a_secret_reference():
+    text = """services:
+  dev:
+    env_file: [ { path: .env } ]
+"""
+    assert len(cm.secret_unsupported_env_file_lines(text)) == 1
+
+
+def test_services_with_secret_env_file_reads_long_syntax():
+    text = """services:
+  db:
+    env_file:
+      - path: .env
+  cache:
+    env_file:
+      - path: ${DEVBASE_ROOT}/.env
+        required: false
+  none:
+    env_file:
+      - path: config/app.env
+"""
+    assert cm.services_with_secret_env_file(text) == {
+        'db': {cm.TARGET_PROJECT},
+        'cache': {cm.TARGET_GLOBAL},
+    }
+
+
+# ---------------------------------------------------------------------------
+# クォートされたサービス名
+# ---------------------------------------------------------------------------
+
+QUOTED_SERVICES = """services:
+  "db":
+    image: mysql
+    env_file:
+      - .env
+  'cache':
+    image: redis
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+"""
+
+
+def test_quoted_service_names_match_the_parsed_ones():
+    """PyYAML は `"db":` を `db` と読む。引用符込みで記録すると照合できない"""
+    parsed = set(yaml.safe_load(QUOTED_SERVICES)['services'])
+    found = cm.services_with_secret_env_file(QUOTED_SERVICES)
+
+    assert set(found) <= parsed
+    assert found == {
+        'db': {cm.TARGET_PROJECT},
+        'cache': {cm.TARGET_GLOBAL},
+    }
+
+
+def test_quoted_service_names_survive_the_migration():
+    """移行でコメントアウトされたあとも同じサービス名で拾えること"""
+    disabled, _ = cm.disable(QUOTED_SERVICES)
+
+    assert cm.services_with_secret_env_file(disabled) == {
+        'db': {cm.TARGET_PROJECT},
+        'cache': {cm.TARGET_GLOBAL},
+    }
+
+
+# ---------------------------------------------------------------------------
+# 改行コード (CRLF / 混在)
+# ---------------------------------------------------------------------------
+
+def test_crlf_round_trip_is_byte_identical():
+    """行末を LF へ潰すと、往復しても元の compose.yml に戻らない"""
+    text = BASIC.replace('\n', '\r\n')
+
+    disabled, touched = cm.disable(text)
+
+    assert touched == ['${DEVBASE_ROOT}/.env', '.env']
+    assert f'{cm.DISABLED_MARK}- .env\r\n' in disabled
+    # LF 単独の行が紛れ込んでいない
+    assert '\n' not in disabled.replace('\r\n', '')
+    assert cm.enable(disabled)[0] == text
+
+
+def test_crlf_key_line_round_trip():
+    """キー行ごと無効化する場合も行末を保つ"""
+    text = ('services:\r\n  dev:\r\n    env_file:\r\n'
+            '      - ${DEVBASE_ROOT}/.env\r\n    image: x\r\n')
+
+    disabled, _ = cm.disable(text)
+
+    assert f'{cm.DISABLED_MARK}env_file:\r\n' in disabled
+    assert cm.enable(disabled)[0] == text
+
+
+def test_mixed_line_endings_are_preserved():
+    """混在していても、書き換えた行の行末だけをそのまま引き継ぐ"""
+    text = ('services:\n  dev:\r\n    env_file:\n'
+            '      - ${DEVBASE_ROOT}/.env\r\n      - .env\n      - env\r\n')
+
+    disabled, touched = cm.disable(text)
+
+    assert touched == ['${DEVBASE_ROOT}/.env', '.env']
+    assert f'{cm.DISABLED_MARK}- ${{DEVBASE_ROOT}}/.env\r\n' in disabled
+    assert f'{cm.DISABLED_MARK}- .env\n' in disabled
+    assert cm.enable(disabled)[0] == text
+
+
+def test_a_file_without_a_trailing_newline_round_trips():
+    text = 'services:\n  dev:\n    env_file:\n      - .env'
+
+    disabled, touched = cm.disable(text)
+
+    assert touched == ['.env']
+    assert not disabled.endswith('\n')
+    assert cm.enable(disabled)[0] == text
 
 
 # ---------------------------------------------------------------------------

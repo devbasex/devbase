@@ -504,18 +504,57 @@ def test_inline_env_file_without_secrets_only_warns(with_key, caplog):
     assert f'{cm.DISABLED_MARK}- ${{DEVBASE_ROOT}}/.env' in compose.read_text()
 
 
+def test_multi_line_long_syntax_secret_aborts_the_migration(with_key):
+    """続きの行を持つ long syntax は行単位で外せない。移行ごと止める"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""services:
+  dev:
+    env_file:
+      - path: ${DEVBASE_ROOT}/.env
+        required: false
+""")
+    before = compose.read_text()
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
+
+    # 何も動いていない: 平文も暗号文も構成ファイルもそのまま
+    assert (with_key / '.env').exists()
+    assert age_files(with_key) == []
+    assert compose.read_text() == before
+
+
+def test_crlf_compose_keeps_its_line_endings(with_key):
+    """CRLF の compose.yml を LF へ潰さない (往復でバイト単位に戻る)"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    original = COMPOSE.replace('\n', '\r\n').encode('utf-8')
+    compose.write_bytes(original)
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    encrypted = compose.read_bytes()
+    # 書き換えた行も含めて LF 単独の行は生まれない
+    assert b'\n' not in encrypted.replace(b'\r\n', b'')
+    assert b'# devbase(PLAN35)' in encrypted
+
+    assert env_migrate.cmd_env_decrypt(with_key, assume_yes=True) == 0
+    assert compose.read_bytes() == original
+
+
 def test_unreadable_compose_aborts_the_migration(with_key, monkeypatch):
     """読めない構成ファイルを飛ばすと、機密だけ退避されて参照が残る"""
     seed_plaintext(with_key)
 
-    original_read = Path.read_text
+    # 構成ファイルは改行コードを保つために read_bytes で読む
+    original_read = Path.read_bytes
 
     def fail_on_compose(self, *args, **kwargs):
         if self.name == 'compose.yml':
             raise OSError('アクセスが拒否されました')
         return original_read(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, 'read_text', fail_on_compose)
+    monkeypatch.setattr(Path, 'read_bytes', fail_on_compose)
 
     assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
 
@@ -530,14 +569,14 @@ def test_unreadable_compose_aborts_the_decrypt(two_projects, monkeypatch):
     root = two_projects
     assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 0
 
-    original_read = Path.read_text
+    original_read = Path.read_bytes
 
     def fail_on_compose(self, *args, **kwargs):
         if self.name == 'compose.yml' and self.parent.name == 'web':
             raise OSError('アクセスが拒否されました')
         return original_read(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, 'read_text', fail_on_compose)
+    monkeypatch.setattr(Path, 'read_bytes', fail_on_compose)
 
     assert env_migrate.cmd_env_decrypt(root, assume_yes=True) == 1
 

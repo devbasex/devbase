@@ -393,3 +393,67 @@ def test_unreadable_compose_falls_back_to_dev_only(project_factory, monkeypatch)
         'SHARED_KEY', 'PROJECT_TOKEN'}
     for name in ('global_only', 'project_only', 'both', 'none'):
         assert 'environment' not in config['services'][name]
+
+
+# ---------------------------------------------------------------------------
+# クォートされたサービス名 / long syntax の env_file
+# ---------------------------------------------------------------------------
+
+COMPOSE_QUOTED_SERVICE = """services:
+  dev:
+    image: alpine
+    volumes:
+      - x:/work
+  "db":
+    image: mysql
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+  'cache':
+    image: redis
+    env_file:
+      - .env
+volumes:
+  x: {}
+"""
+
+
+def test_quoted_service_names_receive_their_secrets(project_factory):
+    """`"db":` は PyYAML では `db`。引用符込みで拾うと機密が渡らない"""
+    path = project_factory(COMPOSE_QUOTED_SERVICE)
+
+    generate_scaled_compose(1, **ORIGINS)
+
+    config = generated(path)
+    # 生成後もサービス名はパース済みの姿 (引用符なし)
+    assert {'db', 'cache'} <= set(config['services'])
+    assert _env_names(config['services']['db']) == {'SHARED_KEY'}
+    assert _env_names(config['services']['cache']) == {'PROJECT_TOKEN'}
+
+
+COMPOSE_LONG_SYNTAX = """services:
+  dev:
+    image: alpine
+    volumes:
+      - x:/work
+  db:
+    image: mysql
+    env_file:
+      - path: ${DEVBASE_ROOT}/.env
+  cache:
+    image: redis
+    env_file:
+      - path: config/app.env
+volumes:
+  x: {}
+"""
+
+
+def test_long_syntax_reference_receives_its_secrets(project_factory):
+    """long syntax (`- path: ...`) の参照も由来つきで拾う"""
+    path = project_factory(COMPOSE_LONG_SYNTAX)
+
+    generate_scaled_compose(1, **ORIGINS)
+
+    config = generated(path)
+    assert _env_names(config['services']['db']) == {'SHARED_KEY'}
+    assert 'environment' not in config['services']['cache']

@@ -454,7 +454,10 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
 
     for path in compose_migrate.compose_files(root, targets):
         try:
-            before = path.read_text(encoding='utf-8')
+            # `read_text` は改行を LF へ揃えて読む (universal newlines) ため、
+            # CRLF の compose.yml を書き戻すとファイル全体の改行コードが
+            # 変わってしまう。書き換えた行以外は 1 バイトも動かさない。
+            before = path.read_bytes().decode('utf-8')
         except (OSError, UnicodeDecodeError) as e:
             # 読めないファイルを飛ばして続けると、機密の参照が残ったまま平文
             # だけが退避され、コマンドは成功を返す。壊れた構成に気付けるのは
@@ -462,23 +465,24 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
             raise MigrationError(
                 f"構成ファイルを読めませんでした ({path}): {e}") from e
 
-        # 行単位では書き換えられない記法 (インライン配列・単一文字列) は
-        # 対象から漏れる。黙って漏らすと壊れた構成のまま起動して初めて
-        # 気付くため、どのファイルの何行目かを警告しておく。
+        # 行単位では書き換えられない記法 (インライン配列・単一文字列・続きの行を
+        # 持つ long syntax など) は対象から漏れる。黙って漏らすと壊れた構成の
+        # まま起動して初めて気付くため、どのファイルの何行目かを警告しておく。
         compose_migrate.warn_unsupported_env_file(before, path)
 
         wanted = _compose_targets(path, has_global=has_global,
                                   project_names=project_names)
         if not restore:
-            # インライン記法のうち **機密を指しているもの** は警告では済まない。
+            # 扱えない記法のうち **機密を指しているもの** は警告では済まない。
             # 平文を退避したあとも参照が有効なまま残り、Compose が存在しない
             # ファイルを読もうとして起動できなくなる。手で直してから再実行して
-            # もらう (機密と無関係なインライン記法は移行に影響しないので警告のみ)。
+            # もらう (機密と無関係なものは移行に影響しないので警告のみ)。
             #
-            # 復元 (decrypt) 側では止めない。平文が戻る以上インライン参照は
-            # 有効になるうえ、ここで失敗させると壊れた状態からの復帰手段まで
+            # 復元 (decrypt) 側では止めない。平文が戻る以上その参照は有効に
+            # なるうえ、ここで失敗させると壊れた状態からの復帰手段まで
             # 塞いでしまう。
-            blocking = compose_migrate.secret_inline_env_file_lines(before, wanted)
+            blocking = compose_migrate.secret_unsupported_env_file_lines(
+                before, wanted)
             if blocking:
                 detail = '\n'.join(f"  {path}:{number}: {line}"
                                    for number, line in blocking)
