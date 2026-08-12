@@ -6,6 +6,7 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
+from devbase.env import compose_migrate
 from devbase.errors import DockerError
 from devbase.log import get_logger
 
@@ -144,6 +145,65 @@ def _load_compose_config(compose_file: Path) -> dict:
         raise DockerError(f"Failed to parse compose file: {e}")
 
 
+def _mask_secret_environment(
+    service: dict, secret_env_names: Sequence[str],
+) -> None:
+    """機密キーだけを「値なしの参照」へ置き換える (それ以外の値は残す)。
+
+    以前は ``environment`` を丸ごと落としていたが、それでは元の ``compose.yml``
+    が持つ**非機密の固定値や機能フラグ**まで消え、スケールした途端に生成コンテナ
+    の挙動が変わってしまう。生成ファイルに残してはいけないのは機密の値だけなので、
+    ``secret_env_names`` に挙がったキーに限って値を落とし、devbase 自身の環境変数
+    から解決させる書き方へ置き換える (plan35 §4.3)。
+
+    元の記法は尊重する。map 形式なら値を ``None`` にした map (Compose は ``KEY:``
+    を「実行プロセスの環境変数から解決」と解釈する)、list 形式なら裸のキー名を
+    並べた list として出力する。
+    """
+    # 重複を除きつつ、指定された順序は保つ
+    secrets = list(dict.fromkeys(secret_env_names))
+    secret_set = set(secrets)
+    existing = service.get('environment')
+
+    if existing is None:
+        # 元から environment が無ければ、機密が無い限り作らない
+        if secrets:
+            service['environment'] = list(secrets)
+        return
+
+    if isinstance(existing, dict):
+        masked = {
+            key: (None if key in secret_set else value)
+            for key, value in existing.items()
+        }
+        for name in secrets:
+            masked.setdefault(name, None)
+        service['environment'] = masked
+        return
+
+    if isinstance(existing, list):
+        masked_list = []
+        listed = set()
+        for item in existing:
+            if not isinstance(item, str):
+                masked_list.append(item)
+                continue
+            name = item.split('=', 1)[0].strip()
+            listed.add(name)
+            # 機密キーは `KEY=value` でも `KEY` でも、値なし参照に揃える
+            masked_list.append(name if name in secret_set else item)
+        masked_list.extend(name for name in secrets if name not in listed)
+        service['environment'] = masked_list
+        return
+
+    # map / list 以外は Compose が受け付けない書き方。手掛かりを残しつつ、
+    # 機密が渡らない事故を避けるため名前の列挙で置き換える。
+    logger.warning(
+        "environment の形式 (%s) を解釈できないため、機密の変数名の列挙で"
+        "置き換えます", type(existing).__name__)
+    service['environment'] = list(secrets)
+
+
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int,
     secret_env_names: Sequence[str] = (),
@@ -156,12 +216,7 @@ def _build_dev_instance(
     # setdefault keeps an explicit `init: false` if the project set one.
     service.setdefault('init', True)
 
-    # 値を持つ environment は落とす。生成ファイルに秘密の値が残らないようにする
-    # ためで、代わりに「変数名だけ」を列挙して devbase 自身の環境変数から
-    # 解決させる (plan35 §4.3)。
-    service.pop('environment', None)
-    if secret_env_names:
-        service['environment'] = list(secret_env_names)
+    _mask_secret_environment(service, secret_env_names)
 
     # Update volume mounts for /persistent/ai and /work
     ai_volume = get_ai_volume_for_index(index)
@@ -201,11 +256,17 @@ def _build_scaled_services(
     return scaled_services
 
 
-def _resolve_env_file_path(entry: Any, base_dir: Path) -> Optional[Path]:
-    """``env_file`` の 1 エントリを実パスへ解決する (解釈できなければ None)"""
+def _env_file_ref(entry: Any) -> Optional[str]:
+    """``env_file`` の 1 エントリから参照先の文字列を取り出す (短縮形 / dict 形)"""
     if isinstance(entry, dict):
         entry = entry.get('path')
-    if not isinstance(entry, str):
+    return entry if isinstance(entry, str) else None
+
+
+def _resolve_env_file_path(entry: Any, base_dir: Path) -> Optional[Path]:
+    """``env_file`` の 1 エントリを実パスへ解決する (解釈できなければ None)"""
+    entry = _env_file_ref(entry)
+    if entry is None:
         return None
     expanded = os.path.expandvars(entry)
     if '$' in expanded:
@@ -216,11 +277,17 @@ def _resolve_env_file_path(entry: Any, base_dir: Path) -> Optional[Path]:
 
 
 def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) -> None:
-    """実在しない ``env_file`` エントリを落とす。
+    """暗号化移行で消える機密ファイルへの ``env_file`` 参照のうち、実在しないものを落とす。
 
     機密を暗号化すると、それまで参照していた平文ファイルは無くなる。参照を
     残したままだと Docker Compose が起動時に落ちるため、生成する構成からは
     外す。値は環境変数として別途注入されるので失われない。
+
+    落とす対象を :func:`compose_migrate.is_secret_entry` が真を返す既知の参照に
+    **限る**のが要点。実在しない参照を無条件に落とすと、利用者のタイプミスや
+    未配置の必須設定まで黙って成功扱いになり、本来 Compose が起動時に知らせて
+    くれる構成の不備を隠してしまう。機密以外の欠落はそのまま残し、Compose に
+    エラーを出させる。
 
     移行コマンドが ``compose.yml`` を書き換え済みなら、ここに来る時点で該当
     エントリは無い。手で書いた構成や書き換え前の状態に対する保険として働く。
@@ -233,10 +300,12 @@ def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) ->
 
     kept = []
     for entry in entries:
+        ref = _env_file_ref(entry)
         resolved = _resolve_env_file_path(entry, base_dir)
-        if resolved is not None and not resolved.exists():
+        if (resolved is not None and not resolved.exists()
+                and ref is not None and compose_migrate.is_secret_entry(ref)):
             logger.info(
-                "%s: 実在しない env_file 参照を除きました (%s)。"
+                "%s: 実在しない機密の env_file 参照を除きました (%s)。"
                 "機密は環境変数として渡されます", service_name, resolved)
             continue
         kept.append(entry)

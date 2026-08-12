@@ -15,11 +15,34 @@ COMPOSE = """services:
       - ${DEVBASE_ROOT}/.env
       - env
     environment:
-      LEFTOVER: has-a-value
+      FEATURE_FLAG: enabled
+      DB_PASSWORD: has-a-value
     volumes:
       - x:/work
   db:
     image: mysql
+volumes:
+  x: {}
+"""
+
+COMPOSE_LIST_ENV = """services:
+  dev:
+    image: alpine
+    environment:
+      - FEATURE_FLAG=enabled
+      - DB_PASSWORD=has-a-value
+      - PASSTHROUGH
+    volumes:
+      - x:/work
+volumes:
+  x: {}
+"""
+
+COMPOSE_NO_ENV = """services:
+  dev:
+    image: alpine
+    volumes:
+      - x:/work
 volumes:
   x: {}
 """
@@ -35,6 +58,18 @@ def project(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture
+def project_factory(tmp_path, monkeypatch):
+    """任意の compose.yml でプロジェクトを組み立てる"""
+    def build(compose_text):
+        (tmp_path / 'compose.yml').write_text(compose_text)
+        monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path / 'root'))
+        (tmp_path / 'root').mkdir(exist_ok=True)
+        monkeypatch.chdir(tmp_path)
+        return tmp_path
+    return build
+
+
 def generated(path):
     return yaml.safe_load((path / '.docker-compose.scale.yml').read_text())
 
@@ -42,18 +77,37 @@ def generated(path):
 def test_secret_names_are_listed_without_values(project):
     generate_scaled_compose(1, secret_env_names=['ANTHROPIC_API_KEY', 'DB_PASSWORD'])
 
-    config = generated(project)
-    assert config['services']['dev-1']['environment'] == [
-        'ANTHROPIC_API_KEY', 'DB_PASSWORD']
+    # 元が map 形式なら map のまま。機密キーだけ値なし参照 (None) になる
+    assert generated(project)['services']['dev-1']['environment'] == {
+        'FEATURE_FLAG': 'enabled',
+        'DB_PASSWORD': None,
+        'ANTHROPIC_API_KEY': None,
+    }
+
+
+def test_non_secret_environment_is_preserved_in_list_form(project_factory):
+    path = project_factory(COMPOSE_LIST_ENV)
+
+    generate_scaled_compose(1, secret_env_names=['DB_PASSWORD', 'ANTHROPIC_API_KEY'])
+
+    # 元が list 形式なら list のまま。機密キーは裸のキー名へ落とす
+    assert generated(path)['services']['dev-1']['environment'] == [
+        'FEATURE_FLAG=enabled',
+        'DB_PASSWORD',
+        'PASSTHROUGH',
+        'ANTHROPIC_API_KEY',
+    ]
+    assert 'has-a-value' not in (path / '.docker-compose.scale.yml').read_text()
 
 
 def test_generated_file_contains_no_secret_values(project):
-    generate_scaled_compose(1, secret_env_names=['ANTHROPIC_API_KEY'])
+    generate_scaled_compose(1, secret_env_names=['ANTHROPIC_API_KEY', 'DB_PASSWORD'])
 
     text = (project / '.docker-compose.scale.yml').read_text()
     assert 'ANTHROPIC_API_KEY' in text
-    # 値を持つ既存の environment は落とす (生成物に値を残さない)
+    # 機密キーの値は生成物に残さない。非機密の固定値はそのまま残す
     assert 'has-a-value' not in text
+    assert 'enabled' in text
 
 
 def test_every_instance_gets_the_names(project):
@@ -61,14 +115,24 @@ def test_every_instance_gets_the_names(project):
 
     config = generated(project)
     for index in (1, 2, 3):
-        assert config['services'][f'dev-{index}']['environment'] == ['TOKEN']
+        assert config['services'][f'dev-{index}']['environment']['TOKEN'] is None
 
 
-def test_no_environment_section_without_secrets(project):
+def test_no_environment_section_without_secrets(project_factory):
+    path = project_factory(COMPOSE_NO_ENV)
+
     generate_scaled_compose(1, secret_env_names=[])
 
-    config = generated(project)
-    assert 'environment' not in config['services']['dev-1']
+    assert 'environment' not in generated(path)['services']['dev-1']
+
+
+def test_names_are_listed_when_original_has_no_environment(project_factory):
+    path = project_factory(COMPOSE_NO_ENV)
+
+    generate_scaled_compose(1, secret_env_names=['ANTHROPIC_API_KEY', 'TOKEN'])
+
+    assert generated(path)['services']['dev-1']['environment'] == [
+        'ANTHROPIC_API_KEY', 'TOKEN']
 
 
 def test_missing_env_file_entries_are_dropped(project):
@@ -77,6 +141,23 @@ def test_missing_env_file_entries_are_dropped(project):
 
     config = generated(project)
     assert config['services']['dev-1']['env_file'] == ['env']
+
+
+def test_missing_non_secret_env_file_entries_are_kept(project_factory):
+    """機密以外の欠落は隠さない (タイプミスや未配置を Compose に知らせる)"""
+    path = project_factory("""services:
+  dev:
+    image: alpine
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - config/app.env
+      - .env
+""")
+
+    generate_scaled_compose(1, secret_env_names=['TOKEN'])
+
+    # 既知の機密参照 (${DEVBASE_ROOT}/.env, .env) だけが落ち、残りは残る
+    assert generated(path)['services']['dev-1']['env_file'] == ['config/app.env']
 
 
 def test_existing_env_file_entries_are_kept(project):

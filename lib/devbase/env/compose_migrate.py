@@ -86,6 +86,21 @@ def _is_target(value: str, targets: Set[str]) -> bool:
     return False
 
 
+def is_secret_entry(value: str,
+                    targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
+                    ) -> bool:
+    """``env_file`` の 1 エントリが「暗号化移行で消える既知の機密参照」かを返す。
+
+    判定そのものは :func:`_is_target` と同じだが、あちらは private なので、
+    構成生成側 (``devbase.volume.compose``) から同じ基準で判定するための公開窓口
+    として置く。判定を 1 箇所に集めておかないと、移行が外す参照と生成が落とす
+    参照がずれる。
+    """
+    if not isinstance(value, str):
+        return False
+    return _is_target(value.strip(), set(targets))
+
+
 def _is_disabled(line: str) -> bool:
     return line.lstrip(' ').startswith(DISABLED_MARK)
 
