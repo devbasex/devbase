@@ -79,9 +79,15 @@ def _ensure_private_dir(path: Path) -> None:
     ごと他ユーザーやサービスから読めなくしてしまう。devbase が作っていない
     ディレクトリの権限はその所有者の管轄なので触らず、緩い場合は警告に留める。
 
-    ``mkdir(parents=True)`` は途中階層もまとめて作るため、作成後に見ただけでは
-    どこを自分が作ったのか区別できない。そこで **作成前に** 未存在の階層を控えて
-    おき、その分だけを後追いで chmod する (umask で 0700 が削られても確実に効く)。
+    ``mkdir(parents=True)`` で一括作成してから chmod すると、作成から chmod まで
+    の間だけ umask 依存の緩い権限 (例 0755) が見えてしまう。その隙に開いた fd は
+    後から chmod しても閉じないため、**作成前に** 未存在の階層を控えておき、親→子
+    の順に ``mkdir(mode=0o700)`` で 1 階層ずつ作る。こうすれば最初から 0700 で、
+    緩い権限が一瞬も露出しない。
+
+    ``mode`` は umask でビットが削られることはあっても広がることはなく、``0o700``
+    には group / other ビットが無いので umask の影響を受けない。「umask で緩く
+    なるのでは」と後追いの chmod を足す必要は無い。
     """
     path = Path(path)
     missing: List[Path] = []
@@ -97,12 +103,14 @@ def _ensure_private_dir(path: Path) -> None:
         _warn_if_world_accessible(path)
         return
 
-    path.mkdir(parents=True, exist_ok=True)
-    for created in missing:
+    # missing は子→親の順に積んであるので、逆順 (親→子) に作る
+    for target in reversed(missing):
         try:
-            os.chmod(created, 0o700)
-        except OSError:
-            pass
+            target.mkdir(mode=0o700)
+        except FileExistsError:
+            # 並行して他プロセスが先に作った場合。既存ディレクトリは
+            # 所有者の管轄として権限を触らない方針に合わせ、chmod しない。
+            continue
 
 
 def _warn_if_world_accessible(path: Path) -> None:

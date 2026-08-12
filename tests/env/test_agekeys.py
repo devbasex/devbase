@@ -69,6 +69,70 @@ def test_generate_key_file_creates_every_missing_level_with_0700(isolated_home,
         assert stat.S_IMODE(level.stat().st_mode) == 0o700
 
 
+def test_created_dirs_are_0700_from_the_moment_of_creation(isolated_home,
+                                                           monkeypatch):
+    """umask 0 でも各階層は「作成した瞬間から」0700。
+
+    一括作成してから chmod する実装だと、作成〜chmod の間だけ umask 依存の
+    緩い権限が露出する。作成直後の mode を記録して、その隙が無いことを見る。
+    """
+    key_path = isolated_home / 'u1' / 'u2' / 'keys.txt'
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(key_path))
+
+    real_mkdir = agekeys.Path.mkdir
+    modes_at_creation = {}
+
+    def recording_mkdir(self, *args, **kwargs):
+        result = real_mkdir(self, *args, **kwargs)
+        modes_at_creation[self] = stat.S_IMODE(self.stat().st_mode)
+        return result
+
+    monkeypatch.setattr(agekeys.Path, 'mkdir', recording_mkdir)
+
+    old = os.umask(0)
+    try:
+        agekeys.generate_key_file()
+    finally:
+        os.umask(old)
+
+    levels = (key_path.parent, key_path.parent.parent)
+    for level in levels:
+        assert modes_at_creation[level] == 0o700, f'{level} が作成時点で緩い'
+        assert stat.S_IMODE(level.stat().st_mode) == 0o700
+
+
+def test_generate_key_file_survives_a_concurrently_created_level(isolated_home,
+                                                                 monkeypatch):
+    """途中の階層を別プロセスが先に作っていても失敗しない。
+
+    先に作られた階層は「既存ディレクトリ」なので、権限は触らず素通りする
+    (既存ディレクトリを chmod しないという方針と一貫させる)。
+    """
+    key_path = isolated_home / 'x' / 'y' / 'keys.txt'
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(key_path))
+
+    racy = isolated_home / 'x'
+    real_mkdir = agekeys.Path.mkdir
+
+    def racing_mkdir(self, *args, **kwargs):
+        if self == racy and not self.exists():
+            # 別プロセスが一足先に作った状況を再現する
+            real_mkdir(self)
+            os.chmod(self, 0o755)
+            raise FileExistsError(17, 'File exists', str(self))
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(agekeys.Path, 'mkdir', racing_mkdir)
+
+    path, _ = agekeys.generate_key_file()
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # 他プロセスが作った階層の権限は変えない
+    assert stat.S_IMODE(racy.stat().st_mode) == 0o755
+    # 自分で作った階層は 0700
+    assert stat.S_IMODE(key_path.parent.stat().st_mode) == 0o700
+
+
 def test_generate_key_file_does_not_chmod_an_existing_dir(isolated_home,
                                                           monkeypatch):
     """既存の共有ディレクトリを鍵の置き場に指定しても、その権限を変えない。
