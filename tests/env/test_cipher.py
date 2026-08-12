@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pyrage
 import pytest
 
@@ -215,3 +217,62 @@ def test_resolve_identity_accepts_age_keygen_output_with_comments(
 
     blob = cipher.encrypt(b"payload", recipients=[pub])
     assert cipher.decrypt(blob, identities=[str(id_path)]) == b"payload"
+
+
+def test_decrypt_skips_unresolvable_identity_and_uses_valid_one(
+        tmp_path, x25519_keypair, caplog):
+    """解決できない identity が先頭にあっても、後続の有効な identity で復号できる。
+
+    ``agekeys.resolve_identities`` は「devbase 専用鍵 → ``~/.ssh`` の既定鍵」の順に
+    候補を並べる。専用鍵ファイルが壊れているだけで復号が止まると、旧来 ``~/.ssh``
+    の鍵で暗号化した暗号文を移行期間中に復号できるという意図が失われるため、
+    解決できない候補は警告を出して読み飛ばす (PR #91 codex 指摘)。
+    """
+    pub, priv_str = x25519_keypair
+    broken = tmp_path / "broken.key"
+    broken.write_text("not a key at all\n")
+    valid = tmp_path / "valid.key"
+    valid.write_text(priv_str)
+
+    blob = cipher.encrypt(b"migrated", recipients=[pub])
+
+    with caplog.at_level(logging.WARNING, logger="devbase.env.cipher"):
+        plain = cipher.decrypt(blob, identities=[str(broken), str(valid)])
+
+    assert plain == b"migrated"
+    # 黙って読み飛ばすと原因が追えないので、理由が warning に残ること
+    warnings = [r.getMessage() for r in caplog.records
+                if r.levelno >= logging.WARNING]
+    assert any(str(broken) in m for m in warnings)
+    assert not any(str(valid) in m for m in warnings)
+
+
+def test_decrypt_reports_every_failure_when_no_identity_resolves(
+        tmp_path, x25519_keypair):
+    """候補が全滅した場合は従来どおり CipherError。各候補の失敗理由を含む"""
+    pub, _ = x25519_keypair
+    missing = tmp_path / "missing.key"
+    broken = tmp_path / "broken.key"
+    broken.write_text("not a key at all\n")
+
+    blob = cipher.encrypt(b"x", recipients=[pub])
+
+    with pytest.raises(cipher.CipherError) as excinfo:
+        cipher.decrypt(blob, identities=[str(missing), str(broken)])
+
+    message = str(excinfo.value)
+    assert str(missing) in message and "見つかりません" in message
+    assert str(broken) in message and "秘密鍵の解釈に失敗" in message
+
+
+def test_decrypt_keeps_message_when_identity_resolves_but_mismatches(
+        tmp_path, x25519_keypair):
+    """解決には成功したが鍵が一致しない場合のメッセージは従来どおり"""
+    pub, _ = x25519_keypair
+    other = tmp_path / "other.key"
+    other.write_text(str(pyrage.x25519.Identity.generate()))
+
+    blob = cipher.encrypt(b"x", recipients=[pub])
+
+    with pytest.raises(cipher.CipherError, match="復号に失敗しました"):
+        cipher.decrypt(blob, identities=[str(other)])

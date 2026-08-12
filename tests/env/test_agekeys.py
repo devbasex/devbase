@@ -482,3 +482,32 @@ def test_umask_does_not_widen_key_permissions(isolated_home):
     finally:
         os.umask(old)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_resolve_identities_still_decrypts_ssh_ciphertext_when_devbase_key_broken(
+        isolated_home, monkeypatch):
+    """専用鍵ファイルが壊れていても、旧来 ``~/.ssh`` の鍵で暗号化した暗号文を
+    ``resolve_identities()`` 経由で復号できる (移行互換性そのものの検証)。
+
+    ``resolve_identities`` は専用鍵を先頭に置くため、専用鍵の解決失敗でそこで
+    止まってしまうと ``~/.ssh`` の鍵を試せない (PR #91 codex 指摘)。
+    """
+    from devbase.env import cipher
+
+    ssh_identity = pyrage.x25519.Identity.generate()
+    ssh_key = isolated_home / 'id_ed25519'
+    ssh_key.write_text(str(ssh_identity))
+    monkeypatch.setattr(agekeys._cipher, 'default_identity_paths',
+                        lambda: [ssh_key])
+
+    # 専用鍵ファイルは存在するが中身が壊れている状態を作る
+    key_file = agekeys.key_file_path()
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    key_file.write_text('broken key material\n')
+
+    identities = agekeys.resolve_identities()
+    assert identities == [str(key_file), str(ssh_key)]
+
+    blob = cipher.encrypt(b'legacy-secret',
+                          recipients=[str(ssh_identity.to_public())])
+    assert cipher.decrypt(blob, identities=identities) == b'legacy-secret'
