@@ -268,8 +268,8 @@ release branch: `release/PLAN35` / base branch: `main`
 | PR # | branch 名 | 概要 | 対応する段階 | 依存 | 並行可否 |
 |---|---|---|---|---|---|
 | 1 | `feature/PLAN35-secret-store` | 秘密ストアの抽象層 + age 実装 + 鍵生成 (`devbase env keygen`) と受信者管理 | 段階 1 | なし | ○ |
-| 2 | `feature/PLAN35-env-commands` | 設定操作コマンド群 (`init`/`sync`/`set`/`get`/`delete`/`edit`/`list`) の保存先切替、`encrypt`/`decrypt` 移行コマンド | 段階 2・5(移行) | PR1 | × |
-| 3 | `feature/PLAN35-runtime` | 起動ラッパーの機密読み込み廃止、`env exec` によるホスト側処理への注入、変数名のみを列挙する構成生成、プロジェクト構成の移行 | 段階 3・4 | PR2 | × |
+| 2 | `feature/PLAN35-env-commands` | 設定操作コマンド群 (`init`/`sync`/`set`/`get`/`delete`/`edit`/`list`) の保存先切替 | 段階 2 | PR1 | × |
+| 3 | `feature/PLAN35-runtime` | 起動ラッパーの機密読み込み廃止、`env exec` によるホスト側処理への注入、変数名のみを列挙する構成生成、`encrypt`/`decrypt` による移行 | 段階 3・4・5(移行) | PR2 | × |
 | 4 | `feature/PLAN35-ops-docs` | `rekey` / `doctor`、除外設定の修正、取り込みバックアップの暗号化、ドキュメント | 段階 5(残り) | PR3 | × |
 
 段階 6 (SOPS を差し替え先として実装) は本 release のスコープ外とし、運用要件が出た時点で別 plan に切り出す。
@@ -277,6 +277,8 @@ release branch: `release/PLAN35` / base branch: `main`
 ### 11.1 依存が直列になる理由
 
 4 本すべてが `lib/devbase/env/` の同一層を触るため、worktree による並行開発の利得よりコンフリクト解消のコストが上回る。PR1 の抽象層が確定しないと PR2 の保存先切替は書けず、PR2 の読み込み経路が確定しないと PR3 の注入経路は書けない。したがって「PR n を release へ merge → PR n+1 を release から切る」の直列で進める。
+
+移行コマンド (`encrypt` / `decrypt`) は当初 PR2 に置く想定だったが、PR3 へ移した。共通の機密を暗号化した時点で平文ファイルは消えるため、コンテナ構成がそのファイルを参照したままだと起動が失敗する。移行手段と、それを受け止める起動経路の変更は同じ PR に入っていないと、その PR だけを取り込んだ状態が壊れる。
 
 ### 11.2 ホスト側で機密を必要とする処理の洗い出し（段階 3 の必須事前作業）
 

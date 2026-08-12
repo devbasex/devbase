@@ -162,7 +162,7 @@ _devbase_completions() {
                             COMPREPLY=($(compgen -W "--global -g --project -p --reveal -r --keys -k" -- "$cur"))
                         fi
                         ;;
-                    set)
+                    set|delete|edit)
                         if [[ "$cur" == -* ]]; then
                             COMPREPLY=($(compgen -W "--project -p" -- "$cur"))
                         fi

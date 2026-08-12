@@ -6,7 +6,7 @@ devbase の全コマンドの構文、オプション、使用例をまとめた
 |---------|------|
 | [トップレベルコマンド](01-toplevel.md) | `init` / `status` / `bin/rc` |
 | [project グループ](02-project.md) | コンテナのライフサイクル管理・一覧（`up` / `down` / `login` / `ps` / `logs` / `scale` / `build` / `rebuild` / `list`）と非推奨の `container` グループ |
-| [env グループ](03-env.md) | 環境変数の管理（`init` / `sync` / `list` / `set` / `get` / `delete` / `edit` / `project` / `export` / `import`） |
+| [env グループ](03-env.md) | 環境変数の管理（`init` / `sync` / `list` / `set` / `get` / `delete` / `edit` / `project` / `keygen` / `export` / `import`） |
 | [plugin グループ](04-plugin.md) | プラグインの管理（`list` / `install` / `uninstall` / `update` / `info` / `sync` / `migrate` / `repo *`） |
 | [snapshot グループ](05-snapshot.md) | スナップショットの管理（`create` / `list` / `restore` / `copy` / `delete` / `rotate`） |
 

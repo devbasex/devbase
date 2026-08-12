@@ -84,16 +84,32 @@ devbase env get AWS_PROFILE
 環境変数を削除します。
 
 ```
-devbase env delete KEY
+devbase env delete KEY [-p]
+```
+
+| オプション | 説明 |
+|-----------|------|
+| `-p` | プロジェクト設定から削除（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
+
+```bash
+# グローバルから削除
+devbase env delete OLD_API_KEY
+
+# カレントプロジェクトの設定から削除
+devbase env delete GCP_ACTIVE_PROFILE -p
 ```
 
 ## `devbase env edit`
 
-デフォルトエディタで `.env` ファイルを開きます。
+デフォルトエディタで設定を開きます。設定が暗号化されている場合は、復号した内容を一時ファイルで編集し、保存時に再暗号化します。
 
 ```
-devbase env edit
+devbase env edit [-p]
 ```
+
+| オプション | 説明 |
+|-----------|------|
+| `-p` | カレントプロジェクトの設定を開く（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
 
 ## `devbase env project`
 
@@ -102,6 +118,39 @@ devbase env edit
 ```
 devbase env project
 ```
+
+## `devbase env keygen`
+
+設定の暗号化に使う devbase 専用の age 鍵を生成します。鍵ファイルは `0600`、置き場のディレクトリは `0700` で作成されます。
+
+```
+devbase env keygen [--force] [-y|--yes]
+```
+
+| オプション | 説明 |
+|-----------|------|
+| `--force` | 既存の鍵を作り直す。**旧鍵でしか復号できない機密は失われます** |
+| `-y`, `--yes` | `--force` 時の確認プロンプトを省略（CI 等での自動実行用） |
+
+鍵の場所は次のとおりで、コマンドラインからは指定できません（生成先と復号時の探索先を必ず一致させるため）。別の場所に置きたい場合は `DEVBASE_AGE_KEY_FILE` を設定してから実行します。
+
+| 指定 | 鍵ファイルのパス |
+|-----|-----------------|
+| 既定 | `~/.config/devbase/age/keys.txt`（`XDG_CONFIG_HOME` があればその配下） |
+| `DEVBASE_AGE_KEY_FILE` | 指定したパスをそのまま使用 |
+
+```bash
+# 既定の場所に生成する（既に鍵があれば公開鍵を表示するだけで何もしない）
+devbase env keygen
+
+# 置き場を変えて生成する
+DEVBASE_AGE_KEY_FILE=~/keys/devbase-age.txt devbase env keygen
+
+# 既存の鍵を捨てて作り直す（確認プロンプトあり）
+devbase env keygen --force
+```
+
+> **鍵のバックアップは必須です。** この鍵を失うと、暗号化した機密は誰にも復号できません（devbase 側にも復旧手段はありません）。生成後に表示される鍵ファイルを、パスワード管理ツールなど端末とは別の場所へ必ず複製してください。鍵は全ワークスペース共通のため、`--force` で作り直すと他のワークスペースで暗号化した機密も復号できなくなります。
 
 ## `devbase env export`
 

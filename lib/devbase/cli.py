@@ -275,10 +275,17 @@ def _add_env_parser(subparsers):
     env_get = env_sub.add_parser('get', help='Get a variable')
     env_get.add_argument('key', help='Variable name')
 
+    # delete / edit の --project は set と対。設定が暗号化されると利用者がエディタで
+    # 直接開いて消せなくなるため、プロジェクト設定を CLI から掃除する経路を残す。
     env_delete = env_sub.add_parser('delete', help='Delete a variable')
     env_delete.add_argument('key', help='Variable name')
+    env_delete.add_argument('--project', '-p', action='store_true',
+                            help='Delete from project .env')
 
-    env_sub.add_parser('edit', help='Open .env in editor')
+    env_edit = env_sub.add_parser('edit', help='Open .env in editor')
+    env_edit.add_argument('--project', '-p', action='store_true',
+                          help='Edit project .env')
+
     env_sub.add_parser('project', help='Setup project-specific variables')
 
     # 生成先を選ぶオプションは置かない。復号側は $DEVBASE_AGE_KEY_FILE か既定パスしか
