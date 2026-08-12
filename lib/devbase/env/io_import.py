@@ -114,29 +114,67 @@ def _decrypt_if_needed(blob: bytes, opts: ImportOptions) -> bytes:
     return _cipher.decrypt(blob, identities=identities)
 
 
+def _secret_ref_for(arcname: str):
+    """バンドル内 arcname に対応する秘密ストアの参照 (機密でなければ ``None``)"""
+    from devbase.env.secret_store import SecretRef
+
+    if arcname == 'env/global.env':
+        return SecretRef.for_global()
+    match = _merge._PROJECT_ENV_RE.match(arcname)
+    if match:
+        return SecretRef.for_project(match.group(1))
+    return None
+
+
 def _build_plans(
     filtered: dict, devbase_root: Path, opts: ImportOptions
 ) -> Tuple[List[_merge.Plan], Optional[Tuple[Path, bytes]]]:
-    """フィルタ済みメンバーから書き出し計画と sources.yml の参照用コピー対象を返す"""
+    """フィルタ済みメンバーから書き出し計画と sources.yml の参照用コピー対象を返す
+
+    機密の書き出し先は秘密ストアに聞く。暗号化されている環境へ import したときに
+    平文の ``.env`` を作ってしまうと、暗号化ファイルと平文が同時に存在する状態に
+    なり、以後どちらが正か判断できなくなる (plan35 §9)。既存内容の読み取りと
+    書き出しの両方をストア越しに行い、保存形式を維持する。
+    """
+    from dataclasses import replace as _dc_replace
+
+    from devbase.env.secret_store import SecretStore
+
+    store = SecretStore(devbase_root)
     plans: List[_merge.Plan] = []
     sources_reference: Optional[Tuple[Path, bytes]] = None
     try:
         for arcname, data in sorted(filtered.items()):
-            target = _merge.target_for(arcname, devbase_root)
             if arcname == 'env/sources.yml':
+                target = _merge.target_for(arcname, devbase_root)
                 plan = _merge.plan_sources(target, data,
                                            merge_metadata=opts.merge_metadata)
                 if plan is not None:
                     plans.append(plan)
                 else:
                     sources_reference = (target, data)
-            else:
-                plans.append(_merge.plan_env_merge(
-                    target, data, arcname,
-                    merge=opts.merge,
-                    replace=opts.replace,
-                    replace_keys=opts.replace_keys,
-                ))
+                continue
+
+            ref = _secret_ref_for(arcname)
+            if ref is None:
+                raise _merge.MergeError(f"未対応のバンドルエントリ: {arcname}")
+
+            exists = store.exists(ref)
+            plan = _merge.plan_env_merge(
+                store.path(ref), data, arcname,
+                merge=opts.merge,
+                replace=opts.replace,
+                replace_keys=opts.replace_keys,
+                existing_bytes=store.load_bytes(ref) if exists else b'',
+                target_exists=exists,
+            )
+            if store.is_encrypted(ref):
+                # merge の結果は平文のバイト列なので、暗号化されている保存先へ
+                # 書く前にここで暗号文へ変換する。以降の原子的書き込み・
+                # ロールバックはバイト列とパスだけを扱うため、そのまま通せる。
+                plan = _dc_replace(
+                    plan, new_bytes=store.age.encrypt_bytes(plan.new_bytes))
+            plans.append(plan)
     except _merge.MergeError as e:
         raise ImportError(str(e)) from e
     return plans, sources_reference

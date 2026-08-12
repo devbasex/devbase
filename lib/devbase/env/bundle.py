@@ -230,17 +230,30 @@ def make_entries_from_disk(devbase_root,
     """
     from pathlib import Path
 
+    from devbase.env.secret_store import SecretRef, SecretStore
+
     devbase_root = Path(devbase_root)
     entries: List[BundleEntry] = []
 
+    # 保存先は秘密ストアに聞く。暗号化済みの機密でも export できるようにするため、
+    # ファイルパスを直接読まずに復号後のバイト列を受け取る。バンドル自体は age で
+    # 暗号化されるので、ここで平文に戻しても保存時の平文は生まれない。
+    store = SecretStore(devbase_root)
+
+    def _origin(path) -> str:
+        """保存先を ``$DEVBASE_ROOT`` 相対の表記へ直す (manifest の可読性のため)"""
+        try:
+            return f'$DEVBASE_ROOT/{Path(path).relative_to(devbase_root)}'
+        except ValueError:
+            return str(path)
+
     if include_global:
-        global_env = devbase_root / '.env'
-        # is_file() でディレクトリ等を除外し、IsADirectoryError 等の例外を防ぐ
-        if global_env.is_file():
+        global_ref = SecretRef.for_global()
+        if store.exists(global_ref):
             entries.append(BundleEntry(
                 arcname='env/global.env',
-                origin='$DEVBASE_ROOT/.env',
-                data=global_env.read_bytes(),
+                origin=_origin(store.path(global_ref)),
+                data=store.load_bytes(global_ref),
             ))
 
     if include_metadata:
@@ -282,12 +295,12 @@ def make_entries_from_disk(devbase_root,
                     name, proj_dir,
                 )
                 continue
-            env_path = proj_dir / '.env'
-            if env_path.is_file():
+            project_ref = SecretRef.for_project(name)
+            if store.exists(project_ref):
                 entries.append(BundleEntry(
                     arcname=f'env/projects/{name}/.env',
-                    origin=f'$DEVBASE_ROOT/projects/{name}/.env',
-                    data=env_path.read_bytes(),
+                    origin=_origin(store.path(project_ref)),
+                    data=store.load_bytes(project_ref),
                 ))
 
     return entries
