@@ -249,7 +249,7 @@ devbase/
 
 ## 次のステップ
 
-- [CLI リファレンス](cli-reference.md) -- 全コマンドの詳細な使い方
+- [CLI リファレンス](cli-reference/README.md) -- 全コマンドの詳細な使い方
 - [環境変数ガイド](environment-variables.md) -- 環境変数の3レベル構造とコレクター
 - [コンテナ操作ガイド](container-operations.md) -- 並行開発やボリュームの詳細
 - [スナップショットガイド](snapshot-guide.md) -- バックアップと復元の仕組み

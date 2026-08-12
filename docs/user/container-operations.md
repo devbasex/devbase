@@ -7,7 +7,7 @@ devbase のコンテナ管理機能について、ライフサイクル、並行
 > 非推奨となり、`project` へのエイリアスとして警告付きで当面動作します。`project` では
 > `up` / `down` / `ps` / `logs` / `scale` に `[name]` を指定することで **任意のディレクトリ
 > から** 対象プロジェクトを操作できます。プロジェクト一覧は `devbase project list` を参照
-> してください。詳細は [CLI リファレンス](cli-reference.md#project-グループ) を参照。
+> してください。詳細は [CLI リファレンス: project グループ](cli-reference/02-project.md) を参照。
 
 ## コンテナライフサイクル
 
@@ -136,7 +136,7 @@ devbase のコンテナは 2 種類のボリュームを使用します。
 | ボリューム名 | マウント先 | 共有範囲 | 用途 |
 |-------------|-----------|---------|------|
 | `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | AI CLI 設定（`.claude` / `.codex` / `.gemini` 等）、SSH 鍵、共有ファイル置き場（`share`）。詳細は「AI 設定の永続化」参照 |
-| `{project}_work_{index}` | `/work` | 各コンテナ専用 | プロジェクトのソースコード、作業ファイル |
+| `devbase_work_{index}` | `/work` | 同じ index のコンテナで共有（プロジェクト間も共有） | プロジェクトのソースコード、作業ファイル |
 
 > **Note:** `devbase_home_ubuntu` は **`/persistent/ai`** にマウントされます（`/home/ubuntu` への直接マウントは廃止）。`/home/ubuntu` 直下はコンテナ層（揮発）で、永続化されるのは entrypoint が `/persistent/ai` 配下へ symlink する設定ファイルのみです。シェル履歴など symlink 対象外のファイルは再生成で失われます。
 
@@ -145,6 +145,8 @@ devbase のコンテナは 2 種類のボリュームを使用します。
 - ボリュームは `devbase down` でもコンテナが削除されても保持されます
 - コンテナの再起動（`devbase up`）で同じボリュームが再マウントされます
 - ボリュームを明示的に削除するには `docker volume rm` を使用します
+
+> **Warning:** `devbase_work_{index}` は `COMPOSE_PROJECT_NAME` の接頭辞が付かない **external ボリューム**です。同じ index（コンテナ 1 なら `devbase_work_1`）を使う限り **別プロジェクトからも同じ実体**を参照するため、`docker volume rm devbase_work_1` は停止中の他プロジェクトの作業ファイルまで削除します。削除前に `docker ps -a --filter volume=devbase_work_1` で利用コンテナを確認してください。
 
 ### ボリュームの確認
 
@@ -181,7 +183,7 @@ AI CLI ツールの設定や認証情報は、コンテナを再生成しても�
 - `share` 配下に置いた VS Code ワークスペースファイルは `DEVBASE_WORKSPACE` で開けます（[環境変数](environment-variables.md) 参照）。
 
 > **Note:** symlink 対象は entrypoint にビルド時 `COPY` で焼き込まれます。エントリを増減した場合は
-> イメージの再ビルドが必要です（`devbase up` 単体では反映されない場合があります。[CLI リファレンス](cli-reference.md) の `devbase project up` の注記参照）。
+> イメージの再ビルドが必要です（`devbase up` 単体では反映されない場合があります。[CLI リファレンス: project グループ](cli-reference/02-project.md#devbase-project-up) の `devbase project up` の注記参照）。
 
 ## コンテナイメージ階層
 
@@ -278,7 +280,7 @@ devbase list --no-interactive   # --plain / -P も同義
 > スナップショット / ステータス）へ ←→ キーで移動して各管理操作を実行できます。
 > パイプ・リダイレクト・CI などの非 TTY 環境では自動的に一覧表示のみに
 > フォールバックします。画面構成とキー操作の詳細は
-> [CLI リファレンス](cli-reference.md#devbase-project-list) を参照してください。
+> [CLI リファレンス: project グループ](cli-reference/02-project.md#devbase-project-list) を参照してください。
 
 `devbase project ps` が「対象プロジェクト 1 つのコンテナ状態」を表示するのに対し、
 `devbase list` は「全プロジェクトの横断一覧」を表示します。

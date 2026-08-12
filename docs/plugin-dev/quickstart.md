@@ -148,6 +148,8 @@ fi
 
 > **Note:** どちらのフックも `bash` で実行されます。`chmod +x` で実行可能ビットを立てておいてください。`pre-up` が非ゼロ終了すると `devbase up` は中断します。`deploy` は各インスタンスに対して `DEVBASE_INSTANCE_INDEX` を環境変数として渡しますが、失敗してもデプロイは続行されます。
 
+> **応用:** 外部リポジトリを共有 work ボリュームへ取り込み、app / nginx / db など複数コンテナで動かすプロジェクトでは、`pre-up` で clone/pull と work ボリュームへの populate を行い、2 回目以降はコンテナ側を上書きしないよう冪等にスキップするのが定石です。詳細は [repo 連携プロジェクトと pre-up populate パターン](repo-backed-projects.md) を参照してください。
+
 ---
 
 ## 3. ローカルでの開発・テスト

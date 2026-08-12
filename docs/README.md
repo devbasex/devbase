@@ -43,7 +43,7 @@ graph TD
 | ドキュメント | 内容 |
 |-------------|------|
 | [はじめに](user/getting-started.md) | 前提条件、初回セットアップ、日常ワークフロー |
-| [CLI リファレンス](user/cli-reference.md) | 全コマンドの構文・オプション・使用例 |
+| [CLI リファレンス](user/cli-reference/README.md) | 全コマンドの構文・オプション・使用例 |
 | [プラグインレジストリ](user/plugin-registries.md) | 公開・社内レジストリの一覧と追加方法 |
 | [環境変数ガイド](user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [コンテナ操作ガイド](user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
@@ -73,6 +73,7 @@ graph LR
 | [プラグイン開発クイックスタート](plugin-dev/quickstart.md) | 最小構成プラグインの作成手順 |
 | [plugin.yml リファレンス](plugin-dev/plugin-yml-reference.md) | プラグイン定義ファイルの全フィールド |
 | [compose.yml ガイドライン](plugin-dev/compose-yml-guidelines.md) | Docker Compose 設定のベストプラクティス |
+| [repo 連携プロジェクトと pre-up populate](plugin-dev/repo-backed-projects.md) | 外部リポジトリを共有 work ボリュームへ populate する `pre-up` パターンと冪等スキップ |
 
 ### devbase 開発者（devbase 本体を改善したい方）
 
@@ -91,7 +92,13 @@ docs/
 ├── README.md                          ← このファイル（ドキュメント索引）
 ├── user/                              ← 利用者向け
 │   ├── getting-started.md             ← はじめに
-│   ├── cli-reference.md               ← CLI リファレンス
+│   ├── cli-reference/                 ← CLI リファレンス（コマンドグループ別）
+│   │   ├── README.md                  ← 目次・コマンド体系
+│   │   ├── 01-toplevel.md             ← init / status / rc
+│   │   ├── 02-project.md              ← project グループ
+│   │   ├── 03-env.md                  ← env グループ
+│   │   ├── 04-plugin.md               ← plugin グループ
+│   │   └── 05-snapshot.md             ← snapshot グループ
 │   ├── plugin-registries.md           ← プラグインレジストリ
 │   ├── environment-variables.md       ← 環境変数ガイド
 │   ├── container-operations.md        ← コンテナ操作ガイド
@@ -100,7 +107,8 @@ docs/
 ├── plugin-dev/                        ← プラグイン開発者向け
 │   ├── quickstart.md                  ← クイックスタート
 │   ├── plugin-yml-reference.md        ← plugin.yml リファレンス
-│   └── compose-yml-guidelines.md      ← compose.yml ガイドライン
+│   ├── compose-yml-guidelines.md      ← compose.yml ガイドライン
+│   └── repo-backed-projects.md        ← repo 連携 / pre-up populate パターン
 └── developer/                         ← devbase 開発者向け
     ├── architecture.md                ← アーキテクチャ
     ├── contributing.md                ← コントリビューション
@@ -114,7 +122,7 @@ docs/
 | やりたいこと | 参照先 |
 |-------------|--------|
 | devbase を初めてインストールする | [はじめに](user/getting-started.md#セットアップ手順) |
-| コマンドの使い方を調べる | [CLI リファレンス](user/cli-reference.md) |
+| コマンドの使い方を調べる | [CLI リファレンス](user/cli-reference/README.md) |
 | 環境変数を設定する | [環境変数ガイド](user/environment-variables.md#環境変数の操作) |
 | 複数コンテナで並行開発する | [コンテナ操作ガイド](user/container-operations.md#並行開発) |
 | データをバックアップ・復元する | [スナップショットガイド](user/snapshot-guide.md) |
