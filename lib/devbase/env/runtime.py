@@ -170,15 +170,65 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
     return resolved
 
 
+#: この実行で :func:`inject` が載せた変数名 → 載せる**前**の値 (未設定なら None)。
+#:
+#: 「載せた変数名」だけでなく元の値まで控えるのは、解除時に利用者がシェルで
+#: 設定していた同名の変数まで消さないため。元々あった変数は元の値へ戻し、
+#: 元々無かった変数だけを削除する。
+_injected_originals: Dict[str, Optional[str]] = {}
+
+
+def clear_injected(environ=None) -> List[str]:
+    """この実行で載せた機密を取り除き、注入前の状態へ戻す。
+
+    プロジェクトを切り替える経路 (TUI や ``project up <other>`` の直接起動) では、
+    切替元プロジェクトの機密を載せた後に切替先の機密を載せ直すことになる。この
+    とき**単に上書きするだけでは足りない**: 切替先に同名のキーが無ければ、切替元
+    固有の機密が ``os.environ`` に残ったまま Compose や子プロセスへ引き継がれて
+    しまうため。載せ直す前にここを通して、切替元の値を確実に落とす。
+
+    非機密設定 (``env``) について起動ラッパーの ``_CALLER_ENV_KEYS`` や
+    :func:`devbase.commands.container._resolve_project_name` が行っている
+    「呼び出し元固有のキーを unset してから対象を読む」のと同じ性質を、機密に
+    ついても満たすための関数。
+
+    自分が載せたキーだけを対象にする。利用者がシェルで設定していた同名の変数は
+    注入前の値へ戻すので、消えることはない。
+
+    Returns:
+        取り除いた (または元へ戻した) 変数名の一覧
+    """
+    target = environ if environ is not None else os.environ
+    cleared = list(_injected_originals)
+    for name, original in _injected_originals.items():
+        if original is None:
+            target.pop(name, None)
+        else:
+            target[name] = original
+    _injected_originals.clear()
+    if cleared:
+        logger.debug("機密 %d 件を環境変数から取り除きました", len(cleared))
+    return cleared
+
+
 def inject(devbase_root: Path, project: Optional[str] = None,
            *, environ=None, store: Optional[SecretStore] = None) -> SecretEnv:
     """合成した機密を環境変数へ載せ、載せた内容を返す。
 
     ``docker compose`` は devbase 自身の環境変数から値を解決するため、Compose を
     起動する前にここを通す。
+
+    載せた変数名と注入前の値を記録し、:func:`clear_injected` で元へ戻せるように
+    する。プロジェクト切替時に切替元の機密を落とすために必要 (詳細は
+    :func:`clear_injected` の説明を参照)。
     """
     resolved = resolve(devbase_root, project, store=store)
     target = environ if environ is not None else os.environ
+    for name in resolved.values:
+        # 既に記録済みなら上書きしない。記録したいのは「devbase が最初に載せる
+        # 前の値」であって、前回の注入で載せた機密ではないため。
+        if name not in _injected_originals:
+            _injected_originals[name] = target.get(name)
     target.update(resolved.values)
     if resolved.names:
         logger.debug("機密 %d 件を環境変数へ載せました", len(resolved.names))

@@ -26,8 +26,15 @@ def store(root, tmp_path):
                        identities=[str(key)])
 
 
+@pytest.fixture(autouse=True)
+def _isolate_injection_state(monkeypatch):
+    """注入記録 (モジュールレベル) をテストごとに独立させる"""
+    monkeypatch.setattr(runtime, '_injected_originals', {})
+
+
 GLOBAL = SecretRef.for_global()
 WEB = SecretRef.for_project('web')
+API = SecretRef.for_project('api')
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +153,78 @@ def test_inject_puts_values_into_the_given_environ(root, store):
 
     assert environ == {'TOKEN': 'sk-1'}
     assert resolved.names == ['TOKEN']
+
+
+# ---------------------------------------------------------------------------
+# 注入の解除 (プロジェクト切替時の残留対策)
+# ---------------------------------------------------------------------------
+
+def test_switching_projects_drops_the_source_only_secret(root, store):
+    """切替元にしか無い機密は、切替先の機密を載せ直すと消える。
+
+    単に上書きするだけでは、切替先に同名キーが無い機密が残ってしまう。
+    """
+    (root / 'projects' / 'api').mkdir()
+    store.age.save(GLOBAL, {'SHARED': 'common'})
+    store.age.save(WEB, {'WEB_ONLY': 'w'})
+    store.age.save(API, {'API_ONLY': 'a'})
+    environ = {}
+
+    runtime.inject(root, 'web', environ=environ, store=store)
+    assert environ['WEB_ONLY'] == 'w'
+
+    runtime.clear_injected(environ)
+    runtime.inject(root, 'api', environ=environ, store=store)
+
+    # 切替元固有の機密は残らない
+    assert 'WEB_ONLY' not in environ
+    assert environ['API_ONLY'] == 'a'
+    # 共通の機密は切替後も残る
+    assert environ['SHARED'] == 'common'
+
+
+def test_clear_injected_restores_the_users_own_value(root, store):
+    """利用者がシェルで設定していた同名の変数は消さず元の値へ戻す"""
+    store.age.save(GLOBAL, {'TOKEN': 'from-secret'})
+    environ = {'TOKEN': 'from-shell', 'PATH': '/bin'}
+
+    runtime.inject(root, None, environ=environ, store=store)
+    assert environ['TOKEN'] == 'from-secret'
+
+    cleared = runtime.clear_injected(environ)
+
+    assert environ['TOKEN'] == 'from-shell'
+    assert environ['PATH'] == '/bin'
+    assert cleared == ['TOKEN']
+
+
+def test_clear_injected_removes_keys_that_did_not_exist(root, store):
+    store.age.save(GLOBAL, {'TOKEN': 'from-secret'})
+    environ = {}
+
+    runtime.inject(root, None, environ=environ, store=store)
+    runtime.clear_injected(environ)
+
+    assert environ == {}
+
+
+def test_repeated_injection_keeps_the_original_value(root, store):
+    """載せ直しても記録するのは「最初に載せる前の値」"""
+    store.age.save(GLOBAL, {'TOKEN': 'from-secret'})
+    environ = {'TOKEN': 'from-shell'}
+
+    runtime.inject(root, None, environ=environ, store=store)
+    runtime.inject(root, None, environ=environ, store=store)
+    runtime.clear_injected(environ)
+
+    assert environ['TOKEN'] == 'from-shell'
+
+
+def test_clear_injected_without_injection_is_noop(root):
+    environ = {'TOKEN': 'from-shell'}
+
+    assert runtime.clear_injected(environ) == []
+    assert environ == {'TOKEN': 'from-shell'}
 
 
 def test_child_env_does_not_touch_os_environ(root, store, monkeypatch):

@@ -56,6 +56,17 @@ def _inject_secrets(*, required: bool):
     失敗したというだけでコンテナを止められなくなるのは困るため、警告に留めて
     続行する。値が要るのは主に起動時の変数展開であり、停止や状態確認には
     要らない。
+
+    載せ直す前に :func:`~devbase.env.runtime.clear_injected` を通すのは、
+    プロジェクト切替の残留対策。``cli._load_secret_env`` は dispatch の**前**に
+    「現在地のプロジェクト」の機密を載せるが、TUI や
+    ``python -m devbase.cli project up <other>`` の直接起動ではその後
+    ``_resolve_project_name`` が対象プロジェクトへ切り替わる。ここは切替・chdir
+    の**後**に呼ばれるので、載せ直しで上書きできる。ただし**上書きだけでは
+    足りない**: 切替先に同名のキーが無い機密 (切替元プロジェクト固有のもの) は
+    上書きされず残り、Compose や子プロセスへ引き継がれてしまうため、先に
+    取り除く。非機密設定 (``env``) 側の ``_CALLER_ENV_KEYS`` /
+    :func:`_resolve_project_name` と同じ扱いを機密にも与えることになる。
     """
     from devbase.env import runtime as _runtime
     from devbase.errors import DevbaseError
@@ -63,6 +74,7 @@ def _inject_secrets(*, required: bool):
     root = _devbase_root()
     if root is None:
         return _runtime.SecretEnv()
+    _runtime.clear_injected()
     try:
         return _runtime.inject(root, _runtime.current_project_name(root))
     except DevbaseError as e:
@@ -338,6 +350,12 @@ def _resolve_project_name(project_name: str) -> bool:
     if not already_there:
         caller_env_keys = _env_var_keys(Path('env'))
         os.chdir(target)
+        # ``PWD`` も併せて切り替える。機密の解決 (
+        # :func:`devbase.env.runtime.current_project_name`) は wrapper の cd を前提に
+        # ``os.environ['PWD']`` を先に見るため、os.chdir だけだと切替前の PWD が残り、
+        # 切替先ではなく呼び出し元プロジェクトの機密を読んでしまう
+        # (TUI の ``_run_in_project`` が PWD を差し替えているのと同じ理由)。
+        os.environ['PWD'] = str(target)
         target_env_keys = _env_var_keys(Path('env'))
         for key in caller_env_keys - target_env_keys:
             os.environ.pop(key, None)
