@@ -45,7 +45,7 @@ from __future__ import annotations
 import difflib
 import re
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from devbase.log import get_logger
 
@@ -111,12 +111,24 @@ def _inline_entries(raw: str) -> List[str]:
             if item]
 
 
+def _target_of(value: str) -> Optional[str]:
+    """``env_file`` の 1 エントリが**どちらの機密**を指しているかを返す。
+
+    「機密かどうか」だけでなく由来 (共通 / プロジェクト) まで返すのは、機密の
+    渡し先を決める側 (``devbase.volume.compose``) が「そのサービスが元々
+    受け取っていた由来のキーだけ」を列挙できるようにするため。真偽値だけでは
+    共通設定しか読んでいなかったサービスにプロジェクト固有の機密まで渡って
+    しまう。
+    """
+    if value in GLOBAL_ENTRIES:
+        return TARGET_GLOBAL
+    if value in PROJECT_ENTRIES:
+        return TARGET_PROJECT
+    return None
+
+
 def _is_target(value: str, targets: Set[str]) -> bool:
-    if TARGET_GLOBAL in targets and value in GLOBAL_ENTRIES:
-        return True
-    if TARGET_PROJECT in targets and value in PROJECT_ENTRIES:
-        return True
-    return False
+    return _target_of(value) in targets
 
 
 def is_secret_entry(value: str,
@@ -345,8 +357,8 @@ def secret_inline_env_file_lines(
 def services_with_secret_env_file(
         text: str,
         targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
-) -> Set[str]:
-    """機密ファイルを参照している (していた) サービス名を **生テキスト** から集める。
+) -> Dict[str, Set[str]]:
+    """機密ファイルを参照している (していた) サービスを **生テキスト** から集める。
 
     移行後の ``compose.yml`` では機密の ``env_file`` 参照がコメントアウトされ、
     YAML としてパースすると見えなくなる。パース結果だけを見ると「元々その参照
@@ -356,9 +368,21 @@ def services_with_secret_env_file(
 
     行単位で書き換えられないインライン記法も対象に含める。移行は止まるが、
     利用者が手で直したあとも同じ判定が使えるようにするため。
+
+    Returns:
+        ``{サービス名: 参照していた種別の集合}``。種別は ``TARGET_GLOBAL`` /
+        ``TARGET_PROJECT``。単なるサービス名の集合ではなく種別まで返すのは、
+        機密を渡す側が**元々受け取っていた由来のキーだけ**へ絞れるようにする
+        ため。共通設定だけを読んでいたサービスにプロジェクト固有のトークンまで
+        渡すのは、元の構成より機密の範囲を広げてしまう。
     """
     wanted = set(targets)
-    found: Set[str] = set()
+    found: Dict[str, Set[str]] = {}
+
+    def record(service: str, value: str) -> None:
+        target = _target_of(value)
+        if target in wanted:
+            found.setdefault(service, set()).add(target)
 
     services_indent: Optional[int] = None
     service_indent: Optional[int] = None
@@ -407,8 +431,7 @@ def services_with_secret_env_file(
         if env_file_indent is not None and indent > env_file_indent:
             item = _LIST_ITEM_RE.match(line)
             if item:
-                if _is_target(_entry_value(item.group(2)), wanted):
-                    found.add(current)
+                record(current, _entry_value(item.group(2)))
                 continue
         env_file_indent = None
 
@@ -417,9 +440,9 @@ def services_with_secret_env_file(
             continue
 
         inline = _ENV_FILE_INLINE_RE.match(line)
-        if inline and any(_is_target(value, wanted)
-                          for value in _inline_entries(inline.group(1))):
-            found.add(current)
+        if inline:
+            for value in _inline_entries(inline.group(1)):
+                record(current, value)
 
     return found
 

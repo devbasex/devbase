@@ -4,7 +4,9 @@ import copy
 import os
 import yaml
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Sequence, Set
+from typing import (
+    Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
+)
 
 from devbase.env import compose_migrate
 from devbase.errors import DockerError
@@ -204,6 +206,59 @@ def _mask_secret_environment(
     service['environment'] = list(secrets)
 
 
+class _SecretNames:
+    """機密の変数名を**由来別**に保持し、参照種別に応じた部分集合を切り出す。
+
+    共通機密 (``$DEVBASE_ROOT/.env``) 由来とプロジェクト機密
+    (``projects/<name>/.env``) 由来を分けて持つのは、サービスごとに「元々
+    ``env_file`` で参照していた由来のキーだけ」を列挙するため。全件をまとめて
+    渡すと、共通設定だけを読んでいた ``db`` のようなサービスにプロジェクト固有
+    のトークンまで届き、元の構成より機密の範囲が広がってしまう。
+
+    由来の内訳が分からない場合 (``global_names`` / ``project_names`` が
+    ``None``) は、全キーが両方の由来を持つものとして扱う。従来どおりの動作へ
+    落ちるだけで、渡し先が狭まって起動できなくなる事故は起こさない。
+
+    既知の限界: 同じキーが共通機密とプロジェクト機密の**両方**にある場合、
+    Compose は値を devbase 自身の環境変数から解決するため、実際に渡る値は
+    合成後の 1 つ (プロジェクト側が優先) に決まる。したがって共通側だけを参照
+    していたサービスにもプロジェクト側の値が渡る。サービスごとに違う値を渡す
+    には生成ファイルへ値を書き込むしかなく、それは「生成物に機密の値を残さない」
+    という本方式の前提と矛盾するため受け入れる (plan35 §7)。
+    """
+
+    def __init__(
+        self,
+        all_names: Sequence[str] = (),
+        global_names: Optional[Sequence[str]] = None,
+        project_names: Optional[Sequence[str]] = None,
+    ) -> None:
+        split_known = global_names is not None or project_names is not None
+        globals_ = list(global_names or ())
+        projects = list(project_names or ())
+        # 重複を除きつつ、呼び出し側が渡した順序は保つ
+        self.all: List[str] = list(dict.fromkeys(
+            [*all_names, *globals_, *projects]))
+        if split_known:
+            self._by_target = {
+                compose_migrate.TARGET_GLOBAL: set(globals_),
+                compose_migrate.TARGET_PROJECT: set(projects),
+            }
+        else:
+            everything = set(self.all)
+            self._by_target = {
+                compose_migrate.TARGET_GLOBAL: everything,
+                compose_migrate.TARGET_PROJECT: everything,
+            }
+
+    def for_targets(self, targets: Iterable[str]) -> List[str]:
+        """指定の参照種別に由来するキーだけを、全体と同じ順序で返す"""
+        allowed: Set[str] = set()
+        for target in targets:
+            allowed |= self._by_target.get(target, set())
+        return [name for name in self.all if name in allowed]
+
+
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int,
     secret_env_names: Sequence[str] = (),
@@ -230,12 +285,17 @@ def _build_dev_instance(
 
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
-    secret_env_names: Sequence[str] = (),
-    secret_services: Iterable[str] = (),
+    secret_names: Optional[_SecretNames] = None,
+    secret_services: Optional[Mapping[str, Set[str]]] = None,
 ) -> dict:
-    """Build the services section: non-dev services + dev-1..dev-N instances."""
+    """Build the services section: non-dev services + dev-1..dev-N instances.
+
+    ``secret_services`` は「サービス名 → 元々参照していた機密の種別
+    (``TARGET_GLOBAL`` / ``TARGET_PROJECT``)」の対応。
+    """
     scaled_services = {}
-    receivers = set(secret_services)
+    secret_names = secret_names if secret_names is not None else _SecretNames()
+    receivers = dict(secret_services or {})
 
     # Copy non-dev services (mysql, valkey, etc.) — rewriting any
     # `depends_on: <dev>` reference to the scaled instances (dev-1..N) so
@@ -252,14 +312,22 @@ def _build_scaled_services(
         # 参照が外れたあと dev だけに渡すと、DB パスワードを読んでいた db の
         # ような非 dev サービスが値を受け取れず起動に失敗する。逆に参照を
         # 持たないサービスへ注入すると、元の構成に無い変数を勝手に増やす。
-        if service_name in receivers:
-            _mask_secret_environment(copied, secret_env_names)
+        #
+        # さらに、渡すのは**そのサービスが参照していた由来のキーだけ**に絞る。
+        # 共通設定 (${DEVBASE_ROOT}/.env) だけを読んでいたサービスへプロジェクト
+        # 固有のトークンまで列挙するのは、元の構成に無かった機密を渡すことに
+        # なり、範囲の拡大にあたる。
+        targets = receivers.get(service_name)
+        if targets:
+            _mask_secret_environment(copied, secret_names.for_targets(targets))
         scaled_services[service_name] = copied
 
-    # Generate a service for each instance
+    # dev サービスは従来どおり全件 (共通 + プロジェクト) を対象にする。
+    # devbase 自身が機密を注入する前提のサービスであり、env_file を書いていない
+    # 構成でも両方の機密を必要とする。
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i, secret_env_names,
+            dev_service, dev_service_name, i, secret_names.all,
         )
     return scaled_services
 
@@ -324,8 +392,10 @@ def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) ->
         service.pop('env_file', None)
 
 
-def _services_receiving_secrets(compose_file: Path, dev_service_name: str) -> Set[str]:
-    """機密を渡すべきサービス名を決める。
+def _services_receiving_secrets(
+    compose_file: Path, dev_service_name: str,
+) -> Dict[str, Set[str]]:
+    """機密を渡すべきサービスと、その**参照種別**を決める。
 
     判定は :func:`compose_migrate.services_with_secret_env_file` に任せ、
     **パース済みの YAML ではなく生テキスト**を渡す。移行後の ``compose.yml``
@@ -334,14 +404,19 @@ def _services_receiving_secrets(compose_file: Path, dev_service_name: str) -> Se
     を復元できない。生テキストなら有効な参照とコメントアウトされた参照の
     両方を拾える。
 
-    dev サービスは常に含める。devbase 自身が機密を注入する前提のサービスで、
-    ``env_file`` を書いていない構成でも機密は渡す必要があるため。
+    返すのがサービス名の集合ではなく種別つきの対応なのは、共通設定だけを
+    参照していたサービスへプロジェクト固有の機密まで渡さないため。
 
-    生テキストを読めない場合は dev サービスだけにフォールバックする。判定に
-    失敗したことを理由に全サービスへ機密を撒くと、必要のないコンテナにまで
-    認証情報を渡すことになる。
+    dev サービスは常に両方の種別を持つものとして含める。devbase 自身が機密を
+    注入する前提のサービスで、``env_file`` を書いていない構成でも機密は渡す
+    必要があるため。
+
+    生テキストを読めない場合は dev サービスだけ (全件) にフォールバックする。
+    判定に失敗したことを理由に全サービスへ機密を撒くと、必要のないコンテナに
+    まで認証情報を渡すことになる。
     """
-    receivers = {dev_service_name}
+    both = {compose_migrate.TARGET_GLOBAL, compose_migrate.TARGET_PROJECT}
+    receivers: Dict[str, Set[str]] = {dev_service_name: set(both)}
     try:
         text = compose_file.read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as e:
@@ -349,7 +424,8 @@ def _services_receiving_secrets(compose_file: Path, dev_service_name: str) -> Se
             "%s を読めなかったため、機密は %s サービスにのみ渡します: %s",
             compose_file, dev_service_name, e)
         return receivers
-    receivers |= compose_migrate.services_with_secret_env_file(text)
+    for name, targets in compose_migrate.services_with_secret_env_file(text).items():
+        receivers.setdefault(name, set()).update(targets)
     return receivers
 
 
@@ -358,6 +434,8 @@ def generate_scaled_compose(
     compose_file: Path = None,
     dev_service_name: str = None,
     secret_env_names: Sequence[str] = (),
+    global_env_names: Optional[Sequence[str]] = None,
+    project_env_names: Optional[Sequence[str]] = None,
 ) -> Path:
     """
     Generate scaled docker-compose file with per-instance volumes
@@ -366,6 +444,13 @@ def generate_scaled_compose(
         scale: Number of container instances
         compose_file: Source compose file path (default: compose.yml)
         dev_service_name: Name of the development service to scale (default: from DEV_SERVICE_NAME env or 'dev')
+        secret_env_names: コンテナへ列挙する機密の変数名 (全件)
+        global_env_names: そのうち共通機密 (``$DEVBASE_ROOT/.env``) 由来のキー
+        project_env_names: そのうちプロジェクト機密由来のキー
+
+    非 dev サービスへは、そのサービスが元々 ``env_file`` で参照していた由来の
+    キーだけを列挙する。由来の内訳が渡されない場合 (両方 ``None``) は全キーを
+    両方の由来とみなす。
 
     Returns:
         Path to generated .docker-compose.scale.yml
@@ -388,11 +473,13 @@ def generate_scaled_compose(
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
 
     secret_services = _services_receiving_secrets(compose_file, dev_service_name)
+    secret_names = _SecretNames(
+        secret_env_names, global_env_names, project_env_names)
 
     scaled_config = {
         'services': _build_scaled_services(
             services, dev_service, dev_service_name, scale,
-            secret_env_names=secret_env_names,
+            secret_names=secret_names,
             secret_services=secret_services,
         ),
         'volumes': _build_volumes_section(config, scale),

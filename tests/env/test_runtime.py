@@ -54,6 +54,26 @@ def test_project_secrets_override_global(root, store):
     assert sorted(resolved.names) == ['ONLY_GLOBAL', 'TOKEN']
 
 
+def test_names_are_kept_per_origin(root, store):
+    """由来ごとに分けて持つ (構成生成側がサービスごとに絞り込むため)"""
+    store.age.save(GLOBAL, {'TOKEN': 'global', 'ONLY_GLOBAL': 'g'})
+    store.age.save(WEB, {'TOKEN': 'project', 'ONLY_PROJECT': 'p'})
+
+    resolved = runtime.resolve(root, 'web', store=store)
+
+    assert sorted(resolved.global_names) == ['ONLY_GLOBAL', 'TOKEN']
+    assert sorted(resolved.project_names) == ['ONLY_PROJECT', 'TOKEN']
+    # 両方にあるキーは全体としては 1 件に畳む
+    assert sorted(resolved.names) == ['ONLY_GLOBAL', 'ONLY_PROJECT', 'TOKEN']
+
+
+def test_no_secrets_is_falsy(root, store):
+    resolved = runtime.resolve(root, None, store=store)
+
+    assert not resolved
+    assert resolved.names == []
+
+
 def test_project_env_overrides_global_for_the_same_key(root, store, monkeypatch):
     """非機密設定が共通設定を上書きする従来の関係を保つ"""
     (root / 'projects' / 'web' / 'env').write_text('AWS_DEFAULT_REGION=us-east-1\n')

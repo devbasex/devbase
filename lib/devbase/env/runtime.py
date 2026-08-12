@@ -84,14 +84,31 @@ def current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Opti
 
 @dataclass
 class SecretEnv:
-    """合成した機密と、コンテナへ渡すべき変数名"""
+    """合成した機密と、コンテナへ渡すべき変数名
+
+    変数名を**由来 (共通 / プロジェクト) ごとに分けて**持つ。構成生成側は、
+    サービスが元々 ``env_file`` で参照していた由来のキーだけを列挙する必要が
+    あり、全キーをまとめた一覧しか無いと、共通設定だけを読んでいたサービスへ
+    プロジェクト固有のトークンまで渡ってしまうため (plan35 §4.3)。
+    """
 
     values: Dict[str, str] = field(default_factory=dict)
-    #: コンテナの構成へ列挙する変数名 (共通機密 + プロジェクト機密のキー)
-    names: List[str] = field(default_factory=list)
+    #: 共通機密 (``$DEVBASE_ROOT/.env``) 由来のキー
+    global_names: List[str] = field(default_factory=list)
+    #: プロジェクト機密 (``projects/<name>/.env``) 由来のキー
+    project_names: List[str] = field(default_factory=list)
+
+    @property
+    def names(self) -> List[str]:
+        """コンテナの構成へ列挙する変数名の全体 (共通 → プロジェクトの順)
+
+        由来を問わず全件が要る場面 (dev サービス、注入した件数のログ) 向けの
+        従来どおりの一覧。重複は先に現れた側の位置で 1 件に畳む。
+        """
+        return list(dict.fromkeys([*self.global_names, *self.project_names]))
 
     def __bool__(self) -> bool:
-        return bool(self.names)
+        return bool(self.global_names or self.project_names)
 
 
 def _project_env_overrides(devbase_root: Path, project: str) -> Dict[str, str]:
@@ -135,7 +152,8 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
     store = store if store is not None else SecretStore(root)
 
     global_secrets = store.load(SecretRef.for_global())
-    names = list(global_secrets)
+    global_names = list(global_secrets)
+    project_names: List[str] = []
 
     merged: Dict[str, str] = dict(global_secrets)
 
@@ -143,12 +161,13 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
         merged.update(_project_env_overrides(root, project))
         project_secrets = store.load(SecretRef.for_project(project))
         merged.update(project_secrets)
-        for key in project_secrets:
-            if key not in names:
-                names.append(key)
+        project_names = list(project_secrets)
 
-    values = {name: merged[name] for name in names if name in merged}
-    return SecretEnv(values=values, names=names)
+    resolved = SecretEnv(global_names=global_names, project_names=project_names)
+    resolved.values = {
+        name: merged[name] for name in resolved.names if name in merged
+    }
+    return resolved
 
 
 def inject(devbase_root: Path, project: Optional[str] = None,

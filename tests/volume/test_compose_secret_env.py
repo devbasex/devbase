@@ -264,3 +264,132 @@ def test_commented_out_references_still_receive_the_secrets(project_factory):
     config = generated(path)
     assert config['services']['db']['environment']['DB_PASSWORD'] is None
     assert 'environment' not in config['services']['cache']
+
+
+# ---------------------------------------------------------------------------
+# 由来 (共通 / プロジェクト) ごとの絞り込み
+# ---------------------------------------------------------------------------
+
+COMPOSE_MIXED_ORIGINS = """services:
+  dev:
+    image: alpine
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - env
+      - .env
+    volumes:
+      - x:/work
+  global_only:
+    image: mysql
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+  project_only:
+    image: redis
+    env_file:
+      - .env
+  both:
+    image: nginx
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - .env
+  none:
+    image: busybox
+volumes:
+  x: {}
+"""
+
+ORIGINS = dict(
+    secret_env_names=['SHARED_KEY', 'PROJECT_TOKEN'],
+    global_env_names=['SHARED_KEY'],
+    project_env_names=['PROJECT_TOKEN'],
+)
+
+
+def _env_names(service_config):
+    """map / list どちらの記法でも、列挙された変数名を集合で返す"""
+    environment = service_config.get('environment')
+    if isinstance(environment, dict):
+        return set(environment)
+    return {item.split('=', 1)[0] for item in (environment or [])}
+
+
+def test_global_only_service_gets_only_global_names(project_factory):
+    """共通の .env だけを読んでいたサービスにプロジェクト固有の機密は渡さない"""
+    path = project_factory(COMPOSE_MIXED_ORIGINS)
+
+    generate_scaled_compose(1, **ORIGINS)
+
+    assert _env_names(generated(path)['services']['global_only']) == {'SHARED_KEY'}
+
+
+def test_project_only_service_gets_only_project_names(project_factory):
+    path = project_factory(COMPOSE_MIXED_ORIGINS)
+
+    generate_scaled_compose(1, **ORIGINS)
+
+    assert _env_names(generated(path)['services']['project_only']) == {
+        'PROJECT_TOKEN'}
+
+
+def test_service_referencing_both_gets_every_name(project_factory):
+    path = project_factory(COMPOSE_MIXED_ORIGINS)
+
+    generate_scaled_compose(1, **ORIGINS)
+
+    config = generated(path)
+    assert _env_names(config['services']['both']) == {
+        'SHARED_KEY', 'PROJECT_TOKEN'}
+    # dev は従来どおり全件 (env_file を書いていない構成でも両方が要る)
+    assert _env_names(config['services']['dev-1']) == {
+        'SHARED_KEY', 'PROJECT_TOKEN'}
+    # 機密を参照していないサービスには何も注入しない
+    assert 'environment' not in config['services']['none']
+
+
+def test_origins_are_respected_after_migration(project_factory):
+    """移行で参照がコメントアウトされたあとも由来ごとの絞り込みを保つ"""
+    from devbase.env import compose_migrate
+
+    disabled, _ = compose_migrate.disable(COMPOSE_MIXED_ORIGINS)
+    path = project_factory(disabled)
+
+    generate_scaled_compose(1, **ORIGINS)
+
+    config = generated(path)
+    assert _env_names(config['services']['global_only']) == {'SHARED_KEY'}
+    assert _env_names(config['services']['project_only']) == {'PROJECT_TOKEN'}
+
+
+def test_without_the_split_every_receiver_gets_every_name(project_factory):
+    """由来の内訳が渡されない場合は従来どおり全件 (渡し漏れで壊さない)"""
+    path = project_factory(COMPOSE_MIXED_ORIGINS)
+
+    generate_scaled_compose(1, secret_env_names=['SHARED_KEY', 'PROJECT_TOKEN'])
+
+    config = generated(path)
+    assert _env_names(config['services']['global_only']) == {
+        'SHARED_KEY', 'PROJECT_TOKEN'}
+
+
+def test_unreadable_compose_falls_back_to_dev_only(project_factory, monkeypatch):
+    """生テキストを読めない場合は dev だけ・全件へフォールバックする"""
+    from pathlib import Path as _Path
+
+    path = project_factory(COMPOSE_MIXED_ORIGINS)
+
+    original = _Path.read_text
+
+    def fail_on_compose(self, *args, **kwargs):
+        if self.name == 'compose.yml':
+            raise OSError('boom')
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(_Path, 'read_text', fail_on_compose)
+
+    generate_scaled_compose(1, **ORIGINS)
+
+    config = generated(path)
+    assert _env_names(config['services']['dev-1']) == {
+        'SHARED_KEY', 'PROJECT_TOKEN'}
+    for name in ('global_only', 'project_only', 'both', 'none'):
+        assert 'environment' not in config['services'][name]

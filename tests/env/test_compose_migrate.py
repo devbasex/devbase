@@ -391,16 +391,36 @@ networks:
 
 
 def test_services_with_secret_env_file_lists_only_the_referencing_ones():
+    """参照していたサービスと、その参照種別 (共通 / プロジェクト) を返す"""
     assert cm.services_with_secret_env_file(MULTI_SERVICE) == {
-        'dev', 'db', 'worker'}
+        'dev': {cm.TARGET_GLOBAL},
+        'db': {cm.TARGET_PROJECT},
+        'worker': {cm.TARGET_PROJECT},
+    }
+
+
+def test_services_with_secret_env_file_reports_both_targets():
+    """両方を参照するサービスは両方の種別を持つ"""
+    text = """services:
+  dev:
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - env
+      - .env
+"""
+    assert cm.services_with_secret_env_file(text) == {
+        'dev': {cm.TARGET_GLOBAL, cm.TARGET_PROJECT}}
 
 
 def test_services_with_secret_env_file_sees_disabled_entries():
-    """移行後は参照がコメントアウトされる。それでも同じ集合を返す必要がある"""
+    """移行後は参照がコメントアウトされる。種別まで含めて同じ結果を返す必要がある"""
     disabled, _ = cm.disable(MULTI_SERVICE)
 
     assert cm.services_with_secret_env_file(disabled) == {
-        'dev', 'db', 'worker'}
+        'dev': {cm.TARGET_GLOBAL},
+        'db': {cm.TARGET_PROJECT},
+        'worker': {cm.TARGET_PROJECT},
+    }
 
 
 def test_services_with_secret_env_file_ignores_other_sections():
@@ -412,14 +432,15 @@ def test_services_with_secret_env_file_ignores_other_sections():
 volumes:
   data: {}
 """
-    assert cm.services_with_secret_env_file(text) == set()
+    assert cm.services_with_secret_env_file(text) == {}
 
 
 def test_services_with_secret_env_file_respects_targets():
     assert cm.services_with_secret_env_file(
-        MULTI_SERVICE, {cm.TARGET_GLOBAL}) == {'dev'}
+        MULTI_SERVICE, {cm.TARGET_GLOBAL}) == {'dev': {cm.TARGET_GLOBAL}}
     assert cm.services_with_secret_env_file(
-        MULTI_SERVICE, {cm.TARGET_PROJECT}) == {'db', 'worker'}
+        MULTI_SERVICE, {cm.TARGET_PROJECT}) == {
+            'db': {cm.TARGET_PROJECT}, 'worker': {cm.TARGET_PROJECT}}
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +470,8 @@ def test_services_with_secret_env_file_handles_trailing_comments():
     env_file:
       - .env   # プロジェクト設定
 """
-    assert cm.services_with_secret_env_file(text) == {'db'}
+    assert cm.services_with_secret_env_file(text) == {
+        'db': {cm.TARGET_PROJECT}}
 
 
 def test_find_secret_entries_does_not_modify():

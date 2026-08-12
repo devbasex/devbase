@@ -40,12 +40,17 @@ def _devbase_root() -> Optional[Path]:
     return Path(root) if root else None
 
 
-def _inject_secrets(*, required: bool) -> list:
-    """機密を復号して自プロセスの環境変数へ載せ、変数名の一覧を返す。
+def _inject_secrets(*, required: bool):
+    """機密を復号して自プロセスの環境変数へ載せ、載せた内容を返す。
 
     ``docker compose`` は自分を起動したプロセスの環境変数から値を解決するため、
     Compose を呼ぶ前にここを通す。生成する構成には変数名しか書かないので、
     暗号文も平文ファイルも Compose には渡らない (plan35 §4.3)。
+
+    戻り値を変数名の一覧ではなく :class:`~devbase.env.runtime.SecretEnv` に
+    しているのは、構成生成側が**由来 (共通 / プロジェクト) ごとの内訳**を必要
+    とするため。サービスが元々参照していなかった由来の機密まで渡さないための
+    材料になる。
 
     ``required=False`` の経路 (down / ps / logs など) では、鍵が無い・復号に
     失敗したというだけでコンテナを止められなくなるのは困るため、警告に留めて
@@ -57,15 +62,24 @@ def _inject_secrets(*, required: bool) -> list:
 
     root = _devbase_root()
     if root is None:
-        return []
+        return _runtime.SecretEnv()
     try:
-        resolved = _runtime.inject(root, _runtime.current_project_name(root))
+        return _runtime.inject(root, _runtime.current_project_name(root))
     except DevbaseError as e:
         if required:
             raise
         logger.warning("機密を読み込めませんでした (続行します): %s", e)
-        return []
-    return resolved.names
+        return _runtime.SecretEnv()
+
+
+def _generate_compose_for(scale: int, secrets) -> Path:
+    """機密の内訳を渡してスケール構成を生成する"""
+    return generate_scaled_compose(
+        scale,
+        secret_env_names=secrets.names,
+        global_env_names=secrets.global_names,
+        project_env_names=secrets.project_names,
+    )
 
 
 def _compose_run(subcommand: str, *extra_args: str) -> int:
@@ -589,8 +603,7 @@ def cmd_up(project_name: str = None, scale: int = None,
             docker_compose_down()
 
         logger.info("[3/6] Generating scaled compose file...")
-        secret_names = _inject_secrets(required=True)
-        override_file = generate_scaled_compose(scale, secret_env_names=secret_names)
+        override_file = _generate_compose_for(scale, _inject_secrets(required=True))
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/6] Starting containers...")
@@ -724,8 +737,8 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
-        secret_names = _inject_secrets(required=True)
-        override_file = generate_scaled_compose(new_scale, secret_env_names=secret_names)
+        override_file = _generate_compose_for(
+            new_scale, _inject_secrets(required=True))
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
