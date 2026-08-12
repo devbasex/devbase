@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from devbase.commands import env_migrate
@@ -10,6 +12,7 @@ from devbase.env.secret_store import SecretRef, SecretStore
 
 GLOBAL = SecretRef.for_global()
 WEB = SecretRef.for_project('web')
+API = SecretRef.for_project('api')
 
 COMPOSE = """services:
   dev:
@@ -46,6 +49,31 @@ def seed_plaintext(root):
     store.plaintext.save(GLOBAL, {'ANTHROPIC_API_KEY': 'sk-1'})
     store.plaintext.save(WEB, {'DB_PASSWORD': 'pw'})
     return store
+
+
+@pytest.fixture
+def two_projects(with_key):
+    """複数対象の途中失敗を見るための構成 (対象は global → api → web の順)"""
+    (with_key / 'projects' / 'api').mkdir(parents=True)
+    (with_key / 'projects' / 'api' / 'compose.yml').write_text(COMPOSE)
+    store = seed_plaintext(with_key)
+    store.plaintext.save(API, {'API_TOKEN': 'tk'})
+    return with_key
+
+
+def compose_texts(root):
+    return {name: (root / 'projects' / name / 'compose.yml').read_text()
+            for name in ('api', 'web')}
+
+
+def age_files(root):
+    return sorted(p.name for p in root.glob('secrets/**/*.age'))
+
+
+def plaintext_files(root):
+    paths = [root / '.env']
+    paths += [root / 'projects' / name / '.env' for name in ('api', 'web')]
+    return sorted(str(p) for p in paths if p.exists())
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +203,68 @@ def test_encrypt_keeps_plaintext_when_the_result_differs(with_key, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# encrypt: 途中で失敗したときの巻き戻し
+# ---------------------------------------------------------------------------
+
+def test_encrypt_rolls_back_when_a_later_target_fails(two_projects, monkeypatch):
+    """後続対象の失敗で「先行対象だけ移行済み」の中間状態を残さない"""
+    root = two_projects
+    before = compose_texts(root)
+
+    from devbase.env.secret_store import AgeBackend, SecretStoreError
+
+    original_save = AgeBackend.save
+
+    def fail_on_web(self, ref, data):
+        if ref == WEB:
+            raise SecretStoreError('暗号化できません')
+        return original_save(self, ref, data)
+
+    monkeypatch.setattr(AgeBackend, 'save', fail_on_web)
+
+    assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 1
+
+    # 先行対象の平文は元の場所のまま。暗号文も compose.yml も動いていない
+    assert plaintext_files(root) == sorted([
+        str(root / '.env'),
+        str(root / 'projects' / 'api' / '.env'),
+        str(root / 'projects' / 'web' / '.env'),
+    ])
+    assert age_files(root) == []
+    assert compose_texts(root) == before
+    assert list(root.glob('backups/**/*.env')) == []
+
+
+def test_encrypt_rolls_back_when_the_compose_write_fails(two_projects,
+                                                        monkeypatch):
+    """構成ファイルを書けなければ、機密の移動ごと巻き戻して失敗を返す"""
+    root = two_projects
+    before = compose_texts(root)
+
+    original_write = Path.write_text
+
+    def fail_on_web_compose(self, *args, **kwargs):
+        # api → web の順に書くので、api だけ書けた状態から巻き戻すことになる
+        if self.name == 'compose.yml' and self.parent.name == 'web':
+            raise OSError('読み取り専用ファイルシステムです')
+        return original_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'write_text', fail_on_web_compose)
+
+    assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 1
+
+    assert plaintext_files(root) == sorted([
+        str(root / '.env'),
+        str(root / 'projects' / 'api' / '.env'),
+        str(root / 'projects' / 'web' / '.env'),
+    ])
+    assert age_files(root) == []
+    assert list(root.glob('backups/**/*.env')) == []
+    # 先に書けてしまった api の compose.yml も元へ戻る
+    assert compose_texts(root) == before
+
+
+# ---------------------------------------------------------------------------
 # decrypt
 # ---------------------------------------------------------------------------
 
@@ -216,3 +306,60 @@ def test_decrypt_aborts_without_confirmation(with_key, monkeypatch):
 
     assert env_migrate.cmd_env_decrypt(with_key) == 1
     assert SecretStore(with_key).is_encrypted(GLOBAL)
+
+
+# ---------------------------------------------------------------------------
+# decrypt: 途中で失敗したときの巻き戻し
+# ---------------------------------------------------------------------------
+
+def test_decrypt_rolls_back_when_a_later_target_fails(two_projects, monkeypatch):
+    """後続対象を復号できないなら、先行対象の暗号文も消さない"""
+    root = two_projects
+    assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 0
+    encrypted_compose = compose_texts(root)
+
+    from devbase.env.secret_store import AgeBackend, SecretStoreError
+
+    original_load = AgeBackend.load
+
+    def fail_on_web(self, ref):
+        if ref == WEB:
+            raise SecretStoreError('復号できません')
+        return original_load(self, ref)
+
+    monkeypatch.setattr(AgeBackend, 'load', fail_on_web)
+
+    assert env_migrate.cmd_env_decrypt(root, assume_yes=True) == 1
+
+    assert age_files(root) == ['api.env.age', 'global.env.age', 'web.env.age']
+    assert plaintext_files(root) == []
+    assert compose_texts(root) == encrypted_compose
+
+
+def test_decrypt_rolls_back_when_removing_the_ciphertext_fails(two_projects,
+                                                              monkeypatch):
+    """削除は最後。失敗しても控えたバイト列から暗号文を復元して元へ戻す"""
+    root = two_projects
+    assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 0
+    encrypted_compose = compose_texts(root)
+
+    from devbase.env.secret_store import AgeBackend, SecretStoreError
+
+    original_remove = AgeBackend.remove
+
+    def fail_on_web(self, ref):
+        if ref == WEB:
+            raise SecretStoreError('削除できません')
+        return original_remove(self, ref)
+
+    monkeypatch.setattr(AgeBackend, 'remove', fail_on_web)
+
+    assert env_migrate.cmd_env_decrypt(root, assume_yes=True) == 1
+
+    assert age_files(root) == ['api.env.age', 'global.env.age', 'web.env.age']
+    assert plaintext_files(root) == []
+    assert compose_texts(root) == encrypted_compose
+    # 復元した暗号文はそのまま復号できる
+    store = SecretStore(root)
+    assert store.load(GLOBAL) == {'ANTHROPIC_API_KEY': 'sk-1'}
+    assert store.load(API) == {'API_TOKEN': 'tk'}
