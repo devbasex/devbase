@@ -45,15 +45,30 @@ def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Opt
     ``<name>`` を返す。保存先はプロジェクトの直下に固定したい (コンテナ構成が
     参照するのはそこであり、実行時の CWD ではない) ため、末尾ではなく先頭の
     パス要素を採用する。
+
+    判定は論理パス → 物理パスの順に 2 段で行う。両方が要るのは:
+
+    - ``.resolve()`` だけだと、プラグイン経由で ``projects/<name>`` が
+      シンボリックリンクになっているプロジェクト配下で実行したときに
+      リンク先の実体を指してしまい、``projects/`` の外と判定される。
+    - 論理パスだけだと、``..`` を含むパスやリンク先の実体パスで入ったときに
+      ``projects/`` 配下と判定できない。
+
+    ``PWD`` 由来のパスはシェルがシンボリックリンクを保った論理パスなので、
+    まず ``resolve()`` せずそのまま突き合わせる。
     """
     current = Path(cwd) if cwd is not None else Path(os.environ.get('PWD', os.getcwd()))
     projects_dir = Path(devbase_root) / 'projects'
-    try:
-        relative = current.resolve().relative_to(projects_dir.resolve())
-    except (ValueError, OSError):
-        return None
-    parts = relative.parts
-    return parts[0] if parts else None
+
+    for to_path in (Path.absolute, Path.resolve):
+        try:
+            relative = to_path(current).relative_to(to_path(projects_dir))
+        except (ValueError, OSError):
+            continue
+        parts = relative.parts
+        if parts:
+            return parts[0]
+    return None
 
 
 def _project_env(devbase_root: Path, cwd: Optional[Path] = None):

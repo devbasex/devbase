@@ -64,6 +64,47 @@ def test_project_name_is_none_outside_projects(devbase_root):
     assert env_cmd._current_project_name(devbase_root, devbase_root) is None
 
 
+@pytest.fixture
+def linked_project(devbase_root, tmp_path):
+    """``projects/linked`` を tmp 配下の実体へのシンボリックリンクとして作る。
+
+    プラグイン経由のプロジェクト (projects/<name> -> plugins/...) の再現。
+    """
+    target = tmp_path / 'link-target'
+    (target / 'sub').mkdir(parents=True)
+    (devbase_root / 'projects' / 'linked').symlink_to(target)
+    return target
+
+
+def test_project_name_resolves_inside_a_symlinked_project(devbase_root, linked_project):
+    """リンク経由の論理パスで入ったらプロジェクト名が取れる"""
+    link = devbase_root / 'projects' / 'linked'
+    assert env_cmd._current_project_name(devbase_root, link) == 'linked'
+
+
+def test_project_name_resolves_in_a_symlinked_project_subdirectory(devbase_root,
+                                                                   linked_project):
+    sub = devbase_root / 'projects' / 'linked' / 'sub'
+    assert env_cmd._current_project_name(devbase_root, sub) == 'linked'
+
+
+def test_project_name_is_none_from_the_symlink_target_path(devbase_root, linked_project):
+    """リンク先の実体パスから実行した場合は ``None``。
+
+    実体は ``projects/`` の外にあり、どのリンク名から辿られたのかを一意に
+    決められない (複数のリンクが同じ実体を指しうる) ため、推測せず断る。
+    """
+    assert env_cmd._current_project_name(devbase_root, linked_project) is None
+    assert env_cmd._current_project_name(devbase_root, linked_project / 'sub') is None
+
+
+def test_project_name_resolves_through_a_dot_dot_path(devbase_root):
+    """``..`` を含むパスは物理パス側のフォールバックで拾える"""
+    sub = devbase_root / 'projects' / 'web' / 'src'
+    sub.mkdir(parents=True)
+    assert env_cmd._current_project_name(devbase_root, sub / '..' / 'src') == 'web'
+
+
 # ---------------------------------------------------------------------------
 # set / get / delete
 # ---------------------------------------------------------------------------
