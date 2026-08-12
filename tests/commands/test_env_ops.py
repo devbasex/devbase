@@ -165,6 +165,79 @@ def test_rekey_keeps_the_recipients_when_decryption_fails(root, with_key,
     assert agekeys.load_recipients(root) == []
 
 
+def test_rekey_rolls_back_when_a_later_rewrite_fails(root, with_key, colleague,
+                                                     monkeypatch):
+    """途中で書き込みに失敗しても、受信者リストも暗号文も元のまま残る"""
+    public, key_path = colleague
+    store = seed_encrypted(root)
+    agekeys.save_recipients(root, [with_key])
+    before_global = store.age.path(GLOBAL).read_bytes()
+    before_web = store.age.path(WEB).read_bytes()
+
+    # 2 件目 (プロジェクト web) の差し替えだけを失敗させる
+    original = env_ops._write_blob
+    web_path = store.age.path(WEB)
+
+    def fail_on_web(path, blob):
+        if path == web_path:
+            raise OSError('ディスクがいっぱいです')
+        return original(path, blob)
+
+    monkeypatch.setattr(env_ops, '_write_blob', fail_on_web)
+
+    assert env_ops.cmd_env_rekey(root, add=[public], assume_yes=True) == 1
+
+    # 受信者リストは元のまま
+    assert agekeys.load_recipients(root) == [with_key]
+    # 1 件目も元の暗号文へ戻っている (同僚の鍵ではまだ読めない)
+    assert store.age.path(GLOBAL).read_bytes() == before_global
+    assert store.age.path(WEB).read_bytes() == before_web
+    # 旧受信者 (自分) の鍵で引き続き全件読める
+    assert SecretStore(root).load(GLOBAL) == {'TOKEN': 'sk-1'}
+    assert SecretStore(root).load(WEB) == {'DB_PASSWORD': 'pw'}
+
+    from devbase.env.secret_store import SecretStoreError
+
+    reader = SecretStore(root, identities=[key_path])
+    with pytest.raises(SecretStoreError):
+        reader.load(GLOBAL)
+
+
+def test_rekey_removes_the_created_recipients_file_on_rollback(root, with_key,
+                                                               colleague,
+                                                               monkeypatch):
+    """リストが無い状態から始めた場合、巻き戻しで作ったリストごと消える"""
+    public, _ = colleague
+    store = seed_encrypted(root)
+    assert not agekeys.recipients_file(root).exists()
+
+    original = env_ops._write_blob
+    web_path = store.age.path(WEB)
+
+    def fail_on_web(path, blob):
+        if path == web_path:
+            raise OSError('ディスクがいっぱいです')
+        return original(path, blob)
+
+    monkeypatch.setattr(env_ops, '_write_blob', fail_on_web)
+
+    assert env_ops.cmd_env_rekey(root, add=[public], assume_yes=True) == 1
+    assert not agekeys.recipients_file(root).exists()
+
+
+def test_rekey_rewrites_every_secret_on_success(root, with_key, colleague):
+    """成功時は全件が新しい受信者で読める"""
+    public, key_path = colleague
+    seed_encrypted(root)
+
+    assert env_ops.cmd_env_rekey(root, add=[public], assume_yes=True) == 0
+
+    reader = SecretStore(root, identities=[key_path])
+    assert reader.load(GLOBAL) == {'TOKEN': 'sk-1'}
+    assert reader.load(WEB) == {'DB_PASSWORD': 'pw'}
+    assert agekeys.load_recipients(root) == [with_key, public]
+
+
 # ---------------------------------------------------------------------------
 # doctor
 # ---------------------------------------------------------------------------
@@ -240,6 +313,43 @@ def test_doctor_reports_wildcardless_backup_pattern(root, with_key, capsys):
 
     assert env_ops.cmd_env_doctor(root) == 1
     assert '日時付きの控えファイルが除外されません' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('body', [
+    '/.env\n/.env.bak*\n/secrets/\n',                     # ルート指定
+    '.env\n.env.bak*\nsecrets\n',                         # 末尾スラッシュ無し
+    '.env   # 機密\n.env.bak*  # 日時付きの控え\nsecrets/ # 暗号化した機密\n',   # 行末コメント
+    '  .env  \n\t.env.bak*\n\nsecrets/\n',                # 空白・空行混じり
+    '**/.env\n**/.env.bak*\n/secrets/\n',                 # 任意階層
+    '.env\n.env*\nsecrets/\n',                            # 控えを広く拾う指定
+])
+def test_doctor_accepts_equivalent_ignore_notations(root, with_key, capsys, body):
+    """実運用で現れる書き方を「不足」と誤検知しない"""
+    seed_encrypted(root)
+    (root / '.gitignore').write_text(body)
+
+    assert env_ops.cmd_env_doctor(root) == 0
+    assert '問題は見つかりませんでした' in capsys.readouterr().out
+
+
+def test_doctor_still_reports_a_genuine_gap_with_root_anchors(root, with_key, capsys):
+    """ルート指定でも、本当に不足していれば従来どおり報告する"""
+    seed_encrypted(root)
+    (root / '.gitignore').write_text('/.env\n/.env.bak*\n')   # secrets が無い
+
+    assert env_ops.cmd_env_doctor(root) == 1
+    out = capsys.readouterr().out
+    assert '除外設定に不足があります' in out
+    assert 'secrets/' in out
+
+
+def test_doctor_ignores_reincluded_patterns(root, with_key, capsys):
+    """`!` の再包含は「除外している根拠」として数えない"""
+    seed_encrypted(root)
+    (root / '.gitignore').write_text('!secrets/\n.env\n.env.bak*\n')
+
+    assert env_ops.cmd_env_doctor(root) == 1
+    assert '除外設定に不足があります' in capsys.readouterr().out
 
 
 def test_doctor_reports_a_world_readable_key(root, with_key, capsys):

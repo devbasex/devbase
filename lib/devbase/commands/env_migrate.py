@@ -19,7 +19,7 @@
   ``compose.yml`` の書き換えが噛み合って初めて意味を持つ。どちらか片方だけ
   済んだ状態は「構成ファイルが存在しないファイルを参照する」壊れた設定になる
   ため、実行した操作ごとに取り消し手続きを積み、どこで失敗しても逆順に
-  巻き戻してから ``1`` を返す (:class:`_Rollback`)
+  巻き戻してから ``1`` を返す (:class:`devbase.env.rollback.Rollback`)
 """
 
 from __future__ import annotations
@@ -30,9 +30,10 @@ import stat
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from devbase.env import agekeys, compose_migrate, io_common
+from devbase.env.rollback import Rollback
 from devbase.env.secret_store import (
     MODE_AGE,
     MODE_PLAINTEXT,
@@ -103,51 +104,9 @@ def _confirm(prompt: str, assume_yes: bool) -> bool:
     return safe_input(prompt) == 'yes'
 
 
-# ---------------------------------------------------------------------------
-# 巻き戻し
-# ---------------------------------------------------------------------------
-
-class _Rollback:
-    """実行した操作の取り消し手続きを積み、失敗時に逆順で実行する。
-
-    移行は複数の破壊的な操作 (暗号化・平文の退避・構成ファイルの書き換え・
-    暗号文の削除) が連なる。「全部検証してから全部実行する」とフェーズを
-    分けるだけでは、実行フェーズの途中で失敗したぶんが中間状態として残る。
-    そこで **操作を 1 つ実行するたびにその取り消し手続きを積み**、どこで
-    失敗しても :meth:`unwind` で逆順に巻き戻せるようにする。
-    """
-
-    def __init__(self) -> None:
-        self._undo: List[Tuple[str, Callable[[], None]]] = []
-
-    def push(self, description: str, undo: Callable[[], None]) -> None:
-        """実行済みの操作に対する取り消し手続きを積む。
-
-        Args:
-            description: 取り消しが何をするか (巻き戻しに失敗したときに
-                「何が残っているか」として利用者へ見せる)
-            undo: 取り消し手続き
-        """
-        self._undo.append((description, undo))
-
-    def unwind(self) -> None:
-        """積んだ取り消し手続きを逆順に実行する。
-
-        後の操作は前の操作を前提にしているため、必ず逆順で戻す。巻き戻しの
-        途中で失敗しても残りは試みるが、**握り潰さずに何が残っているかを
-        具体的に列挙する**。ここで黙ると、利用者は壊れた状態に気付けない。
-        """
-        failures: List[str] = []
-        for description, undo in reversed(self._undo):
-            try:
-                undo()
-            except Exception as e:  # 1 つ失敗しても残りの巻き戻しは続ける
-                failures.append(f"  - {description}: {e}")
-        self._undo.clear()
-        if failures:
-            logger.error(
-                "巻き戻しに失敗しました。次の操作が完了しておらず、"
-                "手動での復旧が必要です:\n%s", "\n".join(failures))
+# 巻き戻し (:class:`devbase.env.rollback.Rollback`) は ``env rekey`` と共有する。
+# 移行は複数の破壊的な操作 (暗号化・平文の退避・構成ファイルの書き換え・暗号文の
+# 削除) が連なるため、操作ごとに取り消し手続きを積んで逆順に戻せるようにする。
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +165,7 @@ def cmd_env_encrypt(devbase_root: Path, *, dry_run: bool = False,
         print("中止しました")
         return 1
 
-    rollback = _Rollback()
+    rollback = Rollback()
     try:
         # 1. 全対象を暗号化して読み戻せることを確認する (平文にはまだ触れない)
         # 2. バックアップ先を排他的に作り、平文をそこへ移す
@@ -237,7 +196,7 @@ def cmd_env_encrypt(devbase_root: Path, *, dry_run: bool = False,
 
 
 def _encrypt_and_verify(store: SecretStore, refs: Sequence[SecretRef],
-                        rollback: _Rollback) -> None:
+                        rollback: Rollback) -> None:
     """全対象を暗号化し、読み戻して元の内容と一致することを確認する。
 
     ここでは平文に一切触れない。鍵の指定を誤ったまま平文を失うと、誰にも
@@ -317,7 +276,7 @@ def _create_backup_dir(preferred: Path) -> Path:
 
 def _move_plaintext_to_backup(store: SecretStore, refs: Sequence[SecretRef],
                               backup_dir: Path,
-                              rollback: _Rollback) -> List[Path]:
+                              rollback: Rollback) -> List[Path]:
     """全対象の平文をバックアップへ移す (取り消し: 元の場所へ戻す)"""
     moved: List[Path] = []
     for ref in refs:
@@ -412,7 +371,7 @@ def cmd_env_decrypt(devbase_root: Path, *, dry_run: bool = False,
         print("中止しました")
         return 1
 
-    rollback = _Rollback()
+    rollback = Rollback()
     try:
         # 1. 全対象の暗号文を読み込み、復号できることを確認する
         # 2. 平文を書き出す
@@ -464,7 +423,7 @@ def _load_encrypted(store: SecretStore, refs: Sequence[SecretRef],
 
 def _write_plaintext(store: SecretStore,
                      loaded: Sequence[Tuple[SecretRef, bytes, bytes]],
-                     rollback: _Rollback) -> None:
+                     rollback: Rollback) -> None:
     """全対象の平文を書き出す (取り消し: 書いた平文を削除)"""
     for ref, plain, _ in loaded:
         store.plaintext.save_bytes(ref, plain)
@@ -478,7 +437,7 @@ def _write_plaintext(store: SecretStore,
 
 def _remove_encrypted(store: SecretStore,
                       loaded: Sequence[Tuple[SecretRef, bytes, bytes]],
-                      rollback: _Rollback) -> None:
+                      rollback: Rollback) -> None:
     """暗号文を削除する (取り消し: 控えた生バイト列で復元)"""
     for ref, _, blob in loaded:
         path = store.age.path(ref)
@@ -659,7 +618,7 @@ def _write_compose(path: Path, text: str, mode: int) -> None:
     io_common.write_secure_bytes_atomic(path, text.encode('utf-8'), mode=mode)
 
 
-def _apply_compose_changes(changes, rollback: _Rollback) -> None:
+def _apply_compose_changes(changes, rollback: Rollback) -> None:
     """計画した書き換えを適用する (取り消し: 元のテキストを書き戻す)。
 
     1 つでも書けなければ例外で呼び出し元へ返す。ここでログだけ出して次の

@@ -10,12 +10,14 @@
 
 from __future__ import annotations
 
+import fnmatch
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
-from devbase.env import agekeys
+from devbase.env import agekeys, io_common
+from devbase.env.rollback import Rollback
 from devbase.env.secret_store import (
     MODE_AGE,
     SecretRef,
@@ -143,37 +145,115 @@ def cmd_env_rekey(devbase_root: Path, *,
         print("中止しました")
         return 1
 
-    # 先に全件を復号してから書き直す。途中で復号に失敗した場合に、一部だけ
-    # 新しい受信者で暗号化された状態を残さないため。
-    payloads = []
-    for ref in refs:
-        try:
-            payloads.append((ref, store.age.load_bytes(ref)))
-        except DevbaseError as e:
-            logger.error("%s を復号できませんでした: %s", ref.label(), e)
-            logger.error("受信者リストは変更していません")
-            return 1
-
+    # 受信者リストの更新と全暗号文の差し替えは、**片方だけ済んだ状態を残さない**
+    # 単一のまとまりとして扱う。中途半端に終わると旧受信者宛と新受信者宛の暗号文が
+    # 混在し、しかも自分の鍵を外す操作だと残った旧暗号文をもう復号できないため、
+    # `devbase env rekey` の再実行でも復旧できなくなる。
+    #
+    # env_migrate と同じ考え方で **破壊的な操作をできるだけ後ろへ寄せ**、実行した
+    # 操作ごとに取り消し手続きを積む (Rollback)。失うものが無い準備 (復号・暗号化)
+    # を先に全件済ませてからディスクへ触るので、途中で失敗しても巻き戻しは
+    # 「控えたバイト列を書き戻す」だけで済む。
+    rollback = Rollback()
     try:
-        agekeys.save_recipients(root, updated)
-    except DevbaseError as e:
-        logger.error("%s", e)
+        # 1. 全件を復号し、旧暗号文の生バイト列も控える (ディスクは触らない)
+        # 2. 新しい受信者宛の暗号文を全件用意する (ここもまだ触らない)
+        # 3. 受信者リストを更新する
+        # 4. 各暗号文を差し替える
+        prepared = _prepare_reencryption(root, store, refs, updated)
+        _replace_recipients(root, updated, rollback)
+        _replace_ciphertexts(store, prepared, rollback)
+    except (DevbaseError, OSError) as e:
+        logger.error("受信者の更新を中止し、変更を巻き戻します: %s", e)
+        rollback.unwind()
         return 1
-
-    rewritten = SecretStore(root, recipients=updated)
-    for ref, data in payloads:
-        try:
-            rewritten.age.save_bytes(ref, data)
-        except DevbaseError as e:
-            logger.error("%s の再暗号化に失敗しました: %s", ref.label(), e)
-            logger.error(
-                "受信者リストは更新済みです。原因を解消して "
-                "`devbase env rekey` を再実行してください")
-            return 1
-        logger.info("%s を再暗号化しました", ref.label())
 
     print(f"\n=== 完了 === (受信者 {len(updated)} 名 / 機密 {len(refs)} 件)")
     return 0
+
+
+def _prepare_reencryption(root: Path, store: SecretStore,
+                          refs: Sequence[SecretRef],
+                          updated: Sequence[str],
+                          ) -> List[Tuple[SecretRef, bytes, bytes]]:
+    """全件を復号し、新しい受信者宛の暗号文を用意する (ディスクは触らない)。
+
+    Returns:
+        ``(参照, 旧暗号文の生バイト列, 新受信者宛の暗号文)`` の並び
+
+    旧暗号文は再暗号化ではなく **生バイト列のまま** 控える。巻き戻しで元の
+    ファイルへ 1 バイト違わず戻せるようにするため (age は暗号化のたびに異なる
+    出力になるので、作り直したものでは「元に戻した」と言い切れない)。
+
+    ここで失敗しても、受信者リストも暗号文もまだ 1 つも書き換えていない。
+    """
+    rewritten = SecretStore(root, recipients=list(updated))
+    prepared: List[Tuple[SecretRef, bytes, bytes]] = []
+    for ref in refs:
+        path = store.age.path(ref)
+        try:
+            old_blob = path.read_bytes()
+        except OSError as e:
+            raise EnvOpsError(f"暗号文を読み込めませんでした ({path}): {e}") from e
+        try:
+            plain = store.age.load_bytes(ref)
+        except DevbaseError as e:
+            raise EnvOpsError(f"{ref.label()}を復号できませんでした: {e}") from e
+        try:
+            new_blob = rewritten.age.encrypt_bytes(plain)
+        except DevbaseError as e:
+            raise EnvOpsError(
+                f"{ref.label()}を新しい受信者宛に暗号化できませんでした: {e}") from e
+        prepared.append((ref, old_blob, new_blob))
+    return prepared
+
+
+def _write_blob(path: Path, blob: bytes) -> None:
+    """暗号文 / 受信者リストを atomic に差し替える。
+
+    書き込みを 1 箇所に集約しておくと、巻き戻し側も同じ経路を通るので
+    「戻したつもりで別の書き方をしていた」というずれが起きない。
+    """
+    io_common.write_secure_bytes_atomic(path, blob)
+
+
+def _replace_recipients(root: Path, updated: Sequence[str],
+                        rollback: Rollback) -> None:
+    """受信者リストを差し替える (取り消し: 元の内容へ戻す / 元が無ければ削除)"""
+    path = agekeys.recipients_file(root)
+    try:
+        before = path.read_bytes() if path.is_file() else None
+    except OSError as e:
+        raise EnvOpsError(f"受信者リストを読み込めませんでした ({path}): {e}") from e
+
+    try:
+        agekeys.save_recipients(root, list(updated))
+    except OSError as e:
+        raise EnvOpsError(f"受信者リストを更新できませんでした ({path}): {e}") from e
+
+    if before is None:
+        # 元々リストが無かった場合は「作る前」= 存在しない状態へ戻す。
+        rollback.push(f"作成した受信者リスト {path} を削除する",
+                      lambda p=path: p.unlink())
+    else:
+        rollback.push(f"受信者リスト {path} を元の内容へ戻す",
+                      lambda p=path, b=before: _write_blob(p, b))
+
+
+def _replace_ciphertexts(store: SecretStore,
+                         prepared: Sequence[Tuple[SecretRef, bytes, bytes]],
+                         rollback: Rollback) -> None:
+    """用意済みの暗号文でファイルを差し替える (取り消し: 旧バイト列を書き戻す)"""
+    for ref, old_blob, new_blob in prepared:
+        path = store.age.path(ref)
+        try:
+            _write_blob(path, new_blob)
+        except OSError as e:
+            raise EnvOpsError(
+                f"{ref.label()}の再暗号化に失敗しました ({path}): {e}") from e
+        rollback.push(f"{ref.label()}の暗号文 {path} を元の内容へ戻す",
+                      lambda p=path, b=old_blob: _write_blob(p, b))
+        logger.info("%s を再暗号化しました", ref.label())
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +293,10 @@ _PLAINTEXT_GLOBS = (
 
 #: 除外設定に必ず入っていてほしいパターン
 _REQUIRED_IGNORE_PATTERNS = ('.env', 'secrets/')
+
+#: 日時付きの控えが除外されるかを試すサンプル名。実際に未追跡で検出された
+#: ``.env.bak-20260807172231`` を代表として使う。
+_BACKUP_SAMPLE_NAME = '.env.bak-20260807172231'
 
 
 def _mode_of(path: Path) -> Optional[int]:
@@ -290,6 +374,46 @@ def _check_leftovers(root: Path, store: SecretStore, report: Report) -> None:
                    '不要なら削除してください')
 
 
+def _normalize_ignore_pattern(line: str) -> Optional[str]:
+    """``.gitignore`` の 1 行を比較用に正規化する (対象外なら ``None``)。
+
+    点検コマンドは「疑わしきは報告」でよいが、**正しく除外できている設定を毎回
+    叱るのは害になる**。無視されて当然と分かる書き方は同じものとして扱う:
+
+    - 前後の空白を落とす (``.env  `` は git も末尾空白を無視する)
+    - 空行と ``#`` 始まりのコメント行は対象外
+    - 行末コメント (`` #`` 以降) を落とす。gitignore の厳密な文法では ``#`` 以降も
+      パターンの一部だが、実運用では ``.env    # 機密`` のように書かれるため許容する
+    - 先頭の ``/`` (リポジトリルート指定) と ``**/`` (任意階層) を落とす。
+      ``/.env`` は ``$DEVBASE_ROOT/.env`` を確実に除外できており、不足ではない
+    - 末尾の ``/`` (ディレクトリ指定) を落とす。``secrets`` と ``secrets/`` は
+      ここで見たい「secrets を除外しているか」に関しては同じ意味になる
+
+    逆に、次は **検出漏れとして受け入れる** (判定を素朴に保つほうが利益が大きい):
+
+    - ``!`` 始まりの再包含は「除外している根拠」にならないので対象外にするが、
+      ``.env`` と ``!.env`` が両方ある矛盾した設定までは追わない
+    - ``secrets/*.age`` のように配下の一部だけを除外する書き方は不足として報告する
+      (実際に平文が漏れうるので、報告する側に倒す)
+    - ``\\`` のエスケープや文字クラスは解釈しない
+    """
+    text = line.strip()
+    if not text or text.startswith('#'):
+        return None
+    if text.startswith('!'):
+        return None
+    comment = text.find(' #')
+    if comment >= 0:
+        text = text[:comment].strip()
+    if not text:
+        return None
+    while text.startswith('**/'):
+        text = text[3:]
+    text = text.lstrip('/')
+    text = text.rstrip('/')
+    return text or None
+
+
 def _check_gitignore(root: Path, report: Report) -> None:
     path = root / '.gitignore'
     report.checked.append(f"除外設定: {path}")
@@ -297,12 +421,18 @@ def _check_gitignore(root: Path, report: Report) -> None:
         report.add('warning', '除外設定がありません', str(path))
         return
     try:
-        lines = [line.strip() for line in path.read_text(encoding='utf-8').splitlines()]
+        raw_lines = path.read_text(encoding='utf-8').splitlines()
     except (OSError, UnicodeDecodeError) as e:
         report.add('warning', '除外設定を読めませんでした', f'{path}: {e}')
         return
 
-    missing = [p for p in _REQUIRED_IGNORE_PATTERNS if p not in lines]
+    patterns = [p for p in (_normalize_ignore_pattern(line) for line in raw_lines)
+                if p is not None]
+
+    # 必須パターン側も同じ規則で正規化してから突き合わせる。報告に出す名前は
+    # 利用者が追記しやすいよう元の表記 (`secrets/`) のままにしておく。
+    missing = [p for p in _REQUIRED_IGNORE_PATTERNS
+               if _normalize_ignore_pattern(p) not in patterns]
     if missing:
         report.add('error', '除外設定に不足があります',
                    '不足: ' + ', '.join(missing),
@@ -310,7 +440,10 @@ def _check_gitignore(root: Path, report: Report) -> None:
 
     # 日時付きバックアップは `.env.bak` の完全一致では弾けない。実際に
     # `.env.bak-20260807172231` のようなファイルが未追跡で検出された経緯がある。
-    if not any(line.startswith('.env.bak') and line.endswith('*') for line in lines):
+    # 「`.env.bak` で始まり `*` で終わる」かどうかではなく、代表的な名前に実際に
+    # マッチするかで見る。`.env.bak*` だけでなく `.env*` のような広い指定も
+    # ちゃんと除外できており、不足として叱る理由がないため。
+    if not any(fnmatch.fnmatch(_BACKUP_SAMPLE_NAME, p) for p in patterns):
         report.add('warning', '日時付きの控えファイルが除外されません',
                    '`.env.bak*` のようなパターンがありません',
                    f'{path} へ `.env.bak*` を追加してください')
