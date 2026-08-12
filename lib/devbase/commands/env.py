@@ -113,6 +113,13 @@ def cmd_env(devbase_root: Path, args) -> int:
             dry_run=getattr(args, 'dry_run', False),
             assume_yes=getattr(args, 'assume_yes', False),
             projects=list(getattr(args, 'projects', []) or []) or None),
+        'rekey':   lambda: _ops().cmd_env_rekey(
+            devbase_root,
+            add=list(getattr(args, 'add_recipients', []) or []),
+            remove=list(getattr(args, 'remove_recipients', []) or []),
+            dry_run=getattr(args, 'dry_run', False),
+            assume_yes=getattr(args, 'assume_yes', False)),
+        'doctor':  lambda: _ops().cmd_env_doctor(devbase_root),
         'keygen':  lambda: cmd_env_keygen(devbase_root,
                                           force=getattr(args, 'force', False),
                                           assume_yes=getattr(args, 'assume_yes', False)),
@@ -124,6 +131,13 @@ def cmd_env(devbase_root: Path, args) -> int:
 
     logger.error("サブコマンドを指定してください: %s", ', '.join(handlers))
     return 1
+
+
+def _ops():
+    """受信者更新 / 点検の実装モジュール (import を遅延させる)"""
+    from devbase.commands import env_ops
+
+    return env_ops
 
 
 def _migrate(_args=None):

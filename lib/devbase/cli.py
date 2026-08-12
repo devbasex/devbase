@@ -54,7 +54,8 @@ SUBCMD_MAP = {
     ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
-                          'exec', 'encrypt', 'decrypt', 'export', 'import'],
+                          'exec', 'encrypt', 'decrypt', 'rekey', 'doctor',
+                          'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
@@ -321,6 +322,24 @@ def _add_env_parser(subparsers):
                          help='Show what would change without writing')
         sub.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
                          help='Skip the confirmation prompt')
+
+    env_rekey = env_sub.add_parser(
+        'rekey', help='Change who can decrypt the secrets and re-encrypt them')
+    env_rekey.add_argument('--add-recipient', action='append', default=[],
+                           metavar='KEY', dest='add_recipients',
+                           help=("Public key to add (repeatable). Formats: "
+                                 "'age1...', 'ssh-ed25519 ...', '@PATH'"))
+    env_rekey.add_argument('--remove-recipient', action='append', default=[],
+                           metavar='KEY', dest='remove_recipients',
+                           help='Public key to remove (repeatable)')
+    env_rekey.add_argument('--dry-run', action='store_true',
+                           help='Show what would change without writing')
+    env_rekey.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
+                           help='Skip the confirmation prompt')
+
+    env_sub.add_parser(
+        'doctor',
+        help='Check for leftover plaintext secrets and ignore-rule gaps')
 
     env_keygen = env_sub.add_parser(
         'keygen',

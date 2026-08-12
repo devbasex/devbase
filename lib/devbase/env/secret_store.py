@@ -237,15 +237,23 @@ class AgeBackend:
                 f"{ref.label()}の機密を復号できませんでした ({path}): {e}"
             ) from e
 
+    def encrypt_bytes(self, data: bytes) -> bytes:
+        """バイト列を受信者宛に暗号化して返す (保存はしない)。
+
+        書き出し先を自前で扱う処理 (``devbase env import`` の原子的な書き込み等)
+        が、暗号化だけをこの層に任せられるようにする。
+        """
+        try:
+            return _cipher.encrypt(data, recipients=self.recipients())
+        except _cipher.CipherError as e:
+            raise SecretStoreError(
+                f"機密を暗号化できませんでした: {e}"
+            ) from e
+
     def save_bytes(self, ref: SecretRef, data: bytes) -> Path:
         """バイト列を **加工せずそのまま** 暗号化して保存する"""
         path = self.path(ref)
-        try:
-            blob = _cipher.encrypt(data, recipients=self.recipients())
-        except _cipher.CipherError as e:
-            raise SecretStoreError(
-                f"{ref.label()}の機密を暗号化できませんでした: {e}"
-            ) from e
+        blob = self.encrypt_bytes(data)
         try:
             # 暗号文は失うと復旧不能なので、既存ファイルを直接 O_TRUNC せず
             # 一時ファイル → fsync → os.replace で差し替える。ディスク枯渇や中断が

@@ -109,6 +109,8 @@ _devbase() {
         'exec:Run a command with the decrypted secrets in its environment'
         'encrypt:Move plaintext settings into the encrypted store'
         'decrypt:Move encrypted settings back to plaintext'
+        'rekey:Change who can decrypt the secrets and re-encrypt them'
+        'doctor:Check for leftover plaintext secrets and ignore-rule gaps'
     )
 
     plugin_subcommands=(
@@ -297,6 +299,13 @@ _devbase() {
                 encrypt|decrypt)
                     _arguments \
                         '*--project[Limit to the specified project (repeatable)]:name:' \
+                        '--dry-run[Show what would change without writing]' \
+                        '--yes[Skip the confirmation prompt]' '-y[Skip the confirmation prompt]'
+                    ;;
+                rekey)
+                    _arguments \
+                        '*--add-recipient[Public key to add (repeatable)]:key:' \
+                        '*--remove-recipient[Public key to remove (repeatable)]:key:' \
                         '--dry-run[Show what would change without writing]' \
                         '--yes[Skip the confirmation prompt]' '-y[Skip the confirmation prompt]'
                     ;;
