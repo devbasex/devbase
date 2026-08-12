@@ -4,7 +4,7 @@ import copy
 import os
 import yaml
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Iterable, Optional, Sequence, Set
 
 from devbase.env import compose_migrate
 from devbase.errors import DockerError
@@ -231,9 +231,11 @@ def _build_dev_instance(
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
     secret_env_names: Sequence[str] = (),
+    secret_services: Iterable[str] = (),
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances."""
     scaled_services = {}
+    receivers = set(secret_services)
 
     # Copy non-dev services (mysql, valkey, etc.) — rewriting any
     # `depends_on: <dev>` reference to the scaled instances (dev-1..N) so
@@ -246,6 +248,12 @@ def _build_scaled_services(
         # Insert tini as PID 1 so orphaned children are reaped (no zombies).
         # setdefault keeps an explicit `init: false` if the project set one.
         copied.setdefault('init', True)
+        # 元々機密ファイルを env_file で参照していたサービスにだけ機密を渡す。
+        # 参照が外れたあと dev だけに渡すと、DB パスワードを読んでいた db の
+        # ような非 dev サービスが値を受け取れず起動に失敗する。逆に参照を
+        # 持たないサービスへ注入すると、元の構成に無い変数を勝手に増やす。
+        if service_name in receivers:
+            _mask_secret_environment(copied, secret_env_names)
         scaled_services[service_name] = copied
 
     # Generate a service for each instance
@@ -316,6 +324,35 @@ def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) ->
         service.pop('env_file', None)
 
 
+def _services_receiving_secrets(compose_file: Path, dev_service_name: str) -> Set[str]:
+    """機密を渡すべきサービス名を決める。
+
+    判定は :func:`compose_migrate.services_with_secret_env_file` に任せ、
+    **パース済みの YAML ではなく生テキスト**を渡す。移行後の ``compose.yml``
+    では機密の ``env_file`` 参照がコメントアウトされ、YAML からは消えている
+    ため、パース結果だけでは「元々その参照から機密を受け取っていたサービス」
+    を復元できない。生テキストなら有効な参照とコメントアウトされた参照の
+    両方を拾える。
+
+    dev サービスは常に含める。devbase 自身が機密を注入する前提のサービスで、
+    ``env_file`` を書いていない構成でも機密は渡す必要があるため。
+
+    生テキストを読めない場合は dev サービスだけにフォールバックする。判定に
+    失敗したことを理由に全サービスへ機密を撒くと、必要のないコンテナにまで
+    認証情報を渡すことになる。
+    """
+    receivers = {dev_service_name}
+    try:
+        text = compose_file.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError) as e:
+        logger.warning(
+            "%s を読めなかったため、機密は %s サービスにのみ渡します: %s",
+            compose_file, dev_service_name, e)
+        return receivers
+    receivers |= compose_migrate.services_with_secret_env_file(text)
+    return receivers
+
+
 def generate_scaled_compose(
     scale: int,
     compose_file: Path = None,
@@ -350,10 +387,13 @@ def generate_scaled_compose(
     if not dev_service:
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
 
+    secret_services = _services_receiving_secrets(compose_file, dev_service_name)
+
     scaled_config = {
         'services': _build_scaled_services(
             services, dev_service, dev_service_name, scale,
             secret_env_names=secret_env_names,
+            secret_services=secret_services,
         ),
         'volumes': _build_volumes_section(config, scale),
         'networks': _build_networks_section(config),

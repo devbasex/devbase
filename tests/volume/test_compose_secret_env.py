@@ -205,7 +205,62 @@ def test_unresolvable_env_file_entries_are_left_alone(tmp_path, monkeypatch):
 
 
 def test_non_dev_services_are_untouched(project):
+    """機密ファイルを参照していないサービスには余計な変数を注入しない"""
     generate_scaled_compose(1, secret_env_names=['TOKEN'])
 
     config = generated(project)
     assert 'environment' not in config['services']['db']
+
+
+# ---------------------------------------------------------------------------
+# 元々機密ファイルを参照していた非 dev サービスへの受け渡し
+# ---------------------------------------------------------------------------
+
+COMPOSE_DB_WITH_SECRET = """services:
+  dev:
+    image: alpine
+    volumes:
+      - x:/work
+  db:
+    image: mysql
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+    environment:
+      MYSQL_DATABASE: app
+  cache:
+    image: redis
+    env_file:
+      - config/app.env
+volumes:
+  x: {}
+"""
+
+
+def test_non_dev_service_with_a_secret_reference_gets_the_names(project_factory):
+    """DB パスワードを env_file から受け取っていたサービスに機密を渡す"""
+    path = project_factory(COMPOSE_DB_WITH_SECRET)
+
+    generate_scaled_compose(1, secret_env_names=['DB_PASSWORD'])
+
+    config = generated(path)
+    # 非機密の値は残したまま、機密は値なし参照として列挙される
+    assert config['services']['db']['environment'] == {
+        'MYSQL_DATABASE': 'app',
+        'DB_PASSWORD': None,
+    }
+    # 機密を参照していないサービスには注入しない
+    assert 'environment' not in config['services']['cache']
+
+
+def test_commented_out_references_still_receive_the_secrets(project_factory):
+    """移行後は参照がコメントアウトされる。YAML から消えても渡し先は変えない"""
+    from devbase.env import compose_migrate
+
+    disabled, _ = compose_migrate.disable(COMPOSE_DB_WITH_SECRET)
+    path = project_factory(disabled)
+
+    generate_scaled_compose(1, secret_env_names=['DB_PASSWORD'])
+
+    config = generated(path)
+    assert config['services']['db']['environment']['DB_PASSWORD'] is None
+    assert 'environment' not in config['services']['cache']

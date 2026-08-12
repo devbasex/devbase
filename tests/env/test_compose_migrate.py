@@ -324,6 +324,134 @@ def test_inline_notation_does_not_break_the_block_sequence():
     assert cm.enable(after)[0] == INLINE
 
 
+def test_secret_inline_lines_are_separated_from_harmless_ones():
+    """機密を指すインライン記法だけが「移行を止める理由」になる"""
+    text = """services:
+  dev:
+    env_file: config/app.env
+  worker:
+    env_file: [ "${DEVBASE_ROOT}/.env", config/app.env ]
+  batch:
+    env_file: .env   # プロジェクト設定
+"""
+    # 対応していない記法としては 3 行すべてが挙がる
+    assert [n for n, _ in cm.unsupported_env_file_lines(text)] == [3, 5, 7]
+    # そのうち機密を指しているのは worker と batch だけ
+    assert [n for n, _ in cm.secret_inline_env_file_lines(text)] == [5, 7]
+
+
+def test_secret_inline_lines_respect_the_requested_targets():
+    """プロジェクトだけを暗号化するなら、共通設定のインライン記法は止めない"""
+    text = """services:
+  dev:
+    env_file: [ "${DEVBASE_ROOT}/.env" ]
+"""
+    assert cm.secret_inline_env_file_lines(text, {cm.TARGET_PROJECT}) == []
+    assert len(cm.secret_inline_env_file_lines(text, {cm.TARGET_GLOBAL})) == 1
+
+
+def test_disabled_inline_lines_are_not_reported_again():
+    """コメントアウト済みの行を再び「止める理由」に数えない"""
+    text = f"""services:
+  dev:
+    {cm.DISABLED_MARK}env_file: .env
+"""
+    assert cm.secret_inline_env_file_lines(text) == []
+
+
+# ---------------------------------------------------------------------------
+# 機密参照を持つサービスの列挙 (生成側が機密を渡す先を決めるのに使う)
+# ---------------------------------------------------------------------------
+
+MULTI_SERVICE = """services:
+
+  dev:
+    image: alpine
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - env
+    volumes:
+      - x:/work
+  db:
+    image: mysql
+    env_file:
+      - .env
+  cache:
+    image: redis
+    env_file:
+      - config/app.env
+  worker:
+    env_file: [ ".env" ]
+volumes:
+  x: {}
+networks:
+  net:
+    driver: bridge
+"""
+
+
+def test_services_with_secret_env_file_lists_only_the_referencing_ones():
+    assert cm.services_with_secret_env_file(MULTI_SERVICE) == {
+        'dev', 'db', 'worker'}
+
+
+def test_services_with_secret_env_file_sees_disabled_entries():
+    """移行後は参照がコメントアウトされる。それでも同じ集合を返す必要がある"""
+    disabled, _ = cm.disable(MULTI_SERVICE)
+
+    assert cm.services_with_secret_env_file(disabled) == {
+        'dev', 'db', 'worker'}
+
+
+def test_services_with_secret_env_file_ignores_other_sections():
+    """`volumes:` などの `- .env` らしき行をサービス扱いしない"""
+    text = """services:
+  dev:
+    volumes:
+      - ./.env:/etc/x
+volumes:
+  data: {}
+"""
+    assert cm.services_with_secret_env_file(text) == set()
+
+
+def test_services_with_secret_env_file_respects_targets():
+    assert cm.services_with_secret_env_file(
+        MULTI_SERVICE, {cm.TARGET_GLOBAL}) == {'dev'}
+    assert cm.services_with_secret_env_file(
+        MULTI_SERVICE, {cm.TARGET_PROJECT}) == {'db', 'worker'}
+
+
+# ---------------------------------------------------------------------------
+# 末尾スペース / 行末コメントを伴うエントリ
+# ---------------------------------------------------------------------------
+
+def test_entries_with_trailing_comments_and_spaces_are_disabled():
+    """`- ${DEVBASE_ROOT}/.env   # 共通設定` のような行も取りこぼさない"""
+    text = """services:
+  dev:
+    env_file:
+      - ${DEVBASE_ROOT}/.env   # 共通設定
+      - ".env"    # プロジェクト設定
+      - env
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == ['${DEVBASE_ROOT}/.env', '.env']
+    assert f'{cm.DISABLED_MARK}- ${{DEVBASE_ROOT}}/.env   # 共通設定' in after
+    # 行末コメントごと元の姿へ戻る
+    assert cm.enable(after)[0] == text
+
+
+def test_services_with_secret_env_file_handles_trailing_comments():
+    text = """services:
+  db:
+    env_file:
+      - .env   # プロジェクト設定
+"""
+    assert cm.services_with_secret_env_file(text) == {'db'}
+
+
 def test_find_secret_entries_does_not_modify():
     found = cm.find_secret_entries(BASIC)
     assert found == ['${DEVBASE_ROOT}/.env', '.env']

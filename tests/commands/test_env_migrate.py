@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -237,20 +239,20 @@ def test_encrypt_rolls_back_when_a_later_target_fails(two_projects, monkeypatch)
 
 
 def test_encrypt_rolls_back_when_the_compose_write_fails(two_projects,
-                                                        monkeypatch):
+                                                         monkeypatch):
     """構成ファイルを書けなければ、機密の移動ごと巻き戻して失敗を返す"""
     root = two_projects
     before = compose_texts(root)
 
-    original_write = Path.write_text
+    original_write = env_migrate._write_compose
 
-    def fail_on_web_compose(self, *args, **kwargs):
+    def fail_on_web_compose(path, text, mode):
         # api → web の順に書くので、api だけ書けた状態から巻き戻すことになる
-        if self.name == 'compose.yml' and self.parent.name == 'web':
+        if path.name == 'compose.yml' and path.parent.name == 'web':
             raise OSError('読み取り専用ファイルシステムです')
-        return original_write(self, *args, **kwargs)
+        return original_write(path, text, mode)
 
-    monkeypatch.setattr(Path, 'write_text', fail_on_web_compose)
+    monkeypatch.setattr(env_migrate, '_write_compose', fail_on_web_compose)
 
     assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 1
 
@@ -263,6 +265,44 @@ def test_encrypt_rolls_back_when_the_compose_write_fails(two_projects,
     assert list(root.glob('backups/**/*.env')) == []
     # 先に書けてしまった api の compose.yml も元へ戻る
     assert compose_texts(root) == before
+
+
+# ---------------------------------------------------------------------------
+# 構成ファイルの書き込みは原子的か / 権限を保つか
+# ---------------------------------------------------------------------------
+
+def test_compose_is_not_left_partially_written(two_projects, monkeypatch):
+    """途中で失敗しても、壊れかけの compose.yml をディスクに残さない"""
+    root = two_projects
+    before = compose_texts(root)
+
+    original_replace = os.replace
+
+    def fail_on_web_compose(src, dst, **kwargs):
+        dst_path = Path(dst)
+        if dst_path.name == 'compose.yml' and dst_path.parent.name == 'web':
+            raise OSError('デバイスに空き領域がありません')
+        return original_replace(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, 'replace', fail_on_web_compose)
+
+    assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 1
+
+    # 元の内容がそのまま残っている (truncate された痕跡が無い)
+    assert compose_texts(root) == before
+    # 一時ファイルも掃除されている
+    assert list((root / 'projects' / 'web').glob('.compose.yml.*')) == []
+
+
+def test_compose_permissions_are_preserved(with_key):
+    """compose.yml は機密ではない。原子的書き込みの既定 0600 へ落とさない"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.chmod(0o644)
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    assert stat.S_IMODE(compose.stat().st_mode) == 0o644
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +453,94 @@ def test_inline_env_file_is_warned_about(with_key, caplog):
 
     with caplog.at_level(logging.WARNING,
                          logger='devbase.env.compose_migrate'):
-        assert env_migrate.cmd_env_encrypt(with_key, dry_run=True) == 0
+        env_migrate.cmd_env_encrypt(with_key, dry_run=True)
 
     messages = [r.getMessage() for r in caplog.records]
     assert any('compose.yml:3' in m and 'env_file' in m for m in messages)
+
+
+def test_inline_secret_env_file_aborts_the_migration(with_key, capsys):
+    """機密を指すインライン記法は警告では済まない (参照が有効なまま残る)"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""services:
+  dev:
+    env_file: [ "${DEVBASE_ROOT}/.env", .env ]
+""")
+    before = compose.read_text()
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
+
+    # 何も動いていない: 平文も暗号文も構成ファイルもそのまま
+    assert (with_key / '.env').exists()
+    assert (with_key / 'projects' / 'web' / '.env').exists()
+    assert age_files(with_key) == []
+    assert list(with_key.glob('backups/**/*.env')) == []
+    assert compose.read_text() == before
+
+
+def test_inline_env_file_without_secrets_only_warns(with_key, caplog):
+    """機密と無関係なインライン記法は移行に影響しない。警告だけで続行する"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""services:
+  dev:
+    env_file: config/app.env
+  worker:
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - env
+""")
+    seed_plaintext(with_key)
+
+    with caplog.at_level(logging.WARNING,
+                         logger='devbase.env.compose_migrate'):
+        assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    from devbase.env import compose_migrate as cm
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any('compose.yml:3' in m for m in messages)
+    # ブロックシーケンスで書かれた機密参照はいつも通り無効化される
+    assert f'{cm.DISABLED_MARK}- ${{DEVBASE_ROOT}}/.env' in compose.read_text()
+
+
+def test_unreadable_compose_aborts_the_migration(with_key, monkeypatch):
+    """読めない構成ファイルを飛ばすと、機密だけ退避されて参照が残る"""
+    seed_plaintext(with_key)
+
+    original_read = Path.read_text
+
+    def fail_on_compose(self, *args, **kwargs):
+        if self.name == 'compose.yml':
+            raise OSError('アクセスが拒否されました')
+        return original_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', fail_on_compose)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
+
+    # 平文は退避されず、暗号文も作られていない
+    assert (with_key / '.env').exists()
+    assert (with_key / 'projects' / 'web' / '.env').exists()
+    assert age_files(with_key) == []
+    assert list(with_key.glob('backups/**/*.env')) == []
+
+
+def test_unreadable_compose_aborts_the_decrypt(two_projects, monkeypatch):
+    root = two_projects
+    assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 0
+
+    original_read = Path.read_text
+
+    def fail_on_compose(self, *args, **kwargs):
+        if self.name == 'compose.yml' and self.parent.name == 'web':
+            raise OSError('アクセスが拒否されました')
+        return original_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', fail_on_compose)
+
+    assert env_migrate.cmd_env_decrypt(root, assume_yes=True) == 1
+
+    # 暗号文はそのまま。平文も書かれていない
+    assert age_files(root) == ['api.env.age', 'global.env.age', 'web.env.age']
+    assert plaintext_files(root) == []

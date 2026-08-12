@@ -33,6 +33,11 @@
 巻き添えにしてしまう。対象外だが**黙って見逃すと壊れた構成のまま起動して初めて気付く**
 ことになるため、:func:`warn_unsupported_env_file` で該当ファイルと行番号を警告し、
 手で書き換えてもらう。
+
+さらに、その行が**機密ファイルを指している**場合は警告では足りない。平文を退避した
+あとも参照が有効なまま残り、Compose が存在しないファイルを読もうとして起動できなく
+なるためである。呼び出し側が「警告で済ませてよい行」と「移行を止めるべき行」を区別
+できるよう、:func:`secret_inline_env_file_lines` で後者だけを列挙する。
 """
 
 from __future__ import annotations
@@ -65,17 +70,45 @@ _LIST_ITEM_RE = re.compile(r'^(\s*)-\s*(.*?)\s*$')
 #: 行単位の書き換えでは扱えないため、検出して警告するためだけに使う。
 _ENV_FILE_INLINE_RE = re.compile(r'^\s*env_file:\s*(?!#)(\S.*)$')
 
+#: ``services:`` セクションの開始行
+_SERVICES_KEY_RE = re.compile(r'^(\s*)services:\s*(#.*)?$')
+
+#: サービス名の行 (``  dev:`` / ``  db:   # コメント``)
+_SERVICE_KEY_RE = re.compile(r'^\s*([^\s#:][^:]*):\s*(#.*)?$')
+
 
 def _indent_of(line: str) -> int:
     return len(line) - len(line.lstrip(' '))
 
 
-def _entry_value(raw: str) -> str:
-    """``- "${DEVBASE_ROOT}/.env"  # comment`` から参照先だけを取り出す"""
-    value = raw.split('#', 1)[0].strip()
+def _strip_quotes(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
         value = value[1:-1]
     return value.strip()
+
+
+def _entry_value(raw: str) -> str:
+    """``- "${DEVBASE_ROOT}/.env"  # comment`` から参照先だけを取り出す"""
+    return _strip_quotes(raw.split('#', 1)[0].strip())
+
+
+def _inline_entries(raw: str) -> List[str]:
+    """``env_file:`` の後ろに直接書かれた値から参照の一覧を取り出す。
+
+    ``[ "${DEVBASE_ROOT}/.env", .env ]`` のようなインライン配列と、
+    ``.env`` のような単一文字列の両方を受ける。書き換えはできないが、
+    「機密を指しているかどうか」の判定だけはここで行う。
+    """
+    value = raw.split('#', 1)[0].strip()
+    if value.startswith('['):
+        value = value[1:]
+        if value.endswith(']'):
+            value = value[:-1]
+        parts = value.split(',')
+    else:
+        parts = [value]
+    return [item for item in (_strip_quotes(part.strip()) for part in parts)
+            if item]
 
 
 def _is_target(value: str, targets: Set[str]) -> bool:
@@ -278,6 +311,116 @@ def warn_unsupported_env_file(text: str, path: Optional[Path] = None
             " (対応しているのは `env_file:` の下に `- ...` を並べる書き方だけです)。"
             " 手動で書き換えてください: %s",
             path if path is not None else '<compose.yml>', number, line)
+    return found
+
+
+def secret_inline_env_file_lines(
+        text: str,
+        targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
+) -> List[Tuple[int, str]]:
+    """**機密ファイルを指している**インライン記法の行だけを列挙する。
+
+    :func:`unsupported_env_file_lines` は「行単位で書き換えられない記法」を
+    すべて返すが、そのうち ``env_file: config/app.env`` のように機密と無関係な
+    ものは移行に影響しない (書き換える必要が無い)。一方 ``env_file: [.env]``
+    のように機密を指しているものは、平文を退避したあとも参照が有効なまま残り、
+    Compose が存在しないファイルを読もうとして起動できなくなる。**警告で流す
+    のではなく移行を止める**必要があるため、その 2 つをここで区別する。
+
+    Returns:
+        ``[(1 始まりの行番号, 行の内容)]``
+    """
+    wanted = set(targets)
+    found: List[Tuple[int, str]] = []
+    for number, line in unsupported_env_file_lines(text):
+        match = _ENV_FILE_INLINE_RE.match(line)
+        if not match:
+            continue
+        if any(_is_target(value, wanted)
+               for value in _inline_entries(match.group(1))):
+            found.append((number, line))
+    return found
+
+
+def services_with_secret_env_file(
+        text: str,
+        targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
+) -> Set[str]:
+    """機密ファイルを参照している (していた) サービス名を **生テキスト** から集める。
+
+    移行後の ``compose.yml`` では機密の ``env_file`` 参照がコメントアウトされ、
+    YAML としてパースすると見えなくなる。パース結果だけを見ると「元々その参照
+    から機密を受け取っていたサービス」(例: DB パスワードを読む ``db``) を
+    取りこぼし、機密が渡らないまま起動して失敗する。そこで生テキストを走査し、
+    **有効なエントリとコメントアウトされたエントリの両方**を拾う。
+
+    行単位で書き換えられないインライン記法も対象に含める。移行は止まるが、
+    利用者が手で直したあとも同じ判定が使えるようにするため。
+    """
+    wanted = set(targets)
+    found: Set[str] = set()
+
+    services_indent: Optional[int] = None
+    service_indent: Optional[int] = None
+    current: Optional[str] = None
+    env_file_indent: Optional[int] = None
+
+    for raw_line in text.splitlines():
+        # コメントアウト済みの行も「YAML としての姿」に戻して判定する
+        line = _source_line(raw_line.rstrip())
+        if not line.strip():
+            continue
+        indent = _indent_of(line)
+
+        if services_indent is None:
+            match = _SERVICES_KEY_RE.match(line)
+            if match:
+                services_indent = len(match.group(1))
+                service_indent = None
+                current = None
+                env_file_indent = None
+            continue
+
+        if indent <= services_indent:
+            # services: セクションを抜けた (volumes: / networks: など)
+            services_indent = None
+            service_indent = None
+            current = None
+            env_file_indent = None
+            match = _SERVICES_KEY_RE.match(line)
+            if match:
+                services_indent = len(match.group(1))
+            continue
+
+        if service_indent is None:
+            service_indent = indent
+
+        if indent <= service_indent:
+            match = _SERVICE_KEY_RE.match(line)
+            current = match.group(1).strip() if match else None
+            env_file_indent = None
+            continue
+
+        if current is None:
+            continue
+
+        if env_file_indent is not None and indent > env_file_indent:
+            item = _LIST_ITEM_RE.match(line)
+            if item:
+                if _is_target(_entry_value(item.group(2)), wanted):
+                    found.add(current)
+                continue
+        env_file_indent = None
+
+        if _ENV_FILE_KEY_RE.match(line):
+            env_file_indent = indent
+            continue
+
+        inline = _ENV_FILE_INLINE_RE.match(line)
+        if inline and any(_is_target(value, wanted)
+                          for value in _inline_entries(inline.group(1))):
+            found.add(current)
+
     return found
 
 

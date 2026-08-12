@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -172,7 +173,13 @@ def cmd_env_encrypt(devbase_root: Path, *, dry_run: bool = False,
     for spec in recipients:
         print(f"  {spec}")
 
-    compose_changes = _plan_compose_changes(root, refs)
+    # 構成ファイルを読めない / 自動では直せない機密参照がある場合はここで中止する。
+    # 平文にはまだ触れていないので、返すだけで元の状態が保たれる。
+    try:
+        compose_changes = _plan_compose_changes(root, refs)
+    except MigrationError as e:
+        logger.error("暗号化を中止しました: %s", e)
+        return 1
     if compose_changes:
         print("\n=== コンテナ構成の変更 ===")
         for path, (_, _, patch) in compose_changes.items():
@@ -312,7 +319,11 @@ def cmd_env_decrypt(devbase_root: Path, *, dry_run: bool = False,
         print(f"  {ref.label():<24} {store.age.path(ref)}"
               f"  →  {store.plaintext.path(ref)}")
 
-    compose_changes = _plan_compose_changes(root, refs, restore=True)
+    try:
+        compose_changes = _plan_compose_changes(root, refs, restore=True)
+    except MigrationError as e:
+        logger.error("復号を中止しました: %s", e)
+        return 1
     if compose_changes:
         print("\n=== コンテナ構成の変更 ===")
         for path, (_, _, patch) in compose_changes.items():
@@ -426,6 +437,11 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
 
     書き換え前のテキストも返すのは、適用後に別の操作が失敗したとき、
     差分を計算したのと同じ内容へ書き戻して巻き戻せるようにするため。
+
+    Raises:
+        MigrationError: 構成ファイルを読めない場合、または自動では書き換え
+            られない機密参照が残っている場合 (どちらも「平文だけ退避されて
+            構成は存在しないファイルを指したまま」という壊れた結果になる)
     """
     root = Path(devbase_root)
     has_global = any(ref.kind == 'global' for ref in refs)
@@ -440,8 +456,11 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
         try:
             before = path.read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError) as e:
-            logger.warning("構成ファイルを読めませんでした (%s): %s", path, e)
-            continue
+            # 読めないファイルを飛ばして続けると、機密の参照が残ったまま平文
+            # だけが退避され、コマンドは成功を返す。壊れた構成に気付けるのは
+            # 次の起動時になるため、ここで移行全体を中止する。
+            raise MigrationError(
+                f"構成ファイルを読めませんでした ({path}): {e}") from e
 
         # 行単位では書き換えられない記法 (インライン配列・単一文字列) は
         # 対象から漏れる。黙って漏らすと壊れた構成のまま起動して初めて
@@ -450,6 +469,24 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
 
         wanted = _compose_targets(path, has_global=has_global,
                                   project_names=project_names)
+        if not restore:
+            # インライン記法のうち **機密を指しているもの** は警告では済まない。
+            # 平文を退避したあとも参照が有効なまま残り、Compose が存在しない
+            # ファイルを読もうとして起動できなくなる。手で直してから再実行して
+            # もらう (機密と無関係なインライン記法は移行に影響しないので警告のみ)。
+            #
+            # 復元 (decrypt) 側では止めない。平文が戻る以上インライン参照は
+            # 有効になるうえ、ここで失敗させると壊れた状態からの復帰手段まで
+            # 塞いでしまう。
+            blocking = compose_migrate.secret_inline_env_file_lines(before, wanted)
+            if blocking:
+                detail = '\n'.join(f"  {path}:{number}: {line}"
+                                   for number, line in blocking)
+                raise MigrationError(
+                    "自動で書き換えられない env_file の記法が機密ファイルを"
+                    "参照しています。次の行を `env_file:` の下に `- ...` を"
+                    "並べる書き方へ手で直してから再実行してください:\n"
+                    f"{detail}")
         if restore:
             after, touched = compose_migrate.enable(before, wanted)
         else:
@@ -462,6 +499,36 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
     return changes
 
 
+#: 既存の ``compose.yml`` の権限を読めなかったときに使う既定値。
+#: 機密ではないので ``0600`` ではなく「誰でも読める」側に倒す。
+_COMPOSE_FALLBACK_MODE = 0o644
+
+
+def _compose_file_mode(path: Path) -> int:
+    """既存の ``compose.yml`` の権限をそのまま返す。
+
+    書き込みに使う :func:`io_common.write_secure_bytes_atomic` は機密ファイル
+    向けに既定が ``0600`` になっている。``compose.yml`` は機密ではなく、他の
+    利用者や CI から読めることを前提に置かれているため、**既存の権限を勝手に
+    狭めない**よう元の mode を引き継ぐ。
+    """
+    try:
+        return stat.S_IMODE(path.stat().st_mode)
+    except OSError:
+        return _COMPOSE_FALLBACK_MODE
+
+
+def _write_compose(path: Path, text: str, mode: int) -> None:
+    """``compose.yml`` を **原子的に** 差し替える。
+
+    ``Path.write_text`` は既存ファイルを truncate してから書くため、途中で
+    ``OSError`` が起きると部分的な ``compose.yml`` が残る。しかもこの書き込みは
+    取り消し手続きを積む前に走るので、壊れた内容を巻き戻せない。一時ファイル
+    → ``os.replace`` の方式なら、途中で失敗しても元の内容がそのまま残る。
+    """
+    io_common.write_secure_bytes_atomic(path, text.encode('utf-8'), mode=mode)
+
+
 def _apply_compose_changes(changes, rollback: _Rollback) -> None:
     """計画した書き換えを適用する (取り消し: 元のテキストを書き戻す)。
 
@@ -471,12 +538,15 @@ def _apply_compose_changes(changes, rollback: _Rollback) -> None:
     書けたぶんの取り消しは既に積んであるので、呼び出し元が巻き戻せる。
     """
     for path, (before, after, _) in changes.items():
+        # 元の権限は書き込み前に控える。差し替え後に読むと、こちらが付けた
+        # 権限を「元の権限」と取り違える。
+        mode = _compose_file_mode(path)
         try:
-            path.write_text(after, encoding='utf-8')
+            _write_compose(path, after, mode)
         except OSError as e:
             raise MigrationError(
                 f"構成ファイルを更新できませんでした ({path}): {e}") from e
         rollback.push(
             f"{path} を元の内容へ書き戻す",
-            lambda p=path, t=before: p.write_text(t, encoding='utf-8'))
+            lambda p=path, t=before, m=mode: _write_compose(p, t, m))
         logger.info("構成ファイルを更新しました: %s", path)
