@@ -465,8 +465,8 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
             raise MigrationError(
                 f"構成ファイルを読めませんでした ({path}): {e}") from e
 
-        # 行単位では書き換えられない記法 (インライン配列・単一文字列・続きの行を
-        # 持つ long syntax など) は対象から漏れる。黙って漏らすと壊れた構成の
+        # 行単位では書き換えられない記法 (インライン配列・続きの行を持つ
+        # long syntax など) は対象から漏れる。黙って漏らすと壊れた構成の
         # まま起動して初めて気付くため、どのファイルの何行目かを警告しておく。
         compose_migrate.warn_unsupported_env_file(before, path)
 

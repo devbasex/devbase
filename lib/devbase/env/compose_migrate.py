@@ -28,14 +28,20 @@
          - "${DEVBASE_ROOT}/.env"
          - path: .env            # long syntax でも 1 行で閉じているもの
 
+       env_file: .env            # 値が単一文字列。キー行ごと無効化する
+       env_file: "${DEVBASE_ROOT}/.env"
+
    行ごとコメントアウトしても他の指定を巻き込まないため、無効化も復元も機械的に
    できる。行末コメント・前後の空行・利用者のコメント行が混ざっていてもよい。
+   単一文字列の形はエントリが 1 つしかないので、``env_file:`` の行そのものを
+   コメントアウトする (シーケンスの全エントリを落としたときと同じ扱い)。
 
 2. 移行を中止する記法 — 1 行に閉じていない、または 1 行に複数の指定が同居する
    もの::
 
-       env_file: .env
        env_file: [ "${DEVBASE_ROOT}/.env", .env ]
+       env_file: >-             # 続きの行に値を持つブロックスカラー
+         .env
        env_file:
          - path: .env
            required: false       # 続きの行を持つ long syntax
@@ -52,6 +58,8 @@
 
        env_file:
          - config/app.env
+
+       env_file: config/app.env
 
    移行で消えるファイルではないので書き換える必要がない。ただし 2. の記法で
    書かれている場合は、機密でなくても警告する
@@ -90,8 +98,17 @@ _ENV_FILE_KEY_RE = re.compile(r'^(\s*)env_file:\s*(#.*)?$')
 _LIST_ITEM_RE = re.compile(r'^(\s*)-\s*(.*?)\s*$')
 
 #: ``env_file:`` の後ろに値が続く書き方 (インライン配列・単一文字列)。
-#: 行単位の書き換えでは扱えないため、検出して警告するためだけに使う。
+#: このうち単一文字列は 1 行で完結するため書き換えの対象にできる
+#: (:func:`_inline_scalar_ref`)。それ以外は検出して警告・中止に回す。
 _ENV_FILE_INLINE_RE = re.compile(r'^\s*env_file:\s*(?!#)(\S.*)$')
+
+#: 「1 行で完結する単一文字列」とはみなせない値の先頭文字。フロー記法
+#: (``[`` ``{``) は 1 行に複数の指定が同居し、ブロックスカラー (``|`` ``>``) や
+#: アンカー・別名・タグ (``&`` ``*`` ``!``) は続きの行を持ちうる。どちらも行ごと
+#: コメントアウトすると無関係な指定を巻き込む / YAML が壊れるため、契約 2. 側へ
+#: 回して中止・警告に落とす。
+_UNSAFE_SCALAR_HEADS = ('[', '{', '|', '>', '&', '*', '!', '?', '%', '@', '`',
+                        ',', '-')
 
 #: long syntax (``- path: .env``) の ``path`` キー。Compose はエントリを
 #: マッピングでも書けるため、文字列としてだけ見ると参照を取りこぼす。
@@ -177,12 +194,45 @@ def _flow_map_refs(text: str) -> List[str]:
             if value.strip()]
 
 
+def _inline_scalar_ref(raw: str) -> Optional[str]:
+    """``env_file: .env`` の値が **1 行で完結する単一文字列** なら参照先を返す。
+
+    この形はエントリが 1 つしかなく、``env_file:`` の行ごとコメントアウトしても
+    他の指定を巻き込まない。だから中止 (契約 2.) ではなく書き換えの対象にできる
+    (契約 1.)。1 行で安全に判断できない値 — フロー記法・ブロックスカラー・
+    閉じていないクォート — は ``None`` を返し、従来どおり中止・警告へ回す。
+
+    Args:
+        raw: ``env_file:`` の後ろに続く部分 (行末コメントを含みうる)
+
+    Returns:
+        参照先の文字列。単一文字列として扱えない場合は ``None``。
+    """
+    value = raw.strip()
+    if value[:1] in ('"', "'"):
+        # クォートされた値は閉じ引用符まで見る。`"a # b"` のように値の中へ
+        # `#` が入る場合、先にコメントで切ると参照先を取り違える。
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end < 0:
+            return None  # 閉じていない = 続きの行を持つ可能性がある
+        rest = value[end + 1:].strip()
+        if rest and not rest.startswith('#'):
+            return None  # 引用符の後ろに別の指定が続く
+        return value[1:end]
+    value = value.split('#', 1)[0].strip()
+    if not value or value[0] in _UNSAFE_SCALAR_HEADS:
+        return None
+    return value
+
+
 def _inline_entries(raw: str) -> List[str]:
     """``env_file:`` の後ろに直接書かれた値から参照の一覧を取り出す。
 
     ``[ "${DEVBASE_ROOT}/.env", .env ]`` のようなインライン配列と、
-    ``.env`` のような単一文字列の両方を受ける。書き換えはできないが、
-    「機密を指しているかどうか」の判定だけはここで行う。
+    ``.env`` のような単一文字列の両方を受ける。「機密を指しているかどうか」の
+    判定に使う (単一文字列は書き換えもできるが、その判定は
+    :func:`_inline_scalar_ref` が行う)。
     """
     value = raw.split('#', 1)[0].strip()
     if value.startswith('['):
@@ -403,6 +453,18 @@ def disable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
     index = 0
     while index < len(lines):
         content, eol = _split_eol(lines[index])
+
+        # `env_file: .env` のように値が単一文字列で 1 行に収まっている形は、
+        # その行がそのまま 1 エントリなのでキー行ごと落とす (契約 1.)
+        inline = _ENV_FILE_INLINE_RE.match(content)
+        if inline:
+            ref = _inline_scalar_ref(inline.group(1))
+            if ref is not None and _is_target(ref, wanted):
+                lines[index] = _disable_line(content) + eol
+                disabled.append(ref)
+            index += 1
+            continue
+
         match = _ENV_FILE_KEY_RE.match(content)
         if not match:
             index += 1
@@ -456,7 +518,20 @@ def enable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
     while index < len(lines):
         content, eol = _split_eol(lines[index])
         # キー行そのものが無効化されている場合があるため、目印を外した姿で判定する
-        match = _ENV_FILE_KEY_RE.match(_source_line(content))
+        source = _source_line(content)
+
+        # 単一文字列の形は行ごと無効化されている。同じ条件で戻す (契約 1.)
+        inline = _ENV_FILE_INLINE_RE.match(source)
+        if inline:
+            if _is_disabled(content):
+                ref = _inline_scalar_ref(inline.group(1))
+                if ref is not None and _is_target(ref, wanted):
+                    lines[index] = _enable_line(content) + eol
+                    restored.append(lines[index].strip())
+            index += 1
+            continue
+
+        match = _ENV_FILE_KEY_RE.match(source)
         if not match:
             index += 1
             continue
@@ -507,9 +582,12 @@ def _unsupported_entries(text: str) -> List[Tuple[int, str, Tuple[str, ...]]]:
         if not _is_disabled(stripped):
             inline = _ENV_FILE_INLINE_RE.match(stripped)
             if inline:
-                # `env_file:` の後ろに値が続く書き方 (インライン配列・単一文字列)
-                found.append((index + 1, stripped.strip(),
-                              tuple(_inline_entries(inline.group(1)))))
+                # `env_file:` の後ろに値が続く書き方。単一文字列は行ごと
+                # 無効化できる (契約 1.) ので挙げない。フロー記法など 1 行で
+                # 安全に判断できないものだけを中止・警告の対象にする
+                if _inline_scalar_ref(inline.group(1)) is None:
+                    found.append((index + 1, stripped.strip(),
+                                  tuple(_inline_entries(inline.group(1)))))
                 index += 1
                 continue
 

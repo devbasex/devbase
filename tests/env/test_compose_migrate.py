@@ -380,11 +380,11 @@ INLINE = """services:
 
 
 def test_inline_notation_is_reported():
+    """フロー記法は挙がる。単一文字列は書き換えられるので挙がらない"""
     found = cm.unsupported_env_file_lines(INLINE)
 
-    assert [number for number, _ in found] == [3, 5]
+    assert [number for number, _ in found] == [3]
     assert found[0][1] == 'env_file: [ "${DEVBASE_ROOT}/.env", .env ]'
-    assert found[1][1] == 'env_file: .env'
 
 
 def test_block_sequence_alone_reports_nothing():
@@ -405,17 +405,18 @@ def test_warn_unsupported_env_file_names_the_file_and_line(caplog):
         cm.warn_unsupported_env_file(INLINE, Path('projects/web/compose.yml'))
 
     messages = [r.getMessage() for r in caplog.records]
-    assert len(messages) == 2
+    assert len(messages) == 1
     assert 'projects/web/compose.yml:3' in messages[0]
     assert 'env_file: [ "${DEVBASE_ROOT}/.env", .env ]' in messages[0]
-    assert 'projects/web/compose.yml:5' in messages[1]
 
 
 def test_inline_notation_does_not_break_the_block_sequence():
     """対象外の記法が混ざっていても、扱える書き方は従来どおり処理する"""
     after, touched = cm.disable(INLINE)
 
-    assert touched == ['${DEVBASE_ROOT}/.env']
+    # フロー記法 (3 行目) は残り、単一文字列とブロックシーケンスは無効化される
+    assert touched == ['.env', '${DEVBASE_ROOT}/.env']
+    assert '    env_file: [ "${DEVBASE_ROOT}/.env", .env ]\n' in after
     assert '      - env\n' in after
     assert cm.enable(after)[0] == INLINE
 
@@ -430,10 +431,10 @@ def test_secret_inline_lines_are_separated_from_harmless_ones():
   batch:
     env_file: .env   # プロジェクト設定
 """
-    # 対応していない記法としては 3 行すべてが挙がる
-    assert [n for n, _ in cm.unsupported_env_file_lines(text)] == [3, 5, 7]
-    # そのうち機密を指しているのは worker と batch だけ
-    assert [n for n, _ in cm.secret_unsupported_env_file_lines(text)] == [5, 7]
+    # 単一文字列 (3 行目・7 行目) は書き換えられるので挙がらない
+    assert [n for n, _ in cm.unsupported_env_file_lines(text)] == [5]
+    # 機密を指すフロー記法だけが移行を止める
+    assert [n for n, _ in cm.secret_unsupported_env_file_lines(text)] == [5]
 
 
 def test_secret_inline_lines_respect_the_requested_targets():
@@ -453,6 +454,162 @@ def test_disabled_inline_lines_are_not_reported_again():
     {cm.DISABLED_MARK}env_file: .env
 """
     assert cm.secret_unsupported_env_file_lines(text) == []
+
+
+# ---------------------------------------------------------------------------
+# 単一文字列の env_file (契約 1.: 1 行で完結するので行ごと無効化できる)
+# ---------------------------------------------------------------------------
+
+SCALAR = """services:
+  dev:
+    image: alpine
+    env_file: ${DEVBASE_ROOT}/.env
+  worker:
+    image: alpine
+    env_file: ".env"
+  batch:
+    image: alpine
+    env_file: config/app.env
+"""
+
+
+def test_scalar_env_file_is_disabled_and_restored():
+    """単一文字列の機密参照は行ごと無効化し、復元で元のテキストに戻る"""
+    after, touched = cm.disable(SCALAR)
+
+    assert touched == ['${DEVBASE_ROOT}/.env', '.env']
+    assert f'    {cm.DISABLED_MARK}env_file: ${{DEVBASE_ROOT}}/.env\n' in after
+    assert f'    {cm.DISABLED_MARK}env_file: ".env"\n' in after
+    # 機密と無関係な単一文字列は触らない
+    assert '    env_file: config/app.env\n' in after
+    # コメントアウトした行は YAML としては消えている
+    assert 'env_file' not in yaml.safe_load(after)['services']['dev']
+
+    assert cm.enable(after)[0] == SCALAR
+
+
+def test_scalar_env_file_round_trips_with_crlf():
+    """CRLF でも往復でバイト単位に戻る"""
+    original = SCALAR.replace('\n', '\r\n')
+
+    after, touched = cm.disable(original)
+
+    assert touched == ['${DEVBASE_ROOT}/.env', '.env']
+    assert '\n' not in after.replace('\r\n', '')
+    assert cm.enable(after)[0] == original
+
+
+def test_scalar_env_file_with_a_trailing_comment_round_trips():
+    """行末コメントや余分な空白があってもそのまま戻る"""
+    text = """services:
+  dev:
+    env_file: .env   # プロジェクト設定
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == ['.env']
+    assert cm.enable(after)[0] == text
+
+
+def test_scalar_env_file_without_secrets_is_untouched():
+    """機密を指さない単一文字列は無効化も警告も中止もしない"""
+    text = """services:
+  dev:
+    env_file: config/app.env
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == []
+    assert after == text
+    assert cm.unsupported_env_file_lines(text) == []
+    assert cm.secret_unsupported_env_file_lines(text) == []
+
+
+def test_scalar_env_file_respects_the_requested_targets():
+    """一部だけ暗号化するときは、その種別の単一文字列だけを無効化する"""
+    after, touched = cm.disable(SCALAR, {cm.TARGET_PROJECT})
+
+    assert touched == ['.env']
+    assert '    env_file: ${DEVBASE_ROOT}/.env\n' in after
+    # 共通設定が暗号化されたままなら、その行は戻さない
+    restored, names = cm.enable(after, {cm.TARGET_GLOBAL})
+    assert names == []
+    assert restored == after
+    assert cm.enable(after, {cm.TARGET_PROJECT})[0] == SCALAR
+
+
+def test_scalar_env_file_is_not_reported_as_unsupported():
+    """単一文字列は契約 1. に入ったので、中止の理由にはならない"""
+    assert cm.unsupported_env_file_lines(SCALAR) == []
+    assert cm.secret_unsupported_env_file_lines(SCALAR) == []
+
+
+def test_scalar_env_file_disable_is_idempotent():
+    once, _ = cm.disable(SCALAR)
+    twice, touched = cm.disable(once)
+
+    assert touched == []
+    assert twice == once
+
+
+def test_services_with_secret_env_file_reads_scalar_notation():
+    """単一文字列でも「どの種別を参照していたか」を拾う"""
+    assert cm.services_with_secret_env_file(SCALAR) == {
+        'dev': {cm.TARGET_GLOBAL},
+        'worker': {cm.TARGET_PROJECT},
+    }
+
+
+def test_services_with_secret_env_file_sees_disabled_scalar_notation():
+    """無効化したあとも参照元のサービスを見失わない"""
+    after, _ = cm.disable(SCALAR)
+
+    assert cm.services_with_secret_env_file(after) == {
+        'dev': {cm.TARGET_GLOBAL},
+        'worker': {cm.TARGET_PROJECT},
+    }
+
+
+def test_flow_sequence_is_still_unsupported():
+    """1 行で安全に判断できない記法は従来どおり中止の対象のまま"""
+    text = """services:
+  dev:
+    env_file: [ .env ]
+  worker:
+    env_file: { path: .env }
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == []
+    assert after == text
+    assert [n for n, _ in cm.secret_unsupported_env_file_lines(text)] == [3, 5]
+
+
+def test_block_scalar_env_file_is_still_unsupported():
+    """続きの行に値を持つブロックスカラーは単一文字列として扱わない"""
+    text = """services:
+  dev:
+    env_file: >-
+      .env
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == []
+    assert after == text
+    assert [n for n, _ in cm.unsupported_env_file_lines(text)] == [3]
+
+
+def test_unclosed_quote_env_file_is_still_unsupported():
+    """クォートが閉じていない値は 1 行で判断できない。中止側へ回す"""
+    text = """services:
+  dev:
+    env_file: ".env
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == []
+    assert after == text
+    assert [n for n, _ in cm.unsupported_env_file_lines(text)] == [3]
 
 
 # ---------------------------------------------------------------------------

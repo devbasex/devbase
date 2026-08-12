@@ -484,7 +484,7 @@ def test_inline_env_file_without_secrets_only_warns(with_key, caplog):
     compose = with_key / 'projects' / 'web' / 'compose.yml'
     compose.write_text("""services:
   dev:
-    env_file: config/app.env
+    env_file: [ config/app.env ]
   worker:
     env_file:
       - ${DEVBASE_ROOT}/.env
@@ -502,6 +502,77 @@ def test_inline_env_file_without_secrets_only_warns(with_key, caplog):
     assert any('compose.yml:3' in m for m in messages)
     # ブロックシーケンスで書かれた機密参照はいつも通り無効化される
     assert f'{cm.DISABLED_MARK}- ${{DEVBASE_ROOT}}/.env' in compose.read_text()
+
+
+def test_scalar_env_file_is_migrated_instead_of_aborting(with_key):
+    """単一文字列で書かれた機密参照は中止せず、行ごと無効化して往復する"""
+    from devbase.env import compose_migrate as cm
+
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    original = """services:
+  dev:
+    image: alpine
+    env_file: ${DEVBASE_ROOT}/.env
+  db:
+    image: alpine
+    env_file: .env
+  batch:
+    image: alpine
+    env_file: config/app.env
+"""
+    compose.write_text(original)
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    after = compose.read_text()
+    assert f'    {cm.DISABLED_MARK}env_file: ${{DEVBASE_ROOT}}/.env\n' in after
+    assert f'    {cm.DISABLED_MARK}env_file: .env\n' in after
+    # 機密と無関係な参照は残す
+    assert '    env_file: config/app.env\n' in after
+
+    assert env_migrate.cmd_env_decrypt(with_key, assume_yes=True) == 0
+    assert compose.read_text() == original
+
+
+def test_scalar_env_file_keeps_crlf_line_endings(with_key):
+    """CRLF の compose.yml でも単一文字列の往復でバイト単位に戻る"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    original = """services:
+  dev:
+    image: alpine
+    env_file: ${DEVBASE_ROOT}/.env
+""".replace('\n', '\r\n').encode('utf-8')
+    compose.write_bytes(original)
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+    assert b'\r\n' in compose.read_bytes()
+    assert env_migrate.cmd_env_decrypt(with_key, assume_yes=True) == 0
+    assert compose.read_bytes() == original
+
+
+def test_scalar_env_file_reaches_the_service_that_read_it(with_key):
+    """無効化したあとも、そのサービスへ機密を渡す先として拾えている"""
+    from devbase.env import compose_migrate as cm
+
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""services:
+  dev:
+    image: alpine
+    env_file: ${DEVBASE_ROOT}/.env
+  db:
+    image: alpine
+    env_file: .env
+""")
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    assert cm.services_with_secret_env_file(compose.read_text()) == {
+        'dev': {cm.TARGET_GLOBAL},
+        'db': {cm.TARGET_PROJECT},
+    }
 
 
 def test_multi_line_long_syntax_secret_aborts_the_migration(with_key):
