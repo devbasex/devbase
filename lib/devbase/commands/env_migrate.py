@@ -22,7 +22,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from devbase.env import agekeys, compose_migrate, io_common
 from devbase.env.secret_store import (
@@ -401,6 +401,22 @@ def _remove_encrypted(store: SecretStore,
 # コンテナ構成の書き換え
 # ---------------------------------------------------------------------------
 
+def _compose_targets(path: Path, *, has_global: bool,
+                     project_names: Sequence[str]) -> Set[str]:
+    """この ``compose.yml`` で触ってよい参照の種別を決める。
+
+    暗号化 (無効化) と復号 (復元) で同じ判定を使う。「一部だけ復号したのに
+    全マーカーを戻す」と、まだ暗号化されたままの共通設定への参照まで有効に
+    なり、存在しないファイルを指したまま Compose が起動に失敗する。
+    """
+    wanted: Set[str] = set()
+    if has_global:
+        wanted.add(compose_migrate.TARGET_GLOBAL)
+    if path.parent.name in project_names:
+        wanted.add(compose_migrate.TARGET_PROJECT)
+    return wanted
+
+
 def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
                           *, restore: bool = False):
     """``compose.yml`` の書き換え内容を組み立てる (書き込みはしない)。
@@ -427,14 +443,16 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
             logger.warning("構成ファイルを読めませんでした (%s): %s", path, e)
             continue
 
+        # 行単位では書き換えられない記法 (インライン配列・単一文字列) は
+        # 対象から漏れる。黙って漏らすと壊れた構成のまま起動して初めて
+        # 気付くため、どのファイルの何行目かを警告しておく。
+        compose_migrate.warn_unsupported_env_file(before, path)
+
+        wanted = _compose_targets(path, has_global=has_global,
+                                  project_names=project_names)
         if restore:
-            after, touched = compose_migrate.enable(before)
+            after, touched = compose_migrate.enable(before, wanted)
         else:
-            wanted = set()
-            if has_global:
-                wanted.add(compose_migrate.TARGET_GLOBAL)
-            if path.parent.name in project_names:
-                wanted.add(compose_migrate.TARGET_PROJECT)
             after, touched = compose_migrate.disable(before, wanted)
 
         if touched and after != before:

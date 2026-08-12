@@ -14,6 +14,25 @@
 コメントや整形が失われること。もう 1 つは、平文へ戻す操作 (``devbase env decrypt``)
 で**元の行を機械的に復元できる**こと。行を削除してしまうと、どの位置に何を書き戻せば
 よいか分からなくなる。
+
+対応する書き方の範囲
+--------------------
+
+行単位で書き換える都合上、扱えるのは **ブロックシーケンス記法** だけである::
+
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - .env
+
+次のインライン記法・単一文字列記法は書き換えの対象外になる::
+
+    env_file: [ "${DEVBASE_ROOT}/.env", .env ]
+    env_file: .env
+
+これらは 1 行に複数の参照が同居するため、行ごとコメントアウトすると無関係な参照まで
+巻き添えにしてしまう。対象外だが**黙って見逃すと壊れた構成のまま起動して初めて気付く**
+ことになるため、:func:`warn_unsupported_env_file` で該当ファイルと行番号を警告し、
+手で書き換えてもらう。
 """
 
 from __future__ import annotations
@@ -21,7 +40,11 @@ from __future__ import annotations
 import difflib
 import re
 from pathlib import Path
-from typing import Iterable, List, Sequence, Set, Tuple
+from typing import Iterable, List, Optional, Sequence, Set, Tuple
+
+from devbase.log import get_logger
+
+logger = get_logger(__name__)
 
 #: コメントアウトした行に付ける目印。復元時はこれを取り除くだけで元に戻る。
 DISABLED_MARK = '# devbase(PLAN35) 機密は環境変数で注入: '
@@ -37,6 +60,10 @@ TARGET_PROJECT = 'project'
 
 _ENV_FILE_KEY_RE = re.compile(r'^(\s*)env_file:\s*(#.*)?$')
 _LIST_ITEM_RE = re.compile(r'^(\s*)-\s*(.*?)\s*$')
+
+#: ``env_file:`` の後ろに値が続く書き方 (インライン配列・単一文字列)。
+#: 行単位の書き換えでは扱えないため、検出して警告するためだけに使う。
+_ENV_FILE_INLINE_RE = re.compile(r'^\s*env_file:\s*(?!#)(\S.*)$')
 
 
 def _indent_of(line: str) -> int:
@@ -73,6 +100,15 @@ def _enable_line(line: str) -> str:
     return f"{indent}{line.lstrip(' ')[len(DISABLED_MARK):]}"
 
 
+def _source_line(line: str) -> str:
+    """無効化されているかに関わらず、その行の「YAML としての姿」を返す。
+
+    復元側はキー行もエントリ行もコメントアウトされている場合があるため、
+    インデントや記法の判定は目印を外した姿に対して行う必要がある。
+    """
+    return _enable_line(line) if _is_disabled(line) else line
+
+
 def disable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
             ) -> Tuple[str, List[str]]:
     """機密ファイルを指す ``env_file`` エントリをコメントアウトする。
@@ -100,7 +136,12 @@ def disable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
         while block_end < len(lines):
             raw = lines[block_end].rstrip('\n')
             if not raw.strip():
-                break
+                # 空行はブロックの終わりではない。ここで打ち切ると以降の
+                # エントリを無効化し損ねるうえ、「有効なエントリが 0 件」と
+                # 誤判定して `env_file:` キーごと落としてしまう。
+                # 終端はインデント (下の判定) が受け持つ。
+                block_end += 1
+                continue
             if _indent_of(raw) <= key_indent:
                 break
             if _is_disabled(raw):
@@ -128,21 +169,101 @@ def disable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
     return ''.join(lines), disabled
 
 
-def enable(text: str) -> Tuple[str, List[str]]:
+def enable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
+           ) -> Tuple[str, List[str]]:
     """``disable`` が付けた目印を外し、元の行へ戻す。
+
+    ``disable`` と同じく **種別を絞れる**。一部のプロジェクトだけを復号した
+    ときに全マーカーを戻すと、まだ暗号化されたままの共通設定
+    (``${DEVBASE_ROOT}/.env``) の参照まで有効になり、存在しないファイルを
+    指したまま Compose の起動が失敗する。
 
     Returns:
         ``(書き換え後のテキスト, 復元した行の一覧)``
     """
+    wanted = set(targets)
     lines = text.splitlines(keepends=True)
     restored: List[str] = []
-    for i, line in enumerate(lines):
-        stripped = line.rstrip('\n')
-        if not _is_disabled(stripped):
+
+    index = 0
+    while index < len(lines):
+        raw = lines[index].rstrip('\n')
+        # キー行そのものが無効化されている場合があるため、目印を外した姿で判定する
+        match = _ENV_FILE_KEY_RE.match(_source_line(raw))
+        if not match:
+            index += 1
             continue
-        lines[i] = _enable_line(stripped) + '\n'
-        restored.append(lines[i].strip())
+
+        key_index = index
+        key_disabled = _is_disabled(raw)
+        key_indent = _indent_of(_source_line(raw))
+        block_end = index + 1
+        active_entries = 0
+
+        while block_end < len(lines):
+            line = lines[block_end].rstrip('\n')
+            if not line.strip():
+                block_end += 1
+                continue
+            source = _source_line(line)
+            if _indent_of(source) <= key_indent:
+                break
+            item = _LIST_ITEM_RE.match(source)
+            if not item:
+                break
+            if _is_disabled(line):
+                if _is_target(_entry_value(item.group(2)), wanted):
+                    lines[block_end] = _enable_line(line) + '\n'
+                    restored.append(lines[block_end].strip())
+                    active_entries += 1
+            else:
+                active_entries += 1
+            block_end += 1
+
+        # キー行は「有効なエントリが 1 つも残らない」場合に無効化されている。
+        # 逆向きも同じ条件で判断し、エントリが戻ったときにだけ復元する。
+        # まだ全エントリが無効なまま `env_file:` を戻すと Compose が失敗する。
+        if key_disabled and active_entries > 0:
+            lines[key_index] = _enable_line(raw) + '\n'
+            restored.append(lines[key_index].strip())
+
+        index = block_end
+
     return ''.join(lines), restored
+
+
+def unsupported_env_file_lines(text: str) -> List[Tuple[int, str]]:
+    """行単位では扱えない ``env_file`` 記法を列挙する。
+
+    Returns:
+        ``[(1 始まりの行番号, 行の内容)]``
+    """
+    found: List[Tuple[int, str]] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.rstrip()
+        if _is_disabled(stripped):
+            continue
+        if _ENV_FILE_INLINE_RE.match(stripped):
+            found.append((number, stripped.strip()))
+    return found
+
+
+def warn_unsupported_env_file(text: str, path: Optional[Path] = None
+                              ) -> List[Tuple[int, str]]:
+    """扱えない ``env_file`` 記法を見つけたら警告する。
+
+    移行の対象から外れることを黙っていると、利用者は「移行できた」と思った
+    まま起動して初めて壊れていることに気付く。どのファイルの何行目を手で
+    直せばよいかまで示す。
+    """
+    found = unsupported_env_file_lines(text)
+    for number, line in found:
+        logger.warning(
+            "%s:%d の env_file はインライン記法のため自動で書き換えられません"
+            " (対応しているのは `env_file:` の下に `- ...` を並べる書き方だけです)。"
+            " 手動で書き換えてください: %s",
+            path if path is not None else '<compose.yml>', number, line)
+    return found
 
 
 def find_secret_entries(text: str,

@@ -6,6 +6,7 @@ import os
 import sys
 from importlib import import_module
 from pathlib import Path
+from typing import Optional
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger, setup
@@ -655,7 +656,7 @@ def main():
 
     cmd = args.command
 
-    _load_secret_env(cmd)
+    _load_secret_env(cmd, getattr(args, 'subcommand', None))
 
     try:
         return _dispatch(cmd, args)
@@ -664,13 +665,27 @@ def main():
         return 1
 
 
-# 機密の注入を行わないコマンド。鍵の生成や平文への退避は「まだ鍵が無い」
+# 機密の注入を行わないコマンド。鍵の生成や暗号化・復号は「まだ鍵が無い」
 # 「復号できない」状態でこそ実行されるため、注入を試みると本来の操作の前に
 # 落ちてしまう。
-_NO_SECRET_INJECTION = frozenset({'init'})
+#
+# `env` のように注入が要るサブコマンド (`env list` など) と要らないサブコマンド
+# が同居するグループがあるため、``(コマンド, サブコマンド)`` の組で持つ。
+# サブコマンドが ``None`` の項目は「そのコマンド全体をスキップする」意味。
+_NO_SECRET_INJECTION = frozenset({
+    ('init', None),
+    ('env', 'keygen'),
+    ('env', 'encrypt'),
+    ('env', 'decrypt'),
+})
 
 
-def _load_secret_env(cmd: str) -> None:
+def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
+    return ((cmd, None) in _NO_SECRET_INJECTION
+            or (cmd, subcommand) in _NO_SECRET_INJECTION)
+
+
+def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
     """機密を復号して自プロセスの環境変数へ載せる。
 
     起動ラッパーは共通の機密ファイルを読み込まなくなった (plan35 §4.4)。
@@ -682,7 +697,7 @@ def _load_secret_env(cmd: str) -> None:
     使えるべきで、値が本当に要る操作 (コンテナ起動など) は各コマンド側で
     改めて必須として読み込む。
     """
-    if cmd in _NO_SECRET_INJECTION:
+    if _skip_secret_injection(cmd, subcommand):
         return
     root = os.environ.get('DEVBASE_ROOT')
     if not root:

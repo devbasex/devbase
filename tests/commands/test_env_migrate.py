@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -363,3 +364,56 @@ def test_decrypt_rolls_back_when_removing_the_ciphertext_fails(two_projects,
     store = SecretStore(root)
     assert store.load(GLOBAL) == {'ANTHROPIC_API_KEY': 'sk-1'}
     assert store.load(API) == {'API_TOKEN': 'tk'}
+
+
+def test_decrypt_of_one_project_leaves_the_global_reference_disabled(two_projects):
+    """部分復号で、まだ暗号化されたままの共通設定の参照まで戻さない"""
+    root = two_projects
+    assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 0
+
+    assert env_migrate.cmd_env_decrypt(root, assume_yes=True,
+                                       projects=['web']) == 0
+
+    store = SecretStore(root)
+    assert not store.is_encrypted(WEB)
+    assert store.is_encrypted(GLOBAL)
+
+    from devbase.env import compose_migrate as cm
+
+    web = (root / 'projects' / 'web' / 'compose.yml').read_text()
+    # プロジェクト側だけが戻り、共通設定の参照は無効のまま
+    assert '      - .env\n' in web
+    assert f'{cm.DISABLED_MARK}- ${{DEVBASE_ROOT}}/.env' in web
+    # 対象外のプロジェクトの構成には手を触れない
+    api = (root / 'projects' / 'api' / 'compose.yml').read_text()
+    assert f'{cm.DISABLED_MARK}- .env' in api
+
+
+def test_decrypt_of_everything_after_a_partial_decrypt_restores_the_original(
+        two_projects):
+    root = two_projects
+    before = compose_texts(root)
+    assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 0
+
+    assert env_migrate.cmd_env_decrypt(root, assume_yes=True,
+                                       projects=['web']) == 0
+    assert env_migrate.cmd_env_decrypt(root, assume_yes=True) == 0
+
+    assert compose_texts(root) == before
+
+
+def test_inline_env_file_is_warned_about(with_key, caplog):
+    """自動で書き換えられない記法は黙って見逃さない"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""services:
+  dev:
+    env_file: [ "${DEVBASE_ROOT}/.env", .env ]
+""")
+    seed_plaintext(with_key)
+
+    with caplog.at_level(logging.WARNING,
+                         logger='devbase.env.compose_migrate'):
+        assert env_migrate.cmd_env_encrypt(with_key, dry_run=True) == 0
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any('compose.yml:3' in m and 'env_file' in m for m in messages)
