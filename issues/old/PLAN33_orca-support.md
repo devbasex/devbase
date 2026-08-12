@@ -2,8 +2,8 @@
 
 ## 関連リンク
 
-- 元 issue: `issues/i33.md`（Orca 対応）
-- 参考アドバイス: `issues/i33-advice.md`（ChatGPT による構成案）
+- 元 issue: `issues/old/i33.md`（Orca 対応）
+- 参考アドバイス: `issues/old/i33-advice.md`（ChatGPT による構成案）
 - Orca 公式:
   - SSH worktrees — https://www.onorca.dev/docs/ssh
   - Work on a remote machine over SSH（recipe）— https://www.onorca.dev/docs/recipes/remote-worktrees
@@ -21,7 +21,7 @@ Orca の remote 開発モデルは **「SSH target 上に worktree を作り、a
 
 `docker exec` を terminal だけコンテナに入れる方式や `ProxyCommand docker exec ... sshd -i`
 方式は、Orca の file explorer / diff / worktree 管理がホスト側を見てしまう・SFTP が使えない
-（上記 open issue）などの制約があるため **採らない**（`issues/i33-advice.md` の結論に従う）。
+（上記 open issue）などの制約があるため **採らない**（`issues/old/i33-advice.md` の結論に従う）。
 
 実現するのは次の 3 層:
 
