@@ -93,10 +93,14 @@ def test_user_comments_are_preserved():
       - env   # プロジェクト設定
     image: x
 """
-    after, _ = cm.disable(text)
+    after, touched = cm.disable(text)
 
     assert '      # 共通設定\n' in after
     assert '      - env   # プロジェクト設定\n' in after
+    # コメント行で走査が止まると、その後ろの機密参照が無効化されないまま残る。
+    # 「往復で元に戻る」だけでは何も書き換えられなかった場合と区別できない。
+    assert touched == ['${DEVBASE_ROOT}/.env']
+    assert f'{cm.DISABLED_MARK}- ${{DEVBASE_ROOT}}/.env' in after
     assert cm.enable(after)[0] == text
 
 
@@ -268,6 +272,96 @@ def test_blank_line_does_not_leak_into_the_next_block():
 
 
 # ---------------------------------------------------------------------------
+# コメント行を含むリスト
+# ---------------------------------------------------------------------------
+
+COMMENT_IN_LIST = """services:
+  dev:
+    env_file:
+      - env
+      # 機密はここから
+      - ${DEVBASE_ROOT}/.env
+      - .env
+    image: x
+"""
+
+
+def test_comment_lines_inside_the_list_do_not_stop_the_scan():
+    """コメント行で打ち切ると、その後ろの機密参照が有効なまま残ってしまう"""
+    after, touched = cm.disable(COMMENT_IN_LIST)
+
+    assert touched == ['${DEVBASE_ROOT}/.env', '.env']
+    assert f'{cm.DISABLED_MARK}- ${{DEVBASE_ROOT}}/.env' in after
+    assert f'{cm.DISABLED_MARK}- .env' in after
+    assert '      # 機密はここから\n' in after
+    assert '      - env\n' in after
+
+
+def test_comment_lines_round_trip():
+    disabled, _ = cm.disable(COMMENT_IN_LIST)
+    restored, touched = cm.enable(disabled)
+
+    assert restored == COMMENT_IN_LIST
+    assert len(touched) == 2
+
+
+def test_comment_lines_do_not_make_the_key_look_used():
+    """コメント行の後ろに有効なエントリが残るなら `env_file:` は落とせない"""
+    text = """services:
+  dev:
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      # プロジェクト設定
+      - env
+    image: x
+"""
+    after, _ = cm.disable(text)
+
+    assert '    env_file:\n' in after
+    assert f'{cm.DISABLED_MARK}env_file:' not in after
+
+
+def test_comments_and_blank_lines_mixed_do_not_stop_the_scan():
+    text = """services:
+  dev:
+    env_file:
+
+      # 共通設定
+      - ${DEVBASE_ROOT}/.env
+
+      # プロジェクト設定
+      - .env
+    image: x
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == ['${DEVBASE_ROOT}/.env', '.env']
+    # 有効なエントリが 1 つも残らないのでキー行も無効化される
+    assert f'{cm.DISABLED_MARK}env_file:' in after
+    assert cm.enable(after)[0] == text
+
+
+def test_comment_does_not_leak_into_the_next_block():
+    """ブロックの外のコメントを読み飛ばしても、次のサービスは壊さない"""
+    text = """services:
+  dev:
+    env_file:
+      - .env
+
+  # ここから worker
+  worker:
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+"""
+    after, touched = cm.disable(text)
+
+    assert touched == ['.env', '${DEVBASE_ROOT}/.env']
+    assert '  # ここから worker\n' in after
+    assert '  worker:\n' in after
+    assert cm.enable(after)[0] == text
+
+
+# ---------------------------------------------------------------------------
 # 対応していない記法
 # ---------------------------------------------------------------------------
 
@@ -433,6 +527,45 @@ volumes:
   data: {}
 """
     assert cm.services_with_secret_env_file(text) == {}
+
+
+def test_services_with_secret_env_file_sees_past_comment_lines():
+    """コメント行で走査が止まると、その後ろの参照を持つサービスを取りこぼす"""
+    text = """services:
+  dev:
+    env_file:
+      - env
+      # 機密はここから
+      - ${DEVBASE_ROOT}/.env
+
+      # プロジェクト設定
+      - .env
+  # ここから db
+  db:
+    env_file:
+      # プロジェクト設定
+      - .env
+"""
+    assert cm.services_with_secret_env_file(text) == {
+        'dev': {cm.TARGET_GLOBAL, cm.TARGET_PROJECT},
+        'db': {cm.TARGET_PROJECT},
+    }
+
+
+def test_services_with_secret_env_file_sees_past_comments_after_disable():
+    """移行後も同じ結果でなければ、機密が渡らないまま起動して失敗する"""
+    text = """services:
+  db:
+    env_file:
+      # プロジェクト設定
+      - .env
+      - env
+"""
+    disabled, touched = cm.disable(text)
+
+    assert touched == ['.env']
+    assert cm.services_with_secret_env_file(disabled) == {
+        'db': {cm.TARGET_PROJECT}}
 
 
 def test_services_with_secret_env_file_respects_targets():

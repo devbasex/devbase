@@ -169,6 +169,60 @@ def _source_line(line: str) -> str:
     return _enable_line(line) if _is_disabled(line) else line
 
 
+def _is_skippable(line: str) -> bool:
+    """空行、または利用者が書いた単独のコメント行かを返す。
+
+    どちらも YAML としての構造を持たないので、走査の途中で出てきても
+    ブロックの終わりとみなしてはいけない。ここで打ち切ると、**コメント行より
+    後ろに書かれた機密参照が無効化されないまま残り**、平文を退避したあとに
+    Compose が存在しないファイルを読もうとして起動できなくなる。
+
+    無効化済みの行 (:data:`DISABLED_MARK` 付き) も見た目はコメント行だが、
+    中身はエントリなので読み飛ばしてはいけない。判定の順序を間違えると
+    ``enable`` が何も復元できなくなるため、先に :func:`_is_disabled` で除く。
+    """
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if _is_disabled(stripped):
+        return False
+    return stripped.startswith('#')
+
+
+def _scan_env_file_block(lines: Sequence[str], key_index: int, key_indent: int
+                         ) -> Tuple[List[Tuple[int, str, bool]], int]:
+    """``env_file:`` ブロックのエントリ行を集め、ブロックの終端を返す。
+
+    ``disable`` と ``enable`` は向きが逆なだけで「どこからどこまでがブロックで、
+    どの行がエントリか」の判定は同じである。二重に持つと片方だけ直したときに
+    無効化と復元がずれるため、走査はここ 1 箇所に集める。
+
+    Args:
+        key_index: ``env_file:`` キー行の位置。
+        key_indent: キー行のインデント (目印を外した姿で数えたもの)。
+
+    Returns:
+        ``([(行の位置, 参照先, 無効化済みか)], ブロック終端の行の位置)``
+    """
+    entries: List[Tuple[int, str, bool]] = []
+    index = key_index + 1
+    while index < len(lines):
+        raw = lines[index].rstrip('\n')
+        if _is_skippable(raw):
+            index += 1
+            continue
+        # 無効化済みの行も「YAML としての姿」に戻してインデントと記法を見る
+        source = _source_line(raw)
+        if _indent_of(source) <= key_indent:
+            break
+        item = _LIST_ITEM_RE.match(source)
+        if not item:
+            break
+        entries.append((index, _entry_value(item.group(2)), _is_disabled(raw)))
+        index += 1
+    return entries, index
+
+
 def disable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
             ) -> Tuple[str, List[str]]:
     """機密ファイルを指す ``env_file`` エントリをコメントアウトする。
@@ -189,35 +243,21 @@ def disable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
 
         key_index = index
         key_indent = len(match.group(1))
-        block_end = index + 1
         touched_here = False
         active_entries = 0
 
-        while block_end < len(lines):
-            raw = lines[block_end].rstrip('\n')
-            if not raw.strip():
-                # 空行はブロックの終わりではない。ここで打ち切ると以降の
-                # エントリを無効化し損ねるうえ、「有効なエントリが 0 件」と
-                # 誤判定して `env_file:` キーごと落としてしまう。
-                # 終端はインデント (下の判定) が受け持つ。
-                block_end += 1
+        entries, block_end = _scan_env_file_block(lines, key_index, key_indent)
+        for entry_index, value, already_disabled in entries:
+            if already_disabled:
+                # すでに無効化されている。有効なエントリとしても数えない
                 continue
-            if _indent_of(raw) <= key_indent:
-                break
-            if _is_disabled(raw):
-                block_end += 1
-                continue
-            item = _LIST_ITEM_RE.match(raw)
-            if not item:
-                break
-            value = _entry_value(item.group(2))
             if _is_target(value, wanted):
-                lines[block_end] = _disable_line(raw) + '\n'
+                lines[entry_index] = (
+                    _disable_line(lines[entry_index].rstrip('\n')) + '\n')
                 disabled.append(value)
                 touched_here = True
             else:
                 active_entries += 1
-            block_end += 1
 
         # 全エントリを落とすと `env_file:` だけが残り、Compose が
         # 「env_file は文字列かリスト」で失敗する。キー行ごと無効化する。
@@ -257,28 +297,18 @@ def enable(text: str, targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
         key_index = index
         key_disabled = _is_disabled(raw)
         key_indent = _indent_of(_source_line(raw))
-        block_end = index + 1
         active_entries = 0
 
-        while block_end < len(lines):
-            line = lines[block_end].rstrip('\n')
-            if not line.strip():
-                block_end += 1
-                continue
-            source = _source_line(line)
-            if _indent_of(source) <= key_indent:
-                break
-            item = _LIST_ITEM_RE.match(source)
-            if not item:
-                break
-            if _is_disabled(line):
-                if _is_target(_entry_value(item.group(2)), wanted):
-                    lines[block_end] = _enable_line(line) + '\n'
-                    restored.append(lines[block_end].strip())
-                    active_entries += 1
-            else:
+        entries, block_end = _scan_env_file_block(lines, key_index, key_indent)
+        for entry_index, value, entry_disabled in entries:
+            if not entry_disabled:
                 active_entries += 1
-            block_end += 1
+                continue
+            if _is_target(value, wanted):
+                lines[entry_index] = (
+                    _enable_line(lines[entry_index].rstrip('\n')) + '\n')
+                restored.append(lines[entry_index].strip())
+                active_entries += 1
 
         # キー行は「有効なエントリが 1 つも残らない」場合に無効化されている。
         # 逆向きも同じ条件で判断し、エントリが戻ったときにだけ復元する。
@@ -299,6 +329,10 @@ def unsupported_env_file_lines(text: str) -> List[Tuple[int, str]]:
         ``[(1 始まりの行番号, 行の内容)]``
     """
     found: List[Tuple[int, str]] = []
+    # ここは行ごとに独立して判定するため、空行や利用者のコメント行があっても
+    # 後続の行を取りこぼすことはない (コメント行は行頭が `#` なので
+    # `_ENV_FILE_INLINE_RE` に一致しない)。ブロックを追う走査は
+    # `_scan_env_file_block` 側にある。
     for number, line in enumerate(text.splitlines(), start=1):
         stripped = line.rstrip()
         if _is_disabled(stripped):
@@ -390,10 +424,13 @@ def services_with_secret_env_file(
     env_file_indent: Optional[int] = None
 
     for raw_line in text.splitlines():
-        # コメントアウト済みの行も「YAML としての姿」に戻して判定する
-        line = _source_line(raw_line.rstrip())
-        if not line.strip():
+        stripped = raw_line.rstrip()
+        # 空行と利用者のコメント行は構造を持たない。ここで env_file ブロックを
+        # 打ち切ると、その後ろのエントリを取りこぼして機密が渡らなくなる
+        if _is_skippable(stripped):
             continue
+        # コメントアウト済みの行も「YAML としての姿」に戻して判定する
+        line = _source_line(stripped)
         indent = _indent_of(line)
 
         if services_indent is None:
