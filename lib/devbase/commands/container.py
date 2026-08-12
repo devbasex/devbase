@@ -35,8 +35,68 @@ _SCALE_COMPOSE_FILE = Path('.docker-compose.scale.yml')
 # 共通ヘルパー
 # ---------------------------------------------------------------------------
 
+def _devbase_root() -> Optional[Path]:
+    root = os.environ.get('DEVBASE_ROOT')
+    return Path(root) if root else None
+
+
+def _inject_secrets(*, required: bool):
+    """機密を復号して自プロセスの環境変数へ載せ、載せた内容を返す。
+
+    ``docker compose`` は自分を起動したプロセスの環境変数から値を解決するため、
+    Compose を呼ぶ前にここを通す。生成する構成には変数名しか書かないので、
+    暗号文も平文ファイルも Compose には渡らない (plan35 §4.3)。
+
+    戻り値を変数名の一覧ではなく :class:`~devbase.env.runtime.SecretEnv` に
+    しているのは、構成生成側が**由来 (共通 / プロジェクト) ごとの内訳**を必要
+    とするため。サービスが元々参照していなかった由来の機密まで渡さないための
+    材料になる。
+
+    ``required=False`` の経路 (down / ps / logs など) では、鍵が無い・復号に
+    失敗したというだけでコンテナを止められなくなるのは困るため、警告に留めて
+    続行する。値が要るのは主に起動時の変数展開であり、停止や状態確認には
+    要らない。
+
+    載せ直す前に :func:`~devbase.env.runtime.clear_injected` を通すのは、
+    プロジェクト切替の残留対策。``cli._load_secret_env`` は dispatch の**前**に
+    「現在地のプロジェクト」の機密を載せるが、TUI や
+    ``python -m devbase.cli project up <other>`` の直接起動ではその後
+    ``_resolve_project_name`` が対象プロジェクトへ切り替わる。ここは切替・chdir
+    の**後**に呼ばれるので、載せ直しで上書きできる。ただし**上書きだけでは
+    足りない**: 切替先に同名のキーが無い機密 (切替元プロジェクト固有のもの) は
+    上書きされず残り、Compose や子プロセスへ引き継がれてしまうため、先に
+    取り除く。非機密設定 (``env``) 側の ``_CALLER_ENV_KEYS`` /
+    :func:`_resolve_project_name` と同じ扱いを機密にも与えることになる。
+    """
+    from devbase.env import runtime as _runtime
+    from devbase.errors import DevbaseError
+
+    root = _devbase_root()
+    if root is None:
+        return _runtime.SecretEnv()
+    _runtime.clear_injected()
+    try:
+        return _runtime.inject(root, _runtime.current_project_name(root))
+    except DevbaseError as e:
+        if required:
+            raise
+        logger.warning("機密を読み込めませんでした (続行します): %s", e)
+        return _runtime.SecretEnv()
+
+
+def _generate_compose_for(scale: int, secrets) -> Path:
+    """機密の内訳を渡してスケール構成を生成する"""
+    return generate_scaled_compose(
+        scale,
+        secret_env_names=secrets.names,
+        global_env_names=secrets.global_names,
+        project_env_names=secrets.project_names,
+    )
+
+
 def _compose_run(subcommand: str, *extra_args: str) -> int:
     """docker compose コマンドを実行する共通関数"""
+    _inject_secrets(required=False)
     cmd = ['docker', 'compose']
     if _SCALE_COMPOSE_FILE.exists():
         cmd.extend(['-f', str(_SCALE_COMPOSE_FILE)])
@@ -290,6 +350,12 @@ def _resolve_project_name(project_name: str) -> bool:
     if not already_there:
         caller_env_keys = _env_var_keys(Path('env'))
         os.chdir(target)
+        # ``PWD`` も併せて切り替える。機密の解決 (
+        # :func:`devbase.env.runtime.current_project_name`) は wrapper の cd を前提に
+        # ``os.environ['PWD']`` を先に見るため、os.chdir だけだと切替前の PWD が残り、
+        # 切替先ではなく呼び出し元プロジェクトの機密を読んでしまう
+        # (TUI の ``_run_in_project`` が PWD を差し替えているのと同じ理由)。
+        os.environ['PWD'] = str(target)
         target_env_keys = _env_var_keys(Path('env'))
         for key in caller_env_keys - target_env_keys:
             os.environ.pop(key, None)
@@ -555,7 +621,7 @@ def cmd_up(project_name: str = None, scale: int = None,
             docker_compose_down()
 
         logger.info("[3/6] Generating scaled compose file...")
-        override_file = generate_scaled_compose(scale)
+        override_file = _generate_compose_for(scale, _inject_secrets(required=True))
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/6] Starting containers...")
@@ -594,6 +660,7 @@ def cmd_up(project_name: str = None, scale: int = None,
 
 def cmd_down() -> int:
     """Stop and remove containers"""
+    _inject_secrets(required=False)
     compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
     docker_compose_down(compose_file=compose_file)
 
@@ -615,6 +682,7 @@ def cmd_down() -> int:
 
 def cmd_login(index: str = '1') -> int:
     """Login to container"""
+    _inject_secrets(required=False)
     dev_service = get_dev_service_name()
 
     if _SCALE_COMPOSE_FILE.exists():
@@ -687,7 +755,8 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
-        override_file = generate_scaled_compose(new_scale)
+        override_file = _generate_compose_for(
+            new_scale, _inject_secrets(required=True))
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
@@ -871,13 +940,27 @@ def _ensure_env_files() -> bool:
         return False
     devbase_root_env = devbase_root / '.env'
 
-    if project_env.exists() and devbase_root_env.exists():
+    # 機密が暗号化されていれば平文の .env は存在しない。ファイルの有無ではなく
+    # 秘密ストアに設定があるかで判定しないと、移行済みの環境で毎回 env init が
+    # 走ってしまう。
+    from devbase.env import runtime as _runtime
+    from devbase.env.secret_store import SecretRef, SecretStore
+
+    store = SecretStore(devbase_root)
+    has_global = store.exists(SecretRef.for_global())
+
+    project_name = _runtime.current_project_name(devbase_root)
+    has_project = project_env.exists()
+    if not has_project and project_name:
+        has_project = store.exists(SecretRef.for_project(project_name))
+
+    if has_project and has_global:
         return True
 
     missing_files = []
-    if not project_env.exists():
+    if not has_project:
         missing_files.append("project .env")
-    if not devbase_root_env.exists():
+    if not has_global:
         missing_files.append(f"devbase root .env ({devbase_root_env})")
 
     logger.info("Missing: %s", ', '.join(missing_files))
@@ -886,7 +969,7 @@ def _ensure_env_files() -> bool:
     success = True
     child_env = {**os.environ, 'PYTHONPATH': str(devbase_root / 'lib')}
 
-    if not devbase_root_env.exists():
+    if not has_global:
         logger.info("Creating devbase root .env...")
         try:
             result = subprocess.run(
@@ -902,7 +985,7 @@ def _ensure_env_files() -> bool:
             logger.error("Running env init for devbase root: %s", e)
             success = False
 
-    if not project_env.exists():
+    if not has_project:
         logger.info("Creating project .env...")
         try:
             project_env.touch()
