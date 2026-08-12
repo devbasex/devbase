@@ -485,6 +485,40 @@ def _print_key_backup_notice(path, public: str) -> None:
     print("=" * 60)
 
 
+def _snapshot_file(path: Path):
+    """ロールバック用にファイル内容を控える。存在しなければ ``None``。
+
+    読めなかった場合も ``None`` を返す。ここで例外にすると、壊れた鍵ファイルを
+    ``--force`` で作り直す正当なケースまで塞いでしまうため。
+    """
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _restore_file(path: Path, snapshot) -> bool:
+    """``_snapshot_file`` で控えた内容を書き戻す。
+
+    ``snapshot`` が ``None`` (= 元は存在しなかった) なら、途中で作られたファイルを
+    削除して元の「無い」状態へ戻す。復元自体に失敗しても呼び出し側の主エラーを
+    潰さないよう、例外は握りつぶして ``False`` を返す。
+    """
+    from devbase.env import io_common as _io_common
+
+    try:
+        if snapshot is None:
+            if path.exists():
+                path.unlink()
+                return True
+            return False
+        _io_common.write_secure_bytes_atomic(path, snapshot)
+        return True
+    except OSError as e:
+        logger.error("ロールバックに失敗しました (%s): %s", path, e)
+        return False
+
+
 def cmd_env_keygen(devbase_root: Path, key_file=None, force: bool = False,
                    assume_yes: bool = False) -> int:
     """devbase 専用の age 鍵を生成する"""
@@ -521,14 +555,26 @@ def cmd_env_keygen(devbase_root: Path, key_file=None, force: bool = False,
                 print("中止しました")
                 return 1
 
+    # 鍵の差し替えと受信者リストの更新は「まとめて成功するか、何も変わらないか」の
+    # どちらかでなければならない。片方だけ適用されると、旧鍵は失われたのに新公開鍵は
+    # 受信者に載っていない、という復旧不能な状態になりうる。個々の書き込みは atomic
+    # でも複数ファイルにまたがる更新はそうならないため、事前に中身を控えて巻き戻す。
+    recipients_path = agekeys.recipients_file(devbase_root)
+    key_snapshot = _snapshot_file(path)
+    recipients_snapshot = _snapshot_file(recipients_path)
+
     try:
         path, public = agekeys.generate_key_file(path, force=True)
         agekeys.add_recipient(devbase_root, public)
         if old_public and old_public != public:
             agekeys.remove_recipient(devbase_root, old_public)
             logger.info("受信者リストから旧公開鍵を削除しました: %s", old_public)
-    except DevbaseError as e:
+    except (DevbaseError, OSError) as e:
         logger.error("%s", e)
+        restored = _restore_file(path, key_snapshot)
+        restored |= _restore_file(recipients_path, recipients_snapshot)
+        if restored:
+            logger.error("鍵と受信者リストを元の状態へ戻しました")
         return 1
 
     logger.info("鍵を生成しました: %s", path)

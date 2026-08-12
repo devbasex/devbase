@@ -73,6 +73,59 @@ def test_generate_key_file_force_replaces_key(isolated_home):
     assert agekeys.read_public_key(path) == second
 
 
+def test_generate_key_file_force_keeps_0600(isolated_home):
+    """一時ファイル経由の差し替えでも権限が広がらない"""
+    path, _ = agekeys.generate_key_file()
+    agekeys.generate_key_file(force=True)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_generate_key_file_force_leaves_no_temp_file(isolated_home):
+    """差し替え用の一時ファイルが鍵ディレクトリに残らない"""
+    path, _ = agekeys.generate_key_file()
+    agekeys.generate_key_file(force=True)
+    assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+def test_generate_key_file_force_keeps_old_key_when_replace_fails(isolated_home,
+                                                                  monkeypatch):
+    """差し替えに失敗しても旧鍵は無傷のまま残る (O_TRUNC 直書きなら失われる)"""
+    path, first = agekeys.generate_key_file()
+    before = path.read_bytes()
+
+    def boom(src, dst):
+        raise OSError(28, 'No space left on device')
+
+    monkeypatch.setattr(agekeys._io_common.os, 'replace', boom)
+
+    with pytest.raises(OSError):
+        agekeys.generate_key_file(force=True)
+
+    assert path.read_bytes() == before
+    assert agekeys.read_public_key(path) == first
+    # 書きかけの一時ファイルも掃除されている
+    assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+def test_save_recipients_keeps_old_list_when_replace_fails(tmp_path, monkeypatch):
+    """受信者リストも差し替え失敗時に旧内容を保つ"""
+    pubs = [str(pyrage.x25519.Identity.generate().to_public()) for _ in range(2)]
+    agekeys.save_recipients(tmp_path, pubs)
+    path = agekeys.recipients_file(tmp_path)
+    before = path.read_bytes()
+
+    def boom(src, dst):
+        raise OSError(28, 'No space left on device')
+
+    monkeypatch.setattr(agekeys._io_common.os, 'replace', boom)
+
+    with pytest.raises(OSError):
+        agekeys.save_recipients(tmp_path, pubs[:1])
+
+    assert path.read_bytes() == before
+    assert agekeys.load_recipients(tmp_path) == pubs
+
+
 def test_generated_key_can_decrypt_what_its_public_key_encrypted(isolated_home):
     from devbase.env import cipher
 

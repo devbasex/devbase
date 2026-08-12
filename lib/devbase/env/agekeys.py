@@ -83,6 +83,11 @@ def generate_key_file(path: Optional[Path] = None, *,
                       force: bool = False) -> Tuple[Path, str]:
     """devbase 専用の age 鍵を生成して ``0600`` で保存する。
 
+    ``force`` で既存鍵を作り直す場合も、同一ディレクトリの一時ファイルへ書いて
+    fsync してから atomic に差し替える。直接 ``O_TRUNC`` で上書きすると、書き込み
+    途中の失敗 (ディスク枯渇・強制終了など) で旧鍵だけが失われ、既存の暗号文を
+    誰も復号できなくなるため。差し替えに成功するまで旧鍵はそのまま残る。
+
     Returns:
         ``(鍵ファイルのパス, 公開鍵文字列)``
 
@@ -110,7 +115,7 @@ def generate_key_file(path: Optional[Path] = None, *,
     )
 
     _ensure_private_dir(path.parent)
-    _io_common.write_secure_bytes(path, content.encode('utf-8'))
+    _io_common.write_secure_bytes_atomic(path, content.encode('utf-8'))
     return path, public
 
 
@@ -175,6 +180,9 @@ def save_recipients(devbase_root: Path, recipients: List[str]) -> Path:
     公開鍵そのものは秘密ではないが、ファイルは ``0600`` で保護する。第三者が
     自分の公開鍵をここへ追記できると、以後の暗号化がその相手にも復号可能に
     なるため、機密性ではなく**改竄防止**のために権限を絞る。
+
+    書き込みは鍵ファイルと同じく atomic に行う。途中失敗で受信者が欠けたリストが
+    残ると、以後の暗号化から一部の受信者が黙って外れてしまうため。
     """
     path = recipients_file(devbase_root)
     _ensure_private_dir(path.parent)
@@ -185,7 +193,7 @@ def save_recipients(devbase_root: Path, recipients: List[str]) -> Path:
         "# 編集しても既存の暗号化ファイルは変わらないため、変更後は再暗号化すること。\n"
     )
     body = ''.join(f"{r}\n" for r in recipients)
-    _io_common.write_secure_bytes(path, (header + body).encode('utf-8'))
+    _io_common.write_secure_bytes_atomic(path, (header + body).encode('utf-8'))
     return path
 
 
