@@ -99,6 +99,32 @@ def test_load_of_missing_file_is_empty(store):
     assert store.plaintext.load(GLOBAL) == {}
 
 
+RAW = b'# comment\n\nexport EDITOR=vim\nQUOTED="a b"\n'
+
+
+def test_bytes_roundtrip_keeps_the_original_content(store):
+    """バイト列経路はコメント・空行・``export`` 表記をそのまま往復させる"""
+    for backend in (store.age, store.plaintext):
+        backend.save_bytes(GLOBAL, RAW)
+        assert backend.load_bytes(GLOBAL) == RAW
+        backend.remove(GLOBAL)
+
+
+def test_load_bytes_of_missing_file_is_empty(store):
+    assert store.age.load_bytes(GLOBAL) == b''
+    assert store.plaintext.load_bytes(GLOBAL) == b''
+
+
+def test_dict_save_normalizes_what_bytes_save_preserved(store):
+    """辞書経由で保存し直すと従来どおり正規化される (原文は残らない)"""
+    store.plaintext.save_bytes(GLOBAL, RAW)
+    values = store.plaintext.load(GLOBAL)
+    store.plaintext.save(GLOBAL, values)
+
+    assert b'# comment' not in store.plaintext.load_bytes(GLOBAL)
+    assert store.plaintext.load(GLOBAL) == values
+
+
 def test_age_load_with_wrong_identity_raises(tmp_path, keypair):
     public, _ = keypair
     other = tmp_path / 'other.key'

@@ -16,6 +16,19 @@
 どちらを使うかは**ファイルの存在で自動判定**する。暗号化ファイルがあればそれを使い、
 無ければ平文を使う。同じ参照に対して両方が存在する状態は、どちらが正なのか判断できない
 ため明示的なエラーにして利用者に解消させる (plan35 §9)。
+
+読み書きの経路は 2 つある:
+
+- ``load`` / ``save``: ``KEY=VALUE`` の辞書として扱う。``devbase env set`` など
+  「値を書き換える」操作はこちらを使う
+- ``load_bytes`` / ``save_bytes``: **原文のバイト列をそのまま** 扱う。
+  ``devbase env encrypt`` / ``decrypt`` の移行はこちらを使い、コメント・空行・
+  ``export KEY=...`` のような表記を保ったまま往復させる
+
+このため「**値を書き換えるまでは原文が保たれ、書き換えると正規化される**」という
+性質になる。``env set`` で 1 つでも値を更新すると ``EnvFile.dump_bytes`` の書式
+(キーの昇順・コメントの消失) へ揃うが、これは平文しか無かった頃と同じ挙動であり、
+暗号化したからといって変わるものではない。
 """
 
 from __future__ import annotations
@@ -88,6 +101,8 @@ class SecretBackend(Protocol):
     def exists(self, ref: SecretRef) -> bool: ...
     def load(self, ref: SecretRef) -> Dict[str, str]: ...
     def save(self, ref: SecretRef, data: Dict[str, str]) -> Path: ...
+    def load_bytes(self, ref: SecretRef) -> bytes: ...
+    def save_bytes(self, ref: SecretRef, data: bytes) -> Path: ...
     def remove(self, ref: SecretRef) -> bool: ...
 
 
@@ -107,30 +122,44 @@ class PlaintextBackend:
     def exists(self, ref: SecretRef) -> bool:
         return self.path(ref).is_file()
 
-    def load(self, ref: SecretRef) -> Dict[str, str]:
+    def load_bytes(self, ref: SecretRef) -> bytes:
+        """``.env`` の中身を **原文のバイト列のまま** 返す (不在なら空)"""
         path = self.path(ref)
         if not path.is_file():
-            return {}
+            return b''
         try:
-            return EnvFile.parse_bytes(path.read_bytes())
+            return path.read_bytes()
         except OSError as e:
             raise SecretStoreError(f"読み込みに失敗しました ({path}): {e}") from e
-        except UnicodeDecodeError as e:
-            raise SecretStoreError(
-                f"{path} を UTF-8 として読めませんでした: {e}\n"
-                "暗号化済みファイルを平文として読もうとしていないか確認してください"
-            ) from e
 
-    def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
+    def save_bytes(self, ref: SecretRef, data: bytes) -> Path:
+        """バイト列を **加工せずそのまま** ``.env`` へ書き出す"""
         path = self.path(ref)
         try:
             # 平文とはいえ機密の入れ物なので、暗号化側と同じく atomic に差し替える。
             # 直接 O_TRUNC すると書き込み途中の失敗で旧値も新値も失った空ファイルが
             # 残り、その状態で暗号化すると中身の無い機密を保存してしまう。
-            _io_common.write_secure_bytes_atomic(path, EnvFile.dump_bytes(data))
+            _io_common.write_secure_bytes_atomic(path, data)
         except OSError as e:
             raise SecretStoreError(f"書き込みに失敗しました ({path}): {e}") from e
         return path
+
+    def load(self, ref: SecretRef) -> Dict[str, str]:
+        try:
+            return EnvFile.parse_bytes(self.load_bytes(ref))
+        except UnicodeDecodeError as e:
+            raise SecretStoreError(
+                f"{self.path(ref)} を UTF-8 として読めませんでした: {e}\n"
+                "暗号化済みファイルを平文として読もうとしていないか確認してください"
+            ) from e
+
+    def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
+        """辞書を ``EnvFile`` の書式へ整形して保存する。
+
+        コメント・空行・``export`` 表記は辞書に載らないため、この経路を通ると
+        内容が正規化される。原文を保ちたい移行系は :meth:`save_bytes` を使う。
+        """
+        return self.save_bytes(ref, EnvFile.dump_bytes(data))
 
     def remove(self, ref: SecretRef) -> bool:
         path = self.path(ref)
@@ -188,37 +217,31 @@ class AgeBackend:
 
     # -- 読み書き -----------------------------------------------------------
 
-    def load(self, ref: SecretRef) -> Dict[str, str]:
+    def load_bytes(self, ref: SecretRef) -> bytes:
+        """復号した **生バイト列** を返す (不在なら空)。
+
+        中身を ``KEY=VALUE`` として解釈しないので、コメント・空行・``export``
+        表記を含む原文をそのまま取り出せる。
+        """
         path = self.path(ref)
         if not path.is_file():
-            return {}
+            return b''
         try:
             blob = path.read_bytes()
         except OSError as e:
             raise SecretStoreError(f"読み込みに失敗しました ({path}): {e}") from e
         try:
-            plain = _cipher.decrypt(blob, identities=self.identities())
+            return _cipher.decrypt(blob, identities=self.identities())
         except _cipher.CipherError as e:
             raise SecretStoreError(
                 f"{ref.label()}の機密を復号できませんでした ({path}): {e}"
             ) from e
-        try:
-            return EnvFile.parse_bytes(plain)
-        except UnicodeDecodeError as e:
-            # 復号は成功したのに中身が UTF-8 でない = 元々 .env ではない
-            # バイナリを暗号化していた、というケース。PlaintextBackend.load と
-            # 同じく SecretStoreError へ包み、呼び出し側が扱う例外を 1 種類に保つ。
-            raise SecretStoreError(
-                f"{ref.label()}の機密を復号しましたが、UTF-8 として読めませんでした "
-                f"({path}): {e}\n"
-                "KEY=VALUE 形式以外のファイルを暗号化していないか確認してください"
-            ) from e
 
-    def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
+    def save_bytes(self, ref: SecretRef, data: bytes) -> Path:
+        """バイト列を **加工せずそのまま** 暗号化して保存する"""
         path = self.path(ref)
         try:
-            blob = _cipher.encrypt(EnvFile.dump_bytes(data),
-                                   recipients=self.recipients())
+            blob = _cipher.encrypt(data, recipients=self.recipients())
         except _cipher.CipherError as e:
             raise SecretStoreError(
                 f"{ref.label()}の機密を暗号化できませんでした: {e}"
@@ -231,6 +254,27 @@ class AgeBackend:
         except OSError as e:
             raise SecretStoreError(f"書き込みに失敗しました ({path}): {e}") from e
         return path
+
+    def load(self, ref: SecretRef) -> Dict[str, str]:
+        try:
+            return EnvFile.parse_bytes(self.load_bytes(ref))
+        except UnicodeDecodeError as e:
+            # 復号は成功したのに中身が UTF-8 でない = 元々 .env ではない
+            # バイナリを暗号化していた、というケース。PlaintextBackend.load と
+            # 同じく SecretStoreError へ包み、呼び出し側が扱う例外を 1 種類に保つ。
+            raise SecretStoreError(
+                f"{ref.label()}の機密を復号しましたが、UTF-8 として読めませんでした "
+                f"({self.path(ref)}): {e}\n"
+                "KEY=VALUE 形式以外のファイルを暗号化していないか確認してください"
+            ) from e
+
+    def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
+        """辞書を ``EnvFile`` の書式へ整形して暗号化する。
+
+        ``PlaintextBackend.save`` と同じく、この経路を通ると内容が正規化される。
+        原文を保ちたい移行系は :meth:`save_bytes` を使う。
+        """
+        return self.save_bytes(ref, EnvFile.dump_bytes(data))
 
     def remove(self, ref: SecretRef) -> bool:
         path = self.path(ref)
@@ -305,8 +349,20 @@ class SecretStore:
 
         まだ何も無い参照は平文に落とす。暗号化へ移すのは ``devbase env encrypt``
         の役目であり、``set`` や ``sync`` が暗黙に形式を変えるべきではない。
+
+        辞書を経由するため、保存した時点で内容は ``EnvFile`` の書式へ正規化される
+        (コメント・空行・``export`` 表記は残らない)。原文のまま運びたい場合は
+        :meth:`save_bytes` を使う。
         """
         return self.backend_for(ref).save(ref, data)
+
+    def load_bytes(self, ref: SecretRef) -> bytes:
+        """保存形式を問わず、中身を **原文のバイト列のまま** 返す"""
+        return self.backend_for(ref).load_bytes(ref)
+
+    def save_bytes(self, ref: SecretRef, data: bytes) -> Path:
+        """既存の保存形式を維持したまま、バイト列を **そのまま** 保存する"""
+        return self.backend_for(ref).save_bytes(ref, data)
 
     def project_names(self) -> List[str]:
         """暗号化済みの機密を持つプロジェクト名を返す"""

@@ -3,7 +3,14 @@
 ``devbase env encrypt`` は平文の設定を暗号化ストアへ移し、``devbase env decrypt``
 は平文へ戻す。どちらも以下を守る (plan35 §9):
 
-- **無言で消さない**: 元の平文はバックアップへ退避し、削除は利用者に委ねる
+- **無言で消さない**: 元の平文はバックアップへ退避し、削除は利用者に委ねる。
+  退避先は排他的に作り、既存のバックアップへは決して書き込まない
+  (:func:`_create_backup_dir`)
+- **原文のまま往復させる**: 機密は ``KEY=VALUE`` の辞書へ畳まず、ファイルの
+  バイト列のまま暗号化する。``decrypt`` するとコメント・空行・``export``
+  表記まで含めて暗号化前のファイルへ戻る。ただし原文が保たれるのは値を
+  書き換えるまでで、``devbase env set`` などで更新すると内容は ``EnvFile``
+  の書式へ正規化される (平文だけを使っていた頃と同じ挙動)
 - **読み戻せることを確認してから消す**: 暗号化した直後に復号し、元の内容と
   一致した対象だけ平文を退避する。鍵の設定を間違えたまま平文を失うと復旧できない
 - **構成ファイルの変更は差分を見せてから行う**: 利用者が独自に編集した
@@ -199,14 +206,20 @@ def cmd_env_encrypt(devbase_root: Path, *, dry_run: bool = False,
         print("中止しました")
         return 1
 
-    backup_dir = root / 'backups' / 'env-encrypt' / _timestamp()
     rollback = _Rollback()
     try:
         # 1. 全対象を暗号化して読み戻せることを確認する (平文にはまだ触れない)
-        # 2. 平文をバックアップへ移す
+        # 2. バックアップ先を排他的に作り、平文をそこへ移す
         # 3. compose.yml を書き換える
         # 平文を消すのは「全対象の暗号文が読み戻せた」と分かってからにする。
         _encrypt_and_verify(store, refs, rollback)
+        backup_dir = _create_backup_dir(
+            root / 'backups' / 'env-encrypt' / _timestamp())
+        # 中身を戻したあとに空のバックアップ先だけ残ると「まだ退避された
+        # ものがある」と誤解させるので、作ったディレクトリも巻き戻しで畳む。
+        rollback.push(
+            f"空になったバックアップ先 {backup_dir} を削除する",
+            lambda d=backup_dir: _prune_empty_dirs(d, d))
         moved = _move_plaintext_to_backup(store, refs, backup_dir, rollback)
         _apply_compose_changes(compose_changes, rollback)
     except (DevbaseError, OSError) as e:
@@ -231,21 +244,75 @@ def _encrypt_and_verify(store: SecretStore, refs: Sequence[SecretRef],
     復号できないファイルだけが残るため、「読み戻せた」ことを全対象について
     確かめてから次のフェーズへ進む。途中で失敗しても、この実行で作った
     暗号文を消せば元の状態に戻る。
+
+    運ぶのは辞書ではなく **平文ファイルの生バイト列** である。``KEY=VALUE`` の
+    辞書へ畳むとコメント・空行・``export KEY=...`` 表記・値のクォートが落ち、
+    ``decrypt`` しても暗号化前の状態には戻らない。バイト列のまま暗号化し、
+    バイト列のまま読み戻して一致を確かめる。
+
+    なお原文が保たれるのは **値を書き換えるまで** である。``devbase env set``
+    などで値を更新すると辞書経由の ``save`` が走り、内容は ``EnvFile`` の書式へ
+    正規化される。平文しか無かった頃と同じ挙動であり、暗号化しても変わらない。
     """
     for ref in refs:
-        values = store.plaintext.load(ref)
-        store.age.save(ref, values)
+        original = store.plaintext.load_bytes(ref)
+        store.age.save_bytes(ref, original)
         # 対象は MODE_PLAINTEXT で選んである = この .age はこの実行で作った
         # ものだけ。巻き戻しで既存の暗号文を巻き添えにする心配はない。
         rollback.push(
             f"{ref.label()}の暗号文 {store.age.path(ref)} を削除する",
             lambda r=ref: store.age.remove(r))
 
-        restored = store.age.load(ref)
-        if restored != values:
+        restored = store.age.load_bytes(ref)
+        if restored != original:
             raise MigrationError(
                 f"{ref.label()}の暗号化結果が元の内容と一致しません")
         logger.info("%s を暗号化しました: %s", ref.label(), store.age.path(ref))
+
+
+#: バックアップ先の名前が衝突したときに試す一意な suffix の上限。
+#: ここまでぶつかるのは「同じ秒に何十回も移行している」か「先回りして名前を
+#: 作られている」異常事態なので、無限に別名を探し続けずに中止して知らせる。
+_BACKUP_DIR_MAX_ATTEMPTS = 100
+
+
+def _create_backup_dir(preferred: Path) -> Path:
+    """バックアップ先を **排他的に** 作成し、実際に作れたパスを返す。
+
+    ディレクトリ名は秒単位の日時なので、同じ秒に 2 回移行すると衝突しうる。
+    既存のディレクトリへそのまま書くと :func:`shutil.move` が同名の
+    ``global.env`` やプロジェクトの env を上書きし、「削除しないはずの過去の
+    平文」を失う。そこで ``exist_ok=False`` で作り、既にあれば ``-2`` ``-3`` …
+    と一意な名前へ寄せて、**既存のディレクトリへは決して書き込まない**。
+
+    Raises:
+        MigrationError: 上限まで試しても空きが見つからない場合、または
+            ディレクトリを作成できない場合 (どちらも平文にはまだ触れていない
+            段階なので、返せば元の状態が保たれる)
+    """
+    # 親階層 (backups/env-encrypt) はスナップショットなど他機能とも共有するので
+    # 権限は既定のまま。退避先そのものは平文の機密が置かれるため 0700 で作る。
+    try:
+        preferred.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise MigrationError(
+            f"バックアップ先を作成できませんでした ({preferred.parent}): {e}") from e
+
+    for attempt in range(1, _BACKUP_DIR_MAX_ATTEMPTS + 1):
+        candidate = (preferred if attempt == 1
+                     else preferred.with_name(f'{preferred.name}-{attempt}'))
+        try:
+            candidate.mkdir(mode=0o700, exist_ok=False)
+        except FileExistsError:
+            continue
+        except OSError as e:
+            raise MigrationError(
+                f"バックアップ先を作成できませんでした ({candidate}): {e}") from e
+        return candidate
+    raise MigrationError(
+        f"バックアップ先 {preferred} が既にあり、"
+        f"{_BACKUP_DIR_MAX_ATTEMPTS} 回試しても空いている名前が見つかりません"
+        "でした。既存のバックアップを片付けてから再実行してください")
 
 
 def _move_plaintext_to_backup(store: SecretStore, refs: Sequence[SecretRef],
@@ -264,12 +331,18 @@ def _move_plaintext_to_backup(store: SecretStore, refs: Sequence[SecretRef],
 
 
 def _move_to_backup(source: Path, ref: SecretRef, backup_dir: Path) -> Path:
-    """平文ファイルをバックアップへ移す (コピーではなく移動)"""
+    """平文ファイルをバックアップへ移す (コピーではなく移動)。
+
+    ``backup_dir`` は :func:`_create_backup_dir` がこの実行のために排他的に
+    作ったディレクトリで、既存のバックアップとは決して重ならない。その内側の
+    ``projects/`` は複数の対象で共有するので ``exist_ok=True`` で掘る
+    (対象ごとにファイル名が一意なため、ここで上書きは起こらない)。
+    """
     if ref.kind == 'global':
         dest = backup_dir / 'global.env'
     else:
         dest = backup_dir / 'projects' / f'{ref.name}.env'
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     shutil.move(str(source), str(dest))
     return dest
 
@@ -364,30 +437,37 @@ def cmd_env_decrypt(devbase_root: Path, *, dry_run: bool = False,
 
 
 def _load_encrypted(store: SecretStore, refs: Sequence[SecretRef],
-                    ) -> List[Tuple[SecretRef, Dict[str, str], bytes]]:
+                    ) -> List[Tuple[SecretRef, bytes, bytes]]:
     """全対象の暗号文を読み込み、復号できることを確認する。
 
-    生バイト列も控える。最後に削除した ``.age`` を、巻き戻しでそのまま
+    Returns:
+        ``(参照, 復号した平文のバイト列, 暗号文のバイト列)`` の並び
+
+    平文は辞書ではなくバイト列で控える。``encrypt`` が原文をそのまま暗号化して
+    いるので、そのまま書き戻せばコメント・空行・``export`` 表記まで含めて
+    暗号化前のファイルへ戻る。
+
+    暗号文の生バイト列も控える。最後に削除した ``.age`` を、巻き戻しでそのまま
     書き戻せるようにするため (再暗号化すると内容が同じでもバイト列は変わり、
     「元に戻した」と言い切れなくなる)。
     """
-    loaded: List[Tuple[SecretRef, Dict[str, str], bytes]] = []
+    loaded: List[Tuple[SecretRef, bytes, bytes]] = []
     for ref in refs:
         path = store.age.path(ref)
         try:
             blob = path.read_bytes()
         except OSError as e:
             raise MigrationError(f"暗号文を読み込めませんでした ({path}): {e}") from e
-        loaded.append((ref, store.age.load(ref), blob))
+        loaded.append((ref, store.age.load_bytes(ref), blob))
     return loaded
 
 
 def _write_plaintext(store: SecretStore,
-                     loaded: Sequence[Tuple[SecretRef, Dict[str, str], bytes]],
+                     loaded: Sequence[Tuple[SecretRef, bytes, bytes]],
                      rollback: _Rollback) -> None:
     """全対象の平文を書き出す (取り消し: 書いた平文を削除)"""
-    for ref, values, _ in loaded:
-        store.plaintext.save(ref, values)
+    for ref, plain, _ in loaded:
+        store.plaintext.save_bytes(ref, plain)
         # 対象は MODE_AGE で選んである = この平文はこの実行で作ったものだけ。
         rollback.push(
             f"{ref.label()}の平文 {store.plaintext.path(ref)} を削除する",
@@ -397,7 +477,7 @@ def _write_plaintext(store: SecretStore,
 
 
 def _remove_encrypted(store: SecretStore,
-                      loaded: Sequence[Tuple[SecretRef, Dict[str, str], bytes]],
+                      loaded: Sequence[Tuple[SecretRef, bytes, bytes]],
                       rollback: _Rollback) -> None:
     """暗号文を削除する (取り消し: 控えた生バイト列で復元)"""
     for ref, _, blob in loaded:

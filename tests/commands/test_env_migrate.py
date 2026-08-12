@@ -26,6 +26,16 @@ COMPOSE = """services:
       - .env
 """
 
+#: 辞書へ畳むと落ちる要素を全部入れた ``.env`` (コメント・空行・``export``
+#: 表記・クォート・キーの並び順)
+RAW_ENV = b"""# devbase \xe3\x81\xae\xe5\x85\xb1\xe9\x80\x9a\xe8\xa8\xad\xe5\xae\x9a
+ZZZ_LAST=1
+
+ANTHROPIC_API_KEY=sk-1
+export EDITOR=vim
+QUOTED="a b c"   # \xe6\x9c\xab\xe5\xb0\xbe\xe3\x82\xb3\xe3\x83\xa1\xe3\x83\xb3\xe3\x83\x88
+"""
+
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
@@ -122,6 +132,46 @@ def test_encrypt_keeps_the_plaintext_in_backups(with_key, capsys):
     assert '退避しました' in capsys.readouterr().out
 
 
+def test_encrypt_never_overwrites_an_existing_backup(with_key, monkeypatch):
+    """退避先の名前が衝突しても、過去に退避した平文を上書きしない"""
+    seed_plaintext(with_key)
+    monkeypatch.setattr(env_migrate, '_timestamp', lambda: '20240101000000')
+
+    existing = with_key / 'backups' / 'env-encrypt' / '20240101000000'
+    (existing / 'projects').mkdir(parents=True)
+    (existing / 'global.env').write_text('OLD_GLOBAL=1\n')
+    (existing / 'projects' / 'web.env').write_text('OLD_WEB=1\n')
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    # 過去のバックアップは 1 バイトも動いていない
+    assert (existing / 'global.env').read_text() == 'OLD_GLOBAL=1\n'
+    assert (existing / 'projects' / 'web.env').read_text() == 'OLD_WEB=1\n'
+    # 今回のぶんは一意な suffix を付けた別ディレクトリへ入る
+    fresh = with_key / 'backups' / 'env-encrypt' / '20240101000000-2'
+    assert 'ANTHROPIC_API_KEY=sk-1' in (fresh / 'global.env').read_text()
+    assert 'DB_PASSWORD=pw' in (fresh / 'projects' / 'web.env').read_text()
+
+
+def test_encrypt_aborts_when_no_backup_name_is_free(with_key, monkeypatch):
+    """一意な退避先を作れないなら、平文に触れないまま中止する"""
+    seed_plaintext(with_key)
+    monkeypatch.setattr(env_migrate, '_timestamp', lambda: '20240101000000')
+    monkeypatch.setattr(env_migrate, '_BACKUP_DIR_MAX_ATTEMPTS', 2)
+
+    base = with_key / 'backups' / 'env-encrypt'
+    for name in ('20240101000000', '20240101000000-2'):
+        (base / name).mkdir(parents=True)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
+
+    # 平文はそのまま。作りかけの暗号文も退避物も残らない
+    assert (with_key / '.env').exists()
+    assert (with_key / 'projects' / 'web' / '.env').exists()
+    assert age_files(with_key) == []
+    assert list(base.glob('**/*.env')) == []
+
+
 def test_encrypt_rewrites_the_compose_file(with_key):
     from devbase.env import compose_migrate
 
@@ -187,7 +237,7 @@ def test_encrypt_keeps_plaintext_when_the_result_cannot_be_read_back(with_key,
     def broken_load(self, ref):
         raise SecretStoreError('復号できません')
 
-    monkeypatch.setattr(AgeBackend, 'load', broken_load)
+    monkeypatch.setattr(AgeBackend, 'load_bytes', broken_load)
 
     assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
     assert (with_key / '.env').exists()
@@ -199,7 +249,7 @@ def test_encrypt_keeps_plaintext_when_the_result_differs(with_key, monkeypatch):
 
     from devbase.env.secret_store import AgeBackend
 
-    monkeypatch.setattr(AgeBackend, 'load', lambda self, ref: {'WRONG': 'x'})
+    monkeypatch.setattr(AgeBackend, 'load_bytes', lambda self, ref: b'WRONG=x\n')
 
     assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
     assert (with_key / '.env').exists()
@@ -216,14 +266,14 @@ def test_encrypt_rolls_back_when_a_later_target_fails(two_projects, monkeypatch)
 
     from devbase.env.secret_store import AgeBackend, SecretStoreError
 
-    original_save = AgeBackend.save
+    original_save = AgeBackend.save_bytes
 
     def fail_on_web(self, ref, data):
         if ref == WEB:
             raise SecretStoreError('暗号化できません')
         return original_save(self, ref, data)
 
-    monkeypatch.setattr(AgeBackend, 'save', fail_on_web)
+    monkeypatch.setattr(AgeBackend, 'save_bytes', fail_on_web)
 
     assert env_migrate.cmd_env_encrypt(root, assume_yes=True) == 1
 
@@ -330,6 +380,43 @@ def test_round_trip_restores_everything(with_key):
     assert not (with_key / 'secrets' / 'global.env.age').exists()
 
 
+def test_round_trip_preserves_the_original_bytes(with_key):
+    """コメント・空行・``export`` 表記・クォートまでバイト単位で元へ戻る"""
+    seed_plaintext(with_key)
+    env = with_key / '.env'
+    env.write_bytes(RAW_ENV)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+    assert not env.exists()
+
+    assert env_migrate.cmd_env_decrypt(with_key, assume_yes=True) == 0
+    assert env.read_bytes() == RAW_ENV
+
+
+def test_env_set_normalizes_the_encrypted_content(with_key):
+    """暗号化済みでも値の更新は従来どおり効く。
+
+    原文が保たれるのは「書き換えるまで」で、``env set`` が走ると平文だけを
+    使っていた頃と同じく ``EnvFile`` の書式へ正規化される。
+    """
+    from devbase.commands import env as env_cmd
+
+    seed_plaintext(with_key)
+    (with_key / '.env').write_bytes(RAW_ENV)
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    assert env_cmd.cmd_env_set(with_key, 'ANTHROPIC_API_KEY=sk-2') == 0
+
+    store = SecretStore(with_key)
+    assert store.is_encrypted(GLOBAL)
+    assert store.load(GLOBAL)['ANTHROPIC_API_KEY'] == 'sk-2'
+
+    assert env_migrate.cmd_env_decrypt(with_key, assume_yes=True) == 0
+    after = (with_key / '.env').read_bytes()
+    assert b'ANTHROPIC_API_KEY=sk-2\n' in after
+    assert '# devbase の共通設定'.encode('utf-8') not in after
+
+
 def test_decrypt_dry_run_changes_nothing(with_key):
     seed_plaintext(with_key)
     env_migrate.cmd_env_encrypt(with_key, assume_yes=True)
@@ -361,14 +448,14 @@ def test_decrypt_rolls_back_when_a_later_target_fails(two_projects, monkeypatch)
 
     from devbase.env.secret_store import AgeBackend, SecretStoreError
 
-    original_load = AgeBackend.load
+    original_load = AgeBackend.load_bytes
 
     def fail_on_web(self, ref):
         if ref == WEB:
             raise SecretStoreError('復号できません')
         return original_load(self, ref)
 
-    monkeypatch.setattr(AgeBackend, 'load', fail_on_web)
+    monkeypatch.setattr(AgeBackend, 'load_bytes', fail_on_web)
 
     assert env_migrate.cmd_env_decrypt(root, assume_yes=True) == 1
 
