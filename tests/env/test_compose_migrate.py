@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pytest
 import yaml
 
 from devbase.env import compose_migrate as cm
@@ -1003,6 +1004,113 @@ def test_services_with_secret_env_file_handles_trailing_comments():
 """
     assert cm.services_with_secret_env_file(text) == {
         'db': {cm.TARGET_PROJECT}}
+
+
+# ---------------------------------------------------------------------------
+# 事後検証: 書き換え後のテキストを YAML としてパースして確かめる
+# ---------------------------------------------------------------------------
+
+def test_remaining_refs_is_empty_after_a_successful_disable():
+    """行ベースの走査で全部外せたケースは、事後検証も素通りする"""
+    after, _ = cm.disable(BASIC)
+
+    assert cm.remaining_secret_env_file_refs(after) == []
+
+
+def test_remaining_refs_ignores_files_without_secrets():
+    text = """services:
+  dev:
+    env_file:
+      - config/app.env
+"""
+    assert cm.remaining_secret_env_file_refs(text) == []
+
+
+def test_remaining_refs_finds_a_block_scalar_the_line_scan_misses():
+    """`env_file: >-` は先頭行に参照先が無い。行ベースでは取りこぼす"""
+    text = """services:
+  dev:
+    env_file: >-
+      .env
+"""
+    # 行ベースの走査は何も書き換えられていない (取りこぼしている)
+    assert cm.disable(text)[1] == []
+    assert cm.remaining_secret_env_file_refs(text) == [('dev', '.env')]
+
+
+def test_remaining_refs_flattens_long_syntax_dicts():
+    text = """services:
+  dev:
+    env_file:
+      - path: ${DEVBASE_ROOT}/.env
+        required: false
+      - path: config/app.env
+"""
+    assert cm.remaining_secret_env_file_refs(text) == [
+        ('dev', '${DEVBASE_ROOT}/.env')]
+
+
+def test_remaining_refs_accepts_a_plain_string_value():
+    text = """services:
+  db:
+    env_file: .env
+"""
+    assert cm.remaining_secret_env_file_refs(text) == [('db', '.env')]
+
+
+def test_remaining_refs_reports_every_service():
+    text = """services:
+  dev:
+    env_file: ${DEVBASE_ROOT}/.env
+  db:
+    env_file:
+      - .env
+"""
+    assert cm.remaining_secret_env_file_refs(text) == [
+        ('dev', '${DEVBASE_ROOT}/.env'), ('db', '.env')]
+
+
+def test_remaining_refs_honours_the_target_filter():
+    """復号しない種別の参照は残っていて当然。検証の対象から外す"""
+    text = """services:
+  dev:
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - .env
+"""
+    assert cm.remaining_secret_env_file_refs(text, [cm.TARGET_PROJECT]) == [
+        ('dev', '.env')]
+
+
+def test_remaining_refs_does_not_see_disabled_lines():
+    """無効化した行は YAML のコメント = パーサからは見えない"""
+    after, _ = cm.disable(BASIC)
+
+    assert cm.DISABLED_MARK in after
+    assert cm.remaining_secret_env_file_refs(after) == []
+
+
+def test_remaining_refs_tolerates_files_without_services():
+    assert cm.remaining_secret_env_file_refs('') == []
+    assert cm.remaining_secret_env_file_refs('volumes:\n  data:\n') == []
+    assert cm.remaining_secret_env_file_refs('services:\n') == []
+
+
+def test_remaining_refs_ignores_non_string_entries():
+    """Compose としては不正な値。機密参照ではないので検証は素通りさせる"""
+    text = """services:
+  dev:
+    env_file:
+      - 123
+      - []
+"""
+    assert cm.remaining_secret_env_file_refs(text) == []
+
+
+def test_remaining_refs_raises_on_broken_yaml():
+    """検証できない = 参照が無いと言い切れない。黙って通してはいけない"""
+    with pytest.raises(cm.ComposeParseError):
+        cm.remaining_secret_env_file_refs('services:\n  dev:\n   - [oops\n')
 
 
 def test_find_secret_entries_does_not_modify():

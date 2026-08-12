@@ -68,6 +68,27 @@
 **不変条件**: 扱えない記法に当たったときに黙って通してはいけない。機密を指して
 いれば中止 (2.)、指していなければ警告に落ちる。黙って見逃すと、平文を退避した
 あとも参照だけが残り、次の起動で初めて壊れていることに気付くことになる。
+
+二段構えの保証 (行ベースの走査 + 事後検証)
+------------------------------------------
+
+上の契約は「行を見て記法を判別できる」ことに依存している。YAML の記法は多く、
+判別を 1 つ取りこぼすたびに同じ穴が空く。例えば ``env_file: >-`` のブロック
+スカラーは先頭行に参照先が書かれておらず、行だけを見ても機密を指しているか
+分からない。**記法ごとに穴を塞ぎ続ける限り、この種の見落としは無くならない**。
+
+そこで記法の判別に頼らない**事後検証**を最後の砦として置く:
+
+1. 行ベースの走査は「うまく書き換えられれば書き換える」(契約 1.)。扱えないと
+   *分かった* ものは早い段階で中止・警告する
+   (契約 2., :func:`secret_unsupported_env_file_lines`)
+2. 書き換えたあとのテキストを **YAML としてパースし**、機密参照が本当に残って
+   いないことを確かめる (:func:`remaining_secret_env_file_refs`)。残っていれば
+   移行そのものを中止し、手で直してもらう
+
+1. が取りこぼしても 2. が必ず捕まえるので、**未知の記法でも「平文だけ退避されて
+参照が残る」結果にはならない**。1. を直す意味は「分かりやすいエラーを早い段階で
+出す」ことであって、不変条件そのものを支えているのは 2. である。
 """
 
 from __future__ import annotations
@@ -75,12 +96,25 @@ from __future__ import annotations
 import difflib
 import re
 from pathlib import Path
-from typing import (Dict, Iterable, List, NamedTuple, Optional, Sequence, Set,
-                    Tuple)
+from typing import (Any, Dict, Iterable, List, NamedTuple, Optional, Sequence,
+                    Set, Tuple)
 
+import yaml
+
+from devbase.errors import DevbaseError
 from devbase.log import get_logger
 
 logger = get_logger(__name__)
+
+
+class ComposeParseError(DevbaseError):
+    """``compose.yml`` を YAML として読めない
+
+    事後検証 (:func:`remaining_secret_env_file_refs`) は「機密参照が残って
+    いないこと」をパース結果で確かめる。パースできなければ確かめようがない
+    ため、「参照が無い」と読み替えて先へ進んではいけない。呼び出し側は
+    構成ファイルの読み取り失敗と同じ扱いで移行を中止する。
+    """
 
 #: コメントアウトした行に付ける目印。復元時はこれを取り除くだけで元に戻る。
 DISABLED_MARK = '# devbase(PLAN35) 機密は環境変数で注入: '
@@ -657,6 +691,81 @@ def secret_unsupported_env_file_lines(
     wanted = set(targets)
     return [(number, line) for number, line, refs in _unsupported_entries(text)
             if any(_is_target(ref, wanted) for ref in refs)]
+
+
+def _parsed_env_file_refs(value: Any) -> List[str]:
+    """パース済みの ``env_file`` の値から参照文字列を平坦化して取り出す。
+
+    Compose の ``env_file`` は 3 通りの姿を取る。どれか 1 つでも見落とすと
+    事後検証がその形を素通りさせてしまうため、すべてここで畳む::
+
+        env_file: .env                     # 文字列
+        env_file: [.env, config/app.env]   # 文字列のリスト
+        env_file:
+          - path: .env                     # long syntax (dict) のリスト
+            required: false
+
+    文字列にならない値 (数値や入れ子など Compose としては不正なもの) は
+    参照として扱えないので落とす。落としたものが機密を指していることは
+    ありえない (機密参照は必ず文字列で書かれる)。
+    """
+    entries = value if isinstance(value, list) else [value]
+    refs: List[str] = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            entry = entry.get('path')
+        if isinstance(entry, str):
+            refs.append(entry.strip())
+    return refs
+
+
+def remaining_secret_env_file_refs(
+        text: str,
+        targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
+) -> List[Tuple[str, str]]:
+    """**YAML としてパースし**、有効なままの機密参照を列挙する (事後検証)。
+
+    モジュール冒頭「二段構えの保証」の 2. にあたる最後の砦。行ベースの走査
+    (:func:`disable`) が書き換えを終えたテキストを渡すと、記法の判別に一切
+    頼らずに「機密を指す ``env_file`` が有効なまま残っていないか」を確かめ
+    られる。無効化した行は YAML のコメントなので、パーサからは最初から
+    見えない = 残っていれば**走査が取りこぼした**ということになる。
+
+    差分が出なかった (何も書き換えなかった) ``compose.yml`` にも掛ける。
+    走査が何も見つけられなかったファイルこそ取りこぼしの疑いが濃く、素通り
+    させると平文だけ退避された壊れた構成が残る。
+
+    Args:
+        text: 検証するテキスト (書き換え後のもの)
+        targets: 消える機密の種別。復号しない種別の参照は残っていて当然
+            なので対象から外す。
+
+    Returns:
+        ``[(サービス名, 残っている参照)]``。空なら参照は残っていない。
+
+    Raises:
+        ComposeParseError: YAML として読めない場合
+    """
+    wanted = set(targets)
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ComposeParseError(f"YAML として読めません: {e}") from e
+
+    if not isinstance(document, dict):
+        return []
+    services = document.get('services')
+    if not isinstance(services, dict):
+        return []
+
+    found: List[Tuple[str, str]] = []
+    for name, config in services.items():
+        if not isinstance(config, dict) or 'env_file' not in config:
+            continue
+        for ref in _parsed_env_file_refs(config['env_file']):
+            if _is_target(ref, wanted):
+                found.append((str(name), ref))
+    return found
 
 
 def services_with_secret_env_file(

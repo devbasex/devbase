@@ -438,10 +438,15 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
     書き換え前のテキストも返すのは、適用後に別の操作が失敗したとき、
     差分を計算したのと同じ内容へ書き戻して巻き戻せるようにするため。
 
+    暗号化側では、書き換え内容を確定したあとに **YAML としてパースし直して**
+    機密参照が残っていないことを確かめる (:func:`_verify_secrets_are_unreferenced`)。
+    行ベースの走査が未知の記法を取りこぼしても、ここで必ず中止に落ちる。
+
     Raises:
-        MigrationError: 構成ファイルを読めない場合、または自動では書き換え
-            られない機密参照が残っている場合 (どちらも「平文だけ退避されて
-            構成は存在しないファイルを指したまま」という壊れた結果になる)
+        MigrationError: 構成ファイルを読めない場合、自動では書き換えられない
+            機密参照が残っている場合、または書き換え後も機密参照が残っている
+            ことを事後検証が見つけた場合 (いずれも「平文だけ退避されて構成は
+            存在しないファイルを指したまま」という壊れた結果になる)
     """
     root = Path(devbase_root)
     has_global = any(ref.kind == 'global' for ref in refs)
@@ -495,12 +500,53 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
             after, touched = compose_migrate.enable(before, wanted)
         else:
             after, touched = compose_migrate.disable(before, wanted)
+            # 行ベースの走査が終わったところで、書き換えた結果を YAML として
+            # 読み直し、機密参照が本当に消えたことを確かめる。走査は記法の
+            # 判別に頼っている以上いつでも取りこぼしうるので、記法に依らない
+            # この検証を最後の砦として必ず通す (compose_migrate 冒頭
+            # 「二段構えの保証」)。差分が出なかったファイルも対象にする。
+            _verify_secrets_are_unreferenced(path, after, wanted)
 
         if touched and after != before:
             changes[path] = (before, after,
                              compose_migrate.diff(before, after, path))
 
     return changes
+
+
+def _verify_secrets_are_unreferenced(path: Path, after: str,
+                                     wanted: Set[str]) -> None:
+    """書き換え後の ``compose.yml`` に機密参照が残っていないことを確かめる。
+
+    ``compose_migrate`` の書き換えは行ベースなので、YAML の記法が想定から
+    外れると (``env_file: >-`` のようなブロックスカラーなど) 参照を取りこぼす。
+    取りこぼしたまま進むと「平文だけ退避され、構成は存在しないファイルを指した
+    まま」でコマンドが成功してしまう。**記法の判別に依らない事後検証**をここに
+    置き、取りこぼしを必ず移行の中止へ落とす。
+
+    復元 (decrypt) 側では行わない。平文が戻る以上その参照は有効で正しく、
+    残っていることが期待される状態だからである。
+
+    Raises:
+        MigrationError: 参照が残っている場合、または YAML として読めない場合
+    """
+    try:
+        remaining = compose_migrate.remaining_secret_env_file_refs(
+            after, wanted)
+    except compose_migrate.ComposeParseError as e:
+        # 検証できない = 参照が残っていないと言い切れない。読み取り失敗と
+        # 同じ扱いで中止する (「たぶん大丈夫」で平文を消してはいけない)。
+        raise MigrationError(
+            f"構成ファイルを読めませんでした ({path}): {e}") from e
+
+    if remaining:
+        detail = '\n'.join(f"  {path}: サービス {service} の env_file: {ref}"
+                           for service, ref in remaining)
+        raise MigrationError(
+            "暗号化で消える機密ファイルへの env_file 参照を自動で外せません"
+            "でした。次の参照を手で削除するか、`env_file:` の下に `- ...` を "
+            "1 行ずつ並べる書き方へ直してから再実行してください:\n"
+            f"{detail}")
 
 
 #: 既存の ``compose.yml`` の権限を読めなかったときに使う既定値。

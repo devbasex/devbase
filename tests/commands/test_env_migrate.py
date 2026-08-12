@@ -595,6 +595,124 @@ def test_multi_line_long_syntax_secret_aborts_the_migration(with_key):
     assert compose.read_text() == before
 
 
+# ---------------------------------------------------------------------------
+# 事後検証: 行ベースの走査が取りこぼしても移行を止める
+# ---------------------------------------------------------------------------
+
+def test_block_scalar_secret_env_file_aborts_the_migration(with_key, caplog):
+    """`env_file: >-` は先頭行に参照先が無い。行ベースの走査では外せない
+
+    走査が何も書き換えられず差分ゼロで素通りしかけるところを、書き換え後の
+    テキストを YAML としてパースする事後検証が捕まえる。
+    """
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""services:
+  dev:
+    image: alpine
+    env_file: >-
+      .env
+""")
+    before = compose.read_text()
+    seed_plaintext(with_key)
+
+    with caplog.at_level(logging.ERROR, logger='devbase.commands.env_migrate'):
+        assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
+
+    # 何も動いていない: 平文も暗号文も構成ファイルもそのまま
+    assert (with_key / '.env').exists()
+    assert (with_key / 'projects' / 'web' / '.env').exists()
+    assert age_files(with_key) == []
+    assert list(with_key.glob('backups/**/*.env')) == []
+    assert compose.read_text() == before
+    # どのファイルのどのサービスに何が残っているのかまで示す
+    message = '\n'.join(r.getMessage() for r in caplog.records)
+    assert 'サービス dev の env_file: .env' in message
+    assert str(compose) in message
+
+
+def test_aliased_long_syntax_secret_aborts_the_migration(with_key):
+    """long syntax の dict を別名で参照する形も事後検証が平坦化して見つける"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""x-secret: &secret
+  path: ${DEVBASE_ROOT}/.env
+
+services:
+  dev:
+    image: alpine
+    env_file:
+      - *secret
+""")
+    before = compose.read_text()
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
+
+    assert (with_key / '.env').exists()
+    assert age_files(with_key) == []
+    assert compose.read_text() == before
+
+
+def test_broken_yaml_compose_aborts_the_migration(with_key):
+    """YAML として読めなければ「参照が残っていない」と言い切れない"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""services:
+  dev:
+    image: alpine
+    labels: [unclosed
+""")
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 1
+
+    assert (with_key / '.env').exists()
+    assert (with_key / 'projects' / 'web' / '.env').exists()
+    assert age_files(with_key) == []
+    assert list(with_key.glob('backups/**/*.env')) == []
+
+
+def test_encrypt_leaves_no_secret_env_file_in_the_parsed_result(with_key):
+    """全部外せたケースは従来どおり成功し、パースしても機密参照が残らない"""
+    from devbase.env import compose_migrate as cm
+
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    compose.write_text("""services:
+  dev:
+    image: alpine
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+      - env
+  db:
+    image: alpine
+    env_file: .env
+  batch:
+    image: alpine
+    env_file:
+      - path: .env
+      - config/app.env
+""")
+    seed_plaintext(with_key)
+
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    after = compose.read_text()
+    assert cm.remaining_secret_env_file_refs(after) == []
+    # 機密と無関係な参照は残したまま
+    assert '      - env\n' in after
+    assert '      - config/app.env\n' in after
+
+
+def test_broken_yaml_does_not_block_the_decrypt(with_key):
+    """復号は壊れた状態からの復帰手段。事後検証で塞いではいけない"""
+    compose = with_key / 'projects' / 'web' / 'compose.yml'
+    seed_plaintext(with_key)
+    assert env_migrate.cmd_env_encrypt(with_key, assume_yes=True) == 0
+
+    compose.write_text(compose.read_text() + '    labels: [unclosed\n')
+
+    assert env_migrate.cmd_env_decrypt(with_key, assume_yes=True) == 0
+    assert (with_key / '.env').exists()
+
+
 def test_crlf_compose_keeps_its_line_endings(with_key):
     """CRLF の compose.yml を LF へ潰さない (往復でバイト単位に戻る)"""
     compose = with_key / 'projects' / 'web' / 'compose.yml'
