@@ -2,7 +2,9 @@
 
 import os
 import subprocess
+from enum import Enum
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 
@@ -484,34 +486,70 @@ def _print_key_backup_notice(path, public: str) -> None:
     print("=" * 60)
 
 
-def _snapshot_file(path: Path):
-    """ロールバック用にファイル内容を控える。存在しなければ ``None``。
+class SnapshotStatus(Enum):
+    """``_snapshot_file`` が区別する 3 状態
 
-    読めなかった場合も ``None`` を返す。ここで例外にすると、壊れた鍵ファイルを
-    ``--force`` で作り直す正当なケースまで塞いでしまうため。
+    ``ABSENT`` (元から無い) と ``UNREADABLE`` (在るが読めない) を 1 つの ``None`` に
+    潰すと、ロールバック時に「読めなかっただけの既存ファイル」を「元は無かった」と
+    誤認して削除してしまう。権限を直せば回収できたはずの鍵まで失うため、両者は
+    別の状態として持ち回る。
+    """
+
+    ABSENT = 'absent'
+    CAPTURED = 'captured'
+    UNREADABLE = 'unreadable'
+
+
+class FileSnapshot(NamedTuple):
+    """ロールバック用に控えたファイルの状態と内容"""
+
+    status: SnapshotStatus
+    data: bytes | None = None
+
+
+def _snapshot_file(path: Path) -> FileSnapshot:
+    """ロールバック用にファイル内容を控える。
+
+    読めなかった場合は例外にせず ``UNREADABLE`` を返す。ここで例外を投げると
+    呼び出し側の失敗経路が増えるだけで、判断 (中止するか続行するか) は呼び出し側の
+    文脈でしか下せないため。
     """
     try:
-        return path.read_bytes()
-    except OSError:
-        return None
+        return FileSnapshot(SnapshotStatus.CAPTURED, path.read_bytes())
+    except FileNotFoundError:
+        return FileSnapshot(SnapshotStatus.ABSENT)
+    except OSError as e:
+        logger.warning("既存ファイルを読めませんでした (%s): %s", path, e)
+        return FileSnapshot(SnapshotStatus.UNREADABLE)
 
 
-def _restore_file(path: Path, snapshot) -> bool:
+def _restore_file(path: Path, snapshot: FileSnapshot) -> bool:
     """``_snapshot_file`` で控えた内容を書き戻す。
 
-    ``snapshot`` が ``None`` (= 元は存在しなかった) なら、途中で作られたファイルを
-    削除して元の「無い」状態へ戻す。復元自体に失敗しても呼び出し側の主エラーを
-    潰さないよう、例外は握りつぶして ``False`` を返す。
+    - ``ABSENT``     : 途中で作られたファイルを削除して元の「無い」状態へ戻す
+    - ``CAPTURED``   : 控えた内容を 0600 で書き戻す
+    - ``UNREADABLE`` : 内容を控えられていないので **削除も上書きもしない**。
+      ここで削除すると、権限を直せば回収できたはずの既存ファイルを永久に失う。
+      呼び出し側が中止判断を落とした場合の最後の砦として、現状のファイルを残す。
+
+    復元自体に失敗しても呼び出し側の主エラーを潰さないよう、例外は握りつぶして
+    ``False`` を返す。
     """
     from devbase.env import io_common as _io_common
 
+    if snapshot.status is SnapshotStatus.UNREADABLE:
+        logger.warning(
+            "%s は読み取れなかったため内容を控えていません。"
+            "巻き戻せないので現在のファイルをそのまま残します", path)
+        return False
+
     try:
-        if snapshot is None:
+        if snapshot.status is SnapshotStatus.ABSENT:
             if path.exists():
                 path.unlink()
                 return True
             return False
-        _io_common.write_secure_bytes_atomic(path, snapshot)
+        _io_common.write_secure_bytes_atomic(path, snapshot.data)
         return True
     except OSError as e:
         logger.error("ロールバックに失敗しました (%s): %s", path, e)
@@ -545,6 +583,33 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
         print("  作り直す場合: devbase env keygen --force")
         return 0
 
+    # keygen はワークスペース固有の受信者リスト (secrets/recipients.txt) を触らない。
+    # 鍵はグローバル (~/.config/devbase/age/keys.txt) なのに受信者リストは
+    # ワークスペースごとに存在するため、ここで書き込むと別ワークスペースには旧公開鍵が
+    # 取り残され、既に失われた秘密鍵に対応する公開鍵で暗号化してしまう。
+    # agekeys.resolve_recipients() は recipients.txt が無ければ鍵ファイルの公開鍵へ
+    # フォールバックするので、単独利用ではリストを作る必要がない。チーム運用で明示的に
+    # 受信者を足す経路 (rekey) だけが recipients.txt を作る。
+    #
+    # 触るファイルが鍵 1 つになったので、ロールバックも鍵ファイルだけで足りる。
+    # それでも巻き戻しは必要で、--force の途中失敗で旧鍵が消えると既存の暗号文を
+    # 誰も復号できなくなるため。
+    #
+    # スナップショットは確認プロンプトより前に取る。読めない鍵は上書きを中止するので、
+    # 「同意させてから中止する」空振りを避けたい。
+    key_snapshot = _snapshot_file(path)
+
+    # 既存鍵が在るのに読めないときは、上書きせずここで止める。控えを取れていない以上
+    # 生成が失敗しても巻き戻せず、成功すれば旧鍵は上書きで消える。権限エラーのような
+    # 回復可能な原因が大半なので、「直せば救えたはずの鍵」を失わせない方を選ぶ。
+    if key_snapshot.status is SnapshotStatus.UNREADABLE:
+        logger.error(
+            "既存の鍵ファイルを読めないため、上書きを中止しました: %s", path)
+        logger.error(
+            "権限を確認するか、不要と判断できる場合は手動で退避してから"
+            "再実行してください")
+        return 1
+
     # ここへ来るのは「鍵が無い」か「--force で作り直す」場合だけ。後者は既存鍵を
     # 捨てる操作なので、常に明示的な同意を取る。
     #
@@ -566,19 +631,6 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
         if answer != 'yes':
             print("中止しました")
             return 1
-
-    # keygen はワークスペース固有の受信者リスト (secrets/recipients.txt) を触らない。
-    # 鍵はグローバル (~/.config/devbase/age/keys.txt) なのに受信者リストは
-    # ワークスペースごとに存在するため、ここで書き込むと別ワークスペースには旧公開鍵が
-    # 取り残され、既に失われた秘密鍵に対応する公開鍵で暗号化してしまう。
-    # agekeys.resolve_recipients() は recipients.txt が無ければ鍵ファイルの公開鍵へ
-    # フォールバックするので、単独利用ではリストを作る必要がない。チーム運用で明示的に
-    # 受信者を足す経路 (rekey) だけが recipients.txt を作る。
-    #
-    # 触るファイルが鍵 1 つになったので、ロールバックも鍵ファイルだけで足りる。
-    # それでも巻き戻しは必要で、--force の途中失敗で旧鍵が消えると既存の暗号文を
-    # 誰も復号できなくなるため。
-    key_snapshot = _snapshot_file(path)
 
     try:
         path, public = agekeys.generate_key_file(path, force=True)

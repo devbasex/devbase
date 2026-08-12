@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+from pathlib import Path
 
 import pyrage
 import pytest
@@ -255,3 +256,112 @@ def test_keygen_rolls_back_to_absent_when_first_keygen_fails(devbase_root,
 
     assert _keygen(devbase_root) == 1
     assert not agekeys.key_file_path().exists()
+
+
+# ---------------------------------------------------------------------------
+# 読み取り不能な既存鍵
+#
+# 「元から無い」と「在るが読めない」を区別しないと、後者をロールバックで削除して
+# しまい、権限を直せば救えたはずの鍵まで失う。
+# ---------------------------------------------------------------------------
+
+def _unreadable(monkeypatch, target: Path):
+    """``target`` の read_bytes にだけ PermissionError を注入する。
+
+    chmod 000 は root 実行だと読めてしまい、コンテナ内 CI とローカルで結果が
+    変わる。読めない状態は権限ではなく例外注入で作る。
+    """
+    real_read_bytes = Path.read_bytes
+
+    def fake_read_bytes(self):
+        if self == target:
+            raise PermissionError(13, 'Permission denied')
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, 'read_bytes', fake_read_bytes)
+
+
+def test_keygen_force_aborts_when_the_existing_key_is_unreadable(devbase_root,
+                                                                 monkeypatch,
+                                                                 caplog):
+    """読めない既存鍵は上書きせず中止する (削除も生成もしない)"""
+    assert _keygen(devbase_root) == 0
+    key_path = agekeys.key_file_path()
+    key_before = key_path.read_bytes()
+
+    generated = []
+    monkeypatch.setattr(agekeys, 'generate_key_file',
+                        lambda *a, **kw: generated.append(a))
+    _unreadable(monkeypatch, key_path)
+
+    assert _keygen(devbase_root, force=True) == 1
+
+    assert generated == [], "読めない鍵を上書きしようとしている"
+    assert key_path.exists(), "読めなかっただけの鍵を削除している"
+    with key_path.open('rb') as f:      # read_bytes は注入で潰れているため
+        assert f.read() == key_before
+    assert '上書きを中止' in caplog.text
+
+
+def test_keygen_aborts_before_asking_for_confirmation_when_unreadable(
+        devbase_root, monkeypatch):
+    """中止が確定しているなら同意を求めない (空振りの確認を出さない)"""
+    assert _keygen(devbase_root) == 0
+    _unreadable(monkeypatch, agekeys.key_file_path())
+
+    asked = _answers(monkeypatch, 'yes')
+    assert env_cmd.cmd_env_keygen(devbase_root, force=True) == 1
+
+    assert asked == []
+
+
+# ---------------------------------------------------------------------------
+# _snapshot_file / _restore_file の 3 状態
+# ---------------------------------------------------------------------------
+
+def test_snapshot_distinguishes_absent_from_unreadable(tmp_path, monkeypatch):
+    path = tmp_path / 'keys.txt'
+    assert env_cmd._snapshot_file(path) == \
+        env_cmd.FileSnapshot(env_cmd.SnapshotStatus.ABSENT, None)
+
+    path.write_bytes(b'secret')
+    assert env_cmd._snapshot_file(path) == \
+        env_cmd.FileSnapshot(env_cmd.SnapshotStatus.CAPTURED, b'secret')
+
+    _unreadable(monkeypatch, path)
+    assert env_cmd._snapshot_file(path) == \
+        env_cmd.FileSnapshot(env_cmd.SnapshotStatus.UNREADABLE, None)
+
+
+def test_restore_file_removes_a_file_that_was_absent(tmp_path):
+    """不在からのロールバックは生成物を消す (退行防止)"""
+    path = tmp_path / 'keys.txt'
+    path.write_bytes(b'generated')
+
+    assert env_cmd._restore_file(
+        path, env_cmd.FileSnapshot(env_cmd.SnapshotStatus.ABSENT)) is True
+    assert not path.exists()
+
+
+def test_restore_file_writes_back_captured_content_with_0600(tmp_path):
+    """控えた内容は 0600 で書き戻す (退行防止)"""
+    path = tmp_path / 'keys.txt'
+    path.write_bytes(b'new')
+
+    assert env_cmd._restore_file(
+        path,
+        env_cmd.FileSnapshot(env_cmd.SnapshotStatus.CAPTURED, b'old')) is True
+    assert path.read_bytes() == b'old'
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_restore_file_keeps_an_unreadable_file(tmp_path, caplog):
+    """読めなかったファイルは削除も上書きもせず、そのまま残す"""
+    path = tmp_path / 'keys.txt'
+    path.write_bytes(b'existing')
+
+    assert env_cmd._restore_file(
+        path, env_cmd.FileSnapshot(env_cmd.SnapshotStatus.UNREADABLE)) is False
+    assert path.exists()
+    assert path.read_bytes() == b'existing'
+    assert str(path) in caplog.text
