@@ -209,10 +209,13 @@ def test_keygen_force_prompt_is_stronger_when_local_secrets_exist(devbase_root,
     assert 'このワークスペースには暗号化済みの機密があり' in out
 
 
-def test_keygen_force_rolls_back_when_generation_fails(devbase_root, monkeypatch):
-    """鍵生成が落ちたら旧鍵をそのまま残す。
+def test_keygen_keeps_the_old_key_when_generation_fails(devbase_root, monkeypatch):
+    """鍵生成が落ちても旧鍵はそのまま残る。
 
-    ここで旧鍵が失われると、既存の暗号文を誰も復号できなくなる。
+    keygen 側に手動ロールバックは無く、原子性は
+    ``agekeys.generate_key_file`` → ``io_common.write_secure_bytes_atomic``
+    (一時ファイル + fsync + os.replace) が担保する。ここではその契約が
+    コマンド層から見て守られていることだけを確認する。
     """
     assert _keygen(devbase_root) == 0
     key_path = agekeys.key_file_path()
@@ -228,7 +231,7 @@ def test_keygen_force_rolls_back_when_generation_fails(devbase_root, monkeypatch
     assert stat.S_IMODE(key_path.stat().st_mode) == 0o600
 
 
-def test_keygen_force_rolls_back_on_oserror(devbase_root, monkeypatch):
+def test_keygen_keeps_the_old_key_on_oserror(devbase_root, monkeypatch):
     """OSError (ディスク枯渇など) でも旧鍵は無傷のまま残る"""
     assert _keygen(devbase_root) == 0
     key_path = agekeys.key_file_path()
@@ -243,42 +246,27 @@ def test_keygen_force_rolls_back_on_oserror(devbase_root, monkeypatch):
     assert key_path.read_bytes() == key_before
 
 
-def test_keygen_rolls_back_to_absent_when_first_keygen_fails(devbase_root,
-                                                             monkeypatch):
-    """初回生成が途中で落ちたら、中途半端な鍵ファイルを残さない"""
-    real_generate = agekeys.generate_key_file
-
-    def half_written(path, **kwargs):
-        real_generate(path, **kwargs)
-        raise DevbaseError('生成直後に失敗しました')
-
-    monkeypatch.setattr(agekeys, 'generate_key_file', half_written)
-
-    assert _keygen(devbase_root) == 1
-    assert not agekeys.key_file_path().exists()
-
-
 # ---------------------------------------------------------------------------
 # 読み取り不能な既存鍵
 #
-# 「元から無い」と「在るが読めない」を区別しないと、後者をロールバックで削除して
-# しまい、権限を直せば救えたはずの鍵まで失う。
+# 原子性とは別の保護。読めないだけの鍵は権限を直せば回収できる可能性があるのに、
+# 生成が成功すると上書きで確実に消えるため、その前に中止する。
 # ---------------------------------------------------------------------------
 
 def _unreadable(monkeypatch, target: Path):
-    """``target`` の read_bytes にだけ PermissionError を注入する。
+    """``target`` にだけ「読み取り権限が無い」と見せる。
 
     chmod 000 は root 実行だと読めてしまい、コンテナ内 CI とローカルで結果が
-    変わる。読めない状態は権限ではなく例外注入で作る。
+    変わる。読めない状態は権限ではなく ``os.access`` の差し替えで作る。
     """
-    real_read_bytes = Path.read_bytes
+    real_access = env_cmd.os.access
 
-    def fake_read_bytes(self):
-        if self == target:
-            raise PermissionError(13, 'Permission denied')
-        return real_read_bytes(self)
+    def fake_access(path, mode, **kwargs):
+        if Path(path) == target and mode & env_cmd.os.R_OK:
+            return False
+        return real_access(path, mode, **kwargs)
 
-    monkeypatch.setattr(Path, 'read_bytes', fake_read_bytes)
+    monkeypatch.setattr(env_cmd.os, 'access', fake_access)
 
 
 def test_keygen_force_aborts_when_the_existing_key_is_unreadable(devbase_root,
@@ -298,8 +286,7 @@ def test_keygen_force_aborts_when_the_existing_key_is_unreadable(devbase_root,
 
     assert generated == [], "読めない鍵を上書きしようとしている"
     assert key_path.exists(), "読めなかっただけの鍵を削除している"
-    with key_path.open('rb') as f:      # read_bytes は注入で潰れているため
-        assert f.read() == key_before
+    assert key_path.read_bytes() == key_before
     assert '上書きを中止' in caplog.text
 
 
@@ -313,55 +300,3 @@ def test_keygen_aborts_before_asking_for_confirmation_when_unreadable(
     assert env_cmd.cmd_env_keygen(devbase_root, force=True) == 1
 
     assert asked == []
-
-
-# ---------------------------------------------------------------------------
-# _snapshot_file / _restore_file の 3 状態
-# ---------------------------------------------------------------------------
-
-def test_snapshot_distinguishes_absent_from_unreadable(tmp_path, monkeypatch):
-    path = tmp_path / 'keys.txt'
-    assert env_cmd._snapshot_file(path) == \
-        env_cmd.FileSnapshot(env_cmd.SnapshotStatus.ABSENT, None)
-
-    path.write_bytes(b'secret')
-    assert env_cmd._snapshot_file(path) == \
-        env_cmd.FileSnapshot(env_cmd.SnapshotStatus.CAPTURED, b'secret')
-
-    _unreadable(monkeypatch, path)
-    assert env_cmd._snapshot_file(path) == \
-        env_cmd.FileSnapshot(env_cmd.SnapshotStatus.UNREADABLE, None)
-
-
-def test_restore_file_removes_a_file_that_was_absent(tmp_path):
-    """不在からのロールバックは生成物を消す (退行防止)"""
-    path = tmp_path / 'keys.txt'
-    path.write_bytes(b'generated')
-
-    assert env_cmd._restore_file(
-        path, env_cmd.FileSnapshot(env_cmd.SnapshotStatus.ABSENT)) is True
-    assert not path.exists()
-
-
-def test_restore_file_writes_back_captured_content_with_0600(tmp_path):
-    """控えた内容は 0600 で書き戻す (退行防止)"""
-    path = tmp_path / 'keys.txt'
-    path.write_bytes(b'new')
-
-    assert env_cmd._restore_file(
-        path,
-        env_cmd.FileSnapshot(env_cmd.SnapshotStatus.CAPTURED, b'old')) is True
-    assert path.read_bytes() == b'old'
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-
-
-def test_restore_file_keeps_an_unreadable_file(tmp_path, caplog):
-    """読めなかったファイルは削除も上書きもせず、そのまま残す"""
-    path = tmp_path / 'keys.txt'
-    path.write_bytes(b'existing')
-
-    assert env_cmd._restore_file(
-        path, env_cmd.FileSnapshot(env_cmd.SnapshotStatus.UNREADABLE)) is False
-    assert path.exists()
-    assert path.read_bytes() == b'existing'
-    assert str(path) in caplog.text

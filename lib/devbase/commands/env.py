@@ -2,9 +2,7 @@
 
 import os
 import subprocess
-from enum import Enum
 from pathlib import Path
-from typing import NamedTuple
 
 import yaml
 
@@ -486,76 +484,6 @@ def _print_key_backup_notice(path, public: str) -> None:
     print("=" * 60)
 
 
-class SnapshotStatus(Enum):
-    """``_snapshot_file`` が区別する 3 状態
-
-    ``ABSENT`` (元から無い) と ``UNREADABLE`` (在るが読めない) を 1 つの ``None`` に
-    潰すと、ロールバック時に「読めなかっただけの既存ファイル」を「元は無かった」と
-    誤認して削除してしまう。権限を直せば回収できたはずの鍵まで失うため、両者は
-    別の状態として持ち回る。
-    """
-
-    ABSENT = 'absent'
-    CAPTURED = 'captured'
-    UNREADABLE = 'unreadable'
-
-
-class FileSnapshot(NamedTuple):
-    """ロールバック用に控えたファイルの状態と内容"""
-
-    status: SnapshotStatus
-    data: bytes | None = None
-
-
-def _snapshot_file(path: Path) -> FileSnapshot:
-    """ロールバック用にファイル内容を控える。
-
-    読めなかった場合は例外にせず ``UNREADABLE`` を返す。ここで例外を投げると
-    呼び出し側の失敗経路が増えるだけで、判断 (中止するか続行するか) は呼び出し側の
-    文脈でしか下せないため。
-    """
-    try:
-        return FileSnapshot(SnapshotStatus.CAPTURED, path.read_bytes())
-    except FileNotFoundError:
-        return FileSnapshot(SnapshotStatus.ABSENT)
-    except OSError as e:
-        logger.warning("既存ファイルを読めませんでした (%s): %s", path, e)
-        return FileSnapshot(SnapshotStatus.UNREADABLE)
-
-
-def _restore_file(path: Path, snapshot: FileSnapshot) -> bool:
-    """``_snapshot_file`` で控えた内容を書き戻す。
-
-    - ``ABSENT``     : 途中で作られたファイルを削除して元の「無い」状態へ戻す
-    - ``CAPTURED``   : 控えた内容を 0600 で書き戻す
-    - ``UNREADABLE`` : 内容を控えられていないので **削除も上書きもしない**。
-      ここで削除すると、権限を直せば回収できたはずの既存ファイルを永久に失う。
-      呼び出し側が中止判断を落とした場合の最後の砦として、現状のファイルを残す。
-
-    復元自体に失敗しても呼び出し側の主エラーを潰さないよう、例外は握りつぶして
-    ``False`` を返す。
-    """
-    from devbase.env import io_common as _io_common
-
-    if snapshot.status is SnapshotStatus.UNREADABLE:
-        logger.warning(
-            "%s は読み取れなかったため内容を控えていません。"
-            "巻き戻せないので現在のファイルをそのまま残します", path)
-        return False
-
-    try:
-        if snapshot.status is SnapshotStatus.ABSENT:
-            if path.exists():
-                path.unlink()
-                return True
-            return False
-        _io_common.write_secure_bytes_atomic(path, snapshot.data)
-        return True
-    except OSError as e:
-        logger.error("ロールバックに失敗しました (%s): %s", path, e)
-        return False
-
-
 def cmd_env_keygen(devbase_root: Path, force: bool = False,
                    assume_yes: bool = False) -> int:
     """devbase 専用の age 鍵を生成する
@@ -591,18 +519,19 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
     # フォールバックするので、単独利用ではリストを作る必要がない。チーム運用で明示的に
     # 受信者を足す経路 (rekey) だけが recipients.txt を作る。
     #
-    # 触るファイルが鍵 1 つになったので、ロールバックも鍵ファイルだけで足りる。
-    # それでも巻き戻しは必要で、--force の途中失敗で旧鍵が消えると既存の暗号文を
-    # 誰も復号できなくなるため。
+    # 書き込みの原子性は agekeys.generate_key_file →
+    # io_common.write_secure_bytes_atomic (一時ファイル + fsync + os.replace) が
+    # 担保しており、生成が途中で失敗しても既存の鍵ファイルは元のまま残る。
+    # したがってこの層で「内容をメモリへ退避して書き戻す」手動ロールバックは重ねない。
+    # 重ねてもリストア自体が失敗しうるぶん壊れ方の種類が増えるだけで、守れるものが
+    # 増えないため。将来ここへロールバックを足したくなったら、まず io 層の原子性が
+    # 破れていないかを疑うこと。
     #
-    # スナップショットは確認プロンプトより前に取る。読めない鍵は上書きを中止するので、
-    # 「同意させてから中止する」空振りを避けたい。
-    key_snapshot = _snapshot_file(path)
-
-    # 既存鍵が在るのに読めないときは、上書きせずここで止める。控えを取れていない以上
-    # 生成が失敗しても巻き戻せず、成功すれば旧鍵は上書きで消える。権限エラーのような
-    # 回復可能な原因が大半なので、「直せば救えたはずの鍵」を失わせない方を選ぶ。
-    if key_snapshot.status is SnapshotStatus.UNREADABLE:
+    # 一方で「既存鍵が在るのに読めない」ときに中止するガードは、原子性とは別の目的で
+    # 残す。読めないだけなら権限を直せば回収できる可能性があるのに、生成が成功すると
+    # 旧鍵は上書きで確実に消えるため。判定は確認プロンプトより前に置き、
+    # 「同意させてから中止する」空振りを避ける。
+    if path.exists() and not os.access(path, os.R_OK):
         logger.error(
             "既存の鍵ファイルを読めないため、上書きを中止しました: %s", path)
         logger.error(
@@ -635,9 +564,8 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
     try:
         path, public = agekeys.generate_key_file(path, force=True)
     except (DevbaseError, OSError) as e:
+        # 差し替えは atomic なので、失敗しても既存の鍵はそのまま残っている。
         logger.error("%s", e)
-        if _restore_file(path, key_snapshot):
-            logger.error("鍵ファイルを元の状態へ戻しました")
         return 1
 
     logger.info("鍵を生成しました: %s", path)
