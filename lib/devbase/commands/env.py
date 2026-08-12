@@ -3,6 +3,7 @@
 import os
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
@@ -13,6 +14,57 @@ from devbase.env.sources import SourcesManager, file_hash, dir_hash
 from devbase.env.collector import CollectorRegistry
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 保存先の解決
+# ---------------------------------------------------------------------------
+#
+# 設定の実体は秘密ストア (devbase.env.secret_store) が持ち、平文か暗号化かは
+# ファイルの存在から自動判定される。以下のヘルパは「どの参照を扱うか」だけを決め、
+# 各コマンドは保存形式を意識せず EnvFile 互換の操作で読み書きする。
+
+def _secret_store(devbase_root: Path):
+    from devbase.env.secret_store import SecretStore
+
+    return SecretStore(devbase_root)
+
+
+def _global_env(devbase_root: Path):
+    """共通設定のビューを返す"""
+    from devbase.env.secret_store import SecretRef
+    from devbase.env.secret_view import SecretEnvFile
+
+    return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_global())
+
+
+def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
+    """CWD が ``projects/<name>`` 配下ならプロジェクト名を返す。
+
+    ``projects/<name>/sub/dir`` のような下位ディレクトリから実行された場合も
+    ``<name>`` を返す。保存先はプロジェクトの直下に固定したい (コンテナ構成が
+    参照するのはそこであり、実行時の CWD ではない) ため、末尾ではなく先頭の
+    パス要素を採用する。
+    """
+    current = Path(cwd) if cwd is not None else Path(os.environ.get('PWD', os.getcwd()))
+    projects_dir = Path(devbase_root) / 'projects'
+    try:
+        relative = current.resolve().relative_to(projects_dir.resolve())
+    except (ValueError, OSError):
+        return None
+    parts = relative.parts
+    return parts[0] if parts else None
+
+
+def _project_env(devbase_root: Path, cwd: Optional[Path] = None):
+    """CWD のプロジェクト設定のビューを返す (projects/ 配下でなければ ``None``)"""
+    from devbase.env.secret_store import SecretRef
+    from devbase.env.secret_view import SecretEnvFile
+
+    name = _current_project_name(devbase_root, cwd)
+    if name is None:
+        return None
+    return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_project(name))
 
 
 def cmd_env(devbase_root: Path, args) -> int:
@@ -50,8 +102,7 @@ def cmd_env(devbase_root: Path, args) -> int:
 
 def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
     """全体環境の初期セットアップ（対話式）"""
-    env_path = devbase_root / '.env'
-    env_file = EnvFile(env_path)
+    env_file = _global_env(devbase_root)
     env_file.load()
 
     if env_file.count() > 0 and not reset:
@@ -60,11 +111,9 @@ def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
         print("  やり直し: devbase env init --reset")
         return 0
 
-    if reset and env_path.exists():
+    if reset and env_file.file_exists():
         env_file.backup()
         logger.info("既存の設定をバックアップしました")
-        env_file = EnvFile(env_path)
-        env_file.load()
         for key in list(env_file.get_all().keys()):
             env_file.delete(key)
 
@@ -83,14 +132,13 @@ def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
 
     _update_source_metadata(devbase_root, env_file)
 
-    logger.info("セットアップ完了: %s (%d変数)", env_path, env_file.count())
+    logger.info("セットアップ完了: %s (%d変数)", env_file.path, env_file.count())
     return 0
 
 
 def cmd_env_sync(devbase_root: Path) -> int:
     """ソースファイルから認証情報を再同期する"""
-    env_path = devbase_root / '.env'
-    env_file = EnvFile(env_path)
+    env_file = _global_env(devbase_root)
     env_file.load()
 
     sources = SourcesManager(devbase_root)
@@ -221,35 +269,29 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
                  keys_only: bool = False) -> int:
     """設定済み変数の一覧表示"""
     if not project_only:
-        env_path = devbase_root / '.env'
-        env_file = EnvFile(env_path)
-        env_file.load()
+        env_file = _global_env(devbase_root)
         all_vars = env_file.get_all()
 
-        print(f"\n=== グローバル ({env_path}) ===")
+        print(f"\n=== グローバル ({env_file.path}{_mode_suffix(env_file)}) ===")
         _print_env_vars(all_vars, keys_only, reveal)
         print(f"\nグローバル: {len(all_vars)}変数")
 
     if not global_only:
-        current_dir = Path(os.environ.get('PWD', os.getcwd()))
-        projects_dir = devbase_root / 'projects'
+        proj_env = _project_env(devbase_root)
+        if proj_env is not None and proj_env.file_exists():
+            proj_vars = proj_env.get_all()
 
-        try:
-            current_dir.relative_to(projects_dir)
-        except ValueError:
-            pass
-        else:
-            project_env_path = current_dir / '.env'
-            if project_env_path.exists():
-                proj_env = EnvFile(project_env_path)
-                proj_env.load()
-                proj_vars = proj_env.get_all()
-
-                print(f"\n=== プロジェクト: {current_dir.name} ({project_env_path}) ===")
-                _print_env_vars(proj_vars, keys_only, reveal)
-                print(f"\nプロジェクト: {len(proj_vars)}変数")
+            print(f"\n=== プロジェクト: {proj_env.ref.name} "
+                  f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
+            _print_env_vars(proj_vars, keys_only, reveal)
+            print(f"\nプロジェクト: {len(proj_vars)}変数")
 
     return 0
+
+
+def _mode_suffix(env_file) -> str:
+    """一覧表示で保存形式を示す接尾辞。平文のときは何も足さない。"""
+    return ' [暗号化]' if env_file.is_encrypted() else ''
 
 
 def _format_value(key: str, value: str, reveal: bool) -> str:
@@ -277,35 +319,33 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False) -> i
         return 1
 
     if project:
-        env_path = Path(os.environ.get('PWD', os.getcwd())) / '.env'
+        env_file = _project_env(devbase_root)
+        if env_file is None:
+            # projects/ 配下でない場所での --project は、どのプロジェクトの設定を
+            # 指しているのか決められない。従来は CWD に .env を作っていたが、
+            # コンテナが読む先とは限らないため明示的に断る。
+            logger.error(
+                "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
+            return 1
     else:
-        env_path = devbase_root / '.env'
+        env_file = _global_env(devbase_root)
 
-    env_file = EnvFile(env_path)
-    env_file.load()
     env_file.set(key, value)
     env_file.save()
 
-    logger.info("%s を設定しました", key)
+    logger.info("%s を設定しました (%s)", key, env_file.path)
     return 0
 
 
 def cmd_env_get(devbase_root: Path, key: str) -> int:
     """変数の値を取得する"""
-    env_path = devbase_root / '.env'
-    env_file = EnvFile(env_path)
-    env_file.load()
-
-    value = env_file.get(key)
+    value = _global_env(devbase_root).get(key)
     if value is not None:
         print(value)
         return 0
 
-    current_dir = Path(os.environ.get('PWD', os.getcwd()))
-    project_env_path = current_dir / '.env'
-    if project_env_path.exists() and project_env_path != env_path:
-        proj_env = EnvFile(project_env_path)
-        proj_env.load()
+    proj_env = _project_env(devbase_root)
+    if proj_env is not None and proj_env.file_exists():
         value = proj_env.get(key)
         if value is not None:
             print(value)
@@ -317,9 +357,7 @@ def cmd_env_get(devbase_root: Path, key: str) -> int:
 
 def cmd_env_delete(devbase_root: Path, key: str) -> int:
     """変数を削除する"""
-    env_path = devbase_root / '.env'
-    env_file = EnvFile(env_path)
-    env_file.load()
+    env_file = _global_env(devbase_root)
 
     if env_file.delete(key):
         env_file.save()
@@ -332,27 +370,84 @@ def cmd_env_delete(devbase_root: Path, key: str) -> int:
 
 def cmd_env_edit(devbase_root: Path) -> int:
     """エディタで.envを開く"""
-    env_path = devbase_root / '.env'
+    env_file = _global_env(devbase_root)
     editor = os.environ.get('EDITOR', 'vi')
-    return subprocess.call([editor, str(env_path)])
+
+    if not env_file.is_encrypted():
+        return subprocess.call([editor, str(env_file.path)])
+
+    return _edit_encrypted(env_file, editor)
+
+
+def _edit_encrypted(env_file, editor: str) -> int:
+    """暗号化された設定を、平文を残さずにエディタで編集する。
+
+    エディタは平文のファイルしか開けないため、復号結果を一時ファイルへ書いて
+    編集させ、保存後に暗号化し直してから消す。一時ファイルは自分専用の
+    ``0700`` ディレクトリに ``0600`` で作り、正常終了でも異常終了でも
+    ``finally`` で必ず削除する。
+
+    ここだけは平文が一瞬ディスクに載る。エディタの外部プロセスに値を渡す方法が
+    他に無いためで、恒久的な平文ファイルを作らないという方針の例外として扱う
+    (plan35 §7 の「守れないもの」に対応する)。
+    """
+    import shutil
+    import tempfile
+
+    from devbase.env import io_common as _io_common
+    from devbase.errors import DevbaseError
+
+    try:
+        data = env_file.get_all()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    workdir = Path(tempfile.mkdtemp(prefix='devbase-env-'))
+    tmp_path = workdir / '.env'
+    try:
+        _io_common.write_secure_bytes(tmp_path, EnvFile.dump_bytes(data))
+        before = tmp_path.read_bytes()
+
+        rc = subprocess.call([editor, str(tmp_path)])
+        if rc != 0:
+            logger.error("エディタが異常終了したため保存しません (exit=%d)", rc)
+            return rc
+
+        after = tmp_path.read_bytes()
+        if after == before:
+            logger.info("変更はありません")
+            return 0
+
+        try:
+            edited = EnvFile.parse_bytes(after)
+        except UnicodeDecodeError as e:
+            logger.error("編集結果を UTF-8 として読めませんでした: %s", e)
+            return 1
+
+        for key in list(env_file.get_all()):
+            env_file.delete(key)
+        for key, value in edited.items():
+            env_file.set(key, value)
+        env_file.save()
+        logger.info("保存しました: %s (%d変数)", env_file.path, env_file.count())
+        return 0
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def cmd_env_project(devbase_root: Path) -> int:
     """プロジェクト固有変数の設定（対話式）"""
-    current_dir = Path(os.environ.get('PWD', os.getcwd()))
-    projects_dir = devbase_root / 'projects'
-
-    try:
-        current_dir.relative_to(projects_dir)
-    except ValueError:
+    env_file = _project_env(devbase_root)
+    if env_file is None:
         logger.error("projects/ 配下で実行してください")
         return 1
 
-    project_name = current_dir.name
-
-    env_yml_path = current_dir / 'env.yml'
-    env_path = current_dir / '.env'
-    env_file = EnvFile(env_path)
+    project_name = env_file.ref.name
+    env_yml_path = Path(devbase_root) / 'projects' / project_name / 'env.yml'
     env_file.load()
 
     print(f"\n=== {project_name} プロジェクト環境変数 ===")
@@ -409,7 +504,7 @@ def cmd_env_project(devbase_root: Path) -> int:
             pass
 
     env_file.save()
-    logger.info("保存完了: %s (%d変数)", env_path, env_file.count())
+    logger.info("保存完了: %s (%d変数)", env_file.path, env_file.count())
     return 0
 
 
