@@ -227,6 +227,64 @@ def test_clear_injected_without_injection_is_noop(root):
     assert environ == {'TOKEN': 'from-shell'}
 
 
+def test_clear_injected_only_touches_the_given_mapping(root, store):
+    """履歴は注入先ごとに持つ (別のマッピングを巻き込まない)
+
+    履歴が全体で 1 つしか無いと、A へ注入した記録で B を「復元」してしまい、
+    B の値が壊れるうえ A には機密が残る。
+    """
+    store.age.save(GLOBAL, {'TOKEN': 'from-secret'})
+    a = {'TOKEN': 'a-shell'}
+    b = {'TOKEN': 'b-shell'}
+
+    runtime.inject(root, None, environ=a, store=store)
+    runtime.inject(root, None, environ=b, store=store)
+
+    assert runtime.clear_injected(a) == ['TOKEN']
+
+    # A だけが元へ戻り、B は注入したままで壊れない
+    assert a == {'TOKEN': 'a-shell'}
+    assert b == {'TOKEN': 'from-secret'}
+
+    # B の履歴は残っているので、後から解除すれば B も元へ戻る
+    assert runtime.clear_injected(b) == ['TOKEN']
+    assert b == {'TOKEN': 'b-shell'}
+
+
+def test_clearing_one_mapping_keeps_secrets_out_of_the_other(root, store):
+    """A の解除が B の機密を消し残さない (逆に A には機密を残さない)"""
+    store.age.save(GLOBAL, {'ONLY_SECRET': 's'})
+    a = {}
+    b = {}
+
+    runtime.inject(root, None, environ=a, store=store)
+    runtime.inject(root, None, environ=b, store=store)
+    runtime.clear_injected(b)
+
+    assert b == {}
+    assert a == {'ONLY_SECRET': 's'}
+
+    runtime.clear_injected(a)
+    assert a == {}
+
+
+def test_inject_and_clear_default_to_os_environ(root, store, monkeypatch):
+    """既定の対象は従来どおり os.environ"""
+    monkeypatch.delenv('TOKEN', raising=False)
+    store.age.save(GLOBAL, {'TOKEN': 'from-secret'})
+    other = {'TOKEN': 'other'}
+
+    runtime.inject(root, None, store=store)
+    assert os.environ['TOKEN'] == 'from-secret'
+
+    # 別マッピングへの注入は os.environ の履歴に混ざらない
+    runtime.inject(root, None, environ=other, store=store)
+
+    assert runtime.clear_injected() == ['TOKEN']
+    assert 'TOKEN' not in os.environ
+    assert other == {'TOKEN': 'from-secret'}
+
+
 def test_child_env_does_not_touch_os_environ(root, store, monkeypatch):
     monkeypatch.delenv('TOKEN', raising=False)
     store.age.save(GLOBAL, {'TOKEN': 'sk-1'})

@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from devbase.env.secret_store import SecretRef, SecretStore
 from devbase.env.store import EnvFile
@@ -170,12 +170,32 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
     return resolved
 
 
-#: この実行で :func:`inject` が載せた変数名 → 載せる**前**の値 (未設定なら None)。
+#: この実行で :func:`inject` が載せた履歴。
+#:
+#: 値は ``(対象の環境マッピング, {変数名: 載せる**前**の値 (未設定なら None)})``。
 #:
 #: 「載せた変数名」だけでなく元の値まで控えるのは、解除時に利用者がシェルで
 #: 設定していた同名の変数まで消さないため。元々あった変数は元の値へ戻し、
 #: 元々無かった変数だけを削除する。
-_injected_originals: Dict[str, Optional[str]] = {}
+#:
+#: さらに**対象マッピングごとに**分けて持つ。:func:`inject` / :func:`clear_injected`
+#: は ``environ`` 引数で ``os.environ`` 以外のマッピングを渡され得る (テストや、
+#: 将来「子プロセス用の辞書へ載せて後で戻す」ような呼び出し) ため。履歴が全体で
+#: 1 つしか無いと、``inject(..., environ=A)`` の後に ``clear_injected(environ=B)``
+#: を呼んだとき、A に対して記録した内容で B を書き換えてしまい (誤って B の値を
+#: 「復元」し)、かつ A には機密が載ったまま残る。
+#:
+#: ``dict`` は hashable ではないのでキーには ``id()`` を使うが、対象そのものへの
+#: 参照も一緒に保持する。参照を持つ限り対象オブジェクトは生存し続けるので、
+#: 解放済みアドレスの ``id`` が別のマッピングへ再利用されて履歴が誤爆すること
+#: がない。解除した時点でその対象の履歴ごと捨てる。
+_injected_originals: Dict[int, Tuple[Any, Dict[str, Optional[str]]]] = {}
+
+
+def _history_for(target) -> Dict[str, Optional[str]]:
+    """対象マッピングに紐づく注入履歴を返す (無ければ作る)"""
+    _, originals = _injected_originals.setdefault(id(target), (target, {}))
+    return originals
 
 
 def clear_injected(environ=None) -> List[str]:
@@ -192,20 +212,24 @@ def clear_injected(environ=None) -> List[str]:
     「呼び出し元固有のキーを unset してから対象を読む」のと同じ性質を、機密に
     ついても満たすための関数。
 
-    自分が載せたキーだけを対象にする。利用者がシェルで設定していた同名の変数は
-    注入前の値へ戻すので、消えることはない。
+    自分が **その対象マッピングへ** 載せたキーだけを対象にする。利用者がシェルで
+    設定していた同名の変数は注入前の値へ戻すので、消えることはない。他の
+    マッピングへの注入は、ここでは一切触らない。
 
     Returns:
         取り除いた (または元へ戻した) 変数名の一覧
     """
     target = environ if environ is not None else os.environ
-    cleared = list(_injected_originals)
-    for name, original in _injected_originals.items():
+    entry = _injected_originals.pop(id(target), None)
+    if entry is None:
+        return []
+    _, originals = entry
+    cleared = list(originals)
+    for name, original in originals.items():
         if original is None:
             target.pop(name, None)
         else:
             target[name] = original
-    _injected_originals.clear()
     if cleared:
         logger.debug("機密 %d 件を環境変数から取り除きました", len(cleared))
     return cleared
@@ -218,17 +242,22 @@ def inject(devbase_root: Path, project: Optional[str] = None,
     ``docker compose`` は devbase 自身の環境変数から値を解決するため、Compose を
     起動する前にここを通す。
 
-    載せた変数名と注入前の値を記録し、:func:`clear_injected` で元へ戻せるように
-    する。プロジェクト切替時に切替元の機密を落とすために必要 (詳細は
-    :func:`clear_injected` の説明を参照)。
+    載せた変数名と注入前の値を **載せた対象マッピングごとに** 記録し、
+    :func:`clear_injected` で元へ戻せるようにする。プロジェクト切替時に切替元の
+    機密を落とすために必要 (詳細は :func:`clear_injected` の説明を参照)。
     """
     resolved = resolve(devbase_root, project, store=store)
     target = environ if environ is not None else os.environ
-    for name in resolved.values:
-        # 既に記録済みなら上書きしない。記録したいのは「devbase が最初に載せる
-        # 前の値」であって、前回の注入で載せた機密ではないため。
-        if name not in _injected_originals:
-            _injected_originals[name] = target.get(name)
+    if resolved.values:
+        # 履歴は対象マッピングごとに持つ (理由は _injected_originals の説明を参照)。
+        # 載せるものが無いときは記録も作らない (空の履歴が対象への参照を抱え込む
+        # のを避ける)。
+        originals = _history_for(target)
+        for name in resolved.values:
+            # 既に記録済みなら上書きしない。記録したいのは「devbase が最初に載せる
+            # 前の値」であって、前回の注入で載せた機密ではないため。
+            if name not in originals:
+                originals[name] = target.get(name)
     target.update(resolved.values)
     if resolved.names:
         logger.debug("機密 %d 件を環境変数へ載せました", len(resolved.names))
