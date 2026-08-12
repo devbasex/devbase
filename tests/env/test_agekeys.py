@@ -212,6 +212,84 @@ def test_generate_key_file_refuses_overwrite_without_force(isolated_home):
     assert path.read_bytes() == before
 
 
+# ---------------------------------------------------------------------------
+# 新規生成の排他性 (TOCTOU)
+#
+# 「存在チェック → 生成」の隙間に他プロセスが鍵を作れると、後発が先発の鍵を
+# 消し、先発鍵で暗号化した機密がその瞬間から復号不能になる。新規生成は
+# O_CREAT|O_EXCL で不可分に作り、隙間そのものを無くす。
+# ---------------------------------------------------------------------------
+
+def test_generate_key_file_creates_a_new_key_exclusively(isolated_home, monkeypatch):
+    """新規生成は O_EXCL 付きで open する (os.replace で置き換えない)"""
+    seen = []
+    real_open = os.open
+
+    def spy_open(target, flags, *args, **kwargs):
+        seen.append((str(target), flags))
+        return real_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(agekeys.os, 'open', spy_open)
+
+    path, _ = agekeys.generate_key_file()
+
+    key_flags = [flags for target, flags in seen if target == str(path)]
+    assert key_flags, "鍵ファイルが os.open 経由で作られていない"
+    assert all(flags & os.O_EXCL for flags in key_flags), \
+        "新規生成に O_EXCL が付いていない (判定と作成の隙間が残る)"
+
+
+def test_generate_key_file_does_not_clobber_a_key_created_after_the_check(
+        isolated_home, monkeypatch):
+    """事前チェック通過後に他プロセスが鍵を作っても、その鍵を上書きしない。
+
+    ``_ensure_private_dir`` の直後に鍵を差し込んで、判定と書き込みの隙間で
+    並行プロセスが先に生成した状況を再現する。排他生成なら後発 (このテストの
+    呼び出し) が負けて、先発の鍵が 1 バイトも変わらずに残る。
+    """
+    path = agekeys.key_file_path()
+    real_ensure = agekeys._ensure_private_dir
+    rival = b'AGE-SECRET-KEY-1RIVAL\n'
+
+    def ensure_then_race(parent):
+        real_ensure(parent)
+        if not path.exists():
+            path.write_bytes(rival)
+
+    monkeypatch.setattr(agekeys, '_ensure_private_dir', ensure_then_race)
+
+    with pytest.raises(agekeys.AgeKeyError, match='既に存在'):
+        agekeys.generate_key_file()
+
+    assert path.read_bytes() == rival
+
+
+def test_generate_key_file_leaves_no_temp_file_on_first_generation(isolated_home):
+    """新規生成は一時ファイルを経由しない (鍵ディレクトリに残骸を残さない)"""
+    path, _ = agekeys.generate_key_file()
+    assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+def test_generate_key_file_removes_a_half_written_key_on_failure(isolated_home,
+                                                                 monkeypatch):
+    """書き込み途中で落ちたら中途半端な鍵を残さない。
+
+    半端な鍵が残ると、以後の生成が「既に存在します」で止まるうえ、その鍵では
+    何も復号できないという最悪の状態になる。
+    """
+    path = agekeys.key_file_path()
+
+    def boom(fd):
+        raise OSError(28, 'No space left on device')
+
+    monkeypatch.setattr(agekeys.os, 'fsync', boom)
+
+    with pytest.raises(OSError):
+        agekeys.generate_key_file()
+
+    assert not path.exists()
+
+
 def test_generate_key_file_force_replaces_key(isolated_home):
     path, first = agekeys.generate_key_file()
     _, second = agekeys.generate_key_file(force=True)

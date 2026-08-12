@@ -96,6 +96,48 @@ def test_keygen_without_force_keeps_existing_key(devbase_root):
     assert agekeys.key_file_path().read_bytes() == before
 
 
+def test_keygen_without_force_does_not_request_an_overwrite(devbase_root,
+                                                            monkeypatch):
+    """非 --force 実行は generate_key_file(force=True) を呼ばない。
+
+    無条件に force=True を渡すと、コマンド側の存在チェックから実際の書き込みまで
+    の隙間に他プロセスが作った鍵を、利用者が要求していないのに消してしまう。
+    """
+    seen = []
+    real = agekeys.generate_key_file
+
+    def spy(path, *, force=False):
+        seen.append(force)
+        return real(path, force=force)
+
+    monkeypatch.setattr(agekeys, 'generate_key_file', spy)
+
+    assert _keygen(devbase_root) == 0
+    assert seen == [False]
+
+
+def test_keygen_aborts_when_a_key_appears_after_the_check(devbase_root,
+                                                          monkeypatch):
+    """事前チェック後に鍵が現れたら、上書きせずエラー終了する (TOCTOU)。
+
+    ``_ensure_private_dir`` の直後に鍵を差し込んで、判定と書き込みの隙間で
+    並行プロセスが先に生成した状況を再現する。
+    """
+    key_path = agekeys.key_file_path()
+    real_ensure = agekeys._ensure_private_dir
+    rival = b'AGE-SECRET-KEY-1RIVAL\n'
+
+    def ensure_then_race(parent):
+        real_ensure(parent)
+        if not key_path.exists():
+            key_path.write_bytes(rival)
+
+    monkeypatch.setattr(agekeys, '_ensure_private_dir', ensure_then_race)
+
+    assert _keygen(devbase_root) == 1
+    assert key_path.read_bytes() == rival
+
+
 def test_keygen_force_replaces_the_key(devbase_root):
     assert _keygen(devbase_root) == 0
     old_public = agekeys.read_public_key(agekeys.key_file_path())

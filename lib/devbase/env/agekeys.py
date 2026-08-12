@@ -128,14 +128,75 @@ def _warn_if_world_accessible(path: Path) -> None:
         )
 
 
+def _key_exists_error(path: Path) -> AgeKeyError:
+    """「既に鍵がある」エラー。事前チェックと排他生成の両方から使う"""
+    return AgeKeyError(
+        f"鍵ファイルが既に存在します: {path}\n"
+        "上書きすると既存の暗号化ファイルを復号できなくなります。"
+        "意図的に作り直す場合のみ --force を指定してください"
+    )
+
+
+def _create_key_file_exclusive(path: Path, data: bytes) -> None:
+    """新規鍵を ``O_CREAT|O_EXCL`` で **排他的に** 作成する。
+
+    「存在チェック → 生成」を別々に行うと、その隙間に他プロセスが同じ判定を
+    通り抜けられる。両者が生成へ進むと後発の書き込みが先発の鍵を消し、先発鍵で
+    暗号化した機密がその瞬間から復号不能になる (TOCTOU)。``O_EXCL`` は
+    「存在しなければ作る」をカーネル側で不可分に行うため、この隙間が原理的に
+    消える。既存ファイルが無い状況では守るべき旧内容も無いので、一時ファイル +
+    ``os.replace`` は不要なだけでなく有害 — ``os.replace`` は既存を無条件に
+    置き換えてしまい、まさに塞ぎたい上書きを許すため。
+
+    書き込み途中で失敗したら、中途半端な鍵ファイルを残さないよう自分で作った
+    ファイルを消す。半端な鍵が残ると以後の生成が「既に存在します」で止まり、
+    しかもその鍵では何も復号できない。
+    """
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as e:
+        raise _key_exists_error(path) from e
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+    # mode 引数が無視される環境 (Windows 等) に備えて明示的に揃える
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def generate_key_file(path: Optional[Path] = None, *,
                       force: bool = False) -> Tuple[Path, str]:
     """devbase 専用の age 鍵を生成して ``0600`` で保存する。
 
-    ``force`` で既存鍵を作り直す場合も、同一ディレクトリの一時ファイルへ書いて
-    fsync してから atomic に差し替える。直接 ``O_TRUNC`` で上書きすると、書き込み
-    途中の失敗 (ディスク枯渇・強制終了など) で旧鍵だけが失われ、既存の暗号文を
-    誰も復号できなくなるため。差し替えに成功するまで旧鍵はそのまま残る。
+    書き込み方法は ``force`` で変える。守るべき旧内容の有無が違うため。
+
+    - ``force=False`` (新規生成): ``O_CREAT|O_EXCL`` で直接排他作成する。
+      判定と作成の隙間を閉じ、並行実行しても先に作った側の鍵が生き残る。
+    - ``force=True`` (作り直し): 同一ディレクトリの一時ファイルへ書いて fsync
+      してから atomic に差し替える。直接 ``O_TRUNC`` で上書きすると、書き込み
+      途中の失敗 (ディスク枯渇・強制終了など) で旧鍵だけが失われ、既存の暗号文を
+      誰も復号できなくなるため。差し替えに成功するまで旧鍵はそのまま残る。
+
+    ``--force`` 同士の並行実行にはロックを掛けない。どちらも利用者が「既存鍵を
+    捨てて作り直す」と明示的に要求した操作であり、後勝ちで最後の鍵が残ること自体が
+    要求どおりの結果だから。ロックで直列化しても「先の鍵が消える」事実は変わらず、
+    グローバルな鍵ファイルにロックの残骸 (stale lock) という別の詰まり方を持ち込む
+    ぶん損になる。塞ぐべきだったのは「誰も上書きを要求していないのに上書きされる」
+    新規生成側だけで、そこは ``O_EXCL`` で閉じている。
 
     Returns:
         ``(鍵ファイルのパス, 公開鍵文字列)``
@@ -144,12 +205,10 @@ def generate_key_file(path: Optional[Path] = None, *,
         AgeKeyError: 既存の鍵があり ``force`` が偽のとき
     """
     path = Path(path) if path is not None else key_file_path()
+    # 早期に弾いて無駄な鍵生成を避けるための事前チェック。ここを通り抜けた
+    # 並行プロセスは下の O_EXCL で確実に止まるので、この判定は最適化にすぎない。
     if path.exists() and not force:
-        raise AgeKeyError(
-            f"鍵ファイルが既に存在します: {path}\n"
-            "上書きすると既存の暗号化ファイルを復号できなくなります。"
-            "意図的に作り直す場合のみ --force を指定してください"
-        )
+        raise _key_exists_error(path)
 
     identity = pyrage.x25519.Identity.generate()
     public = str(identity.to_public())
@@ -164,7 +223,10 @@ def generate_key_file(path: Optional[Path] = None, *,
     )
 
     _ensure_private_dir(path.parent)
-    _io_common.write_secure_bytes_atomic(path, content.encode('utf-8'))
+    if force:
+        _io_common.write_secure_bytes_atomic(path, content.encode('utf-8'))
+    else:
+        _create_key_file_exclusive(path, content.encode('utf-8'))
     return path, public
 
 

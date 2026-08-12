@@ -561,10 +561,16 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
             print("中止しました")
             return 1
 
+    # force はコマンドの --force をそのまま渡す。ここで無条件に force=True に
+    # すると、上の path.exists() 判定から実際の書き込みまでの隙間に他プロセスが
+    # 鍵を作っていた場合、利用者が上書きを要求していないのにその鍵を消してしまう
+    # (TOCTOU)。force=False なら agekeys 側が O_CREAT|O_EXCL で作るため、隙間に
+    # 現れた鍵は上書きされずエラーで止まる。
     try:
-        path, public = agekeys.generate_key_file(path, force=True)
+        path, public = agekeys.generate_key_file(path, force=force)
     except (DevbaseError, OSError) as e:
-        # 差し替えは atomic なので、失敗しても既存の鍵はそのまま残っている。
+        # 新規生成は排他作成、--force の差し替えは atomic なので、いずれの失敗でも
+        # 既に在る鍵はそのまま残っている。
         logger.error("%s", e)
         return 1
 
