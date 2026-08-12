@@ -67,6 +67,26 @@ def _project_env(devbase_root: Path, cwd: Optional[Path] = None):
     return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_project(name))
 
 
+def _target_env(devbase_root: Path, project: bool):
+    """``--project`` の有無から操作対象の設定ビューを返す (解決できなければ ``None``)。
+
+    ``projects/<name>`` 配下でない場所での ``--project`` は、どのプロジェクトの
+    設定を指しているのか決められない。従来は CWD に ``.env`` を作っていたが、
+    コンテナが読む先とは限らないため明示的に断る。
+
+    set / delete / edit の 3 つが同じ判断とエラー文言を持つ必要があるので、
+    ここへ集約して振る舞いがずれないようにする。
+    """
+    if not project:
+        return _global_env(devbase_root)
+
+    env_file = _project_env(devbase_root)
+    if env_file is None:
+        logger.error(
+            "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
+    return env_file
+
+
 def cmd_env(devbase_root: Path, args) -> int:
     """envサブコマンドの振り分け"""
     subcmd = getattr(args, 'subcommand', None)
@@ -82,8 +102,10 @@ def cmd_env(devbase_root: Path, args) -> int:
         'set':     lambda: cmd_env_set(devbase_root, getattr(args, 'assignment', ''),
                                        project=getattr(args, 'project', False)),
         'get':     lambda: cmd_env_get(devbase_root, getattr(args, 'key', '')),
-        'delete':  lambda: cmd_env_delete(devbase_root, getattr(args, 'key', '')),
-        'edit':    lambda: cmd_env_edit(devbase_root),
+        'delete':  lambda: cmd_env_delete(devbase_root, getattr(args, 'key', ''),
+                                          project=getattr(args, 'project', False)),
+        'edit':    lambda: cmd_env_edit(devbase_root,
+                                        project=getattr(args, 'project', False)),
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
@@ -318,17 +340,9 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False) -> i
         logger.error("キー名が空です")
         return 1
 
-    if project:
-        env_file = _project_env(devbase_root)
-        if env_file is None:
-            # projects/ 配下でない場所での --project は、どのプロジェクトの設定を
-            # 指しているのか決められない。従来は CWD に .env を作っていたが、
-            # コンテナが読む先とは限らないため明示的に断る。
-            logger.error(
-                "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
-            return 1
-    else:
-        env_file = _global_env(devbase_root)
+    env_file = _target_env(devbase_root, project)
+    if env_file is None:
+        return 1
 
     env_file.set(key, value)
     env_file.save()
@@ -355,22 +369,35 @@ def cmd_env_get(devbase_root: Path, key: str) -> int:
     return 1
 
 
-def cmd_env_delete(devbase_root: Path, key: str) -> int:
-    """変数を削除する"""
-    env_file = _global_env(devbase_root)
+def cmd_env_delete(devbase_root: Path, key: str, project: bool = False) -> int:
+    """変数を削除する
+
+    ``--project`` を受けるのは、暗号化された設定は利用者がエディタで直接開いて
+    不要なキーを消せないため。CLI からプロジェクト設定を掃除する手段が要る。
+    """
+    env_file = _target_env(devbase_root, project)
+    if env_file is None:
+        return 1
 
     if env_file.delete(key):
         env_file.save()
-        logger.info("%s を削除しました", key)
+        logger.info("%s を削除しました (%s)", key, env_file.path)
         return 0
 
     logger.error("変数 '%s' は存在しません", key)
     return 1
 
 
-def cmd_env_edit(devbase_root: Path) -> int:
-    """エディタで.envを開く"""
-    env_file = _global_env(devbase_root)
+def cmd_env_edit(devbase_root: Path, project: bool = False) -> int:
+    """エディタで.envを開く
+
+    ``--project`` を受けるのは delete と同じ理由。暗号化されていれば
+    ``_edit_encrypted`` 経由で復号 → 編集 → 再暗号化する。
+    """
+    env_file = _target_env(devbase_root, project)
+    if env_file is None:
+        return 1
+
     editor = os.environ.get('EDITOR', 'vi')
 
     if not env_file.is_encrypted():

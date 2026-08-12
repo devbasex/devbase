@@ -84,16 +84,32 @@ devbase env get AWS_PROFILE
 環境変数を削除します。
 
 ```
-devbase env delete KEY
+devbase env delete KEY [-p]
+```
+
+| オプション | 説明 |
+|-----------|------|
+| `-p` | プロジェクト設定から削除（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
+
+```bash
+# グローバルから削除
+devbase env delete OLD_API_KEY
+
+# カレントプロジェクトの設定から削除
+devbase env delete GCP_ACTIVE_PROFILE -p
 ```
 
 ## `devbase env edit`
 
-デフォルトエディタで `.env` ファイルを開きます。
+デフォルトエディタで設定を開きます。設定が暗号化されている場合は、復号した内容を一時ファイルで編集し、保存時に再暗号化します。
 
 ```
-devbase env edit
+devbase env edit [-p]
 ```
+
+| オプション | 説明 |
+|-----------|------|
+| `-p` | カレントプロジェクトの設定を開く（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
 
 ## `devbase env project`
 

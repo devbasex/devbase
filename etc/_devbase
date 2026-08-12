@@ -245,8 +245,17 @@ _devbase() {
                         '1:assignment:' \
                         '--project[Set in project .env]' '-p[Set in project .env]'
                     ;;
-                get|delete)
+                get)
                     _arguments '1:key:'
+                    ;;
+                delete)
+                    _arguments \
+                        '1:key:' \
+                        '--project[Delete from project .env]' '-p[Delete from project .env]'
+                    ;;
+                edit)
+                    _arguments \
+                        '--project[Edit project .env]' '-p[Edit project .env]'
                     ;;
                 export)
                     _arguments \

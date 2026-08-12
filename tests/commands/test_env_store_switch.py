@@ -127,6 +127,38 @@ def test_delete_reports_a_missing_key(devbase_root, with_key):
     assert env_cmd.cmd_env_delete(devbase_root, 'B') == 1
 
 
+def test_delete_project_updates_the_encrypted_project_store(devbase_root, with_key,
+                                                            monkeypatch):
+    """暗号化されたプロジェクト設定からも CLI でキーを消せる"""
+    monkeypatch.setenv('PWD', str(devbase_root / 'projects' / 'web'))
+    store = SecretStore(devbase_root)
+    store.age.save(SecretRef.for_project('web'), {'A': '1', 'B': '2'})
+    encrypt_global(devbase_root, {'A': 'global'})
+
+    assert env_cmd.cmd_env_delete(devbase_root, 'A', project=True) == 0
+
+    assert store.load(SecretRef.for_project('web')) == {'B': '2'}
+    # グローバル側の同名キーは巻き添えにしない
+    assert store.load(GLOBAL) == {'A': 'global'}
+    assert not (devbase_root / 'projects' / 'web' / '.env').exists()
+
+
+def test_delete_project_requires_a_project_dir(devbase_root, with_key):
+    encrypt_global(devbase_root, {'A': '1'})
+
+    assert env_cmd.cmd_env_delete(devbase_root, 'A', project=True) == 1
+
+    # グローバルへフォールバックしていない
+    assert SecretStore(devbase_root).load(GLOBAL) == {'A': '1'}
+
+
+def test_delete_project_reports_a_missing_key(devbase_root, with_key, monkeypatch):
+    monkeypatch.setenv('PWD', str(devbase_root / 'projects' / 'web'))
+    SecretStore(devbase_root).age.save(SecretRef.for_project('web'), {'A': '1'})
+
+    assert env_cmd.cmd_env_delete(devbase_root, 'B', project=True) == 1
+
+
 def test_set_project_requires_a_project_dir(devbase_root):
     assert env_cmd.cmd_env_set(devbase_root, 'FOO=bar', project=True) == 1
     assert not (devbase_root / '.env').exists()
@@ -294,6 +326,52 @@ def test_edit_rejects_a_non_utf8_result(devbase_root, with_key, monkeypatch):
 
     assert env_cmd.cmd_env_edit(devbase_root) == 1
     assert SecretStore(devbase_root).load(GLOBAL) == {'FOO': 'bar'}
+
+
+def test_edit_project_reencrypts_the_project_store(devbase_root, with_key, monkeypatch):
+    """暗号化されたプロジェクト設定も復号 → 編集 → 再暗号化できる"""
+    from pathlib import Path
+
+    monkeypatch.setenv('PWD', str(devbase_root / 'projects' / 'web'))
+    store = SecretStore(devbase_root)
+    project = SecretRef.for_project('web')
+    store.age.save(project, {'FOO': 'bar'})
+    encrypt_global(devbase_root, {'GLOBAL_KEY': 'kept'})
+
+    def mutate(path):
+        assert 'bar' in Path(path).read_text()   # 復号結果が渡っている
+        Path(path).write_text('FOO=changed\n')
+        return 0
+
+    fake_editor(monkeypatch, mutate)
+
+    assert env_cmd.cmd_env_edit(devbase_root, project=True) == 0
+
+    assert store.is_encrypted(project)
+    assert store.load(project) == {'FOO': 'changed'}
+    assert not (devbase_root / 'projects' / 'web' / '.env').exists()
+    # グローバル側は触っていない
+    assert store.load(GLOBAL) == {'GLOBAL_KEY': 'kept'}
+
+
+def test_edit_project_opens_the_plaintext_file_directly(devbase_root, monkeypatch):
+    project_dir = devbase_root / 'projects' / 'web'
+    monkeypatch.setenv('PWD', str(project_dir))
+    SecretStore(devbase_root).plaintext.save(SecretRef.for_project('web'), {'FOO': 'bar'})
+    calls = fake_editor(monkeypatch, lambda path: 0)
+
+    assert env_cmd.cmd_env_edit(devbase_root, project=True) == 0
+    assert calls == [str(project_dir / '.env')]
+
+
+def test_edit_project_requires_a_project_dir(devbase_root, with_key, monkeypatch):
+    encrypt_global(devbase_root, {'FOO': 'bar'})
+    calls = fake_editor(monkeypatch, lambda path: 0)
+
+    assert env_cmd.cmd_env_edit(devbase_root, project=True) == 1
+
+    # エディタも起動していない (グローバルへフォールバックしていない)
+    assert calls == []
 
 
 # ---------------------------------------------------------------------------
