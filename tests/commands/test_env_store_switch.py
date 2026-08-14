@@ -344,6 +344,28 @@ def test_edit_reencrypts_the_result(devbase_root, with_key, monkeypatch):
     assert not (devbase_root / '.env').exists()
 
 
+def test_edit_keeps_comments_and_blank_lines(devbase_root, with_key, monkeypatch):
+    """エディタ編集はコメント・空行を落とさない (辞書経由にすると消える)"""
+    from pathlib import Path
+
+    original = b'# top comment\n\nFOO=bar\n\n# tail comment\n'
+    SecretStore(devbase_root).age.save_bytes(GLOBAL, original)
+
+    def mutate(path):
+        # 復号結果は原文そのまま渡っている
+        assert Path(path).read_bytes() == original
+        Path(path).write_bytes(original.replace(b'FOO=bar', b'FOO=changed'))
+        return 0
+
+    fake_editor(monkeypatch, mutate)
+
+    assert env_cmd.cmd_env_edit(devbase_root) == 0
+
+    store = SecretStore(devbase_root)
+    assert store.is_encrypted(GLOBAL)
+    assert store.age.load_bytes(GLOBAL) == b'# top comment\n\nFOO=changed\n\n# tail comment\n'
+
+
 def test_edit_removes_the_temporary_plaintext(devbase_root, with_key, monkeypatch):
     from pathlib import Path
 

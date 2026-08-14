@@ -46,6 +46,24 @@ class SecretEnvFile:
         if not self._loaded:
             self.load()
 
+    # -- 原文のまま扱う経路 --------------------------------------------------
+    #
+    # 辞書経由の load / save はコメント・空行・``export`` 表記を落とす。
+    # エディタ編集のように利用者の書いた原文を保ちたい経路はこちらを使う。
+
+    def load_bytes(self) -> bytes:
+        """保存されている内容を **原文のバイト列のまま** 返す (不在なら空)"""
+        return self._store.load_bytes(self._ref)
+
+    def save_bytes(self, data: bytes) -> None:
+        """バイト列を **加工せずそのまま** 保存する"""
+        from devbase.env.store import EnvFile
+
+        self._store.save_bytes(self._ref, data)
+        # 保存後に辞書側のキャッシュがずれないよう、書いた内容で作り直す
+        self._data = EnvFile.parse_bytes(data)
+        self._loaded = True
+
     # -- EnvFile 互換の操作 --------------------------------------------------
 
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]:

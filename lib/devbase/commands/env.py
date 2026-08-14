@@ -481,7 +481,9 @@ def _edit_encrypted(env_file, editor: str) -> int:
     from devbase.errors import DevbaseError
 
     try:
-        data = env_file.get_all()
+        # 辞書ではなく原文のバイト列を取り出す。辞書経由だとコメント・空行・
+        # ``export`` 表記が落ち、編集しただけで利用者の書いた内容が消えてしまう。
+        original = env_file.load_bytes()
     except DevbaseError as e:
         logger.error("%s", e)
         return 1
@@ -489,7 +491,7 @@ def _edit_encrypted(env_file, editor: str) -> int:
     workdir = Path(tempfile.mkdtemp(prefix='devbase-env-'))
     tmp_path = workdir / '.env'
     try:
-        _io_common.write_secure_bytes(tmp_path, EnvFile.dump_bytes(data))
+        _io_common.write_secure_bytes(tmp_path, original)
         before = tmp_path.read_bytes()
 
         rc = subprocess.call([editor, str(tmp_path)])
@@ -503,17 +505,15 @@ def _edit_encrypted(env_file, editor: str) -> int:
             return 0
 
         try:
+            # 保存前の妥当性確認と、件数表示のためだけに解析する。
+            # 保存自体は編集後の原文をそのまま書き戻す。
             edited = EnvFile.parse_bytes(after)
         except UnicodeDecodeError as e:
             logger.error("編集結果を UTF-8 として読めませんでした: %s", e)
             return 1
 
-        for key in list(env_file.get_all()):
-            env_file.delete(key)
-        for key, value in edited.items():
-            env_file.set(key, value)
-        env_file.save()
-        logger.info("保存しました: %s (%d変数)", env_file.path, env_file.count())
+        env_file.save_bytes(after)
+        logger.info("保存しました: %s (%d変数)", env_file.path, len(edited))
         return 0
     except DevbaseError as e:
         logger.error("%s", e)
