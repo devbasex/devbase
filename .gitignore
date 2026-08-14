@@ -6,7 +6,8 @@ __pycache__/
 .env.bak*
 .env.backup*
 .gemini/
-.docker-compose.scale.yml
+# up 中の退避 (.docker-compose.scale.yml.prev) も含めて除外する。
+.docker-compose.scale.yml*
 plugins.yml
 repos/
 plugins/*/

@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -92,6 +93,39 @@ def _generate_compose_for(scale: int, secrets) -> Path:
         global_env_names=secrets.global_names,
         project_env_names=secrets.project_names,
     )
+
+
+@contextmanager
+def _previous_scale_compose():
+    """生成前の override compose を退避し、``down`` へ渡すパスとして貸し出す。
+
+    起動時の構成生成 (= 機密の復号) は既存コンテナの停止より**前**に済ませたい。
+    停止してから復号に失敗すると、起動できないだけでなく稼働中の開発環境まで
+    止まったままになるため。一方で
+    :func:`~devbase.volume.compose.generate_scaled_compose` は
+    ``.docker-compose.scale.yml`` を上書きするので、停止には**旧**構成が要る。
+    新構成で停止すると、スケールを縮める起動で新構成に無いインスタンスが
+    取り残されるため。
+
+    退避が無い (初回起動) 場合は ``None`` を返し、呼び出し側は素の
+    ``docker compose down`` へ委ねる。ブロック内で例外が起きたときは旧構成を
+    書き戻す。生成が途中で失敗しても ``down`` / ``ps`` が参照する構成を壊さない
+    ため。
+    """
+    original = _SCALE_COMPOSE_FILE.read_bytes() if _SCALE_COMPOSE_FILE.exists() else None
+    if original is None:
+        yield None
+        return
+
+    backup = Path(f'{_SCALE_COMPOSE_FILE}.prev')
+    backup.write_bytes(original)
+    try:
+        yield backup
+    except BaseException:
+        _SCALE_COMPOSE_FILE.write_bytes(original)
+        raise
+    finally:
+        backup.unlink(missing_ok=True)
 
 
 def _compose_run(subcommand: str, *extra_args: str) -> int:
@@ -614,15 +648,16 @@ def cmd_up(project_name: str = None, scale: int = None,
         logger.info("[1.5/6] Ensuring network exists...")
         ensure_network('devbase_net')
 
-        logger.info("[2/6] Stopping existing containers...")
-        if _SCALE_COMPOSE_FILE.exists():
-            docker_compose_down(compose_file=_SCALE_COMPOSE_FILE)
-        else:
-            docker_compose_down()
+        # 復号と構成生成は既存コンテナを止める**前**に済ませる。鍵の紛失・権限
+        # 不備・暗号文の破損でここが失敗しても、稼働中の開発環境を落としたまま
+        # にしないため。
+        with _previous_scale_compose() as down_compose_file:
+            logger.info("[2/6] Generating scaled compose file...")
+            override_file = _generate_compose_for(scale, _inject_secrets(required=True))
+            logger.info("Generated: %s", override_file)
 
-        logger.info("[3/6] Generating scaled compose file...")
-        override_file = _generate_compose_for(scale, _inject_secrets(required=True))
-        logger.info("Generated: %s", override_file)
+            logger.info("[3/6] Stopping existing containers...")
+            docker_compose_down(compose_file=down_compose_file)
 
         logger.info("[4/6] Starting containers...")
         docker_compose_up(compose_file=override_file, detach=True)
