@@ -309,6 +309,9 @@ _IGNORE_PROBE_PATHS = (
 #: 除外されるかは実在のプロジェクトが無くても確かめたい。
 _SAMPLE_PROJECT_NAME = 'sample'
 
+#: 一覧を報告に載せる上限。プロジェクト数だけ並ぶと読めなくなる。
+_MAX_LISTED = 10
+
 
 def _mode_of(path: Path) -> Optional[int]:
     try:
@@ -369,8 +372,9 @@ def _check_leftovers(root: Path, store: SecretStore, report: Report) -> None:
         plain = [p for p in found if p.suffix != '.age']
         if plain and (encrypted or name == 'env-encrypt'):
             report.add('warning', f'{label}が残っています',
-                       '\n    '.join(str(p) for p in plain[:10])
-                       + (f'\n    ... 他 {len(plain) - 10} 件' if len(plain) > 10 else ''),
+                       '\n    '.join(str(p) for p in plain[:_MAX_LISTED])
+                       + (f'\n    ... 他 {len(plain) - _MAX_LISTED} 件'
+                          if len(plain) > _MAX_LISTED else ''),
                        f'内容を確認したうえで削除してください: rm -rf {base}')
 
     stale: List[Path] = []
@@ -420,6 +424,73 @@ def _git_check_ignore(root: Path, rel_path: str) -> Optional[bool]:
     return None
 
 
+def _repo_root_of(path: Path) -> Optional[Path]:
+    """``path`` を管理している Git リポジトリの最上位を返す。
+
+    Git 管理下でない、または git を実行できない場合は ``None``。
+    """
+    try:
+        proc = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    top = proc.stdout.strip()
+    if not top:
+        return None
+    return Path(top).resolve()
+
+
+def _probe_location(root: Path, rel: str) -> Optional[Tuple[Path, str]]:
+    """点検対象を「実際にそれを管理するリポジトリ」と、その中の相対パスへ翻訳する。
+
+    ``projects/<name>`` はプラグイン経由で別リポジトリへのシンボリックリンクに
+    なっていることがある。この状態で ``DEVBASE_ROOT`` を作業ディレクトリにして
+    ``git check-ignore -- projects/<name>/.env`` を実行すると、Git は
+    ``fatal: pathspec ... is beyond a symbolic link`` と言って 128 で終わる。
+    リンク先の実体を管理しているのは別のリポジトリであり、その平文を除外できて
+    いるかは**そちらの** ``.gitignore`` が決めるためで、これは Git の正しい挙動。
+
+    そこで、リンクを解いた実体の位置から所属リポジトリを引き直し、そのリポジトリ
+    からの相対パスで判定する。判定先を移すだけで、問うている内容は変わらない
+    (「この平文はコミットされうるか」)。
+
+    点検対象は実在しないパス (``.env.bak-20260807172231`` など) も含むため、
+    実体の解決は「実在する直近の親」まで遡って行う。
+
+    Returns:
+        ``(リポジトリの最上位, その中での相対パス)``。所属リポジトリを特定でき
+        なければ ``None``
+    """
+    target = root / rel
+
+    anchor = target.parent
+    while not anchor.exists() and anchor != anchor.parent:
+        anchor = anchor.parent
+    rest = target.relative_to(anchor)
+
+    try:
+        real_target = anchor.resolve() / rest
+    except OSError:
+        return None
+
+    repo = _repo_root_of(real_target.parent if real_target.parent.exists()
+                         else anchor.resolve())
+    if repo is None:
+        return None
+    try:
+        return repo, str(real_target.relative_to(repo))
+    except ValueError:
+        # リポジトリの外を指している (想定外の配置)。判定できないものとして扱う
+        return None
+
+
 def _ignore_probe_paths(root: Path) -> List[str]:
     """除外されているか確かめる代表パスを組み立てる"""
     paths = list(_IGNORE_PROBE_PATHS)
@@ -440,25 +511,40 @@ def _check_gitignore(root: Path, report: Report) -> None:
     report.checked.append(f"除外設定: {path} (git check-ignore で確認)")
 
     exposed: List[str] = []
+    unknown: List[str] = []
     for rel in _ignore_probe_paths(root):
-        ignored = _git_check_ignore(root, rel)
+        location = _probe_location(root, rel)
+        ignored = None if location is None else _git_check_ignore(*location)
         if ignored is None:
             # 「確認できなかった」と「問題なし」を混同しない。ここで独自の
             # 文字列判定へ落とすと、Git と食い違う判定が復活してしまう。
-            report.add('warning', '除外設定を確認できませんでした',
-                       f'{root} で git check-ignore を実行できません '
-                       '(git が無い、または Git リポジトリではありません)',
-                       'Git 管理下で `git check-ignore -v .env secrets/global.env.age` '
-                       'を実行し、除外されることを確かめてください')
-            return
+            #
+            # ただし 1 件でも確かめられなかったからといって残りを諦めない。
+            # 打ち切ると、確かめられるはずのパスの漏れまで見逃す。
+            unknown.append(rel)
+            continue
         if not ignored:
-            exposed.append(rel)
+            repo, rel_in_repo = location
+            # 別リポジトリ (シンボリックリンク先) の平文は、そちらの .gitignore を
+            # 直すことになる。報告にも実際の位置を添える
+            exposed.append(rel if repo == root.resolve()
+                           else f'{rel} → {repo}/{rel_in_repo}')
 
     if exposed:
         report.add('error', '除外設定から漏れているパスがあります',
                    '除外されない: ' + '\n    '.join(exposed),
                    f'{path} へ `.env` / `.env.bak*` / `secrets/` などを追記し、'
                    '`git check-ignore -v <パス>` で除外されることを確かめてください')
+
+    if unknown:
+        shown = unknown[:_MAX_LISTED]
+        detail = 'Git に判定させられませんでした: ' + '\n    '.join(shown)
+        if len(unknown) > len(shown):
+            detail += f'\n    ... 他 {len(unknown) - len(shown)} 件'
+        report.add('warning', '除外設定を確認できませんでした',
+                   detail + '\n    (git が無い、または対象が Git 管理下にありません)',
+                   'Git 管理下で `git check-ignore -v .env secrets/global.env.age` '
+                   'を実行し、除外されることを確かめてください')
 
 
 def cmd_env_doctor(devbase_root: Path) -> int:
