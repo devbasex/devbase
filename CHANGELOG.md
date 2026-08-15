@@ -69,6 +69,19 @@
   置き換えました。`source "$(devbase shell-rc)"` を使っているスクリプトは
   `. <DEVBASE_ROOT>/bin/rc` に書き換えてください。
 
+### Fixed
+- **tmux / screen 経由のターミナルで `devbase up --open` が無言で失敗する問題を修正**
+  しました。VS Code はウィンドウごとに IPC ソケット (`$TMPDIR/vscode-ipc-<uuid>.sock`)
+  を作り直しますが、tmux サーバーはセッション作成時の環境変数を保持し続けるため、
+  既存セッションに再アタッチした端末では `VSCODE_IPC_HOOK_CLI` が**消えたソケットを
+  指したまま**になります。従来は変数の有無だけで VS Code 統合ターミナルと判定して
+  いたため、`code` が死んだソケットへ接続を試みて何も起きず、`_launch` が stderr を
+  捨てていたのでエラーも出ませんでした。ソケットの実在を確認したうえで判定し
+  (`_ipc_socket_alive`)、古い場合は理由を warning に出して「手元で実行するコマンドの
+  提示」へ degrade します。あわせて `_launch` は stderr を握り潰さないようにしました。
+  tmux 側の追随設定は `docs/user/environment-variables.md` の
+  「tmux / screen 経由で使う場合」を参照してください。
+
 ### Added
 - **ワンライナー installer (`install.sh`) を新設**しました (PLAN31_1)。
   `curl -fsSL https://dl.basex.jp/i | bash`
