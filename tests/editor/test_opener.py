@@ -65,9 +65,30 @@ def test_detect_context_ssh(key):
     assert ctx.is_ssh is True
 
 
-def test_detect_context_in_vscode():
-    ctx = opener.detect_context(environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock"},
+def test_detect_context_in_vscode(tmp_path):
+    # ソケットが実在するときだけ in_vscode が立つ
+    sock = tmp_path / "vscode-ipc-live.sock"
+    sock.write_text("")
+    ctx = opener.detect_context(environ={"VSCODE_IPC_HOOK_CLI": str(sock)},
                                 isatty=True, system="Linux")
+    assert ctx.in_vscode is True
+
+
+def test_detect_context_stale_ipc_socket_is_not_vscode(tmp_path):
+    """変数だけ残りソケットが消えた状態 (tmux 再アタッチ等) は in_vscode=False。
+
+    ここを True に倒すと code が死んだソケットへ繋ぎに行き無言で失敗する。
+    """
+    ctx = opener.detect_context(
+        environ={"VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock")},
+        isatty=True, system="Linux")
+    assert ctx.in_vscode is False
+
+
+def test_detect_context_ipc_alive_override():
+    """``ipc_alive`` 明示時は実在チェックを行わない (テスト用差し替え口)。"""
+    ctx = opener.detect_context(environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock"},
+                                isatty=True, system="Linux", ipc_alive=True)
     assert ctx.in_vscode is True
 
 
@@ -535,7 +556,7 @@ def test_open_editor_launch_nested_uri_under_remote_ssh(monkeypatch):
         environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
                  "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22",
                  "DEVBASE_EDITOR_SSH_HOST": "mac2"},
-        isatty=True, launcher=lambda cmd, env: calls.append(cmd),
+        isatty=True, ipc_alive=True, launcher=lambda cmd, env: calls.append(cmd),
     )
     assert result == "launch"
     uri = calls[0][2]
@@ -554,9 +575,35 @@ def test_open_editor_flat_uri_when_ssh_host_unset(monkeypatch):
         project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
         environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
                  "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22"},
-        isatty=True, launcher=lambda cmd, env: calls.append(cmd),
+        isatty=True, ipc_alive=True, launcher=lambda cmd, env: calls.append(cmd),
     )
     assert "@ssh-remote" not in calls[0][2]
+
+
+def test_open_editor_stale_ipc_under_ssh_degrades_to_print_command(
+        monkeypatch, tmp_path, caplog):
+    """死んだ IPC ソケット + SSH は launch せず print_command へ degrade する。
+
+    tmux セッションを再利用した端末で `devbase up --open` が「何も起きない」
+    という無言の失敗になっていた回帰の防止 (実在チェック導入前は launch していた)。
+    """
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    calls = []
+    with caplog.at_level(logging.INFO):
+        result = opener.open_editor(
+            project_name="adminer", dev_service_name="dev",
+            workdir="/work/adminer",
+            environ={"VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock"),
+                     "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22"},
+            isatty=True, launcher=lambda cmd, env: calls.append(cmd),
+        )
+    assert result == "print_command"
+    assert calls == []
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    # 原因が分かるログが出ていること (無言の失敗にしない)
+    assert "VSCODE_IPC_HOOK_CLI" in text
+    assert "code --folder-uri" in text
 
 
 def test_open_editor_skip_when_no_editor(monkeypatch):

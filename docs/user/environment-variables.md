@@ -164,6 +164,7 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 | VS Code の Remote-SSH 統合ターミナル（同一ホストの Docker） | **クライアント側（手元）の VS Code** が開く（`code` シムが委譲） |
 | VS Code の Remote-SSH 統合ターミナル（**跨ホスト**: ssh 先の Docker にコンテナ） | `DEVBASE_EDITOR_SSH_HOST` 設定時にネスト URI で開く（下記「跨ホスト」参照） |
 | 手元から素の SSH（VS Code 外）で接続中 | クライアントへ自動で開く公式手段が無いため、手元で実行する `code --folder-uri ...` コマンドを提示 |
+| tmux / screen 経由のターミナル | `VSCODE_IPC_HOOK_CLI` が古くなっていると VS Code 統合ターミナルとみなさず、SSH 経路の「コマンド提示」へ degrade（下記「tmux / screen 経由で使う場合」参照） |
 | CI / 非対話（非 TTY） / `code` 不在 | 理由を表示してスキップ（`up` 自体は成功） |
 
 #### 跨ホスト（Windows VS Code → Remote-SSH → Mac のコンテナ）
@@ -186,6 +187,45 @@ DEVBASE_EDITOR_SSH_HOST=mac2
 解決順は **`DEVBASE_EDITOR_SSH_HOST` 明示 → `~/.vscode-server` 自動検出 → フラット URI**。
 
 > 同一ホスト構成（手元 Mac/Linux で直接、または ssh 先の Docker にコンテナが無い場合）では ssh-remote ホストは付かず、従来どおりフラット URI で開きます。
+
+#### tmux / screen 経由で使う場合
+
+VS Code は統合ターミナルごとに `$TMPDIR/vscode-ipc-<uuid>.sock` を作り、`VSCODE_IPC_HOOK_CLI` でその場所を伝えます。`code` はこのソケット経由でクライアント側の VS Code に依頼するため、**ソケットが死んでいると `code` は何もできません**。
+
+tmux / screen はサーバープロセスが**セッション作成時の環境変数を保持し続ける**ため、ここが噛み合いません。VS Code のウィンドウをリロードしたり開き直したりするとソケットは作り直されますが、既存の tmux セッションに再アタッチした端末は**古いパスを引き継いだまま**になります。
+
+devbase はソケットの実在を確認してから VS Code 統合ターミナルと判定します（変数の有無だけでは判定しません）。古い場合は警告を出したうえで「手元で実行するコマンドの提示」へ degrade するので、**黙って何も起きないという状態にはなりません**。提示されたコマンドを手元で実行すれば開けます。
+
+自動で開く状態に戻すには、tmux 側に環境変数を追随させます。`~/.tmux.conf` に以下を追記してください。
+
+```tmux
+set -ga update-environment " VSCODE_IPC_HOOK_CLI VSCODE_GIT_IPC_HANDLE VSCODE_GIT_ASKPASS_NODE VSCODE_GIT_ASKPASS_MAIN VSCODE_GIT_ASKPASS_EXTRA_ARGS VSCODE_NONCE GIT_ASKPASS BROWSER TERM_PROGRAM"
+```
+
+これで **attach のたびに**接続してきたクライアントの値でセッション環境が更新されます。ただし更新されるのはセッション環境であり、**すでに起動しているペインのシェル**には波及しません。既存ペインにも追随させたい場合は、シェルの rc（`~/.bash_profile` 等）にプロンプトフックを置きます。
+
+```bash
+if [ -n "${TMUX:-}" ]; then
+  _vscode_sync_env() {
+    # ソケットが生きている間は何もしない（サブプロセスを起動しない）
+    [ -n "${VSCODE_IPC_HOOK_CLI:-}" ] && [ -S "${VSCODE_IPC_HOOK_CLI}" ] && return 0
+    local line
+    while IFS= read -r line; do
+      case "$line" in
+        VSCODE_IPC_HOOK_CLI=*|VSCODE_GIT_IPC_HANDLE=*|GIT_ASKPASS=*|BROWSER=*)
+          export "${line%%=*}=${line#*=}" ;;
+      esac
+    done < <(tmux show-environment 2>/dev/null)
+    return 0
+  }
+  case ";${PROMPT_COMMAND:-};" in
+    *";_vscode_sync_env;"*) ;;
+    *) PROMPT_COMMAND="_vscode_sync_env;${PROMPT_COMMAND:-}" ;;
+  esac
+fi
+```
+
+反映するには `tmux kill-server` でサーバーを作り直してください（`~/.tmux.conf` はサーバー起動時にのみ読まれ、既存ペインのシェルも修正前の rc で起動しているため）。
 
 ## ソースファイル変更検出
 

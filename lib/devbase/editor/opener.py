@@ -8,6 +8,10 @@
   Remote-SSH 統合ターミナルでは ``code`` シムがクライアント (例: Windows) に窓を
   開く。よって ``code --folder-uri <attach-uri>`` を叩くだけで実行コンテキストに
   応じた正しいクライアントへ開ける。
+- ただし ``VSCODE_IPC_HOOK_CLI`` は **変数が残っていても実体が消えている**ことがある
+  (tmux/screen のセッション再利用、VS Code ウィンドウのリロード後の古い端末など)。
+  存在確認まで行わないと ``code`` が死んだソケットへ繋ぎに行き無言で失敗するため、
+  :func:`_ipc_socket_alive` で実在を検証してから ``in_vscode`` を立てる。
 - コンテナ attach URI は ``{"containerName":"/<実コンテナ名>"}`` を hex 化した
   authority を持つ (:func:`build_attach_uri`)。
 - **跨ホスト (手元 VS Code → Remote-SSH(host) → ssh 先の Docker 上コンテナ) では
@@ -67,7 +71,7 @@ class EditorContext:
     """エディタ起動先の判定に使う実行コンテキスト。"""
 
     is_tty: bool
-    in_vscode: bool   # VSCODE_IPC_HOOK_CLI が設定されている
+    in_vscode: bool   # VSCODE_IPC_HOOK_CLI が *生きている* ソケットを指している
     is_wsl: bool
     is_ssh: bool
     is_darwin: bool
@@ -98,21 +102,50 @@ def _detect_wsl(environ) -> bool:
         return False
 
 
+def _ipc_socket_alive(environ) -> bool:
+    """``VSCODE_IPC_HOOK_CLI`` が **実在するソケット** を指しているか。
+
+    「変数が設定されているか」だけでは不十分。VS Code はウィンドウごとに
+    ``$TMPDIR/vscode-ipc-<uuid>.sock`` を作り、ウィンドウを閉じる/リロードすると
+    削除するため、**変数だけが古いまま残る**状況が日常的に起きる:
+
+    - tmux / screen: サーバーがセッション作成時の環境変数を保持し続けるため、
+      同じセッションに再アタッチした端末は死んだソケットのパスを引き継ぐ
+      (``update-environment`` に ``VSCODE_IPC_HOOK_CLI`` を足すと緩和できる)
+    - VS Code ウィンドウのリロード後に残った古いシェル
+    - ``nohup`` / デーモン化して生き残ったプロセス
+
+    この状態を ``in_vscode=True`` と誤判定すると :func:`decide_action` が
+    ``launch`` を選び、``code`` が死んだソケットへ接続を試みて**無言で失敗**する。
+    実在を確認して False に倒せば、SSH 経路なら ``print_command`` へ degrade して
+    ユーザが手元で実行できるコマンドを提示できる。
+    """
+    sock = environ.get("VSCODE_IPC_HOOK_CLI")
+    if not sock:
+        return False
+    # os.path.exists() は OSError / ValueError を内部で捕捉して False を返すため、
+    # 権限エラーや不正なパスもここで「使えない」と判定される。
+    return os.path.exists(sock)
+
+
 def detect_context(environ=None, isatty: Optional[bool] = None,
-                   system: Optional[str] = None) -> EditorContext:
+                   system: Optional[str] = None,
+                   ipc_alive: Optional[bool] = None) -> EditorContext:
     """env / OS からエディタ起動先判定に必要なコンテキストを抽出する。
 
     引数はテスト用の差し替え口。未指定なら ``os.environ`` / ``sys.stdout`` /
-    ``platform.system()`` を用いる。
+    ``platform.system()`` / :func:`_ipc_socket_alive` を用いる。
     """
     env = os.environ if environ is None else environ
     if isatty is None:
         isatty = _stdout_isatty()
     if system is None:
         system = platform.system()
+    if ipc_alive is None:
+        ipc_alive = _ipc_socket_alive(env)
     return EditorContext(
         is_tty=bool(isatty),
-        in_vscode=bool(env.get("VSCODE_IPC_HOOK_CLI")),
+        in_vscode=bool(ipc_alive),
         is_wsl=_detect_wsl(env),
         is_ssh=any(env.get(k) for k in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")),
         is_darwin=(system == "Darwin"),
@@ -473,11 +506,17 @@ def decide_action(ctx: EditorContext, editor_available: bool) -> OpenPlan:
 
 
 def _launch(cmd: list, env: dict) -> None:
-    """エディタを非ブロッキングで起動する (up プロセスを待たせない)。"""
+    """エディタを非ブロッキングで起動する (up プロセスを待たせない)。
+
+    stdout は捨てるが **stderr は握り潰さない** (親へ継承する)。``code`` は IPC 接続に
+    失敗すると stderr にのみ理由を出すため、ここを DEVNULL にすると「何も起きないが
+    エラーも出ない」という最も切り分けづらい失敗になる。非ブロッキング起動なので
+    メッセージは up の出力に遅れて混ざり得るが、無言よりは有用。
+    """
     subprocess.Popen(  # noqa: S603 - argv はコード生成で外部入力を渡さない
         cmd, env=env,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
     )
 
 
@@ -485,16 +524,28 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
                 index: int = 1, compose_file=None,
                 environ=None,
                 isatty: Optional[bool] = None, system: Optional[str] = None,
+                ipc_alive: Optional[bool] = None,
                 launcher: Optional[Callable[[list, dict], None]] = None) -> str:
     """dev コンテナへ接続した VS Code を開く / コマンド提示 / スキップする。
 
     戻り値は実行された action ('launch' | 'print_command' | 'skip')。例外は
     握り潰して warning にし、``up`` 本体を絶対に失敗させない。``isatty`` /
-    ``system`` は :func:`detect_context` への差し替え口 (テスト用)。``compose_file``
-    は実コンテナ名問い合わせ時に起動と同じ override compose を ``-f`` で渡すため。
+    ``system`` / ``ipc_alive`` は :func:`detect_context` への差し替え口 (テスト用)。
+    ``compose_file`` は実コンテナ名問い合わせ時に起動と同じ override compose を
+    ``-f`` で渡すため。
     """
     env = os.environ if environ is None else environ
-    ctx = detect_context(env, isatty=isatty, system=system)
+    ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
+    # 変数だけ残って実体が消えた IPC ソケットは無言の失敗になりやすいので明示する
+    # (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
+    stale_ipc = env.get("VSCODE_IPC_HOOK_CLI")
+    if stale_ipc and not ctx.in_vscode:
+        logger.warning(
+            "VSCODE_IPC_HOOK_CLI が指すソケットが存在しません (%s)。VS Code 統合"
+            "ターミナルとしては扱いません。tmux/screen のセッションを再利用している"
+            "場合や VS Code のウィンドウをリロードした後の古い端末で起きます。",
+            stale_ipc,
+        )
     editor = resolve_editor_cmd(env)        # launch 用 (which 込み・None あり得る)
     display = resolve_editor_display(env)   # print 用 (必ず非 None)
     plan = decide_action(ctx, editor_available=bool(editor))
