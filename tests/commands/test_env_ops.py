@@ -381,6 +381,78 @@ def test_doctor_reports_partially_ignored_secrets_dir(root, with_key, capsys):
     assert 'secrets/leftover.env' in out
 
 
+def link_project(root, name, target_repo):
+    """``projects/<name>`` を別リポジトリ配下へのシンボリックリンクにする。
+
+    プラグイン経由で取り込んだプロジェクトの実際の姿 (実体は別リポジトリの中に
+    あり、``projects/`` にはリンクだけが置かれる) を再現する。
+    """
+    real = target_repo / 'projects' / name
+    real.mkdir(parents=True)
+    (root / 'projects' / name).symlink_to(real)
+    return real
+
+
+@pytest.fixture
+def linked_repo(root, tmp_path_factory):
+    """``projects/`` の実体を持つ別リポジトリ (``DEVBASE_ROOT`` の外)"""
+    other = tmp_path_factory.mktemp('other-repo')
+    git_init(other)
+    return other
+
+
+def test_doctor_checks_symlinked_projects_in_their_own_repository(
+        root, with_key, linked_repo, capsys):
+    """リンク先の平文は、それを管理しているリポジトリの除外設定で判定する
+
+    ``DEVBASE_ROOT`` 側で ``git check-ignore -- projects/<name>/.env`` を実行する
+    と、Git はシンボリックリンクを越えたパスを拒んで 128 を返す。これを「判定
+    できない」で片付けると、点検全体が確認できなかった扱いになる。
+    """
+    seed_encrypted(root)
+    write_gitignore(root)
+    link_project(root, 'linked', linked_repo)
+    (linked_repo / '.gitignore').write_text('.env\n')
+
+    assert env_ops.cmd_env_doctor(root) == 0
+    out = capsys.readouterr().out
+    assert '除外設定を確認できませんでした' not in out
+    assert '問題は見つかりませんでした' in out
+
+
+def test_doctor_reports_linked_projects_that_are_not_ignored(
+        root, with_key, linked_repo, capsys):
+    """リンク先のリポジトリが除外していなければ、その位置ごと報告する"""
+    seed_encrypted(root)
+    write_gitignore(root)
+    link_project(root, 'linked', linked_repo)
+    (linked_repo / '.gitignore').write_text('*.log\n')      # .env を除外していない
+
+    assert env_ops.cmd_env_doctor(root) == 1
+    out = capsys.readouterr().out
+    assert '除外設定から漏れているパスがあります' in out
+    assert 'projects/linked/.env' in out
+    # どちらの .gitignore を直せばよいかが分かるよう、実体の位置も添える
+    assert str(linked_repo) in out
+
+
+def test_doctor_keeps_checking_after_an_undeterminable_path(
+        root, with_key, tmp_path_factory, capsys):
+    """1 件確かめられなくても、残りの点検を打ち切らない"""
+    seed_encrypted(root)
+    (root / '.gitignore').write_text('.env\n.env.bak*\n')   # secrets/ が無い
+    outside = tmp_path_factory.mktemp('not-a-repo')         # Git 管理外へのリンク
+    stray = outside / 'projects' / 'stray'
+    stray.mkdir(parents=True)
+    (root / 'projects' / 'stray').symlink_to(stray)
+
+    assert env_ops.cmd_env_doctor(root) == 1
+    out = capsys.readouterr().out
+    assert '除外設定を確認できませんでした' in out          # 確かめられなかった分
+    assert '除外設定から漏れているパスがあります' in out    # 打ち切られていない
+    assert 'secrets/global.env.age' in out
+
+
 def test_doctor_cannot_check_ignores_without_a_git_repository(root, with_key, capsys):
     """Git リポジトリでなければ「確認できなかった」と言う (成功にしない)"""
     seed_encrypted(root)
