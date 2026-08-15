@@ -123,10 +123,9 @@ def _ipc_socket_alive(environ) -> bool:
     sock = environ.get("VSCODE_IPC_HOOK_CLI")
     if not sock:
         return False
-    try:
-        return os.path.exists(sock)
-    except OSError:  # 権限エラー等は「使えない」とみなす
-        return False
+    # os.path.exists() は OSError / ValueError を内部で捕捉して False を返すため、
+    # 権限エラーや不正なパスもここで「使えない」と判定される。
+    return os.path.exists(sock)
 
 
 def detect_context(environ=None, isatty: Optional[bool] = None,
