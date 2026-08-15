@@ -12,7 +12,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-    locales git wget vim sudo nano jq make unzip \
+    locales git wget vim sudo nano jq make unzip tmux \
     openssh-client \
     curl ca-certificates gnupg lsb-release \
     libnss3 libxrandr2 libxss1 \
