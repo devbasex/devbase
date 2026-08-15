@@ -105,6 +105,12 @@ _devbase() {
         'project:Setup project-specific variables'
         'export:Export .env files as an encrypted bundle (age)'
         'import:Import .env bundle (age decrypt + merge)'
+        'keygen:Generate the devbase age key used by the secret store'
+        'exec:Run a command with the decrypted secrets in its environment'
+        'encrypt:Move plaintext settings into the encrypted store'
+        'decrypt:Move encrypted settings back to plaintext'
+        'rekey:Change who can decrypt the secrets and re-encrypt them'
+        'doctor:Check for leftover plaintext secrets and ignore-rule gaps'
     )
 
     plugin_subcommands=(
@@ -244,8 +250,17 @@ _devbase() {
                         '1:assignment:' \
                         '--project[Set in project .env]' '-p[Set in project .env]'
                     ;;
-                get|delete)
+                get)
                     _arguments '1:key:'
+                    ;;
+                delete)
+                    _arguments \
+                        '1:key:' \
+                        '--project[Delete from project .env]' '-p[Delete from project .env]'
+                    ;;
+                edit)
+                    _arguments \
+                        '--project[Edit project .env]' '-p[Edit project .env]'
                     ;;
                 export)
                     _arguments \
@@ -277,6 +292,27 @@ _devbase() {
                         '--merge-metadata[Add only new sources entries from bundle]' \
                         '--backup-dir[Override backup directory]:dir:_files -/' \
                         '--keep-last[Keep only the last N backup directories]:n:'
+                    ;;
+                exec)
+                    _arguments '*:command:_command_names -e'
+                    ;;
+                encrypt|decrypt)
+                    _arguments \
+                        '*--project[Limit to the specified project (repeatable)]:name:' \
+                        '--dry-run[Show what would change without writing]' \
+                        '--yes[Skip the confirmation prompt]' '-y[Skip the confirmation prompt]'
+                    ;;
+                rekey)
+                    _arguments \
+                        '*--add-recipient[Public key to add (repeatable)]:key:' \
+                        '*--remove-recipient[Public key to remove (repeatable)]:key:' \
+                        '--dry-run[Show what would change without writing]' \
+                        '--yes[Skip the confirmation prompt]' '-y[Skip the confirmation prompt]'
+                    ;;
+                keygen)
+                    _arguments \
+                        '--force[Overwrite an existing key]' \
+                        '--yes[Skip the confirmation prompt for --force]' '-y[Skip the confirmation prompt for --force]'
                     ;;
                 *)
                     _describe -t env-commands 'env command' env_subcommands

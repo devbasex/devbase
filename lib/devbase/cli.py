@@ -6,6 +6,7 @@ import os
 import sys
 from importlib import import_module
 from pathlib import Path
+from typing import Optional
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger, setup
@@ -52,7 +53,9 @@ GROUP_ALIASES = {
 SUBCMD_MAP = {
     ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild'],
-    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'export', 'import'],
+    ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
+                          'exec', 'encrypt', 'decrypt', 'rekey', 'doctor',
+                          'export', 'import'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
@@ -66,6 +69,15 @@ SUBCMD_PREFIX_PREFERENCES = {
         # `import` 追加で `i` が `init` / `import` の両方にマッチして ambiguous に
         # なるため、既存ショートカット (`devbase env i` → `init`) を維持する。
         'i': 'init',
+        # `exec` 追加で `ex` が `exec` / `export` の両方にマッチするため、
+        # 既存ショートカット (`devbase env ex` → `export`) を維持する。
+        # `exec` は `exe` 以降で一意に決まる。
+        'ex': 'export',
+        # `decrypt` 追加で `d` / `de` が `delete` とも一致するため、既存
+        # ショートカット (`devbase env d` → `delete`) を維持する。
+        # `decrypt` は `dec` 以降で一意に決まる。
+        'd': 'delete',
+        'de': 'delete',
     },
 }
 
@@ -274,11 +286,71 @@ def _add_env_parser(subparsers):
     env_get = env_sub.add_parser('get', help='Get a variable')
     env_get.add_argument('key', help='Variable name')
 
+    # delete / edit の --project は set と対。設定が暗号化されると利用者がエディタで
+    # 直接開いて消せなくなるため、プロジェクト設定を CLI から掃除する経路を残す。
     env_delete = env_sub.add_parser('delete', help='Delete a variable')
     env_delete.add_argument('key', help='Variable name')
+    env_delete.add_argument('--project', '-p', action='store_true',
+                            help='Delete from project .env')
 
-    env_sub.add_parser('edit', help='Open .env in editor')
+    env_edit = env_sub.add_parser('edit', help='Open .env in editor')
+    env_edit.add_argument('--project', '-p', action='store_true',
+                          help='Edit project .env')
+
     env_sub.add_parser('project', help='Setup project-specific variables')
+
+    # 生成先を選ぶオプションは置かない。復号側は $DEVBASE_AGE_KEY_FILE か既定パスしか
+    # 探索しないため、任意のパスへ生成できると「その鍵で保存した機密を復号できない」
+    # 状態を作れてしまう。場所を変えたい場合は環境変数を設定してから実行してもらう。
+    # 説明中の環境変数名は devbase.env.agekeys.KEY_FILE_ENV と対。agekeys は pyrage を
+    # 引き込むため、parser 構築時に import せず文字列で持つ (暗号機能を使わない
+    # コマンドまで pyrage のロード失敗に巻き込まないため)。
+    env_exec = env_sub.add_parser(
+        'exec',
+        help='Run a command with the decrypted secrets in its environment')
+    env_exec.add_argument('argv', nargs=argparse.REMAINDER,
+                          metavar='-- CMD [ARGS...]',
+                          help='Command to run (prefix with -- to pass flags)')
+
+    for name, action in (('encrypt', 'Move plaintext settings into the encrypted store'),
+                         ('decrypt', 'Move encrypted settings back to plaintext')):
+        sub = env_sub.add_parser(name, help=action)
+        sub.add_argument('--project', action='append', default=[],
+                         metavar='NAME', dest='projects',
+                         help='Limit to the specified project (repeatable)')
+        sub.add_argument('--dry-run', action='store_true',
+                         help='Show what would change without writing')
+        sub.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
+                         help='Skip the confirmation prompt')
+
+    env_rekey = env_sub.add_parser(
+        'rekey', help='Change who can decrypt the secrets and re-encrypt them')
+    env_rekey.add_argument('--add-recipient', action='append', default=[],
+                           metavar='KEY', dest='add_recipients',
+                           help=("Public key to add (repeatable). Formats: "
+                                 "'age1...', 'ssh-ed25519 ...', '@PATH'"))
+    env_rekey.add_argument('--remove-recipient', action='append', default=[],
+                           metavar='KEY', dest='remove_recipients',
+                           help='Public key to remove (repeatable)')
+    env_rekey.add_argument('--dry-run', action='store_true',
+                           help='Show what would change without writing')
+    env_rekey.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
+                           help='Skip the confirmation prompt')
+
+    env_sub.add_parser(
+        'doctor',
+        help='Check for leftover plaintext secrets and ignore-rule gaps')
+
+    env_keygen = env_sub.add_parser(
+        'keygen',
+        help='Generate the devbase age key used by the secret store '
+             '(written to $DEVBASE_AGE_KEY_FILE or ~/.config/devbase/age/keys.txt; '
+             'set $DEVBASE_AGE_KEY_FILE before running to use another location)')
+    env_keygen.add_argument('--force', action='store_true',
+                            help='Overwrite an existing key (previously encrypted '
+                                 'secrets may become unrecoverable)')
+    env_keygen.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
+                            help='Skip the confirmation prompt for --force')
 
     _add_env_export_parser(env_sub)
     _add_env_import_parser(env_sub)
@@ -603,11 +675,60 @@ def main():
 
     cmd = args.command
 
+    _load_secret_env(cmd, getattr(args, 'subcommand', None))
+
     try:
         return _dispatch(cmd, args)
     except DevbaseError as e:
         logger.error("%s", e)
         return 1
+
+
+# 機密の注入を行わないコマンド。鍵の生成や暗号化・復号は「まだ鍵が無い」
+# 「復号できない」状態でこそ実行されるため、注入を試みると本来の操作の前に
+# 落ちてしまう。
+#
+# `env` のように注入が要るサブコマンド (`env list` など) と要らないサブコマンド
+# が同居するグループがあるため、``(コマンド, サブコマンド)`` の組で持つ。
+# サブコマンドが ``None`` の項目は「そのコマンド全体をスキップする」意味。
+_NO_SECRET_INJECTION = frozenset({
+    ('init', None),
+    ('env', 'keygen'),
+    ('env', 'encrypt'),
+    ('env', 'decrypt'),
+})
+
+
+def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
+    return ((cmd, None) in _NO_SECRET_INJECTION
+            or (cmd, subcommand) in _NO_SECRET_INJECTION)
+
+
+def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
+    """機密を復号して自プロセスの環境変数へ載せる。
+
+    起動ラッパーは共通の機密ファイルを読み込まなくなった (plan35 §4.4)。
+    従来はラッパーが全コマンドに対して値を環境変数として渡していたため、
+    同じ範囲を Python 側で肩代わりする。ここで載せておけば、エディタ起動や
+    Docker Compose の変数展開など、値を必要とする処理が従来どおり動く。
+
+    復号に失敗しても停止しない。鍵が未整備でも `env keygen` や `--help` は
+    使えるべきで、値が本当に要る操作 (コンテナ起動など) は各コマンド側で
+    改めて必須として読み込む。
+    """
+    if _skip_secret_injection(cmd, subcommand):
+        return
+    root = os.environ.get('DEVBASE_ROOT')
+    if not root:
+        return
+    try:
+        from devbase.env import runtime as _runtime
+
+        _runtime.inject(Path(root), _runtime.current_project_name(Path(root)))
+    except DevbaseError as e:
+        logger.debug("機密を読み込めませんでした: %s", e)
+    except Exception as e:  # noqa: BLE001 - 通常コマンドを暗号化都合で倒さない
+        logger.debug("機密の読み込みで想定外のエラー: %s", e)
 
 
 # DEVBASE_ROOT 必須コマンドの定義: cmd -> (module, function, args を渡すか)。

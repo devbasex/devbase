@@ -204,6 +204,44 @@ def test_resolve_clears_caller_only_env_keys(fake_root, monkeypatch):
     assert os.environ["COMPOSE_PROJECT_NAME"] == "other"
 
 
+def test_switching_projects_drops_caller_only_secrets(fake_root, monkeypatch):
+    """切替経路 (`_resolve_project_name` → `_inject_secrets`) で機密が残留しない。
+
+    codex 指摘の回帰テスト。`cli._load_secret_env` は dispatch 前に現在地
+    (呼び出し元) の機密を載せるため、`project up <other>` の直接起動では切替元
+    固有の機密が os.environ に残り Compose や子プロセスへ引き継がれてしまう。
+    切替後の載せ直しでこれが落ちること、共通の機密は残ることを固定する。
+    """
+    from devbase.env import runtime
+
+    monkeypatch.setattr(runtime, "_injected_originals", {})
+    for k in ("CALLER_TOKEN", "OTHER_TOKEN", "SHARED_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+
+    # 平文の機密 (移行前と同じ配置) を用意する。鍵が無くても同じ経路を通る。
+    (fake_root / ".env").write_text("SHARED_SECRET=common\n")
+    caller = fake_root / "projects" / "caller"
+    caller.mkdir()
+    (caller / ".env").write_text("CALLER_TOKEN=caller_only\n")
+    other = fake_root / "projects" / "other"
+    other.mkdir()
+    (other / ".env").write_text("OTHER_TOKEN=other_only\n")
+
+    # 呼び出し元プロジェクト内で起動した状況 (cli._load_secret_env 相当)。
+    monkeypatch.chdir(caller)
+    monkeypatch.setenv("PWD", str(caller))
+    container._inject_secrets(required=False)
+    assert os.environ["CALLER_TOKEN"] == "caller_only"
+
+    assert container._resolve_project_name("other") is True
+    container._inject_secrets(required=False)
+
+    # 切替元固有の機密は残らない / 切替先の機密が載る / 共通の機密は残る
+    assert "CALLER_TOKEN" not in os.environ
+    assert os.environ["OTHER_TOKEN"] == "other_only"
+    assert os.environ["SHARED_SECRET"] == "common"
+
+
 def test_load_project_env_diverges_from_shell_source(tmp_path, monkeypatch):
     """shell ``source`` との仕様乖離を固定する回帰テスト (docstring の note 対応)。
 

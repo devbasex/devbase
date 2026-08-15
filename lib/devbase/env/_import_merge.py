@@ -227,7 +227,9 @@ def _plan_replace_keys(incoming: Dict[str, str], existing: Dict[str, str],
 def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
                    merge: str = 'keep-existing',
                    replace: bool = False,
-                   replace_keys: Sequence[str] = ()) -> Plan:
+                   replace_keys: Sequence[str] = (),
+                   existing_bytes: Optional[bytes] = None,
+                   target_exists: Optional[bool] = None) -> Plan:
     """1 つの ``.env`` に対する merge / replace 計画を作る
 
     新規作成 (= target 不在) ケースでは ``incoming_bytes`` をそのまま採用する。
@@ -239,8 +241,13 @@ def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
     既存のコメント / 空行 / キー順を保持したまま値だけ差し替える (PR #15 gemini 指摘)。
     """
     incoming = EnvFile.parse_bytes(incoming_bytes)
-    target_exists = target.exists()
-    existing_bytes = target.read_bytes() if target_exists else b''
+    # 既存内容は呼び出し側から渡せる。保存先が暗号化されている場合、ファイルを
+    # そのまま読むと暗号文を .env として解釈してしまうため、秘密ストア越しに
+    # 復号したバイト列を渡してもらう (呼び出し側が渡さなければ従来どおり読む)。
+    if target_exists is None:
+        target_exists = target.exists()
+    if existing_bytes is None:
+        existing_bytes = target.read_bytes() if target_exists else b''
     existing = EnvFile.parse_bytes(existing_bytes) if target_exists else {}
 
     if replace:

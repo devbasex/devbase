@@ -3,6 +3,7 @@
 import os
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
@@ -13,6 +14,69 @@ from devbase.env.sources import SourcesManager, file_hash, dir_hash
 from devbase.env.collector import CollectorRegistry
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 保存先の解決
+# ---------------------------------------------------------------------------
+#
+# 設定の実体は秘密ストア (devbase.env.secret_store) が持ち、平文か暗号化かは
+# ファイルの存在から自動判定される。以下のヘルパは「どの参照を扱うか」だけを決め、
+# 各コマンドは保存形式を意識せず EnvFile 互換の操作で読み書きする。
+
+def _secret_store(devbase_root: Path):
+    from devbase.env.secret_store import SecretStore
+
+    return SecretStore(devbase_root)
+
+
+def _global_env(devbase_root: Path):
+    """共通設定のビューを返す"""
+    from devbase.env.secret_store import SecretRef
+    from devbase.env.secret_view import SecretEnvFile
+
+    return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_global())
+
+
+def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
+    """CWD からプロジェクト名を解決する (実体は :mod:`devbase.env.runtime`)。
+
+    同じ判定をコンテナ起動側 (機密の合成) でも使うため、実装は 1 箇所に置く。
+    """
+    from devbase.env import runtime as _runtime
+
+    return _runtime.current_project_name(devbase_root, cwd)
+
+
+def _project_env(devbase_root: Path, cwd: Optional[Path] = None):
+    """CWD のプロジェクト設定のビューを返す (projects/ 配下でなければ ``None``)"""
+    from devbase.env.secret_store import SecretRef
+    from devbase.env.secret_view import SecretEnvFile
+
+    name = _current_project_name(devbase_root, cwd)
+    if name is None:
+        return None
+    return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_project(name))
+
+
+def _target_env(devbase_root: Path, project: bool):
+    """``--project`` の有無から操作対象の設定ビューを返す (解決できなければ ``None``)。
+
+    ``projects/<name>`` 配下でない場所での ``--project`` は、どのプロジェクトの
+    設定を指しているのか決められない。従来は CWD に ``.env`` を作っていたが、
+    コンテナが読む先とは限らないため明示的に断る。
+
+    set / delete / edit の 3 つが同じ判断とエラー文言を持つ必要があるので、
+    ここへ集約して振る舞いがずれないようにする。
+    """
+    if not project:
+        return _global_env(devbase_root)
+
+    env_file = _project_env(devbase_root)
+    if env_file is None:
+        logger.error(
+            "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
+    return env_file
 
 
 def cmd_env(devbase_root: Path, args) -> int:
@@ -30,11 +94,35 @@ def cmd_env(devbase_root: Path, args) -> int:
         'set':     lambda: cmd_env_set(devbase_root, getattr(args, 'assignment', ''),
                                        project=getattr(args, 'project', False)),
         'get':     lambda: cmd_env_get(devbase_root, getattr(args, 'key', '')),
-        'delete':  lambda: cmd_env_delete(devbase_root, getattr(args, 'key', '')),
-        'edit':    lambda: cmd_env_edit(devbase_root),
+        'delete':  lambda: cmd_env_delete(devbase_root, getattr(args, 'key', ''),
+                                          project=getattr(args, 'project', False)),
+        'edit':    lambda: cmd_env_edit(devbase_root,
+                                        project=getattr(args, 'project', False)),
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
+        'exec':    lambda: cmd_env_exec(devbase_root,
+                                        list(getattr(args, 'argv', []) or [])),
+        'encrypt': lambda: _migrate(args).cmd_env_encrypt(
+            devbase_root,
+            dry_run=getattr(args, 'dry_run', False),
+            assume_yes=getattr(args, 'assume_yes', False),
+            projects=list(getattr(args, 'projects', []) or []) or None),
+        'decrypt': lambda: _migrate(args).cmd_env_decrypt(
+            devbase_root,
+            dry_run=getattr(args, 'dry_run', False),
+            assume_yes=getattr(args, 'assume_yes', False),
+            projects=list(getattr(args, 'projects', []) or []) or None),
+        'rekey':   lambda: _ops().cmd_env_rekey(
+            devbase_root,
+            add=list(getattr(args, 'add_recipients', []) or []),
+            remove=list(getattr(args, 'remove_recipients', []) or []),
+            dry_run=getattr(args, 'dry_run', False),
+            assume_yes=getattr(args, 'assume_yes', False)),
+        'doctor':  lambda: _ops().cmd_env_doctor(devbase_root),
+        'keygen':  lambda: cmd_env_keygen(devbase_root,
+                                          force=getattr(args, 'force', False),
+                                          assume_yes=getattr(args, 'assume_yes', False)),
     }
 
     handler = handlers.get(subcmd)
@@ -45,10 +133,54 @@ def cmd_env(devbase_root: Path, args) -> int:
     return 1
 
 
+def _ops():
+    """受信者更新 / 点検の実装モジュール (import を遅延させる)"""
+    from devbase.commands import env_ops
+
+    return env_ops
+
+
+def _migrate(_args=None):
+    """移行コマンドの実装モジュール (import を遅延させる)"""
+    from devbase.commands import env_migrate
+
+    return env_migrate
+
+
+def cmd_env_exec(devbase_root: Path, argv) -> int:
+    """機密を環境変数として渡した状態でコマンドを実行する。
+
+    起動ラッパーは共通の機密ファイルを読み込まなくなったため、ホスト側で動く
+    処理のうち値を必要とするもの (Docker Compose の変数展開など) は、この
+    コマンドを通して実行する (plan35 §4.4)。復号結果は子プロセスの環境変数
+    としてのみ渡り、ファイルには書き出さない。
+    """
+    from devbase.env import runtime as _runtime
+
+    # argparse.REMAINDER は区切りの `--` も残すため、先頭のものだけ取り除く。
+    # 2 つ目以降はコマンド自身への引数なのでそのまま渡す。
+    if argv and argv[0] == '--':
+        argv = argv[1:]
+
+    if not argv:
+        logger.error("実行するコマンドを指定してください: devbase env exec -- CMD [ARGS...]")
+        return 1
+
+    env = _runtime.child_env(devbase_root,
+                             _runtime.current_project_name(devbase_root))
+    try:
+        return subprocess.run(argv, env=env).returncode
+    except FileNotFoundError:
+        logger.error("コマンドが見つかりません: %s", argv[0])
+        return 127
+    except OSError as e:
+        logger.error("コマンドを実行できませんでした (%s): %s", argv[0], e)
+        return 1
+
+
 def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
     """全体環境の初期セットアップ（対話式）"""
-    env_path = devbase_root / '.env'
-    env_file = EnvFile(env_path)
+    env_file = _global_env(devbase_root)
     env_file.load()
 
     if env_file.count() > 0 and not reset:
@@ -57,11 +189,9 @@ def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
         print("  やり直し: devbase env init --reset")
         return 0
 
-    if reset and env_path.exists():
+    if reset and env_file.file_exists():
         env_file.backup()
         logger.info("既存の設定をバックアップしました")
-        env_file = EnvFile(env_path)
-        env_file.load()
         for key in list(env_file.get_all().keys()):
             env_file.delete(key)
 
@@ -80,14 +210,13 @@ def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
 
     _update_source_metadata(devbase_root, env_file)
 
-    logger.info("セットアップ完了: %s (%d変数)", env_path, env_file.count())
+    logger.info("セットアップ完了: %s (%d変数)", env_file.path, env_file.count())
     return 0
 
 
 def cmd_env_sync(devbase_root: Path) -> int:
     """ソースファイルから認証情報を再同期する"""
-    env_path = devbase_root / '.env'
-    env_file = EnvFile(env_path)
+    env_file = _global_env(devbase_root)
     env_file.load()
 
     sources = SourcesManager(devbase_root)
@@ -218,35 +347,29 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
                  keys_only: bool = False) -> int:
     """設定済み変数の一覧表示"""
     if not project_only:
-        env_path = devbase_root / '.env'
-        env_file = EnvFile(env_path)
-        env_file.load()
+        env_file = _global_env(devbase_root)
         all_vars = env_file.get_all()
 
-        print(f"\n=== グローバル ({env_path}) ===")
+        print(f"\n=== グローバル ({env_file.path}{_mode_suffix(env_file)}) ===")
         _print_env_vars(all_vars, keys_only, reveal)
         print(f"\nグローバル: {len(all_vars)}変数")
 
     if not global_only:
-        current_dir = Path(os.environ.get('PWD', os.getcwd()))
-        projects_dir = devbase_root / 'projects'
+        proj_env = _project_env(devbase_root)
+        if proj_env is not None and proj_env.file_exists():
+            proj_vars = proj_env.get_all()
 
-        try:
-            current_dir.relative_to(projects_dir)
-        except ValueError:
-            pass
-        else:
-            project_env_path = current_dir / '.env'
-            if project_env_path.exists():
-                proj_env = EnvFile(project_env_path)
-                proj_env.load()
-                proj_vars = proj_env.get_all()
-
-                print(f"\n=== プロジェクト: {current_dir.name} ({project_env_path}) ===")
-                _print_env_vars(proj_vars, keys_only, reveal)
-                print(f"\nプロジェクト: {len(proj_vars)}変数")
+            print(f"\n=== プロジェクト: {proj_env.ref.name} "
+                  f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
+            _print_env_vars(proj_vars, keys_only, reveal)
+            print(f"\nプロジェクト: {len(proj_vars)}変数")
 
     return 0
+
+
+def _mode_suffix(env_file) -> str:
+    """一覧表示で保存形式を示す接尾辞。平文のときは何も足さない。"""
+    return ' [暗号化]' if env_file.is_encrypted() else ''
 
 
 def _format_value(key: str, value: str, reveal: bool) -> str:
@@ -273,36 +396,26 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False) -> i
         logger.error("キー名が空です")
         return 1
 
-    if project:
-        env_path = Path(os.environ.get('PWD', os.getcwd())) / '.env'
-    else:
-        env_path = devbase_root / '.env'
+    env_file = _target_env(devbase_root, project)
+    if env_file is None:
+        return 1
 
-    env_file = EnvFile(env_path)
-    env_file.load()
     env_file.set(key, value)
     env_file.save()
 
-    logger.info("%s を設定しました", key)
+    logger.info("%s を設定しました (%s)", key, env_file.path)
     return 0
 
 
 def cmd_env_get(devbase_root: Path, key: str) -> int:
     """変数の値を取得する"""
-    env_path = devbase_root / '.env'
-    env_file = EnvFile(env_path)
-    env_file.load()
-
-    value = env_file.get(key)
+    value = _global_env(devbase_root).get(key)
     if value is not None:
         print(value)
         return 0
 
-    current_dir = Path(os.environ.get('PWD', os.getcwd()))
-    project_env_path = current_dir / '.env'
-    if project_env_path.exists() and project_env_path != env_path:
-        proj_env = EnvFile(project_env_path)
-        proj_env.load()
+    proj_env = _project_env(devbase_root)
+    if proj_env is not None and proj_env.file_exists():
         value = proj_env.get(key)
         if value is not None:
             print(value)
@@ -312,44 +425,112 @@ def cmd_env_get(devbase_root: Path, key: str) -> int:
     return 1
 
 
-def cmd_env_delete(devbase_root: Path, key: str) -> int:
-    """変数を削除する"""
-    env_path = devbase_root / '.env'
-    env_file = EnvFile(env_path)
-    env_file.load()
+def cmd_env_delete(devbase_root: Path, key: str, project: bool = False) -> int:
+    """変数を削除する
+
+    ``--project`` を受けるのは、暗号化された設定は利用者がエディタで直接開いて
+    不要なキーを消せないため。CLI からプロジェクト設定を掃除する手段が要る。
+    """
+    env_file = _target_env(devbase_root, project)
+    if env_file is None:
+        return 1
 
     if env_file.delete(key):
         env_file.save()
-        logger.info("%s を削除しました", key)
+        logger.info("%s を削除しました (%s)", key, env_file.path)
         return 0
 
     logger.error("変数 '%s' は存在しません", key)
     return 1
 
 
-def cmd_env_edit(devbase_root: Path) -> int:
-    """エディタで.envを開く"""
-    env_path = devbase_root / '.env'
+def cmd_env_edit(devbase_root: Path, project: bool = False) -> int:
+    """エディタで.envを開く
+
+    ``--project`` を受けるのは delete と同じ理由。暗号化されていれば
+    ``_edit_encrypted`` 経由で復号 → 編集 → 再暗号化する。
+    """
+    env_file = _target_env(devbase_root, project)
+    if env_file is None:
+        return 1
+
     editor = os.environ.get('EDITOR', 'vi')
-    return subprocess.call([editor, str(env_path)])
+
+    if not env_file.is_encrypted():
+        return subprocess.call([editor, str(env_file.path)])
+
+    return _edit_encrypted(env_file, editor)
+
+
+def _edit_encrypted(env_file, editor: str) -> int:
+    """暗号化された設定を、平文を残さずにエディタで編集する。
+
+    エディタは平文のファイルしか開けないため、復号結果を一時ファイルへ書いて
+    編集させ、保存後に暗号化し直してから消す。一時ファイルは自分専用の
+    ``0700`` ディレクトリに ``0600`` で作り、正常終了でも異常終了でも
+    ``finally`` で必ず削除する。
+
+    ここだけは平文が一瞬ディスクに載る。エディタの外部プロセスに値を渡す方法が
+    他に無いためで、恒久的な平文ファイルを作らないという方針の例外として扱う
+    (plan35 §7 の「守れないもの」に対応する)。
+    """
+    import shutil
+    import tempfile
+
+    from devbase.env import io_common as _io_common
+    from devbase.errors import DevbaseError
+
+    try:
+        # 辞書ではなく原文のバイト列を取り出す。辞書経由だとコメント・空行・
+        # ``export`` 表記が落ち、編集しただけで利用者の書いた内容が消えてしまう。
+        original = env_file.load_bytes()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    workdir = Path(tempfile.mkdtemp(prefix='devbase-env-'))
+    tmp_path = workdir / '.env'
+    try:
+        _io_common.write_secure_bytes(tmp_path, original)
+        before = tmp_path.read_bytes()
+
+        rc = subprocess.call([editor, str(tmp_path)])
+        if rc != 0:
+            logger.error("エディタが異常終了したため保存しません (exit=%d)", rc)
+            return rc
+
+        after = tmp_path.read_bytes()
+        if after == before:
+            logger.info("変更はありません")
+            return 0
+
+        try:
+            # 保存前の妥当性確認と、件数表示のためだけに解析する。
+            # 保存自体は編集後の原文をそのまま書き戻す。
+            edited = EnvFile.parse_bytes(after)
+        except UnicodeDecodeError as e:
+            logger.error("編集結果を UTF-8 として読めませんでした: %s", e)
+            return 1
+
+        env_file.save_bytes(after)
+        logger.info("保存しました: %s (%d変数)", env_file.path, len(edited))
+        return 0
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def cmd_env_project(devbase_root: Path) -> int:
     """プロジェクト固有変数の設定（対話式）"""
-    current_dir = Path(os.environ.get('PWD', os.getcwd()))
-    projects_dir = devbase_root / 'projects'
-
-    try:
-        current_dir.relative_to(projects_dir)
-    except ValueError:
+    env_file = _project_env(devbase_root)
+    if env_file is None:
         logger.error("projects/ 配下で実行してください")
         return 1
 
-    project_name = current_dir.name
-
-    env_yml_path = current_dir / 'env.yml'
-    env_path = current_dir / '.env'
-    env_file = EnvFile(env_path)
+    project_name = env_file.ref.name
+    env_yml_path = Path(devbase_root) / 'projects' / project_name / 'env.yml'
     env_file.load()
 
     print(f"\n=== {project_name} プロジェクト環境変数 ===")
@@ -406,7 +587,7 @@ def cmd_env_project(devbase_root: Path) -> int:
             pass
 
     env_file.save()
-    logger.info("保存完了: %s (%d変数)", env_path, env_file.count())
+    logger.info("保存完了: %s (%d変数)", env_file.path, env_file.count())
     return 0
 
 
@@ -456,6 +637,124 @@ def cmd_env_import(devbase_root: Path, args) -> int:
         keep_last=getattr(args, 'keep_last', 10),
     )
     return import_bundle(devbase_root, opts)
+
+
+def _has_encrypted_secrets(devbase_root: Path) -> bool:
+    """暗号化済みの機密が 1 つでも存在するか"""
+    from devbase.env.secret_store import SecretStore, SecretRef
+
+    store = SecretStore(devbase_root)
+    if store.age.exists(SecretRef.for_global()):
+        return True
+    return bool(store.project_names())
+
+
+def _print_key_backup_notice(path, public: str) -> None:
+    print()
+    print("=" * 60)
+    print("鍵のバックアップを必ず取ってください")
+    print("=" * 60)
+    print(f"  鍵ファイル: {path}")
+    print(f"  公開鍵    : {public}")
+    print()
+    print("  この鍵を失うと、暗号化した機密は誰にも復号できません。")
+    print("  パスワード管理ツールなど、端末とは別の場所へ複製を保管してください。")
+    print("=" * 60)
+
+
+def cmd_env_keygen(devbase_root: Path, force: bool = False,
+                   assume_yes: bool = False) -> int:
+    """devbase 専用の age 鍵を生成する
+
+    生成先は必ず ``agekeys.key_file_path()`` (= ``DEVBASE_AGE_KEY_FILE`` があれば
+    それ、無ければ ``~/.config/devbase/age/keys.txt``) にする。生成先を CLI 引数で
+    自由に選べるようにすると、復号側の ``agekeys.resolve_identities()`` はそのパスを
+    探索しないため「生成した鍵で保存した機密を復号できない」状態を作れてしまう。
+    場所を変えたい場合は ``DEVBASE_AGE_KEY_FILE`` を設定してから実行してもらい、
+    生成先と探索先が構造的に一致する契約を保つ。
+    """
+    from devbase.env import agekeys
+    from devbase.errors import DevbaseError
+
+    path = agekeys.key_file_path()
+
+    if path.exists() and not force:
+        try:
+            public = agekeys.read_public_key(path)
+        except DevbaseError as e:
+            logger.error("%s", e)
+            return 1
+        print(f"鍵は既に存在します: {path}")
+        print(f"  公開鍵: {public}")
+        print("  作り直す場合: devbase env keygen --force")
+        return 0
+
+    # keygen はワークスペース固有の受信者リスト (secrets/recipients.txt) を触らない。
+    # 鍵はグローバル (~/.config/devbase/age/keys.txt) なのに受信者リストは
+    # ワークスペースごとに存在するため、ここで書き込むと別ワークスペースには旧公開鍵が
+    # 取り残され、既に失われた秘密鍵に対応する公開鍵で暗号化してしまう。
+    # agekeys.resolve_recipients() は recipients.txt が無ければ鍵ファイルの公開鍵へ
+    # フォールバックするので、単独利用ではリストを作る必要がない。チーム運用で明示的に
+    # 受信者を足す経路 (rekey) だけが recipients.txt を作る。
+    #
+    # 書き込みの原子性は agekeys.generate_key_file →
+    # io_common.write_secure_bytes_atomic (一時ファイル + fsync + os.replace) が
+    # 担保しており、生成が途中で失敗しても既存の鍵ファイルは元のまま残る。
+    # したがってこの層で「内容をメモリへ退避して書き戻す」手動ロールバックは重ねない。
+    # 重ねてもリストア自体が失敗しうるぶん壊れ方の種類が増えるだけで、守れるものが
+    # 増えないため。将来ここへロールバックを足したくなったら、まず io 層の原子性が
+    # 破れていないかを疑うこと。
+    #
+    # 一方で「既存鍵が在るのに読めない」ときに中止するガードは、原子性とは別の目的で
+    # 残す。読めないだけなら権限を直せば回収できる可能性があるのに、生成が成功すると
+    # 旧鍵は上書きで確実に消えるため。判定は確認プロンプトより前に置き、
+    # 「同意させてから中止する」空振りを避ける。
+    if path.exists() and not os.access(path, os.R_OK):
+        logger.error(
+            "既存の鍵ファイルを読めないため、上書きを中止しました: %s", path)
+        logger.error(
+            "権限を確認するか、不要と判断できる場合は手動で退避してから"
+            "再実行してください")
+        return 1
+
+    # ここへ来るのは「鍵が無い」か「--force で作り直す」場合だけ。後者は既存鍵を
+    # 捨てる操作なので、常に明示的な同意を取る。
+    #
+    # 鍵は ~/.config/devbase/age/keys.txt = 全ワークスペース共通のグローバル資産
+    # なのに対し、暗号化された機密はワークスペースごとに散らばっている。同意の要否を
+    # カレントの DEVBASE_ROOT に機密があるか (_has_encrypted_secrets) で決めると、
+    # まだ機密の無い別プロジェクトで --force した瞬間に無警告で鍵が消え、他プロジェクトの
+    # 機密が復旧不能になる。カレントの状況は「文言をどれだけ強くするか」にだけ使う。
+    if path.exists() and not assume_yes:
+        print("鍵ファイルを作り直します。この鍵は全プロジェクト共通です。")
+        print(f"  鍵ファイル: {path}")
+        if _has_encrypted_secrets(devbase_root):
+            print("  このワークスペースには暗号化済みの機密があり、"
+                  "旧鍵でしか復号できないものは失われます。")
+        print("  他のワークスペースで暗号化した機密も、"
+              "旧鍵を失うと復号できなくなります。")
+        print("  続行前に旧鍵のバックアップがあるか確認してください。")
+        answer = safe_input("続行しますか? (yes と入力): ")
+        if answer != 'yes':
+            print("中止しました")
+            return 1
+
+    # force はコマンドの --force をそのまま渡す。ここで無条件に force=True に
+    # すると、上の path.exists() 判定から実際の書き込みまでの隙間に他プロセスが
+    # 鍵を作っていた場合、利用者が上書きを要求していないのにその鍵を消してしまう
+    # (TOCTOU)。force=False なら agekeys 側が O_CREAT|O_EXCL で作るため、隙間に
+    # 現れた鍵は上書きされずエラーで止まる。
+    try:
+        path, public = agekeys.generate_key_file(path, force=force)
+    except (DevbaseError, OSError) as e:
+        # 新規生成は排他作成、--force の差し替えは atomic なので、いずれの失敗でも
+        # 既に在る鍵はそのまま残っている。
+        logger.error("%s", e)
+        return 1
+
+    logger.info("鍵を生成しました: %s", path)
+    _print_key_backup_notice(path, public)
+    return 0
 
 
 def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:

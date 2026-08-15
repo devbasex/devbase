@@ -1,10 +1,13 @@
 __pycache__/
 .venv/
 .env
-.env.bak
-.env.backup
+# 日時付きの控え (.env.bak-20260807172231 等) は完全一致では弾けない。
+# 実際に未追跡のまま検出された経緯があるためワイルドカードで除外する。
+.env.bak*
+.env.backup*
 .gemini/
-.docker-compose.scale.yml
+# up 中の退避 (.docker-compose.scale.yml.prev) も含めて除外する。
+.docker-compose.scale.yml*
 plugins.yml
 repos/
 plugins/*/
@@ -13,6 +16,9 @@ projects/*
 !projects/.gitkeep
 .env.sources.yml
 .cache/
+
+# 暗号化した機密の保存先 (PLAN35)。暗号文とはいえリポジトリには載せない。
+secrets/
 
 # クロスレビュー (ndf:cross-review) の作業生成物
 .cross_review/

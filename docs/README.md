@@ -46,6 +46,7 @@ graph TD
 | [CLI リファレンス](user/cli-reference/README.md) | 全コマンドの構文・オプション・使用例 |
 | [プラグインレジストリ](user/plugin-registries.md) | 公開・社内レジストリの一覧と追加方法 |
 | [環境変数ガイド](user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
+| [環境変数の暗号化](user/env-encryption.md) | 認証情報を暗号化して保存する / 鍵とチーム共有 / 平文へ戻す |
 | [コンテナ操作ガイド](user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
 | [トラブルシューティング](user/troubleshooting.md) | カテゴリ別の問題と解決策 |
@@ -101,6 +102,7 @@ docs/
 │   │   └── 05-snapshot.md             ← snapshot グループ
 │   ├── plugin-registries.md           ← プラグインレジストリ
 │   ├── environment-variables.md       ← 環境変数ガイド
+│   ├── env-encryption.md              ← 環境変数の暗号化
 │   ├── container-operations.md        ← コンテナ操作ガイド
 │   ├── snapshot-guide.md              ← スナップショットガイド
 │   └── troubleshooting.md             ← トラブルシューティング
@@ -124,6 +126,7 @@ docs/
 | devbase を初めてインストールする | [はじめに](user/getting-started.md#セットアップ手順) |
 | コマンドの使い方を調べる | [CLI リファレンス](user/cli-reference/README.md) |
 | 環境変数を設定する | [環境変数ガイド](user/environment-variables.md#環境変数の操作) |
+| 認証情報を暗号化して保存する | [環境変数の暗号化](user/env-encryption.md) |
 | 複数コンテナで並行開発する | [コンテナ操作ガイド](user/container-operations.md#並行開発) |
 | データをバックアップ・復元する | [スナップショットガイド](user/snapshot-guide.md) |
 | エラーが発生した | [トラブルシューティング](user/troubleshooting.md) |

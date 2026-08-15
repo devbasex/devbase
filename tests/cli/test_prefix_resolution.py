@@ -69,3 +69,22 @@ def test_expand_argv_env_in_resolves_to_init(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["devbase", "env", "in"])
     cli._expand_argv()
     assert sys.argv == ["devbase", "env", "init"]
+
+
+def test_expand_argv_env_k_resolves_to_keygen(monkeypatch):
+    """`devbase env k` は唯一の候補 (`keygen`) に解決される (PLAN35)"""
+    monkeypatch.setattr(sys, "argv", ["devbase", "env", "k"])
+    cli._expand_argv()
+    assert sys.argv == ["devbase", "env", "keygen"]
+
+
+def test_env_subcmd_map_covers_all_registered_subcommands():
+    """SUBCMD_MAP['env'] が parser 登録済みサブコマンドを漏れなく含む。
+
+    `keygen` のように parser にだけ追加して SUBCMD_MAP を更新し忘れると、
+    prefix 展開の対象から外れて短縮形が invalid choice で落ちる。
+    """
+    parser = cli._create_parser()
+    env_parser = parser._subparsers._group_actions[0].choices["env"]
+    registered = set(env_parser._subparsers._group_actions[0].choices)
+    assert registered == set(cli.SUBCMD_MAP[("env",)])

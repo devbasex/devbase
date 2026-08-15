@@ -84,16 +84,32 @@ devbase env get AWS_PROFILE
 環境変数を削除します。
 
 ```
-devbase env delete KEY
+devbase env delete KEY [-p]
+```
+
+| オプション | 説明 |
+|-----------|------|
+| `-p` | プロジェクト設定から削除（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
+
+```bash
+# グローバルから削除
+devbase env delete OLD_API_KEY
+
+# カレントプロジェクトの設定から削除
+devbase env delete GCP_ACTIVE_PROFILE -p
 ```
 
 ## `devbase env edit`
 
-デフォルトエディタで `.env` ファイルを開きます。
+デフォルトエディタで設定を開きます。設定が暗号化されている場合は、復号した内容を一時ファイルで編集し、保存時に再暗号化します。
 
 ```
-devbase env edit
+devbase env edit [-p]
 ```
+
+| オプション | 説明 |
+|-----------|------|
+| `-p` | カレントプロジェクトの設定を開く（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
 
 ## `devbase env project`
 
@@ -102,6 +118,166 @@ devbase env edit
 ```
 devbase env project
 ```
+
+## `devbase env keygen`
+
+設定の暗号化に使う devbase 専用の age 鍵を生成します。鍵ファイルは `0600`、置き場のディレクトリは `0700` で作成されます。
+
+```
+devbase env keygen [--force] [-y|--yes]
+```
+
+| オプション | 説明 |
+|-----------|------|
+| `--force` | 既存の鍵を作り直す。**旧鍵でしか復号できない機密は失われます** |
+| `-y`, `--yes` | `--force` 時の確認プロンプトを省略（CI 等での自動実行用） |
+
+鍵の場所は次のとおりで、コマンドラインからは指定できません（生成先と復号時の探索先を必ず一致させるため）。別の場所に置きたい場合は `DEVBASE_AGE_KEY_FILE` を設定してから実行します。
+
+| 指定 | 鍵ファイルのパス |
+|-----|-----------------|
+| 既定 | `~/.config/devbase/age/keys.txt`（`XDG_CONFIG_HOME` があればその配下） |
+| `DEVBASE_AGE_KEY_FILE` | 指定したパスをそのまま使用 |
+
+```bash
+# 既定の場所に生成する（既に鍵があれば公開鍵を表示するだけで何もしない）
+devbase env keygen
+
+# 置き場を変えて生成する
+DEVBASE_AGE_KEY_FILE=~/keys/devbase-age.txt devbase env keygen
+
+# 既存の鍵を捨てて作り直す（確認プロンプトあり）
+devbase env keygen --force
+```
+
+> **鍵のバックアップは必須です。** この鍵を失うと、暗号化した機密は誰にも復号できません（devbase 側にも復旧手段はありません）。生成後に表示される鍵ファイルを、パスワード管理ツールなど端末とは別の場所へ必ず複製してください。鍵は全ワークスペース共通のため、`--force` で作り直すと他のワークスペースで暗号化した機密も復号できなくなります。
+
+## `devbase env encrypt`
+
+平文で保存されている設定を、暗号化ストア (`$DEVBASE_ROOT/secrets/`) へ移します。事前に `devbase env keygen` で鍵を作っておく必要があります。
+
+```
+devbase env encrypt [--project NAME]... [--dry-run] [-y|--yes]
+```
+
+| オプション | 説明 |
+|-----------|------|
+| `--project NAME` | 対象を指定プロジェクトだけに絞る（繰り返し指定可）。指定すると共通設定は対象外になります |
+| `--dry-run` | 変更内容と構成ファイルの差分を表示するだけで、何も書き換えません |
+| `-y`, `--yes` | 確認プロンプトを省略 |
+
+実行すると次の 3 つが行われます。
+
+1. 平文の設定を暗号化して `secrets/` 配下へ保存する
+2. **暗号化した内容を読み戻して元と一致することを確認**してから、元の平文を `backups/env-encrypt/<日時>/` へ退避する
+3. 各プロジェクトの `compose.yml` から機密ファイルの参照をコメントアウトする（元の行はコメントとして残るため、`decrypt` で復元できます）
+
+```bash
+# 何が変わるかを先に確認する
+devbase env encrypt --dry-run
+
+# 共通設定とすべてのプロジェクトを暗号化する
+devbase env encrypt
+
+# 特定プロジェクトだけを暗号化する
+devbase env encrypt --project web
+```
+
+> 退避した平文は**自動では消しません**。内容を確認したうえで、案内された `backups/env-encrypt/<日時>/` を削除してください。削除するまでは端末上に平文の認証情報が残ったままです。
+
+> 退避先は毎回新しく作られます。同じ秒に再実行して名前が衝突した場合は `<日時>-2`, `<日時>-3` … と別のディレクトリになり、**過去の退避物を上書きすることはありません**。
+
+## `devbase env decrypt`
+
+暗号化された設定を平文へ戻します。`encrypt` と対になる退避コマンドです。
+
+```
+devbase env decrypt [--project NAME]... [--dry-run] [-y|--yes]
+```
+
+オプションは `encrypt` と同じです。`compose.yml` のコメントアウトも元に戻るため、暗号化前の状態へそのまま復帰します。機密ファイルは `KEY=VALUE` の一覧へ畳まず原文のバイト列のまま暗号化しているので、コメント・空行・`export KEY=...` 表記・値のクォートもそのまま戻ります。
+
+> 原文が保たれるのは**値を書き換えるまで**です。暗号化した状態で `devbase env set` などを実行すると、内容は `KEY=VALUE` を昇順に並べた書式へ正規化され、コメントは残りません（平文だけを使っていた頃と同じ挙動です）。
+
+```bash
+devbase env decrypt --dry-run
+devbase env decrypt
+```
+
+## `devbase env exec`
+
+復号した機密を環境変数として渡した状態で、任意のコマンドを実行します。値はその子プロセスの環境変数としてのみ渡り、ファイルには書き出されません。
+
+```
+devbase env exec -- CMD [ARGS...]
+```
+
+起動ラッパーは共通の機密ファイルを読み込まないため、ホスト側で機密を必要とする処理（Docker Compose の変数展開など）はこのコマンドを通します。devbase 自身の `devbase build` も内部でこれを使っています。
+
+```bash
+# コンテナに渡る値を確認する
+devbase env exec -- printenv ANTHROPIC_API_KEY
+
+# 機密を必要とする compose 操作を手で実行する
+devbase env exec -- docker compose config
+```
+
+> `devbase env exec -- printenv` のように値を表示するコマンドは、画面共有や端末ログに認証情報がそのまま残ります。実行する場面に注意してください。
+
+## `devbase env rekey`
+
+誰が機密を復号できるかを変更し、暗号化済みの機密をまとめて暗号化し直します。
+
+```
+devbase env rekey [--add-recipient KEY]... [--remove-recipient KEY]... [--dry-run] [-y|--yes]
+```
+
+| オプション | 説明 |
+|-----------|------|
+| `--add-recipient KEY` | 受信者を追加（繰り返し指定可）。`age1...` / `ssh-ed25519 ...` / `@PATH` |
+| `--remove-recipient KEY` | 受信者を削除（繰り返し指定可） |
+| `--dry-run` | 変更内容を表示するだけで、何も書き換えません |
+| `-y`, `--yes` | 確認プロンプトを省略 |
+
+受信者は `$DEVBASE_ROOT/secrets/recipients.txt` に記録されます。リストがまだ無い状態で追加すると、自分の公開鍵も一緒に登録されます（登録しないと自分が受信者から外れ、自分の機密を復号できなくなるため）。
+
+```bash
+# 同僚を追加する
+devbase env rekey --add-recipient age1xxxxxxxx...
+
+# 抜けた人を外す
+devbase env rekey --remove-recipient age1xxxxxxxx...
+```
+
+> 自分の公開鍵を受信者から外すと、再暗号化後にその端末では機密を復号できなくなります。実行前に警告が表示されます。
+
+受信者リストの更新と全機密の再暗号化は、途中で失敗しても中途半端な状態を残さない 1 つのまとまりとして適用されます。書き込みに失敗した場合は受信者リストも各暗号文も実行前の内容へ戻るため、旧受信者宛と新受信者宛の暗号文が混在することはありません。
+
+## `devbase env doctor`
+
+端末上に残る平文と、除外設定の穴を点検します。問題が見つかると非ゼロで終了するため、定期実行にも使えます。
+
+```
+devbase env doctor
+```
+
+確認する内容:
+
+| 観点 | 内容 |
+|-----|------|
+| 鍵 | 鍵ファイルの有無と権限、置き場のディレクトリ権限 |
+| 保存先の衝突 | 暗号化ファイルと平文が同時に存在していないか |
+| 退避された平文 | `backups/env-encrypt/` / `backups/env-import/` に平文が残っていないか |
+| 控えファイル | `.env.bak-<日時>` のような平文の控えが残っていないか |
+| 除外設定 | `.env` / `secrets/` 配下 / `.env.bak-<日時>` / `projects/<name>/.env` が実際に Git から除外されるか |
+
+除外設定の点検は `.gitignore` を読んで解釈するのではなく、代表的なパスを `git check-ignore` に渡して **Git 自身に判定させます**（`.gitignore` の解釈は Git の実装が正であり、独自に真似ると書き方によって食い違うため）。ルート指定（`/.env`）でも任意階層（`**/.env`）でも、Git が実際に除外できていれば報告されません。逆に次のように **Git は除外しない** 書き方は、除外されないパスを挙げて報告します。
+
+- `.env # 機密` — Git は行頭の `#` だけをコメントとして扱うため、これは `.env # 機密` というパターンになります
+- `.env` の後に `!.env` — 後段の再包含で除外が取り消されます
+- `secrets/*.age` — 配下の平文（`secrets/leftover.env` など）が漏れます
+
+`DEVBASE_ROOT` が Git リポジトリでない場合や `git` が使えない場合は、「除外設定を確認できませんでした」と報告します（誤って「問題なし」とは言いません）。
 
 ## `devbase env export`
 
