@@ -31,9 +31,12 @@ base image から **sshd を廃止**し、`devbase orca` 連携および `ENABLE
 
 ## 今後
 
-Issue 34 の agent orchestration（`docker exec` + tmux + VS Code Extension、
-詳細は [`issues/i34-orcalike.md`](../../issues/i34-orcalike.md)）が、
-単一 window でコンテナに入る標準経路になる予定です。
+`devbase login`（= `docker exec`）が、コンテナに入る標準経路です。
+
+当初は devbase 独自の agent orchestration（`docker exec` + tmux + VS Code Extension）を
+追加する検討を進めていましたが、Claude アプリ本体に同等の機能が追加されたため**廃案**としました。
+当時の検討記録は [`issues/old/i34-orcalike.md`](../../issues/old/i34-orcalike.md) にあります。
+複数コンテナの AI セッションを束ねたい場合は、Claude アプリ側の機能を利用してください。
 
 ## クリーンアップ（任意）
 
