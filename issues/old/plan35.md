@@ -1,6 +1,6 @@
 # plan35: 環境変数ファイルの暗号化方針
 
-> 元 issue: `issues/i35.md`
+> 元 issue: `issues/old/i35.md`
 > 種別: 設計方針（multi-PR 想定） / base branch: `main` / release branch: `release/PLAN35`
 > ステータス: 実装完了（段階 1〜5。完了サマリは §12 参照）
 

@@ -1,6 +1,12 @@
 # Issue 34 検討: devbase 独自の Orca-like オーケストレーション
 
-> 元 issue: `issues/i34.md`  
+> **状態: 廃案（2026-08-17）**  
+> Claude アプリ本体に同等のオーケストレーション機能が追加されたため、本ドキュメントが提案する
+> `devbase agent` CLI および VS Code Extension は実装しない。以下は当時の調査・設計記録である。
+> なお §3.1 の sshd/Orca 経路の削除は実施済み（PR #87）で、base image への tmux 追加も
+> 完了している（PR #96）。これらは廃案後もそのまま維持する。
+>
+> 元 issue: `issues/old/i34.md`  
 > 調査日: 2026-07-16  
 > 改訂: 2026-07-17（レビュー反映: 削除順序の後置、Windows 移行、LSP trade-off、metadata 分割）  
 > 結論: **CLI を制御基盤、単一ウィンドウの VS Code Extension を主 UI とする二層構成**を推奨する。
