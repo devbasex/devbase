@@ -5,6 +5,13 @@
 ## [Unreleased]
 
 ### Added
+- **`tmux-first` コマンドを base イメージへ追加**しました。VS Code のウィンドウが
+  異常終了 (クラッシュ / ホスト再起動 / 接続断) すると、VS Code サーバー側に pty が
+  取り残され、tmux クライアントだけがセッションへ繋がったまま残ります。統合ターミナルの
+  起動スクリプトはそのセッションを「使用中」と判定するため、`<repo>-1` に戻れず
+  `<repo>-2`, `<repo>-3` ... と新しいセッションが増え続けます。`tmux-first` は居座って
+  いるクライアントを切断し、一番若い番号のセッションへ現在の端末を切り替えます。
+  `tmux-first -n` で切り替えずに対象を確認でき、`tmux1` のエイリアスも用意しています。
 - **bi-tools プロジェクト用コンテナ (`containers/bi-tools`)** を追加しました。
   `devbase-base` に dbt-core + dbt-bigquery（1.12 系 / Python 3.11）と Lightdash CLI
   (`@lightdash/cli`) を追加し、BigQuery 上の共有 dbt プロジェクト（`dbt build` / `test`）と

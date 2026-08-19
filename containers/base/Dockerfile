@@ -169,6 +169,160 @@ RUN set -eux; \
     mkdir -p ~/.claude; \
     echo '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo '\''unset AWS_REGION'\'' >> \"$CLAUDE_ENV_FILE\""}]}]}}' > ~/.claude/settings.json;
 
+# tmux-first: 若い番号の tmux セッションへ戻すコマンド
+#
+# VS Code のウィンドウが異常終了 (クラッシュ / ホスト再起動 / 接続断) すると、
+# VS Code サーバー側に pty が取り残され、tmux クライアントだけがセッションに
+# 繋がったまま残る。統合ターミナルの起動スクリプトは「クライアントが繋がって
+# いるセッション = 使用中」と判定するため、<repo>-1 に戻れず <repo>-2、
+# <repo>-3 ... と新しいセッションを作り続けてしまう。tmux-first はその居座り
+# クライアントを切断し、一番若い番号のセッションへ現在の端末を切り替える。
+# 詳細は docs/user/environment-variables.md を参照。
+COPY --chmod=0755 <<'TMUX_FIRST_SH' /usr/local/bin/tmux-first
+#!/bin/sh
+# tmux-first - 同じベース名のセッションのうち、最も番号の小さいものへ切り替える。
+#
+# VS Code のウィンドウが異常終了 (クラッシュ / ホスト再起動 / 接続断) すると、
+# VS Code サーバー側に pty が取り残され、tmux クライアントだけがセッションに
+# 繋がったまま残る。次に開いた端末はそのセッションを「使用中」と判断するため、
+# adminer-1 に戻らず adminer-2, adminer-3 ... と新しいセッションを作ってしまう。
+#
+# このコマンドは、対象セッションに居座っている自分以外のクライアントを切断し、
+# 一番若い番号のセッションへ現在の端末を切り替える。
+#
+#   tmux-first             現在のセッション名からベース名を推定 (adminer-2 -> adminer)
+#   tmux-first adminer     ベース名を明示
+#   tmux-first -n          切り替えず、対象と切断予定のクライアントだけ表示
+#
+set -eu
+
+DRY=0
+BASE=""
+usage() {
+	cat <<'USAGE'
+使い方: tmux-first [-n|--dry-run] [ベース名]
+
+  引数なし    現在の tmux セッション名から末尾の -数字 を除いたものをベース名にする
+              (tmux の外にいる場合はカレントディレクトリ名)
+  ベース名    明示指定 (例: tmux-first adminer)
+  -n          切り替えを行わず、対象セッションと切断予定のクライアントを表示する
+USAGE
+}
+
+for a in "$@"; do
+	case "$a" in
+	-n | --dry-run) DRY=1 ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-*)
+		echo "tmux-first: 不明なオプション: $a" >&2
+		usage >&2
+		exit 2
+		;;
+	*) BASE="$a" ;;
+	esac
+done
+
+command -v tmux >/dev/null 2>&1 || {
+	echo "tmux-first: tmux が見つかりません" >&2
+	exit 1
+}
+tmux list-sessions >/dev/null 2>&1 || {
+	echo "tmux-first: tmux サーバーが起動していません" >&2
+	exit 1
+}
+
+# ベース名: 引数 > 現在のセッション名から末尾の -数字 を除去 > カレントディレクトリ名
+if [ -z "$BASE" ]; then
+	if [ -n "${TMUX:-}" ]; then
+		BASE=$(tmux display-message -p '#S' | sed -E 's/-[0-9]+$//')
+	else
+		BASE=$(basename "$PWD" | tr './:' '___')
+	fi
+fi
+[ -n "$BASE" ] || {
+	echo "tmux-first: ベース名を決定できません" >&2
+	exit 1
+}
+
+# <ベース名>-<数字> のセッションを集め、数字の昇順で先頭を採る。
+# ベース名に '-' や正規表現メタ文字が含まれても壊れないよう awk で前方一致比較する。
+TARGET=$(tmux list-sessions -F '#{session_name}' | awk -v b="$BASE" '
+	{
+		n = length(b)
+		if (substr($0, 1, n + 1) == b "-") {
+			suf = substr($0, n + 2)
+			if (suf ~ /^[0-9]+$/) printf "%d\t%s\n", suf, $0
+		}
+	}' | sort -n | head -1 | cut -f2-)
+
+if [ -z "$TARGET" ]; then
+	echo "tmux-first: '${BASE}-<数字>' に一致するセッションがありません" >&2
+	echo "  既存のセッション:" >&2
+	tmux list-sessions -F '    - #{session_name}' >&2
+	exit 1
+fi
+
+# 自分自身のクライアント (これは絶対に切断しない)
+ME=""
+if [ -n "${TMUX:-}" ]; then
+	ME=$(tmux display-message -p '#{client_name}' 2>/dev/null || true)
+fi
+
+# 対象セッションに繋がっている自分以外のクライアント = 居座り。
+# tmux の中にいるのに自分のクライアントを特定できない場合は、自分自身を切断して
+# しまう恐れがあるため切断対象を空にする (切り替えだけ行う)。
+GHOSTS=""
+if [ -n "${TMUX:-}" ] && [ -z "$ME" ]; then
+	echo "tmux-first: 自分のクライアントを特定できないため切断は行いません" >&2
+else
+	GHOSTS=$(tmux list-clients -t "=$TARGET" -F '#{client_name}' 2>/dev/null |
+		grep -v -x -F "${ME:-__no_client__}" || true)
+fi
+
+if [ "$DRY" = 1 ]; then
+	echo "base   : $BASE"
+	echo "target : $TARGET"
+	if [ -n "$ME" ]; then
+		echo "self   : $ME"
+	elif [ -n "${TMUX:-}" ]; then
+		echo "self   : (クライアント未接続)"
+	else
+		echo "self   : (tmux の外)"
+	fi
+	if [ -n "$GHOSTS" ]; then
+		echo "$GHOSTS" | sed 's/^/detach : /'
+	else
+		echo "detach : (なし)"
+	fi
+	exit 0
+fi
+
+if [ -n "$GHOSTS" ]; then
+	echo "$GHOSTS" | while IFS= read -r c; do
+		[ -n "$c" ] || continue
+		echo "tmux-first: 居座りクライアントを切断: $c -> $TARGET"
+		tmux detach-client -t "$c" || true
+	done
+fi
+
+if [ -n "${TMUX:-}" ]; then
+	if [ "$(tmux display-message -p '#S')" = "$TARGET" ]; then
+		echo "tmux-first: すでに $TARGET です"
+	else
+		echo "tmux-first: $TARGET へ切り替えます"
+		tmux switch-client -t "=$TARGET"
+	fi
+else
+	echo "tmux-first: $TARGET にアタッチします"
+	exec tmux attach-session -t "=$TARGET"
+fi
+TMUX_FIRST_SH
+
+RUN echo "alias tmux1='tmux-first'" >> ~/.bashrc
+
 # entrypoint と dind
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 COPY --chmod=755 dind /usr/local/bin/dind
