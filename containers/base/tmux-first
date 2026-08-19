@@ -1,0 +1,245 @@
+#!/bin/sh
+# tmux-first - 同じベース名のセッションのうち、最も番号の小さいものへ切り替える。
+#
+# VS Code のウィンドウが異常終了 (クラッシュ / ホスト再起動 / 接続断) すると、
+# VS Code サーバー側に pty が取り残され、tmux クライアントだけがセッションに
+# 繋がったまま残る。次に開いた端末はそのセッションを「使用中」と判断するため、
+# adminer-1 に戻らず adminer-2, adminer-3 ... と新しいセッションを作ってしまう。
+#
+# このコマンドは、対象セッションに居座っている「放置されたクライアント」を切断し、
+# 一番若い番号のセッションへ現在の端末を切り替える。
+#
+# 接続しているというだけでは居座りとは判定しない。最終操作からの経過時間が
+# TMUX_FIRST_IDLE 秒 (既定 300) 以上のクライアントだけを切断対象とし、
+# 現に使われている端末は残す。すべて切断したい場合は -f を明示する。
+# TMUX_FIRST_IDLE は 0 以上の整数のみ有効で、それ以外はエラー終了する。
+#
+#   tmux-first             現在のセッション名からベース名を推定 (adminer-2 -> adminer)
+#   tmux-first adminer     ベース名を明示
+#   tmux-first -n          切り替えず、対象と切断予定のクライアントだけ表示
+#   tmux-first -f          操作中のクライアントも含めて切断する
+#
+set -eu
+
+DRY=0
+FORCE=0
+BASE=""
+NL='
+'
+# 最終操作からこの秒数以上経過したクライアントを「放置」とみなす。
+# 負数や数値以外を許すとすべてのクライアントが idle 条件を満たしてしまい、-f なしで
+# 操作中の端末まで切断されるため、0 以上の整数以外は受け付けない。
+# 既定値を使うのは未設定のときだけ。明示的な空文字は不正値として下の検証で弾く。
+IDLE_MIN=${TMUX_FIRST_IDLE-300}
+usage() {
+	cat <<'USAGE'
+使い方: tmux-first [-n|--dry-run] [-f|--force] [ベース名]
+
+  引数なし    現在の tmux セッション名から末尾の -数字 を除いたものをベース名にする
+              (tmux の外にいる場合はカレントディレクトリ名)
+  ベース名    明示指定 (例: tmux-first adminer)
+  -n          切り替えを行わず、対象セッションと切断予定のクライアントを表示する
+  -f          操作中のクライアントも含めて切断する
+
+既定では、最終操作から TMUX_FIRST_IDLE 秒 (既定 300) 以上経過したクライアントだけを
+切断する。使用中の端末を巻き添えにしないための安全策。
+TMUX_FIRST_IDLE に 0 以上の整数以外 (負数・数値以外) を指定した場合はエラー終了する。
+USAGE
+}
+
+for a in "$@"; do
+	case "$a" in
+	-n | --dry-run) DRY=1 ;;
+	-f | --force) FORCE=1 ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-*)
+		echo "tmux-first: 不明なオプション: $a" >&2
+		usage >&2
+		exit 2
+		;;
+	*) BASE="$a" ;;
+	esac
+done
+
+case "$IDLE_MIN" in
+'' | *[!0-9]*)
+	echo "tmux-first: TMUX_FIRST_IDLE は 0 以上の整数で指定してください: ${TMUX_FIRST_IDLE:-}" >&2
+	exit 2
+	;;
+esac
+
+command -v tmux >/dev/null 2>&1 || {
+	echo "tmux-first: tmux が見つかりません" >&2
+	exit 1
+}
+tmux list-sessions >/dev/null 2>&1 || {
+	echo "tmux-first: tmux サーバーが起動していません" >&2
+	exit 1
+}
+
+# ベース名: 引数 > 現在のセッション名から末尾の -数字 を除去 > カレントディレクトリ名
+if [ -z "$BASE" ]; then
+	if [ -n "${TMUX:-}" ]; then
+		BASE=$(tmux display-message -p '#S' | sed -E 's/-[0-9]+$//')
+	else
+		BASE=$(basename "$PWD" | tr './:' '___')
+	fi
+fi
+[ -n "$BASE" ] || {
+	echo "tmux-first: ベース名を決定できません" >&2
+	exit 1
+}
+
+# <ベース名>-<数字> のセッションを集め、数字の昇順で先頭を採る。
+# ベース名に '-' や正規表現メタ文字が含まれても壊れないよう awk で前方一致比較する。
+TARGET=$(tmux list-sessions -F '#{session_name}' | awk -v b="$BASE" '
+	{
+		n = length(b)
+		if (substr($0, 1, n + 1) == b "-") {
+			suf = substr($0, n + 2)
+			if (suf ~ /^[0-9]+$/) printf "%d\t%s\n", suf, $0
+		}
+	}' | sort -n | head -1 | cut -f2-)
+
+if [ -z "$TARGET" ]; then
+	echo "tmux-first: '${BASE}-<数字>' に一致するセッションがありません" >&2
+	echo "  既存のセッション:" >&2
+	tmux list-sessions -F '    - #{session_name}' >&2
+	exit 1
+fi
+
+NOW=$(date +%s)
+
+# 自分自身のクライアント (これは絶対に切断しない)
+#
+# pane 内のシェルには「どのクライアントから起動されたか」の情報がないため、tmux の
+# 「現在のクライアント」解決 (セッションに繋がっているうち最終操作が最も新しい
+# クライアント) を使う。人が端末に打ち込んで起動した場合は、そのキー入力で最終操作が
+# 更新されるため、これは必ず実行元自身を指す。
+# 一方 hook や send-keys 経由など、キー入力を伴わない起動では別のクライアントを
+# 指し得る。そこで「最終操作が SELF_FRESH 秒以内」であることまで確認できた場合だけ
+# 実行元と断定し、確認できない場合は実行元自身や別の利用者の端末を操作する恐れが
+# あるため、切断も切り替えも行わない。
+#
+# なお pane 内で `tty` が返すのは pane の pty であって client の tty ではないため、
+# `tty` と #{client_tty} の照合では実行元を特定できない (常に不一致になる)。
+SELF_FRESH=10
+ME=""
+ME_ACT=""
+ME_VERIFIED=0
+if [ -n "${TMUX:-}" ]; then
+	# 名前と最終操作時刻は 1 回の呼び出しでまとめて取る。2 回に分けると、その間に
+	# 別のクライアントが操作された場合に別人の時刻を拾ってしまう。
+	SELF=$(tmux display-message -p '#{client_activity}:#{client_name}' 2>/dev/null || true)
+	case "$SELF" in
+	[0-9]*:?*)
+		ME_ACT=${SELF%%:*}
+		ME=${SELF#*:}
+		;;
+	esac
+	if [ -n "$ME" ] && [ "$((NOW - ME_ACT))" -le "$SELF_FRESH" ]; then
+		ME_VERIFIED=1
+	fi
+	# 未検証の $ME は「直近に操作されたクライアント」であって実行元とは限らず、
+	# 別の利用者の端末名を保持していることがある。そのまま表示や -c の対象に使うと
+	# 「識別できないので切断はしない」と言いながら他人の端末を切り替えてしまうため、
+	# 検証できなかった場合は実行元不明として捨てる。
+	[ "$ME_VERIFIED" = 1 ] || ME=""
+fi
+
+# 対象セッションに繋がっている自分以外のクライアントのうち、最終操作から
+# IDLE_MIN 秒以上経過したものだけを「居座り」とみなす。接続しているだけの
+# クライアントを切断すると、使用中の別ウィンドウや別の利用者の端末まで
+# 巻き添えにしてしまうため、既定では操作中のものは残す (-f で全件切断)。
+#
+# tmux の中にいるのに実行元のクライアントを特定できない場合は、自分自身や別の利用者の
+# 端末を操作してしまう恐れがあるため、切断も切り替えも行わない。
+GHOSTS=""
+ALIVE=""
+if [ -n "${TMUX:-}" ] && [ "$ME_VERIFIED" = 0 ]; then
+	echo "tmux-first: 実行元のクライアントを特定できないため切断は行いません" >&2
+else
+	# client_activity は数字のみ、client_name にも ':' は含まれないため ':' で連結する。
+	# $(...) を for にそのまま渡すと空白での単語分割とパス名展開 (glob) が起きるため、
+	# ヒアドキュメント + while read で 1 行ずつ読む。パイプと違いサブシェルにならないので
+	# ループ内で組み立てた GHOSTS / ALIVE がそのまま残る。
+	CLIENTS=$(tmux list-clients -t "=$TARGET" \
+		-F '#{client_activity}:#{client_name}' 2>/dev/null || true)
+	while IFS=: read -r act name; do
+		[ -n "$name" ] || continue
+		[ "$name" = "${ME:-__no_client__}" ] && continue
+		case "$act" in
+		'' | *[!0-9]*) act=0 ;;
+		esac
+		idle=$((NOW - act))
+		if [ "$FORCE" = 1 ] || [ "$idle" -ge "$IDLE_MIN" ]; then
+			GHOSTS="${GHOSTS:+${GHOSTS}${NL}}${name}"
+		else
+			ALIVE="${ALIVE:+${ALIVE}${NL}}${name} (最終操作 ${idle} 秒前)"
+		fi
+	done <<EOF
+$CLIENTS
+EOF
+fi
+
+if [ -n "$ALIVE" ]; then
+	echo "tmux-first: 操作中のクライアントは切断しません (切断するには -f):" >&2
+	echo "$ALIVE" | sed 's/^/  - /' >&2
+fi
+
+if [ "$DRY" = 1 ]; then
+	echo "base   : $BASE"
+	echo "target : $TARGET"
+	if [ -n "$ME" ]; then
+		echo "self   : $ME"
+	elif [ -n "${TMUX:-}" ]; then
+		echo "self   : (特定できません: 切断も切り替えも行いません)"
+	else
+		echo "self   : (tmux の外)"
+	fi
+	if [ -n "$GHOSTS" ]; then
+		echo "$GHOSTS" | sed 's/^/detach : /'
+	else
+		echo "detach : (なし)"
+	fi
+	if [ -n "$ALIVE" ]; then
+		echo "$ALIVE" | sed 's/^/keep   : /'
+	fi
+	exit 0
+fi
+
+if [ -n "$GHOSTS" ]; then
+	echo "$GHOSTS" | while IFS= read -r c; do
+		[ -n "$c" ] || continue
+		echo "tmux-first: 居座りクライアントを切断: $c -> $TARGET"
+		tmux detach-client -t "$c" || true
+	done
+fi
+
+if [ -n "${TMUX:-}" ]; then
+	if [ -z "$ME" ]; then
+		# 実行元を特定できていない。-c を省いた switch-client も同じ「現在の
+		# クライアント」解決 (最終操作が最も新しいクライアント) を使うため、
+		# 別の利用者の端末を勝手に切り替えてしまう可能性がある。疑わしいときは
+		# 他人の端末を触らない方針に従い、切り替えも行わず手順だけ案内する。
+		echo "tmux-first: 実行元のクライアントを特定できないため切り替えも行いません" >&2
+		echo "tmux-first: 手動で切り替える場合は tmux switch-client -t '=$TARGET'" >&2
+		exit 0
+	fi
+	# 切断対象から除外したクライアントと実際に切り替えるクライアントが食い違わないよう、
+	# -c で対象を固定する (-c なしだと再度「現在のクライアント」が解決され、その間に
+	# 別のクライアントが操作されると別人を切り替えてしまう)。
+	CUR=$(tmux display-message -c "$ME" -p '#S')
+	if [ "$CUR" = "$TARGET" ]; then
+		echo "tmux-first: すでに $TARGET です"
+	else
+		echo "tmux-first: $TARGET へ切り替えます"
+		tmux switch-client -c "$ME" -t "=$TARGET"
+	fi
+else
+	echo "tmux-first: $TARGET にアタッチします"
+	exec tmux attach-session -t "=$TARGET"
+fi

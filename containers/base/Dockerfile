@@ -169,6 +169,17 @@ RUN set -eux; \
     mkdir -p ~/.claude; \
     echo '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo '\''unset AWS_REGION'\'' >> \"$CLAUDE_ENV_FILE\""}]}]}}' > ~/.claude/settings.json;
 
+# tmux セッションの整理コマンド。tmux-first は居座りクライアントを切断して
+# 一番若い番号のセッションへ切り替え、tmux-clean は置き去りのセッションを削除する。
+# 背景と使い方は各スクリプト冒頭のコメントと docs/user/environment-variables.md を参照。
+COPY --chmod=0755 tmux-first /usr/local/bin/tmux-first
+COPY --chmod=0755 tmux-clean /usr/local/bin/tmux-clean
+
+# 短縮名は alias ではなく symlink で用意する。alias は bash の対話シェルにしか効かず、
+# zsh などの他シェルや非対話実行 (docker exec など) では使えないため。
+RUN sudo ln -sf tmux-first /usr/local/bin/tmux1 \
+ && sudo ln -sf tmux-clean /usr/local/bin/tmuxc
+
 # entrypoint と dind
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 COPY --chmod=755 dind /usr/local/bin/dind

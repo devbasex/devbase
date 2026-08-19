@@ -1,0 +1,249 @@
+#!/bin/sh
+# tmux-clean - 同じベース名の不要な tmux セッションを掃除する。
+#
+# tmux-first で若い番号のセッションへ戻したあと、置き去りになった <ベース名>-<数字>
+# のセッションを削除するためのコマンド。既定では安全側に倒し、次のセッションは
+# 残す:
+#
+#   - 残すセッション (keeper): tmux 内なら現在のセッション、外なら最小番号のもの
+#   - アタッチ中のセッション  : 誰かが使用中とみなす
+#   - シェル以外が動いているセッション: ビルドやサーバを実行中とみなす
+#   - シェルに子プロセスが残っているセッション: & で起動したジョブが動いているとみなす
+#
+# 上記も含めて消したい場合は -f を付ける。
+#
+#   tmux-clean            現在のセッション名からベース名を推定して掃除
+#   tmux-clean adminer    ベース名を明示
+#   tmux-clean -n         削除せず、対象と除外理由だけ表示 (dry-run)
+#   tmux-clean -f         アタッチ中・実行中 (バックグラウンドジョブ含む) も削除する
+#
+set -eu
+
+DRY=0
+FORCE=0
+BASE=""
+
+usage() {
+	cat <<'USAGE'
+使い方: tmux-clean [-n|--dry-run] [-f|--force] [ベース名]
+
+  引数なし    現在の tmux セッション名から末尾の -数字 を除いたものをベース名にする
+              (tmux の外にいる場合はカレントディレクトリ名)
+  ベース名    明示指定 (例: tmux-clean adminer)
+  -n          削除せず、削除対象と除外理由を表示する
+  -f          アタッチ中・実行中 (バックグラウンドジョブ含む) のセッションも削除する
+
+残すセッション (keeper) は tmux 内なら現在のセッション、tmux 外なら最小番号のもの。
+USAGE
+}
+
+for a in "$@"; do
+	case "$a" in
+	-n | --dry-run) DRY=1 ;;
+	-f | --force) FORCE=1 ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-*)
+		echo "tmux-clean: 不明なオプション: $a" >&2
+		usage >&2
+		exit 2
+		;;
+	*) BASE="$a" ;;
+	esac
+done
+
+command -v tmux >/dev/null 2>&1 || {
+	echo "tmux-clean: tmux が見つかりません" >&2
+	exit 1
+}
+tmux list-sessions >/dev/null 2>&1 || {
+	echo "tmux-clean: tmux サーバーが起動していません" >&2
+	exit 1
+}
+
+# ベース名: 引数 > 現在のセッション名から末尾の -数字 を除去 > カレントディレクトリ名
+if [ -z "$BASE" ]; then
+	if [ -n "${TMUX:-}" ]; then
+		BASE=$(tmux display-message -p '#S' | sed -E 's/-[0-9]+$//')
+	else
+		BASE=$(basename "$PWD" | tr './:' '___')
+	fi
+fi
+[ -n "$BASE" ] || {
+	echo "tmux-clean: ベース名を決定できません" >&2
+	exit 1
+}
+
+# <ベース名>-<数字> のセッションを数字の昇順で列挙する。
+# ベース名に '-' や正規表現メタ文字が含まれても壊れないよう awk で前方一致比較する。
+SESSIONS=$(tmux list-sessions -F '#{session_name}' | awk -v b="$BASE" '
+	{
+		n = length(b)
+		if (substr($0, 1, n + 1) == b "-") {
+			suf = substr($0, n + 2)
+			if (suf ~ /^[0-9]+$/) printf "%d\t%s\n", suf, $0
+		}
+	}' | sort -n | cut -f2-)
+
+if [ -z "$SESSIONS" ]; then
+	echo "tmux-clean: '${BASE}-<数字>' に一致するセッションがありません" >&2
+	exit 1
+fi
+
+# keeper: tmux 内なら現在のセッション、外なら最小番号。
+# 現在のセッションがベース名に属さない場合も最小番号を残す。
+KEEP=""
+if [ -n "${TMUX:-}" ]; then
+	CUR=$(tmux display-message -p '#S' 2>/dev/null || true)
+	# セッション名に空白や '*' が含まれても壊れないよう、for ではなく while read で回す。
+	while IFS= read -r s; do
+		if [ -n "$s" ] && [ "$s" = "$CUR" ]; then
+			KEEP="$s"
+			break
+		fi
+	done <<EOF
+$SESSIONS
+EOF
+fi
+[ -n "$KEEP" ] || KEEP=$(printf '%s\n' "$SESSIONS" | head -1)
+echo "tmux-clean: base=$BASE keeper=$KEEP"
+
+# シェルとみなすコマンド名 (これしか動いていなければ削除して良いと判断する)
+is_shell() {
+	case "$1" in
+	sh | bash | zsh | dash | fish | ksh | tcsh | csh | ash | -sh | -bash | -zsh | login) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# pane_current_command は foreground のコマンドしか示さないため、シェルから
+# `&` や nohup で起動したサーバー・ジョブがあっても「シェルだけ」に見えてしまう。
+# pane のシェル (pane_pid) に子プロセスが残っていれば実行中とみなして残す。
+has_child_process() {
+	for f in /proc/"$1"/task/*/children; do
+		[ -r "$f" ] || continue
+		[ -n "$(cat "$f" 2>/dev/null || true)" ] && return 0
+	done
+	# /proc/<pid>/task/*/children が使えない環境向けのフォールバック
+	if command -v pgrep >/dev/null 2>&1; then
+		pgrep -P "$1" >/dev/null 2>&1 && return 0
+	fi
+	return 1
+}
+
+KILLED=0
+KEPT=0
+FAILED=0
+while IFS= read -r s; do
+	[ -n "$s" ] || continue
+	if [ "$s" = "$KEEP" ]; then
+		echo "  keep  $s  (keeper)"
+		KEPT=$((KEPT + 1))
+		continue
+	fi
+
+	# セッションの状態 (アタッチ数 / pane) を取得できなかったときに、その「空」を
+	# 「誰も繋いでおらずシェルしか動いていない」と読み替えると、実際には使用中の
+	# セッションを既定実行で削除してしまう。取得に失敗した場合は判定材料が無いと
+	# みなし、削除ではなく keep に倒す (fail-closed)。
+	STATE_OK=1
+
+	# display-message の -t は target-pane を取るためセッション指定に使えない。
+	# -f "#{==:#{session_name},$s}" もセッション名に '}' や ',' が含まれると format
+	# 構文が壊れるため使えない。桁数の決まった #{session_attached} を先頭に置き、
+	# 最初の空白より後ろ全体をセッション名として awk で完全一致させる。
+	# こうすれば名前にどんな文字が入っても取り違えない。
+	ATT=""
+	if SESSION_LIST=$(tmux list-sessions -F '#{session_attached} #{session_name}' 2>/dev/null); then
+		ATT=$(printf '%s\n' "$SESSION_LIST" |
+			awk -v s="$s" '{
+				n = index($0, " ")
+				if (n > 0 && substr($0, n + 1) == s) {
+					print substr($0, 1, n - 1)
+					exit
+				}
+			}')
+		# 一覧に載っていない = 直前に終了したか取り違えている。どちらもアタッチ数が
+		# 不明なので未取得として扱う。
+		[ -n "$ATT" ] || STATE_OK=0
+	else
+		STATE_OK=0
+	fi
+
+	BUSY=""
+	# pane_pid は数字のみ、pane_current_command にも ':' は含まれないため ':' で連結する。
+	# $(...) を for にそのまま渡すと空白での単語分割とパス名展開 (glob) が起きるため、
+	# ヒアドキュメント + while read で 1 行ずつ読む。パイプと違いサブシェルにならないので
+	# ループ内で立てた BUSY がそのまま残る。
+	if PANES=$(tmux list-panes -s -t "=$s" \
+		-F '#{pane_pid}:#{pane_current_command}' 2>/dev/null); then
+		while IFS=: read -r pid cmd; do
+			[ -n "$pid" ] || continue
+			if ! is_shell "$cmd"; then
+				BUSY="$cmd"
+				break
+			fi
+			if has_child_process "$pid"; then
+				BUSY="バックグラウンドジョブ (pane pid $pid)"
+				break
+			fi
+		done <<EOF
+$PANES
+EOF
+	else
+		STATE_OK=0
+	fi
+
+	if [ "$STATE_OK" = 0 ]; then
+		if ! tmux has-session -t "=$s" 2>/dev/null; then
+			# 走査中にセッションが終了していた場合。削除済みなので件数には数えない。
+			echo "  skip  $s  (既に終了していました)"
+			continue
+		fi
+		if [ "$FORCE" = 0 ]; then
+			echo "  keep  $s  (状態を取得できませんでした)"
+			echo "tmux-clean: セッションの状態を取得できないため削除しません: $s" >&2
+			KEPT=$((KEPT + 1))
+			continue
+		fi
+	fi
+
+	if [ "$FORCE" = 0 ] && [ "${ATT:-0}" != 0 ]; then
+		echo "  keep  $s  (アタッチ中: クライアント ${ATT} 個)"
+		KEPT=$((KEPT + 1))
+		continue
+	fi
+	if [ "$FORCE" = 0 ] && [ -n "$BUSY" ]; then
+		echo "  keep  $s  (実行中: $BUSY)"
+		KEPT=$((KEPT + 1))
+		continue
+	fi
+
+	if [ "$DRY" = 1 ]; then
+		echo "  KILL  $s  (dry-run)"
+		KILLED=$((KILLED + 1))
+	elif tmux kill-session -t "=$s" 2>/dev/null; then
+		echo "  KILL  $s"
+		KILLED=$((KILLED + 1))
+	elif ! tmux has-session -t "=$s" 2>/dev/null; then
+		# 直前にセッションが終了していた場合の競合。削除済みなので件数には数えない。
+		echo "  skip  $s  (既に終了していました)"
+	else
+		# 競合以外の失敗。set -e で止めずに残りを処理しつつ、利用者が検知できるよう記録する。
+		echo "tmux-clean: セッションを削除できませんでした: $s" >&2
+		FAILED=$((FAILED + 1))
+	fi
+done <<EOF
+$SESSIONS
+EOF
+
+if [ "$DRY" = 1 ]; then
+	echo "tmux-clean: 削除対象 ${KILLED} 件 / 残す ${KEPT} 件 (dry-run のため実行していません)"
+else
+	echo "tmux-clean: 削除 ${KILLED} 件 / 残す ${KEPT} 件 / 失敗 ${FAILED} 件"
+fi
+
+# 削除に失敗したセッションがあれば、呼び出し側が検知できるよう終了ステータスで知らせる。
+[ "$FAILED" = 0 ] || exit 1
