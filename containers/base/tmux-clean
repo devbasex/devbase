@@ -171,7 +171,9 @@ for s in $SESSIONS; do
 	if [ "$DRY" = 1 ]; then
 		echo "  KILL  $s  (dry-run)"
 	else
-		tmux kill-session -t "=$s"
+		# 直前にセッションが終了していた場合の競合エラーで set -e により
+		# 後続の削除処理が止まらないようにする。
+		tmux kill-session -t "=$s" || true
 		echo "  KILL  $s"
 	fi
 	KILLED=$((KILLED + 1))

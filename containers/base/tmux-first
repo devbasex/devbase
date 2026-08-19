@@ -12,6 +12,7 @@
 # 接続しているというだけでは居座りとは判定しない。最終操作からの経過時間が
 # TMUX_FIRST_IDLE 秒 (既定 300) 以上のクライアントだけを切断対象とし、
 # 現に使われている端末は残す。すべて切断したい場合は -f を明示する。
+# TMUX_FIRST_IDLE は 0 以上の整数のみ有効で、それ以外はエラー終了する。
 #
 #   tmux-first             現在のセッション名からベース名を推定 (adminer-2 -> adminer)
 #   tmux-first adminer     ベース名を明示
@@ -26,6 +27,8 @@ BASE=""
 NL='
 '
 # 最終操作からこの秒数以上経過したクライアントを「放置」とみなす。
+# 負数や数値以外を許すとすべてのクライアントが idle 条件を満たしてしまい、-f なしで
+# 操作中の端末まで切断されるため、0 以上の整数以外は受け付けない。
 IDLE_MIN=${TMUX_FIRST_IDLE:-300}
 usage() {
 	cat <<'USAGE'
@@ -39,6 +42,7 @@ usage() {
 
 既定では、最終操作から TMUX_FIRST_IDLE 秒 (既定 300) 以上経過したクライアントだけを
 切断する。使用中の端末を巻き添えにしないための安全策。
+TMUX_FIRST_IDLE に 0 以上の整数以外 (負数・数値以外) を指定した場合はエラー終了する。
 USAGE
 }
 
@@ -58,6 +62,13 @@ for a in "$@"; do
 	*) BASE="$a" ;;
 	esac
 done
+
+case "$IDLE_MIN" in
+'' | *[!0-9]*)
+	echo "tmux-first: TMUX_FIRST_IDLE は 0 以上の整数で指定してください: ${TMUX_FIRST_IDLE:-}" >&2
+	exit 2
+	;;
+esac
 
 command -v tmux >/dev/null 2>&1 || {
 	echo "tmux-first: tmux が見つかりません" >&2
