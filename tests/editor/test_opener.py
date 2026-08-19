@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass
 
 import pytest
@@ -65,12 +66,32 @@ def test_detect_context_ssh(key):
     assert ctx.is_ssh is True
 
 
-def test_detect_context_in_vscode(tmp_path):
-    # ソケットが実在するときだけ in_vscode が立つ
-    sock = tmp_path / "vscode-ipc-live.sock"
-    sock.write_text("")
-    ctx = opener.detect_context(environ={"VSCODE_IPC_HOOK_CLI": str(sock)},
-                                isatty=True, system="Linux")
+@pytest.fixture
+def listening_ipc_socket():
+    """listen 中の AF_UNIX ソケットを作り、そのパスを返す。
+
+    macOS の sun_path は 104 バイト上限で pytest の tmp_path (/private/var/folders/...)
+    だと超えうるため、短い ``/tmp`` 直下に作る。
+    """
+    import socket as _socket
+    import tempfile
+    d = tempfile.mkdtemp(dir="/tmp", prefix="dbipc")
+    path = os.path.join(d, "s.sock")
+    srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    srv.bind(path)
+    srv.listen(1)
+    try:
+        yield path
+    finally:
+        srv.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_detect_context_in_vscode(listening_ipc_socket):
+    # 接続できるソケットを指しているときだけ in_vscode が立つ
+    ctx = opener.detect_context(
+        environ={"VSCODE_IPC_HOOK_CLI": listening_ipc_socket},
+        isatty=True, system="Linux")
     assert ctx.in_vscode is True
 
 
@@ -82,6 +103,38 @@ def test_detect_context_stale_ipc_socket_is_not_vscode(tmp_path):
     ctx = opener.detect_context(
         environ={"VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock")},
         isatty=True, system="Linux")
+    assert ctx.in_vscode is False
+
+
+def test_detect_context_orphan_ipc_socket_is_not_vscode():
+    """ソケットファイルは残っているが listen していない場合も in_vscode=False。
+
+    VS Code がクラッシュ/強制終了すると $TMPDIR に孤児ソケットが残る。実在確認だけ
+    では生きていると誤判定し、code が ECONNREFUSED で失敗していた回帰の防止。
+    """
+    import socket as _socket
+    import tempfile
+    d = tempfile.mkdtemp(dir="/tmp", prefix="dbipc")
+    path = os.path.join(d, "s.sock")
+    srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    srv.bind(path)
+    srv.listen(1)
+    srv.close()          # bind したファイルは残るが listen は失われる
+    try:
+        assert os.path.exists(path)   # 実在確認では弾けないことを明示
+        ctx = opener.detect_context(environ={"VSCODE_IPC_HOOK_CLI": path},
+                                    isatty=True, system="Linux")
+        assert ctx.in_vscode is False
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_detect_context_ipc_path_is_regular_file_is_not_vscode(tmp_path):
+    """ソケットですらない通常ファイルを指していても in_vscode=False。"""
+    f = tmp_path / "not-a-socket"
+    f.write_text("")
+    ctx = opener.detect_context(environ={"VSCODE_IPC_HOOK_CLI": str(f)},
+                                isatty=True, system="Linux")
     assert ctx.in_vscode is False
 
 

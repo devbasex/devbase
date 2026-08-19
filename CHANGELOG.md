@@ -90,6 +90,16 @@
   `. <DEVBASE_ROOT>/bin/rc` に書き換えてください。
 
 ### Fixed
+- **VS Code の異常終了後に残った IPC ソケットで `devbase up --open` が
+  `ECONNREFUSED` で失敗する問題を修正**しました。`VSCODE_IPC_HOOK_CLI` が指す
+  ソケットの死に方には「ファイルごと消えている」ほかに「ファイルは残っているが
+  listen しているプロセスが居ない」の 2 通りがあります。後者は VS Code の
+  クラッシュ・強制終了・OS 再起動で後始末されなかった場合に `$TMPDIR` へ孤児として
+  残り、`ls` では生きているものと区別が付きません。従来の `_ipc_socket_alive` は
+  ファイルの実在だけを見ていたため後者を「生きている」と誤判定し、`code` が
+  `connect ECONNREFUSED .../vscode-ipc-<uuid>.sock` で失敗していました。
+  **実際に connect して**生死を判定するようにし (タイムアウト 0.5 秒)、死んでいる
+  場合は従来どおり警告のうえ degrade します。
 - **tmux / screen 経由のターミナルで `devbase up --open` が無言で失敗する問題を修正**
   しました。VS Code はウィンドウごとに IPC ソケット (`$TMPDIR/vscode-ipc-<uuid>.sock`)
   を作り直しますが、tmux サーバーはセッション作成時の環境変数を保持し続けるため、

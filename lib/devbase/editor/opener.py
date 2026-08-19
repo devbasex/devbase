@@ -8,10 +8,17 @@
   Remote-SSH 統合ターミナルでは ``code`` シムがクライアント (例: Windows) に窓を
   開く。よって ``code --folder-uri <attach-uri>`` を叩くだけで実行コンテキストに
   応じた正しいクライアントへ開ける。
-- ただし ``VSCODE_IPC_HOOK_CLI`` は **変数が残っていても実体が消えている**ことがある
+- ただし ``VSCODE_IPC_HOOK_CLI`` は **変数が残っていても接続先が死んでいる**ことがある
   (tmux/screen のセッション再利用、VS Code ウィンドウのリロード後の古い端末など)。
-  存在確認まで行わないと ``code`` が死んだソケットへ繋ぎに行き無言で失敗するため、
-  :func:`_ipc_socket_alive` で実在を検証してから ``in_vscode`` を立てる。
+  死に方は 2 通りあり、**ファイルの実在確認だけでは後者を検出できない**:
+
+  1. ソケットファイルごと消えている (VS Code が正常終了時に削除した)
+  2. ソケットファイルは残っているが listen しているプロセスが居ない
+     (クラッシュ・強制終了・OS 再起動などで後始末されなかった)
+
+  2 の状態で ``code`` を叩くと ``ECONNREFUSED`` で失敗する。よって
+  :func:`_ipc_socket_alive` では **実際に connect して**生死を判定してから
+  ``in_vscode`` を立てる。
 - コンテナ attach URI は ``{"containerName":"/<実コンテナ名>"}`` を hex 化した
   authority を持つ (:func:`build_attach_uri`)。
 - **跨ホスト (手元 VS Code → Remote-SSH(host) → ssh 先の Docker 上コンテナ) では
@@ -36,6 +43,7 @@ import platform
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -102,12 +110,17 @@ def _detect_wsl(environ) -> bool:
         return False
 
 
-def _ipc_socket_alive(environ) -> bool:
-    """``VSCODE_IPC_HOOK_CLI`` が **実在するソケット** を指しているか。
+# connect() の待ち時間上限 (秒)。相手が生きていれば UNIX ドメインソケットの接続は
+# 即座に完了するため短くてよい。`devbase up` の最後に走るので体感を優先する。
+_IPC_CONNECT_TIMEOUT = 0.5
 
-    「変数が設定されているか」だけでは不十分。VS Code はウィンドウごとに
-    ``$TMPDIR/vscode-ipc-<uuid>.sock`` を作り、ウィンドウを閉じる/リロードすると
-    削除するため、**変数だけが古いまま残る**状況が日常的に起きる:
+
+def _ipc_socket_alive(environ) -> bool:
+    """``VSCODE_IPC_HOOK_CLI`` が **応答するソケット** を指しているか。
+
+    「変数が設定されているか」だけでは不十分で、**ファイルの実在確認でも足りない**。
+    VS Code はウィンドウごとに ``$TMPDIR/vscode-ipc-<uuid>.sock`` を作るが、変数が
+    古いまま残る状況が日常的に起きる:
 
     - tmux / screen: サーバーがセッション作成時の環境変数を保持し続けるため、
       同じセッションに再アタッチした端末は死んだソケットのパスを引き継ぐ
@@ -115,17 +128,34 @@ def _ipc_socket_alive(environ) -> bool:
     - VS Code ウィンドウのリロード後に残った古いシェル
     - ``nohup`` / デーモン化して生き残ったプロセス
 
-    この状態を ``in_vscode=True`` と誤判定すると :func:`decide_action` が
-    ``launch`` を選び、``code`` が死んだソケットへ接続を試みて**無言で失敗**する。
-    実在を確認して False に倒せば、SSH 経路なら ``print_command`` へ degrade して
-    ユーザが手元で実行できるコマンドを提示できる。
+    このときソケットの死に方は 2 通りある:
+
+    1. **ファイルごと消えている** — ウィンドウを正常に閉じると VS Code が削除する
+    2. **ファイルは残っているが listen していない** — クラッシュ・強制終了・OS 再起動
+       などで後始末されなかった場合。``$TMPDIR`` に孤児ソケットとして溜まる
+
+    2 を ``in_vscode=True`` と誤判定すると :func:`decide_action` が ``launch`` を選び、
+    ``code`` が ``ECONNREFUSED`` で失敗する。実在確認では 1 しか弾けないため、
+    **実際に connect して**判定する。False に倒せば SSH 経路なら ``print_command`` へ
+    degrade して、ユーザが手元で実行できるコマンドを提示できる。
     """
     sock = environ.get("VSCODE_IPC_HOOK_CLI")
     if not sock:
         return False
-    # os.path.exists() は OSError / ValueError を内部で捕捉して False を返すため、
-    # 権限エラーや不正なパスもここで「使えない」と判定される。
-    return os.path.exists(sock)
+    family = getattr(socket, "AF_UNIX", None)
+    if family is None:
+        # AF_UNIX が無いプラットフォームでは接続確認ができないので実在確認に留める。
+        return os.path.exists(sock)
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.settimeout(_IPC_CONNECT_TIMEOUT)
+            s.connect(sock)
+        return True
+    except (OSError, ValueError):
+        # ファイル不在 (ENOENT) / listen 不在 (ECONNREFUSED) / 権限 (EACCES) /
+        # ソケットでない (ECONNREFUSED, ENOTSOCK) / パス長超過 (ValueError) を
+        # まとめて「使えない」と扱う。
+        return False
 
 
 def detect_context(environ=None, isatty: Optional[bool] = None,
@@ -536,14 +566,16 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
-    # 変数だけ残って実体が消えた IPC ソケットは無言の失敗になりやすいので明示する
-    # (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
+    # 変数だけ残って接続先が死んでいる IPC ソケットは無言の失敗になりやすいので
+    # 明示する (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
     stale_ipc = env.get("VSCODE_IPC_HOOK_CLI")
     if stale_ipc and not ctx.in_vscode:
         logger.warning(
-            "VSCODE_IPC_HOOK_CLI が指すソケットが存在しません (%s)。VS Code 統合"
+            "VSCODE_IPC_HOOK_CLI が指すソケットに接続できません (%s)。VS Code 統合"
             "ターミナルとしては扱いません。tmux/screen のセッションを再利用している"
-            "場合や VS Code のウィンドウをリロードした後の古い端末で起きます。",
+            "場合や VS Code のウィンドウをリロードした後の古い端末で起きます。"
+            "ソケットファイルが残っていても、VS Code の異常終了後は listen して"
+            "おらず接続を拒否します。",
             stale_ipc,
         )
     editor = resolve_editor_cmd(env)        # launch 用 (which 込み・None あり得る)
