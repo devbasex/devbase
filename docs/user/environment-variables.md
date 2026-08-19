@@ -203,7 +203,7 @@ devbase は**実際にソケットへ接続できるかを確認**してから V
 | ファイルごと消えている | VS Code のウィンドウを正常に閉じた（VS Code が削除する） | 無し |
 | ファイルは残っているが listen していない | VS Code のクラッシュ・強制終了・OS 再起動で後始末されなかった | **有り** |
 
-後者は `$TMPDIR` に孤児ソケットとして溜まり、接続しようとすると `ECONNREFUSED` になります。`ls` では生きているものと見分けが付きません。
+後者は `$TMPDIR` に孤児ソケットとして溜まり、接続しようとすると `ECONNREFUSED` になります。`ls` でも `test -S` でも生きているものと見分けが付かないため、**生死の判定には実際の接続が要ります**。
 
 自動で開く状態に戻すには、tmux 側に環境変数を追随させます。`~/.tmux.conf` に以下を追記してください。
 
@@ -216,11 +216,13 @@ set -ga update-environment " VSCODE_IPC_HOOK_CLI VSCODE_GIT_IPC_HANDLE VSCODE_GI
 ```bash
 if [ -n "${TMUX:-}" ]; then
   _vscode_sync_env() {
-    # ソケットが生きている間は何もしない（サブプロセスを起動しない）。
-    # 注意: -S はファイルの種別しか見ないため、listen していない孤児ソケットは
-    # 「生きている」と判定されてしまう。この guard に引っかかって追随しない場合は
-    # 行ごと削除して、毎回 tmux show-environment で同期する。
-    [ -n "${VSCODE_IPC_HOOK_CLI:-}" ] && [ -S "${VSCODE_IPC_HOOK_CLI}" ] && return 0
+    # ソケットが生きている間は拾い直さない。生存確認は 2 段で行う。
+    # -S はファイルの種別しか見ないため、listen していない孤児ソケットも
+    # 通過してしまう（上表の 2 つめ）。実際に接続できるかまで確認する。
+    # -S を前段に置くことで、ファイルが無い一般ケースでは nc を起動しない。
+    # macOS の nc は -z を付けると Unix ソケットで誤判定するので付けないこと。
+    [ -n "${VSCODE_IPC_HOOK_CLI:-}" ] && [ -S "${VSCODE_IPC_HOOK_CLI}" ] \
+      && nc -U -w 1 "${VSCODE_IPC_HOOK_CLI}" </dev/null >/dev/null 2>&1 && return 0
     local line
     while IFS= read -r line; do
       case "$line" in
