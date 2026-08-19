@@ -79,10 +79,13 @@ class EditorContext:
     """エディタ起動先の判定に使う実行コンテキスト。"""
 
     is_tty: bool
-    in_vscode: bool   # VSCODE_IPC_HOOK_CLI が *生きている* ソケットを指している
+    in_vscode: bool   # 生きている IPC ソケットが見つかっている
     is_wsl: bool
     is_ssh: bool
     is_darwin: bool
+    # 実際に使う IPC ソケット。env の VSCODE_IPC_HOOK_CLI が死んでいて tmux の
+    # セッション環境から拾い直した場合、env の値とは異なる (None は未解決)。
+    ipc_socket: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,10 @@ def _detect_wsl(environ) -> bool:
 # 即座に完了するため短くてよい。`devbase up` の最後に走るので体感を優先する。
 _IPC_CONNECT_TIMEOUT = 0.5
 
+# tmux show-environment の待ち時間上限 (秒)。ローカルの tmux サーバーへの
+# 問い合わせなので即答するが、応答が無いときに up を止めないよう上限を置く。
+_TMUX_TIMEOUT = 2.0
+
 
 def _ipc_socket_alive(environ) -> bool:
     """``VSCODE_IPC_HOOK_CLI`` が **応答するソケット** を指しているか。
@@ -139,7 +146,11 @@ def _ipc_socket_alive(environ) -> bool:
     **実際に connect して**判定する。False に倒せば SSH 経路なら ``print_command`` へ
     degrade して、ユーザが手元で実行できるコマンドを提示できる。
     """
-    sock = environ.get("VSCODE_IPC_HOOK_CLI")
+    return _socket_connectable(environ.get("VSCODE_IPC_HOOK_CLI"))
+
+
+def _socket_connectable(sock: Optional[str]) -> bool:
+    """UNIX ドメインソケットのパスへ実際に接続できるか。"""
     if not sock:
         return False
     family = getattr(socket, "AF_UNIX", None)
@@ -158,13 +169,69 @@ def _ipc_socket_alive(environ) -> bool:
         return False
 
 
+def _tmux_env(name: str, environ) -> Optional[str]:
+    """tmux の **セッション環境** から変数を 1 つ読む。tmux 外なら None。
+
+    tmux サーバーはセッション作成時の環境変数を保持し続けるが、``update-environment``
+    に登録された変数は **attach のたびに**接続してきたクライアントの値へ更新される。
+    そのため「すでに動いているペインのシェルは古い値、tmux のセッション環境は新しい値」
+    という状態が普通に起きる。ここはその新しい方を読むための口。
+
+    ``tmux show-environment <NAME>`` は未設定の変数を ``-NAME`` の形で返すため、
+    値として扱わないようにする。
+    """
+    if not environ.get("TMUX"):
+        return None
+    try:
+        out = subprocess.run(  # noqa: S603,S607 - 引数は固定、PATH 上の tmux を使う
+            ["tmux", "show-environment", name],
+            # TMUX を見て判定した以上、tmux クライアントも同じ環境に向ける
+            # (PATH 等は失わないよう os.environ に environ を上書き合成する)。
+            env={**os.environ, **environ},
+            capture_output=True, text=True, timeout=_TMUX_TIMEOUT, check=False,
+        )
+    except Exception:  # noqa: BLE001 - tmux 不在/非UTF-8出力等で up を倒さない
+        return None
+    if out.returncode != 0:
+        return None
+    line = out.stdout.strip()
+    prefix = f"{name}="
+    if not line.startswith(prefix):
+        # "-NAME" (削除済み) や想定外の出力
+        return None
+    return line[len(prefix):] or None
+
+
+def resolve_ipc_socket(environ) -> Optional[str]:
+    """実際に使える VS Code IPC ソケットのパスを返す (無ければ None)。
+
+    1. ``VSCODE_IPC_HOOK_CLI`` が生きていればそれを使う
+    2. 死んでいて tmux 内なら、tmux のセッション環境の値を試す
+
+    2 が要るのは、tmux のセッション環境だけが新しく、ペインのシェルが古い値を
+    抱えたままという状態が頻繁に起きるため (:func:`_tmux_env` 参照)。シェル側の
+    プロンプトフックで追随させる運用もあるが、それが入っていない環境でも
+    ``devbase up --open`` が自動で開けるように devbase 側でも拾いにいく。
+    """
+    current = environ.get("VSCODE_IPC_HOOK_CLI")
+    if current and _socket_connectable(current):
+        return current
+    candidate = _tmux_env("VSCODE_IPC_HOOK_CLI", environ)
+    if candidate and candidate != current and _socket_connectable(candidate):
+        return candidate
+    return None
+
+
 def detect_context(environ=None, isatty: Optional[bool] = None,
                    system: Optional[str] = None,
                    ipc_alive: Optional[bool] = None) -> EditorContext:
     """env / OS からエディタ起動先判定に必要なコンテキストを抽出する。
 
     引数はテスト用の差し替え口。未指定なら ``os.environ`` / ``sys.stdout`` /
-    ``platform.system()`` / :func:`_ipc_socket_alive` を用いる。
+    ``platform.system()`` / :func:`resolve_ipc_socket` を用いる。
+
+    ``ipc_alive`` を明示した場合はソケット解決を一切行わない。``True`` を渡した
+    ときの ``ipc_socket`` は env の値をそのまま入れる (テスト用の差し替え口)。
     """
     env = os.environ if environ is None else environ
     if isatty is None:
@@ -172,13 +239,17 @@ def detect_context(environ=None, isatty: Optional[bool] = None,
     if system is None:
         system = platform.system()
     if ipc_alive is None:
-        ipc_alive = _ipc_socket_alive(env)
+        sock = resolve_ipc_socket(env)
+        ipc_alive = sock is not None
+    else:
+        sock = env.get("VSCODE_IPC_HOOK_CLI") if ipc_alive else None
     return EditorContext(
         is_tty=bool(isatty),
         in_vscode=bool(ipc_alive),
         is_wsl=_detect_wsl(env),
         is_ssh=any(env.get(k) for k in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")),
         is_darwin=(system == "Darwin"),
+        ipc_socket=sock,
     )
 
 
@@ -566,9 +637,20 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
+    # tmux のセッション環境から拾い直せた場合は、起動する code にもその値を渡す。
+    # 変数を差し替えないと code 自身が古いソケットへ繋ぎに行って失敗する。
+    stale_ipc = env.get("VSCODE_IPC_HOOK_CLI")
+    if ctx.ipc_socket and ctx.ipc_socket != stale_ipc:
+        env = dict(env)
+        env["VSCODE_IPC_HOOK_CLI"] = ctx.ipc_socket
+        logger.info(
+            "VSCODE_IPC_HOOK_CLI が古かったため tmux のセッション環境から拾い直しました "
+            "(%s → %s)。ペインのシェルに追随させたい場合は環境変数ガイドの "
+            "tmux 設定を参照してください。",
+            stale_ipc or "(未設定)", ctx.ipc_socket,
+        )
     # 変数だけ残って接続先が死んでいる IPC ソケットは無言の失敗になりやすいので
     # 明示する (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
-    stale_ipc = env.get("VSCODE_IPC_HOOK_CLI")
     if stale_ipc and not ctx.in_vscode:
         logger.warning(
             "VSCODE_IPC_HOOK_CLI が指すソケットに接続できません (%s)。VS Code 統合"

@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
@@ -136,6 +137,143 @@ def test_detect_context_ipc_path_is_regular_file_is_not_vscode(tmp_path):
     ctx = opener.detect_context(environ={"VSCODE_IPC_HOOK_CLI": str(f)},
                                 isatty=True, system="Linux")
     assert ctx.in_vscode is False
+
+
+# ---------------------------------------------------------------------------
+# tmux セッション環境からの IPC ソケット拾い直し
+# ---------------------------------------------------------------------------
+
+class _FakeRun:
+    """``subprocess.run`` の差し替え。tmux の出力を模す。"""
+
+    def __init__(self, stdout="", returncode=0, exc=None):
+        self.stdout, self.returncode, self.exc = stdout, returncode, exc
+        self.calls = []
+        self.kwargs = []
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        self.kwargs.append(kw)
+        if self.exc:
+            raise self.exc
+        return SimpleNamespace(stdout=self.stdout, returncode=self.returncode)
+
+
+def test_tmux_env_returns_none_outside_tmux(monkeypatch):
+    """tmux 外では tmux を起動しない (TMUX 未設定なら即 None)。"""
+    run = _FakeRun()
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    assert opener._tmux_env("VSCODE_IPC_HOOK_CLI", {}) is None
+    assert run.calls == []
+
+
+def test_tmux_env_reads_value(monkeypatch):
+    run = _FakeRun(stdout="VSCODE_IPC_HOOK_CLI=/tmp/live.sock\n")
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    got = opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "/tmp/tmux-501/default,1,0"})
+    assert got == "/tmp/live.sock"
+    assert run.calls[0][:2] == ["tmux", "show-environment"]
+    # 判定に使った environ をそのまま tmux クライアントへ渡す (別サーバーを見ない)。
+    env = run.kwargs[0]["env"]
+    assert env["TMUX"] == "/tmp/tmux-501/default,1,0"
+    assert "PATH" in env          # os.environ 由来のキーは失わない
+
+
+def test_tmux_env_treats_removed_marker_as_unset(monkeypatch):
+    """未設定の変数は ``-NAME`` で返るので値として扱わない。"""
+    monkeypatch.setattr(opener.subprocess, "run",
+                        _FakeRun(stdout="-VSCODE_IPC_HOOK_CLI\n"))
+    assert opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "x"}) is None
+
+
+def test_tmux_env_survives_tmux_failure(monkeypatch):
+    """tmux が無い / 落ちても例外を投げず None を返す。"""
+    monkeypatch.setattr(opener.subprocess, "run", _FakeRun(exc=OSError("no tmux")))
+    assert opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "x"}) is None
+    monkeypatch.setattr(opener.subprocess, "run", _FakeRun(returncode=1))
+    assert opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "x"}) is None
+
+
+def test_tmux_env_survives_non_utf8_output(monkeypatch):
+    """非 UTF-8 出力で text=True が投げる UnicodeDecodeError も握り潰す。"""
+    exc = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeRun(exc=exc))
+    assert opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "x"}) is None
+
+
+def test_resolve_ipc_socket_prefers_live_env_value(monkeypatch, listening_ipc_socket):
+    """env の値が生きているなら tmux は見に行かない。"""
+    run = _FakeRun()
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    got = opener.resolve_ipc_socket({"VSCODE_IPC_HOOK_CLI": listening_ipc_socket,
+                                     "TMUX": "x"})
+    assert got == listening_ipc_socket
+    assert run.calls == []
+
+
+def test_resolve_ipc_socket_falls_back_to_tmux(monkeypatch, tmp_path,
+                                               listening_ipc_socket):
+    """env が死んでいて tmux 側が生きていれば拾い直す。"""
+    monkeypatch.setattr(
+        opener.subprocess, "run",
+        _FakeRun(stdout=f"VSCODE_IPC_HOOK_CLI={listening_ipc_socket}\n"))
+    got = opener.resolve_ipc_socket(
+        {"VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock"), "TMUX": "x"})
+    assert got == listening_ipc_socket
+
+
+def test_resolve_ipc_socket_none_when_tmux_value_also_dead(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        opener.subprocess, "run",
+        _FakeRun(stdout=f"VSCODE_IPC_HOOK_CLI={tmp_path / 'also-gone.sock'}\n"))
+    assert opener.resolve_ipc_socket(
+        {"VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock"), "TMUX": "x"}) is None
+
+
+def test_open_editor_passes_recovered_socket_to_launcher(
+        monkeypatch, tmp_path, listening_ipc_socket):
+    """拾い直した値は起動する code の env にも渡す。
+
+    ここを差し替えないと code 自身が古いソケットへ繋ぎに行って失敗する。
+    """
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "adminer-dev-1")
+    monkeypatch.setattr(
+        opener.subprocess, "run",
+        _FakeRun(stdout=f"VSCODE_IPC_HOOK_CLI={listening_ipc_socket}\n"))
+    seen = {}
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ={"VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock"), "TMUX": "x"},
+        isatty=True,
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert seen["env"]["VSCODE_IPC_HOOK_CLI"] == listening_ipc_socket
+
+
+def test_open_editor_without_tmux_does_not_recover(monkeypatch, tmp_path, caplog):
+    """tmux 外では拾い直さず、従来どおり警告を出す。"""
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "adminer-dev-1")
+    run = _FakeRun()
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    calls = []
+    with caplog.at_level(logging.INFO):
+        opener.open_editor(
+            project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+            environ={"VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock")},
+            isatty=True, launcher=lambda cmd, env: calls.append((cmd, env)),
+        )
+    assert run.calls == []          # tmux を叩いていない
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "接続できません" in text
+    assert "拾い直しました" not in text
+    # env の VSCODE_IPC_HOOK_CLI は書き換えられていない
+    assert calls[0][1]["VSCODE_IPC_HOOK_CLI"].endswith("gone.sock")
 
 
 def test_detect_context_ipc_alive_override():
