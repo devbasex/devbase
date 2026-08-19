@@ -97,9 +97,15 @@ fi
 KEEP=""
 if [ -n "${TMUX:-}" ]; then
 	CUR=$(tmux display-message -p '#S' 2>/dev/null || true)
-	for s in $SESSIONS; do
-		[ "$s" = "$CUR" ] && KEEP="$s" && break
-	done
+	# セッション名に空白や '*' が含まれても壊れないよう、for ではなく while read で回す。
+	while IFS= read -r s; do
+		if [ -n "$s" ] && [ "$s" = "$CUR" ]; then
+			KEEP="$s"
+			break
+		fi
+	done <<EOF
+$SESSIONS
+EOF
 fi
 [ -n "$KEEP" ] || KEEP=$(printf '%s\n' "$SESSIONS" | head -1)
 echo "tmux-clean: base=$BASE keeper=$KEEP"
@@ -130,7 +136,8 @@ has_child_process() {
 KILLED=0
 KEPT=0
 FAILED=0
-for s in $SESSIONS; do
+while IFS= read -r s; do
+	[ -n "$s" ] || continue
 	if [ "$s" = "$KEEP" ]; then
 		echo "  keep  $s  (keeper)"
 		KEPT=$((KEPT + 1))
@@ -138,25 +145,38 @@ for s in $SESSIONS; do
 	fi
 
 	# display-message の -t は target-pane を取るためセッション指定に使えない。
-	# また tmux は書式内のタブを '_' に置換するため区切り文字での parse も不可。
-	# list-sessions のフィルタで名前完全一致のものだけを取り出す。
-	ATT=$(tmux list-sessions -F '#{session_attached}' \
-		-f "#{==:#{session_name},$s}" 2>/dev/null)
+	# -f "#{==:#{session_name},$s}" もセッション名に '}' や ',' が含まれると format
+	# 構文が壊れるため使えない。桁数の決まった #{session_attached} を先頭に置き、
+	# 最初の空白より後ろ全体をセッション名として awk で完全一致させる。
+	# こうすれば名前にどんな文字が入っても取り違えない。
+	ATT=$(tmux list-sessions -F '#{session_attached} #{session_name}' 2>/dev/null |
+		awk -v s="$s" '{
+			n = index($0, " ")
+			if (n > 0 && substr($0, n + 1) == s) {
+				print substr($0, 1, n - 1)
+				exit
+			}
+		}')
 	BUSY=""
-	# pane_pid も pane_current_command も空白を含まないため ':' で連結して分解する。
-	for e in $(tmux list-panes -s -t "=$s" \
-		-F '#{pane_pid}:#{pane_current_command}' 2>/dev/null); do
-		pid=${e%%:*}
-		cmd=${e#*:}
+	# pane_pid は数字のみ、pane_current_command にも ':' は含まれないため ':' で連結する。
+	# $(...) を for にそのまま渡すと空白での単語分割とパス名展開 (glob) が起きるため、
+	# ヒアドキュメント + while read で 1 行ずつ読む。パイプと違いサブシェルにならないので
+	# ループ内で立てた BUSY がそのまま残る。
+	PANES=$(tmux list-panes -s -t "=$s" \
+		-F '#{pane_pid}:#{pane_current_command}' 2>/dev/null || true)
+	while IFS=: read -r pid cmd; do
+		[ -n "$pid" ] || continue
 		if ! is_shell "$cmd"; then
 			BUSY="$cmd"
 			break
 		fi
-		if [ -n "$pid" ] && has_child_process "$pid"; then
+		if has_child_process "$pid"; then
 			BUSY="バックグラウンドジョブ (pane pid $pid)"
 			break
 		fi
-	done
+	done <<EOF
+$PANES
+EOF
 
 	if [ "$FORCE" = 0 ] && [ "${ATT:-0}" != 0 ]; then
 		echo "  keep  $s  (アタッチ中: クライアント ${ATT} 個)"
@@ -183,7 +203,9 @@ for s in $SESSIONS; do
 		echo "tmux-clean: セッションを削除できませんでした: $s" >&2
 		FAILED=$((FAILED + 1))
 	fi
-done
+done <<EOF
+$SESSIONS
+EOF
 
 if [ "$DRY" = 1 ]; then
 	echo "tmux-clean: 削除対象 ${KILLED} 件 / 残す ${KEPT} 件 (dry-run のため実行していません)"

@@ -111,10 +111,37 @@ if [ -z "$TARGET" ]; then
 	exit 1
 fi
 
+NOW=$(date +%s)
+
 # 自分自身のクライアント (これは絶対に切断しない)
+#
+# pane 内のシェルには「どのクライアントから起動されたか」の情報がないため、tmux の
+# 「現在のクライアント」解決 (セッションに繋がっているうち最終操作が最も新しい
+# クライアント) を使う。人が端末に打ち込んで起動した場合は、そのキー入力で最終操作が
+# 更新されるため、これは必ず実行元自身を指す。
+# 一方 hook や send-keys 経由など、キー入力を伴わない起動では別のクライアントを
+# 指し得る。そこで「最終操作が SELF_FRESH 秒以内」であることまで確認できた場合だけ
+# 実行元と断定し、確認できない場合は実行元自身を切断する恐れがあるため切断を行わない。
+#
+# なお pane 内で `tty` が返すのは pane の pty であって client の tty ではないため、
+# `tty` と #{client_tty} の照合では実行元を特定できない (常に不一致になる)。
+SELF_FRESH=10
 ME=""
+ME_ACT=""
+ME_VERIFIED=0
 if [ -n "${TMUX:-}" ]; then
-	ME=$(tmux display-message -p '#{client_name}' 2>/dev/null || true)
+	# 名前と最終操作時刻は 1 回の呼び出しでまとめて取る。2 回に分けると、その間に
+	# 別のクライアントが操作された場合に別人の時刻を拾ってしまう。
+	SELF=$(tmux display-message -p '#{client_activity}:#{client_name}' 2>/dev/null || true)
+	case "$SELF" in
+	[0-9]*:?*)
+		ME_ACT=${SELF%%:*}
+		ME=${SELF#*:}
+		;;
+	esac
+	if [ -n "$ME" ] && [ "$((NOW - ME_ACT))" -le "$SELF_FRESH" ]; then
+		ME_VERIFIED=1
+	fi
 fi
 
 # 対象セッションに繋がっている自分以外のクライアントのうち、最終操作から
@@ -122,19 +149,20 @@ fi
 # クライアントを切断すると、使用中の別ウィンドウや別の利用者の端末まで
 # 巻き添えにしてしまうため、既定では操作中のものは残す (-f で全件切断)。
 #
-# tmux の中にいるのに自分のクライアントを特定できない場合は、自分自身を切断して
+# tmux の中にいるのに実行元のクライアントを特定できない場合は、自分自身を切断して
 # しまう恐れがあるため切断対象を空にする (切り替えだけ行う)。
 GHOSTS=""
 ALIVE=""
-if [ -n "${TMUX:-}" ] && [ -z "$ME" ]; then
-	echo "tmux-first: 自分のクライアントを特定できないため切断は行いません" >&2
+if [ -n "${TMUX:-}" ] && [ "$ME_VERIFIED" = 0 ]; then
+	echo "tmux-first: 実行元のクライアントを特定できないため切断は行いません" >&2
 else
-	NOW=$(date +%s)
-	# client_name も client_activity も空白を含まないため ':' で連結して分解する。
-	for e in $(tmux list-clients -t "=$TARGET" \
-		-F '#{client_activity}:#{client_name}' 2>/dev/null); do
-		act=${e%%:*}
-		name=${e#*:}
+	# client_activity は数字のみ、client_name にも ':' は含まれないため ':' で連結する。
+	# $(...) を for にそのまま渡すと空白での単語分割とパス名展開 (glob) が起きるため、
+	# ヒアドキュメント + while read で 1 行ずつ読む。パイプと違いサブシェルにならないので
+	# ループ内で組み立てた GHOSTS / ALIVE がそのまま残る。
+	CLIENTS=$(tmux list-clients -t "=$TARGET" \
+		-F '#{client_activity}:#{client_name}' 2>/dev/null || true)
+	while IFS=: read -r act name; do
 		[ -n "$name" ] || continue
 		[ "$name" = "${ME:-__no_client__}" ] && continue
 		case "$act" in
@@ -146,7 +174,9 @@ else
 		else
 			ALIVE="${ALIVE:+${ALIVE}${NL}}${name} (最終操作 ${idle} 秒前)"
 		fi
-	done
+	done <<EOF
+$CLIENTS
+EOF
 fi
 
 if [ -n "$ALIVE" ]; then
@@ -184,8 +214,19 @@ if [ -n "$GHOSTS" ]; then
 fi
 
 if [ -n "${TMUX:-}" ]; then
-	if [ "$(tmux display-message -p '#S')" = "$TARGET" ]; then
+	# 切断対象から除外したクライアントと実際に切り替えるクライアントが食い違わないよう、
+	# 特定できている場合は -c で対象を固定する (-c なしだと再度「現在のクライアント」が
+	# 解決され、その間に別のクライアントが操作されると別人を切り替えてしまう)。
+	if [ -n "$ME" ]; then
+		CUR=$(tmux display-message -c "$ME" -p '#S')
+	else
+		CUR=$(tmux display-message -p '#S')
+	fi
+	if [ "$CUR" = "$TARGET" ]; then
 		echo "tmux-first: すでに $TARGET です"
+	elif [ -n "$ME" ]; then
+		echo "tmux-first: $TARGET へ切り替えます"
+		tmux switch-client -c "$ME" -t "=$TARGET"
 	else
 		echo "tmux-first: $TARGET へ切り替えます"
 		tmux switch-client -t "=$TARGET"
