@@ -90,6 +90,14 @@
   `. <DEVBASE_ROOT>/bin/rc` に書き換えてください。
 
 ### Fixed
+- **tmux 追随フックのサンプル（`docs/user/environment-variables.md`）が孤児ソケットを
+  検出できない**問題を修正しました。`test -S` はファイルの種別しか見ないため、VS Code の
+  異常終了で残った listen していないソケットも「生きている」と判定し、フックが
+  `tmux show-environment` からの拾い直しを早期 return でスキップしていました。
+  結果として `devbase up --open` が毎回「手元で実行するコマンドの提示」へ degrade します。
+  `nc -U -w 1 <sock> </dev/null` による接続確認を後段に足しました（macOS の `nc` は
+  `-z` を付けると Unix ドメインソケットで誤判定するため付けません）。`-S` を前段に
+  残しているので、ソケットファイルが無い一般ケースでは従来どおり追加のプロセスは起きません。
 - **VS Code の異常終了後に残った IPC ソケットで `devbase up --open` が
   `ECONNREFUSED` で失敗する問題を修正**しました。`VSCODE_IPC_HOOK_CLI` が指す
   ソケットの死に方には「ファイルごと消えている」ほかに「ファイルは残っているが
