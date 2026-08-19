@@ -129,6 +129,7 @@ has_child_process() {
 
 KILLED=0
 KEPT=0
+FAILED=0
 for s in $SESSIONS; do
 	if [ "$s" = "$KEEP" ]; then
 		echo "  keep  $s  (keeper)"
@@ -170,17 +171,25 @@ for s in $SESSIONS; do
 
 	if [ "$DRY" = 1 ]; then
 		echo "  KILL  $s  (dry-run)"
-	else
-		# 直前にセッションが終了していた場合の競合エラーで set -e により
-		# 後続の削除処理が止まらないようにする。
-		tmux kill-session -t "=$s" || true
+		KILLED=$((KILLED + 1))
+	elif tmux kill-session -t "=$s" 2>/dev/null; then
 		echo "  KILL  $s"
+		KILLED=$((KILLED + 1))
+	elif ! tmux has-session -t "=$s" 2>/dev/null; then
+		# 直前にセッションが終了していた場合の競合。削除済みなので件数には数えない。
+		echo "  skip  $s  (既に終了していました)"
+	else
+		# 競合以外の失敗。set -e で止めずに残りを処理しつつ、利用者が検知できるよう記録する。
+		echo "tmux-clean: セッションを削除できませんでした: $s" >&2
+		FAILED=$((FAILED + 1))
 	fi
-	KILLED=$((KILLED + 1))
 done
 
 if [ "$DRY" = 1 ]; then
 	echo "tmux-clean: 削除対象 ${KILLED} 件 / 残す ${KEPT} 件 (dry-run のため実行していません)"
 else
-	echo "tmux-clean: 削除 ${KILLED} 件 / 残す ${KEPT} 件"
+	echo "tmux-clean: 削除 ${KILLED} 件 / 残す ${KEPT} 件 / 失敗 ${FAILED} 件"
 fi
+
+# 削除に失敗したセッションがあれば、呼び出し側が検知できるよう終了ステータスで知らせる。
+[ "$FAILED" = 0 ] || exit 1

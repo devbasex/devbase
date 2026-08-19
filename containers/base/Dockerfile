@@ -175,8 +175,10 @@ RUN set -eux; \
 COPY --chmod=0755 tmux-first /usr/local/bin/tmux-first
 COPY --chmod=0755 tmux-clean /usr/local/bin/tmux-clean
 
-RUN echo "alias tmux1='tmux-first'" >> ~/.bashrc \
- && echo "alias tmuxc='tmux-clean'" >> ~/.bashrc
+# 短縮名は alias ではなく symlink で用意する。alias は bash の対話シェルにしか効かず、
+# zsh などの他シェルや非対話実行 (docker exec など) では使えないため。
+RUN sudo ln -sf tmux-first /usr/local/bin/tmux1 \
+ && sudo ln -sf tmux-clean /usr/local/bin/tmuxc
 
 # entrypoint と dind
 COPY --chmod=755 entrypoint.sh /entrypoint.sh

@@ -235,14 +235,14 @@ VS Code のウィンドウが異常終了すると、VS Code サーバー側に 
 
 接続しているというだけでは居座りとは判定しません。切断対象は最終操作から `TMUX_FIRST_IDLE` 秒（既定 300）以上経過したクライアントだけで、いま使われている別ウィンドウの端末は残します（`-f` で全件切断）。
 
-`TMUX_FIRST_IDLE` に指定できるのは 0 以上の整数だけです。負数や数値以外を指定すると、すべてのクライアントが放置扱いになってしまうため `tmux-first` はエラー終了します。
+`TMUX_FIRST_IDLE` に指定できるのは 0 以上の整数だけです。負数・数値以外・空文字を指定すると、すべてのクライアントが放置扱いになってしまうため `tmux-first` はエラー終了します（既定値 300 が使われるのは未設定のときだけです）。
 
 ```bash
 tmux-first        # 現在のセッション名からベース名を推定 (adminer-2 -> adminer)
 tmux-first -n     # 切り替えず、対象と切断予定のクライアントだけ表示する
 tmux-first -f     # 操作中のクライアントも含めて切断する
 TMUX_FIRST_IDLE=60 tmux-first   # 放置とみなす秒数を変える
-tmux1             # tmux-first のエイリアス
+tmux1             # tmux-first の短縮コマンド (/usr/local/bin の symlink)
 ```
 
 誰がいつから繋いでいるかは次で確認できます。
@@ -257,7 +257,7 @@ tmux list-clients -F '#{client_name} -> #{client_session}  最終操作 #{t:clie
 tmux-clean        # 不要なセッションを削除
 tmux-clean -n     # 削除せず、削除対象と除外理由を表示する
 tmux-clean -f     # アタッチ中・実行中のセッションも削除する
-tmuxc             # tmux-clean のエイリアス
+tmuxc             # tmux-clean の短縮コマンド (/usr/local/bin の symlink)
 ```
 
 ## ソースファイル変更検出
