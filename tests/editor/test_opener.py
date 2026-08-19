@@ -149,9 +149,11 @@ class _FakeRun:
     def __init__(self, stdout="", returncode=0, exc=None):
         self.stdout, self.returncode, self.exc = stdout, returncode, exc
         self.calls = []
+        self.kwargs = []
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
+        self.kwargs.append(kw)
         if self.exc:
             raise self.exc
         return SimpleNamespace(stdout=self.stdout, returncode=self.returncode)
@@ -171,6 +173,10 @@ def test_tmux_env_reads_value(monkeypatch):
     got = opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "/tmp/tmux-501/default,1,0"})
     assert got == "/tmp/live.sock"
     assert run.calls[0][:2] == ["tmux", "show-environment"]
+    # 判定に使った environ をそのまま tmux クライアントへ渡す (別サーバーを見ない)。
+    env = run.kwargs[0]["env"]
+    assert env["TMUX"] == "/tmp/tmux-501/default,1,0"
+    assert "PATH" in env          # os.environ 由来のキーは失わない
 
 
 def test_tmux_env_treats_removed_marker_as_unset(monkeypatch):
@@ -185,6 +191,13 @@ def test_tmux_env_survives_tmux_failure(monkeypatch):
     monkeypatch.setattr(opener.subprocess, "run", _FakeRun(exc=OSError("no tmux")))
     assert opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "x"}) is None
     monkeypatch.setattr(opener.subprocess, "run", _FakeRun(returncode=1))
+    assert opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "x"}) is None
+
+
+def test_tmux_env_survives_non_utf8_output(monkeypatch):
+    """非 UTF-8 出力で text=True が投げる UnicodeDecodeError も握り潰す。"""
+    exc = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeRun(exc=exc))
     assert opener._tmux_env("VSCODE_IPC_HOOK_CLI", {"TMUX": "x"}) is None
 
 

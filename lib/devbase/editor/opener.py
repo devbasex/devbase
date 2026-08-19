@@ -185,9 +185,12 @@ def _tmux_env(name: str, environ) -> Optional[str]:
     try:
         out = subprocess.run(  # noqa: S603,S607 - 引数は固定、PATH 上の tmux を使う
             ["tmux", "show-environment", name],
+            # TMUX を見て判定した以上、tmux クライアントも同じ環境に向ける
+            # (PATH 等は失わないよう os.environ に environ を上書き合成する)。
+            env={**os.environ, **environ},
             capture_output=True, text=True, timeout=_TMUX_TIMEOUT, check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except Exception:  # noqa: BLE001 - tmux 不在/非UTF-8出力等で up を倒さない
         return None
     if out.returncode != 0:
         return None
