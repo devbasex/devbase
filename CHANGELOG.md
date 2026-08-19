@@ -12,6 +12,11 @@
   `<repo>-2`, `<repo>-3` ... と新しいセッションが増え続けます。`tmux-first` は居座って
   いるクライアントを切断し、一番若い番号のセッションへ現在の端末を切り替えます。
   `tmux-first -n` で切り替えずに対象を確認でき、`tmux1` のエイリアスも用意しています。
+- **`tmux-clean` コマンドを base イメージへ追加**しました。`tmux-first` で若い番号の
+  セッションへ戻したあと、置き去りになった `<repo>-<数字>` のセッションを削除します。
+  既定では安全側に倒し、keeper (tmux 内なら現在のセッション、外なら最小番号) と、
+  アタッチ中のセッション、シェル以外を実行中のセッションは残します。`-n` で削除対象と
+  除外理由を確認でき、`-f` ですべて削除します。`tmuxc` のエイリアスも用意しています。
 - **bi-tools プロジェクト用コンテナ (`containers/bi-tools`)** を追加しました。
   `devbase-base` に dbt-core + dbt-bigquery（1.12 系 / Python 3.11）と Lightdash CLI
   (`@lightdash/cli`) を追加し、BigQuery 上の共有 dbt プロジェクト（`dbt build` / `test`）と

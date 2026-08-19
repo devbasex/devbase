@@ -245,6 +245,15 @@ tmux1             # tmux-first のエイリアス
 tmux list-clients -F '#{client_name} -> #{client_session}  最終操作 #{t:client_activity}'
 ```
 
+切り替わったあと、そのセッションのプロンプトで `tmux-clean` を実行すると置き去りのセッションを削除できます。安全側の既定として、keeper（tmux 内なら現在のセッション、tmux 外なら最小番号）、アタッチ中のセッション、シェル以外を実行中のセッションは残します。
+
+```bash
+tmux-clean        # 不要なセッションを削除
+tmux-clean -n     # 削除せず、削除対象と除外理由を表示する
+tmux-clean -f     # アタッチ中・実行中のセッションも削除する
+tmuxc             # tmux-clean のエイリアス
+```
+
 ## ソースファイル変更検出
 
 devbase はソースファイル（`~/.aws/config` 等）のハッシュを `.env.sources.yml` で管理しています。

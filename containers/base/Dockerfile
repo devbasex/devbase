@@ -169,7 +169,7 @@ RUN set -eux; \
     mkdir -p ~/.claude; \
     echo '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo '\''unset AWS_REGION'\'' >> \"$CLAUDE_ENV_FILE\""}]}]}}' > ~/.claude/settings.json;
 
-# tmux-first: 若い番号の tmux セッションへ戻すコマンド
+# tmux-first / tmux-clean: tmux セッションの整理コマンド
 #
 # VS Code のウィンドウが異常終了 (クラッシュ / ホスト再起動 / 接続断) すると、
 # VS Code サーバー側に pty が取り残され、tmux クライアントだけがセッションに
@@ -177,7 +177,8 @@ RUN set -eux; \
 # いるセッション = 使用中」と判定するため、<repo>-1 に戻れず <repo>-2、
 # <repo>-3 ... と新しいセッションを作り続けてしまう。tmux-first はその居座り
 # クライアントを切断し、一番若い番号のセッションへ現在の端末を切り替える。
-# 詳細は docs/user/environment-variables.md を参照。
+# tmux-clean は置き去りになったセッションを削除する (既定では未アタッチかつ
+# シェル以外を実行していないもののみ)。詳細は docs/user/environment-variables.md を参照。
 COPY --chmod=0755 <<'TMUX_FIRST_SH' /usr/local/bin/tmux-first
 #!/bin/sh
 # tmux-first - 同じベース名のセッションのうち、最も番号の小さいものへ切り替える。
@@ -321,7 +322,171 @@ else
 fi
 TMUX_FIRST_SH
 
-RUN echo "alias tmux1='tmux-first'" >> ~/.bashrc
+COPY --chmod=0755 <<'TMUX_CLEAN_SH' /usr/local/bin/tmux-clean
+#!/bin/sh
+# tmux-clean - 同じベース名の不要な tmux セッションを掃除する。
+#
+# tmux-first で若い番号のセッションへ戻したあと、置き去りになった <ベース名>-<数字>
+# のセッションを削除するためのコマンド。既定では安全側に倒し、次のセッションは
+# 残す:
+#
+#   - 残すセッション (keeper): tmux 内なら現在のセッション、外なら最小番号のもの
+#   - アタッチ中のセッション  : 誰かが使用中とみなす
+#   - シェル以外が動いているセッション: ビルドやサーバを実行中とみなす
+#
+# 上記も含めて消したい場合は -f を付ける。
+#
+#   tmux-clean            現在のセッション名からベース名を推定して掃除
+#   tmux-clean adminer    ベース名を明示
+#   tmux-clean -n         削除せず、対象と除外理由だけ表示 (dry-run)
+#   tmux-clean -f         アタッチ中・実行中のセッションも削除する
+#
+set -eu
+
+DRY=0
+FORCE=0
+BASE=""
+
+usage() {
+	cat <<'USAGE'
+使い方: tmux-clean [-n|--dry-run] [-f|--force] [ベース名]
+
+  引数なし    現在の tmux セッション名から末尾の -数字 を除いたものをベース名にする
+              (tmux の外にいる場合はカレントディレクトリ名)
+  ベース名    明示指定 (例: tmux-clean adminer)
+  -n          削除せず、削除対象と除外理由を表示する
+  -f          アタッチ中・シェル以外を実行中のセッションも削除する
+
+残すセッション (keeper) は tmux 内なら現在のセッション、tmux 外なら最小番号のもの。
+USAGE
+}
+
+for a in "$@"; do
+	case "$a" in
+	-n | --dry-run) DRY=1 ;;
+	-f | --force) FORCE=1 ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-*)
+		echo "tmux-clean: 不明なオプション: $a" >&2
+		usage >&2
+		exit 2
+		;;
+	*) BASE="$a" ;;
+	esac
+done
+
+command -v tmux >/dev/null 2>&1 || {
+	echo "tmux-clean: tmux が見つかりません" >&2
+	exit 1
+}
+tmux list-sessions >/dev/null 2>&1 || {
+	echo "tmux-clean: tmux サーバーが起動していません" >&2
+	exit 1
+}
+
+# ベース名: 引数 > 現在のセッション名から末尾の -数字 を除去 > カレントディレクトリ名
+if [ -z "$BASE" ]; then
+	if [ -n "${TMUX:-}" ]; then
+		BASE=$(tmux display-message -p '#S' | sed -E 's/-[0-9]+$//')
+	else
+		BASE=$(basename "$PWD" | tr './:' '___')
+	fi
+fi
+[ -n "$BASE" ] || {
+	echo "tmux-clean: ベース名を決定できません" >&2
+	exit 1
+}
+
+# <ベース名>-<数字> のセッションを数字の昇順で列挙する。
+# ベース名に '-' や正規表現メタ文字が含まれても壊れないよう awk で前方一致比較する。
+SESSIONS=$(tmux list-sessions -F '#{session_name}' | awk -v b="$BASE" '
+	{
+		n = length(b)
+		if (substr($0, 1, n + 1) == b "-") {
+			suf = substr($0, n + 2)
+			if (suf ~ /^[0-9]+$/) printf "%d\t%s\n", suf, $0
+		}
+	}' | sort -n | cut -f2-)
+
+if [ -z "$SESSIONS" ]; then
+	echo "tmux-clean: '${BASE}-<数字>' に一致するセッションがありません" >&2
+	exit 1
+fi
+
+# keeper: tmux 内なら現在のセッション、外なら最小番号。
+# 現在のセッションがベース名に属さない場合も最小番号を残す。
+KEEP=""
+if [ -n "${TMUX:-}" ]; then
+	CUR=$(tmux display-message -p '#S' 2>/dev/null || true)
+	for s in $SESSIONS; do
+		[ "$s" = "$CUR" ] && KEEP="$s" && break
+	done
+fi
+[ -n "$KEEP" ] || KEEP=$(printf '%s\n' "$SESSIONS" | head -1)
+echo "tmux-clean: base=$BASE keeper=$KEEP"
+
+# シェルとみなすコマンド名 (これしか動いていなければ削除して良いと判断する)
+is_shell() {
+	case "$1" in
+	sh | bash | zsh | dash | fish | ksh | tcsh | csh | ash | -sh | -bash | -zsh | login) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+KILLED=0
+KEPT=0
+for s in $SESSIONS; do
+	if [ "$s" = "$KEEP" ]; then
+		echo "  keep  $s  (keeper)"
+		KEPT=$((KEPT + 1))
+		continue
+	fi
+
+	# display-message の -t は target-pane を取るためセッション指定に使えない。
+	# また tmux は書式内のタブを '_' に置換するため区切り文字での parse も不可。
+	# list-sessions のフィルタで名前完全一致のものだけを取り出す。
+	ATT=$(tmux list-sessions -F '#{session_attached}' \
+		-f "#{==:#{session_name},$s}" 2>/dev/null)
+	BUSY=""
+	for c in $(tmux list-panes -s -t "=$s" -F '#{pane_current_command}' 2>/dev/null); do
+		if ! is_shell "$c"; then
+			BUSY="$c"
+			break
+		fi
+	done
+
+	if [ "$FORCE" = 0 ] && [ "${ATT:-0}" != 0 ]; then
+		echo "  keep  $s  (アタッチ中: クライアント ${ATT} 個)"
+		KEPT=$((KEPT + 1))
+		continue
+	fi
+	if [ "$FORCE" = 0 ] && [ -n "$BUSY" ]; then
+		echo "  keep  $s  (実行中: $BUSY)"
+		KEPT=$((KEPT + 1))
+		continue
+	fi
+
+	if [ "$DRY" = 1 ]; then
+		echo "  KILL  $s  (dry-run)"
+	else
+		tmux kill-session -t "=$s"
+		echo "  KILL  $s"
+	fi
+	KILLED=$((KILLED + 1))
+done
+
+if [ "$DRY" = 1 ]; then
+	echo "tmux-clean: 削除対象 ${KILLED} 件 / 残す ${KEPT} 件 (dry-run のため実行していません)"
+else
+	echo "tmux-clean: 削除 ${KILLED} 件 / 残す ${KEPT} 件"
+fi
+TMUX_CLEAN_SH
+
+RUN echo "alias tmux1='tmux-first'" >> ~/.bashrc \
+ && echo "alias tmuxc='tmux-clean'" >> ~/.bashrc
 
 # entrypoint と dind
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
