@@ -144,39 +144,71 @@ while IFS= read -r s; do
 		continue
 	fi
 
+	# セッションの状態 (アタッチ数 / pane) を取得できなかったときに、その「空」を
+	# 「誰も繋いでおらずシェルしか動いていない」と読み替えると、実際には使用中の
+	# セッションを既定実行で削除してしまう。取得に失敗した場合は判定材料が無いと
+	# みなし、削除ではなく keep に倒す (fail-closed)。
+	STATE_OK=1
+
 	# display-message の -t は target-pane を取るためセッション指定に使えない。
 	# -f "#{==:#{session_name},$s}" もセッション名に '}' や ',' が含まれると format
 	# 構文が壊れるため使えない。桁数の決まった #{session_attached} を先頭に置き、
 	# 最初の空白より後ろ全体をセッション名として awk で完全一致させる。
 	# こうすれば名前にどんな文字が入っても取り違えない。
-	ATT=$(tmux list-sessions -F '#{session_attached} #{session_name}' 2>/dev/null |
-		awk -v s="$s" '{
-			n = index($0, " ")
-			if (n > 0 && substr($0, n + 1) == s) {
-				print substr($0, 1, n - 1)
-				exit
-			}
-		}')
+	ATT=""
+	if SESSION_LIST=$(tmux list-sessions -F '#{session_attached} #{session_name}' 2>/dev/null); then
+		ATT=$(printf '%s\n' "$SESSION_LIST" |
+			awk -v s="$s" '{
+				n = index($0, " ")
+				if (n > 0 && substr($0, n + 1) == s) {
+					print substr($0, 1, n - 1)
+					exit
+				}
+			}')
+		# 一覧に載っていない = 直前に終了したか取り違えている。どちらもアタッチ数が
+		# 不明なので未取得として扱う。
+		[ -n "$ATT" ] || STATE_OK=0
+	else
+		STATE_OK=0
+	fi
+
 	BUSY=""
 	# pane_pid は数字のみ、pane_current_command にも ':' は含まれないため ':' で連結する。
 	# $(...) を for にそのまま渡すと空白での単語分割とパス名展開 (glob) が起きるため、
 	# ヒアドキュメント + while read で 1 行ずつ読む。パイプと違いサブシェルにならないので
 	# ループ内で立てた BUSY がそのまま残る。
-	PANES=$(tmux list-panes -s -t "=$s" \
-		-F '#{pane_pid}:#{pane_current_command}' 2>/dev/null || true)
-	while IFS=: read -r pid cmd; do
-		[ -n "$pid" ] || continue
-		if ! is_shell "$cmd"; then
-			BUSY="$cmd"
-			break
-		fi
-		if has_child_process "$pid"; then
-			BUSY="バックグラウンドジョブ (pane pid $pid)"
-			break
-		fi
-	done <<EOF
+	if PANES=$(tmux list-panes -s -t "=$s" \
+		-F '#{pane_pid}:#{pane_current_command}' 2>/dev/null); then
+		while IFS=: read -r pid cmd; do
+			[ -n "$pid" ] || continue
+			if ! is_shell "$cmd"; then
+				BUSY="$cmd"
+				break
+			fi
+			if has_child_process "$pid"; then
+				BUSY="バックグラウンドジョブ (pane pid $pid)"
+				break
+			fi
+		done <<EOF
 $PANES
 EOF
+	else
+		STATE_OK=0
+	fi
+
+	if [ "$STATE_OK" = 0 ]; then
+		if ! tmux has-session -t "=$s" 2>/dev/null; then
+			# 走査中にセッションが終了していた場合。削除済みなので件数には数えない。
+			echo "  skip  $s  (既に終了していました)"
+			continue
+		fi
+		if [ "$FORCE" = 0 ]; then
+			echo "  keep  $s  (状態を取得できませんでした)"
+			echo "tmux-clean: セッションの状態を取得できないため削除しません: $s" >&2
+			KEPT=$((KEPT + 1))
+			continue
+		fi
+	fi
 
 	if [ "$FORCE" = 0 ] && [ "${ATT:-0}" != 0 ]; then
 		echo "  keep  $s  (アタッチ中: クライアント ${ATT} 個)"
