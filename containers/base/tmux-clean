@@ -8,13 +8,14 @@
 #   - 残すセッション (keeper): tmux 内なら現在のセッション、外なら最小番号のもの
 #   - アタッチ中のセッション  : 誰かが使用中とみなす
 #   - シェル以外が動いているセッション: ビルドやサーバを実行中とみなす
+#   - シェルに子プロセスが残っているセッション: & で起動したジョブが動いているとみなす
 #
 # 上記も含めて消したい場合は -f を付ける。
 #
 #   tmux-clean            現在のセッション名からベース名を推定して掃除
 #   tmux-clean adminer    ベース名を明示
 #   tmux-clean -n         削除せず、対象と除外理由だけ表示 (dry-run)
-#   tmux-clean -f         アタッチ中・実行中のセッションも削除する
+#   tmux-clean -f         アタッチ中・実行中 (バックグラウンドジョブ含む) も削除する
 #
 set -eu
 
@@ -30,7 +31,7 @@ usage() {
               (tmux の外にいる場合はカレントディレクトリ名)
   ベース名    明示指定 (例: tmux-clean adminer)
   -n          削除せず、削除対象と除外理由を表示する
-  -f          アタッチ中・シェル以外を実行中のセッションも削除する
+  -f          アタッチ中・実行中 (バックグラウンドジョブ含む) のセッションも削除する
 
 残すセッション (keeper) は tmux 内なら現在のセッション、tmux 外なら最小番号のもの。
 USAGE
@@ -111,6 +112,21 @@ is_shell() {
 	esac
 }
 
+# pane_current_command は foreground のコマンドしか示さないため、シェルから
+# `&` や nohup で起動したサーバー・ジョブがあっても「シェルだけ」に見えてしまう。
+# pane のシェル (pane_pid) に子プロセスが残っていれば実行中とみなして残す。
+has_child_process() {
+	for f in /proc/"$1"/task/*/children; do
+		[ -r "$f" ] || continue
+		[ -n "$(cat "$f" 2>/dev/null || true)" ] && return 0
+	done
+	# /proc/<pid>/task/*/children が使えない環境向けのフォールバック
+	if command -v pgrep >/dev/null 2>&1; then
+		pgrep -P "$1" >/dev/null 2>&1 && return 0
+	fi
+	return 1
+}
+
 KILLED=0
 KEPT=0
 for s in $SESSIONS; do
@@ -126,9 +142,17 @@ for s in $SESSIONS; do
 	ATT=$(tmux list-sessions -F '#{session_attached}' \
 		-f "#{==:#{session_name},$s}" 2>/dev/null)
 	BUSY=""
-	for c in $(tmux list-panes -s -t "=$s" -F '#{pane_current_command}' 2>/dev/null); do
-		if ! is_shell "$c"; then
-			BUSY="$c"
+	# pane_pid も pane_current_command も空白を含まないため ':' で連結して分解する。
+	for e in $(tmux list-panes -s -t "=$s" \
+		-F '#{pane_pid}:#{pane_current_command}' 2>/dev/null); do
+		pid=${e%%:*}
+		cmd=${e#*:}
+		if ! is_shell "$cmd"; then
+			BUSY="$cmd"
+			break
+		fi
+		if [ -n "$pid" ] && has_child_process "$pid"; then
+			BUSY="バックグラウンドジョブ (pane pid $pid)"
 			break
 		fi
 	done

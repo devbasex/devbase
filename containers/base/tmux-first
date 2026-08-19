@@ -6,31 +6,46 @@
 # 繋がったまま残る。次に開いた端末はそのセッションを「使用中」と判断するため、
 # adminer-1 に戻らず adminer-2, adminer-3 ... と新しいセッションを作ってしまう。
 #
-# このコマンドは、対象セッションに居座っている自分以外のクライアントを切断し、
+# このコマンドは、対象セッションに居座っている「放置されたクライアント」を切断し、
 # 一番若い番号のセッションへ現在の端末を切り替える。
+#
+# 接続しているというだけでは居座りとは判定しない。最終操作からの経過時間が
+# TMUX_FIRST_IDLE 秒 (既定 300) 以上のクライアントだけを切断対象とし、
+# 現に使われている端末は残す。すべて切断したい場合は -f を明示する。
 #
 #   tmux-first             現在のセッション名からベース名を推定 (adminer-2 -> adminer)
 #   tmux-first adminer     ベース名を明示
 #   tmux-first -n          切り替えず、対象と切断予定のクライアントだけ表示
+#   tmux-first -f          操作中のクライアントも含めて切断する
 #
 set -eu
 
 DRY=0
+FORCE=0
 BASE=""
+NL='
+'
+# 最終操作からこの秒数以上経過したクライアントを「放置」とみなす。
+IDLE_MIN=${TMUX_FIRST_IDLE:-300}
 usage() {
 	cat <<'USAGE'
-使い方: tmux-first [-n|--dry-run] [ベース名]
+使い方: tmux-first [-n|--dry-run] [-f|--force] [ベース名]
 
   引数なし    現在の tmux セッション名から末尾の -数字 を除いたものをベース名にする
               (tmux の外にいる場合はカレントディレクトリ名)
   ベース名    明示指定 (例: tmux-first adminer)
   -n          切り替えを行わず、対象セッションと切断予定のクライアントを表示する
+  -f          操作中のクライアントも含めて切断する
+
+既定では、最終操作から TMUX_FIRST_IDLE 秒 (既定 300) 以上経過したクライアントだけを
+切断する。使用中の端末を巻き添えにしないための安全策。
 USAGE
 }
 
 for a in "$@"; do
 	case "$a" in
 	-n | --dry-run) DRY=1 ;;
+	-f | --force) FORCE=1 ;;
 	-h | --help)
 		usage
 		exit 0
@@ -90,15 +105,41 @@ if [ -n "${TMUX:-}" ]; then
 	ME=$(tmux display-message -p '#{client_name}' 2>/dev/null || true)
 fi
 
-# 対象セッションに繋がっている自分以外のクライアント = 居座り。
+# 対象セッションに繋がっている自分以外のクライアントのうち、最終操作から
+# IDLE_MIN 秒以上経過したものだけを「居座り」とみなす。接続しているだけの
+# クライアントを切断すると、使用中の別ウィンドウや別の利用者の端末まで
+# 巻き添えにしてしまうため、既定では操作中のものは残す (-f で全件切断)。
+#
 # tmux の中にいるのに自分のクライアントを特定できない場合は、自分自身を切断して
 # しまう恐れがあるため切断対象を空にする (切り替えだけ行う)。
 GHOSTS=""
+ALIVE=""
 if [ -n "${TMUX:-}" ] && [ -z "$ME" ]; then
 	echo "tmux-first: 自分のクライアントを特定できないため切断は行いません" >&2
 else
-	GHOSTS=$(tmux list-clients -t "=$TARGET" -F '#{client_name}' 2>/dev/null |
-		grep -v -x -F "${ME:-__no_client__}" || true)
+	NOW=$(date +%s)
+	# client_name も client_activity も空白を含まないため ':' で連結して分解する。
+	for e in $(tmux list-clients -t "=$TARGET" \
+		-F '#{client_activity}:#{client_name}' 2>/dev/null); do
+		act=${e%%:*}
+		name=${e#*:}
+		[ -n "$name" ] || continue
+		[ "$name" = "${ME:-__no_client__}" ] && continue
+		case "$act" in
+		'' | *[!0-9]*) act=0 ;;
+		esac
+		idle=$((NOW - act))
+		if [ "$FORCE" = 1 ] || [ "$idle" -ge "$IDLE_MIN" ]; then
+			GHOSTS="${GHOSTS:+${GHOSTS}${NL}}${name}"
+		else
+			ALIVE="${ALIVE:+${ALIVE}${NL}}${name} (最終操作 ${idle} 秒前)"
+		fi
+	done
+fi
+
+if [ -n "$ALIVE" ]; then
+	echo "tmux-first: 操作中のクライアントは切断しません (切断するには -f):" >&2
+	echo "$ALIVE" | sed 's/^/  - /' >&2
 fi
 
 if [ "$DRY" = 1 ]; then
@@ -115,6 +156,9 @@ if [ "$DRY" = 1 ]; then
 		echo "$GHOSTS" | sed 's/^/detach : /'
 	else
 		echo "detach : (なし)"
+	fi
+	if [ -n "$ALIVE" ]; then
+		echo "$ALIVE" | sed 's/^/keep   : /'
 	fi
 	exit 0
 fi
