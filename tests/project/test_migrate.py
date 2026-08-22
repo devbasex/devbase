@@ -197,8 +197,33 @@ def test_migrate_projects_follows_symlinks_to_the_plugin_repo(tmp_path):
     assert not (projects / "carmo" / "project.yml").is_symlink()
 
 
+def test_string_values_that_look_like_yaml_scalars_stay_strings(tmp_path):
+    """``GIT_REPO=123`` のように YAML の暗黙型に当たる値も文字列として移行する"""
+    directory = project(
+        tmp_path,
+        env="GIT_HOST=on\nGIT_USER=123\nGIT_REPO=2026\nWORK_DIR=/work/no\n")
+
+    result = migrate_project(directory)
+
+    assert result.status == "migrated"
+    config = load_project_config(directory)
+    assert [(r.host, r.owner, r.repo) for r in config.repos] == [
+        ("on", "123", "2026")]
+    assert config.work_dir == "/work/no"
+
+
+def test_plain_values_are_written_without_quotes(tmp_path):
+    """引用が要らない値は素のまま書く (既に移行済みのファイルと同じ見た目)"""
+    directory = project(tmp_path)
+
+    document = migrate_project(directory, dry_run=True).project_yml
+
+    assert "  - owner: volareinc\n" in document
+    assert "    repo: carmo\n" in document
+
+
 def test_broken_yaml_from_env_fails_only_that_project(tmp_path):
-    """閉じられていない引用符などで生成 YAML が壊れても一括移行は止まらない"""
+    """閉じられていない引用符の env は、その 1 件だけ failed になり一括移行は止まらない"""
     projects = tmp_path / "projects"
     projects.mkdir()
     project(projects, "broken", env='GIT_USER=volareinc\nGIT_REPO="carmo\n')

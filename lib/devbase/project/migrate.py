@@ -38,6 +38,9 @@ MIGRATED_KEYS: Tuple[str, ...] = (
     "CONTAINER_SCALE", "DEVBASE_OPEN_EDITOR",
 )
 
+#: ``project.yml`` へ**文字列スカラー**として書き出すキー (残りは数値・真偽値)
+_STRING_KEYS: Tuple[str, ...] = ("GIT_HOST", "GIT_USER", "GIT_REPO", "WORK_DIR")
+
 _DEFAULT_HOST = "github.com"
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -117,6 +120,18 @@ def _migrate_project(project_dir: Path, dry_run: bool) -> MigrationResult:
             name, project_dir, "skipped",
             reason=f"env に {' / '.join(missing)} がないため変換できません")
 
+    # host / owner / repo / 作業ディレクトリに引用符が残るのは、``GIT_REPO="carmo``
+    # のように env 側の引用符が閉じていない場合だけ。YAML では正しく引用して
+    # 書けてしまう (= 引用符込みのリポジトリ名として通ってしまう) ため、
+    # 生成前に malformed な env として弾く。
+    quoted = [key for key in _STRING_KEYS
+              if any(c in values.get(key, "") for c in "\"'")]
+    if quoted:
+        return MigrationResult(
+            name, project_dir, "failed",
+            reason=(f"env の {' / '.join(quoted)} の引用符が閉じていません "
+                    "(値に引用符が残っています)"))
+
     document = _build_project_yml(values)
     try:
         parse_project_config(_load_yaml(document, config_path),
@@ -156,10 +171,24 @@ def migrate_projects(projects_dir: Path, dry_run: bool = False) -> List[Migratio
 # 内部
 # ---------------------------------------------------------------------------
 
+def _yaml_scalar(value: str) -> str:
+    """文字列を YAML の暗黙型変換に食われないスカラーとして書き出す。
+
+    ``GIT_REPO=123`` / ``GIT_REPO=on`` / ``GIT_REPO=2026-08-22`` は env では
+    ただの文字列だが、素で埋め込むと YAML 1.1 の暗黙タグで int / bool / date に
+    なり、ローダの「文字列で指定してください」で移行が失敗する。
+    ``yaml.safe_dump`` に判断を任せることで、引用が要る値だけが引用され、
+    ``carmo-web`` のような通常の値は素のまま (= 生成物の見た目は変わらない)。
+    """
+    return yaml.safe_dump(
+        value, default_flow_style=True, width=10 ** 6, allow_unicode=True,
+    ).strip().removesuffix("...").strip()
+
+
 def _load_yaml(text: str, source: Path) -> dict:
     """生成した YAML を読み戻す。壊れていたら :class:`ConfigError` に揃える。
 
-    ``env`` に ``GIT_REPO="carmo`` のような閉じられていない引用符があると、値が
+    ``env`` に ``CONTAINER_SCALE="1`` のような閉じられていない引用符があると、値が
     そのまま YAML へ流れて ``yaml.YAMLError`` になる。ローダと同じ
     :class:`ConfigError` に変換して、その 1 件だけを ``failed`` に倒す。
     """
@@ -282,15 +311,15 @@ def _build_project_yml(values: Dict[str, str]) -> str:
 
     work_dir = values.get("WORK_DIR")
     if work_dir and work_dir != f"/work/{repo}":
-        lines.append(f"work_dir: {work_dir}")
+        lines.append(f"work_dir: {_yaml_scalar(work_dir)}")
 
     lines.append("repos:")
     if host != _DEFAULT_HOST:
-        lines.append(f"  - host: {host}")
-        lines.append(f"    owner: {owner}")
+        lines.append(f"  - host: {_yaml_scalar(host)}")
+        lines.append(f"    owner: {_yaml_scalar(owner)}")
     else:
-        lines.append(f"  - owner: {owner}")
-    lines.append(f"    repo: {repo}")
+        lines.append(f"  - owner: {_yaml_scalar(owner)}")
+    lines.append(f"    repo: {_yaml_scalar(repo)}")
     return "\n".join(lines) + "\n"
 
 
