@@ -131,7 +131,11 @@ def load_project_config(project_dir: Path) -> ProjectConfig:
         )
 
     try:
-        raw = yaml.safe_load(path.read_text())
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as e:
+        raise ConfigError(
+            f"{path} を UTF-8 として読めません ({e})。"
+            f"{PROJECT_CONFIG_FILENAME} は UTF-8 で保存してください。") from e
     except OSError as e:
         raise ConfigError(f"{path} を読み込めません: {e}") from e
     except yaml.YAMLError as e:
@@ -155,12 +159,15 @@ def parse_project_config(data: Mapping[str, Any], source: str) -> ProjectConfig:
     _reject_unknown_keys(data, _TOP_LEVEL_KEYS, source, "最上位")
 
     version = data.get("version")
-    if version != SUPPORTED_VERSION:
+    # YAML の ``true`` は Python では ``1`` と等価なので bool を明示的に弾く。
+    if isinstance(version, bool) or version != SUPPORTED_VERSION:
         raise ConfigError(
             f"{source}: version は {SUPPORTED_VERSION} である必要があります "
             f"(現在: {version!r})")
 
-    defaults = data.get("defaults") or {}
+    defaults = data.get("defaults")
+    if defaults is None:
+        defaults = {}
     if not isinstance(defaults, Mapping):
         raise ConfigError(f"{source}: defaults はマッピングである必要があります。")
     _reject_unknown_keys(defaults, _DEFAULTS_KEYS, source, "defaults")

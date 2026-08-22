@@ -16,7 +16,7 @@ from devbase.project.config import (
 
 
 def write_project_yml(tmp_path, text: str):
-    (tmp_path / "project.yml").write_text(text)
+    (tmp_path / "project.yml").write_text(text, encoding="utf-8")
     return tmp_path
 
 
@@ -220,6 +220,38 @@ def test_missing_version_is_an_error():
         parse_project_config({
             "repos": [{"owner": "volareinc", "repo": "carmo"}],
         }, source="project.yml")
+
+
+@pytest.mark.parametrize("bad_version", [True, False])
+def test_boolean_version_is_an_error(bad_version):
+    """YAML の ``true`` は Python では ``1`` と等価なため明示的に弾く"""
+    with pytest.raises(ConfigError, match="version"):
+        parse_project_config({
+            "version": bad_version,
+            "repos": [{"owner": "volareinc", "repo": "carmo"}],
+        }, source="project.yml")
+
+
+@pytest.mark.parametrize("bad_defaults", [[], False, 0, "host", ["host"]])
+def test_non_mapping_defaults_is_an_error(bad_defaults):
+    """falsy な非マッピングを空マッピング扱いで黙って受理しない"""
+    with pytest.raises(ConfigError, match="defaults"):
+        parse_project_config({
+            "version": 1,
+            "defaults": bad_defaults,
+            "repos": [{"owner": "volareinc", "repo": "carmo"}],
+        }, source="project.yml")
+
+
+def test_null_defaults_is_treated_as_empty():
+    """``defaults:`` と書いただけ (null) は未指定と同じ扱い"""
+    config = parse_project_config({
+        "version": 1,
+        "defaults": None,
+        "repos": [{"owner": "volareinc", "repo": "carmo"}],
+    }, source="project.yml")
+
+    assert config.repos[0].host == "github.com"
 
 
 @pytest.mark.parametrize("bad_dir", ["../escape", "nested/dir", ".", "..", "/abs"])
