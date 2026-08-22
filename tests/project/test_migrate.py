@@ -195,3 +195,65 @@ def test_migrate_projects_follows_symlinks_to_the_plugin_repo(tmp_path):
     assert [r.status for r in results] == ["migrated"]
     assert (real / "project.yml").is_file()
     assert not (projects / "carmo" / "project.yml").is_symlink()
+
+
+def test_broken_yaml_from_env_fails_only_that_project(tmp_path):
+    """閉じられていない引用符などで生成 YAML が壊れても一括移行は止まらない"""
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    project(projects, "broken", env='GIT_USER=volareinc\nGIT_REPO="carmo\n')
+    project(projects, "sound")
+
+    results = migrate_projects(projects)
+
+    assert {r.name: r.status for r in results} == {
+        "broken": "failed", "sound": "migrated"}
+    assert not (projects / "broken" / "project.yml").exists()
+    # 変換できなかった側の env は旧キーを保持する (復旧元を残す)
+    assert "GIT_REPO" in (projects / "broken" / "env").read_text(encoding="utf-8")
+
+
+def test_unreadable_env_is_reported_as_failed(tmp_path):
+    """不正な UTF-8 の env が例外のまま伝播して残りの移行を止めない"""
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    bad = projects / "bad"
+    bad.mkdir()
+    (bad / "env").write_bytes(b"GIT_USER=vol\xffareinc\nGIT_REPO=carmo\n")
+    project(projects, "sound")
+
+    results = migrate_projects(projects)
+
+    assert {r.name: r.status for r in results} == {
+        "bad": "failed", "sound": "migrated"}
+
+
+def test_broken_existing_project_yml_keeps_env_untouched(tmp_path):
+    """既存 project.yml が壊れているとき env の旧キー (復旧元) は消さない"""
+    directory = project(tmp_path)
+    (directory / "project.yml").write_text(
+        "version: 1\nrepos:\n  - owner: volareinc\n", encoding="utf-8")
+
+    result = migrate_project(directory)
+
+    assert result.status == "failed"
+    assert "GIT_REPO=carmo" in (directory / "env").read_text(encoding="utf-8")
+
+
+def test_writes_are_atomic(tmp_path, monkeypatch):
+    """書き込み中に落ちても既存ファイルが truncate されない"""
+    directory = project(tmp_path)
+    original = (directory / "env").read_text(encoding="utf-8")
+
+    def boom(*args, **kwargs):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr("devbase.project.migrate.os.replace", boom)
+
+    result = migrate_project(directory)
+
+    assert result.status == "failed"
+    assert not (directory / "project.yml").exists()
+    assert (directory / "env").read_text(encoding="utf-8") == original
+    # 一時ファイルは後始末される
+    assert sorted(p.name for p in directory.iterdir()) == ["env"]

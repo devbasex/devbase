@@ -13,15 +13,20 @@ PLAN32 で ``GIT_USER`` / ``GIT_REPO`` / ``GIT_HOST`` / ``WORK_DIR`` /
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+import yaml
 
 from devbase.errors import ConfigError
 from devbase.log import get_logger
 from devbase.project.config import (
     PROJECT_CONFIG_FILENAME,
+    load_project_config,
     parse_project_config,
 )
 
@@ -60,8 +65,22 @@ class MigrationResult:
 
 
 def migrate_project(project_dir: Path, dry_run: bool = False) -> MigrationResult:
-    """1 プロジェクトを ``project.yml`` 方式へ移行する。"""
-    project_dir = Path(project_dir).resolve()
+    """1 プロジェクトを ``project.yml`` 方式へ移行する。
+
+    136 件を 1 回で回すため、**1 件の失敗で全体を止めない**。不正な UTF-8・権限
+    エラー・書き込み失敗といった想定内の例外はここで ``failed`` の
+    :class:`MigrationResult` に畳み、残りのプロジェクトの移行と集計を続行する。
+    """
+    project_dir = Path(project_dir)
+    try:
+        return _migrate_project(project_dir.resolve(), dry_run=dry_run)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, ConfigError) as e:
+        logger.warning("migrate-config: %s の移行に失敗しました: %s", project_dir, e)
+        return MigrationResult(project_dir.name, project_dir, "failed", reason=str(e))
+
+
+def _migrate_project(project_dir: Path, dry_run: bool) -> MigrationResult:
+    """:func:`migrate_project` の本体 (例外はそのまま送出し、呼び出し側で畳む)。"""
     name = project_dir.name
     env_path = project_dir / "env"
     config_path = project_dir / PROJECT_CONFIG_FILENAME
@@ -76,8 +95,17 @@ def migrate_project(project_dir: Path, dry_run: bool = False) -> MigrationResult
     env_changed = new_env_text != env_text
 
     if config_path.is_file():
+        # 既存 project.yml が壊れている / 読めない場合は env を触らない。旧キーは
+        # 唯一の復旧元なので、設定を読めない状態で掃除すると構成が完全に消える。
+        try:
+            load_project_config(project_dir)
+        except ConfigError as e:
+            return MigrationResult(
+                name, project_dir, "failed",
+                reason=(f"既存 {PROJECT_CONFIG_FILENAME} を読めないため env を"
+                        f"変更しませんでした: {e}"))
         if env_changed and not dry_run:
-            env_path.write_text(new_env_text, encoding="utf-8")
+            _atomic_write(env_path, new_env_text)
         return MigrationResult(
             name, project_dir, "already",
             reason=f"{PROJECT_CONFIG_FILENAME} が既にあります (上書きしません)",
@@ -91,15 +119,19 @@ def migrate_project(project_dir: Path, dry_run: bool = False) -> MigrationResult
 
     document = _build_project_yml(values)
     try:
-        parse_project_config(_load_yaml(document), source=str(config_path))
+        parse_project_config(_load_yaml(document, config_path),
+                             source=str(config_path))
     except ConfigError as e:
         return MigrationResult(name, project_dir, "failed",
                                reason=str(e), project_yml=document)
 
     if not dry_run:
-        config_path.write_text(document, encoding="utf-8")
+        # project.yml を完全に永続化してから env を掃除する。逆順や非 atomic な
+        # 書き込みだと、中断・ディスクフル時に「壊れた project.yml + 旧キーの無い
+        # env」が残り、再実行しても復旧できなくなる。
+        _atomic_write(config_path, document)
         if env_changed:
-            env_path.write_text(new_env_text, encoding="utf-8")
+            _atomic_write(env_path, new_env_text)
 
     return MigrationResult(name, project_dir, "migrated",
                            project_yml=document, env=new_env_text,
@@ -124,9 +156,47 @@ def migrate_projects(projects_dir: Path, dry_run: bool = False) -> List[Migratio
 # 内部
 # ---------------------------------------------------------------------------
 
-def _load_yaml(text: str) -> dict:
-    import yaml
-    return yaml.safe_load(text)
+def _load_yaml(text: str, source: Path) -> dict:
+    """生成した YAML を読み戻す。壊れていたら :class:`ConfigError` に揃える。
+
+    ``env`` に ``GIT_REPO="carmo`` のような閉じられていない引用符があると、値が
+    そのまま YAML へ流れて ``yaml.YAMLError`` になる。ローダと同じ
+    :class:`ConfigError` に変換して、その 1 件だけを ``failed`` に倒す。
+    """
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ConfigError(f"{source} 用に生成した YAML を解釈できません: {e}") from e
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"{source} 用に生成した YAML がマッピングになりません "
+            "(env の値に YAML の構文が混ざっている可能性があります)")
+    return data
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """同一ディレクトリの一時ファイルへ書いてから ``os.replace`` で差し替える。
+
+    直接 ``write_text`` すると、ディスクフルや中断でファイルが truncate された
+    まま残りうる。移行では ``project.yml`` が壊れたまま ``env`` の旧キーだけが
+    消えると復旧元が無くなるため、読み手からは常に旧内容か新内容のどちらかしか
+    見えない atomic な差し替えにする。
+    """
+    path = Path(os.path.realpath(path))      # symlink 自体を置き換えない
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _parse_env(text: str) -> Dict[str, str]:
