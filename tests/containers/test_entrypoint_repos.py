@@ -19,11 +19,13 @@ ENTRYPOINT = Path(__file__).resolve().parents[2] / "containers" / "base" / "entr
 
 
 def encode_plan(rows) -> str:
-    """host 側が渡す wire format (base64 TSV) をテスト側で組み立てる。
+    """host 側が渡す wire format をテスト側で組み立てる。
 
+    フィールド区切りは US (0x1f)、行区切りは LF で末尾にも LF を付ける
+    (``lib/devbase/project/config.py`` の ``encode_repo_plan`` と同じ契約)。
     ``rows`` は ``(url, dir, branch, init)`` のタプル列。init は ``"1"`` / ``"0"``。
     """
-    text = "\n".join("\t".join(row) for row in rows)
+    text = "".join("\x1f".join(row) + "\n" for row in rows)
     return base64.b64encode(text.encode()).decode()
 
 
@@ -201,6 +203,22 @@ def test_no_plan_is_not_an_error(tmp_path, work):
 
     assert result.returncode == 0, result.stderr
     assert list(work.iterdir()) == []
+
+
+def test_entry_with_missing_fields_is_skipped(tmp_path, work):
+    """列数が合わない行は clone せず警告に留め、正しい行の処理は続ける"""
+    good = make_origin(tmp_path, "app")
+    broken = "\x1f".join([f"file://{tmp_path}/x.git", "x"])  # branch / init が無い
+    plan = base64.b64encode(
+        (broken + "\n" + "\x1f".join([good, "app", "", "0"]) + "\n").encode()).decode()
+
+    result = run_entrypoint_fn(f'devbase_clone_repos "{work}"',
+                               {"DEVBASE_REPOS": plan}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "Warning" in result.stdout + result.stderr
+    assert not (work / "x").exists()
+    assert (work / "app" / "README.md").exists()
 
 
 def test_broken_plan_is_reported_without_failing_startup(tmp_path, work):

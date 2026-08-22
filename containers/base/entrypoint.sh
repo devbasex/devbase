@@ -6,11 +6,11 @@ set -e
 # PLAN32: 複数リポジトリの clone / workspace 生成
 # ===================================================================
 # ホスト側 (devbase up) が projects/<name>/project.yml を正規化し、clone プランを
-# base64 TSV (DEVBASE_REPOS) としてコンテナへ渡す。ここでは 1 行ずつ読んで clone
+# base64 のレコード列 (DEVBASE_REPOS) としてコンテナへ渡す。ここでは 1 行ずつ読んで clone
 # するだけなので、コンテナイメージへ YAML/JSON パーサ依存を増やさずに済む。
 #
-# DEVBASE_REPOS         : base64(TSV)。1 行 = `url<TAB>dir<TAB>branch<TAB>init`
-#                         branch は空可、init は 1/0
+# DEVBASE_REPOS         : base64 の行区切りレコード。1 行 = url / dir / branch / init を
+#                         US (0x1f) 区切りで並べたもの。branch は空可、init は 1/0
 # DEVBASE_PRIMARY_DIR   : 起動後に cd する /work 配下のディレクトリ名
 # DEVBASE_WORKSPACE     : 書き出す *.code-workspace の絶対パス (複数 repo 時)
 # DEVBASE_WORKSPACE_B64 : その中身 (base64 JSON)
@@ -42,24 +42,18 @@ devbase_clone_repos() {
     fi
 
     mkdir -p "$work_root"
-    local line rest index=0
-    # TSV の分解に `IFS=$'\t' read` は使えない。タブは IFS の空白扱いなので連続する
-    # 区切りが 1 つに畳まれ、branch 未指定 (空フィールド) の行で init がずれる。
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
+    local extra index=0
+    # フィールド区切りは US (0x1f)。タブだと IFS の空白扱いで連続する区切りが 1 つに
+    # 畳まれ、branch 未指定 (空フィールド) の行で init の値がずれる。
+    while IFS=$'\x1f' read -r url dir branch init extra; do
+        # 末尾の空行 (符号化側が付ける末尾改行) は読み飛ばす
+        [ -n "$url$dir$branch$init$extra" ] || continue
         index=$((index + 1))
-        case "$line" in
-            *$'\t'*$'\t'*$'\t'*) ;;
-            *)
-                echo "Warning: Ignoring malformed clone plan entry (line $index)"
-                continue
-                ;;
-        esac
-        url="${line%%$'\t'*}";    rest="${line#*$'\t'}"
-        dir="${rest%%$'\t'*}";    rest="${rest#*$'\t'}"
-        branch="${rest%%$'\t'*}"; init="${rest#*$'\t'}"
-
-        [ -n "$url" ] && [ -n "$dir" ] || continue
+        if [ -z "$url" ] || [ -z "$dir" ] || [ -n "$extra" ] ||
+           { [ "$init" != "1" ] && [ "$init" != "0" ]; }; then
+            echo "Warning: Ignoring malformed clone plan entry (line $index)"
+            continue
+        fi
         target="$work_root/$dir"
 
         cloned=0
