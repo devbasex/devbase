@@ -68,6 +68,7 @@ def test_deploy_hook_receives_the_repo_layout_and_index(tmp_path, monkeypatch, c
 def test_hooks_still_run_without_a_config(tmp_path, monkeypatch):
     """設定を渡さない呼び出し (旧 scale 経路) でもフック自体は動く"""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DEVBASE_WORK_DIR", raising=False)
     (tmp_path / "pre-up").write_text(DUMP_SCRIPT)
 
     assert container._run_pre_up_hook() is True
@@ -77,6 +78,8 @@ def test_hooks_still_run_without_a_config(tmp_path, monkeypatch):
 
 def test_hook_env_does_not_leak_into_the_parent_process(tmp_path, monkeypatch, config):
     monkeypatch.chdir(tmp_path)
+    # 実行環境に同名の変数が居ても判定がぶれないよう、事前状態を固定する
+    monkeypatch.delenv("DEVBASE_WORK_DIR", raising=False)
     (tmp_path / "pre-up").write_text(DUMP_SCRIPT)
 
     container._run_pre_up_hook(config)
