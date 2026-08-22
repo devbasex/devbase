@@ -23,19 +23,22 @@ git init
 
 ### 1.2 plugin.yml の配置
 
-リポジトリのルートに `plugin.yml` を作成します。
-このファイルはPluginのメタ情報とプロジェクト一覧を定義します。
+リポジトリのルート（Plugin ディレクトリのルート）に `plugin.yml` を作成します。
+このファイルは Plugin のメタ情報を定義します。
 
 ```yaml
-plugins:
-  - name: my-plugin
-    version: 1.0.0
-    description: "サンプルプラグイン"
-    projects:
-      - name: my-project
-        description: "サンプルプロジェクト"
-        path: projects/my-project
+name: my-plugin
+version: "1.0.0"
+description: "サンプルプラグイン"
+requires:
+  devbase: ">=3.0.0"
+priority: 0
 ```
+
+**ポイント:**
+
+- プロジェクトは `projects/` 配下のディレクトリから自動的に検出されます。`plugin.yml` に一覧を書く必要はありません。
+- `requires.devbase` には **この Plugin が動作する devbase 本体の最低バージョン**を書きます。`project.yml` 形式のプロジェクト定義は devbase 3.0.0 以降でしか読めないため、`project.yml` を持つ Plugin（= 本手順で作るもの）は必ず `">=3.0.0"` を指定してください。
 
 > **補足:** `plugin.yml` のフォーマット詳細は [plugin.yml リファレンス](plugin-yml-reference.md) を参照してください。
 

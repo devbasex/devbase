@@ -1,7 +1,7 @@
 # plugin.yml リファレンス
 
-`plugin.yml` はPluginリポジトリのルートに配置する設定ファイルです。
-Pluginのメタ情報とプロジェクト一覧を定義します。
+`plugin.yml` は Plugin ディレクトリのルートに配置する設定ファイルです。
+Plugin のメタ情報（名前・バージョン・必要な devbase 本体のバージョンなど）を定義します。
 
 ---
 
@@ -10,10 +10,13 @@ Pluginのメタ情報とプロジェクト一覧を定義します。
 ```mermaid
 flowchart TB
     subgraph repo["Pluginリポジトリ"]
-        PY["plugin.yml"]
-        subgraph projects["projects/"]
-            P1["my-project-a/"]
-            P2["my-project-b/"]
+        RY["registry.yml<br/>(リポジトリが持つPlugin一覧)"]
+        subgraph plugin["my-plugin/"]
+            PY["plugin.yml<br/>(Pluginのメタ情報)"]
+            subgraph projects["projects/"]
+                P1["my-project-a/"]
+                P2["my-project-b/"]
+            end
         end
     end
     subgraph devbase["devbaseルート"]
@@ -26,7 +29,7 @@ flowchart TB
             S2["my-project-b → plugins/my-plugin/projects/my-project-b"]
         end
     end
-    PY -->|"devbase plugin install"| PS
+    RY -->|"devbase plugin install"| PS
     repo -->|clone| IP
     IP -->|symlink| S1
     IP -->|symlink| S2
@@ -37,45 +40,29 @@ flowchart TB
 ## 基本構造
 
 ```yaml
-plugins:
-  - name: my-plugin
-    version: 1.0.0
-    description: "プラグインの説明"
-    projects:
-      - name: my-project-a
-        description: "プロジェクトAの説明"
-        path: projects/my-project-a
-      - name: my-project-b
-        description: "プロジェクトBの説明"
-        path: projects/my-project-b
+name: my-plugin
+version: "1.0.0"
+description: "プラグインの説明"
+requires:
+  devbase: ">=3.0.0"
+priority: 0
 ```
+
+Plugin が提供するプロジェクトは `projects/` 配下のディレクトリから**自動的に検出**されます。
+`plugin.yml` にプロジェクトを列挙する必要はありません。
 
 ---
 
 ## フィールド一覧
 
-### トップレベル
-
-| フィールド | 型 | 必須 | 説明 |
-|-----------|-----|------|------|
-| `plugins` | array | Yes | Plugin定義のリスト |
-
-### Plugin定義 (`plugins[*]`)
-
-| フィールド | 型 | 必須 | 説明 |
-|-----------|-----|------|------|
-| `name` | string | Yes | Plugin名 |
-| `version` | string | Yes | セマンティックバージョン |
-| `description` | string | No | Pluginの説明 |
-| `projects` | array | Yes | プロジェクト定義のリスト |
-
-### プロジェクト定義 (`plugins[*].projects[*]`)
-
-| フィールド | 型 | 必須 | 説明 |
-|-----------|-----|------|------|
-| `name` | string | Yes | プロジェクト名 |
-| `description` | string | No | プロジェクトの説明 |
-| `path` | string | Yes | リポジトリルートからの相対パス |
+| フィールド | 型 | 必須 | 既定値 | 説明 |
+|-----------|-----|------|--------|------|
+| `name` | string | Yes | ディレクトリ名 | Plugin名 |
+| `version` | string | No | `0.1.0` | セマンティックバージョン |
+| `description` | string | No | `""` | Pluginの説明 |
+| `requires` | map | No | なし | 動作要件。現在は `devbase` キーのみ |
+| `requires.devbase` | string | No | なし | 必要な devbase 本体の最低バージョン（例: `">=3.0.0"`） |
+| `priority` | int | No | `0` | プロジェクト名が他Pluginと衝突したときの優先度。大きいほうが `projects/<name>` を取る |
 
 ---
 
@@ -122,41 +109,68 @@ version: 2.3.1
 
 ### `description`
 
-Pluginまたはプロジェクトの説明文です。
+Pluginの説明文です。
 `devbase plugin list` で一覧表示されるため、簡潔に記述してください。
 
 ```yaml
 description: "EC事業部のマイクロサービス群"
 ```
 
-### `projects`
+### `requires`
 
-Pluginに含まれるプロジェクトの一覧です。
-1つのPluginに複数のプロジェクトを含めることができます。
-
-### `projects[*].name`（プロジェクト名）
-
-プロジェクトを一意に識別する名前です。
-インストール時に `projects/<name>/` としてシンボリックリンクが作成されます。
-
-**バリデーションルール:**
-
-- Plugin名と同様の命名規則
-- devbase全体で一意であること（他のPluginのプロジェクト名と重複不可）
-
-### `projects[*].path`
-
-リポジトリルートからの相対パスで、プロジェクトディレクトリの位置を指定します。
+この Plugin が動作するために必要な devbase 側の条件を書きます。
+現在使えるキーは `devbase`（本体の最低バージョン）だけです。
 
 ```yaml
-path: projects/my-project
+requires:
+  devbase: ">=3.0.0"
 ```
 
-**注意事項:**
+| 値 | 意味 |
+|----|------|
+| `">=3.0.0"` | devbase 3.0.0 以上が必要 |
+| 省略 | バージョン要件なし（どの版でも導入を試みる） |
 
-- パスの先頭に `/` を付けない（相対パスで記述する）
-- 指定したディレクトリに `compose.yml` が存在すること
-- 慣例として `projects/` ディレクトリ配下に配置する
+**devbase 3.0.0 以降のPluginは `">=3.0.0"` を指定してください。**
+プロジェクト設定を `projects/<name>/project.yml` で記述する形式は devbase 3.0.0 で導入されたもので、
+2.x 系の devbase は `project.yml` を読めません。要件を書かないまま 2.x へ導入されると、
+インストールは成功するのに `devbase up` の段階で初めて失敗します。
+
+> `requires.devbase` を上げるのは、**Plugin が `project.yml` 形式へ移行したタイミング**です。
+> 本体の版数と一緒に自動では上がりません。
+
+### `priority`
+
+同じ名前のプロジェクトを複数のPluginが提供したときに、どちらが `projects/<name>` の
+シンボリックリンクを取るかを決める整数です（既定 `0`、大きいほうが勝ち）。
+負けた側は `projects/<name>.<owner>--<repo>` の形でリンクされ、どちらも利用できます。
+
+```yaml
+priority: 10
+```
+
+### プロジェクトの検出
+
+`plugin.yml` にプロジェクト一覧は書きません。Plugin ディレクトリ直下の `projects/` にある
+ディレクトリ（`.` で始まるものを除く）がそのままプロジェクトとして扱われ、インストール時に
+devbase ルートの `projects/<name>/` へシンボリックリンクが作成されます。
+
+```
+my-plugin/
+├── plugin.yml
+└── projects/
+    ├── my-project-a/    -> projects/my-project-a として公開される
+    │   ├── compose.yml
+    │   ├── project.yml
+    │   └── env
+    └── my-project-b/
+        ├── compose.yml
+        ├── project.yml
+        └── env
+```
+
+各プロジェクトディレクトリの中身は
+[クイックスタート](quickstart.md) と [project.yml リファレンス](../user/project-yml.md) を参照してください。
 
 ---
 
@@ -167,14 +181,11 @@ path: projects/my-project
 最もシンプルな構成です。
 
 ```yaml
-plugins:
-  - name: my-api
-    version: 1.0.0
-    description: "APIサーバー開発環境"
-    projects:
-      - name: my-api
-        description: "APIサーバー"
-        path: projects/my-api
+name: my-api
+version: "1.0.0"
+description: "APIサーバー開発環境"
+requires:
+  devbase: ">=3.0.0"
 ```
 
 ディレクトリ構造:
@@ -185,6 +196,7 @@ my-api/
 └── projects/
     └── my-api/
         ├── compose.yml
+        ├── project.yml
         └── env
 ```
 
@@ -193,20 +205,11 @@ my-api/
 関連するプロジェクトをまとめて管理する場合に使います。
 
 ```yaml
-plugins:
-  - name: ecommerce
-    version: 2.1.0
-    description: "ECサイト開発環境一式"
-    projects:
-      - name: ec-frontend
-        description: "フロントエンド（Next.js）"
-        path: projects/ec-frontend
-      - name: ec-backend
-        description: "バックエンドAPI（Go）"
-        path: projects/ec-backend
-      - name: ec-admin
-        description: "管理画面（Laravel）"
-        path: projects/ec-admin
+name: ecommerce
+version: "2.1.0"
+description: "ECサイト開発環境一式"
+requires:
+  devbase: ">=3.0.0"
 ```
 
 ディレクトリ構造:
@@ -217,37 +220,47 @@ ecommerce/
 └── projects/
     ├── ec-frontend/
     │   ├── compose.yml
+    │   ├── project.yml
     │   └── env
     ├── ec-backend/
     │   ├── compose.yml
+    │   ├── project.yml
     │   └── env
     └── ec-admin/
         ├── compose.yml
+        ├── project.yml
         └── env
 ```
 
 ### 1リポジトリに複数Pluginを含む場合
 
-`plugins` 配列に複数のPlugin定義を記述します。
-チーム横断で1つのリポジトリを共有する場合に使えます。
+`plugin.yml` は Plugin ごとに 1 ファイルです。1 つのリポジトリで複数の Plugin を配布する場合は、
+Plugin ごとにディレクトリを分けてそれぞれに `plugin.yml` を置き、リポジトリルートの
+`registry.yml` に一覧を記述します。
+
+```
+my-registry/
+├── registry.yml
+├── team-alpha/
+│   ├── plugin.yml
+│   └── projects/alpha-service/
+└── team-beta/
+    ├── plugin.yml
+    └── projects/beta-service/
+```
+
+`registry.yml`:
 
 ```yaml
+name: my-registry
+description: "社内レジストリ"
 plugins:
   - name: team-alpha
-    version: 1.0.0
+    path: team-alpha
     description: "Alphaチームのプロジェクト"
-    projects:
-      - name: alpha-service
-        description: "Alphaチームのサービス"
-        path: projects/alpha-service
-
   - name: team-beta
-    version: 1.2.0
+    path: team-beta
     description: "Betaチームのプロジェクト"
-    projects:
-      - name: beta-service
-        description: "Betaチームのサービス"
-        path: projects/beta-service
 ```
 
 ---
@@ -258,7 +271,7 @@ devbaseには似た名前の2つのファイルがあります。混同しない
 
 | 項目 | plugin.yml | plugins.yml |
 |------|-----------|-------------|
-| 配置場所 | Pluginリポジトリのルート | devbaseルートディレクトリ |
+| 配置場所 | Pluginディレクトリのルート | devbaseルートディレクトリ |
 | 管理者 | Plugin開発者 | devbase（自動管理） |
 | 用途 | Pluginの定義・メタ情報 | インストール済みPluginのレジストリ |
 | Git管理 | Plugin側のリポジトリで管理 | devbase側のリポジトリで管理 |
@@ -290,17 +303,16 @@ plugins:
 
 ## バリデーション
 
-`plugin.yml` は `devbase plugin install` 実行時に自動的にバリデーションされます。
+`devbase plugin install` はリポジトリを clone したあと `registry.yml` と `plugin.yml` を読み込みます。
 
 ### よくあるエラーと対処
 
 | エラーメッセージ | 原因 | 対処 |
 |----------------|------|------|
-| `Invalid plugin name` | 命名規則違反 | 英小文字・数字・ハイフンのみ使用 |
-| `Invalid version format` | SemVer形式でない | `MAJOR.MINOR.PATCH` 形式に修正 |
-| `Project directory not found` | pathが不正 | ディレクトリの存在を確認 |
-| `compose.yml not found` | compose.ymlが未配置 | 指定ディレクトリに配置 |
-| `Duplicate project name` | プロジェクト名が重複 | 一意な名前に変更 |
+| `Failed to parse .../plugin.yml` | YAML の構文エラー | インデント・引用符を確認 |
+| `No registry.yml found in repository` | リポジトリルートに `registry.yml` が無い | リポジトリルートに配置する |
+| `Plugin '<name>' not found in <repo>` | `registry.yml` に該当 Plugin の記載が無い | `plugins[*].name` を確認 |
+| `Plugin directory not found: <path>` | `registry.yml` の `path` が実在しない | `path` とディレクトリ名を突き合わせる |
 
 ---
 
