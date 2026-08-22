@@ -271,13 +271,33 @@ def test_dir_must_stay_directly_under_work(bad_dir):
     ("repo", "car\tmo"),
     ("host", "github.com/extra"),
     ("branch", "main\nrm -rf"),
+    ("repo", "car\x1fmo"),  # US — wire format の列区切りそのもの
 ])
 def test_fields_reject_whitespace_and_separators(field, value):
-    """wire format (タブ区切り) と URL 組み立てを壊す値を弾く"""
+    """wire format (US 区切り・LF 行区切り) と URL 組み立てを壊す値を弾く"""
     spec = {"owner": "volareinc", "repo": "carmo"}
     spec[field] = value
     with pytest.raises(ConfigError, match=field):
         parse_project_config({"version": 1, "repos": [spec]}, source="project.yml")
+
+
+@pytest.mark.parametrize("value", [
+    "car\x00mo",   # NUL — bash の read / git のどちらにとっても異物
+    "car\x07mo",   # BEL
+    "car\x7fmo",   # DEL
+    "car\u200bmo",  # ゼロ幅空白 — 目視できないまま URL に混ざる
+])
+def test_fields_reject_non_whitespace_control_characters(value):
+    """``isspace()`` ではすり抜ける制御文字・ゼロ幅空白も弾く
+
+    :func:`encode_repo_plan` の docstring が「制御文字を一切含まない」と
+    宣言している以上、空白判定だけでは契約を満たせない。
+    """
+    with pytest.raises(ConfigError, match="repo"):
+        parse_project_config({
+            "version": 1,
+            "repos": [{"owner": "volareinc", "repo": value}],
+        }, source="project.yml")
 
 
 def test_scale_must_be_a_positive_integer():
@@ -457,12 +477,29 @@ def test_numeric_repo_name_reports_a_type_error_not_a_missing_field():
         }, source="project.yml")
 
 
-@pytest.mark.parametrize("missing", [None, ""])
-def test_unspecified_repo_reports_a_missing_field(missing):
+def test_unspecified_repo_reports_a_missing_field():
     with pytest.raises(ConfigError, match="repo は必須です"):
         parse_project_config({
             "version": 1,
-            "repos": [{"owner": "volareinc", "repo": missing}],
+            "repos": [{"owner": "volareinc", "repo": None}],
+        }, source="project.yml")
+
+
+def test_empty_repo_reports_an_empty_value_not_a_missing_field():
+    """``repo: ""`` は「指定はされている」ので「必須です」とは言わない"""
+    with pytest.raises(ConfigError, match="repo に空文字は指定できません"):
+        parse_project_config({
+            "version": 1,
+            "repos": [{"owner": "volareinc", "repo": ""}],
+        }, source="project.yml")
+
+
+def test_empty_optional_branch_is_rejected_as_empty_not_as_missing():
+    """branch は省略可能なので ``branch: ""`` に「必須です」と返すと矛盾する"""
+    with pytest.raises(ConfigError, match="branch に空文字は指定できません"):
+        parse_project_config({
+            "version": 1,
+            "repos": [{"owner": "volareinc", "repo": "carmo", "branch": ""}],
         }, source="project.yml")
 
 

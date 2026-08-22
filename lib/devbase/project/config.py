@@ -324,22 +324,32 @@ def _require_token(value: Any, field: str, source: str, where: str,
                    allow_slash: bool) -> str:
     """URL 組み立てと wire format を壊さない文字列であることを確かめる。
 
-    空白・タブ・改行は wire format (行区切り) を壊し、``/`` は
+    空白・タブ・改行・制御文字は wire format (行区切り・US 区切り) を壊し、``/`` は
     ``https://<host>/<owner>/<repo>.git`` の構造や ``/work/<dir>`` の階層を
     壊すため、項目ごとに許可を分ける (gitlab のサブグループやブランチ名の
     ``feature/x`` は ``/`` を含むため許可する)。
     """
-    # YAML は ``repo: 123`` を int として読むため、「未指定」と「型が違う」を
+    # YAML は ``repo: 123`` を int として読むため、「未指定」「型が違う」「空」を
     # 同じ "必須です" で片づけると「指定したのに必須と言われる」ことになる。
-    if value is None or value == "":
+    # 特に branch のような省略可能なフィールドでは ``branch: ""`` に対して
+    # 「必須です」と返るのが矛盾して見える。
+    if value is None:
         raise ConfigError(f"{source}: {where} の {field} は必須です")
     if not isinstance(value, str):
         raise ConfigError(
             f"{source}: {where} の {field} は文字列で指定してください "
             f"({value!r})")
-    if any(c.isspace() for c in value):
+    if not value:
         raise ConfigError(
-            f"{source}: {where} の {field} に空白文字は使えません ({value!r})")
+            f"{source}: {where} の {field} に空文字は指定できません")
+    # ``isspace()`` だけでは NUL・DEL のような非空白の制御文字やゼロ幅空白が
+    # すり抜ける。URL 組み立て・``/work/<dir>``・wire format のいずれにとっても
+    # 害なので「印字できない文字」をまとめて弾く (通常の空白は印字可能なので
+    # ``isspace()`` 側で拾う)。
+    if any(c.isspace() or not c.isprintable() for c in value):
+        raise ConfigError(
+            f"{source}: {where} の {field} に空白文字・制御文字は使えません "
+            f"({value!r})")
     if not allow_slash and "/" in value:
         raise ConfigError(
             f"{source}: {where} の {field} に / は使えません ({value!r})")
