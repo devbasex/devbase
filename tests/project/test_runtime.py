@@ -115,6 +115,19 @@ def test_write_scale_updates_the_existing_key_and_keeps_comments(tmp_path):
     assert read_scale(tmp_path) == 4
 
 
+def test_write_scale_keeps_an_inline_comment(tmp_path):
+    (tmp_path / "project.yml").write_text(
+        "version: 1\nscale: 1  # 並列数\nrepos:\n"
+        "  - owner: volareinc\n    repo: carmo\n")
+
+    write_scale(tmp_path, 4)
+
+    # 値だけが差し替わり、行内コメントと間隔がそのまま残ること
+    assert (tmp_path / "project.yml").read_text().splitlines()[1] == (
+        "scale: 4  # 並列数")
+    assert read_scale(tmp_path) == 4
+
+
 def test_write_scale_adds_the_key_when_absent(tmp_path):
     (tmp_path / "project.yml").write_text(
         "version: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n")

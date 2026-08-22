@@ -69,8 +69,20 @@ def container_env(config: ProjectConfig, project_name: str) -> Dict[str, str]:
 # scale (旧 CONTAINER_SCALE)
 # ---------------------------------------------------------------------------
 
-_SCALE_LINE = re.compile(r'^scale:.*$', re.M)
+#: ``scale: 1  # 並列数`` の値部分と行内コメントを別々に捕まえる。
+#: 値だけを差し替えてコメントをそのまま残すため。
+_SCALE_LINE = re.compile(r'^scale:(?P<value>[^#\n]*)(?P<comment>#[^\n]*)?$', re.M)
 _VERSION_LINE = re.compile(r'^version:.*$', re.M)
+
+
+def _rewrite_scale_line(match: "re.Match[str]", scale: int) -> str:
+    """``scale`` 行の値だけを差し替え、行内コメントは元の間隔ごと残す。"""
+    comment = match.group("comment")
+    if not comment:
+        return f"scale: {scale}"
+    value = match.group("value")
+    gap = value[len(value.rstrip()):] or " "
+    return f"scale: {scale}{gap}{comment}"
 
 
 def read_scale(project_dir: Path) -> int:
@@ -92,7 +104,8 @@ def write_scale(project_dir: Path, scale: int) -> None:
     original = path.read_text(encoding="utf-8")
 
     if _SCALE_LINE.search(original):
-        updated = _SCALE_LINE.sub(f"scale: {scale}", original, count=1)
+        updated = _SCALE_LINE.sub(
+            lambda m: _rewrite_scale_line(m, scale), original, count=1)
     elif _VERSION_LINE.search(original):
         updated = _VERSION_LINE.sub(
             lambda m: f"{m.group(0)}\nscale: {scale}", original, count=1)
