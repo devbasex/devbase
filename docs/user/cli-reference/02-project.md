@@ -52,7 +52,8 @@ devbase up [name]
 - 起動時にスナップショットを自動作成（新世代 or 差分追加）
   - 直近のスナップショット取得から既定 60 分以内のときはスキップします
   - 間隔は `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES` 環境変数で上書き可能（既定 60、`0` で無効化＝毎回取得、不正値は警告して既定値）
-- `CONTAINER_SCALE` の値に基づいてコンテナ数を決定
+- `project.yml` の `scale` に基づいてコンテナ数を決定（既定: 2）
+- `project.yml` の `repos` を clone プランへ正規化してコンテナへ渡す（コンテナ内で `/work` 配下へ clone される）
 - イメージの自動準備（`devbase up` は `devbase rebuild`＝`devbase build --expires=7` 相当を実行）:
   - `build:` 定義あり、イメージ未存在 → `devbase build` を自動実行
   - `build:` 定義あり、イメージ存在 → プロジェクトイメージの作成日で再ビルドの要否を判定:
@@ -156,6 +157,37 @@ devbase project scale 3
 # 任意のディレクトリから adminer を3台に
 devbase project scale adminer 3
 ```
+
+新しい値は `project.yml` の `scale` に書き戻されるため、次回の `devbase up` にも引き継がれます。
+
+## `devbase project migrate-config`
+
+旧 `env` 形式（`GIT_USER` / `GIT_REPO` / `GIT_HOST` / `WORK_DIR` / `CONTAINER_SCALE` /
+`DEVBASE_OPEN_EDITOR`）のプロジェクト定義を [`project.yml`](../project-yml.md) へ変換します。
+
+```
+devbase project migrate-config [NAME ...] [--dry-run] [--projects-dir DIR]
+```
+
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| `NAME` | いいえ | 対象プロジェクト名（省略時は `projects/` 配下すべて） |
+| `--dry-run` | いいえ | 生成される `project.yml` を表示するだけで書き換えない |
+| `--projects-dir` | いいえ | 対象ディレクトリ（既定: `$DEVBASE_ROOT/projects`）。devbase へリンクしていないプラグインリポジトリ内の `projects/` を直接変換する場合に使う |
+
+```bash
+# まず変換結果を確認する
+devbase project migrate-config --dry-run
+
+# 変換を適用する
+devbase project migrate-config
+```
+
+- 変換対象は上記キーのみで、`ENABLE_SSH` などそれ以外は `env` に残ります
+- 既存の `project.yml` は上書きしません（手で複数リポジトリ構成へ整えたものを壊さないため）。
+  `env` に残った旧キーの掃除だけを行うため、何度実行しても同じ状態になります
+- `projects/<name>` はプラグインリポジトリへのシンボリックリンクです。書き換わるのはリンク先の
+  実体（＝定義の正）で、出力には実際に触れたパスが表示されます
 
 ## `devbase project build`
 
