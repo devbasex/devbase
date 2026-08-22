@@ -13,6 +13,7 @@ PLAN06 Task 3 で追加した ``$DEVBASE_ROOT/projects/`` の一覧 (NAME / PLUG
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from devbase.log import get_logger
@@ -169,3 +170,56 @@ def cmd_project_list(devbase_root: Path, args) -> int:
     from devbase.tui import run as tui_run
 
     return tui_run(Path(devbase_root), args)
+
+
+def cmd_project_migrate_config(devbase_root: Path, args) -> int:
+    """`devbase project migrate-config [name...] [--dry-run]` (PLAN32)。
+
+    旧 ``env`` 形式 (``GIT_USER`` / ``GIT_REPO`` 等) を ``project.yml`` へ変換する。
+    ``projects/<name>`` は plugin リポジトリへの symlink なので、書き換わるのは
+    plugin リポジトリ側の実体ファイルになる。どのパスを触ったかを必ず表示する。
+
+    ``--projects-dir`` で別のディレクトリを指定できる。plugin リポジトリには
+    devbase へリンクしていない projects (``repos/<repo>/<plugin>/projects``) も
+    あり、それらを一括で移行するため。
+    """
+    from devbase.project.migrate import migrate_project, migrate_projects
+
+    override = getattr(args, 'projects_dir', None)
+    projects_dir = Path(override) if override else Path(devbase_root) / 'projects'
+    if not projects_dir.is_dir():
+        print(f"projects ディレクトリがありません: {projects_dir}", file=sys.stderr)
+        return 1
+
+    names = list(getattr(args, 'names', None) or [])
+    dry_run = bool(getattr(args, 'dry_run', False))
+
+    if names:
+        missing = [name for name in names if not (projects_dir / name).is_dir()]
+        if missing:
+            print(f"プロジェクトが見つかりません: {', '.join(missing)}",
+                  file=sys.stderr)
+            return 1
+        results = [migrate_project(projects_dir / name, dry_run=dry_run)
+                   for name in names]
+    else:
+        results = migrate_projects(projects_dir, dry_run=dry_run)
+
+    if dry_run:
+        print("=== dry-run: ファイルは書き換えません ===")
+
+    counts = {}
+    for result in results:
+        counts[result.status] = counts.get(result.status, 0) + 1
+        detail = f" — {result.reason}" if result.reason else ""
+        print(f"[{result.status}] {result.name} ({result.path}){detail}")
+        if dry_run and result.project_yml:
+            print(_indent(result.project_yml))
+
+    print("--- " + " / ".join(f"{status}={count}"
+                              for status, count in sorted(counts.items())))
+    return 1 if counts.get('failed') else 0
+
+
+def _indent(text: str, prefix: str = '    ') -> str:
+    return ''.join(prefix + line + '\n' for line in text.splitlines())

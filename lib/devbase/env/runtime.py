@@ -115,8 +115,8 @@ def _project_env_overrides(devbase_root: Path, project: str) -> Dict[str, str]:
     """プロジェクトの非機密設定 (``projects/<name>/env``) による上書き値。
 
     値そのものはファイルから読まず、既に環境変数へ載っているものだけを採用する。
-    ``env`` は ``WORK_DIR=/work/$GIT_REPO`` のように同一ファイル内の変数を参照
-    するため、起動ラッパー (または ``_load_project_env``) が展開した後の値が
+    ``env`` は ``APP_ROOT=$APP_HOME/app`` のように同一ファイル内の変数を参照
+    できるため、起動ラッパー (または ``_load_project_env``) が展開した後の値が
     正しく、ここで生の行を読み直すと未展開の文字列を掴んでしまう。
     """
     path = Path(devbase_root) / 'projects' / project / 'env'
