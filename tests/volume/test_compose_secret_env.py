@@ -51,7 +51,7 @@ volumes:
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     (tmp_path / 'compose.yml').write_text(COMPOSE)
-    (tmp_path / 'env').write_text('GIT_REPO=web\n')
+    (tmp_path / 'env').write_text('APP_NAME=web\n')
     monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path / 'root'))
     (tmp_path / 'root').mkdir()
     monkeypatch.chdir(tmp_path)

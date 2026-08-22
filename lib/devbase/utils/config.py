@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from devbase.errors import ConfigError
 
 
 def get_project_name() -> str:
@@ -20,23 +19,6 @@ def get_project_name() -> str:
 
     # Fallback to current directory name
     return Path.cwd().name
-
-
-def get_container_scale() -> int:
-    """
-    Get container scale from environment
-
-    Returns:
-        Number of containers (default: 2)
-    """
-    scale_str = os.environ.get('CONTAINER_SCALE', '2')
-    try:
-        scale = int(scale_str)
-        if scale < 1:
-            raise ConfigError("CONTAINER_SCALE must be >= 1")
-        return scale
-    except ValueError as e:
-        raise ConfigError(f"Invalid CONTAINER_SCALE value '{scale_str}': {e}")
 
 
 def get_devbase_root() -> Optional[Path]:

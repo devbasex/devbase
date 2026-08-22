@@ -253,8 +253,15 @@ def detect_context(environ=None, isatty: Optional[bool] = None,
     )
 
 
-def is_open_enabled(environ=None) -> bool:
-    """``DEVBASE_OPEN_EDITOR`` env が真かどうか (未設定は False)。"""
+def is_open_enabled(environ=None, config=None) -> bool:
+    """エディタを自動で開くかどうか。
+
+    プロジェクト設定 (``project.yml`` の ``open_editor``) が指定されていればそれを
+    採る。未指定なら env ``DEVBASE_OPEN_EDITOR`` (グローバル ``.env`` の既定値)
+    を見る。どちらも無ければ開かない。
+    """
+    if config is not None and config.open_editor is not None:
+        return config.open_editor
     env = os.environ if environ is None else environ
     value = env.get("DEVBASE_OPEN_EDITOR")
     if value is None:
@@ -425,23 +432,17 @@ def resolve_container_name(dev_service_name: str, project_name: str, index: int 
     return f"{project_name}-{dev_service_name}-{index}"
 
 
-def resolve_workdir(environ=None, project_name: Optional[str] = None) -> str:
-    """コンテナ内で開くワークスペースパス (``/work/$GIT_REPO``) を返す。"""
-    env = os.environ if environ is None else environ
-    workdir = env.get("WORK_DIR")
-    if workdir:
-        return workdir
-    repo = env.get("GIT_REPO") or project_name
-    return f"/work/{repo}" if repo else "/work"
-
-
 def resolve_workspace(environ=None) -> Optional[str]:
     """開く VS Code ワークスペースファイル (``*.code-workspace``) のコンテナ内パス。
 
     ``DEVBASE_WORKSPACE`` env にコンテナ内の絶対パス (例
     ``/home/ubuntu/share/work/uttarov2-doc.workspace``) が指定されていればそれを返す。
-    未設定・空文字なら None を返し、呼び出し側 (:func:`open_editor`) は従来どおり
-    :func:`resolve_workdir` のフォルダを ``--folder-uri`` で開く。
+    未設定・空文字なら None を返し、呼び出し側 (:func:`open_editor`) はフォルダを
+    ``--folder-uri`` で開く。
+
+    複数リポジトリのプロジェクトでは ``devbase up`` が ``project.yml`` から
+    workspace パスを決めて :func:`open_editor` の ``workspace`` 引数で直接渡す。
+    この env はそれを手動で上書きしたい場合の口として残している。
 
     ワークスペースファイルはコンテナ内に実在するパスを指す前提 (attach 先は
     コンテナ authority のため)。``/home/ubuntu/share`` 等の共有マウント配下に置けば
@@ -622,6 +623,7 @@ def _launch(cmd: list, env: dict) -> None:
 
 
 def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
+                workspace: Optional[str] = None,
                 index: int = 1, compose_file=None,
                 environ=None,
                 isatty: Optional[bool] = None, system: Optional[str] = None,
@@ -633,7 +635,8 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     握り潰して warning にし、``up`` 本体を絶対に失敗させない。``isatty`` /
     ``system`` / ``ipc_alive`` は :func:`detect_context` への差し替え口 (テスト用)。
     ``compose_file`` は実コンテナ名問い合わせ時に起動と同じ override compose を
-    ``-f`` で渡すため。
+    ``-f`` で渡すため。``workspace`` は複数リポジトリ構成で開く
+    ``*.code-workspace`` のコンテナ内パス (未指定なら env ``DEVBASE_WORKSPACE``)。
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
@@ -681,7 +684,7 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     # DEVBASE_WORKSPACE があれば *.code-workspace をワークスペースとして開く。VS Code は
     # `--file-uri` に渡したパスが .code-workspace 拡張子なら multi-root ワークスペースとして
     # 開くため、フォルダを開く `--folder-uri` と URI ターゲット・フラグの両方を切り替える。
-    workspace = resolve_workspace(env)
+    workspace = workspace or resolve_workspace(env)
     open_target = workspace or workdir
     uri_flag = "--file-uri" if workspace else "--folder-uri"
     uri = build_attach_uri(container, open_target,

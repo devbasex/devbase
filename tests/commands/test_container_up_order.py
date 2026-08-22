@@ -27,10 +27,12 @@ NEW_COMPOSE = "services:\n  dev-1: {}\n"
 def up_harness(tmp_path, monkeypatch):
     """cmd_up の外部作用をすべてスタブ化し、呼び出し順を記録する。"""
     monkeypatch.chdir(tmp_path)
+    # PLAN32: cmd_up は project.yml を唯一の正として読む
+    (tmp_path / 'project.yml').write_text(
+        "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
     calls: list = []
 
     monkeypatch.setattr(container, 'get_project_name', lambda: 'proj')
-    monkeypatch.setattr(container, 'get_container_scale', lambda: 1)
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
     monkeypatch.setattr(container, '_ensure_env_files', lambda: True)
     monkeypatch.setattr(container, '_run_pre_up_hook', lambda: True)
@@ -56,7 +58,7 @@ def test_generate_precedes_down_and_uses_previous_compose(up_harness, monkeypatc
     calls = up_harness
     container._SCALE_COMPOSE_FILE.write_text(OLD_COMPOSE)
 
-    def fake_generate(scale, secrets):
+    def fake_generate(scale, secrets, dev_environment=None):
         calls.append(('generate', scale))
         container._SCALE_COMPOSE_FILE.write_text(NEW_COMPOSE)
         return container._SCALE_COMPOSE_FILE
@@ -95,7 +97,7 @@ def test_generation_failure_restores_previous_compose(up_harness, monkeypatch):
     calls = up_harness
     container._SCALE_COMPOSE_FILE.write_text(OLD_COMPOSE)
 
-    def half_written(scale, secrets):
+    def half_written(scale, secrets, dev_environment=None):
         container._SCALE_COMPOSE_FILE.write_text('services:\n  dev-1:')
         raise DevbaseError('compose.yml が壊れています')
 
@@ -114,7 +116,7 @@ def test_first_run_without_previous_compose(up_harness, monkeypatch):
     calls = up_harness
     assert not container._SCALE_COMPOSE_FILE.exists()
 
-    def fake_generate(scale, secrets):
+    def fake_generate(scale, secrets, dev_environment=None):
         container._SCALE_COMPOSE_FILE.write_text(NEW_COMPOSE)
         return container._SCALE_COMPOSE_FILE
 

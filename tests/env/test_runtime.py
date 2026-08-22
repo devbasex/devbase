@@ -94,35 +94,35 @@ def test_project_env_overrides_global_for_the_same_key(root, store, monkeypatch)
 
 def test_project_env_only_keys_are_not_listed(root, store, monkeypatch):
     """非機密設定は env_file が直接読むので変数名を列挙しない"""
-    (root / 'projects' / 'web' / 'env').write_text('GIT_REPO=web\n')
-    monkeypatch.setenv('GIT_REPO', 'web')
+    (root / 'projects' / 'web' / 'env').write_text('APP_NAME=web\n')
+    monkeypatch.setenv('APP_NAME', 'web')
     store.age.save(GLOBAL, {'TOKEN': 't'})
 
     resolved = runtime.resolve(root, 'web', store=store)
 
     assert resolved.names == ['TOKEN']
-    assert 'GIT_REPO' not in resolved.values
+    assert 'APP_NAME' not in resolved.values
 
 
 def test_project_env_value_comes_from_the_environment(root, store, monkeypatch):
     """展開済みの値を採用する (生の行を読み直さない)"""
-    (root / 'projects' / 'web' / 'env').write_text('WORK_DIR=/work/$GIT_REPO\n')
-    monkeypatch.setenv('WORK_DIR', '/work/web')
-    store.age.save(GLOBAL, {'WORK_DIR': '/work/unset'})
+    (root / 'projects' / 'web' / 'env').write_text('APP_ROOT=/srv/$APP_NAME\n')
+    monkeypatch.setenv('APP_ROOT', '/srv/web')
+    store.age.save(GLOBAL, {'APP_ROOT': '/srv/unset'})
 
     resolved = runtime.resolve(root, 'web', store=store)
 
-    assert resolved.values['WORK_DIR'] == '/work/web'
+    assert resolved.values['APP_ROOT'] == '/srv/web'
 
 
 def test_project_env_is_ignored_when_not_in_the_environment(root, store, monkeypatch):
-    monkeypatch.delenv('WORK_DIR', raising=False)
-    (root / 'projects' / 'web' / 'env').write_text('WORK_DIR=/work/$GIT_REPO\n')
-    store.age.save(GLOBAL, {'WORK_DIR': '/work/global'})
+    monkeypatch.delenv('APP_ROOT', raising=False)
+    (root / 'projects' / 'web' / 'env').write_text('APP_ROOT=/srv/$APP_NAME\n')
+    store.age.save(GLOBAL, {'APP_ROOT': '/srv/global'})
 
     resolved = runtime.resolve(root, 'web', store=store)
 
-    assert resolved.values['WORK_DIR'] == '/work/global'
+    assert resolved.values['APP_ROOT'] == '/srv/global'
 
 
 def test_resolve_without_any_secrets_is_empty(root, store):
