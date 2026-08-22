@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -27,12 +28,24 @@ def encode_plan(rows) -> str:
 
 
 def run_entrypoint_fn(script: str, env: dict, cwd: Path) -> subprocess.CompletedProcess:
-    """entrypoint.sh の関数だけを読み込んで ``script`` を実行する。"""
+    """entrypoint.sh の関数だけを読み込んで ``script`` を実行する。
+
+    ``PATH`` を固定すると Homebrew の git しか無い環境で落ちるため、実行環境を
+    引き継ぐ。ただし呼び出し側の DEVBASE_* / GIT_* が紛れ込むとテストの前提が
+    崩れるので、そこだけ落としてから ``env`` を重ねる。
+    """
+    base = {k: v for k, v in os.environ.items()
+            if not k.startswith(("DEVBASE_", "GIT_"))}
     full = f'set -e\nDEVBASE_ENTRYPOINT_LIB_ONLY=1 . "{ENTRYPOINT}"\n{script}\n'
     return subprocess.run(
-        ["bash", "-c", full], cwd=cwd, env={"PATH": "/usr/bin:/bin:/usr/local/bin", **env},
+        ["bash", "-c", full], cwd=cwd, env={**base, **env},
         capture_output=True, text=True,
     )
+
+
+def current_branch(repo: Path) -> str:
+    return subprocess.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
 
 
 def make_origin(tmp_path: Path, name: str, *, branches=(), files=None) -> str:
@@ -95,9 +108,7 @@ def test_checks_out_the_requested_branch(tmp_path, work):
                                {"DEVBASE_REPOS": plan}, tmp_path)
 
     assert result.returncode == 0, result.stderr
-    branch = subprocess.run(["git", "-C", str(work / "app"), "rev-parse",
-                             "--abbrev-ref", "HEAD"], capture_output=True, text=True)
-    assert branch.stdout.strip() == "develop"
+    assert current_branch(work / "app") == "develop"
 
 
 def test_runs_init_script_only_when_enabled(tmp_path, work):
@@ -141,6 +152,35 @@ def test_a_failing_checkout_does_not_stop_the_others(tmp_path, work):
 
     assert result.returncode == 0, result.stderr
     assert (work / "docs" / "README.md").exists()
+
+
+def test_a_failing_checkout_skips_the_init_script(tmp_path, work):
+    """checkout に失敗した repo は打ち切る (意図しない branch で init.sh を走らせない)。"""
+    files = {"README.md": "app", "init.sh": "#!/bin/bash\ntouch ./init-was-run\n"}
+    plan = encode_plan([
+        (make_origin(tmp_path, "app", files=files), "app", "no-such-branch", "1"),
+    ])
+
+    result = run_entrypoint_fn(f'devbase_clone_repos "{work}"',
+                               {"DEVBASE_REPOS": plan}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert not (work / "app" / "init-was-run").exists()
+
+
+def test_existing_clone_keeps_the_branch_the_user_switched_to(tmp_path, work):
+    """再起動のたびに設定 branch へ引き戻さない (checkout は clone 直後のみ)。"""
+    url = make_origin(tmp_path, "app", branches=("develop", "feature-A"))
+    plan = encode_plan([(url, "app", "develop", "0")])
+    run_entrypoint_fn(f'devbase_clone_repos "{work}"', {"DEVBASE_REPOS": plan}, tmp_path)
+    assert current_branch(work / "app") == "develop"
+    subprocess.run(["git", "-C", str(work / "app"), "checkout", "-q", "feature-A"], check=True)
+
+    result = run_entrypoint_fn(f'devbase_clone_repos "{work}"',
+                               {"DEVBASE_REPOS": plan}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert current_branch(work / "app") == "feature-A"
 
 
 def test_existing_clone_is_kept(tmp_path, work):

@@ -30,7 +30,7 @@ devbase_repo_plan_lines() {
 # 1 つ落ちただけでコンテナが起動しないと、他リポジトリでの作業まで止まるため。
 devbase_clone_repos() {
     local work_root="${1:-/work}"
-    local plan url dir branch init target
+    local plan url dir branch init target cloned
 
     if ! plan="$(devbase_repo_plan_lines 2>/dev/null)"; then
         echo "Warning: Failed to decode DEVBASE_REPOS (skipping repository setup)"
@@ -62,6 +62,7 @@ devbase_clone_repos() {
         [ -n "$url" ] && [ -n "$dir" ] || continue
         target="$work_root/$dir"
 
+        cloned=0
         if [ -d "$target/.git" ]; then
             echo "Repository already exists: $dir"
         else
@@ -70,11 +71,16 @@ devbase_clone_repos() {
                 echo "Warning: Failed to clone repository: $url"
                 continue
             fi
+            cloned=1
         fi
 
-        if [ -n "$branch" ]; then
+        # checkout は clone 直後だけ。既存 clone に対して毎回実行すると、コンテナ内で
+        # 作業ブランチへ切り替えたユーザが再起動のたびに引き戻されてしまう。
+        # 失敗したら意図しない branch で init.sh を走らせないよう この repo は打ち切る。
+        if [ "$cloned" = "1" ] && [ -n "$branch" ]; then
             if ! git -C "$target" checkout "$branch"; then
-                echo "Warning: Failed to checkout branch '$branch' in $dir"
+                echo "Warning: Failed to checkout branch '$branch' in $dir (skipping)"
+                continue
             fi
         fi
 
