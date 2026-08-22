@@ -26,6 +26,15 @@
 > 適用には `devbase build --no-cache` によるベースイメージの再ビルドが必要です。
 
 ### Added
+- **ライフサイクルフックへ `project.yml` の値を環境変数で渡す**ようにしました。`pre-up` /
+  `deploy` に `DEVBASE_PRIMARY_DIR` (primary の clone 先ディレクトリ名) /
+  `DEVBASE_PRIMARY_URL` (primary の clone URL) / `DEVBASE_WORK_DIR` (コンテナ内の既定の
+  作業ディレクトリ) / `DEVBASE_REPO_DIRS` (全リポジトリのディレクトリ名・宣言順の空白
+  区切り) が渡ります。フックはホスト側で動くため `env` を読み込めず、`GIT_REPO` /
+  `WORK_DIR` の `project.yml` 移行によって `source ./env` に依存していたフックが値を
+  取れなくなるためです。値は子プロセス限定で、親プロセスの環境は汚しません。
+  詳細は [フックへ渡る環境変数](docs/plugin-dev/quickstart.md#フックへ渡る環境変数)
+  を参照してください。
 - **`devbase project migrate-config`** を追加しました。旧 `env` 形式のプロジェクト定義を
   `project.yml` へ機械的に変換します。`--dry-run` で変換結果を確認でき、既存の
   `project.yml` は上書きしないため何度実行しても同じ状態に収束します。
