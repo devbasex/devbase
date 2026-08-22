@@ -69,11 +69,14 @@ devbase は複数のコンテナを同時に起動し、並行開発を行うこ
 
 ### コンテナ数の設定
 
-プロジェクトの `env` ファイルで `CONTAINER_SCALE` を設定します。デフォルト値は `2` です。
+プロジェクトの [`project.yml`](project-yml.md) で `scale` を設定します。デフォルト値は `2` です。
 
-```bash
-# env ファイルで設定
-CONTAINER_SCALE=2
+```yaml
+version: 1
+scale: 2
+repos:
+  - owner: your-org
+    repo: my-repo
 ```
 
 ### 動的スケーリング
@@ -295,7 +298,7 @@ devbase status
 ## ベストプラクティス
 
 1. **プロジェクト固有のファイルは `/work` に配置する** -- `/persistent/ai`（`~/.claude` 等の symlink 先・`~/share`）は全コンテナで共有されるため
-2. **`CONTAINER_SCALE` は必要最小限に設定する** -- リソース消費を抑制
+2. **`scale` は必要最小限に設定する** -- リソース消費を抑制
 3. **作業終了後は `devbase down` を実行する** -- 自動ローテーションでディスク容量を管理
 4. **`devbase ps` で状態を確認してからログインする** -- 異常終了したコンテナへのログイン試行を避ける
 5. **イメージのビルドは初回と更新時のみ** -- 変更がない場合はキャッシュが利用される

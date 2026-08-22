@@ -4,7 +4,7 @@
 
 リファレンス実装は Laravel Sail ベースの `carmo-system-console` プラグインです。**このリポジトリには含まれません** — 社内向けの private プラグインレジストリで配布されており、`devbase plugin install` 後に `projects/carmo-system-console/`（`projects/` は `.gitignore` 対象）へ展開されます。アクセス権が無い場合でも、本書のコード断片と [チェックリスト](#7-チェックリスト新規に-repo-連携プロジェクトを作るとき) だけでパターンを再現できます。
 
-> **前提:** ライフサイクルフック自体の基本は [プラグイン開発クイックスタート](quickstart.md#25-ライフサイクルフック任意) を、共有ボリュームや `CONTAINER_SCALE` の一般論は [compose.yml ガイドライン](compose-yml-guidelines.md) と [コンテナ操作ガイド](../user/container-operations.md#並行開発) を参照してください。本書はそれらを組み合わせた「repo 連携」パターンに絞って説明します。
+> **前提:** ライフサイクルフック自体の基本は [プラグイン開発クイックスタート](quickstart.md#25-ライフサイクルフック任意) を、共有ボリュームや `scale` の一般論は [compose.yml ガイドライン](compose-yml-guidelines.md) と [コンテナ操作ガイド](../user/container-operations.md#並行開発) を参照してください。本書はそれらを組み合わせた「repo 連携」パターンに絞って説明します。
 
 ---
 
@@ -28,7 +28,7 @@
 graph TD
     S["リモート git リポジトリ<br/>(volareinc/app 等)"] -->|"pre-up ① clone/pull"| R["ホスト ./repo<br/>(app のビルドコンテキスト)"]
     S3["S3<br/>env/&lt;env&gt;.env"] -->|"pre-up ② 取得"| E["ホスト ./.env<br/>(compose 変数展開用)"]
-    R -->|"pre-up ③ populate"| V["共有 work ボリューム<br/>/work/&lt;GIT_REPO&gt;"]
+    R -->|"pre-up ③ populate"| V["共有 work ボリューム<br/>/work/&lt;リポジトリ名&gt;"]
     E -->|"pre-up ④ 配置"| V
     V --> A["app コンテナ /work"]
     V --> N["nginx コンテナ /work:ro"]
@@ -64,9 +64,9 @@ volumes:
 
 > **Note:** `pre-up` は子プロセスのため `export DEVBASE_WORK_VOLUME` しても後続の `docker compose up` へは伝播しません。`compose.yml` 側は `${DEVBASE_WORK_VOLUME:-devbase_work_${DEVBASE_INSTANCE_INDEX:-1}}` のフォールバック式で解決し、加えて `pre-up` が同じ値を `.env` に書き出すことで整合を取ります。
 
-### スケール前提: `CONTAINER_SCALE=1`
+### スケール前提: `scale: 1`
 
-**このパターンは scale=1（1 プロジェクト = 1 work ボリューム）を前提としています。** devbase の既定は `CONTAINER_SCALE=2` なので、プロジェクトの `env` に `CONTAINER_SCALE=1` を明示してください。
+**このパターンは scale=1（1 プロジェクト = 1 work ボリューム）を前提としています。** devbase の既定は `2` なので、プロジェクトの [`project.yml`](../user/project-yml.md) に `scale: 1` を明示してください。
 
 現行実装では、scale>1 にすると「全コンテナが同一のソースツリーを共有する」という本パターンの前提が次の 2 点で崩れます。
 
@@ -78,7 +78,7 @@ volumes:
 - **`DEVBASE_WORK_VOLUME` で名前を分ける。** scale 生成は dev サービスの `/work` を `devbase_work_<index>`（scale=1 なら常に `devbase_work_1`）へ無条件に差し替えます（`compose.yml` に `/work` マウントを書いていなくても追加されます）。`DEVBASE_WORK_VOLUME` が効くのは app / nginx など非 dev サービスだけなので、既定名以外を指定すると dev だけが別ボリュームを見る分裂状態になります。
 - **プロジェクトディレクトリごと複製する。** work ボリュームは `COMPOSE_PROJECT_NAME` の接頭辞が付かない[グローバルな external ボリューム](#クリーンに作り直す再-populate)なので、複製先も同じ `devbase_work_1` を共有します。分離になりません。
 
-同一リポジトリを同時に複数環境で動かす必要がある場合は、Docker ホスト（`docker context`）そのものを分けてください。なお **別リポジトリ**の repo 連携プロジェクト同士は、populate 先が `/work/<GIT_REPO>` とサブディレクトリで分かれるため、同じ work ボリュームを共有したまま共存できます。
+同一リポジトリを同時に複数環境で動かす必要がある場合は、Docker ホスト（`docker context`）そのものを分けてください。なお **別リポジトリ**の repo 連携プロジェクト同士は、populate 先が `/work/<リポジトリ名>` とサブディレクトリで分かれるため、同じ work ボリュームを共有したまま共存できます。
 
 ---
 
@@ -90,8 +90,8 @@ volumes:
 |---|------|------|
 | ① | `repo/` の clone / pull | 無ければ `git clone`、あれば `git pull --ff-only`（app ビルドコンテキストの最新化） |
 | ② | `.env` の取得 | S3 等から取得してホスト `./.env` に配置（`docker compose` の変数展開前に必要） |
-| ③ | work ボリュームへ populate | `repo/` の内容を `/work/<GIT_REPO>` へコピー |
-| ④ | `.env` を work ボリュームへ配置 | Laravel 等のランタイムが `/work/<GIT_REPO>/.env` を参照するため |
+| ③ | work ボリュームへ populate | `repo/` の内容を `/work/<リポジトリ名>` へコピー |
+| ④ | `.env` を work ボリュームへ配置 | Laravel 等のランタイムが `/work/<リポジトリ名>/.env` を参照するため |
 
 ② を `deploy`（`up` 後フック）ではなく `pre-up` で行うのは、`compose.yml` の `MYSQL_DATABASE: ${DB_DATABASE:-...}` のような変数展開が `docker compose` パース時（＝ MySQL コンテナ初回起動前）に `.env` を要求するためです。`deploy` 段階では間に合わず、DB がデフォルト名で初期化されてしまいます。
 
@@ -101,7 +101,7 @@ volumes:
 
 **このパターンの肝は「初回だけ populate し、2 回目以降はコンテナ側に触れない」ことです。**
 
-`pre-up` は work ボリューム上に `/work/<GIT_REPO>/.git` が存在するかどうかで populate 済みを判定し、済みの場合は ②③④ をスキップします。
+`pre-up` は work ボリューム上に `/work/<リポジトリ名>/.git` が存在するかどうかで populate 済みを判定し、済みの場合は ②③④ をスキップします。
 
 | # | 処理 | 未populate（初回） | populate 済み（2回目以降） |
 |---|------|:---:|:---:|
@@ -130,20 +130,20 @@ populate 済み以降、更新経路は次のように分かれます。
 | 対象 | 場所 | 更新方法 |
 |------|------|---------|
 | ビルドコンテキスト | ホスト `./repo` | `pre-up` が毎回 `git pull`（自動） |
-| 実行時ソース | work ボリューム `/work/<GIT_REPO>` | **コンテナ内で手動 `git pull`** |
-| 実行時 `.env` | work ボリューム `/work/<GIT_REPO>/.env` | コンテナ内で手動編集 |
+| 実行時ソース | work ボリューム `/work/<リポジトリ名>` | **コンテナ内で手動 `git pull`** |
+| 実行時 `.env` | work ボリューム `/work/<リポジトリ名>/.env` | コンテナ内で手動編集 |
 
 ```bash
 # 実行時ソースの更新（dev コンテナ内）
-cd /work/<GIT_REPO>
+cd /work/<リポジトリ名>
 git pull origin main
 ```
 
 ### クリーンに作り直す（再 populate）
 
-`.env` やソースを S3 / `repo/` の内容からやり直したい場合は、populate 済み判定に使われる `/work/<GIT_REPO>` を消して、次回 `up` で populate を再実行させます。
+`.env` やソースを S3 / `repo/` の内容からやり直したい場合は、populate 済み判定に使われる `/work/<リポジトリ名>` を消して、次回 `up` で populate を再実行させます。
 
-> **Warning:** work ボリューム（既定 `devbase_work_1`）は `COMPOSE_PROJECT_NAME` の接頭辞が付かない **グローバルな external ボリューム**で、同じインスタンス index を使う **すべての devbase プロジェクトが共有**します。`docker volume rm` でボリュームごと消すと、停止中の別プロジェクトのソースや生成物まで巻き添えで失われます。プロジェクトの分離単位はボリュームではなく `/work/<GIT_REPO>` サブディレクトリなので、**通常はサブディレクトリだけを削除**してください。
+> **Warning:** work ボリューム（既定 `devbase_work_1`）は `COMPOSE_PROJECT_NAME` の接頭辞が付かない **グローバルな external ボリューム**で、同じインスタンス index を使う **すべての devbase プロジェクトが共有**します。`docker volume rm` でボリュームごと消すと、停止中の別プロジェクトのソースや生成物まで巻き添えで失われます。プロジェクトの分離単位はボリュームではなく `/work/<リポジトリ名>` サブディレクトリなので、**通常はサブディレクトリだけを削除**してください。
 
 **推奨: このプロジェクトのサブディレクトリだけを削除する**
 
@@ -153,8 +153,8 @@ devbase down
 # 何が入っているか（＝他プロジェクトが同居していないか）を確認
 docker run --rm -v devbase_work_1:/work alpine ls -la /work
 
-# このプロジェクトのソースだけを削除（<GIT_REPO> は env の値）
-docker run --rm -v devbase_work_1:/work alpine rm -rf /work/<GIT_REPO>
+# このプロジェクトのソースだけを削除（<リポジトリ名> は project.yml の repos[].dir）
+docker run --rm -v devbase_work_1:/work alpine rm -rf /work/<リポジトリ名>
 
 devbase up                        # pre-up が ②③④ を再実行
 ```
@@ -191,12 +191,12 @@ devbase up
 
 ## 7. チェックリスト（新規に repo 連携プロジェクトを作るとき）
 
-- [ ] `env` に `GIT_USER` / `GIT_REPO` を定義した
-- [ ] `env` に `CONTAINER_SCALE=1` を明記した（既定は `2`。[スケール前提](#スケール前提-container_scale1) を参照）
+- [ ] `project.yml` に `repos`（`owner` / `repo`）を定義した
+- [ ] `project.yml` に `scale: 1` を明記した（既定は `2`。[スケール前提](#スケール前提-scale-1) を参照）
 - [ ] `compose.yml` で work ボリュームを `external: true` + `name: ${DEVBASE_WORK_VOLUME:-devbase_work_${DEVBASE_INSTANCE_INDEX:-1}}` で宣言した
 - [ ] app サービスの `build.context` をホスト `./repo` にした
 - [ ] `pre-up` で ①clone/pull → ②`.env`取得 → ③populate → ④`.env`配置 を実装した
-- [ ] `pre-up` が `/work/<GIT_REPO>/.git` の有無で populate 済みを判定し、②③④ をスキップする
+- [ ] `pre-up` が `/work/<リポジトリ名>/.git` の有無で populate 済みを判定し、②③④ をスキップする
 - [ ] populate 時の owner を `1000:1000`（コンテナ内ユーザー）に設定した
 - [ ] `storage/` / `vendor/` / `node_modules/` 等、初回のみ生成され上書きしたくないパスの扱いを決めた
 - [ ] README にソース・`.env` の更新運用（手動 pull / 再 populate）を記載した

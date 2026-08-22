@@ -71,10 +71,9 @@ flowchart TB
         G1["共通APIキー"]
         G2["共有設定値"]
     end
-    subgraph level2["レベル2: プロジェクト設定（env）"]
-        P1["GIT_USER / GIT_REPO"]
-        P2["WORK_DIR"]
-        P3["CONTAINER_SCALE"]
+    subgraph level2["レベル2: プロジェクト環境変数（env）"]
+        P1["ENABLE_SSH など"]
+        P2["アプリが読む変数"]
     end
     subgraph level3["レベル3: プロジェクト機密（.env）"]
         S1["プロジェクト固有のAPIキー"]
@@ -90,7 +89,7 @@ flowchart TB
 | レベル | ファイル | Git管理 | 用途 | 例 |
 |--------|---------|---------|------|-----|
 | 1 | `${DEVBASE_ROOT}/.env` | No | 全プロジェクト共通の設定 | 共通APIキー |
-| 2 | `env` | Yes | プロジェクト固有の設定 | `GIT_REPO`, `CONTAINER_SCALE` |
+| 2 | `env` | Yes | コンテナへ渡すプロジェクト固有の環境変数 | `ENABLE_SSH` |
 | 3 | `.env` | No | プロジェクト固有の機密 | DB接続文字列、秘密鍵 |
 
 ---
@@ -204,9 +203,9 @@ ports:
 
 例: `CONTAINER_INDEX=1` の場合は `13000:3000`、`CONTAINER_INDEX=2` の場合は `23000:3000`
 
-### 5.3 CONTAINER_SCALE の設定
+### 5.3 コンテナ数（scale）の設定
 
-`env` ファイルで `CONTAINER_SCALE` を設定すると、`devbase up` 実行時に `.docker-compose.scale.yml` が自動生成され、指定された数のコンテナが起動します。
+`project.yml` の `scale` を設定すると、`devbase up` 実行時に `.docker-compose.scale.yml` が自動生成され、指定された数のコンテナが起動します（既定: 2）。詳細は [project.yml リファレンス](../user/project-yml.md) を参照してください。
 
 ---
 
@@ -241,14 +240,17 @@ networks:
     external: true
 ```
 
-対応する `env` ファイル:
+対応する `project.yml`:
 
-```bash
-GIT_USER=your-org
-GIT_REPO=my-webapp
-WORK_DIR=/work/$GIT_REPO
-CONTAINER_SCALE=1
+```yaml
+version: 1
+scale: 1
+repos:
+  - owner: your-org
+    repo: my-webapp
 ```
+
+`env` にはコンテナへ渡す環境変数だけを書きます（無くてもファイル自体は残します。`env_file` が参照するため）。
 
 ### 6.2 データベースを含む構成
 

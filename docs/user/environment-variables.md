@@ -34,13 +34,18 @@ graph TD
 
 **プロジェクト設定 `env`（`projects/*/env`）**
 
-プロジェクト固有の設定値を格納します。Git 管理対象のため、機密情報は含めないでください。
+コンテナへ渡すプロジェクト固有の環境変数を格納します。Git 管理対象のため、機密情報は含めないでください。
 
 ```bash
 # env ファイルの例
-REPO_NAME=my-project
-CONTAINER_SCALE=2
+ENABLE_SSH=true
 ```
+
+devbase 自身の設定（どのリポジトリを clone するか、コンテナ数、エディタの自動オープン）は
+環境変数ではなく [`projects/*/project.yml`](project-yml.md) に書きます。`env` に
+`GIT_USER` / `GIT_REPO` / `WORK_DIR` / `CONTAINER_SCALE` を書いても効果はありません。
+
+`compose.yml` が `env_file: - env` で参照するため、中身が無くてもファイル自体は残してください。
 
 **プロジェクト機密 `.env`（`projects/*/.env`）**
 
@@ -140,15 +145,20 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 
 ## `devbase up` 後のエディタ自動オープン
 
-`devbase up` 完了後、dev コンテナへ接続した VS Code を自動で開けます（VS Code の「Attach to Running Container」を CLI から起動）。既定では `/work/$GIT_REPO` フォルダを開きます（`--folder-uri`）。`DEVBASE_WORKSPACE` を指定するとフォルダの代わりに `*.code-workspace` ワークスペースファイルを開きます（`--file-uri`）。
+`devbase up` 完了後、dev コンテナへ接続した VS Code を自動で開けます（VS Code の「Attach to Running Container」を CLI から起動）。
 
-これらは `devbase env init` の収集対象外で、プロジェクトの `env` か `$DEVBASE_ROOT/.env` に手書きする devbase 動作設定です。
+開く対象は [`project.yml`](project-yml.md) から決まります。
+
+- リポジトリが 1 件: primary リポジトリのフォルダ（`--folder-uri`）
+- リポジトリが 2 件以上: 全リポジトリを含む multi-root ワークスペース `/work/<プロジェクト名>.code-workspace`（`--file-uri`）
+
+自動オープンの有無は `project.yml` の `open_editor` が最優先で、未指定なら以下の env に従います。これらは `devbase env init` の収集対象外で、`$DEVBASE_ROOT/.env` かプロジェクトの `env` に手書きする devbase 動作設定です。
 
 | キー | 説明 |
 |------|------|
-| `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く（既定: OFF） |
+| `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く（既定: OFF）。`project.yml` の `open_editor` が指定されていればそちらが優先 |
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
-| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。指定時はフォルダではなくワークスペースを開く。未設定なら従来どおり `/work/$GIT_REPO` フォルダ。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
+| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。複数リポジトリ構成では devbase が自動生成するため通常は不要。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
 | `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「跨ホスト」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |

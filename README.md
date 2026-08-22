@@ -144,6 +144,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 | [はじめに](docs/user/getting-started.md) | 前提条件、初回セットアップ、日常ワークフロー |
 | [CLIリファレンス](docs/user/cli-reference/README.md) | 全コマンドの構文・オプション・使用例（コマンドグループ別） |
 | [プラグインレジストリ](docs/user/plugin-registries.md) | 公開・社内レジストリの一覧と追加方法 |
+| [project.yml リファレンス](docs/user/project-yml.md) | プロジェクト設定（複数リポジトリ・scale・エディタ） |
 | [環境変数ガイド](docs/user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [環境変数の export/import ガイド](docs/user/env-export-import.md) | バンドル形式・age 暗号化・S3 連携・merge/replace の運用 |
 | [コンテナ操作ガイド](docs/user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
