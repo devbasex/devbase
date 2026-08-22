@@ -56,7 +56,7 @@ repos:
 | `defaults` | いいえ | -- | `repos` の各要素へ継承させる既定値（`host` / `owner` / `branch` / `init`） |
 | `scale` | いいえ | `2` | 起動するコンテナ数。`devbase project scale N` はこの値を書き換える |
 | `open_editor` | いいえ | -- | `devbase up` 後に VS Code を自動で開くか。未指定なら env `DEVBASE_OPEN_EDITOR` に従う |
-| `work_dir` | いいえ | primary の `/work/<dir>` | エディタが開く既定フォルダを明示指定する |
+| `work_dir` | いいえ | primary の `/work/<dir>` | エディタが開く既定フォルダを明示指定する。**効くのはリポジトリが 1 件のときだけ**で、2 件以上のときは自動生成の multi-root ワークスペースが開かれる |
 
 ### `repos[]`
 
@@ -94,7 +94,8 @@ clone URL は `https://<host>/<owner>/<repo>.git` で組み立てられます。
 - `dir` の重複（同じ `/work/<dir>` を 2 つのリポジトリが奪い合う）
 - `primary: true` が 2 件以上
 - 未知のキー（`brunch: main` のような打ち間違いが「書いたのに効かない」形で表れないため）
-- 値に空白・制御文字が混ざっている、`dir` が `/work` 直下から外れている
+- `repos[]` の `host` / `owner` / `repo` / `dir` / `branch` に空白・制御文字が混ざっている
+- `dir` が `/work` 直下から外れている（`../` や入れ子のパス、`.` / `..`）
 
 ## `env` との使い分け
 
