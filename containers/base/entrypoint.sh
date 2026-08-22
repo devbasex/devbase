@@ -2,6 +2,133 @@
 
 set -e
 
+# ===================================================================
+# PLAN32: 複数リポジトリの clone / workspace 生成
+# ===================================================================
+# ホスト側 (devbase up) が projects/<name>/project.yml を正規化し、clone プランを
+# base64 のレコード列 (DEVBASE_REPOS) としてコンテナへ渡す。ここでは 1 行ずつ読んで clone
+# するだけなので、コンテナイメージへ YAML/JSON パーサ依存を増やさずに済む。
+#
+# DEVBASE_REPOS         : base64 の行区切りレコード。1 行 = url / dir / branch / init を
+#                         US (0x1f) 区切りで並べたもの。branch は空可、init は 1/0。
+#                         行区切りは LF で末尾にも LF が付く (符号化側の契約:
+#                         lib/devbase/project/config.py の encode_repo_plan)
+# DEVBASE_PRIMARY_DIR   : 起動後に cd する /work 配下のディレクトリ名
+# DEVBASE_WORKSPACE     : 書き出す *.code-workspace の絶対パス (複数 repo 時)
+# DEVBASE_WORKSPACE_B64 : その中身 (base64 JSON)
+#
+# 関数定義だけを読み込みたいテストからは
+# `DEVBASE_ENTRYPOINT_LIB_ONLY=1 . entrypoint.sh` で source する。
+
+# clone プランを復号して 1 行 1 repo で出力する (未設定なら何も出さない)。
+devbase_repo_plan_lines() {
+    [ -n "${DEVBASE_REPOS:-}" ] || return 0
+    printf '%s' "$DEVBASE_REPOS" | base64 -d
+}
+
+# clone プランの各リポジトリを <work_root>/<dir> へ clone する。
+#
+# 個々の失敗 (clone / checkout / init.sh) は warning に留めて次の repo へ進む。
+# 1 つ落ちただけでコンテナが起動しないと、他リポジトリでの作業まで止まるため。
+devbase_clone_repos() {
+    local work_root="${1:-/work}"
+    local plan url dir branch init target cloned
+
+    if ! plan="$(devbase_repo_plan_lines 2>/dev/null)"; then
+        echo "Warning: Failed to decode DEVBASE_REPOS (skipping repository setup)"
+        return 0
+    fi
+    if [ -z "$plan" ]; then
+        echo "No repositories configured (DEVBASE_REPOS is empty)"
+        return 0
+    fi
+
+    mkdir -p "$work_root"
+    local extra index=0
+    # フィールド区切りは US (0x1f)。タブだと IFS の空白扱いで連続する区切りが 1 つに
+    # 畳まれ、branch 未指定 (空フィールド) の行で init の値がずれる。
+    while IFS=$'\x1f' read -r url dir branch init extra; do
+        # 末尾の空行 (符号化側が付ける末尾改行) は読み飛ばす
+        [ -n "$url$dir$branch$init$extra" ] || continue
+        index=$((index + 1))
+        if [ -z "$url" ] || [ -z "$dir" ] || [ -n "$extra" ] ||
+           { [ "$init" != "1" ] && [ "$init" != "0" ]; }; then
+            echo "Warning: Ignoring malformed clone plan entry (line $index)"
+            continue
+        fi
+        target="$work_root/$dir"
+
+        cloned=0
+        if [ -d "$target/.git" ]; then
+            echo "Repository already exists: $dir"
+        else
+            echo "Cloning repository: $url -> $target"
+            if ! git clone "$url" "$target"; then
+                echo "Warning: Failed to clone repository: $url"
+                continue
+            fi
+            cloned=1
+        fi
+
+        # checkout は clone 直後だけ。既存 clone に対して毎回実行すると、コンテナ内で
+        # 作業ブランチへ切り替えたユーザが再起動のたびに引き戻されてしまう。
+        # 失敗したら意図しない branch で init.sh を走らせないよう この repo は打ち切る。
+        if [ "$cloned" = "1" ] && [ -n "$branch" ]; then
+            if ! git -C "$target" checkout "$branch"; then
+                echo "Warning: Failed to checkout branch '$branch' in $dir (skipping)"
+                continue
+            fi
+        fi
+
+        if [ "$init" = "1" ] && [ -f "$target/init.sh" ]; then
+            echo "Running init.sh in $dir"
+            (cd "$target" && ./init.sh) || echo "Warning: init.sh failed in $dir"
+        fi
+    done <<EOF
+$plan
+EOF
+}
+
+# 複数 repo をまとめて開くための *.code-workspace を書き出す。
+#
+# 中身はホスト側で組み立てて base64 で渡ってくるので、ここでは復号して置くだけ。
+# JSON の組み立て (エスケープ) をシェルでやらない分、壊れにくい。
+devbase_write_workspace() {
+    [ -n "${DEVBASE_WORKSPACE:-}" ] || return 0
+    [ -n "${DEVBASE_WORKSPACE_B64:-}" ] || return 0
+
+    local dest="$DEVBASE_WORKSPACE"
+    mkdir -p "$(dirname "$dest")"
+    if printf '%s' "$DEVBASE_WORKSPACE_B64" | base64 -d > "$dest.tmp" 2>/dev/null; then
+        mv "$dest.tmp" "$dest"
+        echo "Workspace file written: $dest"
+    else
+        rm -f "$dest.tmp"
+        echo "Warning: Failed to write workspace file: $dest"
+    fi
+}
+
+# primary リポジトリのディレクトリへ移動する (ログイン直後の作業場所)。
+devbase_enter_primary_dir() {
+    local work_root="${1:-/work}"
+    local target="$work_root/${DEVBASE_PRIMARY_DIR:-}"
+
+    if [ -z "${DEVBASE_PRIMARY_DIR:-}" ]; then
+        return 0
+    fi
+    if [ -d "$target" ]; then
+        cd "$target"
+        echo "Current directory: $(pwd)"
+    else
+        echo "Warning: Primary directory does not exist: $target"
+    fi
+}
+
+# テストは関数定義だけを使う (source 時のみ有効な return で以降を読み飛ばす)。
+if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 # Setup authentication credentials from environment variables
 USERNAME="${USERNAME:-ubuntu}"
 
@@ -261,32 +388,12 @@ done
 echo "AI agent settings symlinks setup completed"
 # ========================================
 
-# Git operations (optional, don't fail if they error)
-if [ -n "$GIT_USER" ] && [ -n "$GIT_REPO" ]; then
-    # Clone repository only if it doesn't exist
-    GIT_HOST="${GIT_HOST:-github.com}"
-    if [ ! -d "$GIT_REPO" ]; then
-        echo "Cloning repository: $GIT_HOST/$GIT_USER/$GIT_REPO"
-        git clone "https://$GIT_HOST/$GIT_USER/$GIT_REPO.git" || echo "Warning: Failed to clone repository"
-    else
-        echo "Repository already exists: $GIT_REPO"
-    fi
-    # Run init.sh from cloned repository root if it exists
-    [ -f "$GIT_REPO/init.sh" ] && (cd "$GIT_REPO" && ./init.sh) || true
-fi
-
-# Move to repository directory if it exists
-echo "Current directory before cd: $(pwd)"
-if [ -n "$GIT_REPO" ]; then
-    echo "GIT_REPO=$GIT_REPO"
-    if [ -d "$GIT_REPO" ]; then
-        echo "Directory $GIT_REPO exists, changing to it"
-        cd "$GIT_REPO"
-        echo "Current directory after cd: $(pwd)"
-    else
-        echo "Directory $GIT_REPO does not exist in $(pwd)"
-    fi
-fi
+# Repository setup (PLAN32: 1 project = 複数リポジトリ)
+# 個々の失敗はコンテナ起動を止めない (関数内で warning 扱い)。
+DEVBASE_WORK_ROOT="${DEVBASE_WORK_ROOT:-/work}"
+devbase_clone_repos "$DEVBASE_WORK_ROOT"
+devbase_write_workspace
+devbase_enter_primary_dir "$DEVBASE_WORK_ROOT"
 
 # Signal that entrypoint setup is complete
 touch /tmp/entrypoint-ready
