@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from devbase.editor import opener
+from devbase.project.config import parse_project_config
 
 
 @dataclass
@@ -294,6 +295,23 @@ def test_detect_context_ipc_alive_override():
 def test_is_open_enabled(value, expected):
     env = {} if value is None else {"DEVBASE_OPEN_EDITOR": value}
     assert opener.is_open_enabled(env) is expected
+
+
+@pytest.mark.parametrize("open_editor,env_value,expected", [
+    (True, "0", True),      # project.yml が env の既定を上書きする
+    (False, "1", False),
+    (None, "1", True),      # project.yml 未指定なら env (グローバル既定) に従う
+    (None, None, False),
+])
+def test_is_open_enabled_prefers_the_project_config(open_editor, env_value, expected):
+    config = parse_project_config({
+        "version": 1,
+        "repos": [{"owner": "volareinc", "repo": "carmo"}],
+        **({} if open_editor is None else {"open_editor": open_editor}),
+    }, source="project.yml")
+    env = {} if env_value is None else {"DEVBASE_OPEN_EDITOR": env_value}
+
+    assert opener.is_open_enabled(env, config=config) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -602,18 +620,6 @@ def test_parse_compose_ps_name_empty_and_invalid():
     assert opener._parse_compose_ps_name("[]") is None
 
 
-def test_resolve_workdir_prefers_work_dir_env():
-    assert opener.resolve_workdir({"WORK_DIR": "/work/x"}, "y") == "/work/x"
-
-
-def test_resolve_workdir_from_git_repo():
-    assert opener.resolve_workdir({"GIT_REPO": "myrepo"}, None) == "/work/myrepo"
-
-
-def test_resolve_workdir_fallback_project_name():
-    assert opener.resolve_workdir({}, "proj") == "/work/proj"
-
-
 def test_resolve_workspace_none_when_unset():
     assert opener.resolve_workspace({}) is None
 
@@ -626,6 +632,40 @@ def test_resolve_workspace_returns_path():
     env = {"DEVBASE_WORKSPACE": "/home/ubuntu/share/work/uttarov2-doc.workspace"}
     assert opener.resolve_workspace(env) == \
         "/home/ubuntu/share/work/uttarov2-doc.workspace"
+
+
+def test_open_editor_opens_the_given_workspace_as_a_file(monkeypatch, tmp_path):
+    """複数 repo 構成では workspace ファイルを --file-uri で開く"""
+    calls = []
+    monkeypatch.setattr(opener, "resolve_editor_cmd", lambda env=None: ["code"])
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "carmo-dev-1")
+
+    action = opener.open_editor(
+        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        workspace="/work/carmo.code-workspace",
+        environ={"TERM": "xterm"}, isatty=True, system="Linux",
+        launcher=lambda cmd, env: calls.append(cmd),
+    )
+
+    assert action == "launch"
+    assert calls[0][1] == "--file-uri"
+    assert "carmo.code-workspace" in calls[0][2]
+
+
+def test_open_editor_opens_the_folder_without_a_workspace(monkeypatch):
+    calls = []
+    monkeypatch.setattr(opener, "resolve_editor_cmd", lambda env=None: ["code"])
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "carmo-dev-1")
+
+    opener.open_editor(
+        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        environ={"TERM": "xterm"}, isatty=True, system="Linux",
+        launcher=lambda cmd, env: calls.append(cmd),
+    )
+
+    assert calls[0][1] == "--folder-uri"
 
 
 # ---------------------------------------------------------------------------

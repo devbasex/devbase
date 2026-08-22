@@ -353,15 +353,25 @@ def test_lifecycle_propagates_open_args_to_cmd_up(monkeypatch):
     assert captured == {'open_editor': True, 'open_index': 2}
 
 
+def _project_config(*repos):
+    """_maybe_open_editor に渡すプロジェクト設定 (既定は単一 repo)。"""
+    from devbase.project.config import parse_project_config
+    return parse_project_config({
+        "version": 1,
+        "defaults": {"owner": "volareinc"},
+        "repos": [{"repo": r} for r in (repos or ("carmo",))],
+    }, source="project.yml")
+
+
 def test_maybe_open_editor_disabled_by_default(monkeypatch):
     """open_flag=None かつ env 未設定なら open_editor を呼ばない。"""
     from devbase.commands import container
     from devbase.editor import opener
-    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: False)
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None, config=None: False)
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', None, None, 1)
+    container._maybe_open_editor('carmo', None, None, 1, _project_config())
     assert called == []
 
 
@@ -369,12 +379,12 @@ def test_maybe_open_editor_flag_overrides_env(monkeypatch):
     """open_flag=True なら env が False でも開く。"""
     from devbase.commands import container
     from devbase.editor import opener
-    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: False)
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None, config=None: False)
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
-    container._maybe_open_editor('carmo', True, 1, 1)
+    container._maybe_open_editor('carmo', True, 1, 1, _project_config())
     assert len(called) == 1
     assert called[0]['project_name'] == 'carmo'
 
@@ -383,14 +393,14 @@ def test_maybe_open_editor_failure_does_not_raise(monkeypatch):
     """open_editor が例外でも _maybe_open_editor は伝播させない (up を倒さない)。"""
     from devbase.commands import container
     from devbase.editor import opener
-    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None, config=None: True)
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
 
     def boom(**kw):
         raise RuntimeError("x")
 
     monkeypatch.setattr(opener, 'open_editor', boom)
-    container._maybe_open_editor('carmo', None, None, 1)  # 例外が出なければ OK
+    container._maybe_open_editor('carmo', None, None, 1, _project_config())  # 例外が出なければ OK
 
 
 @pytest.mark.parametrize('bad_index', [0, -1, 3])
@@ -398,12 +408,12 @@ def test_maybe_open_editor_out_of_range_index_falls_back(monkeypatch, bad_index)
     """0・負数・scale 超過の index は既定 (1) へフォールバックする (scale=2)。"""
     from devbase.commands import container
     from devbase.editor import opener
-    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None, config=None: True)
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', True, bad_index, 2)
+    container._maybe_open_editor('carmo', True, bad_index, 2, _project_config())
     assert len(called) == 1
     assert called[0]['index'] == 1
 
@@ -412,12 +422,12 @@ def test_maybe_open_editor_valid_index_within_scale(monkeypatch):
     """範囲内 (1..scale) の index はそのまま使われる。"""
     from devbase.commands import container
     from devbase.editor import opener
-    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None, config=None: True)
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', True, 2, 3)
+    container._maybe_open_editor('carmo', True, 2, 3, _project_config())
     assert called[0]['index'] == 2
 
 
@@ -425,11 +435,11 @@ def test_maybe_open_editor_forwards_compose_file(monkeypatch):
     """compose_file 引数が open_editor まで伝播する (実コンテナ名問い合わせ用)。"""
     from devbase.commands import container
     from devbase.editor import opener
-    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None: True)
+    monkeypatch.setattr(opener, 'is_open_enabled', lambda environ=None, config=None: True)
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', True, 1, 1,
+    container._maybe_open_editor('carmo', True, 1, 1, _project_config(),
                                  compose_file='override.yml')
     assert called[0]['compose_file'] == 'override.yml'
