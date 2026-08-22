@@ -10,7 +10,7 @@ from devbase.plugin.registry import PluginRegistry
 try:
     from devbase import __version__
 except ImportError:
-    __version__ = "2.2.0"
+    __version__ = "3.0.0"
 
 logger = get_logger(__name__)
 

@@ -74,7 +74,7 @@ env/projects/<name>/.env
 ```yaml
 version: 1
 created_at: '2026-05-21T10:00:00+09:00'
-devbase_version: 2.2.0
+devbase_version: 3.0.0
 files:
   - path: env/global.env
     sha256: <64 文字 hex>

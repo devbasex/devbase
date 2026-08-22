@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-23
+
+プロジェクト設定を `project.yml` へ移行する破壊的変更を含みます。プラグイン側の
+プロジェクト定義も本バージョンに合わせた更新が必要です (`requires.devbase: ">=3.0.0"`)。
+
 ### Changed
 - **1 プロジェクト = 1 コンテナ = 複数リポジトリ**に対応しました。プロジェクトが開発対象と
   するリポジトリは `projects/<name>/project.yml` の `repos` 配列で指定し、すべてが同じ
@@ -223,5 +228,6 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/devbasex/devbase/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/devbasex/devbase/releases/tag/v2.2.0
