@@ -158,7 +158,7 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 |------|------|
 | `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く。`devbase env init` の対話既定は `1`（有効）なので、init 済みの環境では通常 ON。キー自体が未設定のときのみ OFF に倒れる。`project.yml` の `open_editor` が指定されていればそちらが優先 |
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
-| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。複数リポジトリ構成では devbase が自動生成するため通常は不要。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
+| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。**効くのはリポジトリ 1 件の構成だけ**です。2 件以上の構成では `devbase up` が自動生成した `/work/<プロジェクト名>.code-workspace` を直接開くため、この env を設定しても上書きできません。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
 | `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「跨ホスト」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |

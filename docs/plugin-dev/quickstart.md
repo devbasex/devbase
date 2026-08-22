@@ -121,7 +121,7 @@ repos:
     owner: another-org
     dir: infra            # /work 配下の clone 先名（既定: repo 名）
     branch: develop       # clone 後にチェックアウトするブランチ
-    init: false           # clone 後の ./init.sh を実行しない
+    init: false           # 起動のたびの ./init.sh 実行を無効化する
 ```
 
 主なキーは以下のとおりです。全項目は [project.yml リファレンス](../user/project-yml.md) を参照してください。
@@ -131,7 +131,7 @@ repos:
 | `version` | スキーマ版。現在は `1` |
 | `repos[].owner` / `repos[].repo` | Git ホストのユーザー名（Organization 名）とリポジトリ名 |
 | `repos[].host` | Git ホスト名（既定: `github.com`）。GitLab なら `gitlab.com` |
-| `repos[].dir` / `branch` / `init` / `primary` | clone 先ディレクトリ名 / チェックアウトするブランチ / `init.sh` の実行有無 / 既定の作業リポジトリ |
+| `repos[].dir` / `branch` / `init` / `primary` | clone 先ディレクトリ名 / チェックアウトするブランチ（clone 直後のみ） / `init.sh` の実行有無（起動のたびに実行。冪等に書くこと） / 既定の作業リポジトリ |
 | `scale` | 起動するコンテナ数（既定: 2） |
 | `open_editor` | `devbase up` 後に VS Code を自動で開くか |
 

@@ -183,7 +183,7 @@ AI CLI ツールの設定や認証情報は、コンテナを再生成しても�
 
 - `/persistent/ai` は全コンテナ共通の `devbase_home_ubuntu` ボリュームなので、**どのコンテナからも同じ実体**を参照します（例: `~/share` は全コンテナで共有）。
 - symlink **対象外**のホーム配下ファイル（シェル履歴など）はコンテナ層に置かれ、再生成で失われます。永続化したいものは `/persistent/ai` 配下（= 上記 symlink 先）か `/work` に置いてください。
-- `share` 配下に置いた VS Code ワークスペースファイルは `DEVBASE_WORKSPACE` で開けます（[環境変数](environment-variables.md) 参照）。
+- `share` 配下に置いた VS Code ワークスペースファイルは `DEVBASE_WORKSPACE` で開けます（リポジトリ 1 件の構成のみ。[環境変数](environment-variables.md) 参照）。
 
 > **Note:** symlink 対象は entrypoint にビルド時 `COPY` で焼き込まれます。エントリを増減した場合は
 > イメージの再ビルドが必要です（`devbase up` 単体では反映されない場合があります。[CLI リファレンス: project グループ](cli-reference/02-project.md#devbase-project-up) の `devbase project up` の注記参照）。
