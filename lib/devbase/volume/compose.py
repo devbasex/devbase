@@ -259,9 +259,40 @@ class _SecretNames:
         return [name for name in self.all if name in allowed]
 
 
+def _apply_dev_environment(service: dict, extra: Mapping[str, str]) -> None:
+    """dev サービスへ devbase 由来の環境変数を載せる (PLAN32: clone プラン等)。
+
+    ``environment`` は辞書形と ``KEY=VALUE`` のリスト形の両方が使われるため、
+    元の形を保ったまま追記する。同名キーは devbase 側の値で上書きする
+    (clone プランはプロジェクト設定から毎回生成される正のため)。
+    """
+    if not extra:
+        return
+
+    existing = service.get('environment')
+    if isinstance(existing, dict):
+        existing.update(extra)
+        return
+    if isinstance(existing, list):
+        names = set(extra)
+        kept = [entry for entry in existing
+                if not (isinstance(entry, str)
+                        and entry.split('=', 1)[0] in names)]
+        service['environment'] = kept + [f"{k}={v}" for k, v in extra.items()]
+        return
+    if existing is None:
+        service['environment'] = dict(extra)
+        return
+
+    logger.warning(
+        "environment の形式 (%s) を解釈できないため、devbase の環境変数を "
+        "追記できませんでした", type(existing).__name__)
+
+
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int,
     secret_env_names: Sequence[str] = (),
+    dev_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build the service definition for one scaled dev instance (dev-<index>)."""
     service = copy.deepcopy(dev_service)
@@ -272,6 +303,9 @@ def _build_dev_instance(
     service.setdefault('init', True)
 
     _mask_secret_environment(service, secret_env_names)
+    # 機密の伏せ字化のあとに載せる。devbase 由来の値 (clone プラン等) は機密では
+    # なく、そのままコンテナへ渡す必要があるため。
+    _apply_dev_environment(service, dev_environment or {})
 
     # Update volume mounts for /persistent/ai and /work
     ai_volume = get_ai_volume_for_index(index)
@@ -287,6 +321,7 @@ def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
     secret_names: Optional[_SecretNames] = None,
     secret_services: Optional[Mapping[str, Set[str]]] = None,
+    dev_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances.
 
@@ -328,6 +363,7 @@ def _build_scaled_services(
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
             dev_service, dev_service_name, i, secret_names.all,
+            dev_environment=dev_environment,
         )
     return scaled_services
 
@@ -436,6 +472,7 @@ def generate_scaled_compose(
     secret_env_names: Sequence[str] = (),
     global_env_names: Optional[Sequence[str]] = None,
     project_env_names: Optional[Sequence[str]] = None,
+    dev_environment: Optional[Mapping[str, str]] = None,
 ) -> Path:
     """
     Generate scaled docker-compose file with per-instance volumes
@@ -447,6 +484,8 @@ def generate_scaled_compose(
         secret_env_names: コンテナへ列挙する機密の変数名 (全件)
         global_env_names: そのうち共通機密 (``$DEVBASE_ROOT/.env``) 由来のキー
         project_env_names: そのうちプロジェクト機密由来のキー
+        dev_environment: dev サービスへ載せる devbase 由来の環境変数
+            (PLAN32 の clone プラン ``DEVBASE_REPOS`` 等。機密ではない)
 
     非 dev サービスへは、そのサービスが元々 ``env_file`` で参照していた由来の
     キーだけを列挙する。由来の内訳が渡されない場合 (両方 ``None``) は全キーを
@@ -481,6 +520,7 @@ def generate_scaled_compose(
             services, dev_service, dev_service_name, scale,
             secret_names=secret_names,
             secret_services=secret_services,
+            dev_environment=dev_environment,
         ),
         'volumes': _build_volumes_section(config, scale),
         'networks': _build_networks_section(config),

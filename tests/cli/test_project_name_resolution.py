@@ -267,26 +267,26 @@ def test_load_project_env_diverges_from_shell_source(tmp_path, monkeypatch):
 def test_load_project_env_expands_variable_references(tmp_path, monkeypatch):
     """``$VAR`` / ``${VAR}`` を shell ``source`` 同様に展開する回帰テスト。
 
-    実 env の ``WORK_DIR=/work/$GIT_REPO`` (同一ファイル内で先に定義した変数を参照)
+    env は ``APP_ROOT=/srv/$APP_NAME`` のように同一ファイル内で先に定義した変数を参照
     が TUI (``list``) 経路で未展開のまま VS Code に渡る不具合の回帰防止。
     単一引用符値はリテラル扱いで展開しないことも併せて pin する。
     """
-    for k in ("GIT_REPO", "WORK_DIR", "WORK_DIR_BRACE", "SINGLE_Q"):
+    for k in ("APP_NAME", "APP_ROOT", "APP_ROOT_BRACE", "SINGLE_Q"):
         monkeypatch.delenv(k, raising=False)
     env_path = tmp_path / "env"
     env_path.write_text(
-        "GIT_REPO=adminer\n"
-        "WORK_DIR=/work/$GIT_REPO\n"        # 行順に解決済みの GIT_REPO を展開
-        "WORK_DIR_BRACE=/work/${GIT_REPO}\n"  # ${VAR} 形式も展開
-        "SINGLE_Q='/work/$GIT_REPO'\n"      # 単一引用符はリテラル
+        "APP_NAME=adminer\n"
+        "APP_ROOT=/srv/$APP_NAME\n"          # 行順に解決済みの APP_NAME を展開
+        "APP_ROOT_BRACE=/srv/${APP_NAME}\n"  # ${VAR} 形式も展開
+        "SINGLE_Q='/srv/$APP_NAME'\n"        # 単一引用符はリテラル
     )
 
     container._load_project_env(env_path)
 
-    assert os.environ["GIT_REPO"] == "adminer"
-    assert os.environ["WORK_DIR"] == "/work/adminer"
-    assert os.environ["WORK_DIR_BRACE"] == "/work/adminer"
-    assert os.environ["SINGLE_Q"] == "/work/$GIT_REPO"
+    assert os.environ["APP_NAME"] == "adminer"
+    assert os.environ["APP_ROOT"] == "/srv/adminer"
+    assert os.environ["APP_ROOT_BRACE"] == "/srv/adminer"
+    assert os.environ["SINGLE_Q"] == "/srv/$APP_NAME"
 
 
 def test_load_project_env_escaped_dollar_and_undefined(tmp_path, monkeypatch):

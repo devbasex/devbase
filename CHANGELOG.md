@@ -4,7 +4,46 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-23
+
+プロジェクト設定を `project.yml` へ移行する破壊的変更を含みます。プラグイン側の
+プロジェクト定義も本バージョンに合わせた更新が必要です (`requires.devbase: ">=3.0.0"`)。
+
+### Changed
+- **1 プロジェクト = 1 コンテナ = 複数リポジトリ**に対応しました。プロジェクトが開発対象と
+  するリポジトリは `projects/<name>/project.yml` の `repos` 配列で指定し、すべてが同じ
+  コンテナの `/work` 配下へ clone されます。リポジトリごとに Git ホスト・オーナー・
+  ブランチ・clone 先ディレクトリ名・`init.sh` の実行有無を指定できます。関連する複数
+  リポジトリ (本体・ドキュメント・インフラ等) を 1 つの開発環境で横断的に扱えます。
+  リポジトリが 2 件以上あるときは、全リポジトリを含む multi-root ワークスペース
+  `/work/<プロジェクト名>.code-workspace` を生成してエディタで開きます。
+  詳細は [project.yml リファレンス](docs/user/project-yml.md) を参照してください。
+- **プロジェクト設定を `env` から `project.yml` へ移しました (破壊的変更)。**
+  `GIT_USER` / `GIT_REPO` / `GIT_HOST` / `WORK_DIR` / `CONTAINER_SCALE` /
+  `DEVBASE_OPEN_EDITOR` は `project.yml` の `repos` / `work_dir` / `scale` /
+  `open_editor` に移行しました。`env` は「コンテナへ渡す環境変数」だけを持ちます。
+  配列を表現できない環境変数では複数リポジトリを書けないためです。
+  `project.yml` を持たないプロジェクトは `devbase up` が移行手順を案内して停止します
+  (旧形式へ暗黙にフォールバックすると、移行漏れを検出できないため)。
+  `devbase project scale N` の書き込み先も `project.yml` の `scale` になります。
+
+> **Note:** リポジトリの clone は `entrypoint.sh` で行われ、これはイメージに焼き込まれます。
+> 適用には `devbase build --no-cache` によるベースイメージの再ビルドが必要です。
+
 ### Added
+- **ライフサイクルフックへ `project.yml` の値を環境変数で渡す**ようにしました。`pre-up` /
+  `deploy` に `DEVBASE_PRIMARY_DIR` (primary の clone 先ディレクトリ名) /
+  `DEVBASE_PRIMARY_URL` (primary の clone URL) / `DEVBASE_WORK_DIR` (コンテナ内の既定の
+  作業ディレクトリ) / `DEVBASE_REPO_DIRS` (全リポジトリのディレクトリ名・宣言順の空白
+  区切り) が渡ります。フックはホスト側で動くため `env` を読み込めず、`GIT_REPO` /
+  `WORK_DIR` の `project.yml` 移行によって `source ./env` に依存していたフックが値を
+  取れなくなるためです。値は子プロセス限定で、親プロセスの環境は汚しません。
+  詳細は [フックへ渡る環境変数](docs/plugin-dev/quickstart.md#フックへ渡る環境変数)
+  を参照してください。
+- **`devbase project migrate-config`** を追加しました。旧 `env` 形式のプロジェクト定義を
+  `project.yml` へ機械的に変換します。`--dry-run` で変換結果を確認でき、既存の
+  `project.yml` は上書きしないため何度実行しても同じ状態に収束します。
+  変換対象は上記 6 キーのみで、`ENABLE_SSH` などそれ以外は `env` に残ります。
 - **tmux 内では `VSCODE_IPC_HOOK_CLI` が古くても VS Code を自動で開く**ようにしました。
   tmux サーバーはセッション作成時の環境変数を保持し続けますが、`update-environment` に
   登録した変数は attach のたびに更新されるため、**ペインのシェルは古い値・tmux の
@@ -198,5 +237,6 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/devbasex/devbase/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/devbasex/devbase/releases/tag/v2.2.0

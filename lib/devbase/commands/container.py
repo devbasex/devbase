@@ -25,7 +25,8 @@ from devbase.utils.docker import (
     wait_for_containers_ready,
     ensure_network
 )
-from devbase.utils.config import get_project_name, get_container_scale
+from devbase.utils.config import get_project_name
+from devbase.project import runtime as project_runtime
 
 logger = get_logger(__name__)
 
@@ -85,13 +86,19 @@ def _inject_secrets(*, required: bool):
         return _runtime.SecretEnv()
 
 
-def _generate_compose_for(scale: int, secrets) -> Path:
-    """機密の内訳を渡してスケール構成を生成する"""
+def _generate_compose_for(scale: int, secrets, dev_environment=None) -> Path:
+    """機密の内訳と devbase 由来の環境変数を渡してスケール構成を生成する。
+
+    ``dev_environment`` は ``project.yml`` から作った clone プラン等
+    (:func:`devbase.project.runtime.container_env`)。dev サービスへ載せることで、
+    entrypoint がコンテナ内で複数リポジトリを clone できる。
+    """
     return generate_scaled_compose(
         scale,
         secret_env_names=secrets.names,
         global_env_names=secrets.global_names,
         project_env_names=secrets.project_names,
+        dev_environment=dev_environment,
     )
 
 
@@ -139,11 +146,17 @@ def _compose_run(subcommand: str, *extra_args: str) -> int:
     return subprocess.run(cmd).returncode
 
 
-def _run_deploy_script_for_instances(deploy_script: Path, indices) -> None:
-    """デプロイスクリプトをスケールされた各インスタンスに対して実行する"""
+def _run_deploy_script_for_instances(deploy_script: Path, indices,
+                                     config=None) -> None:
+    """デプロイスクリプトをスケールされた各インスタンスに対して実行する。
+
+    ``config`` (``project.yml``) を渡すと、clone 先やリポジトリ URL をフックへ
+    環境変数で伝える (:func:`devbase.project.runtime.hook_env`)。
+    """
+    hook_vars = project_runtime.hook_env(config) if config is not None else {}
     for i in indices:
         logger.info("[Bonus] Running deploy script for instance %d...", i)
-        env = {**os.environ, 'DEVBASE_INSTANCE_INDEX': str(i)}
+        env = {**os.environ, **hook_vars, 'DEVBASE_INSTANCE_INDEX': str(i)}
         try:
             subprocess.run(['bash', str(deploy_script)], check=True, env=env)
             logger.info("Deploy script completed for instance %d", i)
@@ -151,11 +164,16 @@ def _run_deploy_script_for_instances(deploy_script: Path, indices) -> None:
             logger.warning("Deploy script failed for instance %d (exit code %d)", i, e.returncode)
 
 
-def _run_pre_up_hook() -> bool:
+def _run_pre_up_hook(config=None) -> bool:
     """`./pre-up` フックがあればコンテナ起動前に実行する。
 
     ビルドコンテキスト用のリポジトリ clone など、`docker compose up` より前に
     完了しておく必要のある準備処理をプロジェクト側で記述するためのフック。
+
+    ``config`` (``project.yml``) を渡すと、clone 先やリポジトリ URL をフックへ
+    環境変数で伝える (:func:`devbase.project.runtime.hook_env`)。フックは以前
+    ``source ./env`` で ``GIT_REPO`` / ``WORK_DIR`` を読んでいたが、これらは
+    ``project.yml`` へ移ったため devbase 側から明示的に渡す。
 
     Returns:
         True: フックが存在しなかった、または成功した
@@ -166,8 +184,10 @@ def _run_pre_up_hook() -> bool:
         return True
 
     logger.info("Running pre-up hook: %s", pre_up_script)
+    hook_vars = project_runtime.hook_env(config) if config is not None else {}
     try:
-        subprocess.run(['bash', str(pre_up_script)], check=True, env=os.environ.copy())
+        subprocess.run(['bash', str(pre_up_script)], check=True,
+                       env={**os.environ, **hook_vars})
         return True
     except subprocess.CalledProcessError as e:
         logger.error("pre-up hook failed (exit code %d)", e.returncode)
@@ -276,18 +296,17 @@ def _load_project_env(env_file: Path) -> None:
 
     wrapper (bin/devbase) は cd 後に ``source ./env`` で env を読み込むため、
     Python フォールバック経路でも同じ KEY=VALUE を ``os.environ`` に載せて
-    変数欠落 (例: project 固有の ``CONTAINER_SCALE``) を防ぐ。
+    変数欠落 (例: project 固有の ``ENABLE_SSH``) を防ぐ。
 
     env は環境変数定義のみを想定したファイル (bin/devbase 冒頭コメント参照) の
     ため、ここでは ``export`` 接頭辞付き / 無しの単純な ``KEY=VALUE`` 行のみを
     解釈する。``#`` コメント・空行は無視し、値の前後のクォートは除去する。
 
     変数参照 (``$VAR`` / ``${VAR}``) は shell ``source ./env`` (wrapper 経路) と
-    同様に展開する。実 env が ``WORK_DIR=/work/$GIT_REPO`` のように同一ファイル内で
-    先に定義した変数を参照しており、展開しないと TUI (``list``) 経路でワークスペース
-    パスが ``$GIT_REPO`` 等の未展開文字列のまま VS Code で開いてしまうため
-    (行は file 順に ``os.environ`` へ載せるので、参照時には先行行の値が解決済み)。
-    単一引用符 ``'...'`` の値は shell 同様リテラル扱いで展開しない。
+    同様に展開する。``FOO=$BAR/baz`` のように同一ファイル内で先に定義した変数を
+    参照する書き方を wrapper 経路と揃えるため (行は file 順に ``os.environ`` へ
+    載せるので、参照時には先行行の値が解決済み)。単一引用符 ``'...'`` の値は
+    shell 同様リテラル扱いで展開しない。
 
     .. note:: shell ``source`` との仕様乖離について
 
@@ -323,10 +342,9 @@ def _load_project_env(env_file: Path) -> None:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
             single_quoted = value[0] == "'"
             value = value[1:-1]
-        # shell `source ./env` 相当の変数展開 ($VAR / ${VAR}) を行う。実 env は
-        # `WORK_DIR=/work/$GIT_REPO` のように同一ファイル内で先に定義した変数を
-        # 参照しており (行順に os.environ へ載せるため参照時には解決済み)、展開
-        # しないと TUI (list) 経路でワークスペースパスが未展開のまま開いてしまう。
+        # shell `source ./env` 相当の変数展開 ($VAR / ${VAR}) を行う。同一ファイル内で
+        # 先に定義した変数を参照する書き方 (`FOO=$BAR/baz`) を wrapper 経路と揃える
+        # ため (行順に os.environ へ載せるため参照時には解決済み)。
         # 単一引用符はリテラル ($BAR を展開しない) という shell 規則に合わせ、
         # `'...'` の場合のみ展開しない。展開は _expand_env_vars に委ね、`$VAR` /
         # `${VAR}` のみ展開し (未定義は空文字 = shell source 準拠)、`\$` はリテラル
@@ -563,11 +581,15 @@ def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
 
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
                        open_index: Optional[int], scale: int,
-                       compose_file=None) -> None:
+                       config, compose_file=None) -> None:
     """`up` 完了後に dev コンテナへ接続したエディタを開く ([6/6])。
 
-    有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら env
-    ``DEVBASE_OPEN_EDITOR``。エディタ起動の成否は ``up`` の戻り値に影響させない。
+    有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら
+    ``project.yml`` の ``open_editor``、それも無ければ env ``DEVBASE_OPEN_EDITOR``。
+    エディタ起動の成否は ``up`` の戻り値に影響させない。
+
+    開く対象は ``config`` (``project.yml``) から決める。repo が 1 件なら primary の
+    フォルダ、2 件以上なら entrypoint が書き出した ``*.code-workspace``。
 
     ``open_index`` は起動済みインスタンス範囲 ``1..scale`` 内である必要がある。
     0・負数・``scale`` 超過は存在しないコンテナ URI になり原因不明な起動失敗を招くため、
@@ -579,7 +601,8 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
     """
     from devbase.editor import opener
 
-    enabled = open_flag if open_flag is not None else opener.is_open_enabled()
+    enabled = (open_flag if open_flag is not None
+               else opener.is_open_enabled(config=config))
     if not enabled:
         return
 
@@ -591,13 +614,18 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
         compose_file = _SCALE_COMPOSE_FILE
 
     dev_service_name = get_dev_service_name()
-    workdir = opener.resolve_workdir(os.environ, project_name)
+    workdir = config.resolved_work_dir()
+    # repo が 2 件以上なら multi-root workspace を開く (entrypoint が同じパスへ
+    # ファイルを書き出している)。1 件なら従来どおりフォルダを開く。
+    workspace = (project_runtime.workspace_path(project_name)
+                 if len(config.repos) > 1 else None)
     logger.info("[6/6] Opening editor attached to the dev container...")
     try:
         opener.open_editor(
             project_name=project_name,
             dev_service_name=dev_service_name,
             workdir=workdir,
+            workspace=workspace,
             index=open_index,
             compose_file=compose_file,
         )
@@ -612,8 +640,11 @@ def cmd_up(project_name: str = None, scale: int = None,
     if project_name is None:
         project_name = get_project_name()
 
+    # project.yml が唯一の正 (PLAN32)。読めなければ移行手順を案内して止まる。
+    config = project_runtime.current_project_config()
+
     if scale is None:
-        scale = get_container_scale()
+        scale = config.scale if config.scale is not None else project_runtime.DEFAULT_SCALE
 
     dev_service_name = get_dev_service_name()
 
@@ -626,7 +657,7 @@ def cmd_up(project_name: str = None, scale: int = None,
         return 1
 
     # Pre-step: Run ./pre-up hook (e.g. clone source repos used as build contexts)
-    if not _run_pre_up_hook():
+    if not _run_pre_up_hook(config):
         return 1
 
     # Pre-check 2: Ensure container images exist
@@ -653,7 +684,9 @@ def cmd_up(project_name: str = None, scale: int = None,
         # にしないため。
         with _previous_scale_compose() as down_compose_file:
             logger.info("[2/6] Generating scaled compose file...")
-            override_file = _generate_compose_for(scale, _inject_secrets(required=True))
+            override_file = _generate_compose_for(
+                scale, _inject_secrets(required=True),
+                dev_environment=project_runtime.container_env(config, project_name))
             logger.info("Generated: %s", override_file)
 
             logger.info("[3/6] Stopping existing containers...")
@@ -673,10 +706,11 @@ def cmd_up(project_name: str = None, scale: int = None,
         # Run project-specific deploy script for each scaled instance
         deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
-            _run_deploy_script_for_instances(deploy_script, range(1, scale + 1))
+            _run_deploy_script_for_instances(deploy_script, range(1, scale + 1),
+                                             config)
 
         _maybe_open_editor(project_name, open_editor, open_index, scale,
-                           compose_file=override_file)
+                           config, compose_file=override_file)
 
         logger.info("=== Deploy completed successfully ===")
         return 0
@@ -763,8 +797,10 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
     if project_name is None:
         project_name = get_project_name()
 
+    config = project_runtime.current_project_config()
     dev_service_name = get_dev_service_name()
-    current_scale = _get_current_scale()
+    current_scale = (config.scale if config.scale is not None
+                     else project_runtime.DEFAULT_SCALE)
 
     logger.info("Scaling project '%s' from %d to %d containers (dev service: %s)",
                 project_name, current_scale, new_scale, dev_service_name)
@@ -779,9 +815,9 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         return 1
 
     try:
-        logger.info("[1/5] Updating env file: CONTAINER_SCALE=%d -> %d...", current_scale, new_scale)
-        if not _update_scale_in_env(new_scale):
-            return 1
+        logger.info("[1/5] Updating %s: scale=%d -> %d...",
+                    project_runtime.PROJECT_CONFIG_FILENAME, current_scale, new_scale)
+        project_runtime.write_scale(Path.cwd(), new_scale)
 
         logger.info("[2/5] Ensuring volumes exist for scale=%d...", new_scale)
         ensure_volumes(new_scale, project_name)
@@ -791,7 +827,8 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
 
         logger.info("[3/5] Generating scaled compose file...")
         override_file = _generate_compose_for(
-            new_scale, _inject_secrets(required=True))
+            new_scale, _inject_secrets(required=True),
+            dev_environment=project_runtime.container_env(config, project_name))
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
@@ -817,7 +854,8 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         # Run project-specific deploy script for newly added instances
         deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
-            _run_deploy_script_for_instances(deploy_script, range(current_scale + 1, new_scale + 1))
+            _run_deploy_script_for_instances(
+                deploy_script, range(current_scale + 1, new_scale + 1), config)
 
         logger.info("=== Scale completed successfully ===")
         logger.info("Container scale: %d -> %d", current_scale, new_scale)
@@ -1392,49 +1430,3 @@ def _mark_pulled(image_name: str) -> None:
         marker.touch()
     except OSError as e:
         logger.warning("Could not write pull marker for '%s': %s", image_name, e)
-
-
-def _update_scale_in_env(new_scale: int) -> bool:
-    """Update CONTAINER_SCALE value in env file"""
-    env_file = Path('./env')
-
-    if not env_file.exists():
-        logger.error("env file not found: %s", env_file)
-        return False
-
-    def _is_scale_line(line: str) -> bool:
-        return line.strip().startswith('CONTAINER_SCALE=')
-
-    try:
-        lines = env_file.read_text().splitlines(keepends=True)
-        new_lines = [
-            f'CONTAINER_SCALE={new_scale}\n' if _is_scale_line(line) else line
-            for line in lines
-        ]
-        if not any(map(_is_scale_line, lines)):
-            new_lines.append(f'\n# Added by devbase scale command\nCONTAINER_SCALE={new_scale}\n')
-        env_file.write_text(''.join(new_lines))
-        return True
-
-    except Exception as e:
-        logger.error("Updating env file: %s", e)
-        return False
-
-
-def _get_current_scale() -> int:
-    """Get current CONTAINER_SCALE from env file"""
-    env_file = Path('./env')
-
-    if not env_file.exists():
-        return 0
-
-    try:
-        with open(env_file, 'r') as f:
-            for line in f:
-                if line.strip().startswith('CONTAINER_SCALE='):
-                    value = line.split('=', 1)[1].strip()
-                    return int(value)
-    except Exception:
-        pass
-
-    return 0

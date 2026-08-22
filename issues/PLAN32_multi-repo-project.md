@@ -1,180 +1,318 @@
 # PLAN32: 1 project = 1 container = 複数リポジトリ構成への変更
 
-> 元 issue: `issues/i32.md`
-> 種別: 構成変更 (multi-PR) / base branch: `main` / release branch: `release/PLAN32`
+## 関連リンク
 
-## 1. 背景と目的
+- 元 issue: `issues/i32.md`
+- 参考: `docs/plugin-dev/repo-backed-projects.md` (pre-up populate パターン。今回の対象外)
+- 参考: `docs/user/environment-variables.md`, `docs/plugin-dev/quickstart.md`
 
-現在の devbase は **1 プロジェクト = 1 コンテナ = 1 リポジトリ** を原則とする構成になっている。
+## モード
 
-- プロジェクトごとの repo 指定は `projects/<name>/env` の `GIT_USER` / `GIT_REPO` (単一ペア) で行う。
-- コンテナ起動時、`containers/base/entrypoint.sh` が `https://$GIT_HOST/$GIT_USER/$GIT_REPO.git` を **1 本だけ** `/work` に clone し、`cd` する。
-- VS Code は `WORK_DIR=/work/$GIT_REPO` (単一 repo) を開く。
+`architecture` — プロジェクト設定の公開インタフェース (`projects/<name>/env` の `GIT_USER`/`GIT_REPO`) を
+**後方互換なしで** `project.yml` へ置き換え、host CLI・entrypoint・editor・plugin リポジトリ 3 本 (136 project)
+の複数モジュールにまたがるため。
 
-これを **1 プロジェクト = 1 コンテナ = 複数リポジトリ** に拡張したい。あわせて、repo 指定を env の文字列変数で表現するのは配列表現力に限界があるため、**YAML (`projects/<name>/repos.yml`) を新たな正とする**。
+## 目的と非目的
 
-### 解決したい課題
-1. 1 つの開発コンテナで複数 repo (例: `carmo` 本体 + `carmo-batch` + `carmo-cdk`) を同時にチェックアウトして横断作業したい。
-2. repo ごとの host / owner / branch / clone 先ディレクトリ / init 実行有無 を宣言的に、増減しやすい形で管理したい。
-3. 既存の単一 repo プロジェクト (env `GIT_USER`/`GIT_REPO` ベース) を壊さず移行できること。
+達成したい状態:
 
-## 2. 現状アーキテクチャ (調査結果)
+- 1 つの dev コンテナで**複数リポジトリ**を `/work` 配下へ clone し、横断作業できる。
+- リポジトリ指定は配列を素直に表現できる **YAML (`projects/<name>/project.yml`)** で行う。
+- `CONTAINER_SCALE` / `WORK_DIR` / `DEVBASE_OPEN_EDITOR` といった **devbase 自身の設定**も YAML 側へ集約し、
+  `env` は「コンテナへ渡す環境変数」だけを持つ役割に純化する。
+- VS Code は複数リポジトリを 1 ウィンドウで開く **multi-root workspace** で開く。
 
-| レイヤ | ファイル | 役割 | 単一 repo 前提の箇所 |
-|---|---|---|---|
-| プロジェクト設定 | `projects/<name>/env` | `GIT_USER`/`GIT_REPO`/`WORK_DIR` を定義 | 単一ペアのみ |
-| プロジェクト compose | `projects/<name>/compose.yml` | `env_file: [root .env, env, .env]` で dev サービスへ注入 | — |
-| 起動フロー (host) | `lib/devbase/commands/container.py` | `_load_project_env` (env 解析+`$VAR`展開), `_run_pre_up_hook` (`./pre-up`), `generate_scaled_compose` | env は単一 repo キーのみ想定 |
-| clone (container) | `containers/base/entrypoint.sh:265-289` | `GIT_USER`+`GIT_REPO` を 1 本 clone → `init.sh` → `cd` | **中核**: 単一 clone/cd |
-| エディタ起動 | `lib/devbase/editor/opener.py:resolve_workdir` | `WORK_DIR` or `/work/$GIT_REPO` を開く | 単一フォルダのみ |
-| scale 生成 | `lib/devbase/volume/compose.py` | dev を N 台へ複製、`/work` を named volume 化 | repo 数と直交 (影響小) |
+やらないこと:
 
-観測: 認証情報は既に **base64 env blob** (`GCP_CREDENTIALS_BASE64__*` 等) としてコンテナへ渡す実装パターンが確立している。repo リストの transport にも同じ手法が使える。
+- **後方互換の維持はしない** (issue 明記)。旧 `GIT_USER`/`GIT_REPO` 経路は削除し、
+  移行漏れは黙って動かすのではなく**明示的なエラー**にする。
+- `pre-up` populate パターン (`docs/plugin-dev/repo-backed-projects.md`) の再設計。今回は触らない。
+- 複数リポジトリ間の依存解決・同時 push などのワークフロー支援。clone と workspace 生成までが範囲。
+- `volareinc/nyle-dx` の取り込み (ユーザー判断により後回し)。
 
-## 3. 設計方針
+## 前提
 
-### 3.1 YAML スキーマ (新規 `projects/<name>/repos.yml`)
+- 前提 1: 移行対象は把握済み plugin リポジトリ 3 本。`repos/` 配下で `projects/*/env` は **136 件**
+  (`volareinc/devbase-ext` 122 / `takemi-ohama/devbase-ext` 8 / `devbasex/devbase-samples` 6)。
+  キー分布は `WORK_DIR`/`GIT_USER`/`GIT_REPO`/`DEVBASE_OPEN_EDITOR`/`CONTAINER_SCALE` が全 136 件、
+  `ENABLE_SSH` 2 件、`GIT_HOST` 1 件、`AWS_CONFIG_BASE64` 1 件 → 機械変換で移行できる。
+- 前提 2: entrypoint は base image 由来の 1 本のみ (`containers/base/entrypoint.sh`)。lfm も
+  `COPY --from=devbase-base` で同一ファイルを使う。変更は base 再ビルドで全イメージへ届く。
+- 前提 3: `projects/<name>/compose.yml` は `env_file: - env` を持ち、`env` が実在しないと compose が落ちる
+  (`_drop_missing_env_files` は機密由来の参照しか落とさない)。→ 移行後も `env` ファイルは残す。
+- 前提 4: 題材 (pilot) は `takemi-ohama/devbase-ext` の 2 プロジェクト。
+  - `project-trygroup-prd` ← `project-trygroup-prd` + `project-trygroup-prd-customer` (同一 owner `KK-Generation` / 同一イメージ `containers/trygroup`)
+  - `uttarov2` ← `uttarov2` (**gitlab.com** / `uttaro_dev`) + `uttarov2-doc` + `uttarov2migration` (**github.com** / `uttaro-dev2`)
+  - 後者は **repo ごとに host が違う**ため、per-repo `host` の検証題材になる。統合後のイメージは `containers/php85` に寄せる。
+
+## 受け入れ条件
+
+- [ ] AC1: `project.yml` に 2 件以上の repo を書いたプロジェクトで `devbase up` すると、コンテナ内 `/work/<dir>` に
+      **全 repo が clone** され、primary repo の dir に `cd` した状態でログインできる。
+      検証: `devbase build --no-cache` → `up` → `devbase login` で `pwd` と `ls /work`。
+- [ ] AC2: repo ごとに `host` を変えられる (github.com と gitlab.com の混在)。
+      検証: pilot `uttarov2` (gitlab 1 + github 2) の clone 結果。
+- [ ] AC3: `branch` 指定があれば clone 後にそのブランチがチェックアウトされる。検証: コンテナ内 `git -C <dir> rev-parse --abbrev-ref HEAD`。
+- [ ] AC4: repo が 2 件以上のとき、`devbase up --open` は multi-root workspace (`/work/<project>.code-workspace`) を開き、
+      全 repo フォルダが VS Code のエクスプローラに並ぶ。1 件のときは従来どおり `/work/<dir>` フォルダを開く。
+      検証: 生成された `.code-workspace` の内容 + 実機の VS Code。
+- [ ] AC5: `scale` / `open_editor` を `project.yml` から読む。`devbase scale N` は `project.yml` を書き換える。
+      検証: 単体テスト + `devbase scale 2` 実行後の `project.yml` diff。
+- [ ] AC6: `project.yml` が無い / スキーマ不正のプロジェクトは、`up` が**明示エラー**で停止し、移行方法を案内する
+      (旧 `GIT_USER`/`GIT_REPO` へ暗黙フォールバックしない)。検証: 単体テスト + 未移行プロジェクトでの `up`。
+- [ ] AC7: 1 repo の clone に失敗しても他 repo の clone は継続する (fail-soft)。検証: 存在しない repo を含む `project.yml` で `up`。
+- [ ] AC8: 把握済み plugin リポジトリ 3 本の **全 136 project** が `project.yml` を持ち、`env` から
+      `GIT_*`/`WORK_DIR`/`CONTAINER_SCALE`/`DEVBASE_OPEN_EDITOR` が除かれている。検証: 変換コマンドの `--dry-run` 出力と PR diff。
+- [ ] AC9: pilot 2 プロジェクトが統合後の構成 (2 repo / 3 repo) で実際に起動し、旧 5 プロジェクトのうち統合された
+      3 つ (`project-trygroup-prd-customer` / `uttarov2-doc` / `uttarov2migration`) のディレクトリが削除されている。
+- [ ] AC10: devbase 本体 / plugin repo 各 PR の `/ndf:cross-review` が APPROVE になる (issue の完了条件)。
+
+## 代替案と採否
+
+| 案 | 内容 | 採否 | 理由 |
+| --- | --- | --- | --- |
+| 設定ファイル名 `project.yml` (repos + devbase 設定を集約) | `repos` に加え `scale` / `open_editor` / `work_dir` を持つ | **採用** | issue の「`CONTAINER_SCALE` は yaml が相応しい」に沿う。設定の置き場所が 1 つに決まり「どっちに書くか」の迷いが消える |
+| 設定ファイル名 `repos.yml` (repo 定義のみ) | scale 等は `env` に残す | 不採用 | devbase 設定とコンテナ環境変数が `env` に同居したままで、issue の振り分け要求を半分しか満たさない |
+| repo リストの transport: **base64 の US 区切りレコード列** を `DEVBASE_REPOS` で渡す | `url<US>dir<US>branch<US>init` の行 (`<US>` = 0x1f) を base64 化 | **採用** | entrypoint 側が `base64 -d` + `IFS=$'\x1f' read` だけで解釈でき、jq/python への依存を増やさない (lfm など base 非継承イメージでも安全)。base64 なので compose の `$` 展開・改行事故も起きない |
+| transport: base64 JSON + jq | entrypoint で `jq` パース | 不採用 | `jq` は base image にはあるが lfm 系の派生イメージで保証できない。US 区切りの平テキストで足りる |
+| transport: 区切り文字にタブ (当初案) | `url\tdir\tbranch\tinit` の行を base64 化 | 不採用 | タブは IFS の**空白扱い**で連続する区切りが 1 つに畳まれる。`branch` 未指定 (空フィールド) の行で `init` の値がずれるため、`IFS=$'\t' read` で素直に 4 列として読めない。非空白の US (0x1f) なら空フィールドがそのまま残る |
+| transport: `project.yml` を bind mount して entrypoint で解釈 | コンテナ内で YAML を読む | 不採用 | project ディレクトリは現在マウントしていない。マウント経路の追加とコンテナ内 YAML パーサ依存の 2 つを同時に増やす |
+| workspace ファイル: **host で JSON を組み立て base64 で渡し entrypoint が書き出す** | `DEVBASE_WORKSPACE_B64` | **採用** | 生成ロジックを Python 側 (テスト可能) に置ける。entrypoint は `base64 -d > file` の 1 行 |
+| workspace ファイル: entrypoint で shell 組み立て | printf で JSON を書く | 不採用 | テストできない場所にエスケープ処理を置くことになる |
+| 移行: 変換コマンドを実装して機械適用 | `devbase project migrate-config` | **採用** | 136 件を手で書くのは誤りが混じる。冪等 + `--dry-run` で diff をレビューできる |
+| 移行: 手作業 | — | 不採用 | 件数が多く、レビューでの見落としリスクが高い |
+
+## ドメイン用語
+
+| 用語 | 意味 |
+| --- | --- |
+| project | `projects/<name>/` 1 ディレクトリ = 1 compose プロジェクト = 1 dev コンテナ (群) |
+| repo | project が `/work` 配下へ clone する git リポジトリ。今回から**複数** |
+| primary repo | ログイン時の `cd` 先、および repo 1 件時にエディタが開くフォルダ。既定は `repos` の先頭 |
+| clone プラン | `project.yml` を正規化した内部表現。base64 の US 区切りレコード列として `DEVBASE_REPOS` でコンテナへ渡る |
+| plugin repo | project 定義を配布するリポジトリ (`volareinc/devbase-ext` 等)。`projects/*` はここへの symlink |
+
+## 不変条件
+
+- clone プランの `dir` はプロジェクト内で一意 (同じ `/work/<dir>` を 2 repo が奪い合わない)。
+- primary repo はちょうど 1 件。
+- `DEVBASE_REPOS` に機密を含めない (URL / dir / branch のみ。認証は既存の git 資格情報機構)。
+- `project.yml` は人間が編集する正であり、`DEVBASE_REPOS` は内部 wire format。両者の変換は Python 側だけが行う。
+
+## 互換性
+
+| 対象 | 変更 | 互換性の扱い |
+| --- | --- | --- |
+| `projects/<name>/env` の `GIT_USER`/`GIT_REPO`/`GIT_HOST`/`WORK_DIR` | 削除 | **破壊的**。`project.yml` へ移行。旧キーが残っていても無視し、`project.yml` 不在なら `up` はエラー |
+| `projects/<name>/env` の `CONTAINER_SCALE`/`DEVBASE_OPEN_EDITOR` | `project.yml` の `scale`/`open_editor` へ移動 | **破壊的**。グローバル `.env` の `DEVBASE_OPEN_EDITOR` は既定値として残す |
+| `projects/<name>/env` (ファイル自体) | 残す | `ENABLE_SSH` 等のコンテナ環境変数用。空でも compose が参照するため削除しない |
+| `containers/base/entrypoint.sh` | 単一 clone → 複数 clone | **base image 再ビルドが必要**。`devbase build --no-cache` |
+| `devbase scale N` | 書き込み先が `env` → `project.yml` | コマンド名・引数は不変 |
+| plugin repo の project 定義 | 全 136 件へ `project.yml` 追加 | devbase 本体と plugin repo の**同時切り替え (flag day)**。移行漏れは AC6 のエラーで即座に分かる |
+
+## スキーマ (`projects/<name>/project.yml`)
 
 ```yaml
-# 任意: 各 repo のデフォルト値 (DRY 用)
-defaults:
-  host: github.com
+version: 1              # 必須。スキーマ版
+scale: 1                # 任意 (既定 2)。旧 CONTAINER_SCALE
+open_editor: true       # 任意 (未指定ならグローバル .env の DEVBASE_OPEN_EDITOR)
+work_dir: /work/carmo   # 任意。既定は primary repo の /work/<dir>
+
+defaults:               # 任意。repos の各要素へ継承させる既定値
+  host: github.com      # 既定 github.com
   owner: volareinc
 
 repos:
-  - repo: carmo          # 必須。clone 先 dir 名 (default: repo 名)
-    primary: true        # 任意: cd 先 & エディタ既定フォルダ (未指定なら先頭要素)
-    branch: main         # 任意: clone 後に checkout
-  - repo: carmo-batch    # host/owner は defaults を継承
-  - repo: carmo-cdk
-    owner: volareinc     # defaults を個別上書き可
-    dir: cdk             # 任意: /work 配下の clone 先 dir 名を明示指定
-    init: false          # 任意: clone 後の init.sh 実行有無 (default: true)
+  - repo: carmo         # 必須
+    primary: true       # 任意。未指定なら先頭要素が primary
+  - repo: carmo-batch   # host/owner は defaults を継承
+  - repo: uttarov2
+    host: gitlab.com    # 個別上書き (pilot uttarov2 の実例)
+    owner: uttaro_dev
+    dir: system         # 任意。/work 配下の clone 先名 (既定 repo 名)
+    branch: develop     # 任意。clone 後に checkout
+    init: false         # 任意 (既定 true)。clone 後の ./init.sh 実行有無
 ```
 
-- **正規化ルール**: `host` default `github.com`、`dir` default = `repo`、`init` default `true`、`primary` 未指定なら先頭 repo。
-- **バリデーション**: `owner`/`repo` 必須、`dir` 重複禁止、`primary` は最大 1 件。
+正規化とバリデーション:
 
-### 3.2 config → container の transport (推奨: host 正規化 → env blob)
+- `owner` / `repo` 必須。`host` 既定 `github.com`、`dir` 既定 `repo`、`init` 既定 `true`。
+- `dir` 重複はエラー。`primary: true` が 2 件以上はエラー。`repos` が空はエラー。
+- 未知キーはエラー (typo を黙って無視しない)。
 
-**YAML を人間向けの正とし、コンテナへは正規化済みの「clone プラン」を base64 env blob で渡す**ハイブリッド構成を採用する。
+wire format (`DEVBASE_REPOS`, base64 / 1 行 1 repo, US (0x1f) 区切り):
 
 ```
-[人間] repos.yml (YAML, 表現力)
-   │  devbase up  (host / Python)
-   ▼
-[PR1 loader] parse + validate + 正規化
-   │  → clone プラン (JSON) を base64 化
-   ▼
-DEVBASE_REPOS 環境変数 (compose 経由でコンテナへ)
-   │  devbase up → docker compose
-   ▼
-[PR2 entrypoint] DEVBASE_REPOS を decode → repo ごとに clone/checkout/init → primary へ cd
+https://github.com/volareinc/carmo.git<US>carmo<US>main<US>1
+https://gitlab.com/uttaro_dev/uttarov2.git<US>system<US><US>0
 ```
 
-採用理由:
-- パース/バリデーションを **テスト可能な Python** 側に集約でき、entrypoint (bash) を単純に保てる。
-- コンテナ内に YAML パーサ (yq / pyyaml) を新規依存として持ち込まずに済む (既存の base64 env パターンと一致)。
-- env は内部 wire format にすぎず、**人間が触る正は YAML** という issue の要求を満たす。
+- フィールド区切りは **US = unit separator (0x1f)**。非空白なので `IFS=$'\x1f' read -r url dir branch init`
+  がそのまま 4 列として読め、`branch` 未指定 (空フィールド) の行でも `init` の値がずれない。
+  タブだと IFS の空白扱いで連続する区切りが 1 つに畳まれるため採用しない。
+- 行区切りは LF。**末尾にも LF を付ける**。`while read` は EOF 直前の改行なし行を読み捨てる実装が
+  あるため、末尾 LF が無いと最後の行 (repo 1 件ならその唯一の行) が丸ごと落ちる。
+- 各フィールドは符号化側で検証済み。空白・制御文字 (US / LF を含む) は通さないので、
+  エスケープ規則は持たない。
 
-> 代替案 (不採用): `repos.yml` をコンテナへ bind mount し entrypoint 内で `python -c` パース。/work は named volume でありプロジェクト dir は未マウントのため mount 経路の追加が必要で、transport が複雑化する。将来 in-container で再 clone したいニーズが出た場合に再検討する。
+列: `url`, `dir`, `branch` (空可), `init` (`1`/`0`)。primary は別変数 `DEVBASE_PRIMARY_DIR` で渡す
+(列を増やさず、entrypoint の `cd` 先判定を単純に保つ)。
 
-### 3.3 後方互換
+entrypoint 側の読み方 (`containers/base/entrypoint.sh`):
 
-- `repos.yml` が **無い**プロジェクトは、従来どおり env の `GIT_USER`/`GIT_REPO` から **単一要素の clone プラン**を loader が合成する。既存 40+ プロジェクトは無変更で動作する。
-- `repos.yml` が **有る**場合は env の `GIT_USER`/`GIT_REPO` を無視 (YAML 優先)。両方あるときは warning を出す。
-- entrypoint は `DEVBASE_REPOS` があればそれを、無ければ従来の `GIT_USER`/`GIT_REPO` 分岐 (現行コード) をそのまま使う二段構え。→ entrypoint 単体でも後方互換。
+```bash
+printf '%s' "$DEVBASE_REPOS" | base64 -d |
+  while IFS=$'\x1f' read -r url dir branch init; do
+    ...
+  done
+```
 
-### 3.4 エディタ (複数 repo のワークスペース)
+## 修正対象
 
-- `primary` repo を `resolve_workdir` の既定フォルダにする (単一 repo 時と同じ挙動)。
-- 複数 repo 時は `.code-workspace` (multi-root) をコンテナ内 `/work` に生成し、全 repo フォルダを 1 ウィンドウで開けるようにする。`DEVBASE_WORKSPACE` (既存機構, `resolve_workspace`) 経由で開く。
+devbase 本体:
 
-## 4. PR 分割計画
+- 新規 `lib/devbase/project/__init__.py`, `lib/devbase/project/config.py` (ローダ・正規化・検証・wire format)
+- 新規 `lib/devbase/project/migrate.py` (env → project.yml 変換)
+- `lib/devbase/utils/config.py` (`get_container_scale` の取得元)
+- `lib/devbase/commands/container.py` (`cmd_up` 配線 / `cmd_scale` の書き込み先 / `_maybe_open_editor`)
+- `lib/devbase/volume/compose.py` (dev サービスへ `DEVBASE_REPOS` 等を注入)
+- `lib/devbase/editor/opener.py` (`resolve_workdir` / `resolve_workspace` の入力を project 設定へ)
+- `lib/devbase/commands/project.py` + `lib/devbase/cli.py` (`project migrate-config` サブコマンド)
+- `containers/base/entrypoint.sh` (複数 clone + workspace 書き出し)
+- `docs/user/environment-variables.md`, `docs/user/cli-reference/02-project.md`, `docs/user/container-operations.md`,
+  `docs/plugin-dev/quickstart.md`, `docs/plugin-dev/compose-yml-guidelines.md`, `docs/developer/architecture.md`, `CHANGELOG.md`
+- `tests/project/`, `tests/editor/test_opener.py`, `tests/volume/`, `tests/cli/`
 
-| PR # | branch 名 | 概要 | 依存 | 並行可否 |
-|---|---|---|---|---|
-| 1 | `feature/PLAN32-config-loader` | `repos.yml` スキーマ定義 + Python loader (`lib/devbase/repos/config.py`): parse・validate・正規化・env 合成フォールバック + 単体テスト。**挙動変更なしの純ライブラリ** | なし | ○ |
-| 2 | `feature/PLAN32-up-transport` | `devbase up` で loader を呼び `DEVBASE_REPOS` (base64 clone プラン) をコンテナ環境へ注入。`container.py`/compose 生成への配線 | PR1 | × (PR1 の loader API 確定後) |
-| 3 | `feature/PLAN32-entrypoint` | `entrypoint.sh` を複数 repo clone ループへ拡張 (`DEVBASE_REPOS` decode → clone/checkout/init → primary cd)。`GIT_USER`/`GIT_REPO` 後方互換分岐を保持。**要 base image 再ビルド** | PR1 (clone プラン形式の契約のみ) | ○ (PR2 と mock 契約で並行可) |
-| 4 | `feature/PLAN32-editor` | 複数 repo の `.code-workspace` 生成 + `resolve_workdir`/opener の primary 対応 + 単体テスト | PR1 | ○ (mock で先行可) |
-| 5 | `feature/PLAN32-migrate-docs` | env→`repos.yml` 変換ヘルパ + README/docs 更新 + サンプルプロジェクト (`repos.yml` 例) + CHANGELOG | PR1〜4 | × (最後に統合) |
+plugin リポジトリ (別 PR):
+
+- `takemi-ohama/devbase-ext`: pilot 統合 2 件 + 残り project の機械移行 (8 project)
+- `volareinc/devbase-ext`: 122 project の機械移行
+- `devbasex/devbase-samples`: 6 project の機械移行
+
+## タスク分解
+
+各 Task = 1 PR。base branch は `release/PLAN32` (devbase 本体)。
+
+### Task 1: `project.yml` ローダと wire format
+
+- **対象ファイル:** `lib/devbase/project/config.py`, `tests/project/test_config.py`
+- **変更内容:** `ProjectConfig` / `RepoSpec` dataclass、YAML 読み込み・`defaults` 継承・正規化・検証、
+  `encode_repo_plan()` / `decode_repo_plan()` (base64 / US 区切り)。`project.yml` 不在・不正時は移行手順を含む
+  `ConfigError` を送出。この PR では**呼び出し元を差し替えない** (挙動変更なし)。
+- **満たす受け入れ条件:** AC6 の一部 (エラー文言)、AC2/AC3 のデータ表現
+- **進め方:** テスト駆動。正常系 (defaults 継承 / dir 明示 / host 混在 / primary 指定) と
+  異常系 (owner 欠落 / dir 重複 / primary 複数 / 未知キー / repos 空 / ファイル不在) を先に書く。
+
+### Task 2: host 側配線 (`up` / `scale` / editor)
+
+- **対象ファイル:** `lib/devbase/commands/container.py`, `lib/devbase/volume/compose.py`,
+  `lib/devbase/utils/config.py`, `lib/devbase/editor/opener.py`, `tests/volume/`, `tests/editor/`, `tests/commands/`
+- **変更内容:** `cmd_up` で `project.yml` を読み、生成 compose の dev サービスへ `DEVBASE_REPOS` /
+  `DEVBASE_PRIMARY_DIR` / `DEVBASE_WORKSPACE_B64` を注入。`get_container_scale` は `project.yml` の `scale` を、
+  `cmd_scale` は `project.yml` を書き換える。`resolve_workdir` は primary repo、repo 2 件以上なら
+  `DEVBASE_WORKSPACE` に `/work/<project>.code-workspace` を立てる。旧 `GIT_*`/`WORK_DIR` 参照は削除。
+- **満たす受け入れ条件:** AC4 (host 側)、AC5、AC6
+- **進め方:** テスト駆動。生成 compose に期待の env が載ること / `scale` 書き換えの冪等性 / 未移行時のエラーを先に書く。
+
+### Task 3: entrypoint の複数 clone と workspace 書き出し
+
+- **対象ファイル:** `containers/base/entrypoint.sh`, `tests/containers/test_entrypoint_repos.py` (bash を直接実行する形)
+- **変更内容:** `DEVBASE_REPOS` を `base64 -d` して 1 行ずつ clone → `branch` があれば checkout →
+  `init=1` なら `./init.sh` → 最後に `DEVBASE_PRIMARY_DIR` へ `cd`。clone 失敗は warning で継続。
+  `DEVBASE_WORKSPACE_B64` があれば `DEVBASE_WORKSPACE` のパスへ書き出す。旧 `GIT_USER`/`GIT_REPO` 分岐は削除。
+- **満たす受け入れ条件:** AC1、AC2、AC3、AC7、AC4 (書き出し側)
+- **進め方:** shell 関数を抽出し、ホスト側 pytest から `bash -c` で呼ぶ形で先にテストを書く
+  (clone は `file://` のローカル bare repo を使う)。**base image 再ビルド必須**を PR body に明記
+  ([[entrypoint-change-needs-rebuild]])。
+
+### Task 4: 移行コマンド `devbase project migrate-config`
+
+- **対象ファイル:** `lib/devbase/project/migrate.py`, `lib/devbase/commands/project.py`, `lib/devbase/cli.py`, `tests/project/test_migrate.py`
+- **変更内容:** `projects/*/env` (または指定ディレクトリ配下) を走査し、`GIT_USER`/`GIT_REPO`/`GIT_HOST`/
+  `WORK_DIR`/`CONTAINER_SCALE`/`DEVBASE_OPEN_EDITOR` から `project.yml` を生成、`env` からは該当キーを除去。
+  `--dry-run` で diff 表示、冪等 (再実行しても差分なし)。symlink 先 (plugin repo の実体) を書き換えることを明示。
+- **満たす受け入れ条件:** AC8
+- **進め方:** テスト駆動。実 env のパターン (GIT_HOST 有無 / ENABLE_SSH 残留 / 既に移行済み) を fixture 化。
+
+### Task 5: ドキュメントと CHANGELOG
+
+- **対象ファイル:** `docs/` 各所, `CHANGELOG.md`, `issues/PLAN32_multi-repo-project.md`
+- **変更内容:** `project.yml` スキーマ、複数 repo 構成の手順、移行コマンドの使い方、破壊的変更の告知。
+- **満たす受け入れ条件:** AC8 の周辺 (手順の再現性)
+- **進め方:** テスト駆動の対象外 (文書)。
+
+### Task 6: plugin repo 移行 — `takemi-ohama/devbase-ext` (pilot 含む)
+
+- **対象ファイル:** `personal/projects/*`, `bplus/projects/*`
+- **変更内容:** Task 4 のコマンドで 8 project を移行。加えて pilot 統合:
+  `project-trygroup-prd` へ customer repo を追加し `project-trygroup-prd-customer/` を削除。
+  `uttarov2` へ doc/migration repo を追加し `uttarov2-doc/` `uttarov2migration/` を削除 (イメージは php85 に統一)。
+- **満たす受け入れ条件:** AC1〜AC4, AC9
+- **進め方:** 変換 → 手で pilot を統合 → 実機で `build --no-cache` + `up` 検証。
+
+### Task 7: plugin repo 移行 — `volareinc/devbase-ext` (122) / `devbasex/devbase-samples` (6)
+
+- **対象ファイル:** 各 repo の `*/projects/*/env` と新規 `project.yml`
+- **変更内容:** Task 4 のコマンドによる機械変換のみ (統合はしない)。
+- **満たす受け入れ条件:** AC8
+- **進め方:** `--dry-run` の全件 diff をレビュー → 適用 → 代表 project で `up` 確認。
+
+## PR 分割計画
+
+devbase 本体 (`volareinc/devbase` 相当。ここでは `devbase` repo):
+
+| PR # | branch 名 | 対応 Task | 概要 | 依存 | 並行可否 |
+|---|---|---|---|---|---|
+| 1 | `feature/PLAN32-config-loader` | Task 1 | `project.yml` ローダ・正規化・検証・wire format (純ライブラリ、挙動変更なし) | なし | ○ |
+| 2 | `feature/PLAN32-host-wiring` | Task 2 | `up`/`scale`/editor の配線を `project.yml` へ切替、`DEVBASE_REPOS` 注入 | PR1 | × (PR1 merge 後) |
+| 3 | `feature/PLAN32-entrypoint` | Task 3 | entrypoint 複数 clone + workspace 書き出し (**base image 再ビルド必須**) | PR1 (wire format の契約のみ) | ○ (PR2 と並行可) |
+| 4 | `feature/PLAN32-migrate-cmd` | Task 4 | `devbase project migrate-config` (env → project.yml 変換) | PR1 | ○ |
+| 5 | `feature/PLAN32-docs` | Task 5 | docs / CHANGELOG | PR1〜4 | × (最後に統合) |
 
 ```
 release branch: release/PLAN32
 base branch: main
 ```
 
-依存グラフ: PR1 が全ての土台。PR2/PR3/PR4 は PR1 の **clone プラン JSON 形式の契約**さえ固定すれば並行開発可 (PR3 は entrypoint 側、PR2 は host 側で同じ契約の両端)。PR5 は結合・ドキュメントで最後。
+plugin リポジトリ (別リポジトリのため release ブランチは使わず単体 PR):
 
-## 5. PR ごとの実装詳細
+| repo | branch 名 | 対応 Task | 概要 | 依存 |
+|---|---|---|---|---|
+| `takemi-ohama/devbase-ext` | `feature/PLAN32-project-yml` | Task 6 | 8 project の移行 + pilot 統合 2 件 | 本体 PR1〜4 |
+| `volareinc/devbase-ext` | `feature/PLAN32-project-yml` | Task 7 | 122 project の機械移行 | 本体 PR1〜4 |
+| `devbasex/devbase-samples` | `feature/PLAN32-project-yml` | Task 7 | 6 project の機械移行 | 本体 PR1〜4 |
 
-### PR1: config loader (foundation)
-- 新規 `lib/devbase/repos/__init__.py`, `lib/devbase/repos/config.py`。
-- API 案:
-  - `load_repo_plan(project_dir: Path, environ: Mapping) -> list[RepoSpec]`
-    - `repos.yml` があれば YAML を読み、`defaults` 継承 → 正規化 → validate。
-    - 無ければ env の `GIT_USER`/`GIT_REPO`/`GIT_HOST` から単一 `RepoSpec` を合成。両方あれば warning。
-  - `RepoSpec` = `{host, owner, repo, dir, branch, init, primary}` (dataclass)。
-  - `encode_repo_plan(specs) -> str` (JSON→base64) / `decode_repo_plan(str)` は PR2/PR3 の契約テストで共有。
-- clone プラン JSON 契約 (PR2 が生成 / PR3 が消費) を **このPRで確定**し docstring に明記:
-  ```json
-  [{"url":"https://github.com/volareinc/carmo.git","dir":"carmo","branch":"main","init":true,"primary":true}, ...]
-  ```
-- テスト: 正常系 (defaults 継承 / dir 明示 / primary 指定)、異常系 (owner 欠落 / dir 重複 / primary 複数)、env フォールバック、YAML+env 併存 warning。
+plugin repo の PR は本体 release PR の merge 直後に merge する (flag day)。
 
-### PR2: up transport (host wiring)
-- `container.py:cmd_up` (および必要なら `generate_scaled_compose` 前処理) で `load_repo_plan` → `encode_repo_plan` → `DEVBASE_REPOS` を **生成 compose の dev サービス environment もしくは補助 env_file** へ注入。
-  - secret 露出回避のため既存方針 (`environment` を除去し `env_file` 優先) と整合させる。base64 blob を書き出す一時 env ファイル方式が安全。
-- 単一 repo (env フォールバック) でも同じ `DEVBASE_REPOS` を注入し、経路を一本化。
-- テスト: プロジェクト固定で `DEVBASE_REPOS` が期待 JSON を base64 で持つこと。
+## 影響範囲
 
-### PR3: entrypoint 複数 clone (container)
-- `entrypoint.sh:265-289` を置換:
-  - `DEVBASE_REPOS` があれば base64 decode → 各要素で `git clone <url> <dir>` → `branch` 指定時 `git -C <dir> checkout` → `init: true` なら `(cd <dir> && [ -f init.sh ] && ./init.sh)` → `primary` の dir へ最後に `cd`。
-  - `DEVBASE_REPOS` 無し時は現行の `GIT_USER`/`GIT_REPO` 単一 clone を維持 (後方互換)。
-  - clone 失敗は現行同様 warning で継続 (fail-soft)。
-  - decode/iterate は bash + `base64 -d` + 小さな Python one-liner (base image に uv/python 有) で JSON→行変換。新規 apt 依存を増やさない。
-- **base image 再ビルドが必要** ([[entrypoint-change-needs-rebuild]]): 検証は `devbase build --no-cache` 必須。`devbase up` だけでは反映されない点を PR body / テスト手順に明記。
+- 全 project の起動経路 (`devbase up` / `list` / TUI)。移行前の project は起動できなくなる (意図した破壊的変更)。
+- base image を使う全コンテナ (再ビルドが必要)。
+- `devbase scale` / `devbase env init` (エディタ設定の置き場所)。
+- ドキュメント全般 (`GIT_USER`/`GIT_REPO` を前提にした記述)。
 
-### PR4: editor 複数 repo
-- `opener.py`: `resolve_workdir` は primary repo を返す。複数 repo 時は `/work/<name>.code-workspace` (全 repo フォルダを含む multi-root JSON) を生成し `DEVBASE_WORKSPACE` を設定 → `resolve_workspace` 経由で開く。
-- 生成タイミング: entrypoint (コンテナ内 `/work` 実体を見て生成) が素直。PR3 の clone 後段に組み込むか、opener 側で attach 時生成するかを PR4 冒頭で確定。
-- テスト: single repo→従来フォルダ、multi repo→workspace パス解決。
+## リスクと対処
 
-### PR5: migration + docs
-- `env`→`repos.yml` 変換ヘルパ (既存プロジェクトの `GIT_USER`/`GIT_REPO` を読み `repos.yml` を生成、`--dry-run` 付き)。一括移行は任意 (後方互換があるため強制しない)。
-- `README.md` / `docs/` に複数 repo 構成の手順・スキーマ・移行方法を追記。
-- サンプル: `projects/` にマルチ repo の `repos.yml` 例、または `docs/examples/`。
-- `CHANGELOG.md` 追記。
+| リスク | 対処 |
+| --- | --- |
+| devbase 本体と plugin repo の切り替えタイミングのずれで起動不能になる | AC6 の明示エラーで原因が即分かるようにする。plugin repo 側 PR は本体 release PR の merge 直後に merge する。移行コマンドは本体 merge 前でも `--dry-run` で確認可能 |
+| entrypoint 変更が `up` では反映されない | [[entrypoint-change-needs-rebuild]]。Task 3 / 結合検証で `devbase build --no-cache` を必須手順として PR body に明記 |
+| 136 件の機械変換でキーの取りこぼし (ENABLE_SSH 等) | 変換対象キーを allowlist で限定し、それ以外は `env` に残す。`--dry-run` の全件 diff をレビュー |
+| pilot 統合でイメージ差 (php / php85) による退行 | 統合先を php85 に統一し、doc 側のツール要件を統合後に実機確認 |
+| gitlab.com repo の clone 認証が github と別経路 | pilot `uttarov2` で実機検証 (AC2)。失敗時は fail-soft (AC7) で他 repo は継続 |
+| 生成 compose に repo URL が載る | URL は機密ではない。`DEVBASE_REPOS` に機密を入れない不変条件をレビュー観点に含める |
 
-## 6. テスト / 検証計画
+## 切り戻し手順
 
-### 単体 (各個別 PR)
-- PR1: loader の正常/異常/フォールバック (pytest)。
-- PR2: `DEVBASE_REPOS` 注入内容の検証。
-- PR4: workspace パス解決。
+- devbase 本体: `release/PLAN32` の revert で旧 entrypoint / 旧 `GIT_*` 経路へ戻る。base image の再ビルドが必要。
+- plugin repo: 各 PR の revert で `env` が復元される (`project.yml` は削除)。データ移行は無く、生成物は
+  コンテナ内 `/work` の clone だけなので、切り戻し後も再 clone で復旧できる。
+- pilot 統合 (project ディレクトリ削除) は revert で復元されるが、統合後に作った `/work` ボリュームは
+  `devbase down` + ボリューム削除で作り直す。
 
-### 結合 (release PR / Step 7 相当)
-- [ ] `repos.yml` (2〜3 repo) を持つ検証用プロジェクトで `devbase build --no-cache` → `up` → コンテナ内 `/work` に全 repo が clone され、primary に cd していること。
-- [ ] `repos.yml` 内 `branch` 指定が反映されること。
-- [ ] 既存 env-only プロジェクト (`GIT_USER`/`GIT_REPO`) が無変更で従来どおり単一 clone されること (後方互換の回帰確認)。
-- [ ] `DEVBASE_OPEN_EDITOR=1` で複数 repo が multi-root workspace として開くこと。
-- [ ] clone 失敗時 (存在しない repo) に fail-soft で他 repo が継続 clone されること。
+## 完了の定義
 
-## 7. リスク / 留意点
-
-| リスク | 対策 |
-|---|---|
-| entrypoint 変更が `up` では反映されず古い挙動が残る | [[entrypoint-change-needs-rebuild]]。PR3/結合テストで `build --no-cache` 必須を明記 |
-| base64 blob に repo URL 以上の機密は含めない | URL/dir/branch のみ。認証は既存の git credentials 機構を流用 |
-| YAML+env 併存時の優先順位の混乱 | YAML 優先 + warning。docs に明記 |
-| 既存 40+ プロジェクトへの回帰 | 後方互換フォールバックを PR1 で担保し、結合テストに env-only 回帰を含める |
-| `dir` 衝突 / primary 複数 | PR1 の validate で早期 fail |
-
-## 8. 次のアクション
-
-本 plan は **作成フェーズ**の成果物。実装に進む場合は `/ndf:issue-plan-strategy` の実行フェーズ (Step 3〜) に従い:
-1. `release/PLAN32` ブランチ + release Draft PR を先行作成。
-2. PR1〜5 の個別 Draft PR を作成 (PR1 を最優先で着手)。
-3. PR1 完了・merge 後に PR2/PR3/PR4 を worktree 並行開発、PR5 を最後に統合。
+- [ ] AC1〜AC10 をすべて満たし、条件ごとに検証手段と結果が対応している
+- [ ] `uv run pytest` が green
+- [ ] devbase 本体 release PR と plugin repo 各 PR の `/ndf:cross-review` が APPROVE
+- [ ] `docs/` と `CHANGELOG.md` が新方式のみを説明している (旧方式の記述が残っていない)

@@ -1,6 +1,6 @@
 # devbase アーキテクチャ概要
 
-devbase v2.2.0 のアーキテクチャ設計と内部構造について説明する。
+devbase v3.0.0 のアーキテクチャ設計と内部構造について説明する。
 
 ## 全体構成
 
@@ -138,6 +138,26 @@ flowchart LR
 ### snapshot/ -- スナップショット管理
 
 `snapshot/manager.py` の `SnapshotManager` クラスが全機能を提供する。差分バックアップとフルバックアップに対応し、zstd 圧縮を使用する。
+
+### project/ -- プロジェクト設定 (project.yml)
+
+`projects/<name>/project.yml` を読み、コンテナとエディタが使える形へ変換する層。
+YAML の解釈をホスト側の Python に閉じ込めることで、コンテナ側 (`entrypoint.sh`) は
+復号して 1 行ずつ clone するだけで済み、イメージへ YAML パーサ依存を持ち込まない。
+
+| モジュール | 役割 |
+|-----------|------|
+| `config.py` | `project.yml` の読み込み・`defaults` 継承・検証・正規化 (`ProjectConfig` / `RepoSpec`)。clone プランの符号化 (`encode_repo_plan`) |
+| `runtime.py` | コンテナへ渡す環境変数の組み立て (`DEVBASE_REPOS` / `DEVBASE_PRIMARY_DIR` / `DEVBASE_WORKSPACE*`)、multi-root ワークスペース JSON の生成、`scale` の読み書き |
+| `migrate.py` | 旧 `env` 形式 (`GIT_USER` / `GIT_REPO` 等) から `project.yml` への変換 |
+
+```mermaid
+flowchart LR
+    Y["project.yml"] --> C["config.py<br/>検証・正規化"]
+    C --> R["runtime.py<br/>環境変数へ"]
+    R --> Compose[".docker-compose.scale.yml<br/>dev サービス"]
+    Compose --> E["entrypoint.sh<br/>復号して clone"]
+```
 
 ### その他
 
