@@ -316,3 +316,51 @@ plugin repo の PR は本体 release PR の merge 直後に merge する (flag d
 - [ ] `uv run pytest` が green
 - [ ] devbase 本体 release PR と plugin repo 各 PR の `/ndf:cross-review` が APPROVE
 - [ ] `docs/` と `CHANGELOG.md` が新方式のみを説明している (旧方式の記述が残っていない)
+
+---
+
+## 完了サマリ (2026-08-23)
+
+### マージ済み PR
+
+| リポジトリ | PR | 内容 |
+|---|---|---|
+| devbasex/devbase | #103 (release) | 下記 7 本の統合。main へ merge |
+| devbasex/devbase | #104 | `project.yml` ローダと clone プランの wire format |
+| devbasex/devbase | #106 | entrypoint の複数リポジトリ clone + workspace 生成 |
+| devbasex/devbase | #105 | `up` / `scale` / editor の配線を `project.yml` へ |
+| devbasex/devbase | #107 | `devbase project migrate-config` |
+| devbasex/devbase | #108 | ドキュメントと CHANGELOG |
+| devbasex/devbase | #109 | 3.0.0 への版数引き上げ |
+| devbasex/devbase | #110 | フックへ clone 先・URL を渡す |
+| takemi-ohama/devbase-ext | #11 | 8 プロジェクトの移行 + pilot 統合 2 件 |
+| volareinc/devbase-ext | #27 | 122 プロジェクトの移行 |
+| devbasex/devbase-samples | #4 | 6 プロジェクトの移行 |
+
+すべて `/ndf:cross-review` で codex / gemini の APPROVE に収束済み。
+
+### 受け入れ条件の結果
+
+| 条件 | 結果 | 検証 |
+|---|---|---|
+| AC1 複数 repo の clone と primary への `cd` | ✅ | 一時プロジェクトで実機確認 |
+| AC2 repo ごとの host 指定 | ✅ | `https://gitlab.com/<owner>/<repo>.git` の組み立てを実機確認 |
+| AC3 `branch` の checkout | ✅ | 実機確認 |
+| AC4 multi-root workspace | ✅ | `/work/<project>.code-workspace` の生成を実機確認 |
+| AC5 `scale` / `open_editor` の読み書き | ✅ | 単体テスト |
+| AC6 未移行プロジェクトの明示エラー | ✅ | 終了コード 1 と移行手順の案内を実機確認 |
+| AC7 clone 失敗時の fail-soft | ✅ | 実機確認 |
+| AC8 plugin リポジトリ 136 プロジェクトの移行 | ✅ | 変換コマンドで適用、全件ローダ検証 |
+| AC9 pilot 統合 | ⚠️ 一部未 | ファイル構成は完了。**実機起動は未実施** (稼働中コンテナを再起動しないため) |
+| AC10 cross-review APPROVE | ✅ | 本体 8 PR + plugin 3 PR |
+
+### 計画から変わった点
+
+- **版数の引き上げ (#109)**: プラグインの `plugin.yml` が `requires.devbase: ">=2.2.0"` のままだと `project.yml` を読めない環境へインストールできてしまうため、本体を 3.0.0 として切り、各プラグインの下限も揃えた。
+- **フックへの値の受け渡し (#110)**: 計画に無かった。結合検証で、`GIT_REPO` / `WORK_DIR` を `source ./env` で読んでいた `pre-up` / `deploy` が壊れることが判明したため、devbase 側から `DEVBASE_PRIMARY_DIR` / `DEVBASE_PRIMARY_URL` / `DEVBASE_WORK_DIR` / `DEVBASE_REPO_DIRS` を渡す形にした。plugin リポジトリ側の該当フック 2 本も追随させた。
+- **確定仕様の置き場所**: `docs/user/project-yml.md` を恒久リファレンスとした (plan-to-spec 相当)。
+
+### 残作業
+
+- 統合した pilot (`uttarov2` / `project-trygroup-prd`) の実機起動確認。`devbase build --no-cache` → `devbase up` が必要で、稼働中コンテナの再起動を伴う。
+- 統合で消えたプロジェクト (`uttarov2-doc` / `uttarov2migration` / `project-trygroup-prd-customer`) の後片付け。`projects/` のシンボリックリンクと、生成物だけが残ったディレクトリ、および停止済みコンテナが残っている。
