@@ -152,11 +152,11 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 - リポジトリが 1 件: primary リポジトリのフォルダ（`--folder-uri`）
 - リポジトリが 2 件以上: 全リポジトリを含む multi-root ワークスペース `/work/<プロジェクト名>.code-workspace`（`--file-uri`）
 
-自動オープンの有無は `project.yml` の `open_editor` が最優先で、未指定なら以下の env に従います。これらは `devbase env init` の収集対象外で、`$DEVBASE_ROOT/.env` かプロジェクトの `env` に手書きする devbase 動作設定です。
+自動オープンの有無は `project.yml` の `open_editor` が最優先で、未指定なら以下の env に従います。このうち `DEVBASE_OPEN_EDITOR` だけは `devbase env init` の editor コレクターが対話収集し（対話の既定は `1` = 有効）、`$DEVBASE_ROOT/.env` に書き込まれます。残りは収集対象外で、`$DEVBASE_ROOT/.env` かプロジェクトの `env` に手書きする devbase 動作設定です。
 
 | キー | 説明 |
 |------|------|
-| `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く（既定: OFF）。`project.yml` の `open_editor` が指定されていればそちらが優先 |
+| `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く。`devbase env init` の対話既定は `1`（有効）なので、init 済みの環境では通常 ON。キー自体が未設定のときのみ OFF に倒れる。`project.yml` の `open_editor` が指定されていればそちらが優先 |
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
 | `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。複数リポジトリ構成では devbase が自動生成するため通常は不要。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
