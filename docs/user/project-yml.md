@@ -92,8 +92,9 @@ clone URL は `https://<host>/<owner>/<repo>.git` で組み立てられます。
 | `env` | コンテナへ渡す環境変数 | `ENABLE_SSH`、アプリが読む設定値 |
 | `.env` | プロジェクト固有の機密 | API キー、DB 接続情報 |
 
-`compose.yml` が `env_file: - env` で参照するため、`env` は中身が無くても
-ファイル自体を残してください（実在しないと compose が起動時に落ちます）。
+`compose.yml` が `env_file: - env` で参照するため、`env` は**ファイル自体が必須**です。
+渡したい環境変数が無ければ空ファイルで構いませんが、削除すると `devbase up` が
+compose の起動時に失敗します。
 
 ## 旧 `env` 形式からの移行
 

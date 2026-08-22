@@ -182,8 +182,8 @@ devbase up
 |------|------|------|
 | `DEVBASE_REPO_PULL` | `1` | `0` にすると ①（`repo/` の `git pull`）を抑止。オフラインや意図的にビルドコンテキストを固定したいとき |
 | `DEVBASE_ENV_OVERWRITE` | `backup` | 未 populate 時の既存ホスト `.env` の扱い。`backup`（`.env.bak.<ts>` に退避して上書き）/ `skip`（既存があれば S3 取得しない）/ `force`（退避せず上書き） |
-| `DEVBASE_WORK_VOLUME` | `devbase_work_<index>` | `compose.yml` が参照する共有 work ボリューム名の明示指定。未指定なら `DEVBASE_INSTANCE_INDEX` から解決。ただし効くのは **app / nginx など非 dev サービスだけ**で、dev サービスの `/work` は scale 生成時に `devbase_work_<index>` へ無条件に差し替えられます。dev から実行時ソースを触る本パターンでは **既定名のまま**にしてください（[スケール前提](#スケール前提-container_scale1) を参照） |
-| `DEVBASE_INSTANCE_INDEX` | `1` | work ボリューム名のインデックス。**devbase 本体が渡すのは `deploy` フックに対してのみ**で、`pre-up` や `docker compose` のプロセス環境には渡りません。`compose.yml` の `${DEVBASE_INSTANCE_INDEX:-1}` は `.env` に書かれた値、無ければ `1` に解決されます（[スケール前提](#スケール前提-container_scale1) を参照） |
+| `DEVBASE_WORK_VOLUME` | `devbase_work_<index>` | `compose.yml` が参照する共有 work ボリューム名の明示指定。未指定なら `DEVBASE_INSTANCE_INDEX` から解決。ただし効くのは **app / nginx など非 dev サービスだけ**で、dev サービスの `/work` は scale 生成時に `devbase_work_<index>` へ無条件に差し替えられます。dev から実行時ソースを触る本パターンでは **既定名のまま**にしてください（[スケール前提](#スケール前提-scale-1) を参照） |
+| `DEVBASE_INSTANCE_INDEX` | `1` | work ボリューム名のインデックス。**devbase 本体が渡すのは `deploy` フックに対してのみ**で、`pre-up` や `docker compose` のプロセス環境には渡りません。`compose.yml` の `${DEVBASE_INSTANCE_INDEX:-1}` は `.env` に書かれた値、無ければ `1` に解決されます（[スケール前提](#スケール前提-scale-1) を参照） |
 
 > **Note:** `.env` の環境選択（例: `s3://.../env/local.env` の `local` 部分）など、S3 パスやプロファイルはプロジェクト固有の変数（例: `CARMO_ENV`）で制御することがあります。プロジェクトの `pre-up` 冒頭コメントを参照してください。
 

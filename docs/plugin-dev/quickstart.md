@@ -53,7 +53,8 @@ my-plugin/
 └── projects/
     └── my-project/
         ├── compose.yml
-        └── env
+        ├── project.yml
+        └── env          # 中身は任意だが、ファイルは必須
 ```
 
 ### 2.2 compose.yml の作成
@@ -134,7 +135,7 @@ repos:
 | `scale` | 起動するコンテナ数（既定: 2） |
 | `open_editor` | `devbase up` 後に VS Code を自動で開くか |
 
-### 2.3.1 env ファイル（任意）
+### 2.3.1 env ファイル（ファイルは必須・中身は任意）
 
 `projects/my-project/env` には、**コンテナへ渡す環境変数**だけを書きます（`ENABLE_SSH` など）。devbase 自身の設定は `project.yml` にあります。
 
@@ -142,7 +143,11 @@ repos:
 ENABLE_SSH=true
 ```
 
-`compose.yml` が `env_file: - env` で参照するため、**中身が無くてもファイルは残してください**（実在しないと compose が起動時に落ちます）。
+2.2 の `compose.yml` が `env_file: - env` で参照するため、**ファイルは必ず作成してください**（実在しないと `devbase up` が compose の起動時に失敗します）。渡したい環境変数が無ければ空ファイルで構いません。
+
+```bash
+touch projects/my-project/env
+```
 
 ### 2.4 .env ファイル（任意）
 
