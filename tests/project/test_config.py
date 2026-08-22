@@ -222,9 +222,9 @@ def test_missing_version_is_an_error():
         }, source="project.yml")
 
 
-@pytest.mark.parametrize("bad_version", [True, False])
-def test_boolean_version_is_an_error(bad_version):
-    """YAML の ``true`` は Python では ``1`` と等価なため明示的に弾く"""
+@pytest.mark.parametrize("bad_version", [True, False, 1.0, "1"])
+def test_non_integer_version_is_an_error(bad_version):
+    """YAML の ``true`` / ``1.0`` は ``== 1`` を満たすため型で明示的に弾く"""
     with pytest.raises(ConfigError, match="version"):
         parse_project_config({
             "version": bad_version,
@@ -301,6 +301,15 @@ def test_broken_yaml_is_an_error(tmp_path):
         load_project_config(tmp_path)
 
 
+def test_non_utf8_file_is_an_error_with_encoding_hint(tmp_path):
+    """Shift-JIS 等で保存されたファイルは UTF-8 での保存を案内する"""
+    (tmp_path / "project.yml").write_bytes(
+        "version: 1  # 日本語コメント\n".encode("cp932"))
+
+    with pytest.raises(ConfigError, match="UTF-8"):
+        load_project_config(tmp_path)
+
+
 def test_yaml_root_must_be_a_mapping(tmp_path):
     write_project_yml(tmp_path, "- repo: carmo")
 
@@ -344,6 +353,16 @@ def test_repo_plan_round_trips():
         ("https://github.com/volareinc/carmo.git", "carmo", None, True),
         ("https://github.com/volareinc/carmo-batch.git", "carmo-batch", "main", True),
     ]
+
+
+@pytest.mark.parametrize("bad_init", ["", "2", "true", "0 "])
+def test_decode_rejects_init_column_outside_one_and_zero(bad_init):
+    """壊れた値・将来の未知値を「init しない」として黙って通さない"""
+    line = f"https://github.com/volareinc/carmo.git\tcarmo\t\t{bad_init}"
+    encoded = base64.b64encode(line.encode()).decode()
+
+    with pytest.raises(ConfigError, match="init"):
+        decode_repo_plan(encoded)
 
 
 def test_encoded_plan_has_no_shell_or_compose_hazards():

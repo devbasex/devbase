@@ -159,8 +159,11 @@ def parse_project_config(data: Mapping[str, Any], source: str) -> ProjectConfig:
     _reject_unknown_keys(data, _TOP_LEVEL_KEYS, source, "最上位")
 
     version = data.get("version")
-    # YAML の ``true`` は Python では ``1`` と等価なので bool を明示的に弾く。
-    if isinstance(version, bool) or version != SUPPORTED_VERSION:
+    # YAML では ``true`` が ``1``、``1.0`` が float として読まれ、どちらも
+    # ``== 1`` を満たしてしまう。整数のスキーマ版という契約を保つため、値の
+    # 一致だけでなく型そのものを厳密に見る (``type(...) is int`` は bool を
+    # 部分型として受理しない)。
+    if type(version) is not int or version != SUPPORTED_VERSION:
         raise ConfigError(
             f"{source}: version は {SUPPORTED_VERSION} である必要があります "
             f"(現在: {version!r})")
@@ -227,6 +230,11 @@ def decode_repo_plan(encoded: str) -> Tuple[RepoPlanEntry, ...]:
         if len(fields) != 4:
             raise ConfigError(f"clone プランの列数が不正です: {line!r}")
         url, directory, branch, init = fields
+        # init 列は wire format 上 ``1``/``0`` だけ。それ以外を False へ丸めると
+        # 壊れた値や将来の未知値が「init しない」として黙って通ってしまう。
+        if init not in ("0", "1"):
+            raise ConfigError(
+                f"clone プランの init 列は 1 か 0 である必要があります: {line!r}")
         entries.append(RepoPlanEntry(
             url=url, dir=directory, branch=branch or None, init=init == "1"))
     return tuple(entries)
