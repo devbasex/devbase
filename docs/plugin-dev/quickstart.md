@@ -170,19 +170,45 @@ MY_SECRET_API_KEY=sk-xxxxxxxxxxxx
 | `pre-up` | `devbase up` 開始直後（`docker compose up` の前） | `build.context` 用ソースリポジトリの clone、設定ファイルの生成など、イメージビルド前に完了させたい準備 |
 | `deploy` | コンテナ起動完了後、各スケールインスタンスごとに実行 | S3 からの `.env` 取得、コンテナ起動後に必要な外部リソースの初期化など |
 
+#### フックへ渡る環境変数
+
+フックは**ホスト側**で動くため、コンテナへ渡る `env` / `.env` は読み込まれません。フックが必要とする `project.yml` の値は、devbase が環境変数として明示的に渡します。
+
+| 変数 | 内容 | `pre-up` | `deploy` |
+|------|------|:---:|:---:|
+| `DEVBASE_PRIMARY_DIR` | primary リポジトリの `/work` 配下ディレクトリ名（`repos[].dir`。未指定ならリポジトリ名） | ✓ | ✓ |
+| `DEVBASE_PRIMARY_URL` | primary リポジトリの clone URL（`https://<host>/<owner>/<repo>.git`） | ✓ | ✓ |
+| `DEVBASE_WORK_DIR` | コンテナ内の既定の作業ディレクトリ（`work_dir`。未指定なら `/work/$DEVBASE_PRIMARY_DIR`） | ✓ | ✓ |
+| `DEVBASE_REPO_DIRS` | 全リポジトリのディレクトリ名を `project.yml` の宣言順に空白区切りで並べたもの | ✓ | ✓ |
+| `DEVBASE_INSTANCE_INDEX` | 実行対象のインスタンス番号（1 始まり）。`pre-up` はインスタンスごとに実行されないため渡りません | -- | ✓ |
+
+primary は `repos` の先頭（または `primary: true` を付けた 1 件）で、常にちょうど 1 件です。primary 以外も含めて全リポジトリを回したい場合は `DEVBASE_REPO_DIRS` を使います。
+
+```bash
+for dir in $DEVBASE_REPO_DIRS; do
+    echo "populate /work/$dir"
+done
+```
+
+> **Note:** これらは**子プロセスにだけ**渡ります。フック内で `export` しても、後続の `docker compose up` や別プロジェクトの実行へは伝播しません。
+
+#### `pre-up` の例
+
 ```bash
 #!/bin/bash
 # projects/my-project/pre-up
 set -e
 
 # build context に使うリポジトリが無ければ clone
-# (pre-up はホスト側で動くフックなので、clone 先も URL もここに直接書く)
+# (clone 先も URL も devbase が project.yml から渡してくれる)
 if [ ! -d "./repo" ]; then
-    git clone "https://github.com/your-github-user/my-repo.git" repo
+    git clone "$DEVBASE_PRIMARY_URL" repo
 fi
+
+echo "コンテナ内の作業ディレクトリ: $DEVBASE_WORK_DIR"   # 例: /work/my-repo
 ```
 
-> **Note:** どちらのフックも `bash` で実行されます。`chmod +x` で実行可能ビットを立てておいてください。`pre-up` が非ゼロ終了すると `devbase up` は中断します。`deploy` は各インスタンスに対して `DEVBASE_INSTANCE_INDEX` を環境変数として渡しますが、失敗してもデプロイは続行されます。
+> **Note:** どちらのフックも `bash` で実行されます。`chmod +x` で実行可能ビットを立てておいてください。`pre-up` が非ゼロ終了すると `devbase up` は中断します。`deploy` は失敗してもデプロイは続行されます。
 
 > **応用:** 外部リポジトリを共有 work ボリュームへ取り込み、app / nginx / db など複数コンテナで動かすプロジェクトでは、`pre-up` で clone/pull と work ボリュームへの populate を行い、2 回目以降はコンテナ側を上書きしないよう冪等にスキップするのが定石です。詳細は [repo 連携プロジェクトと pre-up populate パターン](repo-backed-projects.md) を参照してください。
 

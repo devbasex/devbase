@@ -12,6 +12,7 @@ from devbase.project.config import decode_repo_plan, parse_project_config
 from devbase.project.runtime import (
     build_workspace_document,
     container_env,
+    hook_env,
     read_scale,
     workspace_path,
     write_scale,
@@ -146,3 +147,27 @@ def test_write_scale_rejects_a_broken_result(tmp_path):
     with pytest.raises(ConfigError, match="scale"):
         write_scale(tmp_path, 0)
     assert "scale" not in (tmp_path / "project.yml").read_text()
+
+
+# ---------------------------------------------------------------------------
+# ライフサイクルフックへ渡す環境変数
+# ---------------------------------------------------------------------------
+
+def test_hook_env_exposes_the_primary_repo_and_work_dir():
+    """`pre-up` / `deploy` は clone 先を知る必要がある (旧 WORK_DIR / GIT_REPO の代替)"""
+    env = hook_env(config_of("carmo", "carmo-batch"))
+
+    assert env["DEVBASE_PRIMARY_DIR"] == "carmo"
+    assert env["DEVBASE_PRIMARY_URL"] == "https://github.com/volareinc/carmo.git"
+    assert env["DEVBASE_WORK_DIR"] == "/work/carmo"
+    assert env["DEVBASE_REPO_DIRS"] == "carmo carmo-batch"
+
+
+def test_hook_env_follows_explicit_work_dir_and_primary():
+    config = config_of({"repo": "carmo-doc"}, {"repo": "carmo", "primary": True},
+                       work_dir="/work/carmo/app")
+
+    env = hook_env(config)
+
+    assert env["DEVBASE_PRIMARY_DIR"] == "carmo"
+    assert env["DEVBASE_WORK_DIR"] == "/work/carmo/app"

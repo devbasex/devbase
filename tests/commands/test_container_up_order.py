@@ -35,7 +35,7 @@ def up_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(container, 'get_project_name', lambda: 'proj')
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
     monkeypatch.setattr(container, '_ensure_env_files', lambda: True)
-    monkeypatch.setattr(container, '_run_pre_up_hook', lambda: True)
+    monkeypatch.setattr(container, '_run_pre_up_hook', lambda config=None: True)
     monkeypatch.setattr(container, '_ensure_images', lambda: True)
     monkeypatch.setattr(container, '_auto_snapshot', lambda: None)
     monkeypatch.setattr(container, 'ensure_volumes', lambda *a, **k: None)

@@ -146,11 +146,17 @@ def _compose_run(subcommand: str, *extra_args: str) -> int:
     return subprocess.run(cmd).returncode
 
 
-def _run_deploy_script_for_instances(deploy_script: Path, indices) -> None:
-    """デプロイスクリプトをスケールされた各インスタンスに対して実行する"""
+def _run_deploy_script_for_instances(deploy_script: Path, indices,
+                                     config=None) -> None:
+    """デプロイスクリプトをスケールされた各インスタンスに対して実行する。
+
+    ``config`` (``project.yml``) を渡すと、clone 先やリポジトリ URL をフックへ
+    環境変数で伝える (:func:`devbase.project.runtime.hook_env`)。
+    """
+    hook_vars = project_runtime.hook_env(config) if config is not None else {}
     for i in indices:
         logger.info("[Bonus] Running deploy script for instance %d...", i)
-        env = {**os.environ, 'DEVBASE_INSTANCE_INDEX': str(i)}
+        env = {**os.environ, **hook_vars, 'DEVBASE_INSTANCE_INDEX': str(i)}
         try:
             subprocess.run(['bash', str(deploy_script)], check=True, env=env)
             logger.info("Deploy script completed for instance %d", i)
@@ -158,11 +164,16 @@ def _run_deploy_script_for_instances(deploy_script: Path, indices) -> None:
             logger.warning("Deploy script failed for instance %d (exit code %d)", i, e.returncode)
 
 
-def _run_pre_up_hook() -> bool:
+def _run_pre_up_hook(config=None) -> bool:
     """`./pre-up` フックがあればコンテナ起動前に実行する。
 
     ビルドコンテキスト用のリポジトリ clone など、`docker compose up` より前に
     完了しておく必要のある準備処理をプロジェクト側で記述するためのフック。
+
+    ``config`` (``project.yml``) を渡すと、clone 先やリポジトリ URL をフックへ
+    環境変数で伝える (:func:`devbase.project.runtime.hook_env`)。フックは以前
+    ``source ./env`` で ``GIT_REPO`` / ``WORK_DIR`` を読んでいたが、これらは
+    ``project.yml`` へ移ったため devbase 側から明示的に渡す。
 
     Returns:
         True: フックが存在しなかった、または成功した
@@ -173,8 +184,10 @@ def _run_pre_up_hook() -> bool:
         return True
 
     logger.info("Running pre-up hook: %s", pre_up_script)
+    hook_vars = project_runtime.hook_env(config) if config is not None else {}
     try:
-        subprocess.run(['bash', str(pre_up_script)], check=True, env=os.environ.copy())
+        subprocess.run(['bash', str(pre_up_script)], check=True,
+                       env={**os.environ, **hook_vars})
         return True
     except subprocess.CalledProcessError as e:
         logger.error("pre-up hook failed (exit code %d)", e.returncode)
@@ -644,7 +657,7 @@ def cmd_up(project_name: str = None, scale: int = None,
         return 1
 
     # Pre-step: Run ./pre-up hook (e.g. clone source repos used as build contexts)
-    if not _run_pre_up_hook():
+    if not _run_pre_up_hook(config):
         return 1
 
     # Pre-check 2: Ensure container images exist
@@ -693,7 +706,8 @@ def cmd_up(project_name: str = None, scale: int = None,
         # Run project-specific deploy script for each scaled instance
         deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
-            _run_deploy_script_for_instances(deploy_script, range(1, scale + 1))
+            _run_deploy_script_for_instances(deploy_script, range(1, scale + 1),
+                                             config)
 
         _maybe_open_editor(project_name, open_editor, open_index, scale,
                            config, compose_file=override_file)
@@ -840,7 +854,8 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         # Run project-specific deploy script for newly added instances
         deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
-            _run_deploy_script_for_instances(deploy_script, range(current_scale + 1, new_scale + 1))
+            _run_deploy_script_for_instances(
+                deploy_script, range(current_scale + 1, new_scale + 1), config)
 
         logger.info("=== Scale completed successfully ===")
         logger.info("Container scale: %d -> %d", current_scale, new_scale)

@@ -147,6 +147,24 @@ flowchart LR
 YAML の解釈はホスト側の Python に閉じています。コンテナ側は復号して 1 行ずつ
 clone するだけなので、イメージへ YAML パーサを持ち込みません。
 
+## ライフサイクルフックへの渡り方
+
+プロジェクトに `pre-up` / `deploy` フックを置いている場合、それらは**ホスト側**で
+動くため `env` を読み込めません。フックがよく必要とする値は、devbase が
+`project.yml` から解決して環境変数として渡します。
+
+| 環境変数 | `project.yml` の由来 |
+|---------|---------------------|
+| `DEVBASE_PRIMARY_DIR` | primary リポジトリの `repos[].dir`（未指定ならリポジトリ名） |
+| `DEVBASE_PRIMARY_URL` | primary リポジトリの `host` / `owner` / `repo` から組み立てた clone URL |
+| `DEVBASE_WORK_DIR` | `work_dir`（未指定なら `/work/<primary の dir>`） |
+| `DEVBASE_REPO_DIRS` | `repos[].dir` を宣言順に空白区切りで並べたもの |
+
+旧 `env` 形式のフックが `source ./env` で読んでいた `GIT_REPO` / `WORK_DIR` は、
+それぞれ `DEVBASE_PRIMARY_DIR` / `DEVBASE_WORK_DIR` に置き換えてください。詳細は
+[プラグイン開発クイックスタート「フックへ渡る環境変数」](../plugin-dev/quickstart.md#フックへ渡る環境変数)
+を参照してください。
+
 > **Note:** `entrypoint.sh` はイメージに焼き込まれます。devbase 本体を更新して
 > clone のふるまいが変わった場合は、`devbase build --no-cache` でベースイメージを
 > 再ビルドしないと反映されません。

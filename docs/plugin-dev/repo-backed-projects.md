@@ -88,10 +88,40 @@ volumes:
 
 | # | 処理 | 内容 |
 |---|------|------|
-| ① | `repo/` の clone / pull | 無ければ `git clone`、あれば `git pull --ff-only`（app ビルドコンテキストの最新化） |
+| ① | `repo/` の clone / pull | 無ければ `git clone "$DEVBASE_PRIMARY_URL"`、あれば `git pull --ff-only`（app ビルドコンテキストの最新化） |
 | ② | `.env` の取得 | S3 等から取得してホスト `./.env` に配置（`docker compose` の変数展開前に必要） |
-| ③ | work ボリュームへ populate | `repo/` の内容を `/work/<リポジトリ名>` へコピー |
-| ④ | `.env` を work ボリュームへ配置 | Laravel 等のランタイムが `/work/<リポジトリ名>/.env` を参照するため |
+| ③ | work ボリュームへ populate | `repo/` の内容を `/work/$DEVBASE_PRIMARY_DIR` へコピー |
+| ④ | `.env` を work ボリュームへ配置 | Laravel 等のランタイムが `/work/$DEVBASE_PRIMARY_DIR/.env` を参照するため |
+
+### clone 先と URL の受け取り方
+
+`pre-up` はホスト側で動くフックなので、コンテナへ渡る `env` は読み込まれません。populate 先のディレクトリ名と clone URL は、devbase が `project.yml` から解決して環境変数で渡します。
+
+```bash
+#!/bin/bash
+# projects/<name>/pre-up
+set -e
+
+REPO_DIR="$DEVBASE_PRIMARY_DIR"                       # 例: carmo-system-console
+WORK_VOLUME="${DEVBASE_WORK_VOLUME:-devbase_work_1}"
+
+# ① ビルドコンテキストの clone / pull
+if [ ! -d "./repo/.git" ]; then
+    git clone "$DEVBASE_PRIMARY_URL" repo
+elif [ "${DEVBASE_REPO_PULL:-1}" = "1" ]; then
+    git -C repo pull --ff-only
+fi
+
+# populate 済み判定は work ボリューム上の /work/$REPO_DIR/.git で行う
+if docker run --rm -v "$WORK_VOLUME:/work" alpine test -d "/work/$REPO_DIR/.git"; then
+    echo "populate 済みのためスキップ"
+    exit 0
+fi
+
+# ②③④ (.env 取得 / populate / .env 配置) は /work/$REPO_DIR を対象に行う
+```
+
+変数の一覧と `deploy` への渡り方は [クイックスタート「フックへ渡る環境変数」](quickstart.md#フックへ渡る環境変数) を参照してください。`project.yml` に複数リポジトリを書いている場合は、`DEVBASE_REPO_DIRS`（宣言順・空白区切り）で全 clone 先を回せます。
 
 ② を `deploy`（`up` 後フック）ではなく `pre-up` で行うのは、`compose.yml` の `MYSQL_DATABASE: ${DB_DATABASE:-...}` のような変数展開が `docker compose` パース時（＝ MySQL コンテナ初回起動前）に `.env` を要求するためです。`deploy` 段階では間に合わず、DB がデフォルト名で初期化されてしまいます。
 
@@ -185,6 +215,15 @@ devbase up
 | `DEVBASE_WORK_VOLUME` | `devbase_work_<index>` | `compose.yml` が参照する共有 work ボリューム名の明示指定。未指定なら `DEVBASE_INSTANCE_INDEX` から解決。ただし効くのは **app / nginx など非 dev サービスだけ**で、dev サービスの `/work` は scale 生成時に `devbase_work_<index>` へ無条件に差し替えられます。dev から実行時ソースを触る本パターンでは **既定名のまま**にしてください（[スケール前提](#スケール前提-scale-1) を参照） |
 | `DEVBASE_INSTANCE_INDEX` | `1` | work ボリューム名のインデックス。**devbase 本体が渡すのは `deploy` フックに対してのみ**で、`pre-up` や `docker compose` のプロセス環境には渡りません。`compose.yml` の `${DEVBASE_INSTANCE_INDEX:-1}` は `.env` に書かれた値、無ければ `1` に解決されます（[スケール前提](#スケール前提-scale-1) を参照） |
 
+上記はプロジェクト側が設定する変数です。これに対し、次の 4 つは **devbase が `project.yml` から解決して `pre-up` / `deploy` の両方へ渡す**読み取り専用の値です（詳細は [クイックスタート「フックへ渡る環境変数」](quickstart.md#フックへ渡る環境変数)）。
+
+| 変数 | 内容 |
+|------|------|
+| `DEVBASE_PRIMARY_DIR` | primary リポジトリの `/work` 配下ディレクトリ名（populate 先） |
+| `DEVBASE_PRIMARY_URL` | primary リポジトリの clone URL |
+| `DEVBASE_WORK_DIR` | コンテナ内の既定の作業ディレクトリ |
+| `DEVBASE_REPO_DIRS` | 全リポジトリのディレクトリ名（宣言順・空白区切り） |
+
 > **Note:** `.env` の環境選択（例: `s3://.../env/local.env` の `local` 部分）など、S3 パスやプロファイルはプロジェクト固有の変数（例: `CARMO_ENV`）で制御することがあります。プロジェクトの `pre-up` 冒頭コメントを参照してください。
 
 ---
@@ -196,6 +235,7 @@ devbase up
 - [ ] `compose.yml` で work ボリュームを `external: true` + `name: ${DEVBASE_WORK_VOLUME:-devbase_work_${DEVBASE_INSTANCE_INDEX:-1}}` で宣言した
 - [ ] app サービスの `build.context` をホスト `./repo` にした
 - [ ] `pre-up` で ①clone/pull → ②`.env`取得 → ③populate → ④`.env`配置 を実装した
+- [ ] `pre-up` が clone 先・URL を `DEVBASE_PRIMARY_DIR` / `DEVBASE_PRIMARY_URL` から受け取っている（`source ./env` でも値を直書きでもなく）
 - [ ] `pre-up` が `/work/<リポジトリ名>/.git` の有無で populate 済みを判定し、②③④ をスキップする
 - [ ] populate 時の owner を `1000:1000`（コンテナ内ユーザー）に設定した
 - [ ] `storage/` / `vendor/` / `node_modules/` 等、初回のみ生成され上書きしたくないパスの扱いを決めた
