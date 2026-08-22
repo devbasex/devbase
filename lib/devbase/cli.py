@@ -242,6 +242,21 @@ def _add_project_parser(subparsers):
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
     _add_list_subparser(pj_sub)
 
+    # `migrate-config` は旧 env 形式から project.yml への変換 (PLAN32)。lifecycle
+    # ではないため wrapper の _PROJECT_NAME_SUBCOMMANDS には含めない。
+    pj_migrate = pj_sub.add_parser(
+        'migrate-config',
+        help='Convert legacy env (GIT_USER/GIT_REPO/...) into project.yml')
+    pj_migrate.add_argument('names', nargs='*', metavar='NAME',
+                            help='Limit to the given projects (default: all)')
+    pj_migrate.add_argument('--dry-run', action='store_true',
+                            help='Show what would change without writing')
+    # plugin リポジトリには devbase へリンクしていない projects/ もある
+    # (`repos/<repo>/<plugin>/projects`)。一括移行のため直接指定できるようにする。
+    pj_migrate.add_argument('--projects-dir', metavar='DIR', default=None,
+                            help='Directory holding the projects '
+                                 '(default: $DEVBASE_ROOT/projects)')
+
 
 def _add_list_subparser(sub):
     """`list` サブコマンドを登録する (project list / top-level list 共通)。
@@ -762,6 +777,11 @@ def _dispatch(cmd, args):
             devbase_root = _require_devbase_root()
             from devbase.commands.project import cmd_project_list
             return cmd_project_list(devbase_root, args)
+        # `project migrate-config` も lifecycle ではなく projects/ 全体の変換。
+        if getattr(args, 'subcommand', None) == 'migrate-config':
+            devbase_root = _require_devbase_root()
+            from devbase.commands.project import cmd_project_migrate_config
+            return cmd_project_migrate_config(devbase_root, args)
         from devbase.commands.container import cmd_project
         return cmd_project(args)
 
