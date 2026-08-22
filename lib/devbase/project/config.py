@@ -2,7 +2,7 @@
 
 1 プロジェクト = 1 コンテナ = **複数リポジトリ**構成の設定ファイルを扱う。
 人間が編集する正は YAML であり、コンテナへは正規化した「clone プラン」を
-base64 TSV (:func:`encode_repo_plan`) にして渡す。YAML の解釈をホスト側の
+base64 テキスト (:func:`encode_repo_plan`) にして渡す。YAML の解釈をホスト側の
 Python に閉じ込めることで、entrypoint (bash) は ``base64 -d`` と ``while read``
 だけで済み、コンテナイメージへ YAML パーサ依存を持ち込まずに済む。
 
@@ -54,7 +54,11 @@ _DEFAULTS_KEYS = frozenset({"host", "owner", "branch", "init"})
 
 _DEFAULT_HOST = "github.com"
 
-_WIRE_FIELD_SEPARATOR = "\t"
+#: wire format のフィールド区切り。US (unit separator, ``\x1f``) を使う。
+#: タブは bash の既定 ``IFS`` と同じ空白類に分類され、``IFS=$'\t' read`` では
+#: 連続する区切りが 1 つに畳まれてしまうため、空フィールド (branch 未指定) が
+#: 消えて以降の列がずれる。US は空白類ではないので空フィールドが保持される。
+_WIRE_FIELD_SEPARATOR = "\x1f"
 
 
 @dataclass(frozen=True)
@@ -200,23 +204,46 @@ def parse_project_config(data: Mapping[str, Any], source: str) -> ProjectConfig:
 # ---------------------------------------------------------------------------
 
 def encode_repo_plan(repos: Iterable[RepoSpec]) -> str:
-    """clone プランを base64 TSV へ符号化する。
+    """clone プランを base64 テキストへ符号化する。
 
-    1 行 1 repo で ``url<TAB>dir<TAB>branch<TAB>init`` (``init`` は ``1``/``0``、
-    ``branch`` 未指定は空文字)。base64 にするのは、compose の変数展開 (``$``) や
-    改行を含む値で構成ファイルが壊れないようにするため。primary は列に含めず
-    ``DEVBASE_PRIMARY_DIR`` で別に渡す (entrypoint の ``cd`` 先判定を単純に保つ)。
+    entrypoint (bash) との契約:
+
+    - 1 行 1 repo で ``url<US>dir<US>branch<US>init``。``<US>`` は unit separator
+      (``\x1f``)、``init`` は ``1``/``0``、``branch`` 未指定は**空フィールド**。
+    - フィールド区切りが空白類 (タブ) ではないため、``IFS=$'\x1f' read -r url
+      dir branch init`` で空フィールドが畳まれず、素直に 4 列として読める。
+    - 行区切りは LF。**末尾にも LF を付ける**。``while read`` は EOF 直前の
+      改行なし行を読み捨てる実装があるため、末尾 LF が無いと最後の行 (repo が
+      1 件ならその唯一の行) が丸ごと落ちる。
+    - 各フィールドは :func:`_require_token` で検証済みで、空白・制御文字
+      (タブ・改行・US を含む) を一切含まない。よって区切り文字とフィールド値が
+      衝突することはなく、エスケープも不要。
+
+    base64 にするのは、compose の変数展開 (``$``) や改行を含む値で構成ファイルが
+    壊れないようにするため。primary は列に含めず ``DEVBASE_PRIMARY_DIR`` で別に
+    渡す (entrypoint の ``cd`` 先判定を単純に保つ)。
+
+    典型的な consumer::
+
+        printf '%s' "$DEVBASE_REPOS" | base64 -d |
+          while IFS=$'\x1f' read -r url dir branch init; do
+            ...
+          done
     """
     lines = [
         _WIRE_FIELD_SEPARATOR.join(
             [repo.url, repo.dir, repo.branch or "", "1" if repo.init else "0"])
         for repo in repos
     ]
-    return base64.b64encode("\n".join(lines).encode()).decode()
+    text = "".join(f"{line}\n" for line in lines)
+    return base64.b64encode(text.encode()).decode()
 
 
 def decode_repo_plan(encoded: str) -> Tuple[RepoPlanEntry, ...]:
-    """:func:`encode_repo_plan` の逆変換 (契約テストと診断用)。"""
+    """:func:`encode_repo_plan` の逆変換 (契約テストと診断用)。
+
+    末尾 LF や空行は無視するので、末尾 LF の有無は round trip に影響しない。
+    """
     try:
         text = base64.b64decode(encoded, validate=True).decode()
     except (ValueError, UnicodeDecodeError) as e:
@@ -295,15 +322,21 @@ def _parse_repo(entry: Any, defaults: Mapping[str, Any], source: str,
 
 def _require_token(value: Any, field: str, source: str, where: str,
                    allow_slash: bool) -> str:
-    """URL 組み立てと TSV を壊さない文字列であることを確かめる。
+    """URL 組み立てと wire format を壊さない文字列であることを確かめる。
 
-    空白・タブ・改行は wire format (タブ区切り・行区切り) を壊し、``/`` は
+    空白・タブ・改行は wire format (行区切り) を壊し、``/`` は
     ``https://<host>/<owner>/<repo>.git`` の構造や ``/work/<dir>`` の階層を
     壊すため、項目ごとに許可を分ける (gitlab のサブグループやブランチ名の
     ``feature/x`` は ``/`` を含むため許可する)。
     """
-    if not isinstance(value, str) or not value:
-        raise ConfigError(f"{source}: {where} の {field} は必須です ({value!r})")
+    # YAML は ``repo: 123`` を int として読むため、「未指定」と「型が違う」を
+    # 同じ "必須です" で片づけると「指定したのに必須と言われる」ことになる。
+    if value is None or value == "":
+        raise ConfigError(f"{source}: {where} の {field} は必須です")
+    if not isinstance(value, str):
+        raise ConfigError(
+            f"{source}: {where} の {field} は文字列で指定してください "
+            f"({value!r})")
     if any(c.isspace() for c in value):
         raise ConfigError(
             f"{source}: {where} の {field} に空白文字は使えません ({value!r})")

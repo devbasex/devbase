@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import shutil
+import subprocess
 
 import pytest
 
@@ -321,7 +323,35 @@ def test_yaml_root_must_be_a_mapping(tmp_path):
 # wire format (entrypoint との契約)
 # ---------------------------------------------------------------------------
 
-def test_encode_repo_plan_is_base64_tsv():
+#: wire format のフィールド区切り (unit separator)。
+US = "\x1f"
+
+#: entrypoint (bash) が想定する読み取り方をそのまま再現する consumer。
+#: 素朴な ``while read`` で 4 列が欠けずに読めることを、実際の bash で確かめる。
+_BASH_CONSUMER = r"""
+set -eu
+printf '%s' "$PLAN" | base64 -d |
+  while IFS=$'\x1f' read -r url dir branch init; do
+    printf '[%s][%s][%s][%s]\n' "$url" "$dir" "$branch" "$init"
+  done
+"""
+
+
+def run_bash_consumer(encoded: str) -> list:
+    """符号化済み clone プランを bash の ``while read`` で読ませて行を返す。"""
+    result = subprocess.run(
+        ["bash", "-c", _BASH_CONSUMER],
+        env={"PLAN": encoded, "PATH": "/usr/bin:/bin:/usr/local/bin"},
+        capture_output=True, text=True, check=True,
+    )
+    return result.stdout.splitlines()
+
+
+requires_bash = pytest.mark.skipif(
+    shutil.which("bash") is None, reason="bash が無い環境ではスキップ")
+
+
+def test_encode_repo_plan_is_base64_unit_separated():
     config = parse_project_config({
         "version": 1,
         "defaults": {"owner": "uttaro-dev2"},
@@ -334,10 +364,60 @@ def test_encode_repo_plan_is_base64_tsv():
     encoded = encode_repo_plan(config.repos)
     decoded = base64.b64decode(encoded).decode()
 
-    assert decoded.splitlines() == [
-        "https://gitlab.com/uttaro_dev/uttarov2.git\tsystem\t\t1",
-        "https://github.com/uttaro-dev2/uttarov2-doc.git\tuttarov2-doc\tdevelop\t0",
+    assert decoded == (
+        f"https://gitlab.com/uttaro_dev/uttarov2.git{US}system{US}{US}1\n"
+        f"https://github.com/uttaro-dev2/uttarov2-doc.git{US}uttarov2-doc"
+        f"{US}develop{US}0\n"
+    )
+
+
+def test_encoded_plan_ends_with_newline():
+    """末尾 LF が無いと素朴な ``while read`` consumer が最後の行を落とす"""
+    config = parse_project_config({
+        "version": 1,
+        "repos": [{"owner": "volareinc", "repo": "carmo"}],
+    }, source="project.yml")
+
+    decoded = base64.b64decode(encode_repo_plan(config.repos)).decode()
+
+    assert decoded.endswith("\n")
+
+
+@requires_bash
+def test_bash_consumer_reads_every_column_including_empty_branch():
+    """branch 未指定 (空フィールド) でも init が branch にずれ込まないこと
+
+    区切りをタブにすると bash の IFS 空白扱いで連続区切りが 1 つに畳まれ、
+    ``1`` が branch に入って init が空になる。US (\x1f) なら空フィールドが残る。
+    """
+    config = parse_project_config({
+        "version": 1,
+        "defaults": {"owner": "volareinc"},
+        "repos": [
+            {"repo": "carmo"},
+            {"repo": "carmo-batch", "branch": "develop", "init": False},
+        ],
+    }, source="project.yml")
+
+    lines = run_bash_consumer(encode_repo_plan(config.repos))
+
+    assert lines == [
+        "[https://github.com/volareinc/carmo.git][carmo][][1]",
+        "[https://github.com/volareinc/carmo-batch.git][carmo-batch][develop][0]",
     ]
+
+
+@requires_bash
+def test_bash_consumer_does_not_drop_the_last_line_for_a_single_repo():
+    """末尾 LF が無いと 1 repo 構成では唯一の行がループ本体に入らない"""
+    config = parse_project_config({
+        "version": 1,
+        "repos": [{"owner": "volareinc", "repo": "carmo"}],
+    }, source="project.yml")
+
+    lines = run_bash_consumer(encode_repo_plan(config.repos))
+
+    assert lines == ["[https://github.com/volareinc/carmo.git][carmo][][1]"]
 
 
 def test_repo_plan_round_trips():
@@ -358,11 +438,32 @@ def test_repo_plan_round_trips():
 @pytest.mark.parametrize("bad_init", ["", "2", "true", "0 "])
 def test_decode_rejects_init_column_outside_one_and_zero(bad_init):
     """壊れた値・将来の未知値を「init しない」として黙って通さない"""
-    line = f"https://github.com/volareinc/carmo.git\tcarmo\t\t{bad_init}"
+    line = f"https://github.com/volareinc/carmo.git{US}carmo{US}{US}{bad_init}"
     encoded = base64.b64encode(line.encode()).decode()
 
     with pytest.raises(ConfigError, match="init"):
         decode_repo_plan(encoded)
+
+
+def test_numeric_repo_name_reports_a_type_error_not_a_missing_field():
+    """YAML が int として読む ``repo: 123`` に「必須です」と言わない
+
+    「指定したのに必須と言われる」を避けるため、未指定と型不一致を書き分ける。
+    """
+    with pytest.raises(ConfigError, match="repo は文字列で指定してください"):
+        parse_project_config({
+            "version": 1,
+            "repos": [{"owner": "volareinc", "repo": 123}],
+        }, source="project.yml")
+
+
+@pytest.mark.parametrize("missing", [None, ""])
+def test_unspecified_repo_reports_a_missing_field(missing):
+    with pytest.raises(ConfigError, match="repo は必須です"):
+        parse_project_config({
+            "version": 1,
+            "repos": [{"owner": "volareinc", "repo": missing}],
+        }, source="project.yml")
 
 
 def test_encoded_plan_has_no_shell_or_compose_hazards():
