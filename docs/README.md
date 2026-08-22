@@ -45,6 +45,7 @@ graph TD
 | [はじめに](user/getting-started.md) | 前提条件、初回セットアップ、日常ワークフロー |
 | [CLI リファレンス](user/cli-reference/README.md) | 全コマンドの構文・オプション・使用例 |
 | [プラグインレジストリ](user/plugin-registries.md) | 公開・社内レジストリの一覧と追加方法 |
+| [project.yml リファレンス](user/project-yml.md) | プロジェクト設定（複数リポジトリ・scale・エディタ） |
 | [環境変数ガイド](user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [環境変数の暗号化](user/env-encryption.md) | 認証情報を暗号化して保存する / 鍵とチーム共有 / 平文へ戻す |
 | [コンテナ操作ガイド](user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
@@ -101,6 +102,7 @@ docs/
 │   │   ├── 04-plugin.md               ← plugin グループ
 │   │   └── 05-snapshot.md             ← snapshot グループ
 │   ├── plugin-registries.md           ← プラグインレジストリ
+│   ├── project-yml.md                 ← project.yml リファレンス
 │   ├── environment-variables.md       ← 環境変数ガイド
 │   ├── env-encryption.md              ← 環境変数の暗号化
 │   ├── container-operations.md        ← コンテナ操作ガイド
@@ -128,6 +130,7 @@ docs/
 | 環境変数を設定する | [環境変数ガイド](user/environment-variables.md#環境変数の操作) |
 | 認証情報を暗号化して保存する | [環境変数の暗号化](user/env-encryption.md) |
 | 複数コンテナで並行開発する | [コンテナ操作ガイド](user/container-operations.md#並行開発) |
+| 1 つのコンテナで複数リポジトリを扱う | [project.yml リファレンス](user/project-yml.md#複数リポジトリ) |
 | データをバックアップ・復元する | [スナップショットガイド](user/snapshot-guide.md) |
 | エラーが発生した | [トラブルシューティング](user/troubleshooting.md) |
 | 旧 Orca 接続から移行する | [Orca 削除の移行ガイド](user/orca-removal-migration.md) |

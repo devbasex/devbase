@@ -21,7 +21,7 @@ graph TD
 | 優先度 | レベル | ファイル | 用途 | Git 管理 |
 |-------|-------|---------|------|---------|
 | 1（低） | グローバル | `devbase/.env` | 共通 API キー・認証情報 | gitignore |
-| 2 | プロジェクト設定 | `projects/*/env` | リポジトリ名・コンテナ数等 | 管理対象 |
+| 2 | プロジェクト環境変数 | `projects/*/env` | コンテナへ渡すプロジェクト固有の環境変数（`ENABLE_SSH` 等） | 管理対象 |
 | 3（高） | プロジェクト機密 | `projects/*/.env` | プロジェクト固有の API キー | gitignore |
 
 > **Note:** 同じキーが複数のレベルに存在する場合、優先度が高いレベルの値が使用されます。例えば、グローバルの `AWS_PROFILE` をプロジェクトの `.env` で上書きすることで、プロジェクトごとに異なる AWS プロファイルを使用できます。
@@ -34,13 +34,18 @@ graph TD
 
 **プロジェクト設定 `env`（`projects/*/env`）**
 
-プロジェクト固有の設定値を格納します。Git 管理対象のため、機密情報は含めないでください。
+コンテナへ渡すプロジェクト固有の環境変数を格納します。Git 管理対象のため、機密情報は含めないでください。
 
 ```bash
 # env ファイルの例
-REPO_NAME=my-project
-CONTAINER_SCALE=2
+ENABLE_SSH=true
 ```
+
+devbase 自身の設定（どのリポジトリを clone するか、コンテナ数、エディタの自動オープン）は
+環境変数ではなく [`projects/*/project.yml`](project-yml.md) に書きます。`env` に
+`GIT_USER` / `GIT_REPO` / `WORK_DIR` / `CONTAINER_SCALE` を書いても効果はありません。
+
+`compose.yml` が `env_file: - env` で参照するため、中身が無くてもファイル自体は残してください。
 
 **プロジェクト機密 `.env`（`projects/*/.env`）**
 
@@ -140,15 +145,20 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 
 ## `devbase up` 後のエディタ自動オープン
 
-`devbase up` 完了後、dev コンテナへ接続した VS Code を自動で開けます（VS Code の「Attach to Running Container」を CLI から起動）。既定では `/work/$GIT_REPO` フォルダを開きます（`--folder-uri`）。`DEVBASE_WORKSPACE` を指定するとフォルダの代わりに `*.code-workspace` ワークスペースファイルを開きます（`--file-uri`）。
+`devbase up` 完了後、dev コンテナへ接続した VS Code を自動で開けます（VS Code の「Attach to Running Container」を CLI から起動）。
 
-これらは `devbase env init` の収集対象外で、プロジェクトの `env` か `$DEVBASE_ROOT/.env` に手書きする devbase 動作設定です。
+開く対象は [`project.yml`](project-yml.md) から決まります。
+
+- リポジトリが 1 件: primary リポジトリのフォルダ（`--folder-uri`）
+- リポジトリが 2 件以上: 全リポジトリを含む multi-root ワークスペース `/work/<プロジェクト名>.code-workspace`（`--file-uri`）
+
+自動オープンの有無は `project.yml` の `open_editor` が最優先で、未指定なら以下の env に従います。このうち `DEVBASE_OPEN_EDITOR` だけは `devbase env init` の editor コレクターが対話収集し（対話の既定は `1` = 有効）、`$DEVBASE_ROOT/.env` に書き込まれます。残りは収集対象外で、`$DEVBASE_ROOT/.env` かプロジェクトの `env` に手書きする devbase 動作設定です。
 
 | キー | 説明 |
 |------|------|
-| `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く（既定: OFF） |
+| `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く。`devbase env init` の対話既定は `1`（有効）なので、init 済みの環境では通常 ON。キー自体が未設定のときのみ OFF に倒れる。`project.yml` の `open_editor` が指定されていればそちらが優先 |
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
-| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。指定時はフォルダではなくワークスペースを開く。未設定なら従来どおり `/work/$GIT_REPO` フォルダ。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
+| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。**効くのはリポジトリ 1 件の構成だけ**です。2 件以上の構成では `devbase up` が自動生成した `/work/<プロジェクト名>.code-workspace` を直接開くため、この env を設定しても上書きできません。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
 | `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「跨ホスト」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |
