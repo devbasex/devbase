@@ -73,8 +73,9 @@
 | --- | --- | --- | --- |
 | 設定ファイル名 `project.yml` (repos + devbase 設定を集約) | `repos` に加え `scale` / `open_editor` / `work_dir` を持つ | **採用** | issue の「`CONTAINER_SCALE` は yaml が相応しい」に沿う。設定の置き場所が 1 つに決まり「どっちに書くか」の迷いが消える |
 | 設定ファイル名 `repos.yml` (repo 定義のみ) | scale 等は `env` に残す | 不採用 | devbase 設定とコンテナ環境変数が `env` に同居したままで、issue の振り分け要求を半分しか満たさない |
-| repo リストの transport: **base64 TSV** を `DEVBASE_REPOS` で渡す | `url\tdir\tbranch\tinit` の行を base64 化 | **採用** | entrypoint 側が `base64 -d` + `while read` だけで解釈でき、jq/python への依存を増やさない (lfm など base 非継承イメージでも安全)。base64 なので compose の `$` 展開・改行事故も起きない |
-| transport: base64 JSON + jq | entrypoint で `jq` パース | 不採用 | `jq` は base image にはあるが lfm 系の派生イメージで保証できない。TSV で足りる |
+| repo リストの transport: **base64 の US 区切りレコード列** を `DEVBASE_REPOS` で渡す | `url<US>dir<US>branch<US>init` の行 (`<US>` = 0x1f) を base64 化 | **採用** | entrypoint 側が `base64 -d` + `IFS=$'\x1f' read` だけで解釈でき、jq/python への依存を増やさない (lfm など base 非継承イメージでも安全)。base64 なので compose の `$` 展開・改行事故も起きない |
+| transport: base64 JSON + jq | entrypoint で `jq` パース | 不採用 | `jq` は base image にはあるが lfm 系の派生イメージで保証できない。US 区切りの平テキストで足りる |
+| transport: 区切り文字にタブ (当初案) | `url\tdir\tbranch\tinit` の行を base64 化 | 不採用 | タブは IFS の**空白扱い**で連続する区切りが 1 つに畳まれる。`branch` 未指定 (空フィールド) の行で `init` の値がずれるため、`IFS=$'\t' read` で素直に 4 列として読めない。非空白の US (0x1f) なら空フィールドがそのまま残る |
 | transport: `project.yml` を bind mount して entrypoint で解釈 | コンテナ内で YAML を読む | 不採用 | project ディレクトリは現在マウントしていない。マウント経路の追加とコンテナ内 YAML パーサ依存の 2 つを同時に増やす |
 | workspace ファイル: **host で JSON を組み立て base64 で渡し entrypoint が書き出す** | `DEVBASE_WORKSPACE_B64` | **採用** | 生成ロジックを Python 側 (テスト可能) に置ける。entrypoint は `base64 -d > file` の 1 行 |
 | workspace ファイル: entrypoint で shell 組み立て | printf で JSON を書く | 不採用 | テストできない場所にエスケープ処理を置くことになる |
@@ -88,7 +89,7 @@
 | project | `projects/<name>/` 1 ディレクトリ = 1 compose プロジェクト = 1 dev コンテナ (群) |
 | repo | project が `/work` 配下へ clone する git リポジトリ。今回から**複数** |
 | primary repo | ログイン時の `cd` 先、および repo 1 件時にエディタが開くフォルダ。既定は `repos` の先頭 |
-| clone プラン | `project.yml` を正規化した内部表現。base64 TSV で `DEVBASE_REPOS` としてコンテナへ渡る |
+| clone プラン | `project.yml` を正規化した内部表現。base64 の US 区切りレコード列として `DEVBASE_REPOS` でコンテナへ渡る |
 | plugin repo | project 定義を配布するリポジトリ (`volareinc/devbase-ext` 等)。`projects/*` はここへの symlink |
 
 ## 不変条件
@@ -139,15 +140,23 @@ repos:
 - `dir` 重複はエラー。`primary: true` が 2 件以上はエラー。`repos` が空はエラー。
 - 未知キーはエラー (typo を黙って無視しない)。
 
-wire format (`DEVBASE_REPOS`, base64 TSV / 1 行 1 repo, タブ区切り):
+wire format (`DEVBASE_REPOS`, base64 / 1 行 1 repo, US (0x1f) 区切り):
 
 ```
-https://github.com/volareinc/carmo.git<TAB>carmo<TAB>main<TAB>1
-https://gitlab.com/uttaro_dev/uttarov2.git<TAB>system<TAB><TAB>0
+https://github.com/volareinc/carmo.git<US>carmo<US>main<US>1
+https://gitlab.com/uttaro_dev/uttarov2.git<US>system<US><US>0
 ```
+
+- フィールド区切りは **US = unit separator (0x1f)**。非空白なので `IFS=$'\x1f' read -r url dir branch init`
+  がそのまま 4 列として読め、`branch` 未指定 (空フィールド) の行でも `init` の値がずれない。
+  タブだと IFS の空白扱いで連続する区切りが 1 つに畳まれるため採用しない。
+- 行区切りは LF。**末尾にも LF を付ける**。`while read` は EOF 直前の改行なし行を読み捨てる実装が
+  あるため、末尾 LF が無いと最後の行 (repo 1 件ならその唯一の行) が丸ごと落ちる。
+- 各フィールドは符号化側で検証済み。空白・制御文字 (US / LF を含む) は通さないので、
+  エスケープ規則は持たない。
 
 列: `url`, `dir`, `branch` (空可), `init` (`1`/`0`)。primary は別変数 `DEVBASE_PRIMARY_DIR` で渡す
-(TSV の列を増やさず、entrypoint の `cd` 先判定を単純に保つ)。
+(列を増やさず、entrypoint の `cd` 先判定を単純に保つ)。
 
 ## 修正対象
 
@@ -179,7 +188,7 @@ plugin リポジトリ (別 PR):
 
 - **対象ファイル:** `lib/devbase/project/config.py`, `tests/project/test_config.py`
 - **変更内容:** `ProjectConfig` / `RepoSpec` dataclass、YAML 読み込み・`defaults` 継承・正規化・検証、
-  `encode_repo_plan()` / `decode_repo_plan()` (base64 TSV)。`project.yml` 不在・不正時は移行手順を含む
+  `encode_repo_plan()` / `decode_repo_plan()` (base64 / US 区切り)。`project.yml` 不在・不正時は移行手順を含む
   `ConfigError` を送出。この PR では**呼び出し元を差し替えない** (挙動変更なし)。
 - **満たす受け入れ条件:** AC6 の一部 (エラー文言)、AC2/AC3 のデータ表現
 - **進め方:** テスト駆動。正常系 (defaults 継承 / dir 明示 / host 混在 / primary 指定) と

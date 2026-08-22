@@ -10,7 +10,9 @@ set -e
 # するだけなので、コンテナイメージへ YAML/JSON パーサ依存を増やさずに済む。
 #
 # DEVBASE_REPOS         : base64 の行区切りレコード。1 行 = url / dir / branch / init を
-#                         US (0x1f) 区切りで並べたもの。branch は空可、init は 1/0
+#                         US (0x1f) 区切りで並べたもの。branch は空可、init は 1/0。
+#                         行区切りは LF で末尾にも LF が付く (符号化側の契約:
+#                         lib/devbase/project/config.py の encode_repo_plan)
 # DEVBASE_PRIMARY_DIR   : 起動後に cd する /work 配下のディレクトリ名
 # DEVBASE_WORKSPACE     : 書き出す *.code-workspace の絶対パス (複数 repo 時)
 # DEVBASE_WORKSPACE_B64 : その中身 (base64 JSON)

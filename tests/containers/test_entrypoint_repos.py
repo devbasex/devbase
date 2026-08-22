@@ -283,3 +283,49 @@ def test_old_git_repo_env_is_no_longer_honoured(tmp_path, work):
 
     assert result.returncode == 0, result.stderr
     assert list(work.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# 符号化側との結合
+# ---------------------------------------------------------------------------
+
+def test_the_real_encoder_output_is_consumed_as_is(tmp_path, work):
+    """host 側の ``encode_repo_plan`` の出力を entrypoint がそのまま読めること。
+
+    wire format (US 区切り / 末尾 LF) の契約は符号化側と entrypoint の 2 箇所に
+    分かれているため、テスト用の ``encode_plan`` だけを見ていると片側だけ変わった
+    ときに気付けない。実物の producer を通した plan で clone まで確認する。
+
+    ``lib/devbase/project/config.py`` は別 PR (Task 1) で入るので、まだ無い
+    ブランチでは skip する。
+    """
+    config = pytest.importorskip(
+        "devbase.project.config",
+        reason="lib/devbase/project/config.py はまだこのブランチに無い (Task 1)")
+
+    repos = [
+        config.RepoSpec(host="github.com", owner="o", repo="app",
+                        dir="app", branch=None, init=False, primary=True),
+        config.RepoSpec(host="github.com", owner="o", repo="docs",
+                        dir="docs", branch="develop", init=False, primary=False),
+    ]
+    # url はローカルの bare リポジトリへ差し替える (ネットワークに触らない)
+    urls = {
+        "app": make_origin(tmp_path, "app"),
+        "docs": make_origin(tmp_path, "docs", branches=("develop",)),
+    }
+    plan = config.encode_repo_plan(repos)
+    decoded = base64.b64decode(plan).decode()
+    for spec in repos:
+        decoded = decoded.replace(spec.url, urls[spec.dir])
+    plan = base64.b64encode(decoded.encode()).decode()
+
+    result = run_entrypoint_fn(f'devbase_clone_repos "{work}"',
+                               {"DEVBASE_REPOS": plan}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "malformed" not in result.stdout + result.stderr
+    # branch 未指定の repo が畳まれず、後続の repo もずれずに読めていること
+    assert (work / "app" / "README.md").exists()
+    assert (work / "docs" / "README.md").exists()
+    assert current_branch(work / "docs") == "develop"
