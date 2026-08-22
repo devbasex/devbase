@@ -65,6 +65,27 @@ def container_env(config: ProjectConfig, project_name: str) -> Dict[str, str]:
     return env
 
 
+def hook_env(config: ProjectConfig) -> Dict[str, str]:
+    """``pre-up`` / ``deploy`` フックへ渡す環境変数を組み立てる。
+
+    フックはホスト側で動き、clone 先のパスやリポジトリ URL を必要とすることが
+    ある (共有ボリュームへの populate、Laravel の ``.env`` 配置など)。以前は
+    ``env`` の ``GIT_REPO`` / ``WORK_DIR`` を ``source ./env`` で読んでいたが、
+    それらは ``project.yml`` へ移ったため devbase 側から明示的に渡す。
+
+    - ``DEVBASE_PRIMARY_DIR`` : primary repo の ``/work`` 配下ディレクトリ名
+    - ``DEVBASE_PRIMARY_URL`` : primary repo の clone URL
+    - ``DEVBASE_WORK_DIR``    : コンテナ内の既定の作業ディレクトリ
+    - ``DEVBASE_REPO_DIRS``   : 全 repo のディレクトリ名 (空白区切り、宣言順)
+    """
+    return {
+        "DEVBASE_PRIMARY_DIR": config.primary.dir,
+        "DEVBASE_PRIMARY_URL": config.primary.url,
+        "DEVBASE_WORK_DIR": config.resolved_work_dir(),
+        "DEVBASE_REPO_DIRS": " ".join(repo.dir for repo in config.repos),
+    }
+
+
 # ---------------------------------------------------------------------------
 # scale (旧 CONTAINER_SCALE)
 # ---------------------------------------------------------------------------
@@ -136,6 +157,7 @@ __all__ = [
     "build_workspace_document",
     "container_env",
     "current_project_config",
+    "hook_env",
     "read_scale",
     "workspace_path",
     "write_scale",
