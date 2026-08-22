@@ -53,7 +53,8 @@ my-plugin/
 └── projects/
     └── my-project/
         ├── compose.yml
-        └── env
+        ├── project.yml
+        └── env          # 中身は任意だが、ファイルは必須
 ```
 
 ### 2.2 compose.yml の作成
@@ -93,26 +94,60 @@ networks:
 
 > **補足:** compose.yml の記述ルール詳細は [compose.yml ガイドライン](compose-yml-guidelines.md) を参照してください。
 
-### 2.3 env ファイルの作成
+### 2.3 project.yml の作成
 
-`projects/my-project/env` を作成します。このファイルはGit管理対象です。
+`projects/my-project/project.yml` を作成します。このファイルはGit管理対象で、**プロジェクト設定の正**です。
 
-```bash
-GIT_USER=your-github-user
-GIT_REPO=my-repo
-WORK_DIR=/work/$GIT_REPO
-CONTAINER_SCALE=1
-# GitLab等GitHub以外のホストを使う場合:
-# GIT_HOST=gitlab.com
+```yaml
+version: 1
+scale: 1
+repos:
+  - owner: your-github-user
+    repo: my-repo
 ```
 
-| 変数 | 説明 |
+複数のリポジトリを 1 つのコンテナへチェックアウトできます。
+
+```yaml
+version: 1
+scale: 1
+defaults:
+  owner: your-github-user
+repos:
+  - repo: my-app          # 先頭が primary（ログイン直後の作業ディレクトリ）
+  - repo: my-app-docs
+  - repo: my-app-infra
+    host: gitlab.com      # リポジトリごとに Git ホストを変えられる
+    owner: another-org
+    dir: infra            # /work 配下の clone 先名（既定: repo 名）
+    branch: develop       # clone 後にチェックアウトするブランチ
+    init: false           # 起動のたびの ./init.sh 実行を無効化する
+```
+
+主なキーは以下のとおりです。全項目は [project.yml リファレンス](../user/project-yml.md) を参照してください。
+
+| キー | 説明 |
 |------|------|
-| `GIT_USER` | Gitホストのユーザー名またはOrganization名 |
-| `GIT_REPO` | リポジトリ名 |
-| `GIT_HOST` | Gitホスト名（デフォルト: `github.com`）。GitLabの場合は `gitlab.com` を指定 |
-| `WORK_DIR` | コンテナ内の作業ディレクトリ |
-| `CONTAINER_SCALE` | 起動するコンテナ数（デフォルト: 2） |
+| `version` | スキーマ版。現在は `1` |
+| `repos[].owner` / `repos[].repo` | Git ホストのユーザー名（Organization 名）とリポジトリ名 |
+| `repos[].host` | Git ホスト名（既定: `github.com`）。GitLab なら `gitlab.com` |
+| `repos[].dir` / `branch` / `init` / `primary` | clone 先ディレクトリ名 / チェックアウトするブランチ（clone 直後のみ） / `init.sh` の実行有無（起動のたびに実行。冪等に書くこと） / 既定の作業リポジトリ |
+| `scale` | 起動するコンテナ数（既定: 2） |
+| `open_editor` | `devbase up` 後に VS Code を自動で開くか |
+
+### 2.3.1 env ファイル（ファイルは必須・中身は任意）
+
+`projects/my-project/env` には、**コンテナへ渡す環境変数**だけを書きます（`ENABLE_SSH` など）。devbase 自身の設定は `project.yml` にあります。
+
+```bash
+ENABLE_SSH=true
+```
+
+2.2 の `compose.yml` が `env_file: - env` で参照するため、**ファイルは必ず作成してください**（実在しないと `devbase up` が compose の起動時に失敗します）。渡したい環境変数が無ければ空ファイルで構いません。
+
+```bash
+touch projects/my-project/env
+```
 
 ### 2.4 .env ファイル（任意）
 
@@ -137,12 +172,10 @@ MY_SECRET_API_KEY=sk-xxxxxxxxxxxx
 # projects/my-project/pre-up
 set -e
 
-# env から GIT_USER / GIT_REPO を取得
-source ./env
-
 # build context に使うリポジトリが無ければ clone
+# (pre-up はホスト側で動くフックなので、clone 先も URL もここに直接書く)
 if [ ! -d "./repo" ]; then
-    git clone "https://github.com/${GIT_USER}/${GIT_REPO}.git" repo
+    git clone "https://github.com/your-github-user/my-repo.git" repo
 fi
 ```
 
