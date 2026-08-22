@@ -158,6 +158,15 @@ https://gitlab.com/uttaro_dev/uttarov2.git<US>system<US><US>0
 列: `url`, `dir`, `branch` (空可), `init` (`1`/`0`)。primary は別変数 `DEVBASE_PRIMARY_DIR` で渡す
 (列を増やさず、entrypoint の `cd` 先判定を単純に保つ)。
 
+entrypoint 側の読み方 (`containers/base/entrypoint.sh`):
+
+```bash
+printf '%s' "$DEVBASE_REPOS" | base64 -d |
+  while IFS=$'\x1f' read -r url dir branch init; do
+    ...
+  done
+```
+
 ## 修正対象
 
 devbase 本体:
