@@ -6,7 +6,7 @@ devbase用のPluginを作成し、公開するまでの手順を解説します�
 
 ## 前提条件
 
-- devbase 2.2.0 以上がインストール済み
+- devbase 3.0.0 以上がインストール済み
 - Git がインストール済み
 - Docker / Docker Compose が利用可能
 

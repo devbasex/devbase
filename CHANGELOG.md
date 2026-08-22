@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-23
+
+プロジェクト設定を `project.yml` へ移行する破壊的変更を含みます。プラグイン側の
+プロジェクト定義も本バージョンに合わせた更新が必要です (`requires.devbase: ">=3.0.0"`)。
+
 ### Added
 - **tmux 内では `VSCODE_IPC_HOOK_CLI` が古くても VS Code を自動で開く**ようにしました。
   tmux サーバーはセッション作成時の環境変数を保持し続けますが、`update-environment` に
