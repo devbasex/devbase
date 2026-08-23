@@ -170,23 +170,47 @@ def test_numeric_requirement_does_not_crash(requires):
     check_devbase_requirement(info(requires), current_version="3.0.0")
 
 
-def test_numeric_requirement_is_still_compared():
-    with pytest.raises(PluginError):
-        check_devbase_requirement(info(4.0), current_version="3.0.0")
+def test_numeric_requirement_is_not_compared(caplog):
+    """数値は YAML が変換した結果で元の表記を復元できないため検証しない"""
+    check_devbase_requirement(info(4.0), current_version="3.0.0")
+
+    assert caplog.records
 
 
-def test_plugin_yml_numeric_requirement_is_loaded_as_str(tmp_path):
+@pytest.mark.parametrize("written,parsed", [("3.0", 3.0), ("3.10", 3.1)])
+def test_unquoted_requirement_is_reported_instead_of_guessed(tmp_path, caplog,
+                                                             written, parsed):
+    """`devbase: 3.10` は float 3.1 になり 3.10 へ戻せない。誤判定せず案内する"""
     from devbase.plugin.syncer import load_plugin_info
 
     plugin = tmp_path / "sample-plugin"
     plugin.mkdir()
     (plugin / "plugin.yml").write_text(
-        "name: sample-plugin\nversion: \"1.0.0\"\nrequires:\n  devbase: 3.0\n")
+        f'name: sample-plugin\nversion: "1.0.0"\nrequires:\n  devbase: {written}\n')
 
     loaded = load_plugin_info(plugin)
 
-    assert loaded.requires_devbase == "3.0"
-    check_devbase_requirement(loaded, current_version="3.0.0")
+    assert loaded.requires_devbase is None
+    assert any("クォート" in r.message for r in caplog.records)
+    # 検証されないので、どの版でもインストールは止まらない
+    check_devbase_requirement(loaded, current_version="3.1.0")
+
+
+def test_quoted_requirement_is_compared(tmp_path):
+    """クォートしてあれば従来どおり検証される"""
+    from devbase.plugin.syncer import load_plugin_info
+
+    plugin = tmp_path / "sample-plugin"
+    plugin.mkdir()
+    (plugin / "plugin.yml").write_text(
+        'name: sample-plugin\nversion: "1.0.0"\nrequires:\n  devbase: ">=3.10"\n')
+
+    loaded = load_plugin_info(plugin)
+
+    assert loaded.requires_devbase == ">=3.10"
+    check_devbase_requirement(loaded, current_version="3.10.0")
+    with pytest.raises(PluginError):
+        check_devbase_requirement(loaded, current_version="3.1.0")
 
 
 # ---------------------------------------------------------------------------

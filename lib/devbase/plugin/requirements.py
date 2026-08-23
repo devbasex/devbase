@@ -86,9 +86,17 @@ def warn_unmet_devbase_requirement(info: Optional[PluginInfo],
 def _unmet_requirement(info: Optional[PluginInfo],
                        current_version: Optional[str]) -> Optional[Tuple[str, str]]:
     """要件を満たさないとき ``(要求, 現在の版)`` を返す。満たす/検証不能なら ``None``。"""
-    # plugin.yml に `devbase: 3.0` とクォート無しで書くと YAML が float にする。
-    # 型を信用せず str へ寄せてから扱う。
-    spec = str(info.requires_devbase or "").strip() if info else ""
+    if info is None or info.requires_devbase is None:
+        return None
+    # 文字列でない値は YAML が数値化した結果で元の表記を復元できない
+    # (`devbase: 3.10` → 3.1)。誤判定を避けるため検証しない。
+    # 通常は load_plugin_info が警告つきで落としているのでここには来ない。
+    if not isinstance(info.requires_devbase, str):
+        logger.warning(
+            "プラグイン '%s' の requires.devbase (%r) が文字列ではないため"
+            "検証せずに続行します", info.name, info.requires_devbase)
+        return None
+    spec = info.requires_devbase.strip()
     if not spec:
         return None
     if os.environ.get(IGNORE_ENV, "").strip().lower() not in ("", "0", "false", "no"):
