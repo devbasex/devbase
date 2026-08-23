@@ -20,6 +20,7 @@ from devbase.volume.compose import (
     get_dev_service_name,
 )
 from devbase.utils.docker import (
+    docker_compose,
     docker_compose_down,
     docker_compose_up,
     wait_for_containers_ready,
@@ -633,6 +634,47 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
         logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
 
 
+def _report_missing_repos(config, scale: int, dev_service_name: str,
+                          project_name: str,
+                          compose_file: Optional[Path] = None) -> None:
+    """``project.yml`` に書いたのに ``/work`` へ無いリポジトリを警告する (PLAN37)。
+
+    clone の失敗は entrypoint 側で warning に留めてコンテナ起動を続ける
+    (``containers/base/entrypoint.sh`` の ``devbase_clone_repos``)。その warning は
+    ``docker logs`` にしか出ないため、``up`` の画面だけを見ていると「成功した」と
+    読めてしまう。ここで ``/work`` の実体を見て不足を伝える。
+
+    ログを grep せず実体を見るのは、ログがコンテナ再起動をまたいで積み上がり
+    「いつの失敗か」を判別できないため。「今 ``/work`` に有るか」の方が真実に近い。
+
+    問い合わせ自体の失敗 (コンテナが既に落ちている等) では何も言わない。``up`` は
+    ここまでで成功しており、付随情報のために倒す価値はない。
+    """
+    for index in range(1, scale + 1):
+        service = f"{dev_service_name}-{index}"
+        try:
+            result = docker_compose(
+                ['exec', '-T', service, 'ls', '-A1', '/work'],
+                compose_file=compose_file, check=True,
+                capture_output=True, silent_error=True)
+        except (subprocess.CalledProcessError, OSError):
+            continue
+
+        # dir には空白・制御文字が入らない (project.yml のローダが弾く) ので
+        # ls の 1 行 = 1 エントリ名として扱える。
+        present = set(result.stdout.split())
+        missing = [repo for repo in config.repos if repo.dir not in present]
+        if not missing:
+            continue
+
+        logger.warning("Repositories missing in /work of %s (clone may have failed):",
+                       service)
+        for repo in missing:
+            logger.warning("  - %s (%s)", repo.dir, repo.url)
+        logger.warning("  Details: devbase project logs %s | grep Warning",
+                       project_name)
+
+
 def cmd_up(project_name: str = None, scale: int = None,
            open_editor: Optional[bool] = None,
            open_index: Optional[int] = None) -> int:
@@ -702,6 +744,10 @@ def cmd_up(project_name: str = None, scale: int = None,
             compose_file=override_file,
             timeout=60
         )
+
+        # clone できなかった repo があれば伝える (揃っていれば何も出さない)。
+        _report_missing_repos(config, scale, dev_service_name, project_name,
+                              compose_file=override_file)
 
         # Run project-specific deploy script for each scaled instance
         deploy_script = Path('./deploy')

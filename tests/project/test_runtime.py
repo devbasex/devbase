@@ -12,6 +12,7 @@ from devbase.project.config import decode_repo_plan, parse_project_config
 from devbase.project.runtime import (
     build_workspace_document,
     container_env,
+    encode_workspace_folders,
     hook_env,
     read_scale,
     workspace_path,
@@ -59,6 +60,50 @@ def test_single_repo_projects_open_a_plain_folder():
 
     assert "DEVBASE_WORKSPACE" not in env
     assert "DEVBASE_WORKSPACE_B64" not in env
+    assert "DEVBASE_WORKSPACE_FOLDERS" not in env
+
+
+# ---------------------------------------------------------------------------
+# workspace の folder レコード (PLAN37)
+# ---------------------------------------------------------------------------
+
+def decode_folder_records(encoded: str):
+    """``<dir><US><JSON>`` の行を (dir, folder) の列へ戻す。"""
+    text = base64.b64decode(encoded).decode()
+    assert text.endswith("\n"), "行区切りは末尾にも付ける契約"
+    return [(line.split("\x1f")[0], json.loads(line.split("\x1f")[1]))
+            for line in text.splitlines() if line]
+
+
+def test_workspace_folders_pair_each_dir_with_its_serialized_folder():
+    """entrypoint が dir で存在確認できるよう、dir と folder JSON が組で並ぶ。"""
+    env = container_env(config_of("carmo", "carmo-batch"), project_name="carmo")
+
+    assert decode_folder_records(env["DEVBASE_WORKSPACE_FOLDERS"]) == [
+        ("carmo", {"name": "carmo", "path": "/work/carmo"}),
+        ("carmo-batch", {"name": "carmo-batch", "path": "/work/carmo-batch"}),
+    ]
+
+
+def test_workspace_folders_follow_the_document_order():
+    """primary 先頭の並びは workspace 本体と揃える (エクスプローラの並び)。"""
+    config = config_of("carmo-doc", {"repo": "carmo", "primary": True})
+
+    records = decode_folder_records(encode_workspace_folders(config))
+
+    assert [dir_ for dir_, _ in records] == ["carmo", "carmo-doc"]
+    assert [folder for _, folder in records] == build_workspace_document(config)["folders"]
+
+
+def test_workspace_folder_records_stay_on_one_line_with_special_characters():
+    """dir に引用符が入っても、直列化はホスト側で済ませてあるので行が割れない。"""
+    config = config_of({"repo": "carmo", "dir": 'we"ird'}, "carmo-batch")
+
+    text = base64.b64decode(encode_workspace_folders(config)).decode()
+
+    assert len(text.splitlines()) == 2
+    assert decode_folder_records(encode_workspace_folders(config))[0] == (
+        'we"ird', {"name": 'we"ird', "path": '/work/we"ird'})
 
 
 def test_workspace_path_is_derived_from_the_project_name():
