@@ -10,6 +10,7 @@ from .installer import parse_registry_yml
 from .models import InstalledPlugin, RegistryInfo
 from .registry import PluginRegistry
 from .repo_manager import _git_pull
+from .requirements import warn_unmet_devbase_requirement
 from .syncer import sync_projects, discover_projects
 
 logger = get_logger("devbase.plugin.updater")
@@ -93,9 +94,12 @@ def _migrate_removed_plugin(
         if entry and repo_local_path:
             from .installer import _register_repo_plugin
             plugin_path = clone_dir / entry.path.rstrip('/')
+            # 旧登録は上で削除済み。ここで例外にすると移行先が登録されないまま
+            # 旧登録も失われるため、要件違反は警告に留める。
             _register_repo_plugin(
                 registry, entry.name, plugin_path,
                 plugin.source, repo_local_path,
+                enforce_requirements=False,
             )
 
     return True
@@ -179,6 +183,9 @@ def _update_repo_plugins(
         from .syncer import load_plugin_info
         info = load_plugin_info(plugin_path)
         version = info.version if info else '0.1.0'
+        # pull で requires.devbase が上がることがある。更新はもう済んでいて
+        # 止められないので、気づけるように警告だけ出す。
+        warn_unmet_devbase_requirement(info)
 
         rel_path = str(plugin_path.relative_to(registry.devbase_root))
         registry.add(InstalledPlugin(

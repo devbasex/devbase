@@ -24,8 +24,29 @@ def load_plugin_info(plugin_dir: Path) -> Optional[PluginInfo]:
         version=data.get('version', '0.1.0'),
         description=data.get('description', ''),
         priority=data.get('priority', 0),
-        requires_devbase=data.get('requires', {}).get('devbase') if isinstance(data.get('requires'), dict) else None,
+        requires_devbase=_requires_devbase(data),
     )
+
+
+def _requires_devbase(data: dict) -> Optional[str]:
+    """requires.devbase を文字列で返す。文字列でなければ None (検証不能)。
+
+    `devbase: 3.10` とクォート無しで書かれると YAML が float の 3.1 にしてしまい、
+    元の版を復元できない (str へ寄せると "3.1" となり 3.10 とは別物になる)。
+    誤った版で比較するより、検証できないものとして扱い、クォートを促す。
+    """
+    requires = data.get('requires')
+    if not isinstance(requires, dict) or requires.get('devbase') is None:
+        return None
+    value = requires['devbase']
+    if not isinstance(value, str):
+        logger.warning(
+            "plugin.yml の requires.devbase (%r) が文字列ではないため検証できません。"
+            "YAML が数値として解釈しており元の表記を復元できません "
+            '(例: 3.10 → 3.1)。クォートして書いてください: devbase: ">=3.10"',
+            value)
+        return None
+    return value
 
 
 def discover_projects(plugin_dir: Path) -> list[str]:

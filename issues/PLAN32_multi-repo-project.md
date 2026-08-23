@@ -360,7 +360,23 @@ plugin repo の PR は本体 release PR の merge 直後に merge する (flag d
 - **フックへの値の受け渡し (#110)**: 計画に無かった。結合検証で、`GIT_REPO` / `WORK_DIR` を `source ./env` で読んでいた `pre-up` / `deploy` が壊れることが判明したため、devbase 側から `DEVBASE_PRIMARY_DIR` / `DEVBASE_PRIMARY_URL` / `DEVBASE_WORK_DIR` / `DEVBASE_REPO_DIRS` を渡す形にした。plugin リポジトリ側の該当フック 2 本も追随させた。
 - **確定仕様の置き場所**: `docs/user/project-yml.md` を恒久リファレンスとした (plan-to-spec 相当)。
 
+### リリース後に実施したこと (2026-08-23)
+
+plan の範囲外で、結合検証と運用の中で出てきた対応。
+
+| 内容 | 結果 |
+|---|---|
+| pilot の実機起動確認 | `uttaro-system` (3 repo) / `project-trygroup-prd` (2 repo・scale=2 の両インスタンス) で確認済み。AC9 充足 |
+| 統合で消えたプロジェクトの後片付け | `projects/` の symlink・残留ディレクトリ・停止済みコンテナを削除済み |
+| 全プロジェクトのイメージ更新 | 32 件を再ビルドし、稼働中コンテナを新 entrypoint で作り直した |
+| v3.0.0 のタグとリリース | 作成済み (CHANGELOG のリンク切れも解消) |
+| `requires.devbase` の検証 | 宣言だけで比較していなかったため、`plugin install` 時に検証する実装を追加 |
+| 関連リポジトリのさらなる集約 | `carmo-ai` (4 repo) / `bi-tools` (3 repo) / `ai-plugins` (2 repo) へ統合し、重複していた `predict_contract` を削除。dev コンテナ 18 → 13 |
+| `uttarov2` → `uttaro-system` へ改名 | 本体リポジトリの移行に合わせてプロジェクト名を実態へ |
+| `carmo-screening` の `init.sh` | 7.5 か月壊れたまま誰も困っていなかったため削除 (volareinc/carmo-screening#314) |
+
 ### 残作業
 
-- 統合した pilot (`uttarov2` / `project-trygroup-prd`) の実機起動確認。`devbase build --no-cache` → `devbase up` が必要で、稼働中コンテナの再起動を伴う。
-- 統合で消えたプロジェクト (`uttarov2-doc` / `uttarov2migration` / `project-trygroup-prd-customer`) の後片付け。`projects/` のシンボリックリンクと、生成物だけが残ったディレクトリ、および停止済みコンテナが残っている。
+- `devbase plugin sync` を実行すると、`devbase-samples` に定義を残した `tmllib` / `devbase` の
+  プロジェクト symlink が復活する。使わないプロジェクトが一覧に出るだけで実害は無い。
+  気になる場合は該当プラグインをローカルから uninstall する。

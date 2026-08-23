@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added
+- **`plugin.yml` の `requires.devbase` をインストール時に検証**するようにしました。要件を
+  満たさない Plugin は `devbase plugin install` が中止します。これまでは値を読むだけで
+  比較しておらず、`project.yml` 形式の Plugin を 2.x へ入れられてしまい、`devbase up` の
+  段階で初めて失敗していました。既存のインストールに触れる前に検証するため、入れ替えに
+  失敗しても既存の Plugin は壊れません。解釈できない書式は警告に留めて続行し、
+  `DEVBASE_IGNORE_PLUGIN_REQUIRES=1` で検証を無効化できます。
+- **`devbase plugin update` でも `requires.devbase` を確認**するようにしました。`git pull` で
+  要求が上がって満たさなくなった Plugin は警告で知らせます（更新は既に済んでいるため中止はしません）。
+
 ## [3.0.0] - 2026-08-23
 
 プロジェクト設定を `project.yml` へ移行する破壊的変更を含みます。プラグイン側の
