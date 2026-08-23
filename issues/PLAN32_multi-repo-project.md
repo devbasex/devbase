@@ -346,12 +346,12 @@ plugin repo の PR は本体 release PR の merge 直後に merge する (flag d
 | AC1 複数 repo の clone と primary への `cd` | ✅ | 一時プロジェクトで実機確認 |
 | AC2 repo ごとの host 指定 | ✅ | `https://gitlab.com/<owner>/<repo>.git` の組み立てを実機確認 |
 | AC3 `branch` の checkout | ✅ | 実機確認 |
-| AC4 multi-root workspace | ✅ | `/work/<project>.code-workspace` の生成を実機確認 |
+| AC4 multi-root workspace | ✅ | `/work/<project>.code-workspace` の生成と、実プロジェクトでの起動コマンド組み立てを確認 (repo 2 件以上 → `--file-uri .../uttaro-system.code-workspace` / 1 件 → `--folder-uri .../work/adminer`)。VS Code の実起動は対話端末が要るため利用者側で確認 |
 | AC5 `scale` / `open_editor` の読み書き | ✅ | 単体テスト |
 | AC6 未移行プロジェクトの明示エラー | ✅ | 終了コード 1 と移行手順の案内を実機確認 |
 | AC7 clone 失敗時の fail-soft | ✅ | 実機確認 |
 | AC8 plugin リポジトリ 136 プロジェクトの移行 | ✅ | 変換コマンドで適用、全件ローダ検証 |
-| AC9 pilot 統合 | ⚠️ 一部未 | ファイル構成は完了。**実機起動は未実施** (稼働中コンテナを再起動しないため) |
+| AC9 pilot 統合 | ✅ | `uttaro-system` (3 repo) / `project-trygroup-prd` (2 repo・scale=2 の両インスタンス) を実機起動し、全 repo の clone・ブランチ・primary への `cd`・workspace 生成を確認。統合前の 3 プロジェクトは削除済み |
 | AC10 cross-review APPROVE | ✅ | 本体 8 PR + plugin 3 PR |
 
 ### 計画から変わった点
