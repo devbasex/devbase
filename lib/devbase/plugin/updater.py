@@ -94,9 +94,12 @@ def _migrate_removed_plugin(
         if entry and repo_local_path:
             from .installer import _register_repo_plugin
             plugin_path = clone_dir / entry.path.rstrip('/')
+            # 旧登録は上で削除済み。ここで例外にすると移行先が登録されないまま
+            # 旧登録も失われるため、要件違反は警告に留める。
             _register_repo_plugin(
                 registry, entry.name, plugin_path,
                 plugin.source, repo_local_path,
+                enforce_requirements=False,
             )
 
     return True

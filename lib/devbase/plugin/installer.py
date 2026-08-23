@@ -14,7 +14,10 @@ from .models import (
     RegistryInfo, RegistryEntry,
 )
 from .registry import PluginRegistry
-from .requirements import check_devbase_requirement
+from .requirements import (
+    check_devbase_requirement,
+    warn_unmet_devbase_requirement,
+)
 from .syncer import sync_projects, load_plugin_info
 
 logger = get_logger("devbase.plugin.installer")
@@ -441,13 +444,24 @@ def _register_repo_plugin(
     plugin_path: Path,
     source_url: str,
     repo_local_path: str,
+    enforce_requirements: bool = True,
 ) -> None:
-    """Register a plugin from repos/ (no file copy, just metadata)."""
+    """Register a plugin from repos/ (no file copy, just metadata).
+
+    ``enforce_requirements=False`` にすると ``requires.devbase`` 違反を警告に
+    留める。update 由来の呼び出し (プラグイン分割の移行) は旧登録を削除した
+    あとに呼ばれるため、ここで例外にすると移行先が登録されないまま旧登録も
+    失われる。git pull は済んでおり止めても整合は取れないので、警告で知らせて
+    登録は進める。
+    """
     if not plugin_path.is_dir():
         raise PluginError(f"Plugin directory not found: {plugin_path}")
 
     info = load_plugin_info(plugin_path)
-    check_devbase_requirement(info)
+    if enforce_requirements:
+        check_devbase_requirement(info)
+    else:
+        warn_unmet_devbase_requirement(info)
     version = info.version if info else '0.1.0'
 
     # Use the actual plugin_path relative to devbase_root so that

@@ -278,3 +278,52 @@ def test_update_warns_when_the_pulled_plugin_needs_a_newer_devbase(
     assert errors == []                                   # 更新は止めない
     assert registry.get("sample-plugin").version == "2.0.0"
     assert any("99.0.0" in r.getMessage() for r in caplog.records)
+
+
+def test_split_migration_keeps_the_registry_when_requirements_are_unmet(
+        tmp_path, monkeypatch, caplog):
+    """プラグイン分割の移行は旧登録を消してから移行先を登録する。
+
+    ここで例外にすると、移行先が登録されないまま旧登録も失われる。git pull は
+    済んでいて止めても整合は取れないので、警告に留めて登録を進める。
+    """
+    import yaml
+
+    from devbase.plugin.models import (
+        InstalledPlugin, RegisteredRepository, RegistryEntry, RegistryInfo,
+    )
+    from devbase.plugin.registry import PluginRegistry
+    from devbase.plugin.updater import _migrate_removed_plugin
+
+    monkeypatch.setattr("devbase.__version__", "2.2.0", raising=False)
+    (tmp_path / "projects").mkdir()
+    registry = PluginRegistry(tmp_path)
+
+    url = "https://github.com/testorg/testrepo.git"
+    clone_dir = tmp_path / "repos" / "github.com--testorg--testrepo"
+    new_plugin_dir = clone_dir / "new-plugin"
+    (new_plugin_dir / "projects" / "shared-project").mkdir(parents=True)
+    (new_plugin_dir / "plugin.yml").write_text(
+        'name: new-plugin\nversion: "1.0.0"\nrequires:\n  devbase: ">=99.0.0"\n')
+    (clone_dir / "registry.yml").write_text(yaml.dump({
+        "name": "testrepo",
+        "plugins": [{"name": "new-plugin", "path": "new-plugin", "description": ""}],
+    }))
+
+    registry.add_repository(RegisteredRepository(
+        name="testrepo", url=url,
+        local_path="repos/github.com--testorg--testrepo"))
+    old = InstalledPlugin(
+        name="old-plugin", version="1.0.0", source=url,
+        installed_at=registry.now_iso(),
+        path="repos/github.com--testorg--testrepo/old-plugin")
+    registry.add(old)
+
+    reg_info = RegistryInfo(name="testrepo", plugins=[
+        RegistryEntry(name="new-plugin", path="new-plugin")])
+
+    assert _migrate_removed_plugin(registry, old, clone_dir, reg_info,
+                                   pre_pull_projects={"shared-project"}) is True
+
+    assert registry.get("new-plugin") is not None      # 移行先が登録される
+    assert any("99.0.0" in r.getMessage() for r in caplog.records)
