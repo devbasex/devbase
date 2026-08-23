@@ -37,9 +37,35 @@ def build_workspace_document(config: ProjectConfig) -> Dict[str, Any]:
     primary repo を先頭に置く。エディタのエクスプローラは並び順どおりに出るため、
     作業の起点になる repo が一番上に来る方が探しやすい。
     """
-    repos = sorted(config.repos, key=lambda repo: not repo.primary)
-    return {"folders": [{"name": repo.dir, "path": f"/work/{repo.dir}"}
-                        for repo in repos]}
+    return {"folders": [_workspace_folder(repo) for repo in _workspace_repos(config)]}
+
+
+def encode_workspace_folders(config: ProjectConfig) -> str:
+    r"""workspace の folder を 1 行 1 件へ直列化する (PLAN37 の wire format)。
+
+    ``<dir><US><folder オブジェクトの JSON>`` の行を LF で連ね、全体を base64 化する。
+    entrypoint は ``<dir>`` で clone の成否を確かめ、生き残った行の JSON だけを
+    連結して workspace を書き出す。**ホストが JSON を直列化しておくことが要点**で、
+    ``dir`` に ``"`` や ``\`` が入っていてもシェル側でエスケープを考えずに済む。
+
+    ``dir`` は ``project.yml`` のローダが空白・制御文字を弾いているため US / LF が
+    フィールドを割ることはなく、JSON 側も ``json.dumps`` が制御文字を
+    エスケープするので 1 行に収まる。
+    """
+    lines = []
+    for repo in _workspace_repos(config):
+        folder = json.dumps(_workspace_folder(repo), ensure_ascii=False)
+        lines.append(f"{repo.dir}\x1f{folder}\n")
+    return base64.b64encode("".join(lines).encode()).decode()
+
+
+def _workspace_repos(config: ProjectConfig):
+    """workspace へ並べる順 (primary が先頭)。"""
+    return sorted(config.repos, key=lambda repo: not repo.primary)
+
+
+def _workspace_folder(repo) -> Dict[str, str]:
+    return {"name": repo.dir, "path": f"/work/{repo.dir}"}
 
 
 def container_env(config: ProjectConfig, project_name: str) -> Dict[str, str]:
@@ -47,8 +73,11 @@ def container_env(config: ProjectConfig, project_name: str) -> Dict[str, str]:
 
     - ``DEVBASE_REPOS``: clone プラン (base64)
     - ``DEVBASE_PRIMARY_DIR``: 起動後に ``cd`` する ``/work`` 配下のディレクトリ名
-    - ``DEVBASE_WORKSPACE`` / ``DEVBASE_WORKSPACE_B64``: repo が 2 件以上のときだけ。
-      1 件のときは従来どおりフォルダを開かせたいので付けない。
+    - ``DEVBASE_WORKSPACE`` / ``DEVBASE_WORKSPACE_B64`` / ``DEVBASE_WORKSPACE_FOLDERS``:
+      repo が 2 件以上のときだけ。1 件のときは従来どおりフォルダを開かせたいので付けない。
+      entrypoint は ``DEVBASE_WORKSPACE_FOLDERS`` から clone できた repo だけを選んで
+      書き出す (PLAN37)。``DEVBASE_WORKSPACE_B64`` は**この変数を知らない古いイメージ**の
+      ための完成品で、新しいホスト + 古いイメージでも workspace が消えないよう残している。
 
     値は base64 と検証済みの名前だけなので、``$`` や改行を含まず compose の
     変数展開に食われない。
@@ -62,6 +91,7 @@ def container_env(config: ProjectConfig, project_name: str) -> Dict[str, str]:
                               ensure_ascii=False, indent=2)
         env["DEVBASE_WORKSPACE"] = workspace_path(project_name)
         env["DEVBASE_WORKSPACE_B64"] = base64.b64encode(document.encode()).decode()
+        env["DEVBASE_WORKSPACE_FOLDERS"] = encode_workspace_folders(config)
     return env
 
 

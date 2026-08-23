@@ -148,7 +148,7 @@ YAML の解釈をホスト側の Python に閉じ込めることで、コンテ�
 | モジュール | 役割 |
 |-----------|------|
 | `config.py` | `project.yml` の読み込み・`defaults` 継承・検証・正規化 (`ProjectConfig` / `RepoSpec`)。clone プランの符号化 (`encode_repo_plan`) |
-| `runtime.py` | コンテナへ渡す環境変数の組み立て (`DEVBASE_REPOS` / `DEVBASE_PRIMARY_DIR` / `DEVBASE_WORKSPACE*`)、multi-root ワークスペース JSON の生成、`scale` の読み書き |
+| `runtime.py` | コンテナへ渡す環境変数の組み立て (`DEVBASE_REPOS` / `DEVBASE_PRIMARY_DIR` / `DEVBASE_WORKSPACE*`)、multi-root ワークスペース JSON の生成 (`DEVBASE_WORKSPACE_FOLDERS` は folder ごとに直列化した形。entrypoint が clone できた repo だけを選べるようにするため)、`scale` の読み書き |
 | `migrate.py` | 旧 `env` 形式 (`GIT_USER` / `GIT_REPO` 等) から `project.yml` への変換 |
 
 ```mermaid

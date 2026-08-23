@@ -255,6 +255,105 @@ def test_workspace_is_skipped_when_not_configured(tmp_path, work):
 
 
 # ---------------------------------------------------------------------------
+# workspace: clone できなかったフォルダを載せない (PLAN37)
+# ---------------------------------------------------------------------------
+
+def encode_folders(*dirs) -> str:
+    """host 側 (``encode_workspace_folders``) と同じ wire format を組み立てる。"""
+    text = "".join(
+        f'{d}\x1f{json.dumps({"name": d, "path": f"/work/{d}"})}\n' for d in dirs)
+    return base64.b64encode(text.encode()).decode()
+
+
+def write_workspace(work: Path, env: dict, tmp_path: Path):
+    dest = work / "sample.code-workspace"
+    result = run_entrypoint_fn(f'devbase_write_workspace "{work}"',
+                               {"DEVBASE_WORKSPACE": str(dest), **env}, tmp_path)
+    return result, dest
+
+
+def test_workspace_lists_only_the_repositories_that_exist(tmp_path, work):
+    """clone に失敗した repo を載せると VS Code に開けないフォルダが並ぶため落とす。"""
+    (work / "app").mkdir()
+
+    result, dest = write_workspace(
+        work, {"DEVBASE_WORKSPACE_FOLDERS": encode_folders("app", "no-perm")}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(dest.read_text()) == {
+        "folders": [{"name": "app", "path": "/work/app"}]}
+
+
+def test_a_skipped_workspace_folder_is_reported(tmp_path, work):
+    """何が消えたのか後から分かるよう warning に残す。"""
+    (work / "app").mkdir()
+
+    result, _ = write_workspace(
+        work, {"DEVBASE_WORKSPACE_FOLDERS": encode_folders("app", "no-perm")}, tmp_path)
+
+    assert "no-perm" in result.stdout + result.stderr
+    assert "Warning" in result.stdout + result.stderr
+
+
+def test_workspace_keeps_the_declared_order(tmp_path, work):
+    for name in ("app", "docs", "infra"):
+        (work / name).mkdir()
+
+    result, dest = write_workspace(
+        work, {"DEVBASE_WORKSPACE_FOLDERS": encode_folders("app", "docs", "infra")},
+        tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert [f["name"] for f in json.loads(dest.read_text())["folders"]] == [
+        "app", "docs", "infra"]
+
+
+def test_workspace_is_still_valid_json_when_nothing_was_cloned(tmp_path, work):
+    """全滅しても壊れた JSON を残さない (古い workspace が残るより空の方が読める)。"""
+    result, dest = write_workspace(
+        work, {"DEVBASE_WORKSPACE_FOLDERS": encode_folders("no-perm")}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(dest.read_text()) == {"folders": []}
+
+
+def test_workspace_handles_special_characters_in_the_folder_name(tmp_path, work):
+    """folder の JSON はホストが直列化済み。シェルは連結するだけで壊さない。"""
+    (work / 'we"ird').mkdir()
+
+    result, dest = write_workspace(
+        work, {"DEVBASE_WORKSPACE_FOLDERS": encode_folders('we"ird')}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(dest.read_text()) == {
+        "folders": [{"name": 'we"ird', "path": '/work/we"ird'}]}
+
+
+def test_workspace_falls_back_to_the_prebuilt_document(tmp_path, work):
+    """PLAN37 を知らない古いホストから起動されても workspace を消さない。"""
+    document = {"folders": [{"name": "app", "path": "/work/app"}]}
+    encoded = base64.b64encode(json.dumps(document).encode()).decode()
+
+    result, dest = write_workspace(work, {"DEVBASE_WORKSPACE_B64": encoded}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(dest.read_text()) == document
+
+
+def test_a_broken_folder_record_does_not_fail_startup(tmp_path, work):
+    (work / "app").mkdir()
+    broken = base64.b64encode(b"app\x1f{\"name\": \"app\", \"path\": \"/work/app\"}\nnoseparator\n").decode()
+
+    result, dest = write_workspace(
+        work, {"DEVBASE_WORKSPACE_FOLDERS": broken}, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(dest.read_text()) == {
+        "folders": [{"name": "app", "path": "/work/app"}]}
+    assert "Warning" in result.stdout + result.stderr
+
+
+# ---------------------------------------------------------------------------
 # primary への cd
 # ---------------------------------------------------------------------------
 

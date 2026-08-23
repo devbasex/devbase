@@ -15,7 +15,12 @@ set -e
 #                         lib/devbase/project/config.py の encode_repo_plan)
 # DEVBASE_PRIMARY_DIR   : 起動後に cd する /work 配下のディレクトリ名
 # DEVBASE_WORKSPACE     : 書き出す *.code-workspace の絶対パス (複数 repo 時)
-# DEVBASE_WORKSPACE_B64 : その中身 (base64 JSON)
+# DEVBASE_WORKSPACE_FOLDERS
+#                       : base64 の行区切りレコード。1 行 = <dir> と folder オブジェクトの
+#                         JSON を US (0x1f) で並べたもの。clone できた dir の行だけを
+#                         連結して workspace にする (PLAN37)
+# DEVBASE_WORKSPACE_B64 : 完成済みの workspace (base64 JSON)。DEVBASE_WORKSPACE_FOLDERS を
+#                         渡さない古いホスト向けの fallback
 #
 # 関数定義だけを読み込みたいテストからは
 # `DEVBASE_ENTRYPOINT_LIB_ONLY=1 . entrypoint.sh` で source する。
@@ -91,14 +96,63 @@ EOF
 
 # 複数 repo をまとめて開くための *.code-workspace を書き出す。
 #
-# 中身はホスト側で組み立てて base64 で渡ってくるので、ここでは復号して置くだけ。
-# JSON の組み立て (エスケープ) をシェルでやらない分、壊れにくい。
+# clone できなかった repo のフォルダを載せると、VS Code のエクスプローラに開けない
+# フォルダが並ぶ (PLAN37)。そこで DEVBASE_WORKSPACE_FOLDERS の各行を見て、
+# <work_root>/<dir> が実在する行の JSON だけを連結する。
+#
+# 各 folder の JSON はホスト側が直列化済みなので、ここで組み立てるのは外枠 (
+# `{"folders": [` … `]}`) とカンマだけ。dir に " や \ が入っていてもシェルで
+# エスケープを考えずに済む。
 devbase_write_workspace() {
+    local work_root="${1:-/work}"
     [ -n "${DEVBASE_WORKSPACE:-}" ] || return 0
-    [ -n "${DEVBASE_WORKSPACE_B64:-}" ] || return 0
 
     local dest="$DEVBASE_WORKSPACE"
     mkdir -p "$(dirname "$dest")"
+
+    if [ -z "${DEVBASE_WORKSPACE_FOLDERS:-}" ]; then
+        # 旧ホスト (PLAN37 前) から起動された場合。完成品をそのまま置く。
+        devbase_write_workspace_verbatim "$dest"
+        return 0
+    fi
+
+    local records dir folder extra first=1
+    if ! records="$(printf '%s' "$DEVBASE_WORKSPACE_FOLDERS" | base64 -d 2>/dev/null)"; then
+        echo "Warning: Failed to decode DEVBASE_WORKSPACE_FOLDERS"
+        devbase_write_workspace_verbatim "$dest"
+        return 0
+    fi
+
+    {
+        printf '{\n  "folders": [\n'
+        while IFS=$'\x1f' read -r dir folder extra; do
+            [ -n "$dir$folder$extra" ] || continue
+            if [ -z "$dir" ] || [ -z "$folder" ] || [ -n "$extra" ]; then
+                echo "Warning: Ignoring malformed workspace folder record" >&2
+                continue
+            fi
+            if [ ! -d "$work_root/$dir" ]; then
+                echo "Warning: Skipping workspace folder (not cloned): $dir" >&2
+                continue
+            fi
+            [ "$first" = "1" ] || printf ',\n'
+            printf '    %s' "$folder"
+            first=0
+        done <<EOF
+$records
+EOF
+        printf '\n  ]\n}\n'
+    } > "$dest.tmp"
+
+    mv "$dest.tmp" "$dest"
+    echo "Workspace file written: $dest"
+}
+
+# ホストが組み立て済みの workspace (DEVBASE_WORKSPACE_B64) をそのまま書き出す。
+devbase_write_workspace_verbatim() {
+    local dest="$1"
+    [ -n "${DEVBASE_WORKSPACE_B64:-}" ] || return 0
+
     if printf '%s' "$DEVBASE_WORKSPACE_B64" | base64 -d > "$dest.tmp" 2>/dev/null; then
         mv "$dest.tmp" "$dest"
         echo "Workspace file written: $dest"
@@ -392,7 +446,7 @@ echo "AI agent settings symlinks setup completed"
 # 個々の失敗はコンテナ起動を止めない (関数内で warning 扱い)。
 DEVBASE_WORK_ROOT="${DEVBASE_WORK_ROOT:-/work}"
 devbase_clone_repos "$DEVBASE_WORK_ROOT"
-devbase_write_workspace
+devbase_write_workspace "$DEVBASE_WORK_ROOT"
 devbase_enter_primary_dir "$DEVBASE_WORK_ROOT"
 
 # Signal that entrypoint setup is complete
