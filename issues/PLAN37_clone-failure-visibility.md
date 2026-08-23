@@ -42,22 +42,32 @@
 
 ## 受け入れ条件
 
+実機検証は `nyle-dx` プロジェクトに権限のないリポジトリ (`volareinc/no-such-repo-xyz123`) を
+一時的に足し、`devbase base` / プロジェクトイメージを再ビルドしたうえで `devbase up` を実行した。
+
 - [x] AC1: `project.yml` に 2 件書き、片方が clone できない構成で `devbase up` すると、標準出力に
       「`/work` に無いリポジトリ」の一覧（dir と clone URL）と、詳細の確認先が出る。
-      検証: 稼働中の実コンテナ `nyle-dx-dev-1` に対して `_report_missing_repos` を実行（docker のモックなし）。
-      `no-such-repo-xyz123` が clone URL 付きで警告に出た。
+
+      ```
+      [5/6] Waiting for containers to be ready...
+      All containers ready
+      Warning: Repositories missing in /work of dev-1 (clone may have failed):
+      Warning:   - no-such-repo-xyz123 (https://github.com/volareinc/no-such-repo-xyz123.git)
+      Warning:   Details: devbase project logs nyle-dx | grep Warning
+      === Deploy completed successfully ===
+      ```
 - [x] AC2: AC1 の状況でも `devbase up` の終了コードは 0 で、成功したリポジトリでは通常どおり作業できる。
-      検証: 報告は `logger.warning` のみで戻り値を持たず、例外も投げない（`tests/commands/test_up_missing_repos.py`）。
+      検証: 上記の実行で `exit=0`。`/work/nyle-dx` と `/work/ideabase` は通常どおり存在する。
 - [x] AC3: 全リポジトリが揃っているときは、`up` の出力は従来と変わらない。
-      検証: 実 `nyle-dx` の `project.yml`（nyle-dx + ideabase、どちらも `/work` に有る）で出力なし。
+      検証: 一時エントリを外して再実行 → `Repositories missing` の出力は 0 件、`exit=0`。
 - [x] AC4: clone に失敗したリポジトリは `*.code-workspace` の `folders` に含まれない。
-      検証: 実イメージ内の bash で新 `devbase_write_workspace` を実行し、`no-such-repo-xyz123` だけが
-      落ちた JSON を確認。
+      検証: 実機の `/work/nyle-dx.code-workspace` は `nyle-dx` と `ideabase` の 2 件のみ。
 - [x] AC5: 落としたフォルダは entrypoint のログに warning として残る。
-      検証: 同上（`Warning: Skipping workspace folder (not cloned): no-such-repo-xyz123`）。
+      検証: `docker logs nyle-dx-dev-1` に
+      `Warning: Skipping workspace folder (not cloned): no-such-repo-xyz123`。
 - [x] AC6: 旧イメージ（新 wire format を知らない entrypoint）に新しいホストから `up` しても、workspace は
       従来どおり全フォルダ入りで書き出される。
-      検証: イメージに焼かれている**実物の** `/entrypoint.sh` に新旧両方の環境変数を渡し、
+      検証: 再ビルド前のイメージに焼かれていた**実物の** `/entrypoint.sh` へ新旧両方の環境変数を渡し、
       `DEVBASE_WORKSPACE_B64` 経由で 3 フォルダすべてが書き出されることを確認。
 - [x] AC7: `pytest` が通る（1445 passed）。
 
