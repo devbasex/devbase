@@ -24,8 +24,20 @@ def load_plugin_info(plugin_dir: Path) -> Optional[PluginInfo]:
         version=data.get('version', '0.1.0'),
         description=data.get('description', ''),
         priority=data.get('priority', 0),
-        requires_devbase=data.get('requires', {}).get('devbase') if isinstance(data.get('requires'), dict) else None,
+        requires_devbase=_requires_devbase(data),
     )
+
+
+def _requires_devbase(data: dict) -> Optional[str]:
+    """requires.devbase を文字列で返す。
+
+    `devbase: 3.0` とクォート無しで書かれると YAML が float にするため、
+    受け取った側で `.strip()` が AttributeError になる。ここで str へ寄せる。
+    """
+    requires = data.get('requires')
+    if not isinstance(requires, dict) or requires.get('devbase') is None:
+        return None
+    return str(requires['devbase'])
 
 
 def discover_projects(plugin_dir: Path) -> list[str]:

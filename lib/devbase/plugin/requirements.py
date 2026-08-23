@@ -52,15 +52,51 @@ def check_devbase_requirement(info: Optional[PluginInfo],
         info: ``plugin.yml`` の内容 (``None`` や要求未指定なら何もしない)
         current_version: 比較に使う devbase の版 (既定は動作中の devbase)
     """
-    if info is None or not (info.requires_devbase or "").strip():
+    unmet = _unmet_requirement(info, current_version)
+    if unmet is None:
         return
-    if os.environ.get(IGNORE_ENV, "").strip() not in ("", "0", "false", "no"):
+    spec, current_version = unmet
+    raise PluginError(
+        f"プラグイン '{info.name}' は devbase {spec} を要求していますが、"
+        f"現在の devbase は {current_version} です。"
+        "devbase を更新してから再度インストールしてください "
+        f"(検証を飛ばす場合は {IGNORE_ENV}=1)。"
+    )
+
+
+def warn_unmet_devbase_requirement(info: Optional[PluginInfo],
+                                   current_version: Optional[str] = None) -> None:
+    """要件違反を **警告だけ** で知らせる (中止できない場面向け)。
+
+    ``devbase plugin update`` は git pull 済みの作業ツリーを追認するだけなので、
+    要求が上がっていても止められない。気づけないまま ``devbase up`` で失敗するより、
+    更新の場で本体の更新を促す方がよい。
+    """
+    unmet = _unmet_requirement(info, current_version)
+    if unmet is None:
+        return
+    spec, current_version = unmet
+    logger.warning(
+        "プラグイン '%s' は devbase %s を要求していますが、現在の devbase は "
+        "%s です。devbase 本体を更新してください "
+        "(この警告を止める場合は %s=1)。",
+        info.name, spec, current_version, IGNORE_ENV)
+
+
+def _unmet_requirement(info: Optional[PluginInfo],
+                       current_version: Optional[str]) -> Optional[Tuple[str, str]]:
+    """要件を満たさないとき ``(要求, 現在の版)`` を返す。満たす/検証不能なら ``None``。"""
+    # plugin.yml に `devbase: 3.0` とクォート無しで書くと YAML が float にする。
+    # 型を信用せず str へ寄せてから扱う。
+    spec = str(info.requires_devbase or "").strip() if info else ""
+    if not spec:
+        return None
+    if os.environ.get(IGNORE_ENV, "").strip().lower() not in ("", "0", "false", "no"):
         logger.warning(
             "%s が設定されているため、プラグイン '%s' の requires.devbase (%s) を"
-            "検証しませんでした", IGNORE_ENV, info.name, info.requires_devbase)
-        return
+            "検証しませんでした", IGNORE_ENV, info.name, spec)
+        return None
 
-    spec = info.requires_devbase.strip()
     if current_version is None:
         from devbase import __version__
         current_version = __version__
@@ -70,7 +106,7 @@ def check_devbase_requirement(info: Optional[PluginInfo],
         logger.warning(
             "プラグイン '%s' の requires.devbase (%s) を解釈できないため、"
             "互換性を検証せずに続行します", info.name, spec)
-        return
+        return None
 
     current = _parse_version(current_version)
     if current is None:
@@ -78,16 +114,13 @@ def check_devbase_requirement(info: Optional[PluginInfo],
             "devbase の版 '%s' を解釈できないため、プラグイン '%s' の "
             "requires.devbase (%s) を検証せずに続行します",
             current_version, info.name, spec)
-        return
+        return None
 
     for operator, required in clauses:
-        if not _OPERATORS[operator](current, required):
-            raise PluginError(
-                f"プラグイン '{info.name}' は devbase {spec} を要求していますが、"
-                f"現在の devbase は {current_version} です。"
-                "devbase を更新してから再度インストールしてください "
-                f"(検証を飛ばす場合は {IGNORE_ENV}=1)。"
-            )
+        left, right = _align(current, required)
+        if not _OPERATORS[operator](left, right):
+            return spec, current_version
+    return None
 
 
 def _parse_spec(spec: str) -> Optional[List[Tuple[str, tuple]]]:
@@ -105,16 +138,22 @@ def _parse_spec(spec: str) -> Optional[List[Tuple[str, tuple]]]:
 
 
 def _parse_version(version: str) -> Optional[tuple]:
-    """``"3.0"`` → ``(3, 0, 0)``。数値以外が混ざっていたら ``None``。
+    """``"3.0.0.1"`` → ``(3, 0, 0, 1)``。数値以外が混ざっていたら ``None``。
 
-    桁数を 3 に揃えるのは ``">=3.0"`` と ``"3.0.0"`` を比べられるようにするため。
+    要素は切り捨てない。``">=3.0.0.1"`` を ``3.0.0`` が満たすと誤判定しないよう、
+    桁合わせは比較時に :func:`_align` で行う。
     """
     parts = str(version).strip().split(".")
-    if not parts or not all(part.isdigit() for part in parts):
+    if not all(part.isdigit() for part in parts):
         return None
-    numbers = [int(part) for part in parts][:3]
-    numbers += [0] * (3 - len(numbers))
-    return tuple(numbers)
+    return tuple(int(part) for part in parts)
 
 
-__all__ = ["IGNORE_ENV", "check_devbase_requirement"]
+def _align(a: tuple, b: tuple) -> Tuple[tuple, tuple]:
+    """短い方を 0 で埋めて桁数を揃える (``">=3.0"`` と ``"3.0.0"`` の比較用)。"""
+    width = max(len(a), len(b))
+    return a + (0,) * (width - len(a)), b + (0,) * (width - len(b))
+
+
+__all__ = ["IGNORE_ENV", "check_devbase_requirement",
+           "warn_unmet_devbase_requirement"]
