@@ -14,6 +14,7 @@ from .models import (
     RegistryInfo, RegistryEntry,
 )
 from .registry import PluginRegistry
+from .requirements import check_devbase_requirement
 from .syncer import sync_projects, load_plugin_info
 
 logger = get_logger("devbase.plugin.installer")
@@ -252,6 +253,12 @@ def _link_plugin(
     plugins_dir: Path,
 ) -> None:
     """Create a symlink for a local plugin (--link install only)"""
+    # 互換性は既存インストールに触れる前に確かめる。後から落とすと、入れ替えの
+    # ために消した既存プラグインが戻らないまま失敗する。
+    info = load_plugin_info(plugin_path)
+    check_devbase_requirement(info)
+    version = info.version if info else '0.1.0'
+
     dest = plugins_dir / name
     if dest.exists() or dest.is_symlink():
         logger.warning("Removing existing plugin '%s'", name)
@@ -261,9 +268,6 @@ def _link_plugin(
             shutil.rmtree(dest)
 
     dest.symlink_to(plugin_path.resolve())
-
-    info = load_plugin_info(plugin_path)
-    version = info.version if info else '0.1.0'
 
     registry.add(InstalledPlugin(
         name=name,
@@ -443,6 +447,7 @@ def _register_repo_plugin(
         raise PluginError(f"Plugin directory not found: {plugin_path}")
 
     info = load_plugin_info(plugin_path)
+    check_devbase_requirement(info)
     version = info.version if info else '0.1.0'
 
     # Use the actual plugin_path relative to devbase_root so that
