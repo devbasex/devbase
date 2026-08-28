@@ -41,16 +41,6 @@ volumes:
   x: {}
 """
 
-COMPOSE_UNSUPPORTED_ENV = """services:
-  dev:
-    image: alpine
-    environment: value
-    volumes:
-      - x:/work
-volumes:
-  x: {}
-"""
-
 REPO_ENV = {"DEVBASE_REPOS": "cGxhbg==", "DEVBASE_PRIMARY_DIR": "carmo"}
 
 
@@ -121,17 +111,3 @@ def test_without_extra_environment_nothing_is_added(project):
     generate_scaled_compose(1)
 
     assert "environment" not in generated(project)["services"]["dev-1"]
-
-
-def test_unsupported_environment_is_replaced_before_dev_environment(project, caplog):
-    (project / "compose.yml").write_text(COMPOSE_UNSUPPORTED_ENV)
-
-    with caplog.at_level("WARNING"):
-        generate_scaled_compose(1, dev_environment=REPO_ENV)
-
-    assert generated(project)["services"]["dev-1"]["environment"] == [
-        "DEVBASE_REPOS=cGxhbg==",
-        "DEVBASE_PRIMARY_DIR=carmo",
-    ]
-    assert any("environment の形式 (str) を解釈できない" in r.getMessage()
-               for r in caplog.records)

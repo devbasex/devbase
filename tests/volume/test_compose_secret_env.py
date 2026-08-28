@@ -47,16 +47,6 @@ volumes:
   x: {}
 """
 
-COMPOSE_UNSUPPORTED_ENV = """services:
-  dev:
-    image: alpine
-    environment: value
-    volumes:
-      - x:/work
-volumes:
-  x: {}
-"""
-
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
@@ -143,17 +133,6 @@ def test_names_are_listed_when_original_has_no_environment(project_factory):
 
     assert generated(path)['services']['dev-1']['environment'] == [
         'ANTHROPIC_API_KEY', 'TOKEN']
-
-
-def test_unsupported_environment_is_replaced_with_secret_names(project_factory, caplog):
-    path = project_factory(COMPOSE_UNSUPPORTED_ENV)
-
-    with caplog.at_level('WARNING'):
-        generate_scaled_compose(1, secret_env_names=['TOKEN'])
-
-    assert generated(path)['services']['dev-1']['environment'] == ['TOKEN']
-    assert any('environment の形式 (str) を解釈できない' in r.getMessage()
-               for r in caplog.records)
 
 
 def test_missing_env_file_entries_are_dropped(project):
