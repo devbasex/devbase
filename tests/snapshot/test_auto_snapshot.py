@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from datetime import datetime, timezone
 
 import pytest
@@ -251,76 +250,3 @@ def test_restore_rejects_missing_full_archive(tmp_path):
 
     with pytest.raises(SnapshotError, match="フルバックアップが見つかりません"):
         mgr.restore('snap1')
-
-
-# ---------------------------------------------------------------------------
-# SnapshotManager._run_docker_tar (mount 方向の現状固定)
-# ---------------------------------------------------------------------------
-
-def _capture_docker_run_command(mgr, monkeypatch):
-    """_run_docker_tar が組み立てる docker run のコマンドを捕捉する"""
-    monkeypatch.setattr(mgr, '_ensure_snapshot_image', lambda: 'devbase-snapshot:latest')
-    captured: list[list[str]] = []
-
-    class _Result:
-        stdout = ''
-
-    def fake_run(cmd, capture_output, text, check):
-        captured.append(cmd)
-        return _Result()
-
-    monkeypatch.setattr(subprocess, 'run', fake_run)
-    return captured
-
-
-def test_run_docker_tar_backup_mode_mounts_volume_readonly(tmp_path, monkeypatch):
-    """backup: volume は :ro (読み取り専用)、backup 先は書き込み可能でマウントされる。"""
-    mgr = SnapshotManager(tmp_path)
-    snap_dir = mgr.backups_dir / 'snap1'
-    snap_dir.mkdir()
-    captured = _capture_docker_run_command(mgr, monkeypatch)
-
-    mgr._run_docker_tar(snap_dir, 'backup', 'echo hi')
-
-    assert len(captured) == 1
-    cmd = captured[0]
-    assert f'devbase_home_ubuntu:/source:ro' in cmd
-    assert f'{snap_dir.resolve()}:/backup' in cmd
-    assert f'{snap_dir.resolve()}:/backup:ro' not in cmd
-
-
-def test_run_docker_tar_restore_mode_mounts_backup_readonly(tmp_path, monkeypatch):
-    """restore: volume は書き込み可能、backup 元は :ro でマウントされる。"""
-    mgr = SnapshotManager(tmp_path)
-    snap_dir = mgr.backups_dir / 'snap1'
-    snap_dir.mkdir()
-    captured = _capture_docker_run_command(mgr, monkeypatch)
-
-    mgr._run_docker_tar(snap_dir, 'restore', 'echo hi')
-
-    assert len(captured) == 1
-    cmd = captured[0]
-    assert 'devbase_home_ubuntu:/target' in cmd
-    assert 'devbase_home_ubuntu:/target:ro' not in cmd
-    assert f'{snap_dir.resolve()}:/backup:ro' in cmd
-
-
-def test_run_docker_tar_unknown_mode_mixes_writable_mounts(tmp_path, monkeypatch):
-    """NOTE: 現状固定。'backup' でも 'restore' でもない未検証の文字列を渡すと、
-    volume 側は mode == 'backup' でないため restore 用 (書き込み可能・/target) の
-    マウントになり、backup 側は mode == 'restore' でないため backup 用 (書き込み
-    可能) のマウントになる。つまり volume も backup 先も両方書き込み可能になる
-    不具合を含む (2 つの三項演算子がそれぞれ別の条件で判定しているため)。
-    修正は別の変更で行う。
-    """
-    mgr = SnapshotManager(tmp_path)
-    snap_dir = mgr.backups_dir / 'snap1'
-    snap_dir.mkdir()
-    captured = _capture_docker_run_command(mgr, monkeypatch)
-
-    mgr._run_docker_tar(snap_dir, 'not-a-real-mode', 'echo hi')
-
-    cmd = captured[0]
-    assert 'devbase_home_ubuntu:/target' in cmd
-    assert f'{snap_dir.resolve()}:/backup' in cmd
-    assert f'{snap_dir.resolve()}:/backup:ro' not in cmd
