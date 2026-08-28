@@ -26,6 +26,36 @@ def get_dev_service_name() -> str:
     return os.environ.get('DEV_SERVICE_NAME', 'dev')
 
 
+@dataclass
+class _DependsOn:
+    """Compose の depends_on 定義を元の形式のまま scale 展開する値オブジェクト。"""
+
+    raw: Any
+
+    def rewrite_dev_service(self, dev_service_name: str, scale: int) -> Any:
+        instance_names = [
+            f"{dev_service_name}-{i}" for i in range(1, scale + 1)
+        ]
+
+        if isinstance(self.raw, list):
+            return [
+                name
+                for dep in self.raw
+                for name in (
+                    instance_names if dep == dev_service_name else [dep]
+                )
+            ]
+
+        if isinstance(self.raw, dict) and dev_service_name in self.raw:
+            rewritten = copy.deepcopy(self.raw)
+            condition = rewritten.pop(dev_service_name)
+            for name in instance_names:
+                rewritten[name] = copy.deepcopy(condition)
+            return rewritten
+
+        return self.raw
+
+
 def _rewrite_depends_on(
     service_config: Dict[str, Any],
     dev_service_name: str,
@@ -42,18 +72,9 @@ def _rewrite_depends_on(
     if not deps:
         return
 
-    instance_names = [f"{dev_service_name}-{i}" for i in range(1, scale + 1)]
-
-    if isinstance(deps, list):
-        service_config['depends_on'] = [
-            name
-            for dep in deps
-            for name in (instance_names if dep == dev_service_name else [dep])
-        ]
-    elif isinstance(deps, dict) and dev_service_name in deps:
-        condition = deps.pop(dev_service_name)
-        for name in instance_names:
-            deps[name] = copy.deepcopy(condition)
+    service_config['depends_on'] = _DependsOn(deps).rewrite_dev_service(
+        dev_service_name, scale,
+    )
 
 
 @dataclass(frozen=True)
