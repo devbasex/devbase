@@ -85,7 +85,10 @@ COPY --from=devbase-base:latest /home/ubuntu/.local /home/ubuntu/.local
 RUN ln -sf /usr/lib/node_modules/npm/bin/npm-cli.js /usr/bin/npm && \
     ln -sf /usr/lib/node_modules/npm/bin/npx-cli.js /usr/bin/npx
 
-ENV PATH="/home/ubuntu/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
+# npm のグローバル prefix は base と同じ（上の COPY /usr/local で取り込み済み。
+# COPY --from は所有者を保持するので ubuntu 所有のまま = sudo なしで `npm i -g` できる）。
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+ENV PATH="/usr/local/share/npm-global/bin:/home/ubuntu/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
 
 # 確認
 RUN gh --version && node --version && npm --version && aws --version && gcloud --version

@@ -1,8 +1,11 @@
 # ==================================
 # devbase-base: 共通基盤イメージ
-# Ubuntu noble + 共通ツール群
+# Ubuntu 26.04 LTS (resolute) + 共通ツール群
 # ==================================
-FROM ubuntu:noble
+# 26.04 は 2026-04 リリースの最新 LTS (サポート 2031-04 まで)。
+# 24.04 (noble) からの主な差分は system python が 3.12 -> 3.14 になること。
+# 3.12/3.13 は既定リポジトリに無いため、必要なら `uv python install 3.12` を使う。
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -59,8 +62,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
 
+# npm のグローバル prefix を /usr/local/share/npm-global に置く。
+# 既定の /usr/lib/node_modules + /usr/bin は root しか書けず、ubuntu ユーザでの
+# `npm i -g`（codex などの自動バージョンアップ）が EACCES で失敗するため。
+# 置き場所とパーミッション設計は Dev Containers 標準
+# (devcontainers/images の javascript-node) に合わせている。
+# ディレクトリはユーザー作成後に ubuntu:npm 所有 + setgid へ変更する。
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+ENV PATH="/usr/local/share/npm-global/bin:${PATH}"
+
 # AWS CLI + gcloud SDK + uv + npm globals（1レイヤーにまとめる）
 RUN set -eux; \
+    mkdir -p "$NPM_CONFIG_PREFIX"; \
     # AWS CLI v2
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip; \
     unzip -q /tmp/awscliv2.zip -d /tmp; \
@@ -93,7 +106,8 @@ RUN set -eux; \
     docker-credential-gcr cloud-run-proxy 2>&1 || true; \
     # uv (Python パッケージマネージャー)
     curl -LsSf https://astral.sh/uv/install.sh | sh; \
-    # npm グローバルパッケージ
+    # npm グローバルパッケージ（umask 0002 で npm グループにも書き込み権を残す）
+    umask 0002; \
     npm i -g yarn @playwright/test aws-cdk aws-cdk-lib typescript @google/gemini-cli @openai/codex; \
     # クリーンアップ
     rm -rf /tmp/* /var/tmp/* \
@@ -122,7 +136,16 @@ RUN groupadd -f users; \
     usermod -aG users,docker $USERNAME; \
     echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users; \
     echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME; \
-    chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME
+    chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME; \
+    # npm グローバル領域を sudo なしで更新できるようにする。
+    # 所有を $USERNAME:npm にし、ディレクトリへ setgid を付けて
+    # 後から誰が入れてもグループが npm のまま揃うようにする
+    # (UID/GID を振り直しても壊れない Dev Containers 方式)。
+    groupadd -r npm; \
+    usermod -aG npm $USERNAME; \
+    chown -R $USERNAME:npm "$NPM_CONFIG_PREFIX"; \
+    chmod -R g+rwX "$NPM_CONFIG_PREFIX"; \
+    find "$NPM_CONFIG_PREFIX" -type d -exec chmod g+s {} +
 
 USER ${USERNAME}
 WORKDIR /tmp

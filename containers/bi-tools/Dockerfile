@@ -23,8 +23,10 @@
 
 FROM devbase-base:latest
 
-# --- root: グローバル npm CLI（Lightdash クライアント）---
-USER root
+# --- ubuntu: グローバル npm CLI（Lightdash クライアント）---
+# npm のグローバル prefix (/usr/local/share/npm-global) は base で ubuntu 所有にしてあるため
+# root へ切り替えずにインストールする（root で入れると ubuntu が更新できなくなる）。
+USER ubuntu
 RUN set -eux; \
     npm i -g @lightdash/cli; \
     lightdash --version
