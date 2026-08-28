@@ -79,21 +79,6 @@ class VolumeManager:
         """
         return f"{WORK_VOLUME_PREFIX}{index}"
 
-    def get_ai_volume_for_index(self, index: int) -> str:
-        """
-        Get AI settings volume name for specified index
-
-        Note: All containers share the same home directory volume (devbase_home_ubuntu)
-        regardless of index.
-
-        Args:
-            index: Container index (1-based, unused)
-
-        Returns:
-            Home ubuntu volume name (devbase_home_ubuntu)
-        """
-        return HOME_UBUNTU_VOLUME
-
     def ensure_volumes(self, scale: int) -> None:
         """
         Ensure required volumes exist for the specified scale
