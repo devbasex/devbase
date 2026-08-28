@@ -142,7 +142,7 @@
 
 | スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
 | --- | --- | --- | --- | --- | ---: |
-| long_method | extract_method | major | codex | レビュー中 | 1 |
+| long_method | extract_method | major | codex | 採用 | 1 |
 
 **なぜ**: 1つの関数でマウント対象の判定、deprecated mount の除外、文字列形式と dict 形式それぞれの置換、欠落 mount の補完まで扱っており、volume 仕様の追加時に分岐全体を読み直す必要がある
 
@@ -154,7 +154,7 @@
 
 | スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
 | --- | --- | --- | --- | --- | ---: |
-| long_method | extract_method | major | codex | レビュー中 | 1 |
+| long_method | extract_method | major | codex | 採用 | 1 |
 
 **なぜ**: env_file の正規化、参照先解決、欠落した機密参照かどうかの判定、service への反映が同じ関数に同居しており、欠落参照の扱いを読むために副作用部分まで追う必要がある
 
@@ -167,7 +167,7 @@
 
 | スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
 | --- | --- | --- | --- | --- | ---: |
-| primitive_obsession | introduce_value_object | major | gemini | レビュー中 | 2 |
+| primitive_obsession | introduce_value_object | major | gemini | 採用 | 2 |
 
 **なぜ**: Dockerのvolume定義が文字列(source:target)と辞書(source, target)の2種類で表現されており、各関数で型チェック(isinstance)を伴うパースが重複して散在している
 
@@ -180,7 +180,7 @@
 
 | スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
 | --- | --- | --- | --- | --- | ---: |
-| magic_value | introduce_named_constant | minor | codex | レビュー中 | 1 |
+| magic_value | introduce_named_constant | minor | codex | 採用 | 1 |
 
 **なぜ**: 個別スナップショットメタデータのファイル名 'meta.yml' が _load_snap_meta、_save_snap_meta、last_snapshot_time の除外説明とテストデータに散在し、global metadata の METADATA_FILE と違って意味が名前で表現されていない
 
@@ -201,3 +201,55 @@
 2. `except Exception` を `except (OSError, subprocess.SubprocessError)` など想定範囲へ絞る
 3. 想定外の例外はそのまま伝播させる (catch しない)
 4. 既存の returncode != 0 判定 (通常の『存在しない』経路) はそのまま残す
+
+## ラウンド 4（実装 codex / レビュー gemini / kiro）
+
+### R4-001 — `lib/devbase/volume/manager.py#AI_VOLUME_PREFIX`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| dead_code | remove_dead_code | minor | codex / kiro | レビュー中 | 1 |
+
+**なぜ**: AI_VOLUME_PREFIX is defined alongside the active volume prefixes, but rg over lib/devbase/volume, lib/devbase/snapshot, tests/volume, and tests/snapshot shows no read references; get_ai_volume_for_index now returns HOME_UBUNTU_VOLUME directly, so the unused prefix suggests an obsolete naming rule.
+
+**手順**: 1. Confirm AI_VOLUME_PREFIX has no dynamic or test references with rg in the target scope
+2. Remove the unused AI_VOLUME_PREFIX definition only
+3. Run the volume manager tests and the full dev test command to confirm behavior is unchanged
+
+### R4-002 — `lib/devbase/snapshot/manager.py#SnapshotManager._run_docker_tar`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| primitive_obsession | introduce_named_constant | major | gemini | レビュー中 | 1 |
+
+**なぜ**: mode引数が 'backup' や 'restore' という生の文字列であり、無効な文字列が渡された際に意図せぬマウント設定になる不具合（テストで現状固定されている）を抱えている
+
+**手順**: 1. 'backup' と 'restore' を表す Enum を導入する
+2. _run_docker_tar と _TarMountSpec.from_mode の引数 mode を Enum 型に変更する
+3. 呼び出し元を Enum の利用に書き換え、無効な文字列を通す現状固定テストを取り除く
+
+### R4-003 — `lib/devbase/volume/compose.py#_rewrite_depends_on`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| primitive_obsession | introduce_value_object | major | gemini | レビュー中 | 2 |
+
+**なぜ**: depends_on の値が list 形式か dict 形式かの判定（isinstance）と展開ロジックが関数内に露出しており、Docker Compose の構造詳細に結合している。またこの分岐に対するテストが欠落している
+
+**手順**: 1. list 形式と dict 形式それぞれの depends_on が正しくスケール展開されることを確認する現状固定テストを追加する
+2. 形式の違いを吸収して展開処理を担う値オブジェクトを導入する
+3. _rewrite_depends_on をその値オブジェクトへ処理を移譲するように書き換える
+
+### R4-004 — `lib/devbase/snapshot/manager.py#SnapshotManager._update_global_metadata`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| duplication | extract_method | minor | kiro | レビュー中 | 2 |
+
+**なぜ**: copy() と _update_global_metadata() の両方に `meta.get('snapshots', [])` を name で線形探索するループがある。どちらも『スナップショット名でメタデータ内のエントリを1件見つける』という同じ業務規則に由来し、命名規則を変える（例: 大文字小文字を無視する）ときは両方を直す必要がある。探索部分だけを _find_snapshot_entry(snapshots, name) として抽出し、見つけた dict を各呼び出し側でコピー / 更新する。
+
+**手順**: 1. tests/snapshot に copy() のメタデータコピー挙動を固定する現状固定テストを追加する（元エントリの各フィールドが新エントリへコピーされ、name と created_at だけが変わることを確認）
+2. _find_snapshot_entry(snapshots: list, name: str) -> Optional[dict] をプライベート関数として追加する（線形探索のみを行う）
+3. copy() 内のループを _find_snapshot_entry の呼び出しに置き換え、見つかった dict をコピーする処理はそのまま残す
+4. _update_global_metadata() 内のループを _find_snapshot_entry の呼び出しに置き換え、見つからなければ append する分岐はそのまま残す
+5. 追加した現状固定テストと既存の snapshot テストを実行する
