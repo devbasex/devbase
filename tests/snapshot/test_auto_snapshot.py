@@ -20,7 +20,7 @@ from devbase.commands.container import (
     _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT,
     _snapshot_min_interval_minutes,
 )
-from devbase.snapshot.manager import SNAPSHOT_META_FILE, SnapshotManager
+from devbase.snapshot.manager import SNAPSHOT_META_FILE, SnapshotManager, _TarMode
 from devbase.errors import SnapshotError
 
 
@@ -157,7 +157,7 @@ def test_restore_applies_full_and_all_incrementals(tmp_path, monkeypatch):
         ['full.tar.zst', 'incr-001.tar.zst', 'incr-002.tar.zst'],
     )
     created: list[tuple[str, bool]] = []
-    commands: list[tuple[object, str, str]] = []
+    commands: list[tuple[object, _TarMode, str]] = []
 
     monkeypatch.setattr(
         mgr,
@@ -178,18 +178,18 @@ def test_restore_applies_full_and_all_incrementals(tmp_path, monkeypatch):
     assert commands == [
         (
             snap_dir,
-            'restore',
+            _TarMode.RESTORE,
             "cd /target && find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; "
             "zstd -d /backup/full.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
         ),
         (
             snap_dir,
-            'restore',
+            _TarMode.RESTORE,
             "cd /target && zstd -d /backup/incr-001.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
         ),
         (
             snap_dir,
-            'restore',
+            _TarMode.RESTORE,
             "cd /target && zstd -d /backup/incr-002.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
         ),
     ]
@@ -207,7 +207,7 @@ def test_restore_applies_incrementals_up_to_point(tmp_path, monkeypatch):
             'incr-003.tar.zst',
         ],
     )
-    commands: list[tuple[object, str, str]] = []
+    commands: list[tuple[object, _TarMode, str]] = []
 
     monkeypatch.setattr(mgr, 'create', lambda name, full: None)
     monkeypatch.setattr(
@@ -221,18 +221,18 @@ def test_restore_applies_incrementals_up_to_point(tmp_path, monkeypatch):
     assert commands == [
         (
             snap_dir,
-            'restore',
+            _TarMode.RESTORE,
             "cd /target && find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; "
             "zstd -d /backup/full.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
         ),
         (
             snap_dir,
-            'restore',
+            _TarMode.RESTORE,
             "cd /target && zstd -d /backup/incr-001.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
         ),
         (
             snap_dir,
-            'restore',
+            _TarMode.RESTORE,
             "cd /target && zstd -d /backup/incr-002.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
         ),
     ]
@@ -280,7 +280,7 @@ def test_run_docker_tar_backup_mode_mounts_volume_readonly(tmp_path, monkeypatch
     snap_dir.mkdir()
     captured = _capture_docker_run_command(mgr, monkeypatch)
 
-    mgr._run_docker_tar(snap_dir, 'backup', 'echo hi')
+    mgr._run_docker_tar(snap_dir, _TarMode.BACKUP, 'echo hi')
 
     assert len(captured) == 1
     cmd = captured[0]
@@ -296,31 +296,10 @@ def test_run_docker_tar_restore_mode_mounts_backup_readonly(tmp_path, monkeypatc
     snap_dir.mkdir()
     captured = _capture_docker_run_command(mgr, monkeypatch)
 
-    mgr._run_docker_tar(snap_dir, 'restore', 'echo hi')
+    mgr._run_docker_tar(snap_dir, _TarMode.RESTORE, 'echo hi')
 
     assert len(captured) == 1
     cmd = captured[0]
     assert 'devbase_home_ubuntu:/target' in cmd
     assert 'devbase_home_ubuntu:/target:ro' not in cmd
     assert f'{snap_dir.resolve()}:/backup:ro' in cmd
-
-
-def test_run_docker_tar_unknown_mode_mixes_writable_mounts(tmp_path, monkeypatch):
-    """NOTE: 現状固定。'backup' でも 'restore' でもない未検証の文字列を渡すと、
-    volume 側は mode == 'backup' でないため restore 用 (書き込み可能・/target) の
-    マウントになり、backup 側は mode == 'restore' でないため backup 用 (書き込み
-    可能) のマウントになる。つまり volume も backup 先も両方書き込み可能になる
-    不具合を含む (2 つの三項演算子がそれぞれ別の条件で判定しているため)。
-    修正は別の変更で行う。
-    """
-    mgr = SnapshotManager(tmp_path)
-    snap_dir = mgr.backups_dir / 'snap1'
-    snap_dir.mkdir()
-    captured = _capture_docker_run_command(mgr, monkeypatch)
-
-    mgr._run_docker_tar(snap_dir, 'not-a-real-mode', 'echo hi')
-
-    cmd = captured[0]
-    assert 'devbase_home_ubuntu:/target' in cmd
-    assert f'{snap_dir.resolve()}:/backup' in cmd
-    assert f'{snap_dir.resolve()}:/backup:ro' not in cmd

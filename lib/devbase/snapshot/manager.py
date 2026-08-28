@@ -5,6 +5,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
@@ -25,30 +26,27 @@ SNAPSHOT_META_FILE = 'meta.yml'
 _VALID_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
 
 
+class _TarMode(Enum):
+    BACKUP = 'backup'
+    RESTORE = 'restore'
+
+
 @dataclass(frozen=True)
 class _TarMountSpec:
-    """``docker run`` へ渡す volume と backup 先の mount 文字列の組。
-
-    NOTE: 現状固定。``mode`` が ``'backup'`` / ``'restore'`` のどちらでもない
-    場合、volume 側は ``mode == 'backup'`` でないため restore 用 (書き込み可能・
-    ``/target``) になり、backup 先は ``mode == 'restore'`` でないため backup 用
-    (書き込み可能) になる。つまり volume と backup 先の両方が書き込み可能になる
-    不具合を含むが、元の実装 (2 つの独立した三項演算子) の振る舞いをそのまま
-    再現している。修正は別の変更で行う。
-    """
+    """``docker run`` へ渡す volume と backup 先の mount 文字列の組。"""
 
     volume_mount: str
     backup_mount: str
 
     @classmethod
-    def from_mode(cls, snap_dir: Path, mode: str) -> '_TarMountSpec':
+    def from_mode(cls, snap_dir: Path, mode: _TarMode) -> '_TarMountSpec':
         abs_snap_dir = snap_dir.resolve()
         volume_mount = (
-            f'{VOLUME_NAME}:/source:ro' if mode == 'backup'
+            f'{VOLUME_NAME}:/source:ro' if mode is _TarMode.BACKUP
             else f'{VOLUME_NAME}:/target'
         )
         backup_mount = (
-            f'{abs_snap_dir}:/backup:ro' if mode == 'restore'
+            f'{abs_snap_dir}:/backup:ro' if mode is _TarMode.RESTORE
             else f'{abs_snap_dir}:/backup'
         )
         return cls(volume_mount=volume_mount, backup_mount=backup_mount)
@@ -308,7 +306,7 @@ class SnapshotManager:
         """フルバックアップを復元する"""
         logger.info("フルバックアップを復元中...")
         self._run_docker_tar(
-            snap_dir, 'restore',
+            snap_dir, _TarMode.RESTORE,
             "cd /target && find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; "
             f"zstd -d /backup/{full_archive.name} -c | tar --listed-incremental=/dev/null -xf -"
         )
@@ -332,7 +330,7 @@ class SnapshotManager:
     def _restore_incremental_archive(self, snap_dir: Path, incr: Path) -> None:
         """差分バックアップを復元する"""
         self._run_docker_tar(
-            snap_dir, 'restore',
+            snap_dir, _TarMode.RESTORE,
             f"cd /target && zstd -d /backup/{incr.name} -c | tar --listed-incremental=/dev/null -xf -"
         )
 
@@ -375,12 +373,12 @@ class SnapshotManager:
             logger.info("devbase-snapshotイメージのビルド完了")
             return SNAPSHOT_IMAGE
 
-    def _run_docker_tar(self, snap_dir: Path, mode: str, command: str) -> None:
+    def _run_docker_tar(self, snap_dir: Path, mode: _TarMode, command: str) -> None:
         """Docker経由でtar操作を実行する。
 
         Args:
             snap_dir: スナップショットディレクトリ
-            mode: 'backup' or 'restore'
+            mode: tar operation mode
             command: コンテナ内で実行するコマンド
         """
         image = self._ensure_snapshot_image()
@@ -408,7 +406,7 @@ class SnapshotManager:
         """フルバックアップを作成"""
         logger.info("フルバックアップを作成中: %s", name)
         self._run_docker_tar(
-            snap_dir, 'backup',
+            snap_dir, _TarMode.BACKUP,
             "tar --listed-incremental=/backup/snapshot.snar "
             "-cf - -C /source . | zstd -1 -T0 -o /backup/full.tar.zst"
         )
@@ -441,7 +439,7 @@ class SnapshotManager:
         logger.info("差分バックアップを作成中: %s/%s", name, incr_name)
 
         self._run_docker_tar(
-            snap_dir, 'backup',
+            snap_dir, _TarMode.BACKUP,
             f"cp /backup/snapshot.snar /backup/snapshot.snar.bak && "
             f"tar --listed-incremental=/backup/snapshot.snar "
             f"-cf - -C /source . | zstd -1 -T0 -o /backup/{incr_name}"
