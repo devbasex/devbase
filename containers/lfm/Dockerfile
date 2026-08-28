@@ -86,7 +86,9 @@ RUN ln -sf /usr/lib/node_modules/npm/bin/npm-cli.js /usr/bin/npm && \
     ln -sf /usr/lib/node_modules/npm/bin/npx-cli.js /usr/bin/npx
 
 # npm のグローバル prefix は base と同じ（上の COPY /usr/local で取り込み済み。
-# COPY --from は所有者を保持するので ubuntu 所有のまま = sudo なしで `npm i -g` できる）。
+# COPY --from は所有者を保持するので ubuntu:npm 所有のまま = sudo なしで `npm i -g` できる。
+# ただし npm グループの定義自体は COPY されないので、下のユーザー設定で
+# base と同じ GID で作り直して整合させる）。
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH="/usr/local/share/npm-global/bin:/home/ubuntu/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
 
@@ -95,9 +97,18 @@ RUN gh --version && node --version && npm --version && aws --version && gcloud -
 
 # ユーザー設定
 ARG USERNAME="ubuntu"
-RUN usermod -aG users,docker $USERNAME && \
-    echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users && \
-    echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME && \
+# npm グループの GID は containers/base/Dockerfile の ARG NPM_GID と必ず一致させる。
+# COPY --from が持ち込んだ /usr/local/share/npm-global 配下のファイルは GID 数値だけを
+# 保持するため、lfm 側に同じ GID のグループが無いと GID が未定義のまま残り、
+# setgid ディレクトリも効かず ubuntu が sudo なしで `npm i -g` できなくなる。
+# ここで chown -R し直さないのは、数百MBの node_modules が丸ごと
+# 新しいレイヤーへ複製されイメージが肥大化するため。
+ARG NPM_GID="2000"
+RUN set -eux; \
+    groupadd -g "$NPM_GID" npm; \
+    usermod -aG users,docker,npm $USERNAME; \
+    echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users; \
+    echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME; \
     chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME
 
 USER ${USERNAME}
