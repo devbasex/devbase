@@ -283,8 +283,12 @@ tmux は `/etc/tmux.conf` を読んでから `~/.tmux.conf` を読み、同じ�
 ```bash
 # 例: ホイールを tmux に渡さず、端末側のスクロールに戻す
 echo 'set -g mouse off' >> ~/.tmux.conf
-tmux kill-server   # 設定はサーバー起動時にのみ読まれる
+tmux source-file ~/.tmux.conf   # 実行中のセッションを保ったまま反映する
 ```
+
+> **Note:** `source-file` はセッションや配下のプロセスを終了せずに設定を読み直し、`mouse` のような
+> オプションは即時に反映されます。ただし `history-limit` は新しく作る pane から適用され、既存の
+> pane は作成時の値を保持します。既存 pane にも効かせたい場合は、その pane を作り直してください。
 
 > **Note:** `~/.tmux.conf` は永続化の対象外です（`/persistent/ai` へ symlink されるのは
 > `~/.claude` などの AI 設定のみ）。コンテナを作り直すと消えるため、残したい設定は
