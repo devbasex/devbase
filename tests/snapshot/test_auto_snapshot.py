@@ -324,3 +324,128 @@ def test_run_docker_tar_unknown_mode_mixes_writable_mounts(tmp_path, monkeypatch
     assert 'devbase_home_ubuntu:/target' in cmd
     assert f'{snap_dir.resolve()}:/backup' in cmd
     assert f'{snap_dir.resolve()}:/backup:ro' not in cmd
+
+
+# ---------------------------------------------------------------------------
+# SnapshotManager._ensure_snapshot_image の現状固定テスト
+# ---------------------------------------------------------------------------
+
+def test_ensure_snapshot_image_returns_existing_image(tmp_path, monkeypatch):
+    mgr = SnapshotManager(tmp_path)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, check, text=False):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    result = mgr._ensure_snapshot_image()
+
+    assert result == 'devbase-snapshot:latest'
+    assert calls == [['docker', 'image', 'inspect', 'devbase-snapshot:latest']]
+
+
+def test_ensure_snapshot_image_missing_dockerfile_raises(tmp_path, monkeypatch):
+    mgr = SnapshotManager(tmp_path)
+
+    def fake_run(cmd, capture_output, check, text=False):
+        if cmd[:3] == ['docker', 'image', 'inspect']:
+            raise subprocess.CalledProcessError(1, cmd)
+        raise AssertionError("should not attempt to build without a Dockerfile")
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    with pytest.raises(SnapshotError, match="スナップショット用Dockerfileが見つかりません"):
+        mgr._ensure_snapshot_image()
+
+
+def test_ensure_snapshot_image_builds_with_buildx_when_missing(tmp_path, monkeypatch):
+    mgr = SnapshotManager(tmp_path)
+    dockerfile_dir = tmp_path / 'containers' / 'snapshot'
+    dockerfile_dir.mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, check, text=False):
+        calls.append(cmd)
+        if cmd[:3] == ['docker', 'image', 'inspect']:
+            raise subprocess.CalledProcessError(1, cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    result = mgr._ensure_snapshot_image()
+
+    assert result == 'devbase-snapshot:latest'
+    assert calls == [
+        ['docker', 'image', 'inspect', 'devbase-snapshot:latest'],
+        ['docker', 'buildx', 'build', '--load',
+         '-t', 'devbase-snapshot:latest', str(dockerfile_dir)],
+    ]
+
+
+def test_ensure_snapshot_image_falls_back_to_docker_build(tmp_path, monkeypatch):
+    """buildx が失敗したら docker build にフォールバックする。"""
+    mgr = SnapshotManager(tmp_path)
+    dockerfile_dir = tmp_path / 'containers' / 'snapshot'
+    dockerfile_dir.mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, check, text=False):
+        calls.append(cmd)
+        if cmd[:3] == ['docker', 'image', 'inspect']:
+            raise subprocess.CalledProcessError(1, cmd)
+        if cmd[1] == 'buildx':
+            raise subprocess.CalledProcessError(1, cmd, stderr='buildx not available')
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    result = mgr._ensure_snapshot_image()
+
+    assert result == 'devbase-snapshot:latest'
+    assert calls == [
+        ['docker', 'image', 'inspect', 'devbase-snapshot:latest'],
+        ['docker', 'buildx', 'build', '--load',
+         '-t', 'devbase-snapshot:latest', str(dockerfile_dir)],
+        ['docker', 'build', '-t', 'devbase-snapshot:latest', str(dockerfile_dir)],
+    ]
+
+
+def test_ensure_snapshot_image_raises_when_all_build_commands_fail(tmp_path, monkeypatch):
+    mgr = SnapshotManager(tmp_path)
+    dockerfile_dir = tmp_path / 'containers' / 'snapshot'
+    dockerfile_dir.mkdir(parents=True)
+
+    def fake_run(cmd, capture_output, check, text=False):
+        if cmd[:3] == ['docker', 'image', 'inspect']:
+            raise subprocess.CalledProcessError(1, cmd)
+        raise subprocess.CalledProcessError(1, cmd, stderr='build failed')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    with pytest.raises(SnapshotError, match="devbase-snapshotのビルドに失敗: build failed"):
+        mgr._ensure_snapshot_image()
+
+
+def test_ensure_snapshot_image_treats_missing_buildx_binary_as_failure(tmp_path, monkeypatch):
+    """buildx バイナリ自体が無い (FileNotFoundError) 場合も docker build へフォールバックする。"""
+    mgr = SnapshotManager(tmp_path)
+    dockerfile_dir = tmp_path / 'containers' / 'snapshot'
+    dockerfile_dir.mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, check, text=False):
+        calls.append(cmd)
+        if cmd[:3] == ['docker', 'image', 'inspect']:
+            raise subprocess.CalledProcessError(1, cmd)
+        if cmd[1] == 'buildx':
+            raise FileNotFoundError('docker-buildx: command not found')
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    result = mgr._ensure_snapshot_image()
+
+    assert result == 'devbase-snapshot:latest'
+    assert calls[-1] == ['docker', 'build', '-t', 'devbase-snapshot:latest', str(dockerfile_dir)]
