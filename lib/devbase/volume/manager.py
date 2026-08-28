@@ -37,7 +37,10 @@ class VolumeManager:
                 check=False
             )
             return result.returncode == 0
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
+            # docker CLI を起動できない場合 (バイナリ不在の FileNotFoundError
+            # や権限不足等) に限って「存在しない」へ丸める。それ以外の想定外の
+            # 例外は原因を隠さずそのまま伝播させる。
             logger.warning("Failed to check volume %s: %s", volume_name, e)
             return False
 

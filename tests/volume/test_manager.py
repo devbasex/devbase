@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from devbase.volume import manager as manager_module
 from devbase.volume.manager import (
     VolumeManager, get_volume_for_index, get_work_volume_for_index,
@@ -57,3 +59,10 @@ def test_volume_exists_false_when_docker_is_missing(monkeypatch):
 def test_volume_exists_false_on_subprocess_error(monkeypatch):
     _fake_run(monkeypatch, side_effect=subprocess.SubprocessError("boom"))
     assert VolumeManager()._volume_exists("devbase_work_1") is False
+
+
+def test_volume_exists_propagates_unexpected_errors(monkeypatch):
+    # docker CLI 呼び出しに関係しない想定外の例外は False へ丸めず伝播させる
+    _fake_run(monkeypatch, side_effect=ValueError("unexpected"))
+    with pytest.raises(ValueError):
+        VolumeManager()._volume_exists("devbase_work_1")
