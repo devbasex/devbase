@@ -20,6 +20,7 @@ from devbase.commands.container import (
     _snapshot_min_interval_minutes,
 )
 from devbase.snapshot.manager import SnapshotManager
+from devbase.errors import SnapshotError
 
 
 # ---------------------------------------------------------------------------
@@ -133,3 +134,119 @@ def test_last_snapshot_time_only_noise_returns_none(tmp_path):
     _touch(snap_dir / 'snapshot.snar', 1_700_200_000.0)
 
     assert mgr.last_snapshot_time() is None
+
+
+# ---------------------------------------------------------------------------
+# SnapshotManager.restore
+# ---------------------------------------------------------------------------
+
+def _snapshot_with_archives(mgr: SnapshotManager, name: str, archives: list[str]):
+    snap_dir = mgr.backups_dir / name
+    snap_dir.mkdir()
+    for archive in archives:
+        (snap_dir / archive).write_bytes(b'archive')
+    return snap_dir
+
+
+def test_restore_applies_full_and_all_incrementals(tmp_path, monkeypatch):
+    mgr = SnapshotManager(tmp_path)
+    snap_dir = _snapshot_with_archives(
+        mgr,
+        'snap1',
+        ['full.tar.zst', 'incr-001.tar.zst', 'incr-002.tar.zst'],
+    )
+    created: list[tuple[str, bool]] = []
+    commands: list[tuple[object, str, str]] = []
+
+    monkeypatch.setattr(
+        mgr,
+        'create',
+        lambda name, full: created.append((name, full)),
+    )
+    monkeypatch.setattr(
+        mgr,
+        '_run_docker_tar',
+        lambda snap_dir, mode, command: commands.append((snap_dir, mode, command)),
+    )
+
+    mgr.restore('snap1')
+
+    assert len(created) == 1
+    assert created[0][0].startswith('pre-restore-')
+    assert created[0][1] is True
+    assert commands == [
+        (
+            snap_dir,
+            'restore',
+            "cd /target && find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; "
+            "zstd -d /backup/full.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
+        ),
+        (
+            snap_dir,
+            'restore',
+            "cd /target && zstd -d /backup/incr-001.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
+        ),
+        (
+            snap_dir,
+            'restore',
+            "cd /target && zstd -d /backup/incr-002.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
+        ),
+    ]
+
+
+def test_restore_applies_incrementals_up_to_point(tmp_path, monkeypatch):
+    mgr = SnapshotManager(tmp_path)
+    snap_dir = _snapshot_with_archives(
+        mgr,
+        'snap1',
+        [
+            'full.tar.zst',
+            'incr-001.tar.zst',
+            'incr-002.tar.zst',
+            'incr-003.tar.zst',
+        ],
+    )
+    commands: list[tuple[object, str, str]] = []
+
+    monkeypatch.setattr(mgr, 'create', lambda name, full: None)
+    monkeypatch.setattr(
+        mgr,
+        '_run_docker_tar',
+        lambda snap_dir, mode, command: commands.append((snap_dir, mode, command)),
+    )
+
+    mgr.restore('snap1', point=2)
+
+    assert commands == [
+        (
+            snap_dir,
+            'restore',
+            "cd /target && find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; "
+            "zstd -d /backup/full.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
+        ),
+        (
+            snap_dir,
+            'restore',
+            "cd /target && zstd -d /backup/incr-001.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
+        ),
+        (
+            snap_dir,
+            'restore',
+            "cd /target && zstd -d /backup/incr-002.tar.zst -c | tar --listed-incremental=/dev/null -xf -",
+        ),
+    ]
+
+
+def test_restore_rejects_invalid_point(tmp_path):
+    mgr = SnapshotManager(tmp_path)
+
+    with pytest.raises(SnapshotError, match="--point は正の整数"):
+        mgr.restore('snap1', point=0)
+
+
+def test_restore_rejects_missing_full_archive(tmp_path):
+    mgr = SnapshotManager(tmp_path)
+    _snapshot_with_archives(mgr, 'snap1', ['incr-001.tar.zst'])
+
+    with pytest.raises(SnapshotError, match="フルバックアップが見つかりません"):
+        mgr.restore('snap1')
