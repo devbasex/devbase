@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import yaml
 
@@ -141,13 +141,47 @@ class SnapshotManager:
             point: 差分の適用上限（例: 3なら incr-003 まで適用）。
                    Noneなら全差分を適用。
         """
-        snap_dir, full_archive = self._restore_snapshot_archives(name, point)
-        self._backup_before_restore()
-        self._restore_full_archive(snap_dir, full_archive)
+        if point is not None and point <= 0:
+            raise SnapshotError(f"--point は正の整数である必要があります: {point}")
+        snap_dir = self._safe_snap_dir(name)
+        if not snap_dir.exists():
+            raise SnapshotError(f"スナップショット '{name}' が見つかりません")
 
-        for incr in self._incremental_archives_to_restore(snap_dir, point):
+        full_archive = snap_dir / 'full.tar.zst'
+        if not full_archive.exists():
+            raise SnapshotError(f"フルバックアップが見つかりません: {full_archive}")
+
+        # 復元前に現在の状態を自動バックアップ
+        pre_restore_name = f"pre-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        logger.info("復元前に現在の状態をバックアップします: %s", pre_restore_name)
+        try:
+            self.create(name=pre_restore_name, full=True)
+        except Exception as e:
+            logger.warning("復元前バックアップに失敗しましたが続行します: %s", e)
+
+        # フルバックアップの復元
+        logger.info("フルバックアップを復元中...")
+        self._run_docker_tar(
+            snap_dir, 'restore',
+            "cd /target && find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; "
+            "zstd -d /backup/full.tar.zst -c | tar --listed-incremental=/dev/null -xf -"
+        )
+
+        # 差分バックアップを順番に適用（pointが指定されていればそこまで）
+        incr_re = re.compile(r'^incr-(\d+)\.tar\.zst$')
+        incr_files = sorted(snap_dir.glob('incr-*.tar.zst'))
+        for incr in incr_files:
+            if point is not None:
+                m = incr_re.match(incr.name)
+                if not m:
+                    continue
+                if int(m.group(1)) > point:
+                    break
             logger.info("差分バックアップを適用中: %s", incr.name)
-            self._restore_incremental_archive(snap_dir, incr)
+            self._run_docker_tar(
+                snap_dir, 'restore',
+                f"cd /target && zstd -d /backup/{incr.name} -c | tar --listed-incremental=/dev/null -xf -"
+            )
 
         if point is not None:
             logger.info("復元完了: %s (incr-%03d まで)", name, point)
@@ -247,62 +281,6 @@ class SnapshotManager:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _restore_snapshot_archives(
-        self, name: str, point: int | None,
-    ) -> tuple[Path, Path]:
-        """復元対象のスナップショットとフルアーカイブを検証する"""
-        if point is not None and point <= 0:
-            raise SnapshotError(f"--point は正の整数である必要があります: {point}")
-        snap_dir = self._safe_snap_dir(name)
-        if not snap_dir.exists():
-            raise SnapshotError(f"スナップショット '{name}' が見つかりません")
-
-        full_archive = snap_dir / 'full.tar.zst'
-        if not full_archive.exists():
-            raise SnapshotError(f"フルバックアップが見つかりません: {full_archive}")
-        return snap_dir, full_archive
-
-    def _backup_before_restore(self) -> None:
-        """復元前に現在の状態をバックアップし、失敗しても復元は続行する"""
-        pre_restore_name = f"pre-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        logger.info("復元前に現在の状態をバックアップします: %s", pre_restore_name)
-        try:
-            self.create(name=pre_restore_name, full=True)
-        except Exception as e:
-            logger.warning("復元前バックアップに失敗しましたが続行します: %s", e)
-
-    def _restore_full_archive(self, snap_dir: Path, full_archive: Path) -> None:
-        """フルバックアップを復元する"""
-        logger.info("フルバックアップを復元中...")
-        self._run_docker_tar(
-            snap_dir, 'restore',
-            "cd /target && find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; "
-            f"zstd -d /backup/{full_archive.name} -c | tar --listed-incremental=/dev/null -xf -"
-        )
-
-    def _incremental_archives_to_restore(
-        self, snap_dir: Path, point: int | None,
-    ) -> List[Path]:
-        """指定されたpointまでに適用する差分アーカイブを返す"""
-        incr_re = re.compile(r'^incr-(\d+)\.tar\.zst$')
-        archives = []
-        for incr in sorted(snap_dir.glob('incr-*.tar.zst')):
-            if point is not None:
-                m = incr_re.match(incr.name)
-                if not m:
-                    continue
-                if int(m.group(1)) > point:
-                    break
-            archives.append(incr)
-        return archives
-
-    def _restore_incremental_archive(self, snap_dir: Path, incr: Path) -> None:
-        """差分バックアップを復元する"""
-        self._run_docker_tar(
-            snap_dir, 'restore',
-            f"cd /target && zstd -d /backup/{incr.name} -c | tar --listed-incremental=/dev/null -xf -"
-        )
 
     def _ensure_snapshot_image(self) -> str:
         """スナップショット専用イメージを確保する（なければ自動ビルド）"""
