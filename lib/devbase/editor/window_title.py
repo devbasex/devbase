@@ -31,7 +31,8 @@ settings.json は VS Code が JSONC (コメント / 末尾カンマ可) とし�
 ``window.title`` だけを差し替える (丸ごと書き直すとコメントを失うため)。
 書き込みは同一ディレクトリの一時ファイル + ``mv`` による原子的置換で行い、
 稼働中の VS Code が中途半端な JSON を読んだり、失敗時に設定を丸ごと失ったり
-しないようにする。
+しないようにする。一時ファイルには既存ファイルの mode を写し取り (新規なら
+``umask 077``)、置換でパーミッションが緩まないようにする。
 """
 
 from __future__ import annotations
@@ -303,6 +304,22 @@ def _docker_exec(args, runner: Optional[Callable] = None, input_text: Optional[s
     )
 
 
+def _read_command() -> str:
+    """settings.json を読むコンテナ内シェルコマンド。
+
+    **不在だけ**を成功 (空出力) 扱いにする。VS Code が一度も繋がっていない
+    コンテナには settings.json が無く、そこで ``cat`` の rc=1 をそのまま
+    受け取ると「exec 失敗」と取り違えて初回のコンテナに一切書けない。
+
+    一方で ``cat ... || true`` のように**全ての**失敗を握り潰すと、権限不足や
+    I/O エラーで読めなかった既存ファイルまで「空」とみなし、空から作り直した
+    設定で :func:`_write_command` が上書きしてしまう。そこで ``[ -e ]`` で
+    不在のみを切り分け、存在するファイルの ``cat`` 失敗は非 0 のまま返す
+    (呼び出し側が書き込みを中止する)。
+    """
+    return f'[ -e "{_SETTINGS_FILE}" ] || exit 0\ncat "{_SETTINGS_FILE}"'
+
+
 def _write_command() -> str:
     """settings.json を**原子的に**置き換えるコンテナ内シェルコマンド。
 
@@ -311,10 +328,20 @@ def _write_command() -> str:
     丸ごと失ったりする。同一ディレクトリの一時ファイルへ書いてから ``mv``
     (同一 FS の rename = 原子的) で差し替える。途中で失敗したときは一時
     ファイルを片付けて非 0 で終わるので、**既存ファイルは元のまま残る**。
+
+    パーミッションは ``mv`` で一時ファイルのものが引き継がれるため、
+    既存ファイルがあれば ``cp -p`` でその mode を先に写し取る (設定に秘密値が
+    入っていて 600 等にしてある場合、umask 任せの 644 へ緩めてしまわない)。
+    新規作成時は ``umask 077`` で本人のみ読める mode にする。
+    ``mkdir`` は umask 変更前に実行し、ディレクトリの mode は変えない。
     """
     return (
-        f'mkdir -p "{_SETTINGS_DIR}" && cat > "{_TMP_FILE}" '
-        f'&& mv -f "{_TMP_FILE}" "{_SETTINGS_FILE}" '
+        f'mkdir -p "{_SETTINGS_DIR}" || exit 1\n'
+        "umask 077\n"
+        f'if [ -e "{_SETTINGS_FILE}" ]; then\n'
+        f'  cp -p "{_SETTINGS_FILE}" "{_TMP_FILE}" || {{ rm -f "{_TMP_FILE}"; exit 1; }}\n'
+        "fi\n"
+        f'cat > "{_TMP_FILE}" && mv -f "{_TMP_FILE}" "{_SETTINGS_FILE}" '
         f'|| {{ rm -f "{_TMP_FILE}"; exit 1; }}'
     )
 
@@ -335,19 +362,18 @@ def apply_to_container(container_name: str, template: Optional[str] = None,
 
     try:
         read = _docker_exec(
-            # ``|| true`` でファイル不在 (VS Code が一度も繋がっていないコンテナ) を
-            # 成功扱いにする。これが無いと cat の rc=1 をそのまま受け取り、初回の
-            # コンテナに一切書けない。``docker exec`` 自体の失敗 (コンテナ不在・
-            # 停止中) は docker が非 0 を返すのでここでも検出できる。
-            ["docker", "exec", container_name, "sh", "-c",
-             f'cat "{_SETTINGS_FILE}" 2>/dev/null || true'],
+            # ファイル不在のみ成功 (空) 扱い。読めなかった既存ファイルは非 0 で
+            # 返り、下で書き込みを中止する (詳細は _read_command を参照)。
+            ["docker", "exec", container_name, "sh", "-c", _read_command()],
             runner=runner,
         )
     except Exception as e:  # noqa: BLE001 - docker 不在/タイムアウト等で up を倒さない
         logger.debug("window.title の読み取りに失敗 (%s): %s", container_name, e)
         return False
     if getattr(read, "returncode", 1) != 0:
-        logger.debug("window.title: %s へ exec できませんでした", container_name)
+        # exec 失敗 (コンテナ不在・停止中) と、存在する settings.json を読めなかった
+        # 場合の両方。どちらも中身が分からないので上書きしない。
+        logger.debug("window.title: %s の設定を読めませんでした", container_name)
         return False
 
     merged = merge_settings(read.stdout or "", title)

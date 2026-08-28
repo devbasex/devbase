@@ -176,9 +176,10 @@ def test_apply_creates_settings_when_file_missing():
     ok = window_title.apply_to_container("nyle-dx-dev-1", environ={}, runner=runner)
     assert ok is True
     assert json.loads(runner.written)["window.title"].startswith("nyle-dx-dev-1")
-    # 読み取りは cat の rc=1 (ファイル不在) を exec 失敗と取り違えないよう握り潰す。
-    read_args = runner.calls[0][0]
-    assert read_args[-1].endswith("|| true")
+    # 読み取りは「不在」だけを成功 (空) 扱いにする。全失敗を握り潰さない。
+    read_command = runner.calls[0][0][-1]
+    assert '[ -e "$HOME/.vscode-server/data/Machine/settings.json" ] || exit 0' in read_command
+    assert "|| true" not in read_command
     # 書き込みはディレクトリごと作る。
     assert "mkdir -p" in runner.calls[1][0][-1]
 
@@ -244,6 +245,9 @@ def test_apply_write_command_replaces_atomically():
     assert 'cat > "$HOME/.vscode-server/data/Machine/settings.json"' not in command
     # 失敗時は一時ファイルを片付けて非 0 で終わる。
     assert "rm -f" in command and "exit 1" in command
+    # パーミッションは既存 mode を写し取り、新規は umask 077 で絞る。
+    assert "umask 077" in command
+    assert 'cp -p "$HOME/.vscode-server/data/Machine/settings.json"' in command
 
 
 def test_write_command_creates_file_without_leftover_tmp(tmp_path):
@@ -270,3 +274,81 @@ def test_write_command_keeps_existing_file_when_write_fails(tmp_path):
         assert settings.read_text() == '{"editor.fontSize": 14}'
     finally:
         machine.chmod(0o700)
+
+
+def _run_read_command(home):
+    """コンテナ内で走るのと同じ読み取りコマンドをローカル sh で実行する。"""
+    return subprocess.run(
+        ["sh", "-c", window_title._read_command()],
+        text=True, capture_output=True, check=False,
+        env={"HOME": str(home), "PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+    )
+
+
+def test_read_command_succeeds_with_empty_output_when_missing(tmp_path):
+    """settings.json 不在は「空の設定」として rc=0。初回コンテナでも書ける。"""
+    result = _run_read_command(tmp_path)
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_read_command_outputs_existing_settings(tmp_path):
+    machine = tmp_path / ".vscode-server" / "data" / "Machine"
+    machine.mkdir(parents=True)
+    (machine / "settings.json").write_text('{"editor.fontSize": 14}')
+    result = _run_read_command(tmp_path)
+    assert result.returncode == 0
+    assert result.stdout == '{"editor.fontSize": 14}'
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX シェルが前提")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root はパーミッションを無視するため")
+def test_read_command_fails_when_existing_file_unreadable(tmp_path):
+    """存在するのに読めない設定を「空」と誤認しない (空から作り直して潰さない)。"""
+    machine = tmp_path / ".vscode-server" / "data" / "Machine"
+    machine.mkdir(parents=True)
+    settings = machine / "settings.json"
+    settings.write_text('{"editor.fontSize": 14}')
+    settings.chmod(0o000)
+    try:
+        result = _run_read_command(tmp_path)
+        assert result.returncode != 0
+    finally:
+        settings.chmod(0o600)
+
+
+def test_apply_skips_write_when_existing_settings_unreadable():
+    """読み取りが非 0 なら書き込みへ進まない (既存設定を空で上書きしない)。"""
+    runner = _Runner(existing="", read_rc=1)
+    assert window_title.apply_to_container(
+        "nyle-dx-dev-1", environ={}, runner=runner) is False
+    assert runner.written is None
+
+
+# ---------------------------------------------------------------------------
+# 書き込みのパーミッション (既存 mode の引き継ぎ / 新規は restrictive)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX のパーミッションが前提")
+def test_write_command_creates_file_with_restrictive_mode(tmp_path):
+    """新規作成の settings.json は本人以外から読めない mode で作る。"""
+    result = _run_write_command(tmp_path, '{\n\t"window.title": "x"\n}\n')
+    assert result.returncode == 0, result.stderr
+    settings = tmp_path / ".vscode-server" / "data" / "Machine" / "settings.json"
+    assert settings.stat().st_mode & 0o077 == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX のパーミッションが前提")
+def test_write_command_preserves_existing_mode(tmp_path):
+    """既存 settings.json の restrictive な mode を置換で失わない。"""
+    machine = tmp_path / ".vscode-server" / "data" / "Machine"
+    machine.mkdir(parents=True)
+    settings = machine / "settings.json"
+    settings.write_text('{"editor.fontSize": 14}')
+    settings.chmod(0o600)
+    result = _run_write_command(tmp_path, '{\n\t"window.title": "x"\n}\n')
+    assert result.returncode == 0, result.stderr
+    assert settings.stat().st_mode & 0o777 == 0o600
+    assert json.loads(settings.read_text()) == {"window.title": "x"}
+    assert [p.name for p in machine.iterdir()] == ["settings.json"]
