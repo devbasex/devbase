@@ -3,6 +3,7 @@
 import copy
 import os
 import yaml
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
@@ -465,6 +466,23 @@ def _services_receiving_secrets(
     return receivers
 
 
+@dataclass(frozen=True)
+class _ScaledComposeContext:
+    """``generate_scaled_compose`` の内部ヘルパーへ渡り回る値をまとめたもの。
+
+    compose ファイルのパス・dev サービス名・機密の変数名・dev サービスへ載せる
+    devbase 由来の環境変数は、``_SecretNames`` の生成から
+    ``_services_receiving_secrets`` / ``_build_scaled_services`` 呼び出しまで
+    ひとまとまりで使われる。公開シグネチャ (``generate_scaled_compose`` の引数)
+    は互換性のため変えず、関数の先頭でこの値へ組み立てる。
+    """
+
+    compose_file: Path
+    dev_service_name: str
+    secret_names: '_SecretNames'
+    dev_environment: Optional[Mapping[str, str]] = field(default=None)
+
+
 def generate_scaled_compose(
     scale: int,
     compose_file: Path = None,
@@ -494,33 +512,39 @@ def generate_scaled_compose(
     Returns:
         Path to generated .docker-compose.scale.yml
     """
-    compose_file = compose_file or Path("compose.yml")
+    ctx = _ScaledComposeContext(
+        compose_file=compose_file or Path("compose.yml"),
+        dev_service_name=(
+            dev_service_name if dev_service_name is not None
+            else get_dev_service_name()
+        ),
+        secret_names=_SecretNames(
+            secret_env_names, global_env_names, project_env_names),
+        dev_environment=dev_environment,
+    )
     override_file = Path(".docker-compose.scale.yml")
-    if dev_service_name is None:
-        dev_service_name = get_dev_service_name()
 
-    config = _load_compose_config(compose_file)
+    config = _load_compose_config(ctx.compose_file)
 
     # Extract dev service (configurable via DEV_SERVICE_NAME)
     services = config.get('services', {})
-    base_dir = compose_file.resolve().parent
+    base_dir = ctx.compose_file.resolve().parent
     for service_name, service_config in services.items():
         if isinstance(service_config, dict):
             _drop_missing_env_files(service_config, base_dir, service_name)
-    dev_service = services.get(dev_service_name)
+    dev_service = services.get(ctx.dev_service_name)
     if not dev_service:
-        raise DockerError(f"No '{dev_service_name}' service found in compose file")
+        raise DockerError(f"No '{ctx.dev_service_name}' service found in compose file")
 
-    secret_services = _services_receiving_secrets(compose_file, dev_service_name)
-    secret_names = _SecretNames(
-        secret_env_names, global_env_names, project_env_names)
+    secret_services = _services_receiving_secrets(
+        ctx.compose_file, ctx.dev_service_name)
 
     scaled_config = {
         'services': _build_scaled_services(
-            services, dev_service, dev_service_name, scale,
-            secret_names=secret_names,
+            services, dev_service, ctx.dev_service_name, scale,
+            secret_names=ctx.secret_names,
             secret_services=secret_services,
-            dev_environment=dev_environment,
+            dev_environment=ctx.dev_environment,
         ),
         'volumes': _build_volumes_section(config, scale),
         'networks': _build_networks_section(config),
