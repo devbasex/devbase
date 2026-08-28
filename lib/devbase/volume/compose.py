@@ -5,7 +5,7 @@ import os
 import yaml
 from pathlib import Path
 from typing import (
-    Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
+    Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple,
 )
 
 from devbase.env import compose_migrate
@@ -147,6 +147,26 @@ def _load_compose_config(compose_file: Path) -> dict:
         raise DockerError(f"Failed to parse compose file: {e}")
 
 
+def _environment_entries(
+    service: dict,
+) -> tuple[str, List[Tuple[Optional[str], Any]], Any]:
+    """Compose environment を表現種別、名前付き値、解釈不能値に分ける"""
+    existing = service.get('environment')
+    if existing is None:
+        return 'none', [], None
+    if isinstance(existing, dict):
+        return 'dict', list(existing.items()), []
+    if isinstance(existing, list):
+        entries: List[Tuple[Optional[str], Any]] = []
+        for item in existing:
+            if not isinstance(item, str):
+                entries.append((None, item))
+                continue
+            entries.append((item.split('=', 1)[0].strip(), item))
+        return 'list', entries, []
+    return 'unsupported', [], existing
+
+
 def _mask_secret_environment(
     service: dict, secret_env_names: Sequence[str],
 ) -> None:
@@ -165,33 +185,32 @@ def _mask_secret_environment(
     # 重複を除きつつ、指定された順序は保つ
     secrets = list(dict.fromkeys(secret_env_names))
     secret_set = set(secrets)
-    existing = service.get('environment')
+    env_kind, entries, unknown = _environment_entries(service)
 
-    if existing is None:
+    if env_kind == 'none':
         # 元から environment が無ければ、機密が無い限り作らない
         if secrets:
             service['environment'] = list(secrets)
         return
 
-    if isinstance(existing, dict):
+    if env_kind == 'dict':
         masked = {
             key: (None if key in secret_set else value)
-            for key, value in existing.items()
+            for key, value in entries
+            if key is not None
         }
         for name in secrets:
             masked.setdefault(name, None)
         service['environment'] = masked
         return
 
-    if isinstance(existing, list):
+    if env_kind == 'list':
         masked_list = []
-        listed = set()
-        for item in existing:
-            if not isinstance(item, str):
+        listed = {name for name, _ in entries if name is not None}
+        for name, item in entries:
+            if name is None:
                 masked_list.append(item)
                 continue
-            name = item.split('=', 1)[0].strip()
-            listed.add(name)
             # 機密キーは `KEY=value` でも `KEY` でも、値なし参照に揃える
             masked_list.append(name if name in secret_set else item)
         masked_list.extend(name for name in secrets if name not in listed)
@@ -202,7 +221,7 @@ def _mask_secret_environment(
     # 機密が渡らない事故を避けるため名前の列挙で置き換える。
     logger.warning(
         "environment の形式 (%s) を解釈できないため、機密の変数名の列挙で"
-        "置き換えます", type(existing).__name__)
+        "置き換えます", type(unknown).__name__)
     service['environment'] = list(secrets)
 
 
@@ -269,24 +288,28 @@ def _apply_dev_environment(service: dict, extra: Mapping[str, str]) -> None:
     if not extra:
         return
 
-    existing = service.get('environment')
-    if isinstance(existing, dict):
-        existing.update(extra)
+    env_kind, entries, unknown = _environment_entries(service)
+    if env_kind == 'dict':
+        service['environment'] = {
+            **{key: value for key, value in entries if key is not None},
+            **extra,
+        }
         return
-    if isinstance(existing, list):
+    if env_kind == 'list':
         names = set(extra)
-        kept = [entry for entry in existing
-                if not (isinstance(entry, str)
-                        and entry.split('=', 1)[0] in names)]
+        kept = [
+            item for name, item in entries
+            if name is None or name not in names
+        ]
         service['environment'] = kept + [f"{k}={v}" for k, v in extra.items()]
         return
-    if existing is None:
+    if env_kind == 'none':
         service['environment'] = dict(extra)
         return
 
     logger.warning(
         "environment の形式 (%s) を解釈できないため、devbase の環境変数を "
-        "追記できませんでした", type(existing).__name__)
+        "追記できませんでした", type(unknown).__name__)
 
 
 def _build_dev_instance(
