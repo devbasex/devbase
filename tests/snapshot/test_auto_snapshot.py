@@ -253,6 +253,39 @@ def test_restore_rejects_missing_full_archive(tmp_path):
         mgr.restore('snap1')
 
 
+def test_copy_preserves_source_metadata_fields_except_name_and_created_at(tmp_path):
+    """現状固定: copy は元エントリを複製し、name と created_at だけを差し替える。"""
+    mgr = SnapshotManager(tmp_path)
+    src_dir = mgr.backups_dir / 'snap1'
+    src_dir.mkdir()
+    (src_dir / 'full.tar.zst').write_text('archive', encoding='utf-8')
+    source_entry = {
+        'name': 'snap1',
+        'created_at': '2024-01-01T00:00:00',
+        'updated_at': '2024-01-02T00:00:00',
+        'incremental_count': 2,
+        'labels': ['daily', 'manual'],
+    }
+    mgr._save_metadata({'snapshots': [source_entry]})
+
+    mgr.copy('snap1', 'snap-copy')
+
+    snapshots = mgr._load_metadata()['snapshots']
+    assert snapshots[0] == source_entry
+    copied = snapshots[1]
+    assert copied['name'] == 'snap-copy'
+    assert copied['created_at'] != source_entry['created_at']
+    assert {
+        key: value
+        for key, value in copied.items()
+        if key not in {'name', 'created_at'}
+    } == {
+        key: value
+        for key, value in source_entry.items()
+        if key not in {'name', 'created_at'}
+    }
+
+
 # ---------------------------------------------------------------------------
 # SnapshotManager._run_docker_tar (mount 方向の現状固定)
 # ---------------------------------------------------------------------------
