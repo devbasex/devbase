@@ -79,7 +79,7 @@
 
 | スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
 | --- | --- | --- | --- | --- | ---: |
-| long_parameter_list | introduce_parameter_object | major | codex / gemini | レビュー中 | 1 |
+| long_parameter_list | introduce_parameter_object | major | codex / gemini | レビュー中 | 2 |
 
 **なぜ**: scale 以外に compose_file, dev_service_name, secret_env_names, global_env_names, project_env_names, dev_environment が並び、機密名の全体/由来別セットと dev 環境の組が呼び出しから内部ヘルパーまで渡り回っている
 
