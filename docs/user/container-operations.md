@@ -242,6 +242,64 @@ gemini "テストを書いて"
 codex "リファクタリングして"
 ```
 
+## tmux（ターミナル）の既定設定
+
+コンテナ内の tmux には、devbase 共通の既定設定 `/etc/tmux.conf` が入っています
+（実体は `containers/base/tmux.conf`）。tmux は起動すると端末の代替画面へ切り替わるため、
+出力履歴は VS Code のスクロールバックではなく tmux 自身のバッファに入ります。素の tmux は
+履歴 2000 行・マウス無効なので、この履歴に実質手が届きません。既定設定はそこを埋めます。
+
+| 設定 | 値 | 理由 |
+|------|-----|------|
+| `mouse` | `on` | ホイールを転がすと copy-mode に入り、履歴を遡れる |
+| `history-limit` | `100000` | 既定の 2000 行はビルドログ 1 回で流れ切る |
+| `focus-events` | `on` | 端末のフォーカス通知を中のアプリへ渡す。Claude Code の完了通知が正しく出し分けられる |
+| `default-terminal` | `tmux-256color` | 端末種別の固定 |
+| `terminal-overrides` | `,xterm-256color:Tc` を追記 | VS Code の統合ターミナルへ 24bit 色を通す |
+
+### 基本操作
+
+| 操作 | キー |
+|------|------|
+| スクロール | マウスホイール（自動で copy-mode に入る） |
+| コピー | ドラッグして離す（クリップボードへ直接入る） |
+| copy-mode に入る | `Ctrl-b` `[` |
+| 履歴内を検索 | copy-mode 中に `Ctrl-r`（上方向）／`Ctrl-s`（下方向） |
+| copy-mode を抜ける | `q` |
+| ペインをまたいで選択 | `Shift` + ドラッグ（VS Code のネイティブ選択に切り替わる） |
+
+コピーは追加設定なしで動きます。tmux の `set-clipboard`（既定 `external`）により、選択して
+ボタンを離した時点で OSC 52 が送出され、VS Code がクリップボードへ書き込みます。
+
+上表の copy-mode のキーは tmux の `mode-keys` に従います。既定は `emacs` ですが、tmux は
+`EDITOR` / `VISUAL` に `vi` を含む値が入っていると `vi` へ切り替えるため、その場合の検索は
+`/`（下方向）と `?`（上方向）になります。
+
+### 個人設定で上書きする
+
+tmux は `/etc/tmux.conf` を読んでから `~/.tmux.conf` を読み、同じオプションは後から読んだ
+`~/.tmux.conf` が勝ちます。既定値を変えたい場合は `~/.tmux.conf` に書いてください。
+
+```bash
+# 例: ホイールを tmux に渡さず、端末側のスクロールに戻す
+echo 'set -g mouse off' >> ~/.tmux.conf
+tmux source-file ~/.tmux.conf   # 実行中のセッションを保ったまま反映する
+```
+
+> **Note:** `source-file` はセッションや配下のプロセスを終了せずに設定を読み直し、`mouse` のような
+> オプションは即時に反映されます。ただし `history-limit` は新しく作る pane から適用され、既存の
+> pane は作成時の値を保持します。既存 pane にも効かせたい場合は、その pane を作り直してください。
+
+> **Note:** `~/.tmux.conf` は永続化の対象外です（`/persistent/ai` へ symlink されるのは
+> `~/.claude` などの AI 設定のみ）。コンテナを作り直すと消えるため、残したい設定は
+> `~/share` 配下など永続領域へ置いてコピーしてください。
+
+> **Note:** `/etc/tmux.conf` はイメージに焼き込まれています。設定を変更した場合の反映には
+> `devbase container build` によるイメージの再ビルドと、コンテナの作り直しが必要です。
+
+セッションが増えてしまったときの整理（`tmux-first` / `tmux-clean`）は
+[環境変数ガイド](environment-variables.md#tmux--screen-経由で使う場合) を参照してください。
+
 ## コンテナの状態確認
 
 ### プロセス一覧

@@ -203,6 +203,11 @@ RUN set -eux; \
     mkdir -p ~/.claude; \
     echo '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo '\''unset AWS_REGION'\'' >> \"$CLAUDE_ENV_FILE\""}]}]}}' > ~/.claude/settings.json;
 
+# tmux の既定設定。素の tmux は履歴 2000 行・マウス無効・フォーカス通知を転送しない
+# ため、代替画面へ切り替わったあとの出力履歴に実質手が届かない。/etc/tmux.conf は
+# ~/.tmux.conf より先に読まれるので、利用者は個人設定で上書きできる。
+COPY --chmod=0644 tmux.conf /etc/tmux.conf
+
 # tmux セッションの整理コマンド。tmux-first は居座りクライアントを切断して
 # 一番若い番号のセッションへ切り替え、tmux-clean は置き去りのセッションを削除する。
 # 背景と使い方は各スクリプト冒頭のコメントと docs/user/environment-variables.md を参照。
