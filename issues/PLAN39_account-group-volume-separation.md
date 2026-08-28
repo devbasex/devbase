@@ -309,17 +309,48 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
 1. **同期（revert より前に必ず行う）** — 正とするグループ（通常は `default`）のコンテナを
    `devbase down` で止めたうえで、グループボリュームの分類 B を共通ボリュームへ書き戻す。
+   `devbase down` でコンテナは削除されるため、以降はコンテナ経由（`docker cp`）ではなく
+   **ボリュームを一時コンテナへ直接マウントして**操作する。
 
    ```bash
-   docker run --rm -v devbase_home_<group>:/from -v devbase_home_ubuntu:/to alpine \
-     sh -c 'cp -a /from/.claude.json /to/.claude.json && \
-            cp -a /from/.claude/. /to/.claude/ && \
-            cp -a /from/.gemini/. /to/.gemini/'
+   GROUP=default   # 正とするグループ名
+
+   docker run --rm -v "devbase_home_${GROUP}:/from" -v devbase_home_ubuntu:/to alpine \
+     sh -c 'for p in .claude.json .claude .gemini; do
+              if [ ! -e "/from/$p" ]; then echo "skip (未作成): $p"; continue; fi
+              if [ -d "/from/$p" ]; then
+                mkdir -p "/to/$p" && cp -a "/from/$p/." "/to/$p/"
+              else
+                cp -a "/from/$p" "/to/$p"
+              fi
+              echo "copied: $p"
+            done'
    ```
+
+   グループ内で一度も使っていないツールのエントリは存在しないことがあるため、各パスの存在を
+   確認してから `cp` し、無いものは `skip` として飛ばす（`&&` で連結すると 1 件目の欠落で
+   以降の同期が止まる）。
 
    対象は分類 B のうち共通側に対応物があるものに限る。`.config/gcloud` / `.config/gws` は
    共通ボリュームに置き場が無く、revert 後は永続化対象外（現行 main と同じ）へ戻るため書き戻さない。
-   保全したい場合は `docker cp` でホストへ退避する。
+   保全したい場合は、同じくボリュームを直接マウントしてカレントディレクトリへ tar で退避する。
+
+   ```bash
+   GROUP=default
+
+   docker run --rm -e GROUP="$GROUP" \
+     -v "devbase_home_${GROUP}:/from" -v "$PWD:/backup" alpine \
+     sh -c 'cd /from || exit 1
+            set --
+            for p in .config/gcloud .config/gws; do
+              if [ -e "$p" ]; then set -- "$@" "$p"; else echo "skip (未作成): $p"; fi
+            done
+            [ "$#" -gt 0 ] || { echo "退避対象なし"; exit 0; }
+            tar cf "/backup/devbase-${GROUP}-config.tar" "$@" && echo "saved: devbase-${GROUP}-config.tar"'
+   ```
+
+   一時コンテナは root で動くため、Linux ホストでは生成された tar が root 所有になる。
+   必要なら `sudo chown "$(id -u):$(id -g)" devbase-<group>-config.tar` で引き取る。
 2. **検証** — `docker run --rm -v devbase_home_ubuntu:/v alpine ls -l /v/.claude /v/.claude.json` で、
    `.credentials.json` と `history.jsonl` が**ファイルとして**存在しサイズが 0 でないこと、
    `.claude/plugins` が壊れていないことを確認する。
