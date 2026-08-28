@@ -66,6 +66,29 @@ def _volume_target(vol: Any) -> Optional[str]:
     return None
 
 
+def _replace_volume_entry_for_instance(
+    vol: Any, replacements: Mapping[str, str],
+) -> tuple:
+    """Replace one volume entry's source when its target is in ``replacements``.
+
+    Returns ``(entry, replaced_target)``. ``replaced_target`` is ``None``
+    when the entry was left untouched.
+    """
+    target = _volume_target(vol)
+    source = replacements.get(target)
+    if source is None:
+        return vol, None
+    if isinstance(vol, str):
+        # String format: "source:target" or "source:target:options"
+        parts = vol.split(':')
+        options = f":{parts[2]}" if len(parts) >= 3 else ""
+        return f"{source}:{target}{options}", target
+    # Dict format: {type, source, target}
+    vol['source'] = source
+    vol['type'] = 'volume'
+    return vol, target
+
+
 def _replace_volumes_for_instance(
     volumes: list, ai_volume: str, work_volume: str,
 ) -> list:
@@ -80,24 +103,12 @@ def _replace_volumes_for_instance(
     new_volumes = []
 
     for vol in volumes:
-        target = _volume_target(vol)
-        if target == _DEPRECATED_TARGET:
+        if _volume_target(vol) == _DEPRECATED_TARGET:
             continue
-        source = replacements.get(target)
-        if source is None:
-            new_volumes.append(vol)
-            continue
-        replaced_targets.add(target)
-        if isinstance(vol, str):
-            # String format: "source:target" or "source:target:options"
-            parts = vol.split(':')
-            options = f":{parts[2]}" if len(parts) >= 3 else ""
-            new_volumes.append(f"{source}:{target}{options}")
-        else:
-            # Dict format: {type, source, target}
-            vol['source'] = source
-            vol['type'] = 'volume'
-            new_volumes.append(vol)
+        entry, replaced = _replace_volume_entry_for_instance(vol, replacements)
+        new_volumes.append(entry)
+        if replaced is not None:
+            replaced_targets.add(replaced)
 
     # Add missing mounts
     new_volumes.extend(
