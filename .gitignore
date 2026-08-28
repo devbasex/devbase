@@ -23,3 +23,7 @@ secrets/
 # クロスレビュー (ndf:cross-review) の作業生成物
 .cross_review/
 gh-payload.json
+# gh api --input 用の一時ペイロード。gh-payload.json 以外の名前でも取り込まない。
+/payload.json
+# レビュー中に採取した差分ダンプ (pr119.diff 等) を誤ってコミットしないため。
+*.diff

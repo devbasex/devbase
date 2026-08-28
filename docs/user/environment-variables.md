@@ -162,8 +162,40 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
 | `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「跨ホスト」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |
+| `DEVBASE_WINDOW_TITLE` | attach 先 VS Code の `window.title` テンプレート。`{container}` が実コンテナ名（例 `nyle-dx-dev-1`）に置換される。既定は `{container}${separator}${dirty}${activeEditorShort}`。`0` / `false` / `off` / 空文字で無効化。下記「ウィンドウタイトル」参照 |
 
 都度の上書きは CLI フラグで行います: `devbase up --open` / `--no-open` / `--open-index N`（env より優先）。
+
+### ウィンドウタイトル（どの窓がどのプロジェクトか）
+
+VS Code の既定タイトルは編集中ファイル名が先頭に来るため、複数プロジェクトの窓を並べるとどれがどれか判別できません。devbase は `up` のたびに各 dev コンテナへ **コンテナ名始まりのタイトル**を設定します。
+
+```
+nyle-dx-dev-1 - main.py
+```
+
+書き込み先は**コンテナ内**の Remote settings `~/.vscode-server/data/Machine/settings.json` の `window.title` です（`window.title` は WINDOW スコープなのでリモート設定で有効）。クライアント側の attached container config ではなくコンテナ内へ書くのは、
+
+- `imageConfigs/<image>.json` は**イメージ単位**で、`devbase-php:latest` のような共有イメージではインスタンスを区別できない
+- `nameConfigs/<container>.json` はコンテナ名単位だが、存在すると `imageConfigs` が読まれなくなり既存の `workspaceFolder` / `extensions` が失われる
+- クライアント側のパスは OS 依存で、跨ホスト構成では devbase の走るホストに無い
+
+ため。エディタ自動オープン（`DEVBASE_OPEN_EDITOR`）の有無に関わらず設定されるので、手動で「コンテナーにアタッチ」した窓にも効きます。
+
+既存の設定は保持し、値が同じなら書き込みません（無用な設定ファイル監視の発火を避けるため）。設定ファイルが JSON として読めない場合は**上書きせず諦めます**。
+
+タイトルを変えたい / 止めたい場合は `DEVBASE_WINDOW_TITLE` を使います:
+
+```sh
+# コンテナ名だけにする
+DEVBASE_WINDOW_TITLE={container}
+# ブランチ名なども足す（VS Code のタイトル変数がそのまま使える）
+DEVBASE_WINDOW_TITLE={container}${separator}${activeEditorShort}${separator}${rootName}
+# 無効化（VS Code 既定のタイトルに戻す）
+DEVBASE_WINDOW_TITLE=0
+```
+
+> 無効化しても、既にコンテナへ書き込んだ `window.title` は消えません。戻すにはコンテナ内 `~/.vscode-server/data/Machine/settings.json` から `window.title` を削除してください。
 
 ### 実行コンテキスト別の挙動
 

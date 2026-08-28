@@ -580,6 +580,34 @@ def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     return open_index
 
 
+def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
+                         compose_file=None) -> None:
+    """各 dev コンテナの VS Code ウィンドウタイトルをコンテナ名始まりにする。
+
+    既定のタイトルは編集中ファイル名が先頭に来るため、複数プロジェクトの窓を
+    並べるとどれがどれか分からなくなる。コンテナ内の Remote settings へ
+    ``window.title`` を書いて、``nyle-dx-dev-1 - ファイル名`` の形に固定する
+    (詳細と方式の選定理由は :mod:`devbase.editor.window_title`)。
+
+    エディタ自動オープンの有無 (``open_editor``) とは独立に行う。手で
+    「コンテナにアタッチ」した窓にも同じタイトルが要るため。
+
+    失敗しても ``up`` は倒さない (タイトルは付随的な体験改善のため)。
+    """
+    from devbase.editor import opener, window_title
+
+    template = window_title.resolve_template()
+    if template is None:
+        return
+    for index in range(1, scale + 1):
+        try:
+            container_name = opener.resolve_container_name(
+                dev_service_name, project_name, index, compose_file=compose_file)
+            window_title.apply_to_container(container_name, template=template)
+        except Exception as e:  # noqa: BLE001 - 付随処理で up を倒さない
+            logger.debug("window.title の設定をスキップしました (index=%d): %s", index, e)
+
+
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
                        open_index: Optional[int], scale: int,
                        config, compose_file=None) -> None:
@@ -754,6 +782,11 @@ def cmd_up(project_name: str = None, scale: int = None,
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(1, scale + 1),
                                              config)
+
+        # VS Code のウィンドウタイトルをコンテナ名始まりに固定する
+        # (自動オープンの有無に関わらず、手動アタッチにも効かせるため up 側で行う)。
+        _apply_window_titles(project_name, scale, dev_service_name,
+                             compose_file=override_file)
 
         _maybe_open_editor(project_name, open_editor, open_index, scale,
                            config, compose_file=override_file)
