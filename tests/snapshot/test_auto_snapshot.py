@@ -20,7 +20,7 @@ from devbase.commands.container import (
     _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT,
     _snapshot_min_interval_minutes,
 )
-from devbase.snapshot.manager import SNAPSHOT_META_FILE, SnapshotManager
+from devbase.snapshot.manager import SnapshotManager
 from devbase.errors import SnapshotError
 
 
@@ -115,7 +115,7 @@ def test_last_snapshot_time_ignores_meta_and_snar(tmp_path):
     noise_new = 1_700_200_000.0  # アーカイブより新しい付随ファイル
 
     _touch(snap_dir / 'full.tar.zst', archive_old)
-    _touch(snap_dir / SNAPSHOT_META_FILE, noise_new)
+    _touch(snap_dir / 'meta.yml', noise_new)
     _touch(snap_dir / 'snapshot.snar', noise_new)
     _touch(snap_dir / 'snapshot.snar.bak', noise_new)
 
@@ -131,7 +131,7 @@ def test_last_snapshot_time_only_noise_returns_none(tmp_path):
     mgr = SnapshotManager(tmp_path)
     snap_dir = mgr.backups_dir / '20240101-000000'
     snap_dir.mkdir()
-    _touch(snap_dir / SNAPSHOT_META_FILE, 1_700_200_000.0)
+    _touch(snap_dir / 'meta.yml', 1_700_200_000.0)
     _touch(snap_dir / 'snapshot.snar', 1_700_200_000.0)
 
     assert mgr.last_snapshot_time() is None
