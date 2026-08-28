@@ -56,55 +56,14 @@ def _rewrite_depends_on(
             deps[name] = copy.deepcopy(condition)
 
 
-@dataclass(frozen=True)
-class _VolumeMount:
-    """1 件の volume 定義 (文字列形式 / dict 形式) をパースした値オブジェクト。
-
-    Docker Compose の volume は ``source:target[:options]`` の文字列と
-    ``{type, source, target, ...}`` の dict の 2 通りで書かれる。``isinstance``
-    を伴うパースをここへ集約し、利用側は ``target`` と :meth:`with_source`
-    だけを見る。``raw`` は元のエントリで、シリアライズ時に元の形式
-    (文字列 / dict) を保つために持つ。
-    """
-
-    raw: Any
-    source: Optional[str] = None
-    target: Optional[str] = None
-    options: Optional[str] = None
-
-    @classmethod
-    def parse(cls, vol: Any) -> '_VolumeMount':
-        """str / dict のエントリから生成する (どちらでもなければ属性は None)"""
-        if isinstance(vol, str):
-            parts = vol.split(':')
-            has_target = len(parts) >= 2
-            return cls(
-                raw=vol,
-                source=parts[0] if has_target else None,
-                target=parts[1] if has_target else None,
-                options=parts[2] if len(parts) >= 3 else None,
-            )
-        if isinstance(vol, dict):
-            return cls(raw=vol, source=vol.get('source'),
-                       target=vol.get('target'))
-        return cls(raw=vol)
-
-    def with_source(self, source: str) -> Any:
-        """source を差し替えたエントリを元の形式 (str / dict) で返す。
-
-        dict 形式は名前付き volume への差し替えなので type も volume に揃える。
-        """
-        if isinstance(self.raw, str):
-            options = f":{self.options}" if self.options is not None else ""
-            return f"{source}:{self.target}{options}"
-        self.raw['source'] = source
-        self.raw['type'] = 'volume'
-        return self.raw
-
-
 def _volume_target(vol: Any) -> Optional[str]:
     """Return the mount target of a volume entry (string / dict form), or None."""
-    return _VolumeMount.parse(vol).target
+    if isinstance(vol, str):
+        parts = vol.split(':')
+        return parts[1] if len(parts) >= 2 else None
+    if isinstance(vol, dict):
+        return vol.get('target')
+    return None
 
 
 def _replace_volume_entry_for_instance(
@@ -115,11 +74,19 @@ def _replace_volume_entry_for_instance(
     Returns ``(entry, replaced_target)``. ``replaced_target`` is ``None``
     when the entry was left untouched.
     """
-    mount = _VolumeMount.parse(vol)
-    source = replacements.get(mount.target)
+    target = _volume_target(vol)
+    source = replacements.get(target)
     if source is None:
         return vol, None
-    return mount.with_source(source), mount.target
+    if isinstance(vol, str):
+        # String format: "source:target" or "source:target:options"
+        parts = vol.split(':')
+        options = f":{parts[2]}" if len(parts) >= 3 else ""
+        return f"{source}:{target}{options}", target
+    # Dict format: {type, source, target}
+    vol['source'] = source
+    vol['type'] = 'volume'
+    return vol, target
 
 
 def _replace_volumes_for_instance(
