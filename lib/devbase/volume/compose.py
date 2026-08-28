@@ -162,7 +162,7 @@ def _environment_entries(
             if not isinstance(item, str):
                 entries.append((None, item))
                 continue
-            entries.append((item.split('=', 1)[0], item))
+            entries.append((item.split('=', 1)[0].strip(), item))
         return 'list', entries, []
     return 'unsupported', [], existing
 

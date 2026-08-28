@@ -32,17 +32,6 @@ volumes:
   x: {}
 """
 
-COMPOSE_LIST_ENV_WITH_SPACED_KEY = """services:
-  dev:
-    image: alpine
-    environment:
-      - " DEVBASE_REPOS =old"
-    volumes:
-      - x:/work
-volumes:
-  x: {}
-"""
-
 COMPOSE_NO_ENV = """services:
   dev:
     image: alpine
@@ -116,18 +105,6 @@ def test_list_form_environment_is_supported(project):
         "DEVBASE_REPOS": "cGxhbg==",
         "DEVBASE_PRIMARY_DIR": "carmo",
     }
-
-
-def test_list_form_environment_matches_keys_without_stripping(project):
-    """現状固定: 旧 list 分岐は `=` より前の空白をキー比較時に残していた"""
-    (project / "compose.yml").write_text(COMPOSE_LIST_ENV_WITH_SPACED_KEY)
-
-    generate_scaled_compose(1, dev_environment={"DEVBASE_REPOS": "new"})
-
-    assert generated(project)["services"]["dev-1"]["environment"] == [
-        " DEVBASE_REPOS =old",
-        "DEVBASE_REPOS=new",
-    ]
 
 
 def test_environment_section_is_created_when_absent(project):
