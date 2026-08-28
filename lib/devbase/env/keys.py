@@ -58,6 +58,9 @@ HOST_SSH_HOST = "HOST_SSH_HOST"  # 任意。default: host.docker.internal
 DEVBASE_OPEN_EDITOR = "DEVBASE_OPEN_EDITOR"  # 真偽。up 後にエディタを開くか (env init 既定 1)
 DEVBASE_EDITOR = "DEVBASE_EDITOR"            # 任意。起動コマンド (既定 code)
 DEVBASE_OPEN_INDEX = "DEVBASE_OPEN_INDEX"    # 任意。開く dev インスタンス番号 (既定 1)
+# 任意。attach 先 VS Code の window.title テンプレート ({container} を実コンテナ名へ置換)。
+# 未設定なら既定テンプレート、0/false/off/空文字で無効。詳細: editor/window_title.py
+DEVBASE_WINDOW_TITLE = "DEVBASE_WINDOW_TITLE"
 # Remote-SSH 跨ホスト構成 (Windows VS Code → ssh → Mac のコンテナ) 用。
 DEVBASE_EDITOR_SSH_HOST = "DEVBASE_EDITOR_SSH_HOST"            # 任意。ssh-remote ホスト名 (例 mac2)。通常は ~/.vscode-server から自動検出
 DEVBASE_EDITOR_DOCKER_CONTEXT = "DEVBASE_EDITOR_DOCKER_CONTEXT"  # 任意。ssh 先 docker context (既定: docker context show)

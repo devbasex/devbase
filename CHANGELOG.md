@@ -5,6 +5,15 @@
 ## [Unreleased]
 
 ### Added
+- **VS Code のウィンドウタイトルをコンテナ名始まりに固定**するようにしました
+  (例 `nyle-dx-dev-1 - main.py`)。既定のタイトルは編集中ファイル名が先頭に来るため、
+  複数プロジェクトの窓を並べるとどれがどのプロジェクトか判別できませんでした。
+  `devbase up` が各 dev コンテナ内の Remote settings
+  (`~/.vscode-server/data/Machine/settings.json`) へ `window.title` を書きます。
+  エディタ自動オープン (`DEVBASE_OPEN_EDITOR`) の有無に関わらず設定されるため、
+  手動で「コンテナーにアタッチ」した窓にも効きます。既存の設定値は保持し、
+  値が同じなら書き込みません。テンプレートは `DEVBASE_WINDOW_TITLE` で変更でき
+  (`{container}` が実コンテナ名へ置換)、`0` で無効化できます。
 - **clone できなかったリポジトリを `devbase up` が知らせる**ようにしました。複数リポジトリ構成で
   一部のリポジトリに権限が無い (または名前が違う) 場合、これまでは entrypoint の警告が
   `docker logs` にしか出ず、`up` の画面は成功したように見えていました。コンテナ起動後に
