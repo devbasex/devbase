@@ -72,3 +72,45 @@ def test_explicit_init_false_is_preserved(in_tmp_cwd):
 
     assert scaled["dev-1"]["init"] is False
     assert scaled["mysql"]["init"] is False
+
+
+def test_depends_on_list_rewrites_dev_to_scaled_instances(in_tmp_cwd):
+    """現状固定: list 形式の depends_on は dev だけを dev-i 群へ展開する。"""
+    _write_compose(in_tmp_cwd, {
+        "dev": {"image": "dev:latest"},
+        "worker": {
+            "image": "worker:latest",
+            "depends_on": ["dev", "mysql"],
+        },
+        "mysql": {"image": "mysql:8"},
+    })
+
+    compose.generate_scaled_compose(scale=2)
+    scaled = _load_scaled(in_tmp_cwd)["services"]
+
+    assert scaled["worker"]["depends_on"] == ["dev-1", "dev-2", "mysql"]
+
+
+def test_depends_on_map_rewrites_dev_to_scaled_instances(in_tmp_cwd):
+    """現状固定: map 形式の depends_on は dev の条件を各 dev-i へ複製する。"""
+    condition = {"condition": "service_healthy", "restart": True}
+    _write_compose(in_tmp_cwd, {
+        "dev": {"image": "dev:latest"},
+        "worker": {
+            "image": "worker:latest",
+            "depends_on": {
+                "dev": condition,
+                "mysql": {"condition": "service_started"},
+            },
+        },
+        "mysql": {"image": "mysql:8"},
+    })
+
+    compose.generate_scaled_compose(scale=2)
+    depends_on = _load_scaled(in_tmp_cwd)["services"]["worker"]["depends_on"]
+
+    assert depends_on == {
+        "mysql": {"condition": "service_started"},
+        "dev-1": condition,
+        "dev-2": condition,
+    }
