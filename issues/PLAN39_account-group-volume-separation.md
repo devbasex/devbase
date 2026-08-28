@@ -59,6 +59,10 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
   `AI_VOLUME_PREFIX = "devbase_ai_"` も同様に未使用。
 - 前提 7: スナップショットの対象は `VOLUME_NAME = 'devbase_home_ubuntu'` 固定
   (`snapshot/manager.py:17,335,369`)。
+- 前提 8: entrypoint の実行順序は「GCP credentials の生成 (`containers/base/entrypoint.sh:189-222`)」→
+  「AI Settings の symlink 生成 (`同 383-440`)」である。symlink ループはホーム側の既存実体を
+  `rm -rf "$HOME_PATH"` (`同 420`) で消してから `ln -s` するため、**先に書かれた
+  `~/.config/gcloud/credentials.json` は実ディレクトリごと消える**。
 
 ## 受け入れ条件
 
@@ -75,12 +79,20 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 - [ ] AC6: 入れ子パスの symlink が正しく張られる。検証: `~/.claude/.credentials.json` が
       **壊れていない** symlink であること、`~/.claude/history.jsonl` が**ディレクトリでない**こと
       （前提 5 の退行を防ぐ）。
-- [ ] AC7: Docker のボリューム名にできないグループ名と、予約語 `ubuntu`（`devbase_home_ubuntu` と衝突する）
-      を**起動前に拒否**し、理由の分かるエラーを出す。
-- [ ] AC8: `default` グループでは、既存の Claude Code / gcloud の認証が**初回シードにより維持**され、
-      再ログインが発生しない。検証: 現行環境で `up` 後に `claude` が未ログイン状態にならないこと。
+- [ ] AC7: Docker のボリューム名にできないグループ名、予約語 `ubuntu`（`devbase_home_ubuntu` と衝突する）、
+      および**数字のみの名前**（`devbase_home_<index>` と衝突する。前提 6）を**起動前に拒否**し、
+      理由の分かるエラーを出す。
+- [ ] AC8: `default` グループでは、**現行 `/persistent/ai` に実体がある**分類 B のデータ
+      （`.claude.json` / `.claude/.credentials.json` / 履歴 / `.gemini`）が**初回シードにより維持**され、
+      Claude Code の再ログインが発生しない。検証: 現行環境で `up` 後に `claude` が未ログイン状態にならないこと。
+      `.config/gcloud` / `.config/gws` は前提 1 のとおり現在どのボリュームにも無く**シード元が存在しない**ため、
+      `default` を含む**全グループで初回 1 回だけ `gcloud auth login` / `gws auth login` が必要**である。
+      これは AC8 の違反としない（AC1 / AC2 はその初回ログイン**以降**の維持を見る条件である）。
 - [ ] AC9: スナップショットが共通・グループ両方のボリュームを対象にし、復元できる。
 - [ ] AC10: `devbase status` に解決されたアカウントグループが表示される。
+- [ ] AC11: 初回起動（グループボリュームが空）でも、env 由来のサービスアカウント鍵が消えない。
+      検証: `GCP_CREDENTIALS_BASE64__<profile>` を設定した状態で `devbase up` した直後に
+      `~/.config/gcloud/credentials.json` が存在し中身が空でないこと（前提 8 の退行を防ぐ）。
 
 ## 代替案と採否
 
@@ -90,7 +102,7 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 | B. ディレクトリを丸ごとグループ別ボリュームへ | `~/.claude` ごと `devbase_home_<group>` に置く | 不採用 | `plugins` / `skills` / `commands` / グローバル `CLAUDE.md` までグループ数だけ複製され二重管理になる。粒度が粗すぎる |
 | C. 環境変数から毎回復元（AWS 方式） | `GCLOUD_CREDENTIALS_BASE64` のようなキーを増やす | 不採用 | gcloud のユーザー OAuth は `credentials.db` / `access_tokens.db` を含む可変の状態で、リフレッシュのたびに更新される。env へ書き戻す経路が無い |
 | D. グループ別ボリューム 1 本だけにする（共通ボリュームを廃止） | 全部を `devbase_home_<group>` へ | 不採用 | B と同じ重複問題に加え、既存 `devbase_home_ubuntu` からの全データ移行が必要になる |
-| **A'. `default` グループの初回シード** | グループボリュームが空なら `/persistent/ai` の分類 B 相当を**コピー**して初期化（`default` のみ） | **採用** | 現行 14 コンテナの大半を占める `default` で再ログインを避けられる。move ではなく copy なので切り戻し時に元データが残る |
+| **A'. `default` グループの初回シード** | グループボリュームが空なら `/persistent/ai` の分類 B 相当を**コピー**して初期化（`default` のみ） | **採用** | 現行 14 コンテナの大半を占める `default` で再ログインを避けられる。move ではなく copy なので切り戻し時に元データが残る。ただしシード元は現行 `/persistent/ai` にあるものに限られ、`.config/gcloud` / `.config/gws` は対象外（AC8） |
 | A''. シードせず全グループで再認証 | issue #116 の当初案 | 不採用 | `default` まで再ログインさせる必要がない。分離の目的は「グループ間で混ぜない」ことであって「捨てる」ことではない |
 
 ## ドメイン用語
@@ -134,7 +146,7 @@ issue #116 の「検討が必要な点」3 件は次のとおり決定した。
 | 生成 compose | dev サービスへ `/persistent/group` のマウントが増える | 追加のみ。`devbase up` で再生成される |
 | プロジェクトの `compose.yml` | 変更不要 | 前提 4 の自動補完に載る |
 | `devbase_home_ubuntu` | **変更しない** | 分類 A のデータはパスも含めてそのまま (`/persistent/ai/.claude/plugins` は移動しない) |
-| 分類 B のデータ | 共通 → グループボリュームへ | `default` は初回シードで維持（AC8）。新規グループは初回のみ再認証 |
+| 分類 B のデータ | 共通 → グループボリュームへ | 現行 `/persistent/ai` に実体があるもの（`.claude.json` / 認証 / 履歴 / `.gemini`）は `default` のみ初回シードで維持（AC8）。`.config/gcloud` / `.config/gws` はシード元が無く、`default` を含む全グループで初回 1 回の再認証が要る |
 | スナップショット | 対象ボリュームが 2 系統になる | 既存スナップショットは共通ボリューム分として復元可能。メタデータに対象ボリュームを記録する |
 
 ## 修正対象
@@ -175,8 +187,12 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 - **対象ファイル:** `lib/devbase/env/keys.py`, `lib/devbase/volume/manager.py`, `tests/volume/test_manager_group.py`
 - **変更内容:** `resolve_account_group()` と `get_group_volume(group)` を追加する。解決順は
   引数 → `os.environ["DEVBASE_ACCOUNT_GROUP"]`（前提 3 により 3 レベルの解決結果が入っている）→ `default`。
-  ボリューム名は `devbase_home_<group>`。`^[a-zA-Z0-9][a-zA-Z0-9._-]*$` に合わないもの、および
-  予約語 `ubuntu` は `DevbaseError` で弾く（前提 6 の命名衝突。`devbase_home_ubuntu` は共通ボリューム）。
+  ボリューム名は `devbase_home_<group>`。次の 3 つを `DevbaseError` で弾く（AC7）。
+  (a) `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` に合わないもの（Docker のボリューム名にできない）。
+  (b) 予約語 `ubuntu`（`devbase_home_ubuntu` が共通ボリュームと衝突する）。
+  (c) `^[0-9]+$` に合う**数字のみの名前**（`devbase_home_<index>` と衝突する。
+  `volume/manager.py:58-68,146-157` の `get_volume_for_index` が同じ名前空間を使う。前提 6）。
+  (b)(c) は (a) を通過するため、正規表現とは別のチェックとして明示的に持つ。
 - **満たす受け入れ条件:** AC5, AC7
 - **進め方:** テスト駆動。フォールバック・正常系・拒否ケースを先に固定する。
 - **補足:** 未使用の `AI_VOLUME_PREFIX`（前提 6）は本 PR で削除する。用途を与えると
@@ -212,22 +228,35 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
   `~/.claude` を実ディレクトリとして作り（既存の symlink が残っていれば外す）、その配下に
   両系統の symlink を張る。symlink 生成の**前に**、`DEVBASE_ACCOUNT_GROUP` が `default` で
   かつグループ側に実体が無いエントリだけ、`/persistent/ai` から**コピー**して初期化する。
-- **満たす受け入れ条件:** AC3, AC4, AC8
+  あわせて、**AI Settings の symlink 生成ブロック全体を GCP credentials の生成
+  (`entrypoint.sh:189-222`) より前へ移動する**。前提 8 のとおり現状は credentials 生成が先・symlink が
+  後であり、この順序のまま Task 5 で `.config/gcloud` を分類 B に足すと、直前に書かれた
+  `~/.config/gcloud/credentials.json` が実ディレクトリごと `rm -rf "$HOME_PATH"` で消され、
+  初回起動時にサービスアカウント鍵が欠落する。移動後は symlink 済みの
+  `~/.config/gcloud` に対して credentials が書かれ、グループボリュームへ永続化される。
+- **満たす受け入れ条件:** AC3, AC4, AC8, AC11
 - **進め方:** テスト駆動。シードの冪等性（2 回目は何もしない）と、非 `default` グループで
-  シードが走らないことをテストで固定する。
+  シードが走らないこと、および **symlink 生成が GCP credentials 生成より前に実行されること**を
+  テストで固定する。
 
 ### Task 5: `.config/gcloud` / `.config/gws` の追加（PR3）
 
 - **対象ファイル:** `containers/base/entrypoint.sh`, `docs/user/container-operations.md`
 - **変更内容:** `AI_SETTINGS_GROUP` に `.config/gcloud` と `.config/gws` を足す。
   `~/.config` 配下は他のツールも使うため、`~/.config` 自体は実ディレクトリのまま
-  個別エントリだけを symlink にする（Task 3 の親ディレクトリ作成が前提）。
-- **満たす受け入れ条件:** AC1, AC2
+  個別エントリだけを symlink にする（Task 3 の親ディレクトリ作成と、Task 4 の実行順序入れ替えが前提）。
+  順序が入れ替わっていない状態でこの変更だけを入れると前提 8 の事故が起きるため、**PR3 は PR2 の
+  merge 後にのみ着手する**（PR 分割計画の依存どおり）。
+- **満たす受け入れ条件:** AC1, AC2, AC11
 - **進め方:** 実機検証。`gcloud auth login` → `devbase down` → `up` → `gcloud auth list` で
-  再認証が要らないことを確認する。
+  再認証が要らないことを確認する。あわせて AC11（初回起動でサービスアカウント鍵が消えないこと）も見る。
 - **補足:** env 由来の `credentials.json`（サービスアカウント鍵）が永続領域へ書かれるようになる。
-  起動のたびに上書きされるが、`GCP_ACTIVE_PROFILE` を切り替えると旧プロファイルのファイルが
-  残る。ドキュメントに明記する。
+  出力先は `GOOGLE_APPLICATION_CREDENTIALS` 未設定なら `~/.config/gcloud/credentials.json` 固定で
+  プロファイル名を含まない (`entrypoint.sh:198-204`) ため、`GCP_ACTIVE_PROFILE` を切り替えても
+  同じパスが上書きされ、プロファイルごとのファイルが並ぶことはない。残るのは別の経路で、
+  `GCP_CREDENTIALS_BASE64__<profile>` も `GOOGLE_APPLICATION_CREDENTIALS_BASE64` も未設定の
+  プロファイルへ切り替えると生成ブロック自体がスキップされ (`同 195`)、**旧プロファイルの鍵が
+  グループボリュームに残ったまま参照される**。この 1 点をドキュメントに明記する。
 
 ### Task 6: スナップショットのグループ対応（PR4）
 
@@ -264,26 +293,52 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 |---|---|
 | 入れ子パス対応の不備で `~/.claude` 配下が壊れ、Claude Code が起動しなくなる | Task 3 を Task 4 より先に、単独で検証する。AC6 で `history.jsonl` と `.credentials.json` を名指しで確認 |
 | 初回シードが非 `default` グループでも走り、分離の意味が失われる | Task 4 でグループ名のガードをテストに固定。AC3 で実機確認 |
-| グループ名が既存ボリューム名と衝突する（`ubuntu`、数字のみ） | Task 1 で拒否。AC7 |
+| グループ名が既存ボリューム名と衝突する（`ubuntu` は `devbase_home_ubuntu`、数字のみは `devbase_home_<index>`） | Task 1 で正規表現とは別の明示チェックとして両方を拒否。AC7 |
 | `~/.config` 全体を symlink にしてしまい、他ツールの設定を巻き込む | Task 5 で `~/.config` は実ディレクトリのまま個別エントリのみ symlink |
 | entrypoint 変更が `up` だけでは反映されない | [[entrypoint-change-needs-rebuild]]。検証手順に `devbase build --no-cache` を明記 |
 | 既存スナップショットが復元できなくなる | Task 6 で旧メタデータ互換をテストで固定 |
-| `GCP_ACTIVE_PROFILE` 切替時に旧プロファイルの `credentials.json` が永続領域に残る | Task 5 の補足としてドキュメント化。削除は運用手順に委ねる |
+| symlink 生成より前に書かれた `~/.config/gcloud/credentials.json` が `rm -rf` で消え、サービスアカウント鍵が欠落する（前提 8） | Task 4 で symlink ブロックを credentials 生成より前へ移動。AC11 で初回起動時の鍵の存在を確認 |
+| 鍵が未設定のプロファイルへ `GCP_ACTIVE_PROFILE` を切り替えると、生成がスキップされ旧プロファイルの `credentials.json` がグループボリュームに残ったまま参照される | Task 5 の補足としてドキュメント化。削除は運用手順に委ねる |
+| 切り戻し時に、シード後にグループ側だけへ書かれた認証・履歴が失われる | 切り戻し手順の同期ステップを必須とし、正とするグループを 1 つに決めてから実行する |
 
 ## 切り戻し手順
 
-- コード変更を revert し、`devbase build --no-cache` と `devbase up` で再生成すれば、
-  `AI_SETTINGS` は元の 1 系統に戻り `/persistent/ai` 配下を参照する。
-- 分類 B のデータは `default` グループへ**コピー**しているだけで `/persistent/ai` 側の元データを
-  消さないため、`default` は revert 後もそのまま動く。
-- 非 `default` グループで作られた認証は `devbase_home_<group>` に残る。不要なら
-  `docker volume rm devbase_home_<group>` で削除する。
+初回シードは**その時点のコピー**であり、稼働開始後の認証更新（トークンのリフレッシュ、MCP の
+再認可）と会話履歴は**グループボリューム側にしか書かれない**。したがって revert だけでは
+`/persistent/ai` は**シード時点の状態**に戻る。次の順で行う。
+
+1. **同期（revert より前に必ず行う）** — 正とするグループ（通常は `default`）のコンテナを
+   `devbase down` で止めたうえで、グループボリュームの分類 B を共通ボリュームへ書き戻す。
+
+   ```bash
+   docker run --rm -v devbase_home_<group>:/from -v devbase_home_ubuntu:/to alpine \
+     sh -c 'cp -a /from/.claude.json /to/.claude.json && \
+            cp -a /from/.claude/. /to/.claude/ && \
+            cp -a /from/.gemini/. /to/.gemini/'
+   ```
+
+   対象は分類 B のうち共通側に対応物があるものに限る。`.config/gcloud` / `.config/gws` は
+   共通ボリュームに置き場が無く、revert 後は永続化対象外（現行 main と同じ）へ戻るため書き戻さない。
+   保全したい場合は `docker cp` でホストへ退避する。
+2. **検証** — `docker run --rm -v devbase_home_ubuntu:/v alpine ls -l /v/.claude /v/.claude.json` で、
+   `.credentials.json` と `history.jsonl` が**ファイルとして**存在しサイズが 0 でないこと、
+   `.claude/plugins` が壊れていないことを確認する。
+3. **競合時の扱い** — 共通ボリュームへ書き戻せるのは**1 グループ分だけ**で、後に書いた方が勝つ。
+   複数グループを運用していた場合は、**どのグループを正とするかを先に決めて手順 1 を 1 回だけ実行する**。
+   他グループのデータは `devbase_home_<group>` に残るので、後から必要になれば対象を変えて再実行できる。
+4. **revert** — コード変更を revert し、`devbase build --no-cache` と `devbase up` で再生成する。
+   `AI_SETTINGS` は元の 1 系統に戻り `/persistent/ai` 配下を参照する。
+5. **後片付け** — 不要になったグループボリュームは `docker volume rm devbase_home_<group>` で削除する。
+
+手順 1 を省いて revert だけを行った場合も**起動はする**が、`default` はシード時点の認証・履歴で
+立ち上がり、それ以降のログイン更新と会話履歴は失われる。急ぎで戻すときの許容ラインとして、
+この差を承知したうえで選ぶこと。
 
 ## 完了の定義
 
-- [ ] AC1〜AC10 を満たし、条件ごとに検証手段と結果が対応している
+- [ ] AC1〜AC11 を満たし、条件ごとに検証手段と結果が対応している
 - [ ] `uv run pytest` が green
 - [ ] 個別 PR がすべて `/ndf:cross-review` で APPROVE 収束済み
 - [ ] `devbase build --no-cache` 後の実機で、`default` と非 `default` の 2 グループを起動して
-      AC1〜AC4 / AC8 を確認している
+      AC1〜AC4 / AC8 / AC11 を確認している
 - [ ] `docs/` と `CHANGELOG.md` が新しいボリューム構造と `DEVBASE_ACCOUNT_GROUP` を説明している
