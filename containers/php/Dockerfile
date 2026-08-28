@@ -1,18 +1,20 @@
 # Dockerfile.dev - devbase互換の開発コンテナ
-# devbase-baseをベースに、PHP 8.3 + MySQL Client + 一般的なPHP拡張を追加
+# devbase-baseをベースに、PHP 8.5 + MySQL Client + 一般的なPHP拡張を追加
 
 FROM devbase-base:latest
 
 USER root
 
-# PHP 8.3 + 必要な拡張 + MySQL Client をUbuntuリポジトリからインストール
+# PHP 8.5 + 必要な拡張 + MySQL Client をUbuntuリポジトリからインストール
+# base が ubuntu:26.04 (resolute) になったため php8.3-* は標準リポジトリに存在しない。
+# 26.04 の標準リポジトリが php8.5 (8.5.4) を提供するので PPA は不要。
 RUN set -eux; \
     apt-get update; \
     apt-get install -y \
-    php8.3-fpm php8.3-cli php8.3-common \
-    php8.3-gd php8.3-bcmath php8.3-mysql \
-    php8.3-zip php8.3-exif php8.3-redis \
-    php8.3-mbstring php8.3-xml php8.3-curl \
+    php8.5-fpm php8.5-cli php8.5-common \
+    php8.5-gd php8.5-bcmath php8.5-mysql \
+    php8.5-zip php8.5-exif php8.5-redis \
+    php8.5-mbstring php8.5-xml php8.5-curl \
     default-mysql-client; \
     rm -rf /var/lib/apt/lists/*
 

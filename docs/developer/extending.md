@@ -241,14 +241,14 @@ devbase のコンテナイメージは `containers/` ディレクトリに定義
 
 ```mermaid
 flowchart TB
-    Ubuntu["ubuntu:noble"] --> Base["devbase-base<br/>Docker CLI, Python 3"]
+    Ubuntu["ubuntu:26.04"] --> Base["devbase-base<br/>Docker CLI, Python 3"]
     Base --> General["devbase-general<br/>AWS CLI, gcloud, Node.js, etc."]
     Base --> Go["devbase-go<br/>Go 開発環境"]
     General --> PHP["devbase-php<br/>PHP 8.3, Composer"]
     General --> LaTeX["devbase-latex<br/>LaTeX"]
     General --> LFM["devbase-lfm<br/>Rust, gfortran, MeCab"]
 
-    Ubuntu2["ubuntu:noble"] --> Snapshot["devbase-snapshot<br/>zstd のみ（軽量）"]
+    Ubuntu2["ubuntu:26.04"] --> Snapshot["devbase-snapshot<br/>zstd のみ（軽量）"]
 ```
 
 ### 手順 1: ディレクトリとDockerfileの作成
@@ -285,7 +285,7 @@ USER ubuntu
 |------|-----------|
 | AWS CLI / gcloud / Node.js 等の一般的な開発ツールが必要 | `devbase-general` |
 | 最小限のツールだけでよい（Docker CLI + Python 3） | `devbase-base` |
-| Docker も不要で極めて軽量なイメージが必要 | `ubuntu:noble` から直接構築 |
+| Docker も不要で極めて軽量なイメージが必要 | `ubuntu:26.04` から直接構築 |
 
 ### 手順 2: ビルドと compose.yml への組み込み
 
