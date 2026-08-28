@@ -319,10 +319,9 @@ def _build_dev_instance(
 
 
 def _build_scaled_services(
-    services: dict, dev_service: dict, dev_service_name: str, scale: int,
-    secret_names: Optional[_SecretNames] = None,
+    services: dict, dev_service: dict, scale: int,
+    ctx: '_ScaledComposeContext',
     secret_services: Optional[Mapping[str, Set[str]]] = None,
-    dev_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances.
 
@@ -330,7 +329,8 @@ def _build_scaled_services(
     (``TARGET_GLOBAL`` / ``TARGET_PROJECT``)」の対応。
     """
     scaled_services = {}
-    secret_names = secret_names if secret_names is not None else _SecretNames()
+    dev_service_name = ctx.dev_service_name
+    secret_names = ctx.secret_names
     receivers = dict(secret_services or {})
 
     # Copy non-dev services (mysql, valkey, etc.) — rewriting any
@@ -364,7 +364,7 @@ def _build_scaled_services(
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
             dev_service, dev_service_name, i, secret_names.all,
-            dev_environment=dev_environment,
+            dev_environment=ctx.dev_environment,
         )
     return scaled_services
 
@@ -430,7 +430,7 @@ def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) ->
 
 
 def _services_receiving_secrets(
-    compose_file: Path, dev_service_name: str,
+    ctx: '_ScaledComposeContext',
 ) -> Dict[str, Set[str]]:
     """機密を渡すべきサービスと、その**参照種別**を決める。
 
@@ -452,6 +452,8 @@ def _services_receiving_secrets(
     判定に失敗したことを理由に全サービスへ機密を撒くと、必要のないコンテナに
     まで認証情報を渡すことになる。
     """
+    dev_service_name = ctx.dev_service_name
+    compose_file = ctx.compose_file
     both = {compose_migrate.TARGET_GLOBAL, compose_migrate.TARGET_PROJECT}
     receivers: Dict[str, Set[str]] = {dev_service_name: set(both)}
     try:
@@ -536,15 +538,12 @@ def generate_scaled_compose(
     if not dev_service:
         raise DockerError(f"No '{ctx.dev_service_name}' service found in compose file")
 
-    secret_services = _services_receiving_secrets(
-        ctx.compose_file, ctx.dev_service_name)
+    secret_services = _services_receiving_secrets(ctx)
 
     scaled_config = {
         'services': _build_scaled_services(
-            services, dev_service, ctx.dev_service_name, scale,
-            secret_names=ctx.secret_names,
+            services, dev_service, scale, ctx,
             secret_services=secret_services,
-            dev_environment=ctx.dev_environment,
         ),
         'volumes': _build_volumes_section(config, scale),
         'networks': _build_networks_section(config),
