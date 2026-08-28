@@ -10,7 +10,6 @@ logger = get_logger("devbase.volume.manager")
 # 共有ボリューム名のプレフィックス
 SHARED_VOLUME_PREFIX = "devbase_home_"
 WORK_VOLUME_PREFIX = "devbase_work_"
-AI_VOLUME_PREFIX = "devbase_ai_"
 # 全コンテナで共有するホームディレクトリボリューム
 HOME_UBUNTU_VOLUME = "devbase_home_ubuntu"
 
