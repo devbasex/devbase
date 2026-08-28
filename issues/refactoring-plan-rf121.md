@@ -79,7 +79,7 @@
 
 | スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
 | --- | --- | --- | --- | --- | ---: |
-| long_parameter_list | introduce_parameter_object | major | codex / gemini | レビュー中 | 2 |
+| long_parameter_list | introduce_parameter_object | major | codex / gemini | 採用 | 2 |
 
 **なぜ**: scale 以外に compose_file, dev_service_name, secret_env_names, global_env_names, project_env_names, dev_environment が並び、機密名の全体/由来別セットと dev 環境の組が呼び出しから内部ヘルパーまで渡り回っている
 
@@ -92,7 +92,7 @@
 
 | スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
 | --- | --- | --- | --- | --- | ---: |
-| duplication | consolidate_duplication | minor | codex / gemini | レビュー中 | 2 |
+| duplication | consolidate_duplication | minor | codex / gemini | 採用 | 2 |
 
 **なぜ**: VolumeManager.get_volume_for_index と module-level get_volume_for_index が同じ SHARED_VOLUME_PREFIX 連結規則を別々に持ち、work volume 側だけは module-level helper が VolumeManager へ委譲する形になっていて同じ概念の表現が揺れている
 
@@ -105,7 +105,7 @@
 
 | スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
 | --- | --- | --- | --- | --- | ---: |
-| primitive_obsession | introduce_value_object | major | codex | レビュー中 | 2 |
+| primitive_obsession | introduce_value_object | major | codex | 採用 | 2 |
 
 **なぜ**: mode は 'backup' / 'restore' の文字列で渡され、mount の読み書き方向を分岐させる制約が _run_docker_tar 内の三項演算子に閉じ込められているため、未検証の文字列でも restore 扱いになる
 
@@ -135,3 +135,69 @@
 
 **手順**: 1. 複数コマンドのフォールバックによるビルド処理を _build_snapshot_image メソッドとして抽出する
 2. _ensure_snapshot_image ではイメージが存在しない場合に抽出したメソッドを呼び出すようにする
+
+## ラウンド 3（実装 claude / レビュー codex / kiro）
+
+### R3-001 — `lib/devbase/volume/compose.py#_replace_volumes_for_instance`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| long_method | extract_method | major | codex | レビュー中 | 1 |
+
+**なぜ**: 1つの関数でマウント対象の判定、deprecated mount の除外、文字列形式と dict 形式それぞれの置換、欠落 mount の補完まで扱っており、volume 仕様の追加時に分岐全体を読み直す必要がある
+
+**手順**: 1. 1件の volume entry を置換する _replace_volume_entry_for_instance を抽出し、置換後 entry と replaced target を返す
+2. _replace_volumes_for_instance は反復、deprecated 除外、欠落 mount の補完だけを担う形に縮小する
+3. 既存の compose 生成テストで string/dict volume と欠落 mount 補完の振る舞いが変わらないことを確認する
+
+### R3-002 — `lib/devbase/volume/compose.py#_drop_missing_env_files`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| long_method | extract_method | major | codex | レビュー中 | 1 |
+
+**なぜ**: env_file の正規化、参照先解決、欠落した機密参照かどうかの判定、service への反映が同じ関数に同居しており、欠落参照の扱いを読むために副作用部分まで追う必要がある
+
+**手順**: 1. env_file を list へ正規化する _env_file_entries を抽出する
+2. 欠落した機密 env_file 参照かを判定する _is_missing_secret_env_file を抽出する
+3. _drop_missing_env_files は kept の組み立てと service への反映だけにする
+4. tests/volume/test_compose_secret_env.py の既存ケースで欠落機密、欠落非機密、未解決変数、全削除時の env_file 削除を確認する
+
+### R3-003 — `lib/devbase/volume/compose.py#_replace_volumes_for_instance`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| primitive_obsession | introduce_value_object | major | gemini | レビュー中 | 2 |
+
+**なぜ**: Dockerのvolume定義が文字列(source:target)と辞書(source, target)の2種類で表現されており、各関数で型チェック(isinstance)を伴うパースが重複して散在している
+
+**手順**: 1. `VolumeMount`クラス（source, targetなどの属性を持つ）を作成する
+2. str/dict から `VolumeMount` を生成するパース処理を実装する
+3. `VolumeMount` から元の型（str/dict）にシリアライズする処理を実装する
+4. `_replace_volumes_for_instance` と `_volume_target` の処理を `VolumeMount` を経由するよう置き換える
+
+### R3-004 — `lib/devbase/snapshot/manager.py#SnapshotManager._load_snap_meta`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| magic_value | introduce_named_constant | minor | codex | レビュー中 | 1 |
+
+**なぜ**: 個別スナップショットメタデータのファイル名 'meta.yml' が _load_snap_meta、_save_snap_meta、last_snapshot_time の除外説明とテストデータに散在し、global metadata の METADATA_FILE と違って意味が名前で表現されていない
+
+**手順**: 1. SNAPSHOT_META_FILE = 'meta.yml' を module 定数として追加する
+2. _load_snap_meta と _save_snap_meta の Path 組み立てを定数参照へ置き換える
+3. last_snapshot_time の除外コメントで定数名を使うか、コメントは挙動説明に留めて直接値の重複を避ける
+4. 必要なら tests/snapshot/test_auto_snapshot.py のノイズファイル作成も定数 import に寄せ、既存テストを実行する
+
+### R3-005 — `lib/devbase/volume/manager.py#VolumeManager._volume_exists`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| swallowed_exception | propagate_exception | minor | kiro | 取り消し | 2 |
+
+**なぜ**: `except Exception` で docker CLI 呼び出し中の全ての例外 (FileNotFoundError: docker バイナリ不在、PermissionError 等) を捕まえ、警告ログのみで False にすり替えている。呼び出し元の ensure_volumes は False を『ボリュームが存在しない』として扱い _create_volume を呼ぶため、docker が使えない環境でも一旦 create を試みてから別のエラーとして失敗する遠回りな経路になり、元の例外の種類・原因が失われる。
+
+**手順**: 1. subprocess.run の呼び出しで発生しうる例外を洗い出す (FileNotFoundError: docker 未インストール、OSError 系)
+2. `except Exception` を `except (OSError, subprocess.SubprocessError)` など想定範囲へ絞る
+3. 想定外の例外はそのまま伝播させる (catch しない)
+4. 既存の returncode != 0 判定 (通常の『存在しない』経路) はそのまま残す
