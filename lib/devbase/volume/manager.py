@@ -139,7 +139,7 @@ def get_volume_for_index(index: int, project_name: str = None) -> str:
     Returns:
         Shared volume name (devbase_home_{index})
     """
-    return VolumeManager().get_volume_for_index(index)
+    return f"{SHARED_VOLUME_PREFIX}{index}"
 
 
 def get_work_volume_for_index(index: int, project_name: str = None) -> str:
