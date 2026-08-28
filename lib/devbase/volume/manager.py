@@ -153,7 +153,7 @@ def get_work_volume_for_index(index: int, project_name: str = None) -> str:
     Returns:
         Work volume name (devbase_work_{index})
     """
-    return VolumeManager().get_work_volume_for_index(index)
+    return f"{WORK_VOLUME_PREFIX}{index}"
 
 
 def get_ai_volume_for_index(index: int, project_name: str = None) -> str:
