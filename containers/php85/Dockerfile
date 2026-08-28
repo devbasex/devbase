@@ -5,11 +5,11 @@ FROM devbase-base:latest
 
 USER root
 
-# Ondřej Surý PPA追加 + PHP 8.5 + 必要な拡張 + MySQL Client をインストール
+# PHP 8.5 + 必要な拡張 + MySQL Client をUbuntuリポジトリからインストール
+# base が ubuntu:26.04 (resolute) になり、標準リポジトリが php8.5 (8.5.4) を
+# 提供するようになったため ppa:ondrej/php は不要になった。
+# （ondrej PPA は resolute 向けの dist を公開しておらず、追加すると apt-get update が失敗する）
 RUN set -eux; \
-    apt-get update; \
-    apt-get install -y software-properties-common; \
-    add-apt-repository -y ppa:ondrej/php; \
     apt-get update; \
     apt-get install -y \
     php8.5-fpm php8.5-cli php8.5-common \

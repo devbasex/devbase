@@ -5,12 +5,14 @@
 
 FROM devbase-base:latest
 
-# --- root レイヤー: pnpm（npm グローバル） ---
-USER root
+# --- user レイヤー: pnpm（npm グローバル） ---
+# npm のグローバル prefix (/usr/local/share/npm-global) は base で ubuntu 所有にしてあるため
+# root へ切り替えずにインストールする（root で入れると ubuntu が更新できなくなる）。
+USER ubuntu
 RUN set -eux; \
     npm i -g pnpm; \
     npm cache clean --force; \
-    rm -rf /root/.npm
+    rm -rf ~/.npm
 
 # --- user レイヤー: Poetry ---
 # uv との競合回避:

@@ -1,8 +1,11 @@
 # ==================================
 # devbase-base: 共通基盤イメージ
-# Ubuntu noble + 共通ツール群
+# Ubuntu 26.04 LTS (resolute) + 共通ツール群
 # ==================================
-FROM ubuntu:noble
+# 26.04 は 2026-04 リリースの最新 LTS (サポート 2031-04 まで)。
+# 24.04 (noble) からの主な差分は system python が 3.12 -> 3.14 になること。
+# 3.12/3.13 は既定リポジトリに無いため、必要なら `uv python install 3.12` を使う。
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -59,8 +62,45 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
 
+# ユーザー設定
+# npm グローバル領域 (後述の NPM_CONFIG_PREFIX) を sudo なしで更新できるようにするため、
+# ユーザーとグループは npm パッケージのインストールより「前」に作っておく。
+# こうすると所有者・パーミッションの変更を install と同じ RUN 内で完結でき、
+# 数百MBの node_modules がメタデータ変更だけのために新しいレイヤーへ
+# 丸ごと複製されるのを避けられる。
+ARG USERNAME="ubuntu"
+# npm グループの GID は派生イメージ (containers/lfm) と揃える必要があるため固定する。
+# lfm は base から /usr/local を COPY するだけで base のグループ定義を引き継がないため、
+# GID が動的だと COPY されたファイルの GID が派生側で未定義になる。
+# 2000 は Ubuntu の system group (<1000) とも既定ユーザー ubuntu (1000) とも衝突しない。
+ARG NPM_GID="2000"
+RUN set -eux; \
+    groupadd -f users; \
+    groupadd -f docker; \
+    groupadd -g "$NPM_GID" npm; \
+    if ! id -u $USERNAME >/dev/null 2>&1; then \
+    useradd -m -s /bin/bash $USERNAME; \
+    fi; \
+    usermod -aG users,docker,npm $USERNAME; \
+    echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users; \
+    echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME; \
+    chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME
+
+# npm のグローバル prefix を /usr/local/share/npm-global に置く。
+# 既定の /usr/lib/node_modules + /usr/bin は root しか書けず、ubuntu ユーザでの
+# `npm i -g`（codex などの自動バージョンアップ）が EACCES で失敗するため。
+# 置き場所とパーミッション設計は Dev Containers 標準
+# (devcontainers/images の javascript-node) に合わせている。
+# ディレクトリは ubuntu:npm 所有 + setgid で作る（下の RUN で実施）。
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+ENV PATH="/usr/local/share/npm-global/bin:${PATH}"
+
 # AWS CLI + gcloud SDK + uv + npm globals（1レイヤーにまとめる）
 RUN set -eux; \
+    # 所有を $USERNAME:npm、ディレクトリへ setgid を付けて作る。
+    # 後から誰が入れてもグループが npm のまま揃う
+    # (UID/GID を振り直しても壊れない Dev Containers 方式)。
+    install -d -m 2775 -o "$USERNAME" -g npm "$NPM_CONFIG_PREFIX"; \
     # AWS CLI v2
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip; \
     unzip -q /tmp/awscliv2.zip -d /tmp; \
@@ -93,8 +133,14 @@ RUN set -eux; \
     docker-credential-gcr cloud-run-proxy 2>&1 || true; \
     # uv (Python パッケージマネージャー)
     curl -LsSf https://astral.sh/uv/install.sh | sh; \
-    # npm グローバルパッケージ
+    # npm グローバルパッケージ（umask 0002 で npm グループにも書き込み権を残す）
+    umask 0002; \
     npm i -g yarn @playwright/test aws-cdk aws-cdk-lib typescript @google/gemini-cli @openai/codex; \
+    # root が作ったファイルも ubuntu が上書きできるように揃える。
+    # install レイヤーと同じ RUN なのでレイヤーの複製は発生しない。
+    chown -R "$USERNAME":npm "$NPM_CONFIG_PREFIX"; \
+    chmod -R g+rwX "$NPM_CONFIG_PREFIX"; \
+    find "$NPM_CONFIG_PREFIX" -type d -exec chmod g+s {} +; \
     # クリーンアップ
     rm -rf /tmp/* /var/tmp/* \
     /root/.npm /root/.cache /root/.config \
@@ -111,18 +157,6 @@ ENV PATH="/root/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
 
 # 確認
 RUN gh --version && node --version && npm --version && aws --version && gcloud --version && session-manager-plugin --version
-
-# ユーザー設定
-ARG USERNAME="ubuntu"
-RUN groupadd -f users; \
-    groupadd -f docker; \
-    if ! id -u $USERNAME >/dev/null 2>&1; then \
-    useradd -m -s /bin/bash $USERNAME; \
-    fi; \
-    usermod -aG users,docker $USERNAME; \
-    echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users; \
-    echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME; \
-    chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME
 
 USER ${USERNAME}
 WORKDIR /tmp

@@ -149,13 +149,13 @@ flowchart TD
 
 | イメージ | ベース | 主要ツール | 典型的な用途 |
 |---------|--------|-----------|-------------|
-| `base` | Ubuntu Noble | Docker CLI、Python 3 | 軽量な自動化・スクリプト |
+| `base` | Ubuntu 26.04 | Docker CLI、Python 3 | 軽量な自動化・スクリプト |
 | `general` | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | Webアプリ、インフラ管理 |
 | `go` | base | Go開発環境 | APIサーバー、CLIツール |
-| `php` | general | PHP 8.3、Composer | Laravel、WordPress |
+| `php` | general | PHP 8.5、Composer | Laravel、WordPress |
 | `latex` | general | LaTeX | 論文、技術文書、レポート |
 | `lfm` | general | Rust、gfortran、MeCab | 数値計算、自然言語処理 |
-| `snapshot` | Ubuntu Noble | zstd | スナップショットの取得・復元 |
+| `snapshot` | Ubuntu 26.04 | zstd | スナップショットの取得・復元 |
 
 ### 4.2 標準イメージの使用
 

@@ -6,7 +6,7 @@
 # ==================================
 # Stage: CUDA ベース + 追加パッケージ
 # ==================================
-FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 AS cudabase
+FROM nvidia/cuda:13.3.1-cudnn-devel-ubuntu26.04 AS cudabase
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -75,6 +75,14 @@ RUN locale-gen en_US.UTF-8 && \
 FROM cudabase
 
 # devbase-base から共通ツールをコピー
+#
+# 【重要】cudabase の Ubuntu バージョンは devbase-base と必ず一致させること。
+# 下の COPY は node / gh 等の「ビルド済みバイナリ」を持ち込むため、
+# devbase-base (ubuntu:26.04 / glibc 2.43) より古い OS の上に置くと
+# "GLIBC_2.4x not found" で即座に壊れる。そのため cudabase には
+# nvidia/cuda の ubuntu26.04 タグを使用する。
+# なお nvidia/cuda の ubuntu26.04 タグは CUDA 13.3.1 系のみが提供されているため、
+# containers/base の Ubuntu を上げる際は CUDA のバージョンも追随させる必要がある。
 COPY --from=devbase-base:latest /usr/local /usr/local
 COPY --from=devbase-base:latest /usr/bin/gh /usr/bin/node /usr/bin/
 COPY --from=devbase-base:latest /usr/lib/node_modules /usr/lib/node_modules
@@ -85,16 +93,30 @@ COPY --from=devbase-base:latest /home/ubuntu/.local /home/ubuntu/.local
 RUN ln -sf /usr/lib/node_modules/npm/bin/npm-cli.js /usr/bin/npm && \
     ln -sf /usr/lib/node_modules/npm/bin/npx-cli.js /usr/bin/npx
 
-ENV PATH="/home/ubuntu/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
+# npm のグローバル prefix は base と同じ（上の COPY /usr/local で取り込み済み。
+# COPY --from は所有者を保持するので ubuntu:npm 所有のまま = sudo なしで `npm i -g` できる。
+# ただし npm グループの定義自体は COPY されないので、下のユーザー設定で
+# base と同じ GID で作り直して整合させる）。
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+ENV PATH="/usr/local/share/npm-global/bin:/home/ubuntu/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
 
 # 確認
 RUN gh --version && node --version && npm --version && aws --version && gcloud --version
 
 # ユーザー設定
 ARG USERNAME="ubuntu"
-RUN usermod -aG users,docker $USERNAME && \
-    echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users && \
-    echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME && \
+# npm グループの GID は containers/base/Dockerfile の ARG NPM_GID と必ず一致させる。
+# COPY --from が持ち込んだ /usr/local/share/npm-global 配下のファイルは GID 数値だけを
+# 保持するため、lfm 側に同じ GID のグループが無いと GID が未定義のまま残り、
+# setgid ディレクトリも効かず ubuntu が sudo なしで `npm i -g` できなくなる。
+# ここで chown -R し直さないのは、数百MBの node_modules が丸ごと
+# 新しいレイヤーへ複製されイメージが肥大化するため。
+ARG NPM_GID="2000"
+RUN set -eux; \
+    groupadd -g "$NPM_GID" npm; \
+    usermod -aG users,docker,npm $USERNAME; \
+    echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users; \
+    echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME; \
     chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME
 
 USER ${USERNAME}

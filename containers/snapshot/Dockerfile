@@ -1,8 +1,8 @@
 # ==================================
 # devbase-snapshot: スナップショット専用軽量イメージ
-# Ubuntu noble + tar + zstd のみ
+# Ubuntu 26.04 + tar + zstd のみ
 # ==================================
-FROM ubuntu:noble
+FROM ubuntu:26.04
 
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends zstd \
