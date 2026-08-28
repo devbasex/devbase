@@ -343,35 +343,39 @@ class SnapshotManager:
             )
             return SNAPSHOT_IMAGE
         except subprocess.CalledProcessError:
-            dockerfile_dir = self.devbase_root / 'containers' / 'snapshot'
-            if not dockerfile_dir.exists():
-                raise SnapshotError(
-                    f"スナップショット用Dockerfileが見つかりません: {dockerfile_dir}"
+            return self._build_snapshot_image()
+
+    def _build_snapshot_image(self) -> str:
+        """スナップショット専用イメージをビルドする（buildx → build の順にフォールバック）"""
+        dockerfile_dir = self.devbase_root / 'containers' / 'snapshot'
+        if not dockerfile_dir.exists():
+            raise SnapshotError(
+                f"スナップショット用Dockerfileが見つかりません: {dockerfile_dir}"
+            )
+        logger.info("devbase-snapshotイメージをビルド中...")
+        build_cmds = [
+            ['docker', 'buildx', 'build', '--load',
+             '-t', SNAPSHOT_IMAGE, str(dockerfile_dir)],
+            ['docker', 'build',
+             '-t', SNAPSHOT_IMAGE, str(dockerfile_dir)],
+        ]
+        last_err = None
+        for cmd in build_cmds:
+            try:
+                subprocess.run(
+                    cmd, check=True, capture_output=True, text=True
                 )
-            logger.info("devbase-snapshotイメージをビルド中...")
-            build_cmds = [
-                ['docker', 'buildx', 'build', '--load',
-                 '-t', SNAPSHOT_IMAGE, str(dockerfile_dir)],
-                ['docker', 'build',
-                 '-t', SNAPSHOT_IMAGE, str(dockerfile_dir)],
-            ]
-            last_err = None
-            for cmd in build_cmds:
-                try:
-                    subprocess.run(
-                        cmd, check=True, capture_output=True, text=True
-                    )
-                    last_err = None
-                    break
-                except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                    last_err = e
-            if last_err is not None:
-                stderr = getattr(last_err, 'stderr', str(last_err))
-                raise SnapshotError(
-                    f"devbase-snapshotのビルドに失敗: {stderr}"
-                ) from last_err
-            logger.info("devbase-snapshotイメージのビルド完了")
-            return SNAPSHOT_IMAGE
+                last_err = None
+                break
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                last_err = e
+        if last_err is not None:
+            stderr = getattr(last_err, 'stderr', str(last_err))
+            raise SnapshotError(
+                f"devbase-snapshotのビルドに失敗: {stderr}"
+            ) from last_err
+        logger.info("devbase-snapshotイメージのビルド完了")
+        return SNAPSHOT_IMAGE
 
     def _run_docker_tar(self, snap_dir: Path, mode: str, command: str) -> None:
         """Docker経由でtar操作を実行する。
