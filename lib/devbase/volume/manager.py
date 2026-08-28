@@ -79,23 +79,6 @@ class VolumeManager:
         """
         return f"{WORK_VOLUME_PREFIX}{index}"
 
-    def _ensure_volume(self, volume_name: str, label: str = "") -> None:
-        """指定したボリュームの存在を確認し、無ければ作成する。
-
-        Args:
-            volume_name: 確認・作成するボリューム名
-            label: ログに付ける補足 (例: "shared home")。無ければ付けない
-        """
-        prefix = f"{label}, " if label else ""
-        if self._volume_exists(volume_name):
-            logger.info("  %s (%sexists)", volume_name, prefix)
-            return
-
-        suffix = f" ({label})" if label else ""
-        logger.info("  Creating %s%s...", volume_name, suffix)
-        if not self._create_volume(volume_name):
-            raise DockerError(f"Failed to create volume {volume_name}")
-
     def ensure_volumes(self, scale: int) -> None:
         """
         Ensure required volumes exist for the specified scale
@@ -110,12 +93,24 @@ class VolumeManager:
         logger.info("Ensuring volumes for %d container(s)", scale)
 
         # Ensure shared home directory volume (once for all containers)
-        self._ensure_volume(HOME_UBUNTU_VOLUME, label="shared home")
+        if self._volume_exists(HOME_UBUNTU_VOLUME):
+            logger.info("  %s (shared home, exists)", HOME_UBUNTU_VOLUME)
+        else:
+            logger.info("  Creating %s (shared home)...", HOME_UBUNTU_VOLUME)
+            if not self._create_volume(HOME_UBUNTU_VOLUME):
+                raise DockerError(f"Failed to create volume {HOME_UBUNTU_VOLUME}")
 
         # Create or verify work volumes for each instance
         for i in range(1, scale + 1):
             work_volume = self.get_work_volume_for_index(i)
-            self._ensure_volume(work_volume)
+
+            # Ensure work volume
+            if self._volume_exists(work_volume):
+                logger.info("  %s (exists)", work_volume)
+            else:
+                logger.info("  Creating %s...", work_volume)
+                if not self._create_volume(work_volume):
+                    raise DockerError(f"Failed to create volume {work_volume}")
 
 
 def ensure_volumes(scale: int, project_name: str = None) -> None:
