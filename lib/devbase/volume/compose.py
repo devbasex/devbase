@@ -400,6 +400,25 @@ def _resolve_env_file_path(entry: Any, base_dir: Path) -> Optional[Path]:
     return path if path.is_absolute() else base_dir / path
 
 
+def _env_file_entries(service: dict) -> Optional[list]:
+    """``env_file`` の値を list へ正規化して返す (キー自体が無ければ None)"""
+    entries = service.get('env_file')
+    if entries is None:
+        return None
+    return entries if isinstance(entries, list) else [entries]
+
+
+def _is_missing_secret_env_file(entry: Any, base_dir: Path) -> bool:
+    """実在しない**既知の機密** ``env_file`` 参照なら真。
+
+    パスへ解決できない参照 (未定義の変数が残る等) と、機密以外の欠落は偽。
+    """
+    ref = _env_file_ref(entry)
+    resolved = _resolve_env_file_path(entry, base_dir)
+    return (resolved is not None and not resolved.exists()
+            and ref is not None and compose_migrate.is_secret_entry(ref))
+
+
 def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) -> None:
     """暗号化移行で消える機密ファイルへの ``env_file`` 参照のうち、実在しないものを落とす。
 
@@ -407,7 +426,7 @@ def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) ->
     残したままだと Docker Compose が起動時に落ちるため、生成する構成からは
     外す。値は環境変数として別途注入されるので失われない。
 
-    落とす対象を :func:`compose_migrate.is_secret_entry` が真を返す既知の参照に
+    落とす対象を :func:`_is_missing_secret_env_file` が真を返す既知の参照に
     **限る**のが要点。実在しない参照を無条件に落とすと、利用者のタイプミスや
     未配置の必須設定まで黙って成功扱いになり、本来 Compose が起動時に知らせて
     くれる構成の不備を隠してしまう。機密以外の欠落はそのまま残し、Compose に
@@ -416,21 +435,17 @@ def _drop_missing_env_files(service: dict, base_dir: Path, service_name: str) ->
     移行コマンドが ``compose.yml`` を書き換え済みなら、ここに来る時点で該当
     エントリは無い。手で書いた構成や書き換え前の状態に対する保険として働く。
     """
-    entries = service.get('env_file')
+    entries = _env_file_entries(service)
     if entries is None:
         return
-    if not isinstance(entries, list):
-        entries = [entries]
 
     kept = []
     for entry in entries:
-        ref = _env_file_ref(entry)
-        resolved = _resolve_env_file_path(entry, base_dir)
-        if (resolved is not None and not resolved.exists()
-                and ref is not None and compose_migrate.is_secret_entry(ref)):
+        if _is_missing_secret_env_file(entry, base_dir):
             logger.info(
                 "%s: 実在しない機密の env_file 参照を除きました (%s)。"
-                "機密は環境変数として渡されます", service_name, resolved)
+                "機密は環境変数として渡されます",
+                service_name, _resolve_env_file_path(entry, base_dir))
             continue
         kept.append(entry)
 
