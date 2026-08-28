@@ -63,6 +63,15 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
   「AI Settings の symlink 生成 (`同 383-440`)」である。symlink ループはホーム側の既存実体を
   `rm -rf "$HOME_PATH"` (`同 420`) で消してから `ln -s` するため、**先に書かれた
   `~/.config/gcloud/credentials.json` は実ディレクトリごと消える**。
+- 前提 9: `GOOGLE_APPLICATION_CREDENTIALS` と `BIGQUERY_KEY_FILE` は、**鍵の有無に関係なく**
+  `/home/ubuntu/.config/gcloud/credentials.json` 固定で env に書かれる
+  (`lib/devbase/env/collectors/google.py:139-141` の `_collect_common_settings` は、
+  プロファイルが 1 件も見つからない経路 (`同 87`) からも無条件に呼ばれる)。
+  一方 entrypoint の生成ブロックは全体が `if [ -n "$_GCP_CREDS_B64" ]`
+  (`containers/base/entrypoint.sh:196`) の内側にあり、**鍵が無いときの削除経路が無い**。
+  他の認証は「復元の直前に古い実体を消す」形になっている
+  (`同 238` の `rm -f ~/.git-credentials`、`同 279` の `rm -f ~/.aws/config ~/.aws/credentials`) が、
+  いずれも復元する側の分岐の中なので、GCP と同じく「未設定へ切り替えたとき」は消えない。
 
 ## 受け入れ条件
 
@@ -93,6 +102,16 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 - [ ] AC11: 初回起動（グループボリュームが空）でも、env 由来のサービスアカウント鍵が消えない。
       検証: `GCP_CREDENTIALS_BASE64__<profile>` を設定した状態で `devbase up` した直後に
       `~/.config/gcloud/credentials.json` が存在し中身が空でないこと（前提 8 の退行を防ぐ）。
+- [ ] AC12: 鍵が設定されていないプロファイルへ切り替えたら、管理対象の `credentials.json` が残らない。
+      検証: (1) `GCP_CREDENTIALS_BASE64__a` を設定して `devbase up` し
+      `~/.config/gcloud/credentials.json` が profile `a` の鍵であることを確認する。
+      (2) `devbase down` 後、`GCP_ACTIVE_PROFILE=b`（`GCP_CREDENTIALS_BASE64__b` も
+      `GOOGLE_APPLICATION_CREDENTIALS_BASE64` も未設定）にして `up` する。
+      (3) 同じグループボリュームであっても `~/.config/gcloud/credentials.json` と
+      `$BIGQUERY_KEY_FILE` が**存在しない**こと、`gcloud auth list` / `bq` が profile `a` の
+      サービスアカウントで動かないことを確認する。
+      (4) `gcloud auth login` によるユーザー OAuth（`credentials.db` / `access_tokens.db` /
+      `application_default_credentials.json`）は削除されず、AC1 が引き続き成立すること。
 
 ## 代替案と採否
 
@@ -247,16 +266,36 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
   個別エントリだけを symlink にする（Task 3 の親ディレクトリ作成と、Task 4 の実行順序入れ替えが前提）。
   順序が入れ替わっていない状態でこの変更だけを入れると前提 8 の事故が起きるため、**PR3 は PR2 の
   merge 後にのみ着手する**（PR 分割計画の依存どおり）。
-- **満たす受け入れ条件:** AC1, AC2, AC11
+- **満たす受け入れ条件:** AC1, AC2, AC11, AC12
 - **進め方:** 実機検証。`gcloud auth login` → `devbase down` → `up` → `gcloud auth list` で
-  再認証が要らないことを確認する。あわせて AC11（初回起動でサービスアカウント鍵が消えないこと）も見る。
-- **補足:** env 由来の `credentials.json`（サービスアカウント鍵）が永続領域へ書かれるようになる。
+  再認証が要らないことを確認する。あわせて AC11（初回起動でサービスアカウント鍵が消えないこと）と
+  AC12（鍵が未設定のプロファイルへ切り替えたら鍵が残らないこと）も見る。
+- **補足 1（出力先）:** env 由来の `credentials.json`（サービスアカウント鍵）が永続領域へ書かれるようになる。
   出力先は `GOOGLE_APPLICATION_CREDENTIALS` 未設定なら `~/.config/gcloud/credentials.json` 固定で
   プロファイル名を含まない (`entrypoint.sh:198-204`) ため、`GCP_ACTIVE_PROFILE` を切り替えても
-  同じパスが上書きされ、プロファイルごとのファイルが並ぶことはない。残るのは別の経路で、
+  同じパスが上書きされ、プロファイルごとのファイルが並ぶことはない。
+- **補足 2（未設定プロファイルへ切り替えたときの削除 / 必須）:** 鍵の永続化を入れる以上、
+  **未設定は「何もしない」ではなく「消す」** に変える。現行の生成ブロックは全体が
+  `if [ -n "$_GCP_CREDS_B64" ]` (`entrypoint.sh:196`) の内側にあり、
   `GCP_CREDENTIALS_BASE64__<profile>` も `GOOGLE_APPLICATION_CREDENTIALS_BASE64` も未設定の
-  プロファイルへ切り替えると生成ブロック自体がスキップされ (`同 195`)、**旧プロファイルの鍵が
-  グループボリュームに残ったまま参照される**。この 1 点をドキュメントに明記する。
+  プロファイルへ切り替えると生成がスキップされる。一方 `GOOGLE_APPLICATION_CREDENTIALS` /
+  `BIGQUERY_KEY_FILE` は鍵の有無に関係なく同じ固定パスを指したまま env から渡る（前提 9）。
+  Task 5 で `.config/gcloud` を永続化するとこの鍵はコンテナ再作成後も残るため、
+  **別グループ・別顧客のサービスアカウントを ADC 経由で使えてしまい、本計画の目的が崩れる**。
+  そこで entrypoint に else 経路を足し、次の仕様にする。
+
+  | 条件 | 振る舞い |
+  |---|---|
+  | 鍵あり | 現行どおり `GAC_PATH` / `BQ_PATH` へ書き、`chmod 600` して export する |
+  | 鍵なし | `GOOGLE_APPLICATION_CREDENTIALS` / `BIGQUERY_KEY_FILE` が指す**管理対象パスのみ** `rm -f` し、両変数を unset して、削除した旨を起動ログに出す |
+
+  削除は devbase が env から生成したファイルに限る。`gcloud auth login` のユーザー OAuth は
+  `credentials.db` / `access_tokens.db` / `application_default_credentials.json` という別ファイルなので
+  影響を受けず、AC1 / AC2 は成立し続ける。ディレクトリごとの `rm -rf` は行わない。
+  これは他の認証と同じ「古い実体を残さない」方針の踏襲でもある
+  (`entrypoint.sh:238` の `rm -f ~/.git-credentials`、`同 279` の `rm -f ~/.aws/config ~/.aws/credentials`)。
+  切替テストは AC12 として実機で確認し、`tests/containers/` に
+  `DEVBASE_ENTRYPOINT_LIB_ONLY` (`entrypoint.sh:182-184`) を使った単体テストを足す。
 
 ### Task 6: スナップショットのグループ対応（PR4）
 
@@ -298,7 +337,7 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 | entrypoint 変更が `up` だけでは反映されない | [[entrypoint-change-needs-rebuild]]。検証手順に `devbase build --no-cache` を明記 |
 | 既存スナップショットが復元できなくなる | Task 6 で旧メタデータ互換をテストで固定 |
 | symlink 生成より前に書かれた `~/.config/gcloud/credentials.json` が `rm -rf` で消え、サービスアカウント鍵が欠落する（前提 8） | Task 4 で symlink ブロックを credentials 生成より前へ移動。AC11 で初回起動時の鍵の存在を確認 |
-| 鍵が未設定のプロファイルへ `GCP_ACTIVE_PROFILE` を切り替えると、生成がスキップされ旧プロファイルの `credentials.json` がグループボリュームに残ったまま参照される | Task 5 の補足としてドキュメント化。削除は運用手順に委ねる |
+| 鍵が未設定のプロファイルへ `GCP_ACTIVE_PROFILE` を切り替えると、生成がスキップされ (`entrypoint.sh:196`) 旧プロファイルの `credentials.json` がグループボリュームに残り、固定パスを指したままの `GOOGLE_APPLICATION_CREDENTIALS`（前提 9）から別顧客の鍵が使われる | Task 5 の補足 2 の仕様で、鍵なし時は管理対象パスを `rm -f` して両変数を unset する。AC12 で切替テストを実機確認し、`tests/containers/` にも固定する |
 | 切り戻し時に、シード後にグループ側だけへ書かれた認証・履歴が失われる | 切り戻し手順の同期ステップを必須とし、正とするグループを 1 つに決めてから実行する |
 
 ## 切り戻し手順
@@ -367,9 +406,9 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
 ## 完了の定義
 
-- [ ] AC1〜AC11 を満たし、条件ごとに検証手段と結果が対応している
+- [ ] AC1〜AC12 を満たし、条件ごとに検証手段と結果が対応している
 - [ ] `uv run pytest` が green
 - [ ] 個別 PR がすべて `/ndf:cross-review` で APPROVE 収束済み
 - [ ] `devbase build --no-cache` 後の実機で、`default` と非 `default` の 2 グループを起動して
-      AC1〜AC4 / AC8 / AC11 を確認している
+      AC1〜AC4 / AC8 / AC11 / AC12 を確認している
 - [ ] `docs/` と `CHANGELOG.md` が新しいボリューム構造と `DEVBASE_ACCOUNT_GROUP` を説明している
