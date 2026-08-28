@@ -194,7 +194,7 @@ devbase のコンテナイメージは用途に応じた階層構造になって
 
 ```mermaid
 graph TD
-    A[Ubuntu Noble] --> B[base]
+    A[Ubuntu 26.04] --> B[base]
     B --> C[general]
     B --> G[go]
     C --> D[php]
@@ -214,14 +214,14 @@ graph TD
 
 | イメージ | ベース | 主な内容 | 用途 |
 |---------|-------|---------|------|
-| **base** | Ubuntu Noble | Docker CLI、Python 3 | 最小限の開発環境 |
+| **base** | Ubuntu 26.04 | Docker CLI、Python 3 | 最小限の開発環境 |
 | **general** | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | 汎用開発環境 |
-| **php** | general | PHP 8.3、Composer、MySQL Shell | PHP 8.3 系 開発 |
+| **php** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **php85** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **latex** | general | LaTeX | 文書作成 |
 | **lfm** | general | Rust、gfortran、MeCab | 数値計算・自然言語処理 |
 | **go** | base | Go 開発環境 | Go 開発 |
-| **snapshot** | Ubuntu Noble | zstd のみ（約 80MB） | スナップショット専用 |
+| **snapshot** | Ubuntu 26.04 | zstd のみ（約 80MB） | スナップショット専用 |
 
 ### AI CLI エイリアス
 

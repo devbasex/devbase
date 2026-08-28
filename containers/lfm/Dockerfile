@@ -6,7 +6,7 @@
 # ==================================
 # Stage: CUDA ベース + 追加パッケージ
 # ==================================
-FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 AS cudabase
+FROM nvidia/cuda:13.3.1-cudnn-devel-ubuntu26.04 AS cudabase
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -76,16 +76,13 @@ FROM cudabase
 
 # devbase-base から共通ツールをコピー
 #
-# 【既知の非互換 / 未解消】glibc バージョン不整合
-# devbase-base は ubuntu:26.04 (glibc 2.43) ベースだが、この lfm は
-# nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 (glibc 2.39) ベースのままである。
-# そのため下の COPY で持ち込まれる node / gh 等のバイナリは、新しい glibc の
-# シンボルを要求して実行時に "GLIBC_2.4x not found" で失敗する可能性が高い。
-#
-# 解消には lfm のベースを nvidia/cuda の ubuntu26.04 タグへ更新する必要があるが、
-# 26.04 向けタグは CUDA 13.3.1 系のみで 12.6.3 は存在しないため、CUDA / cuDNN の
-# メジャーアップグレードを伴う。PyTorch 等の GPU ライブラリ互換検証が別途必要になる
-# ため、本 PR のスコープ外として後続対応とする（PR 本文「やらないこと / フォローアップ」参照）。
+# 【重要】cudabase の Ubuntu バージョンは devbase-base と必ず一致させること。
+# 下の COPY は node / gh 等の「ビルド済みバイナリ」を持ち込むため、
+# devbase-base (ubuntu:26.04 / glibc 2.43) より古い OS の上に置くと
+# "GLIBC_2.4x not found" で即座に壊れる。そのため cudabase には
+# nvidia/cuda の ubuntu26.04 タグを使用する。
+# なお nvidia/cuda の ubuntu26.04 タグは CUDA 13.3.1 系のみが提供されているため、
+# containers/base の Ubuntu を上げる際は CUDA のバージョンも追随させる必要がある。
 COPY --from=devbase-base:latest /usr/local /usr/local
 COPY --from=devbase-base:latest /usr/bin/gh /usr/bin/node /usr/bin/
 COPY --from=devbase-base:latest /usr/lib/node_modules /usr/lib/node_modules

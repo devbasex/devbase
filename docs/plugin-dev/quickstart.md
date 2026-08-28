@@ -330,14 +330,14 @@ flowchart LR
 
 | イメージ | ベース | 主要ツール | 推奨用途 |
 |---------|--------|-----------|---------|
-| `base` | Ubuntu Noble | Docker CLI、Python 3 | 軽量な開発環境 |
+| `base` | Ubuntu 26.04 | Docker CLI、Python 3 | 軽量な開発環境 |
 | `general` | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | 汎用開発 |
 | `go` | base | Go開発環境 | Go言語プロジェクト |
-| `php` | general | PHP 8.3、Composer | PHP 8.3 系プロジェクト |
+| `php` | general | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
 | `php85` | general | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
 | `latex` | general | LaTeX | 文書・論文作成 |
 | `lfm` | general | Rust、gfortran、MeCab | 数値計算・自然言語処理 |
-| `snapshot` | Ubuntu Noble | zstd | スナップショット専用 |
+| `snapshot` | Ubuntu 26.04 | zstd | スナップショット専用 |
 
 ### 5.5 Git管理のガイドライン
 

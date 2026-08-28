@@ -244,7 +244,7 @@ flowchart TB
     Ubuntu["ubuntu:26.04"] --> Base["devbase-base<br/>Docker CLI, Python 3"]
     Base --> General["devbase-general<br/>AWS CLI, gcloud, Node.js, etc."]
     Base --> Go["devbase-go<br/>Go 開発環境"]
-    General --> PHP["devbase-php<br/>PHP 8.3, Composer"]
+    General --> PHP["devbase-php<br/>PHP 8.5, Composer"]
     General --> LaTeX["devbase-latex<br/>LaTeX"]
     General --> LFM["devbase-lfm<br/>Rust, gfortran, MeCab"]
 
