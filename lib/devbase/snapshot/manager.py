@@ -52,6 +52,14 @@ class _TarMountSpec:
         return cls(volume_mount=volume_mount, backup_mount=backup_mount)
 
 
+def _find_snapshot_entry(snapshots: list, name: str) -> Optional[dict]:
+    """スナップショット名に一致するメタデータエントリを返す。"""
+    for snap in snapshots:
+        if snap['name'] == name:
+            return snap
+    return None
+
+
 class SnapshotManager:
     """Docker volumeのスナップショット管理"""
 
@@ -198,13 +206,12 @@ class SnapshotManager:
         # メタデータを更新
         meta = self._load_metadata()
         # 元のスナップショットのメタデータを探してコピー
-        for snap in meta.get('snapshots', []):
-            if snap['name'] == name:
-                new_snap = dict(snap)
-                new_snap['name'] = new_name
-                new_snap['created_at'] = datetime.now().isoformat()
-                meta['snapshots'].append(new_snap)
-                break
+        snap = _find_snapshot_entry(meta.get('snapshots', []), name)
+        if snap is not None:
+            new_snap = dict(snap)
+            new_snap['name'] = new_name
+            new_snap['created_at'] = datetime.now().isoformat()
+            meta['snapshots'].append(new_snap)
         self._save_metadata(meta)
         logger.info("コピー完了: %s -> %s", name, new_name)
 
@@ -460,15 +467,11 @@ class SnapshotManager:
         snap_meta = self._load_snap_meta(snap_dir)
 
         # 既存エントリを探す
-        found = False
-        for snap in meta.get('snapshots', []):
-            if snap['name'] == name:
-                snap['updated_at'] = now
-                snap['incremental_count'] = snap_meta.get('incremental_count', 0)
-                found = True
-                break
-
-        if not found:
+        snap = _find_snapshot_entry(meta.get('snapshots', []), name)
+        if snap is not None:
+            snap['updated_at'] = now
+            snap['incremental_count'] = snap_meta.get('incremental_count', 0)
+        else:
             meta.setdefault('snapshots', []).append({
                 'name': name,
                 'created_at': now,
