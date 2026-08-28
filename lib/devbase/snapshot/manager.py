@@ -3,6 +3,7 @@
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -20,6 +21,35 @@ DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
 METADATA_FILE = 'snapshot.yml'
 _VALID_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+
+
+@dataclass(frozen=True)
+class _TarMountSpec:
+    """``docker run`` へ渡す volume と backup 先の mount 文字列の組。
+
+    NOTE: 現状固定。``mode`` が ``'backup'`` / ``'restore'`` のどちらでもない
+    場合、volume 側は ``mode == 'backup'`` でないため restore 用 (書き込み可能・
+    ``/target``) になり、backup 先は ``mode == 'restore'`` でないため backup 用
+    (書き込み可能) になる。つまり volume と backup 先の両方が書き込み可能になる
+    不具合を含むが、元の実装 (2 つの独立した三項演算子) の振る舞いをそのまま
+    再現している。修正は別の変更で行う。
+    """
+
+    volume_mount: str
+    backup_mount: str
+
+    @classmethod
+    def from_mode(cls, snap_dir: Path, mode: str) -> '_TarMountSpec':
+        abs_snap_dir = snap_dir.resolve()
+        volume_mount = (
+            f'{VOLUME_NAME}:/source:ro' if mode == 'backup'
+            else f'{VOLUME_NAME}:/target'
+        )
+        backup_mount = (
+            f'{abs_snap_dir}:/backup:ro' if mode == 'restore'
+            else f'{abs_snap_dir}:/backup'
+        )
+        return cls(volume_mount=volume_mount, backup_mount=backup_mount)
 
 
 class SnapshotManager:
@@ -353,14 +383,12 @@ class SnapshotManager:
         """
         image = self._ensure_snapshot_image()
 
-        abs_snap_dir = snap_dir.resolve()
-        volume_mount = f'{VOLUME_NAME}:/source:ro' if mode == 'backup' else f'{VOLUME_NAME}:/target'
-        backup_mount = f'{abs_snap_dir}:/backup:ro' if mode == 'restore' else f'{abs_snap_dir}:/backup'
+        mounts = _TarMountSpec.from_mode(snap_dir, mode)
 
         cmd = [
             'docker', 'run', '--rm',
-            '-v', volume_mount,
-            '-v', backup_mount,
+            '-v', mounts.volume_mount,
+            '-v', mounts.backup_mount,
             image,
             'bash', '-c', command,
         ]
