@@ -19,18 +19,7 @@ SNAPSHOT_IMAGE = 'devbase-snapshot:latest'
 DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
 METADATA_FILE = 'snapshot.yml'
-FULL_ARCHIVE_NAME = 'full.tar.zst'
-INCREMENTAL_ARCHIVE_PREFIX = 'incr-'
-SNAPSHOT_ARCHIVE_SUFFIX = '.tar.zst'
-INCREMENTAL_ARCHIVE_RE = re.compile(
-    rf'^{INCREMENTAL_ARCHIVE_PREFIX}(\d+){re.escape(SNAPSHOT_ARCHIVE_SUFFIX)}$'
-)
 _VALID_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
-
-
-def _is_snapshot_archive_name(name: str) -> bool:
-    """バックアップ実体のアーカイブ名か判定する"""
-    return name == FULL_ARCHIVE_NAME or bool(INCREMENTAL_ARCHIVE_RE.match(name))
 
 
 class SnapshotManager:
@@ -133,7 +122,9 @@ class SnapshotManager:
                     continue
                 # アーカイブ実体 (full.tar.zst / incr-NNN.tar.zst) のみを対象とし、
                 # meta.yml / snapshot.snar / *.bak 等は除外する。
-                if not _is_snapshot_archive_name(f.name):
+                if f.name != 'full.tar.zst' and not (
+                    f.name.startswith('incr-') and f.name.endswith('.tar.zst')
+                ):
                     continue
                 mtime = f.stat().st_mtime
                 if latest is None or mtime > latest:
@@ -267,7 +258,7 @@ class SnapshotManager:
         if not snap_dir.exists():
             raise SnapshotError(f"スナップショット '{name}' が見つかりません")
 
-        full_archive = snap_dir / FULL_ARCHIVE_NAME
+        full_archive = snap_dir / 'full.tar.zst'
         if not full_archive.exists():
             raise SnapshotError(f"フルバックアップが見つかりません: {full_archive}")
         return snap_dir, full_archive
@@ -294,12 +285,11 @@ class SnapshotManager:
         self, snap_dir: Path, point: int | None,
     ) -> List[Path]:
         """指定されたpointまでに適用する差分アーカイブを返す"""
+        incr_re = re.compile(r'^incr-(\d+)\.tar\.zst$')
         archives = []
-        for incr in sorted(
-            snap_dir.glob(f'{INCREMENTAL_ARCHIVE_PREFIX}*{SNAPSHOT_ARCHIVE_SUFFIX}')
-        ):
+        for incr in sorted(snap_dir.glob('incr-*.tar.zst')):
             if point is not None:
-                m = INCREMENTAL_ARCHIVE_RE.match(incr.name)
+                m = incr_re.match(incr.name)
                 if not m:
                     continue
                 if int(m.group(1)) > point:
@@ -390,7 +380,7 @@ class SnapshotManager:
         self._run_docker_tar(
             snap_dir, 'backup',
             "tar --listed-incremental=/backup/snapshot.snar "
-            f"-cf - -C /source . | zstd -1 -T0 -o /backup/{FULL_ARCHIVE_NAME}"
+            "-cf - -C /source . | zstd -1 -T0 -o /backup/full.tar.zst"
         )
 
         # meta.yml を作成
@@ -399,7 +389,7 @@ class SnapshotManager:
             'created_at': datetime.now().isoformat(),
             'type': 'full',
             'volume': VOLUME_NAME,
-            'files': [FULL_ARCHIVE_NAME],
+            'files': ['full.tar.zst'],
             'incremental_count': 0,
         }
         self._save_snap_meta(snap_dir, meta)
@@ -414,13 +404,9 @@ class SnapshotManager:
             return
 
         # 差分番号を決定
-        existing = sorted(
-            snap_dir.glob(f'{INCREMENTAL_ARCHIVE_PREFIX}*{SNAPSHOT_ARCHIVE_SUFFIX}')
-        )
+        existing = sorted(snap_dir.glob('incr-*.tar.zst'))
         next_num = len(existing) + 1
-        incr_name = (
-            f'{INCREMENTAL_ARCHIVE_PREFIX}{next_num:03d}{SNAPSHOT_ARCHIVE_SUFFIX}'
-        )
+        incr_name = f'incr-{next_num:03d}.tar.zst'
 
         logger.info("差分バックアップを作成中: %s/%s", name, incr_name)
 
