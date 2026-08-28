@@ -20,6 +20,8 @@ SNAPSHOT_IMAGE = 'devbase-snapshot:latest'
 DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
 METADATA_FILE = 'snapshot.yml'
+# 個別スナップショットディレクトリ内のメタデータファイル名
+SNAPSHOT_META_FILE = 'meta.yml'
 _VALID_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
 
 
@@ -491,15 +493,15 @@ class SnapshotManager:
             yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
 
     def _load_snap_meta(self, snap_dir: Path) -> dict:
-        """個別スナップショットのmeta.ymlを読み込む"""
-        meta_path = snap_dir / 'meta.yml'
+        """個別スナップショットのメタデータ (SNAPSHOT_META_FILE) を読み込む"""
+        meta_path = snap_dir / SNAPSHOT_META_FILE
         if meta_path.exists():
             with open(meta_path) as f:
                 return yaml.safe_load(f) or {}
         return {}
 
     def _save_snap_meta(self, snap_dir: Path, meta: dict) -> None:
-        """個別スナップショットのmeta.ymlを保存する"""
-        meta_path = snap_dir / 'meta.yml'
+        """個別スナップショットのメタデータ (SNAPSHOT_META_FILE) を保存する"""
+        meta_path = snap_dir / SNAPSHOT_META_FILE
         with open(meta_path, 'w') as f:
             yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
