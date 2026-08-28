@@ -72,3 +72,66 @@
 2. Replace the inline filename condition in last_snapshot_time with that predicate
 3. Reuse the same constants in create/restore command construction only where it does not obscure the shell command
 4. Run tests/snapshot/test_auto_snapshot.py and then the full test command
+
+## ラウンド 2（実装 kiro / レビュー codex / gemini）
+
+### R2-001 — `lib/devbase/volume/compose.py#generate_scaled_compose`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| long_parameter_list | introduce_parameter_object | major | codex / gemini | レビュー中 | 1 |
+
+**なぜ**: scale 以外に compose_file, dev_service_name, secret_env_names, global_env_names, project_env_names, dev_environment が並び、機密名の全体/由来別セットと dev 環境の組が呼び出しから内部ヘルパーまで渡り回っている
+
+**手順**: 1. 既存の公開シグネチャは残したまま、内部用の dataclass で compose path, dev service name, secret names, dev environment をまとめる
+2. generate_scaled_compose の冒頭で引数から parameter object を組み立てる
+3. _SecretNames 生成、_services_receiving_secrets 呼び出し、_build_scaled_services 呼び出しを parameter object 経由に置き換える
+4. tests/volume の generate_scaled_compose 経路を実行して公開インタフェースの互換性を確認する
+
+### R2-002 — `lib/devbase/volume/manager.py#get_volume_for_index`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| duplication | consolidate_duplication | minor | codex / gemini | レビュー中 | 2 |
+
+**なぜ**: VolumeManager.get_volume_for_index と module-level get_volume_for_index が同じ SHARED_VOLUME_PREFIX 連結規則を別々に持ち、work volume 側だけは module-level helper が VolumeManager へ委譲する形になっていて同じ概念の表現が揺れている
+
+**手順**: 1. module-level get_volume_for_index を VolumeManager().get_volume_for_index(index) へ委譲し、work volume helper と同じ構造に揃える
+2. project_name 引数は後方互換のため残し、挙動を変えない
+3. tests/volume/test_manager.py に shared volume helper と class method が同じ名前規則を返す現状固定テストを追加する
+4. tests/volume/test_manager.py を実行し、必要なら volume/compose 経路も実行する
+
+### R2-003 — `lib/devbase/snapshot/manager.py#SnapshotManager._run_docker_tar`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| primitive_obsession | introduce_value_object | major | codex | レビュー中 | 2 |
+
+**なぜ**: mode は 'backup' / 'restore' の文字列で渡され、mount の読み書き方向を分岐させる制約が _run_docker_tar 内の三項演算子に閉じ込められているため、未検証の文字列でも restore 扱いになる
+
+**手順**: 1. backup/restore の mount 仕様を表す小さな値オブジェクトを追加し、mode 文字列から生成する境界を 1 箇所に寄せる
+2. _run_docker_tar は値オブジェクトから volume_mount と backup_mount を受け取る形にする
+3. _create_full, _create_incremental, _restore_full_archive, _restore_incremental_archive の呼び出しは既存の公開挙動を保つ最小変更に留める
+4. tests/snapshot の restore 経路に加え、backup 側のコマンド組み立てを固定するテストを先に追加してから実装する
+
+### R2-004 — `lib/devbase/volume/manager.py#VolumeManager.ensure_volumes`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| duplication | consolidate_duplication | minor | gemini | 取り消し | 2 |
+
+**なぜ**: 共有ホームボリュームとワークボリュームの存在確認、ログ出力、作成エラーハンドリングの処理が重複している
+
+**手順**: 1. ボリュームの存在確認・ログ出力・作成を行う _ensure_volume メソッドを抽出する
+2. ensure_volumes 内の各ボリューム確保処理を、抽出したメソッドの呼び出しに置き換える
+
+### R2-005 — `lib/devbase/snapshot/manager.py#SnapshotManager._ensure_snapshot_image`
+
+| スメル | 手法 | 重要度 | 提案元 | 状態 | コミット |
+| --- | --- | --- | --- | --- | ---: |
+| long_method | extract_method | minor | gemini | 取り消し | 2 |
+
+**なぜ**: イメージの存在確認と、無かった場合のビルド処理（複数コマンドのフォールバック・エラー解析）が混在して見通しが悪い
+
+**手順**: 1. 複数コマンドのフォールバックによるビルド処理を _build_snapshot_image メソッドとして抽出する
+2. _ensure_snapshot_image ではイメージが存在しない場合に抽出したメソッドを呼び出すようにする
