@@ -24,7 +24,7 @@ import yaml
 
 from devbase.errors import SnapshotCommandError, SnapshotError
 from devbase.snapshot.manager import (
-    SnapshotManager, rename_only_failure, rename_targets,
+    SnapshotManager, chunk_paths, rename_only_failure, rename_targets,
 )
 
 @pytest.fixture(autouse=True)
@@ -290,6 +290,77 @@ def test_an_empty_target_with_spaces_is_reported_as_one_path(tmp_path, caplog):
     warnings = '\n'.join(r.getMessage() for r in caplog.records
                           if r.levelname == 'WARNING')
     assert './a b/new dir' in warnings
+
+
+# ---------------------------------------------------------------------------
+# 検証コマンドの分割 (ARG_MAX 対策)
+# ---------------------------------------------------------------------------
+
+def test_paths_fit_in_one_chunk_when_small():
+    assert chunk_paths(['a', 'b', 'c'], budget=100) == [['a', 'b', 'c']]
+
+
+def test_paths_are_split_to_stay_under_the_budget():
+    paths = ['x' * 30 for _ in range(10)]
+    chunks = chunk_paths(paths, budget=100)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert len(' '.join(chunk)) <= 100
+    assert [p for chunk in chunks for p in chunk] == paths
+
+
+def test_a_single_oversized_path_is_kept_in_its_own_chunk():
+    """1 件で budget を超えるパスも捨てない。"""
+    assert chunk_paths(['y' * 500], budget=100) == [['y' * 500]]
+
+
+def test_no_chunks_for_no_paths():
+    assert chunk_paths([]) == []
+
+
+def test_many_targets_are_verified_in_several_containers(tmp_path):
+    """パスが多いと 1 コマンドに詰め込まず、複数回に分けて検証する。"""
+    _write_generation(tmp_path, 'gen', incrementals=1)
+    stderr = ''.join(
+        f"tar: Cannot rename './src/{'d' * 200}/{i}' "
+        f"to './dst/{'e' * 200}/{i}': Directory not empty\n"
+        for i in range(1000))
+
+    class CountingManager(StubManager):
+        checks: list = []
+
+        def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
+            if self._archive_in(command) is None and mode == 'restore':
+                self.checks.append(command)
+                return None
+            return super()._run_docker_tar(snap_dir, mode, command, volumes)
+
+    mgr = CountingManager(tmp_path, {'incr-001.tar.zst': stderr})
+    mgr.checks = []
+    mgr.restore('gen')
+
+    assert len(mgr.checks) > 1
+    for command in mgr.checks:
+        assert len(command) < 128 * 1024
+
+
+def test_a_failed_verification_does_not_fail_the_restore(tmp_path, caplog):
+    """検証で落ちても、終わっている復元を失敗にしない。"""
+    _write_generation(tmp_path, 'gen', incrementals=1)
+
+    class BrokenCheckManager(StubManager):
+        def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
+            if self._archive_in(command) is None and mode == 'restore':
+                raise SnapshotCommandError("引数が長すぎます", stderr='')
+            return super()._run_docker_tar(snap_dir, mode, command, volumes)
+
+    mgr = BrokenCheckManager(tmp_path, {'incr-001.tar.zst': BOGUS_RENAME_STDERR})
+    with caplog.at_level('WARNING'):
+        mgr.restore('gen')  # 例外を投げない
+
+    warnings = '\n'.join(r.getMessage() for r in caplog.records
+                          if r.levelname == 'WARNING')
+    assert '復元自体は完了' in warnings
 
 
 def test_a_real_tar_error_still_stops_the_restore(tmp_path):

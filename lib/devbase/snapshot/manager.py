@@ -64,6 +64,33 @@ def rename_only_failure(stderr: str) -> Optional[list]:
     return renames or None
 
 
+# 検証コマンド 1 回あたりの引数の上限。``docker run`` の引数は最終的に execve の
+# ARG_MAX (多くの環境で 128KB) に収まる必要がある。巨大なツリーを入れ替えると
+# 失敗した rename が大量に出うるので、余裕をもって分割する。
+_CHECK_COMMAND_BUDGET = 60_000
+
+
+def chunk_paths(paths: list, budget: int = _CHECK_COMMAND_BUDGET) -> list:
+    """引用済みのパスを、1 コマンドの長さが budget を超えないように分ける。
+
+    1 件で budget を超える異常に長いパスも、単独のチャンクとして必ず返す
+    (捨てると検証から漏れるため)。
+    """
+    chunks: list = []
+    current: list = []
+    length = 0
+    for path in paths:
+        # +1 は区切りの空白
+        if current and length + len(path) + 1 > budget:
+            chunks.append(current)
+            current, length = [], 0
+        current.append(path)
+        length += len(path) + 1
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def rename_targets(lines: list) -> list:
     """rename エラーの行から**宛先**のパスだけを取り出す。
 
@@ -325,20 +352,31 @@ class SnapshotManager:
         """
         if not targets:
             return
-        quoted = ' '.join(shlex.quote(t) for t in sorted(set(targets)))
-        result = self._run_docker_tar(
-            snap_dir, 'restore',
-            'for p in ' + quoted + '; do '
-            'full="/target/${p#./}"; '
-            'if [ -d "$full" ] && [ -z "$(ls -A "$full" 2>/dev/null)" ]; then '
-            'echo "$p"; fi; '
-            'done',
-            volumes=volumes,
-        )
-        # 空白を含むパスを分断しないよう、行単位で解析する。
-        # テストダブルは戻り値を返さない。その場合は検証を行わない。
-        empty = [line.strip() for line in result.stdout.splitlines()
-                 if line.strip()] if result is not None and result.stdout else []
+        quoted = [shlex.quote(t) for t in sorted(set(targets))]
+        empty: list = []
+        for chunk in chunk_paths(quoted):
+            try:
+                result = self._run_docker_tar(
+                    snap_dir, 'restore',
+                    'for p in ' + ' '.join(chunk) + '; do '
+                    'full="/target/${p#./}"; '
+                    'if [ -d "$full" ] && [ -z "$(ls -A "$full" 2>/dev/null)" ]; then '
+                    'echo "$p"; fi; '
+                    'done',
+                    volumes=volumes,
+                )
+            except SnapshotError as e:
+                # ここまで来た時点で復元自体は終わっている。**検証の失敗で復元を
+                # 失敗にしない。** 検証できなかったことだけを伝える。
+                logger.warning(
+                    "復元後の rename 宛先の検証に失敗しました。復元自体は完了して"
+                    "います: %s", e)
+                return
+            # 空白を含むパスを分断しないよう、行単位で解析する。
+            # テストダブルは戻り値を返さない。その場合は検証を行わない。
+            if result is not None and result.stdout:
+                empty.extend(line.strip() for line in result.stdout.splitlines()
+                             if line.strip())
         if not empty:
             return
         logger.warning(
