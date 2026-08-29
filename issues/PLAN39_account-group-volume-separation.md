@@ -110,12 +110,58 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
   `rm -rf "$HOME_PATH"` (`同 420`) で消してから `ln -s` する。`~/.config/gcloud` を symlink 対象に
   **しない**本プランでは両者は衝突しないが、`~` 直下の生成物を将来 symlink 対象へ加えるときは
   この順序が効く（AC11 はその退行を見る）。
+- 前提 15: **この環境では `gcloud auth login` は自動でブラウザ非起動フローになる**（実機検証済み。
+  `carmo-ai-dev-1` / gcloud 582.0.0）。`check_browser.ShouldLaunchBrowser()` は Linux で
+  `DISPLAY` / `WAYLAND_DISPLAY` / `MIR_SOCKET` がどれも無ければ False を返す
+  (`googlecloudsdk/command_lib/util/check_browser.py:36-66`)。コンテナ内で実行すると
+  `ShouldLaunchBrowser(True) = False`（`DISPLAY` は空。`xdg-open` は存在するが判定に使われない）。
+  この場合 `api_lib/auth/util.py:355-365` の `elif not can_launch_browser:` へ入り、Google 所有の
+  クライアント ID では `RemoteLoginWithAuthProxyFlowRunner`（= `--no-launch-browser` と同じ実装）が
+  選ばれる。**フラグを付けなくても「URL を貼って認証コードを戻す」フローになる。**
+  VS Code のポート転送の有無は関係しない（判定材料が `DISPLAY` であってポート到達性ではないため）。
+  各経路の違いは次のとおり（`gcloud auth login --help`）。
+
+  | 経路 | 手元に必要なもの | 受け渡すもの |
+  |---|---|---|
+  | 既定（この環境では下段と同じ挙動になる） | 別マシンのブラウザ | URL を渡し、**認証コード**を貼り戻す |
+  | `--no-launch-browser` | 別マシンのブラウザのみ | 同上 |
+  | `--no-browser` | 別マシンの**ブラウザ + gcloud 372.0 以上** | 生成コマンドを実行し、**長い URL** を貼り戻す |
+
+- 前提 16: **`gcloud auth login --update-adc` は `gcloud auth application-default login` と等価ではない。**
+  前者は既定で `add_quota_project=False` のまま `ADC(creds).DumpADCToFile()` を呼ぶ
+  (`command_lib/auth/auth_util.py:197-220`) のに対し、後者は `DumpADCOptionalQuotaProject(creds)` を
+  呼ぶ (`surface/auth/application_default/login.py:296`)。つまり **`--update-adc` では quota project が
+  ADC に書かれない**。quota project を要する API を使うなら `gcloud auth application-default login` を
+  別に実行する。また `WriteGcloudCredentialsToADC` は `PromptIfADCEnvVarIsSet()` を呼び、
+  `GOOGLE_APPLICATION_CREDENTIALS` が設定されていると「Credentials will still be generated to the
+  default location / To use these credentials, unset this environment variable before running your
+  application」と警告する (`同 174-190`)。`adc` モードでこの変数を unset する本プランの判断と一致する。
+
+- 前提 17: **gws はベースイメージに入っておらず、現在どのコンテナにも存在しない**（実機確認）。
+  稼働中の dev コンテナ 14 本すべてで `command -v gws` が空、`~/.config/gws` も存在しない。
+  issue #116 が計測した 2.9MB は、調査対象コンテナ (`eef62d0d42cb`) ごと失われている
+  （`docker ps -a` に無い）。gws は npm global 等で利用者が個別に入れるもので、その導入先
+  (`~/.npm` / `~/.local/bin`) も永続化対象外である。したがって**設定ディレクトリを永続化するだけでは
+  gws は復旧しない**（バイナリの導入が別途要る。AC2 の前提）。
+
+- 前提 18: 空の named volume は **root 所有**で作られ、uid 1000 では書き込めない（実機確認:
+  `docker run --rm -u 1000:1000 -v <空volume>:/v alpine touch /v/x` → `Permission denied`）。
+  グループボリュームを `CLOUDSDK_CONFIG` の向き先にする以上、**export の前に `chown` が要る**。
+  SQLite 自体は named volume 上で正常に動く（同じく実機で `create table` / `insert` を確認）ので
+  `credentials.db` の置き場としては問題ない（並行実行は前提 13 の別件）。
+
+- 前提 19: ADC の解決を実機（`carmo-ai-dev-1`、gcloud 同梱の `google.auth`）で確認した結果:
+  (1) 鍵ありの現状は SA credentials が解決される（project `nyle-carmo-analysis`）、
+  (2) `GOOGLE_APPLICATION_CREDENTIALS` が存在しないパスを指すと
+  `DefaultCredentialsError: File ... was not found.`（フォールバックしない。前提 10 の再確認）、
+  (3) 2 変数を unset し ADC ファイルも無いと `Your default credentials were not found.`。
+  (3) が `adc` モードで**まだログインしていない**ときの正常な状態であり、手順書の出発点になる。
 
 ## 受け入れ条件
 
 - [ ] AC1: 同じグループのコンテナで `devbase down` → `devbase up` の後、`gcloud auth list` が
       **再認証なしで**同じ active account を返す。
-- [ ] AC2: 同条件で `gws` の認証済みコマンドが再認証なしで通る（`$GOOGLE_WORKSPACE_CLI_CONFIG_DIR` 配下の
+- [ ] AC2: **gws を導入したうえで**（前提 17）、同条件で `gws` の認証済みコマンドが再認証なしで通る（`$GOOGLE_WORKSPACE_CLI_CONFIG_DIR` 配下の
       `credentials.enc` と `.encryption_key` が保たれる）。
 - [ ] AC3: 異なるグループのコンテナが互いの認証を参照しない。検証: `kkg` グループのコンテナで
       `gcloud auth list` / `claude mcp list` を実行し、`default` グループの認証が見えないこと。
@@ -329,7 +375,7 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
   この 2 行だけで、`credentials.db` / `access_tokens.db` / `legacy_credentials/` /
   `configurations/` / `application_default_credentials.json`（= ADC ファイル）と gws の
   `credentials.enc` / `.encryption_key` がグループボリュームへ移る。ディレクトリは entrypoint が
-  `mkdir -p` + `chown` してから export する（空ボリュームは root 所有で作られるため）。
+  `mkdir -p` + `chown` してから export する（空ボリュームは root 所有で作られ uid 1000 では書けない。前提 18）。
 
 - **認証モード:** `GCP_AUTH_MODE` を新設する。
 
@@ -400,13 +446,16 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
   2. **新しいグループの初回セットアップ** — `projects/<name>/env` に
      `DEVBASE_ACCOUNT_GROUP` / `GCP_ACTIVE_PROFILE` / `AWS_PROFILE` を書く → `devbase up` →
      コンテナ内で認証する、までを 1 本の流れとして書く。
-  3. **gcloud のヘッドレス認証** — 前提 15 の 3 経路を、この環境で**実際に通るもの**に絞って書く。
-     検証すること: (a) VS Code アタッチ時にポート転送が効いて既定のブラウザフローが通るか、
-     (b) 通らない場合に `--no-launch-browser`（認証コードの貼り戻し）で完結するか、
-     (c) `gcloud auth login --update-adc` 1 回で `gcloud auth list` と ADC の両方が満たせるか
-     （満たせるなら手順を 1 回に減らす。満たせないなら `gcloud auth application-default login` を別途書く）。
-  4. **gws の認証** — `gws auth login` 相当の手順と、`GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file` が
-     必要かどうかの実機確認結果（コンテナに OS キーリングが無い場合の挙動）。
+  3. **gcloud の認証** — 前提 15 / 16 で調査済みなので、手順としては次を書けばよい。
+     `gcloud auth login`（フラグ不要。この環境では自動で URL + 認証コードのフローになる）と、
+     ADC 用に `gcloud auth application-default login` の 2 回。`--update-adc` で 1 回に減らす案は
+     quota project が書かれないため（前提 16）**既定の手順にはしない**。
+     残る実地確認: 実際に 1 回通して、貼り戻しの UI（プロンプト文言）と所要時間を手順書に書き写す。
+  4. **gws の認証** — 前提 17 のとおり gws は**そもそも導入されていない**ので、
+     手順書には導入から書く（`npm install -g @googleworkspace/cli` 等）。あわせて
+     `gws auth setup` / `gws auth login` の実地確認と、
+     `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file` が必要かどうか（コンテナに OS キーリングが無い場合の挙動）、
+     導入先を永続化するのか毎回入れ直すのかの方針を書く。
   5. **認証モードの切り替え** — `GCP_AUTH_MODE` の `adc` / `key` / 未設定の使い分けと、
      切り替え後に `devbase up` が必要なこと。鍵が要るのはどういう場面かを 1 段落で書く。
   6. **確認コマンド** — `gcloud auth list` / `gcloud config get account` /
@@ -439,6 +488,7 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 | 既存スナップショットが復元できなくなる | Task 6 で旧メタデータ互換をテストで固定 |
 | `GCP_AUTH_MODE=adc` で `GOOGLE_APPLICATION_CREDENTIALS` の unset を忘れると、値だけ残って実体が無く ADC が `DefaultCredentialsError` で落ちる（前提 10。フォールバックしない） | Task 5 で 2 変数を unset する。AC12 (3) で `key` → `adc` の戻り方向を実機とテストの両方で固定する |
 | 同一グループの複数コンテナが同時に gcloud を叩き `database is locked` になる（前提 13。gcloud は並行実行非対応で `credentials.db` は SQLite） | 恒久対策は取らない。グループボリュームを共有する設計に内在するもので symlink 方式でも同じ。ドキュメントに再実行で回避する旨を書く |
+| gws の設定を永続化しても、バイナリがベースイメージにも永続領域にも無いため、コンテナ再作成のたびに再導入が要る（前提 17） | AC2 の前提として手順書（Task 8）に導入手順を書く。ベースイメージへ焼き込むかは本プランのスコープ外とし、必要なら別 issue で扱う |
 | `~/.config/gcloud` が gcloud の設定ディレクトリだと誤解され、そこを永続化しようとする揺り戻しが起きる | `CLOUDSDK_CONFIG` 導入後は単なる鍵の置き場である旨を Task 5 の記述と `docs/user/container-operations.md` に明記する |
 | 切り戻し時に、シード後にグループ側だけへ書かれた認証・履歴が失われる | 切り戻し手順の同期ステップを必須とし、正とするグループを 1 つに決めてから実行する |
 
