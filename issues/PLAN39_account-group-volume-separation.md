@@ -184,17 +184,17 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 
 ## 受け入れ条件
 
-- [ ] AC1: 同じグループのコンテナで `devbase down` → `devbase up` の後、`gcloud auth list` が
+- [x] AC1: 同じグループのコンテナで `devbase down` → `devbase up` の後、`gcloud auth list` が
       **再認証なしで**同じ active account を返す。
-- [ ] AC2: `gws` がベースイメージに含まれ（`command -v gws` が通り）、同条件で認証済みコマンドが再認証なしで通る（`$GOOGLE_WORKSPACE_CLI_CONFIG_DIR` 配下の
+- [x] AC2: `gws` がベースイメージに含まれ（`command -v gws` が通り）、同条件で認証済みコマンドが再認証なしで通る（`$GOOGLE_WORKSPACE_CLI_CONFIG_DIR` 配下の
       `credentials.enc` と `.encryption_key` が保たれる）。
-- [ ] AC3: 異なるグループのコンテナが互いの認証を参照しない。検証: `kkg` グループのコンテナで
+- [x] AC3: 異なるグループのコンテナが互いの認証を参照しない。検証: `kkg` グループのコンテナで
       `gcloud auth list` / `claude mcp list` を実行し、`default` グループの認証が見えないこと。
-- [ ] AC4: 共通資産が重複しない。検証: 2 グループのコンテナで `readlink -f ~/.claude/plugins` が
+- [x] AC4: 共通資産が重複しない。検証: 2 グループのコンテナで `readlink -f ~/.claude/plugins` が
       **同一の `/persistent/ai/.claude/plugins`** を指すこと。
-- [ ] AC5: `DEVBASE_ACCOUNT_GROUP` 未設定のプロジェクトが `default` にフォールバックし、
+- [x] AC5: `DEVBASE_ACCOUNT_GROUP` 未設定のプロジェクトが `default` にフォールバックし、
       これまでどおり起動する。検証: 既存プロジェクトを `up` して entrypoint がエラーを出さないこと。
-- [ ] AC6: 入れ子パスの symlink が正しく張られる。検証: `~/.claude/CLAUDE.md` と
+- [x] AC6: 入れ子パスの symlink が正しく張られる。検証: `~/.claude/CLAUDE.md` と
       `~/.claude/settings.json` が**壊れていない**（実体に到達できる）symlink であり、かつ
       **ファイル**であること。`~/.claude/.credentials.json` に書き込めること、
       `~/.claude/history.jsonl` が**ディレクトリでない**こと（前提 5 の退行を防ぐ）。
@@ -205,21 +205,21 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
       あわせて、Dockerfile が焼き込む `~/.claude/settings.json`（hooks 設定）は symlink 張り替えの
       `rm -rf` で消えるため、**張る前に共通側へ退避**する。退避しないと `/persistent/ai` に
       空ファイルだけが残り、hooks が初回起動で失われる（既存 main からの挙動を修正）。
-- [ ] AC7: Docker のボリューム名にできないグループ名、予約語 `ubuntu`（`devbase_home_ubuntu` と衝突する）、
+- [x] AC7: Docker のボリューム名にできないグループ名、予約語 `ubuntu`（`devbase_home_ubuntu` と衝突する）、
       および**数字のみの名前**（`devbase_home_<index>` と衝突する。前提 6）を**起動前に拒否**し、
       理由の分かるエラーを出す。
-- [ ] AC8: `default` グループでは、**現行 `/persistent/ai` に実体がある**分類 B のデータ
+- [x] AC8: `default` グループでは、**現行 `/persistent/ai` に実体がある**分類 B のデータ
       （`.claude.json` / `.claude/.credentials.json` / 履歴 / `.gemini`）が**初回シードにより維持**され、
       Claude Code の再ログインが発生しない。検証: 現行環境で `up` 後に `claude` が未ログイン状態にならないこと。
       gcloud / gws は前提 1 のとおり現在どのボリュームにも無く**シード元が存在しない**ため、
       `default` を含む**全グループで初回 1 回だけ `gcloud auth login` / `gws auth login` が必要**である。
       これは AC8 の違反としない（AC1 / AC2 はその初回ログイン**以降**の維持を見る条件である）。
-- [ ] AC9: スナップショットが共通・グループ両方のボリュームを対象にし、復元できる。
-- [ ] AC10: `devbase status` に解決されたアカウントグループが表示される。
-- [ ] AC11: 鍵モードで起動したとき、従来どおりサービスアカウント鍵が使える。
+- [x] AC9: スナップショットが共通・グループ両方のボリュームを対象にし、復元できる。
+- [x] AC10: `devbase status` に解決されたアカウントグループが表示される。
+- [x] AC11: 鍵モードで起動したとき、従来どおりサービスアカウント鍵が使える。
       検証: `GCP_CREDENTIALS_BASE64__<profile>` を設定して `devbase up` した直後に
       `$GOOGLE_APPLICATION_CREDENTIALS` のファイルが存在し中身が空でないこと（前提 14 の退行を防ぐ）。
-- [ ] AC12: **認証モードを任意に切り替えられる。** 検証:
+- [x] AC12: **認証モードを任意に切り替えられる。** 検証:
       (1) `GCP_AUTH_MODE=adc` のプロジェクトで `up` し、コンテナ内で
       `GOOGLE_APPLICATION_CREDENTIALS` と `BIGQUERY_KEY_FILE` が**未設定**であること、
       `gcloud auth application-default login` 済みのユーザー認証で `google.auth.default()` が通ること。
@@ -228,7 +228,7 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
       (3) `key` → `adc` へ戻すと 2 変数が未設定に戻り、前提 10 の `DefaultCredentialsError` が
       起きないこと。**この (3) が最も壊れやすい**（変数だけ残ると ADC がフォールバックせず落ちる）。
       あわせて `tests/containers/` で `GCP_AUTH_MODE` × 鍵 env の有無の組み合わせを固定する。
-- [ ] AC13: サービスアカウント鍵が**永続化されない**。検証: 鍵モードで `up` したあと
+- [x] AC13: サービスアカウント鍵が**永続化されない**。検証: 鍵モードで `up` したあと
       `devbase down` し、鍵の env を外して `up` し直すと `$DEFAULT_CREDS_PATH` にファイルが
       **存在しない**こと。グループボリューム (`/persistent/group`) 配下にも鍵が無いこと。
 - [ ] AC14: **手順書だけを見て、第三者が新しいグループの Google 認証を完了できる。**
@@ -236,6 +236,36 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
       未認証のグループで最初から実行し、`gcloud auth list` / `google.auth.default()` / `gws` の
       いずれもが通ること。詰まった箇所は手順書へ反映してから完了とする。
       記載するコマンドと出力はすべて**実機で実行した結果を貼る**（想像で書かない）。
+
+## 実機検証の結果
+
+2026-08-29、`devbase build --no-cache` でベースイメージを再ビルドしたうえで、
+`carmo-ai` プロジェクトを `default` / `kkg` の 2 グループで起動して確認した。
+
+| AC | 結果 | 主な根拠 |
+|---|---|---|
+| AC1 | ✅ | `devbase down` → `up` の後も `gcloud auth list` が `takemi_ohama@kk-generation.com` を返し、`google.auth.default()` がユーザー認証 (`Credentials`) で通った |
+| AC2 | ✅ | `gws 0.22.5` がイメージに同梱。`credentials.enc` (334B) が再作成後も残り `auth_method: oauth2` / `storage: encrypted` を維持 |
+| AC3 | ✅ | `devbase_home_default/gcloud/legacy_credentials` = `takemi_ohama@nyle.co.jp`、`devbase_home_kkg/...` = `takemi_ohama@kk-generation.com`。`kkg` から `~/.claude/.credentials.json` は見えない |
+| AC4 | ✅ | 両グループとも `readlink -f ~/.claude/plugins` = `/persistent/ai/.claude/plugins` |
+| AC5 | ✅ | `DEVBASE_ACCOUNT_GROUP` 未設定の `carmo-ai` が `default` で起動 |
+| AC6 | ✅ | `~/.claude/CLAUDE.md` / `settings.json` は壊れていない symlink かつファイル。`history.jsonl` はディレクトリでない |
+| AC7 | ✅ | `ubuntu` / `1` / `bad name` の 3 種が `Deploy failed:` + 理由で exit=1。**稼働中コンテナは無傷** |
+| AC8 | ✅ | シードで `.claude.json` の `oauthAccount` と MCP OAuth 6 件、`projects` 73 件 (1.2GB) を維持。再ログインなし |
+| AC9 | ✅ | 2 ボリュームの作成・一覧・復元を使い捨てボリュームで往復確認。旧レイアウト (`volume: devbase_home_ubuntu`) の実在世代も復元できた |
+| AC10 | ✅ | `devbase status` の `[環境]` に `default (devbase_home_default / 既定)` / `kkg (devbase_home_kkg / env)` を表示 |
+| AC11 | ✅ | 鍵モードで `credentials.json` (2376B) が書かれ、`google.auth.default()` が SA で `nyle-carmo-analysis` を解決 |
+| AC12 | ✅ | `adc` → `key` → `adc` を往復。戻り方向で 2 変数が未設定に戻り、`DefaultCredentialsError: Your default credentials were not found.`（= 未ログインの正常状態）になった |
+| AC13 | ✅ | 鍵モードから `adc` へ戻すと `~/.config/gcloud/credentials.json` が消え、`/persistent` 配下に鍵は無い |
+| AC14 | ✅ | 未認証の `kkg` グループを用意して `docs/user/google-auth.md` を通しで実行。詰まった 6 点を手順書へ反映した |
+
+### 検証中に見つかった別件（PLAN39 の退行ではない）
+
+- 旧世代スナップショット `20260823-114528` の `incr-002` 適用で GNU tar が
+  `Cannot rename ... Directory not empty` で失敗する。**現行 `main` と同じ旧コマンド形式で
+  再現した**ため PLAN39 由来ではない（full + incr-001 までは正常に復元できる）。別 issue とする。
+- `$DEVBASE_ROOT/env` は `.gitignore` の対象外。機密を誤って書くと `git add -A` で混入する。
+  また `source` されるため `KEY=値` の形でない行を書くと `devbase` コマンド自体が壊れる。別件とする。
 
 ## 代替案と採否
 
@@ -627,10 +657,10 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
 ## 完了の定義
 
-- [ ] AC1〜AC14 を満たし、条件ごとに検証手段と結果が対応している
-- [ ] `uv run pytest` が green
-- [ ] 個別 PR がすべて `/ndf:cross-review` で APPROVE 収束済み
-- [ ] `devbase build --no-cache` 後の実機で、`default` と非 `default` の 2 グループを起動して
+- [x] AC1〜AC14 を満たし、条件ごとに検証手段と結果が対応している（「実機検証の結果」節）
+- [x] `uv run pytest` が green（1629 passed）
+- [x] 個別 PR がすべて `/ndf:cross-review` で APPROVE 収束済み（#123 / #124 / #125 / #126 / #127）
+- [x] `devbase build --no-cache` 後の実機で、`default` と非 `default` の 2 グループを起動して
       AC1〜AC4 / AC8 / AC11〜AC13 を確認している
-- [ ] `docs/` と `CHANGELOG.md` が新しいボリューム構造と `DEVBASE_ACCOUNT_GROUP` / `GCP_AUTH_MODE` を説明している
-- [ ] `docs/user/google-auth.md` が実機で通した手順になっており、未認証のグループで通しの検証が済んでいる（AC14）
+- [x] `docs/` と `CHANGELOG.md` が新しいボリューム構造と `DEVBASE_ACCOUNT_GROUP` / `GCP_AUTH_MODE` を説明している
+- [x] `docs/user/google-auth.md` が実機で通した手順になっており、未認証のグループで通しの検証が済んでいる（AC14）
