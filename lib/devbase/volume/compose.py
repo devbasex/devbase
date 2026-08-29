@@ -8,11 +8,16 @@ from typing import (
     Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
 )
 
-from devbase.env import compose_migrate
+from devbase.env import compose_migrate, keys
 from devbase.errors import DockerError
 from devbase.log import get_logger
 
-from .manager import get_work_volume_for_index, get_ai_volume_for_index
+from .manager import (
+    get_ai_volume_for_index,
+    get_group_volume,
+    get_work_volume_for_index,
+    resolve_account_group,
+)
 
 logger = get_logger(__name__)
 
@@ -66,15 +71,20 @@ def _volume_target(vol: Any) -> Optional[str]:
 
 
 def _replace_volumes_for_instance(
-    volumes: list, ai_volume: str, work_volume: str,
+    volumes: list, ai_volume: str, work_volume: str, group_volume: str,
 ) -> list:
     """Replace volume mounts in a service's volumes list for a specific instance.
 
     /home/ubuntu mounts are skipped (deprecated).
-    /persistent/ai is mapped to ai_volume.
+    /persistent/ai is mapped to ai_volume (shared by every container).
+    /persistent/group is mapped to group_volume (shared within the account group).
     /work is mapped to work_volume.
     """
-    replacements = {'/persistent/ai': ai_volume, '/work': work_volume}
+    replacements = {
+        '/persistent/ai': ai_volume,
+        '/persistent/group': group_volume,
+        '/work': work_volume,
+    }
     replaced_targets = set()
     new_volumes = []
 
@@ -107,7 +117,7 @@ def _replace_volumes_for_instance(
     return new_volumes
 
 
-def _build_volumes_section(config: dict, scale: int) -> dict:
+def _build_volumes_section(config: dict, scale: int, group_volume: str) -> dict:
     """Build the volumes section for a scaled compose file."""
     # Copy original volumes (mysql, valkey, etc.) from config
     volumes: Dict[str, Any] = {
@@ -117,6 +127,10 @@ def _build_volumes_section(config: dict, scale: int) -> dict:
 
     # Add shared home volume (devbase_home_ubuntu) once for all instances
     volumes[get_ai_volume_for_index(1)] = {'external': True}
+
+    # Add the account group volume (devbase_home_<group>), shared by every
+    # container of the group (PLAN39)
+    volumes[group_volume] = {'external': True}
 
     # Add work volumes for each dev instance (external)
     for i in range(1, scale + 1):
@@ -291,6 +305,7 @@ def _apply_dev_environment(service: dict, extra: Mapping[str, str]) -> None:
 
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int,
+    group_volume: str,
     secret_env_names: Sequence[str] = (),
     dev_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
@@ -311,7 +326,7 @@ def _build_dev_instance(
     ai_volume = get_ai_volume_for_index(index)
     work_volume = get_work_volume_for_index(index)
     service['volumes'] = _replace_volumes_for_instance(
-        service.get('volumes', []), ai_volume, work_volume,
+        service.get('volumes', []), ai_volume, work_volume, group_volume,
     )
 
     return service
@@ -319,6 +334,7 @@ def _build_dev_instance(
 
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
+    group_volume: str,
     secret_names: Optional[_SecretNames] = None,
     secret_services: Optional[Mapping[str, Set[str]]] = None,
     dev_environment: Optional[Mapping[str, str]] = None,
@@ -362,7 +378,7 @@ def _build_scaled_services(
     # 構成でも両方の機密を必要とする。
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i, secret_names.all,
+            dev_service, dev_service_name, i, group_volume, secret_names.all,
             dev_environment=dev_environment,
         )
     return scaled_services
@@ -515,14 +531,25 @@ def generate_scaled_compose(
     secret_names = _SecretNames(
         secret_env_names, global_env_names, project_env_names)
 
+    # アカウントグループはここで 1 度だけ解決し、マウント・ボリューム宣言・
+    # 環境変数の 3 か所へ同じ値を配る。コンテナ側で解決し直させると、マウント
+    # されているボリュームと entrypoint が見ているグループ名がずれうる。
+    # 不正な名前はここで DevbaseError になり、構成生成の時点で起動が止まる。
+    account_group = resolve_account_group()
+    group_volume = get_group_volume(account_group)
+    dev_environment = {
+        **(dev_environment or {}),
+        keys.DEVBASE_ACCOUNT_GROUP: account_group,
+    }
+
     scaled_config = {
         'services': _build_scaled_services(
-            services, dev_service, dev_service_name, scale,
+            services, dev_service, dev_service_name, scale, group_volume,
             secret_names=secret_names,
             secret_services=secret_services,
             dev_environment=dev_environment,
         ),
-        'volumes': _build_volumes_section(config, scale),
+        'volumes': _build_volumes_section(config, scale, group_volume),
         'networks': _build_networks_section(config),
     }
 
