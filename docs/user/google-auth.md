@@ -188,7 +188,10 @@ nyle-carmo-analysis Credentials
 > **Note:** `gcloud auth login --update-adc` で 1 回に減らす案は**採りません**。
 > `--update-adc` は quota project を ADC に書かないため（`add_quota_project=False` のまま
 > ADC を書き出す）、quota project を要する API で困ります。
-> `gcloud auth application-default login` は quota project も書き込みます。
+> `gcloud auth application-default login` は quota project の書き込みも試みますが、
+> 書かれるのは利用可能な project を解決できた場合に限られます。上の実行例のように
+> `Cannot find a quota project` となったときは書かれないので、`set-quota-project` で
+> 明示的に追加してください。
 
 > **Note:** 鍵モード（`GCP_AUTH_MODE=key`）で実行すると、gcloud が
 > 「Credentials will still be generated to the default location / To use these credentials,
