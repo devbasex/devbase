@@ -27,6 +27,7 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 - Claude Code の MCP OAuth トークンと Gemini の `vertex-ai` 設定が**グループ単位に分かれる**（問題3。すでに混線している）。
 - サービスアカウント鍵に依存せず、**ユーザー認証（ADC）を既定の経路にできる**。鍵が要る場面は
   `GCP_AUTH_MODE` で切り替えられる。
+- 新しいアカウントグループを足す人が、**手順書だけを見て Google 認証を完了できる**。
 - 一方で `.claude/plugins`（238MB）等の**共通資産はグループ数だけ重複しない**。
 
 やらないこと:
@@ -151,6 +152,11 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 - [ ] AC13: サービスアカウント鍵が**永続化されない**。検証: 鍵モードで `up` したあと
       `devbase down` し、鍵の env を外して `up` し直すと `$DEFAULT_CREDS_PATH` にファイルが
       **存在しない**こと。グループボリューム (`/persistent/group`) 配下にも鍵が無いこと。
+- [ ] AC14: **手順書だけを見て、第三者が新しいグループの Google 認証を完了できる。**
+      検証: `docs/user/google-auth.md` の手順を、書いた本人以外（または記憶に頼らず手順書だけを見て）
+      未認証のグループで最初から実行し、`gcloud auth list` / `google.auth.default()` / `gws` の
+      いずれもが通ること。詰まった箇所は手順書へ反映してから完了とする。
+      記載するコマンドと出力はすべて**実機で実行した結果を貼る**（想像で書かない）。
 
 ## 代替案と採否
 
@@ -225,6 +231,7 @@ issue #116 の「検討が必要な点」3 件は次のとおり決定した。
 - `lib/devbase/snapshot/manager.py` — 対象ボリュームの複数化
 - `lib/devbase/commands/container.py` — `status` へのグループ表示、`up` 時のグループ解決
 - `containers/base/entrypoint.sh` — `AI_SETTINGS` の 2 系統化、入れ子パス対応、初回シード、`CLOUDSDK_CONFIG` / `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` の設定、認証モードの分岐、起動ログ
+- `docs/user/google-auth.md`（新規。Google 認証の手順書）
 - `docs/user/container-operations.md` / `docs/user/environment-variables.md` /
   `docs/user/snapshot-guide.md` / `docs/plugin-dev/compose-yml-guidelines.md` /
   `docs/plugin-dev/quickstart.md` / `README.md` / `CHANGELOG.md`
@@ -243,6 +250,7 @@ base branch:    main
 | 2 | `feature/PLAN39-entrypoint` | `AI_SETTINGS` の 2 系統化、入れ子パス対応、`default` の初回シード | PR1 | × (PR1 merge 後) |
 | 3 | `feature/PLAN39-gcloud` | `CLOUDSDK_CONFIG` / `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` の差し替えと `GCP_AUTH_MODE`（問題1の解消） | PR2 | × (PR2 merge 後) |
 | 4 | `feature/PLAN39-observability` | snapshot のグループ対応、`devbase status` 表示、起動ログ、ドキュメント整備 | PR1 | ○ (PR2/PR3 と並行可) |
+| 5 | `feature/PLAN39-authdoc` | Google 認証の手順書 `docs/user/google-auth.md` の作成（実機で全手順を実行して書く） | PR3 | × (PR3 merge 後) |
 
 issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問題2が顕在化する」として順序固定を求めているが、
 **個別 PR の merge 先は `release/PLAN39` であり `main` ではない**ため、この制約は release PR が
@@ -376,6 +384,42 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 - **満たす受け入れ条件:** AC10
 - **進め方:** 表示とログは実機確認。ドキュメントは文書のみ。
 
+### Task 8: Google 認証の手順書（PR5）
+
+- **対象ファイル:** `docs/user/google-auth.md`（新規）、`docs/user/container-operations.md`（相互リンク）、
+  `docs/user/environment-variables.md`（`GCP_AUTH_MODE` からの参照）、`README.md`（目次）
+- **位置づけ:** Task 1〜7 は「仕組みを作る」タスクだが、この仕組みは**グループごとに人が 1 回
+  対話的に認証する**ことを前提にしている。その 1 回をどう実施するかが書かれていないと、
+  新しいグループを足すたびに手探りになる。手順書はこのプランの成果物の一部とする。
+- **前提:** PR3 が merge され、`CLOUDSDK_CONFIG` と `GCP_AUTH_MODE` が実際に動く状態であること。
+  **書きながら実機で全手順を実行する**（想像で書かない。`ndf:investigation-rules`）。
+- **書く内容:**
+
+  1. **前提の説明** — アカウントグループとは何か、どのボリュームに何が入るか、
+     `~/.config/gcloud` は gcloud の設定ディレクトリ**ではない**こと（`$CLOUDSDK_CONFIG` を見る）。
+  2. **新しいグループの初回セットアップ** — `projects/<name>/env` に
+     `DEVBASE_ACCOUNT_GROUP` / `GCP_ACTIVE_PROFILE` / `AWS_PROFILE` を書く → `devbase up` →
+     コンテナ内で認証する、までを 1 本の流れとして書く。
+  3. **gcloud のヘッドレス認証** — 前提 15 の 3 経路を、この環境で**実際に通るもの**に絞って書く。
+     検証すること: (a) VS Code アタッチ時にポート転送が効いて既定のブラウザフローが通るか、
+     (b) 通らない場合に `--no-launch-browser`（認証コードの貼り戻し）で完結するか、
+     (c) `gcloud auth login --update-adc` 1 回で `gcloud auth list` と ADC の両方が満たせるか
+     （満たせるなら手順を 1 回に減らす。満たせないなら `gcloud auth application-default login` を別途書く）。
+  4. **gws の認証** — `gws auth login` 相当の手順と、`GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file` が
+     必要かどうかの実機確認結果（コンテナに OS キーリングが無い場合の挙動）。
+  5. **認証モードの切り替え** — `GCP_AUTH_MODE` の `adc` / `key` / 未設定の使い分けと、
+     切り替え後に `devbase up` が必要なこと。鍵が要るのはどういう場面かを 1 段落で書く。
+  6. **確認コマンド** — `gcloud auth list` / `gcloud config get account` /
+     `python3 -c "import google.auth; print(google.auth.default()[1])"` / `gws` の疎通確認。
+     **いま自分がどのグループにいるか**の確認方法（`devbase status` の表示、`echo $CLOUDSDK_CONFIG`）。
+  7. **トラブルシュート** — 少なくとも次の 3 つ。いずれも本プランで実際に踏みうるもの:
+     `DefaultCredentialsError`（前提 10。`adc` なのに変数が残っている）、
+     `database is locked`（前提 13。同一グループの同時実行）、
+     意図しないアカウントで操作していた場合の確認と切り替え。
+- **満たす受け入れ条件:** AC14
+- **進め方:** 文書のみ。ただし**未認証のグループを 1 つ用意して最初から通す**こと。
+  詰まった箇所は手順書に反映してから完了とする。
+
 ## 影響範囲
 
 - 全プロジェクトの生成 compose（`devbase up` のたびに再生成されるため移行作業は不要）。
@@ -467,9 +511,10 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
 ## 完了の定義
 
-- [ ] AC1〜AC13 を満たし、条件ごとに検証手段と結果が対応している
+- [ ] AC1〜AC14 を満たし、条件ごとに検証手段と結果が対応している
 - [ ] `uv run pytest` が green
 - [ ] 個別 PR がすべて `/ndf:cross-review` で APPROVE 収束済み
 - [ ] `devbase build --no-cache` 後の実機で、`default` と非 `default` の 2 グループを起動して
       AC1〜AC4 / AC8 / AC11〜AC13 を確認している
-- [ ] `docs/` と `CHANGELOG.md` が新しいボリューム構造と `DEVBASE_ACCOUNT_GROUP` を説明している
+- [ ] `docs/` と `CHANGELOG.md` が新しいボリューム構造と `DEVBASE_ACCOUNT_GROUP` / `GCP_AUTH_MODE` を説明している
+- [ ] `docs/user/google-auth.md` が実機で通した手順になっており、未認証のグループで通しの検証が済んでいる（AC14）
