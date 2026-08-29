@@ -250,6 +250,7 @@ $ command -v gws
 /usr/local/share/npm-global/bin/gws
 $ gws --version
 gws 0.22.5
+This is not an officially supported Google product.
 ```
 
 設定ディレクトリは `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` でグループボリュームへ向いています。
