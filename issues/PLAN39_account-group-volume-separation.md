@@ -72,6 +72,18 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
   他の認証は「復元の直前に古い実体を消す」形になっている
   (`同 238` の `rm -f ~/.git-credentials`、`同 279` の `rm -f ~/.aws/config ~/.aws/credentials`) が、
   いずれも復元する側の分岐の中なので、GCP と同じく「未設定へ切り替えたとき」は消えない。
+- 前提 10: この 2 変数は**プロジェクト側の `env` から任意のパスへ上書きできる**。wrapper は
+  `projects/<name>/env` を `set -a && source ./env` で読み (`bin/devbase:61,338`)、wrapper を
+  経ない経路でも `_load_project_env` (`lib/devbase/commands/container.py:295-418`) と
+  `_project_env_overrides` (`lib/devbase/env/runtime.py:112-134`) が同じ値をコンテナへ渡す。
+  entrypoint 側も変数があればそちらを優先する
+  (`同 204` の `GAC_PATH="${GOOGLE_APPLICATION_CREDENTIALS:-$DEFAULT_CREDS_PATH}"`、
+  `同 213` の `BQ_PATH="${BIGQUERY_KEY_FILE:-$DEFAULT_CREDS_PATH}"`)。
+  したがって**「変数が指す先を消す」仕様にすると、利用者が自前で置いた／ホストから
+  マウントした devbase 管理外の鍵まで消しうる**。削除対象は変数の値ではなく、entrypoint が
+  生成時と同じ式で組み立てる固定パス `DEFAULT_CREDS_PATH`
+  (`/home/${USERNAME}/.config/gcloud/credentials.json`、`同 198`。`USERNAME` は `同 186` の
+  `${USERNAME:-ubuntu}` でコンテナ利用者名に解決される) に限定する必要がある。
 
 ## 受け入れ条件
 
@@ -102,7 +114,8 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 - [ ] AC11: 初回起動（グループボリュームが空）でも、env 由来のサービスアカウント鍵が消えない。
       検証: `GCP_CREDENTIALS_BASE64__<profile>` を設定した状態で `devbase up` した直後に
       `~/.config/gcloud/credentials.json` が存在し中身が空でないこと（前提 8 の退行を防ぐ）。
-- [ ] AC12: 鍵が設定されていないプロファイルへ切り替えたら、管理対象の `credentials.json` が残らない。
+- [ ] AC12: 鍵が設定されていないプロファイルへ切り替えたら、既定パスの `credentials.json` が残らない。
+      かつ、既定パス以外を指すカスタム設定のファイルは**削除されない**。
       検証: (1) `GCP_CREDENTIALS_BASE64__a` を設定して `devbase up` し
       `~/.config/gcloud/credentials.json` が profile `a` の鍵であることを確認する。
       (2) `devbase down` 後、`GCP_ACTIVE_PROFILE=b`（`GCP_CREDENTIALS_BASE64__b` も
@@ -112,6 +125,12 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
       サービスアカウントで動かないことを確認する。
       (4) `gcloud auth login` によるユーザー OAuth（`credentials.db` / `access_tokens.db` /
       `application_default_credentials.json`）は削除されず、AC1 が引き続き成立すること。
+      (5) **カスタムパスは削除されないこと。** `GOOGLE_APPLICATION_CREDENTIALS` と
+      `BIGQUERY_KEY_FILE` を既定パス以外（例 `/home/ubuntu/keys/custom.json`）に設定した env で
+      (1)〜(2) を繰り返し、鍵未設定へ切り替えた後もそのファイルが**残っている**こと、
+      および「devbase 管理外のパスのため削除しない」旨の WARN が起動ログに出ることを確認する。
+      あわせて `tests/containers/` の単体テストでも「既定パス指定 → 削除」「カスタムパス指定 →
+      非削除 + WARN」の 2 ケースを固定する。
 
 ## 代替案と採否
 
@@ -286,16 +305,36 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
   | 条件 | 振る舞い |
   |---|---|
-  | 鍵あり | 現行どおり `GAC_PATH` / `BQ_PATH` へ書き、`chmod 600` して export する |
-  | 鍵なし | `GOOGLE_APPLICATION_CREDENTIALS` / `BIGQUERY_KEY_FILE` が指す**管理対象パスのみ** `rm -f` し、両変数を unset して、削除した旨を起動ログに出す |
+  | 鍵あり | 現行どおり `GAC_PATH` / `BQ_PATH` へ書き、`chmod 600` して export する（変更なし） |
+  | 鍵なし、かつ `GOOGLE_APPLICATION_CREDENTIALS` / `BIGQUERY_KEY_FILE` が未設定または `$DEFAULT_CREDS_PATH` と一致 | `rm -f "$DEFAULT_CREDS_PATH"` で**この 1 パスだけ**を削除し、両変数を unset して、削除した旨を起動ログに出す |
+  | 鍵なし、かつ どちらかが `$DEFAULT_CREDS_PATH` 以外（カスタムパス）を指す | **何も削除しない。変数の unset も行わない。** 「`<変数名>` が devbase 管理外の `<パス>` を指しているため削除しない。プロファイル切替時に旧い鍵が残る可能性があるため、必要なら手動で削除すること」という **WARN ログのみ**を出して起動を続行する |
 
-  削除は devbase が env から生成したファイルに限る。`gcloud auth login` のユーザー OAuth は
+  **削除先は env の変数値ではなく、生成時と同じ式で entrypoint 内に組み立てた固定パス
+  `DEFAULT_CREDS_PATH` (`entrypoint.sh:198`) を使う。**`GOOGLE_APPLICATION_CREDENTIALS` /
+  `BIGQUERY_KEY_FILE` はプロジェクトの `env` から任意のパスへ上書きでき（前提 10）、
+  変数が指す先をそのまま消すとホストからマウントした鍵など devbase 管理外のファイルまで
+  消しうるため、削除先が env の値に左右されない形にする。`DEFAULT_CREDS_PATH` は必ず
+  `/home/<コンテナ利用者>/.config/gcloud/credentials.json` に収まる。
+
+  カスタムパスを削除しないのは、そこが利用者の管理下（自前で置いた鍵、ホストからの
+  マウント先）でありうるためで、devbase が所有を主張できない。安全側（消さない）に倒し、
+  混線の危険が残ることを WARN で知らせる。カスタムパス運用で切替時の混線を確実に断ちたい
+  場合は `GOOGLE_APPLICATION_CREDENTIALS` / `BIGQUERY_KEY_FILE` を `env` から外して既定パスへ
+  戻せば削除対象になる旨を、`docs/user/container-operations.md` に明記する。
+
+  検討したが採らなかった案: 生成時に所有マーカー（例 `.devbase-managed`）へ書き込んだパスなら
+  カスタムパスでも削除する。マーカー自体が永続ボリュームに残る追加状態となり、削除の安全性が
+  マーカーの健全性（手で消された・ボリュームを跨いだ等）に依存する。カスタムパスは利用者の
+  管理下という原則を採り、固定パス限定へ統一した。
+
+  ディレクトリごとの `rm -rf` は行わない。`gcloud auth login` のユーザー OAuth は
   `credentials.db` / `access_tokens.db` / `application_default_credentials.json` という別ファイルなので
-  影響を受けず、AC1 / AC2 は成立し続ける。ディレクトリごとの `rm -rf` は行わない。
-  これは他の認証と同じ「古い実体を残さない」方針の踏襲でもある
+  影響を受けず、AC1 / AC2 は成立し続ける。既定パスに限った削除は、他の認証と同じ
+  「古い実体を残さない」方針の踏襲でもある
   (`entrypoint.sh:238` の `rm -f ~/.git-credentials`、`同 279` の `rm -f ~/.aws/config ~/.aws/credentials`)。
   切替テストは AC12 として実機で確認し、`tests/containers/` に
-  `DEVBASE_ENTRYPOINT_LIB_ONLY` (`entrypoint.sh:182-184`) を使った単体テストを足す。
+  `DEVBASE_ENTRYPOINT_LIB_ONLY` (`entrypoint.sh:182-184`) を使った単体テストを足す
+  （既定パス指定 → 削除 / カスタムパス指定 → 非削除 + WARN の 2 ケース）。
 
 ### Task 6: スナップショットのグループ対応（PR4）
 
@@ -337,7 +376,8 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 | entrypoint 変更が `up` だけでは反映されない | [[entrypoint-change-needs-rebuild]]。検証手順に `devbase build --no-cache` を明記 |
 | 既存スナップショットが復元できなくなる | Task 6 で旧メタデータ互換をテストで固定 |
 | symlink 生成より前に書かれた `~/.config/gcloud/credentials.json` が `rm -rf` で消え、サービスアカウント鍵が欠落する（前提 8） | Task 4 で symlink ブロックを credentials 生成より前へ移動。AC11 で初回起動時の鍵の存在を確認 |
-| 鍵が未設定のプロファイルへ `GCP_ACTIVE_PROFILE` を切り替えると、生成がスキップされ (`entrypoint.sh:196`) 旧プロファイルの `credentials.json` がグループボリュームに残り、固定パスを指したままの `GOOGLE_APPLICATION_CREDENTIALS`（前提 9）から別顧客の鍵が使われる | Task 5 の補足 2 の仕様で、鍵なし時は管理対象パスを `rm -f` して両変数を unset する。AC12 で切替テストを実機確認し、`tests/containers/` にも固定する |
+| 鍵が未設定のプロファイルへ `GCP_ACTIVE_PROFILE` を切り替えると、生成がスキップされ (`entrypoint.sh:196`) 旧プロファイルの `credentials.json` がグループボリュームに残り、固定パスを指したままの `GOOGLE_APPLICATION_CREDENTIALS`（前提 9）から別顧客の鍵が使われる | Task 5 の補足 2 の仕様で、鍵なし時は固定パス `DEFAULT_CREDS_PATH` (`entrypoint.sh:198`) のみを `rm -f` して両変数を unset する。AC12 で切替テストを実機確認し、`tests/containers/` にも固定する |
+| 削除仕様を「変数が指す先を消す」と実装すると、`GOOGLE_APPLICATION_CREDENTIALS` / `BIGQUERY_KEY_FILE` はプロジェクトの `env` から任意パスへ上書きできる（前提 10）ため、ホストからマウントした鍵など devbase 管理外のファイルを消しうる | 削除先を env の値ではなく固定パス `DEFAULT_CREDS_PATH` に限定する。カスタムパス設定時は削除も unset もせず WARN のみ出す。AC12 (5) で「カスタムパスが残ること」をテストで固定する |
 | 切り戻し時に、シード後にグループ側だけへ書かれた認証・履歴が失われる | 切り戻し手順の同期ステップを必須とし、正とするグループを 1 つに決めてから実行する |
 
 ## 切り戻し手順
