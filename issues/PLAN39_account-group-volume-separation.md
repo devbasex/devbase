@@ -252,7 +252,7 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 | AC6 | ✅ | `~/.claude/CLAUDE.md` / `settings.json` は壊れていない symlink かつファイル。`history.jsonl` はディレクトリでない |
 | AC7 | ✅ | `ubuntu` / `1` / `bad name` の 3 種が `Deploy failed:` + 理由で exit=1。**稼働中コンテナは無傷** |
 | AC8 | ✅ | シードで `.claude.json` の `oauthAccount` と MCP OAuth 6 件、`projects` 73 件 (1.2GB) を維持。再ログインなし |
-| AC9 | ✅ | 2 ボリュームの作成・一覧・復元を使い捨てボリュームで往復確認。旧レイアウト (`volume: devbase_home_ubuntu`) の実在世代も復元できた |
+| AC9 | ✅ | 2 ボリュームの作成・一覧・復元を使い捨てボリュームで往復確認。旧レイアウト (`volume: devbase_home_ubuntu`) の実在世代は **`full` + `incr-001` まで**復元できた（`incr-002` は後述の別件で失敗。PLAN39 前の `main` でも同じく失敗するため、この AC の判定からは外している） |
 | AC10 | ✅ | `devbase status` の `[環境]` に `default (devbase_home_default / 既定)` / `kkg (devbase_home_kkg / env)` を表示 |
 | AC11 | ✅ | 鍵モードで `credentials.json` (2376B) が書かれ、`google.auth.default()` が SA で `nyle-carmo-analysis` を解決 |
 | AC12 | ✅ | `adc` → `key` → `adc` を往復。戻り方向で 2 変数が未設定に戻り、`DefaultCredentialsError: Your default credentials were not found.`（= 未ログインの正常状態）になった |
@@ -659,7 +659,9 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
 - [x] AC1〜AC14 を満たし、条件ごとに検証手段と結果が対応している（「実機検証の結果」節）
 - [x] `uv run pytest` が green（1629 passed）
-- [x] 個別 PR がすべて `/ndf:cross-review` で APPROVE 収束済み（#123 / #124 / #125 / #126 / #127）
+- [x] 個別 PR がすべて `/ndf:cross-review` で APPROVE 収束済み（#123 / #124 / #125 / #126）
+- [ ] 本 PR #127（手順書と検証結果）が `/ndf:cross-review` で APPROVE 収束する。
+      レビュー中は未チェックのままにし、収束を確認してからチェックする
 - [x] `devbase build --no-cache` 後の実機で、`default` と非 `default` の 2 グループを起動して
       AC1〜AC4 / AC8 / AC11〜AC13 を確認している
 - [x] `docs/` と `CHANGELOG.md` が新しいボリューム構造と `DEVBASE_ACCOUNT_GROUP` / `GCP_AUTH_MODE` を説明している

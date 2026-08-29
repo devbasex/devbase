@@ -204,8 +204,17 @@ nyle-carmo-analysis Credentials
 ここが PLAN39 で直した点です。`devbase down` はコンテナを削除しますが、認証情報は
 グループボリュームに残るので**再認証は要りません**。
 
+コンテナの作り直しは**ホスト側**で実行します。`up` で作られるのは新しいコンテナなので、
+続きを確認するには `devbase project login <name>` で**入り直してください**。
+
 ```console
+# ホスト
 $ devbase project down <name> && devbase project up <name>
+$ devbase project login <name>
+```
+
+```console
+# 作り直したコンテナの中
 $ gcloud auth list
         Credentialed Accounts
 ACTIVE  ACCOUNT
@@ -434,10 +443,17 @@ $ gws auth status | grep -E '"auth_method"|"storage"'
   "storage": "encrypted",
 ```
 
-コンテナを作り直しても**再認証は要りません**。
+コンテナを作り直しても**再認証は要りません**。ここでも `down` / `up` はホスト側で実行し、
+`devbase project login <name>` で作り直したコンテナへ入り直してから確認します。
 
 ```console
+# ホスト
 $ devbase project down <name> && devbase project up <name>
+$ devbase project login <name>
+```
+
+```console
+# 作り直したコンテナの中
 $ ls -l $GOOGLE_WORKSPACE_CLI_CONFIG_DIR
 total 12
 drwxr-xr-x 2 ubuntu ubuntu 4096 Aug 29 08:47 cache
@@ -611,6 +627,14 @@ ACTIVE  ACCOUNT
 gcloud config set account <正しいアカウント>
 gcloud auth revoke <不要なアカウント>
 ```
+
+**この 2 つは gcloud CLI の認証情報しか変えません。** 3.2 のとおり ADC
+（`$CLOUDSDK_CONFIG/application_default_credentials.json`）は別ファイルなので、
+`google.auth` や BigQuery クライアントなど**ライブラリ経由の呼び出しは古いアカウントのまま**です。
+`gcloud auth list` が正しく見えていても、ライブラリだけ別テナントで動き続けることがあります。
+ライブラリ側も直すには、正しいアカウントで 3.2 の
+`gcloud auth application-default login` をやり直して ADC を上書きしてください。
+ADC がどのアカウントのものかは、このファイルの `account` フィールドに入っています。
 
 グループ自体が間違っていた場合は、プロジェクトの `env` の `DEVBASE_ACCOUNT_GROUP` を直して
 `devbase up` し直してください。**別グループの認証は互いに見えない**ので、正しいグループへ
