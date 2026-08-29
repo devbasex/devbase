@@ -138,11 +138,14 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
   application」と警告する (`同 174-190`)。`adc` モードでこの変数を unset する本プランの判断と一致する。
 
 - 前提 17: **gws はベースイメージに入っておらず、現在どのコンテナにも存在しない**（実機確認）。
-  稼働中の dev コンテナ 14 本すべてで `command -v gws` が空、`~/.config/gws` も存在しない。
-  issue #116 が計測した 2.9MB は、調査対象コンテナ (`eef62d0d42cb`) ごと失われている
-  （`docker ps -a` に無い）。gws は npm global 等で利用者が個別に入れるもので、その導入先
-  (`~/.npm` / `~/.local/bin`) も永続化対象外である。したがって**設定ディレクトリを永続化するだけでは
-  gws は復旧しない**（バイナリの導入が別途要る。AC2 の前提）。
+  `containers/base/Dockerfile` に `gws` / `googleworkspace` の記述は無く、npm グローバル導入は
+  `同 138` の `npm i -g yarn @playwright/test aws-cdk aws-cdk-lib typescript @google/gemini-cli @openai/codex`
+  1 行のみで `@googleworkspace/cli` を含まない。稼働中の dev コンテナ 14 本すべてで `command -v gws` が
+  空、`~/.config/gws` も存在しない。issue #116 が計測した 2.9MB は、調査対象コンテナ
+  (`eef62d0d42cb`) ごと失われている（`docker ps -a` に無い）。
+  したがって設定ディレクトリを永続化するだけでは gws は復旧しないため、
+  **本プランで `@googleworkspace/cli` をベースイメージへ含める**（Task 5）。
+  npm 上のパッケージは `@googleworkspace/cli`（確認時 0.22.5、`bin` は `gws`）。
 
 - 前提 18: 空の named volume は **root 所有**で作られ、uid 1000 では書き込めない（実機確認:
   `docker run --rm -u 1000:1000 -v <空volume>:/v alpine touch /v/x` → `Permission denied`）。
@@ -161,7 +164,7 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 
 - [ ] AC1: 同じグループのコンテナで `devbase down` → `devbase up` の後、`gcloud auth list` が
       **再認証なしで**同じ active account を返す。
-- [ ] AC2: **gws を導入したうえで**（前提 17）、同条件で `gws` の認証済みコマンドが再認証なしで通る（`$GOOGLE_WORKSPACE_CLI_CONFIG_DIR` 配下の
+- [ ] AC2: `gws` がベースイメージに含まれ（`command -v gws` が通り）、同条件で認証済みコマンドが再認証なしで通る（`$GOOGLE_WORKSPACE_CLI_CONFIG_DIR` 配下の
       `credentials.enc` と `.encryption_key` が保たれる）。
 - [ ] AC3: 異なるグループのコンテナが互いの認証を参照しない。検証: `kkg` グループのコンテナで
       `gcloud auth list` / `claude mcp list` を実行し、`default` グループの認証が見えないこと。
@@ -276,6 +279,7 @@ issue #116 の「検討が必要な点」3 件は次のとおり決定した。
 - `lib/devbase/volume/compose.py` — `/persistent/group` のマウントとボリューム宣言、dev サービスへの env 受け渡し
 - `lib/devbase/snapshot/manager.py` — 対象ボリュームの複数化
 - `lib/devbase/commands/container.py` — `status` へのグループ表示、`up` 時のグループ解決
+- `containers/base/Dockerfile` — npm グローバルへ `@googleworkspace/cli` を追加（前提 17）
 - `containers/base/entrypoint.sh` — `AI_SETTINGS` の 2 系統化、入れ子パス対応、初回シード、`CLOUDSDK_CONFIG` / `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` の設定、認証モードの分岐、起動ログ
 - `docs/user/google-auth.md`（新規。Google 認証の手順書）
 - `docs/user/container-operations.md` / `docs/user/environment-variables.md` /
@@ -361,9 +365,9 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
 ### Task 5: gcloud / gws の設定ディレクトリ差し替えと認証モード（PR3）
 
-- **対象ファイル:** `containers/base/entrypoint.sh`, `lib/devbase/env/keys.py`,
-  `lib/devbase/env/collectors/google.py`, `tests/containers/`, `docs/user/container-operations.md`,
-  `docs/user/environment-variables.md`
+- **対象ファイル:** `containers/base/Dockerfile`, `containers/base/entrypoint.sh`,
+  `lib/devbase/env/keys.py`, `lib/devbase/env/collectors/google.py`, `tests/containers/`,
+  `docs/user/container-operations.md`, `docs/user/environment-variables.md`
 - **変更内容:** `.config/gcloud` / `.config/gws` を symlink 対象にはせず、**設定ディレクトリごと
   グループボリュームへ向ける**（前提 8 / 12）。あわせて認証モードを切り替え可能にする。
 
@@ -374,7 +378,10 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
   この 2 行だけで、`credentials.db` / `access_tokens.db` / `legacy_credentials/` /
   `configurations/` / `application_default_credentials.json`（= ADC ファイル）と gws の
-  `credentials.enc` / `.encryption_key` がグループボリュームへ移る。ディレクトリは entrypoint が
+  `credentials.enc` / `.encryption_key` がグループボリュームへ移る。
+  あわせて **`containers/base/Dockerfile:138` の npm グローバル行へ `@googleworkspace/cli` を足す**。
+  前提 17 のとおり gws はどのコンテナにも入っておらず、設定だけ永続化しても復旧しないため。
+  `@google/gemini-cli` / `@openai/codex` と同じ扱いにする（`bin` は `gws`）。ディレクトリは entrypoint が
   `mkdir -p` + `chown` してから export する（空ボリュームは root 所有で作られ uid 1000 では書けない。前提 18）。
 
 - **認証モード:** `GCP_AUTH_MODE` を新設する。
@@ -451,11 +458,10 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
      ADC 用に `gcloud auth application-default login` の 2 回。`--update-adc` で 1 回に減らす案は
      quota project が書かれないため（前提 16）**既定の手順にはしない**。
      残る実地確認: 実際に 1 回通して、貼り戻しの UI（プロンプト文言）と所要時間を手順書に書き写す。
-  4. **gws の認証** — 前提 17 のとおり gws は**そもそも導入されていない**ので、
-     手順書には導入から書く（`npm install -g @googleworkspace/cli` 等）。あわせて
-     `gws auth setup` / `gws auth login` の実地確認と、
-     `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file` が必要かどうか（コンテナに OS キーリングが無い場合の挙動）、
-     導入先を永続化するのか毎回入れ直すのかの方針を書く。
+  4. **gws の認証** — バイナリは Task 5 でベースイメージに入るので、手順書は認証から書く。
+     `gws auth setup`（Cloud プロジェクト設定。gcloud に依存する）と `gws auth login` を実地確認し、
+     `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file` が必要かどうか（コンテナに OS キーリングが無い場合の挙動）を
+     確かめて書く。
   5. **認証モードの切り替え** — `GCP_AUTH_MODE` の `adc` / `key` / 未設定の使い分けと、
      切り替え後に `devbase up` が必要なこと。鍵が要るのはどういう場面かを 1 段落で書く。
   6. **確認コマンド** — `gcloud auth list` / `gcloud config get account` /
@@ -474,7 +480,8 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 - 全プロジェクトの生成 compose（`devbase up` のたびに再生成されるため移行作業は不要）。
 - ディスク使用量: グループ数 × 分類 B のサイズ。実測では gcloud 3.9MB + gws 2.9MB +
   `.claude.json` / 認証 / 履歴で数十 MB 程度。238MB の `plugins` は共通側に残るため増えない。
-- entrypoint 変更のため base イメージの再ビルドが必要（Task 3・4・5・7）。
+- entrypoint と Dockerfile の変更のため base イメージの再ビルドが必要（Task 3・4・5・7）。
+  `@googleworkspace/cli` の追加ぶんイメージが増えるが、既に再ビルドは必須なので追加の手間は無い。
 - スナップショットの世代管理の粒度が変わる（対象が 2 ボリュームになる）。
 
 ## リスクと対処
@@ -488,7 +495,7 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 | 既存スナップショットが復元できなくなる | Task 6 で旧メタデータ互換をテストで固定 |
 | `GCP_AUTH_MODE=adc` で `GOOGLE_APPLICATION_CREDENTIALS` の unset を忘れると、値だけ残って実体が無く ADC が `DefaultCredentialsError` で落ちる（前提 10。フォールバックしない） | Task 5 で 2 変数を unset する。AC12 (3) で `key` → `adc` の戻り方向を実機とテストの両方で固定する |
 | 同一グループの複数コンテナが同時に gcloud を叩き `database is locked` になる（前提 13。gcloud は並行実行非対応で `credentials.db` は SQLite） | 恒久対策は取らない。グループボリュームを共有する設計に内在するもので symlink 方式でも同じ。ドキュメントに再実行で回避する旨を書く |
-| gws の設定を永続化しても、バイナリがベースイメージにも永続領域にも無いため、コンテナ再作成のたびに再導入が要る（前提 17） | AC2 の前提として手順書（Task 8）に導入手順を書く。ベースイメージへ焼き込むかは本プランのスコープ外とし、必要なら別 issue で扱う |
+| gws の設定を永続化しても、バイナリが無ければ復旧しない（前提 17） | Task 5 で `containers/base/Dockerfile:138` へ `@googleworkspace/cli` を足し、ベースイメージに含める。AC2 で `command -v gws` を確認する |
 | `~/.config/gcloud` が gcloud の設定ディレクトリだと誤解され、そこを永続化しようとする揺り戻しが起きる | `CLOUDSDK_CONFIG` 導入後は単なる鍵の置き場である旨を Task 5 の記述と `docs/user/container-operations.md` に明記する |
 | 切り戻し時に、シード後にグループ側だけへ書かれた認証・履歴が失われる | 切り戻し手順の同期ステップを必須とし、正とするグループを 1 つに決めてから実行する |
 
