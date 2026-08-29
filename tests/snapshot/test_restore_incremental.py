@@ -14,6 +14,7 @@ GNU tar の incremental は、ディレクトリを ``(dev, ino)`` で追跡し�
 from __future__ import annotations
 
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,7 +23,9 @@ import pytest
 import yaml
 
 from devbase.errors import SnapshotCommandError, SnapshotError
-from devbase.snapshot.manager import SnapshotManager, rename_only_failure
+from devbase.snapshot.manager import (
+    SnapshotManager, rename_only_failure, rename_targets,
+)
 
 @pytest.fixture(autouse=True)
 def _clean_group_env(monkeypatch):
@@ -58,6 +61,19 @@ def test_rename_only_failure_is_detected(stderr):
     """rename エラーだけの失敗は、失敗した rename の一覧を返す。"""
     assert rename_only_failure(stderr) is not None
     assert len(rename_only_failure(stderr)) == 1
+
+
+def test_rename_targets_extracts_the_destination():
+    """欠落の判定に使うのは rename の**宛先**である。"""
+    lines = rename_only_failure(BOGUS_RENAME_STDERR)
+    assert rename_targets(lines) == ['./.claude/plugins/cache/B10']
+
+
+def test_rename_targets_extracts_the_destination_with_spaces():
+    """パスに空白が入っていても宛先を取り違えない。"""
+    stderr = ("tar: Cannot rename './a b/old dir' to './a b/new dir': "
+              "Directory not empty\n")
+    assert rename_targets(rename_only_failure(stderr)) == ['./a b/new dir']
 
 
 def test_real_error_is_not_treated_as_rename_failure():
@@ -110,6 +126,7 @@ class StubManager(SnapshotManager):
         super().__init__(root)
         self._failures = failures
         self.restored: list[str] = []
+        self.checked: str | None = None
 
     def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
         if mode == 'backup':
@@ -117,6 +134,10 @@ class StubManager(SnapshotManager):
             (snap_dir / 'snapshot.snar').write_text('snar')
             return
         archive = self._archive_in(command)
+        if archive is None:
+            # 展開ではなく、復元後の rename 宛先の検証コマンド
+            self.checked = command
+            return
         self.restored.append(archive)
         if archive in self._failures:
             stderr = self._failures[archive]
@@ -124,11 +145,13 @@ class StubManager(SnapshotManager):
                 f"Dockerでのtar操作に失敗しました: {stderr}", stderr=stderr)
 
     @staticmethod
-    def _archive_in(command: str) -> str:
-        """復元コマンドから、いま展開しているアーカイブ名を取り出す。"""
+    def _archive_in(command: str):
+        """復元コマンドから、いま展開しているアーカイブ名を取り出す。
+
+        展開以外のコマンド (rename 宛先の検証) なら ``None`` を返す。
+        """
         match = re.search(r'full\.tar\.zst|incr-\d+\.tar\.zst', command)
-        assert match is not None, f"アーカイブ名が見つからない: {command}"
-        return match.group(0)
+        return match.group(0) if match else None
 
 
 def test_bogus_rename_does_not_stop_the_restore(tmp_path):
@@ -185,6 +208,66 @@ def test_both_layouts_survive_a_bogus_rename(tmp_path, layout, label):
 
     assert mgr.restored == [
         'full.tar.zst', 'incr-001.tar.zst', 'incr-002.tar.zst'], label
+
+
+def test_skipped_rename_targets_are_checked_after_the_restore(tmp_path):
+    """飲み込んだ rename の宛先は、全アーカイブ適用後にまとめて検証する。"""
+    _write_generation(tmp_path, 'gen', incrementals=2)
+    mgr = StubManager(tmp_path, {'incr-001.tar.zst': BOGUS_RENAME_STDERR})
+
+    mgr.restore('gen')
+
+    # 宛先が渡り、空ディレクトリだけを拾うコマンドになっている
+    assert mgr.checked is not None
+    assert './.claude/plugins/cache/B10' in mgr.checked
+    assert 'ls -A' in mgr.checked
+
+
+def test_rename_targets_are_shell_quoted(tmp_path):
+    """宛先は tar の出力由来なので、シェルへ素通しにしない。"""
+    _write_generation(tmp_path, 'gen', incrementals=1)
+    nasty = ("tar: Cannot rename './x' to './a b; touch /tmp/pwned': "
+             "Directory not empty\n")
+    mgr = StubManager(tmp_path, {'incr-001.tar.zst': nasty})
+
+    mgr.restore('gen')
+
+    assert mgr.checked is not None
+    assert 'touch /tmp/pwned' not in mgr.checked.replace(
+        shlex.quote('./a b; touch /tmp/pwned'), '')
+    assert shlex.quote('./a b; touch /tmp/pwned') in mgr.checked
+
+
+def test_no_check_runs_when_no_rename_was_skipped(tmp_path):
+    """rename を飲み込んでいなければ、余計なコンテナを起こさない。"""
+    _write_generation(tmp_path, 'gen', incrementals=1)
+    mgr = StubManager(tmp_path, {})
+
+    mgr.restore('gen')
+
+    assert mgr.checked is None
+
+
+def test_an_empty_rename_target_is_warned_as_possible_data_loss(tmp_path, caplog):
+    """AC4: 宛先が空なら、正当な rename を取りこぼした可能性として警告する。"""
+    _write_generation(tmp_path, 'gen', incrementals=1)
+
+    class EmptyTargetManager(StubManager):
+        def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
+            result = super()._run_docker_tar(snap_dir, mode, command, volumes)
+            if self._archive_in(command) is None and mode == 'restore':
+                return subprocess.CompletedProcess(
+                    [], 0, stdout='./.claude/plugins/cache/B10\n', stderr='')
+            return result
+
+    mgr = EmptyTargetManager(tmp_path, {'incr-001.tar.zst': BOGUS_RENAME_STDERR})
+    with caplog.at_level('WARNING'):
+        mgr.restore('gen')
+
+    warnings = '\n'.join(r.getMessage() for r in caplog.records
+                          if r.levelname == 'WARNING')
+    assert '中身が復元されていない可能性があります' in warnings
+    assert './.claude/plugins/cache/B10' in warnings
 
 
 def test_a_real_tar_error_still_stops_the_restore(tmp_path):

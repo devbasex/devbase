@@ -1,6 +1,7 @@
 """スナップショット管理のコアロジック"""
 
 import re
+import shlex
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -41,7 +42,7 @@ _VALID_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
 # ディレクトリを rename されたものと誤判定し、dumpdir に偽の R/T レコードを書く。
 # 復元側はそれを rename() として実行して失敗するが、**展開自体は完遂している**ので、
 # この失敗だけは警告にして復元を続ける (PLAN40)。
-_RENAME_ERROR_RE = re.compile(r"^tar: Cannot rename '.*' to '.*': .+$")
+_RENAME_ERROR_RE = re.compile(r"^tar: Cannot rename '(?P<src>.*)' to '(?P<dst>.*)': .+$")
 _TAR_EXIT_LINE = 'tar: Exiting with failure status due to previous errors'
 
 
@@ -61,6 +62,21 @@ def rename_only_failure(stderr: str) -> Optional[list]:
             continue
         return None
     return renames or None
+
+
+def rename_targets(lines: list) -> list:
+    """rename エラーの行から**宛先**のパスだけを取り出す。
+
+    展開後にその宛先が空のままなら、偽 rename ではなく**正当な rename を
+    取りこぼした**可能性がある。正当な rename の差分にはディレクトリの
+    エントリしか入らず、中身は rename でしか移動しないためである。
+    """
+    targets = []
+    for line in lines:
+        match = _RENAME_ERROR_RE.match(line.strip())
+        if match:
+            targets.append(match.group('dst'))
+    return targets
 
 
 class SnapshotManager:
@@ -230,6 +246,10 @@ class SnapshotManager:
         volumes = self.snapshot_volumes(snap_dir)
         logger.info("復元先のボリューム: %s", ', '.join(volumes.values()))
 
+        # 偽 rename として飲み込んだ宛先。全アーカイブ適用後にまとめて検証する
+        # (後続の差分が中身を埋める場合があるので、途中では判断できない)。
+        skipped_renames: list = []
+
         # フルバックアップの復元
         logger.info("フルバックアップを復元中...")
         self._extract_archive(
@@ -237,7 +257,7 @@ class SnapshotManager:
             self.clear_command(volumes) +
             "zstd -d /backup/full.tar.zst -c | "
             "tar --listed-incremental=/dev/null -xf - -C /target",
-            volumes, pre_restore_name,
+            volumes, pre_restore_name, skipped_renames,
         )
 
         # 差分バックアップを順番に適用（pointが指定されていればそこまで）
@@ -255,8 +275,10 @@ class SnapshotManager:
                 snap_dir, incr.name,
                 f"zstd -d /backup/{incr.name} -c | "
                 f"tar --listed-incremental=/dev/null -xf - -C /target",
-                volumes, pre_restore_name,
+                volumes, pre_restore_name, skipped_renames,
             )
+
+        self._warn_about_lost_renames(snap_dir, volumes, skipped_renames)
 
         if point is not None:
             logger.info("復元完了: %s (incr-%03d まで)", name, point)
@@ -264,7 +286,8 @@ class SnapshotManager:
             logger.info("復元完了: %s", name)
 
     def _extract_archive(self, snap_dir: Path, archive: str, command: str,
-                         volumes: dict, pre_restore_name: Optional[str]) -> None:
+                         volumes: dict, pre_restore_name: Optional[str],
+                         skipped_renames: Optional[list] = None) -> None:
         """アーカイブを 1 つ展開する。偽の rename エラーだけは飲み込む。
 
         GNU tar が inode 番号の再利用で誤検出した rename は、復元時に必ず失敗する。
@@ -283,11 +306,45 @@ class SnapshotManager:
                 raise SnapshotError(
                     self._restore_failure_message(archive, pre_restore_name, e)
                 ) from e
+            if skipped_renames is not None:
+                skipped_renames.extend(rename_targets(renames))
             logger.warning(
                 "%s の展開で tar が rename に失敗しました。GNU tar の incremental が "
                 "inode 番号の再利用でディレクトリの rename を誤検出したものとみなし、"
                 "復元を続けます:\n%s",
                 archive, '\n'.join(renames))
+
+    def _warn_about_lost_renames(self, snap_dir: Path, volumes: dict,
+                                 targets: list) -> None:
+        """飲み込んだ rename の宛先が**空のまま**なら、内容の欠落を警告する。
+
+        偽 rename の宛先は、そのディレクトリ自身が新しく作られたものなので、
+        アーカイブから中身が展開されて空にはならない。一方、**正当な** rename を
+        取りこぼした場合は、中身が rename でしか移動しないため宛先が空のまま残る。
+        両者はエラーメッセージだけでは区別できないが、展開後の状態でなら見分けられる。
+        """
+        if not targets:
+            return
+        quoted = ' '.join(shlex.quote(t) for t in sorted(set(targets)))
+        result = self._run_docker_tar(
+            snap_dir, 'restore',
+            'for p in ' + quoted + '; do '
+            'full="/target/${p#./}"; '
+            'if [ -d "$full" ] && [ -z "$(ls -A "$full" 2>/dev/null)" ]; then '
+            'echo "$p"; fi; '
+            'done',
+            volumes=volumes,
+        )
+        # テストダブルは戻り値を返さない。その場合は検証を行わない。
+        empty = result.stdout.split() if result is not None and result.stdout else []
+        if not empty:
+            return
+        logger.warning(
+            "復元後、次のディレクトリが空のままです。GNU tar が記録した rename を "
+            "適用できなかったため、**中身が復元されていない可能性があります**。"
+            "利用者が実際に mv したディレクトリであれば、そのスナップショットからは "
+            "中身を復元できません:\n%s",
+            '\n'.join(sorted(empty)))
 
     @staticmethod
     def _restore_failure_message(archive: str, pre_restore_name: Optional[str],
@@ -511,6 +568,7 @@ class SnapshotManager:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             if result.stdout.strip():
                 logger.debug(result.stdout.strip())
+            return result
         except subprocess.CalledProcessError as e:
             raise SnapshotCommandError(
                 f"Dockerでのtar操作に失敗しました: {e.stderr}",
