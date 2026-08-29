@@ -373,3 +373,27 @@ def test_shared_mount_only_accepts_the_shared_volume(root, name):
 
     with pytest.raises(SnapshotError):
         mgr.snapshot_volumes(snap_dir)
+
+
+@pytest.mark.parametrize("name", [
+    "devbase_home_",           # 空のグループ名 (resolve は default に正規化してしまう)
+    "devbase_home_  kkg  ",    # 前後空白 (resolve は空白を落としてしまう)
+    "devbase_home_ KKG",
+])
+def test_unnormalised_group_volume_names_are_rejected(root, name):
+    """検証を通るかどうかだけでは足りない。
+
+    ``resolve_account_group`` は空文字を ``default`` に、前後空白を落とした名前に
+    **正規化する**ため、通ること自体は不正な名前を許してしまう。実際にマウント
+    されるのは正規化前の生の名前なので、一致まで確認する。
+    """
+    from devbase.errors import SnapshotError
+
+    snap_dir = _write_meta(root, f"unnorm-{abs(hash(name))}", {
+        "name": "unnorm", "type": "full",
+        "volumes": {"ai": "devbase_home_ubuntu", "group": name},
+    })
+    mgr = SnapshotManager(root)
+
+    with pytest.raises(SnapshotError):
+        mgr.snapshot_volumes(snap_dir)

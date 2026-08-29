@@ -611,7 +611,14 @@ class SnapshotManager:
                        f"なければなりません (指定: {name!r})")
             group = name[len(SHARED_VOLUME_PREFIX):]
             try:
-                resolve_account_group(group)
+                # 正規化した結果が元の名前と**一致**することまで見る。
+                # resolve_account_group は空文字を 'default' に、前後空白を
+                # 落とした名前に正規化するので、通るかどうかだけでは
+                # `devbase_home_` や `devbase_home_  kkg  ` を弾けない。
+                # 実際にマウントされるのは正規化前の生の名前である。
+                if get_group_volume(group) != name:
+                    reject(f"グループボリューム {name!r} は正規化された名前では"
+                           f"ありません (期待: {get_group_volume(group)!r})")
             except DevbaseError as e:
                 reject(f"グループボリューム {name!r} のグループ名が不正です: {e}")
 
