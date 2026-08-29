@@ -322,12 +322,54 @@ def test_restore_refuses_before_touching_the_volumes(root):
     assert [c for c in mgr.calls if c["mode"] == "restore"] == []
 
 
-@pytest.mark.parametrize("name", ["devbase_home_ubuntu", "devbase_home_kkg",
-                                  "a", "a-b_c.d", "g1"])
-def test_valid_volume_names_pass(root, name):
-    snap_dir = _write_meta(root, "ok", {
-        "name": "ok", "type": "full", "volumes": {"ai": name, "group": name},
+@pytest.mark.parametrize("group_volume", [
+    "devbase_home_default", "devbase_home_kkg", "devbase_home_with",
+    "devbase_home_a-b_c.d",
+])
+def test_devbase_owned_volume_names_pass(root, group_volume):
+    snap_dir = _write_meta(root, f"ok-{group_volume}", {
+        "name": "ok", "type": "full",
+        "volumes": {"ai": "devbase_home_ubuntu", "group": group_volume},
     })
     mgr = SnapshotManager(root)
 
-    assert mgr.snapshot_volumes(snap_dir) == {"ai": name, "group": name}
+    assert mgr.snapshot_volumes(snap_dir) == {
+        "ai": "devbase_home_ubuntu", "group": group_volume}
+
+
+@pytest.mark.parametrize("name", [
+    "mysql_data",              # 同じ Docker 上の無関係なボリューム
+    "devbase_work_1",          # devbase の作業ボリューム (スナップショット対象外)
+    "devbase_home_ubuntu",     # group 側に共通ボリュームを書く
+    "devbase_home_1",          # 数字のみのグループ名 (index と衝突)
+    "home_kkg",                # プレフィックスが違う
+])
+def test_unrelated_volume_names_are_rejected_for_the_group_mount(root, name):
+    """named volume の形をしているだけでは通さない。
+
+    無関係なボリューム名を書けると、復元前の消去でその中身を失わせられる。
+    """
+    from devbase.errors import SnapshotError
+
+    snap_dir = _write_meta(root, f"bad-{name}", {
+        "name": "bad", "type": "full",
+        "volumes": {"ai": "devbase_home_ubuntu", "group": name},
+    })
+    mgr = SnapshotManager(root)
+
+    with pytest.raises(SnapshotError):
+        mgr.snapshot_volumes(snap_dir)
+
+
+@pytest.mark.parametrize("name", ["mysql_data", "devbase_home_kkg", "devbase_work_1"])
+def test_shared_mount_only_accepts_the_shared_volume(root, name):
+    from devbase.errors import SnapshotError
+
+    snap_dir = _write_meta(root, f"bad-shared-{name}", {
+        "name": "bad", "type": "full",
+        "volumes": {"ai": name, "group": "devbase_home_default"},
+    })
+    mgr = SnapshotManager(root)
+
+    with pytest.raises(SnapshotError):
+        mgr.snapshot_volumes(snap_dir)

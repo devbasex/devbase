@@ -9,9 +9,14 @@ from typing import Optional
 
 import yaml
 
-from devbase.errors import SnapshotError
+from devbase.errors import DevbaseError, SnapshotError
 from devbase.log import get_logger
-from devbase.volume.manager import HOME_UBUNTU_VOLUME, get_group_volume
+from devbase.volume.manager import (
+    HOME_UBUNTU_VOLUME,
+    SHARED_VOLUME_PREFIX,
+    get_group_volume,
+    resolve_account_group,
+)
 
 logger = get_logger(__name__)
 
@@ -25,8 +30,6 @@ GROUP_MOUNT = 'group'
 # メタデータから受け入れるマウント名。空文字は旧レイアウト (共通ボリューム 1 本を
 # ルートへ直接マウント) を表す。
 _ALLOWED_MOUNTS = frozenset({'', SHARED_MOUNT, GROUP_MOUNT})
-# Docker の named volume として通る名前 (絶対パスを弾いて bind mount を防ぐ)
-_VOLUME_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
 SNAPSHOT_IMAGE = 'devbase-snapshot:latest'
 DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
@@ -572,20 +575,46 @@ class SnapshotManager:
 
     @staticmethod
     def _validate_volumes(volumes: dict, snap_dir: Path) -> dict:
-        """メタデータ由来の対象ボリュームを検証する (不正なら SnapshotError)。"""
+        """メタデータ由来の対象ボリュームを検証する (不正なら SnapshotError)。
+
+        **devbase が作るボリュームだけ**を許す。named volume の形をしていれば
+        通す、では足りない: 同じ Docker 上の無関係なボリューム名 (``mysql_data``
+        など) を書けば、復元前の消去でその中身を失わせられる。
+
+        - 共通側 (``''`` / ``ai``) は ``devbase_home_ubuntu`` に限る
+        - グループ側 (``group``) は ``devbase_home_<group>`` の形で、``<group>``
+          がアカウントグループ名として妥当なものに限る
+        """
+        meta_path = snap_dir / 'meta.yml'
+
+        def reject(reason: str) -> None:
+            raise SnapshotError(
+                f"スナップショットのメタデータが不正です ({meta_path}): {reason}")
+
         for sub, name in volumes.items():
             if sub not in _ALLOWED_MOUNTS:
-                raise SnapshotError(
-                    f"スナップショットのメタデータが不正です ({snap_dir / 'meta.yml'}): "
-                    f"未知のマウント名 '{sub}'。"
-                    f"使えるのは {', '.join(repr(m) for m in sorted(_ALLOWED_MOUNTS))} です"
-                )
-            if not isinstance(name, str) or not _VOLUME_NAME_RE.match(name):
-                raise SnapshotError(
-                    f"スナップショットのメタデータが不正です ({snap_dir / 'meta.yml'}): "
-                    f"'{sub}' のボリューム名 {name!r} は Docker の named volume 名として"
-                    "使えません (英数字・ドット・ハイフン・アンダースコア、先頭は英数字)"
-                )
+                reject(f"未知のマウント名 '{sub}'。"
+                       f"使えるのは "
+                       f"{', '.join(repr(m) for m in sorted(_ALLOWED_MOUNTS))} です")
+            if not isinstance(name, str):
+                reject(f"'{sub}' のボリューム名が文字列ではありません: {name!r}")
+
+            if sub in ('', SHARED_MOUNT):
+                if name != HOME_UBUNTU_VOLUME:
+                    reject(f"共通ボリュームに使えるのは {HOME_UBUNTU_VOLUME} だけです"
+                           f" (指定: {name!r})")
+                continue
+
+            # group: devbase_home_<group> の形で、<group> が妥当であること
+            if not name.startswith(SHARED_VOLUME_PREFIX):
+                reject(f"グループボリュームは {SHARED_VOLUME_PREFIX}<group> の形で"
+                       f"なければなりません (指定: {name!r})")
+            group = name[len(SHARED_VOLUME_PREFIX):]
+            try:
+                resolve_account_group(group)
+            except DevbaseError as e:
+                reject(f"グループボリューム {name!r} のグループ名が不正です: {e}")
+
         return dict(volumes)
 
     def _load_snap_meta(self, snap_dir: Path) -> dict:
