@@ -168,7 +168,22 @@ $ PYTHONPATH=/opt/google-cloud-sdk/lib/third_party python3 -c \
 nyle-carmo-analysis Credentials
 ```
 
-`Credentials`（= ユーザー認証）であって `ServiceAccountCredentials` ではないことを確認してください。
+> **Note:** ここに出る `Credentials` は**クラスの短い名前**で、それだけではユーザー認証と
+> サービスアカウントを区別できません。サービスアカウント側の
+> `google.oauth2.service_account.Credentials` も短い名前は同じ `Credentials` です。
+>
+> ```console
+> $ PYTHONPATH=/opt/google-cloud-sdk/lib/third_party python3 -c \
+>     "import google.oauth2.credentials as u, google.oauth2.service_account as s; print(u.Credentials.__name__, s.Credentials.__name__)"
+> Credentials Credentials
+> $ PYTHONPATH=/opt/google-cloud-sdk/lib/third_party python3 -c \
+>     "import google.oauth2.credentials as u, google.oauth2.service_account as s; print(u.Credentials.__module__, s.Credentials.__module__)"
+> google.oauth2.credentials google.oauth2.service_account
+> ```
+>
+> 見分けるには `type(c).__name__` ではなく **`type(c).__module__`** を出してください。
+> ユーザー認証なら `google.oauth2.credentials`、サービスアカウントなら
+> `google.oauth2.service_account` になります。
 
 > **Note:** 末尾の警告のとおり、この時点では **quota project が ADC に書かれていません**。
 > quota project を要する API（`quota exceeded` / `API not enabled` が出るもの）を使うなら
@@ -382,7 +397,13 @@ $ gws auth status
 `gws auth login` は gcloud と**流儀が違います**。認証コードを貼り戻すのではなく、
 **コンテナ内の `localhost:<ランダムポート>` でコールバックを待ち受けます**。
 
+ここまでの 4.1 / 4.2 はコンテナの中で実行していますが、**次の `docker exec` はホスト側**の
+コマンドです。コンテナから一度抜けるか、別のホストのターミナルを開いてください
+（コンテナの中に居るまま実行したいときは、`docker exec -it <コンテナ名>` を外して
+`gws auth login --readonly` だけを実行します）。
+
 ```console
+# ホスト
 $ docker exec -it <コンテナ名> gws auth login --readonly
 Open this URL in your browser to authenticate:
 
@@ -494,8 +515,21 @@ gws auth login --scopes openid,https://www.googleapis.com/auth/userinfo.email,ht
 | 値 | 挙動 |
 |---|---|
 | `adc`（推奨） | 鍵を書かない。`GOOGLE_APPLICATION_CREDENTIALS` と `BIGQUERY_KEY_FILE` を**コンテナへ渡さない**。認証は `$CLOUDSDK_CONFIG/application_default_credentials.json` に委ねる |
-| `key` | `GCP_CREDENTIALS_BASE64__<profile>` を復号して書き、上記 2 変数を渡す（従来どおり）|
+| `key` | アクティブプロファイルの `GCP_CREDENTIALS_BASE64__<profile>`（または旧来の `GOOGLE_APPLICATION_CREDENTIALS_BASE64`）を復号して書き、上記 2 変数を渡す（従来どおり）。**その鍵の env が無いときは警告して `adc` へ倒れる**（下記）|
 | 未設定 | アクティブプロファイルの鍵の env があれば `key`、無ければ `adc` |
+
+> **Warning:** `key` と書いても、**アクティブプロファイルの鍵が env に無ければ `adc` として
+> 構成されます**。サービスアカウントとして動かすつもりが、実際には永続化されたユーザー ADC で
+> 動いてしまうことがあるので注意してください。倒れたときはホスト側に次の警告が出ます。
+>
+> ```
+> GCP_AUTH_MODE=key ですが GCP_CREDENTIALS_BASE64__<profile> が env にありません。adc として構成します
+> ```
+>
+> 実体の無いパスを指す `GOOGLE_APPLICATION_CREDENTIALS` / `BIGQUERY_KEY_FILE` をコンテナへ
+> 渡して `DefaultCredentialsError` にするより安全なため、意図的にこうしています
+> (`lib/devbase/env/gcp_auth.py` の `resolve_auth_mode`)。`key` で動かしたいなら、
+> アクティブプロファイル用の `GCP_CREDENTIALS_BASE64__<profile>` を先に設定してください。
 
 **鍵が要るのはどういう場面か。** ユーザー認証では権限が足りない、あるいは人に紐づかない
 実行主体が必要な場面です。たとえば本番データセットへの読み取りがサービスアカウントにしか
