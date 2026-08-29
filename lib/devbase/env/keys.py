@@ -43,6 +43,14 @@ def gcp_credentials_key(profile: str) -> str:
     return f"{GCP_CREDENTIALS_BASE64_PREFIX}{profile}"
 
 
+# --- Account group (PLAN39: 永続化ボリュームのアカウントグループ分離) ---
+# 使用する Google / AWS アカウントの単位。グループごとに devbase_home_<group> を
+# 作り、コンテナへ /persistent/group としてマウントする。未設定なら `default`。
+# プロジェクト env / グローバル env に手書きする devbase 動作設定。
+# 詳細: docs/user/environment-variables.md
+DEVBASE_ACCOUNT_GROUP = "DEVBASE_ACCOUNT_GROUP"
+
+
 # --- Slack ---
 SLACK_KEYS = ("SLACK_BOT_TOKEN", "SLACK_TEAM_ID",
               "SLACK_CHANNEL_ID", "SLACK_USER_MENTION")

@@ -47,6 +47,9 @@ REPO_ENV = {"DEVBASE_REPOS": "cGxhbg==", "DEVBASE_PRIMARY_DIR": "carmo"}
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    # アカウントグループは常に dev へ載る (PLAN39)。外部環境で値が変わらないよう
+    # 未設定 = default に固定する。
+    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
     return tmp_path
 
 
@@ -94,6 +97,7 @@ def test_list_form_environment_is_supported(project):
         "FEATURE_FLAG": "enabled",
         "DEVBASE_REPOS": "cGxhbg==",
         "DEVBASE_PRIMARY_DIR": "carmo",
+        "DEVBASE_ACCOUNT_GROUP": "default",
     }
 
 
@@ -102,12 +106,19 @@ def test_environment_section_is_created_when_absent(project):
 
     generate_scaled_compose(1, dev_environment=REPO_ENV)
 
-    assert env_of(generated(project)["services"]["dev-1"]) == REPO_ENV
+    assert env_of(generated(project)["services"]["dev-1"]) == {
+        **REPO_ENV, "DEVBASE_ACCOUNT_GROUP": "default"}
 
 
-def test_without_extra_environment_nothing_is_added(project):
+def test_without_extra_environment_only_the_account_group_is_added(project):
+    """呼び出し側が何も渡さなくてもアカウントグループだけは載る (PLAN39)。
+
+    マウントされるグループボリュームと entrypoint が見るグループ名を必ず一致
+    させるため、解決結果はホスト側が明示的に渡す。
+    """
     (project / "compose.yml").write_text(COMPOSE_NO_ENV)
 
     generate_scaled_compose(1)
 
-    assert "environment" not in generated(project)["services"]["dev-1"]
+    dev = generated(project)["services"]["dev-1"]
+    assert env_of(dev) == {"DEVBASE_ACCOUNT_GROUP": "default"}
