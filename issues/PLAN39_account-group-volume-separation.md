@@ -354,7 +354,9 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 - **対象ファイル:** `lib/devbase/commands/container.py`, `containers/base/entrypoint.sh`,
   `docs/`, `README.md`, `CHANGELOG.md`
 - **変更内容:** `devbase status` に解決されたグループを表示する。entrypoint の起動時に
-  グループと `gcloud config get account` の結果を 1 行ログ出力する。ボリューム構造の表
+  グループと `gcloud config get account` の結果を 1 行ログ出力する。`entrypoint.sh` は
+  `set -e`（`containers/base/entrypoint.sh:3`）で動くため、未ログイン時に `gcloud` が非 0 を返しても
+  起動が落ちないよう `$(gcloud config get account 2>/dev/null || echo "unset")` でフォールバックする。ボリューム構造の表
   （`container-operations.md` / `compose-yml-guidelines.md` / `quickstart.md`）と
   `environment-variables.md` の `DEVBASE_ACCOUNT_GROUP`、`snapshot-guide.md` の対象ボリュームを更新する。
 - **満たす受け入れ条件:** AC10
@@ -443,6 +445,8 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 4. **revert** — コード変更を revert し、`devbase build --no-cache` と `devbase up` で再生成する。
    `AI_SETTINGS` は元の 1 系統に戻り `/persistent/ai` 配下を参照する。
 5. **後片付け** — 不要になったグループボリュームは `docker volume rm devbase_home_<group>` で削除する。
+   そのボリュームをマウントしたコンテナが残っていると `volume is in use` で失敗するため、
+   対象グループのコンテナを先に `devbase down` で削除しておく。
 
 手順 1 を省いて revert だけを行った場合も**起動はする**が、`default` はシード時点の認証・履歴で
 立ち上がり、それ以降のログイン更新と会話履歴は失われる。急ぎで戻すときの許容ラインとして、
