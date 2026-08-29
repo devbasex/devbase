@@ -178,6 +178,218 @@ devbase_enter_primary_dir() {
     fi
 }
 
+# ===================================================================
+# PLAN39: AI 設定の永続化 (共通 / アカウントグループの 2 層)
+# ===================================================================
+# /persistent/ai    … 全コンテナ共通 (分類 A)。plugins / skills のように
+#                     契約やテナントに紐づかない資産。グループ数だけ重複させない
+# /persistent/group … アカウントグループ単位 (分類 B)。認証情報と会話履歴のように
+#                     企業テナントへ紐づくもの。グループをまたいで共有しない
+#
+# ~/.claude の既定は**グループ側**にする。Claude Code は projects / sessions /
+# tasks のようなディレクトリを随時作るため、永続化するエントリを列挙する方式だと
+# 列挙漏れが黙って揮発する。既定をグループ側に倒し、共通にしたいものだけを
+# 名指しで共通側へ張る。
+
+# 分類 A: ホーム直下
+DEVBASE_SHARED_SETTINGS=(
+    ".codex"
+    ".serena"
+    ".ssh"
+    ".kiro"
+    "share"
+)
+
+# 分類 B: ホーム直下
+DEVBASE_GROUP_SETTINGS=(
+    ".claude.json"
+    ".claude"
+    ".gemini"
+)
+
+# 分類 A のうち ~/.claude 配下にあるもの (グループ側の .claude から共通側へ張る)
+DEVBASE_SHARED_CLAUDE_SETTINGS=(
+    "plugins"
+    "skills"
+    "commands"
+    "CLAUDE.md"
+    "settings.json"
+)
+
+# ファイルとして作るエントリ (末尾の要素名で判定する)。ここに無いものは
+# ディレクトリとして作る。
+#
+# 拡張子で判定していた頃は `.jsonl` が `*.json` にマッチせず、history.jsonl が
+# **ディレクトリとして**作られて Claude Code が追記できなくなっていた。
+# 新しいファイルのエントリを足すときはこの一覧にも足すこと。
+DEVBASE_FILE_ENTRIES=(
+    ".claude.json"
+    ".credentials.json"
+    "history.jsonl"
+    "CLAUDE.md"
+    "settings.json"
+)
+
+# パスの末尾要素がファイルとして作るエントリか判定する。
+devbase_is_file_entry() {
+    local name="${1##*/}" entry
+    for entry in "${DEVBASE_FILE_ENTRIES[@]}"; do
+        [ "$name" = "$entry" ] && return 0
+    done
+    return 1
+}
+
+# 永続領域のルートを用意する。
+#
+# 空の named volume は **root 所有**で作られ uid 1000 では書き込めないため、
+# 書けなければ chown する。テストのように最初から書ける場所では sudo を呼ばない。
+devbase_ensure_persistent_root() {
+    local root="$1" owner="${2:-${USERNAME:-ubuntu}}"
+
+    if [ ! -d "$root" ]; then
+        mkdir -p "$root" 2>/dev/null || sudo mkdir -p "$root"
+    fi
+    if [ ! -w "$root" ]; then
+        sudo chown "${owner}:${owner}" "$root"
+    fi
+}
+
+# 実体が無ければプレースホルダを作る (親ディレクトリごと)。
+devbase_ensure_entry() {
+    local path="$1"
+
+    mkdir -p "$(dirname "$path")"
+    if [ -e "$path" ]; then
+        return 0
+    fi
+    if devbase_is_file_entry "$path"; then
+        : > "$path"
+    else
+        mkdir -p "$path"
+    fi
+}
+
+# <link_path> を <target_path> への symlink にする。
+#
+# **link 側と実体側の双方**で親ディレクトリを作るのが要点。入れ子パス
+# (.claude/plugins) ではどちらの親も無いことがあり、以前は実体側の作成が
+# `No such file or directory` で落ちて壊れた symlink が残っていた。
+#
+# 既存の実体は `rm -rf` してから張り直す。symlink に対する `rm -rf` は
+# **リンクだけ**を消すので、共通側の実体は巻き添えにならない。
+devbase_link_setting() {
+    local link_path="$1" target_path="$2" owner="${3:-${USERNAME:-ubuntu}}"
+
+    devbase_ensure_entry "$target_path"
+
+    if [ -L "$link_path" ] && [ "$(readlink "$link_path")" = "$target_path" ]; then
+        echo "  ✓ ${link_path} (symlink exists)"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$link_path")"
+    if [ -e "$link_path" ] || [ -L "$link_path" ]; then
+        echo "  Removing existing ${link_path}..."
+        rm -rf "$link_path"
+    fi
+
+    echo "  Creating symlink: ${link_path} -> ${target_path}"
+    ln -s "$target_path" "$link_path"
+    chown -h "${owner}:${owner}" "$link_path" 2>/dev/null || true
+}
+
+# シード元から 1 エントリを**コピー**する (既にあれば何もしない)。
+#
+# 第 3 引数以降は「コピーしない直下の名前」。分類 A の共通資産をグループ側へ
+# 複製しないために使う。
+devbase_seed_entry() {
+    local src="$1" dest="$2"
+    shift 2
+
+    if [ -e "$dest" ]; then
+        return 0
+    fi
+    if [ ! -e "$src" ]; then
+        echo "  skip (シード元なし): $src"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$dest")"
+    if [ ! -d "$src" ]; then
+        cp -a "$src" "$dest"
+        echo "  seeded: $dest"
+        return 0
+    fi
+
+    mkdir -p "$dest"
+    local child name excluded skip
+    # `.[!.]*` と `..?*` で隠しファイルも拾う (`.credentials.json` 等)。
+    for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+        [ -e "$child" ] || [ -L "$child" ] || continue
+        name="${child##*/}"
+        skip=0
+        for excluded in "$@"; do
+            if [ "$name" = "$excluded" ]; then
+                skip=1
+                break
+            fi
+        done
+        [ "$skip" = "1" ] && continue
+        cp -a "$child" "$dest/$name"
+    done
+    echo "  seeded: $dest"
+}
+
+# default グループの初回シード。
+#
+# 現行 /persistent/ai に実体がある分類 B のデータ (.claude.json / 認証 / 履歴 /
+# .gemini) をグループ側へ **コピー** して初期化する。move ではないので切り戻し時に
+# 元データが残る。非 default では走らせない — 走らせるとグループ分離の意味が
+# 失われる。gcloud / gws はシード元が存在しないため対象外 (AC8)。
+devbase_seed_group_settings() {
+    local ai_root="$1" group_root="$2" group="$3"
+    local entry
+
+    if [ "$group" != "default" ]; then
+        return 0
+    fi
+
+    echo "Seeding account group '${group}' from ${ai_root} (first run only)..."
+    for entry in "${DEVBASE_GROUP_SETTINGS[@]}"; do
+        if [ "$entry" = ".claude" ]; then
+            devbase_seed_entry "$ai_root/$entry" "$group_root/$entry" \
+                "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"
+        else
+            devbase_seed_entry "$ai_root/$entry" "$group_root/$entry"
+        fi
+    done
+}
+
+# AI 設定の symlink を 2 系統ぶん張る (初回シードを含む)。
+devbase_setup_ai_settings() {
+    local home_root="$1" ai_root="$2" group_root="$3" group="${4:-default}"
+    local owner="${5:-${USERNAME:-ubuntu}}"
+    local entry
+
+    devbase_ensure_persistent_root "$ai_root" "$owner"
+    devbase_ensure_persistent_root "$group_root" "$owner"
+
+    # symlink を張る**前**にシードする。張ったあとに走らせると、共通側を指す
+    # symlink の中身へコピーしてしまう。
+    devbase_seed_group_settings "$ai_root" "$group_root" "$group"
+
+    for entry in "${DEVBASE_SHARED_SETTINGS[@]}"; do
+        devbase_link_setting "$home_root/$entry" "$ai_root/$entry" "$owner"
+    done
+    for entry in "${DEVBASE_GROUP_SETTINGS[@]}"; do
+        devbase_link_setting "$home_root/$entry" "$group_root/$entry" "$owner"
+    done
+    for entry in "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"; do
+        devbase_link_setting "$group_root/.claude/$entry" \
+            "$ai_root/.claude/$entry" "$owner"
+    done
+}
+
 # テストは関数定義だけを使う (source 時のみ有効な return で以降を読み飛ばす)。
 if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
     return 0 2>/dev/null || exit 0
@@ -380,65 +592,18 @@ if [ "$ENABLE_DIND" = "true" ] || [ "$ENABLE_DIND" = "1" ]; then
 fi
 
 # ========================================
-# AI Agent Settings Symlink Setup
+# AI Agent Settings Symlink Setup (PLAN39: 共通 / グループの 2 層)
 # ========================================
-echo "Setting up AI agent settings symlinks..."
-
+# DEVBASE_ACCOUNT_GROUP はホスト (devbase up) が解決して渡す。ホスト側で
+# 検証済みなので、ここでは未設定時に default へ落とすだけにする。
+DEVBASE_ACCOUNT_GROUP="${DEVBASE_ACCOUNT_GROUP:-default}"
 AI_PERSISTENT_DIR="/persistent/ai"
-AI_SETTINGS=(
-    ".claude.json"
-    ".claude"
-    ".codex"
-    ".gemini"
-    ".serena"
-    ".ssh"
-    ".kiro"
-    "share"
-)
+GROUP_PERSISTENT_DIR="/persistent/group"
 
-# Ensure /persistent/ai directory exists
-if [ ! -d "$AI_PERSISTENT_DIR" ]; then
-    echo "Creating $AI_PERSISTENT_DIR directory..."
-    sudo mkdir -p "$AI_PERSISTENT_DIR"
-    sudo chown "${USERNAME}:${USERNAME}" "$AI_PERSISTENT_DIR"
-fi
-
-# Create symlinks for each AI setting
-for setting in "${AI_SETTINGS[@]}"; do
-    HOME_PATH="/home/${USERNAME}/${setting}"
-    PERSISTENT_PATH="${AI_PERSISTENT_DIR}/${setting}"
-
-    # Skip if symlink already exists and points to correct location
-    if [ -L "$HOME_PATH" ] && [ "$(readlink -f "$HOME_PATH")" = "$PERSISTENT_PATH" ]; then
-        echo "  ✓ ${setting} (symlink exists)"
-        continue
-    fi
-
-    # Remove existing file/directory/broken symlink in home
-    if [ -e "$HOME_PATH" ] || [ -L "$HOME_PATH" ]; then
-        echo "  Removing existing ${setting} from home..."
-        rm -rf "$HOME_PATH"
-    fi
-
-    # If setting doesn't exist in persistent storage, create placeholder
-    if [ ! -e "$PERSISTENT_PATH" ]; then
-        # Determine if it's a file or directory based on extension
-        if [[ "$setting" == *.json ]]; then
-            echo "  Creating empty file: ${setting}"
-            sudo touch "$PERSISTENT_PATH"
-        else
-            echo "  Creating empty directory: ${setting}"
-            sudo mkdir -p "$PERSISTENT_PATH"
-        fi
-        sudo chown -R "${USERNAME}:${USERNAME}" "$PERSISTENT_PATH"
-    fi
-
-    # Create symlink
-    echo "  Creating symlink: ${setting} -> ${PERSISTENT_PATH}"
-    ln -s "$PERSISTENT_PATH" "$HOME_PATH"
-    chown -h "${USERNAME}:${USERNAME}" "$HOME_PATH"
-done
-
+echo "Setting up AI agent settings symlinks (account group: ${DEVBASE_ACCOUNT_GROUP})..."
+devbase_setup_ai_settings \
+    "/home/${USERNAME}" "$AI_PERSISTENT_DIR" "$GROUP_PERSISTENT_DIR" \
+    "$DEVBASE_ACCOUNT_GROUP" "$USERNAME"
 echo "AI agent settings symlinks setup completed"
 # ========================================
 
