@@ -270,6 +270,28 @@ def test_an_empty_rename_target_is_warned_as_possible_data_loss(tmp_path, caplog
     assert './.claude/plugins/cache/B10' in warnings
 
 
+def test_an_empty_target_with_spaces_is_reported_as_one_path(tmp_path, caplog):
+    """検証コマンドの出力は行単位で読む。空白入りのパスを分断しない。"""
+    _write_generation(tmp_path, 'gen', incrementals=1)
+    stderr = ("tar: Cannot rename './x' to './a b/new dir': Directory not empty\n")
+
+    class SpacedTargetManager(StubManager):
+        def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
+            result = super()._run_docker_tar(snap_dir, mode, command, volumes)
+            if self._archive_in(command) is None and mode == 'restore':
+                return subprocess.CompletedProcess(
+                    [], 0, stdout='./a b/new dir\n', stderr='')
+            return result
+
+    mgr = SpacedTargetManager(tmp_path, {'incr-001.tar.zst': stderr})
+    with caplog.at_level('WARNING'):
+        mgr.restore('gen')
+
+    warnings = '\n'.join(r.getMessage() for r in caplog.records
+                          if r.levelname == 'WARNING')
+    assert './a b/new dir' in warnings
+
+
 def test_a_real_tar_error_still_stops_the_restore(tmp_path):
     """AC4: rename 以外の失敗は従来どおり止める。"""
     _write_generation(tmp_path, 'gen', incrementals=3)

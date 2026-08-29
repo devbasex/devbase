@@ -335,8 +335,10 @@ class SnapshotManager:
             'done',
             volumes=volumes,
         )
+        # 空白を含むパスを分断しないよう、行単位で解析する。
         # テストダブルは戻り値を返さない。その場合は検証を行わない。
-        empty = result.stdout.split() if result is not None and result.stdout else []
+        empty = [line.strip() for line in result.stdout.splitlines()
+                 if line.strip()] if result is not None and result.stdout else []
         if not empty:
             return
         logger.warning(
@@ -542,7 +544,8 @@ class SnapshotManager:
         )
 
     def _run_docker_tar(self, snap_dir: Path, mode: str, command: str,
-                        volumes: Optional[dict] = None) -> None:
+                        volumes: Optional[dict] = None
+                        ) -> subprocess.CompletedProcess:
         """Docker経由でtar操作を実行する。
 
         Args:
@@ -550,6 +553,9 @@ class SnapshotManager:
             mode: 'backup' or 'restore'
             command: コンテナ内で実行するコマンド
             volumes: 対象ボリューム (省略時は作成時の対象)
+
+        Returns:
+            実行結果。標準出力を読む呼び出し (rename 宛先の検証) がある。
         """
         image = self._ensure_snapshot_image()
 
