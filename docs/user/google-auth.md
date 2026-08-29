@@ -53,7 +53,7 @@ GCP_AUTH_MODE=adc          # サービスアカウント鍵を使わない場合
 
 ```bash
 devbase project up <name>
-devbase project login <name>
+devbase login <name>
 ```
 
 グループ名には次の 3 つが使えません。`devbase up` の前にエラーになります。
@@ -205,12 +205,12 @@ nyle-carmo-analysis Credentials
 グループボリュームに残るので**再認証は要りません**。
 
 コンテナの作り直しは**ホスト側**で実行します。`up` で作られるのは新しいコンテナなので、
-続きを確認するには `devbase project login <name>` で**入り直してください**。
+続きを確認するには `devbase login <name>` で**入り直してください**。
 
 ```console
 # ホスト
 $ devbase project down <name> && devbase project up <name>
-$ devbase project login <name>
+$ devbase login <name>
 ```
 
 ```console
@@ -444,12 +444,12 @@ $ gws auth status | grep -E '"auth_method"|"storage"'
 ```
 
 コンテナを作り直しても**再認証は要りません**。ここでも `down` / `up` はホスト側で実行し、
-`devbase project login <name>` で作り直したコンテナへ入り直してから確認します。
+`devbase login <name>` で作り直したコンテナへ入り直してから確認します。
 
 ```console
 # ホスト
 $ devbase project down <name> && devbase project up <name>
-$ devbase project login <name>
+$ devbase login <name>
 ```
 
 ```console
