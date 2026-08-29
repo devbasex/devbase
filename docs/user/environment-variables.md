@@ -114,6 +114,10 @@ ADC を既定の経路にできます。鍵が要る場面のために切り替�
 `compose.yml` の `environment:` にパスが直書きされている場合も、`adc` では生成 compose
 から取り除きます。
 
+取り除く対象は **dev サービス（`dev-1` 〜 `dev-N`）だけ**です。`GCP_AUTH_MODE` は dev の
+認証方式の宣言なので、独自に鍵をマウントしている `batch` のような非 dev サービスが
+`environment:` や `env_file` で受け取っている 2 変数はそのまま残します。
+
 ```bash
 # ADC を使う（推奨）
 echo 'GCP_AUTH_MODE=adc' >> projects/<name>/env

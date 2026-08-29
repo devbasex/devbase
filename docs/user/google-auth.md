@@ -531,6 +531,10 @@ gws auth login --scopes openid,https://www.googleapis.com/auth/userinfo.email,ht
 > (`lib/devbase/env/gcp_auth.py` の `resolve_auth_mode`)。`key` で動かしたいなら、
 > アクティブプロファイル用の `GCP_CREDENTIALS_BASE64__<profile>` を先に設定してください。
 
+`adc` で 2 変数を落とすのは **dev サービス（`dev-1` 〜 `dev-N`）だけ**です。`compose.yml` が
+独自に鍵をマウントしている `batch` のような非 dev サービスへ書いた設定や、そのサービスが
+`env_file` で受け取っていた 2 変数には触りません。
+
 **鍵が要るのはどういう場面か。** ユーザー認証では権限が足りない、あるいは人に紐づかない
 実行主体が必要な場面です。たとえば本番データセットへの読み取りがサービスアカウントにしか
 付与されていない場合や、コンテナ内から実行するバッチが特定の SA として動く必要がある場合です。

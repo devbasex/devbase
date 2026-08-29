@@ -14,7 +14,7 @@ Google はサービスアカウント鍵を非推奨とし、ローカル開発�
 シェルはコンテナの env 設定を継承する)。したがって 2 変数の除外はここで行う。
 """
 
-from typing import Mapping, Optional, Sequence
+from typing import Mapping, Sequence
 
 from devbase.env import keys
 from devbase.log import get_logger
@@ -110,15 +110,15 @@ def container_env(env: Mapping[str, str]) -> dict:
     }
 
 
-def filter_key_env_names(
-    names: Optional[Sequence[str]], mode: str,
-) -> Optional[Sequence[str]]:
-    """``adc`` モードでは鍵モード専用の変数名を列挙から外す。
+def key_only_env_names(mode: str) -> Sequence[str]:
+    """``mode`` で **dev の列挙から外す**変数名を返す (``key`` なら空)。
 
     生成 compose の ``environment:`` に名前が載らなければ、Compose はその変数を
     コンテナへ渡さない。値を空文字にするのではなく**渡さない**ことで、
     ``docker exec`` のシェルから見ても未設定になる。
+
+    外すのは devbase が管理する dev サービスの列挙だけである。``GCP_AUTH_MODE``
+    は dev の認証方式の宣言であって、元々この 2 変数を ``env_file`` から受け取って
+    いた非 dev サービス (独自に鍵を持つ batch 等) の設定ではない。
     """
-    if names is None or mode == AUTH_MODE_KEY:
-        return names
-    return [name for name in names if name not in KEY_ONLY_ENV_KEYS]
+    return () if mode == AUTH_MODE_KEY else KEY_ONLY_ENV_KEYS

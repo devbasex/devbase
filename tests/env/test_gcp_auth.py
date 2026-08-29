@@ -120,23 +120,13 @@ def test_unknown_mode_falls_back_to_auto(declared):
 # 鍵モード専用変数の除外 (AC12 / AC13)
 # ---------------------------------------------------------------------------
 
-NAMES = ["ANTHROPIC_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS",
-         "BIGQUERY_KEY_FILE", "GCP_CREDENTIALS_BASE64__default"]
+def test_adc_excludes_the_key_only_names():
+    assert gcp_auth.key_only_env_names(gcp_auth.AUTH_MODE_ADC) == (
+        "GOOGLE_APPLICATION_CREDENTIALS", "BIGQUERY_KEY_FILE")
 
 
-def test_adc_drops_the_key_only_names():
-    filtered = gcp_auth.filter_key_env_names(NAMES, gcp_auth.AUTH_MODE_ADC)
-    assert filtered == ["ANTHROPIC_API_KEY", "GCP_CREDENTIALS_BASE64__default"]
-
-
-def test_key_mode_keeps_every_name():
-    filtered = gcp_auth.filter_key_env_names(NAMES, gcp_auth.AUTH_MODE_KEY)
-    assert filtered == NAMES
-
-
-def test_none_is_passed_through():
-    """由来の内訳が渡されない場合の None をつぶさない。"""
-    assert gcp_auth.filter_key_env_names(None, gcp_auth.AUTH_MODE_ADC) is None
+def test_key_mode_excludes_nothing():
+    assert gcp_auth.key_only_env_names(gcp_auth.AUTH_MODE_KEY) == ()
 
 
 # ---------------------------------------------------------------------------

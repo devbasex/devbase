@@ -197,6 +197,21 @@ volumes:
 """
 
 
+# 非 dev サービスが共通機密を env_file で参照していた構成
+ENV_FILE_COMPOSE = """services:
+  dev:
+    image: alpine
+    volumes:
+      - x:/work
+  batch:
+    image: alpine
+    env_file:
+      - ${DEVBASE_ROOT}/.env
+volumes:
+  x: {}
+"""
+
+
 def services(project) -> dict:
     return yaml.safe_load(
         (project / ".docker-compose.scale.yml").read_text())["services"]
@@ -234,6 +249,23 @@ def test_adc_keeps_inline_key_paths_of_non_dev_services(project, monkeypatch):
 
     batch = services(project)["batch"]["environment"]
     assert batch == ["GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json", "TZ=Asia/Tokyo"]
+
+
+def test_adc_keeps_the_key_env_names_of_non_dev_secret_receivers(project, monkeypatch):
+    """機密として 2 変数を受け取っていた非 dev サービスの列挙も絞らない。
+
+    絞るのは dev へ渡す列挙だけ。共通機密から鍵パスを受け取っていたサービスが
+    adc への切り替えで値を失うと、そのサービスだけが起動できなくなる。
+    """
+    (project / "compose.yml").write_text(ENV_FILE_COMPOSE)
+    monkeypatch.setenv("GCP_AUTH_MODE", "adc")
+
+    generate_scaled_compose(
+        1, secret_env_names=SECRET_NAMES, global_env_names=SECRET_NAMES,
+        project_env_names=[])
+
+    assert "GOOGLE_APPLICATION_CREDENTIALS" in services(project)["batch"]["environment"]
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in env_map(project)
 
 
 def test_key_mode_keeps_inline_key_paths(project, monkeypatch):

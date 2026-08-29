@@ -229,7 +229,7 @@ def _drop_env_names(service: dict, names: Iterable[str]) -> None:
     ``DefaultCredentialsError`` で落ちるため、「値が空」でも「値なし参照」でも
     足りず、**渡さない**しかない。
 
-    機密の列挙 (:func:`gcp_auth.filter_key_env_names`) を絞るだけでは、元の
+    機密の列挙 (:func:`gcp_auth.key_only_env_names`) を絞るだけでは、元の
     ``compose.yml`` の ``environment`` に直書きされたキーが生成物に残る。
     map / list の両記法を扱い、空になった ``environment`` は消す。
     """
@@ -282,7 +282,9 @@ class _SecretNames:
         all_names: Sequence[str] = (),
         global_names: Optional[Sequence[str]] = None,
         project_names: Optional[Sequence[str]] = None,
+        dev_excluded: Iterable[str] = (),
     ) -> None:
+        self._dev_excluded = set(dev_excluded)
         split_known = global_names is not None or project_names is not None
         globals_ = list(global_names or ())
         projects = list(project_names or ())
@@ -300,6 +302,15 @@ class _SecretNames:
                 compose_migrate.TARGET_GLOBAL: everything,
                 compose_migrate.TARGET_PROJECT: everything,
             }
+
+    @property
+    def for_dev(self) -> List[str]:
+        """dev インスタンスへ渡す列挙 (``dev_excluded`` を除いたもの)。
+
+        除外を dev だけに効かせる。非 dev サービスは :meth:`for_targets` 経由で、
+        元々 ``env_file`` で参照していた由来のキーを受け取り続ける。
+        """
+        return [name for name in self.all if name not in self._dev_excluded]
 
     def for_targets(self, targets: Iterable[str]) -> List[str]:
         """指定の参照種別に由来するキーだけを、全体と同じ順序で返す"""
@@ -414,7 +425,8 @@ def _build_scaled_services(
     # 構成でも両方の機密を必要とする。
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i, group_volume, secret_names.all,
+            dev_service, dev_service_name, i, group_volume,
+            secret_names.for_dev,
             dev_environment=dev_environment,
         )
     return scaled_services
@@ -578,16 +590,17 @@ def generate_scaled_compose(
         **gcp_auth.container_env(os.environ),
     }
 
-    # ADC モードでは鍵モード専用の 2 変数を **列挙から外す**。名前が載らなければ
-    # Compose はその変数をコンテナへ渡さないので、docker exec のシェルから見ても
-    # 未設定になる。値を空にするだけでは entrypoint の外に効かない。
+    # ADC モードでは鍵モード専用の 2 変数を **dev の列挙から外す**。名前が載ら
+    # なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
+    # から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
+    #
+    # 除外は dev だけに効かせる。元々この 2 変数を env_file から受け取っていた
+    # 非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
+    # 同じようにそのサービスを壊す。
     auth_mode = dev_environment[keys.GCP_AUTH_MODE]
-    secret_env_names = gcp_auth.filter_key_env_names(secret_env_names, auth_mode)
-    global_env_names = gcp_auth.filter_key_env_names(global_env_names, auth_mode)
-    project_env_names = gcp_auth.filter_key_env_names(project_env_names, auth_mode)
-
     secret_names = _SecretNames(
-        secret_env_names, global_env_names, project_env_names)
+        secret_env_names, global_env_names, project_env_names,
+        dev_excluded=gcp_auth.key_only_env_names(auth_mode))
 
     scaled_services = _build_scaled_services(
         services, dev_service, dev_service_name, scale, group_volume,
