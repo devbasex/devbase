@@ -135,7 +135,7 @@ RUN set -eux; \
     curl -LsSf https://astral.sh/uv/install.sh | sh; \
     # npm グローバルパッケージ（umask 0002 で npm グループにも書き込み権を残す）
     umask 0002; \
-    npm i -g yarn @playwright/test aws-cdk aws-cdk-lib typescript @google/gemini-cli @openai/codex; \
+    npm i -g yarn @playwright/test aws-cdk aws-cdk-lib typescript @google/gemini-cli @openai/codex @googleworkspace/cli; \
     # root が作ったファイルも ubuntu が上書きできるように揃える。
     # install レイヤーと同じ RUN なのでレイヤーの複製は発生しない。
     chown -R "$USERNAME":npm "$NPM_CONFIG_PREFIX"; \

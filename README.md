@@ -13,7 +13,8 @@ devbaseは、Docker Composeを使った再現性の高い開発環境を提供�
 - **豊富なツールセット**: Docker CLI、AWS CLI、gcloud SDK、Terraform、Node.js、AI CLIツールがプリインストール
 - **複数コンテナの並行開発**: `devbase project scale`で既存コンテナを再起動せずにスケール可能
 - **データ永続化**: 名前付きボリュームでコンテナ再起動後もデータを保持
-- **スナップショット管理**: 共通ボリューム `devbase_home_ubuntu`（コンテナ内 `/persistent/ai`。AI 設定・共有ファイル）の増分バックアップ・復元・世代管理
+- **アカウントグループ**: 認証情報と会話ログを `DEVBASE_ACCOUNT_GROUP` 単位のボリュームへ分離（共通資産は重複させない）
+- **スナップショット管理**: 共通ボリューム `devbase_home_ubuntu`（`/persistent/ai`）とグループボリューム `devbase_home_<group>`（`/persistent/group`）の増分バックアップ・復元・世代管理
 - **環境変数の自動収集**: `devbase env init`でAWS/Git/GCP認証情報を対話的に設定
 - **階層メニュー TUI**: `devbase list` のプロジェクト一覧（矢印キー移動・名前絞り込み対応）から起動・操作（up / down / login / ps / logs / scale / build / rebuild）を選択。画面最下部の常設メニュー（環境変数 / プラグイン / スナップショット / ステータス）へは ←→ キーで移動できます
 - **イメージ再ビルド**: `devbase build [name] --no-cache` でキャッシュ無効の完全再ビルド。`devbase rebuild [name]`（= `build --expires=7`）はイメージが既定 7 日より古いときのみ再ビルドします
@@ -148,6 +149,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 | [環境変数ガイド](docs/user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [環境変数の export/import ガイド](docs/user/env-export-import.md) | バンドル形式・age 暗号化・S3 連携・merge/replace の運用 |
 | [コンテナ操作ガイド](docs/user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
+| [Google 認証ガイド](docs/user/google-auth.md) | アカウントグループごとの gcloud / gws 認証、`GCP_AUTH_MODE` |
 | [スナップショットガイド](docs/user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
 | [トラブルシューティング](docs/user/troubleshooting.md) | カテゴリ別の問題と解決策 |
 | [Orca 削除の移行ガイド](docs/user/orca-removal-migration.md) | 旧 Orca(SSH) 接続の廃止と Remote-SSH への移行手順 |

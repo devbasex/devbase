@@ -8,11 +8,16 @@ from typing import (
     Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
 )
 
-from devbase.env import compose_migrate
+from devbase.env import compose_migrate, gcp_auth, keys
 from devbase.errors import DockerError
 from devbase.log import get_logger
 
-from .manager import get_work_volume_for_index, get_ai_volume_for_index
+from .manager import (
+    get_ai_volume_for_index,
+    get_group_volume,
+    get_work_volume_for_index,
+    resolve_account_group,
+)
 
 logger = get_logger(__name__)
 
@@ -66,15 +71,20 @@ def _volume_target(vol: Any) -> Optional[str]:
 
 
 def _replace_volumes_for_instance(
-    volumes: list, ai_volume: str, work_volume: str,
+    volumes: list, ai_volume: str, work_volume: str, group_volume: str,
 ) -> list:
     """Replace volume mounts in a service's volumes list for a specific instance.
 
     /home/ubuntu mounts are skipped (deprecated).
-    /persistent/ai is mapped to ai_volume.
+    /persistent/ai is mapped to ai_volume (shared by every container).
+    /persistent/group is mapped to group_volume (shared within the account group).
     /work is mapped to work_volume.
     """
-    replacements = {'/persistent/ai': ai_volume, '/work': work_volume}
+    replacements = {
+        '/persistent/ai': ai_volume,
+        '/persistent/group': group_volume,
+        '/work': work_volume,
+    }
     replaced_targets = set()
     new_volumes = []
 
@@ -107,7 +117,7 @@ def _replace_volumes_for_instance(
     return new_volumes
 
 
-def _build_volumes_section(config: dict, scale: int) -> dict:
+def _build_volumes_section(config: dict, scale: int, group_volume: str) -> dict:
     """Build the volumes section for a scaled compose file."""
     # Copy original volumes (mysql, valkey, etc.) from config
     volumes: Dict[str, Any] = {
@@ -117,6 +127,10 @@ def _build_volumes_section(config: dict, scale: int) -> dict:
 
     # Add shared home volume (devbase_home_ubuntu) once for all instances
     volumes[get_ai_volume_for_index(1)] = {'external': True}
+
+    # Add the account group volume (devbase_home_<group>), shared by every
+    # container of the group (PLAN39)
+    volumes[group_volume] = {'external': True}
 
     # Add work volumes for each dev instance (external)
     for i in range(1, scale + 1):
@@ -206,6 +220,42 @@ def _mask_secret_environment(
     service['environment'] = list(secrets)
 
 
+def _drop_env_names(service: dict, names: Iterable[str]) -> None:
+    """service の ``environment`` から指定キーを**丸ごと**取り除く。
+
+    値を落として名前だけ残す :func:`_mask_secret_environment` と違い、名前ごと
+    消す。ADC 用 (PLAN39): ``GOOGLE_APPLICATION_CREDENTIALS`` が実在しない
+    ファイルを指していると、ADC はユーザー認証へフォールバックせず
+    ``DefaultCredentialsError`` で落ちるため、「値が空」でも「値なし参照」でも
+    足りず、**渡さない**しかない。
+
+    機密の列挙 (:func:`gcp_auth.key_only_env_names`) を絞るだけでは、元の
+    ``compose.yml`` の ``environment`` に直書きされたキーが生成物に残る。
+    map / list の両記法を扱い、空になった ``environment`` は消す。
+    """
+    drop = set(names)
+    if not drop:
+        return
+    existing = service.get('environment')
+
+    if isinstance(existing, dict):
+        kept = {k: v for k, v in existing.items() if k not in drop}
+    elif isinstance(existing, list):
+        kept = [
+            item for item in existing
+            if not (isinstance(item, str)
+                    and item.split('=', 1)[0].strip() in drop)
+        ]
+    else:
+        # None や解釈できない形式には触らない (警告は mask 側で出している)
+        return
+
+    if kept:
+        service['environment'] = kept
+    else:
+        service.pop('environment', None)
+
+
 class _SecretNames:
     """機密の変数名を**由来別**に保持し、参照種別に応じた部分集合を切り出す。
 
@@ -232,7 +282,9 @@ class _SecretNames:
         all_names: Sequence[str] = (),
         global_names: Optional[Sequence[str]] = None,
         project_names: Optional[Sequence[str]] = None,
+        dev_excluded: Iterable[str] = (),
     ) -> None:
+        self._dev_excluded = set(dev_excluded)
         split_known = global_names is not None or project_names is not None
         globals_ = list(global_names or ())
         projects = list(project_names or ())
@@ -250,6 +302,15 @@ class _SecretNames:
                 compose_migrate.TARGET_GLOBAL: everything,
                 compose_migrate.TARGET_PROJECT: everything,
             }
+
+    @property
+    def for_dev(self) -> List[str]:
+        """dev インスタンスへ渡す列挙 (``dev_excluded`` を除いたもの)。
+
+        除外を dev だけに効かせる。非 dev サービスは :meth:`for_targets` 経由で、
+        元々 ``env_file`` で参照していた由来のキーを受け取り続ける。
+        """
+        return [name for name in self.all if name not in self._dev_excluded]
 
     def for_targets(self, targets: Iterable[str]) -> List[str]:
         """指定の参照種別に由来するキーだけを、全体と同じ順序で返す"""
@@ -291,6 +352,7 @@ def _apply_dev_environment(service: dict, extra: Mapping[str, str]) -> None:
 
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int,
+    group_volume: str,
     secret_env_names: Sequence[str] = (),
     dev_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
@@ -311,7 +373,7 @@ def _build_dev_instance(
     ai_volume = get_ai_volume_for_index(index)
     work_volume = get_work_volume_for_index(index)
     service['volumes'] = _replace_volumes_for_instance(
-        service.get('volumes', []), ai_volume, work_volume,
+        service.get('volumes', []), ai_volume, work_volume, group_volume,
     )
 
     return service
@@ -319,6 +381,7 @@ def _build_dev_instance(
 
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
+    group_volume: str,
     secret_names: Optional[_SecretNames] = None,
     secret_services: Optional[Mapping[str, Set[str]]] = None,
     dev_environment: Optional[Mapping[str, str]] = None,
@@ -362,7 +425,8 @@ def _build_scaled_services(
     # 構成でも両方の機密を必要とする。
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i, secret_names.all,
+            dev_service, dev_service_name, i, group_volume,
+            secret_names.for_dev,
             dev_environment=dev_environment,
         )
     return scaled_services
@@ -512,17 +576,55 @@ def generate_scaled_compose(
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
 
     secret_services = _services_receiving_secrets(compose_file, dev_service_name)
+
+    # アカウントグループはここで 1 度だけ解決し、マウント・ボリューム宣言・
+    # 環境変数の 3 か所へ同じ値を配る。コンテナ側で解決し直させると、マウント
+    # されているボリュームと entrypoint が見ているグループ名がずれうる。
+    # 不正な名前はここで DevbaseError になり、構成生成の時点で起動が止まる。
+    account_group = resolve_account_group()
+    group_volume = get_group_volume(account_group)
+    dev_environment = {
+        **(dev_environment or {}),
+        keys.DEVBASE_ACCOUNT_GROUP: account_group,
+        # gcloud / gws の設定ディレクトリと解決済みの認証モード (PLAN39)
+        **gcp_auth.container_env(os.environ),
+    }
+
+    # ADC モードでは鍵モード専用の 2 変数を **dev の列挙から外す**。名前が載ら
+    # なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
+    # から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
+    #
+    # 除外は dev だけに効かせる。元々この 2 変数を env_file から受け取っていた
+    # 非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
+    # 同じようにそのサービスを壊す。
+    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
     secret_names = _SecretNames(
-        secret_env_names, global_env_names, project_env_names)
+        secret_env_names, global_env_names, project_env_names,
+        dev_excluded=gcp_auth.key_only_env_names(auth_mode))
+
+    scaled_services = _build_scaled_services(
+        services, dev_service, dev_service_name, scale, group_volume,
+        secret_names=secret_names,
+        secret_services=secret_services,
+        dev_environment=dev_environment,
+    )
+
+    # 列挙を絞るだけでは、元の compose.yml が environment に**直書き**している
+    # 2 変数が生成物に残る。adc では dev に鍵を書かないので、パスが残っていること
+    # 自体が DefaultCredentialsError の原因になる。
+    #
+    # 取り除くのは **dev インスタンスだけ**。`GCP_AUTH_MODE` は dev コンテナの
+    # 認証方式の宣言であり、独自に鍵をマウントしている非 dev サービス (batch 等) の
+    # 明示設定まで消すと、そのサービスを壊してしまう。
+    if auth_mode != gcp_auth.AUTH_MODE_KEY:
+        for index in range(1, scale + 1):
+            service = scaled_services.get(f'{dev_service_name}-{index}')
+            if isinstance(service, dict):
+                _drop_env_names(service, gcp_auth.KEY_ONLY_ENV_KEYS)
 
     scaled_config = {
-        'services': _build_scaled_services(
-            services, dev_service, dev_service_name, scale,
-            secret_names=secret_names,
-            secret_services=secret_services,
-            dev_environment=dev_environment,
-        ),
-        'volumes': _build_volumes_section(config, scale),
+        'services': scaled_services,
+        'volumes': _build_volumes_section(config, scale, group_volume),
         'networks': _build_networks_section(config),
     }
 

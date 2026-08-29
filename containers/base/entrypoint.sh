@@ -178,6 +178,342 @@ devbase_enter_primary_dir() {
     fi
 }
 
+# ===================================================================
+# PLAN39: AI 設定の永続化 (共通 / アカウントグループの 2 層)
+# ===================================================================
+# /persistent/ai    … 全コンテナ共通 (分類 A)。plugins / skills のように
+#                     契約やテナントに紐づかない資産。グループ数だけ重複させない
+# /persistent/group … アカウントグループ単位 (分類 B)。認証情報と会話履歴のように
+#                     企業テナントへ紐づくもの。グループをまたいで共有しない
+#
+# ~/.claude の既定は**グループ側**にする。Claude Code は projects / sessions /
+# tasks のようなディレクトリを随時作るため、永続化するエントリを列挙する方式だと
+# 列挙漏れが黙って揮発する。既定をグループ側に倒し、共通にしたいものだけを
+# 名指しで共通側へ張る。
+
+# 分類 A: ホーム直下
+DEVBASE_SHARED_SETTINGS=(
+    ".codex"
+    ".serena"
+    ".ssh"
+    ".kiro"
+    "share"
+)
+
+# 分類 B: ホーム直下
+DEVBASE_GROUP_SETTINGS=(
+    ".claude.json"
+    ".claude"
+    ".gemini"
+)
+
+# 分類 A のうち ~/.claude 配下にあるもの (グループ側の .claude から共通側へ張る)
+DEVBASE_SHARED_CLAUDE_SETTINGS=(
+    "plugins"
+    "skills"
+    "commands"
+    "CLAUDE.md"
+    "settings.json"
+)
+
+# ファイルとして作るエントリ (末尾の要素名で判定する)。ここに無いものは
+# ディレクトリとして作る。
+#
+# 拡張子で判定していた頃は `.jsonl` が `*.json` にマッチせず、history.jsonl が
+# **ディレクトリとして**作られて Claude Code が追記できなくなっていた。
+# 新しいファイルのエントリを足すときはこの一覧にも足すこと。
+DEVBASE_FILE_ENTRIES=(
+    ".claude.json"
+    ".credentials.json"
+    "history.jsonl"
+    "CLAUDE.md"
+    "settings.json"
+)
+
+# パスの末尾要素がファイルとして作るエントリか判定する。
+devbase_is_file_entry() {
+    local name="${1##*/}" entry
+    for entry in "${DEVBASE_FILE_ENTRIES[@]}"; do
+        [ "$name" = "$entry" ] && return 0
+    done
+    return 1
+}
+
+# 永続領域のルートを用意する。
+#
+# 空の named volume は **root 所有**で作られ uid 1000 では書き込めないため、
+# 書けなければ chown する。テストのように最初から書ける場所では sudo を呼ばない。
+devbase_ensure_persistent_root() {
+    local root="$1" owner="${2:-${USERNAME:-ubuntu}}"
+
+    if [ ! -d "$root" ]; then
+        mkdir -p "$root" 2>/dev/null || sudo mkdir -p "$root"
+    fi
+    if [ ! -w "$root" ]; then
+        sudo chown "${owner}:${owner}" "$root"
+    fi
+}
+
+# 実体が無ければプレースホルダを作る (親ディレクトリごと)。
+devbase_ensure_entry() {
+    local path="$1"
+
+    mkdir -p "$(dirname "$path")"
+    if [ -e "$path" ]; then
+        return 0
+    fi
+    if devbase_is_file_entry "$path"; then
+        : > "$path"
+    else
+        mkdir -p "$path"
+    fi
+}
+
+# <link_path> を <target_path> への symlink にする。
+#
+# **link 側と実体側の双方**で親ディレクトリを作るのが要点。入れ子パス
+# (.claude/plugins) ではどちらの親も無いことがあり、以前は実体側の作成が
+# `No such file or directory` で落ちて壊れた symlink が残っていた。
+#
+# 既存の実体は `rm -rf` してから張り直す。symlink に対する `rm -rf` は
+# **リンクだけ**を消すので、共通側の実体は巻き添えにならない。
+devbase_link_setting() {
+    local link_path="$1" target_path="$2" owner="${3:-${USERNAME:-ubuntu}}"
+
+    devbase_ensure_entry "$target_path"
+
+    if [ -L "$link_path" ] && [ "$(readlink "$link_path")" = "$target_path" ]; then
+        echo "  ✓ ${link_path} (symlink exists)"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$link_path")"
+    if [ -e "$link_path" ] || [ -L "$link_path" ]; then
+        echo "  Removing existing ${link_path}..."
+        rm -rf "$link_path"
+    fi
+
+    echo "  Creating symlink: ${link_path} -> ${target_path}"
+    ln -s "$target_path" "$link_path"
+    chown -h "${owner}:${owner}" "$link_path" 2>/dev/null || true
+}
+
+# シード元から 1 エントリを**コピー**する (既にあれば何もしない)。
+#
+# 第 3 引数以降は「コピーしない直下の名前」。分類 A の共通資産をグループ側へ
+# 複製しないために使う。
+devbase_seed_entry() {
+    local src="$1" dest="$2"
+    shift 2
+
+    if [ -e "$dest" ]; then
+        return 0
+    fi
+    if [ ! -e "$src" ]; then
+        echo "  skip (シード元なし): $src"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$dest")"
+    if [ ! -d "$src" ]; then
+        cp -a "$src" "$dest"
+        echo "  seeded: $dest"
+        return 0
+    fi
+
+    mkdir -p "$dest"
+    local child name excluded skip
+    # `.[!.]*` と `..?*` で隠しファイルも拾う (`.credentials.json` 等)。
+    for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+        [ -e "$child" ] || [ -L "$child" ] || continue
+        name="${child##*/}"
+        skip=0
+        for excluded in "$@"; do
+            if [ "$name" = "$excluded" ]; then
+                skip=1
+                break
+            fi
+        done
+        [ "$skip" = "1" ] && continue
+        cp -a "$child" "$dest/$name"
+    done
+    echo "  seeded: $dest"
+}
+
+# default グループの初回シード。
+#
+# 現行 /persistent/ai に実体がある分類 B のデータ (.claude.json / 認証 / 履歴 /
+# .gemini) をグループ側へ **コピー** して初期化する。move ではないので切り戻し時に
+# 元データが残る。非 default では走らせない — 走らせるとグループ分離の意味が
+# 失われる。gcloud / gws はシード元が存在しないため対象外 (AC8)。
+devbase_seed_group_settings() {
+    local ai_root="$1" group_root="$2" group="$3"
+    local entry
+
+    if [ "$group" != "default" ]; then
+        return 0
+    fi
+
+    echo "Seeding account group '${group}' from ${ai_root} (first run only)..."
+    for entry in "${DEVBASE_GROUP_SETTINGS[@]}"; do
+        if [ "$entry" = ".claude" ]; then
+            devbase_seed_entry "$ai_root/$entry" "$group_root/$entry" \
+                "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"
+        else
+            devbase_seed_entry "$ai_root/$entry" "$group_root/$entry"
+        fi
+    done
+}
+
+# イメージが焼き込んだ ~/.claude の初期設定を共通側へ退避する。
+#
+# Dockerfile は ~/.claude/settings.json に hooks 設定を書き込むが、この直後の
+# symlink 張り替えは ~/.claude を `rm -rf` するため、拾わないと初回起動で失われる
+# (共通側には空のプレースホルダだけが残る)。実体が入っているのは初回だけなので、
+# ~/.claude が既に symlink なら 2 回目以降の起動と見なして何もしない。
+devbase_seed_image_claude_settings() {
+    local home_root="$1" ai_root="$2"
+    local entry
+
+    if [ -L "$home_root/.claude" ] || [ ! -d "$home_root/.claude" ]; then
+        return 0
+    fi
+
+    for entry in "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"; do
+        [ -e "$home_root/.claude/$entry" ] || continue
+        devbase_seed_entry "$home_root/.claude/$entry" "$ai_root/.claude/$entry"
+    done
+}
+
+# AI 設定の symlink を 2 系統ぶん張る (初回シードを含む)。
+devbase_setup_ai_settings() {
+    local home_root="$1" ai_root="$2" group_root="$3" group="${4:-default}"
+    local owner="${5:-${USERNAME:-ubuntu}}"
+    local entry
+
+    devbase_ensure_persistent_root "$ai_root" "$owner"
+    devbase_ensure_persistent_root "$group_root" "$owner"
+
+    # symlink を張る**前**にシードする。張ったあとに走らせると、共通側を指す
+    # symlink の中身へコピーしてしまう。
+    devbase_seed_image_claude_settings "$home_root" "$ai_root"
+    devbase_seed_group_settings "$ai_root" "$group_root" "$group"
+
+    for entry in "${DEVBASE_SHARED_SETTINGS[@]}"; do
+        devbase_link_setting "$home_root/$entry" "$ai_root/$entry" "$owner"
+    done
+    for entry in "${DEVBASE_GROUP_SETTINGS[@]}"; do
+        devbase_link_setting "$home_root/$entry" "$group_root/$entry" "$owner"
+    done
+    for entry in "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"; do
+        devbase_link_setting "$group_root/.claude/$entry" \
+            "$ai_root/.claude/$entry" "$owner"
+    done
+}
+
+# ===================================================================
+# PLAN39: GCP の認証モードと gcloud / gws の設定ディレクトリ
+# ===================================================================
+# 設定ディレクトリはグループボリューム配下 (CLOUDSDK_CONFIG /
+# GOOGLE_WORKSPACE_CLI_CONFIG_DIR) をホストから渡される。これにより
+# credentials.db / access_tokens.db / application_default_credentials.json と
+# gws の credentials.enc / .encryption_key がグループ単位に分かれる。
+#
+# 変数そのものはホスト側 (生成 compose) が渡す。entrypoint の export は PID 1 の
+# 子プロセスにしか効かず、docker exec のシェルには届かないため。ここでは
+# **ディレクトリの用意**だけを行う。
+
+# gcloud / gws の設定ディレクトリを用意する (空の named volume は root 所有)。
+devbase_setup_cloud_config_dirs() {
+    local owner="${1:-${USERNAME:-ubuntu}}"
+    local dir
+
+    for dir in "${CLOUDSDK_CONFIG:-}" "${GOOGLE_WORKSPACE_CLI_CONFIG_DIR:-}"; do
+        [ -n "$dir" ] || continue
+        devbase_ensure_persistent_root "$dir" "$owner"
+    done
+}
+
+# サービスアカウント鍵を env から書き出す (鍵モードのみ)。
+#
+# `adc` では鍵を書かず、GOOGLE_APPLICATION_CREDENTIALS / BIGQUERY_KEY_FILE を
+# unset する。値だけ残して実体が無いと ADC はユーザー認証へフォールバックせず
+# DefaultCredentialsError で落ちる。ただし **unset が効くのは PID 1 の子孫だけ**で、
+# docker exec のシェルから消すのはホスト側の役目 (lib/devbase/env/gcp_auth.py)。
+# ここでの unset は、ホストが古い場合や env ファイル直書きに対する保険である。
+#
+# 鍵の出力先 ~/.config/gcloud は CLOUDSDK_CONFIG を向け直した後は
+# **gcloud の設定ディレクトリではなく単なる鍵の置き場**であり、コンテナ層に残る。
+# したがって鍵は毎起動 env から書き直され、永続領域には残らない。
+devbase_setup_gcp_credentials() {
+    local home_root="${1:-/home/${USERNAME:-ubuntu}}"
+    local mode="${GCP_AUTH_MODE:-}"
+    local profile="${GCP_ACTIVE_PROFILE:-default}"
+    local var="GCP_CREDENTIALS_BASE64__${profile}"
+    local creds_b64="${!var:-${GOOGLE_APPLICATION_CREDENTIALS_BASE64:-}}"
+
+    # 未設定・未知の値は auto 判定 (鍵の env があれば key、無ければ adc)
+    if [ "$mode" != "key" ] && [ "$mode" != "adc" ]; then
+        if [ -n "$creds_b64" ]; then
+            mode="key"
+        else
+            mode="adc"
+        fi
+    fi
+
+    if [ "$mode" = "key" ] && [ -z "$creds_b64" ]; then
+        echo "Warning: GCP_AUTH_MODE=key ですが ${var} が設定されていません。ADC へ切り替えます"
+        mode="adc"
+    fi
+
+    if [ "$mode" = "adc" ]; then
+        unset GOOGLE_APPLICATION_CREDENTIALS
+        unset BIGQUERY_KEY_FILE
+        echo "GCP auth mode: adc (サービスアカウント鍵は書き出しません)"
+        return 0
+    fi
+
+    echo "GCP auth mode: key (profile: ${profile})"
+    local default_creds_path="${home_root}/.config/gcloud/credentials.json"
+    local creds_content gac_path bq_path
+
+    creds_content=$(printf '%s' "$creds_b64" | base64 -d)
+
+    gac_path="${GOOGLE_APPLICATION_CREDENTIALS:-$default_creds_path}"
+    mkdir -p "$(dirname "$gac_path")"
+    printf '%s' "$creds_content" > "$gac_path"
+    chmod 600 "$gac_path"
+    export GOOGLE_APPLICATION_CREDENTIALS="$gac_path"
+    echo "Google Cloud credentials saved to: $gac_path"
+
+    bq_path="${BIGQUERY_KEY_FILE:-$default_creds_path}"
+    if [ "$bq_path" != "$gac_path" ]; then
+        mkdir -p "$(dirname "$bq_path")"
+        printf '%s' "$creds_content" > "$bq_path"
+        chmod 600 "$bq_path"
+        echo "BigQuery key file saved to: $bq_path"
+    fi
+    export BIGQUERY_KEY_FILE="$bq_path"
+}
+
+# 起動時に「どのグループで、どのアカウントとして動いているか」を 1 行出す。
+#
+# entrypoint は `set -e` で動くため、未ログインで gcloud が非 0 を返しても起動を
+# 落とさないようフォールバックする。gcloud を含まないイメージもあるので存在確認も行う。
+devbase_log_account_group() {
+    local group="${1:-default}"
+    local account
+
+    if command -v gcloud >/dev/null 2>&1; then
+        account="$(gcloud config get account 2>/dev/null || echo unset)"
+        [ -n "$account" ] || account="unset"
+    else
+        account="gcloud not installed"
+    fi
+
+    echo "Account group: ${group} (gcloud account: ${account}, CLOUDSDK_CONFIG: ${CLOUDSDK_CONFIG:-unset})"
+}
+
 # テストは関数定義だけを使う (source 時のみ有効な return で以降を読み飛ばす)。
 if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
     return 0 2>/dev/null || exit 0
@@ -186,40 +522,11 @@ fi
 # Setup authentication credentials from environment variables
 USERNAME="${USERNAME:-ubuntu}"
 
-# 1. Setup Google Cloud credentials from base64 encoded environment variable
-# New format: GCP_CREDENTIALS_BASE64__{profile} with GCP_ACTIVE_PROFILE
-# Legacy format: GOOGLE_APPLICATION_CREDENTIALS_BASE64
-_GCP_PROFILE="${GCP_ACTIVE_PROFILE:-default}"
-_GCP_VAR="GCP_CREDENTIALS_BASE64__${_GCP_PROFILE}"
-_GCP_CREDS_B64="${!_GCP_VAR:-$GOOGLE_APPLICATION_CREDENTIALS_BASE64}"
-
-if [ -n "$_GCP_CREDS_B64" ]; then
-    echo "Setting up Google Cloud credentials (profile: ${_GCP_PROFILE})..."
-    DEFAULT_CREDS_PATH="/home/${USERNAME}/.config/gcloud/credentials.json"
-
-    # Decode base64 content once
-    CREDS_CONTENT=$(printf '%s' "$_GCP_CREDS_B64" | base64 -d)
-
-    # Output to GOOGLE_APPLICATION_CREDENTIALS path
-    GAC_PATH="${GOOGLE_APPLICATION_CREDENTIALS:-$DEFAULT_CREDS_PATH}"
-    GAC_DIR=$(dirname "$GAC_PATH")
-    mkdir -p "$GAC_DIR"
-    printf '%s' "$CREDS_CONTENT" > "$GAC_PATH"
-    chmod 600 "$GAC_PATH"
-    export GOOGLE_APPLICATION_CREDENTIALS="$GAC_PATH"
-    echo "Google Cloud credentials saved to: $GAC_PATH"
-
-    # Output to BIGQUERY_KEY_FILE path if different
-    BQ_PATH="${BIGQUERY_KEY_FILE:-$DEFAULT_CREDS_PATH}"
-    if [ "$BQ_PATH" != "$GAC_PATH" ]; then
-        BQ_DIR=$(dirname "$BQ_PATH")
-        mkdir -p "$BQ_DIR"
-        printf '%s' "$CREDS_CONTENT" > "$BQ_PATH"
-        chmod 600 "$BQ_PATH"
-        echo "BigQuery key file saved to: $BQ_PATH"
-    fi
-    export BIGQUERY_KEY_FILE="$BQ_PATH"
-fi
+# 1. Setup Google Cloud credentials / auth mode (PLAN39)
+# 設定ディレクトリ (CLOUDSDK_CONFIG / GOOGLE_WORKSPACE_CLI_CONFIG_DIR) と
+# 解決済みの GCP_AUTH_MODE はホスト側 (生成 compose) が渡す。
+devbase_setup_cloud_config_dirs "$USERNAME"
+devbase_setup_gcp_credentials "/home/${USERNAME}"
 
 # 2. Setup Git configuration
 if [ -n "$GIT_USER_NAME" ]; then
@@ -380,66 +687,20 @@ if [ "$ENABLE_DIND" = "true" ] || [ "$ENABLE_DIND" = "1" ]; then
 fi
 
 # ========================================
-# AI Agent Settings Symlink Setup
+# AI Agent Settings Symlink Setup (PLAN39: 共通 / グループの 2 層)
 # ========================================
-echo "Setting up AI agent settings symlinks..."
-
+# DEVBASE_ACCOUNT_GROUP はホスト (devbase up) が解決して渡す。ホスト側で
+# 検証済みなので、ここでは未設定時に default へ落とすだけにする。
+DEVBASE_ACCOUNT_GROUP="${DEVBASE_ACCOUNT_GROUP:-default}"
 AI_PERSISTENT_DIR="/persistent/ai"
-AI_SETTINGS=(
-    ".claude.json"
-    ".claude"
-    ".codex"
-    ".gemini"
-    ".serena"
-    ".ssh"
-    ".kiro"
-    "share"
-)
+GROUP_PERSISTENT_DIR="/persistent/group"
 
-# Ensure /persistent/ai directory exists
-if [ ! -d "$AI_PERSISTENT_DIR" ]; then
-    echo "Creating $AI_PERSISTENT_DIR directory..."
-    sudo mkdir -p "$AI_PERSISTENT_DIR"
-    sudo chown "${USERNAME}:${USERNAME}" "$AI_PERSISTENT_DIR"
-fi
-
-# Create symlinks for each AI setting
-for setting in "${AI_SETTINGS[@]}"; do
-    HOME_PATH="/home/${USERNAME}/${setting}"
-    PERSISTENT_PATH="${AI_PERSISTENT_DIR}/${setting}"
-
-    # Skip if symlink already exists and points to correct location
-    if [ -L "$HOME_PATH" ] && [ "$(readlink -f "$HOME_PATH")" = "$PERSISTENT_PATH" ]; then
-        echo "  ✓ ${setting} (symlink exists)"
-        continue
-    fi
-
-    # Remove existing file/directory/broken symlink in home
-    if [ -e "$HOME_PATH" ] || [ -L "$HOME_PATH" ]; then
-        echo "  Removing existing ${setting} from home..."
-        rm -rf "$HOME_PATH"
-    fi
-
-    # If setting doesn't exist in persistent storage, create placeholder
-    if [ ! -e "$PERSISTENT_PATH" ]; then
-        # Determine if it's a file or directory based on extension
-        if [[ "$setting" == *.json ]]; then
-            echo "  Creating empty file: ${setting}"
-            sudo touch "$PERSISTENT_PATH"
-        else
-            echo "  Creating empty directory: ${setting}"
-            sudo mkdir -p "$PERSISTENT_PATH"
-        fi
-        sudo chown -R "${USERNAME}:${USERNAME}" "$PERSISTENT_PATH"
-    fi
-
-    # Create symlink
-    echo "  Creating symlink: ${setting} -> ${PERSISTENT_PATH}"
-    ln -s "$PERSISTENT_PATH" "$HOME_PATH"
-    chown -h "${USERNAME}:${USERNAME}" "$HOME_PATH"
-done
-
+echo "Setting up AI agent settings symlinks (account group: ${DEVBASE_ACCOUNT_GROUP})..."
+devbase_setup_ai_settings \
+    "/home/${USERNAME}" "$AI_PERSISTENT_DIR" "$GROUP_PERSISTENT_DIR" \
+    "$DEVBASE_ACCOUNT_GROUP" "$USERNAME"
 echo "AI agent settings symlinks setup completed"
+devbase_log_account_group "$DEVBASE_ACCOUNT_GROUP"
 # ========================================
 
 # Repository setup (PLAN32: 1 project = 複数リポジトリ)

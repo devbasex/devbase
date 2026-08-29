@@ -79,14 +79,67 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 | `GCP_ACTIVE_PROFILE` | アクティブなプロファイル名 |
 | `GOOGLE_CLOUD_PROJECT` | GCP プロジェクト ID |
 | `GOOGLE_CLOUD_LOCATION` | GCP リージョン |
-| `GOOGLE_APPLICATION_CREDENTIALS` | サービスアカウントキーのパス |
+| `GOOGLE_APPLICATION_CREDENTIALS` | サービスアカウントキーのパス（鍵モードのみ。下記参照） |
 | `BIGQUERY_PROJECT` | BigQuery プロジェクト |
 | `BIGQUERY_DATASETS` | BigQuery データセット |
 | `BIGQUERY_LOCATION` | BigQuery ロケーション |
-| `BIGQUERY_KEY_FILE` | BigQuery キーファイルパス |
+| `BIGQUERY_KEY_FILE` | BigQuery キーファイルパス（鍵モードのみ。下記参照） |
 
 ソースファイル: `~/gcp-credentials/`
 ソースタイプ: `named_profiles`
+
+##### `GCP_AUTH_MODE` -- 認証モードの切り替え
+
+Google はサービスアカウント鍵を非推奨とし、ローカル開発には
+`gcloud auth application-default login`（ユーザー認証 = ADC）を推奨しています。
+devbase は gcloud の設定ディレクトリをアカウントグループごとに永続化するため、
+ADC を既定の経路にできます。鍵が要る場面のために切り替えを残しています。
+
+`GCP_AUTH_MODE` はプロジェクトの `env` かグローバル `env` に手書きします。
+
+| 値 | 挙動 |
+|---|---|
+| `adc` | 鍵を書かない。`GOOGLE_APPLICATION_CREDENTIALS` と `BIGQUERY_KEY_FILE` を**コンテナへ渡さない**。認証は `$CLOUDSDK_CONFIG/application_default_credentials.json`（= `gcloud auth application-default login` の結果）に委ねる |
+| `key` | `GCP_CREDENTIALS_BASE64__<profile>` を復号して書き、上記 2 変数を渡す（従来どおり） |
+| 未設定 | 鍵の env があれば `key`、無ければ `adc`（既存プロジェクトは従来どおり動きます） |
+
+鍵の有無は **`GCP_ACTIVE_PROFILE`（未設定なら `default`）のプロファイル** 1 本だけで
+判定します（無ければ後方互換の `GOOGLE_APPLICATION_CREDENTIALS_BASE64`）。別プロファイル
+の鍵があっても、アクティブなプロファイルの鍵が無ければ `adc` です。`GCP_AUTH_MODE=key` を
+明示していても同じで、鍵が無ければ `adc` として構成します（警告を出します）。ホスト側と
+コンテナ側で判定が食い違うと、実体の無いパスだけがコンテナへ残るためです。
+
+`adc` で 2 変数を**渡さない**のが要点です。値だけ残して実体が無いと、ADC は
+ユーザー認証へフォールバックせず `DefaultCredentialsError` で落ちます。元の
+`compose.yml` の `environment:` にパスが直書きされている場合も、`adc` では生成 compose
+から取り除きます。
+
+取り除く対象は **dev サービス（`dev-1` 〜 `dev-N`）だけ**です。`GCP_AUTH_MODE` は dev の
+認証方式の宣言なので、独自に鍵をマウントしている `batch` のような非 dev サービスが
+`environment:` や `env_file` で受け取っている 2 変数はそのまま残します。
+
+```bash
+# ADC を使う（推奨）
+echo 'GCP_AUTH_MODE=adc' >> projects/<name>/env
+devbase project up <name>
+```
+
+切り替えには `devbase up` が必要です（コンテナへ渡す環境変数が変わるため）。
+手順の全体は [Google 認証ガイド](google-auth.md) を参照してください。
+
+##### gcloud / gws の設定ディレクトリ
+
+| 変数 | 値 | 意味 |
+|---|---|---|
+| `CLOUDSDK_CONFIG` | `/persistent/group/gcloud` | gcloud の設定ディレクトリ。`credentials.db` / `access_tokens.db` / `application_default_credentials.json` がここに入る |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | `/persistent/group/gws` | gws（Google Workspace CLI）の設定ディレクトリ |
+
+いずれも devbase が生成 compose で渡すため、`env` に書く必要はありません。
+
+> **Warning:** `CLOUDSDK_CONFIG` を向け直したあとの `~/.config/gcloud` は
+> **gcloud の設定ディレクトリではありません**。鍵モードで書き出される
+> サービスアカウント鍵の置き場でしかなく、コンテナ層（揮発）に残ります。
+> gcloud の実際の設定を見たいときは `$CLOUDSDK_CONFIG` を参照してください。
 
 #### git -- Git 認証
 
@@ -142,6 +195,36 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 | `HOST_SSH_HOST` | SSH 先ホスト名（既定: `host.docker.internal`、WSL2/Windows では上書き可） |
 
 ユーザー名のみで秘密情報ではありません。SSH 鍵やリモートログインの有効化はホスト側でユーザーが別途設定する前提です。`devbase env sync` 実行時には、未設定のキーのみ既定値で補完されます（既存値は上書きしません）。
+
+## アカウントグループ (`DEVBASE_ACCOUNT_GROUP`)
+
+**使用する Google / AWS アカウントの単位**を宣言します。`devbase env init` の収集対象では
+なく、`$DEVBASE_ROOT/env` かプロジェクトの `env` に手書きする devbase 動作設定です。
+
+| キー | 説明 |
+|------|------|
+| `DEVBASE_ACCOUNT_GROUP` | アカウントグループ名。未設定なら `default`。グループごとに `devbase_home_<group>` ボリュームが作られ、コンテナへ `/persistent/group` としてマウントされる |
+
+```bash
+# projects/<name>/env
+DEVBASE_ACCOUNT_GROUP=kkg
+```
+
+同じグループのコンテナは Claude Code / gcloud / gws の認証と会話ログを共有し、
+違うグループのコンテナは互いの認証に到達できません。`~/.claude/plugins` のような
+共通資産は別ボリューム (`/persistent/ai`) に残るため、グループを増やしても重複しません。
+
+グループ名には次の 3 つが使えません（`devbase up` の前にエラーになります）。
+
+| 使えない名前 | 理由 |
+|---|---|
+| `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` に合わないもの | Docker のボリューム名にできない |
+| `ubuntu` | 共通ボリューム `devbase_home_ubuntu` と同名になる |
+| 数字だけの名前（`1` / `042`）| インスタンス番号のボリューム `devbase_home_<index>` と同名になる |
+
+解決結果は `devbase status` の `[環境]` セクションに出ます。ボリューム構造の全体は
+[コンテナ運用ガイド](container-operations.md)、Google 認証の手順は
+[Google 認証ガイド](google-auth.md) を参照してください。
 
 ## `devbase up` 後のエディタ自動オープン
 

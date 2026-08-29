@@ -32,15 +32,28 @@ GCP_ACTIVE_PROFILE = "GCP_ACTIVE_PROFILE"
 GOOGLE_CLOUD_PROJECT = "GOOGLE_CLOUD_PROJECT"
 GOOGLE_CLOUD_LOCATION = "GOOGLE_CLOUD_LOCATION"
 GOOGLE_APPLICATION_CREDENTIALS = "GOOGLE_APPLICATION_CREDENTIALS"
+# 後方互換の単一プロファイル鍵 (GCP_CREDENTIALS_BASE64__<profile> の前身)
+GOOGLE_APPLICATION_CREDENTIALS_BASE64 = "GOOGLE_APPLICATION_CREDENTIALS_BASE64"
 BIGQUERY_PROJECT = "BIGQUERY_PROJECT"
 BIGQUERY_DATASETS = "BIGQUERY_DATASETS"
 BIGQUERY_LOCATION = "BIGQUERY_LOCATION"
 BIGQUERY_KEY_FILE = "BIGQUERY_KEY_FILE"
+# 認証モード (PLAN39): `adc` = ユーザー認証 (ADC) / `key` = サービスアカウント鍵。
+# 未設定なら鍵の env の有無で auto 判定する。詳細: lib/devbase/env/gcp_auth.py
+GCP_AUTH_MODE = "GCP_AUTH_MODE"
 
 
 def gcp_credentials_key(profile: str) -> str:
     """プロファイル名からGCPクレデンシャルのキー名を生成する"""
     return f"{GCP_CREDENTIALS_BASE64_PREFIX}{profile}"
+
+
+# --- Account group (PLAN39: 永続化ボリュームのアカウントグループ分離) ---
+# 使用する Google / AWS アカウントの単位。グループごとに devbase_home_<group> を
+# 作り、コンテナへ /persistent/group としてマウントする。未設定なら `default`。
+# プロジェクト env / グローバル env に手書きする devbase 動作設定。
+# 詳細: docs/user/environment-variables.md
+DEVBASE_ACCOUNT_GROUP = "DEVBASE_ACCOUNT_GROUP"
 
 
 # --- Slack ---

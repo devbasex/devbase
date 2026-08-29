@@ -1,5 +1,6 @@
 """devbase status - 環境ステータスの一覧表示"""
 
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -160,6 +161,34 @@ def _get_env_info(devbase_root: Path) -> dict | None:
         return None
 
 
+def _get_account_group() -> dict | None:
+    """解決されたアカウントグループとボリューム名を返す (PLAN39)。
+
+    ``devbase status`` は devbase ルートで実行されることが多く、その場合
+    ``DEVBASE_ACCOUNT_GROUP`` はグローバル ``env`` 由来の値 (無ければ ``default``)
+    になる。プロジェクトディレクトリで実行すればそのプロジェクトの解決結果になる。
+    どちらの値を見ているのかが分かるよう、判定の出どころも返す。
+
+    グループ名が不正な場合はここで例外にせず ``None`` を返す。``status`` は
+    状態を見るためのコマンドで、設定の誤りで一覧全体を出せなくする必要はない。
+    """
+    from devbase.errors import DevbaseError
+    from devbase.volume.manager import get_group_volume, resolve_account_group
+
+    declared = os.environ.get("DEVBASE_ACCOUNT_GROUP")
+    try:
+        group = resolve_account_group()
+        volume = get_group_volume(group)
+    except DevbaseError as e:
+        return {"group": None, "volume": None, "error": str(e)}
+    return {
+        "group": group,
+        "volume": volume,
+        "source": "env" if (declared or "").strip() else "既定",
+        "error": None,
+    }
+
+
 def _get_snapshot_info(devbase_root: Path) -> dict | None:
     """スナップショットの概要情報を取得する"""
     try:
@@ -213,14 +242,25 @@ def cmd_status(devbase_root: Path) -> int:
     # --- 環境セクション ---
     try:
         env_info = _get_env_info(devbase_root)
-        if env_info:
+        group_info = _get_account_group()
+        if env_info or group_info:
             print()
             print("[環境]")
+        if env_info:
             print(
                 f"  {'devbase/.env':<24}"
                 f"{env_info['var_count']}変数 "
                 f"(最終更新: {env_info['last_modified']})"
             )
+        if group_info:
+            if group_info["error"]:
+                print(f"  {'アカウントグループ':<20}(設定エラー) {group_info['error']}")
+            else:
+                print(
+                    f"  {'アカウントグループ':<20}"
+                    f"{group_info['group']} "
+                    f"({group_info['volume']} / {group_info['source']})"
+                )
     except Exception:
         logger.debug("環境情報の取得に失敗しました", exc_info=True)
 

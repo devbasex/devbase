@@ -9,12 +9,27 @@ from typing import Optional
 
 import yaml
 
-from devbase.errors import SnapshotError
+from devbase.errors import DevbaseError, SnapshotError
 from devbase.log import get_logger
+from devbase.volume.manager import (
+    HOME_UBUNTU_VOLUME,
+    SHARED_VOLUME_PREFIX,
+    get_group_volume,
+    resolve_account_group,
+)
 
 logger = get_logger(__name__)
 
-VOLUME_NAME = 'devbase_home_ubuntu'
+# 後方互換のために残す旧定数 (共通ボリューム 1 本だった頃の対象)
+VOLUME_NAME = HOME_UBUNTU_VOLUME
+# 対象ボリュームのマウント先サブディレクトリ (PLAN39)。
+# 共通ボリュームとアカウントグループのボリュームを 1 つのアーカイブへまとめるため、
+# コンテナ内では /source/<sub> に並べて置く。
+SHARED_MOUNT = 'ai'
+GROUP_MOUNT = 'group'
+# メタデータから受け入れるマウント名。空文字は旧レイアウト (共通ボリューム 1 本を
+# ルートへ直接マウント) を表す。
+_ALLOWED_MOUNTS = frozenset({'', SHARED_MOUNT, GROUP_MOUNT})
 SNAPSHOT_IMAGE = 'devbase-snapshot:latest'
 DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
@@ -25,11 +40,36 @@ _VALID_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
 class SnapshotManager:
     """Docker volumeのスナップショット管理"""
 
-    def __init__(self, devbase_root: Path):
+    def __init__(self, devbase_root: Path, group: Optional[str] = None):
+        """
+        Args:
+            devbase_root: devbase のルート
+            group: 対象のアカウントグループ (省略時は環境から解決)
+        """
         self.devbase_root = devbase_root
         self.backups_dir = devbase_root / 'backups'
         self.backups_dir.mkdir(exist_ok=True)
         self._metadata_path = self.backups_dir / METADATA_FILE
+        self._group = group
+        self._volumes: Optional[dict] = None
+
+    @property
+    def volumes(self) -> dict:
+        """作成時の対象ボリューム (初回参照時に解決する)。
+
+        復元時は**スナップショット自身のメタデータ**を見るので、ここでの解決結果は
+        使わない (別グループのスナップショットを取り違えないため)。
+
+        解決はグループ名の検証を伴い、不正な名前なら ``DevbaseError`` になる。
+        一覧・コピー・削除のように対象ボリュームを必要としない操作まで倒さないよう、
+        参照されるまで遅延させる。
+        """
+        if self._volumes is None:
+            self._volumes = {
+                SHARED_MOUNT: HOME_UBUNTU_VOLUME,
+                GROUP_MOUNT: get_group_volume(self._group),
+            }
+        return self._volumes
 
     # ------------------------------------------------------------------
     # Public API
@@ -159,12 +199,17 @@ class SnapshotManager:
         except Exception as e:
             logger.warning("復元前バックアップに失敗しましたが続行します: %s", e)
 
+        volumes = self.snapshot_volumes(snap_dir)
+        logger.info("復元先のボリューム: %s", ', '.join(volumes.values()))
+
         # フルバックアップの復元
         logger.info("フルバックアップを復元中...")
         self._run_docker_tar(
             snap_dir, 'restore',
-            "cd /target && find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; "
-            "zstd -d /backup/full.tar.zst -c | tar --listed-incremental=/dev/null -xf -"
+            self.clear_command(volumes) +
+            "zstd -d /backup/full.tar.zst -c | "
+            "tar --listed-incremental=/dev/null -xf - -C /target",
+            volumes=volumes,
         )
 
         # 差分バックアップを順番に適用（pointが指定されていればそこまで）
@@ -180,7 +225,9 @@ class SnapshotManager:
             logger.info("差分バックアップを適用中: %s", incr.name)
             self._run_docker_tar(
                 snap_dir, 'restore',
-                f"cd /target && zstd -d /backup/{incr.name} -c | tar --listed-incremental=/dev/null -xf -"
+                f"zstd -d /backup/{incr.name} -c | "
+                f"tar --listed-incremental=/dev/null -xf - -C /target",
+                volumes=volumes,
             )
 
         if point is not None:
@@ -276,6 +323,20 @@ class SnapshotManager:
         if not snapshots:
             return True
         latest = snapshots[-1]
+
+        # 対象ボリュームの構成が変わったら新世代にする (PLAN39 の移行やグループ
+        # 切替)。旧世代の snar は別のレイアウトを記録しているので、そこへ差分を
+        # 積むと全ファイルが移動したものとして扱われ差分が壊れる。世代を分ければ
+        # 旧世代はそのまま復元できる。
+        snap_dir = self.backups_dir / latest.get('name', '')
+        if snap_dir.is_dir() and self.snapshot_volumes(snap_dir) != self.volumes:
+            logger.info(
+                "対象ボリュームの構成が変わったため新しい世代を作成します "
+                "(旧: %s / 新: %s)",
+                ', '.join(self.snapshot_volumes(snap_dir).values()),
+                ', '.join(self.volumes.values()))
+            return True
+
         return latest.get('incremental_count', 0) >= max_incrementals
 
     # ------------------------------------------------------------------
@@ -321,23 +382,54 @@ class SnapshotManager:
             logger.info("devbase-snapshotイメージのビルド完了")
             return SNAPSHOT_IMAGE
 
-    def _run_docker_tar(self, snap_dir: Path, mode: str, command: str) -> None:
+    @staticmethod
+    def volume_mount_args(volumes: dict, mode: str) -> list:
+        """対象ボリュームの ``docker run -v`` 引数を組み立てる。
+
+        サブディレクトリ名が空文字のエントリは、旧レイアウト (共通ボリューム 1 本を
+        ルートへ直接マウント) を表す。旧スナップショットを復元するために残している。
+        """
+        root = '/source' if mode == 'backup' else '/target'
+        suffix = ':ro' if mode == 'backup' else ''
+        args = []
+        for sub, name in volumes.items():
+            target = f'{root}/{sub}' if sub else root
+            args.extend(['-v', f'{name}:{target}{suffix}'])
+        return args
+
+    @staticmethod
+    def clear_command(volumes: dict) -> str:
+        """復元前に対象ボリュームの中身を空にするコマンドを組み立てる。
+
+        マウントポイント自身は消せない (busy) ので、**各マウントの直下**を消す。
+        旧レイアウトも同じ形で扱える。
+        """
+        roots = ' '.join(
+            f'/target/{sub}' if sub else '/target' for sub in volumes)
+        return (
+            'for d in ' + roots + '; do '
+            'find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; '
+            'done; '
+        )
+
+    def _run_docker_tar(self, snap_dir: Path, mode: str, command: str,
+                        volumes: Optional[dict] = None) -> None:
         """Docker経由でtar操作を実行する。
 
         Args:
             snap_dir: スナップショットディレクトリ
             mode: 'backup' or 'restore'
             command: コンテナ内で実行するコマンド
+            volumes: 対象ボリューム (省略時は作成時の対象)
         """
         image = self._ensure_snapshot_image()
 
         abs_snap_dir = snap_dir.resolve()
-        volume_mount = f'{VOLUME_NAME}:/source:ro' if mode == 'backup' else f'{VOLUME_NAME}:/target'
         backup_mount = f'{abs_snap_dir}:/backup:ro' if mode == 'restore' else f'{abs_snap_dir}:/backup'
 
         cmd = [
             'docker', 'run', '--rm',
-            '-v', volume_mount,
+            *self.volume_mount_args(volumes or self.volumes, mode),
             '-v', backup_mount,
             image,
             'bash', '-c', command,
@@ -366,7 +458,7 @@ class SnapshotManager:
             'name': name,
             'created_at': datetime.now().isoformat(),
             'type': 'full',
-            'volume': VOLUME_NAME,
+            'volumes': dict(self.volumes),
             'files': ['full.tar.zst'],
             'incremental_count': 0,
         }
@@ -374,6 +466,18 @@ class SnapshotManager:
 
     def _create_incremental(self, name: str, snap_dir: Path) -> None:
         """差分バックアップを作成"""
+        recorded = self.snapshot_volumes(snap_dir)
+        if recorded != self.volumes:
+            # 通常はここへ来ない (should_start_new_generation が新世代へ倒す)。
+            # 明示的に古い世代を指定されたときだけ到達する。黙って壊れた差分を
+            # 積むより、理由を出して止める方がよい。
+            raise SnapshotError(
+                f"スナップショット '{name}' は別のボリューム構成 "
+                f"({', '.join(recorded.values())}) で作られています。"
+                f"現在の対象は {', '.join(self.volumes.values())} です。"
+                "新しい世代を作成してください (devbase snapshot create)"
+            )
+
         snar_file = snap_dir / 'snapshot.snar'
         if not snar_file.exists():
             # snarファイルがなければフルバックアップにフォールバック
@@ -411,10 +515,13 @@ class SnapshotManager:
 
         # 既存エントリを探す
         found = False
+        volumes = snap_meta.get('volumes') or self.snapshot_volumes(snap_dir)
+
         for snap in meta.get('snapshots', []):
             if snap['name'] == name:
                 snap['updated_at'] = now
                 snap['incremental_count'] = snap_meta.get('incremental_count', 0)
+                snap['volumes'] = dict(volumes)
                 found = True
                 break
 
@@ -424,6 +531,7 @@ class SnapshotManager:
                 'created_at': now,
                 'updated_at': now,
                 'incremental_count': snap_meta.get('incremental_count', 0),
+                'volumes': dict(volumes),
             })
 
         self._save_metadata(meta)
@@ -439,6 +547,82 @@ class SnapshotManager:
         """グローバルメタデータを保存する"""
         with open(self._metadata_path, 'w') as f:
             yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
+
+    def snapshot_volumes(self, snap_dir: Path) -> dict:
+        """スナップショットの対象ボリュームを、そのメタデータから解決する。
+
+        新しいメタデータは ``volumes`` (サブディレクトリ名 → ボリューム名) を持つ。
+        持たない旧スナップショットは共通ボリューム 1 本をルートへ直接マウントする
+        レイアウトなので、サブディレクトリ名を空文字にした 1 件として返す。
+
+        **値は検証してから返す。** ここで返した内容はマウント先として
+        ``docker run -v <値>:/target/<キー>`` に、キーは
+        :meth:`clear_command` が組み立てる ``bash -c`` の消去コマンドに入る。
+        ``meta.yml`` は編集できるうえスナップショットは環境をまたいで持ち込めるため、
+        絶対パスを値に書けば任意のホストディレクトリを bind mount して**復元前に
+        中身を消せて**しまう。キーは既知のマウント名だけ、値は Docker の named
+        volume として通る名前だけを許す。
+
+        Raises:
+            SnapshotError: メタデータの対象ボリュームが不正な場合
+        """
+        meta = self._load_snap_meta(snap_dir)
+        volumes = meta.get('volumes')
+        if isinstance(volumes, dict) and volumes:
+            return self._validate_volumes(volumes, snap_dir)
+        return self._validate_volumes(
+            {'': meta.get('volume', HOME_UBUNTU_VOLUME)}, snap_dir)
+
+    @staticmethod
+    def _validate_volumes(volumes: dict, snap_dir: Path) -> dict:
+        """メタデータ由来の対象ボリュームを検証する (不正なら SnapshotError)。
+
+        **devbase が作るボリュームだけ**を許す。named volume の形をしていれば
+        通す、では足りない: 同じ Docker 上の無関係なボリューム名 (``mysql_data``
+        など) を書けば、復元前の消去でその中身を失わせられる。
+
+        - 共通側 (``''`` / ``ai``) は ``devbase_home_ubuntu`` に限る
+        - グループ側 (``group``) は ``devbase_home_<group>`` の形で、``<group>``
+          がアカウントグループ名として妥当なものに限る
+        """
+        meta_path = snap_dir / 'meta.yml'
+
+        def reject(reason: str) -> None:
+            raise SnapshotError(
+                f"スナップショットのメタデータが不正です ({meta_path}): {reason}")
+
+        for sub, name in volumes.items():
+            if sub not in _ALLOWED_MOUNTS:
+                reject(f"未知のマウント名 '{sub}'。"
+                       f"使えるのは "
+                       f"{', '.join(repr(m) for m in sorted(_ALLOWED_MOUNTS))} です")
+            if not isinstance(name, str):
+                reject(f"'{sub}' のボリューム名が文字列ではありません: {name!r}")
+
+            if sub in ('', SHARED_MOUNT):
+                if name != HOME_UBUNTU_VOLUME:
+                    reject(f"共通ボリュームに使えるのは {HOME_UBUNTU_VOLUME} だけです"
+                           f" (指定: {name!r})")
+                continue
+
+            # group: devbase_home_<group> の形で、<group> が妥当であること
+            if not name.startswith(SHARED_VOLUME_PREFIX):
+                reject(f"グループボリュームは {SHARED_VOLUME_PREFIX}<group> の形で"
+                       f"なければなりません (指定: {name!r})")
+            group = name[len(SHARED_VOLUME_PREFIX):]
+            try:
+                # 正規化した結果が元の名前と**一致**することまで見る。
+                # resolve_account_group は空文字を 'default' に、前後空白を
+                # 落とした名前に正規化するので、通るかどうかだけでは
+                # `devbase_home_` や `devbase_home_  kkg  ` を弾けない。
+                # 実際にマウントされるのは正規化前の生の名前である。
+                if get_group_volume(group) != name:
+                    reject(f"グループボリューム {name!r} は正規化された名前では"
+                           f"ありません (期待: {get_group_volume(group)!r})")
+            except DevbaseError as e:
+                reject(f"グループボリューム {name!r} のグループ名が不正です: {e}")
+
+        return dict(volumes)
 
     def _load_snap_meta(self, snap_dir: Path) -> dict:
         """個別スナップショットのmeta.ymlを読み込む"""

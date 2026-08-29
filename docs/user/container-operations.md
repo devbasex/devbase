@@ -120,28 +120,69 @@ graph LR
     subgraph devbase
         C[コンテナ 1<br/>/work 専用]
         D[コンテナ 2<br/>/work 専用]
-        E[共有AI設定<br/>/persistent/ai]
+        E[共通AI設定<br/>/persistent/ai]
+        F[グループ別の認証・履歴<br/>/persistent/group]
     end
     A --> C
     B --> D
     C --> E
     D --> E
+    C --> F
+    D --> F
 ```
 
 - 各コンテナは独立した `/work` ボリュームを持つ
-- `/persistent/ai`（AI 設定・共有ファイル）は全コンテナで共有される（`/home/ubuntu` 直下のうち永続化されるのは symlink 対象のみ。下記「AI 設定の永続化」参照）
+- `/persistent/ai`（共通の AI 資産・共有ファイル）は全コンテナで共有される
+- `/persistent/group`（認証情報・会話履歴）は**同じアカウントグループのコンテナだけ**で共有される
+- `/home/ubuntu` 直下のうち永続化されるのは symlink 対象のみ（下記「AI 設定の永続化」参照）
 - 異なるブランチでの並行作業に便利
 
 ## ボリューム構造
 
-devbase のコンテナは 2 種類のボリュームを使用します。
+devbase のコンテナは 3 種類のボリュームを使用します。
 
 | ボリューム名 | マウント先 | 共有範囲 | 用途 |
 |-------------|-----------|---------|------|
-| `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | AI CLI 設定（`.claude` / `.codex` / `.gemini` 等）、SSH 鍵、共有ファイル置き場（`share`）。詳細は「AI 設定の永続化」参照 |
+| `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | 契約やテナントに紐づかない共通資産（`~/.claude/plugins` / `skills` / `commands` / `CLAUDE.md` / `settings.json`、`.codex` / `.serena` / `.kiro`、SSH 鍵、共有ファイル置き場 `share`）|
+| `devbase_home_{group}` | `/persistent/group` | 同じアカウントグループのコンテナで共有 | 企業テナントに紐づくもの（Claude Code の認証と会話ログ、`.gemini`、gcloud / gws の設定ディレクトリ）|
 | `devbase_work_{index}` | `/work` | 同じ index のコンテナで共有（プロジェクト間も共有） | プロジェクトのソースコード、作業ファイル |
 
-> **Note:** `devbase_home_ubuntu` は **`/persistent/ai`** にマウントされます（`/home/ubuntu` への直接マウントは廃止）。`/home/ubuntu` 直下はコンテナ層（揮発）で、永続化されるのは entrypoint が `/persistent/ai` 配下へ symlink する設定ファイルのみです。シェル履歴など symlink 対象外のファイルは再生成で失われます。
+> **Note:** `devbase_home_ubuntu` は **`/persistent/ai`** にマウントされます（`/home/ubuntu` への直接マウントは廃止）。`/home/ubuntu` 直下はコンテナ層（揮発）で、永続化されるのは entrypoint が `/persistent/ai` / `/persistent/group` 配下へ symlink する設定ファイルのみです。シェル履歴など symlink 対象外のファイルは再生成で失われます。
+
+### アカウントグループ
+
+`devbase_home_{group}` の `{group}` は `DEVBASE_ACCOUNT_GROUP` で宣言します。
+**使用する Google / AWS アカウントの単位**で、未設定なら `default` です。
+
+```bash
+# projects/<name>/env
+DEVBASE_ACCOUNT_GROUP=kkg
+```
+
+これは「nyle.co.jp で認証した gcloud を kk-generation.com のプロジェクトが引き継がない」
+ようにするための仕切りです。同じグループのコンテナは認証を共有し、違うグループのコンテナは
+互いの認証に到達できません。一方で `~/.claude/plugins`（238MB）のような共通資産は
+`/persistent/ai` に置かれるため、グループを増やしても重複しません。
+
+いま自分がどのグループにいるかは `devbase status` の `[環境]` セクションで確認できます。
+
+```
+[環境]
+  devbase/.env            42変数 (最終更新: 2026-08-29)
+  アカウントグループ          kkg (devbase_home_kkg / env)
+```
+
+末尾の `env` / `既定` は、値が `env` 由来か未設定によるフォールバックかを示します。
+
+グループ名には次の 3 つが使えません。`devbase up` の前にエラーになります。
+
+| 使えない名前 | 理由 |
+|---|---|
+| `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` に合わないもの | Docker のボリューム名にできない |
+| `ubuntu` | 共通ボリューム `devbase_home_ubuntu` と同名になる |
+| 数字だけの名前（`1` / `042`） | インスタンス番号のボリューム `devbase_home_<index>` と同名になる |
+
+Google 認証の具体的な手順は [Google 認証ガイド](google-auth.md) を参照してください。
 
 ### ボリュームの永続性
 
@@ -161,32 +202,97 @@ docker volume ls | grep devbase
 docker volume inspect devbase_home_ubuntu
 ```
 
-> **Warning:** `devbase_home_ubuntu` ボリューム（`/persistent/ai`、および symlink 経由でアクセスする `~/.claude` / `~/share` 等）は全プロジェクトで共有されます。ここにプロジェクト固有のファイルを置くと、他のプロジェクトにも影響します。プロジェクト固有のファイルは `/work` に配置してください。
+> **Warning:** `devbase_home_ubuntu` ボリューム（`/persistent/ai`、および symlink 経由でアクセスする `~/.claude/plugins` / `~/share` 等）は全プロジェクトで共有されます。ここにプロジェクト固有のファイルを置くと、他のプロジェクトにも影響します。プロジェクト固有のファイルは `/work` に配置してください。
 
 ## AI 設定の永続化
 
 AI CLI ツールの設定や認証情報は、コンテナを再生成しても保持されるよう
-`devbase_home_ubuntu` ボリューム（`/persistent/ai`）に永続化されます。
+2 つのボリュームに永続化されます。
 
 仕組みは **symlink** です。コンテナ起動時、entrypoint（`containers/base/entrypoint.sh`）が
-以下の各エントリについて `/home/ubuntu/<name> -> /persistent/ai/<name>` の symlink を作成します。
+以下の各エントリについて symlink を作成します。
+
+**全コンテナ共通（`/persistent/ai`）**
 
 | エントリ | 内容 |
 |---------|------|
-| `.claude.json` / `.claude` | Claude Code の設定・認証 |
-| `.codex` | Codex CLI の設定 |
-| `.gemini` | Gemini CLI の設定 |
+| `.codex` | Codex CLI の設定（ChatGPT アカウントで分離済み）|
 | `.serena` | Serena MCP の設定 |
-| `.kiro` | Kiro CLI の設定 |
+| `.kiro` | Kiro CLI の設定（AWS 側で分離済み）|
 | `.ssh` | SSH 鍵 |
-| `share` | 全コンテナ共有のファイル置き場（任意用途） |
+| `share` | 全コンテナ共有のファイル置き場（任意用途）|
+| `.claude/plugins` `.claude/skills` `.claude/commands` `.claude/CLAUDE.md` `.claude/settings.json` | Claude Code の共通資産 |
+
+**アカウントグループ単位（`/persistent/group`）**
+
+| エントリ | 内容 |
+|---------|------|
+| `.claude.json` | Claude Code の設定（`oauthAccount` を含む）|
+| `.claude` | Claude Code の認証・会話ログ・セッション状態（上表の共通資産を除く**すべて**）|
+| `.gemini` | Gemini CLI の設定（`vertex-ai` は GCP プロジェクトに紐づく）|
+
+`~/.claude` は `/persistent/group/.claude` への symlink で、**その配下の既定はグループ側**です。
+共通資産だけがその中から `/persistent/ai/.claude/<name>` へ張り直されます。既定をグループ側に
+倒しているのは、Claude Code が `projects` / `sessions` / `tasks` のようなディレクトリを随時作るため、
+永続化するものを列挙する方式だと**列挙漏れが黙って揮発する**からです。
+
+```console
+$ readlink -f ~/.claude              # グループ側
+/persistent/group/.claude
+$ readlink -f ~/.claude/plugins      # 共通側（どのグループから見ても同じ実体）
+/persistent/ai/.claude/plugins
+```
 
 - `/persistent/ai` は全コンテナ共通の `devbase_home_ubuntu` ボリュームなので、**どのコンテナからも同じ実体**を参照します（例: `~/share` は全コンテナで共有）。
-- symlink **対象外**のホーム配下ファイル（シェル履歴など）はコンテナ層に置かれ、再生成で失われます。永続化したいものは `/persistent/ai` 配下（= 上記 symlink 先）か `/work` に置いてください。
+- `/persistent/group` は `devbase_home_{group}` で、**同じアカウントグループのコンテナだけ**が同じ実体を参照します。
+- symlink **対象外**のホーム配下ファイル（シェル履歴など）はコンテナ層に置かれ、再生成で失われます。永続化したいものは `/persistent/ai` / `/persistent/group` 配下（= 上記 symlink 先）か `/work` に置いてください。
+
+### 既存環境からの移行（初回シード）
+
+`default` グループでは、初回起動時に `/persistent/ai` にある分類 B のデータ
+（`.claude.json` / 認証 / 会話ログ / `.gemini`）が `/persistent/group` へ**コピー**されます。
+そのため既存環境で Claude Code の再ログインは発生しません。
+
+- コピーであって移動ではないので、切り戻すときは元データがそのまま残っています
+- 実行されるのは**グループ側にまだ実体が無いときだけ**です（2 回目以降は何もしません）
+- 実測で 1.3GB 程度あるため**初回だけ起動が伸びます**
+- 非 `default` グループではシードしません（分離の意味が失われるため）
+- `gcloud` / `gws` はシード元が存在しないため、`default` を含む**全グループで初回 1 回の認証**が必要です
+
+起動ログの 1 行で、どのグループとしてどのアカウントで動いているかを確認できます。
+
+```
+Account group: kkg (gcloud account: someone@kk-generation.com, CLOUDSDK_CONFIG: /persistent/group/gcloud)
+```
 - `share` 配下に置いた VS Code ワークスペースファイルは `DEVBASE_WORKSPACE` で開けます（リポジトリ 1 件の構成のみ。[環境変数](environment-variables.md) 参照）。
 
 > **Note:** symlink 対象は entrypoint にビルド時 `COPY` で焼き込まれます。エントリを増減した場合は
 > イメージの再ビルドが必要です（`devbase up` 単体では反映されない場合があります。[CLI リファレンス: project グループ](cli-reference/02-project.md#devbase-project-up) の `devbase project up` の注記参照）。
+
+### gcloud / gws の設定はどこにあるか
+
+gcloud と gws は symlink ではなく **環境変数で設定ディレクトリごと差し替え**ています。
+
+| 変数 | 向き先 | 入るもの |
+|---|---|---|
+| `CLOUDSDK_CONFIG` | `/persistent/group/gcloud` | `credentials.db` / `access_tokens.db` / `legacy_credentials/` / `configurations/` / `application_default_credentials.json`（ADC ファイル） |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | `/persistent/group/gws` | `credentials.enc` / `.encryption_key` |
+
+`CLOUDSDK_CONFIG` は gcloud CLI 専用の仕組みではなく `google.auth` の探索経路そのものなので、
+BigQuery クライアント等のライブラリも同じ場所を見ます。
+
+> **Warning:** この差し替えにより、`~/.config/gcloud` は **gcloud の設定ディレクトリでは
+> なくなりました**。鍵モード（`GCP_AUTH_MODE=key`）で書き出されるサービスアカウント鍵の
+> 置き場でしかなく、コンテナ層（揮発）に残ります。したがって鍵は毎起動 `env` から書き直され、
+> 永続領域には残りません。設定を見たいときは `$CLOUDSDK_CONFIG` を参照してください。
+
+認証モードの切り替えは [環境変数ガイド](environment-variables.md) の `GCP_AUTH_MODE`、
+実際の認証手順は [Google 認証ガイド](google-auth.md) を参照してください。
+
+> **Warning:** gcloud は**並行実行を想定していません**（公式ドキュメント: "Parallel execution of
+> multiple gcloud CLI commands is not supported."）。`credentials.db` は SQLite なので、
+> 同じアカウントグループの複数コンテナが同時に `gcloud` を叩くと `database is locked` が
+> 出ることがあります。恒久対策は取っていないので、その場合は少し待って再実行してください。
 
 ## コンテナイメージ階層
 
