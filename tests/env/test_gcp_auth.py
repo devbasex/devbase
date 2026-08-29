@@ -27,9 +27,56 @@ def test_unset_with_profile_key_resolves_to_key():
     assert gcp_auth.resolve_auth_mode(env) == gcp_auth.AUTH_MODE_KEY
 
 
+def test_active_profile_selects_the_key():
+    """entrypoint と同じく GCP_ACTIVE_PROFILE の鍵だけを見る。"""
+    env = {keys.GCP_ACTIVE_PROFILE: "prod",
+           "GCP_CREDENTIALS_BASE64__prod": "eyJ9"}
+    assert gcp_auth.resolve_auth_mode(env) == gcp_auth.AUTH_MODE_KEY
+
+
+def test_other_profiles_key_does_not_make_it_key_mode():
+    """別プロファイルの鍵しか無い構成でホストだけ key と判定しない。
+
+    entrypoint はアクティブプロファイルの鍵が無ければ adc へ落ちる。ホストが
+    key のままだと実体の無いパスを指す 2 変数だけがコンテナへ渡り、
+    docker exec のシェルで DefaultCredentialsError になる。
+    """
+    env = {keys.GCP_ACTIVE_PROFILE: "dev",
+           "GCP_CREDENTIALS_BASE64__prod": "eyJ9"}
+    assert gcp_auth.resolve_auth_mode(env) == gcp_auth.AUTH_MODE_ADC
+
+
+def test_declared_key_without_a_key_falls_back_to_adc():
+    """key 宣言でも鍵が無ければ adc (entrypoint と同じフォールバック)。"""
+    env = {keys.GCP_AUTH_MODE: "key"}
+    assert gcp_auth.resolve_auth_mode(env) == gcp_auth.AUTH_MODE_ADC
+
+
+def test_declared_key_with_another_profiles_key_falls_back_to_adc():
+    env = {keys.GCP_AUTH_MODE: "key",
+           keys.GCP_ACTIVE_PROFILE: "dev",
+           "GCP_CREDENTIALS_BASE64__prod": "eyJ9"}
+    assert gcp_auth.resolve_auth_mode(env) == gcp_auth.AUTH_MODE_ADC
+
+
+@pytest.mark.parametrize("profile", ["", "   "])
+def test_blank_active_profile_means_default(profile):
+    """entrypoint の ``${GCP_ACTIVE_PROFILE:-default}`` と揃える。"""
+    env = {keys.GCP_ACTIVE_PROFILE: profile,
+           "GCP_CREDENTIALS_BASE64__default": "eyJ9"}
+    assert gcp_auth.resolve_auth_mode(env) == gcp_auth.AUTH_MODE_KEY
+
+
 def test_unset_with_legacy_key_resolves_to_key():
     """後方互換の GOOGLE_APPLICATION_CREDENTIALS_BASE64 も鍵として数える。"""
     env = {"GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9"}
+    assert gcp_auth.resolve_auth_mode(env) == gcp_auth.AUTH_MODE_KEY
+
+
+def test_legacy_key_covers_a_named_active_profile():
+    """プロファイル別の鍵が無ければ後方互換の変数を見る (entrypoint と同じ)。"""
+    env = {keys.GCP_ACTIVE_PROFILE: "prod",
+           "GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9"}
     assert gcp_auth.resolve_auth_mode(env) == gcp_auth.AUTH_MODE_KEY
 
 
@@ -107,4 +154,4 @@ def test_container_env_carries_the_resolved_mode():
     """コンテナ側で解決し直させない (ホストと判定がずれないようにする)。"""
     assert gcp_auth.container_env({})[keys.GCP_AUTH_MODE] == "adc"
     assert gcp_auth.container_env(
-        {"GCP_CREDENTIALS_BASE64__x": "eyJ9"})[keys.GCP_AUTH_MODE] == "key"
+        {"GCP_CREDENTIALS_BASE64__default": "eyJ9"})[keys.GCP_AUTH_MODE] == "key"

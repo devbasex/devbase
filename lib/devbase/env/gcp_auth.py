@@ -17,6 +17,9 @@ Google はサービスアカウント鍵を非推奨とし、ローカル開発�
 from typing import Mapping, Optional, Sequence
 
 from devbase.env import keys
+from devbase.log import get_logger
+
+logger = get_logger(__name__)
 
 # 認証モード
 AUTH_MODE_ADC = "adc"
@@ -39,34 +42,58 @@ CLOUDSDK_CONFIG = "CLOUDSDK_CONFIG"
 GOOGLE_WORKSPACE_CLI_CONFIG_DIR = "GOOGLE_WORKSPACE_CLI_CONFIG_DIR"
 
 
-def has_service_account_key(env: Mapping[str, str]) -> bool:
-    """サービスアカウント鍵の env が 1 つでもあるか。
+def active_profile(env: Mapping[str, str]) -> str:
+    """アクティブなプロファイル名を返す。
 
-    プロファイル別の ``GCP_CREDENTIALS_BASE64__<profile>`` と、後方互換の
-    ``GOOGLE_APPLICATION_CREDENTIALS_BASE64`` の両方を見る。値が空の変数は
-    「無い」として扱う (``env`` に空で書かれていても鍵にはならない)。
+    entrypoint の ``${GCP_ACTIVE_PROFILE:-default}`` と同じ解釈 (未設定・空なら
+    ``default``)。ホストとコンテナで別のプロファイルを見ないよう、判定はここへ
+    集約する。
     """
-    if env.get("GOOGLE_APPLICATION_CREDENTIALS_BASE64"):
-        return True
-    return any(
-        name.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX) and value
-        for name, value in env.items()
-    )
+    return (env.get(keys.GCP_ACTIVE_PROFILE) or "").strip() or "default"
+
+
+def has_service_account_key(env: Mapping[str, str]) -> bool:
+    """**アクティブプロファイル**のサービスアカウント鍵が env にあるか。
+
+    プロファイル別の ``GCP_CREDENTIALS_BASE64__<profile>`` を見て、無ければ
+    後方互換の ``GOOGLE_APPLICATION_CREDENTIALS_BASE64`` を見る。値が空の変数は
+    「無い」として扱う (``env`` に空で書かれていても鍵にはならない)。
+
+    entrypoint の ``devbase_setup_gcp_credentials`` が見るのと**同じ 1 本だけ**を
+    見るのが要点である。全プロファイルを走査すると、別プロファイルの鍵しか無い
+    構成でホストは ``key`` と判定するのに、コンテナ側は鍵を書けず ``adc`` へ
+    落ちる。その結果、実体の無いパスを指す 2 変数だけが生成 compose に残り、
+    ``docker exec`` のシェルから使ったときに ``DefaultCredentialsError`` になる。
+    """
+    profile = active_profile(env)
+    return bool(env.get(keys.gcp_credentials_key(profile))
+                or env.get(keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64))
 
 
 def resolve_auth_mode(env: Mapping[str, str]) -> str:
-    """認証モードを解決する。
+    """認証モードを解決する (entrypoint と同じ条件・同じフォールバックで)。
 
-    ``GCP_AUTH_MODE`` が ``adc`` / ``key`` ならその値。未設定・空・未知の値なら
-    auto 判定として「鍵の env があれば ``key``、無ければ ``adc``」にする。
+    ``GCP_AUTH_MODE`` が ``adc`` なら鍵があっても ADC。それ以外 (``key`` 宣言・
+    未設定・空・未知の値) は**アクティブプロファイルの鍵の有無**で決める。
+
+    ``key`` を宣言していても鍵が無ければ ``adc`` へ倒すのは、entrypoint が同じ
+    フォールバックを持つため。ホストだけ ``key`` のままだと、鍵の実体が無いのに
+    2 変数がコンテナへ渡り ``DefaultCredentialsError`` を招く。
 
     未知の値を拒否せず auto へ倒すのは、タイプミスで**既存プロジェクトが
     起動できなくなる**のを避けるため。auto は現行 main と同じ挙動になる。
     """
     declared = (env.get(keys.GCP_AUTH_MODE) or "").strip().lower()
-    if declared in AUTH_MODES:
-        return declared
-    return AUTH_MODE_KEY if has_service_account_key(env) else AUTH_MODE_ADC
+    if declared == AUTH_MODE_ADC:
+        return AUTH_MODE_ADC
+    if has_service_account_key(env):
+        return AUTH_MODE_KEY
+    if declared == AUTH_MODE_KEY:
+        logger.warning(
+            "%s=key ですが %s が env にありません。adc として構成します",
+            keys.GCP_AUTH_MODE,
+            keys.gcp_credentials_key(active_profile(env)))
+    return AUTH_MODE_ADC
 
 
 def container_env(env: Mapping[str, str]) -> dict:

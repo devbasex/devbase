@@ -103,8 +103,16 @@ ADC を既定の経路にできます。鍵が要る場面のために切り替�
 | `key` | `GCP_CREDENTIALS_BASE64__<profile>` を復号して書き、上記 2 変数を渡す（従来どおり） |
 | 未設定 | 鍵の env があれば `key`、無ければ `adc`（既存プロジェクトは従来どおり動きます） |
 
+鍵の有無は **`GCP_ACTIVE_PROFILE`（未設定なら `default`）のプロファイル** 1 本だけで
+判定します（無ければ後方互換の `GOOGLE_APPLICATION_CREDENTIALS_BASE64`）。別プロファイル
+の鍵があっても、アクティブなプロファイルの鍵が無ければ `adc` です。`GCP_AUTH_MODE=key` を
+明示していても同じで、鍵が無ければ `adc` として構成します（警告を出します）。ホスト側と
+コンテナ側で判定が食い違うと、実体の無いパスだけがコンテナへ残るためです。
+
 `adc` で 2 変数を**渡さない**のが要点です。値だけ残して実体が無いと、ADC は
-ユーザー認証へフォールバックせず `DefaultCredentialsError` で落ちます。
+ユーザー認証へフォールバックせず `DefaultCredentialsError` で落ちます。元の
+`compose.yml` の `environment:` にパスが直書きされている場合も、`adc` では生成 compose
+から取り除きます。
 
 ```bash
 # ADC を使う（推奨）
