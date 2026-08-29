@@ -149,6 +149,7 @@ devbaseのコマンドは4つのグループにまとめられています。
 | [環境変数ガイド](docs/user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [環境変数の export/import ガイド](docs/user/env-export-import.md) | バンドル形式・age 暗号化・S3 連携・merge/replace の運用 |
 | [コンテナ操作ガイド](docs/user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
+| [Google 認証ガイド](docs/user/google-auth.md) | アカウントグループごとの gcloud / gws 認証、`GCP_AUTH_MODE` |
 | [スナップショットガイド](docs/user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
 | [トラブルシューティング](docs/user/troubleshooting.md) | カテゴリ別の問題と解決策 |
 | [Orca 削除の移行ガイド](docs/user/orca-removal-migration.md) | 旧 Orca(SSH) 接続の廃止と Remote-SSH への移行手順 |
