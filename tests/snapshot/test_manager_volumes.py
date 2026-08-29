@@ -251,3 +251,83 @@ def test_invalid_group_is_rejected_when_volumes_are_needed(root, monkeypatch):
 
     with pytest.raises(DevbaseError):
         _ = mgr.volumes
+
+
+# ---------------------------------------------------------------------------
+# メタデータの検証 (改変・持ち込みスナップショット対策)
+# ---------------------------------------------------------------------------
+
+def _write_meta(root: Path, name: str, meta: dict) -> Path:
+    snap_dir = root / "backups" / name
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    (snap_dir / "meta.yml").write_text(yaml.safe_dump(meta))
+    (snap_dir / "full.tar.zst").write_text("archive")
+    return snap_dir
+
+
+def test_absolute_path_as_volume_is_rejected(root):
+    """絶対パスを許すと任意のホストディレクトリを bind mount して消せてしまう。"""
+    from devbase.errors import SnapshotError
+
+    snap_dir = _write_meta(root, "tampered", {
+        "name": "tampered", "type": "full",
+        "volumes": {"ai": "/Users/someone", "group": "devbase_home_default"},
+    })
+    mgr = SnapshotManager(root)
+
+    with pytest.raises(SnapshotError) as excinfo:
+        mgr.snapshot_volumes(snap_dir)
+    assert "/Users/someone" in str(excinfo.value)
+
+
+def test_unknown_mount_name_is_rejected(root):
+    """マウント名は消去コマンドのシェル文字列に入るため、既知の名前だけ許す。"""
+    from devbase.errors import SnapshotError
+
+    snap_dir = _write_meta(root, "tampered2", {
+        "name": "tampered2", "type": "full",
+        "volumes": {"; rm -rf /": "devbase_home_default"},
+    })
+    mgr = SnapshotManager(root)
+
+    with pytest.raises(SnapshotError):
+        mgr.snapshot_volumes(snap_dir)
+
+
+def test_legacy_volume_value_is_validated_too(root):
+    """旧形式の `volume:` も同じ検証を通す。"""
+    from devbase.errors import SnapshotError
+
+    snap_dir = _write_meta(root, "tampered3", {
+        "name": "tampered3", "type": "full", "volume": "/etc",
+    })
+    mgr = SnapshotManager(root)
+
+    with pytest.raises(SnapshotError):
+        mgr.snapshot_volumes(snap_dir)
+
+
+def test_restore_refuses_before_touching_the_volumes(root):
+    """検証は消去コマンドを流す**前**に効く。"""
+    from devbase.errors import SnapshotError
+
+    _write_meta(root, "tampered4", {
+        "name": "tampered4", "type": "full",
+        "volumes": {"ai": "../../etc", "group": "devbase_home_default"},
+    })
+    mgr = RecordingManager(root)
+
+    with pytest.raises(SnapshotError):
+        mgr.restore("tampered4")
+    assert [c for c in mgr.calls if c["mode"] == "restore"] == []
+
+
+@pytest.mark.parametrize("name", ["devbase_home_ubuntu", "devbase_home_kkg",
+                                  "a", "a-b_c.d", "g1"])
+def test_valid_volume_names_pass(root, name):
+    snap_dir = _write_meta(root, "ok", {
+        "name": "ok", "type": "full", "volumes": {"ai": name, "group": name},
+    })
+    mgr = SnapshotManager(root)
+
+    assert mgr.snapshot_volumes(snap_dir) == {"ai": name, "group": name}

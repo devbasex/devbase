@@ -187,13 +187,11 @@ volumes:
 ONLY_KEYS_COMPOSE = """services:
   dev:
     image: alpine
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /home/ubuntu/.config/gcloud/credentials.json
+      BIGQUERY_KEY_FILE: /home/ubuntu/.config/gcloud/credentials.json
     volumes:
       - x:/work
-  batch:
-    image: alpine
-    environment:
-      GOOGLE_APPLICATION_CREDENTIALS: /keys/sa.json
-      BIGQUERY_KEY_FILE: /keys/sa.json
 volumes:
   x: {}
 """
@@ -222,15 +220,20 @@ def test_adc_drops_inline_key_paths_from_the_original_compose(project, monkeypat
     assert env["TZ"] == "Asia/Tokyo"
 
 
-def test_adc_drops_inline_key_paths_from_non_dev_services(project, monkeypatch):
-    """list 記法の非 dev サービスからも消す (鍵はどこにも書かれない)。"""
+def test_adc_keeps_inline_key_paths_of_non_dev_services(project, monkeypatch):
+    """非 dev サービスの明示設定は残す。
+
+    ``GCP_AUTH_MODE`` は **dev コンテナの認証方式**の宣言である。独自に鍵を
+    マウントしている batch のようなサービスから元の ``compose.yml`` の設定まで
+    消すと、そのサービスを壊してしまう。
+    """
     (project / "compose.yml").write_text(INLINE_MAP_COMPOSE)
     monkeypatch.setenv("GCP_AUTH_MODE", "adc")
 
     generate_scaled_compose(1, secret_env_names=SECRET_NAMES)
 
     batch = services(project)["batch"]["environment"]
-    assert batch == ["TZ=Asia/Tokyo"]
+    assert batch == ["GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json", "TZ=Asia/Tokyo"]
 
 
 def test_key_mode_keeps_inline_key_paths(project, monkeypatch):
@@ -247,14 +250,35 @@ def test_key_mode_keeps_inline_key_paths(project, monkeypatch):
         "GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json", "TZ=Asia/Tokyo"]
 
 
-def test_environment_is_removed_when_it_becomes_empty(project, monkeypatch):
-    """全部消えたら environment ごと落とす (空の map を残さない)。"""
+def test_inline_key_paths_are_dropped_from_the_dev_instance(project, monkeypatch):
+    """dev の environment に直書きされた 2 変数は消す。
+
+    列挙を絞るだけでは元の ``compose.yml`` の直書きが生成物に残り、実在しない
+    パスが ADC を ``DefaultCredentialsError`` で落とす。
+    """
     (project / "compose.yml").write_text(ONLY_KEYS_COMPOSE)
     monkeypatch.setenv("GCP_AUTH_MODE", "adc")
 
     generate_scaled_compose(1)
 
-    assert "environment" not in services(project)["batch"]
+    names = env_names(project)
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in names
+    assert "BIGQUERY_KEY_FILE" not in names
+
+
+def test_environment_is_removed_when_it_becomes_empty():
+    """全部消えたら environment ごと落とす (空の map を残さない)。"""
+    from devbase.volume.compose import _drop_env_names
+    from devbase.env import gcp_auth
+
+    service = {"image": "alpine", "environment": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "/keys/sa.json",
+        "BIGQUERY_KEY_FILE": "/keys/sa.json",
+    }}
+
+    _drop_env_names(service, gcp_auth.KEY_ONLY_ENV_KEYS)
+
+    assert "environment" not in service
 
 
 def test_declared_key_without_a_key_drops_them_too(project, monkeypatch):

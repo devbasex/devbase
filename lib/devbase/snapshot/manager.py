@@ -22,6 +22,11 @@ VOLUME_NAME = HOME_UBUNTU_VOLUME
 # コンテナ内では /source/<sub> に並べて置く。
 SHARED_MOUNT = 'ai'
 GROUP_MOUNT = 'group'
+# メタデータから受け入れるマウント名。空文字は旧レイアウト (共通ボリューム 1 本を
+# ルートへ直接マウント) を表す。
+_ALLOWED_MOUNTS = frozenset({'', SHARED_MOUNT, GROUP_MOUNT})
+# Docker の named volume として通る名前 (絶対パスを弾いて bind mount を防ぐ)
+_VOLUME_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
 SNAPSHOT_IMAGE = 'devbase-snapshot:latest'
 DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
@@ -546,12 +551,42 @@ class SnapshotManager:
         新しいメタデータは ``volumes`` (サブディレクトリ名 → ボリューム名) を持つ。
         持たない旧スナップショットは共通ボリューム 1 本をルートへ直接マウントする
         レイアウトなので、サブディレクトリ名を空文字にした 1 件として返す。
+
+        **値は検証してから返す。** ここで返した内容はマウント先として
+        ``docker run -v <値>:/target/<キー>`` に、キーは
+        :meth:`clear_command` が組み立てる ``bash -c`` の消去コマンドに入る。
+        ``meta.yml`` は編集できるうえスナップショットは環境をまたいで持ち込めるため、
+        絶対パスを値に書けば任意のホストディレクトリを bind mount して**復元前に
+        中身を消せて**しまう。キーは既知のマウント名だけ、値は Docker の named
+        volume として通る名前だけを許す。
+
+        Raises:
+            SnapshotError: メタデータの対象ボリュームが不正な場合
         """
         meta = self._load_snap_meta(snap_dir)
         volumes = meta.get('volumes')
         if isinstance(volumes, dict) and volumes:
-            return dict(volumes)
-        return {'': meta.get('volume', HOME_UBUNTU_VOLUME)}
+            return self._validate_volumes(volumes, snap_dir)
+        return self._validate_volumes(
+            {'': meta.get('volume', HOME_UBUNTU_VOLUME)}, snap_dir)
+
+    @staticmethod
+    def _validate_volumes(volumes: dict, snap_dir: Path) -> dict:
+        """メタデータ由来の対象ボリュームを検証する (不正なら SnapshotError)。"""
+        for sub, name in volumes.items():
+            if sub not in _ALLOWED_MOUNTS:
+                raise SnapshotError(
+                    f"スナップショットのメタデータが不正です ({snap_dir / 'meta.yml'}): "
+                    f"未知のマウント名 '{sub}'。"
+                    f"使えるのは {', '.join(repr(m) for m in sorted(_ALLOWED_MOUNTS))} です"
+                )
+            if not isinstance(name, str) or not _VOLUME_NAME_RE.match(name):
+                raise SnapshotError(
+                    f"スナップショットのメタデータが不正です ({snap_dir / 'meta.yml'}): "
+                    f"'{sub}' のボリューム名 {name!r} は Docker の named volume 名として"
+                    "使えません (英数字・ドット・ハイフン・アンダースコア、先頭は英数字)"
+                )
+        return dict(volumes)
 
     def _load_snap_meta(self, snap_dir: Path) -> dict:
         """個別スナップショットのmeta.ymlを読み込む"""

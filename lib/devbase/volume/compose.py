@@ -597,11 +597,15 @@ def generate_scaled_compose(
     )
 
     # 列挙を絞るだけでは、元の compose.yml が environment に**直書き**している
-    # 2 変数が生成物に残る。adc では鍵をどのサービスにも書かないので、パスが
-    # 残っていること自体が DefaultCredentialsError の原因になる。全サービスから
-    # 名前ごと取り除く。
+    # 2 変数が生成物に残る。adc では dev に鍵を書かないので、パスが残っていること
+    # 自体が DefaultCredentialsError の原因になる。
+    #
+    # 取り除くのは **dev インスタンスだけ**。`GCP_AUTH_MODE` は dev コンテナの
+    # 認証方式の宣言であり、独自に鍵をマウントしている非 dev サービス (batch 等) の
+    # 明示設定まで消すと、そのサービスを壊してしまう。
     if auth_mode != gcp_auth.AUTH_MODE_KEY:
-        for service in scaled_services.values():
+        for index in range(1, scale + 1):
+            service = scaled_services.get(f'{dev_service_name}-{index}')
             if isinstance(service, dict):
                 _drop_env_names(service, gcp_auth.KEY_ONLY_ENV_KEYS)
 
