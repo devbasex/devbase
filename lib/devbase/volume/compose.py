@@ -8,7 +8,7 @@ from typing import (
     Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
 )
 
-from devbase.env import compose_migrate, keys
+from devbase.env import compose_migrate, gcp_auth, keys
 from devbase.errors import DockerError
 from devbase.log import get_logger
 
@@ -218,6 +218,42 @@ def _mask_secret_environment(
         "environment の形式 (%s) を解釈できないため、機密の変数名の列挙で"
         "置き換えます", type(existing).__name__)
     service['environment'] = list(secrets)
+
+
+def _drop_env_names(service: dict, names: Iterable[str]) -> None:
+    """service の ``environment`` から指定キーを**丸ごと**取り除く。
+
+    値を落として名前だけ残す :func:`_mask_secret_environment` と違い、名前ごと
+    消す。ADC 用 (PLAN39): ``GOOGLE_APPLICATION_CREDENTIALS`` が実在しない
+    ファイルを指していると、ADC はユーザー認証へフォールバックせず
+    ``DefaultCredentialsError`` で落ちるため、「値が空」でも「値なし参照」でも
+    足りず、**渡さない**しかない。
+
+    機密の列挙 (:func:`gcp_auth.filter_key_env_names`) を絞るだけでは、元の
+    ``compose.yml`` の ``environment`` に直書きされたキーが生成物に残る。
+    map / list の両記法を扱い、空になった ``environment`` は消す。
+    """
+    drop = set(names)
+    if not drop:
+        return
+    existing = service.get('environment')
+
+    if isinstance(existing, dict):
+        kept = {k: v for k, v in existing.items() if k not in drop}
+    elif isinstance(existing, list):
+        kept = [
+            item for item in existing
+            if not (isinstance(item, str)
+                    and item.split('=', 1)[0].strip() in drop)
+        ]
+    else:
+        # None や解釈できない形式には触らない (警告は mask 側で出している)
+        return
+
+    if kept:
+        service['environment'] = kept
+    else:
+        service.pop('environment', None)
 
 
 class _SecretNames:
@@ -528,8 +564,6 @@ def generate_scaled_compose(
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
 
     secret_services = _services_receiving_secrets(compose_file, dev_service_name)
-    secret_names = _SecretNames(
-        secret_env_names, global_env_names, project_env_names)
 
     # アカウントグループはここで 1 度だけ解決し、マウント・ボリューム宣言・
     # 環境変数の 3 か所へ同じ値を配る。コンテナ側で解決し直させると、マウント
@@ -540,15 +574,39 @@ def generate_scaled_compose(
     dev_environment = {
         **(dev_environment or {}),
         keys.DEVBASE_ACCOUNT_GROUP: account_group,
+        # gcloud / gws の設定ディレクトリと解決済みの認証モード (PLAN39)
+        **gcp_auth.container_env(os.environ),
     }
 
+    # ADC モードでは鍵モード専用の 2 変数を **列挙から外す**。名前が載らなければ
+    # Compose はその変数をコンテナへ渡さないので、docker exec のシェルから見ても
+    # 未設定になる。値を空にするだけでは entrypoint の外に効かない。
+    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
+    secret_env_names = gcp_auth.filter_key_env_names(secret_env_names, auth_mode)
+    global_env_names = gcp_auth.filter_key_env_names(global_env_names, auth_mode)
+    project_env_names = gcp_auth.filter_key_env_names(project_env_names, auth_mode)
+
+    secret_names = _SecretNames(
+        secret_env_names, global_env_names, project_env_names)
+
+    scaled_services = _build_scaled_services(
+        services, dev_service, dev_service_name, scale, group_volume,
+        secret_names=secret_names,
+        secret_services=secret_services,
+        dev_environment=dev_environment,
+    )
+
+    # 列挙を絞るだけでは、元の compose.yml が environment に**直書き**している
+    # 2 変数が生成物に残る。adc では鍵をどのサービスにも書かないので、パスが
+    # 残っていること自体が DefaultCredentialsError の原因になる。全サービスから
+    # 名前ごと取り除く。
+    if auth_mode != gcp_auth.AUTH_MODE_KEY:
+        for service in scaled_services.values():
+            if isinstance(service, dict):
+                _drop_env_names(service, gcp_auth.KEY_ONLY_ENV_KEYS)
+
     scaled_config = {
-        'services': _build_scaled_services(
-            services, dev_service, dev_service_name, scale, group_volume,
-            secret_names=secret_names,
-            secret_services=secret_services,
-            dev_environment=dev_environment,
-        ),
+        'services': scaled_services,
         'volumes': _build_volumes_section(config, scale, group_volume),
         'networks': _build_networks_section(config),
     }
