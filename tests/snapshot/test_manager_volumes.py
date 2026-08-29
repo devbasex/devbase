@@ -1,0 +1,253 @@
+"""スナップショットの対象ボリューム (PLAN39 Task 6)
+
+対象が共通ボリューム 1 本から「共通 + アカウントグループ」の 2 本になる。
+Docker は起動せず、``_run_docker_tar`` を差し替えて **何をどこへマウントするか**と
+**旧メタデータの互換**を固定する。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from devbase.errors import SnapshotError
+from devbase.snapshot.manager import SnapshotManager
+
+
+@pytest.fixture(autouse=True)
+def _clean_group_env(monkeypatch):
+    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
+
+
+@pytest.fixture
+def root(tmp_path: Path) -> Path:
+    return tmp_path
+
+
+class RecordingManager(SnapshotManager):
+    """``docker run`` を実行せず、渡された引数だけを記録する。"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls: list[dict] = []
+
+    def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
+        self.calls.append({
+            "mode": mode,
+            "command": command,
+            "volumes": dict(volumes or self.volumes),
+            "mounts": self.volume_mount_args(volumes or self.volumes, mode),
+        })
+        # フルバックアップの実体が無いと restore が止まるので、印だけ作る
+        if mode == "backup":
+            (snap_dir / "full.tar.zst").write_text("archive")
+            (snap_dir / "snapshot.snar").write_text("snar")
+
+
+# ---------------------------------------------------------------------------
+# 対象ボリューム (AC9)
+# ---------------------------------------------------------------------------
+
+def test_both_volumes_are_targeted(root):
+    mgr = RecordingManager(root)
+
+    assert mgr.volumes == {
+        "ai": "devbase_home_ubuntu",
+        "group": "devbase_home_default",
+    }
+
+
+def test_group_volume_follows_the_account_group(root, monkeypatch):
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
+    mgr = RecordingManager(root)
+
+    assert mgr.volumes["group"] == "devbase_home_kkg"
+
+
+def test_explicit_group_wins(root, monkeypatch):
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
+    mgr = RecordingManager(root, group="with")
+
+    assert mgr.volumes["group"] == "devbase_home_with"
+
+
+def test_backup_mounts_both_volumes_read_only(root):
+    mgr = RecordingManager(root)
+
+    mgr.create(name="snap1")
+
+    mounts = mgr.calls[0]["mounts"]
+    assert mounts == [
+        "-v", "devbase_home_ubuntu:/source/ai:ro",
+        "-v", "devbase_home_default:/source/group:ro",
+    ]
+
+
+def test_restore_mounts_both_volumes_writable(root):
+    mgr = RecordingManager(root)
+    mgr.create(name="snap1")
+    mgr.calls.clear()
+
+    mgr.restore("snap1")
+
+    restore_calls = [c for c in mgr.calls if c["mode"] == "restore"]
+    assert restore_calls[0]["mounts"] == [
+        "-v", "devbase_home_ubuntu:/target/ai",
+        "-v", "devbase_home_default:/target/group",
+    ]
+
+
+def test_restore_clears_each_mount_not_the_mount_points(root):
+    """マウントポイント自身は消せない (busy)。各マウントの直下を消す。"""
+    mgr = RecordingManager(root)
+    mgr.create(name="snap1")
+    mgr.calls.clear()
+
+    mgr.restore("snap1")
+
+    command = [c for c in mgr.calls if c["mode"] == "restore"][0]["command"]
+    assert "for d in /target/ai /target/group;" in command
+    assert "-C /target" in command
+
+
+# ---------------------------------------------------------------------------
+# メタデータ
+# ---------------------------------------------------------------------------
+
+def test_metadata_records_the_target_volumes(root):
+    mgr = RecordingManager(root)
+
+    mgr.create(name="snap1")
+
+    meta = yaml.safe_load((root / "backups" / "snap1" / "meta.yml").read_text())
+    assert meta["volumes"] == {
+        "ai": "devbase_home_ubuntu",
+        "group": "devbase_home_default",
+    }
+
+
+def test_global_metadata_records_the_target_volumes(root):
+    mgr = RecordingManager(root)
+
+    mgr.create(name="snap1")
+
+    meta = yaml.safe_load((root / "backups" / "snapshot.yml").read_text())
+    assert meta["snapshots"][0]["volumes"]["group"] == "devbase_home_default"
+
+
+# ---------------------------------------------------------------------------
+# 旧スナップショットの互換 (AC9)
+# ---------------------------------------------------------------------------
+
+def _write_legacy_snapshot(root: Path, name: str = "old") -> Path:
+    """PLAN39 以前のスナップショット (共通ボリューム 1 本) を作る。"""
+    snap_dir = root / "backups" / name
+    snap_dir.mkdir(parents=True)
+    (snap_dir / "full.tar.zst").write_text("archive")
+    (snap_dir / "snapshot.snar").write_text("snar")
+    (snap_dir / "meta.yml").write_text(yaml.safe_dump({
+        "name": name,
+        "type": "full",
+        "volume": "devbase_home_ubuntu",
+        "files": ["full.tar.zst"],
+        "incremental_count": 0,
+    }))
+    (root / "backups" / "snapshot.yml").write_text(yaml.safe_dump({
+        "max_generations": 3,
+        "snapshots": [{"name": name, "created_at": "2026-01-01T00:00:00",
+                       "updated_at": "2026-01-01T00:00:00",
+                       "incremental_count": 0}],
+    }))
+    return snap_dir
+
+
+def test_legacy_snapshot_layout_is_recognised(root):
+    snap_dir = _write_legacy_snapshot(root)
+    mgr = RecordingManager(root)
+
+    assert mgr.snapshot_volumes(snap_dir) == {"": "devbase_home_ubuntu"}
+
+
+def test_legacy_snapshot_restores_into_the_shared_volume(root):
+    """旧世代は共通ボリュームをルートへ直接マウントして復元する。"""
+    _write_legacy_snapshot(root)
+    mgr = RecordingManager(root)
+
+    mgr.restore("old")
+
+    restore_calls = [c for c in mgr.calls if c["mode"] == "restore"]
+    assert restore_calls[0]["mounts"] == ["-v", "devbase_home_ubuntu:/target"]
+    assert "for d in /target;" in restore_calls[0]["command"]
+
+
+def test_snapshot_without_metadata_falls_back_to_the_shared_volume(root):
+    """meta.yml が壊れている / 無い世代でも復元先を見失わない。"""
+    snap_dir = root / "backups" / "broken"
+    snap_dir.mkdir(parents=True)
+    mgr = RecordingManager(root)
+
+    assert mgr.snapshot_volumes(snap_dir) == {"": "devbase_home_ubuntu"}
+
+
+# ---------------------------------------------------------------------------
+# レイアウト変更時の世代分割
+# ---------------------------------------------------------------------------
+
+def test_layout_change_starts_a_new_generation(root):
+    """旧世代へ差分を積むと snar のレイアウトが違うため差分が壊れる。"""
+    _write_legacy_snapshot(root)
+    mgr = RecordingManager(root)
+
+    assert mgr.should_start_new_generation() is True
+
+
+def test_group_change_starts_a_new_generation(root, monkeypatch):
+    mgr = RecordingManager(root)
+    mgr.create(name="snap1")
+
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
+    other = RecordingManager(root)
+
+    assert other.should_start_new_generation() is True
+
+
+def test_same_layout_keeps_appending_increments(root):
+    mgr = RecordingManager(root)
+    mgr.create(name="snap1")
+
+    assert mgr.should_start_new_generation() is False
+
+
+def test_incremental_on_a_different_layout_is_refused(root):
+    """明示的に古い世代を指定されたときは、壊れた差分を積まず理由を出す。"""
+    _write_legacy_snapshot(root)
+    mgr = RecordingManager(root)
+
+    with pytest.raises(SnapshotError) as excinfo:
+        mgr.create(name="old", full=False)
+
+    message = str(excinfo.value)
+    assert "devbase_home_ubuntu" in message
+    assert "devbase_home_default" in message
+
+
+def test_invalid_group_does_not_break_read_only_operations(root, monkeypatch):
+    """一覧のように対象ボリュームを要さない操作は、グループ名が不正でも通る。"""
+    _write_legacy_snapshot(root)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "ubuntu")
+
+    mgr = SnapshotManager(root)
+
+    assert [s["name"] for s in mgr.list()] == ["old"]
+
+
+def test_invalid_group_is_rejected_when_volumes_are_needed(root, monkeypatch):
+    from devbase.errors import DevbaseError
+
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "ubuntu")
+    mgr = SnapshotManager(root)
+
+    with pytest.raises(DevbaseError):
+        _ = mgr.volumes

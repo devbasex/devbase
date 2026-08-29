@@ -5,6 +5,52 @@
 ## [Unreleased]
 
 ### Added
+- **永続化ボリュームをアカウントグループ単位に分離**しました (PLAN39 / #116)。
+  これまで認証情報と会話ログは全コンテナ共通の `devbase_home_ubuntu` に置かれていたため、
+  nyle.co.jp で認証した Claude Code / gcloud を kk-generation.com のプロジェクトが
+  そのまま引き継いでしまい、企業テナントの境界を越えていました。`DEVBASE_ACCOUNT_GROUP`
+  (未設定なら `default`) で使用する Google / AWS アカウントの単位を宣言すると、
+  グループごとに `devbase_home_<group>` が作られ `/persistent/group` としてマウントされます。
+
+  | 分類 | 置き場 | 内容 |
+  |---|---|---|
+  | 共通 | `/persistent/ai` (`devbase_home_ubuntu`) | `~/.claude/plugins` / `skills` / `commands` / `CLAUDE.md` / `settings.json`、`.codex` / `.serena` / `.kiro` / `.ssh` / `share` |
+  | グループ別 | `/persistent/group` (`devbase_home_<group>`) | `.claude.json`、`~/.claude` 本体 (認証・会話ログ)、`.gemini`、gcloud / gws の設定ディレクトリ |
+
+  `~/.claude/plugins` (238MB) のような共通資産はグループ数だけ重複しません。
+  `default` グループでは初回起動時に既存データを**コピー**してシードするため、
+  Claude Code の再ログインは発生しません (gcloud / gws はシード元が無いため
+  全グループで初回 1 回の認証が要ります)。使えないグループ名 (Docker のボリューム名に
+  できないもの・`ubuntu`・数字だけ) は `devbase up` の前にエラーで弾きます。
+  詳細は [コンテナ操作ガイド](docs/user/container-operations.md#アカウントグループ) を参照してください。
+
+- **gcloud / gws の設定ディレクトリをアカウントグループ単位に永続化**しました。
+  `CLOUDSDK_CONFIG` / `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` を `/persistent/group` 配下へ
+  向けることで、`gcloud auth login` / `gws auth login` のユーザー OAuth が
+  **コンテナを作り直しても保たれ**、かつグループをまたいで共有されなくなります。
+  `CLOUDSDK_CONFIG` は gcloud CLI 専用ではなく `google.auth` の探索経路そのものなので、
+  BigQuery クライアント等も同じ場所を見ます。あわせて `@googleworkspace/cli` (`gws`) を
+  base イメージへ追加しました (これまでどのコンテナにも入っておらず、設定だけ永続化しても
+  復旧しませんでした)。
+
+- **`GCP_AUTH_MODE` を新設**しました。`adc` でサービスアカウント鍵を使わず
+  `gcloud auth application-default login` によるユーザー認証 (ADC) を使い、`key` で
+  従来どおり鍵を使います。未設定なら鍵の env の有無で自動判定するため、既存プロジェクトは
+  これまでどおり動きます。`adc` では `GOOGLE_APPLICATION_CREDENTIALS` と `BIGQUERY_KEY_FILE` を
+  **コンテナへ渡しません** (値だけ残して実体が無いと ADC はユーザー認証へフォールバックせず
+  `DefaultCredentialsError` で落ちるため)。
+
+  > **Warning:** `CLOUDSDK_CONFIG` の導入により、`~/.config/gcloud` は
+  > **gcloud の設定ディレクトリではなくなりました**。鍵モードで書き出される
+  > サービスアカウント鍵の置き場でしかなく、コンテナ層 (揮発) に残ります。設定を見たい
+  > ときは `$CLOUDSDK_CONFIG` を参照してください。
+
+- **`devbase status` に解決されたアカウントグループ**を表示するようにしました。
+  コンテナの起動ログにも、グループ名と gcloud のアカウントが 1 行出ます。
+
+  > **Note:** 上記のうち entrypoint と Dockerfile に関わる変更は、反映に
+  > `devbase build --no-cache` によるイメージの再ビルドとコンテナの作り直しが要ります。
+
 - **tmux の既定設定 (`/etc/tmux.conf`) を base イメージへ焼き込む**ようにしました。tmux は
   起動時に端末の代替画面へ切り替わるため、出力履歴は VS Code のスクロールバックではなく
   tmux 自身のバッファに入ります。これまでコンテナの tmux は素の初期状態 (履歴 2000 行・
@@ -50,6 +96,23 @@
 > `devbase container build` (必要に応じて `--no-cache`) によるイメージの再ビルドが要ります。
 > 再ビルドしていないイメージでは、これまでどおり全フォルダを載せたワークスペースが
 > 書き出されます (機能が黙って失われることはありません)。
+
+- **スナップショットの対象が 2 ボリューム**になりました (共通 + アカウントグループ)。
+  メタデータに対象ボリューム名を記録し、`devbase snapshot list` にも表示します。
+  分離前に作られた既存スナップショットは**そのまま復元できます**。対象ボリュームの構成が
+  変わったときは、旧世代へ壊れた差分を積まないよう新しい世代を作ります (旧世代の差分状態
+  ファイルは別のレイアウトを記録しているため、そこへ差分を積むと差分が壊れます)。
+- **`devbase env init` は鍵を登録したときだけ** `GOOGLE_APPLICATION_CREDENTIALS` /
+  `BIGQUERY_KEY_FILE` を書くようにしました (従来は鍵の有無に関係なく書いていました)。
+  実体の無いパスが `env` に残っていると ADC がユーザー認証へフォールバックできません。
+
+### Fixed
+- entrypoint の symlink 生成で、**入れ子パスの親ディレクトリが作られていなかった**不具合を
+  直しました。`~/.claude/.credentials.json` は永続領域側の作成が
+  `No such file or directory` で落ちて壊れた symlink になり、`~/.claude/history.jsonl` は
+  ファイル判定が `*.json` グロブだったため `.jsonl` にマッチせず**ディレクトリとして**
+  作られ、Claude Code が追記できませんでした。ファイルとして作るエントリは拡張子ではなく
+  明示の一覧で判定するようにしています。
 
 - **`plugin.yml` の `requires.devbase` をインストール時に検証**するようにしました。要件を
   満たさない Plugin は `devbase plugin install` が中止します。これまでは値を読むだけで

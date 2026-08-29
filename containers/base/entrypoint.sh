@@ -496,6 +496,24 @@ devbase_setup_gcp_credentials() {
     export BIGQUERY_KEY_FILE="$bq_path"
 }
 
+# 起動時に「どのグループで、どのアカウントとして動いているか」を 1 行出す。
+#
+# entrypoint は `set -e` で動くため、未ログインで gcloud が非 0 を返しても起動を
+# 落とさないようフォールバックする。gcloud を含まないイメージもあるので存在確認も行う。
+devbase_log_account_group() {
+    local group="${1:-default}"
+    local account
+
+    if command -v gcloud >/dev/null 2>&1; then
+        account="$(gcloud config get account 2>/dev/null || echo unset)"
+        [ -n "$account" ] || account="unset"
+    else
+        account="gcloud not installed"
+    fi
+
+    echo "Account group: ${group} (gcloud account: ${account}, CLOUDSDK_CONFIG: ${CLOUDSDK_CONFIG:-unset})"
+}
+
 # テストは関数定義だけを使う (source 時のみ有効な return で以降を読み飛ばす)。
 if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
     return 0 2>/dev/null || exit 0
@@ -682,6 +700,7 @@ devbase_setup_ai_settings \
     "/home/${USERNAME}" "$AI_PERSISTENT_DIR" "$GROUP_PERSISTENT_DIR" \
     "$DEVBASE_ACCOUNT_GROUP" "$USERNAME"
 echo "AI agent settings symlinks setup completed"
+devbase_log_account_group "$DEVBASE_ACCOUNT_GROUP"
 # ========================================
 
 # Repository setup (PLAN32: 1 project = 複数リポジトリ)
