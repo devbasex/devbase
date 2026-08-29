@@ -365,6 +365,26 @@ devbase_seed_group_settings() {
     done
 }
 
+# イメージが焼き込んだ ~/.claude の初期設定を共通側へ退避する。
+#
+# Dockerfile は ~/.claude/settings.json に hooks 設定を書き込むが、この直後の
+# symlink 張り替えは ~/.claude を `rm -rf` するため、拾わないと初回起動で失われる
+# (共通側には空のプレースホルダだけが残る)。実体が入っているのは初回だけなので、
+# ~/.claude が既に symlink なら 2 回目以降の起動と見なして何もしない。
+devbase_seed_image_claude_settings() {
+    local home_root="$1" ai_root="$2"
+    local entry
+
+    if [ -L "$home_root/.claude" ] || [ ! -d "$home_root/.claude" ]; then
+        return 0
+    fi
+
+    for entry in "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"; do
+        [ -e "$home_root/.claude/$entry" ] || continue
+        devbase_seed_entry "$home_root/.claude/$entry" "$ai_root/.claude/$entry"
+    done
+}
+
 # AI 設定の symlink を 2 系統ぶん張る (初回シードを含む)。
 devbase_setup_ai_settings() {
     local home_root="$1" ai_root="$2" group_root="$3" group="${4:-default}"
@@ -376,6 +396,7 @@ devbase_setup_ai_settings() {
 
     # symlink を張る**前**にシードする。張ったあとに走らせると、共通側を指す
     # symlink の中身へコピーしてしまう。
+    devbase_seed_image_claude_settings "$home_root" "$ai_root"
     devbase_seed_group_settings "$ai_root" "$group_root" "$group"
 
     for entry in "${DEVBASE_SHARED_SETTINGS[@]}"; do

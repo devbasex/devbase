@@ -333,3 +333,54 @@ def test_seed_copies_dotfiles(roots):
     setup(roots, "default")
 
     assert (grp / ".claude" / ".last-cleanup").read_text() == "ts"
+
+
+# ---------------------------------------------------------------------------
+# イメージ同梱の ~/.claude/settings.json の退避
+# ---------------------------------------------------------------------------
+
+HOOKS = '{"hooks":{"SessionStart":[]}}'
+
+
+def test_image_claude_settings_are_kept_on_first_run(roots):
+    """Dockerfile が焼いた ``~/.claude/settings.json`` を空ファイルで潰さない。
+
+    symlink 張り替えは ``~/.claude`` を ``rm -rf`` するため、退避しないと
+    hooks 設定が初回起動で消えて共通側に空ファイルだけが残る。
+    """
+    home, ai, grp = roots
+    (home / ".claude").mkdir()
+    (home / ".claude" / "settings.json").write_text(HOOKS)
+
+    setup(roots)
+
+    assert (ai / ".claude" / "settings.json").read_text() == HOOKS
+    # グループ側 -> 共通側の symlink 経由でも読める
+    assert (home / ".claude" / "settings.json").read_text() == HOOKS
+
+
+def test_image_claude_settings_do_not_overwrite_the_shared_volume(roots):
+    """永続側に既存の設定があればイメージ側で上書きしない。"""
+    home, ai, _ = roots
+    (home / ".claude").mkdir()
+    (home / ".claude" / "settings.json").write_text(HOOKS)
+    (ai / ".claude").mkdir(parents=True)
+    (ai / ".claude" / "settings.json").write_text('{"user": true}')
+
+    setup(roots)
+
+    assert (ai / ".claude" / "settings.json").read_text() == '{"user": true}'
+
+
+def test_second_run_does_not_seed_through_the_symlink(roots):
+    """2 回目以降 (``~/.claude`` が symlink) は退避を走らせない。"""
+    home, ai, _ = roots
+    (home / ".claude").mkdir()
+    (home / ".claude" / "settings.json").write_text(HOOKS)
+
+    setup(roots)
+    (ai / ".claude" / "settings.json").write_text('{"edited": true}')
+    setup(roots)
+
+    assert (ai / ".claude" / "settings.json").read_text() == '{"edited": true}'
+    assert (home / ".claude").is_symlink()

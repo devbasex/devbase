@@ -194,6 +194,9 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
       不変条件の反転（既定をグループ側へ）により両者はグループボリューム上の実ファイルになる。
       入れ子 symlink として残るのは分類 A の 5 件で、うち `CLAUDE.md` / `settings.json` が
       「親ディレクトリが無い入れ子のファイルエントリ」という前提 5 と同じ条件を満たす。
+      あわせて、Dockerfile が焼き込む `~/.claude/settings.json`（hooks 設定）は symlink 張り替えの
+      `rm -rf` で消えるため、**張る前に共通側へ退避**する。退避しないと `/persistent/ai` に
+      空ファイルだけが残り、hooks が初回起動で失われる（既存 main からの挙動を修正）。
 - [ ] AC7: Docker のボリューム名にできないグループ名、予約語 `ubuntu`（`devbase_home_ubuntu` と衝突する）、
       および**数字のみの名前**（`devbase_home_<index>` と衝突する。前提 6）を**起動前に拒否**し、
       理由の分かるエラーを出す。
