@@ -129,3 +129,27 @@ def test_invalid_environment_value_is_rejected(monkeypatch):
 def test_ai_volume_prefix_is_gone():
     """未使用の AI_VOLUME_PREFIX は削除済み。命名系統を 2 つ並べない。"""
     assert not hasattr(manager, "AI_VOLUME_PREFIX")
+
+
+# ---------------------------------------------------------------------------
+# Docker を触る前に弾く (AC7)
+# ---------------------------------------------------------------------------
+
+def test_ensure_volumes_rejects_bad_group_before_touching_docker(monkeypatch):
+    """グループ名が不正なら Docker の状態を一切変えずに失敗する。
+
+    検証が共有ボリュームの作成より後ろにあると、入力ミスだけで
+    devbase_home_ubuntu が作られてしまう。
+    """
+    created: list[str] = []
+    monkeypatch.setattr(
+        manager.VolumeManager, "_volume_exists",
+        lambda self, name: False)
+    monkeypatch.setattr(
+        manager.VolumeManager, "_create_volume",
+        lambda self, name: created.append(name) or True)
+
+    with pytest.raises(DevbaseError):
+        manager.VolumeManager().ensure_volumes(1, group="ubuntu")
+
+    assert created == []

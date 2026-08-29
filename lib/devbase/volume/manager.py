@@ -178,6 +178,11 @@ class VolumeManager:
         """
         logger.info("Ensuring volumes for %d container(s)", scale)
 
+        # グループ名の検証は Docker を触る前に済ませる。あとに置くと、名前が
+        # 不正なだけの入力エラーでも共有ボリュームが作られてから失敗して
+        # しまい、Docker の状態が変わってしまう。
+        group_volume = get_group_volume(group)
+
         # Ensure shared home directory volume (once for all containers)
         if self._volume_exists(HOME_UBUNTU_VOLUME):
             logger.info("  %s (shared home, exists)", HOME_UBUNTU_VOLUME)
@@ -187,7 +192,6 @@ class VolumeManager:
                 raise DockerError(f"Failed to create volume {HOME_UBUNTU_VOLUME}")
 
         # Ensure account group volume (shared by all containers of the group)
-        group_volume = get_group_volume(group)
         if self._volume_exists(group_volume):
             logger.info("  %s (account group, exists)", group_volume)
         else:
