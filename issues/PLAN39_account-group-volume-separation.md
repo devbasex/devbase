@@ -153,6 +153,20 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
   SQLite 自体は named volume 上で正常に動く（同じく実機で `create table` / `insert` を確認）ので
   `credentials.db` の置き場としては問題ない（並行実行は前提 13 の別件）。
 
+- 前提 20: **`~/.claude` の子要素は 30 件あり、プランが分類表で名指ししているのは 7 件だけ**
+  （実機 `carmo-ai-dev-1` で確認。`.credentials.json` / `.last-cleanup` /
+  `.last-update-result.json` / `.ndf-retention-checked` / `.ndf-retention.lock` /
+  `.ndf-statusline-backup.json` / `.ndf-statusline.lock` / `CLAUDE.md` / `backups` /
+  `cache` / `commands` / `daemon` / `daemon.log` / `debug` / `file-history` /
+  `history.jsonl` / `ide` / `jobs` / `logs` / `mcp-needs-auth-cache.json` /
+  `ndf-statusline.sh` / `paste-cache` / `plugins` / `projects` / `session-env` /
+  `sessions` / `settings.json` / `shell-snapshots` / `skills` / `tasks`）。
+  容量は `projects` 1.1GB・`plugins` 222MB・`file-history` 76MB・`session-env` 22MB・
+  `jobs` 18MB で、`.claude` 全体は 1.5GB。`projects` は Claude Code の会話ログ実体であり、
+  分類表が `history.jsonl` を B とした理由（顧客情報が入りうる）がそのまま当てはまる。
+  Claude Code は版が上がるたびに新しい子ディレクトリを作るため、**永続化するエントリを
+  列挙する方式では列挙漏れが黙って揮発する**。
+
 - 前提 19: ADC の解決を実機（`carmo-ai-dev-1`、gcloud 同梱の `google.auth`）で確認した結果:
   (1) 鍵ありの現状は SA credentials が解決される（project `nyle-carmo-analysis`）、
   (2) `GOOGLE_APPLICATION_CREDENTIALS` が存在しないパスを指すと
@@ -172,9 +186,17 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
       **同一の `/persistent/ai/.claude/plugins`** を指すこと。
 - [ ] AC5: `DEVBASE_ACCOUNT_GROUP` 未設定のプロジェクトが `default` にフォールバックし、
       これまでどおり起動する。検証: 既存プロジェクトを `up` して entrypoint がエラーを出さないこと。
-- [ ] AC6: 入れ子パスの symlink が正しく張られる。検証: `~/.claude/.credentials.json` が
-      **壊れていない** symlink であること、`~/.claude/history.jsonl` が**ディレクトリでない**こと
-      （前提 5 の退行を防ぐ）。
+- [ ] AC6: 入れ子パスの symlink が正しく張られる。検証: `~/.claude/CLAUDE.md` と
+      `~/.claude/settings.json` が**壊れていない**（実体に到達できる）symlink であり、かつ
+      **ファイル**であること。`~/.claude/.credentials.json` に書き込めること、
+      `~/.claude/history.jsonl` が**ディレクトリでない**こと（前提 5 の退行を防ぐ）。
+      当初は `.credentials.json` / `history.jsonl` 自体を symlink にする想定だったが、
+      不変条件の反転（既定をグループ側へ）により両者はグループボリューム上の実ファイルになる。
+      入れ子 symlink として残るのは分類 A の 5 件で、うち `CLAUDE.md` / `settings.json` が
+      「親ディレクトリが無い入れ子のファイルエントリ」という前提 5 と同じ条件を満たす。
+      あわせて、Dockerfile が焼き込む `~/.claude/settings.json`（hooks 設定）は symlink 張り替えの
+      `rm -rf` で消えるため、**張る前に共通側へ退避**する。退避しないと `/persistent/ai` に
+      空ファイルだけが残り、hooks が初回起動で失われる（既存 main からの挙動を修正）。
 - [ ] AC7: Docker のボリューム名にできないグループ名、予約語 `ubuntu`（`devbase_home_ubuntu` と衝突する）、
       および**数字のみの名前**（`devbase_home_<index>` と衝突する。前提 6）を**起動前に拒否**し、
       理由の分かるエラーを出す。
@@ -243,7 +265,8 @@ issue #116 の「検討が必要な点」3 件は次のとおり決定した。
 | `.claude/history.jsonl`, `.claude/file-history` | **B** | 会話履歴に顧客情報が入りうる |
 | `.gemini` | **B** | `security.auth.selectedType = vertex-ai` で GCP プロジェクトに紐づく |
 | `.config/gcloud`, `.config/gws` | **B**（symlink ではなく env で差し替え） | 問題1の本体。`CLOUDSDK_CONFIG` / `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` をグループボリューム配下へ向ける（前提 8 / 12）。**symlink 対象にはしない** |
-| `.claude/plugins`, `.claude/skills`, `.claude/commands`, `.claude/CLAUDE.md`, `.claude/settings.json` | **A** | 契約やテナントに紐づかない共通資産。238MB を重複させない |
+| `.claude/plugins`, `.claude/skills`, `.claude/commands`, `.claude/CLAUDE.md`, `.claude/settings.json` | **A** | 契約やテナントに紐づかない共通資産。238MB を重複させない。**`.claude` 配下で A なのはこの 5 件だけ**で、残りはすべて B（既定）になる |
+| `.claude/projects`, `.claude/sessions`, `.claude/tasks`, `.claude/session-env` ほか `.claude` 配下の未列挙エントリ | **B**（既定） | 会話ログとセッション状態。顧客情報が入りうる点は `history.jsonl` と同じ。列挙せず既定で B にすることで、Claude Code が将来増やす子ディレクトリも取りこぼさない（前提 20） |
 | `.codex`, `.kiro`, `.serena`, `share` | **A** | Codex は ChatGPT アカウント、Kiro は AWS 側（env 由来）で分離済み |
 | `.ssh` | **A**（現状維持） | entrypoint は `.ssh` を参照しておらず、git 認証は `GIT_CREDENTIALS_BASE64` / `GH_TOKEN` で完結している。企業テナントの境界になっていない。必要になれば配列間の 1 行移動で B へ移せる |
 | `.aws`, `.git-credentials`, `.gitconfig` | **C** | env から毎回復元（現行どおり） |
@@ -253,8 +276,14 @@ issue #116 の「検討が必要な点」3 件は次のとおり決定した。
 - 分類 A のエントリは、どのグループのコンテナから見ても `/persistent/ai` 配下の**同一実体**を指す。
 - 分類 B のエントリは、異なるグループのコンテナから**互いに到達できない**。
 - グループ名が未指定でも起動できる（`default` へフォールバック）。
-- `~/.claude` はシンボリックリンクではなく**実ディレクトリ**であり、その配下に A / B 双方への
-  シンボリックリンクが並ぶ。
+- `~/.claude` の**既定はグループ側**である。`~/.claude` は `/persistent/group/.claude` への
+  シンボリックリンクで、その配下に分類 A のエントリだけが共通側 (`/persistent/ai/.claude/<x>`)
+  への シンボリックリンクとして並ぶ。
+  当初は「`~/.claude` を実ディレクトリにし、A / B 双方の symlink を並べる」としていたが、
+  前提 20 のとおり `.claude` の子要素は 30 件あり、列挙方式では `projects`（1.1GB の会話ログ）
+  のような**未列挙の子が黙って揮発する**。既定をグループ側へ倒し、共通にしたいものだけを
+  名指しする向きに反転した。`~/.claude` が symlink であること自体は現行 `main` と同じで、
+  変わるのは向き先だけである。
 - サービスアカウント鍵は**永続領域に置かない**。毎起動 env から書き直され、コンテナ層とともに消える。
 
 ## 互換性
@@ -349,11 +378,16 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 ### Task 4: AI_SETTINGS の 2 系統化と初回シード（PR2）
 
 - **対象ファイル:** `containers/base/entrypoint.sh`, `tests/containers/`
-- **変更内容:** `AI_SETTINGS` を `AI_SETTINGS_SHARED`（→ `/persistent/ai`）と
-  `AI_SETTINGS_GROUP`（→ `/persistent/group`）に分ける。分類は上表のとおり。
-  `~/.claude` を実ディレクトリとして作り（既存の symlink が残っていれば外す）、その配下に
-  両系統の symlink を張る。symlink 生成の**前に**、`DEVBASE_ACCOUNT_GROUP` が `default` で
+- **変更内容:** `AI_SETTINGS` を 3 つの配列に分ける。
+  `DEVBASE_SHARED_SETTINGS`（ホーム直下・分類 A → `/persistent/ai`）、
+  `DEVBASE_GROUP_SETTINGS`（ホーム直下・分類 B → `/persistent/group`）、
+  `DEVBASE_SHARED_CLAUDE_SETTINGS`（`.claude` 配下の分類 A。グループ側の `.claude` から
+  共通側へ張る）。`~/.claude` は symlink のまま向き先を `/persistent/group/.claude` へ変え、
+  その配下に共通資産 5 件の symlink を張る（不変条件の反転。理由は前提 20）。
+  symlink 生成の**前に**、`DEVBASE_ACCOUNT_GROUP` が `default` で
   かつグループ側に実体が無いエントリだけ、`/persistent/ai` から**コピー**して初期化する。
+  `.claude` のシードでは分類 A の 5 件を**除外**する（共通資産を重複させないため。
+  除外しないと直後の symlink 生成が消すだけの無駄なコピーになる）。
   `~/.config/gcloud` を symlink 対象に**しない**ため（Task 5 は env で差し替える）、
   前提 14 の実行順序による事故は起きない。**symlink ブロックの移動は行わない**。
   ただし将来 `~` 直下の生成物を symlink 対象へ加えると同じ衝突が起きるので、
@@ -517,7 +551,15 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
      sh -c 'for p in .claude.json .claude .gemini; do
               if [ ! -e "/from/$p" ]; then echo "skip (未作成): $p"; continue; fi
               if [ -d "/from/$p" ]; then
-                mkdir -p "/to/$p" && cp -a "/from/$p/." "/to/$p/"
+                mkdir -p "/to/$p"
+                # 分類 A への symlink (plugins / skills / commands / CLAUDE.md /
+                # settings.json) は書き戻さない。共通側の実体を指すリンクなので、
+                # 書き戻すと実体が自分自身を指す symlink に置き換わる
+                for c in "/from/$p"/* "/from/$p"/.[!.]*; do
+                  [ -e "$c" ] || [ -L "$c" ] || continue
+                  [ -L "$c" ] && { echo "skip (共通側への link): ${c##*/}"; continue; }
+                  cp -a "$c" "/to/$p/"
+                done
               else
                 cp -a "/from/$p" "/to/$p"
               fi
@@ -527,7 +569,9 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 
    グループ内で一度も使っていないツールのエントリは存在しないことがあるため、各パスの存在を
    確認してから `cp` し、無いものは `skip` として飛ばす（`&&` で連結すると 1 件目の欠落で
-   以降の同期が止まる）。
+   以降の同期が止まる）。`/persistent/group/.claude` 配下には分類 A の実体へ向いた symlink が
+   並ぶので（不変条件）、**symlink は書き戻さない**。書き戻すと共通側の実体
+   (`/persistent/ai/.claude/plugins` 等) が自分自身を指す symlink に置き換わってしまう。
 
    対象は分類 B のうち共通側に対応物があるものに限る。gcloud / gws は共通ボリュームに置き場が無く、
    revert 後は永続化対象外（現行 main と同じ）へ戻るため書き戻さない。グループボリューム直下の
