@@ -411,6 +411,91 @@ devbase_setup_ai_settings() {
     done
 }
 
+# ===================================================================
+# PLAN39: GCP の認証モードと gcloud / gws の設定ディレクトリ
+# ===================================================================
+# 設定ディレクトリはグループボリューム配下 (CLOUDSDK_CONFIG /
+# GOOGLE_WORKSPACE_CLI_CONFIG_DIR) をホストから渡される。これにより
+# credentials.db / access_tokens.db / application_default_credentials.json と
+# gws の credentials.enc / .encryption_key がグループ単位に分かれる。
+#
+# 変数そのものはホスト側 (生成 compose) が渡す。entrypoint の export は PID 1 の
+# 子プロセスにしか効かず、docker exec のシェルには届かないため。ここでは
+# **ディレクトリの用意**だけを行う。
+
+# gcloud / gws の設定ディレクトリを用意する (空の named volume は root 所有)。
+devbase_setup_cloud_config_dirs() {
+    local owner="${1:-${USERNAME:-ubuntu}}"
+    local dir
+
+    for dir in "${CLOUDSDK_CONFIG:-}" "${GOOGLE_WORKSPACE_CLI_CONFIG_DIR:-}"; do
+        [ -n "$dir" ] || continue
+        devbase_ensure_persistent_root "$dir" "$owner"
+    done
+}
+
+# サービスアカウント鍵を env から書き出す (鍵モードのみ)。
+#
+# `adc` では鍵を書かず、GOOGLE_APPLICATION_CREDENTIALS / BIGQUERY_KEY_FILE を
+# unset する。値だけ残して実体が無いと ADC はユーザー認証へフォールバックせず
+# DefaultCredentialsError で落ちる。ただし **unset が効くのは PID 1 の子孫だけ**で、
+# docker exec のシェルから消すのはホスト側の役目 (lib/devbase/env/gcp_auth.py)。
+# ここでの unset は、ホストが古い場合や env ファイル直書きに対する保険である。
+#
+# 鍵の出力先 ~/.config/gcloud は CLOUDSDK_CONFIG を向け直した後は
+# **gcloud の設定ディレクトリではなく単なる鍵の置き場**であり、コンテナ層に残る。
+# したがって鍵は毎起動 env から書き直され、永続領域には残らない。
+devbase_setup_gcp_credentials() {
+    local home_root="${1:-/home/${USERNAME:-ubuntu}}"
+    local mode="${GCP_AUTH_MODE:-}"
+    local profile="${GCP_ACTIVE_PROFILE:-default}"
+    local var="GCP_CREDENTIALS_BASE64__${profile}"
+    local creds_b64="${!var:-${GOOGLE_APPLICATION_CREDENTIALS_BASE64:-}}"
+
+    # 未設定・未知の値は auto 判定 (鍵の env があれば key、無ければ adc)
+    if [ "$mode" != "key" ] && [ "$mode" != "adc" ]; then
+        if [ -n "$creds_b64" ]; then
+            mode="key"
+        else
+            mode="adc"
+        fi
+    fi
+
+    if [ "$mode" = "key" ] && [ -z "$creds_b64" ]; then
+        echo "Warning: GCP_AUTH_MODE=key ですが ${var} が設定されていません。ADC へ切り替えます"
+        mode="adc"
+    fi
+
+    if [ "$mode" = "adc" ]; then
+        unset GOOGLE_APPLICATION_CREDENTIALS
+        unset BIGQUERY_KEY_FILE
+        echo "GCP auth mode: adc (サービスアカウント鍵は書き出しません)"
+        return 0
+    fi
+
+    echo "GCP auth mode: key (profile: ${profile})"
+    local default_creds_path="${home_root}/.config/gcloud/credentials.json"
+    local creds_content gac_path bq_path
+
+    creds_content=$(printf '%s' "$creds_b64" | base64 -d)
+
+    gac_path="${GOOGLE_APPLICATION_CREDENTIALS:-$default_creds_path}"
+    mkdir -p "$(dirname "$gac_path")"
+    printf '%s' "$creds_content" > "$gac_path"
+    chmod 600 "$gac_path"
+    export GOOGLE_APPLICATION_CREDENTIALS="$gac_path"
+    echo "Google Cloud credentials saved to: $gac_path"
+
+    bq_path="${BIGQUERY_KEY_FILE:-$default_creds_path}"
+    if [ "$bq_path" != "$gac_path" ]; then
+        mkdir -p "$(dirname "$bq_path")"
+        printf '%s' "$creds_content" > "$bq_path"
+        chmod 600 "$bq_path"
+        echo "BigQuery key file saved to: $bq_path"
+    fi
+    export BIGQUERY_KEY_FILE="$bq_path"
+}
+
 # テストは関数定義だけを使う (source 時のみ有効な return で以降を読み飛ばす)。
 if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
     return 0 2>/dev/null || exit 0
@@ -419,40 +504,11 @@ fi
 # Setup authentication credentials from environment variables
 USERNAME="${USERNAME:-ubuntu}"
 
-# 1. Setup Google Cloud credentials from base64 encoded environment variable
-# New format: GCP_CREDENTIALS_BASE64__{profile} with GCP_ACTIVE_PROFILE
-# Legacy format: GOOGLE_APPLICATION_CREDENTIALS_BASE64
-_GCP_PROFILE="${GCP_ACTIVE_PROFILE:-default}"
-_GCP_VAR="GCP_CREDENTIALS_BASE64__${_GCP_PROFILE}"
-_GCP_CREDS_B64="${!_GCP_VAR:-$GOOGLE_APPLICATION_CREDENTIALS_BASE64}"
-
-if [ -n "$_GCP_CREDS_B64" ]; then
-    echo "Setting up Google Cloud credentials (profile: ${_GCP_PROFILE})..."
-    DEFAULT_CREDS_PATH="/home/${USERNAME}/.config/gcloud/credentials.json"
-
-    # Decode base64 content once
-    CREDS_CONTENT=$(printf '%s' "$_GCP_CREDS_B64" | base64 -d)
-
-    # Output to GOOGLE_APPLICATION_CREDENTIALS path
-    GAC_PATH="${GOOGLE_APPLICATION_CREDENTIALS:-$DEFAULT_CREDS_PATH}"
-    GAC_DIR=$(dirname "$GAC_PATH")
-    mkdir -p "$GAC_DIR"
-    printf '%s' "$CREDS_CONTENT" > "$GAC_PATH"
-    chmod 600 "$GAC_PATH"
-    export GOOGLE_APPLICATION_CREDENTIALS="$GAC_PATH"
-    echo "Google Cloud credentials saved to: $GAC_PATH"
-
-    # Output to BIGQUERY_KEY_FILE path if different
-    BQ_PATH="${BIGQUERY_KEY_FILE:-$DEFAULT_CREDS_PATH}"
-    if [ "$BQ_PATH" != "$GAC_PATH" ]; then
-        BQ_DIR=$(dirname "$BQ_PATH")
-        mkdir -p "$BQ_DIR"
-        printf '%s' "$CREDS_CONTENT" > "$BQ_PATH"
-        chmod 600 "$BQ_PATH"
-        echo "BigQuery key file saved to: $BQ_PATH"
-    fi
-    export BIGQUERY_KEY_FILE="$BQ_PATH"
-fi
+# 1. Setup Google Cloud credentials / auth mode (PLAN39)
+# 設定ディレクトリ (CLOUDSDK_CONFIG / GOOGLE_WORKSPACE_CLI_CONFIG_DIR) と
+# 解決済みの GCP_AUTH_MODE はホスト側 (生成 compose) が渡す。
+devbase_setup_cloud_config_dirs "$USERNAME"
+devbase_setup_gcp_credentials "/home/${USERNAME}"
 
 # 2. Setup Git configuration
 if [ -n "$GIT_USER_NAME" ]; then

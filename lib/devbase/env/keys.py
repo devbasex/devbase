@@ -36,6 +36,9 @@ BIGQUERY_PROJECT = "BIGQUERY_PROJECT"
 BIGQUERY_DATASETS = "BIGQUERY_DATASETS"
 BIGQUERY_LOCATION = "BIGQUERY_LOCATION"
 BIGQUERY_KEY_FILE = "BIGQUERY_KEY_FILE"
+# 認証モード (PLAN39): `adc` = ユーザー認証 (ADC) / `key` = サービスアカウント鍵。
+# 未設定なら鍵の env の有無で auto 判定する。詳細: lib/devbase/env/gcp_auth.py
+GCP_AUTH_MODE = "GCP_AUTH_MODE"
 
 
 def gcp_credentials_key(profile: str) -> str:

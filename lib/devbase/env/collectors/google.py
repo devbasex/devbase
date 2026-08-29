@@ -75,6 +75,7 @@ def collect_google_credentials(env_file: EnvFile) -> None:
 
     if not profiles:
         existing = env_file.get(keys.gcp_credentials_key("default"))
+        has_key = bool(existing)
         if existing:
             logger.info("%s: 設定済み", keys.gcp_credentials_key("default"))
         else:
@@ -83,9 +84,10 @@ def collect_google_credentials(env_file: EnvFile) -> None:
                 creds_path = Path(creds_path_str).expanduser()
                 if creds_path.exists():
                     _register_profile(env_file, 'default', creds_path)
+                    has_key = True
                 else:
                     logger.error("ファイルが見つかりません: %s", creds_path)
-        _collect_common_settings(env_file)
+        _collect_common_settings(env_file, has_key=has_key)
         return
 
     print(f"\n検出されたcredential ({len(profiles)}件):")
@@ -111,7 +113,7 @@ def collect_google_credentials(env_file: EnvFile) -> None:
         env_file.set(keys.BIGQUERY_PROJECT, project_id)
         logger.info("%s: %s", keys.GOOGLE_CLOUD_PROJECT, project_id)
 
-    _collect_common_settings(env_file)
+    _collect_common_settings(env_file, has_key=True)
 
 
 def _register_profile(env_file: EnvFile, name: str, file_path: Path) -> None:
@@ -125,8 +127,17 @@ def _register_profile(env_file: EnvFile, name: str, file_path: Path) -> None:
         logger.error("credentialファイルの処理に失敗: %s", e)
 
 
-def _collect_common_settings(env_file: EnvFile) -> None:
-    """GCP共通設定を収集"""
+def _collect_common_settings(env_file: EnvFile, has_key: bool = False) -> None:
+    """GCP共通設定を収集
+
+    Args:
+        env_file: 書き込み先
+        has_key: サービスアカウント鍵を登録したか。鍵モード専用の変数
+            (``GOOGLE_APPLICATION_CREDENTIALS`` / ``BIGQUERY_KEY_FILE``) は
+            鍵があるときだけ書く。実体の無いパスが env に残っていると ADC が
+            ユーザー認証へフォールバックせず ``DefaultCredentialsError`` で
+            落ちるため (PLAN39 / 前提 10)。
+    """
     collect_key(env_file, keys.GOOGLE_CLOUD_LOCATION, auto_value="global", mask_after=0,
                 prompt=f"{keys.GOOGLE_CLOUD_LOCATION} (デフォルト: global): ")
 
@@ -136,7 +147,16 @@ def _collect_common_settings(env_file: EnvFile) -> None:
     collect_key(env_file, keys.BIGQUERY_LOCATION, auto_value="asia-northeast1", mask_after=0,
                 prompt=f"{keys.BIGQUERY_LOCATION} (デフォルト: asia-northeast1): ")
 
-    # コンテナ内パス（devbaseコンテナイメージの仕様に依存）
+    if not has_key:
+        logger.info(
+            "サービスアカウント鍵が未登録のため %s / %s は設定しません "
+            "(ADC を使う場合は不要。詳細: docs/user/google-auth.md)",
+            keys.GOOGLE_APPLICATION_CREDENTIALS, keys.BIGQUERY_KEY_FILE)
+        return
+
+    # コンテナ内パス（devbaseコンテナイメージの仕様に依存）。
+    # CLOUDSDK_CONFIG を向け直したあとの ~/.config/gcloud は gcloud の設定
+    # ディレクトリではなく、単なる鍵の置き場になる (PLAN39)。
     env_file.set(keys.BIGQUERY_KEY_FILE, "/home/ubuntu/.config/gcloud/credentials.json")
     env_file.set(keys.GOOGLE_APPLICATION_CREDENTIALS, "/home/ubuntu/.config/gcloud/credentials.json")
 

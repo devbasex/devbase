@@ -2,10 +2,35 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 import yaml
 
 from devbase.volume.compose import generate_scaled_compose
+
+
+# devbase 自身が dev サービスへ常に載せる変数 (PLAN39)。機密ではないので、
+# 「機密の渡し方」を見るこのファイルの期待値からは除いて比較する。
+DEVBASE_MANAGED = {
+    "DEVBASE_ACCOUNT_GROUP": "default",
+    "CLOUDSDK_CONFIG": "/persistent/group/gcloud",
+    "GOOGLE_WORKSPACE_CLI_CONFIG_DIR": "/persistent/group/gws",
+    "GCP_AUTH_MODE": "adc",
+}
+
+
+def _without_managed(environment):
+    """environment から devbase 由来の変数を除く (map / list の記法は保つ)"""
+    if isinstance(environment, dict):
+        return {k: v for k, v in environment.items() if k not in DEVBASE_MANAGED}
+    return [item for item in (environment or [])
+            if item.split('=', 1)[0] not in DEVBASE_MANAGED]
+
+
+def secret_env(path, service='dev-1'):
+    return _without_managed(
+        generated(path)['services'][service].get('environment'))
 
 
 COMPOSE = """services:
@@ -48,13 +73,23 @@ volumes:
 """
 
 
+def _clear_devbase_env(monkeypatch):
+    """devbase 由来の変数の解決が外部環境に左右されないようにする"""
+    for name in ('DEVBASE_ACCOUNT_GROUP', 'GCP_AUTH_MODE',
+                 'GOOGLE_APPLICATION_CREDENTIALS_BASE64'):
+        monkeypatch.delenv(name, raising=False)
+    for name in list(os.environ):
+        if name.startswith('GCP_CREDENTIALS_BASE64__'):
+            monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     (tmp_path / 'compose.yml').write_text(COMPOSE)
     (tmp_path / 'env').write_text('APP_NAME=web\n')
     monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path / 'root'))
     (tmp_path / 'root').mkdir()
-    monkeypatch.delenv('DEVBASE_ACCOUNT_GROUP', raising=False)
+    _clear_devbase_env(monkeypatch)
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -66,7 +101,7 @@ def project_factory(tmp_path, monkeypatch):
         (tmp_path / 'compose.yml').write_text(compose_text)
         monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path / 'root'))
         (tmp_path / 'root').mkdir(exist_ok=True)
-        monkeypatch.delenv('DEVBASE_ACCOUNT_GROUP', raising=False)
+        _clear_devbase_env(monkeypatch)
         monkeypatch.chdir(tmp_path)
         return tmp_path
     return build
@@ -79,13 +114,11 @@ def generated(path):
 def test_secret_names_are_listed_without_values(project):
     generate_scaled_compose(1, secret_env_names=['ANTHROPIC_API_KEY', 'DB_PASSWORD'])
 
-    # 元が map 形式なら map のまま。機密キーだけ値なし参照 (None) になる。
-    # DEVBASE_ACCOUNT_GROUP は機密ではない devbase 由来の値なので実値で載る。
-    assert generated(project)['services']['dev-1']['environment'] == {
+    # 元が map 形式なら map のまま。機密キーだけ値なし参照 (None) になる
+    assert secret_env(project) == {
         'FEATURE_FLAG': 'enabled',
         'DB_PASSWORD': None,
         'ANTHROPIC_API_KEY': None,
-        'DEVBASE_ACCOUNT_GROUP': 'default',
     }
 
 
@@ -95,12 +128,11 @@ def test_non_secret_environment_is_preserved_in_list_form(project_factory):
     generate_scaled_compose(1, secret_env_names=['DB_PASSWORD', 'ANTHROPIC_API_KEY'])
 
     # 元が list 形式なら list のまま。機密キーは裸のキー名へ落とす
-    assert generated(path)['services']['dev-1']['environment'] == [
+    assert secret_env(path) == [
         'FEATURE_FLAG=enabled',
         'DB_PASSWORD',
         'PASSTHROUGH',
         'ANTHROPIC_API_KEY',
-        'DEVBASE_ACCOUNT_GROUP=default',
     ]
     assert 'has-a-value' not in (path / '.docker-compose.scale.yml').read_text()
 
@@ -129,8 +161,7 @@ def test_no_secret_names_are_listed_without_secrets(project_factory):
 
     generate_scaled_compose(1, secret_env_names=[])
 
-    assert generated(path)['services']['dev-1']['environment'] == {
-        'DEVBASE_ACCOUNT_GROUP': 'default'}
+    assert secret_env(path) == {}
 
 
 def test_names_are_listed_when_original_has_no_environment(project_factory):
@@ -138,8 +169,7 @@ def test_names_are_listed_when_original_has_no_environment(project_factory):
 
     generate_scaled_compose(1, secret_env_names=['ANTHROPIC_API_KEY', 'TOKEN'])
 
-    assert generated(path)['services']['dev-1']['environment'] == [
-        'ANTHROPIC_API_KEY', 'TOKEN', 'DEVBASE_ACCOUNT_GROUP=default']
+    assert secret_env(path) == ['ANTHROPIC_API_KEY', 'TOKEN']
 
 
 def test_missing_env_file_entries_are_dropped(project):
@@ -313,8 +343,12 @@ ORIGINS = dict(
 
 
 def _env_names(service_config):
-    """map / list どちらの記法でも、列挙された変数名を集合で返す"""
-    environment = service_config.get('environment')
+    """map / list どちらの記法でも、列挙された機密の変数名を集合で返す
+
+    devbase 由来の変数 (アカウントグループ / gcloud 設定ディレクトリ / 認証モード)
+    は機密ではないので数えない。
+    """
+    environment = _without_managed(service_config.get('environment'))
     if isinstance(environment, dict):
         return set(environment)
     return {item.split('=', 1)[0] for item in (environment or [])}
@@ -346,10 +380,9 @@ def test_service_referencing_both_gets_every_name(project_factory):
     config = generated(path)
     assert _env_names(config['services']['both']) == {
         'SHARED_KEY', 'PROJECT_TOKEN'}
-    # dev は従来どおり全件 (env_file を書いていない構成でも両方が要る)。
-    # DEVBASE_ACCOUNT_GROUP は機密ではなく devbase 由来の値として常に載る。
+    # dev は従来どおり全件 (env_file を書いていない構成でも両方が要る)
     assert _env_names(config['services']['dev-1']) == {
-        'SHARED_KEY', 'PROJECT_TOKEN', 'DEVBASE_ACCOUNT_GROUP'}
+        'SHARED_KEY', 'PROJECT_TOKEN'}
     # 機密を参照していないサービスには何も注入しない
     assert 'environment' not in config['services']['none']
 
@@ -398,7 +431,7 @@ def test_unreadable_compose_falls_back_to_dev_only(project_factory, monkeypatch)
 
     config = generated(path)
     assert _env_names(config['services']['dev-1']) == {
-        'SHARED_KEY', 'PROJECT_TOKEN', 'DEVBASE_ACCOUNT_GROUP'}
+        'SHARED_KEY', 'PROJECT_TOKEN'}
     for name in ('global_only', 'project_only', 'both', 'none'):
         assert 'environment' not in config['services'][name]
 

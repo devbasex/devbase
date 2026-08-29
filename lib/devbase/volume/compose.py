@@ -8,7 +8,7 @@ from typing import (
     Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
 )
 
-from devbase.env import compose_migrate, keys
+from devbase.env import compose_migrate, gcp_auth, keys
 from devbase.errors import DockerError
 from devbase.log import get_logger
 
@@ -528,8 +528,6 @@ def generate_scaled_compose(
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
 
     secret_services = _services_receiving_secrets(compose_file, dev_service_name)
-    secret_names = _SecretNames(
-        secret_env_names, global_env_names, project_env_names)
 
     # アカウントグループはここで 1 度だけ解決し、マウント・ボリューム宣言・
     # 環境変数の 3 か所へ同じ値を配る。コンテナ側で解決し直させると、マウント
@@ -540,7 +538,20 @@ def generate_scaled_compose(
     dev_environment = {
         **(dev_environment or {}),
         keys.DEVBASE_ACCOUNT_GROUP: account_group,
+        # gcloud / gws の設定ディレクトリと解決済みの認証モード (PLAN39)
+        **gcp_auth.container_env(os.environ),
     }
+
+    # ADC モードでは鍵モード専用の 2 変数を **列挙から外す**。名前が載らなければ
+    # Compose はその変数をコンテナへ渡さないので、docker exec のシェルから見ても
+    # 未設定になる。値を空にするだけでは entrypoint の外に効かない。
+    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
+    secret_env_names = gcp_auth.filter_key_env_names(secret_env_names, auth_mode)
+    global_env_names = gcp_auth.filter_key_env_names(global_env_names, auth_mode)
+    project_env_names = gcp_auth.filter_key_env_names(project_env_names, auth_mode)
+
+    secret_names = _SecretNames(
+        secret_env_names, global_env_names, project_env_names)
 
     scaled_config = {
         'services': _build_scaled_services(

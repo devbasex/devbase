@@ -188,6 +188,31 @@ AI CLI ツールの設定や認証情報は、コンテナを再生成しても�
 > **Note:** symlink 対象は entrypoint にビルド時 `COPY` で焼き込まれます。エントリを増減した場合は
 > イメージの再ビルドが必要です（`devbase up` 単体では反映されない場合があります。[CLI リファレンス: project グループ](cli-reference/02-project.md#devbase-project-up) の `devbase project up` の注記参照）。
 
+### gcloud / gws の設定はどこにあるか
+
+gcloud と gws は symlink ではなく **環境変数で設定ディレクトリごと差し替え**ています。
+
+| 変数 | 向き先 | 入るもの |
+|---|---|---|
+| `CLOUDSDK_CONFIG` | `/persistent/group/gcloud` | `credentials.db` / `access_tokens.db` / `legacy_credentials/` / `configurations/` / `application_default_credentials.json`（ADC ファイル） |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | `/persistent/group/gws` | `credentials.enc` / `.encryption_key` |
+
+`CLOUDSDK_CONFIG` は gcloud CLI 専用の仕組みではなく `google.auth` の探索経路そのものなので、
+BigQuery クライアント等のライブラリも同じ場所を見ます。
+
+> **Warning:** この差し替えにより、`~/.config/gcloud` は **gcloud の設定ディレクトリでは
+> なくなりました**。鍵モード（`GCP_AUTH_MODE=key`）で書き出されるサービスアカウント鍵の
+> 置き場でしかなく、コンテナ層（揮発）に残ります。したがって鍵は毎起動 `env` から書き直され、
+> 永続領域には残りません。設定を見たいときは `$CLOUDSDK_CONFIG` を参照してください。
+
+認証モードの切り替えは [環境変数ガイド](environment-variables.md) の `GCP_AUTH_MODE`、
+実際の認証手順は [Google 認証ガイド](google-auth.md) を参照してください。
+
+> **Warning:** gcloud は**並行実行を想定していません**（公式ドキュメント: "Parallel execution of
+> multiple gcloud CLI commands is not supported."）。`credentials.db` は SQLite なので、
+> 同じアカウントグループの複数コンテナが同時に `gcloud` を叩くと `database is locked` が
+> 出ることがあります。恒久対策は取っていないので、その場合は少し待って再実行してください。
+
 ## コンテナイメージ階層
 
 devbase のコンテナイメージは用途に応じた階層構造になっています。
