@@ -98,22 +98,26 @@ flowchart TB
 
 ### 3.1 標準ボリューム
 
-devbaseでは2種類のボリュームパターンを使い分けます。
+devbaseでは3種類のボリュームパターンを使い分けます。
 
 ```yaml
 volumes:
-  - devbase_home_ubuntu:/persistent/ai                            # 全コンテナ共有（AI設定）
+  - devbase_home_ubuntu:/persistent/ai                            # 全コンテナ共有（共通AI資産）
+  - devbase_home_default:/persistent/group                        # アカウントグループ単位（認証・履歴）
   - ${COMPOSE_PROJECT_NAME}_work_${CONTAINER_INDEX:-1}:/work      # コンテナ専用
 ```
 
 | ボリューム | マウント先 | 共有範囲 | 用途 |
 |-----------|-----------|----------|------|
-| `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナ | AI CLI 設定（`.claude` 等）、SSH鍵、共有ファイル置き場（`share`）。`~/.claude` 等は entrypoint が symlink |
+| `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナ | 契約に紐づかない共通資産（`~/.claude/plugins` 等）、SSH鍵、共有ファイル置き場（`share`）。entrypoint が symlink |
+| `devbase_home_<group>` | `/persistent/group` | 同じアカウントグループのコンテナ | 認証情報と会話ログ（`~/.claude` 本体、`.gemini`、gcloud / gws の設定） |
 | `${COMPOSE_PROJECT_NAME}_work_${CONTAINER_INDEX:-1}` | `/work` | コンテナ専用 | ソースコード、ビルド成果物 |
 
-> **Note:** マウント先は **`/persistent/ai`** です（旧 `/home/ubuntu` 直接マウントは廃止）。
+> **Note:** マウント先は **`/persistent/ai`** と **`/persistent/group`** です（旧 `/home/ubuntu` 直接マウントは廃止）。
 > これらの標準ボリュームは compose.yml に明記しなくても devbase がスケール用 compose 生成時に
-> 自動注入します。明記する場合も必ず `/persistent/ai` を使ってください。
+> 自動注入します。**グループボリュームの名前は `DEVBASE_ACCOUNT_GROUP` から devbase が決める**ので、
+> プロジェクト側で書く必要はありません（書いた場合も生成時に正しい名前へ差し替えられます）。
+> 明記する場合も必ず `/persistent/ai` / `/persistent/group` を使ってください。
 
 ### 3.2 Docker Socketのマウント
 

@@ -62,14 +62,17 @@ def _snapshot_list(mgr) -> int:
     if not snapshots:
         print("スナップショットはありません")
         return 0
-    print(f"{'名前':<24} {'作成日時':<24} {'差分数':>6} {'サイズ':>10}")
-    print("-" * 68)
+    print(f"{'名前':<24} {'作成日時':<24} {'差分数':>6} {'サイズ':>10}  対象ボリューム")
+    print("-" * 90)
     for s in snapshots:
+        # 対象ボリュームは PLAN39 以降に記録される。旧世代は共通ボリュームのみ。
+        volumes = ', '.join((s.get('volumes') or {}).values()) or 'devbase_home_ubuntu'
         print(
             f"{s['name']:<24} "
             f"{s.get('created_at', 'N/A')[:19]:<24} "
             f"{s.get('incremental_count', 0):>6} "
-            f"{_format_size(s.get('size_bytes', 0)):>10}"
+            f"{_format_size(s.get('size_bytes', 0)):>10}  "
+            f"{volumes}"
         )
     return 0
 

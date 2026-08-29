@@ -192,6 +192,36 @@ devbase project up <name>
 
 ユーザー名のみで秘密情報ではありません。SSH 鍵やリモートログインの有効化はホスト側でユーザーが別途設定する前提です。`devbase env sync` 実行時には、未設定のキーのみ既定値で補完されます（既存値は上書きしません）。
 
+## アカウントグループ (`DEVBASE_ACCOUNT_GROUP`)
+
+**使用する Google / AWS アカウントの単位**を宣言します。`devbase env init` の収集対象では
+なく、`$DEVBASE_ROOT/env` かプロジェクトの `env` に手書きする devbase 動作設定です。
+
+| キー | 説明 |
+|------|------|
+| `DEVBASE_ACCOUNT_GROUP` | アカウントグループ名。未設定なら `default`。グループごとに `devbase_home_<group>` ボリュームが作られ、コンテナへ `/persistent/group` としてマウントされる |
+
+```bash
+# projects/<name>/env
+DEVBASE_ACCOUNT_GROUP=kkg
+```
+
+同じグループのコンテナは Claude Code / gcloud / gws の認証と会話ログを共有し、
+違うグループのコンテナは互いの認証に到達できません。`~/.claude/plugins` のような
+共通資産は別ボリューム (`/persistent/ai`) に残るため、グループを増やしても重複しません。
+
+グループ名には次の 3 つが使えません（`devbase up` の前にエラーになります）。
+
+| 使えない名前 | 理由 |
+|---|---|
+| `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` に合わないもの | Docker のボリューム名にできない |
+| `ubuntu` | 共通ボリューム `devbase_home_ubuntu` と同名になる |
+| 数字だけの名前（`1` / `042`）| インスタンス番号のボリューム `devbase_home_<index>` と同名になる |
+
+解決結果は `devbase status` の `[環境]` セクションに出ます。ボリューム構造の全体は
+[コンテナ運用ガイド](container-operations.md)、Google 認証の手順は
+[Google 認証ガイド](google-auth.md) を参照してください。
+
 ## `devbase up` 後のエディタ自動オープン
 
 `devbase up` 完了後、dev コンテナへ接続した VS Code を自動で開けます（VS Code の「Attach to Running Container」を CLI から起動）。

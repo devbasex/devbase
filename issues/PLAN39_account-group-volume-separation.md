@@ -153,6 +153,14 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
   SQLite 自体は named volume 上で正常に動く（同じく実機で `create table` / `insert` を確認）ので
   `credentials.db` の置き場としては問題ない（並行実行は前提 13 の別件）。
 
+- 前提 21: **entrypoint の `export` / `unset` は `docker exec` のシェルに届かない。**
+  コンテナの環境変数はホスト側（生成 compose の `environment:` と `env_file`）が決めるもので、
+  entrypoint が変更できるのは自分の子プロセス（`exec "$@"` で起動する PID 1 の子孫）だけである。
+  実機確認: `docker exec carmo-ai-dev-1 sh -c 'echo $GOOGLE_APPLICATION_CREDENTIALS'` は
+  entrypoint の外側の値をそのまま返す。したがって `CLOUDSDK_CONFIG` の設定も、
+  `adc` モードでの 2 変数の除去も、**ホスト側で行う必要がある**（AC12 は `docker exec` で
+  検証する条件なので、entrypoint だけでは満たせない）。
+
 - 前提 20: **`~/.claude` の子要素は 30 件あり、プランが分類表で名指ししているのは 7 件だけ**
   （実機 `carmo-ai-dev-1` で確認。`.credentials.json` / `.last-cleanup` /
   `.last-update-result.json` / `.ndf-retention-checked` / `.ndf-retention.lock` /
@@ -303,6 +311,7 @@ issue #116 の「検討が必要な点」3 件は次のとおり決定した。
 ## 修正対象
 
 - `lib/devbase/env/keys.py` — `DEVBASE_ACCOUNT_GROUP` / `GCP_AUTH_MODE` の定義
+- `lib/devbase/env/gcp_auth.py`（新規） — 認証モードの解決と、鍵モード専用変数の除外（前提 21）
 - `lib/devbase/env/collectors/google.py` — `GOOGLE_APPLICATION_CREDENTIALS` / `BIGQUERY_KEY_FILE` を無条件に書かないようにする（前提 11）
 - `lib/devbase/volume/manager.py` — グループ名の解決・検証、グループボリュームの作成
 - `lib/devbase/volume/compose.py` — `/persistent/group` のマウントとボリューム宣言、dev サービスへの env 受け渡し
@@ -405,14 +414,16 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 - **変更内容:** `.config/gcloud` / `.config/gws` を symlink 対象にはせず、**設定ディレクトリごと
   グループボリュームへ向ける**（前提 8 / 12）。あわせて認証モードを切り替え可能にする。
 
-  ```sh
-  export CLOUDSDK_CONFIG="/persistent/group/gcloud"
-  export GOOGLE_WORKSPACE_CLI_CONFIG_DIR="/persistent/group/gws"
+  ```
+  CLOUDSDK_CONFIG=/persistent/group/gcloud
+  GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/persistent/group/gws
   ```
 
-  この 2 行だけで、`credentials.db` / `access_tokens.db` / `legacy_credentials/` /
+  この 2 つだけで、`credentials.db` / `access_tokens.db` / `legacy_credentials/` /
   `configurations/` / `application_default_credentials.json`（= ADC ファイル）と gws の
   `credentials.enc` / `.encryption_key` がグループボリュームへ移る。
+
+  **渡すのは entrypoint の `export` ではなくホスト側の生成 compose である**（前提 21）。
   あわせて **`containers/base/Dockerfile:138` の npm グローバル行へ `@googleworkspace/cli` を足す**。
   前提 17 のとおり gws はどのコンテナにも入っておらず、設定だけ永続化しても復旧しないため。
   `@google/gemini-cli` / `@openai/codex` と同じ扱いにする（`bin` は `gws`）。ディレクトリは entrypoint が
@@ -426,8 +437,12 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
   | `key` | 現行どおり `GCP_CREDENTIALS_BASE64__<profile>` を復号して書き、2 変数を export する |
   | 未設定（auto） | 鍵の env があれば `key`、無ければ `adc` |
 
-  `adc` で 2 変数を **unset する**のが要点である。値だけ残して実体が無いと ADC は
+  `adc` で 2 変数を **コンテナへ渡さない**のが要点である。値だけ残して実体が無いと ADC は
   ユーザー認証へフォールバックせず `DefaultCredentialsError` で落ちる（前提 10）。
+  前提 21 のとおり entrypoint の `unset` は `docker exec` のシェルへ届かないため、
+  **ホスト側で生成 compose の `environment:` の列挙から外す**。名前が載らなければ
+  Compose はその変数をコンテナへ渡さない。entrypoint 側の `unset` は、古いホストから
+  起動された場合とプロジェクト `env` 直書きに対する保険として残す。
   現状 `_collect_common_settings` は鍵の有無に関係なく 2 変数を書く（前提 11）ため、
   `devbase env init` 側も鍵を登録したときだけ書くよう直す。
 
