@@ -23,3 +23,15 @@ class ConfigError(DevbaseError):
 
 class SnapshotError(DevbaseError):
     """スナップショット操作エラー"""
+
+
+class SnapshotCommandError(SnapshotError):
+    """スナップショットのコンテナ内コマンドが失敗した。
+
+    呼び出し側が**失敗の中身**で分岐できるよう ``stderr`` を持つ
+    (復元は tar の rename エラーだけを警告として飲み込む — PLAN40)。
+    """
+
+    def __init__(self, message: str, stderr: str = ''):
+        super().__init__(message)
+        self.stderr = stderr
