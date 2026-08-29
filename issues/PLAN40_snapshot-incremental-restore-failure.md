@@ -235,7 +235,29 @@ Task 1 で原因が確定したため、採否を次のとおり確定した（�
 | AC3 | 同上（世代はテスト内で新規に作成する） | 満たす |
 | AC4 | `test_the_failure_message_says_how_to_get_back` / `test_a_full_restore_failure_also_says_how_to_get_back` / `test_a_real_tar_error_still_stops_the_restore` / `docs/user/snapshot-guide.md` | どの差分で落ちたか・`pre-restore-<name>` から戻す手順を出す |
 | AC5 | `test_both_layouts_survive_a_bogus_rename`（旧 `volume:` / 新 `volumes: {ai, group}` の 2 レイアウト） | 両方で後続の差分まで適用しきる |
-| AC6 | `uv run pytest` | 1,663 passed。Docker が無い環境では実機テストだけ skip する |
+| AC6 | `uv run pytest` | 1,676 passed。Docker が無い環境では実機テストだけ skip する |
+
+### クロスレビューで追加した振る舞い
+
+代替案 F は「偽 rename と正当な rename をエラー文だけでは区別できない」という弱点を持つ。
+レビューでこの点を指摘され、**展開後の状態でなら区別できる**ことを実験で確かめて対処した。
+
+| 失敗した rename の宛先 | 意味 | 実測 |
+|---|---|---|
+| 存在しない / 中身がある | 偽 rename。欠落なし | 総入れ替えの再現で確認 |
+| **存在するが空のまま** | 正当な rename を取りこぼした疑い | 正当な `mv` の再現で確認 |
+
+偽 rename の宛先はそのディレクトリ自身が新しく作られたものなので、アーカイブから中身が
+展開されて空にならない。一方、正当な `mv` の差分には**ディレクトリのエントリしか入らない**
+ため、取りこぼすと宛先が空のまま残る。`restore()` は飲み込んだ rename の宛先を集め、
+**全アーカイブ適用後に 1 度だけ**検査する（後続の差分が中身を埋める場合があるため）。
+
+空の宛先を検出しても**失敗にはせず警告に留める**。空の宛先で復元を止めると、正当に空だった
+ディレクトリで再び途中停止が起き、この PLAN が直そうとしている症状を再発させる。空の宛先の
+中身はそのスナップショットには入っていないため、停止しても復旧しない。
+
+検証は復元の完了**後**に走るので、検証自体の失敗を復元の失敗にしない。パス数が多い場合は
+`chunk_paths()` で `docker run` の引数長を抑えて複数回に分ける。
 
 **AC5 の実機確認の範囲について。** 実 Docker の検証は `group` 側のボリューム
 (`devbase_home_plan40test`) だけで行った。旧レイアウトと新レイアウトの `ai` 側は
@@ -325,7 +347,7 @@ rename エラーの扱いには影響しないので、その差はテストダ�
 
 - [x] AC1〜AC6 を満たし、条件ごとに検証手段と結果が対応している（「検証結果」節）
 - [x] `uv run pytest` が green（1,663 passed）
-- [ ] `/ndf:cross-review` で APPROVE 収束済み
+- [x] `/ndf:cross-review` で APPROVE 収束済み（4 ラウンド。codex / gemini 両者 APPROVE）
 - [x] `docs/user/snapshot-guide.md` が復元の制約と失敗時の戻し方を説明している
 - [x] 総入れ替えを挟んだ差分 3 個の世代を最後まで復元できることを実機で確認している
       （当初の「実在する差分 8 個の世代」はローテーションで消滅済み。前提 6 を参照）
