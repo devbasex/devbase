@@ -5,6 +5,17 @@
 ## [Unreleased]
 
 ### Added
+- **Antigravity CLI (`agy`) をベースイメージへ追加**しました。Google の AI コーディング
+  エージェントを、既存の `claude` / `gemini` / `codex` / `kiro` と同じくコンテナ内から
+  すぐ使えます。エイリアス `agy` は確認プロンプトを省く
+  `--dangerously-skip-permissions` 付き (Gemini CLI の `--yolo` に相当するフラグは
+  Antigravity CLI には無く、この 1 本だけです)。設定と認証は
+  `~/.gemini/antigravity-cli/` 配下に置かれるため、既にグループ単位で永続化されている
+  `.gemini` にそのまま乗り、**コンテナを作り直しても再認証は要りません**。
+
+  反映には**ベースイメージの再ビルド**が要ります (`devbase container build`)。
+  バイナリは約 190MB です。
+
 - **永続化ボリュームをアカウントグループ単位に分離**しました (PLAN39 / #116)。
   これまで認証情報と会話ログは全コンテナ共通の `devbase_home_ubuntu` に置かれていたため、
   nyle.co.jp で認証した Claude Code / gcloud を kk-generation.com のプロジェクトが
