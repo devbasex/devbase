@@ -82,7 +82,7 @@ devbase と最も近い位置に立つツール群。devcontainer / Docker / VM 
   - `scale` による並行 dev コンテナ
   - 環境変数の **3レベル統合**（`${DEVBASE_ROOT}/.env` / `env` / `.env`）
   - snapshot（差分10世代＋フル3世代）
-  - **AI CLI 同梱**（claude / codex / gemini / kiro）
+  - **AI CLI 同梱**（claude / codex / gemini / kiro / agy）
 
 ### 2.6 DDEV / Lando
 
@@ -151,7 +151,7 @@ devbase は「**ホスト ↔ dev コンテナ**」型、こちらは「**dev �
 ### → devbase
 
 - 複数リポジトリを横断して開発（マイクロサービス、モノリス＋API＋バッチ＋インフラ）
-- **AI CLI（claude/codex/gemini/kiro）を多用**しつつコンテナで安全に隔離
+- **AI CLI（claude/codex/gemini/kiro/agy）を多用**しつつコンテナで安全に隔離
 - 同一リポジトリで**並行開発**（git worktree の代替）
 - **社外秘の compose 構成**を private extension で組織内に閉じて配布
 - ローカルDockerで**オフライン完結**
@@ -214,7 +214,7 @@ public な devbase 本体に、private な extension を**重ねるだけ**で�
 
 ### 7.4 AI CLI 同梱と封じ込め
 
-`claude` / `codex` / `gemini` / `kiro` をベースイメージに同梱。`--dangerously-skip-permissions` 等の危険モードもコンテナ境界で**ホストに波及しない**。
+`claude` / `codex` / `gemini` / `kiro` / `agy` をベースイメージに同梱。`--dangerously-skip-permissions` 等の危険モードもコンテナ境界で**ホストに波及しない**。
 
 ---
 

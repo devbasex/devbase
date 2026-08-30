@@ -171,7 +171,12 @@ RUN set -eux; \
     # インストーラは SHA512 を検証し linux の amd64 / arm64 どちらでも動く。
     # 併せて .bashrc / .zshrc / .profile へ PATH 行を足すため、下の RUN が入れる
     # 同じ行と重複するが、内容が同一なので実害は無い (--skip-path 相当の口は無い)。
-    curl -fsSL https://antigravity.google/cli/install.sh | bash; \
+    # パイプ直結だと既定 shell に pipefail が無く curl の失敗を bash の成功が覆い隠すため、
+    # 一度ファイルへ落としてから実行し、最後にバイナリの実体を検証する。
+    curl -fsSL https://antigravity.google/cli/install.sh -o agy-install.sh; \
+    bash agy-install.sh; \
+    rm -f agy-install.sh; \
+    "$HOME/.local/bin/agy" --version; \
     # Kiro CLI (Linux ZIP method for x86_64 and aarch64)
     ARCH=$(uname -m); \
     if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "aarch64" ]; then \
