@@ -167,6 +167,11 @@ RUN set -eux; \
     curl -LsSf https://astral.sh/uv/install.sh | sh; \
     # Claude Code CLI
     curl -fsSL https://claude.ai/install.sh | bash; \
+    # Antigravity CLI (agy)。~/.local/bin へ単体バイナリを置く方式で、
+    # インストーラは SHA512 を検証し linux の amd64 / arm64 どちらでも動く。
+    # 併せて .bashrc / .zshrc / .profile へ PATH 行を足すため、下の RUN が入れる
+    # 同じ行と重複するが、内容が同一なので実害は無い (--skip-path 相当の口は無い)。
+    curl -fsSL https://antigravity.google/cli/install.sh | bash; \
     # Kiro CLI (Linux ZIP method for x86_64 and aarch64)
     ARCH=$(uname -m); \
     if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "aarch64" ]; then \
@@ -197,6 +202,7 @@ RUN set -eux; \
     echo 'alias gemini='\''GOOGLE_GENAI_USE_VERTEXAI=true gemini --yolo "$@"'\''' >> ~/.bashrc; \
     echo 'alias codex='\''codex --dangerously-bypass-approvals-and-sandbox "$@"'\''' >> ~/.bashrc; \
     echo 'alias kiro='\''kiro-cli chat --trust-all-tools "$@"'\''' >> ~/.bashrc; \
+    echo 'alias agy='\''agy --dangerously-skip-permissions "$@"'\''' >> ~/.bashrc; \
     echo 'complete -o default claudb kiro' >> ~/.bashrc; \
     git config --global credential.helper store; \
     # Configure Claude Code hooks

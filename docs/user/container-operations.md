@@ -229,7 +229,7 @@ AI CLI ツールの設定や認証情報は、コンテナを再生成しても�
 |---------|------|
 | `.claude.json` | Claude Code の設定（`oauthAccount` を含む）|
 | `.claude` | Claude Code の認証・会話ログ・セッション状態（上表の共通資産を除く**すべて**）|
-| `.gemini` | Gemini CLI の設定（`vertex-ai` は GCP プロジェクトに紐づく）|
+| `.gemini` | Gemini CLI と Antigravity CLI の設定（`vertex-ai` は GCP プロジェクトに紐づく。Antigravity CLI は `.gemini/antigravity-cli/` 配下を使う）|
 
 `~/.claude` は `/persistent/group/.claude` への symlink で、**その配下の既定はグループ側**です。
 共通資産だけがその中から `/persistent/ai/.claude/<name>` へ張り直されます。既定をグループ側に
@@ -340,6 +340,7 @@ general イメージ以降のコンテナ内では、以下の AI CLI ツール�
 | `gemini` | Gemini CLI | yolo mode | Google の AI アシスタント |
 | `codex` | Codex CLI | bypass-approvals | OpenAI の AI コーディングツール |
 | `kiro` | Kiro CLI | trust-all-tools | AWS の AI アシスタント |
+| `agy` | Antigravity CLI | dangerously-skip-permissions | Google の AI コーディングエージェント |
 
 ```bash
 # コンテナ内での使用例
