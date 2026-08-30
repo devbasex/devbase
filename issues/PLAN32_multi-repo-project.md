@@ -377,6 +377,13 @@ plan の範囲外で、結合検証と運用の中で出てきた対応。
 
 ### 残作業
 
-- `devbase plugin sync` を実行すると、`devbase-samples` に定義を残した `tmllib` / `devbase` の
+- ~~`devbase plugin sync` を実行すると、`devbase-samples` に定義を残した `tmllib` / `devbase` の
   プロジェクト symlink が復活する。使わないプロジェクトが一覧に出るだけで実害は無い。
-  気になる場合は該当プラグインをローカルから uninstall する。
+  気になる場合は該当プラグインをローカルから uninstall する。~~
+  → **対応済み (2026-08-30)**。`devbase plugin uninstall devbase` / `... tmllib` を実行し、
+  `projects/` の重複 symlink を解消した (37 → 36 project / 11 → 9 plugin)。
+  `devbase plugin sync` を再実行しても復活しないことを確認済み
+  (`sync_projects` は `installed_plugins` だけを対象にするため)。
+  統合先の `carmo-ai` (tmllib を含む) / `ai-plugins` (devbase を含む) は健在で、
+  `repos/` の clone も残しているため `devbase plugin install` で戻せる。
+  なお `plugins.yml` は `.gitignore` 対象のローカル状態で、リポジトリへの差分は生じない。

@@ -231,7 +231,7 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 - [x] AC13: サービスアカウント鍵が**永続化されない**。検証: 鍵モードで `up` したあと
       `devbase down` し、鍵の env を外して `up` し直すと `$DEFAULT_CREDS_PATH` にファイルが
       **存在しない**こと。グループボリューム (`/persistent/group`) 配下にも鍵が無いこと。
-- [ ] AC14: **手順書だけを見て、第三者が新しいグループの Google 認証を完了できる。**
+- [x] AC14: **手順書だけを見て、第三者が新しいグループの Google 認証を完了できる。**
       検証: `docs/user/google-auth.md` の手順を、書いた本人以外（または記憶に頼らず手順書だけを見て）
       未認証のグループで最初から実行し、`gcloud auth list` / `google.auth.default()` / `gws` の
       いずれもが通ること。詰まった箇所は手順書へ反映してから完了とする。
@@ -660,9 +660,21 @@ issue #116 は「Phase 1・2 を入れずに Phase 3 だけを適用すると問
 - [x] AC1〜AC14 を満たし、条件ごとに検証手段と結果が対応している（「実機検証の結果」節）
 - [x] `uv run pytest` が green（1629 passed）
 - [x] 個別 PR がすべて `/ndf:cross-review` で APPROVE 収束済み（#123 / #124 / #125 / #126）
-- [ ] 本 PR #127（手順書と検証結果）が `/ndf:cross-review` で APPROVE 収束する。
-      レビュー中は未チェックのままにし、収束を確認してからチェックする
+- [x] 本 PR #127（手順書と検証結果）が `/ndf:cross-review` で APPROVE 収束する。
+      → 収束を確認し、2026-08-29 に main へマージ済み
 - [x] `devbase build --no-cache` 後の実機で、`default` と非 `default` の 2 グループを起動して
       AC1〜AC4 / AC8 / AC11〜AC13 を確認している
 - [x] `docs/` と `CHANGELOG.md` が新しいボリューム構造と `DEVBASE_ACCOUNT_GROUP` / `GCP_AUTH_MODE` を説明している
 - [x] `docs/user/google-auth.md` が実機で通した手順になっており、未認証のグループで通しの検証が済んでいる（AC14）
+
+---
+
+## 完了サマリ (2026-08-30)
+
+- マージ済み PR: #123 (PR1) / #124 (PR2) / #125 (PR3) / #126 (PR4) / #127 (PR5)、統合 release PR #122。
+  いずれも `/ndf:cross-review` で APPROVE 収束済み。
+- 受け入れ条件 AC1〜AC14 はすべて充足（「実機検証の結果」節）。確定仕様は
+  `docs/user/google-auth.md` と `docs/user/container-operations.md` に置いた。
+- 検証中に見つかった別件のうち、差分スナップショットの復元失敗は
+  `issues/PLAN40_snapshot-incremental-restore-failure.md` として起票し、#128 で解決済み。
+  `$DEVBASE_ROOT/env` が `.gitignore` の対象外である件は、対応不要と判断した (2026-08-30)。
