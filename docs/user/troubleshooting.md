@@ -428,6 +428,63 @@ docker volume ls | grep <project>
 docker volume rm <volume_name>
 ```
 
+### VS Code Server のボリュームが溜まっている
+
+**症状:**
+
+`devbase_vscode_*` のボリュームが増え、`docker system df` のボリューム使用量が大きい。
+使わなくなったプロジェクトの分も残っている。
+
+**原因:**
+
+`~/.vscode-server`（VS Code Server 本体・拡張機能）はコンテナ 1 つにつき 1 本の
+`devbase_vscode_{project}_{index}` へ永続化されます。attach したコンテナ 1 つあたり
+**約 1.6GB** で、プロジェクトを削除してもボリュームは自動では消えません。
+
+**解決策:**
+
+```bash
+# VS Code Server ボリュームの一覧
+docker volume ls --filter name=devbase_vscode_ --format '{{.Name}}'
+
+# サイズを確認
+docker system df -v | grep devbase_vscode_
+
+# 使用中のコンテナが無いことを確認してから削除する
+docker ps -a --filter volume=devbase_vscode_<project>_1
+docker volume rm devbase_vscode_<project>_1
+```
+
+失われるのは VS Code Server のキャッシュだけで、次に attach すると再取得されます
+（その 1 回だけダウンロードが走ります）。AI 設定や作業ファイルには影響しません。
+
+> **Note:** `docker volume prune` は稼働中でないコンテナが参照するボリュームも消します。
+> 対象を絞りたい場合は上のように名前を指定して削除してください。
+
+### VS Code の attach で毎回ダウンロードが走る
+
+**症状:**
+
+`devbase up` のあとに VS Code を attach すると、毎回 `Installing VS Code Server` が出て
+215MB のダウンロードが走る。
+
+**原因と解決策:**
+
+1. **entrypoint が古い** — VS Code Server の永続化にはベースイメージの再ビルドが要ります。
+   `devbase container build --no-cache` を実行してから `devbase up` してください。
+2. **VS Code 本体が更新された** — `bin/<commit>` は VS Code クライアントのビルドごとに
+   分かれます。クライアントを更新した直後の 1 回はダウンロードが走ります（仕様）。
+3. **ボリュームがマウントされていない** — 次で確認できます。
+
+```bash
+docker inspect <project>-dev-1 \
+  --format '{{range .Mounts}}{{.Name}} -> {{.Destination}}{{"\n"}}{{end}}' \
+  | grep vscode
+```
+
+`devbase_vscode_<project>_1 -> /home/ubuntu/.vscode-server` が出ない場合は、
+`.docker-compose.scale.yml` が古いままです。`devbase up` で再生成されます。
+
 ## 問題が解決しない場合
 
 上記の方法で解決しない場合は、以下の情報を添えて [GitHub Issues](https://github.com/devbasex/devbase/issues) に報告してください。
