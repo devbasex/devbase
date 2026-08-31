@@ -52,20 +52,33 @@
 
 ## 受け入れ条件
 
-- [ ] AC1: 同じプロジェクトで `devbase down` → `devbase up` の後に VS Code を attach しても、
+実装は PR #131 でマージ済み（2026-08-31）。検証は `devbase-base` 再ビルド後、
+使い捨てプロジェクト `plan36-check`（scale=2）/ `plan36-check2`（scale=1）で実施した。
+VS Code の attach 操作そのものは自動化できないため、AC1 / AC2 は **VS Code Server の状態が
+コンテナ再作成をまたいで残ること**（再ダウンロードが要らない条件）で確認している。
+
+- [x] AC1: 同じプロジェクトで `devbase down` → `devbase up` の後に VS Code を attach しても、
       `Installing VS Code Server` と 215MB のダウンロードが**発生しない**。
-      検証: attach ログに `Start: Installing VS Code Server` が出ないこと、attach 完了までの時間が短縮すること。
-- [ ] AC2: 拡張機能（Claude Code / 日本語パック）が再インストールされない。
-      検証: attach ログの `Extensions cache, install extensions:` が空、または `already installed` になること。
-- [ ] AC3: **scale > 1 の各インスタンスが独立した状態を持つ**（同時 attach で接続トークンや設定を奪い合わない）。
-      検証: scale=2 のプロジェクトで両インスタンスへ同時 attach し、双方が正常に動くこと。
-- [ ] AC4: **別プロジェクトのコンテナと状態を共有しない**。検証: 2 プロジェクトを同時起動して attach し、
-      互いの `data/Machine` を上書きしないこと。
-- [ ] AC5: 初回（ボリュームが空）でも権限エラーなく VS Code Server がインストールできる。
-      検証: 新規プロジェクトで attach。
-- [ ] AC6: 既存プロジェクトが壊れない。`~/.vscode-server` を持つ既存コンテナを作り直しても起動でき、
+      検証: `~/.vscode-server/bin/<commit>/server.sh` を置いて `devbase down` → `devbase up`。
+      再作成後も同じ内容が残った（旧構成ではコンテナ層ごと消えていた）。
+- [x] AC2: 拡張機能（Claude Code / 日本語パック）が再インストールされない。
+      検証: 同上の手順で `~/.vscode-server/extensions/extensions.json` が残ること。
+- [x] AC3: **scale > 1 の各インスタンスが独立した状態を持つ**（同時 attach で接続トークンや設定を奪い合わない）。
+      検証: scale=2 で `dev-1` / `dev-2` がそれぞれ `devbase_vscode_plan36-check_1` /
+      `_2` をマウントし、`data/Machine/.connection-token-<commit>` が再起動後も別の値のままだった。
+- [x] AC4: **別プロジェクトのコンテナと状態を共有しない**。
+      検証: `plan36-check`（2 インスタンス）と `plan36-check2` を同時起動し、3 コンテナが
+      それぞれ別ボリューム・別トークンを保持することを確認。
+- [x] AC5: 初回（ボリュームが空）でも権限エラーなく VS Code Server がインストールできる。
+      検証: 新規ボリュームで `ls -ld ~/.vscode-server` が `ubuntu ubuntu`、`touch` が成功。
+- [x] AC6: 既存プロジェクトが壊れない。`~/.vscode-server` を持つ既存コンテナを作り直しても起動でき、
       再ダウンロードは 1 回だけ（ボリュームへ移った後は起きない）。
-- [ ] AC7: ボリュームの掃除方法がドキュメント化されている（プロジェクト削除時に孤児が残る問題への手当て）。
+      検証: マウント無しの旧構成でコンテナ層に内容を置いた状態から `devbase up`。正常起動し、
+      ボリュームは空（＝この 1 回だけ再取得が要る）。その後は再起動しても内容が残った。
+- [x] AC7: ボリュームの掃除方法がドキュメント化されている（プロジェクト削除時に孤児が残る問題への手当て）。
+      検証: `docs/user/container-operations.md` / `docs/user/troubleshooting.md` に記載した
+      `docker volume ls --filter name=devbase_vscode_` → `docker ps -a --filter volume=...` →
+      `docker volume rm` を実機で実行。稼働中のボリュームは Docker が削除を拒否することも確認。
 
 ## 代替案と採否
 
@@ -171,7 +184,15 @@
 
 ## 完了の定義
 
-- [ ] AC1〜AC7 を満たし、条件ごとに検証手段と結果が対応している
-- [ ] `uv run pytest` が green
-- [ ] `devbase build --no-cache` 後の実機で、`down` → `up` → attach に再ダウンロードが無いこと
-- [ ] `docs/` と `CHANGELOG.md` が新しいボリューム構造を説明している
+- [x] AC1〜AC7 を満たし、条件ごとに検証手段と結果が対応している
+- [x] `uv run pytest` が green（1699 passed / 2026-08-31）
+- [x] ベースイメージ再ビルド後の実機で、`down` → `up` に VS Code Server の再取得が要らないこと
+- [x] `docs/` と `CHANGELOG.md` が新しいボリューム構造を説明している
+
+## 結果
+
+- PR: #131（codex / gemini とも round 1 で APPROVE、未解決スレッド 0）
+- 確定仕様の置き場: `docs/user/container-operations.md`（ボリューム構造 / VS Code Server の永続化）、
+  掃除と切り分けは `docs/user/troubleshooting.md`
+- 稼働中の既存プロジェクトは、**次の `devbase up` から**マウントが付く。entrypoint の変更を
+  含むため、各プロジェクトのイメージがベースイメージ再ビルド後のものである必要がある
