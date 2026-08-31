@@ -412,6 +412,20 @@ devbase_setup_ai_settings() {
 }
 
 # ===================================================================
+# PLAN36: VS Code Server の永続ディレクトリ
+# ===================================================================
+# ~/.vscode-server にはコンテナ 1 つにつき 1 本の named volume が割り当てられる
+# (devbase_vscode_<project>_<index>)。空のボリュームは root 所有で作られるため、
+# そのままでは開発ユーザーが VS Code Server をインストールできない。
+#
+# マウントが無い構成でもディレクトリを作るだけで済み、VS Code の動作は変わらない。
+devbase_setup_vscode_server_dir() {
+    local home_root="$1" owner="${2:-${USERNAME:-ubuntu}}"
+
+    devbase_ensure_persistent_root "${home_root}/.vscode-server" "$owner"
+}
+
+# ===================================================================
 # PLAN39: GCP の認証モードと gcloud / gws の設定ディレクトリ
 # ===================================================================
 # 設定ディレクトリはグループボリューム配下 (CLOUDSDK_CONFIG /
@@ -527,6 +541,9 @@ USERNAME="${USERNAME:-ubuntu}"
 # 解決済みの GCP_AUTH_MODE はホスト側 (生成 compose) が渡す。
 devbase_setup_cloud_config_dirs "$USERNAME"
 devbase_setup_gcp_credentials "/home/${USERNAME}"
+
+# 1.5. VS Code Server の永続ディレクトリ (PLAN36)
+devbase_setup_vscode_server_dir "/home/${USERNAME}" "$USERNAME"
 
 # 2. Setup Git configuration
 if [ -n "$GIT_USER_NAME" ]; then

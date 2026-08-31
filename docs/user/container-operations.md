@@ -139,13 +139,14 @@ graph LR
 
 ## ボリューム構造
 
-devbase のコンテナは 3 種類のボリュームを使用します。
+devbase のコンテナは 4 種類のボリュームを使用します。
 
 | ボリューム名 | マウント先 | 共有範囲 | 用途 |
 |-------------|-----------|---------|------|
 | `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | 契約やテナントに紐づかない共通資産（`~/.claude/plugins` / `skills` / `commands` / `CLAUDE.md` / `settings.json`、`.codex` / `.serena` / `.kiro`、SSH 鍵、共有ファイル置き場 `share`）|
 | `devbase_home_{group}` | `/persistent/group` | 同じアカウントグループのコンテナで共有 | 企業テナントに紐づくもの（Claude Code の認証と会話ログ、`.gemini`、gcloud / gws の設定ディレクトリ）|
 | `devbase_work_{index}` | `/work` | 同じ index のコンテナで共有（プロジェクト間も共有） | プロジェクトのソースコード、作業ファイル |
+| `devbase_vscode_{project}_{index}` | `/home/ubuntu/.vscode-server` | 共有しない（コンテナ 1 つに 1 本）| VS Code Server 本体・拡張機能・接続トークン |
 
 > **Note:** `devbase_home_ubuntu` は **`/persistent/ai`** にマウントされます（`/home/ubuntu` への直接マウントは廃止）。`/home/ubuntu` 直下はコンテナ層（揮発）で、永続化されるのは entrypoint が `/persistent/ai` / `/persistent/group` 配下へ symlink する設定ファイルのみです。シェル履歴など symlink 対象外のファイルは再生成で失われます。
 
@@ -184,6 +185,26 @@ DEVBASE_ACCOUNT_GROUP=kkg
 
 Google 認証の具体的な手順は [Google 認証ガイド](google-auth.md) を参照してください。
 
+### VS Code Server の永続化
+
+VS Code を attach すると、コンテナ内に VS Code Server（本体 `bin/<commit>`・拡張機能・
+接続トークン）が入ります。ここは `~/.vscode-server` で、以前はコンテナ層（揮発）にあったため
+`devbase up` でコンテナを作り直すたびに **215MB の再ダウンロード**（約 55 秒）が走っていました。
+
+現在は `devbase_vscode_{project}_{index}` を `~/.vscode-server` にマウントするため、
+コンテナを作り直しても本体と拡張機能が残ります。
+
+このボリュームだけは**共有しません**。VS Code Server は「1 マシン 1 セット」の状態
+（`data/Machine/.connection-token-<commit>` など）を持ち、複数のコンテナが同時に書くと
+接続トークンを奪い合うためです。名前にプロジェクト名とインスタンス番号の両方を含めることで、
+`scale > 1` の同時 attach でも、別プロジェクトの同時起動でも状態が混ざりません。
+
+- 初回 attach と VS Code 本体のバージョン更新時（`commit` ハッシュが変わるとき）は
+  ダウンロードが走ります。減るのは**コンテナ再作成のたびの再取得**です
+- プロジェクトが `compose.yml` で `~/.vscode-server` を自分でマウントしている場合、
+  devbase は上書きしません
+- スナップショット（`devbase snapshot`）の対象外です。失っても attach し直せば再取得されます
+
 ### ボリュームの永続性
 
 - ボリュームは `devbase down` でもコンテナが削除されても保持されます
@@ -201,6 +222,25 @@ docker volume ls | grep devbase
 # 特定ボリュームの詳細
 docker volume inspect devbase_home_ubuntu
 ```
+
+#### 使わなくなった VS Code Server ボリュームを消す
+
+`devbase_vscode_*` はプロジェクトを削除しても自動では消えません。attach したコンテナ 1 つ
+あたり **約 1.6GB** を使うため、使わなくなったプロジェクトの分は手で削除します。
+
+```bash
+# 一覧（サイズ付き）
+docker volume ls --filter name=devbase_vscode_ --format '{{.Name}}'
+docker system df -v | grep devbase_vscode_
+
+# 使用中のコンテナが無いことを確認してから削除する
+docker ps -a --filter volume=devbase_vscode_<project>_1
+docker volume rm devbase_vscode_<project>_1
+```
+
+削除しても失われるのは VS Code Server のキャッシュだけです。次の attach で再取得され、
+設定（`~/.claude` などの AI 設定）には影響しません。稼働中のコンテナが掴んでいるボリュームは
+`docker volume rm` が拒否するので、先に `devbase down` してください。
 
 > **Warning:** `devbase_home_ubuntu` ボリューム（`/persistent/ai`、および symlink 経由でアクセスする `~/.claude/plugins` / `~/share` 等）は全プロジェクトで共有されます。ここにプロジェクト固有のファイルを置くと、他のプロジェクトにも影響します。プロジェクト固有のファイルは `/work` に配置してください。
 

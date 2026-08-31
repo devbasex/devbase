@@ -5,6 +5,25 @@
 ## [Unreleased]
 
 ### Added
+- **VS Code Server をコンテナ再作成をまたいで保つ**ようにしました (PLAN36)。
+  `~/.vscode-server` はこれまでコンテナ層 (揮発) にあったため、`devbase up` で
+  コンテナを作り直すたびに VS Code の attach で **215MB の再ダウンロード**
+  (約 55 秒) と拡張機能の再インストールが走っていました。コンテナ 1 つにつき 1 本の
+  named volume `devbase_vscode_<project>_<index>` を `~/.vscode-server` へ
+  マウントし、本体・拡張機能・接続トークンをプロジェクトの寿命で保ちます。
+
+  共有せずコンテナ単位にするのは、VS Code Server が「1 マシン 1 セット」の状態
+  (`data/Machine/.connection-token-<commit>` など) を持つためです。名前に
+  プロジェクト名とインスタンス番号を含めるので、`scale > 1` の同時 attach でも
+  別プロジェクトの同時起動でも状態が混ざりません。
+
+  反映には**ベースイメージの再ビルド**が要ります (`devbase container build --no-cache`)。
+  空のボリュームは root 所有で作られるため、entrypoint が所有者を初期化します。
+  VS Code 本体の更新 (`commit` ハッシュの変更) 時は従来どおり取得が走ります。
+  ボリュームは `devbase down` でも残るので、使わなくなったプロジェクトの分は
+  [トラブルシューティング](docs/user/troubleshooting.md#vs-code-server-のボリュームが溜まっている)
+  の手順で削除してください。
+
 - **Antigravity CLI (`agy`) をベースイメージへ追加**しました。Google の AI コーディング
   エージェントを、既存の `claude` / `gemini` / `codex` / `kiro` と同じくコンテナ内から
   すぐ使えます。エイリアス `agy` は確認プロンプトを省く
