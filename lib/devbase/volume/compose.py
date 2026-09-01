@@ -249,6 +249,22 @@ def _mask_secret_environment(
     service['environment'] = list(secrets)
 
 
+def _service_env_names(service: dict) -> List[str]:
+    """service の ``environment`` に書かれているキー名を読む。
+
+    map 記法 (``KEY: VALUE``) と list 記法 (``KEY=VALUE`` / 名前参照のみ) の
+    両方を扱う。除外集合を組み立てるとき、``compose.yml`` の直書きも候補に
+    含めるために要る。env や機密の列挙だけを見ていると、直書きされた別
+    プロファイルの鍵を外し損ねる (issue #134)。
+    """
+    existing = service.get('environment')
+    if isinstance(existing, dict):
+        return [str(name) for name in existing]
+    if isinstance(existing, list):
+        return [str(item).split('=', 1)[0].strip() for item in existing]
+    return []
+
+
 def _drop_env_names(service: dict, names: Iterable[str]) -> None:
     """service の ``environment`` から指定キーを**丸ごと**取り除く。
 
@@ -258,9 +274,10 @@ def _drop_env_names(service: dict, names: Iterable[str]) -> None:
     ``DefaultCredentialsError`` で落ちるため、「値が空」でも「値なし参照」でも
     足りず、**渡さない**しかない。
 
-    機密の列挙 (:func:`gcp_auth.key_only_env_names`) を絞るだけでは、元の
-    ``compose.yml`` の ``environment`` に直書きされたキーが生成物に残る。
-    map / list の両記法を扱い、空になった ``environment`` は消す。
+    機密の列挙 (:func:`gcp_auth.dev_excluded_env_names`) を絞るだけでは、元の
+    ``compose.yml`` の ``environment`` に直書き・名前参照されたキーが生成物に
+    残り、鍵の実体もそこから漏れる (issue #134)。map / list の両記法を扱い、
+    空になった ``environment`` は消す。
     """
     drop = set(names)
     if not drop:
@@ -639,13 +656,19 @@ def generate_scaled_compose(
     # 非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
     # 同じようにそのサービスを壊す。
     auth_mode = dev_environment[keys.GCP_AUTH_MODE]
+    #
+    # 候補は 3 か所から集める。機密の列挙・ホストの環境変数・元 compose.yml の
+    # dev への直書きである。どれか 1 つでも欠けると、そこに書かれた別プロファイル
+    # の鍵を外し損ねる。
     enumerated = [*secret_env_names,
                   *(global_env_names or ()),
-                  *(project_env_names or ())]
+                  *(project_env_names or ()),
+                  *_service_env_names(dev_service)]
+    dev_excluded = gcp_auth.dev_excluded_env_names(
+        os.environ, auth_mode, enumerated)
     secret_names = _SecretNames(
         secret_env_names, global_env_names, project_env_names,
-        dev_excluded=gcp_auth.dev_excluded_env_names(
-            os.environ, auth_mode, enumerated))
+        dev_excluded=dev_excluded)
 
     # VS Code Server は再作成をまたいで保つためコンテナ 1 つに 1 本の named
     # volume を宛てる (PLAN36)。プロジェクトが自分で ~/.vscode-server を
@@ -668,17 +691,23 @@ def generate_scaled_compose(
     )
 
     # 列挙を絞るだけでは、元の compose.yml が environment に**直書き**している
-    # 2 変数が生成物に残る。adc では dev に鍵を書かないので、パスが残っていること
-    # 自体が DefaultCredentialsError の原因になる。
+    # 変数が生成物に残る。adc では dev に鍵を書かないので、鍵ファイルのパスが
+    # 残っていること自体が DefaultCredentialsError の原因になる。同じ理屈で、
+    # 鍵の実体 (GCP_CREDENTIALS_BASE64__*) を直書き・名前参照している compose.yml
+    # は列挙の絞り込みを迂回して鍵をコンテナへ渡してしまう (issue #134)。
+    # したがって除外集合は列挙と生成物の両方へ同じものを適用する。
+    #
+    # 鍵モードのガードは要らない。dev_excluded_env_names は key モードでは
+    # 鍵パスの 2 変数を返さないので、「鍵モードでは直書きのパスを尊重する」挙動は
+    # そのまま保たれる。
     #
     # 取り除くのは **dev インスタンスだけ**。`GCP_AUTH_MODE` は dev コンテナの
     # 認証方式の宣言であり、独自に鍵をマウントしている非 dev サービス (batch 等) の
     # 明示設定まで消すと、そのサービスを壊してしまう。
-    if auth_mode != gcp_auth.AUTH_MODE_KEY:
-        for index in range(1, scale + 1):
-            service = scaled_services.get(f'{dev_service_name}-{index}')
-            if isinstance(service, dict):
-                _drop_env_names(service, gcp_auth.KEY_ONLY_ENV_KEYS)
+    for index in range(1, scale + 1):
+        service = scaled_services.get(f'{dev_service_name}-{index}')
+        if isinstance(service, dict):
+            _drop_env_names(service, dev_excluded)
 
     scaled_config = {
         'services': scaled_services,

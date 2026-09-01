@@ -181,12 +181,19 @@ def dev_excluded_env_names(env: Mapping[str, str], mode: str,
     ``DefaultCredentialsError`` を避けるためのもの。こちらはそれに加えて、
     **鍵の中身を運ぶ base64 変数のうちコンテナ内で使われないもの**を外す。
 
+    ``adc`` では**アクティブプロファイルの鍵も外す**。entrypoint の
+    ``devbase_setup_gcp_credentials`` は ``adc`` だと ``creds_b64`` を使わずに
+    return するので、鍵の実体は 1 本も要らない。アクティブ分だけ残すと、
+    「鍵を使わない」と宣言したコンテナの ``env`` から秘密鍵が読めてしまう。
+
     許可リストとして働くのが要点である。プロジェクト側の ``env`` で不要な鍵を
     1 本ずつ空文字に潰す拒否リスト方式だと、グローバルへプロファイルが増える
     たびに全プロジェクトへ追記が要り、漏れてもエラーにならない。
     """
     excluded = list(key_only_env_names(mode))
     excluded.extend(inactive_profile_key_names(env, names))
+    if mode != AUTH_MODE_KEY:
+        excluded.append(keys.gcp_credentials_key(active_profile(env)))
     if not _legacy_key_is_the_source(env, mode):
         excluded.append(keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64)
     # 呼び出し側が渡した順序を保ちつつ重複を除く

@@ -105,7 +105,14 @@ def test_key_mode_is_auto_detected(project, monkeypatch):
 
 
 def test_adc_drops_the_key_only_variables(project, monkeypatch):
-    """AC12 (1): 2 変数がコンテナへ渡らない。"""
+    """AC12 (1): 2 変数がコンテナへ渡らない。
+
+    ``GCP_CREDENTIALS_BASE64__default`` (アクティブプロファイルの鍵) の期待値は
+    レビュー指摘で「渡す」から「渡さない」へ変えた。entrypoint の
+    ``devbase_setup_gcp_credentials`` は ``adc`` だと ``creds_b64`` を読む前に
+    return するため、adc のコンテナは鍵の実体を 1 本も必要としない。アクティブ分
+    だけ残すと、鍵を使わないと宣言したコンテナの ``env`` から秘密鍵が読めてしまう。
+    """
     monkeypatch.setenv("GCP_AUTH_MODE", "adc")
     monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
 
@@ -114,8 +121,9 @@ def test_adc_drops_the_key_only_variables(project, monkeypatch):
     names = env_names(project)
     assert "GOOGLE_APPLICATION_CREDENTIALS" not in names
     assert "BIGQUERY_KEY_FILE" not in names
-    # 鍵そのものと他の機密は従来どおり渡す
-    assert "GCP_CREDENTIALS_BASE64__default" in names
+    # adc では entrypoint が鍵を読まないので、アクティブ分の鍵も渡さない
+    assert "GCP_CREDENTIALS_BASE64__default" not in names
+    # 鍵と無関係な機密は従来どおり渡す
     assert "ANTHROPIC_API_KEY" in names
 
 
@@ -465,3 +473,81 @@ def test_non_dev_services_keep_the_key_material(project, monkeypatch):
 
     assert "GCP_CREDENTIALS_BASE64__default" in services(project)["batch"]["environment"]
     assert "GCP_CREDENTIALS_BASE64__default" not in env_names(project)
+
+
+# 鍵の実体を compose.yml へ直書きしている構成 (map 記法と list 記法)
+INLINE_KEY_MAP_COMPOSE = """services:
+  dev:
+    image: alpine
+    environment:
+      GCP_CREDENTIALS_BASE64__default: eyJ9
+      GCP_CREDENTIALS_BASE64__kkg: eyJ9
+      TZ: Asia/Tokyo
+    volumes:
+      - x:/work
+  batch:
+    image: alpine
+    environment:
+      GCP_CREDENTIALS_BASE64__default: eyJ9
+volumes:
+  x: {}
+"""
+
+INLINE_KEY_LIST_COMPOSE = """services:
+  dev:
+    image: alpine
+    environment:
+      - GCP_CREDENTIALS_BASE64__default=eyJ9
+      - GCP_CREDENTIALS_BASE64__kkg
+      - TZ=Asia/Tokyo
+    volumes:
+      - x:/work
+volumes:
+  x: {}
+"""
+
+
+@pytest.mark.parametrize("compose_text", [
+    INLINE_KEY_MAP_COMPOSE,
+    INLINE_KEY_LIST_COMPOSE,
+])
+def test_inline_key_material_is_dropped_from_dev(project, monkeypatch, compose_text):
+    """直書きされた鍵は列挙の絞り込みを迂回するので、生成物からも取り除く。
+
+    map 記法と list 記法（``KEY=VALUE`` と名前参照のみ）の両方を確認する。
+    """
+    (project / "compose.yml").write_text(compose_text)
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__with", "eyJ9")
+
+    generate_scaled_compose(1)
+
+    names = env_names(project)
+    assert "GCP_CREDENTIALS_BASE64__default" not in names
+    assert "GCP_CREDENTIALS_BASE64__kkg" not in names
+    # 鍵と無関係な直書きの値は残す
+    assert "TZ" in names
+
+
+def test_inline_key_material_of_non_dev_services_is_kept(project, monkeypatch):
+    """非 dev サービスの明示設定は消さない（既存方針の踏襲）。"""
+    (project / "compose.yml").write_text(INLINE_KEY_MAP_COMPOSE)
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__with", "eyJ9")
+
+    generate_scaled_compose(1)
+
+    batch = services(project)["batch"]["environment"]
+    assert batch["GCP_CREDENTIALS_BASE64__default"] == "eyJ9"
+
+
+def test_adc_drops_inline_key_material_including_the_active_profile(project, monkeypatch):
+    """adc では直書きされたアクティブプロファイルの鍵も取り除く。"""
+    (project / "compose.yml").write_text(INLINE_KEY_MAP_COMPOSE)
+    monkeypatch.setenv("GCP_AUTH_MODE", "adc")
+
+    generate_scaled_compose(1)
+
+    names = env_names(project)
+    assert not [name for name in names if "CREDENTIALS_BASE64" in name]
+    assert "TZ" in names

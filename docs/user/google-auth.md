@@ -539,15 +539,23 @@ gws auth login --scopes openid,https://www.googleapis.com/auth/userinfo.email,ht
 書き出すことだけで、`GCP_CREDENTIALS_BASE64__*` の配布までは止まらないためです。名前が
 生成 compose に載っていれば値はコンテナへ届き、`env` で中身が読めます。
 
-| 変数 | dev へ渡すか |
-|---|---|
-| `GCP_CREDENTIALS_BASE64__<アクティブプロファイル>` | 渡す |
-| `GCP_CREDENTIALS_BASE64__<それ以外>` | **渡さない**（モードによらず） |
-| `GOOGLE_APPLICATION_CREDENTIALS_BASE64` | `key` かつアクティブプロファイルの鍵が無いときだけ渡す |
+| 変数 | `adc` | `key` |
+|---|---|---|
+| `GCP_CREDENTIALS_BASE64__<アクティブプロファイル>` | **渡さない** | 渡す |
+| `GCP_CREDENTIALS_BASE64__<それ以外>` | 渡さない | 渡さない |
+| `GOOGLE_APPLICATION_CREDENTIALS_BASE64` | 渡さない | アクティブプロファイルの鍵が無いときだけ渡す |
 
-entrypoint が読むのはアクティブプロファイルの鍵 1 本だけなので、それ以外は渡す必要が
-ありません。後方互換キーだけは、アクティブプロファイルの鍵が無いときに供給源になるため
-その場合に限って残します。
+`adc` で**アクティブプロファイルの鍵も渡さない**のが要点です。entrypoint の
+`devbase_setup_gcp_credentials` は `adc` だと鍵を読む前に return するため、鍵の実体は
+1 本も要りません。アクティブ分だけ残すと「鍵を使わない」と宣言したコンテナの `env` から
+秘密鍵が読めてしまいます。
+
+除外は `compose.yml` の dev サービスへ**直書き**された変数にも効きます。列挙を絞るだけでは
+直書きが生成物に残り、対策を迂回するためです。非 dev サービスの明示設定には触りません。
+
+`key` モードで entrypoint が読むのはアクティブプロファイルの鍵 1 本だけなので、それ以外は
+渡す必要がありません。後方互換キーだけは、`key` でアクティブプロファイルの鍵が無いときに
+供給源になるため、その場合に限って残します。
 
 > **Warning:** アクティブプロファイルの鍵が無く `GCP_AUTH_MODE` も宣言していないと、
 > 後方互換キーが `key` モードを引き起こして渡り続けます。別のアカウントグループの鍵を
