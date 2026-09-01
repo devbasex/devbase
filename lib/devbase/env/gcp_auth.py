@@ -12,9 +12,15 @@ Google はサービスアカウント鍵を非推奨とし、ローカル開発�
 コンテナへ渡る環境変数を決めるのは**ホスト側の生成 compose** であり、entrypoint の
 ``export`` / ``unset`` は PID 1 の子プロセスにしか効かない (``docker exec`` の
 シェルはコンテナの env 設定を継承する)。したがって 2 変数の除外はここで行う。
+
+同じ理由で、**鍵の実体を運ぶ base64 変数**も列挙から外す必要がある (issue #134)。
+``adc`` が止めるのは「鍵をファイルへ書き出すこと」だけで、環境変数としての配布は
+止まらない。名前が列挙に残る限り Compose が値を解決して渡すため、アカウント
+グループを分けても他社の鍵がコンテナ内から ``env`` で読めてしまう。外す対象は
+:func:`dev_excluded_env_names` にまとめてある。
 """
 
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from devbase.env import keys
 from devbase.log import get_logger
@@ -122,3 +128,66 @@ def key_only_env_names(mode: str) -> Sequence[str]:
     いた非 dev サービス (独自に鍵を持つ batch 等) の設定ではない。
     """
     return () if mode == AUTH_MODE_KEY else KEY_ONLY_ENV_KEYS
+
+
+def inactive_profile_key_names(env: Mapping[str, str],
+                               names: Iterable[str] = ()) -> Sequence[str]:
+    """**アクティブプロファイル以外**の ``GCP_CREDENTIALS_BASE64__*`` を返す。
+
+    entrypoint の ``devbase_setup_gcp_credentials`` が読むのは
+    ``GCP_CREDENTIALS_BASE64__${GCP_ACTIVE_PROFILE}`` の **1 本だけ**である。
+    他プロファイルの鍵はどのモードでもコンテナ内で使われないので、dev の列挙
+    から外して**値ごと渡さない**。
+
+    ``adc`` が止めるのは「鍵をファイルへ書き出すこと」だけで、環境変数としての
+    配布は止まらない。名前が列挙に残る限り Compose が値を解決して渡すため、
+    アカウントグループを分けても他社の鍵がコンテナ内から ``env`` で読める。
+
+    ``env`` だけでなく ``names`` (生成 compose へ列挙する機密の名前) も走査する。
+    ``runtime.inject`` を経ていれば両者は一致するが、その前提に寄りかかると
+    「列挙されているのに ``os.environ`` には無い」名前を外し損ねる。判定を呼び
+    出し順に依存させないため、両方を候補にする。
+    """
+    active = keys.gcp_credentials_key(active_profile(env))
+    candidates = dict.fromkeys([*env, *names])
+    return tuple(
+        name for name in candidates
+        if name.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX) and name != active
+    )
+
+
+def _legacy_key_is_the_source(env: Mapping[str, str], mode: str) -> bool:
+    """後方互換キーが**実際に鍵の供給源になる**か。
+
+    entrypoint は ``GCP_CREDENTIALS_BASE64__<active>`` が無いときだけ
+    ``GOOGLE_APPLICATION_CREDENTIALS_BASE64`` へフォールバックする
+    (``${!var:-${GOOGLE_APPLICATION_CREDENTIALS_BASE64:-}}``)。したがって残す
+    必要があるのは「鍵モード」かつ「アクティブプロファイルの鍵が無い」ときだけ。
+
+    ここを落とすと、プロファイル別キーへ未移行のプロジェクトが鍵を受け取れ
+    なくなって壊れる。空文字を「無い」として扱うのは
+    :func:`has_service_account_key` と同じ判定である。
+    """
+    if mode != AUTH_MODE_KEY:
+        return False
+    return not env.get(keys.gcp_credentials_key(active_profile(env)))
+
+
+def dev_excluded_env_names(env: Mapping[str, str], mode: str,
+                           names: Iterable[str] = ()) -> Sequence[str]:
+    """dev の列挙から外す変数名を返す (鍵のパス + 使われない鍵の実体)。
+
+    :func:`key_only_env_names` が外すのは「鍵ファイルのパスを指す 2 変数」で、
+    ``DefaultCredentialsError`` を避けるためのもの。こちらはそれに加えて、
+    **鍵の中身を運ぶ base64 変数のうちコンテナ内で使われないもの**を外す。
+
+    許可リストとして働くのが要点である。プロジェクト側の ``env`` で不要な鍵を
+    1 本ずつ空文字に潰す拒否リスト方式だと、グローバルへプロファイルが増える
+    たびに全プロジェクトへ追記が要り、漏れてもエラーにならない。
+    """
+    excluded = list(key_only_env_names(mode))
+    excluded.extend(inactive_profile_key_names(env, names))
+    if not _legacy_key_is_the_source(env, mode):
+        excluded.append(keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64)
+    # 呼び出し側が渡した順序を保ちつつ重複を除く
+    return tuple(dict.fromkeys(excluded))

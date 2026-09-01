@@ -336,3 +336,132 @@ def test_other_profiles_key_does_not_enable_key_mode(project, monkeypatch):
     env = env_map(project)
     assert env["GCP_AUTH_MODE"] == "adc"
     assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
+
+
+# ---------------------------------------------------------------------------
+# 鍵の実体 (base64) が他グループへ渡らないこと (issue #134)
+# ---------------------------------------------------------------------------
+
+# グローバルに複数プロファイルの鍵がある状態で列挙される名前
+MULTI_PROFILE_SECRETS = [
+    "ANTHROPIC_API_KEY",
+    "GCP_CREDENTIALS_BASE64__default",
+    "GCP_CREDENTIALS_BASE64__with",
+    "GOOGLE_APPLICATION_CREDENTIALS_BASE64",
+]
+
+
+@pytest.fixture
+def multi_profile(project, monkeypatch):
+    """with グループのプロジェクトから、nyle の鍵も見えている状態を作る。"""
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__with", "eyJ9")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", "eyJ9")
+    return project
+
+
+def test_other_profiles_key_is_not_passed_to_the_container(multi_profile):
+    """他プロファイルの鍵と、使われない後方互換キーを渡さない。
+
+    #133 で分離したのは認証情報の置き場所までで、GCP_ACTIVE_PROFILE を変えても
+    鍵の配布範囲は狭まらなかった。
+    """
+    generate_scaled_compose(1, secret_env_names=MULTI_PROFILE_SECRETS)
+
+    names = env_names(multi_profile)
+    assert "GCP_CREDENTIALS_BASE64__default" not in names
+    assert "GOOGLE_APPLICATION_CREDENTIALS_BASE64" not in names
+    # 自分のプロファイルの鍵と無関係な機密は従来どおり渡す
+    assert "GCP_CREDENTIALS_BASE64__with" in names
+    assert "ANTHROPIC_API_KEY" in names
+
+
+def test_adc_project_gets_no_key_material_at_all(project, monkeypatch):
+    """#133 の with-ai-dev の構成。鍵の実体が 1 本も渡らない。"""
+    monkeypatch.setenv("GCP_AUTH_MODE", "adc")
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", "eyJ9")
+
+    generate_scaled_compose(
+        1, secret_env_names=["GCP_CREDENTIALS_BASE64__default",
+                             "GOOGLE_APPLICATION_CREDENTIALS_BASE64"])
+
+    names = env_names(project)
+    assert not [name for name in names if "CREDENTIALS_BASE64" in name]
+
+
+def test_legacy_key_still_drives_auto_key_mode(project, monkeypatch):
+    """adc を宣言しないと、後方互換キーが鍵モードを引き起こし残り続ける。
+
+    #133 で with-ai-dev が踏んだ経路である。アクティブプロファイルの鍵が無いと
+    ``has_service_account_key`` は後方互換キーへフォールバックして ``key`` を
+    返し、entrypoint も同じ判定でその鍵を書き出す。したがってこの構成では
+    後方互換キーを外せない (外すと鍵の供給源を失って壊れる)。
+
+    この除外だけでは足りず、プロジェクト側の ``GCP_AUTH_MODE=adc`` の宣言と
+    組み合わせて初めて他社の鍵が渡らなくなる。
+    """
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", "eyJ9")
+
+    generate_scaled_compose(
+        1, secret_env_names=["GCP_CREDENTIALS_BASE64__default",
+                             "GOOGLE_APPLICATION_CREDENTIALS_BASE64"])
+
+    names = env_names(project)
+    assert env_map(project)["GCP_AUTH_MODE"] == "key"
+    # 他プロファイルの鍵は外れる
+    assert "GCP_CREDENTIALS_BASE64__default" not in names
+    # 供給源になっている後方互換キーは残る
+    assert "GOOGLE_APPLICATION_CREDENTIALS_BASE64" in names
+
+
+def test_enumerated_but_unset_names_are_excluded_too(project, monkeypatch):
+    """判定を runtime.inject の呼び出し順に依存させない。
+
+    os.environ に載る前でも、列挙される名前から他プロファイルの鍵を外す。
+    """
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__with", "eyJ9")
+
+    generate_scaled_compose(
+        1, secret_env_names=["GCP_CREDENTIALS_BASE64__kkg",
+                             "GCP_CREDENTIALS_BASE64__with"])
+
+    names = env_names(project)
+    assert "GCP_CREDENTIALS_BASE64__kkg" not in names
+    assert "GCP_CREDENTIALS_BASE64__with" in names
+
+
+def test_legacy_key_survives_when_it_is_the_only_source(project, monkeypatch):
+    """プロファイル別キーへ未移行のプロジェクトを壊さない。
+
+    後方互換キーだけで鍵モードになる構成では、これを外すと entrypoint が鍵を
+    書き出せなくなる。
+    """
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", "eyJ9")
+
+    generate_scaled_compose(
+        1, secret_env_names=["GOOGLE_APPLICATION_CREDENTIALS_BASE64"])
+
+    assert env_map(project)["GCP_AUTH_MODE"] == "key"
+    assert "GOOGLE_APPLICATION_CREDENTIALS_BASE64" in env_names(project)
+
+
+def test_non_dev_services_keep_the_key_material(project, monkeypatch):
+    """除外は dev だけ。共通機密から鍵を受け取っていた非 dev サービスは維持。"""
+    (project / "compose.yml").write_text(ENV_FILE_COMPOSE)
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
+
+    generate_scaled_compose(
+        1,
+        secret_env_names=["GCP_CREDENTIALS_BASE64__default"],
+        global_env_names=["GCP_CREDENTIALS_BASE64__default"],
+        project_env_names=[])
+
+    assert "GCP_CREDENTIALS_BASE64__default" in services(project)["batch"]["environment"]
+    assert "GCP_CREDENTIALS_BASE64__default" not in env_names(project)

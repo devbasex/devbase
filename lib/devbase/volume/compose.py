@@ -626,17 +626,26 @@ def generate_scaled_compose(
         **gcp_auth.container_env(os.environ),
     }
 
-    # ADC モードでは鍵モード専用の 2 変数を **dev の列挙から外す**。名前が載ら
+    # コンテナ内で使われない GCP の変数を **dev の列挙から外す**。名前が載ら
     # なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
     # から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
     #
-    # 除外は dev だけに効かせる。元々この 2 変数を env_file から受け取っていた
+    # 外すのは 2 種類ある。ADC モードでの鍵ファイルのパス 2 変数
+    # (DefaultCredentialsError を避けるため) と、アクティブプロファイル以外の
+    # GCP_CREDENTIALS_BASE64__* および使われない後方互換キー (鍵の実体が他社の
+    # コンテナへ渡るのを防ぐため / issue #134)。判定は gcp_auth に集約する。
+    #
+    # 除外は dev だけに効かせる。元々これらを env_file から受け取っていた
     # 非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
     # 同じようにそのサービスを壊す。
     auth_mode = dev_environment[keys.GCP_AUTH_MODE]
+    enumerated = [*secret_env_names,
+                  *(global_env_names or ()),
+                  *(project_env_names or ())]
     secret_names = _SecretNames(
         secret_env_names, global_env_names, project_env_names,
-        dev_excluded=gcp_auth.key_only_env_names(auth_mode))
+        dev_excluded=gcp_auth.dev_excluded_env_names(
+            os.environ, auth_mode, enumerated))
 
     # VS Code Server は再作成をまたいで保つためコンテナ 1 つに 1 本の named
     # volume を宛てる (PLAN36)。プロジェクトが自分で ~/.vscode-server を

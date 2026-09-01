@@ -145,3 +145,100 @@ def test_container_env_carries_the_resolved_mode():
     assert gcp_auth.container_env({})[keys.GCP_AUTH_MODE] == "adc"
     assert gcp_auth.container_env(
         {"GCP_CREDENTIALS_BASE64__default": "eyJ9"})[keys.GCP_AUTH_MODE] == "key"
+
+
+# ---------------------------------------------------------------------------
+# 鍵の実体 (base64) の除外 (issue #134)
+# ---------------------------------------------------------------------------
+
+def test_inactive_profile_keys_are_excluded():
+    """アクティブプロファイル以外の鍵は entrypoint が読まないので外す。"""
+    env = {keys.GCP_ACTIVE_PROFILE: "with",
+           "GCP_CREDENTIALS_BASE64__default": "eyJ9",
+           "GCP_CREDENTIALS_BASE64__kkg": "eyJ9",
+           "GCP_CREDENTIALS_BASE64__with": "eyJ9"}
+
+    excluded = set(gcp_auth.inactive_profile_key_names(env))
+
+    assert excluded == {"GCP_CREDENTIALS_BASE64__default",
+                        "GCP_CREDENTIALS_BASE64__kkg"}
+
+
+def test_active_profile_key_is_kept():
+    """自分のプロファイルの鍵は entrypoint が使うので残す。"""
+    env = {keys.GCP_ACTIVE_PROFILE: "with",
+           "GCP_CREDENTIALS_BASE64__with": "eyJ9"}
+
+    assert gcp_auth.inactive_profile_key_names(env) == ()
+
+
+def test_unset_profile_defaults_to_the_default_key():
+    """GCP_ACTIVE_PROFILE 未設定なら default の鍵が残る。"""
+    env = {"GCP_CREDENTIALS_BASE64__default": "eyJ9",
+           "GCP_CREDENTIALS_BASE64__prod": "eyJ9"}
+
+    assert gcp_auth.inactive_profile_key_names(env) == (
+        "GCP_CREDENTIALS_BASE64__prod",)
+
+
+def test_adc_excludes_the_legacy_key():
+    """adc では entrypoint が鍵を一切読まないので後方互換キーも外す。"""
+    env = {keys.GCP_AUTH_MODE: "adc",
+           "GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9"}
+
+    assert keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64 in \
+        gcp_auth.dev_excluded_env_names(env, gcp_auth.AUTH_MODE_ADC)
+
+
+def test_key_mode_with_profile_key_excludes_the_legacy_key():
+    """プロファイル別キーが使われるならフォールバックは発生しない。"""
+    env = {keys.GCP_ACTIVE_PROFILE: "with",
+           "GCP_CREDENTIALS_BASE64__with": "eyJ9",
+           "GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9"}
+
+    assert keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64 in \
+        gcp_auth.dev_excluded_env_names(env, gcp_auth.AUTH_MODE_KEY)
+
+
+def test_key_mode_without_profile_key_keeps_the_legacy_key():
+    """後方互換キーが鍵の供給源のときだけ残す。
+
+    ここを外すと、プロファイル別キーへ未移行のプロジェクトが鍵を受け取れなく
+    なって起動時に壊れる。
+    """
+    env = {"GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9"}
+
+    assert keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64 not in \
+        gcp_auth.dev_excluded_env_names(env, gcp_auth.AUTH_MODE_KEY)
+
+
+def test_empty_profile_key_counts_as_absent():
+    """空文字は has_service_account_key と同じく「無い」扱い。"""
+    env = {keys.GCP_ACTIVE_PROFILE: "with",
+           "GCP_CREDENTIALS_BASE64__with": "",
+           "GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9"}
+
+    assert keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64 not in \
+        gcp_auth.dev_excluded_env_names(env, gcp_auth.AUTH_MODE_KEY)
+
+
+def test_dev_excluded_keeps_the_key_only_names():
+    """既存の 2 変数の除外は据え置き (adc のときだけ外す)。"""
+    adc = gcp_auth.dev_excluded_env_names({}, gcp_auth.AUTH_MODE_ADC)
+    key = gcp_auth.dev_excluded_env_names(
+        {"GCP_CREDENTIALS_BASE64__default": "eyJ9"}, gcp_auth.AUTH_MODE_KEY)
+
+    assert "GOOGLE_APPLICATION_CREDENTIALS" in adc
+    assert "BIGQUERY_KEY_FILE" in adc
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in key
+    assert "BIGQUERY_KEY_FILE" not in key
+
+
+def test_dev_excluded_has_no_duplicates():
+    env = {keys.GCP_AUTH_MODE: "adc",
+           "GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9",
+           "GCP_CREDENTIALS_BASE64__prod": "eyJ9"}
+
+    names = gcp_auth.dev_excluded_env_names(env, gcp_auth.AUTH_MODE_ADC)
+
+    assert len(names) == len(set(names))
