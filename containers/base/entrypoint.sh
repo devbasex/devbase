@@ -230,13 +230,44 @@ DEVBASE_FILE_ENTRIES=(
     "settings.json"
 )
 
-# パスの末尾要素がファイルとして作るエントリか判定する。
-devbase_is_file_entry() {
+# 空で作ると**不正な JSON** になるエントリ。プレースホルダは `{}` にする。
+#
+# 空ファイルを置くと Claude Code が
+# `The configuration file at ~/.claude.json contains invalid JSON.` で起動を
+# 拒否する。実体がシードされる `default` グループでは起こらないが、非 default の
+# グループはシードを飛ばすため必ずプレースホルダになる (issue #136)。
+#
+# `history.jsonl` は JSON Lines なので**入れない**。`{}` を書くと 1 行目が
+# 履歴の 1 件として読まれる。`CLAUDE.md` も Markdown なので空でよい。
+#
+# 拡張子 (`*.json`) で判定しないのは `DEVBASE_FILE_ENTRIES` と同じ理由である。
+# かつて `.jsonl` が `*.json` にマッチせず history.jsonl がディレクトリとして
+# 作られた。エントリ名の列挙で揃えておけば、ファイルを足す人が「ファイルか
+# ディレクトリか」「空でよいか JSON か」を同じ場所で判断できる。
+DEVBASE_JSON_FILE_ENTRIES=(
+    ".claude.json"
+    ".credentials.json"
+    "settings.json"
+)
+
+# パスの末尾要素が一覧に載っているか判定する (第 2 引数以降が一覧)。
+devbase_entry_name_in() {
     local name="${1##*/}" entry
-    for entry in "${DEVBASE_FILE_ENTRIES[@]}"; do
+    shift
+    for entry in "$@"; do
         [ "$name" = "$entry" ] && return 0
     done
     return 1
+}
+
+# パスの末尾要素がファイルとして作るエントリか判定する。
+devbase_is_file_entry() {
+    devbase_entry_name_in "$1" "${DEVBASE_FILE_ENTRIES[@]}"
+}
+
+# パスの末尾要素が JSON として作るエントリか判定する。
+devbase_is_json_file_entry() {
+    devbase_entry_name_in "$1" "${DEVBASE_JSON_FILE_ENTRIES[@]}"
 }
 
 # 永続領域のルートを用意する。
@@ -263,7 +294,11 @@ devbase_ensure_entry() {
         return 0
     fi
     if devbase_is_file_entry "$path"; then
-        : > "$path"
+        if devbase_is_json_file_entry "$path"; then
+            printf '{}' > "$path"
+        else
+            : > "$path"
+        fi
     else
         mkdir -p "$path"
     fi
