@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-09-02
+
+`devbase up` でコンテナを作り直しても VS Code Server が残るようになり、
+アカウントグループを分けたときに他社の GCP 鍵がコンテナへ渡らなくなりました。
+`devbase build <image>` の単体ビルドも動くようになっています。
+
+`FROM devbase-*` を使うプロジェクトは、VS Code Server の永続化と Antigravity CLI の
+追加を反映するために**ベースイメージの再ビルド**が要ります。
+
+```bash
+devbase build base --no-cache
+```
+
 ### Added
 - **VS Code Server をコンテナ再作成をまたいで保つ**ようにしました (PLAN36)。
   `~/.vscode-server` はこれまでコンテナ層 (揮発) にあったため、`devbase up` で
@@ -428,6 +441,7 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/devbasex/devbase/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/devbasex/devbase/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/devbasex/devbase/releases/tag/v2.2.0
