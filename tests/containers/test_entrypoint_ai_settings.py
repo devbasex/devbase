@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -292,8 +293,11 @@ def test_non_default_groups_are_not_seeded(roots):
     assert not (grp / ".claude" / ".credentials.json").exists()
     assert not (grp / ".claude" / "projects").exists()
     assert not (grp / ".gemini" / "settings.json").exists()
-    # プレースホルダは作られるが、シード元の中身は入らない
-    assert (grp / ".claude.json").read_text() == ""
+    # プレースホルダは作られるが、シード元の中身は入らない。
+    # 期待値を "" から "{}" へ変えたのは issue #136 の修正による。空ファイルは
+    # 不正な JSON で Claude Code が起動できないため、プレースホルダを {} にした。
+    # 「シードされていない」ことの確認という本来の意図は変わらない。
+    assert (grp / ".claude.json").read_text() == "{}"
 
 
 def test_seed_runs_only_once(roots):
@@ -384,3 +388,86 @@ def test_second_run_does_not_seed_through_the_symlink(roots):
 
     assert (ai / ".claude" / "settings.json").read_text() == '{"edited": true}'
     assert (home / ".claude").is_symlink()
+
+
+# ---------------------------------------------------------------------------
+# プレースホルダの初期内容 (issue #136)
+# ---------------------------------------------------------------------------
+
+def test_new_group_gets_a_parsable_claude_json(roots):
+    """非 default グループの初回起動で ``.claude.json`` が妥当な JSON になる。
+
+    空ファイルは JSON として不正で、Claude Code が
+    ``The configuration file at ~/.claude.json contains invalid JSON.``
+    で起動を拒否する。``default`` はシードで実体が入るため踏まないが、
+    非 default はシードを飛ばすので必ずプレースホルダになる。
+    """
+    home, _, grp = roots
+    setup(roots, group_name="with")
+
+    assert (grp / ".claude.json").read_text() == "{}"
+    assert json.loads((home / ".claude.json").read_text()) == {}
+
+
+def test_shared_settings_json_is_parsable(roots):
+    """共通側の ``settings.json`` も空では作らない。
+
+    共通ボリュームを新規に作った場合、同じ経路で 0 バイトになる。
+    """
+    _, ai, _ = roots
+    setup(roots, group_name="with")
+
+    assert json.loads((ai / ".claude" / "settings.json").read_text()) == {}
+
+
+def test_non_json_entries_stay_empty(roots):
+    """``CLAUDE.md`` は空のままでよい。Markdown は空で妥当。"""
+    _, ai, _ = roots
+    setup(roots, group_name="with")
+
+    assert (ai / ".claude" / "CLAUDE.md").read_text() == ""
+
+
+def test_history_jsonl_is_not_pre_created(roots):
+    """``history.jsonl`` はプレースホルダとして作られない。
+
+    ``~/.claude`` はディレクトリごとグループ側へ張られるため、その配下は
+    ``devbase_ensure_entry`` を通らない。Claude Code が書くまで存在しない。
+    ``DEVBASE_FILE_ENTRIES`` に載っているのは、将来この経路を通ったときに
+    ディレクトリとして作られないようにするための型ヒントである。
+    """
+    _, _, grp = roots
+    setup(roots, group_name="with")
+
+    assert not (grp / ".claude" / "history.jsonl").exists()
+
+
+def test_existing_file_content_is_not_overwritten(roots):
+    """実体があるファイルの中身は書き換えない (冪等性)。
+
+    2 回目以降の起動で利用者の設定が ``{}`` へ巻き戻ると、認証も MCP 接続も消える。
+    """
+    _, _, grp = roots
+    grp.mkdir(parents=True, exist_ok=True)
+    (grp / ".claude.json").write_text('{"oauthAccount": "keep me"}')
+
+    setup(roots, group_name="with")
+    setup(roots, group_name="with")
+
+    assert json.loads((grp / ".claude.json").read_text()) == {
+        "oauthAccount": "keep me"}
+
+
+def test_deliberately_emptied_file_is_left_alone(roots):
+    """利用者が空にしたファイルは書き換えない。
+
+    ``devbase_ensure_entry`` の契約は「実体が無ければ作る」であって、
+    「中身を直す」ではない。壊れたボリュームの自動修復はこの関数の責務ではない。
+    """
+    _, _, grp = roots
+    grp.mkdir(parents=True, exist_ok=True)
+    (grp / ".claude.json").write_text("")
+
+    setup(roots, group_name="with")
+
+    assert (grp / ".claude.json").read_text() == ""
