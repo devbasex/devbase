@@ -118,7 +118,7 @@ $ gcloud auth list
 | --- | --- |
 | テスト | `uv run pytest tests/containers -q`（限定）、`uv run pytest tests/ -q`（全体） |
 | 静的解析 | `shellcheck --severity=error containers/base/ai-cli-aliases.sh`、`python -m compileall -q lib bin` |
-| 手動確認 | ベースイメージを再ビルドしたコンテナで `type gemini` と、`GOOGLE_CLOUD_PROJECT` の有無による分岐。リリース後テストで行う |
+| 手動確認 | ベースイメージを再ビルドしたコンテナで、`alias gemini` の定義に `GOOGLE_GENAI_USE_VERTEXAI` と `$@` が無いこと。`GOOGLE_GENAI_USE_VERTEXAI=true` を持つプロジェクトで Vertex 経路、持たないプロジェクトで `settings.json` の経路になること。リリース後テストで行う |
 
 ## 前提とする取り決め
 
@@ -180,7 +180,7 @@ $ gcloud auth list
 
 | 対象 | 何をするか |
 | --- | --- |
-| 共通（Vertex を既定にする） | `devbase env set -g GOOGLE_GENAI_USE_VERTEXAI=true`。既に `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` が共通機密にあり、同じ層へ揃う |
+| 共通（Vertex を既定にする） | `devbase env set GOOGLE_GENAI_USE_VERTEXAI=true`（スコープ指定なしが共通。プロジェクト側は `--project` / `-p`）。既に `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` が共通機密にあり、同じ層へ揃う |
 | `with-ai-dev` / `project-trygroup-prd` | `projects/<name>/env` へ `GOOGLE_GENAI_USE_VERTEXAI=` を書き、共通の値を打ち消す。`GOOGLE_CLOUD_PROJECT=` と同じやり方 |
 
 共通機密は利用者の環境にあり、リポジトリの差分では移せない。**手順として書き、実施したか
