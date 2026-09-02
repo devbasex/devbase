@@ -266,3 +266,44 @@ def test_single_build_ignores_expires_with_warning(devbase_root, captured_run, c
     # 期限判定 (docker image inspect) を挟まず、ビルド 1 回だけ
     assert len(captured_run) == 1
     assert captured_run[0][:4] == ["docker", "buildx", "build", "--load"]
+
+
+@pytest.mark.parametrize("bad_image", [
+    "../etc",
+    "base/../../etc",
+    "a/b",
+    "..",
+    ".",
+    "",
+    "..\\etc",
+    "-base",
+])
+def test_single_build_rejects_invalid_image_name(
+        devbase_root, captured_run, caplog, bad_image):
+    """ディレクトリ名として不正な `image` は docker を起動せず 1 で終わる。
+
+    `/` や `\\`、`..` を通すと $DEVBASE_ROOT の外を指せてしまい、Docker タグとしても
+    不正な名前を渡せてしまうため、パス組み立ての前に弾く (PR #144 のレビュー指摘)。
+    """
+    with caplog.at_level(logging.ERROR):
+        rc = container.cmd_build(image=bad_image)
+
+    assert rc == 1
+    assert captured_run == []
+    assert "Invalid image name" in caplog.text
+
+
+def test_single_build_accepts_real_container_directory_names(devbase_root, captured_run):
+    """`containers/` 配下の実在ディレクトリ名は検証を通る。"""
+    names = ["base", "bi-tools", "general", "go", "latex",
+             "lfm", "php", "php85", "snapshot", "trygroup"]
+    for name in names:
+        d = devbase_root / "containers" / name
+        d.mkdir(exist_ok=True)
+        (d / "Dockerfile").write_text("FROM x\n")
+
+    for name in names:
+        assert container.cmd_build(image=name) == 0
+
+    tags = [cmd[cmd.index("-t") + 1] for cmd in captured_run]
+    assert tags == [f"devbase-{name}:latest" for name in names]

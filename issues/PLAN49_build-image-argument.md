@@ -279,6 +279,12 @@ Python の 2 実装が残ったままになり、タグ規約の食い違いを�
 無い。`base` を `base:latest` としてビルドしても、他の Dockerfile の `FROM devbase-base:latest`
 からは見えず、ビルドした意味が失われる。
 
+タグは `containers/` 配下のディレクトリ名から一意に導く。渡された `image` から `devbase-`
+接頭辞を剥がすことはしない。剥がすと `containers/xxx` と `containers/devbase-xxx` が
+`devbase-xxx:latest` を取り合い、別ディレクトリなのに互いのイメージを上書きしてしまう。
+`devbase build devbase-base` のように接頭辞込みで渡した場合は、存在確認で
+`containers/devbase-base` を探して見つからず、探したパスを示して終了コード 1 で終わる。
+
 コマンドを `docker build` から `docker buildx build --load` へ揃えるのは、shell の
 `build_base_image` が同じイメージを buildx で作っているためである。ビルダが分かれると、
 同じイメージを 2 通りの方法で作ることになり、`--load` を伴わない buildx 既定ビルダでは
@@ -322,6 +328,19 @@ Python の 2 実装が残ったままになり、タグ規約の食い違いを�
   → **AC8（改）: `image` 指定の単体ビルド経路で `docker` を起動する実装が 1 箇所（Python の
   `cmd_build`）だけになる。** compose ビルドの 1 段目である shell の `build_base_image` は
   対象外とする（2026-09-02、決定 4 の理由による）
+- ~~単体ビルドのタグは、`image` が `devbase-` 始まりで渡された場合も二重に付かないよう
+  接頭辞を剥がしてから付け直す~~
+  → **タグは `containers/` 配下のディレクトリ名から一意に導き、`devbase-` 接頭辞は
+  剥がさずそのまま前置する。** 剥がすと `containers/xxx` と `containers/devbase-xxx` が
+  `devbase-xxx:latest` を取り合い、別ディレクトリなのに互いのイメージを上書きしてしまう。
+  接頭辞込みで渡された場合は `containers/devbase-<name>` が見つからず、探したパスを示して
+  終了コード 1 で終わる（2026-09-02、PR [#144](https://github.com/devbasex/devbase/pull/144)
+  のレビュー指摘による）
+- **追加: 単体ビルドの `image` は `containers/` 配下の 1 ディレクトリ名として妥当な文字
+  （`[A-Za-z0-9][A-Za-z0-9._-]*`）に限り、それ以外は `docker` を起動せず終了コード 1 で
+  終わる。** `/` や `\`、`..` を通すと `$DEVBASE_ROOT` の外を指せてしまい、Docker タグとしても
+  不正な名前を渡せてしまうため（2026-09-02、PR [#144](https://github.com/devbasex/devbase/pull/144)
+  のレビュー指摘による）
 
 ---
 
@@ -383,7 +402,7 @@ Python の 2 実装が残ったままになり、タグ規約の食い違いを�
 ### Task 1: 単体ビルドの `docker` コマンドを直す
 
 - **対象ファイル:** `lib/devbase/commands/container.py`、`tests/cli/test_build_image_argument.py`
-- **変更内容:** `cmd_build(image=...)` が組み立てるコマンドを `['docker', 'build', '-t', image, str(image_dir)]` から `['docker', 'buildx', 'build', '--load', '-t', f'devbase-{image}:latest', str(image_dir)]` へ変える。`--no-cache` は末尾に付ける。`image` が `devbase-` 始まりで渡された場合も二重に付かないよう接頭辞を剥がしてから付け直す。
+- **変更内容:** `cmd_build(image=...)` が組み立てるコマンドを `['docker', 'build', '-t', image, str(image_dir)]` から `['docker', 'buildx', 'build', '--load', '-t', f'devbase-{image}:latest', str(image_dir)]` へ変える。`--no-cache` は末尾に付ける。タグは `containers/` 配下のディレクトリ名から一意に導き、`devbase-` 接頭辞は剥がさずそのまま前置する（剥がすと `containers/xxx` と `containers/devbase-xxx` が同じタグを取り合い、別ディレクトリなのに互いのイメージを上書きしてしまうため）。`devbase build devbase-base` のように接頭辞込みで渡した場合は `containers/devbase-base` が見つからず、探したパスを示して終了コード 1 で終わる。
 - **満たす受け入れ条件:** AC1（docker 引数列）、AC3、AC4、AC5、AC7
 - **進め方:** `subprocess.run` を差し替えて引数列を捕まえる失敗するテストを先に書き、実装で通す。存在しないディレクトリ・`Dockerfile` 不在・`DEVBASE_ROOT` 未設定の 3 つの失敗系も同じ回で固定する。
 

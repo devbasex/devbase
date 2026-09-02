@@ -954,6 +954,11 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
 # cmd_build
 # ---------------------------------------------------------------------------
 
+# 単体ビルドで受け付けるイメージ名。`containers/` 配下の 1 ディレクトリ名であることを
+# 保証するため、英数字始まりで英数字・ハイフン・アンダースコア・ピリオドのみを許可する。
+_IMAGE_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
+
+
 def _build_single_image(image: str, no_cache: bool = False) -> int:
     """``$DEVBASE_ROOT/containers/<image>`` を単体ビルドする (PLAN49 / #139)。
 
@@ -967,6 +972,16 @@ def _build_single_image(image: str, no_cache: bool = False) -> int:
     devbase_root = os.environ.get('DEVBASE_ROOT', '')
     if not devbase_root:
         logger.error("DEVBASE_ROOT not set")
+        return 1
+
+    # `image` はパスの一部として連結し、そのままタグにもなる。`/` `\` `..` などを
+    # 通すと $DEVBASE_ROOT の外を指せてしまい、Docker タグとして不正な名前も作れるため、
+    # ディレクトリ名 1 つとして妥当な文字だけを許可し、それ以外はここで弾く。
+    if not _IMAGE_NAME_RE.fullmatch(image):
+        logger.error(
+            "Invalid image name: %r (must be a single directory name under "
+            "containers/: alphanumeric start, then letters, digits, '.', '-', '_')",
+            image)
         return 1
 
     image_dir = Path(devbase_root) / 'containers' / image
