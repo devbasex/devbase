@@ -51,9 +51,8 @@ $ gcloud auth list
 
 ## 前提
 
-- 前提 1: Vertex AI は `GOOGLE_CLOUD_PROJECT` が決まっていなければ使えない。したがって
-  「`GOOGLE_CLOUD_PROJECT` が空でない」ことを Vertex を使う条件として扱ってよい。
-  （成否の判定: Vertex を使うプロジェクトの env に `GOOGLE_CLOUD_PROJECT` が必ずあること）
+- 前提 1: 認証方式は環境変数 `GOOGLE_GENAI_USE_VERTEXAI` で**明示的に**選ぶ。起動定義は
+  推論しない。（成否の判定: 起動定義に認証方式を決める分岐が 1 つも無いこと）
 - 前提 2: `--yolo`（確認プロンプトの省略）は現状どおり付ける。他の AI CLI の alias と揃える方針を変えない。
 - 前提 3: 稼働中のコンテナには反映されない。ベースイメージの再ビルドとコンテナ再作成が要る。
 
@@ -61,9 +60,10 @@ $ gcloud auth list
 
 含む:
 
-- `gemini` の起動時に `GOOGLE_GENAI_USE_VERTEXAI` を無条件に立てるのをやめること
+- `gemini` の起動時に `GOOGLE_GENAI_USE_VERTEXAI` を立てるのをやめ、環境で選ばせること
+- 起動定義から、意図した働きをしていない `"$@"` を落とすこと（全 6 定義）
 - alias 群を Dockerfile のインライン `echo` から独立したファイルへ出し、テストできるようにすること
-- 上記に伴う `docs/` の追従
+- 上記に伴う `docs/` の追従と、既存利用者の振る舞いを保つ移行手順の明示
 
 含まない:
 
@@ -83,28 +83,33 @@ $ gcloud auth list
 
 ## 受け入れ条件
 
-- [ ] AC1: `GOOGLE_CLOUD_PROJECT` が未設定または空のシェルで `gemini` を起動すると、
-      `GOOGLE_GENAI_USE_VERTEXAI` が子プロセスへ渡らない
-- [ ] AC2: `GOOGLE_CLOUD_PROJECT` が非空のシェルで `gemini` を起動すると、
-      `GOOGLE_GENAI_USE_VERTEXAI=true` が子プロセスへ渡る（現行の nyle 系の振る舞いの維持）
-- [ ] AC3: 呼び出し側が `GOOGLE_GENAI_USE_VERTEXAI` を明示的に設定している場合は、値を上書きしない。
-      空文字や `false` を設定した場合も、その値のまま渡る
+- [ ] AC1: 起動定義のどこにも `GOOGLE_GENAI_USE_VERTEXAI` を設定する記述が無い。
+      `gemini` の環境は呼び出し側から渡ったものがそのまま届く
+- [ ] AC2: `GOOGLE_GENAI_USE_VERTEXAI=true` を環境に持つシェルで `gemini` を起動すると、
+      その値が子プロセスへ渡る（環境で Vertex を選べる）
+- [ ] AC3: `GOOGLE_GENAI_USE_VERTEXAI` を持たないシェルで `gemini` を起動すると、
+      子プロセスにも設定されない（環境を素通しする）
 - [ ] AC4: `gemini` へ渡した引数が、そのままの順序で実体へ届く。`--yolo` が必ず付く
-- [ ] AC5: `claude` / `claudb` / `codex` / `kiro` / `agy` が起動する実体とオプションが現行と変わらない
-- [ ] AC6: `complete -o default claudb kiro` が引き続き有効
-- [ ] AC7: 対話シェルで `gemini` が定義されている（`type gemini` が実体のパスではなく定義を返す）
-- [ ] AC8: AC1〜AC5 を固定する自動テストが `tests/containers/` にあり、**Docker に依存せず**
+- [ ] AC5: **すべての起動定義から `"$@"` が消えている。** `claude` / `claudb` / `gemini` /
+      `codex` / `kiro` / `agy` のいずれの定義にも `$@` を含まない
+- [ ] AC6: `claude` / `claudb` / `codex` / `kiro` / `agy` が起動する実体と、`"$@"` を除いた
+      オプションが現行と変わらない
+- [ ] AC7: 上記 5 つそれぞれに引数を渡すと、そのままの順序で実体へ届く
+      （`"$@"` を落としても引数が欠けない）
+- [ ] AC8: `complete -o default claudb kiro` が引き続き有効
+- [ ] AC9: AC1〜AC7 を固定する自動テストが `tests/containers/` にあり、**Docker に依存せず**
       実行できる（既存の `tests/containers/test_entrypoint_*.py` と同じく shell を直接読む方式）
-- [ ] AC9: 既存テスト一式（`tests/`）が退行しない
-- [ ] AC10: `docs/` に、Vertex 経路と OAuth 経路の切り替わり方が書かれている
+- [ ] AC10: 既存テスト一式（`tests/`）が退行しない
+- [ ] AC11: `docs/` に、Vertex 経路と OAuth 経路をどこで選ぶかが書かれている
+- [ ] AC12: 移行手順（下記「移行」）が計画に書かれ、実施の要否が完了報告に残る
 
 ## 影響
 
 | 対象 | 影響 |
 | --- | --- |
-| 公開インタフェース | `gemini` コマンドの起動時の環境が変わる。`GOOGLE_CLOUD_PROJECT` を持つプロジェクト（既定）では現行と同じ |
+| 公開インタフェース | `gemini` は環境の `GOOGLE_GENAI_USE_VERTEXAI` に従うようになる。全 6 定義から `"$@"` が消えるが、引数の渡り方は変わらない |
 | データ | なし |
-| 既存の振る舞い | `GOOGLE_CLOUD_PROJECT` を空にした 2 プロジェクト（`with-ai-dev` / `project-trygroup-prd`）で Vertex を強制しなくなる。これが修正の目的 |
+| 既存の振る舞い | **移行を行わないと、いま Vertex を使っている環境が OAuth 側へ倒れる。** 共通機密へ `GOOGLE_GENAI_USE_VERTEXAI=true` を入れることで現行と同じになる（「移行」の節） |
 | 反映の条件 | ベースイメージの再ビルド（`devbase build base --no-cache`）とコンテナの再作成が要る |
 
 ## 検証手段
@@ -139,51 +144,73 @@ $ gcloud auth list
 
 | 要素 | 責務 |
 | --- | --- |
-| `containers/base/ai-cli-aliases.sh`（新規） | AI CLI の起動定義を持つ唯一の場所。alias 群と `gemini` の関数 |
+| `containers/base/ai-cli-aliases.sh`（新規） | AI CLI の起動定義を持つ唯一の場所。alias 群 |
 | `containers/base/Dockerfile` | 上記を `COPY` し、`.bashrc` から読み込ませる。インラインの `echo` 群を落とす |
 | `tests/containers/test_ai_cli_aliases.py`（新規） | 起動定義の振る舞いを Docker 抜きで固定する |
 
 ## 入出力の契約
 
-### `gemini [引数...]`
+### 起動定義
 
-| 項目 | 内容 |
+すべて `alias <名前>='<実体> <固定オプション>'` の形にする。環境変数の前置は
+`claudb`（Bedrock を選ぶためのもの）だけが持ち、他は持たない。
+
+| 名前 | 実体と固定オプション | 環境の前置 |
+| --- | --- | --- |
+| `claude` | `claude --dangerously-skip-permissions` | なし |
+| `claudb` | `claude --dangerously-skip-permissions` | `CLAUDE_CODE_USE_BEDROCK=1 AWS_REGION=us-west-2` |
+| `gemini` | `gemini --yolo` | **なし**（現行の `GOOGLE_GENAI_USE_VERTEXAI=true` を落とす） |
+| `codex` | `codex --dangerously-bypass-approvals-and-sandbox` | なし |
+| `kiro` | `kiro-cli chat --trust-all-tools` | なし |
+| `agy` | `agy --dangerously-skip-permissions` | なし |
+
+引数は alias の展開で末尾へ付くため、定義側に `"$@"` は要らない。
+
+`gemini` の認証方式は環境が決める。
+
+| 環境 | gemini の経路 |
 | --- | --- |
-| 名前 | `gemini`（シェル関数） |
-| 入力 | 任意の引数。環境変数 `GOOGLE_CLOUD_PROJECT` と `GOOGLE_GENAI_USE_VERTEXAI` |
-| 出力 | `gemini --yolo <引数...>` を実体で起動し、その終了コードを返す |
-| 環境の決め方 | `GOOGLE_GENAI_USE_VERTEXAI` が**未設定のときだけ**、`GOOGLE_CLOUD_PROJECT` が非空なら `true` を補う。設定済みならその値を保つ |
-| 互換性 | `GOOGLE_CLOUD_PROJECT` を持つ既存のプロジェクトでは現行と同じ |
+| `GOOGLE_GENAI_USE_VERTEXAI=true` | Vertex AI |
+| 未設定・空・`false` | `~/.gemini/settings.json` の `selectedType` に従う（OAuth など） |
 
-補い方は呼び出し 1 回限りの前置（`VAR=値 command ...`）で行い、シェルの環境そのものは変えない。
-`gemini` を 1 度実行したら以降の別のコマンドまで Vertex 扱いになる、という副作用を作らないため。
+## 移行
 
-## 処理の流れ
+**この変更だけでは、いま Vertex を使っている環境が OAuth 側へ倒れる。** 起動定義が
+補っていた `GOOGLE_GENAI_USE_VERTEXAI=true` を、環境の側へ移す必要がある。
 
-```mermaid
-flowchart TD
-    A["gemini 引数..."] --> B{"GOOGLE_GENAI_USE_VERTEXAI<br/>は設定済みか"}
-    B -->|"はい（空文字も含む）"| E["そのまま command gemini --yolo 引数..."]
-    B -->|いいえ| C{"GOOGLE_CLOUD_PROJECT<br/>は非空か"}
-    C -->|"はい（nyle 系など）"| D["GOOGLE_GENAI_USE_VERTEXAI=true を<br/>1 回限り前置して起動"]
-    C -->|"いいえ（with-ai-dev など）"| E
-```
+| 対象 | 何をするか |
+| --- | --- |
+| 共通（Vertex を既定にする） | `devbase env set -g GOOGLE_GENAI_USE_VERTEXAI=true`。既に `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` が共通機密にあり、同じ層へ揃う |
+| `with-ai-dev` / `project-trygroup-prd` | `projects/<name>/env` へ `GOOGLE_GENAI_USE_VERTEXAI=` を書き、共通の値を打ち消す。`GOOGLE_CLOUD_PROJECT=` と同じやり方 |
+
+共通機密は利用者の環境にあり、リポジトリの差分では移せない。**手順として書き、実施したか
+どうかを完了報告に残す。**
 
 ## 決定の記録
 
-### 決定 1: Vertex を使うかは `GOOGLE_CLOUD_PROJECT` の有無で決める
+### 決定 1: 認証方式は起動定義で推論せず、環境変数で明示的に選ぶ
 
-Vertex AI はプロジェクトが決まっていなければ呼べない。`GOOGLE_CLOUD_PROJECT` が空という状態は
-「Vertex を使えない」と同義であり、推測ではなく前提条件そのものである。プロジェクトを空にした
-2 件はいずれも「nyle の GCP を使わない」意思で空にしており、判定と意図が一致する。
+`GOOGLE_CLOUD_PROJECT` は gcloud・BigQuery・その他の GCP ツールが共有するプロジェクト指定で
+あって、gemini の認証方式の opt-in ではない。これを判定に使うと、OAuth を選んだ利用者が
+BigQuery などの目的で同じ変数を設定した瞬間、意図せず Vertex へ倒れる。認証方式を表す変数
+（`GOOGLE_GENAI_USE_VERTEXAI`）だけで決める。
 
-新しい専用の変数（`DEVBASE_GEMINI_AUTH` など）を足す案は採らない。設定する場所が 1 つ増え、
-`GOOGLE_CLOUD_PROJECT` と食い違ったときにどちらが正かを決める必要が出る。
+起動定義が値を補う案（`GOOGLE_CLOUD_PROJECT` が非空なら `true`）は、上記のとおり別の目的の
+変数へ意味を重ねるため採らない。新しい専用の変数を足す案も採らない。gemini 自身が読む変数が
+既にあり、設定する場所を増やすと食い違いの解決が要る。
 
-### 決定 2: alias ではなくシェル関数にする
+**この決定は、いま Vertex を使っている環境へ移行を要求する。** 起動定義が補っていた値を
+共通機密へ移す（「移行」の節）。移行を伴わない案（推論を残す）と比べ、認証方式が 1 か所で
+読み取れる状態と引き換えに、1 度の手順を払う。
 
-alias は引数を受け取れない（`"$@"` はシェルの位置パラメータに展開される）ため、条件分岐を
-書けない。関数なら引数をそのまま渡せ、`command` で自分自身への再帰も避けられる。
+### 決定 2: alias のままにし、`"$@"` を落とす
+
+条件分岐を持たないため、シェル関数にする必要はない。alias は展開時に引数が末尾へ付くので、
+定義側に `"$@"` は要らない。
+
+現行の `"$@"` は alias の引数ではなく**シェルの位置パラメータ**に展開される。対話シェルでは
+空で、非対話シェルでは alias 展開自体が既定で無効なため実害は出ていないが、読み手には
+「引数を渡すための記述」に見える。意図した働きをしていないので落とす。
 
 ### 決定 3: 起動定義を Dockerfile から独立したファイルへ出す
 
@@ -194,26 +221,43 @@ alias は引数を受け取れない（`"$@"` はシェルの位置パラメー�
 
 この移動自体は振る舞いを変えない。`gemini` の変更とはコミットを分ける。
 
-### 決定 4: 明示的に設定された `GOOGLE_GENAI_USE_VERTEXAI` は空文字でも尊重する
+### 決定 4: 共通機密を既定の置き場にする
 
-判定に `[ -n "$GOOGLE_GENAI_USE_VERTEXAI" ]` を使うと、意図して空にした場合に `true` を
-補ってしまう。`${VAR+x}` で**設定されているか**を見る。「明示的に無効化した」を表現できる形を残す。
+`GOOGLE_GENAI_USE_VERTEXAI` は `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` と同じ層
+（`secrets/global.env.age`）へ置く。3 つは揃って初めて Vertex が成立するため、別々の層に
+散らすと片方だけを変えたときに壊れる。プロジェクト単位の打ち消しは、既にある
+`projects/<name>/env` の空上書き（`_project_env_overrides`）でそのまま効く。
 
 ## テスト設計
 
 | 受け入れ条件 | 何で確かめるか |
 | --- | --- |
-| AC1 / AC2 / AC3 | `tests/containers/test_ai_cli_aliases.py`: PATH の先頭へ `gemini` のスタブ（受け取った環境と引数を出力する実行可能ファイル）を置き、`ai-cli-aliases.sh` を source して `gemini` を呼ぶ。`GOOGLE_CLOUD_PROJECT` と `GOOGLE_GENAI_USE_VERTEXAI` の組み合わせを parametrize で回す |
-| AC4 | 同ファイル: スタブが出力した引数列が `--yolo <渡した引数...>` と一致すること |
-| AC5 / AC6 | 同ファイル: `shopt -s expand_aliases` して source し、`alias claude` などの定義文字列と `complete -p` を突き合わせる |
-| AC7 | 同ファイル: `type -t gemini` が `function` を返すこと |
-| AC8 | 上記が Docker を起動しないこと（`bash` の起動のみ） |
-| AC9 | `uv run pytest tests/ -q` |
-| AC10 | `docs/` の差分をレビューで確認 |
+| AC1 | `tests/containers/test_ai_cli_aliases.py`: `ai-cli-aliases.sh` の中身に `GOOGLE_GENAI_USE_VERTEXAI` が現れないこと |
+| AC2 / AC3 | 同ファイル: PATH の先頭へ `gemini` のスタブ（受け取った環境と引数を出力する実行可能ファイル）を置き、`shopt -s expand_aliases` して source し `gemini` を呼ぶ。`GOOGLE_GENAI_USE_VERTEXAI` を設定した場合／しない場合で、スタブが見る値を突き合わせる |
+| AC4 / AC7 | 同ファイル: スタブが出力した引数列が `<固定オプション> <渡した引数...>` と一致すること。6 つすべてを parametrize で回す |
+| AC5 | 同ファイル: `alias` の定義文字列のいずれにも `$@` が含まれないこと |
+| AC6 | 同ファイル: 実体と固定オプションが「起動定義」の表と一致すること |
+| AC8 | 同ファイル: source 後に `complete -p claudb` / `complete -p kiro` が引けること |
+| AC9 | 上記が Docker を起動しないこと（`bash` の起動のみ） |
+| AC10 | `uv run pytest tests/ -q` |
+| AC11 | `docs/` の差分をレビューで確認 |
+| AC12 | 完了報告に移行の実施状況を書く |
 
 ## 未確認のまま残ること
 
 | 項目 | 内容 |
 | --- | --- |
-| 実コンテナでの動作 | この工程では shell を直接 source して検証する。ベースイメージを再ビルドしたコンテナで `type gemini` と分岐が期待どおりかは、リリース後テストで確かめる |
+| 実コンテナでの動作 | この工程では shell を直接 source して検証する。ベースイメージを再ビルドしたコンテナで各 alias が期待どおり起動するかは、リリース後テストで確かめる |
+| 移行後の Vertex 経路 | 共通機密へ `GOOGLE_GENAI_USE_VERTEXAI=true` を入れた後、nyle 系プロジェクトで Vertex が現行どおり動くこと。共通機密は利用者の環境にあるためリポジトリの検証では踏めない |
 | `GOOGLE_CLOUD_PROJECT` の漏れ | 対象範囲外。稼働中のコンテナでは `nyle-carmo-analysis` が入っているが、現在の環境で `resolve()` を実行すると空になる。この計画では扱わない |
+
+## 受け入れ条件の変更
+
+- ~~AC1: `GOOGLE_CLOUD_PROJECT` が未設定または空のシェルで `gemini` を起動すると
+  `GOOGLE_GENAI_USE_VERTEXAI` が子プロセスへ渡らない / AC2: 非空なら `true` が渡る~~
+  → **起動定義は認証方式を推論しない。`GOOGLE_GENAI_USE_VERTEXAI` だけで決める**
+  （2026-09-03、PR #148 のレビュー指摘による。`GOOGLE_CLOUD_PROJECT` は GCP 全般の
+  プロジェクト指定であって gemini の認証方式の opt-in ではなく、OAuth 利用者が別の目的で
+  設定した瞬間に Vertex へ倒れるため。移行の節を追加した）
+- 追加: **AC5 / AC7 — すべての起動定義から `"$@"` を落とす**
+  （2026-09-03、利用者の指示による。alias では意図した働きをしていないため）
