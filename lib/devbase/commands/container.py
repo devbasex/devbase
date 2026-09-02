@@ -994,13 +994,11 @@ def _build_single_image(image: str, no_cache: bool = False) -> int:
         logger.error("Dockerfile not found: %s", dockerfile)
         return 1
 
-    # タグは `devbase-<image>:latest` に揃える。`containers/` 配下のイメージは
-    # すべてこの規約で参照されており (compose.yml の image: / 他 Dockerfile の
-    # `FROM devbase-base:latest` / snapshot の SNAPSHOT_IMAGE)、接頭辞なしで
-    # ビルドすると `FROM devbase-*` から解決できず、ビルドした意味が失われる。
-    # タグは `containers/` 配下のディレクトリ名から一意に導く。接頭辞を剥がすと
-    # `containers/xxx` と `containers/devbase-xxx` が同じタグを取り合い、ディレクトリが
-    # 別なのに互いのイメージを上書きしてしまうため、剥がさない。
+    # タグは `devbase-` + ディレクトリ名。`containers/` 配下のイメージはすべてこの規約で
+    # 参照されており (compose.yml の image: / 他 Dockerfile の `FROM devbase-base:latest` /
+    # snapshot の SNAPSHOT_IMAGE)、接頭辞なしでは `FROM devbase-*` から解決できない。
+    # 接頭辞は剥がさない。剥がすと `containers/xxx` と `containers/devbase-xxx` が同じ
+    # タグを取り合い、ディレクトリが別なのに互いのイメージを上書きしてしまう。
     # `devbase build devbase-base` のように接頭辞込みで渡した場合は、上の存在確認で
     # `containers/devbase-base` を探して見つからず、探したパスを示して終了する。
     tag = f"devbase-{image}:latest"
