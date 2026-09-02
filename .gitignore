@@ -27,3 +27,6 @@ gh-payload.json
 /payload.json
 # レビュー中に採取した差分ダンプ (pr119.diff 等) を誤ってコミットしないため。
 *.diff
+
+# 開発用の作業ツリー
+.worktrees/
