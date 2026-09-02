@@ -224,7 +224,9 @@ docker buildx build --load -t devbase-<image>:latest $DEVBASE_ROOT/containers/<i
 
 タグは必ず `devbase-` を前置します。`containers/` 配下のイメージは他の Dockerfile から
 `FROM devbase-base:latest` の形で参照されるため、前置しないタグではビルドしても解決できません。
-`devbase build devbase-base` のように前置込みで渡しても二重にはなりません。
+タグは `containers/` 配下のディレクトリ名から一意に決まります。`<image>` にはディレクトリ名を
+渡してください。`devbase build devbase-base` のように接頭辞込みで渡すと `containers/devbase-base`
+を探して見つからず、終了コード 1 で終わります。
 
 ビルドは 1 回だけで、compose イメージは巻き込みません。`containers/<image>` または
 その `Dockerfile` が無い場合は、探したパスを表示して終了コード 1 で終わります。

@@ -983,8 +983,12 @@ def _build_single_image(image: str, no_cache: bool = False) -> int:
     # すべてこの規約で参照されており (compose.yml の image: / 他 Dockerfile の
     # `FROM devbase-base:latest` / snapshot の SNAPSHOT_IMAGE)、接頭辞なしで
     # ビルドすると `FROM devbase-*` から解決できず、ビルドした意味が失われる。
-    # 利用者が `devbase-base` と接頭辞込みで渡しても二重に付けない。
-    tag = f"devbase-{image.removeprefix('devbase-')}:latest"
+    # タグは `containers/` 配下のディレクトリ名から一意に導く。接頭辞を剥がすと
+    # `containers/xxx` と `containers/devbase-xxx` が同じタグを取り合い、ディレクトリが
+    # 別なのに互いのイメージを上書きしてしまうため、剥がさない。
+    # `devbase build devbase-base` のように接頭辞込みで渡した場合は、上の存在確認で
+    # `containers/devbase-base` を探して見つからず、探したパスを示して終了する。
+    tag = f"devbase-{image}:latest"
 
     # `docker build` ではなく `docker buildx build --load` を使う。shell 側の
     # build_base_image が同じイメージを buildx で作っており、ビルダが分かれると

@@ -195,16 +195,22 @@ def test_single_build_appends_no_cache(devbase_root, captured_run):
     assert captured_run[0].count(str(devbase_root / "containers" / "base")) == 1
 
 
-def test_single_build_does_not_double_prefix(devbase_root, captured_run):
-    """`devbase-base` と渡されても `devbase-devbase-base` にしない。"""
-    (devbase_root / "containers" / "devbase-base").mkdir()
-    (devbase_root / "containers" / "devbase-base" / "Dockerfile").write_text("FROM x\n")
+def test_single_build_tag_maps_one_to_one_to_directory(devbase_root, captured_run):
+    """タグは `containers/` 配下のディレクトリ名と 1:1 に対応する。
 
-    container.cmd_build(image="devbase-base")
+    接頭辞を剥がすと `containers/xxx` と `containers/devbase-xxx` が同じタグを取り合い、
+    別ディレクトリなのに互いのイメージを上書きするため、剥がさずそのまま前置する。
+    """
+    for name in ("xxx", "devbase-xxx"):
+        (devbase_root / "containers" / name).mkdir()
+        (devbase_root / "containers" / name / "Dockerfile").write_text("FROM x\n")
 
-    assert "-t" in captured_run[0]
-    tag = captured_run[0][captured_run[0].index("-t") + 1]
-    assert tag == "devbase-base:latest"
+    container.cmd_build(image="xxx")
+    container.cmd_build(image="devbase-xxx")
+
+    tags = [cmd[cmd.index("-t") + 1] for cmd in captured_run]
+    assert tags == ["devbase-xxx:latest", "devbase-devbase-xxx:latest"]
+    assert len(set(tags)) == 2
 
 
 def test_single_build_missing_directory_fails(devbase_root, captured_run, caplog):
