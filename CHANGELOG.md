@@ -137,6 +137,28 @@
   実体の無いパスが `env` に残っていると ADC がユーザー認証へフォールバックできません。
 
 ### Fixed
+- **使われない GCP サービスアカウント鍵をコンテナへ渡さない**ようにしました (#134)。
+  `GCP_AUTH_MODE=adc` が止めるのは「鍵をファイルへ書き出すこと」だけで、鍵を運ぶ
+  `GCP_CREDENTIALS_BASE64__*` と `GOOGLE_APPLICATION_CREDENTIALS_BASE64` は生成 compose の
+  `environment` に名前が残り、値がコンテナへ渡っていました。アカウントグループを分けても
+  **他社の鍵がコンテナ内から `env` で読める**状態が続きます。
+
+  entrypoint が読むのはアクティブプロファイルの鍵 1 本だけなので、それ以外は dev の列挙から
+  外します。`adc` では 1 本も渡しません。後方互換キーは、鍵モードでアクティブプロファイルの
+  鍵が無いとき **だけ** 供給源になるため、その場合に限って残します。`compose.yml` の dev へ
+  **直書き**された鍵も取り除きます (列挙を絞るだけでは迂回されるため)。非 dev サービスの
+  設定には触れません。
+
+- **新規アカウントグループの初回起動で Claude Code が起動しない**不具合を直しました (#136)。
+  プレースホルダとして作られる `~/.claude.json` が 0 バイトで、
+  `The configuration file at ~/.claude.json contains invalid JSON.` になっていました。
+  `default` グループは実体がシードされるため踏みませんが、非 default はシードを飛ばす
+  (他社テナントの認証情報を持ち込まないための設計) ので必ず空になります。
+
+  空で作ると不正になるエントリを一覧で持ち、`{}` を書くようにしました。`history.jsonl` は
+  JSON Lines なので対象外です (`{}` を書くと 1 行目が履歴として読まれます)。
+  反映には**ベースイメージの再ビルド**が要ります (`devbase container build --no-cache`)。
+
 - entrypoint の symlink 生成で、**入れ子パスの親ディレクトリが作られていなかった**不具合を
   直しました。`~/.claude/.credentials.json` は永続領域側の作成が
   `No such file or directory` で落ちて壊れた symlink になり、`~/.claude/history.jsonl` は
