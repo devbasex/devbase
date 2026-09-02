@@ -20,10 +20,12 @@ logger = get_logger("devbase.cli")
 
 # Shortcuts: top-level command -> project subcommand
 # 委譲先は共有の cmd_project (PLAN06 で container は非推奨化)。
-# NOTE: `build` はここに含めない。配布入口 bin/devbase が `build` を shell の
-# cmd_build (devbase-base 依存検出 + 2 段ビルド + --no-cache 対応) に委譲しており、
-# Python の project build (単純な compose build) とは実装が異なるため。Python 側で
-# `build` を project build ショートカットとして広告すると wrapper の実経路と乖離する。
+# NOTE: `build` はここに含めない。配布入口 bin/devbase が `build` の引数を見て
+# 振り分けており (PLAN49)、Python 側で単一のショートカットとして広告すると実経路と
+# 乖離するため:
+#   - 既定 / --no-cache / --project-no-cache -> shell の cmd_build
+#     (devbase-base 依存検出 + 2 段ビルド)
+#   - <image> 指定 / --expires               -> Python の project build
 # project build / container build サブコマンド自体は引き続き利用可能。
 #
 # 同期注意 (メンテナンス性): SHORTCUTS のキー集合と _add_project_parser の
@@ -551,8 +553,9 @@ def _add_shortcuts(subparsers):
 
     `login` は project login と同様に単一 positional を `index` として扱い `[name]`
     は受け付けない (曖昧さ回避)。`build` はショートカットに含めない (SHORTCUTS の
-    注記参照): bin/devbase が build を shell 実装 (cmd_build) に委譲するため、
-    Python 側でトップレベル build を広告すると実経路と乖離する。
+    注記参照): bin/devbase が build の引数を見て shell (cmd_build) と Python
+    (project build) へ振り分けるため、Python 側でトップレベル build を単一の
+    ショートカットとして広告すると実経路と乖離する。
     """
     _add_login_subparser(subparsers)
 

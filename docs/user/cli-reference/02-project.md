@@ -214,6 +214,28 @@ devbase build [image] [--no-cache | --expires[=DAYS]]
 > 単体ビルドでは `--no-cache` のみ反映され、`--expires` は対象外です。`--expires` 付きビルドは
 > 作成日判定のため Python 経路（`project build`）で処理されます。
 
+### 単体ビルドが作るイメージ
+
+`image` を指定すると、`$DEVBASE_ROOT/containers/<image>` を次のコマンドでビルドします。
+
+```
+docker buildx build --load -t devbase-<image>:latest $DEVBASE_ROOT/containers/<image>
+```
+
+タグは必ず `devbase-` を前置します。`containers/` 配下のイメージは他の Dockerfile から
+`FROM devbase-base:latest` の形で参照されるため、前置しないタグではビルドしても解決できません。
+`devbase build devbase-base` のように前置込みで渡しても二重にはなりません。
+
+ビルドは 1 回だけで、compose イメージは巻き込みません。`containers/<image>` または
+その `Dockerfile` が無い場合は、探したパスを表示して終了コード 1 で終わります。
+
+> **`<image>` が `$DEVBASE_ROOT/projects/` に実在する名前と一致する場合、トップレベルの
+> `devbase build <image>` はそのプロジェクトへの操作として解釈されます。** これは
+> `devbase build <プロジェクト名>` を「そのプロジェクトをビルドする」と読む設計によるもので、
+> イメージ指定は失われます。該当するときは `devbase project build <image>` を使ってください
+> （こちらは常にイメージ名として扱います）。詳細は
+> [#142](https://github.com/devbasex/devbase/issues/142) を参照してください。
+
 ## `devbase project rebuild`
 
 `devbase build --expires=7` のシノニムです（既定 7 日）。プロジェクトイメージが 7 日以上古ければ

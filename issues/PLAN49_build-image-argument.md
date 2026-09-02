@@ -322,3 +322,114 @@ Python の 2 実装が残ったままになり、タグ規約の食い違いを�
   → **AC8（改）: `image` 指定の単体ビルド経路で `docker` を起動する実装が 1 箇所（Python の
   `cmd_build`）だけになる。** compose ビルドの 1 段目である shell の `build_base_image` は
   対象外とする（2026-09-02、決定 4 の理由による）
+
+---
+
+# 実装計画
+
+## 関連リンク
+
+- issue [#139](https://github.com/devbasex/devbase/issues/139)
+- 設計 PR [#143](https://github.com/devbasex/devbase/pull/143)（マージ済み。本ファイルの前半 2 節）
+- 範囲外として起票: [#141](https://github.com/devbasex/devbase/issues/141) / [#142](https://github.com/devbasex/devbase/issues/142)
+
+## モード
+
+`standard`。ドキュメント記載の `devbase build [image]` が動かない不具合の修正で、本番の振る舞いが変わる。構文・オプションの約束は変えない。
+
+## 目的と非目的
+
+達成したい状態:
+
+- `devbase build <image>` が `containers/<image>` を単体ビルドし、`devbase-<image>:latest` を作る
+- 単体ビルドの `docker` 呼び出しが Python の 1 箇所だけになる
+- `bin/devbase` の引数解釈に回帰テストがある
+
+やらないこと:
+
+- `<image>` と実在プロジェクト名の衝突の解消（#142）
+- CI へ pytest を追加すること（#141）
+- `--expires` を単体ビルドへ適用すること
+- `containers/` 配下の変更
+
+## 受け入れ条件
+
+本ファイル前半の AC1〜AC11（AC8 は「受け入れ条件の変更」節の改訂版）をそのまま使う。検証手段は同節の「テスト設計」に対応させる。
+
+## 代替案と採否
+
+設計の「決定の記録」に記載済み。ここでは再掲しない。
+
+## 互換性
+
+| 対象 | 変更 | 互換性の扱い |
+| --- | --- | --- |
+| `devbase build [image]` | 失敗 → 成功 | 破壊なし。現状 100% 失敗するため依存する呼び出し側が存在しない |
+| `devbase project build <image>` / `devbase container build <image>` | タグが `<image>:latest` → `devbase-<image>:latest` | 旧タグはリポジトリ内のどこからも参照されておらず `FROM devbase-*` を解決できないため、移行措置を設けない |
+| データスキーマ | なし | — |
+
+## 修正対象
+
+| ファイル | 変更 |
+| --- | --- |
+| `bin/devbase` | dispatch の `build)` ケース（428-440 行）に位置引数の検出を足す |
+| `lib/devbase/commands/container.py` | `cmd_build` の単体ビルド（972-998 行）のタグとビルダを直す。`_dispatch_lifecycle` の docstring（435-437 行）を実態へ合わせる |
+| `lib/devbase/cli.py` | `SHORTCUTS` と `_add_shortcut_parsers` のルーティング注記を実態へ合わせる |
+| `tests/cli/test_build_image_argument.py` | 新規 |
+| `docs/user/cli-reference/02-project.md` | `devbase project build` の節にタグ規約と衝突挙動を追記 |
+
+## タスク分解
+
+### Task 1: 単体ビルドの `docker` コマンドを直す
+
+- **対象ファイル:** `lib/devbase/commands/container.py`、`tests/cli/test_build_image_argument.py`
+- **変更内容:** `cmd_build(image=...)` が組み立てるコマンドを `['docker', 'build', '-t', image, str(image_dir)]` から `['docker', 'buildx', 'build', '--load', '-t', f'devbase-{image}:latest', str(image_dir)]` へ変える。`--no-cache` は末尾に付ける。`image` が `devbase-` 始まりで渡された場合も二重に付かないよう接頭辞を剥がしてから付け直す。
+- **満たす受け入れ条件:** AC1（docker 引数列）、AC3、AC4、AC5、AC7
+- **進め方:** `subprocess.run` を差し替えて引数列を捕まえる失敗するテストを先に書き、実装で通す。存在しないディレクトリ・`Dockerfile` 不在・`DEVBASE_ROOT` 未設定の 3 つの失敗系も同じ回で固定する。
+
+### Task 2: wrapper が位置引数を Python へ振り分ける
+
+- **対象ファイル:** `bin/devbase`、`tests/cli/test_build_image_argument.py`
+- **変更内容:** dispatch の `build)` ケースのループで、`--expires` の検出に加えて `-` で始まらない引数を `_build_image` として拾う。`_has_expires` か `_build_image` のいずれかが立っていれば `run_python project build "${_DEVBASE_ARGS[@]}"`、どちらも無ければ `cmd_build "${_DEVBASE_ARGS[@]}"` を呼ぶ。
+- **満たす受け入れ条件:** AC1（振り分け）、AC2、AC6-1〜AC6-4、AC9
+- **進め方:** `tests/cli/test_project_name_resolution.py` と同じスタブ方式（`run_python` / `cmd_build` / `compose_with_secrets` を関数で上書きし、`bin/devbase` を実プロセス起動）で失敗するテストを先に書く。`build base` が `PYTHON:` 側へ、`build` / `build --no-cache` / `build --project-no-cache` が `BUILD:` 側へ行くことを固定する。
+
+### Task 3: ルーティングの注記を実態へ合わせる
+
+- **対象ファイル:** `lib/devbase/cli.py`、`lib/devbase/commands/container.py`
+- **変更内容:** 「build は shell 実装へ委譲する」旨の注記が 3 箇所（`cli.py` の `SHORTCUTS` 前、`cli.py` の `_add_shortcut_parsers` docstring、`container.py` の `_dispatch_lifecycle` docstring）にある。`image` 指定と `--expires` は Python、それ以外が shell という現在の実態を書く。
+- **満たす受け入れ条件:** AC8（実装が 1 箇所であることを読み手が追えるようにする）
+- **進め方:** コメントのみ。テスト駆動の対象外。
+
+### Task 4: ドキュメントを追従させる
+
+- **対象ファイル:** `docs/user/cli-reference/02-project.md`
+- **変更内容:** `devbase project build` の節に、単体ビルドが作るタグが `devbase-<image>:latest` であること、`<image>` が実在プロジェクト名と一致すると name 解決が優先されること（逃げ道は `devbase project build <image>`、詳細は #142）を書く。
+- **満たす受け入れ条件:** AC11
+- **進め方:** ドキュメントのみ。テスト駆動の対象外。
+
+## 影響範囲
+
+- `devbase build` の 4 経路（既定 / `--no-cache` / `--project-no-cache` / `--expires`）— 変えない。Task 2 の振り分け条件が誤ると全経路に影響するため、AC6 のテストで固定する
+- `devbase rebuild` / `devbase up` — `_run_build` 経由で `bash bin/devbase build [--no-cache|--project-no-cache]` を呼ぶ。いずれもフラグのみで位置引数を持たないため、振り分けの影響を受けない
+- `lib/devbase/snapshot/manager.py` — `devbase-snapshot:latest` を独自に build している。今回は触らない
+
+## リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| 振り分け条件の誤りで `devbase build --no-cache` が Python 側へ流れ、2 段ビルドが失われる | AC6 のテストで 4 経路すべての行き先を固定する |
+| `_run_build`（Python → shell）と新しい振り分け（shell → Python）で無限再帰する | `_run_build` は位置引数を渡さないため shell 側の `cmd_build` へ入る。AC6-2 / AC6-3 のテストがこれを固定する |
+| タグ変更に気付かず `base:latest` を参照している箇所が残る | `grep -rn "base:latest"` 等でリポジトリ全体を走査し、`devbase-` 接頭辞なしの参照が無いことを確認する |
+
+## 切り戻し手順
+
+コード変更のみでデータ移行を伴わない。PR の revert で完全に戻る。イメージのタグが変わるが、旧タグ（`<image>:latest`）は誰も参照していないため後始末は不要。
+
+## 完了の定義
+
+- [ ] AC1〜AC11 をすべて満たし、条件ごとに検証手段と結果が対応している
+- [ ] `uv run pytest tests/ -q` が通る
+- [ ] `shellcheck --severity=error bin/devbase` が通る
+- [ ] `uv run ruff check --select=E9,F63,F7,F82 lib` が通る
+- [ ] `python -m compileall -q lib bin` が通る

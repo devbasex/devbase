@@ -421,18 +421,27 @@ case "$_resolved_cmd" in
         run_python "${_resolved_cmd}" "${_DEVBASE_ARGS[@]}" ;;
     # Shell-implemented commands
     #
-    # build: 既定 / --no-cache / <image> は shell の cmd_build (devbase-base の
-    # 2 段ビルド) で処理する。--expires はイメージ作成日の判定が必要で、shell では
-    # RFC3339 日付パースが非可搬なため Python (project build) へ委譲する
-    # (i07: build --expires=N / rebuild / up が共通の期限リゾルバを使う)。
+    # build: 既定 / --no-cache / --project-no-cache は shell の cmd_build
+    # (devbase-base の 2 段ビルド) で処理する。次の 2 つは Python (project build)
+    # へ委譲する (PLAN49 / i07):
+    #   - <image> 指定の単体ビルド: `devbase project build <image>` /
+    #     `devbase container build <image>` と同じ実装へ届ける。逆向き (Python から
+    #     shell を呼ぶ) にすると、この wrapper 冒頭の name 解決を通ってしまい、
+    #     containers/ と projects/ に同名がある場合 (bi-tools) に別のものを
+    #     ビルドしてしまう。
+    #   - --expires: イメージ作成日の判定が必要で、shell では RFC3339 日付パースが
+    #     非可搬なため (build --expires=N / rebuild / up が共通の期限リゾルバを使う)。
     build)
         _has_expires=0
+        _build_image=""
         for _ba in "${_DEVBASE_ARGS[@]}"; do
             case "$_ba" in
                 --expires|--expires=*) _has_expires=1 ;;
+                -*) ;;
+                *) _build_image="$_ba" ;;
             esac
         done
-        if [ "$_has_expires" = 1 ]; then
+        if [ "$_has_expires" = 1 ] || [ -n "$_build_image" ]; then
             run_python project build "${_DEVBASE_ARGS[@]}"
         else
             cmd_build "${_DEVBASE_ARGS[@]}"
