@@ -13,7 +13,8 @@ flowchart TB
 
     BinDevbase --> ResolveCmd{"resolve_command<br/>プレフィックスマッチ"}
 
-    ResolveCmd -->|"build"| CmdBuild["cmd_build()<br/>Bash で直接実行"]
+    ResolveCmd -->|"build (フラグのみ)"| CmdBuild["cmd_build()<br/>Bash で直接実行"]
+    ResolveCmd -->|"build &lt;image&gt; / --expires"| RunPython
     ResolveCmd -->|"その他すべて"| RunPython["run_python()<br/>uv run → python -m devbase.cli"]
 
     RunPython --> CliPy["cli.py<br/>_expand_argv → _create_parser → _dispatch"]
@@ -29,16 +30,35 @@ flowchart TB
     Project -->|"list (TTY)"| Tui["tui/<br/>(階層メニュー TUI)"]
 
     CmdBuild --> Docker["docker buildx build / docker compose build"]
+    Container --> DockerSingle["docker buildx build --load<br/>(単体ビルド)"]
 ```
 
 ### なぜ二層構成なのか
 
 | 層 | 担当 | 利点 |
 |----|------|------|
-| **Bash** (`bin/devbase`) | PATH 設定、シェル補完登録、環境変数エクスポート、`build` コマンド | シェル環境へのネイティブ統合。`source` で `.env` を読み込み、`DEVBASE_ROOT` を確定してから Python に渡せる |
-| **Python** (`lib/devbase/`) | init, status, project, env, plugin, snapshot, tui | 複雑なロジック（YAML パース、Git 操作、差分バックアップ等）を安全かつ保守的に実装できる |
+| **Bash** (`bin/devbase`) | PATH 設定、シェル補完登録、環境変数エクスポート、`build` の compose ビルド | シェル環境へのネイティブ統合。`source` で `.env` を読み込み、`DEVBASE_ROOT` を確定してから Python に渡せる |
+| **Python** (`lib/devbase/`) | init, status, project, env, plugin, snapshot, tui、`build` の単体ビルドと期限判定 | 複雑なロジック（YAML パース、Git 操作、差分バックアップ等）を安全かつ保守的に実装できる |
 
-`build` コマンドだけが Bash 側に残っている理由は、Docker buildx の制御と compose.yml のパース処理がシェルスクリプトで完結するためである。
+### `build` の振り分け
+
+`build` だけは引数によって層が分かれる。`bin/devbase` の dispatch が判定する。
+
+| 引数 | 実行する層 | 実体 | 理由 |
+|------|-----------|------|------|
+| なし / `--no-cache` / `--project-no-cache` | Bash | `cmd_build()` | compose.yml のパースと `FROM devbase-*` の依存検出、2 段ビルドの制御がシェルで完結する |
+| `<image>` | Python | `container._build_single_image()` | `devbase project build <image>` / `devbase container build <image>` と同じ実装へ届ける。逆向きに Python から `bin/devbase build <image>` を呼ぶと、wrapper 冒頭の name 解決を通ってしまい、`containers/` と `projects/` に同名がある場合に別のものをビルドする |
+| `--expires[=DAYS]` | Python | `container.cmd_build()` → `_build_resolved()` | イメージ作成日の判定に RFC3339 の日付パースが要り、シェルでは非可搬 |
+
+単体ビルド（`<image>` 指定）は `$DEVBASE_ROOT/containers/<image>` を
+`docker buildx build --load -t devbase-<image>:latest` で作る。タグはディレクトリ名から
+一意に決まり、接頭辞は剥がさない。剥がすと `containers/xxx` と `containers/devbase-xxx` が
+同じタグを取り合うためである。`image` はディレクトリ名 1 つとして妥当な文字だけを
+受け付ける（先頭は英数字、以降は英数字・`.`・`-`・`_`）。
+
+期限判定の経路（`--expires`）は Python から `_run_build()` で `bin/devbase build` を
+呼び戻すが、そこでは位置引数を渡さないため Bash の `cmd_build()` へ入る。単体ビルドの
+振り分けと再帰しない。
 
 ## モジュール構成
 
@@ -55,7 +75,7 @@ Python 側のエントリーポイント。以下の責務を持つ。
 
 | 定数 | 役割 |
 |------|------|
-| `SHORTCUTS` | トップレベルショートカット → サブコマンドのマッピング。`up`, `down`, `login`, `ps`, `scale`, `rebuild` が `project` グループへ転送される（`build` は shell 実装へ委譲するため除外、`list` は lifecycle ではないため `_dispatch` で個別 routing） |
+| `SHORTCUTS` | トップレベルショートカット → サブコマンドのマッピング。`up`, `down`, `login`, `ps`, `scale`, `rebuild` が `project` グループへ転送される（`build` は引数によって shell / Python へ分かれるため除外、`list` は lifecycle ではないため `_dispatch` で個別 routing） |
 | `GROUP_ALIASES` | グループのエイリアス。`ct` → `container`, `pl` → `plugin`, `ss` → `snapshot` |
 | `SUBCMD_MAP` | 各グループが受け付けるサブコマンド一覧。プレフィックスマッチの候補として使用される |
 
@@ -203,7 +223,7 @@ sequenceDiagram
 
     User->>Bash: devbase con u
     Bash->>Bash: resolve_command("con") → "container"
-    alt build コマンド
+    alt build コマンド (フラグのみ)
         Bash->>Bash: cmd_build() を直接実行
     else その他のコマンド
         Bash->>Python: uv run python -m devbase.cli container u

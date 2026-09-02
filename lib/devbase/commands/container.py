@@ -433,8 +433,9 @@ def _dispatch_lifecycle(args) -> int:
     chdir する (PLAN06 方針 A の Python 側フォールバック)。chdir を各 handler に
     散らさずここで実施するのは、`cmd_down()` / `cmd_login()` / `cmd_logs()` 等が
     project_name 引数を取らず、per-handler 実装では down/login/logs で名前解決が
-    効かなくなるため。build は wrapper の shell 実装で CWD 実行されるため、この
-    Python フォールバックの対象外 (name 属性も持たない)。
+    効かなくなるため。build は name positional を持たないため、この Python
+    フォールバックの対象外である。compose ビルドは wrapper の shell 実装で CWD
+    実行され、`<image>` 指定の単体ビルドは CWD に依存しない (PLAN49)。
     """
     subcmd = getattr(args, 'subcommand', None)
     project_name = getattr(args, 'name', None) or getattr(args, 'project_name', None)
@@ -953,13 +954,75 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
 # cmd_build
 # ---------------------------------------------------------------------------
 
-def cmd_build(image: str = None, no_cache: bool = False,
+# 単体ビルドで受け付けるイメージ名。`containers/` 配下の 1 ディレクトリ名であることを
+# 保証するため、英数字始まりで英数字・ハイフン・アンダースコア・ピリオドのみを許可する。
+_IMAGE_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
+
+
+def _build_single_image(image: str, no_cache: bool = False) -> int:
+    """``$DEVBASE_ROOT/containers/<image>`` を単体ビルドする (PLAN49 / #139)。
+
+    ``devbase build <image>`` (bin/devbase の dispatch が振り分け) と
+    ``devbase project build <image>`` / ``devbase container build <image>`` の
+    共通の実装。compose ビルドは巻き込まない。
+
+    Returns:
+        ``docker`` の終了コード。事前条件を満たさない場合は 1。
+    """
+    devbase_root = os.environ.get('DEVBASE_ROOT', '')
+    if not devbase_root:
+        logger.error("DEVBASE_ROOT not set")
+        return 1
+
+    # `image` はパスの一部として連結し、そのままタグにもなる。`/` `\` `..` などを
+    # 通すと $DEVBASE_ROOT の外を指せてしまい、Docker タグとして不正な名前も作れるため、
+    # ディレクトリ名 1 つとして妥当な文字だけを許可し、それ以外はここで弾く。
+    if not _IMAGE_NAME_RE.fullmatch(image):
+        logger.error(
+            "Invalid image name: %r (must be a single directory name under "
+            "containers/: alphanumeric start, then letters, digits, '.', '-', '_')",
+            image)
+        return 1
+
+    image_dir = Path(devbase_root) / 'containers' / image
+    if not image_dir.is_dir():
+        logger.error("Image directory not found: %s", image_dir)
+        return 1
+
+    dockerfile = image_dir / 'Dockerfile'
+    if not dockerfile.exists():
+        logger.error("Dockerfile not found: %s", dockerfile)
+        return 1
+
+    # タグは `devbase-` + ディレクトリ名。`containers/` 配下のイメージはすべてこの規約で
+    # 参照されており (compose.yml の image: / 他 Dockerfile の `FROM devbase-base:latest` /
+    # snapshot の SNAPSHOT_IMAGE)、接頭辞なしでは `FROM devbase-*` から解決できない。
+    # 接頭辞は剥がさない。剥がすと `containers/xxx` と `containers/devbase-xxx` が同じ
+    # タグを取り合い、ディレクトリが別なのに互いのイメージを上書きしてしまう。
+    # `devbase build devbase-base` のように接頭辞込みで渡した場合は、上の存在確認で
+    # `containers/devbase-base` を探して見つからず、探したパスを示して終了する。
+    tag = f"devbase-{image}:latest"
+
+    # `docker build` ではなく `docker buildx build --load` を使う。shell 側の
+    # build_base_image が同じイメージを buildx で作っており、ビルダが分かれると
+    # 同じイメージを 2 通りの方法で作ることになる。`--load` が無いと buildx の
+    # 既定ビルダでは生成物がローカルのイメージ一覧へ現れない。
+    logger.info("Building image '%s' from %s ...", tag, image_dir)
+    cmd = ['docker', 'buildx', 'build', '--load', '-t', tag, str(image_dir)]
+    if no_cache:
+        cmd.append('--no-cache')
+    result = subprocess.run(cmd, check=False)
+    return result.returncode
+
+
+def cmd_build(image: Optional[str] = None, no_cache: bool = False,
               expires: Optional[int] = None) -> int:
     """Build container images.
 
     引数の意味 (i07 の 3 モード):
-      - ``image`` 指定: ``$DEVBASE_ROOT/containers/<image>`` を直接 ``docker build``
-        する単体ビルド (``--no-cache`` のみ反映、``--expires`` は対象外)。
+      - ``image`` 指定: ``$DEVBASE_ROOT/containers/<image>`` を
+        ``docker buildx build --load -t devbase-<image>:latest`` で作る単体ビルド
+        (``--no-cache`` のみ反映、``--expires`` は対象外)。
       - ``image`` なし + フラグなし: 通常のキャッシュビルド。
       - ``image`` なし + ``--no-cache``: base / project とも無条件 no-cache。
       - ``image`` なし + ``--expires=N``: project の作成日で期限判定し、N 日以上なら
@@ -967,7 +1030,8 @@ def cmd_build(image: str = None, no_cache: bool = False,
 
     フラグなしの compose ビルドも、devbase-base の 2 段ビルドを行う shell
     ``cmd_build`` (``bin/devbase``) 経由 (:func:`_build_resolved` → :func:`_run_build`)
-    に統一する。``image`` 指定の単体ビルドのみ直接 ``docker build`` する。
+    に統一する。``image`` 指定の単体ビルドはここが唯一の実装で、shell 側の dispatch
+    (``devbase build <image>``) もここへ振り分けられる (PLAN49)。
     """
     if image is not None:
         # 単体ビルド (image 指定) では期限判定を行わないため --expires は無視される。
@@ -975,27 +1039,7 @@ def cmd_build(image: str = None, no_cache: bool = False,
         if expires is not None:
             logger.warning(
                 "--expires is ignored when building a single image ('%s')", image)
-        devbase_root = os.environ.get('DEVBASE_ROOT', '')
-        if not devbase_root:
-            logger.error("DEVBASE_ROOT not set")
-            return 1
-
-        image_dir = Path(devbase_root) / 'containers' / image
-        if not image_dir.is_dir():
-            logger.error("Image directory not found: %s", image_dir)
-            return 1
-
-        dockerfile = image_dir / 'Dockerfile'
-        if not dockerfile.exists():
-            logger.error("Dockerfile not found: %s", dockerfile)
-            return 1
-
-        logger.info("Building image '%s' from %s ...", image, image_dir)
-        cmd = ['docker', 'build', '-t', image, str(image_dir)]
-        if no_cache:
-            cmd.append('--no-cache')
-        result = subprocess.run(cmd, check=False)
-        return result.returncode
+        return _build_single_image(image, no_cache=no_cache)
 
     # `--expires` 単独 (値なし) は sentinel -1。既定日数へ解決する。
     if expires is not None and expires < 0:

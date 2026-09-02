@@ -137,6 +137,26 @@
   実体の無いパスが `env` に残っていると ADC がユーザー認証へフォールバックできません。
 
 ### Fixed
+- **`devbase build <image>` が必ず失敗する問題**を修正しました (#139)。`<image>` の位置引数が
+  剥がされないまま `docker buildx build` へ渡り、PATH が 2 つになって
+  `docker: 'docker buildx build' requires 1 argument` で落ちていました。CLI リファレンスに
+  正式な構文として載っているにもかかわらず、**ベースイメージだけを再ビルドする手段が
+  無い**状態でした。
+
+  `bin/devbase` の dispatch が位置引数を検出し、`--expires` と同じく Python 側へ振り分けます。
+  `devbase build` / `--no-cache` / `--project-no-cache` は従来どおり shell の 2 段ビルドです。
+
+  あわせて `devbase project build <image>` / `devbase container build <image>` が作るタグを
+  `<image>:latest` から **`devbase-<image>:latest`** へ直しました。旧タグは他の Dockerfile の
+  `FROM devbase-base:latest` から解決できず、ビルドしても使われませんでした。ビルドコマンドも
+  shell 側と同じ `docker buildx build --load` に揃えています。旧タグはリポジトリ内のどこからも
+  参照されていないため、移行の手当ては要りません。
+
+  `<image>` にはディレクトリ名を渡してください (`devbase build base`)。`devbase-base` のように
+  接頭辞込みで渡すと `containers/devbase-base` を探して見つからず、終了コード 1 で終わります。
+  `<image>` が `projects/` に実在する名前と一致する場合は、そのプロジェクトへの操作として
+  解釈されます (#142)。この場合は `devbase project build <image>` を使ってください。
+
 - **使われない GCP サービスアカウント鍵をコンテナへ渡さない**ようにしました (#134)。
   `GCP_AUTH_MODE=adc` が止めるのは「鍵をファイルへ書き出すこと」だけで、鍵を運ぶ
   `GCP_CREDENTIALS_BASE64__*` と `GOOGLE_APPLICATION_CREDENTIALS_BASE64` は生成 compose の
