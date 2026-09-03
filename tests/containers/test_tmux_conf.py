@@ -109,10 +109,14 @@ def _client_capabilities(config: Path) -> str:
                 return shown.stdout
         raise AssertionError("クライアントが接続しなかった")
     finally:
-        client.terminate()
-        client.wait(timeout=5)
-        os.close(controller)
+        # サーバーを先に落とす。クライアントは接続が切れて自ら終わるので wait が
+        # 即座に返り、待ち切れなかった場合でも残りの後始末を続けられるように
+        # TimeoutExpired は握り潰す (`sleep 30` を残さないため)。
         subprocess.run([*base, "kill-server"], capture_output=True, text=True, env=env)
+        client.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            client.wait(timeout=5)
+        os.close(controller)
         with contextlib.suppress(FileNotFoundError):
             socket.unlink()
 
