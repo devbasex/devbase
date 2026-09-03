@@ -199,16 +199,13 @@ RUN set -eux; \
     ~/.local/share/pnpm \
     ~/.claude.json.backup*
 
+# AI CLI の起動定義。~/.bashrc へ直接書かずファイルにしているのは、Docker を
+# 起動せずに tests/containers/test_ai_cli_aliases.py で振る舞いを固定するため。
+COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh
+
 RUN set -eux; \
-    # AI CLI aliases
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc; \
-    echo 'alias claude='\''claude --dangerously-skip-permissions "$@"'\''' >> ~/.bashrc; \
-    echo 'alias claudb='\''CLAUDE_CODE_USE_BEDROCK=1 AWS_REGION=us-west-2 claude --dangerously-skip-permissions "$@"'\''' >> ~/.bashrc; \
-    echo 'alias gemini='\''GOOGLE_GENAI_USE_VERTEXAI=true gemini --yolo "$@"'\''' >> ~/.bashrc; \
-    echo 'alias codex='\''codex --dangerously-bypass-approvals-and-sandbox "$@"'\''' >> ~/.bashrc; \
-    echo 'alias kiro='\''kiro-cli chat --trust-all-tools "$@"'\''' >> ~/.bashrc; \
-    echo 'alias agy='\''agy --dangerously-skip-permissions "$@"'\''' >> ~/.bashrc; \
-    echo 'complete -o default claudb kiro' >> ~/.bashrc; \
+    echo '. /etc/devbase/ai-cli-aliases.sh' >> ~/.bashrc; \
     git config --global credential.helper store; \
     # Configure Claude Code hooks
     mkdir -p ~/.claude; \
