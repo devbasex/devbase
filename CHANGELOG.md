@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Fixed
+- **tmux の中で URL がクリックできなくなっていた**のを直しました。tmux は端末が `Hls`
+  能力を持つときだけハイパーリンク (OSC 8) を書き出し、持たない端末ではリンクを捨てて
+  文字列だけを描きます。tmux が `xterm*` へ既定で与える機能に `hyperlinks` は含まれない
+  ため、v3.1.0 で入れた `/etc/tmux.conf` の下では Claude Code などが出す URL が
+  クリックできない見た目だけのリンクになっていました。`terminal-features` へ
+  `,xterm-256color:hyperlinks` を追記します。
+
+  > **Note:** 反映には `devbase build base` によるイメージの再ビルドとコンテナの
+  > 作り直しが要ります。動作中のコンテナで今すぐ戻すには、`~/.tmux.conf` へ同じ 1 行を
+  > 書いて `tmux source-file ~/.tmux.conf` した後、**クライアントを繋ぎ直して**ください
+  > (端末の能力は接続時に決まるため、実行中のクライアントには反映されません)。
+
 ## [3.1.0] - 2026-09-02
 
 `devbase up` でコンテナを作り直しても VS Code Server が残るようになり、
