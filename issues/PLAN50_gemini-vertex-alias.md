@@ -261,3 +261,110 @@ BigQuery などの目的で同じ変数を設定した瞬間、意図せず Vert
   設定した瞬間に Vertex へ倒れるため。移行の節を追加した）
 - 追加: **AC5 / AC7 — すべての起動定義から `"$@"` を落とす**
   （2026-09-03、利用者の指示による。alias では意図した働きをしていないため）
+
+---
+
+# 実装計画
+
+## 関連リンク
+
+- 設計 PR [#148](https://github.com/devbasex/devbase/pull/148)（マージ済み。本ファイルの前半 2 節）
+
+## モード
+
+`standard`。全コンテナの `gemini` の振る舞いが変わる。触るのは `containers/base` の 1 領域。
+
+## 目的と非目的
+
+達成したい状態:
+
+- 起動定義が認証方式を決めない。`GOOGLE_GENAI_USE_VERTEXAI` を設定する記述がどこにも無い
+- 全 6 定義から `"$@"` が消える
+- 起動定義が Docker 抜きでテストできる場所にある
+
+やらないこと:
+
+- `GOOGLE_CLOUD_PROJECT` がプロジェクトの空上書きを無視してコンテナへ漏れる件の調査
+- `~/.gemini/settings.json` の管理
+- 他の AI CLI の起動オプションの変更（`"$@"` の除去を除く）
+
+## 受け入れ条件
+
+本ファイル前半の AC1〜AC12 をそのまま使う。
+
+## 修正対象
+
+| ファイル | 変更 |
+| --- | --- |
+| `containers/base/ai-cli-aliases.sh` | 新規。起動定義の唯一の置き場 |
+| `containers/base/Dockerfile` | 上記を `COPY` し `.bashrc` から読み込ませる。インラインの `echo` 群（202-209 行）を落とす |
+| `tests/containers/test_ai_cli_aliases.py` | 新規 |
+| `docs/user/container-operations.md` | AI CLI の起動定義と、gemini の認証方式の選び方を書く |
+
+## タスク分解
+
+### Task 1: 起動定義をファイルへ出す（振る舞いを変えない）
+
+- **対象ファイル:** `containers/base/ai-cli-aliases.sh`、`containers/base/Dockerfile`、`tests/containers/test_ai_cli_aliases.py`
+- **変更内容:** インラインの `echo ... >> ~/.bashrc` 群と同じ内容を `ai-cli-aliases.sh` へ移す。**この段階では `GOOGLE_GENAI_USE_VERTEXAI=true` も `"$@"` もそのまま残す。** Dockerfile は `COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh` と、`.bashrc` へ読み込み行を 1 行足す形にする。
+- **満たす受け入れ条件:** AC9 の土台（テストできる場所へ移す）
+- **進め方:** 移した内容が現行と一致することを固定するテストを先に書く。振る舞いを変えないため、テストは移行前後で同じ結果になる。
+
+### Task 2: `GOOGLE_GENAI_USE_VERTEXAI` の強制をやめる
+
+- **対象ファイル:** `containers/base/ai-cli-aliases.sh`、`tests/containers/test_ai_cli_aliases.py`
+- **変更内容:** `gemini` の定義から `GOOGLE_GENAI_USE_VERTEXAI=true` の前置を落とす。
+- **満たす受け入れ条件:** AC1、AC2、AC3
+- **進め方:** 環境の `GOOGLE_GENAI_USE_VERTEXAI` がそのまま子プロセスへ届くこと（設定時／未設定時）を固定する失敗するテストを先に書く。
+
+### Task 3: 全定義から `"$@"` を落とす
+
+- **対象ファイル:** `containers/base/ai-cli-aliases.sh`、`tests/containers/test_ai_cli_aliases.py`
+- **変更内容:** 6 定義すべての `"$@"` を削除する。
+- **満たす受け入れ条件:** AC4、AC5、AC6、AC7
+- **進め方:** 引数がそのままの順序で実体へ届くことを 6 定義分 parametrize で固定し、定義文字列に `$@` が無いことも確認する。
+
+### Task 4: ドキュメント
+
+- **対象ファイル:** `docs/user/container-operations.md`
+- **変更内容:** AI CLI の起動定義の一覧と、gemini の認証方式を `GOOGLE_GENAI_USE_VERTEXAI` で選ぶこと、プロジェクト単位で打ち消せることを書く。
+- **満たす受け入れ条件:** AC11
+- **進め方:** ドキュメントのみ。
+
+### Task 5: 移行
+
+- **対象:** 利用者の環境（リポジトリの差分ではない）
+- **変更内容:** `devbase env set GOOGLE_GENAI_USE_VERTEXAI=true` と、`with-ai-dev` / `project-trygroup-prd` の `env` への空上書き。
+- **満たす受け入れ条件:** AC12
+- **進め方:** 実施の可否を利用者に確認し、結果を完了報告に残す。
+
+## 影響範囲
+
+- 全コンテナの対話シェル。ベースイメージの再ビルドとコンテナ再作成で初めて反映される
+- `containers/general` `go` `php` `php85` `latex` `bi-tools` `trygroup` は `FROM devbase-base` のため、base の再ビルド後に各イメージも焼き直しが要る
+
+## リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| 移行を忘れて既存の Vertex 利用者が OAuth へ倒れる | AC12 で完了報告に実施状況を残す。CHANGELOG にも移行手順を書く |
+| `.bashrc` からの読み込み行が対話シェル以外で悪さをする | 読み込むファイルは alias 定義と `complete` のみで、副作用を持たない |
+| `"$@"` の除去で引数が欠ける | AC7 で 6 定義すべての引数の届き方をテストで固定する |
+
+## 切り戻し手順
+
+コード変更のみ。PR の revert で戻る。移行で共通機密へ入れた `GOOGLE_GENAI_USE_VERTEXAI` は、
+revert 後も残るが害はない（旧定義が同じ値を前置していたため）。
+
+## 完了の定義
+
+- [ ] AC1〜AC12 をすべて満たし、条件ごとに検証手段と結果が対応している
+- [ ] `uv run pytest tests/ -q` が通る
+- [ ] `shellcheck --severity=error containers/base/ai-cli-aliases.sh` が通る
+- [ ] `python -m compileall -q lib bin` が通る
+
+## 範囲を広げた判断
+
+- `claudb` が `claude` の alias まで展開し `--dangerously-skip-permissions` を 2 度渡していた
+  （実コンテナで再現を確認）。書き換えている行そのものが原因で、放置するとテストが重複を
+  「正」として固定するため範囲に入れ、`command claude` を挟んで解消した（2026-09-03）

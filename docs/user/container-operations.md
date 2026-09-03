@@ -389,6 +389,52 @@ gemini "テストを書いて"
 codex "リファクタリングして"
 ```
 
+## AI CLI の起動定義
+
+コンテナの対話シェルでは、各 AI CLI が確認プロンプトを省くオプション付きで起動します。
+定義は `/etc/devbase/ai-cli-aliases.sh` にあり、`~/.bashrc` から読み込まれます。
+
+| コマンド | 起動するもの |
+|---------|-------------|
+| `claude` | `claude --dangerously-skip-permissions` |
+| `claudb` | `claude --dangerously-skip-permissions`（Amazon Bedrock 経由。`CLAUDE_CODE_USE_BEDROCK=1` / `AWS_REGION=us-west-2` を前置） |
+| `gemini` | `gemini --yolo` |
+| `codex` | `codex --dangerously-bypass-approvals-and-sandbox` |
+| `kiro` | `kiro-cli chat --trust-all-tools` |
+| `agy` | `agy --dangerously-skip-permissions` |
+
+引数はそのまま後ろへ渡ります（`gemini "テストを書いて"` は `gemini --yolo "テストを書いて"`）。
+素の CLI を使いたいときは `command gemini ...` のように `command` を前置します。
+
+### gemini の認証方式
+
+**起動定義は認証方式を決めません。** 環境変数 `GOOGLE_GENAI_USE_VERTEXAI` で選びます。
+
+| 設定 | 経路 |
+|------|------|
+| `GOOGLE_GENAI_USE_VERTEXAI=true` | Vertex AI（`GOOGLE_CLOUD_PROJECT` と ADC が要る） |
+| 未設定・空 | `~/.gemini/settings.json` の `selectedType` に従う（`oauth-personal` など） |
+
+Vertex AI を既定にするなら共通の設定へ入れます。
+
+```bash
+devbase env set GOOGLE_GENAI_USE_VERTEXAI=true
+```
+
+Vertex AI を使わないプロジェクト（別会社のアカウントで OAuth ログインするなど）は、
+`projects/<name>/env` で空にして共通の値を打ち消します。`GOOGLE_CLOUD_PROJECT` と同じやり方です。
+
+```
+GOOGLE_GENAI_USE_VERTEXAI=
+GOOGLE_CLOUD_PROJECT=
+```
+
+> **`GOOGLE_CLOUD_PROJECT` は認証方式を選ぶ変数ではありません。** gcloud や BigQuery でも使う
+> プロジェクト指定なので、OAuth を使いながら別の用途で設定していても Vertex へは切り替わりません。
+
+`~/.gemini` はアカウントグループのボリューム（`/persistent/group/.gemini`）にあるため、
+OAuth のログインはコンテナを作り直しても残ります。
+
 ## tmux（ターミナル）の既定設定
 
 コンテナ内の tmux には、devbase 共通の既定設定 `/etc/tmux.conf` が入っています
