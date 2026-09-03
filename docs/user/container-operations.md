@@ -449,6 +449,7 @@ OAuth のログインはコンテナを作り直しても残ります。
 | `focus-events` | `on` | 端末のフォーカス通知を中のアプリへ渡す。Claude Code の完了通知が正しく出し分けられる |
 | `default-terminal` | `tmux-256color` | 端末種別の固定 |
 | `terminal-overrides` | `,xterm-256color:Tc` を追記 | VS Code の統合ターミナルへ 24bit 色を通す |
+| `terminal-features` | `,xterm-256color:hyperlinks` を追記 | OSC 8 のハイパーリンクを外側の端末へ渡す。宣言しないと tmux がリンクを捨て、Claude Code などが出す URL がクリックできない |
 
 ### 基本操作
 
