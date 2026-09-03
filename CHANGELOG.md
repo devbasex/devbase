@@ -4,6 +4,50 @@
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-09-03
+
+`gemini` が常に Vertex AI 経由になっていたのをやめ、認証方式を環境で選べるようにしました。
+
+**この版を反映するには、ベースイメージの再ビルドとコンテナの再作成が要ります。**
+
+```bash
+devbase build base --no-cache
+devbase up <プロジェクト名>
+```
+
+### Changed
+- **`gemini` の Vertex AI 強制をやめました。** `containers/base/Dockerfile` が `.bashrc` へ
+  書き込む alias が、全コンテナで `GOOGLE_GENAI_USE_VERTEXAI=true` を無条件に前置していました。
+  Vertex AI を使わないプロジェクト（`GOOGLE_CLOUD_PROJECT` を空にしたもの）でも Vertex 経路へ
+  倒れ、gemini が使えなくなります。
+
+  認証方式は環境変数 `GOOGLE_GENAI_USE_VERTEXAI` で選びます。未設定・空なら
+  `~/.gemini/settings.json` の `selectedType`（OAuth など）に従います。
+
+  **`GOOGLE_CLOUD_PROJECT` の有無では判定しません。** これは gcloud や BigQuery でも使う
+  プロジェクト指定であって認証方式の opt-in ではなく、OAuth を使いながら別の目的で設定して
+  いる場合に意図せず Vertex へ倒れるためです。
+
+  > **移行が要ります。** これまで Vertex AI を使っていた環境は、alias が補っていた値を
+  > 環境の側へ移してください。移さないと OAuth 側へ倒れます。
+  >
+  > ```bash
+  > devbase env set GOOGLE_GENAI_USE_VERTEXAI=true
+  > ```
+  >
+  > Vertex AI を使わないプロジェクトは `projects/<name>/env` に
+  > `GOOGLE_GENAI_USE_VERTEXAI=` を書いて共通の値を打ち消します。
+
+- **AI CLI の起動定義を `containers/base/ai-cli-aliases.sh` へ出しました。** `~/.bashrc` へ
+  直接書き出す形をやめ、`COPY` する資産にしています。Docker を起動せずに振る舞いを固定する
+  テストを 37 件追加しました。定義の場所はコンテナ内の `/etc/devbase/ai-cli-aliases.sh` です。
+
+### Fixed
+- **`claudb` が `--dangerously-skip-permissions` を 2 度渡していた**のを直しました。alias の
+  展開で `claude` の alias まで展開されていたためです。`command` を挟んで解消しました。
+- **起動定義の `"$@"` を落としました。** alias の `"$@"` は alias の引数ではなくシェルの
+  位置パラメータへ展開されるため、引数を渡す働きをしていませんでした。引数の渡り方は変わりません。
+
 ## [3.1.0] - 2026-09-02
 
 `devbase up` でコンテナを作り直しても VS Code Server が残るようになり、
@@ -441,7 +485,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/devbasex/devbase/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/devbasex/devbase/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/devbasex/devbase/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/devbasex/devbase/releases/tag/v2.2.0
