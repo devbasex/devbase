@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [3.2.2] - 2026-09-04
+
+base イメージで AI CLI の alias 設定を一般ユーザーが読み込めない問題を修正しました。
+
+**この版を反映するには、ベースイメージの再ビルドとコンテナの再作成が要ります。**
+
+```bash
+devbase build base --no-cache
+devbase up <プロジェクト名>
+```
+
+### Fixed
+
+- **`/etc/devbase/ai-cli-aliases.sh` を一般ユーザーが読み込めるようにしました。**
+  alias ファイルの配置前に親ディレクトリを `0755` で明示作成します。これにより、新規に
+  no-cache ビルドしたイメージでも Bash 起動時に `Permission denied` が発生しません。
+
 ## [3.2.1] - 2026-09-04
 
 Kiro CLI のログイン状態をコンテナ再作成後も保持し、tmux の履歴上で選択した文字列を
@@ -508,7 +525,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.2.1...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.2.2...HEAD
+[3.2.2]: https://github.com/devbasex/devbase/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/devbasex/devbase/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/devbasex/devbase/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/devbasex/devbase/compare/v3.0.0...v3.1.0
