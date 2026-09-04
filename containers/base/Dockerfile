@@ -201,6 +201,7 @@ RUN set -eux; \
 
 # AI CLI の起動定義。~/.bashrc へ直接書かずファイルにしているのは、Docker を
 # 起動せずに tests/containers/test_ai_cli_aliases.py で振る舞いを固定するため。
+RUN sudo install -d -m 0755 /etc/devbase
 COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh
 
 RUN set -eux; \
