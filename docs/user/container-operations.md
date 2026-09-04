@@ -144,7 +144,7 @@ devbase のコンテナは 4 種類のボリュームを使用します。
 | ボリューム名 | マウント先 | 共有範囲 | 用途 |
 |-------------|-----------|---------|------|
 | `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | 契約やテナントに紐づかない共通資産（`~/.claude/plugins` / `skills` / `commands` / `CLAUDE.md` / `settings.json`、`.codex` / `.serena` / `.kiro`、SSH 鍵、共有ファイル置き場 `share`）|
-| `devbase_home_{group}` | `/persistent/group` | 同じアカウントグループのコンテナで共有 | 企業テナントに紐づくもの（Claude Code の認証と会話ログ、`.gemini`、gcloud / gws の設定ディレクトリ）|
+| `devbase_home_{group}` | `/persistent/group` | 同じアカウントグループのコンテナで共有 | 企業テナントに紐づくもの（Claude Code の認証と会話ログ、`.gemini`、Kiro CLI の `.local/share/kiro-cli`、gcloud / gws の設定ディレクトリ）|
 | `devbase_work_{index}` | `/work` | 同じ index のコンテナで共有（プロジェクト間も共有） | プロジェクトのソースコード、作業ファイル |
 | `devbase_vscode_{project}_{index}` | `/home/ubuntu/.vscode-server` | 共有しない（コンテナ 1 つに 1 本）| VS Code Server 本体・拡張機能・接続トークン |
 
@@ -270,6 +270,7 @@ AI CLI ツールの設定や認証情報は、コンテナを再生成しても�
 | `.claude.json` | Claude Code の設定（`oauthAccount` を含む）|
 | `.claude` | Claude Code の認証・会話ログ・セッション状態（上表の共通資産を除く**すべて**）|
 | `.gemini` | Gemini CLI と Antigravity CLI の設定（`vertex-ai` は GCP プロジェクトに紐づく。Antigravity CLI は `.gemini/antigravity-cli/` 配下を使う）|
+| `.local/share/kiro-cli` | Kiro CLI 2.x の認証状態・実行データ |
 
 `~/.claude` は `/persistent/group/.claude` への symlink で、**その配下の既定はグループ側**です。
 共通資産だけがその中から `/persistent/ai/.claude/<name>` へ張り直されます。既定をグループ側に
@@ -455,14 +456,17 @@ OAuth のログインはコンテナを作り直しても残ります。
 | 操作 | キー |
 |------|------|
 | スクロール | マウスホイール（自動で copy-mode に入る） |
-| コピー | ドラッグして離す（クリップボードへ直接入る） |
+| 範囲選択 | ドラッグ（ボタンを離しても選択を保持） |
+| コピー | 選択中に `Ctrl+C`（クリップボードへ入れて copy-mode を抜ける） |
+| 選択解除 | `q` |
 | copy-mode に入る | `Ctrl-b` `[` |
 | 履歴内を検索 | copy-mode 中に `Ctrl-r`（上方向）／`Ctrl-s`（下方向） |
 | copy-mode を抜ける | `q` |
 | ペインをまたいで選択 | `Shift` + ドラッグ（VS Code のネイティブ選択に切り替わる） |
 
-コピーは追加設定なしで動きます。tmux の `set-clipboard`（既定 `external`）により、選択して
-ボタンを離した時点で OSC 52 が送出され、VS Code がクリップボードへ書き込みます。
+ドラッグ終了後も選択範囲が残ります。`Ctrl+C` を押すと tmux が OSC 52 を送出し、VS Code の
+クリップボードへ書き込んで copy-mode を抜けます。コピーせず選択を解除する場合は `q` を
+押します。
 
 上表の copy-mode のキーは tmux の `mode-keys` に従います。既定は `emacs` ですが、tmux は
 `EDITOR` / `VISUAL` に `vi` を含む値が入っていると `vi` へ切り替えるため、その場合の検索は

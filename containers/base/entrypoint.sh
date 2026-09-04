@@ -205,6 +205,14 @@ DEVBASE_GROUP_SETTINGS=(
     ".claude.json"
     ".claude"
     ".gemini"
+    ".local/share/kiro-cli"
+)
+
+# 分類 B のうち、既存コンテナのホームから初回だけ取り込むもの。
+# Kiro CLI 2.x は認証状態を ~/.local/share/kiro-cli にも保存するため、symlink へ
+# 張り替える前にコピーしないと、初回適用時のログイン状態を失う。
+DEVBASE_GROUP_HOME_SEED_SETTINGS=(
+    ".local/share/kiro-cli"
 )
 
 # 分類 A のうち ~/.claude 配下にあるもの (グループ側の .claude から共通側へ張る)
@@ -383,7 +391,7 @@ devbase_seed_entry() {
 # 失われる。gcloud / gws はシード元が存在しないため対象外 (AC8)。
 devbase_seed_group_settings() {
     local ai_root="$1" group_root="$2" group="$3"
-    local entry
+    local entry home_seed_entry skip
 
     if [ "$group" != "default" ]; then
         return 0
@@ -391,6 +399,16 @@ devbase_seed_group_settings() {
 
     echo "Seeding account group '${group}' from ${ai_root} (first run only)..."
     for entry in "${DEVBASE_GROUP_SETTINGS[@]}"; do
+        # ホームから取り込むエントリには /persistent/ai 側の旧保存先が無い。
+        # 専用のホームシードへ任せ、存在しないシード元を試行しない。
+        skip=0
+        for home_seed_entry in "${DEVBASE_GROUP_HOME_SEED_SETTINGS[@]}"; do
+            if [ "$entry" = "$home_seed_entry" ]; then
+                skip=1
+                break
+            fi
+        done
+        [ "$skip" = "1" ] && continue
         if [ "$entry" = ".claude" ]; then
             devbase_seed_entry "$ai_root/$entry" "$group_root/$entry" \
                 "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"
@@ -433,6 +451,12 @@ devbase_setup_ai_settings() {
     # symlink の中身へコピーしてしまう。
     devbase_seed_image_claude_settings "$home_root" "$ai_root"
     devbase_seed_group_settings "$ai_root" "$group_root" "$group"
+    for entry in "${DEVBASE_GROUP_HOME_SEED_SETTINGS[@]}"; do
+        # 既存リンクは以前選択したグループを指す可能性がある。リンク先を辿って
+        # 新しいグループへ認証状態をコピーしてはならない。
+        [ -L "$home_root/$entry" ] && continue
+        devbase_seed_entry "$home_root/$entry" "$group_root/$entry"
+    done
 
     for entry in "${DEVBASE_SHARED_SETTINGS[@]}"; do
         devbase_link_setting "$home_root/$entry" "$ai_root/$entry" "$owner"
