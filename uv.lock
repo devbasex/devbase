@@ -41,7 +41,7 @@ wheels = [
 
 [[package]]
 name = "devbase"
-version = "3.2.0"
+version = "3.2.1"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },

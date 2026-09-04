@@ -1,6 +1,6 @@
 [project]
 name = "devbase"
-version = "3.2.0"
+version = "3.2.1"
 description = "Docker-based Development Environment Manager"
 requires-python = ">=3.10"
 dependencies = [

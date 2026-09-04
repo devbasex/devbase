@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-09-04
+
+Kiro CLI のログイン状態をコンテナ再作成後も保持し、tmux の履歴上で選択した文字列を
+`Ctrl+C` でコピーできるようにしました。
+
+**この版を反映するには、ベースイメージの再ビルドとコンテナの再作成が要ります。**
+
+```bash
+devbase build base --no-cache
+devbase up <プロジェクト名>
+```
+
+### Fixed
+
+- **Kiro CLI 2.x の認証状態と実行データをアカウントグループ単位で永続化しました。**
+  `~/.local/share/kiro-cli` は `/persistent/group/.local/share/kiro-cli` へのシンボリックリンクに
+  なります。初回適用時にホーム側へ既存データがある場合は、グループ側の保存先が空のときだけ
+  コピーするため、再ログイン済みの状態を失わず、異なるAWSアカウント間でも混ざりません。
+- **tmux の履歴上でドラッグ選択した文字列を `Ctrl+C` でコピーできるようにしました。**
+  マウスホイールで履歴へ入り、ボタンを離しても選択を保持します。`Ctrl+C` はOSC 52経由で
+  端末のクリップボードへコピーしてcopy-modeを終了します。`Ctrl+Home` はVS CodeやWindows側の
+  操作と競合するため割り当てません。
+
 ## [3.2.0] - 2026-09-03
 
 `gemini` が常に Vertex AI 経由になっていたのをやめ、認証方式を環境で選べるようにしました。
@@ -485,7 +508,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.2.1...HEAD
+[3.2.1]: https://github.com/devbasex/devbase/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/devbasex/devbase/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/devbasex/devbase/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/devbasex/devbase/compare/v2.2.0...v3.0.0
