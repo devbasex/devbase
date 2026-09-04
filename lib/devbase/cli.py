@@ -14,7 +14,7 @@ from devbase.log import get_logger, setup
 try:
     from . import __version__
 except ImportError:
-    __version__ = "3.2.1"
+    __version__ = "3.2.2"
 
 logger = get_logger("devbase.cli")
 
