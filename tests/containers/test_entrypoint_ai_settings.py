@@ -73,10 +73,58 @@ def test_group_entries_point_at_the_group_volume(roots):
     home, _, grp = roots
     setup(roots, "kkg")
 
-    for entry in (".claude.json", ".claude", ".gemini"):
+    for entry in (".claude.json", ".claude", ".gemini", ".local/share/kiro-cli"):
         link = home / entry
         assert link.is_symlink(), f"{entry} が symlink ではない"
         assert link.resolve() == (grp / entry).resolve()
+
+
+def test_kiro_cli_data_points_at_the_group_volume(roots):
+    home, _, grp = roots
+    setup(roots, "kkg")
+
+    link = home / ".local" / "share" / "kiro-cli"
+    assert link.is_symlink()
+    assert link.resolve() == (grp / ".local" / "share" / "kiro-cli").resolve()
+
+
+def test_existing_kiro_cli_data_is_seeded_before_linking(roots):
+    home, _, grp = roots
+    source = home / ".local" / "share" / "kiro-cli"
+    source.mkdir(parents=True)
+    (source / "data.sqlite3").write_text("logged-in")
+
+    setup(roots, "kkg")
+
+    assert source.is_symlink()
+    assert (grp / ".local" / "share" / "kiro-cli" / "data.sqlite3").read_text() == "logged-in"
+
+
+def test_existing_group_kiro_data_is_not_overwritten(roots):
+    home, _, grp = roots
+    source = home / ".local" / "share" / "kiro-cli"
+    target = grp / ".local" / "share" / "kiro-cli"
+    source.mkdir(parents=True)
+    target.mkdir(parents=True)
+    (source / "data.sqlite3").write_text("stale")
+    (target / "data.sqlite3").write_text("refreshed")
+
+    setup(roots, "kkg")
+
+    assert (target / "data.sqlite3").read_text() == "refreshed"
+
+
+def test_kiro_cli_data_is_separate_between_groups(roots, tmp_path):
+    home_a, ai, group_a = roots
+    home_b = tmp_path / "home-b"
+    group_b = tmp_path / "persistent" / "kkg"
+    home_b.mkdir()
+
+    setup((home_a, ai, group_a), "default")
+    setup((home_b, ai, group_b), "kkg")
+    (home_a / ".local" / "share" / "kiro-cli" / "identity").write_text("default")
+
+    assert not (home_b / ".local" / "share" / "kiro-cli" / "identity").exists()
 
 
 def test_claude_defaults_to_the_group_volume(roots):

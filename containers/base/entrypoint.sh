@@ -205,6 +205,14 @@ DEVBASE_GROUP_SETTINGS=(
     ".claude.json"
     ".claude"
     ".gemini"
+    ".local/share/kiro-cli"
+)
+
+# 分類 B のうち、既存コンテナのホームから初回だけ取り込むもの。
+# Kiro CLI 2.x は認証状態を ~/.local/share/kiro-cli にも保存するため、symlink へ
+# 張り替える前にコピーしないと、初回適用時のログイン状態を失う。
+DEVBASE_GROUP_HOME_SEED_SETTINGS=(
+    ".local/share/kiro-cli"
 )
 
 # 分類 A のうち ~/.claude 配下にあるもの (グループ側の .claude から共通側へ張る)
@@ -433,6 +441,9 @@ devbase_setup_ai_settings() {
     # symlink の中身へコピーしてしまう。
     devbase_seed_image_claude_settings "$home_root" "$ai_root"
     devbase_seed_group_settings "$ai_root" "$group_root" "$group"
+    for entry in "${DEVBASE_GROUP_HOME_SEED_SETTINGS[@]}"; do
+        devbase_seed_entry "$home_root/$entry" "$group_root/$entry"
+    done
 
     for entry in "${DEVBASE_SHARED_SETTINGS[@]}"; do
         devbase_link_setting "$home_root/$entry" "$ai_root/$entry" "$owner"

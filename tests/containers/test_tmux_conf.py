@@ -146,10 +146,19 @@ def test_dockerfile_installs_conf_as_etc_tmux_conf():
         f"配置先かパーミッションが想定と違う: {copy_lines[0]}"
 
 
-def test_conf_does_not_change_key_bindings():
-    """条件 9: 既定値の配布に留め、利用者の既知の操作を壊さない。"""
+def test_conf_provides_windows_like_copy_bindings():
+    """履歴上のドラッグ選択と Ctrl+C を両モードへ設定する。"""
     directives = [line.strip() for line in TMUX_CONF.read_text().splitlines()
                   if line.strip() and not line.strip().startswith("#")]
     assert directives, "設定が 1 行も無い"
-    assert all(line.startswith("set ") for line in directives), \
-        f"set 以外の指示が含まれる: {[x for x in directives if not x.startswith('set ')]}"
+    binding_directives = [line for line in directives if not line.startswith("set ")]
+    assert binding_directives == [
+        "unbind-key -T copy-mode MouseDragEnd1Pane",
+        "unbind-key -T copy-mode-vi MouseDragEnd1Pane",
+        "bind-key -T copy-mode MouseDown1Pane select-pane",
+        "bind-key -T copy-mode-vi MouseDown1Pane select-pane",
+        r"bind-key -T copy-mode MouseDrag1Pane select-pane \; send-keys -X begin-selection",
+        r"bind-key -T copy-mode-vi MouseDrag1Pane select-pane \; send-keys -X begin-selection",
+        "bind-key -T copy-mode C-c send-keys -X copy-selection-and-cancel",
+        "bind-key -T copy-mode-vi C-c send-keys -X copy-selection-and-cancel",
+    ]
