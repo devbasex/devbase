@@ -127,6 +127,29 @@ def test_kiro_cli_data_is_separate_between_groups(roots, tmp_path):
     assert not (home_b / ".local" / "share" / "kiro-cli" / "identity").exists()
 
 
+def test_switching_groups_in_the_same_home_does_not_copy_kiro_data(roots, tmp_path):
+    """既存 symlink 経由で前グループの認証状態を次グループへ移さない。"""
+    home, ai, group_a = roots
+    group_b = tmp_path / "persistent" / "kkg"
+
+    setup((home, ai, group_a), "default")
+    (home / ".local" / "share" / "kiro-cli" / "identity").write_text("default")
+
+    setup((home, ai, group_b), "kkg")
+
+    assert (home / ".local" / "share" / "kiro-cli").resolve() == \
+        (group_b / ".local" / "share" / "kiro-cli").resolve()
+    assert not (group_b / ".local" / "share" / "kiro-cli" / "identity").exists()
+
+
+def test_kiro_home_seed_is_not_attempted_from_shared_volume(roots):
+    """Kiro 2.x のデータはホーム由来なので /persistent/ai を探索しない。"""
+    _, ai, _ = roots
+    result = setup(roots, "default")
+
+    assert f"skip (シード元なし): {ai}/.local/share/kiro-cli" not in result.stdout
+
+
 def test_claude_defaults_to_the_group_volume(roots):
     """``~/.claude`` 配下の既定はグループ側。
 
