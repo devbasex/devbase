@@ -99,31 +99,55 @@ cache:
 
 | パス | 中身 |
 | --- | --- |
-| `cache/global.env.age` | 共通機密の控え（age 暗号化） |
-| `cache/projects/<name>.env.age` | プロジェクト機密の控え |
-| `cache/index.json` | 参照ごとの `fetched_at` / `backend` / `url_host` / 取得元の指紋 |
+| `cache/global.env.age` | 共通機密の控えと、その取得元を表す `scope`（age 暗号化） |
+| `cache/projects/<name>.env.age` | プロジェクト機密の控えと `scope` |
+| `cache/index.json` | 参照ごとの `fetched_at` / `backend` / `url_host`。`status` の表示だけに使う |
 
-`index.json` に**キー名も値も入れない**。何が保存されているかは暗号文の側にしか無い状態を保つ。
+**1 つの参照のキャッシュは 1 ファイルに収める。** 控えた機密と `scope` を同じ age 暗号文の
+中へ入れ、`write_secure_bytes_atomic` で 1 回の置き換えとして書く。復号すると両方が必ず同じ
+取得の結果として一緒に出るため、機密と `scope` が食い違った組み合わせは作れない。暗号文を
+復号した中身は次の形にする。
+
+```json
+{
+  "version": 1,
+  "scope": "sha256:9f2c1e...",
+  "backend": "infisical",
+  "fetched_at": "2026-09-08T10:00:00+09:00",
+  "secrets": "KEY=value\n..."
+}
+```
+
+`index.json` は `status` が最終取得時刻と接続先を表示するためだけに置く。**キャッシュを使える
+かの判定には使わない。** キー名も値も入れない。何が保存されているかは暗号文の側にしか無い
+状態を保つ。欠けていても壊れていてもキャッシュの可否は変わらない。
 
 ```json
 {
   "version": 1,
   "entries": {
-    "global": {"fetched_at": "2026-09-08T10:00:00+09:00", "backend": "infisical", "url_host": "infisical.example.com", "scope": "sha256:9f2c1e..."},
-    "project:carmo": {"fetched_at": "2026-09-08T10:00:00+09:00", "backend": "infisical", "url_host": "infisical.example.com", "scope": "sha256:4ab7d0..."}
+    "global": {"fetched_at": "2026-09-08T10:00:00+09:00", "backend": "infisical", "url_host": "infisical.example.com"},
+    "project:carmo": {"fetched_at": "2026-09-08T10:00:00+09:00", "backend": "infisical", "url_host": "infisical.example.com"}
   }
 }
 ```
 
 **キャッシュを使える条件:** `scope` は接続先 URL 全体・`project_id`・`environment`・その参照の
 `secretPath`・認証主体（client ID）を連結して SHA-256 を取ったものである。読み出すときは現在の
-設定から同じ手順で計算し、`backend` と `scope` の両方が一致する参照だけをキャッシュとして使う。
-一致しない参照はキャッシュが無いものとして扱い、不達なら接続先を示して非ゼロ終了する。
+設定から同じ手順で計算し、**復号して得た** `backend` と `scope` の両方が一致する参照だけを
+キャッシュとして使う。一致しない参照はキャッシュが無いものとして扱い、不達なら接続先を示して
+非ゼロ終了する。
 
 指紋を持たず参照名と `url_host` だけで一致を見ると、同じホスト上の別の project や environment
 へ切り替えた直後に不達だった場合、切り替える前の機密を新しい環境のコンテナへ渡すことになる。
-連結した値をそのまま置かず SHA-256 にするのは、project の識別子と client ID を `index.json` に
-平文で残さないためである。
+連結した値をそのまま置かず SHA-256 にするのは、project の識別子と client ID を平文で残さない
+ためである。
+
+暗号文と `scope` を別のファイルへ分けると、どちらも原子的に置き換えても組み合わせが崩れる。
+scope A と scope B を使う 2 つの `devbase up` が「B の暗号文 → A の暗号文 → A の `scope` →
+B の `scope`」の順に書けば、B の `scope` に A の機密が結び付いた状態が残り、別の environment の
+機密を渡してしまう。更新の途中でプロセスが止まった場合も同じ形が残る。1 ファイルに収めれば、
+残るのはどちらか一方の完全な世代だけになる。
 
 **時系列の扱い: 上書きし、過去を残さない。** 理由は決定 5 にある。
 
@@ -189,14 +213,20 @@ age ストアの内容をサーバへ写す。写した後の age 側は `backup
 | 段階 | 現行 | 変更後 |
 | --- | --- | --- |
 | 計画 | 参照ごとに書き込み先の `Path` を決める | 参照ごとに `(SecretRef, bytes)` を決める。保存先は backend が持つ |
-| 退避 | 対象ファイルを `backups/` へ複製する | 取り込み前の値を backend から読み、`backups/` へ age 暗号化して控える |
+| 退避 | 対象ファイルを `backups/` へ複製する | **ファイル backend では現行のまま複製する。** サーバ backend では取り込み前の値を backend から読み、`backups/` へ age 暗号化して控える |
 | 適用 | tmp を `os.replace()` で一括 rename | 参照ごとに `store.save_bytes()` を呼ぶ |
-| 巻き戻し | 退避したファイルを書き戻す | 控えた値を `store.save_bytes()` で書き戻し、取り込み前に無かった参照は消す |
+| 巻き戻し | 退避したファイルを書き戻す | 控えた値を書き戻し（ファイル backend は複製したファイル、サーバ backend は復号した値を `store.save_bytes()` で）、取り込み前に無かった参照は消す |
+
+**退避の暗号化はサーバ backend に限る。** ファイル backend（`auto` / `age` / `plaintext`）では、
+控えの元になるファイルが同じ形で手元にあるため、複製しても平文の機密は増えない。ここを
+暗号化すると、受信者鍵を設定していない利用者の `import` が鍵の要求で失敗し、前提 3 の
+「既定の挙動は変えない」に反する。サーバ backend では控えの元が手元に無く、退避が新しい
+平文ファイルを作ることになるため暗号化する。この場合に受信者鍵が無ければ、取り込みを 1 件も
+始めずに鍵の用意を促して非ゼロ終了する（ブートストラップと同じ扱い）。
 
 ファイル backend では `save_bytes()` の内側で既存の `write_secure_bytes_atomic` が働くため、
 1 つの参照の書き込みが途中の状態で残ることはない。参照をまたぐ一括 rename が持っていた同時性は
-サーバ backend では作れないので、失敗した参照までを順に巻き戻す形にする。退避を暗号化した
-ファイルにするのは、`backups/` に平文の機密を新しく作らないためである。
+サーバ backend では作れないので、失敗した参照までを順に巻き戻す形にする。
 
 `export` 側は `store.load_bytes()` を通るため、収録の判定を直せば backend を問わず動く（決定 4）。
 
@@ -358,10 +388,15 @@ age 固有の操作なのでそのまま残す（決定 8）。
 | 取得失敗でキャッシュが変化しない | `tests/env/test_cache.py`（ファイルのハッシュ比較） |
 | キャッシュが age で暗号化されている | 同上（先頭が age のヘッダであること） |
 | 接続先・project・environment を変えるとキャッシュを使わない | `scope` を変えた場合の `tests/env/test_cache.py` と、不達かつ不一致で非ゼロ終了する結合テスト |
+| 控えと `scope` が同じ 1 ファイルに収まる | `tests/env/test_cache.py`（暗号文だけを別 `scope` の世代へ差し替えても、読み出しが `scope` の不一致として捨てること） |
+| 更新の途中で止めても前の世代が残る | `tests/env/test_cache.py`（置き換えの直前で中断させ、読み出しが前の値と前の `scope` を返すこと） |
+| 別 `scope` の同時書き込みで組み合わせが混ざらない | `tests/env/test_cache.py`（2 つの書き込みを交互に進め、残った 1 件の `scope` と中身が対応すること） |
 | 鍵が無い端末でブートストラップが平文へ落ちない | `tests/env/test_bootstrap.py`（識別鍵を外した状態で非ゼロ終了し、平文ファイルが増えないこと） |
 | 参照記法を含む値が set / get と migrate の往復で変わらない | 偽サーバが `expandSecretReferences` の受信を記録する結合テスト（`tests/env/test_infisical.py`） |
 | 移行先に同じキーがあれば 1 件も書かない | 偽サーバの受信記録を検査する結合テスト |
 | `env import` の取り込み先が有効な backend になる | 偽サーバに対する結合テスト（`tests/cli/test_env_import.py` に backend 差し替えの場合を追加） |
+| 未設定の backend では `import` の退避が現行のまま働く | 既存の `tests/cli/test_env_import.py` を書き換えずに通す（受信者鍵を用意しなくても成功すること） |
+| サーバ backend の `import` の退避が暗号化される | 同上の結合テスト（`backups/` に平文の機密が増えず、受信者鍵が無ければ 1 件も取り込まずに終了すること） |
 | `env export` がサーバ上の機密を収録する | 偽サーバに対する結合テスト（`tests/cli/test_env_export.py`） |
 | 値がログ・エラー・`--dry-run` に出ない | `caplog` と標準出力を走査する検査を上記各テストへ足す |
 | トークンが argv に載らない | `backend use` の引数定義に client secret を取る位置引数・オプションが無いことの検査 |
@@ -376,5 +411,5 @@ age 固有の操作なのでそのまま残す（決定 8）。
 | 自己ホストの Infisical が `v4` を持つか | 公開ドキュメントの現行版は `/api/v4/secrets` を示すが、実際に立てる版がこれを持つかは構築後にしか確かめられない。`api_version` を設定で持たせ、`v3`（`/api/v3/secrets/raw`）へ落とせるようにして受ける |
 | personal override の要否 | `carmo-cdk#312` の「決めてほしいこと」に上げてある。決まるまで既定は `false`（決定 6） |
 | access token の有効期間 | `expiresIn` の実値がサーバ設定に依存する。過ぎたら取り直す実装にして、値そのものには依存しない |
-| 同時実行 | 2 つの `devbase up` が同時にキャッシュを書く場合。既存の `write_secure_bytes_atomic` で置き換えるため壊れた中身は残らないが、どちらが残るかは決まらない。実害が無い（どちらもサーバの写し）と判断して扱わない |
+| 同時実行 | 2 つの `devbase up` が同時にキャッシュを書く場合。参照ごとに 1 ファイルを `write_secure_bytes_atomic` で置き換えるため、残るのはどちらか一方の完全な世代で、`scope` は必ずその世代のものになる。どちらの世代が残るかは決まらないが、混ざった組み合わせは残らない |
 | プロジェクト数が増えたときの往復 | 現状 20 個前後で、1 回の `up` が読むのは 2 参照のみ。全参照を一度に読む場面（`env list` の全体表示）だけ `recursive` を使うかは、実測してから決める |
