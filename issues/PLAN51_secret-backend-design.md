@@ -87,8 +87,13 @@ cache:
 | `DEVBASE_INFISICAL_CLIENT_SECRET` | 同 client secret |
 
 **このファイルだけは登録簿を経由せず、直接 `AgeBackend` で読む。** 有効な backend を通して
-読もうとすると、「接続するための値を、接続しないと読めない」循環になる。鍵が無い端末では
-`PlaintextBackend` へ落ちる（既存の自動判定と同じ規則）。
+読もうとすると、「接続するための値を、接続しないと読めない」循環になる。
+
+**平文へは落とさない。** age の識別鍵が無い端末では、鍵の置き場と用意の手順を述べて、
+`backend use infisical` と機密の読み込みの両方を非ゼロで終了させる。接続資格情報を age ストアに
+置くことは要求の側で決まっており、鍵が無いことを理由に平文の置き場を作ると満たせなくなる。
+既存の自動判定はファイルの存在で backend を選ぶだけで、鍵の有無で平文へ移す規則は持たない。
+`bootstrap.env.age` があって鍵が無い状態は、復号できない状態としてそのまま失敗させる。
 
 ### 3. キャッシュ — `$DEVBASE_ROOT/secrets/cache/`
 
@@ -96,7 +101,7 @@ cache:
 | --- | --- |
 | `cache/global.env.age` | 共通機密の控え（age 暗号化） |
 | `cache/projects/<name>.env.age` | プロジェクト機密の控え |
-| `cache/index.json` | 参照ごとの `fetched_at` / `backend` / `url_host` |
+| `cache/index.json` | 参照ごとの `fetched_at` / `backend` / `url_host` / 取得元の指紋 |
 
 `index.json` に**キー名も値も入れない**。何が保存されているかは暗号文の側にしか無い状態を保つ。
 
@@ -104,11 +109,21 @@ cache:
 {
   "version": 1,
   "entries": {
-    "global": {"fetched_at": "2026-09-08T10:00:00+09:00", "backend": "infisical", "url_host": "infisical.example.com"},
-    "project:carmo": {"fetched_at": "2026-09-08T10:00:00+09:00", "backend": "infisical", "url_host": "infisical.example.com"}
+    "global": {"fetched_at": "2026-09-08T10:00:00+09:00", "backend": "infisical", "url_host": "infisical.example.com", "scope": "sha256:9f2c1e..."},
+    "project:carmo": {"fetched_at": "2026-09-08T10:00:00+09:00", "backend": "infisical", "url_host": "infisical.example.com", "scope": "sha256:4ab7d0..."}
   }
 }
 ```
+
+**キャッシュを使える条件:** `scope` は接続先 URL 全体・`project_id`・`environment`・その参照の
+`secretPath`・認証主体（client ID）を連結して SHA-256 を取ったものである。読み出すときは現在の
+設定から同じ手順で計算し、`backend` と `scope` の両方が一致する参照だけをキャッシュとして使う。
+一致しない参照はキャッシュが無いものとして扱い、不達なら接続先を示して非ゼロ終了する。
+
+指紋を持たず参照名と `url_host` だけで一致を見ると、同じホスト上の別の project や environment
+へ切り替えた直後に不達だった場合、切り替える前の機密を新しい環境のコンテナへ渡すことになる。
+連結した値をそのまま置かず SHA-256 にするのは、project の識別子と client ID を `index.json` に
+平文で残さないためである。
 
 **時系列の扱い: 上書きし、過去を残さない。** 理由は決定 5 にある。
 
@@ -142,12 +157,16 @@ age ストアの内容をサーバへ写す。写した後の age 側は `backup
 | `devbase env backend status` | なし | 現在の backend 名、保存先（パスまたは URL）、キャッシュの有無と最終取得時刻。終了コード 0 | 設定が壊れているとき、読めなかった箇所を述べて 1 |
 | `devbase env backend use <name>` | `<name>`、`--url`、`--project-id`、`--environment`、`--client-id`、`--client-secret-stdin`、`--no-cache` | 書き込んだ設定の要約（**client secret は伏せる**）。終了コード 0 | 未知の名前なら利用できる名前の一覧を添えて 2。必須の設定が欠けていれば欠けた項目名を述べて 2。**いずれの場合も設定を書き換えない** |
 | `devbase env backend test` | なし | 接続先 URL と、読めた参照の件数。終了コード 0 | 到達できない・認証できない・参照が読めない、のどれかを述べて 1 |
-| `devbase env backend migrate --to <name>` | `--to`、`--dry-run`、`--yes` | 移す参照とキー**名**の一覧。`--dry-run` では書き込まない | 検証に失敗したら書いた分を消し、移行前の設定のまま 1 |
+| `devbase env backend migrate --to <name>` | `--to`、`--dry-run`、`--yes` | 移す参照とキー**名**の一覧。`--dry-run` では書き込まない | 移行先に同じキーがあれば 1 件も書かずに、衝突したキー名を挙げて 2。読み戻しの検証に失敗したら**この実行で作成したキーだけ**を消し、移行前の設定のまま 1 |
 
 **client secret を引数で受け取らない。** `--client-secret-stdin` で標準入力から読むか、TTY では
 `questionary` の伏せ字入力で尋ねる。`ps` から読める位置に置かないためである。
 
 `--dry-run` の出力にキーの**値**を含めない。キー名だけを並べる。
+
+**移行先の既存キーを上書きしない。** 書き込みの前に移行先の同じ参照を読み、同じキーがあれば
+1 件も書かずに中止する。`--dry-run` も同じ検査を行い、衝突したキー名を一覧に示す。上書きしたい
+場合は、そのキーを移行先で消してから実行する。理由は決定 7 にある。
 
 ### 既存コマンドの互換性
 
@@ -161,6 +180,26 @@ age ストアの内容をサーバへ写す。写した後の age 側は `backup
 `cli.py` の `SUBCMD_MAP` に `backend` を足す。`b` は他と衝突しないが、`SUBCMD_PREFIX_PREFERENCES`
 は既存の指定を変えない。
 
+#### `env import` の取り込み先を backend へ向ける
+
+現行の `io_import._build_plans()` は参照ごとに書き込み先の `Path` を決め、`_import_atomic.commit()`
+は tmp を `os.replace()` でローカルへ rename する。どちらも backend を通らないため、`backend_for()`
+の差し替えだけでは取り込み先がサーバにならない。次の 4 段階を backend 越しの操作へ置き換える。
+
+| 段階 | 現行 | 変更後 |
+| --- | --- | --- |
+| 計画 | 参照ごとに書き込み先の `Path` を決める | 参照ごとに `(SecretRef, bytes)` を決める。保存先は backend が持つ |
+| 退避 | 対象ファイルを `backups/` へ複製する | 取り込み前の値を backend から読み、`backups/` へ age 暗号化して控える |
+| 適用 | tmp を `os.replace()` で一括 rename | 参照ごとに `store.save_bytes()` を呼ぶ |
+| 巻き戻し | 退避したファイルを書き戻す | 控えた値を `store.save_bytes()` で書き戻し、取り込み前に無かった参照は消す |
+
+ファイル backend では `save_bytes()` の内側で既存の `write_secure_bytes_atomic` が働くため、
+1 つの参照の書き込みが途中の状態で残ることはない。参照をまたぐ一括 rename が持っていた同時性は
+サーバ backend では作れないので、失敗した参照までを順に巻き戻す形にする。退避を暗号化した
+ファイルにするのは、`backups/` に平文の機密を新しく作らないためである。
+
+`export` 側は `store.load_bytes()` を通るため、収録の判定を直せば backend を問わず動く（決定 4）。
+
 ### Infisical との契約（外部）
 
 devbase 側では OpenAPI 記述を持たず、Infisical が公開しているものを正とする。使う経路は次の 5 つ。
@@ -168,13 +207,18 @@ devbase 側では OpenAPI 記述を持たず、Infisical が公開している�
 | 用途 | 経路 | 送るもの |
 | --- | --- | --- |
 | 認証 | `POST /api/v1/auth/universal-auth/login` | `clientId`, `clientSecret` → `accessToken`, `expiresIn` |
-| 一括取得 | `GET /api/v4/secrets` | `projectId`, `environment`, `secretPath`, `includePersonalOverrides` → `{secrets: [{secretKey, secretValue}]}` |
+| 一括取得 | `GET /api/v4/secrets` | `projectId`, `environment`, `secretPath`, `includePersonalOverrides`, `expandSecretReferences` → `{secrets: [{secretKey, secretValue}]}` |
 | 作成 | `POST /api/v4/secrets/{secretName}` | `projectId`, `environment`, `secretValue`, `secretPath` |
 | 更新 | `PATCH /api/v4/secrets/{secretName}` | 同上 |
 | 削除 | `DELETE /api/v4/secrets/{secretName}` | `projectId`, `environment`, `secretPath` |
 
 認証以外はすべて `Authorization: Bearer <accessToken>` を付ける。access token は
 プロセス内にだけ持ち、ディスクへ書かない。`expiresIn` を過ぎたら取り直す。
+
+**一括取得に `expandSecretReferences=false` を必ず載せる。** [Infisical の list secrets](https://infisical.com/docs/api-reference/endpoints/secrets/list)
+はこの既定が `true` で、値に含まれる `${OTHER_KEY}` をサーバ側で展開して返す。既存の `EnvFile` は
+同じ記法を文字列のまま保持するため、既定のままでは `set` した値と `get` で返る値が変わり、
+`migrate` の読み戻し検証も一致しない。`v3`（`/api/v3/secrets/raw`）へ落とす場合も同じ指定を送る。
 
 **参照ごとに 1 回、`GET /api/v4/secrets` を呼ぶ。** `devbase up` で読む参照は共通と
 プロジェクトの 2 つなので、認証 1 回 + 取得 2 回の計 3 往復に収まる。`recursive` は使わない
@@ -238,6 +282,21 @@ Go のバイナリを各端末へ配る手間が同じ理由で釣り合わな�
 工場関数を新設して 11 か所を書き換える案は、差分が広がるわりに得るものが無く、
 既存テストの書き換えも要る。
 
+**`backend_for()` だけでなく、`mode()` / `exists()` / `path()` も選択中の backend へ委譲する。**
+現行の `mode()` は `age.exists()` と `plaintext.exists()` だけを見るため、委譲しないと
+`exists()` がサーバ上の機密に `False` を返す。`bundle.py` の export は `store.exists()` で
+収録を決めており（`bundle.py:252,299`）、サーバにだけある機密がバンドルから落ちる。
+
+| メソッド | 委譲後の返し方 |
+| --- | --- |
+| `mode(ref)` | 選択中の backend 名（`age` / `plaintext` / `infisical`）。その backend に無ければ `absent` |
+| `exists(ref)` | 選択中の backend の `exists(ref)` |
+| `path(ref)` | ファイル backend はファイルのパス。サーバ backend は `secretPath` を `Path` として返す |
+
+`backend` が `auto` のときの `mode()` は現行のままで、暗号化と平文の同時存在を拒む判定も残る。
+`path()` の戻り値の型は変えないため、`$DEVBASE_ROOT` の外側のパスをそのまま文字列にする
+`bundle.py` の `_origin()` は手を入れずに済む。
+
 `store.age` / `store.plaintext` を名指しで触っている `env_migrate.py` と `env_ops.py` は、
 age 固有の操作なのでそのまま残す（決定 8）。
 
@@ -262,6 +321,12 @@ age 固有の操作なのでそのまま残す（決定 8）。
 
 `env encrypt` が既に「書く → 読み戻して一致を確認する → 元を退避する」という順序を持っている。
 機密を失う経路を 2 通り作らないため、同じ順序に揃える。
+
+この順序の前に、**移行先に同じキーが無いことを確かめる**。移行先に既にある値を上書きすると、
+読み戻しが一致しなかったときに戻す先が「上書きする前の値」になり、その値は移行の実行中にしか
+手元に無い。控えを持てば機密の置き場が 1 つ増え、途中で落ちた場合はその控えごと失われる。
+衝突を先に拒めば、巻き戻しはこの実行で作成したキーを消すだけで済み、移行の前からサーバに
+あった機密には触れない。衝突したキーは名前を挙げて示し、移行先で消してから再実行してもらう。
 
 両方向を同時に同期する案は採らない。どちらが正かを devbase 側で判断できず、
 `SecretStore.backend_for()` が暗号化と平文の同時存在を拒んでいるのと同じ理由で、
@@ -292,6 +357,12 @@ age 固有の操作なのでそのまま残す（決定 8）。
 | 不達 + キャッシュなし → 非ゼロ終了 | 同上 |
 | 取得失敗でキャッシュが変化しない | `tests/env/test_cache.py`（ファイルのハッシュ比較） |
 | キャッシュが age で暗号化されている | 同上（先頭が age のヘッダであること） |
+| 接続先・project・environment を変えるとキャッシュを使わない | `scope` を変えた場合の `tests/env/test_cache.py` と、不達かつ不一致で非ゼロ終了する結合テスト |
+| 鍵が無い端末でブートストラップが平文へ落ちない | `tests/env/test_bootstrap.py`（識別鍵を外した状態で非ゼロ終了し、平文ファイルが増えないこと） |
+| 参照記法を含む値が set / get と migrate の往復で変わらない | 偽サーバが `expandSecretReferences` の受信を記録する結合テスト（`tests/env/test_infisical.py`） |
+| 移行先に同じキーがあれば 1 件も書かない | 偽サーバの受信記録を検査する結合テスト |
+| `env import` の取り込み先が有効な backend になる | 偽サーバに対する結合テスト（`tests/cli/test_env_import.py` に backend 差し替えの場合を追加） |
+| `env export` がサーバ上の機密を収録する | 偽サーバに対する結合テスト（`tests/cli/test_env_export.py`） |
 | 値がログ・エラー・`--dry-run` に出ない | `caplog` と標準出力を走査する検査を上記各テストへ足す |
 | トークンが argv に載らない | `backend use` の引数定義に client secret を取る位置引数・オプションが無いことの検査 |
 | 既存利用者の挙動が変わらない | **既存テストを 1 行も書き換えずに通す**（`uv run pytest`） |
