@@ -166,7 +166,10 @@ Infisical は「最初の 1 つ」であって前提ではない。
 - 参照ごとに別々の backend を使う運用（前提 5）
 - 1 台の端末で複数の利用者を切り替える運用（前提 7）
 - 機密の履歴・監査ログの devbase 側での保持（サーバの WebUI が持つものを使う）
-- `devbase env export` / `import` のバンドル形式の変更
+- `devbase env export` / `import` のバンドル形式の変更（バンドルはチーム単位の 2 種の参照だけを
+  扱い、持ち主を表す表現を足さない）
+- 個人単位の機密の `devbase env export` / `import`（置き場はサーバにあり、端末を替えても
+  backend の設定と認証で読める）
 - 複数人での同時編集の競合解決（サーバ側の最終書き込み優先に従う）
 
 ## 受け入れ条件
@@ -216,8 +219,8 @@ Infisical は「最初の 1 つ」であって前提ではない。
       backend が `age` のときの表示は変わらない
 - [ ] backend が `infisical` のとき、`devbase env init --reset` は退避を作れなければ機密を
       1 件も削除せずに非ゼロで終了する
-- [ ] backend が `infisical` のとき、`devbase env export` にサーバ上の機密が収録され、
-      `devbase env import` の取り込み先がサーバになる
+- [ ] backend が `infisical` のとき、`devbase env export` にサーバ上のチーム単位の機密が収録され、
+      `devbase env import` の取り込み先がサーバのチーム単位の参照になる
 - [ ] backend を設定していない状態の `devbase env import` は、これまでどおり対象ファイルを
       `backups/` へ複製し、age の受信者鍵を用意していなくても成功する
 - [ ] backend が `infisical` のとき、`devbase env import` の退避は age 暗号化され、`backups/` に
@@ -236,6 +239,9 @@ Infisical は「最初の 1 つ」であって前提ではない。
       2 層に負ける
 - [ ] backend が `age` / `plaintext` / 未設定のとき、`--user` を付けた操作は個人単位を扱えない旨を
       表示して非ゼロで終了し、チーム単位の置き場へは書き込まれない
+- [ ] `devbase env export` が作るバンドルに個人単位の機密が現れず、個人単位の置き場へ取得の
+      要求も送られない。`devbase env import` も個人単位の参照へは書き込まない。
+      どちらのコマンドも `--user` を受け付けない
 - [ ] `devbase env backend status` に、チーム単位と個人単位それぞれの置き場と、設定されている
       個人単位の識別子が表示される
 - [ ] 個人単位の識別子を変えた後は、変更前に取得したキャッシュが使われない

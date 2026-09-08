@@ -72,11 +72,39 @@
 | `env init --reset` | 出力形式は変えない。参照を指す `--user` を足す。退避はファイル backend では現行どおり保存先を複製し、サーバ backend では読み出した値を age 暗号化して控える（下記） |
 | `env encrypt` / `decrypt` | **age 固有のまま**。有効な backend が `age` / `auto` 以外のとき、age 専用である旨を述べて非ゼロ終了する |
 | `env rekey` | 引数・出力形式は変えない。**backend の選択に関わらず実行でき**、再暗号化の対象へ `bootstrap.env.age` と `cache/` 配下を加える（[決定 8](PLAN51_secret-backend-decisions.md)） |
-| `env export` / `import` | バンドル形式を変えない。書き出しは有効な backend が持つ参照すべて（サーバ backend では 4 種）から読み、取り込みはバンドルに収録されていた参照へ有効な backend 越しに書く |
+| `env export` / `import` | バンドル形式を変えない。**扱うのはチーム単位の 2 種の参照だけ**で、書き出しはそこから有効な backend 越しに読み、取り込みも同じ参照へ有効な backend 越しに書く（下記） |
 | `devbase up` ほかコンテナ操作 | 変えない。`runtime.resolve()` の入力が変わるだけで、compose へ渡すものは同じ |
 
 `cli.py` の `SUBCMD_MAP` に `backend` を足す。`b` は他と衝突しないが、`SUBCMD_PREFIX_PREFERENCES`
 は既存の指定を変えない。
+
+#### バンドルが扱うのはチーム単位の参照だけ
+
+バンドルに入る名前は `env/global.env` / `env/projects/<name>/.env` / `env/sources.yml` の 3 種の
+ままで、持ち主を表す表現を足さない。`manifest.yml` の `version` も 1 のままにする。
+
+| バンドル内の名前 | 対応する参照 | 書き出し | 取り込み |
+| --- | --- | --- | --- |
+| `env/global.env` | チーム共通 | 収録する | チーム共通へ書く |
+| `env/projects/<name>/.env` | チームのプロジェクト | 収録する | 同じ名前のチームのプロジェクトへ書く |
+| `env/sources.yml` | 機密ではない | 現行どおり | 現行どおり |
+| （名前を持たない） | 個人共通 / 個人のプロジェクト | 収録しない | 書かない |
+
+`env export` は持ち主が `user` の参照を読まない。サーバ backend でも取得を送るのはチーム単位の
+2 種だけで、個人単位の `secretPath` へは要求が届かない。`env import` は復元先を現行のまま
+チーム単位の参照とし（`io_import._secret_ref_for()`）、この表に無い名前は現行どおり拒む
+（`_import_merge.filter_members()`）。参照の持ち主を選ぶ `--user` は `export` / `import` へ
+足さない。
+
+**名前も版も増えないため、往復はどちらの向きでも成り立つ。** この計画の実装を持たない devbase
+が作ったバンドルはそのまま取り込め、この計画の実装が作ったバンドルもその devbase が取り込める。
+仕様の「含まない」にある「バンドル形式の変更」は、この形でそのまま成り立つ。理由は
+[決定 13](PLAN51_secret-backend-decisions.md) にある。
+
+**個人単位の機密は持ち運ばない。** 置き場はサーバの `/users/<user>/...` にあり、端末を替えても
+backend の設定と認証だけで同じ値が読める。ファイル backend は個人単位の参照を持たないため
+（[設計 1 のデータ構造](PLAN51_secret-backend-design.md)）、age ストアにある個人向けの値をサーバの個人単位の置き場へ移すときは
+`devbase env set --user` で入れ直す。移行コマンドが扱う範囲も同じくチーム単位だけである。
 
 #### `env import` の取り込み先を backend へ向ける
 
