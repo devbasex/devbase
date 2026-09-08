@@ -20,10 +20,11 @@
 | `env/cache.py`（新規） | 取得できた機密を age で暗号化して控え、不達時に読み出す |
 | `env/secret_store.py`（改修） | `backend_for()` が設定を見るようにする。設定が無ければ現行の自動判定のまま。backend が「保存先をファイルとして直接編集できるか」を `direct_edit` として持つ |
 | `env/secret_view.py`（改修） | `backup()` が backend の性質で退避の作り方を分ける |
-| `commands/env.py`（改修） | `edit` の分岐を `direct_edit` へ切り替え、一覧の保存形式表示に backend 名を使う |
+| `env/runtime.py`（改修） | `resolve()` が重ねる機密を 2 層から 4 層（チーム共通・個人共通・チームのプロジェクト・個人のプロジェクト）へ増やす。順序は[設計 2 の重ね順](PLAN51_secret-backend-contract.md)に従う |
+| `commands/env.py`（改修） | `edit` の分岐を `direct_edit` へ切り替え、一覧の保存形式表示に backend 名を使う。`list` / `get` / `set` / `delete` / `edit` で持ち主を選ぶ `--user` を扱う |
 | `commands/env_backend.py`（新規） | `devbase env backend` の 4 サブコマンド |
 | `commands/env_ops.py`（改修） | `doctor` に backend 設定・ブートストラップ・キャッシュの点検を足す。`rekey` が再暗号化する対象へブートストラップとキャッシュを加える |
-| `cli.py`（改修） | サブコマンドの登録と、prefix 解決の優先指定 |
+| `cli.py`（改修） | サブコマンドの登録と、prefix 解決の優先指定。`env` の上記 5 サブコマンドへ `--user` を登録する |
 
 `PlaintextBackend` と `AgeBackend` は `secret_store.py` に置いたままにする。登録簿はそれらを
 参照するだけで、移動しない。
@@ -340,8 +341,38 @@ B の `scope`」の順に書けば、B の `scope` に A の機密が結び付�
 決めるのはサーバ、という分担にする。
 
 **ファイル backend は個人単位の参照を持たない。** `age` と `plaintext` の保存先は 1 台の端末の
-中にあり、その端末を使う人が 1 人である以上、持ち主で分ける先が無い。`SecretRef` へ持ち主
-（`team` / `user`）を足し、既存の `SecretRef.for_global()` / `for_project()` は `team` を返す。
-ファイル backend は持ち主が `user` の参照に対して `exists()` が偽・`load()` が空を返し、
-書き込みは個人単位を持たない旨を述べて非ゼロ終了する。既存の呼び出しはすべて `team` を指す
+中にあり、その端末を使う人が 1 人である以上、持ち主で分ける先が無い。参照へ足す持ち主は次項の
+形にする。ファイル backend は持ち主が `user` の参照に対して `exists()` が偽・`load()` が空を
+返し、書き込みは個人単位を持たない旨を述べて非ゼロ終了する。既存の呼び出しはすべて `team` を指す
 ため、backend を設定していない端末では読む先も書く先も現行と同じになる（前提 3）。
+
+### 5. 参照の形 — `SecretRef`
+
+持ち主の軸は参照そのものが持つ。`SecretRef`（`lib/devbase/env/secret_store.py`）は凍結した
+dataclass で、等価比較とハッシュがそのまま使われている。足すのは既定値付きのフィールド 1 つ
+だけにする。
+
+| 項目 | 現行 | 変更後 |
+| --- | --- | --- |
+| フィールド | `kind: str`（`'global'` / `'project'`）、`name: Optional[str] = None` | 末尾へ `owner: str = 'team'`（`'team'` / `'user'`）を足す |
+| 生成 | `for_global()` / `for_project(name)` | 同じ 2 つのまま。既定 `'team'` のキーワード引数 `owner` を受ける |
+| 表示 | `label()` が `グローバル` / `プロジェクト '<name>'` を返す | `owner` が `'user'` のとき `個人のグローバル` / `個人のプロジェクト '<name>'` を返す |
+
+文書で「チーム共通」と呼ぶものが `for_global()`、「個人共通」が `for_global(owner='user')`、
+「チームのプロジェクト」が `for_project(name)`、「個人のプロジェクト」が
+`for_project(name, owner='user')` である。
+
+**ファクトリは増やさない。** `SecretRef` を組み立てる箇所はこの 2 つのファクトリの中だけで、
+ほかに直接の `SecretRef(...)` 呼び出しは無い。`for_user_global()` のような名前を別に足すと
+参照の作り方が 4 通りへ増え、持ち主を実行時の引数（`--user`）で受け取る `commands/env.py` が
+そのぶんの分岐を持つことになる。既存の呼び出しは `owner` を渡さないため、これまでどおり
+チーム単位の参照を返す（[決定 4](PLAN51_secret-backend-decisions.md)）。`owner` を末尾へ置くのは、`name` を位置引数で渡している
+生成をそのまま残すためである。`name` の検査（`_validate_project_name()`）は現行のまま
+`for_project()` の中で行い、`owner` が 2 つの値のどちらでもなければ生成時に拒む。
+
+**`label()` のチーム単位の戻り値は変えない。** この文字列は「〜の機密が暗号化・平文の両方に
+存在します」のような誤りの伝達へ埋め込まれ（`secret_store.py:322` ほか）、`env migrate` と
+`env doctor` の一覧では `{ref.label():<24}` として桁揃えにも使われる（`env_migrate.py:136`
+ほか）。チーム単位の文字列を変えると、これらの表示とそれを見ている既存テストが一斉に動く。
+桁揃えの経路はファイル backend の一覧だけで、そこへ来る参照はチーム単位に限られるため、
+`個人の` を前に置いた長い方が桁を崩すこともない。
