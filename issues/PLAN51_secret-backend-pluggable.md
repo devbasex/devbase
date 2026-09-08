@@ -126,7 +126,7 @@ Infisical は「最初の 1 つ」であって前提ではない。
 - Infisical adapter（REST、machine identity 認証）
 - ローカル暗号化キャッシュと、サーバ不達時のフォールバック
 - age の受信者更新（`devbase env rekey`）の対象へ、ブートストラップ機密とキャッシュを含める
-- 既存の `env list/get/set/delete/edit/doctor` をサーバ backend でも同じ形で動かす
+- 既存の `env list/get/set/delete/edit/init/doctor` をサーバ backend でも同じ形で動かす
 - 両方向の移行（age → Infisical、Infisical → age）
 - 利用者向けドキュメント
 
@@ -169,6 +169,13 @@ Infisical は「最初の 1 つ」であって前提ではない。
       機密が `age` のときと同じ変数名で載る
 - [ ] backend が `infisical` のとき、`${OTHER_KEY}` のような参照記法を含む値を
       `devbase env set` で保存して `devbase env get` で取ると、保存した文字列がそのまま返る
+- [ ] backend が `infisical` のとき、`devbase env edit` はサーバ上の機密を復元した一時ファイルを
+      エディタで開き、保存するとサーバへ書き戻される。エディタが開くのは `secretPath` を
+      そのままローカルのパスとして扱ったファイルではなく、編集後に平文の一時ファイルが残らない
+- [ ] backend が `infisical` のとき、`devbase env list` の保存形式の表示が backend 名を示す。
+      backend が `age` のときの表示は変わらない
+- [ ] backend が `infisical` のとき、`devbase env init --reset` は退避を作れなければ機密を
+      1 件も削除せずに非ゼロで終了する
 - [ ] backend が `infisical` のとき、`devbase env export` にサーバ上の機密が収録され、
       `devbase env import` の取り込み先がサーバになる
 - [ ] backend を設定していない状態の `devbase env import` は、これまでどおり対象ファイルを

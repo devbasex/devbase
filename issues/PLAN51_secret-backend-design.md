@@ -12,7 +12,9 @@
 | `env/infisical.py`（新規） | Infisical の REST を叩く `SecretBackend` 実装 |
 | `env/bootstrap.py`（新規） | サーバ接続に使う機密を `secrets/bootstrap.env.age` から読む。**登録簿を経由しない** |
 | `env/cache.py`（新規） | 取得できた機密を age で暗号化して控え、不達時に読み出す |
-| `env/secret_store.py`（改修） | `backend_for()` が設定を見るようにする。設定が無ければ現行の自動判定のまま |
+| `env/secret_store.py`（改修） | `backend_for()` が設定を見るようにする。設定が無ければ現行の自動判定のまま。backend が「保存先をファイルとして直接編集できるか」を `direct_edit` として持つ |
+| `env/secret_view.py`（改修） | `backup()` が backend の性質で退避の作り方を分ける |
+| `commands/env.py`（改修） | `edit` の分岐を `direct_edit` へ切り替え、一覧の保存形式表示に backend 名を使う |
 | `commands/env_backend.py`（新規） | `devbase env backend` の 4 サブコマンド |
 | `commands/env_ops.py`（改修） | `doctor` に backend 設定・ブートストラップ・キャッシュの点検を足す。`rekey` が再暗号化する対象へブートストラップとキャッシュを加える |
 | `cli.py`（改修） | サブコマンドの登録と、prefix 解決の優先指定 |
@@ -213,7 +215,9 @@ age ストアの内容をサーバへ写す。写した後の age 側は `backup
 
 | コマンド | 扱い |
 | --- | --- |
-| `env list` / `get` / `set` / `delete` / `edit` / `project` / `sync` | 引数・出力形式ともに変えない。`SecretStore` 越しに動くため backend を問わない |
+| `env list` / `get` / `set` / `delete` / `project` / `sync` | 引数・出力形式ともに変えない。`SecretStore` 越しに動くため backend を問わない |
+| `env edit` | 引数・出力形式は変えない。**保存先を直接エディタへ渡すのは平文の backend だけ**にし、それ以外は一時ファイル経由で `load_bytes()` / `save_bytes()` を呼ぶ（下記） |
+| `env init --reset` | 引数・出力形式は変えない。退避はファイル backend では現行どおり保存先を複製し、サーバ backend では読み出した値を age 暗号化して控える（下記） |
 | `env encrypt` / `decrypt` | **age 固有のまま**。有効な backend が `age` / `auto` 以外のとき、age 専用である旨を述べて非ゼロ終了する |
 | `env rekey` | 引数・出力形式は変えない。**backend の選択に関わらず実行でき**、再暗号化の対象へ `bootstrap.env.age` と `cache/` 配下を加える（決定 8） |
 | `env export` / `import` | バンドル形式を変えない。書き出しは有効な backend から読み、取り込みは有効な backend へ書く |
@@ -247,6 +251,40 @@ age ストアの内容をサーバへ写す。写した後の age 側は `backup
 サーバ backend では作れないので、失敗した参照までを順に巻き戻す形にする。
 
 `export` 側は `store.load_bytes()` を通るため、収録の判定を直せば backend を問わず動く（決定 4）。
+
+#### `path()` をファイルとして扱う経路を backend の性質で分ける
+
+`path()` はファイル backend では開いて読み書きしてよいファイルを指すが、サーバ backend では
+`secretPath` を `Path` にしただけの**表示と由来の記録のための値**であり、ローカルには存在しない。
+`path()` の戻り値を実ファイルとして扱っている経路が 2 つあり、どちらも `backend_for()` の
+差し替えだけでは通らない。
+
+| 経路 | 現行 | 変更後 |
+| --- | --- | --- |
+| `cmd_env_edit()`（`commands/env.py:459`） | `is_encrypted()` が偽なら `path()` をエディタへ渡す | `direct_edit` が偽なら一時ファイル経由で編集する |
+| `SecretEnvFile.backup()`（`env init --reset` が呼ぶ） | `path()` を `shutil.copy2` で `<path>.backup` へ複製する | ファイル backend は現行のまま。サーバ backend は `load_bytes()` を age 暗号化して `backups/env-init/<日時>/` へ控える |
+
+**分岐の基準を「暗号化されているか」から「保存先をファイルとして直接編集できるか」へ変える。**
+`SecretBackend` に真偽値 `direct_edit` を足し、`PlaintextBackend` だけ真、`AgeBackend` と
+`InfisicalBackend` は偽とする。`SecretStore.direct_edit(ref)` は選択中の backend の値を返す。
+現行の `is_encrypted()`（＝`mode() == 'age'`）は `mode` が `infisical` のときも偽になるため、
+そのままでは `/global` のようなローカルパスをエディタで開くだけになり、サーバの機密を編集も
+保存もできない。
+
+`cmd_env_edit()` は `direct_edit` が偽のとき既存の `_edit_encrypted()` を通す。この関数は
+`load_bytes()` → 一時ファイル（自分専用の `0700` ディレクトリに `0600`）→ `save_bytes()` しか
+使っておらず age 固有の処理を持たないため、実装を変えずにサーバ backend でもそのまま働く。
+age を指す名前だけ `_edit_via_tempfile()` へ改める。
+
+`backup()` は現行、複製に失敗しても警告を出して `None` を返すだけで、呼び出し側の
+`cmd_env_init()` はそのまま全キーの削除へ進む。サーバ backend では退避を作れないまま消すことに
+なるため、**退避を作れなかったときは削除へ進まず非ゼロで返す**。サーバ backend の退避を age で
+暗号化する理由と、受信者鍵が無ければ 1 件も消さずに終了する扱いは、`import` の退避（前節）と
+同じである。
+
+一覧の保存形式表示（`_mode_suffix()`、`commands/env.py:372`）も `is_encrypted()` を見ており、
+`infisical` では何も付かない。`mode()` を使い、`age` は現行どおり `[暗号化]`、`plaintext` は
+何も付けず、それ以外は `[<backend 名>]` を付ける。
 
 ### Infisical との契約（外部）
 
@@ -339,7 +377,7 @@ Go のバイナリを各端末へ配る手間が同じ理由で釣り合わな�
 | --- | --- |
 | `mode(ref)` | 選択中の backend 名（`age` / `plaintext` / `infisical`）。その backend に無ければ `absent` |
 | `exists(ref)` | 選択中の backend の `exists(ref)` |
-| `path(ref)` | ファイル backend はファイルのパス。サーバ backend は `secretPath` を `Path` として返す |
+| `path(ref)` | ファイル backend はファイルのパス。サーバ backend は `secretPath` を `Path` として返す（**表示と由来の記録のための値**で、開いて読み書きしてよいファイルではない） |
 
 `backend` が `auto` のときの `mode()` は現行のままで、暗号化と平文の同時存在を拒む判定も残る。
 `path()` の戻り値の型は変えないため、`$DEVBASE_ROOT` の外側のパスをそのまま文字列にする
@@ -422,6 +460,9 @@ age 暗号文として手元に残り、受信者を入れ替える手段はこ�
 | `backend test` が到達可否で 0 / 非ゼロを返す | 偽サーバに対する結合テスト（`tests/env/test_infisical.py`） |
 | 未知の backend 名を拒み、設定を書き換えない | `tests/commands/test_env_backend.py` |
 | `list` / `set` / `get` / `delete` が backend を問わず同じ形で動く | 偽サーバに対する結合テスト。既存の `tests/commands/test_env_store_switch.py` に倣う |
+| サーバ backend の `edit` が一時ファイル経由でサーバへ保存される | 偽サーバに対する結合テスト（`tests/commands/test_env_store_switch.py` の `edit` の場合を backend 差し替えで追加。エディタ役が受け取るのは `secretPath` ではなく一時ファイルで、保存後にサーバへ書き込みが届き、一時ファイルが残らないこと） |
+| サーバ backend の `init --reset` が退避を作れなければ 1 件も消さない | 同上（受信者鍵を外した状態で非ゼロ終了し、サーバ上の機密が残ること） |
+| 一覧の保存形式表示が backend 名を示す | `tests/commands/test_env_store_switch.py`（`age` は `[暗号化]` のまま、`infisical` は `[infisical]`、平文は何も付かないこと） |
 | `-p` で書いた値が別プロジェクトから取れない | `secretPath` の組み立ての単体テスト + 結合テスト |
 | `devbase up` の環境変数が age のときと同じ変数名で載る | `tests/env/test_runtime.py` に backend 差し替えの場合を追加 |
 | `migrate --dry-run` が値を出さず書き込まない | 偽サーバの受信記録を検査する結合テスト |
