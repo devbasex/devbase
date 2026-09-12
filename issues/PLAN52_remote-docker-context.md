@@ -272,6 +272,9 @@ issue #162 の提案として書かれているものを、この仕様の決定
 - [ ] `.cache/docker-gid/` と `project.local.yml` が Git から除外される（devbase 本体は
       `.cache/` と `projects/*` で既に除外。devbase-samples 側は起票）
 - [ ] `devbase status` の出力と呼び出す docker コマンドが変わらない
+- [ ] 機密ストア（`.env`）に `DOCKER_CONTEXT` / `DOCKER_GID` / `DOCKER_HOST` があっても、
+      `up` が起動する volume・compose・exec のすべての子プロセスに、解決した context と
+      確定した gid が届き、`DOCKER_HOST` は届かない。`env exec` も同じ
 
 ## 非機能の条件
 

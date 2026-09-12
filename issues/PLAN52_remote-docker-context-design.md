@@ -75,7 +75,7 @@ graph TD
 | 個人設定の読み込み | `project.local.yml` を読み、`docker` 節を検証して `DockerSettings` にする。無い・空なら既定値 |
 | context の解決 | CLI / env / ファイル / 未指定の順で 1 つに決め、出所を添える。**docker を呼ばない純粋な処理** |
 | 接続先の確定 | 解決した context と現在の context を比べてリモート扱いを決め、`home` / `gid` を添える。現在の context は `docker context show` で 1 回だけ問い合わせる。**問い合わせは `DOCKER_CONTEXT` を取り除いた環境で実行する**（docker は `DOCKER_CONTEXT` を最優先で返すため、載せた後に呼ぶと設定先自身が返り、常にローカル扱いになる） |
-| 環境変数への反映 | `DOCKER_CONTEXT` を `os.environ` へ載せ、`DOCKER_HOST` があれば警告して取り除く（docker は `DOCKER_HOST` を `DOCKER_CONTEXT` より優先するため）。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える）。**接続先の確定より後に行う** |
+| 環境変数への反映 | `DOCKER_CONTEXT` を `os.environ` へ載せ、`DOCKER_HOST` があれば警告して取り除く（docker は `DOCKER_HOST` を `DOCKER_CONTEXT` より優先するため）。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える）。**接続先の確定より後に行い、冪等にして機密注入の後に再適用する** |
 | bind mount の書き換え | 生成物の各サービスの bind mount で `~` を `home` に置き換え、置き換えられないものを警告に集める |
 | attach URI の組み立て | 解決した context を `settings.context` に載せる。既存の `ssh_host` との組み合わせを保つ |
 | up / scale | 接続先を確定する。`up` は反映・書き換え・URI のすべてを使い、`scale` はエディタを開かないため反映と書き換えだけを使う |
@@ -272,7 +272,8 @@ docker:
 
 `devbase env exec [--context NAME] -- CMD` は、カレントディレクトリをプロジェクトとして
 `ContextChoice` を解決する（`--context` があればそれが CLI 由来として最優先）。
-`DOCKER_CONTEXT` を子プロセスの環境へ載せる。gid・home・リモート判定は行わない
+`DOCKER_CONTEXT` を子プロセスの環境へ載せる（`child_env()` が機密を載せた**後**の辞書へ
+適用し、`.env` の同名キーに負けない）。gid・home・リモート判定は行わない
 （docker を呼ばない）。`--context` を引数で受けるのは、`cli.main()` が dispatch の前に
 機密を `os.environ` へ注入し、`.env` に `DEVBASE_DOCKER_CONTEXT` があると環境変数で渡した
 値が上書きされるためである。
@@ -328,6 +329,7 @@ sequenceDiagram
         U->>U: 自動スナップショットを飛ばす（警告）
     end
     U->>C: 生成(scale, secrets, home, remote)
+    Note over U,C: 機密注入の直後に反映を再適用
     C-->>U: 生成物（警告があれば出す）
     U->>D: compose down / up / exec（環境を継承）
     U->>U: エディタ(docker_context=target.context)
@@ -343,6 +345,14 @@ sequenceDiagram
 
 解決と反映は `_ensure_env_files` より前、`project.yml` の読み込みの直後に置く。
 `pre-up` フックも `DOCKER_CONTEXT` を継承する。
+
+**反映は 1 回では足りない。** `_inject_secrets()`（`runtime.inject`）は機密ストアの値を
+`os.environ` へ無条件に上書きするため、`.env` に `DOCKER_CONTEXT` / `DOCKER_GID` /
+`DOCKER_HOST` があると、確定した接続先が途中で戻る。`cmd_up` は構成生成の中で
+`_inject_secrets(required=True)` を呼び、その後に `compose down / up` を実行する。そのため
+反映は**冪等な関数**にし、`_inject_secrets()` の直後に**必ず再適用する**。`_inject_secrets`
+は container.py の全 lifecycle コマンドが通る 1 か所なので、そこに再適用を置けば漏れない。
+`env exec` も `child_env()` が返した辞書へ同じ関数を適用してから子プロセスを起動する。
 
 ### 他のコマンド
 

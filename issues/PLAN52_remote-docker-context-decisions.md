@@ -124,6 +124,17 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 リモートのボリュームを `docker run ... | tar` の標準出力経由で手元へ運ぶ形は、差分世代の
 仕組みごと作り直しになるため別課題にする。
 
+### 決定 13: 接続先の反映は冪等にし、機密注入のたびに再適用する
+
+`runtime.inject` は機密ストアの値を `os.environ` へ無条件に上書きする。機密ストアに
+`DOCKER_CONTEXT` / `DOCKER_GID` / `DOCKER_HOST` が入っていると、`up` の途中（構成生成の中の
+`_inject_secrets`）で確定済みの接続先が戻り、volume 作成と `compose up` が別の daemon を
+向く。反映を冪等な関数にして `_inject_secrets` の直後と `child_env()` の後に呼べば、
+何度注入されても最後に確定した接続先が残る。
+
+`runtime.inject` に「上書きしないキー」の一覧を持たせる形は、機密の注入が接続先の都合を
+知ることになり、責務が混ざるため採らない。
+
 ## テスト設計
 
 | 受け入れ条件 | 何で確かめるか |
@@ -137,6 +148,7 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 | リモート判定が `DOCKER_CONTEXT` 反映後でも変わらない | `test_docker_context.py`: `runner` に渡る env に `DOCKER_CONTEXT` が無いこと。`os.environ` に載せた後に確定しても `remote` が真になること |
 | env の空文字は未指定 | 同上 |
 | `DOCKER_HOST` があるとき context 解決時に外れる | `test_docker_context.py`: 反映後の環境に `DOCKER_HOST` が無く警告が出る。context が `None` なら残る |
+| 機密注入の後も接続先が維持される | `test_container_context.py`: 機密ストアに `DOCKER_CONTEXT=x` / `DOCKER_GID=1` / `DOCKER_HOST=tcp://...` を置いた状態で `up --context b` を実行し、volume・compose・exec のすべての子プロセスに `DOCKER_CONTEXT=b`、確定した `DOCKER_GID`、`DOCKER_HOST` 無しで届く。`env exec` も同様 |
 | `--context` を受け付けるコマンド | `tests/cli/test_project_dispatch.py` 系: parser が各サブコマンドで `--context` を取ること |
 | 存在しない context は docker のエラーで止まる | 手動確認（docker の判定に委ねるため単体テストにしない） |
 | ローカル扱いで `DOCKER_GID` が変わらない | `test_container_context.py`: 現在の context と同じ名前を設定し、`DOCKER_GID` が元のまま |
