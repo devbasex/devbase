@@ -135,7 +135,8 @@ uv の起動が 1 回増えるため採らない。
 | `home` 無しのリモート扱いで警告 | `test_bind_mounts.py` + `caplog` |
 | 絶対パスと named volume を触らない | `test_bind_mounts.py` |
 | `down` / `ps` / `logs` / `login` の伝播 | `test_container_context.py`: 各 cmd の子プロセス env |
-| shell `build` の伝播 | `tests/cli/test_wrapper_build_context.py`: `docker` と `uv` を偽コマンドに差し替え、`--context` が取り除かれて `DEVBASE_DOCKER_CONTEXT` に写ること。`env exec` 経由で `DOCKER_CONTEXT` が届くこと |
+| リモート扱いの `scale` | `test_container_context.py`: `DOCKER_CONTEXT` / `DOCKER_GID` と生成物の bind mount |
+| shell `build` の伝播 | `tests/cli/test_wrapper_build_context.py`: `docker` と `uv` を偽コマンドに差し替え、`--context` が取り除かれて `DEVBASE_DOCKER_CONTEXT` に写ること。`env exec` 経由で `DOCKER_CONTEXT` が届くこと。`build --context NAME` と `--context=NAME` が単体ビルドへ誤分岐しないこと |
 | `up` からの自動ビルド | `test_container_context.py`: `_run_build` の子プロセス env に `DOCKER_CONTEXT` と `DEVBASE_DOCKER_CONTEXT` |
 | `env exec` | `tests/cli/test_secret_injection.py` 系に追加: 子プロセス env の `DOCKER_CONTEXT` |
 | 自動スナップショットの回避 | `test_container_context.py`: リモート扱いで `SnapshotManager.create` が呼ばれず警告が出る |

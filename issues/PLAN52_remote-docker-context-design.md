@@ -78,7 +78,7 @@ graph TD
 | 環境変数への反映 | `DOCKER_CONTEXT` と `DEVBASE_DOCKER_CONTEXT` を `os.environ` へ載せる。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える） |
 | bind mount の書き換え | 生成物の各サービスの bind mount で `~` を `home` に置き換え、置き換えられないものを警告に集める |
 | attach URI の組み立て | 解決した context を `settings.context` に載せる。既存の `ssh_host` との組み合わせを保つ |
-| up / scale | 接続先を確定し、反映・書き換え・URI のすべてを使う |
+| up / scale | 接続先を確定する。`up` は反映・書き換え・URI のすべてを使い、`scale` はエディタを開かないため反映と書き換えだけを使う |
 | down / ps / logs / login / build / rebuild | context だけを解決して反映する（gid・home は使わない） |
 | env exec | shell の `cmd_build` から呼ばれる。context だけを解決して子プロセスへ載せる |
 
@@ -246,11 +246,11 @@ docker:
 | 項目 | 内容 |
 | --- | --- |
 | 名前 | `--context NAME` |
-| 付く場所 | `up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` と、`project` / `container` 配下の同名サブコマンド、トップレベルの同名ショートカット |
+| 付く場所 | `project` / `container` 配下の `up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild`。トップレベルはショートカットが既にある `up` / `down` / `ps` / `login` / `scale` / `build` / `rebuild` だけ（`logs` のショートカットは無く、新設しない） |
 | 入力 | context 名（文字列）。空文字は `argparse` の型検査で拒む |
 | 出力 | 無し。解決結果は `up` の冒頭の info 1 行に出る |
 | 失敗の形 | 名前が存在しなければ docker CLI が非ゼロで止まり、devbase はその終了コードを返す |
-| 互換性 | 既存の引数は変えない。`build` の shell 経路では `bin/devbase` が `--context` を取り除いて `DEVBASE_DOCKER_CONTEXT` に写す |
+| 互換性 | 既存の引数は変えない。`build` の shell 経路では `bin/devbase` の `build)` 分岐が、`_build_image` の走査より**前**に `--context NAME` / `--context=NAME` を取り除いて `DEVBASE_DOCKER_CONTEXT` に写す（後にすると `NAME` が単体イメージ名として拾われ、Python の単体ビルドへ誤分岐する） |
 
 ### 環境変数
 
@@ -350,15 +350,21 @@ sequenceDiagram
 ```mermaid
 graph TD
     A[bin/devbase build 引数] --> B{--context あり?}
-    B -->|はい| C[取り除いて<br/>DEVBASE_DOCKER_CONTEXT に写す]
+    B -->|はい| C[build 分岐の先頭で取り除き<br/>DEVBASE_DOCKER_CONTEXT に写す]
     B -->|いいえ| D[そのまま]
-    C --> E[docker 呼び出しはすべて<br/>env exec 経由]
-    D --> E
-    E --> F[env exec が context を<br/>解決して DOCKER_CONTEXT を載せる]
+    C --> G{image 指定 or --expires?}
+    D --> G
+    G -->|はい| H[Python の project build]
+    G -->|いいえ| E[shell の cmd_build]
+    E --> F[docker 呼び出しはすべて<br/>env exec 経由]
+    H --> F2[Python が context を解決]
 ```
 
-`cmd_build` の `docker buildx build` と `docker image inspect` を `compose_with_secrets`
-（= `env exec`）経由へ変える。関数名は役割に合わせ `run_with_project_env` に改める。
+`--context` の抽出は `bin/devbase` の `build)` 分岐の**先頭**、`_build_image` / `--expires` の
+走査より前に置く。走査の後に置くと `--context` の値が単体イメージ名として拾われ、
+`project build <name>` へ誤分岐する。`cmd_build` の `docker buildx build` と
+`docker image inspect` を `compose_with_secrets`（= `env exec`）経由へ変える。関数名は役割に
+合わせ `run_with_project_env` に改める。
 
 ## 非機能の実現方式
 

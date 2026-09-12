@@ -183,8 +183,10 @@ issue #162 の提案として書かれているものを、この仕様の決定
 - [ ] 同じ状態で CLI 指定が無ければ `b`、env も無ければ `a`
 - [ ] env `DEVBASE_DOCKER_CONTEXT` に空文字を設定すると「未指定」として扱い、
       `project.local.yml` の値へ落ちる
-- [ ] `--context` は `devbase up` / `down` / `ps` / `logs` / `login` / `scale` / `build` /
-      `rebuild` と、それらの `project` / `container` 配下の同名サブコマンドが受け付ける
+- [ ] `--context` は `project` / `container` 配下の `up` / `down` / `ps` / `logs` / `login` /
+      `scale` / `build` / `rebuild` と、トップレベルにショートカットがある `up` / `down` /
+      `ps` / `login` / `scale` / `build` / `rebuild` が受け付ける（`logs` にトップレベルの
+      ショートカットは無く、新設もしない）
 - [ ] 解決した context が `docker context ls` に無い名前のとき、`devbase up` はコンテナを
       起動せずに非ゼロで終了する。表示は docker CLI のエラー（`context "x" does not exist`）
       である。devbase 側で名前の存在を先に検証しない（docker の判定に委ねる）
@@ -220,6 +222,8 @@ issue #162 の提案として書かれているものを、この仕様の決定
 
 - [ ] リモート扱いの `devbase down` / `ps` / `logs` / `login` が、`up` と同じ `DOCKER_CONTEXT` を
       子プロセスへ載せる（`.docker-compose.scale.yml` の有無によらない）
+- [ ] リモート扱いの `devbase scale N` は、`up` と同じく `DOCKER_CONTEXT` と `DOCKER_GID` を
+      載せ、bind mount を書き換えた生成物で新しいインスタンスを起動する
 - [ ] リモート扱いの `devbase build`（shell 経路）で、`docker buildx build` /
       `docker image inspect` / `docker compose build` のすべてが `DOCKER_CONTEXT` 付きで動く
 - [ ] リモート扱いの `devbase up` からの自動ビルド（`_run_build` → `bin/devbase build`）も
@@ -322,5 +326,4 @@ issue #162 の提案として書かれているものを、この仕様の決定
 
 | 項目 | 誰が決めるか | 期限 |
 | --- | --- | --- |
-| gid 取得に使う公開イメージ（`alpine` / `busybox`）とタグの固定 | 設計で決める | 設計工程 |
 | devbase-samples の `.gitignore` 更新の起票先と担当 | 利用者 | 実装 PR のマージまで |
