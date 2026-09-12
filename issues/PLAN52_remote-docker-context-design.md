@@ -1,0 +1,380 @@
+# PLAN52 設計: 構成要素とデータ構造と処理の流れ
+
+この文書は「どう作るか」だけを扱う。
+
+| 内容 | 文書 |
+| --- | --- |
+| 要求と受け入れ条件 | [PLAN52_remote-docker-context.md](PLAN52_remote-docker-context.md) |
+| 決定の記録とテスト設計 | [PLAN52_remote-docker-context-decisions.md](PLAN52_remote-docker-context-decisions.md) |
+
+## 機能一覧
+
+| # | 機能 | 誰が使うか |
+| --- | --- | --- |
+| F1 | プロジェクトごとに接続先の docker context を個人設定に書く | 別ホストで dev コンテナを動かす利用者 |
+| F2 | `devbase up / down / ps / logs / login / scale / build / rebuild` が設定した context の daemon を相手に動く | 同上 |
+| F3 | 一時的に別の context へ向ける（CLI / 環境変数） | 同上 |
+| F4 | リモート側の docker グループ gid を自動で決める | 同上（`docker.gid` を書かずに済ませたい人） |
+| F5 | bind mount の `~` をリモート側の HOME で展開する | `~/.aws` 等を mount するプロジェクトの利用者 |
+| F6 | `devbase up` が開く VS Code がリモートのコンテナへ attach する | 同上 |
+| F7 | Remote-SSH 統合端末から、手元で直接 attach する URI も受け取る | Windows VS Code → Mac → WSL の一周を避けたい人 |
+
+## 構成要素
+
+### 文脈
+
+```mermaid
+graph LR
+    利用者 --> CLI[devbase]
+    CLI --> Local[手元の docker daemon]
+    CLI --> Remote[別ホストの docker daemon]
+    CLI --> Code[VS Code]
+    Code --> Remote
+```
+
+変えられないものは次の 3 つである。
+
+| 外部の系 | 変えられない振る舞い |
+| --- | --- |
+| docker CLI | context の解決順（`DOCKER_CONTEXT` → `docker context use` → 既定） |
+| compose クライアント | bind mount の `~` を手元の HOME へ展開する |
+| VS Code Dev Containers 拡張 | attach URI の `settings.context` を attach 先の context 名として読む |
+
+### 構成要素図
+
+```mermaid
+graph TD
+    subgraph 設定
+        LC[個人設定の読み込み<br/>project.local.yml]
+    end
+    subgraph 解決
+        RC[context の解決<br/>優先順位と出所]
+        RT[接続先の確定<br/>リモート判定・home・gid]
+    end
+    subgraph 適用
+        AP[環境変数への反映<br/>DOCKER_CONTEXT / DOCKER_GID]
+        BM[bind mount の書き換え]
+        ED[attach URI の組み立て]
+    end
+    subgraph 入口
+        UP[up / scale]
+        OT[down / ps / logs / login / build / rebuild]
+        EX[env exec]
+    end
+    LC --> RC --> RT
+    RT --> AP
+    RT --> BM
+    RT --> ED
+    UP --> RT
+    OT --> RC
+    EX --> RC
+```
+
+| 要素 | 責務 |
+| --- | --- |
+| 個人設定の読み込み | `project.local.yml` を読み、`docker` 節を検証して `DockerSettings` にする。無い・空なら既定値 |
+| context の解決 | CLI / env / ファイル / 未指定の順で 1 つに決め、出所を添える。**docker を呼ばない純粋な処理** |
+| 接続先の確定 | 解決した context と現在の context を比べてリモート扱いを決め、`home` / `gid` を添える。現在の context は `docker context show` で 1 回だけ問い合わせる |
+| 環境変数への反映 | `DOCKER_CONTEXT` と `DEVBASE_DOCKER_CONTEXT` を `os.environ` へ載せる。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える） |
+| bind mount の書き換え | 生成物の各サービスの bind mount で `~` を `home` に置き換え、置き換えられないものを警告に集める |
+| attach URI の組み立て | 解決した context を `settings.context` に載せる。既存の `ssh_host` との組み合わせを保つ |
+| up / scale | 接続先を確定し、反映・書き換え・URI のすべてを使う |
+| down / ps / logs / login / build / rebuild | context だけを解決して反映する（gid・home は使わない） |
+| env exec | shell の `cmd_build` から呼ばれる。context だけを解決して子プロセスへ載せる |
+
+### 配置
+
+```mermaid
+graph TD
+    subgraph 手元
+        SH[bin/devbase<br/>bash]
+        PY[devbase.cli<br/>Python]
+        DC[docker CLI / compose]
+        VS[VS Code]
+    end
+    subgraph 別ホスト
+        DD[dockerd]
+        CT[dev コンテナ]
+    end
+    SH -->|env exec 経由| PY
+    PY -->|DOCKER_CONTEXT 付きの環境| DC
+    DC -->|ssh: compose の構成・ビルド文脈| DD
+    DD --> CT
+    VS -->|settings.context を持つ attach URI| CT
+```
+
+境界をまたぐもの: docker CLI が ssh で送るのは compose の構成（変数展開済み。機密は
+**環境変数の値として展開された結果**が含まれる）とビルド文脈（`containers/`）。
+`project.local.yml`・`env`・`.env`・age の鍵は手元に留まる。
+
+### パッケージ・モジュール構成
+
+```text
+bin/devbase                          (変更: cmd_build の docker 直接呼び出しを env exec 経由へ、--context の受け取り)
+lib/devbase/
+├── cli.py                           (変更: --context を lifecycle サブコマンドへ追加)
+├── project/
+│   ├── config.py                    (変更: project.yml の docker: を案内付きで拒否)
+│   └── local_config.py              (新設: project.local.yml の読み込みと検証)
+├── utils/
+│   └── docker_context.py            (新設: context の解決・接続先の確定・環境変数への反映・gid 取得)
+├── volume/
+│   ├── bind_mounts.py               (新設: ~ の展開と警告の収集)
+│   └── compose.py                   (変更: 生成時に bind_mounts を呼ぶ)
+├── commands/
+│   ├── container.py                 (変更: 各 cmd で解決と反映、自動スナップショットの回避)
+│   └── env.py                       (変更: env exec で context を子プロセスへ)
+└── editor/
+    └── opener.py                    (変更: docker_context の解決順とフラット URI の提示)
+docs/user/
+├── project-yml.md                   (変更: project.local.yml の節)
+├── environment-variables.md         (変更: 「跨ホスト」→「リモート Docker」)
+└── cli-reference/02-project.md      (変更: --context)
+tests/
+├── project/test_local_config.py     (新設)
+├── utils/test_docker_context.py     (新設)
+├── volume/test_bind_mounts.py       (新設)
+├── commands/test_container_context.py (新設)
+├── cli/test_wrapper_build_context.py  (新設)
+└── editor/test_opener.py            (変更)
+```
+
+## 構造
+
+```mermaid
+classDiagram
+    class DockerSettings {
+        +context: str?
+        +home: str?
+        +gid: int?
+    }
+    class ProjectLocalConfig {
+        +docker: DockerSettings
+    }
+    class ContextChoice {
+        +context: str?
+        +source: str
+    }
+    class DockerTarget {
+        +context: str?
+        +source: str
+        +remote: bool
+        +home: str?
+        +gid: int?
+    }
+    ProjectLocalConfig "1" --> "1" DockerSettings
+    ContextChoice ..> DockerSettings: 読む
+    DockerTarget ..> ContextChoice: 元にする
+    DockerTarget ..> DockerSettings: home と gid を取る
+    ProjectConfig ..> ProjectLocalConfig: 別ファイル・別型
+```
+
+| 型 | 責務 |
+| --- | --- |
+| `DockerSettings` | `project.local.yml` の `docker` 節 1 つ分。すべて省略可 |
+| `ProjectLocalConfig` | `project.local.yml` 1 ファイル分。いまは `docker` だけを持つ。将来 `scale` 等を足す器 |
+| `ContextChoice` | 優先順位で決めた context と出所（`cli` / `env` / `file` / `default` の 4 値）。docker を呼ばずに決まる |
+| `DockerTarget` | 接続先の確定結果。`remote` が偽なら `home` / `gid` は `None` |
+
+`ProjectConfig`（既存）は変えない。`project.local.yml` を `project.yml` へ深くマージする
+形は採らない（決定 2）。
+
+### 状態: リモート扱いの判定
+
+```mermaid
+stateDiagram-v2
+    [*] --> 未指定: context が None
+    [*] --> 指定あり: context が非 None
+    指定あり --> ローカル扱い: 現在の context と一致
+    指定あり --> リモート扱い: 現在の context と不一致
+    指定あり --> リモート扱い: 現在の context を取得できない
+    未指定 --> [*]
+    ローカル扱い --> [*]
+    リモート扱い --> [*]
+```
+
+`home` / `gid` が `DockerTarget` に載る条件は 2 つある。リモート扱いであること、そして
+**CLI / env で上書きされた context がファイルの `docker.context` と一致すること**（前提 4）
+である。不一致なら両方 `None` にし、警告を 1 行出す。
+
+## データ構造
+
+永続化するのは 2 つで、どちらも Git 管理外である。
+
+### `projects/<name>/project.local.yml`
+
+```yaml
+docker:
+  context: gpu-wsl      # 任意。docker context ls の名前
+  home: /home/takemi    # 任意。リモート側の HOME（絶対パス）
+  gid: 999              # 任意。リモート側の docker グループ gid
+```
+
+| キー | 型 | 必須 | 検証 |
+| --- | --- | --- | --- |
+| `docker` | マッピング | いいえ | 未知キーは `ConfigError` |
+| `docker.context` | 文字列 | いいえ | 空・空白・制御文字を含むものは `ConfigError` |
+| `docker.home` | 文字列 | いいえ | `/` で始まらないものは `ConfigError` |
+| `docker.gid` | 整数 | いいえ | 真偽値・負数・非整数は `ConfigError` |
+
+最上位に `docker` 以外のキーがあれば `ConfigError`。空ファイル（`None`）は「無い」と同じ。
+`project.yml` 側は `_TOP_LEVEL_KEYS` を変えず、`docker` があったときだけ
+「`project.local.yml` へ移す」案内を含むメッセージにする。
+
+### `$DEVBASE_ROOT/.cache/docker-gid/<context>`
+
+| 項目 | 内容 |
+| --- | --- |
+| 中身 | 10 進の gid 1 行 |
+| 作る時 | リモート扱いの up / scale で `docker.gid` が無く、取得に成功したとき |
+| 読む時 | 同じ条件で、ファイルがあり整数として読めるとき |
+| 消す時 | 自動では消さない。リモート側の gid が変わったら利用者が消すか `docker.gid` を書く |
+| ファイル名 | context 名をそのまま使う。context 名は docker が `/` を許さないため経路を壊さない |
+
+上書きして過去を失う構造だが、控えるのは再取得できる値であり履歴に意味が無い（決定 6）。
+
+## 入出力の契約
+
+### 設定ファイル
+
+上の「データ構造」が契約である。読み込みの入口は
+`load_project_local_config(project_dir) -> ProjectLocalConfig`。ファイルが無ければ
+既定値（`docker` の 3 項目とも `None`）を返し、例外にしない。
+
+### CLI `--context`
+
+| 項目 | 内容 |
+| --- | --- |
+| 名前 | `--context NAME` |
+| 付く場所 | `up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` と、`project` / `container` 配下の同名サブコマンド、トップレベルの同名ショートカット |
+| 入力 | context 名（文字列）。空文字は `argparse` の型検査で拒む |
+| 出力 | 無し。解決結果は `up` の冒頭の info 1 行に出る |
+| 失敗の形 | 名前が存在しなければ docker CLI が非ゼロで止まり、devbase はその終了コードを返す |
+| 互換性 | 既存の引数は変えない。`build` の shell 経路では `bin/devbase` が `--context` を取り除いて `DEVBASE_DOCKER_CONTEXT` に写す |
+
+### 環境変数
+
+| 名前 | 向き | 意味 |
+| --- | --- | --- |
+| `DEVBASE_DOCKER_CONTEXT` | 入力 | env / `.env` / shell からの上書き。空文字は未指定 |
+| `DOCKER_CONTEXT` | 出力 | 解決した context。docker CLI と compose が読む。未指定なら載せない |
+| `DOCKER_GID` | 出力 | リモート扱いの up / scale だけ上書き。他は `bin/devbase` の値のまま |
+| `DEVBASE_EDITOR_DOCKER_CONTEXT` | 入力 | 既存。attach URI の `settings.context` を明示したいときだけ。解決した context より優先 |
+
+`DEVBASE_DOCKER_CONTEXT` は**出力としても**載せる。`up` から `bin/devbase build` を起動する
+経路で、shell 側の `env exec` が同じ context を再解決するためである。CLI で上書きした値を
+子プロセスへ引き継ぐ経路はこれしか無い。
+
+### `env exec`
+
+`devbase env exec -- CMD` は、カレントディレクトリをプロジェクトとして `ContextChoice` を
+解決する。`DOCKER_CONTEXT` を子プロセスの環境へ載せる。gid・home・リモート判定は行わない
+（docker を呼ばない）。
+
+### bind mount の書き換え
+
+入力: 生成物の `services` と `home`。出力: 書き換えた `services` と警告の一覧。
+
+| bind mount の書き方 | `home` あり | `home` なし（リモート扱い） |
+| --- | --- | --- |
+| `~/x:/t`、`~:/t`、`{source: ~/x}` | `home/x` へ置き換え | 警告に載せる |
+| `~user/x:/t` | 置き換えず警告に載せる | 警告に載せる |
+| `./x:/t`、`../x:/t` | 置き換えず警告に載せる | 警告に載せる |
+| `/abs:/t`、named volume、`{type: volume}` | 触らない | 触らない |
+
+警告は 1 回にまとめ、mount の一覧と `docker.home` の書き方を添える。
+
+### attach URI
+
+`open_editor(..., docker_context: str | None)` を足す。`settings.context` の決め方:
+
+| `DEVBASE_EDITOR_DOCKER_CONTEXT` | `docker_context` 引数 | `ssh_host` | `settings.context` |
+| --- | --- | --- | --- |
+| 明示（非空） | 任意 | 任意 | 明示の値 |
+| 明示（空文字） | 任意 | 任意 | 付けない |
+| 無し | 非 None | 任意 | 引数の値 |
+| 無し | None | あり | `docker context show`（従来） |
+| 無し | None | 無し | 付けない（従来） |
+
+`ssh_host` と `settings.context` の両方が付くとき、同じペイロードで `@ssh-remote+` を
+付けないフラット URI を info で 1 行添える。
+
+## 処理の流れ
+
+### `devbase up`
+
+```mermaid
+sequenceDiagram
+    participant U as up
+    participant R as 解決と確定
+    participant D as docker
+    participant C as 構成生成
+    U->>R: 解決(project_dir, --context, environ)
+    R->>D: docker context show
+    D-->>R: 現在の context（失敗なら不明）
+    R-->>U: DockerTarget
+    U->>U: DOCKER_CONTEXT / DEVBASE_DOCKER_CONTEXT を載せる
+    alt リモート扱い
+        U->>R: gid を確定(target)
+        R->>D: docker run alpine stat（控えが無いとき）
+        D-->>R: gid（失敗なら DevbaseError）
+        R-->>U: DOCKER_GID を載せる
+        U->>U: 自動スナップショットを飛ばす（警告）
+    end
+    U->>C: 生成(scale, secrets, home, remote)
+    C-->>U: 生成物（警告があれば出す）
+    U->>D: compose down / up / exec（環境を継承）
+    U->>U: エディタ(docker_context=target.context)
+```
+
+失敗の経路:
+
+| どこで | 何が起きる | 結果 |
+| --- | --- | --- |
+| `project.local.yml` の検証 | `ConfigError` | `up` は `project.yml` を読む前に非ゼロで終了。コンテナに触らない |
+| gid の取得 | docker が非ゼロ、または出力が整数でない | `DevbaseError`。docker の stderr と `docker.gid` の書き方を出して非ゼロ。既存コンテナは止めない（構成生成より前） |
+| context が存在しない | 最初に daemon へ届く docker 呼び出し（`docker context show` は成功する。リモート扱いなら gid の `docker run`、そうでなければ `volume inspect`）で失敗 | docker のメッセージ（`context "x" does not exist`）を含めて非ゼロ |
+
+解決と反映は `_ensure_env_files` より前、`project.yml` の読み込みの直後に置く。
+`pre-up` フックも `DOCKER_CONTEXT` を継承する。
+
+### 他のコマンド
+
+`_dispatch_lifecycle` が handler を呼ぶ前に `ContextChoice` を解決し、`DOCKER_CONTEXT` と
+`DEVBASE_DOCKER_CONTEXT` を載せる。対象は `down` / `ps` / `logs` / `login` / `build`（Python
+経路）/ `rebuild` である。`up` / `scale` はそこからさらに `DockerTarget` を確定する。
+`docker context show` を呼ぶのは `up` / `scale` だけである。
+
+### shell の `build`
+
+```mermaid
+graph TD
+    A[bin/devbase build 引数] --> B{--context あり?}
+    B -->|はい| C[取り除いて<br/>DEVBASE_DOCKER_CONTEXT に写す]
+    B -->|いいえ| D[そのまま]
+    C --> E[docker 呼び出しはすべて<br/>env exec 経由]
+    D --> E
+    E --> F[env exec が context を<br/>解決して DOCKER_CONTEXT を載せる]
+```
+
+`cmd_build` の `docker buildx build` と `docker image inspect` を `compose_with_secrets`
+（= `env exec`）経由へ変える。関数名は役割に合わせ `run_with_project_env` に改める。
+
+## 非機能の実現方式
+
+| 大項目 | 要求の条件 | 実現方式 | 確かめ方 |
+| --- | --- | --- | --- |
+| 性能・拡張性 | ローカル扱いの `up` に新たな docker 呼び出しを足さない。リモート扱いで足すのは gid 取得 1 回（初回のみ）と `docker context show` 1 回まで | `docker context show` は context が非 None のときだけ呼ぶ。gid は `.cache/docker-gid/<context>` に控える | `subprocess.run` を差し替えた結合テストで呼び出し回数を数える |
+| 運用・保守性 | 解決した context と出所を `up` の冒頭に 1 行出す。飛ばした処理と書き換えなかった mount は警告に残す | `ContextChoice.source` を info に含める。警告は `logger.warning` に集約 | ログをキャプチャする単体テスト |
+| 移行性 | 設定を書くまで挙動が変わらない。消せば戻る | context が `None` のとき環境変数を一切触らない。書き換えは `home` が非 None のときだけ | 既存テストが書き換えなしで通る |
+| セキュリティ | 接続先の実体・鍵・トークンを設定に持たない。平文はリモートへ渡らない | 設定は context 名だけ。機密注入の経路は変えない | 受け入れ条件「起きてはいけないこと」の grep |
+| システム環境 | 手元 macOS / Linux / WSL、リモート Linux dockerd + sshd | 手元側で bash と Python 3.10 以降のみを前提にする。リモート側に devbase を要求しない | ドキュメントの手順で実機確認 |
+
+## 未確認のまま残ること
+
+| 項目 | 内容 |
+| --- | --- |
+| buildx とリモート context | `DOCKER_CONTEXT` 付きの `docker buildx build --load` が、その context の docker ドライバでビルドされビルド文脈を送ることは docker の仕様だが、`docker buildx use` で別のビルダーを固定している環境では変わる。実機で確かめる |
+| `pre-up` フックの build 文脈 | ローカルへ clone して build context にするフックがリモートで動くかは、この計画では確かめない（対象範囲外） |
+| `settings.context` のローカル VS Code での解釈 | ssh 先経由での実機確認はあるが、手元の Dev Containers 拡張が非既定 context で attach する経路は実機で確かめる（リリース後テスト） |
+| alpine のタグ | `alpine:3` を使う。リモートに無ければ pull が走る（初回のみ） |
