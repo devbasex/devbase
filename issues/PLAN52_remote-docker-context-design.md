@@ -250,7 +250,7 @@ docker:
 | 入力 | context 名（文字列）。空文字は `argparse` の型検査で拒む |
 | 出力 | 無し。解決結果は `up` の冒頭の info 1 行に出る |
 | 失敗の形 | 名前が存在しなければ docker CLI が非ゼロで止まり、devbase はその終了コードを返す |
-| 互換性 | 既存の引数は変えない。`build` の shell 経路では `bin/devbase` の `build)` 分岐が、`_build_image` の走査より**前**に `--context NAME` / `--context=NAME` を取り除いて `DEVBASE_DOCKER_CONTEXT` に写す（後にすると `NAME` が単体イメージ名として拾われ、Python の単体ビルドへ誤分岐する） |
+| 互換性 | 既存の引数は変えない。`build` の shell 経路では `bin/devbase` の `build)` 分岐が、`_build_image` の走査より**前**に `--context NAME` / `--context=NAME` を取り除いてシェル変数に保持し、docker を叩く `env exec` へ `--context NAME` として**引数で**渡す（後にすると `NAME` が単体イメージ名として拾われ、Python の単体ビルドへ誤分岐する。環境変数に写すと Python 側の機密注入が `.env` の同名キーで上書きする） |
 
 ### 環境変数
 
@@ -269,9 +269,12 @@ docker:
 
 ### `env exec`
 
-`devbase env exec -- CMD` は、カレントディレクトリをプロジェクトとして `ContextChoice` を
-解決する。`DOCKER_CONTEXT` を子プロセスの環境へ載せる。gid・home・リモート判定は行わない
-（docker を呼ばない）。
+`devbase env exec [--context NAME] -- CMD` は、カレントディレクトリをプロジェクトとして
+`ContextChoice` を解決する（`--context` があればそれが CLI 由来として最優先）。
+`DOCKER_CONTEXT` を子プロセスの環境へ載せる。gid・home・リモート判定は行わない
+（docker を呼ばない）。`--context` を引数で受けるのは、`cli.main()` が dispatch の前に
+機密を `os.environ` へ注入し、`.env` に `DEVBASE_DOCKER_CONTEXT` があると環境変数で渡した
+値が上書きされるためである。
 
 ### bind mount の書き換え
 
@@ -354,19 +357,20 @@ sequenceDiagram
 ```mermaid
 graph TD
     A[bin/devbase build 引数] --> B{--context あり?}
-    B -->|はい| C[build 分岐の先頭で取り除き<br/>DEVBASE_DOCKER_CONTEXT に export<br/>（env の読み直しより後）]
+    B -->|はい| C[build 分岐の先頭で取り除き<br/>シェル変数に保持]
     B -->|いいえ| D[そのまま]
     C --> G{image 指定 or --expires?}
     D --> G
-    G -->|はい| H[Python の project build]
+    G -->|はい| H[Python の project build<br/>--context を引数で渡す]
     G -->|いいえ| E[shell の cmd_build]
-    E --> F[docker 呼び出しはすべて<br/>env exec 経由]
+    E --> F[docker 呼び出しはすべて<br/>env exec --context NAME 経由]
     H --> F2[Python が context を解決]
 ```
 
 `--context` の抽出は `bin/devbase` の `build)` 分岐の**先頭**、`_build_image` / `--expires` の
 走査より前に置く。走査の後に置くと `--context` の値が単体イメージ名として拾われ、
-`project build <name>` へ誤分岐する。`cmd_build` の `docker buildx build` と
+`project build <name>` へ誤分岐する。抽出した値は環境変数に写さず、`env exec` と
+`project build` へ `--context NAME` として引数で渡す。`cmd_build` の `docker buildx build` と
 `docker image inspect` を `compose_with_secrets`（= `env exec`）経由へ変える。関数名は役割に
 合わせ `run_with_project_env` に改める。
 

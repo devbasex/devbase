@@ -78,25 +78,29 @@ ssh 設定を devbase が解釈し直すことになり、TCP+TLS の context �
 相対パスは compose クライアントが手元の絶対パスへ解決し、リモートには存在しない。どちらも
 「正しい値」を devbase が推測できないため、黙って書き換えるより一覧で示す。
 
-### 決定 9: shell の `build` は `--context` を `DEVBASE_DOCKER_CONTEXT` へ写し、docker 呼び出しを `env exec` 経由にする
+### 決定 9: shell の `build` は `--context` を `env exec --context` へ引数で渡し、docker 呼び出しを `env exec` 経由にする
 
-`bin/devbase` は YAML を読めない。`--context` を引数から取り除いて環境変数に写せば、Python
-側の `env exec` が同じ優先順位（env > ファイル）で解決できる。CLI より上の優先はもともと
-無いので、env に写しても結果は変わらない。`docker buildx build` と `docker image inspect` の
-直接呼び出しも `env exec` を通す。compose のビルドと同じ経路で `DOCKER_CONTEXT` を受け取る。
+`bin/devbase` は YAML を読めない。`--context` を引数から取り除いて `env exec --context NAME`
+へ渡せば、Python 側が CLI 由来として最優先で解決する。`docker buildx build` と
+`docker image inspect` の直接呼び出しも `env exec` を通す。compose のビルドと同じ経路で
+`DOCKER_CONTEXT` を受け取る。
 
-`bin/devbase` の冒頭で Python を 1 回呼んで `DOCKER_CONTEXT` を export する形は、全コマンドに
-uv の起動が 1 回増えるため採らない。
+環境変数 `DEVBASE_DOCKER_CONTEXT` に写す形は採らない。`cli.main()` は dispatch の前に機密を
+`os.environ` へ注入し（`runtime.inject` は既存の値を上書きする）、`.env` に同名のキーが
+あると写した値が消える。`bin/devbase` の冒頭で Python を 1 回呼んで `DOCKER_CONTEXT` を
+export する形も、全コマンドに uv の起動が 1 回増えるため採らない。
 
 ### 決定 10: `up` からの自動ビルドは解決した context を `--context` で明示して渡す
 
 `up` は CLI の `--context` で上書きした値を `os.environ['DOCKER_CONTEXT']` に載せる。
 一方 `bin/devbase build` → `env exec` の経路は context を**再解決**する。`bin/devbase` は
-起動時に root とプロジェクトの `env` を読み直すため、環境変数 `DEVBASE_DOCKER_CONTEXT` で
-値を渡しても `env` に同名のキーがあればそこで戻される。`_run_build` が `--context <name>` を
-引数で渡せば、`build)` 分岐が `env` の読み直しより後に export するので、CLI の値が勝つ。
+起動時に root とプロジェクトの `env` を読み直し、Python 側は `.env` の機密を注入するため、
+環境変数で渡した値は `env` / `.env` の同名キーに負ける。`_run_build` が `--context <name>` を
+引数で渡し、`build)` 分岐がそれを `env exec --context` へ引数のまま送れば（決定 9）、
+どちらのファイルに何があっても CLI の値が届く。
 
-`DEVBASE_DOCKER_CONTEXT` を出力として載せる形は、上記のとおり `env` に負けるため採らない。
+`DEVBASE_DOCKER_CONTEXT` を出力として載せる形は、上記のとおり `env` / `.env` に負けるため
+採らない。
 
 ### 決定 11: エディタの `settings.context` は「明示 → devbase の解決結果 → 従来の推測」の順
 
@@ -140,8 +144,8 @@ uv の起動が 1 回増えるため採らない。
 | 絶対パスと named volume を触らない | `test_bind_mounts.py` |
 | `down` / `ps` / `logs` / `login` の伝播 | `test_container_context.py`: 各 cmd の子プロセス env |
 | リモート扱いの `scale` | `test_container_context.py`: `DOCKER_CONTEXT` / `DOCKER_GID` と生成物の bind mount |
-| shell `build` の伝播 | `tests/cli/test_wrapper_build_context.py`: `docker` と `uv` を偽コマンドに差し替え、`--context` が取り除かれて `DEVBASE_DOCKER_CONTEXT` に写ること。`env exec` 経由で `DOCKER_CONTEXT` が届くこと。`build --context NAME` と `--context=NAME` が単体ビルドへ誤分岐しないこと |
-| `up` からの自動ビルド | `test_container_context.py`: `_run_build` が `bin/devbase build --context <name>` を起動する。`test_wrapper_build_context.py`: `env` に `DEVBASE_DOCKER_CONTEXT=a` があっても `--context b` が勝つ |
+| shell `build` の伝播 | `tests/cli/test_wrapper_build_context.py`: `docker` と `uv` を偽コマンドに差し替え、`--context` が取り除かれて `DEVBASE_DOCKER_CONTEXT` に写ること。`env exec --context NAME` として引数で届くこと。`build --context NAME` と `--context=NAME` が単体ビルドへ誤分岐しないこと |
+| `up` からの自動ビルド | `test_container_context.py`: `_run_build` が `bin/devbase build --context <name>` を起動する。`test_wrapper_build_context.py`: `env` に `DEVBASE_DOCKER_CONTEXT=a` があっても `--context b` が勝つ。`tests/cli/test_secret_injection.py` 系: `.env`（機密）に `DEVBASE_DOCKER_CONTEXT=a` があっても `env exec --context b` の子プロセスに `DOCKER_CONTEXT=b` が載る |
 | `env exec` | `tests/cli/test_secret_injection.py` 系に追加: 子プロセス env の `DOCKER_CONTEXT` |
 | 自動スナップショットの回避 | `test_container_context.py`: リモート扱いで `SnapshotManager.create` が呼ばれず警告が出る |
 | `snapshot` 系と `down` のローテーションは変わらない | 既存テスト（`tests/snapshot/`）が書き換えなしで通る |

@@ -227,10 +227,12 @@ issue #162 の提案として書かれているものを、この仕様の決定
 - [ ] リモート扱いの `devbase build`（shell 経路）で、`docker buildx build` /
       `docker image inspect` / `docker compose build` のすべてが `DOCKER_CONTEXT` 付きで動く
 - [ ] リモート扱いの `devbase up` からの自動ビルド（`_run_build` → `bin/devbase build`）も
-      `DOCKER_CONTEXT` 付きで動く。プロジェクトの `env` に `DEVBASE_DOCKER_CONTEXT=a` があり
-      `up --context b` で起動した場合も、自動ビルドは `b` に対して行われる
-- [ ] `devbase env exec -- CMD` は、カレントプロジェクトの解決した context を子プロセスの
-      `DOCKER_CONTEXT` へ載せる。解決結果が `None` なら載せない
+      `DOCKER_CONTEXT` 付きで動く。プロジェクトの `env` または `.env` に
+      `DEVBASE_DOCKER_CONTEXT=a` があり `up --context b` で起動した場合も、自動ビルドは `b` に
+      対して行われる
+- [ ] `devbase env exec [--context NAME] -- CMD` は、カレントプロジェクトの解決した context を
+      子プロセスの `DOCKER_CONTEXT` へ載せる。解決結果が `None` なら載せない。`--context` を
+      付けたときは、`env` / `.env` に `DEVBASE_DOCKER_CONTEXT` があってもその値が勝つ
 - [ ] リモート扱いの `devbase up` は自動スナップショットを作らず、その旨を 1 行の警告で出す
 - [ ] `devbase snapshot` 系のコマンドと `down` のローテーションは、`project.local.yml` の
       有無で呼び出す docker コマンドも対象ディレクトリも変わらない
