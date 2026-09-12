@@ -130,7 +130,8 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 `DOCKER_CONTEXT` / `DOCKER_GID` / `DOCKER_HOST` が入っていると、`up` の途中（構成生成の中の
 `_inject_secrets`）で確定済みの接続先が戻り、volume 作成と `compose up` が別の daemon を
 向く。反映を冪等な関数にして `_inject_secrets` の直後と `child_env()` の後に呼べば、
-何度注入されても最後に確定した接続先が残る。
+何度注入されても最後に確定した接続先が残る。控えは `docker_context` モジュールが持ち、
+`_inject_secrets` が注入の直後に `reapply()` を呼ぶ（設計「処理の流れ」の責務表）。
 
 `runtime.inject` に「上書きしないキー」の一覧を持たせる形は、機密の注入が接続先の都合を
 知ることになり、責務が混ざるため採らない。
@@ -145,7 +146,7 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 | `project.yml` の `docker:` を案内付きで拒む | `tests/project/test_config.py` に 1 件追加 |
 | 壊れた YAML | `test_local_config.py`: ファイル名を含む `ConfigError` |
 | 優先順位 CLI > env > ファイル > 未指定 | `tests/utils/test_docker_context.py`: 組み合わせの表で `ContextChoice` を検証 |
-| リモート判定が `DOCKER_CONTEXT` 反映後でも変わらない | `test_docker_context.py`: `runner` に渡る env に `DOCKER_CONTEXT` が無いこと。`os.environ` に載せた後に確定しても `remote` が真になること |
+| リモート判定が `DOCKER_CONTEXT` / `DOCKER_HOST` 反映後でも変わらない | `test_docker_context.py`: `runner` に渡る env に `DOCKER_CONTEXT` も `DOCKER_HOST` も無いこと。`os.environ` に載せた後に確定しても `remote` が真になり、`DOCKER_HOST` だけがある環境で同名の context を指定しても `remote` が偽になること |
 | env の空文字は未指定 | 同上 |
 | `DOCKER_HOST` があるとき context 解決時に外れる | `test_docker_context.py`: 反映後の環境に `DOCKER_HOST` が無く警告が出る。context が `None` なら残る |
 | 機密注入の後も接続先が維持される | `test_container_context.py`: 機密ストアに `DOCKER_CONTEXT=x` / `DOCKER_GID=1` / `DOCKER_HOST=tcp://...` を置いた状態で `up --context b` を実行し、volume・compose・exec のすべての子プロセスに `DOCKER_CONTEXT=b`、確定した `DOCKER_GID`、`DOCKER_HOST` 無しで届く。`env exec` も同様 |
@@ -177,4 +178,4 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 | 機密の値が現れない | `test_container_context.py`: 機密を載せた状態で警告・控え・info に値が無い |
 | Git から除外 | `git check-ignore .cache/docker-gid/x projects/x/project.local.yml` |
 | `status` が変わらない | `tests/commands/test_status_account_group.py` が書き換えなしで通る |
-| 性能（docker 呼び出し回数） | `test_container_context.py`: ローカル扱いの `up` で `docker context show` / `docker run alpine` が呼ばれない |
+| 性能（docker 呼び出し回数） | `test_container_context.py`: context 未指定の `up` では `docker context show` / `docker run alpine` のどちらも呼ばれない。context 指定ありで現在の context と一致する `up` では `docker context show` が 1 回だけ呼ばれ、`docker run alpine` は呼ばれない |

@@ -74,7 +74,7 @@ graph TD
 | --- | --- |
 | 個人設定の読み込み | `project.local.yml` を読み、`docker` 節を検証して `DockerSettings` にする。無い・空なら既定値 |
 | context の解決 | CLI / env / ファイル / 未指定の順で 1 つに決め、出所を添える。**docker を呼ばない純粋な処理** |
-| 接続先の確定 | 解決した context と現在の context を比べてリモート扱いを決め、`home` / `gid` を添える。現在の context は `docker context show` で 1 回だけ問い合わせる。**問い合わせは `DOCKER_CONTEXT` を取り除いた環境で実行する**（docker は `DOCKER_CONTEXT` を最優先で返すため、載せた後に呼ぶと設定先自身が返り、常にローカル扱いになる） |
+| 接続先の確定 | 解決した context と現在の context を比べてリモート扱いを決め、`home` / `gid` を添える。現在の context は `docker context show` で 1 回だけ問い合わせる。**問い合わせは `DOCKER_CONTEXT` と `DOCKER_HOST` の両方を取り除いた環境で実行する**（`DOCKER_CONTEXT` が残ると設定先自身が返って常にローカル扱いになり、`DOCKER_HOST` が残ると `default` が返って常にリモート扱いになる。実測: `DOCKER_HOST=tcp://127.0.0.1:1 docker context show` → `default`） |
 | 環境変数への反映 | `DOCKER_CONTEXT` を `os.environ` へ載せ、`DOCKER_HOST` があれば警告して取り除く（docker は `DOCKER_HOST` を `DOCKER_CONTEXT` より優先するため）。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える）。**接続先の確定より後に行い、冪等にして機密注入の後に再適用する** |
 | bind mount の書き換え | 生成物の各サービスの bind mount で `~` を `home` に置き換え、置き換えられないものを警告に集める |
 | attach URI の組み立て | 解決した context を `settings.context` に載せる。既存の `ssh_host` との組み合わせを保つ |
@@ -317,7 +317,7 @@ sequenceDiagram
     participant D as docker
     participant C as 構成生成
     U->>R: 解決(project_dir, --context, environ)
-    R->>D: docker context show（DOCKER_CONTEXT 抜きの環境）
+    R->>D: docker context show（DOCKER_CONTEXT / DOCKER_HOST 抜きの環境）
     D-->>R: 現在の context（失敗なら不明）
     R-->>U: DockerTarget
     U->>U: DOCKER_CONTEXT を載せる（確定の後）
@@ -350,9 +350,20 @@ sequenceDiagram
 `os.environ` へ無条件に上書きするため、`.env` に `DOCKER_CONTEXT` / `DOCKER_GID` /
 `DOCKER_HOST` があると、確定した接続先が途中で戻る。`cmd_up` は構成生成の中で
 `_inject_secrets(required=True)` を呼び、その後に `compose down / up` を実行する。そのため
-反映は**冪等な関数**にし、`_inject_secrets()` の直後に**必ず再適用する**。`_inject_secrets`
-は container.py の全 lifecycle コマンドが通る 1 か所なので、そこに再適用を置けば漏れない。
-`env exec` も `child_env()` が返した辞書へ同じ関数を適用してから子プロセスを起動する。
+反映は**冪等な関数**にし、`_inject_secrets()` の直後に**必ず再適用する**。責務の置き方は
+次のとおり。
+
+| 要素 | 責務 |
+| --- | --- |
+| `utils/docker_context.apply(target, environ)` | 反映する。同時に「いま有効な接続先」をモジュール変数に控える。冪等 |
+| `utils/docker_context.reapply(environ)` | 控えた接続先があれば `apply` を呼び直す。無ければ何もしない |
+| `commands/container._inject_secrets()` | 機密を注入した**直後に自分で** `reapply()` を呼ぶ。呼び出し側は何もしない |
+| `commands/env.cmd_env_exec()` | `child_env()` が返した辞書へ `apply(choice, env)` を直接当てる（モジュール変数は使わない） |
+
+`_inject_secrets` は引数を取らない共通関数で、container.py の全 lifecycle コマンドが通る。
+確定した接続先を引数で配り直すより、`docker_context` 側が控えを持ち `_inject_secrets` が
+それを呼ぶ方が、呼び出し側を変えずに漏れを塞げる。モジュール変数を持つのはこの 1 つだけで、
+テストでは `docker_context.reset()` で消す。
 
 ### 他のコマンド
 
@@ -360,8 +371,8 @@ sequenceDiagram
 `login` / `build`（Python 経路）/ `rebuild` の handler はそれをそのまま `DOCKER_CONTEXT` に
 載せる。`up` / `scale` の handler は**載せる前に** `DockerTarget` を確定する（上の
 シーケンス図の順序）。`docker context show` を呼ぶのは `up` / `scale` だけである。
-確定の問い合わせは `DOCKER_CONTEXT` を取り除いた環境で行うため、呼び出し側が先に載せて
-しまっても判定は変わらない。
+確定の問い合わせは `DOCKER_CONTEXT` と `DOCKER_HOST` を取り除いた環境で行うため、呼び出し側が
+先に載せてしまっても判定は変わらない。
 
 ### shell の `build`
 
@@ -389,7 +400,7 @@ graph TD
 
 | 大項目 | 要求の条件 | 実現方式 | 確かめ方 |
 | --- | --- | --- | --- |
-| 性能・拡張性 | ローカル扱いの `up` に新たな docker 呼び出しを足さない。リモート扱いで足すのは gid 取得 1 回（初回のみ）と `docker context show` 1 回まで | `docker context show` は context が非 None のときだけ呼ぶ。gid は `.cache/docker-gid/<context>` に控える | `subprocess.run` を差し替えた結合テストで呼び出し回数を数える |
+| 性能・拡張性 | context 未指定（`None`）の `up` に新たな docker 呼び出しを足さない。context 指定ありの `up` で足すのは `docker context show` 1 回と、リモート扱いのときの gid 取得 1 回（初回のみ）まで | `docker context show` は context が非 None のときだけ呼ぶ。gid は `.cache/docker-gid/<context>` に控える | `subprocess.run` を差し替えた結合テストで呼び出し回数を数える |
 | 運用・保守性 | 解決した context と出所を `up` の冒頭に 1 行出す。飛ばした処理と書き換えなかった mount は警告に残す | `ContextChoice.source` を info に含める。警告は `logger.warning` に集約 | ログをキャプチャする単体テスト |
 | 移行性 | 設定を書くまで挙動が変わらない。消せば戻る | context が `None` のとき環境変数を一切触らない。書き換えは `home` が非 None のときだけ | 既存テストが書き換えなしで通る |
 | セキュリティ | 接続先の実体・鍵・トークンを設定に持たない。鍵・設定ファイル・平文ファイルは手元に留まり、復号済みの機密の**値**は compose の変数展開を通じて接続先の daemon とコンテナへ渡る | 設定は context 名だけ。機密注入の経路（`_inject_secrets` → compose の変数展開）は変えず、ファイルを送る経路を足さない | 受け入れ条件「起きてはいけないこと」の grep と、生成物に値が書かれないことの既存テスト |

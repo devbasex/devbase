@@ -280,7 +280,7 @@ issue #162 の提案として書かれているものを、この仕様の決定
 
 | 大項目 | 条件 |
 | --- | --- |
-| 性能・拡張性 | ローカル扱いの `up` に新たな docker 呼び出しを足さない。リモート扱いで足すのは gid 取得の `docker run` 1 回（初回のみ）と、現在の context を知るための `docker context show` 1 回まで |
+| 性能・拡張性 | context 未指定（`None`）の `up` に新たな docker 呼び出しを足さない。context 指定ありの `up` で足すのは、現在の context を知るための `docker context show` 1 回と、リモート扱いのときの gid 取得の `docker run` 1 回（初回のみ）まで |
 | 運用・保守性 | 解決した context と、その出所（CLI / env / ファイル / 未指定）を `up` の冒頭に info で 1 行出す。リモート扱いで飛ばした処理（スナップショット）と書き換えなかった mount は警告で残す |
 | 移行性 | 設定を書くまで挙動が変わらない。`project.local.yml` を消せば元に戻る。データ移行は無い |
 | セキュリティ | `project.local.yml` は接続先の実体（ホスト名・鍵・トークン）を持たない。機密の注入経路（`_inject_secrets` → compose の変数展開）は変えない。age の鍵・`.env`・`project.local.yml` は手元に留まるが、**復号済みの機密の値は従来のローカル構成と同じく compose の変数展開を通じて接続先の daemon とコンテナへ渡る**。接続先は機密を預けてよいホストに限る |
