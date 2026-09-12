@@ -20,6 +20,11 @@ docker CLI と compose の両方が `DOCKER_CONTEXT` を読み、`docker context
 `--context` を各コマンド引数に足す形は、`docker compose` が `--context` を受け付けない
 （グローバルオプションとしてのみ）ため一様に書けず、採らない。
 
+docker は `DOCKER_HOST` があると `DOCKER_CONTEXT` を無視する（実測、Docker 29.4.3）。
+context を解決したときは `DOCKER_HOST` を警告つきで環境から取り除く。エラーで止める形は、
+シェルの rc に `DOCKER_HOST` を書いている利用者がプロジェクトごとの設定を使えなくなるため
+採らない。取り除くのは devbase のプロセスとその子プロセスの中だけである。
+
 ### 決定 2: `project.local.yml` は `project.yml` へマージせず、別の型で読む
 
 issue は「深いマージ（local が勝つ）」を提案しているが、初期スコープの `docker` 節は
@@ -131,6 +136,7 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 | 優先順位 CLI > env > ファイル > 未指定 | `tests/utils/test_docker_context.py`: 組み合わせの表で `ContextChoice` を検証 |
 | リモート判定が `DOCKER_CONTEXT` 反映後でも変わらない | `test_docker_context.py`: `runner` に渡る env に `DOCKER_CONTEXT` が無いこと。`os.environ` に載せた後に確定しても `remote` が真になること |
 | env の空文字は未指定 | 同上 |
+| `DOCKER_HOST` があるとき context 解決時に外れる | `test_docker_context.py`: 反映後の環境に `DOCKER_HOST` が無く警告が出る。context が `None` なら残る |
 | `--context` を受け付けるコマンド | `tests/cli/test_project_dispatch.py` 系: parser が各サブコマンドで `--context` を取ること |
 | 存在しない context は docker のエラーで止まる | 手動確認（docker の判定に委ねるため単体テストにしない） |
 | ローカル扱いで `DOCKER_GID` が変わらない | `test_container_context.py`: 現在の context と同じ名前を設定し、`DOCKER_GID` が元のまま |
@@ -144,7 +150,7 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 | 絶対パスと named volume を触らない | `test_bind_mounts.py` |
 | `down` / `ps` / `logs` / `login` の伝播 | `test_container_context.py`: 各 cmd の子プロセス env |
 | リモート扱いの `scale` | `test_container_context.py`: `DOCKER_CONTEXT` / `DOCKER_GID` と生成物の bind mount |
-| shell `build` の伝播 | `tests/cli/test_wrapper_build_context.py`: `docker` と `uv` を偽コマンドに差し替え、`--context` が取り除かれて `DEVBASE_DOCKER_CONTEXT` に写ること。`env exec --context NAME` として引数で届くこと。`build --context NAME` と `--context=NAME` が単体ビルドへ誤分岐しないこと |
+| shell `build` の伝播 | `tests/cli/test_wrapper_build_context.py`: `docker` と `uv` を偽コマンドに差し替え、`--context` が引数から取り除かれてシェル変数に保持され、`env exec --context NAME` として引数で届くこと。`build --context NAME` と `--context=NAME` が単体ビルドへ誤分岐しないこと |
 | `up` からの自動ビルド | `test_container_context.py`: `_run_build` が `bin/devbase build --context <name>` を起動する。`test_wrapper_build_context.py`: `env` に `DEVBASE_DOCKER_CONTEXT=a` があっても `--context b` が勝つ。`tests/cli/test_secret_injection.py` 系: `.env`（機密）に `DEVBASE_DOCKER_CONTEXT=a` があっても `env exec --context b` の子プロセスに `DOCKER_CONTEXT=b` が載る |
 | `env exec` | `tests/cli/test_secret_injection.py` 系に追加: 子プロセス env の `DOCKER_CONTEXT` |
 | 自動スナップショットの回避 | `test_container_context.py`: リモート扱いで `SnapshotManager.create` が呼ばれず警告が出る |

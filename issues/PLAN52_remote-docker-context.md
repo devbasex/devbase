@@ -54,7 +54,7 @@ issue #162 の提案として書かれているものを、この仕様の決定
 | 確認事項 | 結果 | 根拠 |
 | --- | --- | --- |
 | `docker` / `docker compose` の呼び出し方 | すべて `subprocess` で CLI を叩く。daemon の選択は CLI の既定（現在の context）に委ねている | `grep -rn "subprocess.run\|Popen" lib/devbase` → `commands/container.py`（14）`utils/docker.py`（3）`volume/manager.py`（2）`snapshot/manager.py`（3）`editor/opener.py`（4）`editor/window_title.py`（1）`commands/status.py`（1）ほか |
-| `DOCKER_CONTEXT` 環境変数の効き方 | docker CLI と compose v2 の両方が読む。`docker context use` の既定と `DOCKER_HOST` より優先する | Docker CLI リファレンス「Environment variables」の `DOCKER_CONTEXT` |
+| `DOCKER_CONTEXT` 環境変数の効き方 | docker CLI と compose v2 の両方が読む。`docker context use` の既定より優先する。**ただし `DOCKER_HOST` が設定されているときはそちらが勝ち、`DOCKER_CONTEXT` は無視される** | 実測: `DOCKER_HOST=tcp://127.0.0.1:1 DOCKER_CONTEXT=desktop-linux docker version` が `Cannot connect to the Docker daemon at tcp://127.0.0.1:1` で失敗（Docker 29.4.3）。Docker Docs「Docker contexts」、docker/cli #6151 |
 | `DOCKER_GID` の決め方 | `bin/devbase:37` で `uname` が Darwin なら `0`、それ以外はローカルの `/etc/group`。Python 側には決める処理が無い | `bin/devbase:37`、`grep -rn DOCKER_GID lib tests` → 0 件 |
 | `DOCKER_GID` の使われ方 | サンプルの全プロジェクトが `group_add: ["${DOCKER_GID}"]` と `/var/run/docker.sock` の bind を持つ | `projects/*/compose.yml`（18 件）、`docs/plugin-dev/compose-yml-guidelines.md:131` |
 | bind mount の `~` を展開するのは誰か | compose クライアント（手元）。生成物 `.docker-compose.scale.yml` には `~/...` のまま残り、`docker compose up -f <生成物>` の時点で手元の HOME へ展開される | `lib/devbase/volume/compose.py:_load_compose_config`（YAML を直接読み、`docker compose config` を通さない）、`_build_dev_instance` が volumes を文字列のまま複製 |
@@ -103,8 +103,10 @@ issue #162 の提案として書かれているものを、この仕様の決定
   入れないこと）
 - 前提 7: **`DOCKER_HOST` を直接指定する運用は扱わない。** 接続先は docker context の名前で
   表し、`DOCKER_HOST` を使いたい場合は `docker context create --docker host=...` で名前を
-  付けてから指定する。（成否の判定: 新しい設定・フラグ・env のどれも `DOCKER_HOST` を
-  受け取らないこと）
+  付けてから指定する。docker は `DOCKER_HOST` があると `DOCKER_CONTEXT` を無視するため、
+  context を解決したときは `DOCKER_HOST` を子プロセスから外す。（成否の判定: 新しい設定・
+  フラグ・env のどれも `DOCKER_HOST` を受け取らず、context 解決時に `DOCKER_HOST` が子プロセス
+  へ渡らないこと）
 - 前提 8: **イメージはホストごとに別物である。** リモート扱いの `up` はリモート側の
   イメージを見て、無ければリモート側でビルドする。手元のイメージをリモートへ転送しない。
   （成否の判定: `_ensure_images` と `build` が `DOCKER_CONTEXT` 付きで動き、`docker save`
@@ -187,6 +189,10 @@ issue #162 の提案として書かれているものを、この仕様の決定
       `scale` / `build` / `rebuild` と、トップレベルにショートカットがある `up` / `down` /
       `ps` / `login` / `scale` / `build` / `rebuild` が受け付ける（`logs` にトップレベルの
       ショートカットは無く、新設もしない）
+- [ ] 解決した context が非 `None` で、実行時の環境に `DOCKER_HOST` があるとき、devbase は
+      `DOCKER_HOST` を子プロセスへ渡さず、その旨を警告する（渡すと docker が `DOCKER_CONTEXT`
+      を無視して `DOCKER_HOST` へ接続するため）。解決した context が `None` なら `DOCKER_HOST`
+      はそのまま渡り、従来どおり動く
 - [ ] 解決した context が `docker context ls` に無い名前のとき、`devbase up` はコンテナを
       起動せずに非ゼロで終了する。表示は docker CLI のエラー（`context "x" does not exist`）
       である。devbase 側で名前の存在を先に検証しない（docker の判定に委ねる）

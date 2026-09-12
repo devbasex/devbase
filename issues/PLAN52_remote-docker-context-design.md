@@ -75,7 +75,7 @@ graph TD
 | 個人設定の読み込み | `project.local.yml` を読み、`docker` 節を検証して `DockerSettings` にする。無い・空なら既定値 |
 | context の解決 | CLI / env / ファイル / 未指定の順で 1 つに決め、出所を添える。**docker を呼ばない純粋な処理** |
 | 接続先の確定 | 解決した context と現在の context を比べてリモート扱いを決め、`home` / `gid` を添える。現在の context は `docker context show` で 1 回だけ問い合わせる。**問い合わせは `DOCKER_CONTEXT` を取り除いた環境で実行する**（docker は `DOCKER_CONTEXT` を最優先で返すため、載せた後に呼ぶと設定先自身が返り、常にローカル扱いになる） |
-| 環境変数への反映 | `DOCKER_CONTEXT` を `os.environ` へ載せる。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える）。**接続先の確定より後に行う** |
+| 環境変数への反映 | `DOCKER_CONTEXT` を `os.environ` へ載せ、`DOCKER_HOST` があれば警告して取り除く（docker は `DOCKER_HOST` を `DOCKER_CONTEXT` より優先するため）。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える）。**接続先の確定より後に行う** |
 | bind mount の書き換え | 生成物の各サービスの bind mount で `~` を `home` に置き換え、置き換えられないものを警告に集める |
 | attach URI の組み立て | 解決した context を `settings.context` に載せる。既存の `ssh_host` との組み合わせを保つ |
 | up / scale | 接続先を確定する。`up` は反映・書き換え・URI のすべてを使い、`scale` はエディタを開かないため反映と書き換えだけを使う |
@@ -258,6 +258,7 @@ docker:
 | --- | --- | --- |
 | `DEVBASE_DOCKER_CONTEXT` | 入力 | env / `.env` / shell からの上書き。空文字は未指定。**出力としては載せない**（`bin/devbase` が `env` を読み直すと上書きされるため、子プロセスへ渡す手段にならない） |
 | `DOCKER_CONTEXT` | 出力 | 解決した context。docker CLI と compose が読む。未指定なら載せない |
+| `DOCKER_HOST` | 入力 | 解決した context が非 `None` のときは警告して `os.environ` から取り除く（残すと docker がこちらを優先し、context が効かない）。`None` なら触らない |
 | `DOCKER_GID` | 出力 | リモート扱いの up / scale だけ上書き。他は `bin/devbase` の値のまま |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 入力 | 既存。attach URI の `settings.context` を明示したいときだけ。解決した context より優先 |
 
