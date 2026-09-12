@@ -74,8 +74,8 @@ graph TD
 | --- | --- |
 | 個人設定の読み込み | `project.local.yml` を読み、`docker` 節を検証して `DockerSettings` にする。無い・空なら既定値 |
 | context の解決 | CLI / env / ファイル / 未指定の順で 1 つに決め、出所を添える。**docker を呼ばない純粋な処理** |
-| 接続先の確定 | 解決した context と現在の context を比べてリモート扱いを決め、`home` / `gid` を添える。現在の context は `docker context show` で 1 回だけ問い合わせる |
-| 環境変数への反映 | `DOCKER_CONTEXT` と `DEVBASE_DOCKER_CONTEXT` を `os.environ` へ載せる。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える） |
+| 接続先の確定 | 解決した context と現在の context を比べてリモート扱いを決め、`home` / `gid` を添える。現在の context は `docker context show` で 1 回だけ問い合わせる。**問い合わせは `DOCKER_CONTEXT` を取り除いた環境で実行する**（docker は `DOCKER_CONTEXT` を最優先で返すため、載せた後に呼ぶと設定先自身が返り、常にローカル扱いになる） |
+| 環境変数への反映 | `DOCKER_CONTEXT` を `os.environ` へ載せる。リモート扱いの up / scale では `DOCKER_GID` も載せる（gid が無ければリモートで取得し `.cache/` に控える）。**接続先の確定より後に行う** |
 | bind mount の書き換え | 生成物の各サービスの bind mount で `~` を `home` に置き換え、置き換えられないものを警告に集める |
 | attach URI の組み立て | 解決した context を `settings.context` に載せる。既存の `ssh_host` との組み合わせを保つ |
 | up / scale | 接続先を確定する。`up` は反映・書き換え・URI のすべてを使い、`scale` はエディタを開かないため反映と書き換えだけを使う |
@@ -256,14 +256,16 @@ docker:
 
 | 名前 | 向き | 意味 |
 | --- | --- | --- |
-| `DEVBASE_DOCKER_CONTEXT` | 入力 | env / `.env` / shell からの上書き。空文字は未指定 |
+| `DEVBASE_DOCKER_CONTEXT` | 入力 | env / `.env` / shell からの上書き。空文字は未指定。**出力としては載せない**（`bin/devbase` が `env` を読み直すと上書きされるため、子プロセスへ渡す手段にならない） |
 | `DOCKER_CONTEXT` | 出力 | 解決した context。docker CLI と compose が読む。未指定なら載せない |
 | `DOCKER_GID` | 出力 | リモート扱いの up / scale だけ上書き。他は `bin/devbase` の値のまま |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | 入力 | 既存。attach URI の `settings.context` を明示したいときだけ。解決した context より優先 |
 
-`DEVBASE_DOCKER_CONTEXT` は**出力としても**載せる。`up` から `bin/devbase build` を起動する
-経路で、shell 側の `env exec` が同じ context を再解決するためである。CLI で上書きした値を
-子プロセスへ引き継ぐ経路はこれしか無い。
+`up` から `bin/devbase build` を起動する経路（`_run_build`）は、解決した context を
+**`--context <name>` として引数で渡す**。`bin/devbase` は起動時に root の `env` と
+プロジェクトの `env` を読み直すため、環境変数で渡した値はそこで `env` の
+`DEVBASE_DOCKER_CONTEXT` に戻される。引数なら `build)` 分岐がその後で写すので勝つ
+（決定 10）。
 
 ### `env exec`
 
@@ -310,10 +312,10 @@ sequenceDiagram
     participant D as docker
     participant C as 構成生成
     U->>R: 解決(project_dir, --context, environ)
-    R->>D: docker context show
+    R->>D: docker context show（DOCKER_CONTEXT 抜きの環境）
     D-->>R: 現在の context（失敗なら不明）
     R-->>U: DockerTarget
-    U->>U: DOCKER_CONTEXT / DEVBASE_DOCKER_CONTEXT を載せる
+    U->>U: DOCKER_CONTEXT を載せる（確定の後）
     alt リモート扱い
         U->>R: gid を確定(target)
         R->>D: docker run alpine stat（控えが無いとき）
@@ -340,17 +342,19 @@ sequenceDiagram
 
 ### 他のコマンド
 
-`_dispatch_lifecycle` が handler を呼ぶ前に `ContextChoice` を解決し、`DOCKER_CONTEXT` と
-`DEVBASE_DOCKER_CONTEXT` を載せる。対象は `down` / `ps` / `logs` / `login` / `build`（Python
-経路）/ `rebuild` である。`up` / `scale` はそこからさらに `DockerTarget` を確定する。
-`docker context show` を呼ぶのは `up` / `scale` だけである。
+`_dispatch_lifecycle` は `ContextChoice` を解決して handler へ渡す。`down` / `ps` / `logs` /
+`login` / `build`（Python 経路）/ `rebuild` の handler はそれをそのまま `DOCKER_CONTEXT` に
+載せる。`up` / `scale` の handler は**載せる前に** `DockerTarget` を確定する（上の
+シーケンス図の順序）。`docker context show` を呼ぶのは `up` / `scale` だけである。
+確定の問い合わせは `DOCKER_CONTEXT` を取り除いた環境で行うため、呼び出し側が先に載せて
+しまっても判定は変わらない。
 
 ### shell の `build`
 
 ```mermaid
 graph TD
     A[bin/devbase build 引数] --> B{--context あり?}
-    B -->|はい| C[build 分岐の先頭で取り除き<br/>DEVBASE_DOCKER_CONTEXT に写す]
+    B -->|はい| C[build 分岐の先頭で取り除き<br/>DEVBASE_DOCKER_CONTEXT に export<br/>（env の読み直しより後）]
     B -->|いいえ| D[そのまま]
     C --> G{image 指定 or --expires?}
     D --> G
@@ -373,7 +377,7 @@ graph TD
 | 性能・拡張性 | ローカル扱いの `up` に新たな docker 呼び出しを足さない。リモート扱いで足すのは gid 取得 1 回（初回のみ）と `docker context show` 1 回まで | `docker context show` は context が非 None のときだけ呼ぶ。gid は `.cache/docker-gid/<context>` に控える | `subprocess.run` を差し替えた結合テストで呼び出し回数を数える |
 | 運用・保守性 | 解決した context と出所を `up` の冒頭に 1 行出す。飛ばした処理と書き換えなかった mount は警告に残す | `ContextChoice.source` を info に含める。警告は `logger.warning` に集約 | ログをキャプチャする単体テスト |
 | 移行性 | 設定を書くまで挙動が変わらない。消せば戻る | context が `None` のとき環境変数を一切触らない。書き換えは `home` が非 None のときだけ | 既存テストが書き換えなしで通る |
-| セキュリティ | 接続先の実体・鍵・トークンを設定に持たない。平文はリモートへ渡らない | 設定は context 名だけ。機密注入の経路は変えない | 受け入れ条件「起きてはいけないこと」の grep |
+| セキュリティ | 接続先の実体・鍵・トークンを設定に持たない。鍵・設定ファイル・平文ファイルは手元に留まり、復号済みの機密の**値**は compose の変数展開を通じて接続先の daemon とコンテナへ渡る | 設定は context 名だけ。機密注入の経路（`_inject_secrets` → compose の変数展開）は変えず、ファイルを送る経路を足さない | 受け入れ条件「起きてはいけないこと」の grep と、生成物に値が書かれないことの既存テスト |
 | システム環境 | 手元 macOS / Linux / WSL、リモート Linux dockerd + sshd | 手元側で bash と Python 3.10 以降のみを前提にする。リモート側に devbase を要求しない | ドキュメントの手順で実機確認 |
 
 ## 未確認のまま残ること

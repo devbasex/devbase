@@ -227,7 +227,8 @@ issue #162 の提案として書かれているものを、この仕様の決定
 - [ ] リモート扱いの `devbase build`（shell 経路）で、`docker buildx build` /
       `docker image inspect` / `docker compose build` のすべてが `DOCKER_CONTEXT` 付きで動く
 - [ ] リモート扱いの `devbase up` からの自動ビルド（`_run_build` → `bin/devbase build`）も
-      `DOCKER_CONTEXT` 付きで動く
+      `DOCKER_CONTEXT` 付きで動く。プロジェクトの `env` に `DEVBASE_DOCKER_CONTEXT=a` があり
+      `up --context b` で起動した場合も、自動ビルドは `b` に対して行われる
 - [ ] `devbase env exec -- CMD` は、カレントプロジェクトの解決した context を子プロセスの
       `DOCKER_CONTEXT` へ載せる。解決結果が `None` なら載せない
 - [ ] リモート扱いの `devbase up` は自動スナップショットを作らず、その旨を 1 行の警告で出す
@@ -271,7 +272,7 @@ issue #162 の提案として書かれているものを、この仕様の決定
 | 性能・拡張性 | ローカル扱いの `up` に新たな docker 呼び出しを足さない。リモート扱いで足すのは gid 取得の `docker run` 1 回（初回のみ）と、現在の context を知るための `docker context show` 1 回まで |
 | 運用・保守性 | 解決した context と、その出所（CLI / env / ファイル / 未指定）を `up` の冒頭に info で 1 行出す。リモート扱いで飛ばした処理（スナップショット）と書き換えなかった mount は警告で残す |
 | 移行性 | 設定を書くまで挙動が変わらない。`project.local.yml` を消せば元に戻る。データ移行は無い |
-| セキュリティ | `project.local.yml` は接続先の実体（ホスト名・鍵・トークン）を持たない。機密の注入経路（`_inject_secrets`）は変えず、平文はリモートへ渡らない |
+| セキュリティ | `project.local.yml` は接続先の実体（ホスト名・鍵・トークン）を持たない。機密の注入経路（`_inject_secrets` → compose の変数展開）は変えない。age の鍵・`.env`・`project.local.yml` は手元に留まるが、**復号済みの機密の値は従来のローカル構成と同じく compose の変数展開を通じて接続先の daemon とコンテナへ渡る**。接続先は機密を預けてよいホストに限る |
 | システム環境 | 手元: macOS / Linux / WSL の bash + docker CLI（context 対応、19.03 以降）+ compose v2。リモート: Linux の dockerd + sshd。Windows は WSL2 内の dockerd |
 
 ## 影響
