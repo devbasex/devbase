@@ -203,3 +203,20 @@ def test_secret_paths_honor_configured_prefixes():
     assert inf.secret_path(SecretRef.for_global()) == '/shared'
     assert inf.secret_path(SecretRef.for_project('a')) == '/shared/p/a'
     assert inf.secret_path(SecretRef.for_global(owner='user')) == '/people/u/global'
+
+
+@pytest.mark.parametrize('value', ['abc', '1.5', '[1]'])
+def test_non_integer_version_is_a_config_error(root, value):
+    write_yaml(root, f"version: {value}\nbackend: age\n")
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'version' in str(exc.value)
+
+
+def test_unsupported_version_is_a_config_error(root):
+    write_yaml(root, "version: 2\nbackend: age\n")
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'version' in str(exc.value) and '1' in str(exc.value)

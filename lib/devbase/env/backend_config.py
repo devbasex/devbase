@@ -220,7 +220,18 @@ def _from_dict(data: Dict[str, Any], source: Optional[Path]) -> BackendConfig:
         cache_enabled = bool(raw_cache.get('enabled'))
 
     raw_version = data.get('version')
-    version = 1 if raw_version in (None, '') else int(raw_version)
+    if raw_version in (None, ''):
+        version = 1
+    else:
+        # 他の不正値と同じく、キー名と受け付ける値を添えて拒む (生の ValueError を漏らさない)
+        try:
+            version = int(str(raw_version).strip())
+        except ValueError:
+            raise BackendConfigError(
+                f"version の値 {raw_version!r} には対応していません (受け付ける値: 1)") from None
+        if version != 1:
+            raise BackendConfigError(
+                f"version の値 {raw_version!r} には対応していません (受け付ける値: 1)")
 
     return BackendConfig(backend=backend, infisical=infisical,
                          cache_enabled=cache_enabled, version=version,
