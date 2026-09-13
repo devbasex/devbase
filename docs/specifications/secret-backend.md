@@ -1,17 +1,34 @@
-# 機密ストアの保存先の差し替え（backend と Infisical）
+# 機密ストアの保存先の差し替え（backend と OpenBao）
 
 ## 概要
 
 devbase は機密の保存先（backend）を `$DEVBASE_ROOT/secrets/backend.yml` で明示的に選ぶ。
-選べるのは `auto` / `plaintext` / `age` / `infisical` の 4 つで、設定が無ければ `auto`（暗号化
+選べるのは `auto` / `plaintext` / `age` / `openbao` の 4 つで、設定が無ければ `auto`（暗号化
 ファイルがあれば age、無ければ平文というファイルの存在による自動判定）として動き、設定を
-持たない端末の挙動は変わらない。サーバ backend として [Infisical](https://infisical.com/) に
-対応し、REST を標準ライブラリで叩く（常時の依存は増えない）。サーバへ到達できないときは
-age で暗号化した手元のキャッシュで起動し、認証を拒まれたときはキャッシュを使わずに止まる。
+持たない端末の挙動は変わらない。サーバ backend として [OpenBao](https://openbao.org/) の
+KV v2 シークレットエンジンに対応し、REST を標準ライブラリで叩く（常時の依存は増えない）。
+サーバへ到達できないときは age で暗号化した手元のキャッシュで起動し、認証を拒まれたときは
+キャッシュを使わずに止まる。
 
 機密の参照には**適用範囲**（共通 / プロジェクト）に加えて**持ち主**（チーム / 個人）の軸が
 あり、`devbase env list` / `get` / `set` / `delete` / `edit` の `--user` で個人単位の置き場を
 相手にする。ファイル backend は個人単位の置き場を持たない。
+
+### サーバ backend に OpenBao を採る理由
+
+最初のサーバ backend は Infisical を予定していた。Community 版（ライセンス無し）では
+次の点が設計に合わない（確認したコードの位置は devbasex/devbase#166 にある）。
+
+| 要件 | Infisical Community 版 | OpenBao |
+| --- | --- | --- |
+| パス単位の権限（他人の個人単位のパスをサーバが拒む） | カスタムロールとフォルダ単位のアクセス制御が使えない。組み込みロールは project 全体に効く | テンプレート化したポリシー（`{{identity.entity.name}}`）で 1 つの置き場の中をパス単位に許可・拒否できる |
+| 利用者ごと・端末ごとの資格の失効 | machine identity の client secret 単位 | AppRole の `role_id` を利用者ごと、`secret_id` を端末ごとに分けて失効できる |
+| 監査ログ | 記録されない（保持日数 0） | 標準で持つ。値は HMAC 化される |
+| 同時編集の競合 | 最終書き込み優先 | 版を指定した書き込み（check-and-set）で後から書いた側が止まる |
+
+Infisical で個人単位の機密を守るには利用者ごとに project を分けるしかなく、「持ち主の軸を
+パスで分ける」設計が成り立たない。OpenBao ではその設計がそのまま成り立つ。開発モードの
+サーバに対する確認の結果は #166 にある。
 
 ## 用語
 
@@ -20,20 +37,22 @@ age で暗号化した手元のキャッシュで起動し、認証を拒まれ�
 | 参照（`SecretRef`） | 機密の宛先。適用範囲（`global` / `project`）と持ち主（`team` / `user`）の組み合わせで 4 種 |
 | チーム単位の機密 | チームの全員が同じ値を使う機密（サービスアカウントの鍵、連携先の API キーなど） |
 | 個人単位の機密 | 利用者ごとに値が違う機密（各自のクラウドアクセスキー、個人アクセストークンなど） |
-| backend | 参照に対して機密を読み書きする実装。`plaintext` / `age` / `infisical`。`auto` は存在による判定 |
-| ブートストラップ機密 | サーバ backend が接続に使う client ID / client secret。`secrets/bootstrap.env.age` に age で暗号化して置く |
+| backend | 参照に対して機密を読み書きする実装。`plaintext` / `age` / `openbao`。`auto` は存在による判定 |
+| パス | KV v2 の中で 1 つの参照を指す相対パス（`team/global` など）。`.env` 1 つがパス 1 つに対応し、キーと値の組をまとめて持つ |
+| 版 | KV v2 がパスごとに持つ書き込みの通し番号。書き込みで 1 ずつ進み、版を指定した書き込み（check-and-set）に使う |
+| ブートストラップ機密 | サーバ backend が接続に使う AppRole の `role_id` / `secret_id`。`secrets/bootstrap.env.age` に age で暗号化して置く |
 | キャッシュ | サーバの内容と一致すると確かめられた機密を、参照ごとに age で暗号化して手元に控えたもの |
-| scope | キャッシュの取得元を表す指紋。接続先 URL・project ID・environment・secretPath・client ID の SHA-256 |
-| client secret / access token | 前者は machine identity の長期の資格情報で手元に保存する。後者は前者を交換して得る短期の資格情報でプロセス内にだけ持つ |
+| scope | キャッシュの取得元を表す指紋。接続先 URL・`mount`・パス・`role_id` の SHA-256 |
+| `role_id` / `secret_id` / token | `role_id` は利用者ごとの AppRole の識別子。`secret_id` は端末ごとに発行される長期の資格情報で手元に保存する。token は両者を交換して得る短期の資格情報でプロセス内にだけ持つ |
 
 ## 構成要素
 
 | 要素 | 置き場所 | 責務 |
 | --- | --- | --- |
-| backend の設定 | `lib/devbase/env/backend_config.py` | `secrets/backend.yml` の読み書きと検証、参照ごとの `secretPath` の組み立て |
+| backend の設定 | `lib/devbase/env/backend_config.py` | `secrets/backend.yml` の読み書きと検証、参照ごとのパスの組み立て |
 | 登録簿 | `lib/devbase/env/backends.py` | backend 名から実装を作る。未知の名前は一覧を添えて拒む |
 | ストアの窓口 | `lib/devbase/env/secret_store.py` | `SecretRef`（持ち主の軸）、`PlaintextBackend` / `AgeBackend`、設定を見て backend を選ぶ `SecretStore` |
-| Infisical adapter | `lib/devbase/env/infisical.py` | 認証、参照ごとの一括取得、差分適用の書き込み、失敗の種類の判定 |
+| OpenBao adapter | `lib/devbase/env/openbao.py` | AppRole 認証、参照ごとの取得、版を指定した丸ごとの書き込み、失敗の種類の判定 |
 | ブートストラップ | `lib/devbase/env/bootstrap.py` | 接続資格情報を登録簿を経由せず age で直接読み書きする |
 | キャッシュ | `lib/devbase/env/cache.py` | 参照ごとの控えの書き込み・読み出し・破棄・全消去 |
 | 機密の合成 | `lib/devbase/env/runtime.py` | 4 層の機密を重ねてコンテナへ渡す |
@@ -50,9 +69,9 @@ flowchart LR
     ST --> REG[backends 登録簿]
     REG --> PT[PlaintextBackend]
     REG --> AGE[AgeBackend]
-    REG --> INF[InfisicalBackend]
-    INF --> BS[bootstrap]
-    INF --> CA[cache]
+    REG --> OB[OpenBaoBackend]
+    OB --> BS[bootstrap]
+    OB --> CA[cache]
     BS --> AGEFILE[(secrets/bootstrap.env.age)]
     CA --> CAFILE[(secrets/cache/)]
 ```
@@ -70,11 +89,11 @@ flowchart LR
 | --- | --- |
 | `auto`（既定） | 参照ごとに暗号化ファイルがあれば age、無ければ平文。両方あれば「どちらが正か判断できない」として止める |
 | `plaintext` / `age` | 常にその backend。ファイルの存在で判定せず、両方あっても止めない |
-| `infisical` | 常にサーバ。`path()` は `secretPath` を `Path` にした表示用の値で、ローカルには存在しない |
+| `openbao` | 常にサーバ。`path()` は `<mount>/<パス>` を `Path` にした表示用の値で、ローカルには存在しない |
 
 `mode(ref)` は選択中の backend 名（存在しなければ `absent`）を返す。`direct_edit(ref)` が真
 なのは平文だけで、それ以外の `env edit` は一時ファイル経由（読み出し → 編集 → 書き戻し）で
-行う。`has_user_refs(ref)` は個人単位の参照を持つかで、`infisical` だけ真。
+行う。`has_user_refs(ref)` は個人単位の参照を持つかで、`openbao` だけ真。
 
 設定に機密は入らない。値が入るのはブートストラップだけである。
 
@@ -128,60 +147,81 @@ flowchart LR
 
 | コマンド | 入力 | 成功 | 失敗 |
 | --- | --- | --- | --- |
-| `status` | なし | backend 名、保存先、4 参照の `secretPath`、個人単位の識別子、接続資格情報の有無、キャッシュの有無と最終取得時刻。0 | 設定が壊れていれば理由を述べて 1 |
-| `use <name>` | `--url` `--project-id` `--environment` `--user ID` `--client-id` `--client-secret-stdin` `--no-cache` | 検証 → 資格情報の保存 → 設定の保存の順で行い、要約を表示（client secret は伏せる）。0 | 未知の名前・必須項目の欠落は 2、鍵が無いなどは 1。**いずれも設定を書き換えない** |
+| `status` | なし | backend 名、保存先、`mount`、4 参照のパス、個人単位の識別子、接続資格情報の有無と `role_id`、キャッシュの有無と最終取得時刻。0 | 設定が壊れていれば理由を述べて 1 |
+| `use <name>` | `--url` `--mount` `--user ID` `--role-id` `--secret-id-stdin` `--no-cache` | 検証 → 資格情報の保存 → 設定の保存の順で行い、要約を表示（`secret_id` は伏せる）。0 | 未知の名前・必須項目の欠落は 2、鍵が無いなどは 1。**いずれも設定を書き換えない** |
 | `test` | なし | 認証と参照ごとの取得（キャッシュへ落ちない）を行い、接続先 URL と読めた参照の件数を表示。0 | 到達できない・認証できない・サーバ backend でない → 1 |
-| `migrate --to <name>` | `--to age\|infisical` `--dry-run` `--yes` | 後述 | 衝突は 2、読み戻しの不一致・書き込み失敗は 1 |
+| `migrate --to <name>` | `--to age\|openbao` `--dry-run` `--yes` | 後述 | 衝突は 2、読み戻しの不一致・書き込み失敗は 1 |
 
-client secret は引数で受け取らない。`--client-secret-stdin` で標準入力の最初の行を読むか、
-TTY では伏せ字入力で尋ねる。`use` は引数に無い項目を既存の設定から引き継ぎ、資格情報の
-指定が無ければ既存のブートストラップを使う。`use infisical` は `backend.yml` より先に
-ブートストラップを書く（資格情報を書けない状態で backend だけが切り替わると、次の実行から
-機密を読めなくなる）。
+`secret_id` は引数で受け取らない。`--secret-id-stdin` で標準入力の最初の行を読むか、TTY では
+伏せ字入力で尋ねる。`use` は引数に無い項目を既存の設定から引き継ぎ、資格情報の指定が無ければ
+既存のブートストラップを使う。`use openbao` は `backend.yml` より先にブートストラップを書く
+（資格情報を書けない状態で backend だけが切り替わると、次の実行から機密を読めなくなる）。
 
 `cli.py` は `env backend` を機密の注入を行わないコマンドとして扱う（設定が壊れている・
 サーバに届かない状態でこそ実行されるため）。
 
-### Infisical との契約
+### OpenBao との契約
 
-使う経路は 5 つで、認証以外は `Authorization: Bearer <accessToken>` を付ける。
+使う経路は 4 つで、認証以外は `X-Vault-Token: <token>` を付ける。`<path>` は後述の対応表の
+パスで、キーと値の組は KV v2 の 1 つのパスにまとめて置く。
 
-| 用途 | 経路 | 送るもの |
+| 用途 | 経路 | 送るもの / 受け取るもの |
 | --- | --- | --- |
-| 認証 | `POST /api/v1/auth/universal-auth/login` | `clientId` / `clientSecret` → `accessToken` / `expiresIn` |
-| 一括取得 | `GET /api/v4/secrets` | `projectId` / `environment` / `secretPath` / `expandSecretReferences=false` / `includePersonalOverrides=false` → `{secrets: [{secretKey, secretValue}]}` |
-| 作成 / 更新 / 削除 | `POST` / `PATCH` / `DELETE /api/v4/secrets/{name}` | `projectId` / `environment` / `secretPath`（/ `secretValue`）。`name` はパスの 1 要素として `/` を含めて符号化する |
+| 認証 | `POST /v1/auth/approle/login` | `role_id` / `secret_id` → `auth.client_token` / `auth.lease_duration` |
+| 取得 | `GET /v1/<mount>/data/<path>` | → `data.data`（キーと値の辞書）/ `data.metadata.version` |
+| 保存 | `POST /v1/<mount>/data/<path>` | `{"options": {"cas": <版>}, "data": {<キーと値の辞書>}}` |
+| 削除（参照ごと） | `DELETE /v1/<mount>/metadata/<path>` | 全版を消す |
 
-- `expandSecretReferences=false` を常に送る。`${OTHER_KEY}` のような参照記法を文字列のまま
-  往復させ、差分の判定にも展開前の値を使うためである
-- `includePersonalOverrides=false` を常に送り、設定で変える手段を置かない。持ち主の軸は
-  `secretPath` で表す（personal override は全員が見る値の上書きで、同名の値が先に無いと
-  作れない）
-- 参照ごとに 1 回 `GET` を呼ぶ。`recursive` は使わない（個人単位のパスは利用者ごとに分かれて
-  おり、親から辿ると他人のパスまで要求する）。`runtime.resolve()` 1 回はプロジェクト指定あり
-  で認証 1 回 + 取得 4 回、指定なしで認証 1 回 + 取得 2 回
+- 参照ごとに 1 回 `GET` を呼ぶ。`LIST` は使わない（個人単位のパスは利用者ごとに分かれて
+  おり、親から辿ると他人のパスまで要求する。サーバのポリシーも `users/` 直下の一覧を拒む）。
+  `runtime.resolve()` 1 回はプロジェクト指定ありで認証 1 回 + 取得 4 回、指定なしで認証
+  1 回 + 取得 2 回
 - 同じ `SecretStore` の中では、取得した参照を控えて `exists` → `load` の並びで 2 度取りに
-  行かない。書き込み前の差分計算には使わず、必ず取り直す
-- access token は `expiresIn` の少し前に取り直す。取得が 401 を返したら手元の token を捨てて
-  1 度だけ再認証し、同じ取得をやり直す。それでも 401、または 403 なら資格の取り消しとして
-  扱う。ログイン自体の 401 / 403 は取り直す先が無いのでその時点で確定する
-- `save` / `save_bytes` は参照の内容**全体**を受け取り、取得した現状との差分だけを
-  DELETE → PATCH → POST の順に送る。値が同じキーは送らない。途中で失敗したら残りを送らず、
-  反映済みのキー名を述べて止め、その参照のキャッシュを消す。巻き戻しは行わない
-- Infisical にはコメント・空行の置き場が無く、`load_bytes()` が返すのは `KEY=VALUE` の並び
+  行かない。書き込み前の版の取得には使わず、必ず取り直す
+- token は実行のたびに取り直し、ディスクへ保存しない。`lease_duration` の少し前に取り直す
+  （エディタを長く開いた `env edit` の書き戻しで、期限切れの token を送らないため）。
+  応答の状態による再認証は置かない。認証以外の経路の 403 は権限の不足として確定する
+  （サーバ側で token の期限を実行時間より十分長くする前提で、期限切れは事前の取り直しだけで
+  扱う）
+- `save` / `save_bytes` は参照の内容**全体**を受け取り、**版を指定して丸ごと置き換える**。
+  1. 書き込みの直前に `GET` し、`data.metadata.version` を版とする。404 でも本文に
+     `data.metadata.version` があればその値を版とし、無ければ 0 とする（最新版が論理削除
+     されたパスは 404 と一緒に現在の版を返す。版 0 は「まだ 1 度も書かれていない」の意味で、
+     論理削除されたパスに 0 を送ると不一致になる）
+  2. 保存対象の辞書全体を `options.cas` にその版を付けて `POST` する
+  3. 版が合わず 400 になったら、他の誰かが先に書いた旨を述べて非ゼロで終了し、その参照の
+     控えを消す。同じ操作をやり直せば、取り直した版で書ける
+
+  1 つの参照の書き込みは原子的で、一部のキーだけが新しい状態にはならない。差分の計算も、
+  「どこまで反映したか」の報告も要らない
+- `remove(ref)` は取得して存在を確かめてから `DELETE /v1/<mount>/metadata/<path>` で全版を
+  消し、存在しなければ何もせず偽を返す。CLI のコマンドはこの経路を使わない（`env delete` は
+  キーを除いた全体を `save` し、`migrate` はサーバ側を消さない）
+- 応答の `data.data` の値は文字列だけを受け付ける。文字列以外の値（数値・真偽値・null・
+  入れ子）が含まれていれば応答を解釈できないとして扱う（devbase と WebUI は文字列しか書か
+  ない）
+- KV v2 は値の中の `${OTHER_KEY}` を展開しない。参照記法は文字列のまま往復する
+- KV v2 にはコメント・空行の置き場が無く、`load_bytes()` が返すのは `KEY=VALUE` の並び
   である
 
-`secretPath` の対応:
+パスの対応:
 
-| 参照 | `secretPath` |
+| 参照 | パス |
 | --- | --- |
-| チーム共通 | `<path_team_global>`（既定 `/team/global`） |
-| チームのプロジェクト | `<path_team_project_prefix>/<name>`（既定 `/team/projects/<name>`） |
-| 個人共通 | `<path_user_prefix>/<user>/global`（既定 `/users/<user>/global`） |
+| チーム共通 | `<path_team_global>`（既定 `team/global`） |
+| チームのプロジェクト | `<path_team_project_prefix>/<name>`（既定 `team/projects/<name>`） |
+| 個人共通 | `<path_user_prefix>/<user>/global`（既定 `users/<user>/global`） |
 | 個人のプロジェクト | `<path_user_prefix>/<user>/projects/<name>` |
 
-`<name>` と `<user>` はパス区切りと `..` を含まない検査を通っているため、組み立てた
-`secretPath` が設定した親の外へ出ることはない。
+`<name>` と `<user>` はパス区切りと `..` を含まない検査を通っているため、組み立てたパスが
+設定した親の外へ出ることはない。URL へ埋め込む前に各要素を符号化する（`/` は区切りとして
+残す）。`<user>` は社内メールアドレスの `@` より前の部分で、サーバ側の entity 名と同じ値に
+する。サーバのポリシーは entity 名で個人単位のパスを絞るため、設定の `user` が本人と違えば
+`users/<user>/...` の取得が 403 になる。
+
+サーバ側の構成（KV v2 のマウント、ポリシー、AppRole、token の期限）は devbase の範囲外で、
+運用側のリポジトリ（carmo-cdk#312）が持つ。devbase が前提にするのは、上の 4 経路と
+「本人のパスは読み書きでき、チームのパスは読め、他人のパスは拒まれる」ことだけである。
 
 ### 失敗の種類とキャッシュ
 
@@ -189,26 +229,41 @@ TTY では伏せ字入力で尋ねる。`use` は引数に無い項目を既存�
 
 | サーバとのやり取りの結果 | 例外 | 世代を書き直すか | キャッシュを使ってよいか |
 | --- | --- | --- | --- |
-| 取得の成功（`secrets` が配列。0 件を含む） | — | 取得した内容で置き換える | — |
+| 取得の成功（200 で `data.data` が辞書。0 件を含む） | — | 取得した内容で置き換える | — |
+| 取得が 404（未作成、または最新版が論理削除されている） | — | 機密 0 件として空の世代で置き換える | — |
 | 書き込みの成功 | — | 書いた内容で置き換える。置き換えられなければ消す | — |
-| 書き込みが途中で失敗 | `SecretWriteError` | 消す | — |
-| 通信できない（接続不能・タイムアウト・5xx・本文の途中切れ）・応答を解釈できない | `SecretUnreachableError` | 残す | 使う |
-| 認証拒否（再認証後も 401、または 403） | `SecretAuthError` | 残す | **使わず、非ゼロで終了する** |
+| 書き込みの版が合わない（400 で `errors` に check-and-set の不一致） | `SecretConflictError` | 消す | — |
+| 通信できない（接続不能・タイムアウト・5xx・本文の途中切れ）・応答を解釈できない（上記以外の 4xx を含む） | `SecretUnreachableError` | 残す | 使う |
+| 認証拒否（ログインの 400 / 403）・権限の不足（取得の 403・書き込みの 403） | `SecretAuthError` | 残す | **使わず、非ゼロで終了する** |
+
+`SecretAuthError` の文言は原因ごとに分ける。
+
+| 応答 | 意味 | 述べること |
+| --- | --- | --- |
+| ログインの 400（`invalid role or secret`） | `secret_id` の失効か書き間違い | 資格を確認できない。`secret_id` が失効していないか |
+| ログインの 403 | 利用者（entity）の無効化 | 同上 |
+| 取得の 403 | ログインは通ったが、そのパスを読む権限が無い | 読む権限が無い。`user` の設定が本人と違う可能性 |
+| 書き込みの 403 | ログインは通ったが、書く権限が無い（チーム単位への書き込みなど） | 書き込み権限が無い。資格の取り消しとは別の文言にする（ログインが成功しているため区別できる） |
+
+ログインの 400 を「応答を解釈できない」側へ分類しない（失効させた `secret_id` でキャッシュへ
+落ちてしまう）。
 
 キャッシュはサーバの内容の写しであって記録ではなく、最後にサーバと一致すると確かめられた
-1 世代だけを持つ。空の一覧も「その参照には機密が 1 件も無い」という取得結果として空の世代で
+1 世代だけを持つ。404 も「その参照には機密が 1 件も無い」という取得結果として空の世代で
 置き換える（前の世代を残すと、WebUI で消した機密が次の不達で戻る）。書き込みの成功でも
 置き換えるのは、書き込みの前に読んだ内容で控えが止まると、`env delete` で消したキーが次の
-不達でコンテナへ戻るためである。
+不達でコンテナへ戻るためである。版の不一致で消すのは、直前に読んだ内容がもう現物と違うと
+分かっているためである。それ以外の書き込みの失敗（不達・403）ではサーバは変わっておらず、
+直前の `GET` で進んだ世代がそのまま写しとして正しい。
 
-認証拒否でキャッシュへ落ちないのは、失効させた client secret や外した権限が手元の起動を
-止められなくなるためで、控えは消さない（client secret の書き間違いのような一時的な状態で
-控えを失わない）。
+認証拒否と権限の不足でキャッシュへ落ちないのは、失効させた `secret_id` や外した権限が手元の
+起動を止められなくなるためで、控えは消さない（`secret_id` の書き間違いのような一時的な
+状態で控えを失わない）。
 
 キャッシュを使えるのは、上表で「使う」失敗であることに加えて、復号して得た `backend` と
-`scope` が現在の設定から計算した値と一致する参照だけである。接続先 URL・project ID・
-environment・識別子・client ID のいずれかを変えると変更前の控えは使われず、不達なら接続先を
-示して非ゼロで終了する。
+`scope` が現在の設定から計算した値と一致する参照だけである。接続先 URL・`mount`・パス・
+`role_id` のいずれかを変えると変更前の控えは使われず、不達なら接続先を示して非ゼロで終了
+する。
 
 `cache.enabled` が偽のときは、控えを作らないだけでなく、backend を解決するすべての実行で
 `cache/` 配下の控えを消す。消せなければ残ったパスを挙げて非ゼロで終了する。
@@ -219,13 +274,13 @@ flowchart TD
     B --> C{backend は}
     C -->|auto| D[ファイルの存在で判定]
     C -->|age / plaintext| E[そのファイル backend]
-    C -->|infisical| F[bootstrap.env.age から資格情報を読む]
-    F --> G[universal-auth で認証]
-    G --> H[GET /api/v4/secrets を参照ごとに 1 回]
-    G -->|401 / 403| P
+    C -->|openbao| F[bootstrap.env.age から role_id / secret_id を読む]
+    F --> G[POST /v1/auth/approle/login]
+    G -->|400 / 403| P
+    G --> H[GET /v1/mount/data/path を参照ごとに 1 回]
     H --> I{取得できたか}
-    I -->|できた| J[取得した内容でキャッシュを置き換える]
-    I -->|認証拒否| P[資格を確認できない旨と URL を出し非ゼロ終了]
+    I -->|200 / 404| J[取得した内容でキャッシュを置き換える]
+    I -->|403| P[資格を確認できない旨と URL を出し非ゼロ終了]
     I -->|通信失敗・解釈できない応答| K{キャッシュはあるか}
     K -->|ある| L[キャッシュを復号し、警告と最終取得時刻を出す]
     K -->|ない| M[到達できない旨と URL を出し非ゼロ終了]
@@ -248,30 +303,34 @@ flowchart TD
 3. 読み戻して、移行元の全キーと移行先に元からあった全キーが期待どおりの値で返ることを
    確かめる。一致しなければこの実行で作成したキーだけを消し、移行前の設定のまま 1 で終了する
 4. `backend.yml` を `--to` の値へ書き換える
-5. `--to infisical` では移行元の age / 平文ファイルを `backups/env-backend-migrate/<日時>/` へ
+5. `--to openbao` では移行元の age / 平文ファイルを `backups/env-backend-migrate/<日時>/` へ
    移し、退避先を表示する。`--to age` ではサーバ上の機密を消さず、残っている場所（接続先
-   URL と `secretPath`）を表示し、`cache/` を消す
+   URL と `<mount>/<パス>`）を表示し、`cache/` を消す
+
+`--to openbao` でチーム単位のパスへ書く権限が無ければ、手順 2 で「書き込み権限が無い」旨を
+述べて 1 で終了する（移行はチームの置き場を作る操作で、書ける利用者が行う）。
 
 設定の書き換えを退避より先に行うのは、設定を書けなかったときに元のファイルだけが移動済みに
 なり、設定が指す先から機密が読めなくなるのを防ぐためである。`bootstrap.env.age` はどちらの
-向きでも残す（再び `infisical` へ戻すときに資格情報を入れ直さずに済む）。サーバ側を消さない
+向きでも残す（再び `openbao` へ戻すときに資格情報を入れ直さずに済む）。サーバ側を消さない
 のは、他の利用者が参照している可能性を devbase が判断できないためである。
 
 ### 既存コマンドの扱い
 
 | コマンド | 扱い |
 | --- | --- |
-| `env edit` | `direct_edit` が真（平文）なら保存先をそのままエディタへ渡す。それ以外は一時ファイル（自分専用の `0700` ディレクトリに `0600`）経由で `load_bytes()` → 編集 → `save_bytes()` |
+| `env edit` | `direct_edit` が真（平文）なら保存先をそのままエディタへ渡す。それ以外は一時ファイル（自分専用の `0700` ディレクトリに `0600`）経由で `load_bytes()` → 編集 → `save_bytes()`。書き戻しの版は編集後に取り直すため、編集中に他の人が書いていれば版の不一致で止まる |
 | `env init --reset` | ファイル backend では従来どおり `.backup` を複製する。サーバ backend では読み出した値を age で暗号化して `backups/env-init/<日時>/` へ控え、作れなければ 1 件も消さずに非ゼロで終了する |
-| `env encrypt` / `decrypt` | age 専用。backend が `infisical` なら止める。明示的な設定が変換後の保存先と逆（`plaintext` で `encrypt`、`age` で `decrypt`）でも止める（設定が指す先から機密が消える）。`auto` と一致する設定ではファイルの存在で判定する |
+| `env encrypt` / `decrypt` | age 専用。backend が `openbao` なら止める。明示的な設定が変換後の保存先と逆（`plaintext` で `encrypt`、`age` で `decrypt`）でも止める（設定が指す先から機密が消える）。`auto` と一致する設定ではファイルの存在で判定する |
 | `env rekey` | backend の選択に関わらず実行でき、手元の age 暗号文すべて（機密の参照、`bootstrap.env.age`、`cache/` 配下）を 1 つのまとまりとして再暗号化する |
-| `env export` | チーム単位の 2 種の参照だけを backend 越しに読む。個人単位の `secretPath` へ要求は届かない。バンドルの名前と `manifest.yml` の `version` は変わらない |
+| `env export` | チーム単位の 2 種の参照だけを backend 越しに読む。個人単位のパスへ要求は届かない。バンドルの名前と `manifest.yml` の `version` は変わらない |
 | `env import` | チーム単位の参照へ backend 越しに書く。ファイル backend では従来どおり複製と原子的な rename。サーバ backend では取り込み前の値を age で暗号化して `backups/` へ全件控えてから参照ごとに `save_bytes()` し、失敗した参照までを（失敗した参照自身も含めて）控えた値で巻き戻す。受信者鍵が無ければ 1 件も取り込まない。暗号化の判定は「保存先が age か」で行い、`backend: age` で保存先がまだ無い参照も暗号文として保存する |
-| `env doctor` | `backend.yml` の読み込みと登録簿の名前、`backend: infisical` でのブートストラップの 2 キー、`backend.yml` / `bootstrap.env.age` / `cache/` 配下の権限（ファイル `0600`、ディレクトリ `0700`）、`git check-ignore` による除外（`secrets/backend.yml` / `secrets/bootstrap.env.age` / `secrets/cache/team/global.env.age`）を点検する |
+| `env doctor` | `backend.yml` の読み込みと登録簿の名前、`backend: openbao` でのブートストラップの 2 キー、`backend.yml` / `bootstrap.env.age` / `cache/` 配下の権限（ファイル `0600`、ディレクトリ `0700`）、`git check-ignore` による除外（`secrets/backend.yml` / `secrets/bootstrap.env.age` / `secrets/cache/team/global.env.age`）を点検する |
 
 ### 常に成り立つ条件
 
-- 機密の値と client secret は、ログ・例外メッセージ・`--dry-run` の出力・`index.json` に載らない
+- 機密の値と `secret_id` は、ログ・例外メッセージ・`status` の出力・`--dry-run` の出力・
+  `index.json` に載らない
 - `backend.yml` に機密は入らない。ブートストラップとキャッシュは age 暗号文としてしか
   ディスクに置かれない。age の識別鍵が無い端末では平文へ落とさず、鍵の用意を促して非ゼロで
   終了する
@@ -279,9 +338,11 @@ flowchart TD
   ときと同じである
 - ファイル backend は個人単位の参照に対して `exists()` が偽・`load()` が空を返し、書き込みと
   `remove()` は何もしない（拒む）
-- 対応していない設定値（`api_version` が `v4` 以外、`version` が 1 以外、未知の backend 名、
-  ループバック以外への `http`、パス区切りや `..` を含む `user`）は既定へ読み替えず、キー名と
-  受け付ける値を添えて拒む
+- サーバ backend への 1 つの参照の書き込みは、丸ごと反映されるか、何も反映されないかの
+  どちらかである
+- 対応していない設定値は既定へ読み替えず、キー名と受け付ける値を添えて拒む。対象は
+  `version` が 1 以外、未知の backend 名、ループバック以外への `http`、パス区切りや `..` を
+  含む `user` / `mount`、`/` で始まる・終わる・`..` を含む `path_*` である
 
 ## データ・設定
 
@@ -289,16 +350,14 @@ flowchart TD
 
 ```yaml
 version: 1
-backend: infisical
-infisical:
-  url: https://infisical.example.com
-  project_id: 7f0e2c1a-....
-  environment: common
+backend: openbao
+openbao:
+  url: https://openbao.example.com
+  mount: devbase
   user: member01
-  path_team_global: /team/global
-  path_team_project_prefix: /team/projects
-  path_user_prefix: /users
-  api_version: v4
+  path_team_global: team/global
+  path_team_project_prefix: team/projects
+  path_user_prefix: users
   timeout_seconds: 5
 cache:
   enabled: true
@@ -307,22 +366,19 @@ cache:
 | キー | 意味 | 空・不在のとき |
 | --- | --- | --- |
 | `version` | 形式の版。`1` だけを受け付ける | `1` |
-| `backend` | `auto` / `plaintext` / `age` / `infisical` | `auto` |
-| `infisical.url` | 接続先。`https` に限る。`http` はホストが `localhost` / `127.0.0.1` / `::1` のときだけ受け付ける | `infisical` のとき必須 |
-| `infisical.project_id` | project の識別子 | 同上 |
-| `infisical.environment` | environment の slug | `common` |
-| `infisical.user` | 個人単位の置き場に使う識別子。パス区切りと `..` は不可 | `infisical` のとき必須 |
-| `infisical.path_team_global` / `path_team_project_prefix` / `path_user_prefix` | `secretPath` の親。`/` で始まる | 上記の既定 |
-| `infisical.api_version` | `v4` だけを受け付ける | `v4` |
-| `infisical.timeout_seconds` | 1 回の HTTP の待ち時間（正の整数） | `5` |
+| `backend` | `auto` / `plaintext` / `age` / `openbao` | `auto` |
+| `openbao.url` | 接続先。`https` に限る。`http` はホストが `localhost` / `127.0.0.1` / `::1` のときだけ受け付ける | `openbao` のとき必須 |
+| `openbao.mount` | KV v2 シークレットエンジンのマウント名。パス区切りと `..` は不可 | `devbase` |
+| `openbao.user` | 個人単位の置き場に使う識別子（entity 名）。パス区切りと `..` は不可 | `openbao` のとき必須 |
+| `openbao.path_team_global` / `path_team_project_prefix` / `path_user_prefix` | パスの親。`/` で始めない・終えない | 上記の既定 |
+| `openbao.timeout_seconds` | 1 回の HTTP の待ち時間（正の整数） | `5` |
 | `cache.enabled` | キャッシュを書く・読むか。偽なら既存の控えも消す | `true` |
 
 ### `$DEVBASE_ROOT/secrets/bootstrap.env.age`（`0600`）
 
-`DEVBASE_INFISICAL_CLIENT_ID` と `DEVBASE_INFISICAL_CLIENT_SECRET` の `KEY=VALUE` を、
-機密の age ストアと同じ受信者・同じ鍵で暗号化したもの。登録簿を経由せず `AgeBackend` で
-直接読み書きする（有効な backend を通すと「接続するための値を、接続しないと読めない」
-循環になる）。
+`DEVBASE_OPENBAO_ROLE_ID` と `DEVBASE_OPENBAO_SECRET_ID` の `KEY=VALUE` を、機密の age
+ストアと同じ受信者・同じ鍵で暗号化したもの。登録簿を経由せず `AgeBackend` で直接読み書き
+する（有効な backend を通すと「接続するための値を、接続しないと読めない」循環になる）。
 
 ### `$DEVBASE_ROOT/secrets/cache/`（ディレクトリ `0700`、ファイル `0600`）
 
@@ -336,7 +392,7 @@ cache:
 収め、原子的な置き換えで書くため、両者が食い違った組み合わせは残らない。
 
 ```json
-{"version": 1, "scope": "sha256:...", "backend": "infisical",
+{"version": 1, "scope": "sha256:...", "backend": "openbao",
  "fetched_at": "2026-09-08T10:00:00+09:00", "secrets": "KEY=value\n..."}
 ```
 
@@ -344,52 +400,64 @@ cache:
 
 | 操作 | 退避先 | 形 |
 | --- | --- | --- |
-| `migrate --to infisical` | `backups/env-backend-migrate/<日時>/` | 移行元の age / 平文ファイルをそのまま移動 |
+| `migrate --to openbao` | `backups/env-backend-migrate/<日時>/` | 移行元の age / 平文ファイルをそのまま移動 |
 | `env import`（サーバ backend） | `backups/env-import/dbenv-<日時>/<owner>-<kind>[-<name>].env.age` | 取り込み前の値を age 暗号化 |
 | `env init --reset`（サーバ backend） | `backups/env-init/<日時>/<owner>-<kind>[-<name>].env.age` | 同上 |
 
 ## セキュリティ
 
-- client secret はコマンド引数で受け取らない（`ps` から読める位置に置かない）。標準入力か
+- `secret_id` はコマンド引数で受け取らない（`ps` から読める位置に置かない）。標準入力か
   TTY の伏せ字入力だけを経路にする
 - `http` はループバック宛てだけ受け付ける。環境変数やテスト専用のオプションで例外を開ける
   手段は置かない（実サーバを使う端末でも開けられる抜け道になる）
-- `scope` を SHA-256 にするのは、project の識別子と client ID を平文で残さないためである
-- 個人単位の機密は `secretPath` で分け、他人のパスを読む権限が無ければサーバが 401 / 403 を
-  返す。宛先を指すのは設定、渡してよいかを決めるのはサーバという分担である
+- `scope` を SHA-256 にするのは、`role_id` とパスを平文で残さないためである
+- 個人単位の機密はパスで分け、他人のパスを読む権限が無ければサーバが 403 を返す。宛先を
+  指すのは設定、渡してよいかを決めるのはサーバ（entity 名で絞るポリシー）という分担である
+- 端末ごとに `secret_id` を分けるため、1 台の失効が他の端末に及ばない。失効前に発行済みの
+  token は期限まで使えるため、期限はサーバ側で短く保つ
 - `secrets/` は Git の除外対象で、`doctor` が実際に除外されることを確かめる
 
 ## 運用
 
 - 設定が無ければ挙動は変わらない。`backend.yml` を消せば `auto` に戻る
-- Infisical を使う場合も age の鍵が要る（ブートストラップとキャッシュの暗号化に使う）。
+- OpenBao を使う場合も age の鍵が要る（ブートストラップとキャッシュの暗号化に使う）。
   受信者の入れ替えは `rekey` が担い、外した受信者は資格情報も控えも復号できなくなる
-- サーバの構築・運用は devbase の範囲外で、devbase は既存のサーバへ接続するだけである
+- サーバの構築・運用は devbase の範囲外で、devbase は既存のサーバへ接続するだけである。
+  利用者は管理者から接続先 URL・`mount`・自分の識別子・`role_id`・端末ごとの `secret_id` を
+  受け取る
 - 1 台の端末が同時に使う backend は 1 つ、扱う個人単位の機密は 1 人分である
-- 複数人の同時編集の競合はサーバ側の最終書き込み優先に従う。不達のときに書き込みを控えへ
-  溜める経路は無い
+- 複数人の同時編集は版の不一致として後から書いた側で止まる。黙って上書きせず、読み直して
+  やり直す。不達のときに書き込みを控えへ溜める経路は無い
 - 個人単位の機密は `export` / `import` で持ち運ばない。端末を替えても backend の設定と認証で
   同じ値が読める
+- チーム単位のパスへ書けるのは、サーバ側で書き込みのポリシーを付けた利用者だけである。
+  それ以外の利用者の `env set`（`--user` なし）と `migrate --to openbao` は「書き込み権限が
+  無い」で止まる
 
 ## テスト観点
 
-- 設定の読み込み・検証・既定値・`secretPath` の組み立て（`tests/env/test_backend_config.py`）
+- 設定の読み込み・検証・既定値・パスの組み立て（`tests/env/test_backend_config.py`）
 - 参照の持ち主、登録簿、設定による backend の選択、`auto` の互換（`tests/env/test_secret_store_backend.py`）
 - ブートストラップの往復と鍵が無いときの失敗（`tests/env/test_bootstrap.py`）
-- 偽 Infisical サーバ（`tests/conftest.py`、`http.server`）に対する差分適用・往復回数・
-  再認証・403・不達・キー名の符号化・`backend test`（`tests/env/test_infisical.py`）
-- キャッシュの配置・不達時の復帰・認証拒否での不使用・`scope`・書き込みとの同期・無効化・
-  原子性・本文の途中切れ（`tests/env/test_cache.py`）
+- 偽 OpenBao サーバに対する版付きの丸ごと書き込み・版の不一致・往復回数・ログインの
+  400 / 403・取得と書き込みの 403・404 と論理削除後の版・不達・パス要素の符号化・
+  `backend test`（`tests/env/test_openbao.py`）。偽サーバは `tests/conftest.py` の
+  `http.server` で、AppRole のログインと KV v2 の取得・版付き保存・メタデータ削除を持つ。
+  ポリシーの代わりに、`users/<user>/` 以外への書き込みと他人のパスを 403 にする
+- キャッシュの配置・不達時の復帰・認証拒否での不使用・`scope`・書き込みとの同期・版の不一致
+  での破棄・無効化・原子性・本文の途中切れ（`tests/env/test_cache.py`）
 - 4 層の重ね順とファイル backend での不変（`tests/env/test_runtime.py`）
-- `status` / `use` と argv に client secret を取る経路が無いこと（`tests/commands/test_env_backend.py`）
+- `status` / `use` と argv に `secret_id` を取る経路が無いこと（`tests/commands/test_env_backend.py`）
 - `--user` の宛先、`list` / `get` の順序、ファイル backend での拒否、`edit` / `init --reset`
   （`tests/commands/test_env_user_axis.py`）
-- 移行の衝突・読み戻し・巻き戻し・設定の切替の順序・両方向（`tests/commands/test_env_backend_migrate.py`）
+- 移行の衝突・読み戻し・巻き戻し・設定の切替の順序・両方向・書き込み権限が無いとき
+  （`tests/commands/test_env_backend_migrate.py`）
 - `rekey` の対象、`encrypt` / `decrypt` の向き、`doctor` の点検（`tests/commands/test_env_ops_backend.py`）
 - `export` / `import` がサーバ backend 越しに動き、個人単位を触らないこと、暗号化した退避、
   巻き戻し、`backend: age` への import（`tests/cli/test_env_bundle_backend.py`）
-- 実サーバに対する `devbase env backend test` / `devbase up`、folder path 単位の権限の
-  絞り込み、自己ホストの Infisical が `v4` を持つことは手動確認
+- 実サーバに対する `devbase env backend test` / `devbase up` は手動確認。ポリシーによる
+  他人のパスと `users/` 直下の一覧の拒否、端末 1 台の `secret_id` の失効も同じ（開発モードの
+  サーバでの確認結果は #166。本番のサーバでは配布後に確かめる）
 
 ## 関連リンク
 
@@ -397,3 +465,7 @@ cache:
 - [環境変数の暗号化](../user/env-encryption.md)
 - [CLI リファレンス: env](../user/cli-reference/03-env.md)
 - 発端の依頼: `issues/security-key.md`
+- Infisical から OpenBao への切り替えの経緯: devbasex/devbase#166
+- [OpenBao: KV v2 API](https://openbao.org/api-docs/secret/kv/kv-v2/)
+- [OpenBao: AppRole auth](https://openbao.org/docs/auth/approle/)
+- [OpenBao: Policies](https://openbao.org/docs/concepts/policies/)
