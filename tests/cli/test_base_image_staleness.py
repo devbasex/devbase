@@ -127,6 +127,12 @@ def test_run_build_no_cache_flag(tmp_path, monkeypatch):
     assert captured["cmd"][-2:] == ["build", "--no-cache"]
 
 
+def test_wrapper_has_project_no_cache_mode():
+    wrapper = (Path(__file__).resolve().parents[2] / "bin" / "devbase").read_text()
+    assert "--project-no-cache) project_no_cache=1" in wrapper
+    assert 'docker compose build "${DEV_SERVICE_NAME:-dev}" --no-cache "$@"' in wrapper
+
+
 # ---------------------------------------------------------------------------
 # _build_resolved: build --expires / rebuild の共通エントリ
 # ---------------------------------------------------------------------------

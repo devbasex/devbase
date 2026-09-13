@@ -87,17 +87,6 @@ compose_with_secrets() {
         uv run --project "$DEVBASE_ROOT" python -m devbase.cli env exec --${_BUILD_CONTEXT:+context "$_BUILD_CONTEXT" --} "$@"
 }
 
-build_project_image() {
-    if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
-        echo ""
-        echo "✓ All images built successfully"
-    else
-        echo ""
-        echo "✗ Failed to build project image"
-        exit 1
-    fi
-}
-
 cmd_build() {
     echo "=== Building devbase images ==="
 
@@ -191,7 +180,14 @@ cmd_build() {
 
         echo ""
         echo "[2/2] Building project image without cache..."
-        build_project_image --no-cache "$@"
+        if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" --no-cache "$@"; then
+            echo ""
+            echo "✓ All images built successfully"
+        else
+            echo ""
+            echo "✗ Failed to build project image"
+            exit 1
+        fi
         return
     fi
 
@@ -206,7 +202,14 @@ cmd_build() {
 
         echo ""
         echo "[2/2] Building project image..."
-        build_project_image "$@"
+        if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
+            echo ""
+            echo "✓ All images built successfully"
+        else
+            echo ""
+            echo "✗ Failed to build project image"
+            exit 1
+        fi
         return
     fi
 
@@ -232,7 +235,14 @@ cmd_build() {
 
     echo ""
     echo "[2/2] Building project image..."
-    build_project_image "$@"
+    if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
+        echo ""
+        echo "✓ All images built successfully"
+    else
+        echo ""
+        echo "✗ Failed to build project image"
+        exit 1
+    fi
 }
 
 # ===================================================================
