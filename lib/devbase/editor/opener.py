@@ -565,16 +565,10 @@ def resolve_docker_context(environ=None, runner: Optional[Callable] = None,
         return explicit.strip() or None
     if default:
         return default
-    run = runner or subprocess.run
-    try:
-        proc = run(["docker", "context", "show"],
-                   capture_output=True, text=True, timeout=10)
-    except Exception:  # noqa: BLE001 - docker 不在等は best-effort
-        return None
-    if getattr(proc, "returncode", 1) != 0:
-        return None
-    out = (proc.stdout or "").strip()
-    return out or None
+    # 現在の context の取得は docker_context に一本化する。DOCKER_CONTEXT / DOCKER_HOST を
+    # 外した環境で問い合わせないと、残っている値に引きずられた答えが返る。
+    from devbase.utils import docker_context as _dc
+    return _dc.current_context(environ=env, runner=runner)
 
 
 _NO_EDITOR_REASON = (

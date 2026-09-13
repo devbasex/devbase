@@ -985,3 +985,16 @@ def test_resolve_docker_context_default_beats_docker_show():
         raise AssertionError("docker context show should not run")
 
     assert opener.resolve_docker_context({}, runner=boom, default="gpu-wsl") == "gpu-wsl"
+
+
+def test_resolve_docker_context_probe_strips_docker_context_and_host():
+    """現在の context の問い合わせは DOCKER_CONTEXT / DOCKER_HOST を外した環境で行う。"""
+    seen = {}
+
+    def runner(cmd, **kw):
+        seen.update(kw.get("env") or {})
+        return _Proc(returncode=0, stdout="desktop-linux\n")
+
+    env = {"DOCKER_CONTEXT": "x", "DOCKER_HOST": "tcp://x", "PATH": "/p"}
+    assert opener.resolve_docker_context(env, runner=runner) == "desktop-linux"
+    assert "DOCKER_CONTEXT" not in seen and "DOCKER_HOST" not in seen and seen["PATH"] == "/p"

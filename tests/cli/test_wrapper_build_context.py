@@ -106,3 +106,12 @@ def test_shell_docker_calls_go_through_env_exec():
               if re.search(r'\bdocker (buildx build|image inspect)\b', line)
               and 'compose_with_secrets' not in line]
     assert direct == [], direct
+
+
+@pytest.mark.parametrize("args", [["build", "--context", ""], ["build", "--context="],
+                                  ["build", "--context", "  "]])
+def test_empty_context_value_is_an_error(wrapper_root, args):
+    result = _run_wrapper(args, wrapper_root)
+    assert result.returncode == 2
+    assert "--context" in result.stderr
+    assert _line(result, "BUILD:") is None

@@ -449,18 +449,23 @@ case "$_resolved_cmd" in
         # project build へ引数で渡す。
         _build_args=()
         _expect_context=0
+        _context_given=0
         for _ba in "${_DEVBASE_ARGS[@]}"; do
             if [ "$_expect_context" = 1 ]; then
                 _BUILD_CONTEXT="$_ba"; _expect_context=0; continue
             fi
             case "$_ba" in
-                --context) _expect_context=1 ;;
-                --context=*) _BUILD_CONTEXT="${_ba#--context=}" ;;
+                --context) _expect_context=1; _context_given=1 ;;
+                --context=*) _BUILD_CONTEXT="${_ba#--context=}"; _context_given=1 ;;
                 *) _build_args+=("$_ba") ;;
             esac
         done
-        if [ "$_expect_context" = 1 ]; then
-            echo "Error: --context requires a context name" >&2; exit 2
+        # 値なし・空・空白のみは Python 側 (cli.py の _non_empty) と同じく exit 2 で止める。
+        # 空のまま通すと ${_BUILD_CONTEXT:+...} が展開されず、手元の daemon でビルドが走る。
+        _BUILD_CONTEXT="${_BUILD_CONTEXT#"${_BUILD_CONTEXT%%[![:space:]]*}"}"
+        _BUILD_CONTEXT="${_BUILD_CONTEXT%"${_BUILD_CONTEXT##*[![:space:]]}"}"
+        if [ "$_expect_context" = 1 ] || { [ "$_context_given" = 1 ] && [ -z "$_BUILD_CONTEXT" ]; }; then
+            echo "Error: --context requires a non-empty context name" >&2; exit 2
         fi
         # bash 3.2 は空配列の "${arr[@]}" を set -u で未定義扱いするが、この wrapper は
         # set -u を使わないので、抜き取った残りをそのまま _DEVBASE_ARGS へ戻してよい。
