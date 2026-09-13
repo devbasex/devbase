@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-09-13
+
+別ホストの Docker（Windows/WSL2・別 PC・EC2）に dev コンテナを立てられるようになりました。
+`projects/<name>/project.local.yml` に docker context の名前を書くだけで、compose と機密の
+復号は手元のまま、daemon だけをリモートへ向けます。
+
 ### Added
 
 - **別ホストの Docker に dev コンテナを立てられるようにしました（PLAN52 / #162）。**
@@ -549,7 +555,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.2.2...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.3.0...HEAD
+[3.3.0]: https://github.com/devbasex/devbase/compare/v3.2.2...v3.3.0
 [3.2.2]: https://github.com/devbasex/devbase/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/devbasex/devbase/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/devbasex/devbase/compare/v3.1.0...v3.2.0
