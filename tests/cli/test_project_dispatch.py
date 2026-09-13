@@ -476,3 +476,9 @@ def test_dispatch_root_command_passes_only_root(monkeypatch, tmp_path, command):
 
     assert cli._dispatch(command, _args(command=command)) == 0
     assert calls == [tmp_path]
+
+
+def test_dispatch_unknown_command_returns_one():
+    """未知コマンドで spec is None となり return 1 する経路を固定する。"""
+    args = _args(command='bogus')
+    assert cli._dispatch('bogus', args) == 1
