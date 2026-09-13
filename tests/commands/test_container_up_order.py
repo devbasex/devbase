@@ -47,6 +47,12 @@ def test_resolve_open_index_env_fallback(monkeypatch, env_val, expected):
 def up_harness(tmp_path, monkeypatch):
     """cmd_up の外部作用をすべてスタブ化し、呼び出し順を記録する。"""
     monkeypatch.chdir(tmp_path)
+    # PLAN52: cmd_up は docker context を解決する。外の環境変数や前のテストの残りを
+    # 拾わないよう、context 関連の env とモジュール状態を空にしてから始める
+    from devbase.utils import docker_context as dc
+    for name in ('DOCKER_CONTEXT', 'DOCKER_HOST', 'DEVBASE_DOCKER_CONTEXT'):
+        monkeypatch.delenv(name, raising=False)
+    dc.reset()
     # PLAN32: cmd_up は project.yml を唯一の正として読む
     (tmp_path / 'project.yml').write_text(
         "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
