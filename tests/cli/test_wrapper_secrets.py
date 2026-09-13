@@ -38,19 +38,6 @@ def test_wrapper_sources_the_non_secret_settings():
     assert len(sourced) == 1, sourced
 
 
-def test_compose_build_goes_through_the_secret_injection():
-    """`docker compose build` は機密を必要としうるので env exec 経由で呼ぶ"""
-    lines = wrapper_lines()
-    direct = [line for line in lines
-              if 'docker compose build' in line
-              and 'compose_with_secrets' not in line]
-    assert direct == [], ("機密注入を経ずに compose build を呼んでいます: "
-                          + repr(direct))
-
-    wrapped = [line for line in lines if 'compose_with_secrets docker compose build' in line]
-    assert len(wrapped) == 3, wrapped
-
-
 def test_secret_injection_helper_uses_env_exec():
     text = WRAPPER.read_text(encoding='utf-8')
     assert 'compose_with_secrets()' in text

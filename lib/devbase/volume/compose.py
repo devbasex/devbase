@@ -611,6 +611,85 @@ def _prepare_remote_mounts(
                 "\n  ".join(unresolved))
 
 
+def _build_secret_names(
+    dev_service: Mapping[str, Any],
+    dev_environment: Mapping[str, str],
+    secret_env_names: Sequence[str],
+    global_env_names: Optional[Sequence[str]],
+    project_env_names: Optional[Sequence[str]],
+) -> tuple[_SecretNames, Sequence[str]]:
+    # コンテナ内で使われない GCP の変数を **dev の列挙から外す**。名前が載ら
+    # なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
+    # から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
+    #
+    # 外すのは 2 種類ある。ADC モードでの鍵ファイルのパス 2 変数
+    # (DefaultCredentialsError を避けるため) と、アクティブプロファイル以外の
+    # GCP_CREDENTIALS_BASE64__* および使われない後方互換キー (鍵の実体が他社の
+    # コンテナへ渡るのを防ぐため / issue #134)。判定は gcp_auth に集約する。
+    #
+    # 除外は dev だけに効かせる。元々これらを env_file から受け取っていた
+    # 非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
+    # 同じようにそのサービスを壊す。
+    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
+    #
+    # 候補は 3 か所から集める。機密の列挙・ホストの環境変数・元 compose.yml の
+    # dev への直書きである。どれか 1 つでも欠けると、そこに書かれた別プロファイル
+    # の鍵を外し損ねる。
+    enumerated = [*secret_env_names,
+                  *(global_env_names or ()),
+                  *(project_env_names or ()),
+                  *_service_env_names(dev_service)]
+    dev_excluded = gcp_auth.dev_excluded_env_names(
+        os.environ, auth_mode, enumerated)
+    secret_names = _SecretNames(
+        secret_env_names, global_env_names, project_env_names,
+        dev_excluded=dev_excluded)
+
+    return secret_names, dev_excluded
+
+
+def _resolve_vscode_volumes(
+    dev_service: Mapping[str, Any], scale: int,
+) -> List[str]:
+    # VS Code Server は再作成をまたいで保つためコンテナ 1 つに 1 本の named
+    # volume を宛てる (PLAN36)。プロジェクトが自分で ~/.vscode-server を
+    # マウントしている場合は、その指定を奪わないよう devbase 側は何もしない。
+    if _declares_target(dev_service, VSCODE_SERVER_TARGET):
+        vscode_volumes: List[str] = []
+    else:
+        project_name = resolve_project_name()
+        vscode_volumes = [
+            get_vscode_volume_for(project_name, i)
+            for i in range(1, scale + 1)
+        ]
+
+    return vscode_volumes
+
+
+def _drop_dev_excluded(
+    scaled_services: dict, dev_service_name: str, scale: int,
+    dev_excluded: Sequence[str],
+) -> None:
+    # 列挙を絞るだけでは、元の compose.yml が environment に**直書き**している
+    # 変数が生成物に残る。adc では dev に鍵を書かないので、鍵ファイルのパスが
+    # 残っていること自体が DefaultCredentialsError の原因になる。同じ理屈で、
+    # 鍵の実体 (GCP_CREDENTIALS_BASE64__*) を直書き・名前参照している compose.yml
+    # は列挙の絞り込みを迂回して鍵をコンテナへ渡してしまう (issue #134)。
+    # したがって除外集合は列挙と生成物の両方へ同じものを適用する。
+    #
+    # 鍵モードのガードは要らない。dev_excluded_env_names は key モードでは
+    # 鍵パスの 2 変数を返さないので、「鍵モードでは直書きのパスを尊重する」挙動は
+    # そのまま保たれる。
+    #
+    # 取り除くのは **dev インスタンスだけ**。`GCP_AUTH_MODE` は dev コンテナの
+    # 認証方式の宣言であり、独自に鍵をマウントしている非 dev サービス (batch 等) の
+    # 明示設定まで消すと、そのサービスを壊してしまう。
+    for index in range(1, scale + 1):
+        service = scaled_services.get(f'{dev_service_name}-{index}')
+        if isinstance(service, dict):
+            _drop_env_names(service, dev_excluded)
+
+
 def generate_scaled_compose(
     scale: int,
     compose_file: Path = None,
@@ -679,44 +758,10 @@ def generate_scaled_compose(
         **gcp_auth.container_env(os.environ),
     }
 
-    # コンテナ内で使われない GCP の変数を **dev の列挙から外す**。名前が載ら
-    # なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
-    # から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
-    #
-    # 外すのは 2 種類ある。ADC モードでの鍵ファイルのパス 2 変数
-    # (DefaultCredentialsError を避けるため) と、アクティブプロファイル以外の
-    # GCP_CREDENTIALS_BASE64__* および使われない後方互換キー (鍵の実体が他社の
-    # コンテナへ渡るのを防ぐため / issue #134)。判定は gcp_auth に集約する。
-    #
-    # 除外は dev だけに効かせる。元々これらを env_file から受け取っていた
-    # 非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
-    # 同じようにそのサービスを壊す。
-    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
-    #
-    # 候補は 3 か所から集める。機密の列挙・ホストの環境変数・元 compose.yml の
-    # dev への直書きである。どれか 1 つでも欠けると、そこに書かれた別プロファイル
-    # の鍵を外し損ねる。
-    enumerated = [*secret_env_names,
-                  *(global_env_names or ()),
-                  *(project_env_names or ()),
-                  *_service_env_names(dev_service)]
-    dev_excluded = gcp_auth.dev_excluded_env_names(
-        os.environ, auth_mode, enumerated)
-    secret_names = _SecretNames(
-        secret_env_names, global_env_names, project_env_names,
-        dev_excluded=dev_excluded)
-
-    # VS Code Server は再作成をまたいで保つためコンテナ 1 つに 1 本の named
-    # volume を宛てる (PLAN36)。プロジェクトが自分で ~/.vscode-server を
-    # マウントしている場合は、その指定を奪わないよう devbase 側は何もしない。
-    if _declares_target(dev_service, VSCODE_SERVER_TARGET):
-        vscode_volumes: List[str] = []
-    else:
-        project_name = resolve_project_name()
-        vscode_volumes = [
-            get_vscode_volume_for(project_name, i)
-            for i in range(1, scale + 1)
-        ]
+    secret_names, dev_excluded = _build_secret_names(
+        dev_service, dev_environment, secret_env_names,
+        global_env_names, project_env_names)
+    vscode_volumes = _resolve_vscode_volumes(dev_service, scale)
 
     scaled_services = _build_scaled_services(
         services, dev_service, dev_service_name, scale, group_volume,
@@ -726,24 +771,7 @@ def generate_scaled_compose(
         vscode_volumes=vscode_volumes,
     )
 
-    # 列挙を絞るだけでは、元の compose.yml が environment に**直書き**している
-    # 変数が生成物に残る。adc では dev に鍵を書かないので、鍵ファイルのパスが
-    # 残っていること自体が DefaultCredentialsError の原因になる。同じ理屈で、
-    # 鍵の実体 (GCP_CREDENTIALS_BASE64__*) を直書き・名前参照している compose.yml
-    # は列挙の絞り込みを迂回して鍵をコンテナへ渡してしまう (issue #134)。
-    # したがって除外集合は列挙と生成物の両方へ同じものを適用する。
-    #
-    # 鍵モードのガードは要らない。dev_excluded_env_names は key モードでは
-    # 鍵パスの 2 変数を返さないので、「鍵モードでは直書きのパスを尊重する」挙動は
-    # そのまま保たれる。
-    #
-    # 取り除くのは **dev インスタンスだけ**。`GCP_AUTH_MODE` は dev コンテナの
-    # 認証方式の宣言であり、独自に鍵をマウントしている非 dev サービス (batch 等) の
-    # 明示設定まで消すと、そのサービスを壊してしまう。
-    for index in range(1, scale + 1):
-        service = scaled_services.get(f'{dev_service_name}-{index}')
-        if isinstance(service, dict):
-            _drop_env_names(service, dev_excluded)
+    _drop_dev_excluded(scaled_services, dev_service_name, scale, dev_excluded)
 
     _prepare_remote_mounts(scaled_services, docker_home, remote)
 
