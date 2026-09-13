@@ -355,15 +355,20 @@ sequenceDiagram
 
 | 要素 | 責務 |
 | --- | --- |
-| `utils/docker_context.apply(target, environ)` | 反映する。同時に「いま有効な接続先」をモジュール変数に控える。冪等 |
+| `utils/docker_context.apply(target, environ)` | 反映する。同時に「いま有効な接続先」をモジュール変数に控え、最初の適用時に `DOCKER_CONTEXT` / `DOCKER_GID` / `DOCKER_HOST` の元の値も控える。冪等 |
 | `utils/docker_context.reapply(environ)` | 控えた接続先があれば `apply` を呼び直す。無ければ何もしない |
+| `utils/docker_context.reset(environ)` | 控えた接続先を捨て、3 変数を元の値へ戻す（元々無かったものは消す）。控えが無ければ何もしない |
+| `commands/container._dispatch_lifecycle()` | handler を呼ぶ**前**と、`finally` で**後**に `reset()` を呼ぶ。1 プロセスで複数の lifecycle 操作を行う TUI で、前の操作の接続先が次へ漏れないようにする |
 | `commands/container._inject_secrets()` | 機密を注入した**直後に自分で** `reapply()` を呼ぶ。呼び出し側は何もしない |
 | `commands/env.cmd_env_exec()` | `child_env()` が返した辞書へ `apply(choice, env)` を直接当てる（モジュール変数は使わない） |
 
 `_inject_secrets` は引数を取らない共通関数で、container.py の全 lifecycle コマンドが通る。
 確定した接続先を引数で配り直すより、`docker_context` 側が控えを持ち `_inject_secrets` が
 それを呼ぶ方が、呼び出し側を変えずに漏れを塞げる。モジュール変数を持つのはこの 1 つだけで、
-テストでは `docker_context.reset()` で消す。
+`_dispatch_lifecycle` の前後とテストの `setUp` で `reset()` を通す。TUI（`tui/dispatch.py`）は
+同じプロセスで `project up A` → `project down B` を続けて呼ぶため、A の控えが残ると B の
+解決結果が `None`（環境を触らない）でも `_inject_secrets` → `reapply()` が A の接続先を
+復活させる。`reset()` が元の値へ戻すので、B は利用者のシェルの環境だけを見て動く。
 
 ### 他のコマンド
 

@@ -136,7 +136,9 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 `_inject_secrets`）で確定済みの接続先が戻り、volume 作成と `compose up` が別の daemon を
 向く。反映を冪等な関数にして `_inject_secrets` の直後と `child_env()` の後に呼べば、
 何度注入されても最後に確定した接続先が残る。控えは `docker_context` モジュールが持ち、
-`_inject_secrets` が注入の直後に `reapply()` を呼ぶ（設計「処理の流れ」の責務表）。
+`_inject_secrets` が注入の直後に `reapply()` を呼ぶ（設計「処理の流れ」の責務表）。控えは
+lifecycle 操作の単位で生き、`_dispatch_lifecycle` が前後で `reset()` して捨てる。1 プロセスで
+操作を続ける TUI で、前の操作の接続先を次の操作へ持ち越さないためである。
 
 `runtime.inject` に「上書きしないキー」の一覧を持たせる形は、機密の注入が接続先の都合を
 知ることになり、責務が混ざるため採らない。
@@ -154,6 +156,7 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 | リモート判定が `DOCKER_CONTEXT` / `DOCKER_HOST` 反映後でも変わらない | `test_docker_context.py`: `runner` に渡る env に `DOCKER_CONTEXT` も `DOCKER_HOST` も無いこと。`os.environ` に載せた後に確定しても `remote` が真になり、`DOCKER_HOST` だけがある環境で同名の context を指定しても `remote` が偽になること |
 | env の空文字は未指定 | 同上 |
 | `DOCKER_HOST` があるとき context 解決時に外れる | `test_docker_context.py`: 反映後の環境に `DOCKER_HOST` が無く警告が出る。context が `None` なら残る |
+| 操作の間で接続先が漏れない | `test_container_context.py`: 同じプロセスで `project up A`（`docker.context: a`）の後に `project down B`（設定なし）を呼ぶと、B の子プロセスに `DOCKER_CONTEXT` が無く、`DOCKER_GID` は `bin/devbase` の元の値に戻っている |
 | プロジェクト切替の後に解決する | `test_container_context.py`: A の `.env` に `DEVBASE_DOCKER_CONTEXT=a`、B の `project.local.yml` に `docker.context: b` を置き、A で `project down B` を実行すると子プロセスに `DOCKER_CONTEXT=b` が届く |
 | 機密注入の後も接続先が維持される | `test_container_context.py`: 機密ストアに `DOCKER_CONTEXT=x` / `DOCKER_GID=1` / `DOCKER_HOST=tcp://...` を置いた状態で `up --context b` を実行し、volume・compose・exec のすべての子プロセスに `DOCKER_CONTEXT=b`、確定した `DOCKER_GID`、`DOCKER_HOST` 無しで届く。`env exec` も同様 |
 | `--context` を受け付けるコマンド | `tests/cli/test_project_dispatch.py` 系: parser が各サブコマンドで `--context` を取ること |
