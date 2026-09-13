@@ -120,6 +120,14 @@ class SecretEnvFile:
         """保存先をファイルとして直接エディタで開いてよいか (平文だけ真)"""
         return self._store.direct_edit(self._ref)
 
+    def mode_name(self) -> str:
+        """保存先の backend 名 (存在の有無によらない。エラー文言用)"""
+        return self._store.backend_for(self._ref).name
+
+    def has_user_refs(self) -> bool:
+        """保存先の backend が個人単位の参照を持つか"""
+        return self._store.has_user_refs(self._ref)
+
     def file_exists(self) -> bool:
         return self._store.exists(self._ref)
 

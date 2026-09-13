@@ -159,3 +159,51 @@ def test_import_rolls_back_applied_references_when_a_later_one_fails(infisical_r
 
     assert infisical.get(TEAM_GLOBAL) == {'OLD': '1'}
     assert infisical.get(TEAM_WEB) == {}
+
+
+def test_import_rolls_back_a_reference_that_failed_halfway(infisical_root, infisical,
+                                                           bundle_keys, tmp_path):
+    """1 つの参照の途中で失敗しても、その参照の反映済みキーも取り込み前へ戻る"""
+    pub, key = bundle_keys
+    infisical.put(TEAM_GLOBAL, {'OLD': '1'})
+    src = make_bundle(tmp_path, pub, {'env/global.env': b'NEW1=1\nNEW2=2\nOLD=1\n'})
+    # POST NEW1 (1 回目) は通し、POST NEW2 (2 回目) で落とす。巻き戻しの DELETE NEW1 は通す
+    infisical.fail_write_attempts = [2]
+
+    with pytest.raises(EnvImportError):
+        import_bundle(infisical_root, ImportOptions(
+            source=str(src), merge='prefer-incoming', identities=[str(key)],
+            include_metadata=False))
+
+    assert infisical.get(TEAM_GLOBAL) == {'OLD': '1'}
+
+
+def test_import_into_an_explicit_age_backend_encrypts_new_references(tmp_path, monkeypatch,
+                                                                     bundle_keys):
+    """backend: age で保存先がまだ無い参照も、平文ではなく暗号文として保存される"""
+    from devbase.env import agekeys, backend_config as bc
+    from devbase.env.secret_store import SecretRef, SecretStore
+
+    root = tmp_path / 'root'
+    (root / 'projects' / 'web').mkdir(parents=True)
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    agekeys.generate_key_file()
+    bc.save(root, bc.BackendConfig(backend='age'))
+    pub, key = bundle_keys
+    src = make_bundle(tmp_path, pub, {
+        'env/global.env': b'SECRET=plain-value\n',
+        'env/projects/web/.env': b'WEB=plain-web\n',
+    })
+
+    assert import_bundle(root, ImportOptions(
+        source=str(src), identities=[str(key)], include_metadata=False)) == 0
+
+    for path in (root / 'secrets' / 'global.env.age', root / 'secrets' / 'projects' / 'web.env.age'):
+        raw = path.read_bytes()
+        assert raw.startswith(b'age-encryption.org/')
+        assert b'plain-' not in raw
+    store = SecretStore(root)
+    assert store.load(SecretRef.for_global()) == {'SECRET': 'plain-value'}
+    assert store.load(SecretRef.for_project('web')) == {'WEB': 'plain-web'}
+    assert not (root / '.env').exists()

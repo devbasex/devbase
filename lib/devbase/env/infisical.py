@@ -75,6 +75,7 @@ class InfisicalBackend:
 
     name = BACKEND_NAME
     direct_edit = False
+    has_user_refs = True
 
     def __init__(self, store: SecretStore):
         self._store = store

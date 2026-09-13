@@ -82,12 +82,23 @@ def _target_env(devbase_root: Path, project: bool, user: bool = False):
     ここへ集約して振る舞いがずれないようにする。
     """
     if not project:
-        return _global_env(devbase_root, user=user)
+        env_file = _global_env(devbase_root, user=user)
+    else:
+        env_file = _project_env(devbase_root, user=user)
+        if env_file is None:
+            logger.error(
+                "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
+            return None
 
-    env_file = _project_env(devbase_root, user=user)
-    if env_file is None:
+    # ファイル backend は個人単位の参照を持たない。backend の path() はチーム単位の
+    # ファイルを指すため、ここで止めないと `edit --user` がチームの .env を開き、
+    # 個人の資格情報が全員から見える場所へ入る (PLAN51 設計 2)。
+    if user and not env_file.has_user_refs():
         logger.error(
-            "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
+            "%s backend は個人単位の機密を扱えません (--user)。"
+            "個人単位の機密を置くにはサーバ backend を設定してください: "
+            "devbase env backend use infisical ...", env_file.mode_name())
+        return None
     return env_file
 
 

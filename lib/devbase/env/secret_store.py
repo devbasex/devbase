@@ -134,6 +134,8 @@ class SecretBackend(Protocol):
     name: str
     #: 保存先をファイルとして直接エディタで開いてよいか。平文だけ真。
     direct_edit: bool
+    #: 個人単位の参照 (``owner='user'``) を持つか。ファイル backend は持たない。
+    has_user_refs: bool
 
     def path(self, ref: SecretRef) -> Path: ...
     def exists(self, ref: SecretRef) -> bool: ...
@@ -160,6 +162,7 @@ class PlaintextBackend:
 
     name = MODE_PLAINTEXT
     direct_edit = True
+    has_user_refs = False
 
     def __init__(self, devbase_root: Path):
         self._root = Path(devbase_root)
@@ -213,6 +216,10 @@ class PlaintextBackend:
         return self.save_bytes(ref, EnvFile.dump_bytes(data))
 
     def remove(self, ref: SecretRef) -> bool:
+        # 個人単位の参照は持たない。path() はチーム単位のファイルを指すため、
+        # ここで止めないとチームの機密を消してしまう。
+        if ref.is_user:
+            return False
         path = self.path(ref)
         if not path.exists():
             return False
@@ -228,6 +235,7 @@ class AgeBackend:
 
     name = MODE_AGE
     direct_edit = False
+    has_user_refs = False
 
     def __init__(self, devbase_root: Path, *,
                  recipients: Optional[Sequence[str]] = None,
@@ -338,6 +346,8 @@ class AgeBackend:
         return self.save_bytes(ref, EnvFile.dump_bytes(data))
 
     def remove(self, ref: SecretRef) -> bool:
+        if ref.is_user:
+            return False
         path = self.path(ref)
         if not path.exists():
             return False
@@ -449,6 +459,10 @@ class SecretStore:
     def direct_edit(self, ref: SecretRef) -> bool:
         """保存先をファイルとして直接エディタで開いてよいか"""
         return bool(self.backend_for(ref).direct_edit)
+
+    def has_user_refs(self, ref: SecretRef) -> bool:
+        """選択中の backend が個人単位の参照を持つか (ファイル backend は持たない)"""
+        return bool(getattr(self.backend_for(ref), 'has_user_refs', False))
 
     # -- 読み書き -----------------------------------------------------------
 

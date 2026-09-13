@@ -180,10 +180,13 @@ def _build_plans(
             )
             if not _is_file_backend(store, ref):
                 plan = _dc_replace(plan, ref=ref)
-            elif store.is_encrypted(ref):
+            elif store.backend_for(ref) is store.age:
                 # merge の結果は平文のバイト列なので、暗号化されている保存先へ
                 # 書く前にここで暗号文へ変換する。以降の原子的書き込み・
                 # ロールバックはバイト列とパスだけを扱うため、そのまま通せる。
+                # 判定は「暗号化ファイルが存在するか」ではなく「保存先が age か」で
+                # 行う。`backend: age` で保存先がまだ無い参照は前者だと平文のまま
+                # `.age` へ書かれてしまう。
                 plan = _dc_replace(
                     plan, new_bytes=store.age.encrypt_bytes(plan.new_bytes))
             plans.append(plan)
@@ -308,6 +311,8 @@ def _apply_via_backend(store, plans: List[_merge.Plan],
 
     参照をまたぐ一括 rename が持っていた同時性はサーバ backend では作れないため、
     適用済みの参照を控えた値で書き戻す (取り込み前に無かった参照は空にする)。
+    **失敗した参照も巻き戻しに含める。** サーバ backend の ``save`` はキー単位で
+    反映するため、1 つの参照の途中で失敗しても一部のキーは既に書かれている。
     """
     from devbase.errors import DevbaseError
 
@@ -318,7 +323,7 @@ def _apply_via_backend(store, plans: List[_merge.Plan],
             store.save_bytes(plan.ref, plan.new_bytes)
         except DevbaseError as e:
             logger.error("%s の取り込みに失敗しました: %s", plan.ref.label(), e)
-            _rollback_via_backend(store, applied, before_of)
+            _rollback_via_backend(store, applied + [plan], before_of)
             raise ImportError(f"{plan.ref.label()}の取り込みに失敗しました: {e}") from e
         applied.append(plan)
         logger.info("%s を取り込みました (%s)", plan.ref.label(), store.path(plan.ref))

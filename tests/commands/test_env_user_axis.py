@@ -110,20 +110,16 @@ def test_set_does_not_resend_unchanged_keys(infisical_root, infisical):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('prepare', ['unset', 'age', 'plaintext'])
-def test_user_writes_are_refused_on_file_backends(file_root, prepare):
-    """cli.main が DevbaseError を捕まえて非ゼロにする (既存の get と同じ伝播)"""
-    from devbase.env.secret_store import SecretStoreError
-
+def test_user_writes_are_refused_on_file_backends(file_root, prepare, caplog):
     store = SecretStore(file_root)
     if prepare == 'age':
         store.age.save(GLOBAL, {'KEEP': '1'})
     elif prepare == 'plaintext':
         store.plaintext.save(GLOBAL, {'KEEP': '1'})
 
-    with pytest.raises(SecretStoreError, match='個人単位'):
-        env_cmd.cmd_env_set(file_root, 'A=1', user=True)
-    # 個人単位の参照は存在しないので、削除は「無い」として非ゼロ (書き込みは起きない)
+    assert env_cmd.cmd_env_set(file_root, 'A=1', user=True) == 1
     assert env_cmd.cmd_env_delete(file_root, 'KEEP', user=True) == 1
+    assert '個人単位' in errors(caplog)
 
     expected = {} if prepare == 'unset' else {'KEEP': '1'}
     assert SecretStore(file_root).load(GLOBAL) == expected
@@ -334,3 +330,23 @@ def test_commands_with_the_owner_axis_accept_user(argv):
     cli._add_env_parser(parser.add_subparsers(dest='command'))
     ns = parser.parse_args(argv)
     assert ns.user is True
+
+
+@pytest.mark.parametrize('prepare', ['unset', 'age', 'plaintext'])
+def test_edit_user_on_file_backends_does_not_open_the_team_file(file_root, prepare, monkeypatch,
+                                                                caplog):
+    store = SecretStore(file_root)
+    if prepare == 'age':
+        store.age.save(GLOBAL, {'KEEP': '1'})
+    elif prepare == 'plaintext':
+        store.plaintext.save(GLOBAL, {'KEEP': '1'})
+    calls = []
+    monkeypatch.setattr(env_cmd.subprocess, 'call', lambda argv: calls.append(argv) or 0)
+
+    assert env_cmd.cmd_env_edit(file_root, user=True) == 1
+    assert env_cmd.cmd_env_edit(file_root, user=True, project=True) == 1
+
+    assert calls == []                       # エディタは 1 度も起動しない
+    assert '個人単位' in errors(caplog)
+    expected = {} if prepare == 'unset' else {'KEEP': '1'}
+    assert SecretStore(file_root).load(GLOBAL) == expected
