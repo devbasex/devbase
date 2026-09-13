@@ -242,3 +242,38 @@ def test_declining_confirmation_keeps_destination_and_config(age_root, infisical
     assert config_path.read_bytes() == config_before
     assert SecretStore(age_root).load(GLOBAL) == {'A': 'a-value', 'SHARED': 'from-age'}
     assert SecretStore(age_root).load(WEB) == {'W': 'w-value'}
+
+
+def test_conflict_check_does_not_fall_back_to_the_cache(age_root, infisical):
+    """衝突の検査はサーバの現物で行い、取得できなければ書き込み前に止まる"""
+    # キャッシュには B だけを残し、その後サーバへ A (移行元と同名) が足される
+    infisical.put(TEAM_GLOBAL, {'B': 'pre-existing'})
+    SecretStore(age_root, config=bc.BackendConfig(
+        backend='infisical', infisical=bc.load(age_root).infisical)).load(GLOBAL)
+    infisical.put(TEAM_GLOBAL, {'A': 'server', 'B': 'pre-existing'})
+    infisical.fail_get_attempts = [infisical.get_attempts + 1]   # 移行準備の取得だけを落とす
+
+    assert migrate(age_root, 'infisical') == 1
+
+    assert not any(r.secret_name for r in infisical.received)
+    assert infisical.get(TEAM_GLOBAL) == {'A': 'server', 'B': 'pre-existing'}
+    assert bc.load(age_root).backend == 'age'
+
+
+def test_config_save_failure_keeps_the_source_files_in_place(age_root, infisical, monkeypatch):
+    real_save = bc.save
+
+    def failing_save(root, config):
+        if config.backend == 'infisical':
+            raise bc.BackendConfigError('disk full')
+        return real_save(root, config)
+
+    monkeypatch.setattr(bc, 'save', failing_save)
+
+    assert migrate(age_root, 'infisical') == 1
+
+    assert (age_root / 'secrets' / 'global.env.age').exists()
+    assert (age_root / 'secrets' / 'projects' / 'web.env.age').exists()
+    assert not (age_root / 'backups' / 'env-backend-migrate').exists()
+    assert bc.load(age_root).backend == 'age'
+    assert SecretStore(age_root).load(GLOBAL)['A'] == 'a-value'

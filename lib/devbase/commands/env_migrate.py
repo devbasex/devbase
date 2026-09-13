@@ -113,13 +113,18 @@ def _confirm(prompt: str, assume_yes: bool) -> bool:
 # encrypt
 # ---------------------------------------------------------------------------
 
-def _age_file_store(root: Path) -> Optional[SecretStore]:
+def _age_file_store(root: Path, *, target: str) -> Optional[SecretStore]:
     """encrypt / decrypt が使う、ファイルの存在で判定する店。
 
     どちらも age ストアと平文ストアの間で機密を移す age 固有の操作で、サーバ backend
     には対応する概念が無い (PLAN51 決定 8)。有効な backend が age 系でなければ
-    ``None`` を返し、呼び出し側はその旨を述べて止める。age 系なら設定ファイルの
-    選択に関わらずファイルの存在で判定する (``backend: age`` でも平文が対象になる)。
+    ``None`` を返し、呼び出し側はその旨を述べて止める。
+
+    ``target`` は変換後の保存先 (``age`` / ``plaintext``)。**明示的な backend 設定が
+    変換後の保存先と逆を指すときも拒む。** ``backend: plaintext`` のまま encrypt すると
+    平文が消えて設定は平文を指し続け、次の読み込みが空になる (decrypt と ``age`` も同じ)。
+    ``auto`` と変換後の保存先に一致する設定では、設定ファイルの選択に関わらずファイルの
+    存在で判定する (``backend: age`` でも平文が対象になる)。
     """
     from devbase.env import backend_config as _bc
 
@@ -133,6 +138,11 @@ def _age_file_store(root: Path) -> Optional[SecretStore]:
                      "(現在の backend: %s)。サーバ backend との間で移すには "
                      "`devbase env backend migrate` を使ってください", name)
         return None
+    if name != _bc.BACKEND_AUTO and name != target:
+        logger.error("backend が %s に固定されているため、%s へ移すと設定の指す先から機密が"
+                     "消えます。先に `devbase env backend use %s` (または auto) に切り替えて"
+                     "ください", name, target, target)
+        return None
     return SecretStore(root, config=_bc.BackendConfig())
 
 
@@ -141,7 +151,7 @@ def cmd_env_encrypt(devbase_root: Path, *, dry_run: bool = False,
                     projects: Optional[Sequence[str]] = None) -> int:
     """平文の設定を暗号化ストアへ移す"""
     root = Path(devbase_root)
-    store = _age_file_store(root)
+    store = _age_file_store(root, target=MODE_AGE)
     if store is None:
         return 1
 
@@ -364,7 +374,7 @@ def cmd_env_decrypt(devbase_root: Path, *, dry_run: bool = False,
                     projects: Optional[Sequence[str]] = None) -> int:
     """暗号化された設定を平文へ戻す"""
     root = Path(devbase_root)
-    store = _age_file_store(root)
+    store = _age_file_store(root, target=MODE_PLAINTEXT)
     if store is None:
         return 1
 

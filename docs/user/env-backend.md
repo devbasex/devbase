@@ -195,7 +195,9 @@ cache:
 - `devbase env rekey` は `backend: infisical` のときも実行でき、`bootstrap.env.age` と
   `secrets/cache/` 配下も再暗号化します
 - `devbase env encrypt` / `decrypt` は age ストア専用です。`backend: infisical` のときは
-  止まります（サーバとの間で移すには `migrate` を使います）
+  止まります（サーバとの間で移すには `migrate` を使います）。`backend: plaintext` のまま
+  `encrypt`、`backend: age` のまま `decrypt` も止まります（変換後に設定が指す先から機密が
+  消えるため。先に `backend use` で合わせるか `auto` に戻してください）
 - `devbase env doctor` は backend 設定の読み込み、資格情報の有無、`backend.yml` /
   `bootstrap.env.age` / `cache/` の権限、Git の除外設定を点検します
 

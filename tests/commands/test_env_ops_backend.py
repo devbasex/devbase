@@ -115,6 +115,41 @@ def test_encrypt_and_decrypt_are_age_only(infisical_root, caplog):
     assert not (infisical_root / 'secrets' / 'global.env.age').exists()
 
 
+def test_encrypt_is_refused_when_backend_is_plaintext(infisical_root, caplog):
+    """変換後に設定が指す先から機密が消える向きは拒む"""
+    config = bc.load(infisical_root)
+    bc.save(infisical_root, bc.BackendConfig(backend='plaintext', infisical=config.infisical))
+    (infisical_root / '.env').write_text('A=1\n')
+
+    assert env_migrate.cmd_env_encrypt(infisical_root, assume_yes=True) == 1
+
+    assert (infisical_root / '.env').read_text() == 'A=1\n'
+    assert 'plaintext' in errors(caplog)
+    assert SecretStore(infisical_root).load(GLOBAL) == {'A': '1'}
+
+
+def test_decrypt_is_refused_when_backend_is_age(infisical_root, caplog):
+    config = bc.load(infisical_root)
+    bc.save(infisical_root, bc.BackendConfig(backend='age', infisical=config.infisical))
+    SecretStore(infisical_root).age.save(GLOBAL, {'A': '1'})
+
+    assert env_migrate.cmd_env_decrypt(infisical_root, assume_yes=True) == 1
+
+    assert (infisical_root / 'secrets' / 'global.env.age').exists()
+    assert SecretStore(infisical_root).load(GLOBAL) == {'A': '1'}
+
+
+def test_decrypt_works_when_backend_is_plaintext(infisical_root):
+    config = bc.load(infisical_root)
+    bc.save(infisical_root, bc.BackendConfig(backend='plaintext', infisical=config.infisical))
+    SecretStore(infisical_root).age.save(GLOBAL, {'A': '1'})
+
+    assert env_migrate.cmd_env_decrypt(infisical_root, assume_yes=True) == 0
+
+    assert SecretStore(infisical_root).load(GLOBAL) == {'A': '1'}
+    assert not (infisical_root / 'secrets' / 'global.env.age').exists()
+
+
 def test_encrypt_still_works_when_backend_is_age(infisical_root):
     config = bc.load(infisical_root)
     bc.save(infisical_root, bc.BackendConfig(backend='age', infisical=config.infisical))

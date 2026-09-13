@@ -50,6 +50,11 @@ class FakeInfisical:
     get_status: Optional[int] = None
     #: 取得に返す本文を差し替える (壊れた JSON など)
     get_body: Optional[bytes] = None
+    #: 何回目の取得の試みを 503 にするか (1 始まり)。それ以外は通す
+    fail_get_attempts: List[int] = field(default_factory=list)
+    get_attempts: int = 0
+    #: 取得の本文を Content-Length より短く切って返す (IncompleteRead を起こす)
+    truncate_get_body: bool = False
     #: このパスへの読み書きを 403 で拒む (前方一致)
     forbidden_prefixes: List[str] = field(default_factory=list)
     #: 書き込み (POST/PATCH/DELETE) を N 回成功させた後は 500 を返す
@@ -131,13 +136,17 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             return {'_raw': raw.decode('utf-8', 'replace')}
 
-    def _send(self, status: int, payload: Any = None, raw: Optional[bytes] = None) -> None:
+    def _send(self, status: int, payload: Any = None, raw: Optional[bytes] = None,
+              truncate: bool = False) -> None:
         body = raw if raw is not None else json.dumps(payload if payload is not None else {}).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Content-Length', str(len(body) + (100 if truncate else 0)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(body[:1] if truncate else body)
+        if truncate:
+            self.wfile.flush()
+            self.close_connection = True
 
     def _record(self, method: str) -> Received:
         parts = urlsplit(self.path)
@@ -188,6 +197,9 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(401, {'message': 'unauthorized'})
         if self._forbidden(rec):
             return self._send(403, {'message': 'forbidden'})
+        state.get_attempts += 1
+        if state.get_attempts in state.fail_get_attempts:
+            return self._send(503, {'message': 'unavailable'})
         if state.get_body is not None:
             return self._send(state.get_status or 200, raw=state.get_body)
         if state.get_status is not None:
@@ -207,7 +219,7 @@ class _Handler(BaseHTTPRequestHandler):
                 for other, other_value in data.items():
                     value = value.replace('${' + other + '}', other_value)
             secrets.append({'secretKey': key, 'secretValue': value})
-        return self._send(200, {'secrets': secrets})
+        return self._send(200, {'secrets': secrets}, truncate=state.truncate_get_body)
 
     def _write(self, rec: Received, op: str):
         state = self.server_state

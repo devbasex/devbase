@@ -399,17 +399,20 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         logger.error("移行を中止しました: %s", e)
         return 1
 
+    # 設定の切り替えを退避より先に行う。逆にすると、設定を書けなかったときに
+    # 元のファイルだけが移動済みになり、設定が指す先から機密が読めなくなる。
+    try:
+        _bc.save(root, _dc_replace(config, backend=to))
+    except _bc.BackendConfigError as e:
+        logger.error("移行先への書き込みは済みましたが、設定を書き換えられませんでした: %s\n"
+                     "  移行元の機密は元の場所に残っています。設定を直してから再実行してください", e)
+        return 1
+
     if to == _bc.BACKEND_INFISICAL:
         backup_dir = plan.move_files_to_backup()
     else:
         _cache.purge(root)
         backup_dir = None
-
-    try:
-        _bc.save(root, _dc_replace(config, backend=to))
-    except _bc.BackendConfigError as e:
-        logger.error("移行は完了しましたが、設定を書き換えられませんでした: %s", e)
-        return 1
 
     print(f"\n=== 完了 === backend を {to} に切り替えました")
     if to == _bc.BACKEND_INFISICAL:
@@ -446,9 +449,20 @@ class _MigrationPlan:
     def _dest_backend(self):
         return self.server if self.to == _bc.BACKEND_INFISICAL else self.file_store.age
 
+    def _read_current(self, backend, ref: SecretRef) -> dict:
+        """移行元・移行先の現物を読む。
+
+        サーバは ``fetch`` で取り直し、キャッシュへは落ちない。控えで衝突を検査すると、
+        控えの後にサーバへ足されたキーとの衝突を見逃し、後続の保存が上書きする。
+        取得できなければ書き込み前にここで止まる。
+        """
+        if backend is self.server:
+            return self.server.fetch(ref)
+        return backend.load(ref) if backend.exists(ref) else {}
+
     def prepare(self) -> None:
         for ref in _team_refs(self.root):
-            data = self._source_backend().load(ref)
+            data = self._read_current(self._source_backend(), ref)
             if not data:
                 continue
             if self.to == 'age' and self.file_store.plaintext.exists(ref):
@@ -456,8 +470,7 @@ class _MigrationPlan:
                     f"{ref.label()}の平文 {self.file_store.plaintext.path(ref)} が残っています。"
                     "age へ移すと暗号化・平文が同時に存在する状態になるため、"
                     "先に `devbase env encrypt` で暗号化するか退避してください")
-            dest = self._dest_backend()
-            current = dest.load(ref) if dest.exists(ref) else {}
+            current = self._read_current(self._dest_backend(), ref)
             self.source[ref] = data
             self.existing[ref] = current
             self.moves.append((ref, sorted(data)))

@@ -114,6 +114,14 @@ def test_failed_fetch_leaves_the_cache_untouched(infisical_root, infisical, how)
     assert digest(path) == before
 
 
+def test_truncated_response_falls_back_to_the_cache(infisical_root, infisical):
+    """本文が Content-Length より短く切れた応答 (IncompleteRead) は不達として扱う"""
+    fill(infisical, SecretStore(infisical_root))
+    infisical.truncate_get_body = True
+
+    assert SecretStore(infisical_root).load(GLOBAL) == {'A': 'team-global'}
+
+
 def test_an_empty_answer_replaces_the_cache(infisical_root, infisical):
     fill(infisical, SecretStore(infisical_root))
     infisical.put('/team/global', {})

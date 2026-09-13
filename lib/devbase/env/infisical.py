@@ -24,6 +24,7 @@ access token はプロセス内にだけ持ち、ディスクへ書かない。�
 
 from __future__ import annotations
 
+import http.client
 import json
 import socket
 import time
@@ -184,7 +185,10 @@ class InfisicalBackend:
                 raw = resp.read()
         except _urlerror.HTTPError as e:
             raise _HttpStatus(e.code, e.read() or b'') from None
-        except (_urlerror.URLError, socket.timeout, ConnectionError, OSError) as e:
+        except (_urlerror.URLError, socket.timeout, ConnectionError, OSError,
+                http.client.HTTPException) as e:
+            # 本文の途中で切られたとき (IncompleteRead) も「応答を最後まで受け取れなかった」
+            # 不達として扱い、キャッシュへ落ちられるようにする
             raise SecretUnreachableError(
                 f"Infisical へ到達できません ({e.reason if hasattr(e, 'reason') else e})\n"
                 f"  接続先: {self.url}") from None
