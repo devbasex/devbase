@@ -154,3 +154,46 @@ def test_devbase_managed_environment_is_always_present(project):
 
     env = env_of(generated(project)["services"]["dev-1"])
     assert {k: env[k] for k in DEVBASE_MANAGED} == DEVBASE_MANAGED
+
+
+def test_list_form_environment_with_whitespace_key_is_overwritten(project):
+    """list 形式でキー名に空白が含まれていても devbase 側の値で正しく上書きされる。"""
+    (project / "compose.yml").write_text("""services:
+  dev:
+    image: alpine
+    environment:
+      - " DEVBASE_PRIMARY_DIR = old "
+    volumes:
+      - x:/work
+volumes:
+  x: {}
+""")
+
+    generate_scaled_compose(1, dev_environment=REPO_ENV)
+
+    dev = generated(project)["services"]["dev-1"]
+    assert user_env(dev) == {
+        "DEVBASE_REPOS": "cGxhbg==",
+        "DEVBASE_PRIMARY_DIR": "carmo",
+    }
+
+
+def test_env_helpers():
+    """環境変数走査ヘルパ (_env_shape, _env_item_name, _iter_env_names) の動作検証。"""
+    from devbase.volume.compose import _env_item_name, _env_shape, _iter_env_names
+
+    assert _env_shape(None) == "none"
+    assert _env_shape({}) == "dict"
+    assert _env_shape([]) == "list"
+    assert _env_shape("invalid") == "other"
+
+    assert _env_item_name("KEY=VAL") == "KEY"
+    assert _env_item_name("  KEY  =VAL ") == "KEY"
+    assert _env_item_name("KEY") == "KEY"
+    assert _env_item_name("  KEY  ") == "KEY"
+    assert _env_item_name(123) is None
+
+    assert list(_iter_env_names(None)) == []
+    assert list(_iter_env_names({"A": "1", "B": "2"})) == ["A", "B"]
+    assert list(_iter_env_names(["A=1", " B = 2 ", 123, "C"])) == ["A", "B", "C"]
+

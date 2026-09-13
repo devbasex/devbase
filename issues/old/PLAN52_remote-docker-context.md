@@ -346,3 +346,101 @@ issue #162 の提案として書かれているものを、この仕様の決定
 | 項目 | 誰が決めるか | 期限 |
 | --- | --- | --- |
 | devbase-samples の `.gitignore` 更新の起票先と担当 | 利用者 | 実装 PR のマージまで |
+
+## 実装計画
+
+設計は [PLAN52_remote-docker-context-design.md](PLAN52_remote-docker-context-design.md)、
+決定とテスト設計は [PLAN52_remote-docker-context-decisions.md](PLAN52_remote-docker-context-decisions.md)
+にある。ここではタスクの分解と順序だけを書く。**1 本の実装 Pull Request**（`feature/remote-docker-context`）で
+進める。設計の要素は互いに呼び合う（反映・再適用・reset を全コマンドが通る）ため、分けると
+中間状態のマージが動かない。
+
+### 修正対象
+
+| 区分 | ファイル |
+| --- | --- |
+| 新設 | `lib/devbase/project/local_config.py`、`lib/devbase/utils/docker_context.py`、`lib/devbase/volume/bind_mounts.py` |
+| 変更 | `bin/devbase`、`lib/devbase/cli.py`、`lib/devbase/project/config.py`、`lib/devbase/volume/compose.py`、`lib/devbase/commands/container.py`、`lib/devbase/commands/env.py`、`lib/devbase/editor/opener.py` |
+| 文書 | `docs/user/project-yml.md`、`docs/user/environment-variables.md`、`docs/user/cli-reference/02-project.md`、`docs/user/cli-reference/03-env.md`、`CHANGELOG.md` |
+| テスト | `tests/project/test_local_config.py`、`tests/utils/test_docker_context.py`、`tests/volume/test_bind_mounts.py`、`tests/commands/test_container_context.py`、`tests/cli/test_wrapper_build_context.py`、既存の `tests/project/test_config.py`、`tests/editor/test_opener.py`、`tests/cli/test_secret_injection.py` |
+
+### タスク分解
+
+各タスクは失敗するテスト → 最小実装 → 整理の順で進める（`tdd-cycle`）。
+
+#### Task 1: `project.local.yml` を読む
+
+- 対象: `project/local_config.py`（新設）、`project/config.py`
+- 内容: `DockerSettings` / `ProjectLocalConfig` と `load_project_local_config()`。無い・空は既定値、未知キー・型・値の検証は `ConfigError`。`project.yml` の `docker:` は移す案内付きで拒む
+- 満たす条件: 「設定の読み込み」の 10 件、「起きてはいけないこと」の `project.yml` 単体の検証
+
+#### Task 2: context を解決し反映する
+
+- 対象: `utils/docker_context.py`（新設）
+- 内容: `ContextChoice` / `DockerTarget`、`choose_context()`（CLI > env > ファイル > None）、`resolve_target()`（`docker context show` を `DOCKER_CONTEXT` / `DOCKER_HOST` 抜きの環境で 1 回、前提 4 の `home` / `gid` の扱い）、`apply()` / `reapply()` / `reset()`（`DOCKER_HOST` の除去と元の値の控え）、`ensure_remote_gid()`（`alpine:3` の `stat`、`.cache/docker-gid/<context>`、gid 0 の警告）
+- 満たす条件: 「context の優先順位」の env / ファイル / CLI の並び、「`DOCKER_GID`」の 6 件、`DOCKER_HOST` の 1 件
+
+#### Task 3: lifecycle コマンドに通す
+
+- 対象: `commands/container.py`、`cli.py`
+- 内容: `--context` を lifecycle の parser へ。`_dispatch_lifecycle` の開始時と `finally` で `reset()`、`_resolve_project_name` の直後に `_inject_secrets(required=False)`、`ContextChoice` の解決と `apply`。`_inject_secrets` の末尾で `reapply()`。`cmd_up` / `cmd_scale` は `resolve_target()` → `apply` → gid → 生成へ `home` / `remote` を渡す。`cmd_up` はリモート扱いで自動スナップショットを飛ばす。`_run_build` は `--context` を引数で渡す。`up` の冒頭に解決結果の info
+- 満たす条件: 「各コマンド」の `down` / `ps` / `logs` / `login` / `scale` / 自動ビルド / 自動スナップショット、「起きてはいけないこと」の TUI・プロジェクト切替・機密ストアの 3 件、性能の条件
+
+#### Task 4: bind mount の `~` を展開する
+
+- 対象: `volume/bind_mounts.py`（新設）、`volume/compose.py`
+- 内容: `expand_home()`（短い書式・`~` 単独・長い書式）と `collect_warnings()`（`~user`、相対パス、`home` 無し）。`generate_scaled_compose(..., docker_home=None, remote=False)` から呼ぶ
+- 満たす条件: 「bind mount の `~`」の 7 件
+
+#### Task 5: shell の `build` と `env exec`
+
+- 対象: `bin/devbase`、`commands/env.py`、`cli.py`
+- 内容: `build)` 分岐の先頭で `--context NAME` / `--context=NAME` を抜いてシェル変数へ。`compose_with_secrets` を `run_with_project_env` に改名し `env exec ${ctx:+--context "$ctx"} --` を経由。`cmd_build` の `docker buildx build` / `docker image inspect` をそこ経由に。Python 経路（image 指定 / `--expires`）へは `--context` を引数で渡す。`env exec` の parser に `--context`、`cmd_env_exec` は `child_env()` の後に `apply`
+- 満たす条件: 「各コマンド」の shell `build` と `env exec`、「context の優先順位」の `--context` を受け付けるコマンド
+
+#### Task 6: VS Code の attach URI
+
+- 対象: `editor/opener.py`、`commands/container.py`
+- 内容: `open_editor(docker_context=...)`、`resolve_docker_context(env, default=...)` の解決順、ネスト URI のときのフラット URI の info
+- 満たす条件: 「VS Code」の 6 件
+
+#### Task 7: 文書
+
+- 対象: `docs/user/project-yml.md`、`docs/user/environment-variables.md`、`docs/user/cli-reference/02-project.md`、`03-env.md`、`CHANGELOG.md`
+- 内容: `project.local.yml` の節、「跨ホスト」→「リモート Docker」、WSL / EC2 の `docker context create` 手順、`--context`、gid の控えの消し方、`DOCKER_HOST` の扱い
+- 満たす条件: 対象範囲「ドキュメント」の 4 行。テスト駆動は適用しない（文書）
+
+### 順序と依存
+
+```mermaid
+graph TD
+    T1[Task 1 設定] --> T2[Task 2 解決と反映]
+    T2 --> T3[Task 3 lifecycle]
+    T2 --> T5[Task 5 shell build / env exec]
+    T3 --> T4[Task 4 bind mount]
+    T3 --> T6[Task 6 VS Code]
+    T4 --> T7[Task 7 文書]
+    T5 --> T7
+    T6 --> T7
+```
+
+### リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| `commands/container.py` は 1555 行で、Task 3 が多くの関数に触る | 構造は保ち、タスクごとに既存テスト（1793 件）と新規テストを通す。実装後の `cross-refactoring` で責務の分割を検討する |
+| `bin/devbase` の `build)` 分岐は引数の走査が入り組んでいる | `tests/cli/test_wrapper_build_context.py` で偽の `docker` / `uv` を PATH に置き、`--context` の抜き取りと誤分岐しないことを先に固定する |
+| `docker context show` / `docker run` を実 docker で叩けないテスト環境 | すべて `runner` 引数で差し替える。実 daemon はリリース後テストで確かめる |
+| 設定が無いときの退行 | 各タスクで既存テストを書き換えずに通すことを完了条件にする |
+
+### 切り戻し手順
+
+`project.local.yml` を消せば設定前の挙動へ戻る。コードの切り戻しは Pull Request の revert で
+済む（データ移行は無い。`.cache/docker-gid/` は消してよい）。
+
+### 完了の定義
+
+- [ ] 受け入れ条件 49 件のそれぞれに、テストか手動確認の結果が対応している
+- [ ] `uv run pytest` / `ruff check --select=E9,F63,F7,F82 lib` / `shellcheck --severity=error bin/devbase` / `python -m compileall -q lib bin` が exit 0
+- [ ] `cross-refactoring` と `cross-review` を通し、未解決の指摘が 0
+- [ ] 文書 4 件が更新され、`CHANGELOG.md` の Unreleased に載っている

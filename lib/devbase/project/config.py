@@ -160,6 +160,13 @@ def parse_project_config(data: Mapping[str, Any], source: str) -> ProjectConfig:
         data: YAML を読み込んだマッピング
         source: エラーメッセージに出す出所 (ファイルパス等)
     """
+    # 機材依存の docker 節 (context / home / gid) は共有される project.yml ではなく
+    # gitignore 対象の project.local.yml に置く (PLAN52)。未知キーとして弾くだけだと
+    # 移す先が分からないので、案内を添える。
+    if "docker" in data:
+        raise ConfigError(
+            f"{source}: docker 節は共有ファイルには書けません。個人・機材ごとの設定は "
+            "同じディレクトリの project.local.yml (gitignore 対象) へ移してください。")
     _reject_unknown_keys(data, _TOP_LEVEL_KEYS, source, "最上位")
 
     version = data.get("version")

@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **別ホストの Docker に dev コンテナを立てられるようにしました（PLAN52 / #162）。**
+  `projects/<name>/project.local.yml`（gitignore 対象の個人・機材ごとの設定）に
+  `docker.context` / `docker.home` / `docker.gid` を書くと、`devbase up/down/ps/logs/login/
+  scale/build/rebuild` がその docker context の daemon を相手に動きます。優先順位は
+  CLI `--context` > env `DEVBASE_DOCKER_CONTEXT` > `project.local.yml` > 現在の context です。
+  - リモート扱い（解決した context が現在の context と異なる）では `DOCKER_GID` をリモート側で
+    取得して `.cache/docker-gid/<context>` に控え、bind mount の `~` を `docker.home` で展開し、
+    自動スナップショットを飛ばします
+  - `devbase up` が開く VS Code の attach URI に `settings.context` を付け、ローカル端末からも
+    リモートのコンテナへ attach できます。Remote-SSH 統合端末では手元で直接 attach する
+    フラット URI も表示します
+  - `devbase env exec --context NAME` を追加し、shell の `devbase build` はそこを通して docker を
+    呼びます
+  - 詳細は `docs/user/environment-variables.md` の「リモート Docker」と
+    `docs/user/project-yml.md` の「`project.local.yml`」
+
+### Changed
+
+- `project.yml` に `docker:` を書くと、`project.local.yml` へ移すよう案内するエラーになります
+- docker context を解決したときは、docker が `DOCKER_CONTEXT` より優先する `DOCKER_HOST` を
+  警告して子プロセスから外します（設定が無いときは従来どおり）
+
 ## [3.2.2] - 2026-09-04
 
 base イメージで AI CLI の alias 設定を一般ユーザーが読み込めない問題を修正しました。

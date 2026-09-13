@@ -209,10 +209,12 @@ devbase env decrypt
 復号した機密を環境変数として渡した状態で、任意のコマンドを実行します。値はその子プロセスの環境変数としてのみ渡り、ファイルには書き出されません。
 
 ```
-devbase env exec -- CMD [ARGS...]
+devbase env exec [--context NAME] -- CMD [ARGS...]
 ```
 
 起動ラッパーは共通の機密ファイルを読み込まないため、ホスト側で機密を必要とする処理（Docker Compose の変数展開など）はこのコマンドを通します。devbase 自身の `devbase build` も内部でこれを使っています。
+
+カレントディレクトリがプロジェクトなら、その `project.local.yml` と env から docker context を解決して子プロセスの `DOCKER_CONTEXT` に載せます。`--context NAME` はそれを上書きします（`devbase build --context NAME` が内部で渡す口です）。
 
 ```bash
 # コンテナに渡る値を確認する

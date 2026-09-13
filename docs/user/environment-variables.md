@@ -277,8 +277,9 @@ DEVBASE_ACCOUNT_GROUP=kkg
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
 | `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。**効くのはリポジトリ 1 件の構成だけ**です。2 件以上の構成では `devbase up` が自動生成した `/work/<プロジェクト名>.code-workspace` を直接開くため、この env を設定しても上書きできません。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
-| `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「跨ホスト」参照 |
-| `DEVBASE_EDITOR_DOCKER_CONTEXT` | 跨ホスト時に ssh 先で使う docker context（既定: ホストの `docker context show`） |
+| `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「リモート Docker」参照 |
+| `DEVBASE_EDITOR_DOCKER_CONTEXT` | attach に使う docker context を手で決めたいときだけ明示する。未設定なら devbase が解決した context（`--context` / `DEVBASE_DOCKER_CONTEXT` / `project.local.yml`）、それも無ければ跨ホスト時にホストの `docker context show` |
+| `DEVBASE_DOCKER_CONTEXT` | `devbase up/down/ps/logs/login/scale/build/rebuild` が向ける docker context。`project.local.yml` の `docker.context` より優先し、CLI `--context` に負ける。グローバル `.env` に書くと全プロジェクトが同じホストへ向くため、通常は `project.local.yml` に書く。下記「リモート Docker」参照 |
 | `DEVBASE_WINDOW_TITLE` | attach 先 VS Code の `window.title` テンプレート。`{container}` が実コンテナ名（例 `nyle-dx-dev-1`）に置換される。既定は `{container}${separator}${dirty}${activeEditorShort}`。`0` / `false` / `off` / 空文字で無効化。下記「ウィンドウタイトル」参照 |
 
 都度の上書きは CLI フラグで行います: `devbase up --open` / `--no-open` / `--open-index N`（env より優先）。
@@ -321,31 +322,122 @@ DEVBASE_WINDOW_TITLE=0
 | ローカル端末（Mac/Linux） | ローカル VS Code が開く |
 | WSL 端末 | Windows 側 VS Code が開く（`code` ラッパ経由） |
 | VS Code の Remote-SSH 統合ターミナル（同一ホストの Docker） | **クライアント側（手元）の VS Code** が開く（`code` シムが委譲） |
-| VS Code の Remote-SSH 統合ターミナル（**跨ホスト**: ssh 先の Docker にコンテナ） | `DEVBASE_EDITOR_SSH_HOST` 設定時にネスト URI で開く（下記「跨ホスト」参照） |
+| VS Code の Remote-SSH 統合ターミナル（**跨ホスト**: ssh 先の Docker にコンテナ） | ネスト URI で開く（`DEVBASE_EDITOR_SSH_HOST` は通常は自動検出。下記「リモート Docker」参照） |
+| ローカル端末 / Remote-SSH 統合ターミナルで、コンテナが **別ホストの docker context** 上にある | attach URI に `settings.context` を付け、Dev Containers 拡張にその context で attach させる（下記「リモート Docker」参照） |
 | 手元から素の SSH（VS Code 外）で接続中 | クライアントへ自動で開く公式手段が無いため、手元で実行する `code --folder-uri ...` コマンドを提示 |
 | tmux 経由のターミナル | `VSCODE_IPC_HOOK_CLI` が古くなっていても、tmux のセッション環境から生きた値を拾い直して開く。拾えなければ「コマンド提示」へ degrade（下記「tmux / screen 経由で使う場合」参照） |
 | CI / 非対話（非 TTY） / `code` 不在 | 理由を表示してスキップ（`up` 自体は成功） |
 
-#### 跨ホスト（Windows VS Code → Remote-SSH → Mac のコンテナ）
+#### リモート Docker（別ホストの daemon にコンテナを立てる）
+
+`devbase up` は既定で **コマンドを実行した環境の Docker** にコンテナを立てます。
+`projects/<name>/project.local.yml` に docker context の名前を書くと、そのプロジェクトの
+`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` を**別ホストの daemon**
+へ向けられます。用途は、CUDA が使える Windows（WSL2）の GPU、負荷分散のための 3 台目の PC、
+AWS EC2 の計算資源などです。
+
+仕組みは「compose クライアントは手元、daemon はリモート」です。devbase・`projects/`・機密鍵を
+リモートへ複製する必要はなく、リモートに要るのは **docker CLI + dockerd + sshd** だけです。
+手元で復号した機密の**値**は、従来のローカル構成と同じく compose の変数展開を通じて接続先の
+daemon とコンテナへ渡ります（鍵・`.env`・`project.local.yml` は手元に留まります）。
+接続先は機密を預けてよいホストに限ってください。
+
+##### 1. docker context を作る（手元で 1 回）
+
+接続先の実体（ホスト名・鍵）は docker context に持たせ、devbase には**名前だけ**を書きます。
+ssh 鍵・TLS・WSL / EC2 の違いは docker 側の問題として devbase から切り離せます。
+
+```bash
+# Windows の WSL2 内 dockerd（WSL 内で sshd を動かし、Docker Desktop の WSL 統合か
+# WSL 内へ直接インストールした dockerd を使う。Windows 側 OpenSSH 経由にはしない）
+docker context create gpu-wsl --docker "host=ssh://takemi@winpc"
+
+# EC2（ssh 経由なので TLS 証明書の配布は要らない）
+docker context create ec2 --docker "host=ssh://ubuntu@ec2-host"
+
+docker context ls          # 名前を確認する。`docker context use` で切り替える必要は無い
+```
+
+リモート側のユーザが docker グループに入っていること（`docker ps` が sudo 無しで通ること）を
+確かめてください。
+
+##### 2. `project.local.yml` に書く
+
+```yaml
+# projects/<name>/project.local.yml（gitignore 対象。個人・機材ごとの設定）
+docker:
+  context: gpu-wsl
+  home: /home/takemi      # ~/.aws などを bind mount するプロジェクトだけ要る
+  # gid: 999              # 省略すると初回の up で自動取得して .cache/docker-gid/<context> に控える
+```
+
+キーの意味と優先順位は [`project.yml` リファレンス](project-yml.md#projectlocalyml個人機材ごとの設定)に
+あります。一時的に別の context へ向けるには `devbase up <name> --context <ctx>` か
+env `DEVBASE_DOCKER_CONTEXT` を使います。
+
+##### 3. `devbase up` する
+
+`up` の冒頭に `docker context: gpu-wsl (project.local.yml, リモート扱い)` と出ます。
+「リモート扱い」は、解決した context が `docker context show`（現在の context）と異なる
+状態です。同じ名前なら従来どおりローカル扱いで、gid の取得も `~` の展開も行いません。
+
+リモート扱いの `up` で変わること:
+
+| 項目 | 動き |
+|------|------|
+| `docker` / `docker compose` の宛先 | 環境変数 `DOCKER_CONTEXT` で全呼び出し（フック、`devbase build` の自動実行を含む）へ渡す |
+| `DOCKER_GID` | `docker.gid` の値。無ければ `docker run --rm -v /var/run/docker.sock:/s alpine:3 stat -c %g /s` で取得して控える。取得した値が `0` のときは警告する（socket が root 所有か rootless Docker。その場合は `docker.gid` を明示） |
+| bind mount の `~` | `docker.home` で展開して生成物 `.docker-compose.scale.yml` に書く。`docker.home` が無ければ該当する mount を警告する（リモートでは空ディレクトリになる）。`~user/...` と `./` の相対パスは書き換えず警告する |
+| イメージ | リモート側のイメージを見て、無ければリモート側でビルドする（buildx がビルド文脈を送る）。ホストごとに別物なので初回は時間がかかる |
+| 自動スナップショット | 作らない（控えたいボリュームがリモートにある）。`devbase snapshot` 系は従来どおり手元の daemon を対象にする |
+| `DOCKER_HOST` | 設定されていれば警告して外す。docker は `DOCKER_HOST` を `DOCKER_CONTEXT` より優先するため、残すと context が効かない |
+
+gid の控え `$DEVBASE_ROOT/.cache/docker-gid/<context>` は自動では消しません。リモート側の
+gid が変わったらファイルを消すか `docker.gid` を書いてください。
+
+##### 4. VS Code の開き方
+
+`devbase up` が開く attach URI は、実行した場所とコンテナの場所で変わります。
+
+| `devbase up` を実行する場所 | コンテナの場所 | 開き方 |
+|---|---|---|
+| ローカル端末（Mac / Linux / WSL） | 同じマシン（従来） | フラット URI |
+| ローカル端末 | リモート context | フラット URI + `settings.context=<ctx>`。手元の Dev Containers 拡張がその context 経由で attach する |
+| Remote-SSH 統合ターミナル（Windows VS Code → Mac） | Mac | ネスト URI `…@ssh-remote+<host>`（下記） |
+| Remote-SSH 統合ターミナル | リモート context（WSL / EC2 など） | ネスト URI + `settings.context=<ctx>`。Mac の Dev Containers が context 経由で attach する。あわせて、手元の VS Code に同名の context があれば直接 attach できるフラット URI も表示する（Windows → Mac → WSL(Windows) の一周を避けたいとき） |
+
+`settings.context` は「`DEVBASE_EDITOR_DOCKER_CONTEXT` の明示 → devbase が解決した context →
+（ssh 先のときだけ）`docker context show`」の順で決まります。
+
+##### 跨ホスト（Windows VS Code → Remote-SSH → Mac のコンテナ）
 
 手元（例 Windows）の VS Code から Remote-SSH で別ホスト（例 Mac）へ入り、その統合ターミナルで `devbase up` を実行する構成では、コンテナは **ssh 先（Mac）の Docker** 上にあります。このとき `code` の開く要求はクライアント（Windows）へ委譲されるため、フラットな attach URI のままだと **クライアント側の Docker** を見に行きコンテナが見つかりません（「コンテナーにアタッチできません。すでに存在しません」）。
 
 これを解決するには、ネスト URI `vscode-remote://attached-container+<hex>@ssh-remote+<host>/work/...` を使い、docker ルックアップを ssh 先（コンテナのある Mac）で行わせます。`<host>` は **手元 `~/.ssh/config` の `Host` 別名**（例 `mac2`）で、これは「今の VS Code 接続の authority ラベル」と完全一致する必要があります（ネスト attach は新規 ssh 接続を張らず既存接続を再利用するため。IP や `user@IP` は "Parent authority found without ExecServer" で不可）。
 
-このラベルは VS Code が ssh 先の端末 env に渡さない（`SSH_CONNECTION` は IP のみ）ものの、**devbase は ssh 先（Mac）の VS Code 系サーバーディレクトリ（`~/.vscode-server` / `~/.cursor-server` / `~/.vscode-server-insiders` 等）の File History から自動検出**します（`DEVBASE_EDITOR` で cursor 等を使う場合も横断）。よって**通常は設定不要**です。docker context は `docker context show` から自動取得します。
+このラベルは VS Code が ssh 先の端末 env に渡さない（`SSH_CONNECTION` は IP のみ）ものの、**devbase は ssh 先（Mac）の VS Code 系サーバーディレクトリ（`~/.vscode-server` / `~/.cursor-server` / `~/.vscode-server-insiders` 等）の File History から自動検出**します（`DEVBASE_EDITOR` で cursor 等を使う場合も横断）。よって**通常は設定不要**です。
 
 自動検出が外れる場合（複数 ssh-remote ホストを使い分けている等）のみ明示します:
 
 ```sh
 # $DEVBASE_ROOT/env など（全プロジェクト共通にしたい場合）
 DEVBASE_EDITOR_SSH_HOST=mac2
-# 必要なら docker context も明示
+# attach に使う docker context を手で決めたい場合だけ
 # DEVBASE_EDITOR_DOCKER_CONTEXT=desktop-linux
 ```
 
 解決順は **`DEVBASE_EDITOR_SSH_HOST` 明示 → `~/.vscode-server` 自動検出 → フラット URI**。
 
 > 同一ホスト構成（手元 Mac/Linux で直接、または ssh 先の Docker にコンテナが無い場合）では ssh-remote ホストは付かず、従来どおりフラット URI で開きます。
+
+##### 制約
+
+- `docker context use` で**現在の context 自体**をリモートへ向けた状態は、これまでどおりの
+  動き（gid・`~`・スナップショットの補正なし）です。プロジェクトごとの設定を使ってください
+- `devbase status` は手元の daemon だけを見ます。プロジェクトごとに daemon が違う構成の集約は
+  していません
+- リモートのボリュームのスナップショットは扱いません
+- Docker Desktop for Windows への直結は前提にしていません（WSL2 内の dockerd を使う）
 
 #### tmux / screen 経由で使う場合
 
