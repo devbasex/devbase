@@ -177,35 +177,46 @@ def _plan_replace(target: Path, arcname: str, incoming: Dict[str, str],
     )
 
 
+@dataclass
+class _MergeState:
+    """merge 経路で組み立てる出力 (マージ結果と分類一覧) をまとめた内部状態。
+
+    ``merged`` は書き出す最終的なキー値。``added`` / ``overwritten`` /
+    ``skipped`` は dry-run / ログ表示のための分類一覧。plan_env_merge の呼び出し
+    ごとに 1 つ作り、3 つのマージヘルパーが同じ状態を更新する。
+    """
+    merged: Dict[str, str] = field(default_factory=dict)
+    added: List[str] = field(default_factory=list)
+    overwritten: List[str] = field(default_factory=list)
+    skipped: List[str] = field(default_factory=list)
+
+
 def _plan_keep_existing(incoming: Dict[str, str], existing: Dict[str, str],
-                        merged: Dict[str, str], added: List[str],
-                        skipped: List[str]) -> None:
+                        state: _MergeState) -> None:
     """既存キーは保持。新規キーのみ追加"""
     for key, value in incoming.items():
         if key in existing:
-            skipped.append(key)
+            state.skipped.append(key)
         else:
-            merged[key] = value
-            added.append(key)
+            state.merged[key] = value
+            state.added.append(key)
 
 
 def _plan_prefer_incoming(incoming: Dict[str, str], existing: Dict[str, str],
-                          merged: Dict[str, str], added: List[str],
-                          overwritten: List[str]) -> None:
+                          state: _MergeState) -> None:
     """incoming で既存キーを上書き"""
     for key, value in incoming.items():
         if key in existing:
             if existing[key] != value:
-                overwritten.append(key)
+                state.overwritten.append(key)
         else:
-            added.append(key)
-        merged[key] = value
+            state.added.append(key)
+        state.merged[key] = value
 
 
 def _plan_replace_keys(incoming: Dict[str, str], existing: Dict[str, str],
-                       replace_keys: Sequence[str], merged: Dict[str, str],
-                       added: List[str], overwritten: List[str],
-                       skipped: List[str]) -> None:
+                       replace_keys: Sequence[str],
+                       state: _MergeState) -> None:
     """--replace-keys: 指定キーのみ上書き、残りは keep-existing 相当
 
     keep-existing 相当 = 既存にあれば残す、無ければ新規追加 (skipped は
@@ -215,16 +226,16 @@ def _plan_replace_keys(incoming: Dict[str, str], existing: Dict[str, str],
     for key, value in incoming.items():
         if key in replace_set:
             if key in existing and existing[key] != value:
-                overwritten.append(key)
+                state.overwritten.append(key)
             elif key not in existing:
-                added.append(key)
-            merged[key] = value
+                state.added.append(key)
+            state.merged[key] = value
         elif key in existing:
             if existing[key] != value:
-                skipped.append(key)
+                state.skipped.append(key)
         else:
-            added.append(key)
-            merged[key] = value
+            state.added.append(key)
+            state.merged[key] = value
 
 
 def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
@@ -258,29 +269,26 @@ def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
                              incoming_bytes, target_exists)
 
     merged: Dict[str, str] = dict(existing)
-    added: List[str] = []
-    overwritten: List[str] = []
-    skipped: List[str] = []
+    state = _MergeState(merged=merged)
 
     if replace_keys:
-        _plan_replace_keys(incoming, existing, replace_keys,
-                           merged, added, overwritten, skipped)
+        _plan_replace_keys(incoming, existing, replace_keys, state)
     elif merge == 'keep-existing':
-        _plan_keep_existing(incoming, existing, merged, added, skipped)
+        _plan_keep_existing(incoming, existing, state)
     elif merge == 'prefer-incoming':
-        _plan_prefer_incoming(incoming, existing, merged, added, overwritten)
+        _plan_prefer_incoming(incoming, existing, state)
     else:
         raise MergeError(f"不明な --merge モード: {merge!r}")
 
-    new_bytes = (_merge_into_existing_bytes(existing_bytes, merged)
+    new_bytes = (_merge_into_existing_bytes(existing_bytes, state.merged)
                  if target_exists else incoming_bytes)
     return Plan(
         target=target,
         arcname=arcname,
         new_bytes=new_bytes,
-        added_keys=sorted(added),
-        overwritten_keys=sorted(overwritten),
-        skipped_keys=sorted(skipped),
+        added_keys=sorted(state.added),
+        overwritten_keys=sorted(state.overwritten),
+        skipped_keys=sorted(state.skipped),
         op='merge' if target_exists else 'create',
     )
 

@@ -536,48 +536,69 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
             raise MigrationError(
                 f"構成ファイルを読めませんでした ({path}): {e}") from e
 
-        # 行単位では書き換えられない記法 (インライン配列・続きの行を持つ
-        # long syntax など) は対象から漏れる。黙って漏らすと壊れた構成の
-        # まま起動して初めて気付くため、どのファイルの何行目かを警告しておく。
-        compose_migrate.warn_unsupported_env_file(before, path)
-
         wanted = _compose_targets(path, has_global=has_global,
                                   project_names=project_names)
-        if not restore:
-            # 扱えない記法のうち **機密を指しているもの** は警告では済まない。
-            # 平文を退避したあとも参照が有効なまま残り、Compose が存在しない
-            # ファイルを読もうとして起動できなくなる。手で直してから再実行して
-            # もらう (機密と無関係なものは移行に影響しないので警告のみ)。
-            #
-            # 復元 (decrypt) 側では止めない。平文が戻る以上その参照は有効に
-            # なるうえ、ここで失敗させると壊れた状態からの復帰手段まで
-            # 塞いでしまう。
-            blocking = compose_migrate.secret_unsupported_env_file_lines(
-                before, wanted)
-            if blocking:
-                detail = '\n'.join(f"  {path}:{number}: {line}"
-                                   for number, line in blocking)
-                raise MigrationError(
-                    "自動で書き換えられない env_file の記法が機密ファイルを"
-                    "参照しています。次の行を `env_file:` の下に `- ...` を"
-                    "並べる書き方へ手で直してから再実行してください:\n"
-                    f"{detail}")
-        if restore:
-            after, touched = compose_migrate.enable(before, wanted)
-        else:
-            after, touched = compose_migrate.disable(before, wanted)
-            # 行ベースの走査が終わったところで、書き換えた結果を YAML として
-            # 読み直し、機密参照が本当に消えたことを確かめる。走査は記法の
-            # 判別に頼っている以上いつでも取りこぼしうるので、記法に依らない
-            # この検証を最後の砦として必ず通す (compose_migrate 冒頭
-            # 「二段構えの保証」)。差分が出なかったファイルも対象にする。
-            _verify_secrets_are_unreferenced(path, after, wanted)
+        after, touched = _transform_compose(path, before, wanted,
+                                             restore=restore)
 
         if touched and after != before:
             changes[path] = (before, after,
                              compose_migrate.diff(before, after, path))
 
     return changes
+
+
+def _transform_compose(path: Path, before: str, wanted: Set[str],
+                       *, restore: bool) -> Tuple[str, bool]:
+    """1 つの ``compose.yml`` の本文を書き換え後の内容へ変換する。
+
+    未対応記法の警告・暗号化時の中止判定・enable/disable・暗号化後の事後検証を
+    ここに集約する。差分の集約 (呼び出し元) からは、書き換え前後のテキストと
+    「触ったか」だけを返す。
+
+    Returns:
+        ``(書き換え後のテキスト, 触ったかどうか)``
+
+    Raises:
+        MigrationError: 暗号化側で自動では書き換えられない機密参照が残っている
+            場合、または事後検証が機密参照の取りこぼしを見つけた場合
+    """
+    # 行単位では書き換えられない記法 (インライン配列・続きの行を持つ
+    # long syntax など) は対象から漏れる。黙って漏らすと壊れた構成の
+    # まま起動して初めて気付くため、どのファイルの何行目かを警告しておく。
+    compose_migrate.warn_unsupported_env_file(before, path)
+
+    if not restore:
+        # 扱えない記法のうち **機密を指しているもの** は警告では済まない。
+        # 平文を退避したあとも参照が有効なまま残り、Compose が存在しない
+        # ファイルを読もうとして起動できなくなる。手で直してから再実行して
+        # もらう (機密と無関係なものは移行に影響しないので警告のみ)。
+        #
+        # 復元 (decrypt) 側では止めない。平文が戻る以上その参照は有効に
+        # なるうえ、ここで失敗させると壊れた状態からの復帰手段まで
+        # 塞いでしまう。
+        blocking = compose_migrate.secret_unsupported_env_file_lines(
+            before, wanted)
+        if blocking:
+            detail = '\n'.join(f"  {path}:{number}: {line}"
+                               for number, line in blocking)
+            raise MigrationError(
+                "自動で書き換えられない env_file の記法が機密ファイルを"
+                "参照しています。次の行を `env_file:` の下に `- ...` を"
+                "並べる書き方へ手で直してから再実行してください:\n"
+                f"{detail}")
+    if restore:
+        after, touched = compose_migrate.enable(before, wanted)
+    else:
+        after, touched = compose_migrate.disable(before, wanted)
+        # 行ベースの走査が終わったところで、書き換えた結果を YAML として
+        # 読み直し、機密参照が本当に消えたことを確かめる。走査は記法の
+        # 判別に頼っている以上いつでも取りこぼしうるので、記法に依らない
+        # この検証を最後の砦として必ず通す (compose_migrate 冒頭
+        # 「二段構えの保証」)。差分が出なかったファイルも対象にする。
+        _verify_secrets_are_unreferenced(path, after, wanted)
+
+    return after, touched
 
 
 def _verify_secrets_are_unreferenced(path: Path, after: str,
