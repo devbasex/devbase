@@ -62,6 +62,9 @@ class Plan:
     overwritten_keys: List[str] = field(default_factory=list)
     skipped_keys: List[str] = field(default_factory=list)
     op: str = 'merge'  # 'merge' | 'replace' | 'create' | 'sources-merge'
+    #: 保存先がローカルのファイルではなく backend (サーバ) の参照であるとき、その参照。
+    #: ``None`` なら ``target`` は書き込んでよいローカルパス (PLAN51 設計 2)。
+    ref: Optional[object] = None
 
 
 def target_for(arcname: str, devbase_root: Path) -> Path:

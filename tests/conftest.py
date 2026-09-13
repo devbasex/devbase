@@ -54,6 +54,9 @@ class FakeInfisical:
     forbidden_prefixes: List[str] = field(default_factory=list)
     #: 書き込み (POST/PATCH/DELETE) を N 回成功させた後は 500 を返す
     fail_writes_after: Optional[int] = None
+    #: 何回目の書き込みの試みを 500 にするか (1 始まり)。それ以外は通す
+    fail_write_attempts: List[int] = field(default_factory=list)
+    write_attempts: int = 0
     #: 現在有効な access token (None なら未発行)
     token: Optional[str] = None
     logins: int = 0
@@ -206,7 +209,10 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(401, {'message': 'unauthorized'})
         if self._forbidden(rec):
             return self._send(403, {'message': 'forbidden'})
+        state.write_attempts += 1
         if state.fail_writes_after is not None and state.writes >= state.fail_writes_after:
+            return self._send(500, {'message': 'boom'})
+        if state.write_attempts in state.fail_write_attempts:
             return self._send(500, {'message': 'boom'})
         key = (rec.body.get('environment', 'common'), rec.body.get('secretPath', ''))
         bucket = state.secrets.setdefault(key, {})
