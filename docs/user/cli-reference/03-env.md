@@ -58,6 +58,7 @@ devbase env set KEY=VALUE [-p]
 | オプション | 説明 |
 |-----------|------|
 | `-p` | プロジェクトレベルに設定（デフォルトはグローバル） |
+| `--user` | 個人単位の置き場に設定（サーバ backend のみ。[機密の保存先を選ぶ](../env-backend.md)） |
 
 ```bash
 # グローバルに設定
@@ -65,14 +66,18 @@ devbase env set ANTHROPIC_API_KEY=sk-xxx
 
 # プロジェクトレベルに設定
 devbase env set GCP_ACTIVE_PROFILE=my-project -p
+
+# 自分だけの値として設定 (Infisical)
+devbase env set AWS_ACCESS_KEY_ID=AKIA... --user
 ```
 
 ## `devbase env get`
 
-環境変数の値を取得します。
+環境変数の値を取得します。個人共通 → チーム共通 → 個人のプロジェクト → チームのプロジェクト
+の順に探します。
 
 ```
-devbase env get KEY
+devbase env get KEY [--user]
 ```
 
 ```bash
@@ -84,12 +89,13 @@ devbase env get AWS_PROFILE
 環境変数を削除します。
 
 ```
-devbase env delete KEY [-p]
+devbase env delete KEY [-p] [--user]
 ```
 
 | オプション | 説明 |
 |-----------|------|
 | `-p` | プロジェクト設定から削除（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
+| `--user` | 個人単位の置き場から削除（サーバ backend のみ） |
 
 ```bash
 # グローバルから削除
@@ -104,12 +110,13 @@ devbase env delete GCP_ACTIVE_PROFILE -p
 デフォルトエディタで設定を開きます。設定が暗号化されている場合は、復号した内容を一時ファイルで編集し、保存時に再暗号化します。
 
 ```
-devbase env edit [-p]
+devbase env edit [-p] [--user]
 ```
 
 | オプション | 説明 |
 |-----------|------|
 | `-p` | カレントプロジェクトの設定を開く（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
+| `--user` | 個人単位の置き場を開く（サーバ backend のみ） |
 
 ## `devbase env project`
 
@@ -302,3 +309,23 @@ devbase env import <bundle>
 
 `--dry-run` での確認や identity 鍵指定などの詳細は
 [環境変数の export / import ガイド](../env-export-import.md#devbase-env-import-リファレンス)を参照してください。
+
+## `devbase env backend`
+
+機密の保存先（平文 / age / Infisical サーバ）を選び、確かめ、移します。詳細は
+[機密の保存先を選ぶ](../env-backend.md) を参照してください。
+
+```
+devbase env backend status
+devbase env backend use <name> [--url URL] [--project-id ID] [--environment SLUG] [--user ID]
+                               [--client-id ID] [--client-secret-stdin] [--no-cache]
+devbase env backend test
+devbase env backend migrate --to <age|infisical> [--dry-run] [--yes]
+```
+
+| サブコマンド | 内容 |
+|---|---|
+| `status` | 現在の backend 名、保存先、参照ごとの置き場、キャッシュの状態を表示 |
+| `use <name>` | backend を切り替える（`auto` / `plaintext` / `age` / `infisical`）。検証に失敗したときは設定を書き換えない。client secret は `--client-secret-stdin` か伏せ字入力で受け取り、引数では受け取らない |
+| `test` | サーバへ接続し、参照ごとに読めるかを確かめる |
+| `migrate --to NAME` | チーム単位の機密を別の backend へ写す。移行先に同じキーがあれば 1 件も書かない。読み戻して一致しなければ作成したキーだけを消す |

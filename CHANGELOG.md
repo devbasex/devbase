@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- **機密の保存先を差し替えられるようにしました（PLAN51 / #159）。** `secrets/backend.yml` で
+  `auto` / `plaintext` / `age` / `infisical` を選べます。最初のサーバ backend として
+  [Infisical](https://infisical.com/) に対応し、REST を標準ライブラリで叩くため常時の依存は
+  増えません。設定していない端末の挙動は変わりません。
+  - `devbase env backend status` / `use` / `test` / `migrate` を追加しました。client secret は
+    `--client-secret-stdin` か伏せ字入力で受け取り、引数では受け取りません
+  - `devbase env list` / `get` / `set` / `delete` / `edit` に `--user` を追加しました。持ち主の軸
+    （チーム / 個人）を選び、個人単位の機密は `/users/<user>/...` へ分けて置きます。`-p` の意味と
+    既定の宛先は変わりません
+  - サーバへ到達できないときは、age 暗号化した手元のキャッシュ（`secrets/cache/`）で起動します。
+    認証を拒まれたときはキャッシュを使わずに止まります
+  - `devbase env rekey` は `bootstrap.env.age` とキャッシュも再暗号化し、`devbase env doctor` は
+    backend 設定・資格情報・権限・Git の除外設定を点検します
+  - 詳細は `docs/user/env-backend.md`
+
+### Changed
+
+- `devbase env encrypt` / `decrypt` は backend が `infisical` のとき止まります（age ストア専用）
+
 ## [3.3.0] - 2026-09-13
 
 別ホストの Docker（Windows/WSL2・別 PC・EC2）に dev コンテナを立てられるようになりました。
