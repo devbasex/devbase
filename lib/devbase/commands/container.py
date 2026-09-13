@@ -103,6 +103,14 @@ def _choose_context(cli_context: Optional[str] = None) -> docker_context.Context
     return docker_context.choose_context(settings, cli_context=cli_context)
 
 
+def _apply_context(context: Optional[str] = None) -> None:
+    """context を 1 つに決めて環境へ反映する。docker を呼ばない (``_choose_context`` + apply)。
+
+    ``up`` / ``scale`` 以外の lifecycle コマンドが共通で通る入口。
+    """
+    docker_context.apply(_choose_context(context))
+
+
 def _resolve_docker_target(cli_context: Optional[str] = None) -> docker_context.DockerTarget:
     """``up`` / ``scale`` 用: 接続先を確定し、環境へ反映し、リモート扱いなら gid も決める。
 
@@ -111,8 +119,8 @@ def _resolve_docker_target(cli_context: Optional[str] = None) -> docker_context.
     設計どおり反映より前に置く。gid の取得はリモートの daemon に届く最初の呼び出しに
     なるため、存在しない context はここで docker のメッセージと共に止まる。
     """
+    choice = _choose_context(cli_context)
     settings = load_project_local_config(Path.cwd()).docker
-    choice = docker_context.choose_context(settings, cli_context=cli_context)
     target = docker_context.resolve_target(choice, settings)
     if target.context is None:
         return target
@@ -203,7 +211,7 @@ def _previous_scale_compose():
 def _compose_run(subcommand: str, *extra_args: str,
                  context: Optional[str] = None) -> int:
     """docker compose コマンドを実行する共通関数"""
-    docker_context.apply(_choose_context(context))
+    _apply_context(context)
     _inject_secrets(required=False)
     cmd = ['docker', 'compose']
     if _SCALE_COMPOSE_FILE.exists():
@@ -944,7 +952,7 @@ def cmd_up(project_name: str = None, scale: int = None,
 
 def cmd_down(context: Optional[str] = None) -> int:
     """Stop and remove containers"""
-    docker_context.apply(_choose_context(context))
+    _apply_context(context)
     _inject_secrets(required=False)
     compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
     docker_compose_down(compose_file=compose_file)
@@ -967,7 +975,7 @@ def cmd_down(context: Optional[str] = None) -> int:
 
 def cmd_login(index: str = '1', context: Optional[str] = None) -> int:
     """Login to container"""
-    docker_context.apply(_choose_context(context))
+    _apply_context(context)
     _inject_secrets(required=False)
     dev_service = get_dev_service_name()
 
@@ -1181,7 +1189,7 @@ def cmd_build(image: Optional[str] = None, no_cache: bool = False,
     """
     # 接続先を環境へ反映する (PLAN52)。単体ビルドも compose ビルドも、shell 経由の
     # 自動ビルドも、以降の docker 呼び出しは DOCKER_CONTEXT を継承する。
-    docker_context.apply(_choose_context(context))
+    _apply_context(context)
 
     if image is not None:
         # 単体ビルド (image 指定) では期限判定を行わないため --expires は無視される。
@@ -1269,7 +1277,7 @@ def cmd_rebuild(expires: int = None, context: Optional[str] = None) -> int:
     """
     if expires is None:
         expires = _image_max_age_days()
-    docker_context.apply(_choose_context(context))
+    _apply_context(context)
     logger.info("Rebuilding images (expires=%d days) from compose.yml ...", expires)
     return _build_resolved(expires=expires, no_cache=False)
 
