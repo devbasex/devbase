@@ -119,8 +119,8 @@ def _resolve_docker_target(cli_context: Optional[str] = None) -> docker_context.
     設計どおり反映より前に置く。gid の取得はリモートの daemon に届く最初の呼び出しに
     なるため、存在しない context はここで docker のメッセージと共に止まる。
     """
-    choice = _choose_context(cli_context)
     settings = load_project_local_config(Path.cwd()).docker
+    choice = docker_context.choose_context(settings, cli_context=cli_context)
     target = docker_context.resolve_target(choice, settings)
     if target.context is None:
         return target
