@@ -285,7 +285,34 @@ def _store_credentials(root: Path, args) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_env_backend_test(devbase_root: Path) -> int:
-    raise NotImplementedError
+    """サーバへ接続し、参照ごとに読めるかを確かめる (キャッシュへは落ちない)"""
+    from devbase.env.infisical import InfisicalBackend
+
+    root = Path(devbase_root)
+    store = SecretStore(root)
+    try:
+        if store.backend_name != _bc.BACKEND_INFISICAL:
+            logger.error("サーバ backend (infisical) が設定されていません (現在: %s)。"
+                         "`devbase env backend use infisical ...` で設定してください",
+                         store.backend_name)
+            return 1
+        backend = store.backend_for(SecretRef.for_global())
+        assert isinstance(backend, InfisicalBackend)
+        refs: List[SecretRef] = []
+        for ref in _team_refs(root):
+            refs.append(ref)
+            refs.append(SecretRef.for_global(owner='user') if ref.kind == 'global'
+                        else SecretRef.for_project(ref.name, owner='user'))
+        results = backend.probe(refs)
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    print(f"\n接続先: {backend.url}")
+    print(f"読めた参照: {len(results)} 件")
+    for ref, count in results:
+        print(f"  {ref.label():<28} {backend.secret_path(ref):<40} {count} 変数")
+    return 0
 
 
 def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
