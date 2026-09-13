@@ -57,6 +57,9 @@ class FakeInfisical:
     #: 何回目の書き込みの試みを 500 にするか (1 始まり)。それ以外は通す
     fail_write_attempts: List[int] = field(default_factory=list)
     write_attempts: int = 0
+    #: 書き込みが 1 度でも起きた後の取得で値を差し替える (読み戻しの検証を失敗させる):
+    #: (environment, path) → {key: value}
+    readback_tamper: Dict[Tuple[str, str], Dict[str, str]] = field(default_factory=dict)
     #: 現在有効な access token (None なら未発行)
     token: Optional[str] = None
     logins: int = 0
@@ -189,7 +192,13 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(state.get_status or 200, raw=state.get_body)
         if state.get_status is not None:
             return self._send(state.get_status, {'message': 'error'})
-        data = state.get(rec.query.get('secretPath', ''), rec.query.get('environment', 'common'))
+        env_name = rec.query.get('environment', 'common')
+        path = rec.query.get('secretPath', '')
+        data = state.get(path, env_name)
+        if state.writes > 0:
+            for key, value in state.readback_tamper.get((env_name, path), {}).items():
+                if key in data:
+                    data[key] = value
         expand = rec.query.get('expandSecretReferences', 'true') == 'true'
         secrets = []
         for key in sorted(data):

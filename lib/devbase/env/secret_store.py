@@ -360,12 +360,18 @@ class SecretStore:
 
     def __init__(self, devbase_root: Path, *,
                  recipients: Optional[Sequence[str]] = None,
-                 identities: Optional[Sequence[str]] = None):
+                 identities: Optional[Sequence[str]] = None,
+                 config=None):
+        """``config`` を渡すと ``secrets/backend.yml`` を読まずにその設定で動く。
+
+        移行 (``env backend migrate``) のように、設定ファイルが指す backend とは別の
+        backend を相手にする処理のための入口。通常の呼び出しでは渡さない。
+        """
         self.root = Path(devbase_root)
         self.plaintext = PlaintextBackend(self.root)
         self.age = AgeBackend(self.root, recipients=recipients,
                               identities=identities)
-        self._config = None
+        self._config = config
         self._selected: Optional[SecretBackend] = None
 
     # -- 設定 ---------------------------------------------------------------

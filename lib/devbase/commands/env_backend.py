@@ -315,6 +315,230 @@ def cmd_env_backend_test(devbase_root: Path) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# migrate
+# ---------------------------------------------------------------------------
+
+MIGRATE_TARGETS = ('age', _bc.BACKEND_INFISICAL)
+
+
 def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
                             dry_run: bool = False, assume_yes: bool = False) -> int:
-    raise NotImplementedError
+    """チーム単位の機密を別の backend へ写す (PLAN51 決定 7)。
+
+    手順は両方向とも同じ: 移行先の同じ参照を読んで衝突を確かめる → 移行先の内容へ
+    移行元を重ねて保存する → 読み戻して一致を確かめる → 一致しなければこの実行で
+    作成したキーだけを消す → 成功したときだけ ``backend.yml`` を書き換える。
+    移行元の機密は自動削除しない。
+    """
+    from devbase.env import cache as _cache
+    from devbase.env.infisical import InfisicalBackend
+
+    root = Path(devbase_root)
+    if to not in MIGRATE_TARGETS:
+        logger.error("--to には %s のいずれかを指定してください: %r",
+                     ' / '.join(MIGRATE_TARGETS), to)
+        return EXIT_USAGE
+
+    try:
+        config = _bc.load(root)
+    except _bc.BackendConfigError as e:
+        logger.error("%s", e)
+        return 1
+    if config.infisical is None:
+        logger.error("Infisical の接続設定がありません。先に "
+                     "`devbase env backend use infisical --url ... --project-id ... --user ...` "
+                     "で設定してください")
+        return EXIT_USAGE
+    try:
+        config.infisical.validate()
+    except _bc.BackendConfigError as e:
+        logger.error("%s", e)
+        return EXIT_USAGE
+
+    # 移行元と移行先は設定ファイルの backend とは無関係に組み立てる。移行の途中で
+    # 設定を変えず、成功したときだけ書き換えるため。
+    file_store = SecretStore(root, config=_bc.BackendConfig())
+    server_store = SecretStore(root, config=_dc_replace(config, backend=_bc.BACKEND_INFISICAL))
+    try:
+        server = server_store.backend_for(SecretRef.for_global())
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    assert isinstance(server, InfisicalBackend)
+
+    plan = _MigrationPlan(root, file_store, server, to)
+    try:
+        plan.prepare()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    if not plan.moves:
+        print("移す機密はありません")
+        return 0
+
+    plan.print_summary()
+    if plan.conflicts:
+        print("\n移行先に同じキーがあるため、1 件も書き込まずに中止しました。"
+              "移行先で消してから再実行してください")
+        return EXIT_USAGE
+    if dry_run:
+        print("\n(--dry-run のため変更していません)")
+        return 0
+    if not assume_yes:
+        from devbase.env.store import safe_input
+
+        if safe_input("続行しますか? (yes と入力): ") != 'yes':
+            print("中止しました")
+            return 1
+
+    try:
+        plan.apply()
+    except DevbaseError as e:
+        logger.error("移行を中止しました: %s", e)
+        return 1
+
+    if to == _bc.BACKEND_INFISICAL:
+        backup_dir = plan.move_files_to_backup()
+    else:
+        _cache.purge(root)
+        backup_dir = None
+
+    try:
+        _bc.save(root, _dc_replace(config, backend=to))
+    except _bc.BackendConfigError as e:
+        logger.error("移行は完了しましたが、設定を書き換えられませんでした: %s", e)
+        return 1
+
+    print(f"\n=== 完了 === backend を {to} に切り替えました")
+    if to == _bc.BACKEND_INFISICAL:
+        print("元の age / 平文の機密は次の場所へ退避しました。内容を確認したうえで削除してください:")
+        print(f"  {backup_dir}")
+    else:
+        print("サーバ上の機密はそのまま残っています (devbase は消しません):")
+        print(f"  接続先: {server.url}")
+        for ref, _ in plan.moves:
+            print(f"  {ref.label():<24} {server.secret_path(ref)}")
+    return 0
+
+
+class _MigrationPlan:
+    """1 回の移行の計画と実行"""
+
+    def __init__(self, root: Path, file_store: SecretStore, server, to: str):
+        self.root = root
+        self.file_store = file_store
+        self.server = server
+        self.to = to
+        #: (参照, 移行元のキー名) の並び
+        self.moves: List[tuple] = []
+        #: 参照 → 移行先に元からあった内容
+        self.existing: dict = {}
+        #: 参照 → 移行元の内容
+        self.source: dict = {}
+        #: 参照 → 衝突したキー名
+        self.conflicts: dict = {}
+
+    def _source_backend(self):
+        return self.file_store if self.to == _bc.BACKEND_INFISICAL else self.server
+
+    def _dest_backend(self):
+        return self.server if self.to == _bc.BACKEND_INFISICAL else self.file_store.age
+
+    def prepare(self) -> None:
+        for ref in _team_refs(self.root):
+            data = self._source_backend().load(ref)
+            if not data:
+                continue
+            if self.to == 'age' and self.file_store.plaintext.exists(ref):
+                raise DevbaseError(
+                    f"{ref.label()}の平文 {self.file_store.plaintext.path(ref)} が残っています。"
+                    "age へ移すと暗号化・平文が同時に存在する状態になるため、"
+                    "先に `devbase env encrypt` で暗号化するか退避してください")
+            dest = self._dest_backend()
+            current = dest.load(ref) if dest.exists(ref) else {}
+            self.source[ref] = data
+            self.existing[ref] = current
+            self.moves.append((ref, sorted(data)))
+            clash = sorted(k for k in data if k in current)
+            if clash:
+                self.conflicts[ref] = clash
+
+    def print_summary(self) -> None:
+        direction = ('age / 平文 → infisical' if self.to == _bc.BACKEND_INFISICAL
+                     else 'infisical → age')
+        print(f"\n=== 移行する機密 ({direction}) ===")
+        for ref, keys in self.moves:
+            print(f"  {ref.label():<24} {len(keys)} 件: {', '.join(keys)}")
+        if self.conflicts:
+            print("\n移行先に同じキーがあります:")
+            for ref, keys in self.conflicts.items():
+                print(f"  {ref.label():<24} {', '.join(keys)}")
+
+    def apply(self) -> None:
+        dest = self._dest_backend()
+        created: dict = {}
+        try:
+            for ref, keys in self.moves:
+                merged = dict(self.existing[ref])
+                merged.update(self.source[ref])
+                created[ref] = list(keys)
+                dest.save(ref, merged)
+                logger.info("%s を書き込みました", ref.label())
+            for ref, _ in self.moves:
+                expected = dict(self.existing[ref])
+                expected.update(self.source[ref])
+                actual = self._read_back(ref)
+                if actual != expected:
+                    diff = sorted(k for k in expected if actual.get(k) != expected[k])
+                    raise DevbaseError(
+                        f"{ref.label()}を読み戻した内容が元と一致しません "
+                        f"(一致しないキー: {', '.join(diff) or '(不明)'})")
+        except DevbaseError:
+            self._rollback(created)
+            raise
+
+    def _read_back(self, ref: SecretRef) -> dict:
+        if self.to == _bc.BACKEND_INFISICAL:
+            return self.server.fetch(ref)
+        return self.file_store.age.load(ref)
+
+    def _rollback(self, created: dict) -> None:
+        """この実行で作成したキーだけを消す。移行先に元からあったキーは触らない。"""
+        dest = self._dest_backend()
+        for ref, keys in created.items():
+            try:
+                if self.to == 'age' and not self.existing[ref]:
+                    self.file_store.age.remove(ref)
+                    continue
+                current = self._read_back(ref)
+                dest.save(ref, {k: v for k, v in current.items() if k not in keys})
+                logger.warning("rollback: %s に作成したキーを消しました", ref.label())
+            except DevbaseError as e:
+                logger.error("rollback 失敗: %s: %s", ref.label(), e)
+
+    def move_files_to_backup(self) -> Path:
+        """移行元の age / 平文ファイルを退避先へ移す (元の場所からは消える)"""
+        from datetime import datetime
+        import shutil
+
+        backup_dir = (self.root / 'backups' / 'env-backend-migrate'
+                      / datetime.now().strftime('%Y%m%d-%H%M%S'))
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for ref, _ in self.moves:
+            backend = self.file_store.backend_for(ref)
+            source = backend.path(ref)
+            if not source.is_file():
+                continue
+            if ref.kind == 'global':
+                target = backup_dir / source.name
+            else:
+                target = backup_dir / 'projects' / (
+                    source.name if backend is self.file_store.age else f'{ref.name}.env')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.move(str(source), str(target))
+            except OSError as e:
+                logger.warning("%s を退避できませんでした (%s): %s", ref.label(), source, e)
+        return backup_dir
