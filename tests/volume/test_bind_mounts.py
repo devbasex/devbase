@@ -61,3 +61,19 @@ def test_no_warnings_when_nothing_to_report():
     services = {'s': {'volumes': ['/abs:/x', 'named:/y']}}
     assert bind_mounts.expand_home(services, '/h') == []
     assert bind_mounts.collect_remote_warnings(services) == []
+
+
+def test_long_form_bind_with_bare_relative_source_is_reported():
+    """長い書式の type: bind は `data` のような素の相対 source も bind mount。"""
+    services = {'s': {'volumes': [{'type': 'bind', 'source': 'data', 'target': '/data'},
+                                  {'type': 'bind', 'source': '~/x', 'target': '/x'}]}}
+    assert bind_mounts.collect_remote_warnings(services) == ['s: data:/data', 's: ~/x:/x']
+    warnings = bind_mounts.expand_home(services, '/home/t')
+    assert warnings == ['s: data:/data']
+    assert services['s']['volumes'][1]['source'] == '/home/t/x'
+    assert services['s']['volumes'][0]['source'] == 'data'   # 書き換えない
+
+
+def test_long_form_named_volume_without_type_is_not_a_bind():
+    services = {'s': {'volumes': [{'source': 'named', 'target': '/data'}]}}
+    assert bind_mounts.collect_remote_warnings(services) == []

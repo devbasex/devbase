@@ -987,14 +987,14 @@ def test_resolve_docker_context_default_beats_docker_show():
     assert opener.resolve_docker_context({}, runner=boom, default="gpu-wsl") == "gpu-wsl"
 
 
-def test_resolve_docker_context_probe_strips_docker_context_and_host():
-    """現在の context の問い合わせは DOCKER_CONTEXT / DOCKER_HOST を外した環境で行う。"""
+def test_resolve_docker_context_probe_uses_the_effective_environment():
+    """attach 先の推測は docker が実際に使う context に合わせる (環境変数を外さない)。"""
     seen = {}
 
     def runner(cmd, **kw):
         seen.update(kw.get("env") or {})
-        return _Proc(returncode=0, stdout="desktop-linux\n")
+        return _Proc(returncode=0, stdout="existing-remote\n")
 
-    env = {"DOCKER_CONTEXT": "x", "DOCKER_HOST": "tcp://x", "PATH": "/p"}
-    assert opener.resolve_docker_context(env, runner=runner) == "desktop-linux"
-    assert "DOCKER_CONTEXT" not in seen and "DOCKER_HOST" not in seen and seen["PATH"] == "/p"
+    env = {"DOCKER_CONTEXT": "existing-remote", "PATH": "/p"}
+    assert opener.resolve_docker_context(env, runner=runner) == "existing-remote"
+    assert seen["DOCKER_CONTEXT"] == "existing-remote" and seen["PATH"] == "/p"

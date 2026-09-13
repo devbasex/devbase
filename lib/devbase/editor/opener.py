@@ -565,10 +565,12 @@ def resolve_docker_context(environ=None, runner: Optional[Callable] = None,
         return explicit.strip() or None
     if default:
         return default
-    # 現在の context の取得は docker_context に一本化する。DOCKER_CONTEXT / DOCKER_HOST を
-    # 外した環境で問い合わせないと、残っている値に引きずられた答えが返る。
+    # 推測は「docker が実際に使う context」に合わせる (環境変数は外さない)。devbase の
+    # 設定が無く DOCKER_CONTEXT だけで別 daemon へ向けている利用者では、コンテナも
+    # その context にあるので、attach 先も同じ名前でなければならない。リモート判定用の
+    # 問い合わせ (環境変数を外す current_context) とは目的が違うので分ける。
     from devbase.utils import docker_context as _dc
-    return _dc.current_context(environ=env, runner=runner)
+    return _dc.effective_context(environ=env, runner=runner)
 
 
 _NO_EDITOR_REASON = (

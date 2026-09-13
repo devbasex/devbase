@@ -72,10 +72,13 @@ def _split(vol: Any) -> Tuple[Optional[str], Any]:
             return None, None
         return source, parts[1:]
     if isinstance(vol, dict):
-        if vol.get('type') not in (None, 'bind'):
-            return None, None
         source = vol.get('source')
-        if isinstance(source, str) and _looks_like_path(source):
+        if not isinstance(source, str) or not source:
+            return None, None
+        # 長い書式で type: bind と明示されていれば、`data` のような素の相対パスも
+        # bind mount (compose がファイル基準の絶対パスへ解決する)。type が無いときは
+        # 短い書式と同じ規則で判定する。
+        if vol.get('type') == 'bind' or (vol.get('type') is None and _looks_like_path(source)):
             return source, None
     return None, None
 
@@ -93,10 +96,10 @@ def _looks_like_path(source: str) -> bool:
 
 
 def _needs_remote_path(source: str) -> bool:
-    """手元でしか解決できないパス: ``~user/...`` と相対パス。"""
-    if source.startswith('~') and source != '~' and not source.startswith('~/'):
-        return True
-    return source.startswith(('./', '../')) or source in ('.', '..')
+    """手元でしか解決できないパス: ``~user/...`` と相対パス (``/`` でも ``~`` でも始まらない)。"""
+    if source.startswith('~'):
+        return source != '~' and not source.startswith('~/')
+    return not source.startswith('/')
 
 
 def _display(vol: Any) -> str:

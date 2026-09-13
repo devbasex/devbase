@@ -120,6 +120,27 @@ def current_context(environ: Optional[MutableMapping[str, str]] = None,
     return (proc.stdout or "").strip() or None
 
 
+def effective_context(environ: Optional[MutableMapping[str, str]] = None,
+                      runner: Optional[Runner] = None) -> Optional[str]:
+    """docker が**実際に使う** context 名を ``docker context show`` で取る。
+
+    :func:`current_context` と違い、環境変数を外さない。``DOCKER_CONTEXT`` が設定されて
+    いればその名前が、``DOCKER_HOST`` があれば ``default`` が返る。エディタの attach 先の
+    推測など「docker と同じ答え」が要る場面に使う。取れなければ ``None``。
+    """
+    run = runner or subprocess.run
+    env = dict(os.environ if environ is None else environ)
+    try:
+        proc = run(["docker", "context", "show"], capture_output=True, text=True,
+                   timeout=10, env=env)
+    except Exception as e:  # noqa: BLE001 - docker 不在等は best-effort
+        logger.debug("docker context show を実行できません: %s", e)
+        return None
+    if getattr(proc, "returncode", 1) != 0:
+        return None
+    return (proc.stdout or "").strip() or None
+
+
 def resolve_target(choice: ContextChoice, settings: DockerSettings,
                    environ: Optional[MutableMapping[str, str]] = None,
                    runner: Optional[Runner] = None) -> DockerTarget:
@@ -317,6 +338,7 @@ __all__ = [
     "apply",
     "choose_context",
     "current_context",
+    "effective_context",
     "ensure_remote_gid",
     "reapply",
     "reset",
