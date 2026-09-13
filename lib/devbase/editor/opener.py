@@ -548,12 +548,14 @@ def resolve_editor_ssh_host(environ=None,
         return None
 
 
-def resolve_docker_context(environ=None, runner: Optional[Callable] = None) -> Optional[str]:
-    """ssh 先で使う docker context を解決する。
+def resolve_docker_context(environ=None, runner: Optional[Callable] = None,
+                           default: Optional[str] = None) -> Optional[str]:
+    """attach に使う docker context を解決する。
 
-    ``DEVBASE_EDITOR_DOCKER_CONTEXT`` 明示があればそれ。無ければ devbase up を実行して
-    いるホスト (= コンテナのある Mac) の現在の docker context を ``docker context show``
-    で取得する。docker 不在・非0・例外・空はすべて None (settings.context を付けない)。
+    順序は ``DEVBASE_EDITOR_DOCKER_CONTEXT`` 明示 → ``default`` (devbase が
+    ``project.local.yml`` / ``--context`` から解決した context、PLAN52) → devbase up を
+    実行しているホストの現在の docker context (``docker context show``)。docker 不在・
+    非0・例外・空はすべて None (settings.context を付けない)。
     """
     env = os.environ if environ is None else environ
     explicit = env.get("DEVBASE_EDITOR_DOCKER_CONTEXT")
@@ -561,6 +563,8 @@ def resolve_docker_context(environ=None, runner: Optional[Callable] = None) -> O
         # 空文字 ("") は明示的オプトアウト (settings.context を付けない) として扱い、
         # `docker context show` を呼ばない。
         return explicit.strip() or None
+    if default:
+        return default
     run = runner or subprocess.run
     try:
         proc = run(["docker", "context", "show"],
@@ -628,7 +632,8 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
                 environ=None,
                 isatty: Optional[bool] = None, system: Optional[str] = None,
                 ipc_alive: Optional[bool] = None,
-                launcher: Optional[Callable[[list, dict], None]] = None) -> str:
+                launcher: Optional[Callable[[list, dict], None]] = None,
+                docker_context: Optional[str] = None) -> str:
     """dev コンテナへ接続した VS Code を開く / コマンド提示 / スキップする。
 
     戻り値は実行された action ('launch' | 'print_command' | 'skip')。例外は
@@ -637,6 +642,8 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     ``compose_file`` は実コンテナ名問い合わせ時に起動と同じ override compose を
     ``-f`` で渡すため。``workspace`` は複数リポジトリ構成で開く
     ``*.code-workspace`` のコンテナ内パス (未指定なら env ``DEVBASE_WORKSPACE``)。
+    ``docker_context`` は devbase が解決した接続先 (PLAN52)。あればローカル端末でも
+    ``settings.context`` を付け、Dev Containers 拡張にその context で attach させる。
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
@@ -680,7 +687,12 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     # は既存 ExecServer を前提にできずネスト URI が動かないため、明示設定時のみ採用する。
     ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
                 if ctx.is_ssh else None)
-    docker_context = resolve_docker_context(env) if ssh_host else None
+    # settings.context は「明示 → devbase の解決結果 → (ssh 先のときだけ) 現在の
+    # context の推測」の順 (PLAN52 決定 11)。解決結果があればローカル端末でも付ける。
+    if ssh_host or docker_context:
+        docker_context = resolve_docker_context(env, default=docker_context)
+    else:
+        docker_context = None
     # DEVBASE_WORKSPACE があれば *.code-workspace をワークスペースとして開く。VS Code は
     # `--file-uri` に渡したパスが .code-workspace 拡張子なら multi-root ワークスペースとして
     # 開くため、フォルダを開く `--folder-uri` と URI ターゲット・フラグの両方を切り替える。
@@ -689,6 +701,15 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     uri_flag = "--file-uri" if workspace else "--folder-uri"
     uri = build_attach_uri(container, open_target,
                            ssh_host=ssh_host, docker_context=docker_context)
+    if ssh_host and docker_context:
+        # Windows VS Code → Remote-SSH(Mac) → 別ホストの docker という一周を避けたい
+        # 場合、手元の VS Code に同名の context があれば直接 attach できる (PLAN52)。
+        flat = build_attach_uri(container, open_target, docker_context=docker_context)
+        logger.info(
+            "手元の VS Code に同名の docker context '%s' があれば、ssh 先を経由せず "
+            "次で直接 attach できます:", docker_context)
+        logger.info("  %s %s '%s'",
+                    " ".join(shlex.quote(c) for c in display), uri_flag, flat)
 
     if plan.action == "print_command":
         # 提示コマンドは手元 (ローカル) で実行する前提。ローカルに code が無くても
