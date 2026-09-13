@@ -7,6 +7,7 @@ from typing import Optional
 
 import yaml
 
+from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.env import keys
 from devbase.env.store import EnvFile, safe_input
@@ -30,12 +31,18 @@ def _secret_store(devbase_root: Path):
     return SecretStore(devbase_root)
 
 
-def _global_env(devbase_root: Path):
-    """共通設定のビューを返す"""
+def _owner(user: bool) -> str:
+    """``--user`` の有無を参照の持ち主へ写す (PLAN51 決定 14)"""
+    return 'user' if user else 'team'
+
+
+def _global_env(devbase_root: Path, user: bool = False, store=None):
+    """共通設定のビューを返す (``user`` なら個人共通)"""
     from devbase.env.secret_store import SecretRef
     from devbase.env.secret_view import SecretEnvFile
 
-    return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_global())
+    store = store if store is not None else _secret_store(devbase_root)
+    return SecretEnvFile(store, SecretRef.for_global(owner=_owner(user)))
 
 
 def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
@@ -48,7 +55,8 @@ def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Opt
     return _runtime.current_project_name(devbase_root, cwd)
 
 
-def _project_env(devbase_root: Path, cwd: Optional[Path] = None):
+def _project_env(devbase_root: Path, cwd: Optional[Path] = None,
+                 user: bool = False, store=None):
     """CWD のプロジェクト設定のビューを返す (projects/ 配下でなければ ``None``)"""
     from devbase.env.secret_store import SecretRef
     from devbase.env.secret_view import SecretEnvFile
@@ -56,11 +64,15 @@ def _project_env(devbase_root: Path, cwd: Optional[Path] = None):
     name = _current_project_name(devbase_root, cwd)
     if name is None:
         return None
-    return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_project(name))
+    store = store if store is not None else _secret_store(devbase_root)
+    return SecretEnvFile(store, SecretRef.for_project(name, owner=_owner(user)))
 
 
-def _target_env(devbase_root: Path, project: bool):
-    """``--project`` の有無から操作対象の設定ビューを返す (解決できなければ ``None``)。
+def _target_env(devbase_root: Path, project: bool, user: bool = False):
+    """``--project`` / ``--user`` から操作対象の設定ビューを返す (解決できなければ ``None``)。
+
+    ``-p`` は適用範囲の軸を、``--user`` は持ち主の軸を選び、片方の指定がもう片方の軸を
+    動かさない (PLAN51 決定 14)。指定の無い軸は既定 (共通 / チーム単位) を採る。
 
     ``projects/<name>`` 配下でない場所での ``--project`` は、どのプロジェクトの
     設定を指しているのか決められない。従来は CWD に ``.env`` を作っていたが、
@@ -70,9 +82,9 @@ def _target_env(devbase_root: Path, project: bool):
     ここへ集約して振る舞いがずれないようにする。
     """
     if not project:
-        return _global_env(devbase_root)
+        return _global_env(devbase_root, user=user)
 
-    env_file = _project_env(devbase_root)
+    env_file = _project_env(devbase_root, user=user)
     if env_file is None:
         logger.error(
             "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
@@ -90,14 +102,19 @@ def cmd_env(devbase_root: Path, args) -> int:
                                         global_only=getattr(args, 'global_only', False),
                                         project_only=getattr(args, 'project_only', False),
                                         reveal=getattr(args, 'reveal', False),
-                                        keys_only=getattr(args, 'keys_only', False)),
+                                        keys_only=getattr(args, 'keys_only', False),
+                                        user=getattr(args, 'user', False)),
         'set':     lambda: cmd_env_set(devbase_root, getattr(args, 'assignment', ''),
-                                       project=getattr(args, 'project', False)),
-        'get':     lambda: cmd_env_get(devbase_root, getattr(args, 'key', '')),
+                                       project=getattr(args, 'project', False),
+                                       user=getattr(args, 'user', False)),
+        'get':     lambda: cmd_env_get(devbase_root, getattr(args, 'key', ''),
+                                       user=getattr(args, 'user', False)),
         'delete':  lambda: cmd_env_delete(devbase_root, getattr(args, 'key', ''),
-                                          project=getattr(args, 'project', False)),
+                                          project=getattr(args, 'project', False),
+                                          user=getattr(args, 'user', False)),
         'edit':    lambda: cmd_env_edit(devbase_root,
-                                        project=getattr(args, 'project', False)),
+                                        project=getattr(args, 'project', False),
+                                        user=getattr(args, 'user', False)),
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
@@ -212,7 +229,15 @@ def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
         return 0
 
     if reset and env_file.file_exists():
-        env_file.backup()
+        from devbase.errors import DevbaseError
+
+        try:
+            env_file.backup()
+        except DevbaseError as e:
+            # サーバ backend では退避を作れないまま消すことになる。退避が無ければ
+            # 削除へ進まない (PLAN51 設計 2)
+            logger.error("退避を作れないため、既存の設定を消さずに中止します: %s", e)
+            return 1
         logger.info("既存の設定をバックアップしました")
         for key in list(env_file.get_all().keys()):
             env_file.delete(key)
@@ -366,32 +391,56 @@ def _print_env_vars(vars_dict, keys_only, reveal):
 
 def cmd_env_list(devbase_root: Path, global_only: bool = False,
                  project_only: bool = False, reveal: bool = False,
-                 keys_only: bool = False) -> int:
-    """設定済み変数の一覧表示"""
-    if not project_only:
-        env_file = _global_env(devbase_root)
-        all_vars = env_file.get_all()
+                 keys_only: bool = False, user: bool = False) -> int:
+    """設定済み変数の一覧表示
 
-        print(f"\n=== グローバル ({env_file.path}{_mode_suffix(env_file)}) ===")
-        _print_env_vars(all_vars, keys_only, reveal)
-        print(f"\nグローバル: {len(all_vars)}変数")
+    適用範囲の軸は ``-g`` / ``-p`` で、持ち主の軸は ``--user`` で絞る。指定の無い軸は
+    絞らない。チーム共通の節は変数が 0 件でも出し、それ以外は存在する参照だけ出す
+    (個人単位の参照を持たない backend では、出力は従来と同じになる)。
+    """
+    store = _secret_store(devbase_root)
+    owners = (True,) if user else (False, True)
+
+    if not project_only:
+        for as_user in owners:
+            env_file = _global_env(devbase_root, user=as_user, store=store)
+            if as_user and not env_file.file_exists():
+                continue
+            all_vars = env_file.get_all()
+            label = '個人のグローバル' if as_user else 'グローバル'
+
+            print(f"\n=== {label} ({env_file.path}{_mode_suffix(env_file)}) ===")
+            _print_env_vars(all_vars, keys_only, reveal)
+            print(f"\n{label}: {len(all_vars)}変数")
 
     if not global_only:
-        proj_env = _project_env(devbase_root)
-        if proj_env is not None and proj_env.file_exists():
-            proj_vars = proj_env.get_all()
+        for as_user in owners:
+            proj_env = _project_env(devbase_root, user=as_user, store=store)
+            if proj_env is not None and proj_env.file_exists():
+                proj_vars = proj_env.get_all()
+                label = '個人のプロジェクト' if as_user else 'プロジェクト'
 
-            print(f"\n=== プロジェクト: {proj_env.ref.name} "
-                  f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
-            _print_env_vars(proj_vars, keys_only, reveal)
-            print(f"\nプロジェクト: {len(proj_vars)}変数")
+                print(f"\n=== {label}: {proj_env.ref.name} "
+                      f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
+                _print_env_vars(proj_vars, keys_only, reveal)
+                print(f"\n{label}: {len(proj_vars)}変数")
 
     return 0
 
 
 def _mode_suffix(env_file) -> str:
-    """一覧表示で保存形式を示す接尾辞。平文のときは何も足さない。"""
-    return ' [暗号化]' if env_file.is_encrypted() else ''
+    """一覧表示で保存形式を示す接尾辞。平文のときは何も足さない。
+
+    age は従来どおり ``[暗号化]``、サーバ backend は backend 名を示す。
+    """
+    from devbase.env.secret_store import MODE_ABSENT, MODE_AGE, MODE_PLAINTEXT
+
+    mode = env_file.mode()
+    if mode == MODE_AGE:
+        return ' [暗号化]'
+    if mode in (MODE_PLAINTEXT, MODE_ABSENT):
+        return ''
+    return f' [{mode}]'
 
 
 def _format_value(key: str, value: str, reveal: bool) -> str:
@@ -404,7 +453,8 @@ def _format_value(key: str, value: str, reveal: bool) -> str:
     return f"{value[:57]}..." if len(value) > 60 else value
 
 
-def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False) -> int:
+def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
+                user: bool = False) -> int:
     """変数を設定する"""
     if '=' not in assignment:
         logger.error("形式: devbase env set KEY=VALUE")
@@ -418,7 +468,7 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False) -> i
         logger.error("キー名が空です")
         return 1
 
-    env_file = _target_env(devbase_root, project)
+    env_file = _target_env(devbase_root, project, user=user)
     if env_file is None:
         return 1
 
@@ -429,31 +479,45 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False) -> i
     return 0
 
 
-def cmd_env_get(devbase_root: Path, key: str) -> int:
-    """変数の値を取得する"""
-    value = _global_env(devbase_root).get(key)
-    if value is not None:
-        print(value)
-        return 0
+def cmd_env_get(devbase_root: Path, key: str, user: bool = False) -> int:
+    """変数の値を取得する
 
-    proj_env = _project_env(devbase_root)
-    if proj_env is not None and proj_env.file_exists():
-        value = proj_env.get(key)
+    探索順は 個人共通 → チーム共通 → 個人のプロジェクト → チームのプロジェクト。
+    適用範囲の順は現行のまま共通が先で、同じ適用範囲では個人単位を先に見る
+    (PLAN51 設計 2)。``--user`` を付けると個人単位だけを探す。
+    """
+    store = _secret_store(devbase_root)
+    owners = (True,) if user else (True, False)
+
+    for as_user in owners:
+        env_file = _global_env(devbase_root, user=as_user, store=store)
+        if as_user and not env_file.file_exists():
+            continue
+        value = env_file.get(key)
         if value is not None:
             print(value)
             return 0
+
+    for as_user in owners:
+        proj_env = _project_env(devbase_root, user=as_user, store=store)
+        if proj_env is not None and proj_env.file_exists():
+            value = proj_env.get(key)
+            if value is not None:
+                print(value)
+                return 0
 
     logger.error("変数 '%s' は設定されていません", key)
     return 1
 
 
-def cmd_env_delete(devbase_root: Path, key: str, project: bool = False) -> int:
+def cmd_env_delete(devbase_root: Path, key: str, project: bool = False,
+                   user: bool = False) -> int:
     """変数を削除する
 
     ``--project`` を受けるのは、暗号化された設定は利用者がエディタで直接開いて
     不要なキーを消せないため。CLI からプロジェクト設定を掃除する手段が要る。
     """
-    env_file = _target_env(devbase_root, project)
+    env_file = _target_env(devbase_root, project, user=user)
     if env_file is None:
         return 1
 
@@ -466,29 +530,37 @@ def cmd_env_delete(devbase_root: Path, key: str, project: bool = False) -> int:
     return 1
 
 
-def cmd_env_edit(devbase_root: Path, project: bool = False) -> int:
+def cmd_env_edit(devbase_root: Path, project: bool = False, user: bool = False) -> int:
     """エディタで.envを開く
 
-    ``--project`` を受けるのは delete と同じ理由。暗号化されていれば
-    ``_edit_encrypted`` 経由で復号 → 編集 → 再暗号化する。
+    ``--project`` を受けるのは delete と同じ理由。保存先をファイルとして直接開いて
+    よいのは平文の backend だけで (``direct_edit``)、それ以外は
+    ``_edit_via_tempfile`` 経由で 読み出し → 編集 → 書き戻し する。判定を
+    「暗号化されているか」ではなく「直接編集できるか」にするのは、サーバ backend の
+    ``path()`` が ``secretPath`` を ``Path`` にしただけの値で、開いても機密は無いため。
     """
-    env_file = _target_env(devbase_root, project)
+    env_file = _target_env(devbase_root, project, user=user)
     if env_file is None:
         return 1
 
     editor = os.environ.get('EDITOR', 'vi')
 
-    if not env_file.is_encrypted():
+    try:
+        direct = env_file.direct_edit()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    if direct:
         return subprocess.call([editor, str(env_file.path)])
 
-    return _edit_encrypted(env_file, editor)
+    return _edit_via_tempfile(env_file, editor)
 
 
-def _edit_encrypted(env_file, editor: str) -> int:
-    """暗号化された設定を、平文を残さずにエディタで編集する。
+def _edit_via_tempfile(env_file, editor: str) -> int:
+    """直接開けない保存先 (暗号化・サーバ) を、平文を残さずにエディタで編集する。
 
-    エディタは平文のファイルしか開けないため、復号結果を一時ファイルへ書いて
-    編集させ、保存後に暗号化し直してから消す。一時ファイルは自分専用の
+    エディタは平文のファイルしか開けないため、読み出した内容を一時ファイルへ書いて
+    編集させ、保存後に保存先へ書き戻してから消す。一時ファイルは自分専用の
     ``0700`` ディレクトリに ``0600`` で作り、正常終了でも異常終了でも
     ``finally`` で必ず削除する。
 

@@ -329,3 +329,86 @@ def test_current_project_name_follows_a_symlinked_project(root, tmp_path):
     (root / 'projects' / 'linked').symlink_to(target)
 
     assert runtime.current_project_name(root, root / 'projects' / 'linked') == 'linked'
+
+
+# ---------------------------------------------------------------------------
+# 持ち主の軸を足した 4 層の重ね順 (PLAN51 決定 12)
+# ---------------------------------------------------------------------------
+
+class _FourLayerStore:
+    """4 参照を持つ最小の店 (backend を問わず重ね順だけを見る)"""
+
+    def __init__(self, layers):
+        self._layers = layers
+
+    def load(self, ref):
+        return dict(self._layers.get((ref.kind, ref.name, ref.owner), {}))
+
+
+USER_GLOBAL = SecretRef.for_global(owner='user')
+USER_WEB = SecretRef.for_project('web', owner='user')
+
+
+def _layers(**kw):
+    table = {
+        'team_global': ('global', None, 'team'),
+        'user_global': ('global', None, 'user'),
+        'team_web': ('project', 'web', 'team'),
+        'user_web': ('project', 'web', 'user'),
+    }
+    return {table[name]: data for name, data in kw.items()}
+
+
+def test_user_project_wins_over_all_other_layers(root):
+    store = _FourLayerStore(_layers(
+        team_global={'K': 'tg'}, user_global={'K': 'ug'},
+        team_web={'K': 'tw'}, user_web={'K': 'uw'}))
+
+    assert runtime.resolve(root, 'web', store=store).values['K'] == 'uw'
+
+
+def test_layers_fall_back_in_the_documented_order(root):
+    layers = _layers(team_global={'K': 'tg'}, user_global={'K': 'ug'},
+                     team_web={'K': 'tw'}, user_web={'K': 'uw'})
+    order = [('project', 'web', 'user'), ('project', 'web', 'team'),
+             ('global', None, 'user'), ('global', None, 'team')]
+    expected = ['uw', 'tw', 'ug', 'tg']
+
+    for key, value in zip(order, expected):
+        assert runtime.resolve(root, 'web', store=_FourLayerStore(layers)).values['K'] == value
+        del layers[key]
+
+
+def test_project_env_beats_global_layers_and_loses_to_project_layers(root, monkeypatch):
+    (root / 'projects' / 'web' / 'env').write_text('K=from-env\n')
+    monkeypatch.setenv('K', 'from-env')
+
+    store = _FourLayerStore(_layers(team_global={'K': 'tg'}, user_global={'K': 'ug'}))
+    assert runtime.resolve(root, 'web', store=store).values['K'] == 'from-env'
+
+    store = _FourLayerStore(_layers(user_global={'K': 'ug'}, team_web={'K': 'tw'}))
+    assert runtime.resolve(root, 'web', store=store).values['K'] == 'tw'
+
+
+def test_names_are_listed_once_across_the_four_layers(root):
+    store = _FourLayerStore(_layers(
+        team_global={'A': '1', 'K': 'tg'}, user_global={'K': 'ug', 'B': '2'},
+        team_web={'K': 'tw', 'C': '3'}, user_web={'K': 'uw', 'D': '4'}))
+
+    resolved = runtime.resolve(root, 'web', store=store)
+
+    assert resolved.global_names == ['A', 'K', 'B']
+    assert resolved.project_names == ['K', 'C', 'D']
+    assert resolved.names == ['A', 'K', 'B', 'C', 'D']
+
+
+def test_file_backends_resolve_exactly_as_before(root, store):
+    """個人単位の参照を持たない backend では、結果が 2 層のときと同じ"""
+    store.age.save(GLOBAL, {'TOKEN': 'global', 'ONLY_GLOBAL': 'g'})
+    store.age.save(WEB, {'TOKEN': 'project'})
+
+    resolved = runtime.resolve(root, 'web', store=store)
+
+    assert resolved.values == {'TOKEN': 'project', 'ONLY_GLOBAL': 'g'}
+    assert resolved.global_names == ['ONLY_GLOBAL', 'TOKEN']   # 保存時に昇順へ正規化される
+    assert resolved.project_names == ['TOKEN']

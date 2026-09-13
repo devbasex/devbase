@@ -343,6 +343,13 @@ def _add_env_parser(subparsers):
     env_edit.add_argument('--project', '-p', action='store_true',
                           help='Edit project .env')
 
+    # 持ち主の軸 (PLAN51 決定 14)。`-p` が適用範囲を、`--user` が持ち主を選び、
+    # 片方の指定がもう片方の軸を動かさない。値を取らない真偽フラグである点も `-p` と
+    # 揃える。init / sync / project / export / import には足さない。
+    for sub in (env_list, env_get, env_set, env_delete, env_edit):
+        sub.add_argument('--user', action='store_true', dest='user',
+                         help="Use this user's personal secrets instead of the team's")
+
     env_sub.add_parser('project', help='Setup project-specific variables')
 
     # 生成先を選ぶオプションは置かない。復号側は $DEVBASE_AGE_KEY_FILE か既定パスしか

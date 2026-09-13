@@ -116,19 +116,33 @@ class SecretEnvFile:
     def is_encrypted(self) -> bool:
         return self._store.is_encrypted(self._ref)
 
+    def direct_edit(self) -> bool:
+        """保存先をファイルとして直接エディタで開いてよいか (平文だけ真)"""
+        return self._store.direct_edit(self._ref)
+
     def file_exists(self) -> bool:
         return self._store.exists(self._ref)
 
     def backup(self) -> Optional[Path]:
-        """保存先ファイルを ``.backup`` 付きで複製する。
+        """保存先を退避する。
 
-        暗号化されている場合は暗号文のまま複製されるため、複製が新たな平文の
-        滞留を生むことはない。
+        ファイル backend では現行どおり ``.backup`` 付きで複製する。暗号化されている
+        場合は暗号文のまま複製されるため、複製が新たな平文の滞留を生むことはない。
+
+        サーバ backend では手元に複製できるファイルが無いため、読み出した値を age で
+        暗号化して ``backups/env-init/<日時>/`` へ控える。**退避を作れなければ失敗
+        させる** (``SecretStoreError``)。呼び出し側 (``env init --reset``) はそこで
+        削除へ進まない (PLAN51 設計 2)。
         """
         import shutil
 
         if not self.file_exists():
             return None
+        from devbase.env.secret_store import AgeBackend, PlaintextBackend
+
+        backend = self._store.backend_for(self._ref)
+        if not isinstance(backend, (AgeBackend, PlaintextBackend)):
+            return self._backup_encrypted()
         source = self.path
         backup_path = Path(str(source) + '.backup')
         try:
@@ -137,6 +151,23 @@ class SecretEnvFile:
             logger.warning("バックアップを作成できませんでした (%s): %s", backup_path, e)
             return None
         return backup_path
+
+    def _backup_encrypted(self) -> Path:
+        from datetime import datetime
+
+        from devbase.env import io_common as _io_common
+        from devbase.env.secret_store import SecretStoreError
+
+        ref = self._ref
+        stem = f"{ref.owner}-{ref.kind}" + (f"-{ref.name}" if ref.name else '')
+        target = (Path(self._store.root) / 'backups' / 'env-init'
+                  / datetime.now().strftime('%Y%m%d-%H%M%S-%f') / f'{stem}.env.age')
+        try:
+            blob = self._store.age.encrypt_bytes(self.load_bytes())
+            _io_common.write_secure_bytes_atomic(target, blob)
+        except OSError as e:
+            raise SecretStoreError(f"退避を書き込めませんでした ({target}): {e}") from e
+        return target
 
     def __repr__(self) -> str:
         return f"SecretEnvFile({self._ref!r} -> {self.path})"
