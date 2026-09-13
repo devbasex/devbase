@@ -367,7 +367,15 @@ sequenceDiagram
 
 ### 他のコマンド
 
-`_dispatch_lifecycle` は `ContextChoice` を解決して handler へ渡す。`down` / `ps` / `logs` /
+`_dispatch_lifecycle` は、`name` で対象プロジェクトへ切り替えた（`_resolve_project_name`）
+**直後に `_inject_secrets(required=False)` を呼び、対象プロジェクトの機密で `os.environ` を
+作り直してから** `ContextChoice` を解決する。`cli.main()` は dispatch の前に**現在地**の機密を
+注入しており、`_resolve_project_name` は非機密の `env` のキーしか入れ替えない。そのため
+プロジェクト A から `project down B` を実行すると、A の `.env` の `DEVBASE_DOCKER_CONTEXT` が
+残ったまま B の context を解決してしまう。`_inject_secrets` は注入前に `clear_injected` を
+通すので、ここで呼び直せば A の値は消える（まだ接続先が無いので `reapply()` は何もしない）。
+
+その後 `ContextChoice` を解決して handler へ渡す。`down` / `ps` / `logs` /
 `login` / `build`（Python 経路）/ `rebuild` の handler はそれをそのまま `DOCKER_CONTEXT` に
 載せる。`up` / `scale` の handler は**載せる前に** `DockerTarget` を確定する（上の
 シーケンス図の順序）。`docker context show` を呼ぶのは `up` / `scale` だけである。
