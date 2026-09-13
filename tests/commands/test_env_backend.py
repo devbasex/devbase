@@ -209,3 +209,19 @@ def test_use_parser_has_no_client_secret_option():
     ns = parser.parse_args(['env', 'backend', 'use', 'infisical', '--client-secret-stdin'])
     assert ns.client_secret_stdin is True
     assert not hasattr(ns, 'client_secret')
+
+
+@pytest.mark.parametrize('action', [None, 'unknown'])
+def test_backend_missing_or_unknown_action_reports_usage(root, caplog, action):
+    """未指定・未知のアクションの現在の終了コードと案内を固定する。"""
+    args = SimpleNamespace(backend_action=action)
+
+    with caplog.at_level(logging.ERROR, logger='devbase.commands.env_backend'):
+        assert env_backend.cmd_env_backend(root, args) == 2
+
+    assert any(
+        record.levelno == logging.ERROR
+        and record.getMessage() ==
+        'サブコマンドを指定してください: status, use, test, migrate'
+        for record in caplog.records
+    )

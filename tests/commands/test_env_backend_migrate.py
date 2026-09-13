@@ -213,3 +213,32 @@ def test_env_get_returns_the_same_value_before_and_after_a_failed_migration(age_
     capsys.readouterr()
     assert env_cmd.cmd_env_get(age_root, 'A') == 0
     assert capsys.readouterr().out.strip() == 'a-value'
+
+
+def test_declining_confirmation_keeps_destination_and_config(age_root, infisical,
+                                                             monkeypatch, capsys):
+    """確認で no を入力した場合の中止と保存内容の不変を固定する。"""
+    infisical.put(TEAM_GLOBAL, {'B': 'pre-existing'})
+    infisical.put(TEAM_WEB, {'EXISTING': 'keep'})
+    config_path = age_root / 'secrets' / 'backend.yml'
+    config_before = config_path.read_bytes()
+    prompts = []
+
+    def decline(prompt):
+        prompts.append(prompt)
+        return 'no'
+
+    monkeypatch.setattr('devbase.env.store.safe_input', decline)
+
+    assert env_backend.cmd_env_backend_migrate(
+        age_root, to='infisical', assume_yes=False,
+    ) == 1
+
+    assert prompts == ['続行しますか? (yes と入力): ']
+    assert '中止しました' in capsys.readouterr().out
+    assert infisical.get(TEAM_GLOBAL) == {'B': 'pre-existing'}
+    assert infisical.get(TEAM_WEB) == {'EXISTING': 'keep'}
+    assert not any(r.secret_name for r in infisical.received)
+    assert config_path.read_bytes() == config_before
+    assert SecretStore(age_root).load(GLOBAL) == {'A': 'a-value', 'SHARED': 'from-age'}
+    assert SecretStore(age_root).load(WEB) == {'W': 'w-value'}
