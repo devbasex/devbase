@@ -70,10 +70,21 @@ export DEVBASE_ROOT
 # Docker Compose の変数展開が機密を必要とする場合があるため、compose の呼び出しは
 # Python 経由で機密を注入して実行する (plan35 §4.4 / §11.2)。復号結果は子プロセスの
 # 環境変数としてだけ渡り、ファイルには書き出されない。
+#
+# docker context (PLAN52) も同じ経路で届く。`env exec` がカレントプロジェクトの
+# project.local.yml と env から context を解決して DOCKER_CONTEXT を載せるため、
+# shell から docker を叩く箇所 (buildx build / image inspect / compose build) は
+# すべてここを通す。`devbase build --context NAME` の値は _BUILD_CONTEXT に保持し、
+# 環境変数ではなく引数で渡す。環境変数に写すと、Python 側が dispatch の前に注入する
+# .env の同名キー (DEVBASE_DOCKER_CONTEXT) に上書きされる。
+#
+# `--${_BUILD_CONTEXT:+...}` は、_BUILD_CONTEXT があれば `--context NAME -- "$@"`、
+# 無ければ `-- "$@"` に展開される (`--` の直後に context の語を続けるかどうか)。
+_BUILD_CONTEXT=""
 compose_with_secrets() {
     ensure_uv
     PYTHONPATH="${DEVBASE_ROOT}/lib:$PYTHONPATH" \
-        uv run --project "$DEVBASE_ROOT" python -m devbase.cli env exec -- "$@"
+        uv run --project "$DEVBASE_ROOT" python -m devbase.cli env exec --${_BUILD_CONTEXT:+context "$_BUILD_CONTEXT" --} "$@"
 }
 
 cmd_build() {
@@ -120,7 +131,7 @@ cmd_build() {
         fi
 
         echo "Building ${base_image}:latest..."
-        if docker buildx build --load -t "${base_image}:latest" "$container_dir" "$@"; then
+        if compose_with_secrets docker buildx build --load -t "${base_image}:latest" "$container_dir" "$@"; then
             echo "✓ ${base_image} built successfully"
             return 0
         else
@@ -211,7 +222,7 @@ cmd_build() {
         fi
     else
         # Fallback: check if devbase-base exists
-        if ! docker image inspect devbase-base:latest >/dev/null 2>&1; then
+        if ! compose_with_secrets docker image inspect devbase-base:latest >/dev/null 2>&1; then
             echo ""
             echo "[1/2] Building devbase-base..."
             if ! build_base_image "devbase-base" "$@"; then
@@ -432,9 +443,28 @@ case "$_resolved_cmd" in
     #   - --expires: イメージ作成日の判定が必要で、shell では RFC3339 日付パースが
     #     非可搬なため (build --expires=N / rebuild / up が共通の期限リゾルバを使う)。
     build)
+        # `--context NAME` / `--context=NAME` は最初に抜き取る (PLAN52)。下の走査より
+        # 後に置くと NAME が単体イメージ名として拾われ、Python の単体ビルドへ誤分岐する。
+        # 値は _BUILD_CONTEXT に保持し、compose_with_secrets (env exec) と Python の
+        # project build へ引数で渡す。
+        _build_args=()
+        _expect_context=0
+        for _ba in "${_DEVBASE_ARGS[@]}"; do
+            if [ "$_expect_context" = 1 ]; then
+                _BUILD_CONTEXT="$_ba"; _expect_context=0; continue
+            fi
+            case "$_ba" in
+                --context) _expect_context=1 ;;
+                --context=*) _BUILD_CONTEXT="${_ba#--context=}" ;;
+                *) _build_args+=("$_ba") ;;
+            esac
+        done
+        if [ "$_expect_context" = 1 ]; then
+            echo "Error: --context requires a context name" >&2; exit 2
+        fi
         _has_expires=0
         _build_image=""
-        for _ba in "${_DEVBASE_ARGS[@]}"; do
+        for _ba in ${_build_args[@]+"${_build_args[@]}"}; do
             case "$_ba" in
                 --expires|--expires=*) _has_expires=1 ;;
                 -*) ;;
@@ -442,9 +472,10 @@ case "$_resolved_cmd" in
             esac
         done
         if [ "$_has_expires" = 1 ] || [ -n "$_build_image" ]; then
-            run_python project build "${_DEVBASE_ARGS[@]}"
+            run_python project build ${_build_args[@]+"${_build_args[@]}"} \
+                ${_BUILD_CONTEXT:+--context "$_BUILD_CONTEXT"}
         else
-            cmd_build "${_DEVBASE_ARGS[@]}"
+            cmd_build ${_build_args[@]+"${_build_args[@]}"}
         fi
         ;;
     # Help and unknown
