@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as _urlerror
 from urllib import request as _urlrequest
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from devbase.env import bootstrap as _bootstrap
 from devbase.env.secret_store import SecretRef, SecretStore, SecretStoreError
@@ -293,8 +293,10 @@ class InfisicalBackend:
         body: Dict[str, Any] = dict(self._base_query(ref))
         if value is not None:
             body['secretValue'] = value
+        # キー名はパスの 1 要素。`/` や空白・`?` を含む名前が別のリソースを指したり
+        # クエリとして解釈されたりしないよう、`/` も含めて全て符号化する。
         try:
-            self._authed(method, f'/api/v4/secrets/{key}', body=body)
+            self._authed(method, f"/api/v4/secrets/{quote(key, safe='')}", body=body)
         except _HttpStatus as e:
             if e.status in (401, 403):
                 raise self._auth_error(e.status, ref) from None

@@ -318,3 +318,12 @@ def test_backend_test_fails_without_a_server_backend(tmp_path, caplog):
 
     assert env_backend.cmd_env_backend_test(tmp_path) == 1
     assert 'infisical' in caplog.text
+
+
+def test_key_names_are_percent_encoded_in_the_url_path(store, infisical):
+    """`FOO/BAR` や空白・`?` を含むキーでも別のリソースを叩かない"""
+    store.save(GLOBAL, {'FOO/BAR': '1', 'WITH SPACE': '2', 'Q?A#B': '3'})
+
+    posted = sorted(r.secret_name for r in infisical.requests_of('POST') if r.secret_name)
+    assert posted == sorted(['FOO%2FBAR', 'WITH%20SPACE', 'Q%3FA%23B'])
+    assert infisical.get(TEAM_GLOBAL_PATH) == {'FOO%2FBAR': '1', 'WITH%20SPACE': '2', 'Q%3FA%23B': '3'}
