@@ -36,8 +36,13 @@ def _clean_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv('DOCKER_GID', '0')
     dc.reset()
+    # _resolve_project_name / _load_project_env は os.environ を直接書くので、
+    # テストごとに丸ごと戻す
+    saved = dict(os.environ)
     yield
     dc.reset()
+    os.environ.clear()
+    os.environ.update(saved)
 
 
 @pytest.fixture
