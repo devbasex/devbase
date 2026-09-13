@@ -5,7 +5,7 @@ import os
 import yaml
 from pathlib import Path
 from typing import (
-    Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set,
+    Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set,
 )
 
 from devbase.env import compose_migrate, gcp_auth, keys
@@ -191,6 +191,37 @@ def _load_compose_config(compose_file: Path) -> dict:
         raise DockerError(f"Failed to parse compose file: {e}")
 
 
+def _env_shape(existing: Any) -> str:
+    """environment の表現形式 ('none' / 'dict' / 'list' / 'other') を判定する。"""
+    if existing is None:
+        return 'none'
+    if isinstance(existing, dict):
+        return 'dict'
+    if isinstance(existing, list):
+        return 'list'
+    return 'other'
+
+
+def _env_item_name(item: Any) -> Optional[str]:
+    """list 形式の environment 項目からキー名を取り出す (非文字列なら None)。"""
+    if isinstance(item, str):
+        return item.split('=', 1)[0].strip()
+    return None
+
+
+def _iter_env_names(existing: Any) -> Iterator[str]:
+    """environment (dict または list 形式) に定義されているキー名を列挙する。"""
+    shape = _env_shape(existing)
+    if shape == 'dict':
+        for name in existing:
+            yield str(name)
+    elif shape == 'list':
+        for item in existing:
+            name = _env_item_name(item)
+            if name is not None:
+                yield name
+
+
 def _mask_secret_environment(
     service: dict, secret_env_names: Sequence[str],
 ) -> None:
@@ -210,14 +241,15 @@ def _mask_secret_environment(
     secrets = list(dict.fromkeys(secret_env_names))
     secret_set = set(secrets)
     existing = service.get('environment')
+    shape = _env_shape(existing)
 
-    if existing is None:
+    if shape == 'none':
         # 元から environment が無ければ、機密が無い限り作らない
         if secrets:
             service['environment'] = list(secrets)
         return
 
-    if isinstance(existing, dict):
+    if shape == 'dict':
         masked = {
             key: (None if key in secret_set else value)
             for key, value in existing.items()
@@ -227,14 +259,14 @@ def _mask_secret_environment(
         service['environment'] = masked
         return
 
-    if isinstance(existing, list):
+    if shape == 'list':
         masked_list = []
         listed = set()
         for item in existing:
-            if not isinstance(item, str):
+            name = _env_item_name(item)
+            if name is None:
                 masked_list.append(item)
                 continue
-            name = item.split('=', 1)[0].strip()
             listed.add(name)
             # 機密キーは `KEY=value` でも `KEY` でも、値なし参照に揃える
             masked_list.append(name if name in secret_set else item)
@@ -258,12 +290,7 @@ def _service_env_names(service: dict) -> List[str]:
     含めるために要る。env や機密の列挙だけを見ていると、直書きされた別
     プロファイルの鍵を外し損ねる (issue #134)。
     """
-    existing = service.get('environment')
-    if isinstance(existing, dict):
-        return [str(name) for name in existing]
-    if isinstance(existing, list):
-        return [str(item).split('=', 1)[0].strip() for item in existing]
-    return []
+    return list(_iter_env_names(service.get('environment')))
 
 
 def _drop_env_names(service: dict, names: Iterable[str]) -> None:
@@ -284,14 +311,14 @@ def _drop_env_names(service: dict, names: Iterable[str]) -> None:
     if not drop:
         return
     existing = service.get('environment')
+    shape = _env_shape(existing)
 
-    if isinstance(existing, dict):
+    if shape == 'dict':
         kept = {k: v for k, v in existing.items() if k not in drop}
-    elif isinstance(existing, list):
+    elif shape == 'list':
         kept = [
             item for item in existing
-            if not (isinstance(item, str)
-                    and item.split('=', 1)[0].strip() in drop)
+            if _env_item_name(item) not in drop
         ]
     else:
         # None や解釈できない形式には触らない (警告は mask 側で出している)
@@ -378,17 +405,20 @@ def _apply_dev_environment(service: dict, extra: Mapping[str, str]) -> None:
         return
 
     existing = service.get('environment')
-    if isinstance(existing, dict):
+    shape = _env_shape(existing)
+
+    if shape == 'dict':
         existing.update(extra)
         return
-    if isinstance(existing, list):
+    if shape == 'list':
         names = set(extra)
-        kept = [entry for entry in existing
-                if not (isinstance(entry, str)
-                        and entry.split('=', 1)[0] in names)]
+        kept = [
+            entry for entry in existing
+            if _env_item_name(entry) not in names
+        ]
         service['environment'] = kept + [f"{k}={v}" for k, v in extra.items()]
         return
-    if existing is None:
+    if shape == 'none':
         service['environment'] = dict(extra)
         return
 
