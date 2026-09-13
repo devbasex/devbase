@@ -261,6 +261,25 @@ def test_gid_probe_non_integer_raises(tmp_path):
         dc.ensure_remote_gid(target, cache_dir=tmp_path, runner=runner)
 
 
+@pytest.mark.parametrize("exc", [
+    FileNotFoundError("docker not found"),
+    subprocess.TimeoutExpired(cmd=["docker"], timeout=120),
+])
+def test_gid_probe_runner_exception_raises_devbase_error(tmp_path, exc):
+    """現状固定: runner が送出した例外は DevbaseError へ包まれ、案内を含む。"""
+    def runner(cmd, **kw):
+        raise exc
+
+    target = dc.DockerTarget("gpu-wsl", "file", True, None, None)
+    with pytest.raises(DevbaseError) as excinfo:
+        dc.ensure_remote_gid(target, cache_dir=tmp_path, runner=runner)
+
+    err_msg = str(excinfo.value)
+    assert "gpu-wsl" in err_msg
+    assert "docker.gid" in err_msg
+    assert not (tmp_path / "docker-gid" / "gpu-wsl").exists()
+
+
 def test_gid_zero_warns_but_is_used(tmp_path, caplog):
     runner = lambda c, **k: _proc("0\n")  # noqa: E731
     target = dc.DockerTarget("gpu-wsl", "file", True, None, None)

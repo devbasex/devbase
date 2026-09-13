@@ -29,6 +29,20 @@ def test_resolve_explicit_open_index_boundaries(open_index, expected):
     assert container._resolve_open_index(open_index, scale=3) == expected
 
 
+@pytest.mark.parametrize("env_val, expected", [
+    (None, 1),
+    ("2", 2),
+    ("abc", 1),
+])
+def test_resolve_open_index_env_fallback(monkeypatch, env_val, expected):
+    """現状固定: open_index=None のとき DEVBASE_OPEN_INDEX の未設定・整数・非整数を解決する。"""
+    if env_val is None:
+        monkeypatch.delenv("DEVBASE_OPEN_INDEX", raising=False)
+    else:
+        monkeypatch.setenv("DEVBASE_OPEN_INDEX", env_val)
+    assert container._resolve_open_index(None, scale=5) == expected
+
+
 @pytest.fixture
 def up_harness(tmp_path, monkeypatch):
     """cmd_up の外部作用をすべてスタブ化し、呼び出し順を記録する。"""
