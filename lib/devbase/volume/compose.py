@@ -12,6 +12,7 @@ from devbase.env import compose_migrate, gcp_auth, keys
 from devbase.errors import DockerError
 from devbase.log import get_logger
 
+from . import bind_mounts
 from .manager import (
     get_ai_volume_for_index,
     get_group_volume,
@@ -590,6 +591,8 @@ def generate_scaled_compose(
     global_env_names: Optional[Sequence[str]] = None,
     project_env_names: Optional[Sequence[str]] = None,
     dev_environment: Optional[Mapping[str, str]] = None,
+    docker_home: Optional[str] = None,
+    remote: bool = False,
 ) -> Path:
     """
     Generate scaled docker-compose file with per-instance volumes
@@ -603,6 +606,11 @@ def generate_scaled_compose(
         project_env_names: そのうちプロジェクト機密由来のキー
         dev_environment: dev サービスへ載せる devbase 由来の環境変数
             (PLAN32 の clone プラン ``DEVBASE_REPOS`` 等。機密ではない)
+        docker_home: リモート側の HOME (PLAN52)。与えると全サービスの bind mount の
+            ``~`` をこの値で展開する。ローカル扱いでは ``None`` のまま (compose の
+            展開に委ねる)
+        remote: リモート扱いか。``docker_home`` が無いときに、リモートに存在しない
+            パスを指す mount を警告する
 
     非 dev サービスへは、そのサービスが元々 ``env_file`` で参照していた由来の
     キーだけを列挙する。由来の内訳が渡されない場合 (両方 ``None``) は全キーを
@@ -708,6 +716,25 @@ def generate_scaled_compose(
         service = scaled_services.get(f'{dev_service_name}-{index}')
         if isinstance(service, dict):
             _drop_env_names(service, dev_excluded)
+
+    # リモート扱いでは bind mount の ~ をリモート側の HOME で展開する (PLAN52 決定 7)。
+    # 生成物だけが -f で渡るので、ここで絶対パスにしておけば compose の手元 HOME への
+    # 展開は起きない。展開できない mount (~user / 相対パス) は一覧で警告する (決定 8)。
+    if docker_home:
+        unresolved = bind_mounts.expand_home(scaled_services, docker_home)
+        if unresolved:
+            logger.warning(
+                "次の bind mount はリモートには無いパスを指すため書き換えていません "
+                "(docker.home では代替できない ~user / 相対パス):\n  %s",
+                "\n  ".join(unresolved))
+    elif remote:
+        unresolved = bind_mounts.collect_remote_warnings(scaled_services)
+        if unresolved:
+            logger.warning(
+                "リモートの docker context で起動しますが、次の bind mount は手元のパスを"
+                "指しています (リモートでは空ディレクトリになります)。~ を展開するには "
+                "project.local.yml に docker.home を書いてください:\n  %s",
+                "\n  ".join(unresolved))
 
     scaled_config = {
         'services': scaled_services,
