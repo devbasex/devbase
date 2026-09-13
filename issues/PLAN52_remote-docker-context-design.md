@@ -112,7 +112,7 @@ graph TD
 ```text
 bin/devbase                          (変更: cmd_build の docker 直接呼び出しを env exec 経由へ、--context の受け取り)
 lib/devbase/
-├── cli.py                           (変更: --context を lifecycle サブコマンドへ追加)
+├── cli.py                           (変更: --context を lifecycle サブコマンドと env exec へ追加)
 ├── project/
 │   ├── config.py                    (変更: project.yml の docker: を案内付きで拒否)
 │   └── local_config.py              (新設: project.local.yml の読み込みと検証)
@@ -246,7 +246,7 @@ docker:
 | 項目 | 内容 |
 | --- | --- |
 | 名前 | `--context NAME` |
-| 付く場所 | `project` / `container` 配下の `up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild`。トップレベルはショートカットが既にある `up` / `down` / `ps` / `login` / `scale` / `build` / `rebuild` だけ（`logs` のショートカットは無く、新設しない） |
+| 付く場所 | `project` / `container` 配下の `up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild`。トップレベルはショートカットが既にある `up` / `down` / `ps` / `login` / `scale` / `build` / `rebuild` だけ（`logs` のショートカットは無く、新設しない）。加えて `env exec`（shell の `build` から渡すため） |
 | 入力 | context 名（文字列）。空文字は `argparse` の型検査で拒む |
 | 出力 | 無し。解決結果は `up` の冒頭の info 1 行に出る |
 | 失敗の形 | 名前が存在しなければ docker CLI が非ゼロで止まり、devbase はその終了コードを返す |
@@ -358,7 +358,7 @@ sequenceDiagram
 | `utils/docker_context.apply(target, environ)` | 反映する。同時に「いま有効な接続先」をモジュール変数に控え、最初の適用時に `DOCKER_CONTEXT` / `DOCKER_GID` / `DOCKER_HOST` の元の値も控える。冪等 |
 | `utils/docker_context.reapply(environ)` | 控えた接続先があれば `apply` を呼び直す。無ければ何もしない |
 | `utils/docker_context.reset(environ)` | 控えた接続先を捨て、3 変数を元の値へ戻す（元々無かったものは消す）。控えが無ければ何もしない |
-| `commands/container._dispatch_lifecycle()` | handler を呼ぶ**前**と、`finally` で**後**に `reset()` を呼ぶ。1 プロセスで複数の lifecycle 操作を行う TUI で、前の操作の接続先が次へ漏れないようにする |
+| `commands/container._dispatch_lifecycle()` | **開始時**（`_resolve_project_name` と機密の読み直しより前）と、`finally` で**終了時**に `reset()` を呼ぶ。1 プロセスで複数の lifecycle 操作を行う TUI で、前の操作の接続先が次へ漏れないようにする。開始時にも置くのは、前の操作が `finally` を通らずに終わった場合（`KeyboardInterrupt` を TUI が握った等）への備え |
 | `commands/container._inject_secrets()` | 機密を注入した**直後に自分で** `reapply()` を呼ぶ。呼び出し側は何もしない |
 | `commands/env.cmd_env_exec()` | `child_env()` が返した辞書へ `apply(choice, env)` を直接当てる（モジュール変数は使わない） |
 
@@ -381,8 +381,11 @@ sequenceDiagram
 通すので、ここで呼び直せば A の値は消える（まだ接続先が無いので `reapply()` は何もしない）。
 
 その後 `ContextChoice` を解決して handler へ渡す。`down` / `ps` / `logs` /
-`login` / `build`（Python 経路）/ `rebuild` の handler はそれをそのまま `DOCKER_CONTEXT` に
-載せる。`up` / `scale` の handler は**載せる前に** `DockerTarget` を確定する（上の
+`login` / `build`（Python 経路）/ `rebuild` の handler は `apply(choice, os.environ)` を呼ぶ
+（`apply` は `DockerTarget` と `ContextChoice` のどちらも受け、`ContextChoice` なら context
+だけを載せる）。**handler が環境変数へ直接代入する形は採らない。** `apply` を通さないと
+`DOCKER_HOST` の除去と控えが行われず、`reapply()` / `reset()` が効かなくなる。`up` / `scale` の
+handler は**載せる前に** `DockerTarget` を確定し、それを `apply` に渡す（上の
 シーケンス図の順序）。`docker context show` を呼ぶのは `up` / `scale` だけである。
 確定の問い合わせは `DOCKER_CONTEXT` と `DOCKER_HOST` を取り除いた環境で行うため、呼び出し側が
 先に載せてしまっても判定は変わらない。
