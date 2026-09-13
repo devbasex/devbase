@@ -583,6 +583,34 @@ def _services_receiving_secrets(
     return receivers
 
 
+def _prepare_remote_mounts(
+    scaled_services: dict, docker_home: Optional[str], remote: bool,
+) -> None:
+    """リモート扱いでの bind mount の ~ 展開と警告を行う (PLAN52 決定 7・8)。
+
+    ``docker_home`` があれば全サービスの bind mount の ~ をリモート側の HOME で
+    展開する。生成物だけが -f で渡るので、ここで絶対パスにしておけば compose の
+    手元 HOME への展開は起きない。展開できない mount (~user / 相対パス) は一覧で
+    警告する。``docker_home`` が無くリモート扱いのときは、手元のパスを指す mount
+    を警告する (docker.home の指定を促す)。``scaled_services`` を破壊的に更新する。
+    """
+    if docker_home:
+        unresolved = bind_mounts.expand_home(scaled_services, docker_home)
+        if unresolved:
+            logger.warning(
+                "次の bind mount はリモートには無いパスを指すため書き換えていません "
+                "(docker.home では代替できない ~user / 相対パス):\n  %s",
+                "\n  ".join(unresolved))
+    elif remote:
+        unresolved = bind_mounts.collect_remote_warnings(scaled_services)
+        if unresolved:
+            logger.warning(
+                "リモートの docker context で起動しますが、次の bind mount は手元のパスを"
+                "指しています (リモートでは空ディレクトリになります)。~ を展開するには "
+                "project.local.yml に docker.home を書いてください:\n  %s",
+                "\n  ".join(unresolved))
+
+
 def generate_scaled_compose(
     scale: int,
     compose_file: Path = None,
@@ -717,24 +745,7 @@ def generate_scaled_compose(
         if isinstance(service, dict):
             _drop_env_names(service, dev_excluded)
 
-    # リモート扱いでは bind mount の ~ をリモート側の HOME で展開する (PLAN52 決定 7)。
-    # 生成物だけが -f で渡るので、ここで絶対パスにしておけば compose の手元 HOME への
-    # 展開は起きない。展開できない mount (~user / 相対パス) は一覧で警告する (決定 8)。
-    if docker_home:
-        unresolved = bind_mounts.expand_home(scaled_services, docker_home)
-        if unresolved:
-            logger.warning(
-                "次の bind mount はリモートには無いパスを指すため書き換えていません "
-                "(docker.home では代替できない ~user / 相対パス):\n  %s",
-                "\n  ".join(unresolved))
-    elif remote:
-        unresolved = bind_mounts.collect_remote_warnings(scaled_services)
-        if unresolved:
-            logger.warning(
-                "リモートの docker context で起動しますが、次の bind mount は手元のパスを"
-                "指しています (リモートでは空ディレクトリになります)。~ を展開するには "
-                "project.local.yml に docker.home を書いてください:\n  %s",
-                "\n  ".join(unresolved))
+    _prepare_remote_mounts(scaled_services, docker_home, remote)
 
     scaled_config = {
         'services': scaled_services,

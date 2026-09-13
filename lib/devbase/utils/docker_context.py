@@ -245,6 +245,26 @@ def ensure_remote_gid(target: DockerTarget, cache_dir: Path,
     if cached is not None:
         return cached
 
+    gid = _probe_remote_gid(target, environ, runner)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_text(f"{gid}\n", encoding="utf-8")
+    logger.info("context '%s' の docker gid を取得しました: %d (控え: %s)",
+                target.context, gid, cache_file)
+    return gid
+
+
+def _probe_remote_gid(target: DockerTarget,
+                      environ: Optional[MutableMapping[str, str]] = None,
+                      runner: Optional[Runner] = None) -> int:
+    """``DOCKER_CONTEXT`` 付きの ``docker run`` で docker.sock の gid を取る (決定 5)。
+
+    Docker 用の環境を組み、subprocess を実行し、失敗を DevbaseError へ変換し、標準
+    出力を整数化する。gid が 0 のときは socket が root 所有 / rootless の可能性を
+    警告する (値はそのまま返す)。
+
+    Raises:
+        DevbaseError: docker が非ゼロ、実行例外、または出力が整数でない。
+    """
     env = dict(os.environ if environ is None else environ)
     env[DOCKER_CONTEXT] = str(target.context)
     env.pop(DOCKER_HOST, None)
@@ -267,10 +287,6 @@ def ensure_remote_gid(target: DockerTarget, cache_dir: Path,
             "context '%s' の docker.sock の gid は 0 でした。socket が root 所有か rootless "
             "Docker の可能性があります。コンテナから docker を使えない場合は "
             "project.local.yml の docker.gid を明示してください。", target.context)
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(f"{gid}\n", encoding="utf-8")
-    logger.info("context '%s' の docker gid を取得しました: %d (控え: %s)",
-                target.context, gid, cache_file)
     return gid
 
 

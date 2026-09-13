@@ -626,6 +626,81 @@ def _launch(cmd: list, env: dict) -> None:
     )
 
 
+def _prepare_ipc_env(env, ctx: EditorContext):
+    """拾い直した IPC ソケットを env へ反映し、必要な警告ログを出す。
+
+    tmux のセッション環境から拾い直せた場合は、起動する code にもその値を渡す。
+    変数を差し替えないと code 自身が古いソケットへ繋ぎに行って失敗する。変数だけ
+    残って接続先が死んでいる IPC ソケットは無言の失敗になりやすいので明示する
+    (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
+
+    ``env`` は差し替えが要る場合のみ複製して返す (要らなければそのまま返す)。
+    """
+    stale_ipc = env.get("VSCODE_IPC_HOOK_CLI")
+    if ctx.ipc_socket and ctx.ipc_socket != stale_ipc:
+        env = dict(env)
+        env["VSCODE_IPC_HOOK_CLI"] = ctx.ipc_socket
+        logger.info(
+            "VSCODE_IPC_HOOK_CLI が古かったため tmux のセッション環境から拾い直しました "
+            "(%s → %s)。ペインのシェルに追随させたい場合は環境変数ガイドの "
+            "tmux 設定を参照してください。",
+            stale_ipc or "(未設定)", ctx.ipc_socket,
+        )
+    if stale_ipc and not ctx.in_vscode:
+        logger.warning(
+            "VSCODE_IPC_HOOK_CLI が指すソケットに接続できません (%s)。VS Code 統合"
+            "ターミナルとしては扱いません。tmux/screen のセッションを再利用している"
+            "場合や VS Code のウィンドウをリロードした後の古い端末で起きます。"
+            "ソケットファイルが残っていても、VS Code の異常終了後は listen して"
+            "おらず接続を拒否します。",
+            stale_ipc,
+        )
+    return env
+
+
+def _build_open_uri(ctx: EditorContext, env, container: str, workdir: str,
+                    workspace: Optional[str], docker_context: Optional[str],
+                    display: list) -> tuple[str, str]:
+    """開く対象の attach URI と URI フラグを組む。
+
+    ssh_host + docker_context + workspace + uri_flag + uri の組み立てを担う。
+    SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。自動推測は
+    VS Code Remote-SSH 統合端末 (in_vscode) の時だけ有効にする — plain SSH
+    (VS Code 外) は既存 ExecServer を前提にできずネスト URI が動かないため、明示
+    設定時のみ採用する。settings.context は「明示 → devbase の解決結果 → (ssh 先の
+    ときだけ) 現在の context の推測」の順 (PLAN52 決定 11)。解決結果があればローカル
+    端末でも付ける。
+
+    ネスト URI (ssh_host + docker_context) のときは、手元 VS Code に同名 context が
+    あれば ssh 先を経由せず直接 attach できるフラット URI を info ログで提示する。
+
+    戻り値は ``(uri, uri_flag)``。
+    """
+    ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
+                if ctx.is_ssh else None)
+    if ssh_host or docker_context:
+        docker_context = resolve_docker_context(env, default=docker_context)
+    else:
+        docker_context = None
+    # DEVBASE_WORKSPACE があれば *.code-workspace をワークスペースとして開く。VS Code は
+    # `--file-uri` に渡したパスが .code-workspace 拡張子なら multi-root ワークスペースとして
+    # 開くため、フォルダを開く `--folder-uri` と URI ターゲット・フラグの両方を切り替える。
+    open_target = workspace or workdir
+    uri_flag = "--file-uri" if workspace else "--folder-uri"
+    uri = build_attach_uri(container, open_target,
+                           ssh_host=ssh_host, docker_context=docker_context)
+    if ssh_host and docker_context:
+        # Windows VS Code → Remote-SSH(Mac) → 別ホストの docker という一周を避けたい
+        # 場合、手元の VS Code に同名の context があれば直接 attach できる (PLAN52)。
+        flat = build_attach_uri(container, open_target, docker_context=docker_context)
+        logger.info(
+            "手元の VS Code に同名の docker context '%s' があれば、ssh 先を経由せず "
+            "次で直接 attach できます:", docker_context)
+        logger.info("  %s %s '%s'",
+                    " ".join(shlex.quote(c) for c in display), uri_flag, flat)
+    return uri, uri_flag
+
+
 def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
                 workspace: Optional[str] = None,
                 index: int = 1, compose_file=None,
@@ -647,29 +722,9 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     """
     env = os.environ if environ is None else environ
     ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
-    # tmux のセッション環境から拾い直せた場合は、起動する code にもその値を渡す。
-    # 変数を差し替えないと code 自身が古いソケットへ繋ぎに行って失敗する。
-    stale_ipc = env.get("VSCODE_IPC_HOOK_CLI")
-    if ctx.ipc_socket and ctx.ipc_socket != stale_ipc:
-        env = dict(env)
-        env["VSCODE_IPC_HOOK_CLI"] = ctx.ipc_socket
-        logger.info(
-            "VSCODE_IPC_HOOK_CLI が古かったため tmux のセッション環境から拾い直しました "
-            "(%s → %s)。ペインのシェルに追随させたい場合は環境変数ガイドの "
-            "tmux 設定を参照してください。",
-            stale_ipc or "(未設定)", ctx.ipc_socket,
-        )
-    # 変数だけ残って接続先が死んでいる IPC ソケットは無言の失敗になりやすいので
-    # 明示する (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
-    if stale_ipc and not ctx.in_vscode:
-        logger.warning(
-            "VSCODE_IPC_HOOK_CLI が指すソケットに接続できません (%s)。VS Code 統合"
-            "ターミナルとしては扱いません。tmux/screen のセッションを再利用している"
-            "場合や VS Code のウィンドウをリロードした後の古い端末で起きます。"
-            "ソケットファイルが残っていても、VS Code の異常終了後は listen して"
-            "おらず接続を拒否します。",
-            stale_ipc,
-        )
+    # tmux のセッション環境から拾い直せた場合は env を差し替え、死んだ IPC ソケット
+    # の警告も出す。
+    env = _prepare_ipc_env(env, ctx)
     editor = resolve_editor_cmd(env)        # launch 用 (which 込み・None あり得る)
     display = resolve_editor_display(env)   # print 用 (必ず非 None)
     plan = decide_action(ctx, editor_available=bool(editor))
@@ -682,34 +737,9 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
 
     container = resolve_container_name(
         dev_service_name, project_name, index, compose_file=compose_file)
-    # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。自動推測は
-    # VS Code Remote-SSH 統合端末 (in_vscode) の時だけ有効にする — plain SSH (VS Code 外)
-    # は既存 ExecServer を前提にできずネスト URI が動かないため、明示設定時のみ採用する。
-    ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
-                if ctx.is_ssh else None)
-    # settings.context は「明示 → devbase の解決結果 → (ssh 先のときだけ) 現在の
-    # context の推測」の順 (PLAN52 決定 11)。解決結果があればローカル端末でも付ける。
-    if ssh_host or docker_context:
-        docker_context = resolve_docker_context(env, default=docker_context)
-    else:
-        docker_context = None
-    # DEVBASE_WORKSPACE があれば *.code-workspace をワークスペースとして開く。VS Code は
-    # `--file-uri` に渡したパスが .code-workspace 拡張子なら multi-root ワークスペースとして
-    # 開くため、フォルダを開く `--folder-uri` と URI ターゲット・フラグの両方を切り替える。
     workspace = workspace or resolve_workspace(env)
-    open_target = workspace or workdir
-    uri_flag = "--file-uri" if workspace else "--folder-uri"
-    uri = build_attach_uri(container, open_target,
-                           ssh_host=ssh_host, docker_context=docker_context)
-    if ssh_host and docker_context:
-        # Windows VS Code → Remote-SSH(Mac) → 別ホストの docker という一周を避けたい
-        # 場合、手元の VS Code に同名の context があれば直接 attach できる (PLAN52)。
-        flat = build_attach_uri(container, open_target, docker_context=docker_context)
-        logger.info(
-            "手元の VS Code に同名の docker context '%s' があれば、ssh 先を経由せず "
-            "次で直接 attach できます:", docker_context)
-        logger.info("  %s %s '%s'",
-                    " ".join(shlex.quote(c) for c in display), uri_flag, flat)
+    uri, uri_flag = _build_open_uri(
+        ctx, env, container, workdir, workspace, docker_context, display)
 
     if plan.action == "print_command":
         # 提示コマンドは手元 (ローカル) で実行する前提。ローカルに code が無くても

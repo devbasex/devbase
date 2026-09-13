@@ -795,6 +795,79 @@ def _report_missing_repos(config, scale: int, dev_service_name: str,
                        project_name)
 
 
+def _run_pre_up_checks(config) -> bool:
+    """`up` の起動前チェック 3 つを順に実行する。
+
+    順序と早期 return はそのまま: (1) ``.env`` の存在確認、(2) ``./pre-up`` フック、
+    (3) コンテナイメージの存在確認。どれかが失敗したら False を返し、``cmd_up`` は
+    起動へ進まない。すべて満たせば True。
+    """
+    # Pre-check 1: Ensure .env file exists with content
+    if not _ensure_env_files():
+        logger.error("Failed to create .env file. Please run 'devbase env init' manually.")
+        return False
+
+    # Pre-step: Run ./pre-up hook (e.g. clone source repos used as build contexts)
+    if not _run_pre_up_hook(config):
+        return False
+
+    # Pre-check 2: Ensure container images exist
+    if not _ensure_images():
+        logger.error(
+            "Failed to ensure container images. "
+            "Run 'devbase container build' for build-based services, "
+            "or 'docker pull <image>' for image-only services."
+        )
+        return False
+
+    return True
+
+
+def _run_deploy_pipeline(project_name: str, scale: int, config,
+                         target: docker_context.DockerTarget,
+                         dev_service_name: str) -> Path:
+    """[1/6]〜[5/6] のデプロイ本体 (volume/network/compose 生成・down・up・wait)。
+
+    復号と構成生成は既存コンテナを止める**前**に済ませる。鍵の紛失・権限不備・
+    暗号文の破損でここが失敗しても、稼働中の開発環境を落としたままにしないため。
+    :func:`_previous_scale_compose` が退避した旧構成で停止し、生成した新構成で
+    起動して ready を待つ。生成した override compose のパスを返す (後処理の
+    ``_report_missing_repos`` / ``_apply_window_titles`` / ``_maybe_open_editor``
+    が同じファイルを ``-f`` で使う)。
+    """
+    logger.info("[1/6] Ensuring volumes exist...")
+    ensure_volumes(scale, project_name)
+
+    logger.info("[1.5/6] Ensuring network exists...")
+    ensure_network('devbase_net')
+
+    # 復号と構成生成は既存コンテナを止める**前**に済ませる。鍵の紛失・権限
+    # 不備・暗号文の破損でここが失敗しても、稼働中の開発環境を落としたまま
+    # にしないため。
+    with _previous_scale_compose() as down_compose_file:
+        logger.info("[2/6] Generating scaled compose file...")
+        override_file = _generate_compose_for(
+            scale, _inject_secrets(required=True),
+            dev_environment=project_runtime.container_env(config, project_name),
+            **_remote_generate_kwargs(target))
+        logger.info("Generated: %s", override_file)
+
+        logger.info("[3/6] Stopping existing containers...")
+        docker_compose_down(compose_file=down_compose_file)
+
+    logger.info("[4/6] Starting containers...")
+    docker_compose_up(compose_file=override_file, detach=True)
+
+    logger.info("[5/6] Waiting for containers to be ready...")
+    wait_for_containers_ready(
+        container_prefix=dev_service_name,
+        scale=scale,
+        compose_file=override_file,
+        timeout=60
+    )
+    return override_file
+
+
 def cmd_up(project_name: str = None, scale: int = None,
            open_editor: Optional[bool] = None,
            open_index: Optional[int] = None,
@@ -822,22 +895,7 @@ def cmd_up(project_name: str = None, scale: int = None,
     logger.info("Deploying project '%s' with scale=%d (dev service: %s)",
                 project_name, scale, dev_service_name)
 
-    # Pre-check 1: Ensure .env file exists with content
-    if not _ensure_env_files():
-        logger.error("Failed to create .env file. Please run 'devbase env init' manually.")
-        return 1
-
-    # Pre-step: Run ./pre-up hook (e.g. clone source repos used as build contexts)
-    if not _run_pre_up_hook(config):
-        return 1
-
-    # Pre-check 2: Ensure container images exist
-    if not _ensure_images():
-        logger.error(
-            "Failed to ensure container images. "
-            "Run 'devbase container build' for build-based services, "
-            "or 'docker pull <image>' for image-only services."
-        )
+    if not _run_pre_up_checks(config):
         return 1
 
     # Pre-step: Auto snapshot（差分世代数ベース世代管理）。リモート扱いでは飛ばす
@@ -847,36 +905,8 @@ def cmd_up(project_name: str = None, scale: int = None,
         _auto_snapshot()
 
     try:
-        logger.info("[1/6] Ensuring volumes exist...")
-        ensure_volumes(scale, project_name)
-
-        logger.info("[1.5/6] Ensuring network exists...")
-        ensure_network('devbase_net')
-
-        # 復号と構成生成は既存コンテナを止める**前**に済ませる。鍵の紛失・権限
-        # 不備・暗号文の破損でここが失敗しても、稼働中の開発環境を落としたまま
-        # にしないため。
-        with _previous_scale_compose() as down_compose_file:
-            logger.info("[2/6] Generating scaled compose file...")
-            override_file = _generate_compose_for(
-                scale, _inject_secrets(required=True),
-                dev_environment=project_runtime.container_env(config, project_name),
-                **_remote_generate_kwargs(target))
-            logger.info("Generated: %s", override_file)
-
-            logger.info("[3/6] Stopping existing containers...")
-            docker_compose_down(compose_file=down_compose_file)
-
-        logger.info("[4/6] Starting containers...")
-        docker_compose_up(compose_file=override_file, detach=True)
-
-        logger.info("[5/6] Waiting for containers to be ready...")
-        wait_for_containers_ready(
-            container_prefix=dev_service_name,
-            scale=scale,
-            compose_file=override_file,
-            timeout=60
-        )
+        override_file = _run_deploy_pipeline(
+            project_name, scale, config, target, dev_service_name)
 
         # clone できなかった repo があれば伝える (揃っていれば何も出さない)。
         _report_missing_repos(config, scale, dev_service_name, project_name,
