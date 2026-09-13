@@ -102,7 +102,8 @@ def cmd_env(devbase_root: Path, args) -> int:
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
         'exec':    lambda: cmd_env_exec(devbase_root,
-                                        list(getattr(args, 'argv', []) or [])),
+                                        list(getattr(args, 'argv', []) or []),
+                                        context=getattr(args, 'context', None)),
         'encrypt': lambda: _migrate(args).cmd_env_encrypt(
             devbase_root,
             dry_run=getattr(args, 'dry_run', False),
@@ -147,15 +148,22 @@ def _migrate(_args=None):
     return env_migrate
 
 
-def cmd_env_exec(devbase_root: Path, argv) -> int:
+def cmd_env_exec(devbase_root: Path, argv, context: Optional[str] = None) -> int:
     """機密を環境変数として渡した状態でコマンドを実行する。
 
     起動ラッパーは共通の機密ファイルを読み込まなくなったため、ホスト側で動く
     処理のうち値を必要とするもの (Docker Compose の変数展開など) は、この
     コマンドを通して実行する (plan35 §4.4)。復号結果は子プロセスの環境変数
     としてのみ渡り、ファイルには書き出さない。
+
+    docker context (PLAN52) もここで子プロセスへ載せる。カレントディレクトリの
+    ``project.local.yml`` と env、引数 ``--context`` から解決し、機密を載せた**後**の
+    辞書へ反映するので、``.env`` の同名キーに負けない。gid・home・リモート判定は
+    行わない (docker を呼ばない)。
     """
     from devbase.env import runtime as _runtime
+    from devbase.project.local_config import load_project_local_config
+    from devbase.utils import docker_context
 
     # argparse.REMAINDER は区切りの `--` も残すため、先頭のものだけ取り除く。
     # 2 つ目以降はコマンド自身への引数なのでそのまま渡す。
@@ -168,6 +176,9 @@ def cmd_env_exec(devbase_root: Path, argv) -> int:
 
     env = _runtime.child_env(devbase_root,
                              _runtime.current_project_name(devbase_root))
+    settings = load_project_local_config(Path.cwd()).docker
+    docker_context.apply(docker_context.choose_context(settings, cli_context=context,
+                                                       environ=env), env, track=False)
     try:
         return subprocess.run(argv, env=env).returncode
     except FileNotFoundError:

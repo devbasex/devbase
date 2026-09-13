@@ -110,6 +110,25 @@ def _add_name_arg(parser):
     return parser
 
 
+def _add_context_arg(parser):
+    """lifecycle サブコマンドに `--context NAME` を登録する (PLAN52)。
+
+    docker context を一時的に上書きする。優先順位は CLI > env `DEVBASE_DOCKER_CONTEXT`
+    > `project.local.yml` の `docker.context` > 現在の context。空文字は受け付けない。
+    """
+    parser.add_argument('--context', dest='context', metavar='NAME',
+                        type=_non_empty, default=None,
+                        help='Docker context to use for this command '
+                             '(overrides DEVBASE_DOCKER_CONTEXT and project.local.yml)')
+    return parser
+
+
+def _non_empty(value: str) -> str:
+    if not value.strip():
+        raise argparse.ArgumentTypeError('--context には context 名を指定してください')
+    return value.strip()
+
+
 def _add_open_args(parser):
     """`up` に エディタ自動オープン関連フラグを登録する (PLAN31_3)。
 
@@ -140,6 +159,7 @@ def _add_login_subparser(sub):
     """
     p = sub.add_parser('login', help='Login to container')
     p.add_argument('index', nargs='?', default='1', help='Container index')
+    _add_context_arg(p)
 
 
 def _add_build_subparser(sub):
@@ -151,6 +171,7 @@ def _add_build_subparser(sub):
     """
     p = sub.add_parser('build', help='Build container images')
     p.add_argument('image', nargs='?', default=None, help='Image name')
+    _add_context_arg(p)
     # `--no-cache` と `--expires` は仕様上併用しない (無条件 no-cache か期限判定の
     # いずれか)。併用すると no-cache が優先され --expires が黙殺されるため、
     # add_mutually_exclusive_group で CLI レベルの排他制御を行い usage error で落とす。
@@ -171,24 +192,28 @@ def _add_container_parser(subparsers):
                                       help='Manage containers')
     ct_sub = ct_parser.add_subparsers(dest='subcommand')
 
-    _add_open_args(ct_sub.add_parser('up', help='Start containers'))
-    ct_sub.add_parser('down', help='Stop and remove containers')
+    _add_context_arg(_add_open_args(ct_sub.add_parser('up', help='Start containers')))
+    _add_context_arg(ct_sub.add_parser('down', help='Stop and remove containers'))
 
     _add_login_subparser(ct_sub)
 
     ct_ps = ct_sub.add_parser('ps', help='Show container status')
     ct_ps.add_argument('--all', '-a', action='store_true', help='Show all containers')
+    _add_context_arg(ct_ps)
 
     ct_logs = ct_sub.add_parser('logs', help='Show container logs')
     ct_logs.add_argument('--follow', '-f', action='store_true', help='Follow log output')
     ct_logs.add_argument('--tail', type=int, default=None, help='Number of lines')
+    _add_context_arg(ct_logs)
 
     ct_scale = ct_sub.add_parser('scale', help='Scale containers online')
     ct_scale.add_argument('new_scale', type=int, help='New number of containers')
+    _add_context_arg(ct_scale)
 
     _add_build_subparser(ct_sub)
 
-    ct_sub.add_parser('rebuild', help='Rebuild stale images (= build --expires=7)')
+    _add_context_arg(ct_sub.add_parser(
+        'rebuild', help='Rebuild stale images (= build --expires=7)'))
 
 
 def _add_project_parser(subparsers):
@@ -211,25 +236,29 @@ def _add_project_parser(subparsers):
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')
 
-    _add_open_args(_add_name_arg(pj_sub.add_parser('up', help='Start containers')))
-    _add_name_arg(pj_sub.add_parser('down', help='Stop and remove containers'))
+    _add_context_arg(_add_open_args(_add_name_arg(
+        pj_sub.add_parser('up', help='Start containers'))))
+    _add_context_arg(_add_name_arg(pj_sub.add_parser('down', help='Stop and remove containers')))
 
     _add_login_subparser(pj_sub)
 
     pj_ps = pj_sub.add_parser('ps', help='Show container status')
     _add_name_arg(pj_ps)
     pj_ps.add_argument('--all', '-a', action='store_true', help='Show all containers')
+    _add_context_arg(pj_ps)
 
     pj_logs = pj_sub.add_parser('logs', help='Show container logs')
     _add_name_arg(pj_logs)
     pj_logs.add_argument('--follow', '-f', action='store_true', help='Follow log output')
     pj_logs.add_argument('--tail', type=int, default=None, help='Number of lines')
+    _add_context_arg(pj_logs)
 
     # NOTE: `[name]` optional + `new_scale` 必須 int の順。値が 1 個なら new_scale に、
     # 2 個なら (name, new_scale) に割り当てられ曖昧にならない (tests/cli 参照)。
     pj_scale = pj_sub.add_parser('scale', help='Scale containers online')
     _add_name_arg(pj_scale)
     pj_scale.add_argument('new_scale', type=int, help='New number of containers')
+    _add_context_arg(pj_scale)
 
     _add_build_subparser(pj_sub)
 
@@ -237,8 +266,8 @@ def _add_project_parser(subparsers):
     # 省略可能な `[name]` を取り、name 指定時は _dispatch_lifecycle が chdir してから
     # 実行する。wrapper の _PROJECT_NAME_SUBCOMMANDS / _NAME_RESOLVABLE_SHORTCUTS にも
     # 追加すること。
-    _add_name_arg(pj_sub.add_parser(
-        'rebuild', help='Rebuild stale images (= build --expires=7)'))
+    _add_context_arg(_add_name_arg(pj_sub.add_parser(
+        'rebuild', help='Rebuild stale images (= build --expires=7)')))
 
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
@@ -325,6 +354,9 @@ def _add_env_parser(subparsers):
     env_exec = env_sub.add_parser(
         'exec',
         help='Run a command with the decrypted secrets in its environment')
+    # shell の `devbase build --context NAME` がここへ引数で渡す (PLAN52 決定 9)。
+    # 環境変数で渡すと dispatch 前の機密注入が .env の同名キーで上書きするため。
+    _add_context_arg(env_exec)
     env_exec.add_argument('argv', nargs=argparse.REMAINDER,
                           metavar='-- CMD [ARGS...]',
                           help='Command to run (prefix with -- to pass flags)')
@@ -562,19 +594,23 @@ def _add_shortcuts(subparsers):
     ps_sc = subparsers.add_parser('ps', help='Show container status')
     _add_name_arg(ps_sc)
     ps_sc.add_argument('--all', '-a', action='store_true', help='Show all containers')
+    _add_context_arg(ps_sc)
 
-    _add_open_args(_add_name_arg(subparsers.add_parser('up', help='Start containers')))
-    _add_name_arg(subparsers.add_parser('down', help='Stop and remove containers'))
+    _add_context_arg(_add_open_args(_add_name_arg(
+        subparsers.add_parser('up', help='Start containers'))))
+    _add_context_arg(_add_name_arg(
+        subparsers.add_parser('down', help='Stop and remove containers')))
 
     # `[name]` optional + `new_scale` 必須 int の順 (project scale と同じ規則)。
     scale_sc = subparsers.add_parser('scale', help='Scale containers online')
     _add_name_arg(scale_sc)
     scale_sc.add_argument('new_scale', type=int, help='New number of containers')
+    _add_context_arg(scale_sc)
 
     # `rebuild` は project rebuild のトップレベルシノニム (Python 実装のため build と
     # 異なりショートカット可)。up/down と同じく `[name]` を受け付ける。
-    _add_name_arg(subparsers.add_parser(
-        'rebuild', help='Rebuild stale images (= build --expires=7)'))
+    _add_context_arg(_add_name_arg(subparsers.add_parser(
+        'rebuild', help='Rebuild stale images (= build --expires=7)')))
 
     # `list` は `project list` のトップレベルシノニム。lifecycle ではなく一覧表示
     # のため SHORTCUTS (project lifecycle へ写像) ではなく _dispatch で個別に

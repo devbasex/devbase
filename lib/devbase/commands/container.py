@@ -27,7 +27,9 @@ from devbase.utils.docker import (
     ensure_network
 )
 from devbase.utils.config import get_project_name
+from devbase.utils import docker_context
 from devbase.project import runtime as project_runtime
+from devbase.project.local_config import load_project_local_config
 
 logger = get_logger(__name__)
 
@@ -85,14 +87,74 @@ def _inject_secrets(*, required: bool):
             raise
         logger.warning("機密を読み込めませんでした (続行します): %s", e)
         return _runtime.SecretEnv()
+    finally:
+        # 機密ストアに DOCKER_CONTEXT / DOCKER_GID / DOCKER_HOST があると、注入が
+        # 確定済みの接続先を上書きする。反映は冪等なので注入のたびに当て直す
+        # (PLAN52 決定 13)。接続先が無ければ何もしない。
+        docker_context.reapply()
 
 
-def _generate_compose_for(scale: int, secrets, dev_environment=None) -> Path:
+def _choose_context(cli_context: Optional[str] = None) -> docker_context.ContextChoice:
+    """カレントプロジェクトの ``project.local.yml`` を読み、context を 1 つに決める。
+
+    docker を呼ばない。CLI > env ``DEVBASE_DOCKER_CONTEXT`` > ファイル > 未指定 (PLAN52)。
+    """
+    settings = load_project_local_config(Path.cwd()).docker
+    return docker_context.choose_context(settings, cli_context=cli_context)
+
+
+def _resolve_docker_target(cli_context: Optional[str] = None) -> docker_context.DockerTarget:
+    """``up`` / ``scale`` 用: 接続先を確定し、環境へ反映し、リモート扱いなら gid も決める。
+
+    順序は確定 → 反映 → gid。確定の問い合わせ (``docker context show``) は
+    ``DOCKER_CONTEXT`` を外した環境で行うので、反映の後に呼んでも判定は変わらないが、
+    設計どおり反映より前に置く。gid の取得はリモートの daemon に届く最初の呼び出しに
+    なるため、存在しない context はここで docker のメッセージと共に止まる。
+    """
+    settings = load_project_local_config(Path.cwd()).docker
+    choice = docker_context.choose_context(settings, cli_context=cli_context)
+    target = docker_context.resolve_target(choice, settings)
+    if target.context is None:
+        return target
+    logger.info("docker context: %s (%s, %s)", target.context, _SOURCE_LABELS[target.source],
+                "リモート扱い" if target.remote else "現在の context と同じ")
+    docker_context.apply(target)
+    if target.remote:
+        root = _devbase_root()
+        cache_dir = (root / '.cache') if root else Path('.cache')
+        gid = docker_context.ensure_remote_gid(target, cache_dir=cache_dir)
+        target = docker_context.DockerTarget(
+            target.context, target.source, True, target.home, gid)
+        docker_context.apply(target)
+    return target
+
+
+def _remote_generate_kwargs(target: docker_context.DockerTarget) -> dict:
+    """リモート扱いのときだけ構成生成へ渡す引数。ローカル扱いでは空 (従来の呼び出しの形)。"""
+    if not target.remote:
+        return {}
+    return {'docker_home': target.home, 'remote': True}
+
+
+_SOURCE_LABELS = {
+    'cli': '--context',
+    'env': 'DEVBASE_DOCKER_CONTEXT',
+    'file': 'project.local.yml',
+    'default': '既定',
+}
+
+
+def _generate_compose_for(scale: int, secrets, dev_environment=None,
+                          docker_home: Optional[str] = None,
+                          remote: bool = False) -> Path:
     """機密の内訳と devbase 由来の環境変数を渡してスケール構成を生成する。
 
     ``dev_environment`` は ``project.yml`` から作った clone プラン等
     (:func:`devbase.project.runtime.container_env`)。dev サービスへ載せることで、
     entrypoint がコンテナ内で複数リポジトリを clone できる。
+
+    ``docker_home`` / ``remote`` はリモート扱いのときの bind mount の書き換えと警告
+    (PLAN52)。ローカル扱いでは両方とも既定値のまま渡す。
     """
     return generate_scaled_compose(
         scale,
@@ -100,6 +162,8 @@ def _generate_compose_for(scale: int, secrets, dev_environment=None) -> Path:
         global_env_names=secrets.global_names,
         project_env_names=secrets.project_names,
         dev_environment=dev_environment,
+        docker_home=docker_home,
+        remote=remote,
     )
 
 
@@ -136,8 +200,10 @@ def _previous_scale_compose():
         backup.unlink(missing_ok=True)
 
 
-def _compose_run(subcommand: str, *extra_args: str) -> int:
+def _compose_run(subcommand: str, *extra_args: str,
+                 context: Optional[str] = None) -> int:
     """docker compose コマンドを実行する共通関数"""
+    docker_context.apply(_choose_context(context))
     _inject_secrets(required=False)
     cmd = ['docker', 'compose']
     if _SCALE_COMPOSE_FILE.exists():
@@ -439,37 +505,52 @@ def _dispatch_lifecycle(args) -> int:
     """
     subcmd = getattr(args, 'subcommand', None)
     project_name = getattr(args, 'name', None) or getattr(args, 'project_name', None)
+    context = getattr(args, 'context', None)
 
-    # name 指定時はディレクトリを解決して chdir する。解決失敗 (DEVBASE_ROOT 未設定
-    # / 存在しない name) は候補提示の上でエラー終了する。
-    if project_name:
-        if not _resolve_project_name(project_name):
-            return 1
+    # 接続先の控えは lifecycle 操作の単位で生きる (PLAN52 決定 13)。TUI は 1 プロセスで
+    # 操作を続けるため、開始時にも捨てて前の操作の接続先を持ち越さない。
+    docker_context.reset()
+    try:
+        # name 指定時はディレクトリを解決して chdir する。解決失敗 (DEVBASE_ROOT 未設定
+        # / 存在しない name) は候補提示の上でエラー終了する。
+        if project_name:
+            if not _resolve_project_name(project_name):
+                return 1
+            # cli.main() は dispatch の前に**現在地**の機密を注入している。切替先の
+            # context を解決する前に、切替元の .env に残る DEVBASE_DOCKER_CONTEXT を
+            # 消し、切替先の機密で作り直す (PLAN52)。
+            _inject_secrets(required=False)
 
-    handlers = {
-        'up':    lambda: cmd_up(project_name=project_name,
-                                scale=getattr(args, 'scale', None),
-                                open_editor=getattr(args, 'open_editor', None),
-                                open_index=getattr(args, 'open_index', None)),
-        'down':  lambda: cmd_down(),
-        'login': lambda: cmd_login(index=getattr(args, 'index', '1')),
-        'ps':    lambda: cmd_ps(all_containers=getattr(args, 'all', False)),
-        'logs':  lambda: cmd_logs(follow=getattr(args, 'follow', False),
-                                  tail=getattr(args, 'tail', None)),
-        'scale': lambda: cmd_scale(new_scale=getattr(args, 'new_scale', None),
-                                   project_name=project_name),
-        'build': lambda: cmd_build(image=getattr(args, 'image', None),
-                                   no_cache=getattr(args, 'no_cache', False),
-                                   expires=getattr(args, 'expires', None)),
-        'rebuild': lambda: cmd_rebuild(),
-    }
+        # `--context` は指定されたときだけ渡す。各 handler の既定は None なので結果は
+        # 同じで、指定が無い経路は従来と同じ呼び出しの形を保つ。
+        ctx = {'context': context} if context is not None else {}
+        handlers = {
+            'up':    lambda: cmd_up(project_name=project_name,
+                                    scale=getattr(args, 'scale', None),
+                                    open_editor=getattr(args, 'open_editor', None),
+                                    open_index=getattr(args, 'open_index', None),
+                                    **ctx),
+            'down':  lambda: cmd_down(**ctx),
+            'login': lambda: cmd_login(index=getattr(args, 'index', '1'), **ctx),
+            'ps':    lambda: cmd_ps(all_containers=getattr(args, 'all', False), **ctx),
+            'logs':  lambda: cmd_logs(follow=getattr(args, 'follow', False),
+                                      tail=getattr(args, 'tail', None), **ctx),
+            'scale': lambda: cmd_scale(new_scale=getattr(args, 'new_scale', None),
+                                       project_name=project_name, **ctx),
+            'build': lambda: cmd_build(image=getattr(args, 'image', None),
+                                       no_cache=getattr(args, 'no_cache', False),
+                                       expires=getattr(args, 'expires', None), **ctx),
+            'rebuild': lambda: cmd_rebuild(**ctx),
+        }
 
-    handler = handlers.get(subcmd)
-    if handler:
-        return handler()
+        handler = handlers.get(subcmd)
+        if handler:
+            return handler()
 
-    logger.error("サブコマンドを指定してください: %s", ', '.join(handlers))
-    return 1
+        logger.error("サブコマンドを指定してください: %s", ', '.join(handlers))
+        return 1
+    finally:
+        docker_context.reset()
 
 
 def cmd_project(args) -> int:
@@ -520,11 +601,19 @@ def _snapshot_min_interval_minutes() -> int:
         return _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
 
 
-def _auto_snapshot() -> None:
+def _auto_snapshot(remote: bool = False) -> None:
     """デプロイ前の自動スナップショット (差分世代数ベース世代管理)。
 
     失敗してもデプロイは続行する (warning のみ)。DEVBASE_ROOT 未設定なら no-op。
+    リモート扱い (PLAN52 決定 12) では作らない。控えたいボリュームがリモートにあり、
+    手元のディレクトリを bind mount する仕組みではリモートの空ディレクトリへ書いて
+    しまうため。
     """
+    if remote:
+        logger.warning(
+            "[0/6] リモートの docker context ではスナップショットを扱えないため、"
+            "自動スナップショットを飛ばします")
+        return
     devbase_root = os.environ.get('DEVBASE_ROOT')
     if not devbase_root:
         return
@@ -611,7 +700,8 @@ def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
 
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
                        open_index: Optional[int], scale: int,
-                       config, compose_file=None) -> None:
+                       config, compose_file=None,
+                       docker_context_name: Optional[str] = None) -> None:
     """`up` 完了後に dev コンテナへ接続したエディタを開く ([6/6])。
 
     有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら
@@ -658,6 +748,7 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
             workspace=workspace,
             index=open_index,
             compose_file=compose_file,
+            docker_context=docker_context_name,
         )
     except Exception as e:  # noqa: BLE001 - エディタ起動で up を倒さない
         logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
@@ -706,13 +797,22 @@ def _report_missing_repos(config, scale: int, dev_service_name: str,
 
 def cmd_up(project_name: str = None, scale: int = None,
            open_editor: Optional[bool] = None,
-           open_index: Optional[int] = None) -> int:
+           open_index: Optional[int] = None,
+           context: Optional[str] = None) -> int:
     """Deploy containers with specified scale"""
     if project_name is None:
         project_name = get_project_name()
 
     # project.yml が唯一の正 (PLAN32)。読めなければ移行手順を案内して止まる。
     config = project_runtime.current_project_config()
+
+    # 接続先 (docker context) を確定して環境へ反映する (PLAN52)。以降の docker /
+    # docker compose / フックはすべて環境変数 DOCKER_CONTEXT を継承する。
+    try:
+        target = _resolve_docker_target(context)
+    except DevbaseError as e:
+        logger.error("Deploy failed: %s", e)
+        return 1
 
     if scale is None:
         scale = config.scale if config.scale is not None else project_runtime.DEFAULT_SCALE
@@ -740,8 +840,11 @@ def cmd_up(project_name: str = None, scale: int = None,
         )
         return 1
 
-    # Pre-step: Auto snapshot（差分世代数ベース世代管理）
-    _auto_snapshot()
+    # Pre-step: Auto snapshot（差分世代数ベース世代管理）。リモート扱いでは飛ばす
+    if target.remote:
+        _auto_snapshot(remote=True)
+    else:
+        _auto_snapshot()
 
     try:
         logger.info("[1/6] Ensuring volumes exist...")
@@ -757,7 +860,8 @@ def cmd_up(project_name: str = None, scale: int = None,
             logger.info("[2/6] Generating scaled compose file...")
             override_file = _generate_compose_for(
                 scale, _inject_secrets(required=True),
-                dev_environment=project_runtime.container_env(config, project_name))
+                dev_environment=project_runtime.container_env(config, project_name),
+                **_remote_generate_kwargs(target))
             logger.info("Generated: %s", override_file)
 
             logger.info("[3/6] Stopping existing containers...")
@@ -790,7 +894,8 @@ def cmd_up(project_name: str = None, scale: int = None,
                              compose_file=override_file)
 
         _maybe_open_editor(project_name, open_editor, open_index, scale,
-                           config, compose_file=override_file)
+                           config, compose_file=override_file,
+                           docker_context_name=target.context)
 
         logger.info("=== Deploy completed successfully ===")
         return 0
@@ -807,8 +912,9 @@ def cmd_up(project_name: str = None, scale: int = None,
 # cmd_down
 # ---------------------------------------------------------------------------
 
-def cmd_down() -> int:
+def cmd_down(context: Optional[str] = None) -> int:
     """Stop and remove containers"""
+    docker_context.apply(_choose_context(context))
     _inject_secrets(required=False)
     compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
     docker_compose_down(compose_file=compose_file)
@@ -829,8 +935,9 @@ def cmd_down() -> int:
 # cmd_login
 # ---------------------------------------------------------------------------
 
-def cmd_login(index: str = '1') -> int:
+def cmd_login(index: str = '1', context: Optional[str] = None) -> int:
     """Login to container"""
+    docker_context.apply(_choose_context(context))
     _inject_secrets(required=False)
     dev_service = get_dev_service_name()
 
@@ -848,36 +955,43 @@ def cmd_login(index: str = '1') -> int:
 # cmd_ps
 # ---------------------------------------------------------------------------
 
-def cmd_ps(all_containers: bool = False) -> int:
+def cmd_ps(all_containers: bool = False, context: Optional[str] = None) -> int:
     """Show container status via docker compose ps"""
     extra = ['--all'] if all_containers else []
-    return _compose_run('ps', *extra)
+    return _compose_run('ps', *extra, context=context)
 
 
 # ---------------------------------------------------------------------------
 # cmd_logs
 # ---------------------------------------------------------------------------
 
-def cmd_logs(follow: bool = False, tail: Optional[int] = None) -> int:
+def cmd_logs(follow: bool = False, tail: Optional[int] = None,
+             context: Optional[str] = None) -> int:
     """Show container logs via docker compose logs"""
     extra = []
     if follow:
         extra.append('--follow')
     if tail is not None:
         extra.extend(['--tail', str(tail)])
-    return _compose_run('logs', *extra)
+    return _compose_run('logs', *extra, context=context)
 
 
 # ---------------------------------------------------------------------------
 # cmd_scale
 # ---------------------------------------------------------------------------
 
-def cmd_scale(new_scale: int, project_name: str = None) -> int:
+def cmd_scale(new_scale: int, project_name: str = None,
+              context: Optional[str] = None) -> int:
     """Scale containers online without restarting existing ones"""
     if project_name is None:
         project_name = get_project_name()
 
     config = project_runtime.current_project_config()
+    try:
+        target = _resolve_docker_target(context)
+    except DevbaseError as e:
+        logger.error("Scale failed: %s", e)
+        return 1
     dev_service_name = get_dev_service_name()
     current_scale = (config.scale if config.scale is not None
                      else project_runtime.DEFAULT_SCALE)
@@ -908,7 +1022,8 @@ def cmd_scale(new_scale: int, project_name: str = None) -> int:
         logger.info("[3/5] Generating scaled compose file...")
         override_file = _generate_compose_for(
             new_scale, _inject_secrets(required=True),
-            dev_environment=project_runtime.container_env(config, project_name))
+            dev_environment=project_runtime.container_env(config, project_name),
+            **_remote_generate_kwargs(target))
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
@@ -1016,7 +1131,8 @@ def _build_single_image(image: str, no_cache: bool = False) -> int:
 
 
 def cmd_build(image: Optional[str] = None, no_cache: bool = False,
-              expires: Optional[int] = None) -> int:
+              expires: Optional[int] = None,
+              context: Optional[str] = None) -> int:
     """Build container images.
 
     引数の意味 (i07 の 3 モード):
@@ -1033,6 +1149,10 @@ def cmd_build(image: Optional[str] = None, no_cache: bool = False,
     に統一する。``image`` 指定の単体ビルドはここが唯一の実装で、shell 側の dispatch
     (``devbase build <image>``) もここへ振り分けられる (PLAN49)。
     """
+    # 接続先を環境へ反映する (PLAN52)。単体ビルドも compose ビルドも、shell 経由の
+    # 自動ビルドも、以降の docker 呼び出しは DOCKER_CONTEXT を継承する。
+    docker_context.apply(_choose_context(context))
+
     if image is not None:
         # 単体ビルド (image 指定) では期限判定を行わないため --expires は無視される。
         # 誤併用に気付けるよう警告を出す。
@@ -1104,7 +1224,7 @@ def _build_resolved(expires: Optional[int], no_cache: bool) -> int:
     return 0 if _build_with_expires(expires, image_name, inspect.stdout, dev_service) else 1
 
 
-def cmd_rebuild(expires: int = None) -> int:
+def cmd_rebuild(expires: int = None, context: Optional[str] = None) -> int:
     """Rebuild project images honoring an expiry window (``build --expires=N`` synonym).
 
     ``devbase rebuild`` は ``devbase build --expires=7`` のシノニム (既定 7 日)。
@@ -1119,6 +1239,7 @@ def cmd_rebuild(expires: int = None) -> int:
     """
     if expires is None:
         expires = _image_max_age_days()
+    docker_context.apply(_choose_context(context))
     logger.info("Rebuilding images (expires=%d days) from compose.yml ...", expires)
     return _build_resolved(expires=expires, no_cache=False)
 
@@ -1481,6 +1602,12 @@ def _run_build(no_cache: bool = False, project_no_cache: bool = False) -> bool:
         return False
 
     cmd = ['bash', str(devbase_bin), 'build']
+    # 確定済みの context は引数で渡す (PLAN52 決定 10)。bin/devbase は起動時に env を
+    # 読み直し、Python 側は .env の機密を注入するため、環境変数で渡した値は同名キーに
+    # 負ける。引数なら build) 分岐が最優先で解決する。
+    active = docker_context.active_target()
+    if active is not None and active.context:
+        cmd.extend(['--context', active.context])
     if project_no_cache:
         cmd.append('--project-no-cache')
     elif no_cache:

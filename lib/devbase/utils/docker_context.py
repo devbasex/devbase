@@ -160,20 +160,26 @@ _active: Optional[Applicable] = None
 _originals: Optional[Dict[str, Optional[str]]] = None
 
 
-def apply(target: Applicable, environ: Optional[MutableMapping[str, str]] = None) -> None:
+def apply(target: Applicable, environ: Optional[MutableMapping[str, str]] = None,
+          *, track: bool = True) -> None:
     """接続先を環境へ反映する。冪等。
 
     - context が ``None`` なら何も触らない (従来どおり CLI に委ねる)
     - ``DOCKER_CONTEXT`` を載せ、``DOCKER_HOST`` があれば警告して取り除く
     - :class:`DockerTarget` でリモート扱いかつ gid が決まっていれば ``DOCKER_GID`` も載せる
+
+    ``track=False`` は子プロセス用の辞書へ当てるだけで、モジュールの控えを持たない
+    (``env exec``)。控えを持つと、その後の :func:`reset` が別の辞書の元の値を
+    ``os.environ`` へ書き戻す。
     """
     global _active, _originals
     env = os.environ if environ is None else environ
     if target.context is None:
         return
-    if _originals is None:
-        _originals = {name: env.get(name) for name in _PROTECTED}
-    _active = target
+    if track:
+        if _originals is None:
+            _originals = {name: env.get(name) for name in _PROTECTED}
+        _active = target
 
     env[DOCKER_CONTEXT] = target.context
     if DOCKER_HOST in env:
