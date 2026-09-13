@@ -174,3 +174,32 @@ def test_save_rejects_an_invalid_config_without_writing(root):
         bc.save(root, config)
 
     assert not (root / 'secrets' / 'backend.yml').exists()
+
+
+# ---------------------------------------------------------------------------
+# secretPath の組み立て
+# ---------------------------------------------------------------------------
+
+def test_secret_paths_follow_the_documented_layout():
+    from devbase.env.secret_store import SecretRef
+
+    inf = bc.InfisicalSettings(url='https://x', project_id='p', user='member01')
+
+    assert inf.secret_path(SecretRef.for_global()) == '/team/global'
+    assert inf.secret_path(SecretRef.for_project('carmo')) == '/team/projects/carmo'
+    assert inf.secret_path(SecretRef.for_global(owner='user')) == '/users/member01/global'
+    assert inf.secret_path(SecretRef.for_project('carmo', owner='user')) == \
+        '/users/member01/projects/carmo'
+
+
+def test_secret_paths_honor_configured_prefixes():
+    from devbase.env.secret_store import SecretRef
+
+    inf = bc.InfisicalSettings(url='https://x', project_id='p', user='u',
+                               path_team_global='/shared',
+                               path_team_project_prefix='/shared/p',
+                               path_user_prefix='/people')
+
+    assert inf.secret_path(SecretRef.for_global()) == '/shared'
+    assert inf.secret_path(SecretRef.for_project('a')) == '/shared/p/a'
+    assert inf.secret_path(SecretRef.for_global(owner='user')) == '/people/u/global'

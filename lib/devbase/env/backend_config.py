@@ -112,6 +112,21 @@ class InfisicalSettings:
                     f"infisical.{key} は '/' で始まるパスで指定してください: {value!r}")
         return self
 
+    def secret_path(self, ref) -> str:
+        """参照に対応する Infisical の ``secretPath`` (設計 1 の対応表)。
+
+        ``<name>`` と ``<user>`` はいずれもパスを跨がない検査を通っているため、
+        組み立てた結果が設定した親の外へ出ることはない。
+        """
+        if ref.owner == 'user':
+            base = f"{self.path_user_prefix.rstrip('/')}/{self.user}"
+            if ref.kind == 'global':
+                return f'{base}/global'
+            return f'{base}/projects/{ref.name}'
+        if ref.kind == 'global':
+            return self.path_team_global
+        return f"{self.path_team_project_prefix.rstrip('/')}/{ref.name}"
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             'url': self.url,

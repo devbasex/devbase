@@ -121,6 +121,7 @@ def cmd_env(devbase_root: Path, args) -> int:
             dry_run=getattr(args, 'dry_run', False),
             assume_yes=getattr(args, 'assume_yes', False)),
         'doctor':  lambda: _ops().cmd_env_doctor(devbase_root),
+        'backend': lambda: _backend().cmd_env_backend(devbase_root, args),
         'keygen':  lambda: cmd_env_keygen(devbase_root,
                                           force=getattr(args, 'force', False),
                                           assume_yes=getattr(args, 'assume_yes', False)),
@@ -139,6 +140,13 @@ def _ops():
     from devbase.commands import env_ops
 
     return env_ops
+
+
+def _backend():
+    """保存先の選択・移行の実装モジュール (import を遅延させる)"""
+    from devbase.commands import env_backend
+
+    return env_backend
 
 
 def _migrate(_args=None):

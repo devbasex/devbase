@@ -57,7 +57,7 @@ SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
                           'exec', 'encrypt', 'decrypt', 'rekey', 'doctor',
-                          'export', 'import'],
+                          'export', 'import', 'backend'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
@@ -403,6 +403,45 @@ def _add_env_parser(subparsers):
 
     _add_env_export_parser(env_sub)
     _add_env_import_parser(env_sub)
+    _add_env_backend_parser(env_sub)
+
+
+def _add_env_backend_parser(env_sub):
+    """`env backend` サブコマンド群を登録する (PLAN51)。"""
+    env_backend = env_sub.add_parser(
+        'backend', help='Choose where secrets are stored (age / plaintext / infisical)')
+    backend_sub = env_backend.add_subparsers(dest='backend_action')
+
+    backend_sub.add_parser('status', help='Show the active backend and its locations')
+
+    use = backend_sub.add_parser('use', help='Switch to another backend')
+    use.add_argument('name', help='Backend name (auto / plaintext / age / infisical)')
+    use.add_argument('--url', default=None, help='Infisical server URL (https)')
+    use.add_argument('--project-id', dest='project_id', default=None,
+                     help='Infisical project ID')
+    use.add_argument('--environment', default=None,
+                     help='Infisical environment slug (default: common)')
+    use.add_argument('--user', default=None, metavar='ID',
+                     help='Identifier for this user\'s personal secrets')
+    use.add_argument('--client-id', dest='client_id', default=None,
+                     help='Machine identity client ID')
+    # client secret は argv で受けない (ps から読める位置に置かない)。
+    use.add_argument('--client-secret-stdin', dest='client_secret_stdin',
+                     action='store_true',
+                     help='Read the machine identity client secret from stdin')
+    use.add_argument('--no-cache', dest='no_cache', action='store_true',
+                     help='Do not keep an encrypted local cache of server secrets')
+
+    backend_sub.add_parser('test', help='Check the connection to the server backend')
+
+    migrate = backend_sub.add_parser(
+        'migrate', help='Copy team secrets to another backend (age <-> infisical)')
+    migrate.add_argument('--to', required=True, metavar='NAME',
+                         help='Destination backend (age / infisical)')
+    migrate.add_argument('--dry-run', action='store_true',
+                         help='Show what would move (key names only) without writing')
+    migrate.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
+                         help='Skip the confirmation prompt')
 
 
 def _add_env_export_parser(env_sub):
@@ -750,6 +789,9 @@ _NO_SECRET_INJECTION = frozenset({
     ('env', 'keygen'),
     ('env', 'encrypt'),
     ('env', 'decrypt'),
+    # backend の設定を触るコマンド。設定が壊れている・サーバに届かない状態でこそ
+    # 実行されるため、注入で先に落ちないようにする。
+    ('env', 'backend'),
 })
 
 
