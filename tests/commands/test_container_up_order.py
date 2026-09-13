@@ -23,6 +23,12 @@ OLD_COMPOSE = "services:\n  dev-1: {}\n  dev-2: {}\n"
 NEW_COMPOSE = "services:\n  dev-1: {}\n"
 
 
+@pytest.mark.parametrize("open_index, expected", [(0, 1), (3, 3), (4, 1)])
+def test_resolve_explicit_open_index_boundaries(open_index, expected):
+    """現状固定: 範囲外は 1 に戻し、scale と同じ番号は保持する。"""
+    assert container._resolve_open_index(open_index, scale=3) == expected
+
+
 @pytest.fixture
 def up_harness(tmp_path, monkeypatch):
     """cmd_up の外部作用をすべてスタブ化し、呼び出し順を記録する。"""

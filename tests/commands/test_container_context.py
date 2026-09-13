@@ -236,6 +236,29 @@ def test_up_reapplies_after_secret_injection(up_harness, docker_calls, project, 
 
 
 # ---------------------------------------------------------------------------
+# scale
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("context", [None, 'gpu-wsl'])
+def test_scale_propagates_remote_settings(up_harness, docker_calls, project, context):
+    """現状固定: scale もリモート接続先と home を構成生成へ届ける。"""
+    (project / 'project.local.yml').write_text(
+        "docker:\n  context: gpu-wsl\n  home: /home/remote\n  gid: 42\n")
+
+    assert container.cmd_scale(2, context=context) == 0
+
+    for step in ('volumes', 'network', 'generate', 'wait'):
+        assert up_harness[step]['DOCKER_CONTEXT'] == 'gpu-wsl'
+        assert up_harness[step]['DOCKER_GID'] == '42'
+    assert up_harness['generate']['kwargs'] == {'docker_home': '/home/remote', 'remote': True}
+    compose_envs = [env for cmd, _, env in docker_calls if cmd[:2] == ['docker', 'compose']]
+    assert compose_envs
+    for env in compose_envs:
+        assert env['DOCKER_CONTEXT'] == 'gpu-wsl'
+        assert env['DOCKER_GID'] == '42'
+
+
+# ---------------------------------------------------------------------------
 # down / ps / logs / login / build
 # ---------------------------------------------------------------------------
 

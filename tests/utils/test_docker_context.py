@@ -183,6 +183,31 @@ def test_reset_restores_original_values():
     assert env == {"DOCKER_HOST": "tcp://x", "DOCKER_GID": "0"}
 
 
+def test_untracked_apply_preserves_parent_target_and_originals():
+    """現状固定: 子辞書への適用は親の再適用・復元に影響しない。"""
+    original = {"DOCKER_CONTEXT": "parent-original", "DOCKER_HOST": "tcp://parent",
+                "DOCKER_GID": "10", "KEEP": "parent"}
+    parent = dict(original)
+    child = {"DOCKER_CONTEXT": "child-original", "DOCKER_HOST": "tcp://child",
+             "DOCKER_GID": "20", "KEEP": "child"}
+    try:
+        dc.apply(dc.DockerTarget("remote-a", "cli", True, None, 42), parent)
+        dc.apply(dc.DockerTarget("remote-b", "cli", True, None, 99), child, track=False)
+        expected_child = {"DOCKER_CONTEXT": "remote-b", "DOCKER_GID": "99", "KEEP": "child"}
+        assert child == expected_child
+
+        parent.update({"DOCKER_CONTEXT": "overwritten", "DOCKER_HOST": "tcp://overwritten",
+                       "DOCKER_GID": "30"})
+        dc.reapply(parent)
+        assert parent == {"DOCKER_CONTEXT": "remote-a", "DOCKER_GID": "42", "KEEP": "parent"}
+
+        dc.reset(parent)
+        assert parent == original
+        assert child == expected_child
+    finally:
+        dc.reset(parent)
+
+
 def test_apply_is_idempotent_and_keeps_first_originals():
     env = {"DOCKER_GID": "0"}
     dc.apply(dc.DockerTarget("gpu-wsl", "cli", True, None, 999), env)
