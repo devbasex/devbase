@@ -113,12 +113,37 @@ def _confirm(prompt: str, assume_yes: bool) -> bool:
 # encrypt
 # ---------------------------------------------------------------------------
 
+def _age_file_store(root: Path) -> Optional[SecretStore]:
+    """encrypt / decrypt が使う、ファイルの存在で判定する店。
+
+    どちらも age ストアと平文ストアの間で機密を移す age 固有の操作で、サーバ backend
+    には対応する概念が無い (PLAN51 決定 8)。有効な backend が age 系でなければ
+    ``None`` を返し、呼び出し側はその旨を述べて止める。age 系なら設定ファイルの
+    選択に関わらずファイルの存在で判定する (``backend: age`` でも平文が対象になる)。
+    """
+    from devbase.env import backend_config as _bc
+
+    try:
+        name = _bc.load(root).backend
+    except _bc.BackendConfigError as e:
+        logger.error("%s", e)
+        return None
+    if name not in (_bc.BACKEND_AUTO, 'age', 'plaintext'):
+        logger.error("encrypt / decrypt は age ストア専用のコマンドです "
+                     "(現在の backend: %s)。サーバ backend との間で移すには "
+                     "`devbase env backend migrate` を使ってください", name)
+        return None
+    return SecretStore(root, config=_bc.BackendConfig())
+
+
 def cmd_env_encrypt(devbase_root: Path, *, dry_run: bool = False,
                     assume_yes: bool = False,
                     projects: Optional[Sequence[str]] = None) -> int:
     """平文の設定を暗号化ストアへ移す"""
     root = Path(devbase_root)
-    store = SecretStore(root)
+    store = _age_file_store(root)
+    if store is None:
+        return 1
 
     try:
         recipients = agekeys.resolve_recipients(root)
@@ -339,7 +364,9 @@ def cmd_env_decrypt(devbase_root: Path, *, dry_run: bool = False,
                     projects: Optional[Sequence[str]] = None) -> int:
     """暗号化された設定を平文へ戻す"""
     root = Path(devbase_root)
-    store = SecretStore(root)
+    store = _age_file_store(root)
+    if store is None:
+        return 1
 
     refs = _select_refs(root, store, MODE_AGE, projects)
     if not refs:
