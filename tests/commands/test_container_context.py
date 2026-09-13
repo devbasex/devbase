@@ -385,3 +385,29 @@ def test_parser_has_no_top_level_logs():
     from devbase.cli import _create_parser
     with pytest.raises(SystemExit):
         _create_parser().parse_args(['logs'])
+
+
+def test_dispatch_clears_source_secrets_before_loading_target_env(project, monkeypatch):
+    """A の機密 (DEVBASE_DOCKER_CONTEXT=a) を、B の env が載せた b を消さずに落とす。"""
+    b = project / 'projects' / 'B'
+    b.mkdir(parents=True)
+    (b / 'project.yml').write_text(PROJECT_YML)
+    (b / 'env').write_text("DEVBASE_DOCKER_CONTEXT=b\n")
+    # cli.main() 相当: A の機密として注入 (注入前は未設定)
+    secret_runtime.clear_injected()
+    monkeypatch.setattr(secret_runtime, 'resolve',
+                        lambda root, project, store=None: types.SimpleNamespace(
+                            values={'DEVBASE_DOCKER_CONTEXT': 'a'}, names=['DEVBASE_DOCKER_CONTEXT']))
+    secret_runtime.inject(project, None)
+    assert os.environ['DEVBASE_DOCKER_CONTEXT'] == 'a'
+
+    # 切替先 B の機密は空。_inject_secrets は実物のまま (clear_injected を通る)
+    monkeypatch.setattr(secret_runtime, 'resolve',
+                        lambda root, project, store=None: types.SimpleNamespace(values={}, names=[]))
+    seen = []
+    monkeypatch.setattr(container, 'docker_compose_down',
+                        lambda **k: seen.append(_snapshot()))
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    assert container._dispatch_lifecycle(types.SimpleNamespace(subcommand='down', name='B')) == 0
+    assert seen[-1]['DOCKER_CONTEXT'] == 'b'
+    secret_runtime.clear_injected()

@@ -54,3 +54,15 @@ def test_env_exec_does_not_keep_module_state(harness):
     (harness['root'] / 'project.local.yml').write_text("docker:\n  context: gpu-wsl\n")
     env_cmd.cmd_env_exec(harness['root'], ['--', 'true'])
     assert dc.active_target() is None
+
+
+def test_local_yml_is_read_from_project_root_when_run_in_subdir(harness, monkeypatch):
+    """projects/<name>/sub から実行しても、機密と同じくプロジェクト直下の設定を読む。"""
+    root = harness['root']
+    proj = root / 'projects' / 'A'
+    (proj / 'sub').mkdir(parents=True)
+    (proj / 'project.local.yml').write_text("docker:\n  context: gpu-wsl\n")
+    monkeypatch.chdir(proj / 'sub')
+    monkeypatch.setattr(secret_runtime, 'current_project_name', lambda r: 'A')
+    assert env_cmd.cmd_env_exec(root, ['--', 'true']) == 0
+    assert harness['env']['DOCKER_CONTEXT'] == 'gpu-wsl'

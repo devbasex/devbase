@@ -174,9 +174,12 @@ def cmd_env_exec(devbase_root: Path, argv, context: Optional[str] = None) -> int
         logger.error("実行するコマンドを指定してください: devbase env exec -- CMD [ARGS...]")
         return 1
 
-    env = _runtime.child_env(devbase_root,
-                             _runtime.current_project_name(devbase_root))
-    settings = load_project_local_config(Path.cwd()).docker
+    project = _runtime.current_project_name(devbase_root)
+    env = _runtime.child_env(devbase_root, project)
+    # project.local.yml は機密と同じくプロジェクト直下から読む。projects/<name>/sub から
+    # 実行しても、機密の対象 (current_project_name) と設定の対象が食い違わない。
+    project_dir = (Path(devbase_root) / 'projects' / project) if project else Path.cwd()
+    settings = load_project_local_config(project_dir).docker
     docker_context.apply(docker_context.choose_context(settings, cli_context=context,
                                                        environ=env), env, track=False)
     try:

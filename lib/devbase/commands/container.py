@@ -522,11 +522,15 @@ def _dispatch_lifecycle(args) -> int:
         # name 指定時はディレクトリを解決して chdir する。解決失敗 (DEVBASE_ROOT 未設定
         # / 存在しない name) は候補提示の上でエラー終了する。
         if project_name:
+            # cli.main() は dispatch の前に**現在地**の機密を注入している。切替先の
+            # env を読む**前**に切替元の機密を落とす (PLAN52)。後に落とすと、
+            # clear_injected が「注入前の値」へ戻す動きで、切替先の env が載せた
+            # 同名キー (DEVBASE_DOCKER_CONTEXT など) まで消してしまう。
+            from devbase.env import runtime as _runtime
+            _runtime.clear_injected()
             if not _resolve_project_name(project_name):
                 return 1
-            # cli.main() は dispatch の前に**現在地**の機密を注入している。切替先の
-            # context を解決する前に、切替元の .env に残る DEVBASE_DOCKER_CONTEXT を
-            # 消し、切替先の機密で作り直す (PLAN52)。
+            # 切替先の機密で作り直してから context を解決する。
             _inject_secrets(required=False)
 
         # `--context` は指定されたときだけ渡す。各 handler の既定は None なので結果は
