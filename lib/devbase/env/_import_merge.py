@@ -119,44 +119,6 @@ def filter_members(
     return result
 
 
-def _merge_into_existing_bytes(existing_bytes: bytes,
-                               merged: Dict[str, str]) -> bytes:
-    """既存 ``.env`` のコメント / 空行 / キー順を保持したまま、``merged`` で値を差し替える。
-
-    既存に無いキーは末尾に sorted 順で append。``merged`` から除外されたキーは
-    出力からも除外する (現状の merge ロジック上発生しないが、安全側で対応)。
-
-    値が変更されていないキーは ``raw`` 行をそのまま温存して出力する。これにより
-    例えば ``PATH=$HOME/bin`` のような未クオート値が ``PATH="\\$HOME/bin"`` に
-    勝手にエスケープされて source 時の意味が変わるのを防ぐ (PR #13 codex 指摘)。
-    値が変わったキーと新規キーのみ ``EnvFile._format_kv_line`` でフォーマットする。
-
-    ``EnvFile.dump_bytes`` で再シリアライズするとコメント・空行が失われるため、
-    ``EnvFile.parse_entries`` ベースで再構成している (PR #15 gemini 指摘)。
-    """
-    seen: set[str] = set()
-    out_lines: List[str] = []
-    for e in EnvFile.parse_entries(existing_bytes):
-        if e.kind != 'kv' or e.key is None:
-            out_lines.append(e.raw + '\n')
-            continue
-        if e.key in merged:
-            seen.add(e.key)
-            new_value = merged[e.key]
-            if e.value == new_value:
-                # 値が変わっていないキーは元の raw 行を温存する (escape 形式や
-                # クオート有無を保持して source 時の意味が変わらないように)
-                out_lines.append(e.raw + '\n')
-            else:
-                out_lines.append(
-                    EnvFile._format_kv_line(e.key, new_value)
-                )
-        # merged から除外されているキーは entries からも落とす
-    for key in sorted(k for k in merged if k not in seen):
-        out_lines.append(EnvFile._format_kv_line(key, merged[key]))
-    return ''.join(out_lines).encode('utf-8')
-
-
 def _plan_replace(target: Path, arcname: str, incoming: Dict[str, str],
                   existing: Dict[str, str], incoming_bytes: bytes,
                   target_exists: bool) -> Plan:
@@ -251,7 +213,7 @@ def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
     parse_bytes 経由でも完全に round-trip できる前提が崩れた瞬間に二重エスケープが
     発生するためである (PR #15 codex 指摘)。
 
-    既存ファイルが存在する merge 経路では :func:`_merge_into_existing_bytes` で
+    既存ファイルが存在する merge 経路では :meth:`EnvFile.render_updated_bytes` で
     既存のコメント / 空行 / キー順を保持したまま値だけ差し替える (PR #15 gemini 指摘)。
     """
     incoming = EnvFile.parse_bytes(incoming_bytes)
@@ -280,7 +242,7 @@ def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
     else:
         raise MergeError(f"不明な --merge モード: {merge!r}")
 
-    new_bytes = (_merge_into_existing_bytes(existing_bytes, state.merged)
+    new_bytes = (EnvFile.render_updated_bytes(existing_bytes, state.merged)
                  if target_exists else incoming_bytes)
     return Plan(
         target=target,

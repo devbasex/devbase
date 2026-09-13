@@ -204,6 +204,45 @@ class EnvFile:
                 lines.append(e.raw + '\n')
         return ''.join(lines).encode('utf-8')
 
+    @staticmethod
+    def render_updated_bytes(existing_bytes: bytes,
+                             values: Dict[str, str]) -> bytes:
+        """既存 ``.env`` のコメント / 空行 / キー順を保持したまま、``values`` で値を差し替える。
+
+        既存に無いキーは末尾に sorted 順で append。``values`` から除外されたキーは
+        出力からも除外する (import の merge ロジック上発生しないが、安全側で対応)。
+
+        値が変更されていないキーは ``raw`` 行をそのまま温存して出力する。これにより
+        例えば ``PATH=$HOME/bin`` のような未クオート値が ``PATH="\\$HOME/bin"`` に
+        勝手にエスケープされて source 時の意味が変わるのを防ぐ (PR #13 codex 指摘)。
+        値が変わったキーと新規キーのみ :meth:`_format_kv_line` でフォーマットする。
+
+        :meth:`dump_bytes` / :meth:`dump_entries_bytes` は全キーを再整形するため、
+        コメント・空行と未変更行の原文を残すこの経路は :meth:`parse_entries`
+        ベースで別に再構成する (PR #15 gemini 指摘)。
+        """
+        seen: set[str] = set()
+        out_lines: List[str] = []
+        for e in EnvFile.parse_entries(existing_bytes):
+            if e.kind != 'kv' or e.key is None:
+                out_lines.append(e.raw + '\n')
+                continue
+            if e.key in values:
+                seen.add(e.key)
+                new_value = values[e.key]
+                if e.value == new_value:
+                    # 値が変わっていないキーは元の raw 行を温存する (escape 形式や
+                    # クオート有無を保持して source 時の意味が変わらないように)
+                    out_lines.append(e.raw + '\n')
+                else:
+                    out_lines.append(
+                        EnvFile._format_kv_line(e.key, new_value)
+                    )
+            # values から除外されているキーは entries からも落とす
+        for key in sorted(k for k in values if k not in seen):
+            out_lines.append(EnvFile._format_kv_line(key, values[key]))
+        return ''.join(out_lines).encode('utf-8')
+
     def load(self) -> Dict[str, str]:
         """ファイルを読み込みkey=valueをパースする"""
         if not self.file_path.exists():

@@ -179,32 +179,40 @@ def _str(value: Any, default: str = '') -> str:
     return text if text else default
 
 
+def _infisical_from_dict(raw_inf: Any, backend: str) -> Optional[InfisicalSettings]:
+    """``infisical:`` 節を解釈する。節が無く backend も infisical でなければ ``None``。
+
+    backend が infisical なのに節が無いときは空の設定を返し、欠けている項目は
+    :meth:`InfisicalSettings.validate` がキー名を挙げて拒む。
+    """
+    if not (isinstance(raw_inf, dict) or backend == BACKEND_INFISICAL):
+        return None
+    raw_inf = raw_inf if isinstance(raw_inf, dict) else {}
+    defaults = InfisicalSettings(url='', project_id='', user='')
+    timeout = raw_inf.get('timeout_seconds')
+    return InfisicalSettings(
+        url=_str(raw_inf.get('url')),
+        project_id=_str(raw_inf.get('project_id')),
+        user=_str(raw_inf.get('user')),
+        environment=_str(raw_inf.get('environment'), defaults.environment),
+        path_team_global=_str(raw_inf.get('path_team_global'),
+                              defaults.path_team_global),
+        path_team_project_prefix=_str(raw_inf.get('path_team_project_prefix'),
+                                      defaults.path_team_project_prefix),
+        path_user_prefix=_str(raw_inf.get('path_user_prefix'),
+                              defaults.path_user_prefix),
+        api_version=_str(raw_inf.get('api_version'), defaults.api_version),
+        timeout_seconds=(defaults.timeout_seconds if timeout in (None, '')
+                         else timeout),
+    )
+
+
 def _from_dict(data: Dict[str, Any], source: Optional[Path]) -> BackendConfig:
     if not isinstance(data, dict):
         raise BackendConfigError(f"{source} の内容がマッピングではありません")
 
     backend = _str(data.get('backend'), BACKEND_AUTO)
-    raw_inf = data.get('infisical')
-    infisical: Optional[InfisicalSettings] = None
-    if isinstance(raw_inf, dict) or backend == BACKEND_INFISICAL:
-        raw_inf = raw_inf if isinstance(raw_inf, dict) else {}
-        defaults = InfisicalSettings(url='', project_id='', user='')
-        timeout = raw_inf.get('timeout_seconds')
-        infisical = InfisicalSettings(
-            url=_str(raw_inf.get('url')),
-            project_id=_str(raw_inf.get('project_id')),
-            user=_str(raw_inf.get('user')),
-            environment=_str(raw_inf.get('environment'), defaults.environment),
-            path_team_global=_str(raw_inf.get('path_team_global'),
-                                  defaults.path_team_global),
-            path_team_project_prefix=_str(raw_inf.get('path_team_project_prefix'),
-                                          defaults.path_team_project_prefix),
-            path_user_prefix=_str(raw_inf.get('path_user_prefix'),
-                                  defaults.path_user_prefix),
-            api_version=_str(raw_inf.get('api_version'), defaults.api_version),
-            timeout_seconds=(defaults.timeout_seconds if timeout in (None, '')
-                             else timeout),
-        )
+    infisical = _infisical_from_dict(data.get('infisical'), backend)
 
     raw_cache = data.get('cache')
     cache_enabled = True
