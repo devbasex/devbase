@@ -462,9 +462,12 @@ case "$_resolved_cmd" in
         if [ "$_expect_context" = 1 ]; then
             echo "Error: --context requires a context name" >&2; exit 2
         fi
+        # bash 3.2 は空配列の "${arr[@]}" を set -u で未定義扱いするが、この wrapper は
+        # set -u を使わないので、抜き取った残りをそのまま _DEVBASE_ARGS へ戻してよい。
+        _DEVBASE_ARGS=(${_build_args[@]+"${_build_args[@]}"})
         _has_expires=0
         _build_image=""
-        for _ba in ${_build_args[@]+"${_build_args[@]}"}; do
+        for _ba in "${_DEVBASE_ARGS[@]}"; do
             case "$_ba" in
                 --expires|--expires=*) _has_expires=1 ;;
                 -*) ;;
@@ -472,10 +475,9 @@ case "$_resolved_cmd" in
             esac
         done
         if [ "$_has_expires" = 1 ] || [ -n "$_build_image" ]; then
-            run_python project build ${_build_args[@]+"${_build_args[@]}"} \
-                ${_BUILD_CONTEXT:+--context "$_BUILD_CONTEXT"}
+            run_python project build "${_DEVBASE_ARGS[@]}" ${_BUILD_CONTEXT:+--context "$_BUILD_CONTEXT"}
         else
-            cmd_build ${_build_args[@]+"${_build_args[@]}"}
+            cmd_build "${_DEVBASE_ARGS[@]}"
         fi
         ;;
     # Help and unknown
