@@ -58,6 +58,11 @@ issue は「深いマージ（local が勝つ）」を提案しているが、�
 VM でも同じ手順で済む。使うイメージは `alpine:3`。小さく、`stat` が `-c` を受け付ける。
 毎回の `up` で `docker run` を挟むと 1〜2 秒増えるため、成功した値をファイルに控える。
 
+この取り方は、リモートの docker.sock が docker グループ所有（rootful の既定）であることを
+前提にする。socket が `root:root` の構成では `0` が返り、rootless Docker では socket の場所も
+所有者も違う。どちらも失敗の経路には掛からず `group_add: ["0"]` が黙って通るため、
+そうした構成では `docker.gid` を明示する。取得した gid が `0` のときは、その旨を警告に出す。
+
 `docker info` は gid を出さない。`ssh <host> getent group docker` は採らない。context の
 ssh 設定を devbase が解釈し直すことになり、TCP+TLS の context では成り立たない。
 
@@ -155,6 +160,7 @@ export する形も、全コマンドに uv の起動が 1 回増えるため採
 | ローカル扱いで `DOCKER_GID` が変わらない | `test_container_context.py`: 現在の context と同じ名前を設定し、`DOCKER_GID` が元のまま |
 | `docker.gid` 明示 | `test_docker_context.py`: `DockerTarget.gid` と反映後の `os.environ` |
 | gid の自動取得と控え | `test_docker_context.py`: `runner` を差し替え、1 回目は `docker run` が呼ばれて控えが書かれ、2 回目は呼ばれない |
+| 取得した gid が `0` のときの警告 | `test_docker_context.py`: `runner` が `0` を返すと警告が出て値は採用される |
 | gid 取得の失敗 | `test_docker_context.py`: 非ゼロ / 非整数の出力で `DevbaseError`。`test_container_context.py`: `up` が非ゼロで終わり compose を呼ばない |
 | `~` の展開（短い書式・`~` 単独・長い書式） | `tests/volume/test_bind_mounts.py` |
 | `~user` と相対パスは警告のみ | 同上 |

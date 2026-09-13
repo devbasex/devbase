@@ -208,6 +208,8 @@ issue #162 の提案として書かれているものを、この仕様の決定
       `docker run` を起動せずにその値を使う
 - [ ] 取得に失敗した（docker が非ゼロ・出力が整数でない）とき、`up` は理由と
       `docker.gid` の書き方を示して非ゼロで終了し、コンテナを起動しない
+- [ ] 取得した gid が `0` のとき、`up` は続行するが、socket が root 所有か rootless の可能性と
+      `docker.gid` の書き方を警告に出す
 
 ### bind mount の `~`
 
@@ -284,7 +286,7 @@ issue #162 の提案として書かれているものを、この仕様の決定
 | 運用・保守性 | 解決した context と、その出所（CLI / env / ファイル / 未指定）を `up` の冒頭に info で 1 行出す。リモート扱いで飛ばした処理（スナップショット）と書き換えなかった mount は警告で残す |
 | 移行性 | 設定を書くまで挙動が変わらない。`project.local.yml` を消せば元に戻る。データ移行は無い |
 | セキュリティ | `project.local.yml` は接続先の実体（ホスト名・鍵・トークン）を持たない。機密の注入経路（`_inject_secrets` → compose の変数展開）は変えない。age の鍵・`.env`・`project.local.yml` は手元に留まるが、**復号済みの機密の値は従来のローカル構成と同じく compose の変数展開を通じて接続先の daemon とコンテナへ渡る**。接続先は機密を預けてよいホストに限る |
-| システム環境 | 手元: macOS / Linux / WSL の bash + docker CLI（context 対応、19.03 以降）+ compose v2。リモート: Linux の dockerd + sshd。Windows は WSL2 内の dockerd |
+| システム環境 | 手元: macOS / Linux / WSL の bash + docker CLI（context 対応、19.03 以降）+ compose v2。リモート: Linux の rootful dockerd + sshd（docker.sock が docker グループ所有）。Windows は WSL2 内の dockerd。rootless Docker と socket が `root:root` の構成は gid の自動取得の対象外で、`docker.gid` を明示する |
 
 ## 影響
 
