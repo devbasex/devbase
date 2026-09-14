@@ -439,7 +439,7 @@ DEVBASE_EDITOR_SSH_HOST=mac2
 DEVBASE_EDITOR_SSH_HOST=
 ```
 
-前提は、`code` の実行先（手元の VS Code が docker CLI を呼ぶ側）で `docker --context <ctx> ps` がコンテナを返すことです。Windows の VS Code で `dev.containers.executeInWSL` が `true` なら WSL 内の CLI が使われるので、WSL 内に `docker context create <ctx> --docker host=unix:///var/run/docker.sock` で同名 context を作れば足ります。行を消せば自動検出（ネスト URI）に戻ります。
+前提は 2 つです。1 つは、`code` の実行先（手元の VS Code が docker CLI を呼ぶ側）で `docker --context <ctx> ps` がコンテナを返すこと。もう 1 つは、`settings.context` が **devbase の解決した context（`project.local.yml` / `--context` / `DEVBASE_DOCKER_CONTEXT`）か `DEVBASE_EDITOR_DOCKER_CONTEXT` の明示**から来ていることです。ssh 先の `docker context show` の推測だけに頼っている構成では、空文字にすると推測も行われず `settings.context` が付かない（手元の既定 daemon へ繋ぎに行く）ため、`devbase up` はこの案内を出しません。Windows の VS Code で `dev.containers.executeInWSL` が `true` なら WSL 内の CLI が使われるので、WSL 内に `docker context create <ctx> --docker host=unix:///var/run/docker.sock` で同名 context を作れば足ります。行を消せば自動検出（ネスト URI）に戻ります。
 
 ##### 制約
 

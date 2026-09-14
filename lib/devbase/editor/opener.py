@@ -670,14 +670,21 @@ def _build_open_uri(ctx: EditorContext, env, container: str, workdir: str,
     ネスト URI (ssh_host + docker_context) のときは、手元 VS Code に同名 context が
     あれば ssh 先を経由せず直接 attach できるフラット URI を info ログで提示する。
     あわせて、``DEVBASE_EDITOR_SSH_HOST=`` (空) で恒久的にフラット URI へ切り替えられる
-    ことも示す (案内だけでは毎回手で貼ることになる)。
+    ことも示す (案内だけでは毎回手で貼ることになる)。この案内は context が明示か devbase の
+    解決結果から来ているときだけ出す。``docker context show`` の推測だけが元のときは、
+    ssh_host を外すと推測も行われず ``settings.context`` が消えるため出さない。
 
     戻り値は ``(uri, uri_flag)``。
     """
     ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
                 if ctx.is_ssh else None)
-    if ssh_host or docker_context:
-        docker_context = resolve_docker_context(env, default=docker_context)
+    # 明示 (DEVBASE_EDITOR_DOCKER_CONTEXT) と devbase の解決結果は ssh の有無によらず
+    # 付ける。`docker context show` の推測だけは ssh 先のときに限る (ローカル端末で
+    # 毎回 docker を叩かない)。
+    explicit_context = env.get("DEVBASE_EDITOR_DOCKER_CONTEXT")
+    resolved_context = docker_context
+    if ssh_host or resolved_context or explicit_context is not None:
+        docker_context = resolve_docker_context(env, default=resolved_context)
     else:
         docker_context = None
     # DEVBASE_WORKSPACE があれば *.code-workspace をワークスペースとして開く。VS Code は
@@ -697,10 +704,13 @@ def _build_open_uri(ctx: EditorContext, env, container: str, workdir: str,
         logger.info("  %s %s '%s'",
                     " ".join(shlex.quote(c) for c in display), uri_flag, flat)
         # 空文字の明示はネストのオプトアウト (resolve_editor_ssh_host)。毎回手で貼る
-        # 代わりに恒久化する方法を、その場で示す。
-        logger.info(
-            "  env に DEVBASE_EDITOR_SSH_HOST= (空) を書くと、次回からこのフラット URI で"
-            "直接開きます")
+        # 代わりに恒久化する方法を、その場で示す。ただし context が `docker context
+        # show` の推測だけから来ている場合は、ssh_host を外すと推測も行われず
+        # settings.context が消える (別の daemon へ繋ぎに行く) ため案内しない。
+        if resolved_context or explicit_context is not None:
+            logger.info(
+                "  env に DEVBASE_EDITOR_SSH_HOST= (空) を書くと、次回からこのフラット URI で"
+                "直接開きます")
     return uri, uri_flag
 
 
