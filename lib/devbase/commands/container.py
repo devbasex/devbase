@@ -1410,6 +1410,28 @@ def _image_max_age_days() -> int:
         return _IMAGE_MAX_AGE_DAYS_DEFAULT
 
 
+def _read_compose_services() -> tuple[int, dict]:
+    """Compose 設定の終了コードと services を取得する。"""
+    result = subprocess.run(
+        ['docker', 'compose', 'config', '--format', 'json'],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    if result.returncode != 0:
+        return result.returncode, {}
+    config = json.loads(result.stdout)
+    return result.returncode, config.get('services', {})
+
+
+def _dev_image_spec(services: dict, dev_service_name: str) -> tuple[dict, str, bool]:
+    """dev サービスと、そのイメージ名・ビルド定義の有無を取り出す。"""
+    dev_service = services.get(dev_service_name, {})
+    image_name = dev_service.get('image', '')
+    has_build = bool(dev_service.get('build'))
+    return dev_service, image_name, has_build
+
+
 def _ensure_images() -> bool:
     """Check that required container images exist and are fresh.
 
@@ -1439,23 +1461,13 @@ def _ensure_images() -> bool:
     dev_service_name = get_dev_service_name()
 
     try:
-        result = subprocess.run(
-            ['docker', 'compose', 'config', '--format', 'json'],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-
-        if result.returncode != 0:
+        returncode, services = _read_compose_services()
+        if returncode != 0:
             logger.info("Unable to check image status")
             logger.info("Running 'devbase container build' to ensure images exist...")
             return _run_build()
 
-        config = json.loads(result.stdout)
-        services = config.get('services', {})
-        dev_service = services.get(dev_service_name, {})
-        image_name = dev_service.get('image', '')
-        has_build = bool(dev_service.get('build'))
+        dev_service, image_name, has_build = _dev_image_spec(services, dev_service_name)
 
         if not image_name:
             logger.warning("No image specified for %s service", dev_service_name)
