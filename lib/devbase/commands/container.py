@@ -1681,15 +1681,7 @@ def _base_image_is_fresh(dev_service: dict, max_age: int) -> bool:
     base_ref = _get_base_image_ref(dev_service)
     if not base_ref:
         return False
-    inspect = subprocess.run(
-        ['docker', 'image', 'inspect', base_ref],
-        capture_output=True,
-        text=True,
-        check=False
-    )
-    if inspect.returncode != 0:
-        return False
-    age_days = _get_image_age_days(inspect.stdout)
+    age_days = _inspect_image_age(base_ref)
     if age_days is None:
         return False
     if age_days < max_age:
@@ -1745,6 +1737,19 @@ def _pull_and_mark(image_name: str) -> bool:
     if ok:
         _mark_pulled(image_name)
     return ok
+
+
+def _inspect_image_age(ref: str) -> Optional[int]:
+    """Inspect an image and return its age in days, or None on failure."""
+    inspect = subprocess.run(
+        ['docker', 'image', 'inspect', ref],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    if inspect.returncode != 0:
+        return None
+    return _get_image_age_days(inspect.stdout)
 
 
 def _get_image_age_days(inspect_json: str) -> Optional[int]:
