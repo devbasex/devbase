@@ -67,7 +67,7 @@ devbase env set ANTHROPIC_API_KEY=sk-xxx
 # プロジェクトレベルに設定
 devbase env set GCP_ACTIVE_PROFILE=my-project -p
 
-# 自分だけの値として設定 (Infisical)
+# 自分だけの値として設定 (OpenBao)
 devbase env set AWS_ACCESS_KEY_ID=AKIA... --user
 ```
 
@@ -312,20 +312,20 @@ devbase env import <bundle>
 
 ## `devbase env backend`
 
-機密の保存先（平文 / age / Infisical サーバ）を選び、確かめ、移します。詳細は
+機密の保存先（平文 / age / OpenBao サーバ）を選び、確かめ、移します。詳細は
 [機密の保存先を選ぶ](../env-backend.md) を参照してください。
 
 ```
 devbase env backend status
-devbase env backend use <name> [--url URL] [--project-id ID] [--environment SLUG] [--user ID]
-                               [--client-id ID] [--client-secret-stdin] [--no-cache]
+devbase env backend use <name> [--url URL] [--mount NAME] [--user ID]
+                               [--role-id ID] [--secret-id-stdin] [--no-cache]
 devbase env backend test
-devbase env backend migrate --to <age|infisical> [--dry-run] [--yes]
+devbase env backend migrate --to <age|openbao> [--dry-run] [--yes]
 ```
 
 | サブコマンド | 内容 |
 |---|---|
 | `status` | 現在の backend 名、保存先、参照ごとの置き場、キャッシュの状態を表示 |
-| `use <name>` | backend を切り替える（`auto` / `plaintext` / `age` / `infisical`）。検証に失敗したときは設定を書き換えない。client secret は `--client-secret-stdin` か伏せ字入力で受け取り、引数では受け取らない |
+| `use <name>` | backend を切り替える（`auto` / `plaintext` / `age` / `openbao`）。検証に失敗したときは設定を書き換えない。`secret_id` は `--secret-id-stdin` か伏せ字入力で受け取り、引数では受け取らない |
 | `test` | サーバへ接続し、参照ごとに読めるかを確かめる |
 | `migrate --to NAME` | チーム単位の機密を別の backend へ写す。移行先に同じキーがあれば 1 件も書かない。読み戻して一致しなければ作成したキーだけを消す |
