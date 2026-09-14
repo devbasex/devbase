@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 import subprocess
 
+import pytest
+
 from devbase.env import container_token
 
 TOKEN = 's.fake-token-1234567890'
@@ -80,3 +82,28 @@ def test_push_with_no_containers_does_nothing():
     runner = Recorder()
     assert container_token.push([], TOKEN, runner=runner) == []
     assert runner.calls == []
+
+
+@pytest.mark.parametrize('error_type', [subprocess.TimeoutExpired, subprocess.CalledProcessError])
+def test_push_continues_after_a_subprocess_exception_without_logging_token(caplog, error_type):
+    """現状固定: 途中の例外を警告にとどめ、後続にも stdin で token を届ける。"""
+    deliveries = []
+
+    def runner(argv, **kwargs):
+        name = argv[3]
+        deliveries.append((name, kwargs['input']))
+        if name == 'web-dev-2':
+            if error_type is subprocess.TimeoutExpired:
+                raise error_type(argv, 30, output=TOKEN, stderr=TOKEN)
+            raise error_type(1, argv, output=TOKEN, stderr=TOKEN)
+        return subprocess.CompletedProcess(argv, 0, stdout='', stderr='')
+
+    with caplog.at_level(logging.DEBUG):
+        written = container_token.push(['web-dev-1', 'web-dev-2', 'web-dev-3'], TOKEN,
+                                       runner=runner)
+
+    assert written == ['web-dev-1', 'web-dev-3']
+    assert deliveries == [('web-dev-1', TOKEN), ('web-dev-2', TOKEN), ('web-dev-3', TOKEN)]
+    assert any(record.levelno == logging.WARNING and 'web-dev-2' in record.getMessage()
+               for record in caplog.records)
+    assert TOKEN not in caplog.text

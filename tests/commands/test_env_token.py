@@ -191,3 +191,56 @@ def test_push_is_the_shared_writer(openbao_root, web, monkeypatch):
 
     assert _run(openbao_root, Docker(['web-dev-1\tdev-1'])) == 0
     assert seen['names'] == ['web-dev-1']
+
+
+@pytest.mark.parametrize('failure', [
+    'nonzero', FileNotFoundError('docker'),
+    subprocess.TimeoutExpired(['docker', 'ps'], 30),
+], ids=['nonzero', 'missing-docker', 'timeout'])
+def test_docker_ps_failure_does_not_issue_or_distribute_a_token(
+        tmp_path, monkeypatch, capsys, failure):
+    """現状固定: 列挙の失敗は終了値 1 となり、認証にも配布にも進まない。"""
+    from devbase.env import runtime
+
+    class Backend:
+        def __init__(self):
+            self.issued_tokens = []
+
+        def issue_token(self):
+            token = 's.fake-issued-token'
+            self.issued_tokens.append(token)
+            return token
+
+    backend = Backend()
+
+    class Store:
+        backend_name = 'openbao'
+
+        def backend_for(self, ref):
+            return backend
+
+    monkeypatch.setattr(runtime, 'store_for', lambda root: Store())
+    project = tmp_path / 'projects' / 'web'
+    project.mkdir(parents=True)
+    (project / 'env').write_text('')
+    monkeypatch.chdir(project)
+    monkeypatch.setenv('PWD', str(project))
+    for name in ('DOCKER_CONTEXT', 'DOCKER_HOST', 'DEVBASE_DOCKER_CONTEXT',
+                 'DEV_SERVICE_NAME', 'COMPOSE_PROJECT_NAME'):
+        monkeypatch.setenv(name, '')
+        monkeypatch.delenv(name)
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(list(argv))
+        assert argv[:2] == ['docker', 'ps']
+        if isinstance(failure, Exception):
+            raise failure
+        return subprocess.CompletedProcess(argv, 1, stdout='', stderr='docker unavailable')
+
+    assert env_cmd.cmd_env_token(tmp_path, runner=runner) == 1
+
+    assert capsys.readouterr().out == ''
+    assert backend.issued_tokens == []
+    assert any(argv[:2] == ['docker', 'ps'] for argv in calls)
+    assert not any(argv[:2] == ['docker', 'exec'] for argv in calls)
