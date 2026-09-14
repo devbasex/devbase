@@ -199,3 +199,68 @@ def test_build_resolved_expires_present_delegates(tmp_path, monkeypatch):
     )
     assert container._build_resolved(expires=7, no_cache=False) == 0
     assert seen == {"expires": 7, "image": "dev:latest"}
+
+
+# ---------------------------------------------------------------------------
+# _image_max_age_days (現状固定テスト)
+# ---------------------------------------------------------------------------
+
+_MAX_AGE_ENV = "DEVBASE_IMAGE_MAX_AGE_DAYS"
+
+
+def test_image_max_age_days_unset_returns_default(monkeypatch):
+    monkeypatch.delenv(_MAX_AGE_ENV, raising=False)
+    assert container._image_max_age_days() == container._IMAGE_MAX_AGE_DAYS_DEFAULT
+    assert container._IMAGE_MAX_AGE_DAYS_DEFAULT == 7
+
+
+def test_image_max_age_days_valid_value(monkeypatch):
+    monkeypatch.setenv(_MAX_AGE_ENV, "14")
+    assert container._image_max_age_days() == 14
+
+
+def test_image_max_age_days_zero(monkeypatch):
+    monkeypatch.setenv(_MAX_AGE_ENV, "0")
+    assert container._image_max_age_days() == 0
+
+
+def test_image_max_age_days_negative_falls_back_with_warning(monkeypatch, caplog):
+    monkeypatch.setenv(_MAX_AGE_ENV, "-5")
+    with caplog.at_level("WARNING"):
+        result = container._image_max_age_days()
+    assert result == container._IMAGE_MAX_AGE_DAYS_DEFAULT
+    assert any("Invalid DEVBASE_IMAGE_MAX_AGE_DAYS='-5'" in r.getMessage() for r in caplog.records)
+
+
+def test_image_max_age_days_non_numeric_falls_back_with_warning(monkeypatch, caplog):
+    monkeypatch.setenv(_MAX_AGE_ENV, "abc")
+    with caplog.at_level("WARNING"):
+        result = container._image_max_age_days()
+    assert result == container._IMAGE_MAX_AGE_DAYS_DEFAULT
+    assert any("Invalid DEVBASE_IMAGE_MAX_AGE_DAYS='abc'" in r.getMessage() for r in caplog.records)
+
+
+def test_env_non_negative_int(monkeypatch, caplog):
+    monkeypatch.delenv("TEST_ENV_VAR", raising=False)
+    assert container._env_non_negative_int("TEST_ENV_VAR", 60) == 60
+
+    monkeypatch.setenv("TEST_ENV_VAR", "")
+    assert container._env_non_negative_int("TEST_ENV_VAR", 60) == 60
+
+    monkeypatch.setenv("TEST_ENV_VAR", "30")
+    assert container._env_non_negative_int("TEST_ENV_VAR", 60) == 30
+
+    monkeypatch.setenv("TEST_ENV_VAR", "0")
+    assert container._env_non_negative_int("TEST_ENV_VAR", 60) == 0
+
+    monkeypatch.setenv("TEST_ENV_VAR", "-5")
+    with caplog.at_level("WARNING"):
+        assert container._env_non_negative_int("TEST_ENV_VAR", 60) == 60
+    assert any("Invalid TEST_ENV_VAR='-5'" in r.getMessage() for r in caplog.records)
+
+    monkeypatch.setenv("TEST_ENV_VAR", "invalid")
+    with caplog.at_level("WARNING"):
+        assert container._env_non_negative_int("TEST_ENV_VAR", 60) == 60
+    assert any("Invalid TEST_ENV_VAR='invalid'" in r.getMessage() for r in caplog.records)
+
+

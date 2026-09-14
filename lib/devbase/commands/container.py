@@ -50,6 +50,28 @@ def _devbase_root() -> Optional[Path]:
     return Path(root) if root else None
 
 
+def _env_non_negative_int(env_name: str, default: int) -> int:
+    """環境変数から非負整数を読み出す。
+
+    未設定・空文字なら default を返す。
+    負値または整数に変換できない場合は warning を出力して default にフォールバックする。
+    """
+    raw = os.environ.get(env_name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError
+        return value
+    except ValueError:
+        logger.warning(
+            "Invalid %s=%r, using default %d",
+            env_name, raw, default
+        )
+        return default
+
+
 def _inject_secrets(*, required: bool):
     """機密を復号して自プロセスの環境変数へ載せ、載せた内容を返す。
 
@@ -633,20 +655,10 @@ def _snapshot_min_interval_minutes() -> int:
     DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES で上書き可能 (0 で無効化＝毎回取得)。
     値が不正な場合は既定値にフォールバックする。
     """
-    raw = os.environ.get('DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES')
-    if not raw:
-        return _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
-    try:
-        value = int(raw)
-        if value < 0:
-            raise ValueError
-        return value
-    except ValueError:
-        logger.warning(
-            "Invalid DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES=%r, using default %d",
-            raw, _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
-        )
-        return _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
+    return _env_non_negative_int(
+        'DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES',
+        _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT,
+    )
 
 
 def _auto_snapshot(remote: bool = False) -> None:
@@ -1409,20 +1421,10 @@ def _image_max_age_days() -> int:
     Override via the DEVBASE_IMAGE_MAX_AGE_DAYS environment variable.
     Falls back to the default on missing or malformed values.
     """
-    raw = os.environ.get('DEVBASE_IMAGE_MAX_AGE_DAYS')
-    if not raw:
-        return _IMAGE_MAX_AGE_DAYS_DEFAULT
-    try:
-        value = int(raw)
-        if value < 0:
-            raise ValueError
-        return value
-    except ValueError:
-        logger.warning(
-            "Invalid DEVBASE_IMAGE_MAX_AGE_DAYS=%r, using default %d",
-            raw, _IMAGE_MAX_AGE_DAYS_DEFAULT
-        )
-        return _IMAGE_MAX_AGE_DAYS_DEFAULT
+    return _env_non_negative_int(
+        'DEVBASE_IMAGE_MAX_AGE_DAYS',
+        _IMAGE_MAX_AGE_DAYS_DEFAULT,
+    )
 
 
 def _read_compose_services() -> tuple[int, dict]:
