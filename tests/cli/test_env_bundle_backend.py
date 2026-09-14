@@ -184,6 +184,40 @@ def test_import_rolls_back_a_reference_whose_result_is_unknown(openbao_root, ope
     assert len(openbao.requests_of('GET')) == 2      # 取り込み前 + 巻き戻し前の読み直し
 
 
+def test_import_does_not_roll_back_a_reference_the_server_refused(openbao_root, openbao,
+                                                                  bundle_keys, tmp_path):
+    """版の不一致で拒まれた参照は巻き戻さない (CAS が守った他の利用者の更新を消さない)"""
+    import devbase.env.io_import as io_import_mod
+
+    pub, key = bundle_keys
+    openbao.put(TEAM_GLOBAL, {'OLD': '1'})
+    openbao.put(TEAM_WEB, {'W': 'old'})
+    src = make_bundle(tmp_path, pub, {
+        'env/global.env': b'OLD=1\nNEW=2\n',
+        'env/projects/web/.env': b'W=mine\n',
+    })
+    # 退避のための読み出しの後、web を他の利用者が書き換える → web の保存が CAS で落ちる
+    original = io_import_mod._apply_via_backend
+
+    def apply_with_race(store, plans, backups):
+        openbao.put(TEAM_WEB, {'W': 'theirs'})
+        return original(store, plans, backups)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(io_import_mod, '_apply_via_backend', apply_with_race)
+    try:
+        with pytest.raises(EnvImportError):
+            import_bundle(openbao_root, ImportOptions(
+                source=str(src), merge='prefer-incoming', identities=[str(key)],
+                include_metadata=False))
+    finally:
+        monkey.undo()
+
+    assert openbao.get(TEAM_GLOBAL) == {'OLD': '1'}          # 先に書けた参照は戻る
+    assert openbao.get(TEAM_WEB) == {'W': 'theirs'}          # 他の利用者の更新は残る
+    assert not any(r.kv_path == TEAM_WEB and r.cas == 2 for r in openbao.requests_of('POST'))
+
+
 def test_import_stops_before_writing_when_the_server_is_unreachable(openbao_root, openbao,
                                                                     bundle_keys, tmp_path):
     """控えがあっても、取り込みは現物を読めなければ始めない"""

@@ -270,7 +270,7 @@ def test_a_version_conflict_discards_the_cache(openbao_root, openbao):
         SecretStore(openbao_root).load(GLOBAL)
 
 
-@pytest.mark.parametrize('how', ['dropped', '500', 'garbled'])
+@pytest.mark.parametrize('how', ['dropped', '500', 'garbled', '500-truncated'])
 def test_a_write_with_an_unknown_result_discards_the_cache(openbao_root, openbao, how):
     """サーバが更新を確定した後で応答だけが失われた (壊れた) 可能性があるため消す"""
     fill(openbao, SecretStore(openbao_root))
@@ -278,6 +278,9 @@ def test_a_write_with_an_unknown_result_discards_the_cache(openbao_root, openbao
         openbao.drop_write_response = True
     elif how == '500':
         openbao.fail_write_attempts = [1]
+    elif how == '500-truncated':
+        openbao.fail_write_attempts = [1]
+        openbao.truncate_write_error_body = True
     else:
         openbao.garble_write_response = True
 

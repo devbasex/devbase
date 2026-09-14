@@ -24,6 +24,9 @@ token はプロセス内にだけ持ち、ディスクへ書かない。実行�
 - :class:`SecretAuthError` — ログインの拒否と権限の不足。キャッシュを**使わない**
 - :class:`SecretConflictError` — 版の不一致 (読んでから書くまでの間に他人が書いた)。
   その参照の控えを**消す**
+
+後の 2 つは :class:`SecretRefusedError` で、サーバが拒んだと確定している (サーバは
+変わっていない)。巻き戻しはこの型で落ちた参照を対象から外す。
 """
 
 from __future__ import annotations
@@ -58,11 +61,20 @@ class SecretUnreachableError(SecretStoreError):
     """サーバへ到達できない、または応答を解釈できない (キャッシュへ落ちてよい)"""
 
 
-class SecretAuthError(SecretStoreError):
+class SecretRefusedError(SecretStoreError):
+    """サーバが拒んだと確定した失敗。**サーバは変わっていない**。
+
+    書き込みの巻き戻し (``import`` / ``migrate``) は、この型の失敗で落ちた参照を
+    対象から外す。巻き戻すと、読み直した版で控えた値を書き戻し、CAS が守った他の
+    利用者の更新を消してしまう。
+    """
+
+
+class SecretAuthError(SecretRefusedError):
     """認証の拒否、または権限の不足 (キャッシュへ落ちてはいけない)"""
 
 
-class SecretConflictError(SecretStoreError):
+class SecretConflictError(SecretRefusedError):
     """版の不一致。読んでから書くまでの間に他の誰かが書いた"""
 
 
@@ -227,7 +239,15 @@ class OpenBaoBackend:
             with _urlrequest.urlopen(req, timeout=self._settings.timeout_seconds) as resp:
                 raw = resp.read()
         except _urlerror.HTTPError as e:
-            raise _HttpStatus(e.code, e.read() or b'') from None
+            # 失敗応答の本文も最後まで受け取れないことがある (5xx の途中切れ)。
+            # 状態コードだけで拒否と確定させず、不達として扱う
+            try:
+                body = e.read() or b''
+            except (OSError, http.client.HTTPException) as read_error:
+                raise SecretUnreachableError(
+                    f"OpenBao へ到達できません (HTTP {e.code} の応答を最後まで受け取れません: "
+                    f"{read_error})\n  接続先: {self.url}") from None
+            raise _HttpStatus(e.code, body) from None
         except (_urlerror.URLError, socket.timeout, ConnectionError, OSError,
                 http.client.HTTPException) as e:
             # 本文の途中で切られたとき (IncompleteRead) も「応答を最後まで受け取れなかった」

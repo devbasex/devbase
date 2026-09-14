@@ -86,6 +86,8 @@ class FakeOpenBao:
     drop_write_response: bool = False
     #: 書き込みの応答を JSON でない本文にする (解釈できない応答)
     garble_write_response: bool = False
+    #: 書き込みの 500 の本文を Content-Length より短く切る (失敗応答の途中切れ)
+    truncate_write_error_body: bool = False
     #: 書き込みが 1 度でも起きた後の取得で値を差し替える (読み戻しの検証を失敗させる):
     #: path → {key: value}
     readback_tamper: Dict[str, Dict[str, str]] = field(default_factory=dict)
@@ -237,7 +239,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(403, {'errors': ['1 error occurred:\n\t* permission denied\n\n']})
         state.write_attempts += 1
         if state.write_attempts in state.fail_write_attempts:
-            return self._send(500, {'errors': ['boom']})
+            return self._send(500, {'errors': ['boom']}, truncate=state.truncate_write_error_body)
         data = rec.body.get('data')
         if not isinstance(data, dict):
             return self._send(400, {'errors': ['data must be a map']})

@@ -489,7 +489,7 @@ class _MigrationPlan:
                 print(f"  {ref.label():<24} {', '.join(keys)}")
 
     def apply(self) -> None:
-        from devbase.env.openbao import SecretAuthError, SecretConflictError
+        from devbase.env.openbao import SecretRefusedError
 
         dest = self._dest_backend()
         created: dict = {}
@@ -503,7 +503,7 @@ class _MigrationPlan:
                 created[ref] = list(keys)
                 try:
                     dest.save(ref, merged)
-                except (SecretAuthError, SecretConflictError):
+                except SecretRefusedError:
                     created.pop(ref, None)
                     raise
                 logger.info("%s を書き込みました", ref.label())

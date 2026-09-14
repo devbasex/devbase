@@ -311,9 +311,12 @@ def _apply_via_backend(store, plans: List[_merge.Plan],
 
     参照をまたぐ一括 rename が持っていた同時性はサーバ backend では作れないため、
     適用済みの参照を控えた値で書き戻す (取り込み前に無かった参照は空にする)。
-    **失敗した参照も巻き戻しに含める。** サーバ backend の ``save`` はキー単位で
-    反映するため、1 つの参照の途中で失敗しても一部のキーは既に書かれている。
+    **結果が分からずに失敗した参照も巻き戻しに含める。** 送った後に応答が失われた
+    書き込みは、サーバが確定している可能性がある。**サーバが拒んだと確定した参照
+    (権限の不足・版の不一致) は含めない。** サーバは変わっておらず、巻き戻すと読み直した
+    版で控えた値を書き戻し、CAS が守った他の利用者の更新を消してしまう。
     """
+    from devbase.env.openbao import SecretRefusedError
     from devbase.errors import DevbaseError
 
     before_of = {id(plan): before for plan, before in backups}
@@ -323,7 +326,8 @@ def _apply_via_backend(store, plans: List[_merge.Plan],
             store.save_bytes(plan.ref, plan.new_bytes)
         except DevbaseError as e:
             logger.error("%s の取り込みに失敗しました: %s", plan.ref.label(), e)
-            _rollback_via_backend(store, applied + [plan], before_of)
+            failed = [] if isinstance(e, SecretRefusedError) else [plan]
+            _rollback_via_backend(store, applied + failed, before_of)
             raise ImportError(f"{plan.ref.label()}の取り込みに失敗しました: {e}") from e
         applied.append(plan)
         logger.info("%s を取り込みました (%s)", plan.ref.label(), store.path(plan.ref))
