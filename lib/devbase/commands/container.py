@@ -431,6 +431,24 @@ def _load_project_env(env_file: Path) -> None:
         os.environ[key] = value
 
 
+def _unset_caller_only_env_keys(caller_keys: set, target_dir: Path) -> None:
+    """呼び出し元 env にしか無いキーを os.environ から unset する。
+
+    別プロジェクトから `project up other` を直接起動した場合、呼び出し元 env に
+    しか無いキー (例: DEV_SERVICE_NAME) が os.environ に残留し対象へ誤って
+    引き継がれる。対象 (``target_dir`` = 現 CWD) の env を読み、呼び出し元にしか
+    無いキーを unset してクリーンにする
+    (codex 指摘 / wrapper の _CALLER_ENV_KEYS と同等のフォールバック)。
+
+    Args:
+        caller_keys: chdir 前に記録した呼び出し元 env のキー集合。
+        target_dir:  切替先プロジェクトのディレクトリ (既に chdir 済みの CWD)。
+    """
+    target_env_keys = _env_var_keys(target_dir / 'env')
+    for key in caller_keys - target_env_keys:
+        os.environ.pop(key, None)
+
+
 def _resolve_project_name(project_name: str) -> bool:
     """project name を $DEVBASE_ROOT/projects/<name> へ解決し chdir する。
 
@@ -468,12 +486,10 @@ def _resolve_project_name(project_name: str) -> bool:
 
     # chdir 前に呼び出し元 (現 CWD) の env が定義するキーを記録しておく。
     # 別プロジェクトから `project up other` を直接起動した場合、呼び出し元 env に
-    # しか無いキー (例: DEV_SERVICE_NAME) が os.environ に残留し対象へ誤って
-    # 引き継がれるため、対象 env を読む前に unset してクリーンにする
-    # (codex 指摘 / wrapper の _CALLER_ENV_KEYS と同等のフォールバック)。
+    # しか無いキーを chdir 後に unset するために使う (詳細は
+    # :func:`_unset_caller_only_env_keys`)。
     # already_there (= 既に対象ディレクトリ。通常 wrapper 経由) の場合は呼び出し元
     # ＝対象であり、wrapper 側で既にクリーン化済みのため何もしない。
-    caller_env_keys: set = set()
     if not already_there:
         caller_env_keys = _env_var_keys(Path('env'))
         os.chdir(target)
@@ -483,9 +499,7 @@ def _resolve_project_name(project_name: str) -> bool:
         # 切替先ではなく呼び出し元プロジェクトの機密を読んでしまう
         # (TUI の ``_run_in_project`` が PWD を差し替えているのと同じ理由)。
         os.environ['PWD'] = str(target)
-        target_env_keys = _env_var_keys(Path('env'))
-        for key in caller_env_keys - target_env_keys:
-            os.environ.pop(key, None)
+        _unset_caller_only_env_keys(caller_env_keys, target)
 
     # wrapper の `source ./env` と同等に project env を os.environ へ反映する。
     # wrapper 経由なら既に同じ値が載っているため冪等。
