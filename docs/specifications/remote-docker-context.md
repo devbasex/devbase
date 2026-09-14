@@ -119,7 +119,11 @@ root 所有か rootless Docker の可能性を警告して続行する。控え�
 （ssh 先のときだけ）docker が実際に使う context（環境変数を外さない `docker context show`）」の
 順で決める。解決した context があればローカル端末でもフラット URI に付ける。Remote-SSH 統合
 端末でネスト URI と `settings.context` の両方が付くときは、手元の VS Code に同名の context が
-あれば直接 attach できるフラット URI を info で提示する。
+あれば直接 attach できるフラット URI を info で提示し、`DEVBASE_EDITOR_SSH_HOST=`（空）で
+恒久的にそのフラット URI へ切り替えられることも示す。空文字は自動検出のオプトアウトで、
+ネストを付けず `settings.context` だけを残す。明示と devbase の解決結果は ssh の有無に
+よらず付けるが、`docker context show` の推測は ssh 先のときに限るため、推測だけが元の
+ときは空文字で `settings.context` も消える。その場合は恒久化の案内を出さない。
 
 ```mermaid
 sequenceDiagram
