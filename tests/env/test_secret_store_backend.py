@@ -105,14 +105,14 @@ def test_store_reports_user_refs_absent_without_config(store):
 # ---------------------------------------------------------------------------
 
 def test_registry_knows_the_documented_names():
-    assert backends.BACKEND_NAMES == ('auto', 'plaintext', 'age', 'infisical')
+    assert backends.BACKEND_NAMES == ('auto', 'plaintext', 'age', 'openbao')
 
 
 def test_registry_rejects_unknown_names_with_the_list():
     with pytest.raises(SecretStoreError) as exc:
         backends.require_known('vaultwarden')
     message = str(exc.value)
-    assert 'vaultwarden' in message and 'infisical' in message and 'age' in message
+    assert 'vaultwarden' in message and 'openbao' in message and 'age' in message
 
 
 # ---------------------------------------------------------------------------

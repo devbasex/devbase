@@ -41,8 +41,8 @@ def create_backend(name: str, store: 'SecretStore') -> 'SecretBackend':
         return store.plaintext
     if name == 'age':
         return store.age
-    if name == 'infisical':
-        from devbase.env.infisical import InfisicalBackend
+    if name == 'openbao':
+        from devbase.env.openbao import OpenBaoBackend
 
-        return InfisicalBackend(store)
+        return OpenBaoBackend(store)
     raise SecretStoreError(f"backend '{name}' は登録簿にありますが、生成方法が定義されていません")

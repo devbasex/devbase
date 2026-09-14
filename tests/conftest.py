@@ -1,9 +1,13 @@
-"""偽の Infisical サーバ (標準ライブラリの http.server で立てる)
+"""偽の OpenBao サーバ (標準ライブラリの http.server で立てる)
 
 PLAN51 の結合テストが使う。実サーバは `carmo-cdk#312` の完了後にしか使えないため、
-設計 2「Infisical との契約」の 5 経路だけを平文 HTTP で再現し、受信したリクエストを
-記録して検査できるようにする。接続先が ``http://127.0.0.1:<port>`` になるのは、
-``backend_config`` がループバック宛てだけ ``http`` を許すため。
+仕様「OpenBao との契約」の 4 経路 (AppRole のログイン、KV v2 の取得・版付き保存・
+メタデータ削除) だけを平文 HTTP で再現し、受信したリクエストを記録して検査できるように
+する。接続先が ``http://127.0.0.1:<port>`` になるのは、``backend_config`` がループバック
+宛てだけ ``http`` を許すため。
+
+ポリシーの代わりに ``forbidden_prefixes`` (読み書きとも 403) と ``team_writable``
+(偽なら ``team/`` への保存が 403) で権限の不足を再現する。
 """
 
 from __future__ import annotations
@@ -12,8 +16,8 @@ import json
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlsplit
+from typing import Any, Dict, List, Optional, Set
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -22,30 +26,46 @@ import pytest
 class Received:
     method: str
     path: str
-    query: Dict[str, str]
     body: Dict[str, Any]
     headers: Dict[str, str]
 
-    @property
-    def secret_path(self) -> Optional[str]:
-        return self.query.get('secretPath') or self.body.get('secretPath')
+    def _kv(self, kind: str) -> Optional[str]:
+        parts = self.path.split('/', 4)   # ['', 'v1', <mount>, <kind>, <path>]
+        if len(parts) == 5 and parts[1] == 'v1' and parts[3] == kind:
+            return unquote(parts[4])
+        return None
 
     @property
-    def secret_name(self) -> Optional[str]:
-        prefix = '/api/v4/secrets/'
-        return self.path[len(prefix):] if self.path.startswith(prefix) else None
+    def kv_path(self) -> Optional[str]:
+        """``/v1/<mount>/data/<path>`` の ``<path>`` (復号済み)"""
+        return self._kv('data')
+
+    @property
+    def metadata_path(self) -> Optional[str]:
+        return self._kv('metadata')
+
+    @property
+    def cas(self) -> Optional[int]:
+        options = self.body.get('options')
+        return options.get('cas') if isinstance(options, dict) else None
 
 
 @dataclass
-class FakeInfisical:
-    client_id: str = 'cid'
-    client_secret: str = 's3cret'
-    project_id: str = 'pid'
-    #: (environment, secretPath) → {key: value}
-    secrets: Dict[Tuple[str, str], Dict[str, str]] = field(default_factory=dict)
+class FakeOpenBao:
+    role_id: str = 'rid'
+    secret_id: str = 's3cret'
+    mount: str = 'devbase'
+    #: path → {key: value} (現在の版の内容)
+    secrets: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    #: path → 現在の版 (1 度も書かれていなければ無い)
+    versions: Dict[str, int] = field(default_factory=dict)
+    #: 最新版が論理削除されたパス (取得は 404 だが本文に版が入る)
+    soft_deleted: Set[str] = field(default_factory=set)
     received: List[Received] = field(default_factory=list)
-    #: ログインを拒む (401)
+    #: ログインを 400 (invalid role or secret) で拒む
     reject_login: bool = False
+    #: ログインを 403 で拒む (利用者の無効化)
+    disable_entity: bool = False
     #: 取得に返す HTTP 状態 (None なら正常)
     get_status: Optional[int] = None
     #: 取得に返す本文を差し替える (壊れた JSON など)
@@ -57,15 +77,19 @@ class FakeInfisical:
     truncate_get_body: bool = False
     #: このパスへの読み書きを 403 で拒む (前方一致)
     forbidden_prefixes: List[str] = field(default_factory=list)
-    #: 書き込み (POST/PATCH/DELETE) を N 回成功させた後は 500 を返す
-    fail_writes_after: Optional[int] = None
+    #: 偽なら ``team/`` 配下への保存を 403 で拒む (書き込みのポリシーが無い利用者)
+    team_writable: bool = True
     #: 何回目の書き込みの試みを 500 にするか (1 始まり)。それ以外は通す
     fail_write_attempts: List[int] = field(default_factory=list)
     write_attempts: int = 0
+    #: 書き込みを反映した後、応答を返さずに接続を切る (結果不明の失敗)
+    drop_write_response: bool = False
+    #: 書き込みの応答を JSON でない本文にする (解釈できない応答)
+    garble_write_response: bool = False
     #: 書き込みが 1 度でも起きた後の取得で値を差し替える (読み戻しの検証を失敗させる):
-    #: (environment, path) → {key: value}
-    readback_tamper: Dict[Tuple[str, str], Dict[str, str]] = field(default_factory=dict)
-    #: 現在有効な access token (None なら未発行)
+    #: path → {key: value}
+    readback_tamper: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    #: 現在有効な token (None なら未発行)
     token: Optional[str] = None
     logins: int = 0
     writes: int = 0
@@ -75,11 +99,12 @@ class FakeInfisical:
 
     # -- 起動と停止 ---------------------------------------------------------
 
-    def start(self) -> 'FakeInfisical':
+    def start(self) -> 'FakeOpenBao':
         server = self
         handler = type('Handler', (_Handler,), {'server_state': server})
         self._server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
-        self._thread = threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
+        self._thread = threading.Thread(target=self._server.serve_forever,
+                                        kwargs={"poll_interval": 0.02}, daemon=True)
         self._thread.start()
         return self
 
@@ -101,25 +126,37 @@ class FakeInfisical:
 
     # -- 状態の操作 ---------------------------------------------------------
 
-    def put(self, path: str, data: Dict[str, str], environment: str = 'common') -> None:
-        self.secrets[(environment, path)] = dict(data)
+    def put(self, path: str, data: Dict[str, str]) -> int:
+        """サーバ側で書く (版が 1 つ進む)。他の利用者の更新を再現するのに使う。"""
+        with self._lock:
+            self.versions[path] = self.versions.get(path, 0) + 1
+            self.secrets[path] = dict(data)
+            self.soft_deleted.discard(path)
+            return self.versions[path]
 
-    def get(self, path: str, environment: str = 'common') -> Dict[str, str]:
-        return dict(self.secrets.get((environment, path), {}))
+    def get(self, path: str) -> Dict[str, str]:
+        return dict(self.secrets.get(path, {}))
+
+    def version_of(self, path: str) -> int:
+        return self.versions.get(path, 0)
+
+    def soft_delete(self, path: str) -> None:
+        """最新版を論理削除する (WebUI の delete に相当)"""
+        self.soft_deleted.add(path)
 
     def expire_token(self) -> None:
-        """発行済みの access token を失効させる (再ログインすれば新しく出す)"""
+        """発行済みの token を失効させる (再ログインすれば新しく出す)"""
         self.token = None
 
     def requests_of(self, method: str) -> List[Received]:
         return [r for r in self.received if r.method == method]
 
-    def requests_to(self, secret_path: str) -> List[Received]:
-        return [r for r in self.received if r.secret_path == secret_path]
+    def requests_to(self, path: str) -> List[Received]:
+        return [r for r in self.received if r.kv_path == path]
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_state: FakeInfisical
+    server_state: FakeOpenBao
 
     def log_message(self, *args):  # 標準エラーへ出さない
         pass
@@ -148,11 +185,17 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             self.close_connection = True
 
+    def _drop(self) -> None:
+        """応答を返さずに接続を切る"""
+        self.close_connection = True
+        try:
+            self.connection.shutdown(1)
+        except OSError:
+            pass
+
     def _record(self, method: str) -> Received:
         parts = urlsplit(self.path)
-        query = {k: v[0] for k, v in parse_qs(parts.query).items()}
-        rec = Received(method=method, path=parts.path, query=query,
-                       body=self._read_body(),
+        rec = Received(method=method, path=parts.path, body=self._read_body(),
                        headers={k: v for k, v in self.headers.items()})
         with self.server_state._lock:
             self.server_state.received.append(rec)
@@ -160,113 +203,130 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _authorized(self, rec: Received) -> bool:
         state = self.server_state
-        header = rec.headers.get('Authorization', '')
-        return state.token is not None and header == f'Bearer {state.token}'
+        return state.token is not None and rec.headers.get('X-Vault-Token') == state.token
 
-    def _forbidden(self, rec: Received) -> bool:
-        path = rec.secret_path or ''
+    def _forbidden(self, path: str) -> bool:
         return any(path.startswith(p) for p in self.server_state.forbidden_prefixes)
+
+    def _mount_ok(self, rec: Received) -> bool:
+        parts = rec.path.split('/')
+        return len(parts) > 2 and parts[1] == 'v1' and parts[2] == self.server_state.mount
 
     # -- 経路 ---------------------------------------------------------------
 
     def do_POST(self):
         rec = self._record('POST')
         state = self.server_state
-        if rec.path == '/api/v1/auth/universal-auth/login':
+        if rec.path == '/v1/auth/approle/login':
             state.logins += 1
-            if (state.reject_login or rec.body.get('clientId') != state.client_id
-                    or rec.body.get('clientSecret') != state.client_secret):
-                return self._send(401, {'message': 'unauthorized'})
+            if state.disable_entity:
+                return self._send(403, {'errors': ['permission denied']})
+            if (state.reject_login or rec.body.get('role_id') != state.role_id
+                    or rec.body.get('secret_id') != state.secret_id):
+                return self._send(400, {'errors': ['invalid role or secret']})
             state.token = f'token-{state.logins}'
-            return self._send(200, {'accessToken': state.token, 'expiresIn': 3600,
-                                    'tokenType': 'Bearer'})
-        return self._write(rec, 'create')
-
-    def do_PATCH(self):
-        return self._write(self._record('PATCH'), 'update')
+            return self._send(200, {'auth': {'client_token': state.token,
+                                             'lease_duration': 3600,
+                                             'renewable': True}})
+        path = rec.kv_path
+        if path is None or not self._mount_ok(rec):
+            return self._send(404, {'errors': []})
+        if not self._authorized(rec):
+            return self._send(403, {'errors': ['permission denied']})
+        if self._forbidden(path) or (not state.team_writable and path.startswith('team/')):
+            return self._send(403, {'errors': ['1 error occurred:\n\t* permission denied\n\n']})
+        state.write_attempts += 1
+        if state.write_attempts in state.fail_write_attempts:
+            return self._send(500, {'errors': ['boom']})
+        data = rec.body.get('data')
+        if not isinstance(data, dict):
+            return self._send(400, {'errors': ['data must be a map']})
+        with state._lock:
+            current = state.versions.get(path, 0)
+            cas = rec.cas
+            if cas is None or cas != current:
+                return self._send(400, {'errors': [
+                    'check-and-set parameter did not match the current version']})
+            state.versions[path] = current + 1
+            state.secrets[path] = {str(k): v for k, v in data.items()}
+            state.soft_deleted.discard(path)
+            state.writes += 1
+            new_version = state.versions[path]
+        if state.drop_write_response:
+            return self._drop()
+        if state.garble_write_response:
+            return self._send(200, raw=b'<html>gateway</html>')
+        return self._send(200, {'data': {'version': new_version, 'destroyed': False,
+                                         'created_time': '2026-09-14T00:00:00Z'}})
 
     def do_DELETE(self):
-        return self._write(self._record('DELETE'), 'delete')
+        rec = self._record('DELETE')
+        state = self.server_state
+        path = rec.metadata_path
+        if path is None or not self._mount_ok(rec):
+            return self._send(404, {'errors': []})
+        if not self._authorized(rec):
+            return self._send(403, {'errors': ['permission denied']})
+        if self._forbidden(path) or (not state.team_writable and path.startswith('team/')):
+            return self._send(403, {'errors': ['permission denied']})
+        with state._lock:
+            state.versions.pop(path, None)
+            state.secrets.pop(path, None)
+            state.soft_deleted.discard(path)
+        self.send_response(204)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
 
     def do_GET(self):
         rec = self._record('GET')
         state = self.server_state
-        if rec.path != '/api/v4/secrets':
-            return self._send(404, {'message': 'not found'})
+        path = rec.kv_path
+        if path is None or not self._mount_ok(rec):
+            return self._send(404, {'errors': []})
         if not self._authorized(rec):
-            return self._send(401, {'message': 'unauthorized'})
-        if self._forbidden(rec):
-            return self._send(403, {'message': 'forbidden'})
+            return self._send(403, {'errors': ['permission denied']})
+        if self._forbidden(path):
+            return self._send(403, {'errors': ['permission denied']})
         state.get_attempts += 1
         if state.get_attempts in state.fail_get_attempts:
-            return self._send(503, {'message': 'unavailable'})
+            return self._send(503, {'errors': ['unavailable']})
         if state.get_body is not None:
             return self._send(state.get_status or 200, raw=state.get_body)
         if state.get_status is not None:
-            return self._send(state.get_status, {'message': 'error'})
-        env_name = rec.query.get('environment', 'common')
-        path = rec.query.get('secretPath', '')
-        data = state.get(path, env_name)
+            return self._send(state.get_status, {'errors': ['error']})
+        if path not in state.versions:
+            return self._send(404, {'errors': []})
+        version = state.versions[path]
+        if path in state.soft_deleted:
+            return self._send(404, {'errors': [], 'data': {
+                'data': None,
+                'metadata': {'version': version, 'deletion_time': '2026-09-14T00:00:00Z',
+                             'destroyed': False}}})
+        data = state.get(path)
         if state.writes > 0:
-            for key, value in state.readback_tamper.get((env_name, path), {}).items():
+            for key, value in state.readback_tamper.get(path, {}).items():
                 if key in data:
                     data[key] = value
-        expand = rec.query.get('expandSecretReferences', 'true') == 'true'
-        secrets = []
-        for key in sorted(data):
-            value = data[key]
-            if expand:
-                for other, other_value in data.items():
-                    value = value.replace('${' + other + '}', other_value)
-            secrets.append({'secretKey': key, 'secretValue': value})
-        return self._send(200, {'secrets': secrets}, truncate=state.truncate_get_body)
-
-    def _write(self, rec: Received, op: str):
-        state = self.server_state
-        name = rec.secret_name
-        if name is None:
-            return self._send(404, {'message': 'not found'})
-        if not self._authorized(rec):
-            return self._send(401, {'message': 'unauthorized'})
-        if self._forbidden(rec):
-            return self._send(403, {'message': 'forbidden'})
-        state.write_attempts += 1
-        if state.fail_writes_after is not None and state.writes >= state.fail_writes_after:
-            return self._send(500, {'message': 'boom'})
-        if state.write_attempts in state.fail_write_attempts:
-            return self._send(500, {'message': 'boom'})
-        key = (rec.body.get('environment', 'common'), rec.body.get('secretPath', ''))
-        bucket = state.secrets.setdefault(key, {})
-        if op == 'create':
-            if name in bucket:
-                return self._send(409, {'message': 'exists'})
-            bucket[name] = rec.body.get('secretValue', '')
-        elif op == 'update':
-            if name not in bucket:
-                return self._send(404, {'message': 'missing'})
-            bucket[name] = rec.body.get('secretValue', '')
-        else:
-            if name not in bucket:
-                return self._send(404, {'message': 'missing'})
-            del bucket[name]
-        state.writes += 1
-        return self._send(200, {'secret': {'secretKey': name}})
+        return self._send(200, {'data': {'data': data,
+                                         'metadata': {'version': version, 'deletion_time': '',
+                                                      'destroyed': False}}},
+                          truncate=state.truncate_get_body)
 
 
 @pytest.fixture
-def infisical():
-    """偽 Infisical サーバ。テスト終了時に落とす。"""
-    server = FakeInfisical().start()
+def openbao():
+    """偽 OpenBao サーバ。テスト終了時に落とす。"""
+    server = FakeOpenBao().start()
     try:
         yield server
     finally:
         server.stop()
 
 
-def configure_infisical(root, server: FakeInfisical, *, user: str = 'member01',
-                        cache_enabled: bool = True, environment: str = 'common',
-                        with_bootstrap: bool = True):
-    """DEVBASE_ROOT を偽サーバ向けの ``backend: infisical`` に設定する。
+def configure_openbao(root, server: FakeOpenBao, *, user: str = 'member01',
+                      cache_enabled: bool = True, with_bootstrap: bool = True,
+                      mount: Optional[str] = None):
+    """DEVBASE_ROOT を偽サーバ向けの ``backend: openbao`` に設定する。
 
     age 鍵は呼び出し側が用意している前提 (ブートストラップとキャッシュの暗号化に使う)。
     """
@@ -274,19 +334,18 @@ def configure_infisical(root, server: FakeInfisical, *, user: str = 'member01',
     from devbase.env import bootstrap
 
     config = bc.BackendConfig(
-        backend='infisical',
-        infisical=bc.InfisicalSettings(url=server.url, project_id=server.project_id,
-                                       user=user, environment=environment),
+        backend='openbao',
+        openbao=bc.OpenBaoSettings(url=server.url, user=user, mount=mount or server.mount),
         cache_enabled=cache_enabled,
     )
     bc.save(root, config)
     if with_bootstrap:
-        bootstrap.save(root, bootstrap.Credentials(server.client_id, server.client_secret))
+        bootstrap.save(root, bootstrap.Credentials(server.role_id, server.secret_id))
     return config
 
 
 @pytest.fixture
-def infisical_root(tmp_path, monkeypatch, infisical):
+def openbao_root(tmp_path, monkeypatch, openbao):
     """age 鍵を持ち、偽サーバを backend にした DEVBASE_ROOT"""
     from devbase.env import agekeys
 
@@ -296,5 +355,5 @@ def infisical_root(tmp_path, monkeypatch, infisical):
     monkeypatch.setenv('PWD', str(tmp_path))
     monkeypatch.chdir(tmp_path)
     agekeys.generate_key_file()
-    configure_infisical(tmp_path, infisical)
+    configure_openbao(tmp_path, openbao)
     return tmp_path

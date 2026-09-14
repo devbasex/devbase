@@ -12,19 +12,18 @@ import pytest
 from devbase.commands import env_migrate, env_ops
 from devbase.env import agekeys, backend_config as bc, bootstrap, cache, cipher
 from devbase.env.secret_store import SecretRef, SecretStore
-from tests.conftest import configure_infisical
 
 
 GLOBAL = SecretRef.for_global()
 
 
 @pytest.fixture
-def git_root(infisical_root, monkeypatch):
+def git_root(openbao_root, monkeypatch):
     monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
     monkeypatch.setenv('GIT_CONFIG_SYSTEM', os.devnull)
-    subprocess.run(['git', 'init', '-q'], cwd=str(infisical_root), check=True)
-    (infisical_root / '.gitignore').write_text('.env\n.env.bak*\nsecrets/\nprojects/*/.env\n')
-    return infisical_root
+    subprocess.run(['git', 'init', '-q'], cwd=str(openbao_root), check=True)
+    (openbao_root / '.gitignore').write_text('.env\n.env.bak*\nsecrets/\nprojects/*/.env\n')
+    return openbao_root
 
 
 @pytest.fixture
@@ -39,8 +38,8 @@ def errors(caplog) -> str:
     return '\n'.join(r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
 
 
-def seed_cache(root, infisical):
-    infisical.put('/team/global', {'A': '1'})
+def seed_cache(root, openbao):
+    openbao.put('team/global', {'A': '1'})
     SecretStore(root).load(GLOBAL)
     assert cache.entry_path(root, GLOBAL).exists()
 
@@ -49,123 +48,123 @@ def seed_cache(root, infisical):
 # rekey
 # ---------------------------------------------------------------------------
 
-def test_rekey_reencrypts_bootstrap_and_cache(infisical_root, infisical, colleague):
+def test_rekey_reencrypts_bootstrap_and_cache(openbao_root, openbao, colleague):
     public, key_file = colleague
-    seed_cache(infisical_root, infisical)
+    seed_cache(openbao_root, openbao)
     own_key = agekeys.key_file_path()
-    bootstrap_path = bootstrap.path(infisical_root)
-    cache_path = cache.entry_path(infisical_root, GLOBAL)
+    bootstrap_path = bootstrap.path(openbao_root)
+    cache_path = cache.entry_path(openbao_root, GLOBAL)
     before = (bootstrap_path.read_bytes(), cache_path.read_bytes())
 
-    assert env_ops.cmd_env_rekey(infisical_root, add=[public], assume_yes=True) == 0
+    assert env_ops.cmd_env_rekey(openbao_root, add=[public], assume_yes=True) == 0
 
     assert (bootstrap_path.read_bytes(), cache_path.read_bytes()) != before
     for path in (bootstrap_path, cache_path):
         cipher.decrypt(path.read_bytes(), identities=[key_file])      # 同僚が読める
         cipher.decrypt(path.read_bytes(), identities=[str(own_key)])  # 自分も読める
-    assert bootstrap.load(infisical_root).client_id == 'cid'
+    assert bootstrap.load(openbao_root).role_id == 'rid'
 
 
-def test_rekey_removed_recipient_cannot_read_bootstrap_or_cache(infisical_root, infisical,
+def test_rekey_removed_recipient_cannot_read_bootstrap_or_cache(openbao_root, openbao,
                                                                 colleague):
     public, key_file = colleague
-    seed_cache(infisical_root, infisical)
-    assert env_ops.cmd_env_rekey(infisical_root, add=[public], assume_yes=True) == 0
+    seed_cache(openbao_root, openbao)
+    assert env_ops.cmd_env_rekey(openbao_root, add=[public], assume_yes=True) == 0
 
-    assert env_ops.cmd_env_rekey(infisical_root, remove=[public], assume_yes=True) == 0
+    assert env_ops.cmd_env_rekey(openbao_root, remove=[public], assume_yes=True) == 0
 
-    for path in (bootstrap.path(infisical_root), cache.entry_path(infisical_root, GLOBAL)):
+    for path in (bootstrap.path(openbao_root), cache.entry_path(openbao_root, GLOBAL)):
         with pytest.raises(cipher.CipherError):
             cipher.decrypt(path.read_bytes(), identities=[key_file])
-    assert bootstrap.load(infisical_root).client_id == 'cid'
+    assert bootstrap.load(openbao_root).role_id == 'rid'
 
 
-def test_rekey_dry_run_lists_bootstrap_and_cache(infisical_root, infisical, colleague, capsys):
+def test_rekey_dry_run_lists_bootstrap_and_cache(openbao_root, openbao, colleague, capsys):
     public, _ = colleague
-    seed_cache(infisical_root, infisical)
+    seed_cache(openbao_root, openbao)
 
-    assert env_ops.cmd_env_rekey(infisical_root, add=[public], dry_run=True) == 0
+    assert env_ops.cmd_env_rekey(openbao_root, add=[public], dry_run=True) == 0
 
     out = capsys.readouterr().out
     assert 'bootstrap.env.age' in out
-    assert str(cache.entry_path(infisical_root, GLOBAL)) in out
+    assert str(cache.entry_path(openbao_root, GLOBAL)) in out
 
 
-def test_rekey_works_with_backend_infisical_and_no_age_secrets(infisical_root, colleague):
+def test_rekey_works_with_backend_openbao_and_no_age_secrets(openbao_root, colleague):
     """backend の選択を理由に止まらない (再暗号化する対象はブートストラップだけ)"""
     public, key_file = colleague
 
-    assert env_ops.cmd_env_rekey(infisical_root, add=[public], assume_yes=True) == 0
+    assert env_ops.cmd_env_rekey(openbao_root, add=[public], assume_yes=True) == 0
 
-    cipher.decrypt(bootstrap.path(infisical_root).read_bytes(), identities=[key_file])
+    cipher.decrypt(bootstrap.path(openbao_root).read_bytes(), identities=[key_file])
 
 
 # ---------------------------------------------------------------------------
 # encrypt / decrypt
 # ---------------------------------------------------------------------------
 
-def test_encrypt_and_decrypt_are_age_only(infisical_root, caplog):
-    (infisical_root / '.env').write_text('A=1\n')
+def test_encrypt_and_decrypt_are_age_only(openbao_root, caplog):
+    (openbao_root / '.env').write_text('A=1\n')
 
-    assert env_migrate.cmd_env_encrypt(infisical_root, assume_yes=True) == 1
-    assert env_migrate.cmd_env_decrypt(infisical_root, assume_yes=True) == 1
+    assert env_migrate.cmd_env_encrypt(openbao_root, assume_yes=True) == 1
+    assert env_migrate.cmd_env_decrypt(openbao_root, assume_yes=True) == 1
 
-    assert 'age' in errors(caplog) and 'infisical' in errors(caplog)
-    assert (infisical_root / '.env').read_text() == 'A=1\n'
-    assert not (infisical_root / 'secrets' / 'global.env.age').exists()
+    assert 'age' in errors(caplog) and 'openbao' in errors(caplog)
+    assert (openbao_root / '.env').read_text() == 'A=1\n'
+    assert not (openbao_root / 'secrets' / 'global.env.age').exists()
 
 
-def test_encrypt_is_refused_when_backend_is_plaintext(infisical_root, caplog):
+def test_encrypt_is_refused_when_backend_is_plaintext(openbao_root, caplog):
     """変換後に設定が指す先から機密が消える向きは拒む"""
-    config = bc.load(infisical_root)
-    bc.save(infisical_root, bc.BackendConfig(backend='plaintext', infisical=config.infisical))
-    (infisical_root / '.env').write_text('A=1\n')
+    config = bc.load(openbao_root)
+    bc.save(openbao_root, bc.BackendConfig(backend='plaintext', openbao=config.openbao))
+    (openbao_root / '.env').write_text('A=1\n')
 
-    assert env_migrate.cmd_env_encrypt(infisical_root, assume_yes=True) == 1
+    assert env_migrate.cmd_env_encrypt(openbao_root, assume_yes=True) == 1
 
-    assert (infisical_root / '.env').read_text() == 'A=1\n'
+    assert (openbao_root / '.env').read_text() == 'A=1\n'
     assert 'plaintext' in errors(caplog)
-    assert SecretStore(infisical_root).load(GLOBAL) == {'A': '1'}
+    assert SecretStore(openbao_root).load(GLOBAL) == {'A': '1'}
 
 
-def test_decrypt_is_refused_when_backend_is_age(infisical_root, caplog):
-    config = bc.load(infisical_root)
-    bc.save(infisical_root, bc.BackendConfig(backend='age', infisical=config.infisical))
-    SecretStore(infisical_root).age.save(GLOBAL, {'A': '1'})
+def test_decrypt_is_refused_when_backend_is_age(openbao_root, caplog):
+    config = bc.load(openbao_root)
+    bc.save(openbao_root, bc.BackendConfig(backend='age', openbao=config.openbao))
+    SecretStore(openbao_root).age.save(GLOBAL, {'A': '1'})
 
-    assert env_migrate.cmd_env_decrypt(infisical_root, assume_yes=True) == 1
+    assert env_migrate.cmd_env_decrypt(openbao_root, assume_yes=True) == 1
 
-    assert (infisical_root / 'secrets' / 'global.env.age').exists()
-    assert SecretStore(infisical_root).load(GLOBAL) == {'A': '1'}
-
-
-def test_decrypt_works_when_backend_is_plaintext(infisical_root):
-    config = bc.load(infisical_root)
-    bc.save(infisical_root, bc.BackendConfig(backend='plaintext', infisical=config.infisical))
-    SecretStore(infisical_root).age.save(GLOBAL, {'A': '1'})
-
-    assert env_migrate.cmd_env_decrypt(infisical_root, assume_yes=True) == 0
-
-    assert SecretStore(infisical_root).load(GLOBAL) == {'A': '1'}
-    assert not (infisical_root / 'secrets' / 'global.env.age').exists()
+    assert (openbao_root / 'secrets' / 'global.env.age').exists()
+    assert SecretStore(openbao_root).load(GLOBAL) == {'A': '1'}
 
 
-def test_encrypt_still_works_when_backend_is_age(infisical_root):
-    config = bc.load(infisical_root)
-    bc.save(infisical_root, bc.BackendConfig(backend='age', infisical=config.infisical))
-    (infisical_root / '.env').write_text('A=1\n')
+def test_decrypt_works_when_backend_is_plaintext(openbao_root):
+    config = bc.load(openbao_root)
+    bc.save(openbao_root, bc.BackendConfig(backend='plaintext', openbao=config.openbao))
+    SecretStore(openbao_root).age.save(GLOBAL, {'A': '1'})
 
-    assert env_migrate.cmd_env_encrypt(infisical_root, assume_yes=True) == 0
+    assert env_migrate.cmd_env_decrypt(openbao_root, assume_yes=True) == 0
 
-    assert (infisical_root / 'secrets' / 'global.env.age').exists()
+    assert SecretStore(openbao_root).load(GLOBAL) == {'A': '1'}
+    assert not (openbao_root / 'secrets' / 'global.env.age').exists()
+
+
+def test_encrypt_still_works_when_backend_is_age(openbao_root):
+    config = bc.load(openbao_root)
+    bc.save(openbao_root, bc.BackendConfig(backend='age', openbao=config.openbao))
+    (openbao_root / '.env').write_text('A=1\n')
+
+    assert env_migrate.cmd_env_encrypt(openbao_root, assume_yes=True) == 0
+
+    assert (openbao_root / 'secrets' / 'global.env.age').exists()
 
 
 # ---------------------------------------------------------------------------
 # doctor
 # ---------------------------------------------------------------------------
 
-def test_doctor_is_quiet_on_a_healthy_server_setup(git_root, infisical, capsys):
-    seed_cache(git_root, infisical)
+def test_doctor_is_quiet_on_a_healthy_server_setup(git_root, openbao, capsys):
+    seed_cache(git_root, openbao)
 
     assert env_ops.cmd_env_doctor(git_root) == 0
     out = capsys.readouterr().out
@@ -182,10 +181,10 @@ def test_doctor_reports_a_broken_backend_config(git_root, capsys):
 
 def test_doctor_reports_a_missing_user(git_root, capsys):
     (git_root / 'secrets' / 'backend.yml').write_text(
-        f"backend: infisical\ninfisical:\n  url: {'https://x.example.com'}\n  project_id: p\n")
+        f"backend: openbao\nopenbao:\n  url: {'https://x.example.com'}\n")
 
     assert env_ops.cmd_env_doctor(git_root) == 1
-    assert 'infisical.user' in capsys.readouterr().out
+    assert 'openbao.user' in capsys.readouterr().out
 
 
 def test_doctor_reports_missing_bootstrap_keys(git_root, capsys):
@@ -193,12 +192,12 @@ def test_doctor_reports_missing_bootstrap_keys(git_root, capsys):
 
     assert env_ops.cmd_env_doctor(git_root) == 1
     out = capsys.readouterr().out
-    assert 'bootstrap.env.age' in out and 'DEVBASE_INFISICAL_CLIENT_ID' in out
+    assert 'bootstrap.env.age' in out and 'DEVBASE_OPENBAO_ROLE_ID' in out
 
 
 @pytest.mark.parametrize('target', ['backend.yml', 'bootstrap.env.age', 'cache/team/global.env.age'])
-def test_doctor_reports_loose_file_permissions(git_root, infisical, capsys, target):
-    seed_cache(git_root, infisical)
+def test_doctor_reports_loose_file_permissions(git_root, openbao, capsys, target):
+    seed_cache(git_root, openbao)
     path = git_root / 'secrets' / target
     path.chmod(0o644)
 
@@ -207,8 +206,8 @@ def test_doctor_reports_loose_file_permissions(git_root, infisical, capsys, targ
     assert str(path) in out and 'chmod 600' in out
 
 
-def test_doctor_reports_a_loose_cache_directory(git_root, infisical, capsys):
-    seed_cache(git_root, infisical)
+def test_doctor_reports_a_loose_cache_directory(git_root, openbao, capsys):
+    seed_cache(git_root, openbao)
     (git_root / 'secrets' / 'cache').chmod(0o755)
 
     assert env_ops.cmd_env_doctor(git_root) == 1

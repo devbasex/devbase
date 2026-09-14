@@ -12,28 +12,27 @@ import pytest
 
 from devbase.env import agekeys, cache, runtime
 from devbase.env import backend_config as bc
-from devbase.env.infisical import SecretAuthError, SecretUnreachableError
+from devbase.env.openbao import SecretAuthError, SecretConflictError, SecretUnreachableError
 from devbase.env.secret_store import SecretRef, SecretStore, SecretStoreError
-from tests.conftest import configure_infisical
 
 
 GLOBAL = SecretRef.for_global()
 WEB = SecretRef.for_project('web')
 USER_GLOBAL = SecretRef.for_global(owner='user')
 USER_WEB = SecretRef.for_project('web', owner='user')
-TEAM_GLOBAL_PATH = '/team/global'
+TEAM_GLOBAL_PATH = 'team/global'
 
 
 def digest(path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def fill(infisical, store):
+def fill(openbao, store):
     """4 参照すべてに 1 件ずつ入れて取得し、控えを作る"""
-    infisical.put('/team/global', {'A': 'team-global'})
-    infisical.put('/team/projects/web', {'B': 'team-web'})
-    infisical.put('/users/member01/global', {'C': 'user-global'})
-    infisical.put('/users/member01/projects/web', {'D': 'user-web'})
+    openbao.put('team/global', {'A': 'team-global'})
+    openbao.put('team/projects/web', {'B': 'team-web'})
+    openbao.put('users/member01/global', {'C': 'user-global'})
+    openbao.put('users/member01/projects/web', {'D': 'user-web'})
     return runtime.resolve(store.root, 'web', store=store)
 
 
@@ -41,12 +40,12 @@ def fill(infisical, store):
 # 配置と形式
 # ---------------------------------------------------------------------------
 
-def test_each_reference_has_its_own_encrypted_file(infisical_root, infisical):
-    store = SecretStore(infisical_root)
-    fill(infisical, store)
+def test_each_reference_has_its_own_encrypted_file(openbao_root, openbao):
+    store = SecretStore(openbao_root)
+    fill(openbao, store)
 
-    files = cache.cached_files(infisical_root)
-    base = infisical_root / 'secrets' / 'cache'
+    files = cache.cached_files(openbao_root)
+    base = openbao_root / 'secrets' / 'cache'
     assert files == sorted([
         base / 'team' / 'global.env.age', base / 'team' / 'projects' / 'web.env.age',
         base / 'user' / 'global.env.age', base / 'user' / 'projects' / 'web.env.age'])
@@ -57,13 +56,13 @@ def test_each_reference_has_its_own_encrypted_file(infisical_root, infisical):
     assert stat.S_IMODE(base.stat().st_mode) == 0o700
 
 
-def test_index_has_no_keys_or_values(infisical_root, infisical):
-    store = SecretStore(infisical_root)
-    fill(infisical, store)
+def test_index_has_no_keys_or_values(openbao_root, openbao):
+    store = SecretStore(openbao_root)
+    fill(openbao, store)
 
-    raw = (infisical_root / 'secrets' / 'cache' / 'index.json').read_text()
+    raw = (openbao_root / 'secrets' / 'cache' / 'index.json').read_text()
     assert 'team-global' not in raw and '"A"' not in raw
-    entries = cache.read_index(infisical_root)
+    entries = cache.read_index(openbao_root)
     assert set(entries) == {'team:global', 'team:project:web', 'user:global', 'user:project:web'}
     assert entries['team:global']['url_host'] == '127.0.0.1'
     assert entries['team:global']['fetched_at']
@@ -73,13 +72,13 @@ def test_index_has_no_keys_or_values(infisical_root, infisical):
 # 不達
 # ---------------------------------------------------------------------------
 
-def test_unreachable_with_a_cache_resolves_and_warns(infisical_root, infisical, caplog):
-    fill(infisical, SecretStore(infisical_root))
-    fetched_at = cache.read_index(infisical_root)['team:global']['fetched_at']
-    infisical.stop()
+def test_unreachable_with_a_cache_resolves_and_warns(openbao_root, openbao, caplog):
+    fill(openbao, SecretStore(openbao_root))
+    fetched_at = cache.read_index(openbao_root)['team:global']['fetched_at']
+    openbao.stop()
 
     with caplog.at_level(logging.WARNING):
-        resolved = runtime.resolve(infisical_root, 'web', store=SecretStore(infisical_root))
+        resolved = runtime.resolve(openbao_root, 'web', store=SecretStore(openbao_root))
 
     assert resolved.values == {'A': 'team-global', 'B': 'team-web',
                                'C': 'user-global', 'D': 'user-web'}
@@ -87,181 +86,239 @@ def test_unreachable_with_a_cache_resolves_and_warns(infisical_root, infisical, 
     assert 'team-global' not in caplog.text
 
 
-def test_unreachable_without_a_cache_fails_with_the_url(infisical_root, infisical):
-    url = infisical.url
-    infisical.stop()
+def test_unreachable_without_a_cache_fails_with_the_url(openbao_root, openbao):
+    url = openbao.url
+    openbao.stop()
 
     with pytest.raises(SecretUnreachableError) as exc:
-        runtime.resolve(infisical_root, 'web', store=SecretStore(infisical_root))
+        runtime.resolve(openbao_root, 'web', store=SecretStore(openbao_root))
     assert url in str(exc.value)
 
 
 @pytest.mark.parametrize('how', ['down', '500', 'bad-json'])
-def test_failed_fetch_leaves_the_cache_untouched(infisical_root, infisical, how):
-    fill(infisical, SecretStore(infisical_root))
-    path = cache.entry_path(infisical_root, GLOBAL)
+def test_failed_fetch_leaves_the_cache_untouched(openbao_root, openbao, how):
+    fill(openbao, SecretStore(openbao_root))
+    path = cache.entry_path(openbao_root, GLOBAL)
     before = digest(path)
 
     if how == 'down':
-        infisical.stop()
+        openbao.stop()
     elif how == '500':
-        infisical.get_status = 500
+        openbao.get_status = 500
     else:
-        infisical.get_body = b'{oops'
+        openbao.get_body = b'{oops'
 
-    SecretStore(infisical_root).load(GLOBAL)   # キャッシュから返る
+    SecretStore(openbao_root).load(GLOBAL)   # キャッシュから返る
 
     assert digest(path) == before
 
 
-def test_truncated_response_falls_back_to_the_cache(infisical_root, infisical):
+def test_truncated_response_falls_back_to_the_cache(openbao_root, openbao):
     """本文が Content-Length より短く切れた応答 (IncompleteRead) は不達として扱う"""
-    fill(infisical, SecretStore(infisical_root))
-    infisical.truncate_get_body = True
+    fill(openbao, SecretStore(openbao_root))
+    openbao.truncate_get_body = True
 
-    assert SecretStore(infisical_root).load(GLOBAL) == {'A': 'team-global'}
+    assert SecretStore(openbao_root).load(GLOBAL) == {'A': 'team-global'}
 
 
-def test_an_empty_answer_replaces_the_cache(infisical_root, infisical):
-    fill(infisical, SecretStore(infisical_root))
-    infisical.put('/team/global', {})
+def test_an_empty_answer_replaces_the_cache(openbao_root, openbao):
+    fill(openbao, SecretStore(openbao_root))
+    openbao.put('team/global', {})
 
-    assert SecretStore(infisical_root).load(GLOBAL) == {}
-    infisical.stop()
+    assert SecretStore(openbao_root).load(GLOBAL) == {}
+    openbao.stop()
 
-    assert SecretStore(infisical_root).load(GLOBAL) == {}
+    assert SecretStore(openbao_root).load(GLOBAL) == {}
+
+
+def test_a_404_replaces_the_cache_with_an_empty_generation(openbao_root, openbao):
+    """WebUI で参照ごと消した (論理削除) 後の 404 は機密 0 件として控えを置き換える"""
+    fill(openbao, SecretStore(openbao_root))
+    openbao.soft_delete('team/global')
+
+    assert SecretStore(openbao_root).load(GLOBAL) == {}
+    openbao.stop()
+
+    assert SecretStore(openbao_root).load(GLOBAL) == {}
 
 
 # ---------------------------------------------------------------------------
 # 認証拒否
 # ---------------------------------------------------------------------------
 
-def test_auth_rejection_does_not_use_or_change_the_cache(infisical_root, infisical,
+def test_auth_rejection_does_not_use_or_change_the_cache(openbao_root, openbao,
                                                           monkeypatch):
-    fill(infisical, SecretStore(infisical_root))
-    path = cache.entry_path(infisical_root, GLOBAL)
+    fill(openbao, SecretStore(openbao_root))
+    path = cache.entry_path(openbao_root, GLOBAL)
     before = digest(path)
-    infisical.reject_login = True
-    infisical.expire_token()
+    openbao.reject_login = True
+    openbao.expire_token()
     reads = []
     original = cache.SecretCache.read
     monkeypatch.setattr(cache.SecretCache, 'read',
                         lambda self, ref, backend: reads.append(ref) or original(self, ref, backend))
 
     with pytest.raises(SecretAuthError):
-        runtime.resolve(infisical_root, 'web', store=SecretStore(infisical_root))
+        runtime.resolve(openbao_root, 'web', store=SecretStore(openbao_root))
 
     assert reads == []
     assert digest(path) == before
 
     # 資格が戻った後の不達では、そのキャッシュがこれまでどおり使われる
-    infisical.reject_login = False
-    infisical.stop()
-    assert SecretStore(infisical_root).load(GLOBAL) == {'A': 'team-global'}
+    openbao.reject_login = False
+    openbao.stop()
+    assert SecretStore(openbao_root).load(GLOBAL) == {'A': 'team-global'}
 
 
-def test_forbidden_reference_does_not_use_the_cache(infisical_root, infisical):
-    fill(infisical, SecretStore(infisical_root))
-    infisical.forbidden_prefixes = ['/users/']
+def test_forbidden_reference_does_not_use_the_cache(openbao_root, openbao):
+    fill(openbao, SecretStore(openbao_root))
+    openbao.forbidden_prefixes = ['users/']
 
     with pytest.raises(SecretAuthError):
-        SecretStore(infisical_root).load(USER_GLOBAL)
+        SecretStore(openbao_root).load(USER_GLOBAL)
 
 
 # ---------------------------------------------------------------------------
 # scope
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize('change', ['url', 'project_id', 'environment', 'user'])
-def test_changed_settings_invalidate_the_cache(infisical_root, infisical, change):
-    fill(infisical, SecretStore(infisical_root))
-    config = bc.load(infisical_root)
-    inf = config.infisical
+@pytest.mark.parametrize('change', ['url', 'mount', 'path', 'user'])
+def test_changed_settings_invalidate_the_cache(openbao_root, openbao, change):
+    fill(openbao, SecretStore(openbao_root))
+    ob = bc.load(openbao_root).openbao
     if change == 'url':
         # 同じホストの別ポート (= 別の接続先)。到達はできない
-        new = bc.InfisicalSettings(**{**inf.to_dict(), 'url': 'http://127.0.0.1:1'})
-    elif change == 'project_id':
-        new = bc.InfisicalSettings(**{**inf.to_dict(), 'project_id': 'other'})
-    elif change == 'environment':
-        new = bc.InfisicalSettings(**{**inf.to_dict(), 'environment': 'staging'})
+        new = bc.OpenBaoSettings(**{**ob.to_dict(), 'url': 'http://127.0.0.1:1'})
+    elif change == 'mount':
+        new = bc.OpenBaoSettings(**{**ob.to_dict(), 'mount': 'other'})
+    elif change == 'path':
+        new = bc.OpenBaoSettings(**{**ob.to_dict(), 'path_team_global': 'shared/global'})
     else:
-        new = bc.InfisicalSettings(**{**inf.to_dict(), 'user': 'member02'})
-    bc.save(infisical_root, bc.BackendConfig(backend='infisical', infisical=new))
-    infisical.stop()
+        new = bc.OpenBaoSettings(**{**ob.to_dict(), 'user': 'member02'})
+    bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=new))
+    openbao.stop()
 
     ref = USER_GLOBAL if change == 'user' else GLOBAL
     with pytest.raises(SecretUnreachableError):
-        SecretStore(infisical_root).load(ref)
+        SecretStore(openbao_root).load(ref)
 
 
-def test_changed_client_id_invalidates_the_cache(infisical_root, infisical):
+def test_changed_role_id_invalidates_the_cache(openbao_root, openbao):
     from devbase.env import bootstrap
 
-    fill(infisical, SecretStore(infisical_root))
-    bootstrap.save(infisical_root, bootstrap.Credentials('other-cid', 's3cret'))
-    infisical.stop()
+    fill(openbao, SecretStore(openbao_root))
+    bootstrap.save(openbao_root, bootstrap.Credentials('other-rid', 's3cret'))
+    openbao.stop()
 
     with pytest.raises(SecretUnreachableError):
-        SecretStore(infisical_root).load(GLOBAL)
+        SecretStore(openbao_root).load(GLOBAL)
 
 
-def test_ciphertext_and_scope_travel_together(infisical_root, infisical):
+def test_ciphertext_and_scope_travel_together(openbao_root, openbao):
     """暗号文だけを別 scope の世代へ差し替えても、scope の不一致として捨てられる"""
-    store = SecretStore(infisical_root)
-    fill(infisical, store)
-    good = cache.entry_path(infisical_root, GLOBAL).read_bytes()
+    store = SecretStore(openbao_root)
+    fill(openbao, store)
+    good = cache.entry_path(openbao_root, GLOBAL).read_bytes()
 
-    # 別 environment で取得した世代を作り、その暗号文を元の場所へ戻す
-    inf = bc.load(infisical_root).infisical
-    other = bc.InfisicalSettings(**{**inf.to_dict(), 'environment': 'staging'})
-    bc.save(infisical_root, bc.BackendConfig(backend='infisical', infisical=other))
-    infisical.put('/team/global', {'A': 'staging-value'}, environment='staging')
-    SecretStore(infisical_root).load(GLOBAL)
-    staged = cache.entry_path(infisical_root, GLOBAL).read_bytes()
+    # 別 mount で取得した世代を作り、その暗号文を元の場所へ戻す
+    ob = bc.load(openbao_root).openbao
+    other = bc.OpenBaoSettings(**{**ob.to_dict(), 'mount': 'staging'})
+    bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=other))
+    openbao.mount = 'staging'
+    openbao.put('team/global', {'A': 'staging-value'})
+    SecretStore(openbao_root).load(GLOBAL)
+    staged = cache.entry_path(openbao_root, GLOBAL).read_bytes()
     assert staged != good
 
-    bc.save(infisical_root, bc.BackendConfig(backend='infisical', infisical=inf))
-    cache.entry_path(infisical_root, GLOBAL).write_bytes(staged)
-    infisical.stop()
+    bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=ob))
+    cache.entry_path(openbao_root, GLOBAL).write_bytes(staged)
+    openbao.stop()
 
     with pytest.raises(SecretUnreachableError):
-        SecretStore(infisical_root).load(GLOBAL)
+        SecretStore(openbao_root).load(GLOBAL)
 
 
 # ---------------------------------------------------------------------------
 # 書き込みとの同期
 # ---------------------------------------------------------------------------
 
-def test_successful_writes_advance_the_cache(infisical_root, infisical):
-    fill(infisical, SecretStore(infisical_root))
-    store = SecretStore(infisical_root)
+def test_successful_writes_advance_the_cache(openbao_root, openbao):
+    fill(openbao, SecretStore(openbao_root))
+    store = SecretStore(openbao_root)
     store.save(GLOBAL, {'NEW': '1'})     # A (漏れたキー) を消し、NEW を足す
-    infisical.stop()
+    openbao.stop()
 
-    resolved = runtime.resolve(infisical_root, 'web', store=SecretStore(infisical_root))
+    resolved = runtime.resolve(openbao_root, 'web', store=SecretStore(openbao_root))
 
     assert 'A' not in resolved.values
     assert resolved.values['NEW'] == '1'
 
 
-def test_partial_write_failure_discards_the_cache(infisical_root, infisical):
-    fill(infisical, SecretStore(infisical_root))
-    infisical.fail_writes_after = 1
+def test_a_version_conflict_discards_the_cache(openbao_root, openbao):
+    fill(openbao, SecretStore(openbao_root))
+    store = SecretStore(openbao_root)
+    store.load(GLOBAL)
+    openbao.put('team/global', {'A': 'theirs'})
 
-    with pytest.raises(SecretStoreError):
-        SecretStore(infisical_root).save(GLOBAL, {'X': '1', 'Y': '2'})
+    with pytest.raises(SecretConflictError):
+        store.save(GLOBAL, {'X': '1'})
 
-    assert not cache.entry_path(infisical_root, GLOBAL).exists()
-    assert 'team:global' not in cache.read_index(infisical_root)
-    infisical.stop()
+    assert not cache.entry_path(openbao_root, GLOBAL).exists()
+    assert 'team:global' not in cache.read_index(openbao_root)
+    openbao.stop()
     with pytest.raises(SecretUnreachableError):
-        SecretStore(infisical_root).load(GLOBAL)
+        SecretStore(openbao_root).load(GLOBAL)
 
 
-def test_unwritable_cache_after_a_write_is_discarded_with_a_warning(infisical_root, infisical,
+@pytest.mark.parametrize('how', ['dropped', '500', 'garbled'])
+def test_a_write_with_an_unknown_result_discards_the_cache(openbao_root, openbao, how):
+    """サーバが更新を確定した後で応答だけが失われた (壊れた) 可能性があるため消す"""
+    fill(openbao, SecretStore(openbao_root))
+    if how == 'dropped':
+        openbao.drop_write_response = True
+    elif how == '500':
+        openbao.fail_write_attempts = [1]
+    else:
+        openbao.garble_write_response = True
+
+    with pytest.raises(SecretUnreachableError):
+        SecretStore(openbao_root).save(GLOBAL, {'X': '1'})
+
+    assert not cache.entry_path(openbao_root, GLOBAL).exists()
+    assert 'team:global' not in cache.read_index(openbao_root)
+
+
+def test_a_write_the_server_refused_keeps_the_cache(openbao_root, openbao):
+    """403 はサーバが拒んだと確定した応答で、読んだときに進んだ世代がそのまま正しい"""
+    fill(openbao, SecretStore(openbao_root))
+    openbao.team_writable = False
+
+    with pytest.raises(SecretAuthError):
+        SecretStore(openbao_root).save(GLOBAL, {'X': '1'})
+
+    assert cache.entry_path(openbao_root, GLOBAL).exists()
+    openbao.stop()
+    assert SecretStore(openbao_root).load(GLOBAL) == {'A': 'team-global'}
+
+
+def test_a_reference_read_from_the_cache_cannot_be_written_back(openbao_root, openbao):
+    """控えには版が無い。復旧後に取り直した版で書くと不達の間の他人の更新を上書きする"""
+    fill(openbao, SecretStore(openbao_root))
+    openbao.stop()
+    store = SecretStore(openbao_root)
+    assert store.load(GLOBAL) == {'A': 'team-global'}     # 控えから
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.save(GLOBAL, {'A': 'stale'})
+
+    assert '書き込めません' in str(exc.value) or '書き戻' in str(exc.value)
+    assert cache.entry_path(openbao_root, GLOBAL).exists()     # 控えは残る
+
+
+def test_unwritable_cache_after_a_write_is_discarded_with_a_warning(openbao_root, openbao,
                                                                     monkeypatch, caplog):
-    fill(infisical, SecretStore(infisical_root))
-    store = SecretStore(infisical_root)
+    fill(openbao, SecretStore(openbao_root))
+    store = SecretStore(openbao_root)
     # 受信者鍵を外す = 新しい世代を暗号化できない
     monkeypatch.setattr(store.age, 'encrypt_bytes',
                         lambda data: (_ for _ in ()).throw(SecretStoreError('no recipients')))
@@ -269,8 +326,8 @@ def test_unwritable_cache_after_a_write_is_discarded_with_a_warning(infisical_ro
     with caplog.at_level(logging.WARNING):
         store.save(GLOBAL, {'NEW': '1'})
 
-    assert infisical.get('/team/global') == {'NEW': '1'}     # サーバへは書けている
-    assert not cache.entry_path(infisical_root, GLOBAL).exists()
+    assert openbao.get('team/global') == {'NEW': '1'}     # サーバへは書けている
+    assert not cache.entry_path(openbao_root, GLOBAL).exists()
     assert '控えを消します' in caplog.text
 
 
@@ -278,39 +335,39 @@ def test_unwritable_cache_after_a_write_is_discarded_with_a_warning(infisical_ro
 # 無効化
 # ---------------------------------------------------------------------------
 
-def test_disabling_the_cache_removes_existing_entries(infisical_root, infisical):
-    fill(infisical, SecretStore(infisical_root))
-    assert cache.cached_files(infisical_root)
-    inf = bc.load(infisical_root).infisical
-    bc.save(infisical_root, bc.BackendConfig(backend='infisical', infisical=inf,
+def test_disabling_the_cache_removes_existing_entries(openbao_root, openbao):
+    fill(openbao, SecretStore(openbao_root))
+    assert cache.cached_files(openbao_root)
+    ob = bc.load(openbao_root).openbao
+    bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=ob,
                                              cache_enabled=False))
 
-    SecretStore(infisical_root).load(GLOBAL)
+    SecretStore(openbao_root).load(GLOBAL)
 
-    assert cache.cached_files(infisical_root) == []
-    assert not cache.index_path(infisical_root).exists()
+    assert cache.cached_files(openbao_root) == []
+    assert not cache.index_path(openbao_root).exists()
 
 
-def test_deletion_while_disabled_does_not_come_back(infisical_root, infisical):
-    fill(infisical, SecretStore(infisical_root))
-    inf = bc.load(infisical_root).infisical
-    bc.save(infisical_root, bc.BackendConfig(backend='infisical', infisical=inf,
+def test_deletion_while_disabled_does_not_come_back(openbao_root, openbao):
+    fill(openbao, SecretStore(openbao_root))
+    ob = bc.load(openbao_root).openbao
+    bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=ob,
                                              cache_enabled=False))
-    SecretStore(infisical_root).save(GLOBAL, {})     # LEAKED (= A) を消す
-    bc.save(infisical_root, bc.BackendConfig(backend='infisical', infisical=inf,
+    SecretStore(openbao_root).save(GLOBAL, {})     # LEAKED (= A) を消す
+    bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=ob,
                                              cache_enabled=True))
-    infisical.stop()
+    openbao.stop()
 
     with pytest.raises(SecretUnreachableError):
-        runtime.resolve(infisical_root, 'web', store=SecretStore(infisical_root))
+        runtime.resolve(openbao_root, 'web', store=SecretStore(openbao_root))
 
 
-def test_undeletable_entries_fail_with_their_paths(infisical_root, infisical, monkeypatch):
-    fill(infisical, SecretStore(infisical_root))
-    inf = bc.load(infisical_root).infisical
-    bc.save(infisical_root, bc.BackendConfig(backend='infisical', infisical=inf,
+def test_undeletable_entries_fail_with_their_paths(openbao_root, openbao, monkeypatch):
+    fill(openbao, SecretStore(openbao_root))
+    ob = bc.load(openbao_root).openbao
+    bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=ob,
                                              cache_enabled=False))
-    target = cache.entry_path(infisical_root, GLOBAL)
+    target = cache.entry_path(openbao_root, GLOBAL)
     real_unlink = os.unlink
 
     def deny(path, *a, **kw):
@@ -321,7 +378,7 @@ def test_undeletable_entries_fail_with_their_paths(infisical_root, infisical, mo
     monkeypatch.setattr(os, 'unlink', deny)
 
     with pytest.raises(SecretStoreError) as exc:
-        SecretStore(infisical_root).load(GLOBAL)
+        SecretStore(openbao_root).load(GLOBAL)
     assert str(target) in str(exc.value)
 
 
@@ -329,10 +386,10 @@ def test_undeletable_entries_fail_with_their_paths(infisical_root, infisical, mo
 # 原子性
 # ---------------------------------------------------------------------------
 
-def test_interrupted_update_keeps_the_previous_generation(infisical_root, infisical, monkeypatch):
-    fill(infisical, SecretStore(infisical_root))
-    before = cache.entry_path(infisical_root, GLOBAL).read_bytes()
-    infisical.put('/team/global', {'A': 'changed'})
+def test_interrupted_update_keeps_the_previous_generation(openbao_root, openbao, monkeypatch):
+    fill(openbao, SecretStore(openbao_root))
+    before = cache.entry_path(openbao_root, GLOBAL).read_bytes()
+    openbao.put('team/global', {'A': 'changed'})
     real_replace = os.replace
 
     def interrupt(src, dst, *a, **kw):
@@ -341,27 +398,27 @@ def test_interrupted_update_keeps_the_previous_generation(infisical_root, infisi
         return real_replace(src, dst, *a, **kw)
 
     monkeypatch.setattr(os, 'replace', interrupt)
-    SecretStore(infisical_root).load(GLOBAL)      # 置き換えに失敗 → 控えを消す方針
+    SecretStore(openbao_root).load(GLOBAL)      # 置き換えに失敗 → 控えを消す方針
     monkeypatch.setattr(os, 'replace', real_replace)
 
     # 途中の状態 (一時ファイル) は残らない
-    leftovers = [p for p in cache.cache_dir(infisical_root).rglob('*') if p.name.endswith('.tmp')]
+    leftovers = [p for p in cache.cache_dir(openbao_root).rglob('*') if p.name.endswith('.tmp')]
     assert leftovers == []
-    entry = cache.entry_path(infisical_root, GLOBAL)
+    entry = cache.entry_path(openbao_root, GLOBAL)
     assert not entry.exists() or entry.read_bytes() == before
 
 
-def test_concurrent_generations_do_not_mix(infisical_root, infisical):
+def test_concurrent_generations_do_not_mix(openbao_root, openbao):
     """別 scope の 2 つの書き込みが交互に進んでも、残る 1 件は scope と中身が対応する"""
-    store_a = SecretStore(infisical_root)
-    fill(infisical, store_a)
+    store_a = SecretStore(openbao_root)
+    fill(openbao, store_a)
     backend_a = store_a.backend_for(GLOBAL)
     cache_a = cache.SecretCache(store_a)
 
-    inf = bc.load(infisical_root).infisical
-    other = bc.InfisicalSettings(**{**inf.to_dict(), 'environment': 'staging'})
-    bc.save(infisical_root, bc.BackendConfig(backend='infisical', infisical=other))
-    store_b = SecretStore(infisical_root)
+    ob = bc.load(openbao_root).openbao
+    other = bc.OpenBaoSettings(**{**ob.to_dict(), 'mount': 'staging'})
+    bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=other))
+    store_b = SecretStore(openbao_root)
     backend_b = store_b.backend_for(GLOBAL)
     cache_b = cache.SecretCache(store_b)
 

@@ -416,35 +416,33 @@ def _add_env_parser(subparsers):
 def _add_env_backend_parser(env_sub):
     """`env backend` サブコマンド群を登録する (PLAN51)。"""
     env_backend = env_sub.add_parser(
-        'backend', help='Choose where secrets are stored (age / plaintext / infisical)')
+        'backend', help='Choose where secrets are stored (age / plaintext / openbao)')
     backend_sub = env_backend.add_subparsers(dest='backend_action')
 
     backend_sub.add_parser('status', help='Show the active backend and its locations')
 
     use = backend_sub.add_parser('use', help='Switch to another backend')
-    use.add_argument('name', help='Backend name (auto / plaintext / age / infisical)')
-    use.add_argument('--url', default=None, help='Infisical server URL (https)')
-    use.add_argument('--project-id', dest='project_id', default=None,
-                     help='Infisical project ID')
-    use.add_argument('--environment', default=None,
-                     help='Infisical environment slug (default: common)')
+    use.add_argument('name', help='Backend name (auto / plaintext / age / openbao)')
+    use.add_argument('--url', default=None, help='OpenBao server URL (https)')
+    use.add_argument('--mount', default=None, metavar='NAME',
+                     help='KV v2 mount name (default: devbase)')
     use.add_argument('--user', default=None, metavar='ID',
-                     help='Identifier for this user\'s personal secrets')
-    use.add_argument('--client-id', dest='client_id', default=None,
-                     help='Machine identity client ID')
-    # client secret は argv で受けない (ps から読める位置に置かない)。
-    use.add_argument('--client-secret-stdin', dest='client_secret_stdin',
+                     help='Identifier for this user\'s personal secrets (entity name)')
+    use.add_argument('--role-id', dest='role_id', default=None,
+                     help='AppRole role_id')
+    # secret_id は argv で受けない (ps から読める位置に置かない)。
+    use.add_argument('--secret-id-stdin', dest='secret_id_stdin',
                      action='store_true',
-                     help='Read the machine identity client secret from stdin')
+                     help='Read the AppRole secret_id for this machine from stdin')
     use.add_argument('--no-cache', dest='no_cache', action='store_true',
                      help='Do not keep an encrypted local cache of server secrets')
 
     backend_sub.add_parser('test', help='Check the connection to the server backend')
 
     migrate = backend_sub.add_parser(
-        'migrate', help='Copy team secrets to another backend (age <-> infisical)')
+        'migrate', help='Copy team secrets to another backend (age <-> openbao)')
     migrate.add_argument('--to', required=True, metavar='NAME',
-                         help='Destination backend (age / infisical)')
+                         help='Destination backend (age / openbao)')
     migrate.add_argument('--dry-run', action='store_true',
                          help='Show what would move (key names only) without writing')
     migrate.add_argument('--yes', '-y', action='store_true', dest='assume_yes',

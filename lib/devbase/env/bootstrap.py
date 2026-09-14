@@ -1,7 +1,6 @@
 """ブートストラップ機密 — ``$DEVBASE_ROOT/secrets/bootstrap.env.age``
 
-サーバ backend が接続に使う資格情報 (machine identity の client ID / client secret)
-を置く。**登録簿を経由せず、直接 age で読み書きする。** 有効な backend を通して
+サーバ backend が接続に使う資格情報 (AppRole の ``role_id`` / ``secret_id``) を置く。**登録簿を経由せず、直接 age で読み書きする。** 有効な backend を通して
 読もうとすると「接続するための値を、接続しないと読めない」循環になる
 (PLAN51 設計 1 / 決定 2)。
 
@@ -25,8 +24,8 @@ from devbase.env.store import EnvFile
 
 BOOTSTRAP_FILENAME = 'bootstrap.env.age'
 
-CLIENT_ID_KEY = 'DEVBASE_INFISICAL_CLIENT_ID'
-CLIENT_SECRET_KEY = 'DEVBASE_INFISICAL_CLIENT_SECRET'
+ROLE_ID_KEY = 'DEVBASE_OPENBAO_ROLE_ID'
+SECRET_ID_KEY = 'DEVBASE_OPENBAO_SECRET_ID'
 
 
 class BootstrapError(SecretStoreError):
@@ -35,11 +34,11 @@ class BootstrapError(SecretStoreError):
 
 @dataclass(frozen=True)
 class Credentials:
-    client_id: str
-    client_secret: str
+    role_id: str
+    secret_id: str
 
     def __repr__(self) -> str:  # 値をログ・例外へ載せない
-        return f"Credentials(client_id={self.client_id!r}, client_secret='***')"
+        return f"Credentials(role_id={self.role_id!r}, secret_id='***')"
 
 
 def path(devbase_root: Path) -> Path:
@@ -73,20 +72,20 @@ def load(devbase_root: Path) -> Optional[Credentials]:
     except UnicodeDecodeError as e:
         raise BootstrapError(
             f"ブートストラップ機密を UTF-8 として読めませんでした ({target}): {e}") from e
-    missing = [key for key in (CLIENT_ID_KEY, CLIENT_SECRET_KEY) if not data.get(key)]
+    missing = [key for key in (ROLE_ID_KEY, SECRET_ID_KEY) if not data.get(key)]
     if missing:
         raise BootstrapError(
             f"ブートストラップ機密に必要なキーがありません ({target}): {', '.join(missing)}\n"
-            "  `devbase env backend use infisical --client-id ID --client-secret-stdin` "
+            "  `devbase env backend use openbao --role-id ID --secret-id-stdin` "
             "で入れ直してください")
-    return Credentials(client_id=data[CLIENT_ID_KEY], client_secret=data[CLIENT_SECRET_KEY])
+    return Credentials(role_id=data[ROLE_ID_KEY], secret_id=data[SECRET_ID_KEY])
 
 
 def save(devbase_root: Path, creds: Credentials) -> Path:
     """age で暗号化して書く。受信者鍵が無ければ 1 バイトも書かない。"""
     target = path(devbase_root)
-    plain = EnvFile.dump_bytes({CLIENT_ID_KEY: creds.client_id,
-                                CLIENT_SECRET_KEY: creds.client_secret})
+    plain = EnvFile.dump_bytes({ROLE_ID_KEY: creds.role_id,
+                                SECRET_ID_KEY: creds.secret_id})
     blob = _age(devbase_root).encrypt_bytes(plain)
     try:
         _io_common.write_secure_bytes_atomic(target, blob)

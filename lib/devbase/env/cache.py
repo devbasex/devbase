@@ -12,16 +12,19 @@
   置き、キャッシュを使えるかの判定には使わない。キー名も値も入れない
 
 **1 つの参照のキャッシュは 1 ファイルに収める。** 控えた機密と、取得元を表す ``scope``
-(接続先 URL・project・environment・secretPath・client ID の SHA-256) を同じ age 暗号文の
+(接続先 URL・mount・パス・role_id の SHA-256) を同じ age 暗号文の
 中へ入れ、``write_secure_bytes_atomic`` で 1 回の置き換えとして書く。復号すると両方が
 必ず同じ取得の結果として出るため、機密と ``scope`` が食い違った組み合わせは作れない。
 
 書き直す条件と使ってよい条件は同じではない (設計 1 のキャッシュの節の表):
 
-- 取得の成功 (0 件を含む) と書き込みの成功: 置き換える
-- 書き込みの途中失敗、新しい世代を書けない: 消す
-- 通信できない・応答を解釈できない: 残して**使う**
-- 認証拒否 (401 / 403): 残して**使わない** (この判定は :mod:`infisical` 側が行う)
+- 取得の成功 (0 件・404 を含む) と書き込みの成功: 置き換える
+- 版の不一致、結果が分からない書き込み、新しい世代を書けない: 消す
+- 取得で通信できない・応答を解釈できない: 残して**使う**
+- 認証拒否・権限の不足: 残して**使わない** (この判定は :mod:`openbao` 側が行う)
+
+**控えに版は入れない。** 控えは読み取りにだけ使い、書き戻しの基準にしない
+(:mod:`openbao` が控えから読んだ参照の ``save`` を拒む)。
 
 ``cache.enabled`` が偽のときは、控えを作らないだけでなく既存の控えを消す (:func:`purge`)。
 """
@@ -42,7 +45,7 @@ from devbase.env.store import EnvFile
 from devbase.log import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover
-    from devbase.env.infisical import InfisicalBackend
+    from devbase.env.openbao import OpenBaoBackend
 
 logger = get_logger(__name__)
 
@@ -128,9 +131,8 @@ def purge(devbase_root: Path) -> None:
             + '\n  '.join(remaining))
 
 
-def scope_of(url: str, project_id: str, environment: str, secret_path: str,
-             client_id: str) -> str:
-    joined = '\n'.join((url, project_id, environment, secret_path, client_id))
+def scope_of(url: str, mount: str, path: str, role_id: str) -> str:
+    joined = '\n'.join((url, mount, path, role_id))
     return 'sha256:' + hashlib.sha256(joined.encode('utf-8')).hexdigest()
 
 
@@ -149,22 +151,21 @@ class SecretCache:
         self._store = store
         self._root = Path(store.root)
 
-    def _scope(self, ref: SecretRef, backend: 'InfisicalBackend') -> str:
-        s = backend.settings
-        return scope_of(s.url, s.project_id, s.environment,
-                        backend.secret_path(ref), backend.client_id)
+    def _scope(self, ref: SecretRef, backend: 'OpenBaoBackend') -> str:
+        # 材料は backend が持つ (cache は設定の形を知らない)
+        return backend.cache_scope(ref)
 
     # -- 書く -----------------------------------------------------------------
 
     def store(self, ref: SecretRef, secrets: Dict[str, str],
-              backend: 'InfisicalBackend', *, after_write: bool = False) -> None:
+              backend: 'OpenBaoBackend', *, after_write: bool = False) -> None:
         """取得・書き込みで確かめた内容で世代を置き換える。
 
         置き換えられなければその参照の控えを消す。前の世代を残すと、書き込みの前の
         機密が控えとして生き続けるため。サーバ側の操作は済んでいるので失敗にはせず、
         警告を出すにとどめる。
         """
-        from devbase.env.infisical import url_host
+        from devbase.env.openbao import url_host
 
         fetched_at = datetime.now().astimezone().isoformat(timespec='seconds')
         payload = {
@@ -206,7 +207,7 @@ class SecretCache:
 
     # -- 読む -----------------------------------------------------------------
 
-    def read(self, ref: SecretRef, backend: 'InfisicalBackend') -> Optional[CachedEntry]:
+    def read(self, ref: SecretRef, backend: 'OpenBaoBackend') -> Optional[CachedEntry]:
         """現在の設定と ``scope`` が一致する控えを返す (無ければ ``None``)"""
         path = entry_path(self._root, ref)
         if not path.is_file():

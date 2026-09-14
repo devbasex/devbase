@@ -22,12 +22,11 @@ def write_yaml(root, text: str):
     return path
 
 
-INFISICAL_MINIMAL = """\
+OPENBAO_MINIMAL = """\
 version: 1
-backend: infisical
-infisical:
-  url: https://infisical.example.com
-  project_id: 7f0e2c1a
+backend: openbao
+openbao:
+  url: https://openbao.example.com
   user: member01
 """
 
@@ -49,22 +48,20 @@ def test_empty_backend_falls_back_to_auto(root):
     assert bc.load(root).backend == 'auto'
 
 
-def test_infisical_defaults_are_filled_in(root):
-    write_yaml(root, INFISICAL_MINIMAL)
+def test_openbao_defaults_are_filled_in(root):
+    write_yaml(root, OPENBAO_MINIMAL)
 
     config = bc.load(root)
 
-    assert config.backend == 'infisical'
-    inf = config.infisical
-    assert inf.url == 'https://infisical.example.com'
-    assert inf.project_id == '7f0e2c1a'
-    assert inf.environment == 'common'
-    assert inf.user == 'member01'
-    assert inf.path_team_global == '/team/global'
-    assert inf.path_team_project_prefix == '/team/projects'
-    assert inf.path_user_prefix == '/users'
-    assert inf.api_version == 'v4'
-    assert inf.timeout_seconds == 5
+    assert config.backend == 'openbao'
+    ob = config.openbao
+    assert ob.url == 'https://openbao.example.com'
+    assert ob.mount == 'devbase'
+    assert ob.user == 'member01'
+    assert ob.path_team_global == 'team/global'
+    assert ob.path_team_project_prefix == 'team/projects'
+    assert ob.path_user_prefix == 'users'
+    assert ob.timeout_seconds == 5
 
 
 # ---------------------------------------------------------------------------
@@ -79,53 +76,79 @@ def test_unknown_backend_lists_the_available_names(root):
 
     message = str(exc.value)
     assert 'vaultwarden' in message
-    for name in ('auto', 'plaintext', 'age', 'infisical'):
+    for name in ('auto', 'plaintext', 'age', 'openbao'):
         assert name in message
 
 
-def test_infisical_requires_url_project_id_and_user(root):
-    write_yaml(root, "backend: infisical\ninfisical: {}\n")
+def test_openbao_requires_url_and_user(root):
+    write_yaml(root, "backend: openbao\nopenbao: {}\n")
 
     with pytest.raises(bc.BackendConfigError) as exc:
         bc.load(root)
 
     message = str(exc.value)
-    assert 'url' in message and 'project_id' in message and 'user' in message
+    assert 'openbao.url' in message and 'openbao.user' in message
+
+
+def test_infisical_is_no_longer_a_known_backend(root):
+    write_yaml(root, "backend: infisical\ninfisical:\n  url: https://x\n")
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'infisical' in str(exc.value) and 'openbao' in str(exc.value)
 
 
 @pytest.mark.parametrize('url', [
-    'https://infisical.example.com',
+    'https://openbao.example.com',
     'http://localhost:8080',
     'http://127.0.0.1:8080',
     'http://[::1]:8080',
 ])
 def test_https_and_loopback_http_are_accepted(root, url):
-    write_yaml(root, INFISICAL_MINIMAL.replace('https://infisical.example.com', url))
+    write_yaml(root, OPENBAO_MINIMAL.replace('https://openbao.example.com', url))
 
-    assert bc.load(root).infisical.url == url
+    assert bc.load(root).openbao.url == url
 
 
 def test_http_to_a_remote_host_is_rejected(root):
-    write_yaml(root, INFISICAL_MINIMAL.replace('https://', 'http://'))
+    write_yaml(root, OPENBAO_MINIMAL.replace('https://', 'http://'))
 
     with pytest.raises(bc.BackendConfigError) as exc:
         bc.load(root)
     assert 'http' in str(exc.value)
 
 
-def test_unsupported_api_version_is_rejected_not_defaulted(root):
-    write_yaml(root, INFISICAL_MINIMAL + "  api_version: v3\n")
+@pytest.mark.parametrize('key', ['path_team_global', 'path_team_project_prefix',
+                                 'path_user_prefix'])
+@pytest.mark.parametrize('value', ['/team/global', 'team/global/', 'a/../b'])
+def test_paths_must_be_relative_without_dotdot(root, key, value):
+    write_yaml(root, OPENBAO_MINIMAL + f"  {key}: {value!r}\n")
 
     with pytest.raises(bc.BackendConfigError) as exc:
         bc.load(root)
+    assert key in str(exc.value)
 
-    message = str(exc.value)
-    assert 'api_version' in message and 'v4' in message and 'v3' in message
+
+@pytest.mark.parametrize('mount', ['a/b', '..', 'a\\b'])
+def test_mount_with_path_separators_is_rejected(root, mount):
+    write_yaml(root, OPENBAO_MINIMAL + f"  mount: {mount!r}\n")
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'mount' in str(exc.value)
+
+
+def test_non_positive_timeout_is_rejected(root):
+    write_yaml(root, OPENBAO_MINIMAL + "  timeout_seconds: 0\n")
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'timeout_seconds' in str(exc.value)
 
 
 @pytest.mark.parametrize('user', ['a/b', '..', '.', 'a\\b', ''])
 def test_user_with_path_separators_is_rejected(root, user):
-    write_yaml(root, INFISICAL_MINIMAL.replace('member01', repr(user)))
+    write_yaml(root, OPENBAO_MINIMAL.replace('member01', repr(user)))
 
     with pytest.raises(bc.BackendConfigError) as exc:
         bc.load(root)
@@ -141,7 +164,7 @@ def test_unreadable_yaml_names_the_file(root):
 
 
 def test_cache_can_be_disabled(root):
-    write_yaml(root, INFISICAL_MINIMAL + "cache:\n  enabled: false\n")
+    write_yaml(root, OPENBAO_MINIMAL + "cache:\n  enabled: false\n")
 
     assert bc.load(root).cache_enabled is False
 
@@ -152,9 +175,9 @@ def test_cache_can_be_disabled(root):
 
 def test_save_writes_0600_and_roundtrips(root):
     config = bc.BackendConfig(
-        backend='infisical',
-        infisical=bc.InfisicalSettings(
-            url='https://infisical.example.com', project_id='pid', user='me'),
+        backend='openbao',
+        openbao=bc.OpenBaoSettings(
+            url='https://openbao.example.com', user='me', mount='kv'),
         cache_enabled=False,
     )
 
@@ -162,8 +185,8 @@ def test_save_writes_0600_and_roundtrips(root):
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     loaded = bc.load(root)
-    assert loaded.backend == 'infisical'
-    assert loaded.infisical.project_id == 'pid'
+    assert loaded.backend == 'openbao'
+    assert loaded.openbao.mount == 'kv'
     assert loaded.cache_enabled is False
 
 
@@ -177,32 +200,34 @@ def test_save_rejects_an_invalid_config_without_writing(root):
 
 
 # ---------------------------------------------------------------------------
-# secretPath の組み立て
+# パスの組み立て
 # ---------------------------------------------------------------------------
 
-def test_secret_paths_follow_the_documented_layout():
+def test_paths_follow_the_documented_layout():
     from devbase.env.secret_store import SecretRef
 
-    inf = bc.InfisicalSettings(url='https://x', project_id='p', user='member01')
+    ob = bc.OpenBaoSettings(url='https://x', user='member01')
 
-    assert inf.secret_path(SecretRef.for_global()) == '/team/global'
-    assert inf.secret_path(SecretRef.for_project('carmo')) == '/team/projects/carmo'
-    assert inf.secret_path(SecretRef.for_global(owner='user')) == '/users/member01/global'
-    assert inf.secret_path(SecretRef.for_project('carmo', owner='user')) == \
-        '/users/member01/projects/carmo'
+    assert ob.path_of(SecretRef.for_global()) == 'team/global'
+    assert ob.path_of(SecretRef.for_project('carmo')) == 'team/projects/carmo'
+    assert ob.path_of(SecretRef.for_global(owner='user')) == 'users/member01/global'
+    assert ob.path_of(SecretRef.for_project('carmo', owner='user')) == \
+        'users/member01/projects/carmo'
+    assert ob.display_path(SecretRef.for_global()) == 'devbase/team/global'
 
 
-def test_secret_paths_honor_configured_prefixes():
+def test_paths_honor_configured_prefixes_and_mount():
     from devbase.env.secret_store import SecretRef
 
-    inf = bc.InfisicalSettings(url='https://x', project_id='p', user='u',
-                               path_team_global='/shared',
-                               path_team_project_prefix='/shared/p',
-                               path_user_prefix='/people')
+    ob = bc.OpenBaoSettings(url='https://x', user='u', mount='kv',
+                            path_team_global='shared',
+                            path_team_project_prefix='shared/p',
+                            path_user_prefix='people')
 
-    assert inf.secret_path(SecretRef.for_global()) == '/shared'
-    assert inf.secret_path(SecretRef.for_project('a')) == '/shared/p/a'
-    assert inf.secret_path(SecretRef.for_global(owner='user')) == '/people/u/global'
+    assert ob.path_of(SecretRef.for_global()) == 'shared'
+    assert ob.path_of(SecretRef.for_project('a')) == 'shared/p/a'
+    assert ob.path_of(SecretRef.for_global(owner='user')) == 'people/u/global'
+    assert ob.display_path(SecretRef.for_project('a')) == 'kv/shared/p/a'
 
 
 @pytest.mark.parametrize('value', ['abc', '1.5', '[1]'])

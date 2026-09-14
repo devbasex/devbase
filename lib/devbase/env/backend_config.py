@@ -1,14 +1,14 @@
 """backend の選択と非機密設定 — ``$DEVBASE_ROOT/secrets/backend.yml``
 
 どの backend を使うかと、その接続先のような **機密ではない** 設定をここに置く
-(PLAN51 設計 1)。値そのもの (client secret など) はブートストラップ
+(PLAN51 設計 1)。値そのもの (secret_id など) はブートストラップ
 (:mod:`devbase.env.bootstrap`) が age で暗号化して持ち、このファイルには入らない。
 
 ファイルが無ければ ``auto`` = 現行のファイル存在による自動判定であり、設定を
 持たない端末の挙動は変わらない (前提 3)。
 
-**対応していない値は既定へ落とさず、設定エラーとして拒む。** ``api_version: v3`` を
-黙って ``v4`` へ読み替えると、書いたとおりに動いていないことに気づく手段が無くなる。
+**対応していない値は既定へ落とさず、設定エラーとして拒む。** ``path_team_global: /team/global``
+を黙って ``team/global`` へ読み替えると、書いたとおりに動いていないことに気づく手段が無くなる。
 欠けている項目と同じく、受け付けない値もキー名と受け付ける値を述べて止める。
 """
 
@@ -27,14 +27,10 @@ from devbase.errors import DevbaseError
 CONFIG_FILENAME = 'backend.yml'
 
 #: 登録簿にある backend 名。``auto`` は「ファイルの存在で判定する」現行の規則を指す。
-BACKEND_NAMES = ('auto', 'plaintext', 'age', 'infisical')
+BACKEND_NAMES = ('auto', 'plaintext', 'age', 'openbao')
 
 BACKEND_AUTO = 'auto'
-BACKEND_INFISICAL = 'infisical'
-
-#: 受け付ける Infisical API の版。取得・作成・更新・削除の 4 経路をすべて定義した
-#: 版だけを載せる (設計 3「未確認のまま残ること」)。
-SUPPORTED_API_VERSIONS = ('v4',)
+BACKEND_OPENBAO = 'openbao'
 
 #: ``http`` を受け付けるホスト。平文が流れるのを同じ端末の中に閉じる。
 _LOOPBACK_HOSTS = ('localhost', '127.0.0.1', '::1')
@@ -51,17 +47,34 @@ def config_path(devbase_root: Path) -> Path:
 
 
 def _validate_segment(value: str, key: str) -> str:
-    """``secretPath`` の 1 要素として使う値がパスを跨がないことを確かめる。
+    """パスの 1 要素として使う値がパスを跨がないことを確かめる。
 
     プロジェクト名と同じ検査 (``secret_store._validate_project_name``) をかける。
-    ``..`` や区切り文字を許すと、組み立てた ``secretPath`` が設定した親の外へ出る。
+    ``..`` や区切り文字を許すと、組み立てたパスが設定した親の外へ出る。
     """
     if not value:
-        raise BackendConfigError(f"infisical.{key} が設定されていません")
+        raise BackendConfigError(f"openbao.{key} が設定されていません")
     if (value in ('.', '..') or '/' in value or '\\' in value
             or value != Path(value).name):
         raise BackendConfigError(
-            f"infisical.{key} にパス区切りや '..' は使えません: {value!r}")
+            f"openbao.{key} にパス区切りや '..' は使えません: {value!r}")
+    return value
+
+
+def _validate_relative_path(value: str, key: str) -> str:
+    """置き場の相対パス。先頭・末尾の ``/`` と ``..`` を許さない。
+
+    KV v2 の経路は ``/v1/<mount>/data/<path>`` で、``<path>`` に先頭の ``/`` を付けると
+    経路が二重の ``/`` になる。既定へ読み替えず、設定エラーとして止める。
+    """
+    if not value:
+        raise BackendConfigError(f"openbao.{key} が設定されていません")
+    if value.startswith('/') or value.endswith('/'):
+        raise BackendConfigError(
+            f"openbao.{key} は '/' で始めず・終えずに指定してください: {value!r}")
+    if any(part in ('', '.', '..') or '\\' in part for part in value.split('/')):
+        raise BackendConfigError(
+            f"openbao.{key} に空の要素や '..' は使えません: {value!r}")
     return value
 
 
@@ -72,71 +85,64 @@ def _validate_url(url: str) -> str:
     if parts.scheme == 'http' and parts.hostname in _LOOPBACK_HOSTS:
         return url
     raise BackendConfigError(
-        f"infisical.url は https でなければなりません: {url!r}\n"
+        f"openbao.url は https でなければなりません: {url!r}\n"
         "  http を使えるのは localhost / 127.0.0.1 / ::1 宛てだけです")
 
 
 @dataclass(frozen=True)
-class InfisicalSettings:
+class OpenBaoSettings:
     url: str
-    project_id: str
     user: str
-    environment: str = 'common'
-    path_team_global: str = '/team/global'
-    path_team_project_prefix: str = '/team/projects'
-    path_user_prefix: str = '/users'
-    api_version: str = 'v4'
+    mount: str = 'devbase'
+    path_team_global: str = 'team/global'
+    path_team_project_prefix: str = 'team/projects'
+    path_user_prefix: str = 'users'
     timeout_seconds: int = 5
 
-    def validate(self) -> 'InfisicalSettings':
-        missing = [key for key in ('url', 'project_id', 'user')
-                   if not getattr(self, key)]
+    def validate(self) -> 'OpenBaoSettings':
+        missing = [key for key in ('url', 'user') if not getattr(self, key)]
         if missing:
             raise BackendConfigError(
-                "backend: infisical に必要な設定が欠けています: "
-                + ', '.join(f'infisical.{key}' for key in missing))
+                "backend: openbao に必要な設定が欠けています: "
+                + ', '.join(f'openbao.{key}' for key in missing))
         _validate_url(self.url)
         _validate_segment(self.user, 'user')
-        if self.api_version not in SUPPORTED_API_VERSIONS:
-            raise BackendConfigError(
-                f"infisical.api_version の値 {self.api_version!r} には対応していません "
-                f"(受け付ける値: {', '.join(SUPPORTED_API_VERSIONS)})")
+        _validate_segment(self.mount, 'mount')
         if not isinstance(self.timeout_seconds, int) or self.timeout_seconds <= 0:
             raise BackendConfigError(
-                f"infisical.timeout_seconds は正の整数で指定してください: "
+                f"openbao.timeout_seconds は正の整数で指定してください: "
                 f"{self.timeout_seconds!r}")
         for key in ('path_team_global', 'path_team_project_prefix', 'path_user_prefix'):
-            value = getattr(self, key)
-            if not value.startswith('/'):
-                raise BackendConfigError(
-                    f"infisical.{key} は '/' で始まるパスで指定してください: {value!r}")
+            _validate_relative_path(getattr(self, key), key)
         return self
 
-    def secret_path(self, ref) -> str:
-        """参照に対応する Infisical の ``secretPath`` (設計 1 の対応表)。
+    def path_of(self, ref) -> str:
+        """参照に対応する KV v2 のパス (仕様の対応表。``<mount>`` は含まない)。
 
         ``<name>`` と ``<user>`` はいずれもパスを跨がない検査を通っているため、
         組み立てた結果が設定した親の外へ出ることはない。
         """
         if ref.owner == 'user':
-            base = f"{self.path_user_prefix.rstrip('/')}/{self.user}"
+            base = f"{self.path_user_prefix}/{self.user}"
             if ref.kind == 'global':
                 return f'{base}/global'
             return f'{base}/projects/{ref.name}'
         if ref.kind == 'global':
             return self.path_team_global
-        return f"{self.path_team_project_prefix.rstrip('/')}/{ref.name}"
+        return f"{self.path_team_project_prefix}/{ref.name}"
+
+    def display_path(self, ref) -> str:
+        """表示用の ``<mount>/<パス>``"""
+        return f"{self.mount}/{self.path_of(ref)}"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             'url': self.url,
-            'project_id': self.project_id,
-            'environment': self.environment,
+            'mount': self.mount,
             'user': self.user,
             'path_team_global': self.path_team_global,
             'path_team_project_prefix': self.path_team_project_prefix,
             'path_user_prefix': self.path_user_prefix,
-            'api_version': self.api_version,
             'timeout_seconds': self.timeout_seconds,
         }
 
@@ -144,7 +150,7 @@ class InfisicalSettings:
 @dataclass(frozen=True)
 class BackendConfig:
     backend: str = BACKEND_AUTO
-    infisical: Optional[InfisicalSettings] = None
+    openbao: Optional[OpenBaoSettings] = None
     cache_enabled: bool = True
     version: int = 1
     #: 読み込み元。ファイルが無ければ ``None`` (``auto`` の既定)
@@ -155,18 +161,18 @@ class BackendConfig:
             raise BackendConfigError(
                 f"backend の値 {self.backend!r} は登録されていません "
                 f"(利用できる backend: {', '.join(BACKEND_NAMES)})")
-        if self.backend == BACKEND_INFISICAL:
-            if self.infisical is None:
+        if self.backend == BACKEND_OPENBAO:
+            if self.openbao is None:
                 raise BackendConfigError(
-                    "backend: infisical に必要な設定が欠けています: "
-                    "infisical.url, infisical.project_id, infisical.user")
-            self.infisical.validate()
+                    "backend: openbao に必要な設定が欠けています: "
+                    "openbao.url, openbao.user")
+            self.openbao.validate()
         return self
 
     def to_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {'version': self.version, 'backend': self.backend}
-        if self.infisical is not None:
-            data['infisical'] = self.infisical.to_dict()
+        if self.openbao is not None:
+            data['openbao'] = self.openbao.to_dict()
         data['cache'] = {'enabled': self.cache_enabled}
         return data
 
@@ -179,29 +185,25 @@ def _str(value: Any, default: str = '') -> str:
     return text if text else default
 
 
-def _infisical_from_dict(raw_inf: Any, backend: str) -> Optional[InfisicalSettings]:
-    """``infisical:`` 節を解釈する。節が無く backend も infisical でなければ ``None``。
+def _openbao_from_dict(raw: Any, backend: str) -> Optional[OpenBaoSettings]:
+    """``openbao:`` 節を解釈する。節が無く backend も openbao でなければ ``None``。
 
-    backend が infisical なのに節が無いときは空の設定を返し、欠けている項目は
-    :meth:`InfisicalSettings.validate` がキー名を挙げて拒む。
+    backend が openbao なのに節が無いときは空の設定を返し、欠けている項目は
+    :meth:`OpenBaoSettings.validate` がキー名を挙げて拒む。
     """
-    if not (isinstance(raw_inf, dict) or backend == BACKEND_INFISICAL):
+    if not (isinstance(raw, dict) or backend == BACKEND_OPENBAO):
         return None
-    raw_inf = raw_inf if isinstance(raw_inf, dict) else {}
-    defaults = InfisicalSettings(url='', project_id='', user='')
-    timeout = raw_inf.get('timeout_seconds')
-    return InfisicalSettings(
-        url=_str(raw_inf.get('url')),
-        project_id=_str(raw_inf.get('project_id')),
-        user=_str(raw_inf.get('user')),
-        environment=_str(raw_inf.get('environment'), defaults.environment),
-        path_team_global=_str(raw_inf.get('path_team_global'),
-                              defaults.path_team_global),
-        path_team_project_prefix=_str(raw_inf.get('path_team_project_prefix'),
+    raw = raw if isinstance(raw, dict) else {}
+    defaults = OpenBaoSettings(url='', user='')
+    timeout = raw.get('timeout_seconds')
+    return OpenBaoSettings(
+        url=_str(raw.get('url')),
+        user=_str(raw.get('user')),
+        mount=_str(raw.get('mount'), defaults.mount),
+        path_team_global=_str(raw.get('path_team_global'), defaults.path_team_global),
+        path_team_project_prefix=_str(raw.get('path_team_project_prefix'),
                                       defaults.path_team_project_prefix),
-        path_user_prefix=_str(raw_inf.get('path_user_prefix'),
-                              defaults.path_user_prefix),
-        api_version=_str(raw_inf.get('api_version'), defaults.api_version),
+        path_user_prefix=_str(raw.get('path_user_prefix'), defaults.path_user_prefix),
         timeout_seconds=(defaults.timeout_seconds if timeout in (None, '')
                          else timeout),
     )
@@ -212,7 +214,7 @@ def _from_dict(data: Dict[str, Any], source: Optional[Path]) -> BackendConfig:
         raise BackendConfigError(f"{source} の内容がマッピングではありません")
 
     backend = _str(data.get('backend'), BACKEND_AUTO)
-    infisical = _infisical_from_dict(data.get('infisical'), backend)
+    openbao = _openbao_from_dict(data.get('openbao'), backend)
 
     raw_cache = data.get('cache')
     cache_enabled = True
@@ -233,7 +235,7 @@ def _from_dict(data: Dict[str, Any], source: Optional[Path]) -> BackendConfig:
             raise BackendConfigError(
                 f"version の値 {raw_version!r} には対応していません (受け付ける値: 1)")
 
-    return BackendConfig(backend=backend, infisical=infisical,
+    return BackendConfig(backend=backend, openbao=openbao,
                          cache_enabled=cache_enabled, version=version,
                          source=source)
 

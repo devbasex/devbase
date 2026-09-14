@@ -67,7 +67,7 @@ def _encrypted_paths(devbase_root: Path, store: SecretStore) -> List[Ciphertext]
     """手元にある age 暗号文をすべて集める。
 
     機密の参照に加えて、ブートストラップ機密とサーバ backend のキャッシュも含める
-    (PLAN51 決定 8)。``backend: infisical`` のときもこれらは age 暗号文として手元に
+    (PLAN51 決定 8)。``backend: openbao`` のときもこれらは age 暗号文として手元に
     残り、受信者を入れ替える手段は ``rekey`` 以外に無いため。
     """
     from devbase.env import bootstrap as _bootstrap
@@ -617,20 +617,20 @@ def _check_backend(root: Path, report: Report) -> None:
     bootstrap_path = _bootstrap.path(root)
     if bootstrap_path.exists():
         _check_file_mode(report, bootstrap_path, what='ブートストラップ機密')
-    if config.backend == _bc.BACKEND_INFISICAL:
+    if config.backend == _bc.BACKEND_OPENBAO:
         try:
             creds = _bootstrap.load(root)
         except DevbaseError as e:
             report.add('error', 'ブートストラップ機密を読めません', str(e),
-                       '`devbase env backend use infisical --client-id ID '
-                       '--client-secret-stdin` で入れ直してください')
+                       '`devbase env backend use openbao --role-id ID '
+                       '--secret-id-stdin` で入れ直してください')
         else:
             if creds is None:
-                report.add('error', 'Infisical の接続資格情報がありません',
-                           f'{bootstrap_path} が無く、{_bootstrap.CLIENT_ID_KEY} / '
-                           f'{_bootstrap.CLIENT_SECRET_KEY} を読めません',
-                           '`devbase env backend use infisical --client-id ID '
-                           '--client-secret-stdin` で設定してください')
+                report.add('error', 'OpenBao の接続資格情報がありません',
+                           f'{bootstrap_path} が無く、{_bootstrap.ROLE_ID_KEY} / '
+                           f'{_bootstrap.SECRET_ID_KEY} を読めません',
+                           '`devbase env backend use openbao --role-id ID '
+                           '--secret-id-stdin` で設定してください')
 
     cache_dir = _cache.cache_dir(root)
     if cache_dir.is_dir():

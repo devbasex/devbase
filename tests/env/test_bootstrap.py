@@ -23,7 +23,7 @@ def with_key(root):
     return public
 
 
-CREDS = bootstrap.Credentials(client_id='cid-1', client_secret='very-secret')
+CREDS = bootstrap.Credentials(role_id='rid-1', secret_id='very-secret')
 
 
 def test_roundtrip_is_encrypted_and_0600(root, with_key):
@@ -64,10 +64,10 @@ def test_load_reports_missing_keys(root, with_key):
     from devbase.env.secret_store import AgeBackend
     from devbase.env import io_common
 
-    blob = AgeBackend(root).encrypt_bytes(b'DEVBASE_INFISICAL_CLIENT_ID=only-id\n')
+    blob = AgeBackend(root).encrypt_bytes(b'DEVBASE_OPENBAO_ROLE_ID=only-id\n')
     io_common.write_secure_bytes_atomic(bootstrap.path(root), blob)
 
     with pytest.raises(DevbaseError) as exc:
         bootstrap.load(root)
-    assert 'DEVBASE_INFISICAL_CLIENT_SECRET' in str(exc.value)
+    assert 'DEVBASE_OPENBAO_SECRET_ID' in str(exc.value)
     assert 'only-id' not in str(exc.value)
