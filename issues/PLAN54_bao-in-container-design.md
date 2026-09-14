@@ -24,13 +24,13 @@
 | `env/container_token.py`（新設） | 受け取った token をコンテナへ届ける。`docker exec` で `~/.vault-token`（`0600`）へ書く。replica ごとの繰り返しを持つ。token の取得と backend の判定は持たない（呼び出し側の責務） |
 | `commands/container.py` `_push_bao_token()`（足す） | `up` の [5/6] の後に呼ぶ。backend が `openbao` でなければ何もしない。`issue_token()` で token を得て `push()` へ渡す。失敗しても `up` を倒さない（`_apply_window_titles` と同じ扱い） |
 | `commands/container.py` `_generate_compose_for()` の `dev_environment`（変える） | backend が `openbao` のとき `BAO_ADDR=<url>` を dev サービスの `environment` に足す（値はリテラル。機密ではない） |
-| `commands/env.py` `cmd_env_token()`（足す） | `devbase env token [--print]`。既定は現在地のプロジェクトの起動中の dev コンテナへ届ける（`issue_token()` → `push()`）。`--print` は標準出力へ token だけを出す |
-| `cli.py`（変える） | parser に `env token` のサブコマンドと `--print` を足し、`SUBCMD_MAP[('env',)]` に `token` を足す（`tests/cli/test_prefix_resolution.py` が parser と `SUBCMD_MAP` の一致を固定している）。`_NO_SECRET_INJECTION` に `('env', 'token')` を足す |
+| `commands/env.py` `cmd_env_token()`（足す） | `devbase env token [--print] [--context NAME]`。既定は現在地のプロジェクトの起動中の dev コンテナへ届ける（`issue_token()` → 接続先の解決 → `push()`）。`--print` は標準出力へ token だけを出す |
+| `cli.py`（変える） | parser に `env token` のサブコマンドと `--print` を足し、`--context` は `env exec` と同じ `_add_context_arg` で足す。`SUBCMD_MAP[('env',)]` に `token` を足す（`tests/cli/test_prefix_resolution.py` が parser と `SUBCMD_MAP` の一致を固定している）。`_NO_SECRET_INJECTION` に `('env', 'token')` を足す |
 | `docs/user/env-backend.md`（変える） | 「コンテナの中から `bao` を使う」の節（F4） |
 | `tests/containers/test_base_dockerfile_bao.py`（新設） | Dockerfile の `bao` 導入行を固定する（版・両アーキテクチャ・検証） |
-| `tests/env/test_container_token.py`（新設） | `docker exec` の呼び出しの形（コマンド・stdin・umask・一時ファイルからの `mv`）と、replica の繰り返し |
+| `tests/env/test_container_token.py`（新設） | `docker exec` の呼び出しの形（コマンド・stdin・`umask`・`mktemp` した一時ファイルからの `mv`）と、replica の繰り返し |
 | `tests/commands/test_container_bao.py`（新設） | `up` が `BAO_ADDR` を足す／足さない、`_push_bao_token` の要否 |
-| `tests/commands/test_env_token.py`（新設） | `env token` の `--print` と既定の経路、backend が `openbao` でないときの失敗 |
+| `tests/commands/test_env_token.py`（新設） | `env token` の `--print` と既定の経路、backend が `openbao` でないときの失敗、`project.local.yml` の `docker.context` が `docker ps` / `docker exec` の両方に効くこと |
 
 構成要素の関係:
 
@@ -124,13 +124,14 @@ classDiagram
 ### `devbase env token`
 
 ```text
-devbase env token [--print]
+devbase env token [--print] [--context NAME]
 ```
 
 | 引数 | 意味 |
 | --- | --- |
 | （なし） | 現在地のプロジェクトの起動中の dev コンテナすべての `~/.vault-token` を書き換える |
 | `--print` | コンテナへ書かず、token を標準出力へ 1 行で出す。手で貼りたいとき・別の経路のコンテナのため。プロジェクトとコンテナは見ない |
+| `--context NAME` | docker context を一時的に上書きする。`env exec` と同じ `_add_context_arg`（PLAN52） |
 
 対象のプロジェクトは、他の `env` サブコマンド（`set -p` など）と同じく実行時のディレクトリから
 決める（`_current_project_name`）。プロジェクト名を取る引数は置かない。既存の `-p` は名前を
@@ -138,8 +139,19 @@ devbase env token [--print]
 `env token` だけ引数を取る `-p` にすると意味が割れる。別のプロジェクトへ届けたいときは
 そのディレクトリで打つ。
 
-処理の順は「backend の判定 → ログイン（`issue_token()`）→ 対象の解決 → 書き込み」で、
+処理の順は「backend の判定 → ログイン（`issue_token()`）→ 接続先の解決 → 対象の解決 → 書き込み」で、
 `--print` は 2 つ目で止まって token を出す。
+
+接続先（docker context）は `env token` 自身が決める。`up` が `_resolve_docker_target` で当てた
+`DOCKER_CONTEXT` はその process の環境にしか無く、後から別の process で打つ `env token` には
+残らない。何もしないと、`project.local.yml` の `docker.context` だけでリモート（PLAN52）を
+指す端末では既定の daemon を見に行き、コンテナが無いか、同名の別のコンテナへ token を書く。
+そこで `cmd_env_exec` と同じ形で決める。`_current_project_name` で決めたプロジェクトの直下の
+`project.local.yml` を `load_project_local_config` で読み、`docker_context.choose_context`
+（CLI `--context` > env `DEVBASE_DOCKER_CONTEXT` > ファイル > 未指定）で 1 つに決め、
+`docker_context.apply` で process の環境へ当てる。この後の `docker ps`（対象の解決）と
+`docker exec`（書き込み）は同じ接続先へ向かう。gid・home の解決（`_resolve_docker_target`）は
+要らない（compose を生成しない）。`--print` はここへ来ない。
 
 | 状況 | 出力 | 終了コード |
 | --- | --- | --- |
@@ -159,20 +171,27 @@ devbase env token [--print]
 ```text
 docker exec -i <container> sh -c '
   umask 077
-  cat > "$HOME/.vault-token.tmp" && mv -f "$HOME/.vault-token.tmp" "$HOME/.vault-token" \
-    || { rm -f "$HOME/.vault-token.tmp"; exit 1; }'
+  tmp=$(mktemp "$HOME/.vault-token.XXXXXX") || exit 1
+  cat > "$tmp" && chmod 0600 "$tmp" && mv -f "$tmp" "$HOME/.vault-token" \
+    || { rm -f "$tmp"; exit 1; }'
   （stdin: token）
 ```
 
 - `-i` で stdin を渡し、引数に token を載せない（`ps` に出さない）
 - 同じディレクトリの一時ファイルへ書いてから `mv -f` で置き換える（`editor/window_title.py`
   `_write_command` と同じ形）。`cat >` で直接上書きすると、`env token` の再実行で既存ファイルの
-  mode がそのまま残り（`umask` は新規作成にしか効かない）、途中で切れると空のファイルが残る。
-  一時ファイルは毎回 `umask 077` の下で作られるため、`mv` 後の mode は前の状態によらず
-  `0600` になる。`window_title.py` の `cp -p`（既存の mode を写す）は要らない。ここでは
-  前の mode を引き継がず、常に `0600` にしたい
-- 既存の `_docker_exec` の経路（`editor/window_title.py`）と同じく `DOCKER_CONTEXT` を継承する
-  ため、リモートの daemon（PLAN52）でも同じ形で届く
+  mode がそのまま残り（`umask` は新規作成にしか効かない）、途中で切れると空のファイルが残る
+- 一時ファイルは固定名にせず `mktemp` で**毎回新しく**作る。固定名（`.vault-token.tmp`）だと、
+  その名前のファイルが既にあるとき `cat >` は既存の inode へ書き、`umask 077` は効かない
+  （0644 で先に置いておくと、終了コード 0 のまま `~/.vault-token` が 0644 になる。round 2 の
+  レビューで再現）。並行して打った `env token` 同士が 1 つの一時ファイルを取り合うこともない。
+  `mktemp` は `O_EXCL` で `0600` に作るので、`mv` 後の mode は前の状態によらず `0600` になる。
+  `chmod 0600` は `mktemp` の実装差への保険で、失敗すれば書き込みを止める。
+  `window_title.py` の `cp -p`（既存の mode を写す）は要らない。ここでは前の mode を
+  引き継がず、常に `0600` にしたい
+- 接続先（`DOCKER_CONTEXT`）は呼び出し側が process の環境へ当てておく。`up` は
+  `_resolve_docker_target` が当てた同じ process の中で `_push_bao_token` を呼ぶ。`env token` は
+  自身で決める（「`devbase env token`」の節）。どちらもリモートの daemon（PLAN52）へ同じ形で届く
 - `$HOME` はコンテナの利用者（`ubuntu`）のもの。`docker exec` の既定の利用者は compose の
   `user` 設定に従い、base イメージは `USER ubuntu` で終わる
 
@@ -194,7 +213,7 @@ sequenceDiagram
     alt backend が openbao（_push_bao_token）
         UP->>ST: issue_token()（同じインスタンス。期限内なら再ログインしない）
         UP->>P: push([<c>…], token)
-        P->>D: docker exec -i <c> sh -c '… cat > tmp && mv -f tmp ~/.vault-token'
+        P->>D: docker exec -i <c> sh -c '… tmp=$(mktemp …) && cat > $tmp && mv -f $tmp ~/.vault-token'
         D->>C: ~/.vault-token を書く
         P-->>UP: 書けたコンテナ名（失敗は警告。up は倒さない）
     end
@@ -203,6 +222,8 @@ sequenceDiagram
     U->>C: bao kv get … → 403
     U->>UP: devbase env token
     UP->>ST: issue_token()（新しい token）
+    UP->>UP: docker context を決めて当てる（project.local.yml / DEVBASE_DOCKER_CONTEXT / --context）
+    UP->>D: docker ps（起動中の dev コンテナ）
     UP->>P: push([<c>…], token)
     P->>D: docker exec -i …
     U->>C: bao kv get … → 200
@@ -291,9 +312,9 @@ CLI だけが要る base イメージには余計である。tar.gz は `bao` �
 | 3. コンテナ内 `bao kv get` がホストの `env get --user` と同じ値 | 手動（リリース後テスト。PLAN53 の後の端末で） |
 | 4. コンテナ内 `kv patch` がホストの `env get --user` に見える | 手動（同上） |
 | 5. `team/global` は読めて書けない | 手動（同上。サーバのポリシーの確認） |
-| 6. 1 時間後に `devbase env token` で読める | 手動（同上）。`tests/commands/test_env_token.py` で `issue_token` → `push` の順と対象コンテナ、`--print` がコンテナを見ないことを固定。`tests/cli/test_prefix_resolution.py`（既存）が `SUBCMD_MAP` への登録を固定 |
+| 6. 1 時間後に `devbase env token` で読める | 手動（同上）。`tests/commands/test_env_token.py` で `issue_token` → `push` の順と対象コンテナ、`--print` がコンテナを見ないこと、`project.local.yml` の `docker.context` をリモートにしたとき `docker ps` と `docker exec` が両方ともその context で呼ばれることを固定。`tests/cli/test_prefix_resolution.py`（既存）が `SUBCMD_MAP` への登録を固定 |
 | 7. backend が `age` なら `BAO_ADDR` / token が無く compose が同じ | `tests/commands/test_container_bao.py`: `up` の harness で生成 compose の差分 0、`_push_bao_token` が `docker exec` を呼ばない |
-| 8. token がログと compose に書かれない | `tests/env/test_container_token.py`: `docker exec` の argv に token が無く stdin にある。`caplog` に token が無い |
+| 8. token がログと compose に書かれない | `tests/env/test_container_token.py`: `docker exec` の argv に token が無く stdin にある。`caplog` に token が無い。シェルの文言に `mktemp` と `umask 077` があり、固定名の一時ファイルが無い |
 | 9. `pytest` / `ruff` / `shellcheck` | `quality-gates` |
 | 10. Dockerfile の導入行を固定するテスト | `tests/containers/test_base_dockerfile_bao.py`（版・`amd64` / `arm64` の分岐・`sha256sum -c`） |
 
@@ -302,5 +323,5 @@ CLI だけが要る base イメージには余計である。tar.gz は `bao` �
 | 項目 | 内容 |
 | --- | --- |
 | `bao` が `~/.vault-token` を既定で読むこと | バイナリの文字列（`~/.vault-token` / `BAO_TOKEN_PATH`）と OpenBao の CLI 文書から読んだ。実サーバで確かめるのはリリース後テスト。読まなければ `BAO_TOKEN_PATH` を `environment` で指す |
-| 派生イメージが `USER` を変えていないこと | `containers/*/Dockerfile` の 8 本はすべて `ubuntu`（`${USERNAME}`）で終わる（2026-09-14 に数えた）。利用者側の `projects/*/compose.yml` が `user:` を変える場合は `$HOME` が変わり、その場合は `BAO_TOKEN_PATH` で指す運用になる |
+| 派生イメージが `USER` を変えていないこと | `containers/*/Dockerfile` は 10 本。dev イメージは base と派生 8 本の 9 本で、`USER` を書く 8 本（base と派生 7 本）は `ubuntu`（`${USERNAME}`）で終わり、`general` は `USER` を書かず base の `ubuntu` を継ぐ（2026-09-14 に数えた）。`snapshot` は `FROM ubuntu:26.04` で `USER` が無く root だが、dev サービスではないので token の届け先に入らない（対象は起動中の dev コンテナだけ）。利用者側の `projects/*/compose.yml` が `user:` を変える場合は `$HOME` が変わり、その場合は `BAO_TOKEN_PATH` で指す運用になる |
 | PLAN55（#168）との順序 | 先に入った側に合わせて `SecretStore` の引き回しを決める（処理の流れの節） |
