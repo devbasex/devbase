@@ -1041,6 +1041,45 @@ def cmd_logs(follow: bool = False, tail: Optional[int] = None,
 # cmd_scale
 # ---------------------------------------------------------------------------
 
+def _run_scale_pipeline(project_name: str, current_scale: int, new_scale: int,
+                        config, target: docker_context.DockerTarget,
+                        dev_service_name: str) -> Optional[Path]:
+    """[2/5]〜[5/5] のスケール本体 (volume/network/compose 生成・up・wait)。"""
+    logger.info("[2/5] Ensuring volumes exist for scale=%d...", new_scale)
+    ensure_volumes(new_scale, project_name)
+
+    logger.info("[2.5/5] Ensuring network exists...")
+    ensure_network('devbase_net')
+
+    logger.info("[3/5] Generating scaled compose file...")
+    override_file = _generate_compose_for(
+        new_scale, _inject_secrets(required=True),
+        dev_environment=project_runtime.container_env(config, project_name),
+        **_remote_generate_kwargs(target))
+    logger.info("Generated: %s", override_file)
+
+    logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
+    logger.info("Using --no-recreate to avoid restarting existing containers...")
+
+    result = subprocess.run(
+        ['docker', 'compose', '-f', str(override_file), 'up', '-d', '--no-recreate'],
+        check=False
+    )
+
+    if result.returncode != 0:
+        logger.error("Failed to start new containers")
+        return None
+
+    logger.info("[5/5] Waiting for new containers to be ready...")
+    wait_for_containers_ready(
+        container_prefix=dev_service_name,
+        scale=new_scale,
+        compose_file=override_file,
+        timeout=60
+    )
+    return override_file
+
+
 def cmd_scale(new_scale: int, project_name: str = None,
               context: Optional[str] = None) -> int:
     """Scale containers online without restarting existing ones"""
@@ -1074,38 +1113,11 @@ def cmd_scale(new_scale: int, project_name: str = None,
                     project_runtime.PROJECT_CONFIG_FILENAME, current_scale, new_scale)
         project_runtime.write_scale(Path.cwd(), new_scale)
 
-        logger.info("[2/5] Ensuring volumes exist for scale=%d...", new_scale)
-        ensure_volumes(new_scale, project_name)
-
-        logger.info("[2.5/5] Ensuring network exists...")
-        ensure_network('devbase_net')
-
-        logger.info("[3/5] Generating scaled compose file...")
-        override_file = _generate_compose_for(
-            new_scale, _inject_secrets(required=True),
-            dev_environment=project_runtime.container_env(config, project_name),
-            **_remote_generate_kwargs(target))
-        logger.info("Generated: %s", override_file)
-
-        logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
-        logger.info("Using --no-recreate to avoid restarting existing containers...")
-
-        result = subprocess.run(
-            ['docker', 'compose', '-f', str(override_file), 'up', '-d', '--no-recreate'],
-            check=False
-        )
-
-        if result.returncode != 0:
-            logger.error("Failed to start new containers")
+        override_file = _run_scale_pipeline(
+            project_name, current_scale, new_scale, config, target,
+            dev_service_name)
+        if override_file is None:
             return 1
-
-        logger.info("[5/5] Waiting for new containers to be ready...")
-        wait_for_containers_ready(
-            container_prefix=dev_service_name,
-            scale=new_scale,
-            compose_file=override_file,
-            timeout=60
-        )
 
         # Run project-specific deploy script for newly added instances
         deploy_script = Path('./deploy')
