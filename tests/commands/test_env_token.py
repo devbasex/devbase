@@ -244,3 +244,31 @@ def test_docker_ps_failure_does_not_issue_or_distribute_a_token(
     assert backend.issued_tokens == []
     assert any(argv[:2] == ['docker', 'ps'] for argv in calls)
     assert not any(argv[:2] == ['docker', 'exec'] for argv in calls)
+
+
+def test_dev_containers_are_ordered_numerically_and_malformed_lines_are_skipped(
+        openbao_root, web, capsys):
+    """現状固定: ps 出力の番号を数値順 (1, 2, 10) に並べ、0・先頭ゼロ・非数値・タブなし行を除外する。"""
+    ps_lines = [
+        'web-dev-10\tdev-10',
+        'web-dev-0\tdev-0',
+        'web-dev-2\tdev-2',
+        'malformed-line-without-tab',
+        'web-dev-01\tdev-01',
+        'web-dev-1\tdev-1',
+        'web-dev-x\tdev-x',
+    ]
+    docker = Docker(ps_lines)
+
+    assert _run(openbao_root, docker) == 0
+
+    exec_targets = [c[0][3] for c in docker.of('exec')]
+    out_containers = capsys.readouterr().out.split()
+
+    expected = ['web-dev-1', 'web-dev-2', 'web-dev-10']
+    assert exec_targets == expected
+    assert out_containers == expected
+    invalid_names = {'web-dev-0', 'web-dev-01', 'web-dev-x', 'malformed-line-without-tab'}
+    assert not any(name in invalid_names for name in exec_targets)
+    assert not any(name in invalid_names for name in out_containers)
+
