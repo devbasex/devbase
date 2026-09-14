@@ -56,15 +56,17 @@
   OpenBao 側の値の変更を指し、シェルへ読み直す手段は**案内**（`docs/user/`）で示す
   （例: `export KEY="$(bao kv get -field=KEY …)"`）。成否の判定: 起動中のプロセスの
   環境を書き換える仕組みを作らない
-- 前提 7: backend が `openbao` でない端末（`age` / `plaintext`）では、`BAO_ADDR` /
-  `BAO_TOKEN` をコンテナへ渡さず、それ以外の振る舞いは変えない（PLAN51 の前提 3）
+- 前提 7: backend が `openbao` でない端末（`age` / `plaintext`）では、~~`BAO_ADDR` /
+  `BAO_TOKEN`~~ → `BAO_ADDR`（環境変数）と token（`~/.vault-token`）をコンテナへ渡さず
+  （2026-09-14、決定 1 に揃えた）、それ以外の振る舞いは変えない（PLAN51 の前提 3）
 
 ## 対象範囲
 
 含む:
 
 - `containers/base/Dockerfile` への `bao` 2.6.2 の導入（amd64 / arm64、checksums.txt で検証）
-- backend が `openbao` のとき、`devbase up` がコンテナへ `BAO_ADDR` と有効な `BAO_TOKEN` を渡すこと
+- backend が `openbao` のとき、`devbase up` がコンテナへ `BAO_ADDR`（環境変数）と、有効な token を
+  書いた `~/.vault-token` を渡すこと（~~`BAO_ADDR` と有効な `BAO_TOKEN`~~ 2026-09-14、決定 1 に揃えた）
 - 起動中のコンテナから token を取り直す手段（方式は設計で決める）
 - 利用者への案内（`docs/user/env-backend.md`）: パスの形、`kv put` と `kv patch` の違い、
   シェルへの読み直し、token の期限と取り直し
@@ -83,7 +85,7 @@
 
 | 用語 | 意味 |
 | --- | --- |
-| `bao` | OpenBao の CLI。`BAO_ADDR` / `BAO_TOKEN` を環境変数から読む |
+| `bao` | OpenBao の CLI。接続先は環境変数 `BAO_ADDR` から、token は環境変数 `BAO_TOKEN` が無ければ `~/.vault-token` から読む |
 | token | AppRole ログインで得る `client_token`。TTL 1 時間、延長不可 |
 | 端末の資格情報 | AppRole の `role_id` / `secret_id`。ホストの `secrets/bootstrap.env.age` にある |
 | 控え | ホスト側 `secrets/cache/` の age 暗号化キャッシュ。読み取り専用 |
@@ -107,7 +109,8 @@
       `bao kv put -mount=devbase team/global X=1`
       結果: 前者は成功、後者は 403 で終了コード 2（devbase 側で何も作らない。サーバの
       ポリシーの確認）
-- [ ] 前提: コンテナ起動から 1 時間以上経ち、`BAO_TOKEN` が切れている
+- [ ] 前提: コンテナ起動から 1 時間以上経ち、~~`BAO_TOKEN`~~ → `~/.vault-token` の token が
+      切れている（2026-09-14、決定 1 に揃えた）
       操作: 設計で決めた取り直しの手段を実行してから `bao kv get …`
       結果: 再起動せずに値を読める
 - [ ] backend が `age` の端末で `devbase up` したとき、コンテナの `env` に `BAO_ADDR` が無く、
@@ -133,7 +136,7 @@
 | --- | --- |
 | 公開インタフェース | コンテナ内の環境変数 `BAO_ADDR` とファイル `~/.vault-token` が増える（backend が `openbao` のときだけ）。ホストのコマンド `devbase env token` が増える |
 | データ | スキーマ変更なし。`secrets/backend.yml` の項目が増えるかは設計で決める |
-| 既存の振る舞い | base イメージに `bao` が入る（全端末）。`openbao` の端末では `devbase up` がコンテナへ 2 変数を追加で渡す |
+| 既存の振る舞い | base イメージに `bao` が入る（全端末）。`openbao` の端末では `devbase up` がコンテナへ環境変数 `BAO_ADDR` を追加で渡し、`~/.vault-token` を書く |
 
 ## 検証手段
 

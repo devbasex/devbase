@@ -21,14 +21,14 @@
 | --- | --- |
 | `containers/base/Dockerfile`（変える） | `bao` の tar.gz を取得し、`checksums.txt` で検証して `/usr/local/bin/bao` へ置く。版は `ARG BAO_VERSION` |
 | `env/openbao.py` `OpenBaoBackend.issue_token()`（足す） | 現在の token を返す。無い・期限が近ければログインし直す。既存の `_ensure_token` を公開する薄い入口 |
-| `env/container_token.py`（新設） | token をコンテナへ届ける。`docker exec` で `~/.vault-token`（`0600`）へ書く。対象のコンテナ名の解決と、replica ごとの繰り返しを持つ |
-| `commands/container.py` `_push_bao_token()`（足す） | `up` の [5/6] の後に呼ぶ。backend が `openbao` でなければ何もしない。失敗しても `up` を倒さない（`_apply_window_titles` と同じ扱い） |
+| `env/container_token.py`（新設） | 受け取った token をコンテナへ届ける。`docker exec` で `~/.vault-token`（`0600`）へ書く。replica ごとの繰り返しを持つ。token の取得と backend の判定は持たない（呼び出し側の責務） |
+| `commands/container.py` `_push_bao_token()`（足す） | `up` の [5/6] の後に呼ぶ。backend が `openbao` でなければ何もしない。`issue_token()` で token を得て `push()` へ渡す。失敗しても `up` を倒さない（`_apply_window_titles` と同じ扱い） |
 | `commands/container.py` `_generate_compose_for()` の `dev_environment`（変える） | backend が `openbao` のとき `BAO_ADDR=<url>` を dev サービスの `environment` に足す（値はリテラル。機密ではない） |
-| `commands/env.py` `cmd_env_token()`（足す） | `devbase env token [--print]`。既定は現在地のプロジェクトの起動中の dev コンテナへ届ける。`--print` は標準出力へ token だけを出す |
-| `cli.py` の parser（変える） | `env token` のサブコマンドと `--print` |
+| `commands/env.py` `cmd_env_token()`（足す） | `devbase env token [--print]`。既定は現在地のプロジェクトの起動中の dev コンテナへ届ける（`issue_token()` → `push()`）。`--print` は標準出力へ token だけを出す |
+| `cli.py`（変える） | parser に `env token` のサブコマンドと `--print` を足し、`SUBCMD_MAP[('env',)]` に `token` を足す（`tests/cli/test_prefix_resolution.py` が parser と `SUBCMD_MAP` の一致を固定している）。`_NO_SECRET_INJECTION` に `('env', 'token')` を足す |
 | `docs/user/env-backend.md`（変える） | 「コンテナの中から `bao` を使う」の節（F4） |
 | `tests/containers/test_base_dockerfile_bao.py`（新設） | Dockerfile の `bao` 導入行を固定する（版・両アーキテクチャ・検証） |
-| `tests/env/test_container_token.py`（新設） | `docker exec` の呼び出しの形（コマンド・stdin・umask）と、replica の繰り返し |
+| `tests/env/test_container_token.py`（新設） | `docker exec` の呼び出しの形（コマンド・stdin・umask・一時ファイルからの `mv`）と、replica の繰り返し |
 | `tests/commands/test_container_bao.py`（新設） | `up` が `BAO_ADDR` を足す／足さない、`_push_bao_token` の要否 |
 | `tests/commands/test_env_token.py`（新設） | `env token` の `--print` と既定の経路、backend が `openbao` でないときの失敗 |
 
@@ -51,13 +51,14 @@ graph LR
     end
     SRV[(OpenBao サーバ)]
     UP -->|environment に BAO_ADDR| ENVV
-    UP --> PUSH
-    TOKCMD --> PUSH
-    PUSH -->|issue_token| OB
+    UP -->|issue_token| OB
+    TOKCMD -->|issue_token| OB
+    UP -->|push token| PUSH
+    TOKCMD -->|push token| PUSH
     OB -->|approle login| SRV
     OB --> CFG
     OB --> BOOT
-    PUSH -->|docker exec: cat > ~/.vault-token| TF
+    PUSH -->|docker exec: 一時ファイル → mv ~/.vault-token| TF
     BAO --> TF
     BAO --> ENVV
     BAO -->|kv get / put / patch| SRV
@@ -87,9 +88,20 @@ classDiagram
         +config: BackendConfig
         -_selected_backend() SecretBackend
     }
-    ContainerTokenPusher ..> OpenBaoBackend : issue_token()
-    ContainerTokenPusher ..> SecretStore : backend が openbao か
+    class TokenCaller {
+        <<呼び出し側>>
+        _push_bao_token()
+        cmd_env_token()
+    }
+    TokenCaller ..> SecretStore : backend が openbao か
+    TokenCaller ..> OpenBaoBackend : issue_token()
+    TokenCaller ..> ContainerTokenPusher : push(names, token)
 ```
+
+責務の境界は「token を得る」と「token を届ける」で分ける。`_push_bao_token` と `cmd_env_token`
+（図の `TokenCaller`）が backend を判定し、`issue_token()` で token を得て `push()` へ渡す。
+`ContainerTokenPusher` は `docker` しか知らず、`OpenBaoBackend` にも `SecretStore` にも依存しない
+（テストは token の文字列を渡すだけで済む）。
 
 `issue_token()` は `_ensure_token()` をそのまま返す。ログイン失敗の例外（`SecretAuthError` /
 `SecretUnreachableError`）はそのまま上へ伝える。`push()` は書けたコンテナ名の一覧を返し、
@@ -112,19 +124,30 @@ classDiagram
 ### `devbase env token`
 
 ```text
-devbase env token [--print] [-p PROJECT]
+devbase env token [--print]
 ```
 
 | 引数 | 意味 |
 | --- | --- |
-| （なし） | 現在地のプロジェクト（`-p` で指定可）の起動中の dev コンテナすべての `~/.vault-token` を書き換える |
-| `--print` | コンテナへ書かず、token を標準出力へ 1 行で出す。手で貼りたいとき・別の経路のコンテナのため |
+| （なし） | 現在地のプロジェクトの起動中の dev コンテナすべての `~/.vault-token` を書き換える |
+| `--print` | コンテナへ書かず、token を標準出力へ 1 行で出す。手で貼りたいとき・別の経路のコンテナのため。プロジェクトとコンテナは見ない |
+
+対象のプロジェクトは、他の `env` サブコマンド（`set -p` など）と同じく実行時のディレクトリから
+決める（`_current_project_name`）。プロジェクト名を取る引数は置かない。既存の `-p` は名前を
+取らない真偽フラグで（`docs/specifications/secret-backend.md`「参照の持ち主と `--user`」）、
+`env token` だけ引数を取る `-p` にすると意味が割れる。別のプロジェクトへ届けたいときは
+そのディレクトリで打つ。
+
+処理の順は「backend の判定 → ログイン（`issue_token()`）→ 対象の解決 → 書き込み」で、
+`--print` は 2 つ目で止まって token を出す。
 
 | 状況 | 出力 | 終了コード |
 | --- | --- | --- |
 | backend が `openbao` でない | 「backend が openbao ではありません」 | 1 |
 | ログインが拒まれた（400 / 403） | 既存の `SecretAuthError` の文言 | 1 |
 | 到達できない | 既存の `SecretUnreachableError` の文言（**控えは使わない**。token は控えられない） | 1 |
+| `--print` | token を 1 行（上の 3 つ以外の条件は見ない） | 0 |
+| `projects/` の下ではない | 「プロジェクトのディレクトリで実行してください」 | 1 |
 | 起動中の dev コンテナが無い | 「起動中のコンテナがありません: <project>」 | 1 |
 | 一部のコンテナに書けなかった | 書けたもの・書けなかったものを 1 行ずつ | 1 |
 | すべて書けた | 書いたコンテナ名を 1 行ずつ（token は出さない） | 0 |
@@ -134,11 +157,20 @@ devbase env token [--print] [-p PROJECT]
 ### `docker exec` の形
 
 ```text
-docker exec -i <container> sh -c 'umask 077 && cat > "$HOME/.vault-token"'
+docker exec -i <container> sh -c '
+  umask 077
+  cat > "$HOME/.vault-token.tmp" && mv -f "$HOME/.vault-token.tmp" "$HOME/.vault-token" \
+    || { rm -f "$HOME/.vault-token.tmp"; exit 1; }'
   （stdin: token）
 ```
 
 - `-i` で stdin を渡し、引数に token を載せない（`ps` に出さない）
+- 同じディレクトリの一時ファイルへ書いてから `mv -f` で置き換える（`editor/window_title.py`
+  `_write_command` と同じ形）。`cat >` で直接上書きすると、`env token` の再実行で既存ファイルの
+  mode がそのまま残り（`umask` は新規作成にしか効かない）、途中で切れると空のファイルが残る。
+  一時ファイルは毎回 `umask 077` の下で作られるため、`mv` 後の mode は前の状態によらず
+  `0600` になる。`window_title.py` の `cp -p`（既存の mode を写す）は要らない。ここでは
+  前の mode を引き継がず、常に `0600` にしたい
 - 既存の `_docker_exec` の経路（`editor/window_title.py`）と同じく `DOCKER_CONTEXT` を継承する
   ため、リモートの daemon（PLAN52）でも同じ形で届く
 - `$HOME` はコンテナの利用者（`ubuntu`）のもの。`docker exec` の既定の利用者は compose の
@@ -149,8 +181,9 @@ docker exec -i <container> sh -c 'umask 077 && cat > "$HOME/.vault-token"'
 ```mermaid
 sequenceDiagram
     participant U as 利用者
-    participant UP as cmd_up
+    participant UP as cmd_up / cmd_env_token
     participant ST as SecretStore/OpenBaoBackend
+    participant P as container_token.push
     participant D as docker
     participant C as dev コンテナ
     U->>UP: devbase up
@@ -158,17 +191,20 @@ sequenceDiagram
     UP->>D: compose up（environment に BAO_ADDR）
     D->>C: 起動
     UP->>UP: [5/6] ready を待つ
-    alt backend が openbao
+    alt backend が openbao（_push_bao_token）
         UP->>ST: issue_token()（同じインスタンス。期限内なら再ログインしない）
-        UP->>D: docker exec -i <c> sh -c 'umask 077 && cat > ~/.vault-token'
+        UP->>P: push([<c>…], token)
+        P->>D: docker exec -i <c> sh -c '… cat > tmp && mv -f tmp ~/.vault-token'
         D->>C: ~/.vault-token を書く
+        P-->>UP: 書けたコンテナ名（失敗は警告。up は倒さない）
     end
     UP->>UP: [6/6] エディタ
     Note over C: 1 時間後に token が切れる
     U->>C: bao kv get … → 403
     U->>UP: devbase env token
     UP->>ST: issue_token()（新しい token）
-    UP->>D: docker exec -i …
+    UP->>P: push([<c>…], token)
+    P->>D: docker exec -i …
     U->>C: bao kv get … → 200
 ```
 
@@ -255,7 +291,7 @@ CLI だけが要る base イメージには余計である。tar.gz は `bao` �
 | 3. コンテナ内 `bao kv get` がホストの `env get --user` と同じ値 | 手動（リリース後テスト。PLAN53 の後の端末で） |
 | 4. コンテナ内 `kv patch` がホストの `env get --user` に見える | 手動（同上） |
 | 5. `team/global` は読めて書けない | 手動（同上。サーバのポリシーの確認） |
-| 6. 1 時間後に `devbase env token` で読める | 手動（同上）。`tests/commands/test_env_token.py` で `issue_token` → `push` の順と対象コンテナを固定 |
+| 6. 1 時間後に `devbase env token` で読める | 手動（同上）。`tests/commands/test_env_token.py` で `issue_token` → `push` の順と対象コンテナ、`--print` がコンテナを見ないことを固定。`tests/cli/test_prefix_resolution.py`（既存）が `SUBCMD_MAP` への登録を固定 |
 | 7. backend が `age` なら `BAO_ADDR` / token が無く compose が同じ | `tests/commands/test_container_bao.py`: `up` の harness で生成 compose の差分 0、`_push_bao_token` が `docker exec` を呼ばない |
 | 8. token がログと compose に書かれない | `tests/env/test_container_token.py`: `docker exec` の argv に token が無く stdin にある。`caplog` に token が無い |
 | 9. `pytest` / `ruff` / `shellcheck` | `quality-gates` |
