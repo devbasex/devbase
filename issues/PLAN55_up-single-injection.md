@@ -65,7 +65,9 @@
 含む:
 
 - `cli._load_secret_env` → `container` の各経路で `SecretStore` と解決結果を引き継ぐ仕組み
-- `_ensure_env_files` の存在判定を注入済みの結果で行うこと
+- ~~`_ensure_env_files` の存在判定を注入済みの結果で行うこと~~ → `_ensure_env_files` の
+  存在判定で注入と同じ `SecretStore`（`runtime.store_for`）を使い、往復を無くすこと
+  （判定の意味は変えない。2026-09-14、前提 3・設計の決定 4 に揃えた）
 - `up` 1 回の往復回数を偽サーバで固定するテスト
 - `docs/specifications/secret-backend.md`「OpenBao との契約」の該当箇所の追記（`plan-to-spec`）
 
