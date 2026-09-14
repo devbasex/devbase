@@ -188,6 +188,20 @@ def test_lifecycle_no_resolution_without_name(monkeypatch):
     assert resolved == []
 
 
+def test_cmd_project_releases_store_when_project_is_missing(tmp_path, monkeypatch):
+    """現状固定: 名前解決で早期終了しても次の操作には新しいストアを渡す。"""
+    from devbase.commands import container
+    from devbase.env import runtime
+
+    (tmp_path / 'projects').mkdir()
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    before = runtime.store_for(tmp_path)
+
+    assert container.cmd_project(_args(subcommand='ps', name='missing-project')) == 1
+
+    assert runtime.store_for(tmp_path) is not before
+
+
 # ---------------------------------------------------------------------------
 # cli._dispatch: ルーティング
 # ---------------------------------------------------------------------------

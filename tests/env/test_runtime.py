@@ -402,6 +402,25 @@ def test_names_are_listed_once_across_the_four_layers(root):
     assert resolved.names == ['A', 'K', 'B', 'C', 'D']
 
 
+def test_invalid_utf8_project_env_preserves_secret_values_and_origins(root, monkeypatch):
+    """現状固定: 不正 UTF-8 があれば有効な先頭行も含め上書きを無視する。"""
+    (root / 'projects' / 'web' / 'env').write_bytes(b'TOKEN=override\nINVALID=\xff\n')
+    monkeypatch.setenv('TOKEN', 'override')
+    store = _FourLayerStore(_layers(
+        team_global={'TOKEN': 'secret'}, user_global={'USER_GLOBAL': 'ug'},
+        team_web={'PROJECT_ONLY': 'p'}, user_web={'USER_PROJECT': 'up'}))
+
+    resolved = runtime.resolve(root, 'web', store=store)
+
+    assert resolved.values == {
+        'TOKEN': 'secret', 'USER_GLOBAL': 'ug',
+        'PROJECT_ONLY': 'p', 'USER_PROJECT': 'up',
+    }
+    assert set(resolved.global_names) == {'TOKEN', 'USER_GLOBAL'}
+    assert set(resolved.project_names) == {'PROJECT_ONLY', 'USER_PROJECT'}
+    assert set(resolved.names) == {'TOKEN', 'USER_GLOBAL', 'PROJECT_ONLY', 'USER_PROJECT'}
+
+
 def test_file_backends_resolve_exactly_as_before(root, store):
     """個人単位の参照を持たない backend では、結果が 2 層のときと同じ"""
     store.age.save(GLOBAL, {'TOKEN': 'global', 'ONLY_GLOBAL': 'g'})

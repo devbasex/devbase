@@ -58,3 +58,19 @@ def test_injection_is_skipped_before_devbase_root_is_read(monkeypatch):
     """DEVBASE_ROOT が無くても判定自体は成立する (例外を出さない)"""
     monkeypatch.delenv('DEVBASE_ROOT', raising=False)
     cli._load_secret_env('env', 'keygen')
+
+
+@pytest.mark.parametrize('required', [True, False])
+def test_container_injection_without_root_returns_empty_secrets(monkeypatch, required):
+    """現状固定: root 未設定なら必須指定でも例外を出さず空を返す。"""
+    from devbase.commands import container
+    from devbase.env.runtime import SecretEnv
+
+    monkeypatch.delenv('DEVBASE_ROOT', raising=False)
+
+    secrets = container._inject_secrets(required=required)
+
+    assert isinstance(secrets, SecretEnv)
+    assert not secrets
+    assert secrets.values == {}
+    assert secrets.names == []

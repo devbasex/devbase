@@ -107,6 +107,35 @@ def _gets(openbao):
     return sorted(r.kv_path for r in openbao.requests_of('GET'))
 
 
+@pytest.mark.parametrize(('subcommand', 'name'), [
+    pytest.param('unknown', None, id='unknown-subcommand'),
+    pytest.param('ps', 'missing-project', id='missing-project'),
+    pytest.param('ps', None, id='handler-error'),
+])
+def test_cmd_project_error_discards_cached_secrets(
+        openbao_root, openbao, monkeypatch, subcommand, name):
+    """現状固定: 異常終了後の解決では操作前の機密を持ち越さない。"""
+    root = openbao_root
+    monkeypatch.setenv('DEVBASE_ROOT', str(root))
+    openbao.put(TEAM_GLOBAL, {'TOKEN': 'old'})
+    assert runtime.resolve(root).values['TOKEN'] == 'old'
+    openbao.put(TEAM_GLOBAL, {'TOKEN': 'new'})
+
+    def fail_ps(**kwargs):
+        raise RuntimeError('ps failed')
+
+    monkeypatch.setattr(container, 'cmd_ps', fail_ps)
+    args = types.SimpleNamespace(subcommand=subcommand, name=name)
+    if subcommand == 'ps' and name is None:
+        with pytest.raises(RuntimeError, match='ps failed'):
+            container.cmd_project(args)
+    else:
+        assert container.cmd_project(args) == 1
+
+    # fixture の解除処理が走る前に、公開入口から更新値を読み直す。
+    assert runtime.resolve(root).values['TOKEN'] == 'new'
+
+
 def test_up_in_project(up_root, openbao, monkeypatch):
     """受け入れ条件 1: `web` の中で `up` → 認証 1 回、GET 4 回"""
     monkeypatch.chdir(up_root['root'] / 'projects' / 'web')
