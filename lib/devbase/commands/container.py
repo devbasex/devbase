@@ -1436,29 +1436,18 @@ def _ensure_images() -> bool:
         logger.warning("compose.yml not found, skipping image check")
         return True
 
-    dev_service_name = get_dev_service_name()
-
     try:
-        result = subprocess.run(
-            ['docker', 'compose', 'config', '--format', 'json'],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-
-        if result.returncode != 0:
+        dev_service = _resolve_dev_service()
+        if dev_service is None:
             logger.info("Unable to check image status")
             logger.info("Running 'devbase container build' to ensure images exist...")
             return _run_build()
 
-        config = json.loads(result.stdout)
-        services = config.get('services', {})
-        dev_service = services.get(dev_service_name, {})
         image_name = dev_service.get('image', '')
         has_build = bool(dev_service.get('build'))
 
         if not image_name:
-            logger.warning("No image specified for %s service", dev_service_name)
+            logger.warning("No image specified for %s service", get_dev_service_name())
             return True
 
         inspect = subprocess.run(
