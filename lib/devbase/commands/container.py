@@ -213,14 +213,26 @@ def _previous_scale_compose():
         backup.unlink(missing_ok=True)
 
 
+def _prepare_compose(context: Optional[str]) -> None:
+    """Compose の接続先を反映してから機密を任意注入する。"""
+    _apply_context(context)
+    _inject_secrets(required=False)
+
+
+def _compose_base_args(compose_file: Optional[Path]) -> list[str]:
+    """指定された override を付与した Compose のベース引数を返す。"""
+    cmd = ['docker', 'compose']
+    if compose_file is not None:
+        cmd.extend(['-f', str(compose_file)])
+    return cmd
+
+
 def _compose_run(subcommand: str, *extra_args: str,
                  context: Optional[str] = None) -> int:
     """docker compose コマンドを実行する共通関数"""
-    _apply_context(context)
-    _inject_secrets(required=False)
-    cmd = ['docker', 'compose']
-    if _SCALE_COMPOSE_FILE.exists():
-        cmd.extend(['-f', str(_SCALE_COMPOSE_FILE)])
+    _prepare_compose(context)
+    compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
+    cmd = _compose_base_args(compose_file)
     cmd.append(subcommand)
     cmd.extend(extra_args)
     return subprocess.run(cmd).returncode
@@ -1003,16 +1015,14 @@ def cmd_down(context: Optional[str] = None) -> int:
 
 def cmd_login(index: str = '1', context: Optional[str] = None) -> int:
     """Login to container"""
-    _apply_context(context)
-    _inject_secrets(required=False)
+    _prepare_compose(context)
     dev_service = get_dev_service_name()
-
-    if _SCALE_COMPOSE_FILE.exists():
-        cmd = ['docker', 'compose', '-f', str(_SCALE_COMPOSE_FILE),
-               'exec', f'{dev_service}-{index}', 'bash']
+    compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
+    cmd = _compose_base_args(compose_file)
+    if compose_file is not None:
+        cmd.extend(['exec', f'{dev_service}-{index}', 'bash'])
     else:
-        cmd = ['docker', 'compose', 'exec', f'--index={index}',
-               dev_service, 'bash']
+        cmd.extend(['exec', f'--index={index}', dev_service, 'bash'])
 
     return subprocess.run(cmd).returncode
 
