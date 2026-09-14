@@ -5,7 +5,7 @@
   - 根拠: `devbase up` の起動経路（`lib/devbase/cli.py` / `lib/devbase/commands/container.py`）
     の振る舞いの変更。公開インタフェースは変えない。対象には `tests/cli/test_secret_injection.py`
     / `tests/cli/test_project_name_resolution.py` / `tests/commands/test_container_up_order.py`
-    / `tests/env/test_openbao.py` がある
+    / `tests/env/test_openbao.py` / `tests/cli/tui/test_dispatch.py` がある
 - 閉じる課題: #168
 
 ## 依頼（原文）
@@ -65,6 +65,10 @@
 - 前提 5: 共通機密が未作成で `_ensure_env_files` が子プロセスの `env init` を走らせたとき、
   `env init` が書いた変数はその `up` のコンテナへ渡る（今日はそうなっている。控えを持ち回る
   ことでこれを失わない。2026-09-14、設計の決定 5）。成否の判定: 受け入れ条件 8
+- 前提 6: TUI（1 プロセスで操作を続ける）で機密を書いて（`env edit` など）から `up` したとき、
+  書いた値がそのコンテナへ渡る（今日はそうなっている。TUI の書き込みは注入と別の `SecretStore`
+  を通るので、控えを持ち回ることでこれを失わない。2026-09-14、設計の決定 3）。
+  成否の判定: 受け入れ条件 9
 
 ## 対象範囲
 
@@ -75,6 +79,8 @@
   存在判定で注入と同じ `SecretStore`（`runtime.store_for`）を使い、往復を無くすこと
   （判定の意味は変えない。2026-09-14、前提 3・設計の決定 4 に揃えた）
 - `up` 1 回の往復回数を偽サーバで固定するテスト
+- TUI で機密を書いてから `up` したとき、書いた値で起動する性質を保つこと（2026-09-14、
+  前提 6。TUI の往復数は引き続き条件にしない）
 - `docs/specifications/secret-backend.md`「OpenBao との契約」の該当箇所の追記（`plan-to-spec`）
 
 含まない:
@@ -84,6 +90,7 @@
 - `runtime.resolve()` の重ね順・`SecretStore` の HTTP の契約の変更
 - TUI（1 プロセスで複数の操作を続ける経路）の往復。`_dispatch_lifecycle` の入口で
   `docker_context.reset()` と同じ扱いにするかは設計で決めるが、TUI の往復数は条件にしない
+  （決まった: TUI の委譲層 `tui/dispatch.py` の入口で捨てる。2026-09-14、設計の決定 3）
 - コンテナへの `bao` の導入（#169、PLAN54）
 
 ## 用語
@@ -125,6 +132,11 @@
       操作: `web` の中で `devbase up`（docker の呼び出しは差し替える）
       結果: 起動時の環境変数と生成される構成に `INIT_KEY` が渡る。往復は認証 2 回、GET 8 回
       以下（`env init` の前に 4、書いた後に読み直して 4）（2026-09-14、前提 5）
+- [ ] 前提: backend が `openbao`（偽サーバ）で `team/global` に `REVIEW_KEY=old` がある。TUI の
+      起動相当（`_load_secret_env`）を通した後、同じプロセスで TUI の `env edit`（エディタは
+      `REVIEW_KEY=new` を保存するものに差し替える）を実行する
+      操作: 同じプロセスで TUI の `up web`（docker の呼び出しは差し替える）
+      結果: 起動時の環境変数と生成される構成の `REVIEW_KEY` が `new`（2026-09-14、前提 6）
 
 ## 非機能の条件
 
@@ -139,7 +151,7 @@
 | --- | --- |
 | 公開インタフェース | 変わらない |
 | データ | 変わらない |
-| 既存の振る舞い | `up` の途中で 2 度目の解決をしなくなる。`_ensure_env_files` がサーバへ問い合わせなくなる。共通機密が未作成で `env init` を走らせたときだけ、書いた後に読み直す（その `up` に限り認証 1 回 + GET 4 回が足される） |
+| 既存の振る舞い | `up` の途中で 2 度目の解決をしなくなる。`_ensure_env_files` がサーバへ問い合わせなくなる。共通機密が未作成で `env init` を走らせたときだけ、書いた後に読み直す（その `up` に限り認証 1 回 + GET 4 回が足される）。TUI は操作の入口で控えを捨て、起動時に読んだ値を最初の操作にも引き継がない（TUI の操作 1 回あたり認証 1 回 + GET 4 回。今日より少ない） |
 
 ## 検証手段
 

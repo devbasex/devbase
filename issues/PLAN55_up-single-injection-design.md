@@ -15,6 +15,7 @@
 | F2 | `_ensure_env_files` の存在判定がサーバへ問い合わせない | 開発者（同上） |
 | F3 | `up` 1 回の往復回数がテストで固定される | 保守する人 |
 | F4 | 共通機密が未作成で `env init` を走らせた `up` は、`env init` が書いた変数でコンテナを起動する（従来どおり） | 開発者（初回の `up`） |
+| F5 | TUI で機密を書いて（`env edit` など）から `up` すると、書いた値でコンテナを起動する（従来どおり） | 開発者（TUI） |
 
 ## 構成要素
 
@@ -26,8 +27,10 @@
 | `commands/container.py` `_ensure_env_files()`（変える） | `SecretStore(devbase_root)` を `runtime.store_for(devbase_root)` に置き換える。子プロセスの `env init` を走らせたら、戻った直後に `runtime.release_store()` を呼ぶ（決定 5） |
 | `commands/container.py` `_dispatch_lifecycle()`（変える） | `finally` で `docker_context.reset()` に並べて `runtime.release_store()` を呼ぶ |
 | `cli.py` `_load_secret_env()`（変えない） | dispatch 前の注入はそのまま。作った `SecretStore` が `store_for` の控えになる |
+| `tui/dispatch.py` `_preserve_cwd_env()`（変える） | TUI の委譲の入口（`dispatch_lifecycle` / `dispatch_group` の両方が通る）で `runtime.release_store()` を呼ぶ。起動時や前の操作の控えを持ち越さない（決定 3） |
 | `tests/env/test_runtime_store.py`（新設） | `store_for` / `release_store` の振る舞い（同一性・`root` 変更・解放後の作り直し） |
 | `tests/cli/test_up_roundtrips.py`（新設） | 3 経路の `up` を `FakeOpenBao` で走らせ、認証と GET の回数を固定する。`env init` を走らせた `up` が書いた値で起動することも固定する |
+| `tests/cli/tui/test_dispatch.py`（変える） | TUI の委譲の入口で控えが捨てられること。同じプロセスで `env edit` → `up` した値が渡ること |
 | `docs/specifications/secret-backend.md`「OpenBao との契約」（`plan-to-spec` で変える） | 「`devbase up` 1 回あたり」の文を、持ち回りの規則とともに確定仕様にする |
 
 構成要素の関係:
@@ -36,6 +39,9 @@
 graph TD
     subgraph cli [cli.py]
         LOAD[_load_secret_env]
+    end
+    subgraph tui [tui/dispatch.py]
+        TD[_preserve_cwd_env]
     end
     subgraph container [commands/container.py]
         DL[_dispatch_lifecycle]
@@ -51,6 +57,8 @@ graph TD
     ST[(SecretStore<br/>OpenBaoBackend._seen)]
     SRV[(OpenBao)]
     LOAD --> RES
+    TD -.入口で捨てる.-> RS
+    TD --> DL
     DL --> INJ
     DL -->|finally| RS
     INJ --> RES
@@ -134,11 +142,12 @@ sequenceDiagram
 | `devbase up web`（`api` の中） | 1 | 6 | `_load_secret_env` で `api` の 4、切替後に `web` の 2 |
 | `devbase up web`（`projects/` の外） | 1 | 4 | `_load_secret_env` で共通 2、切替後に `web` の 2 |
 | `devbase up`（`web` の中、`team/global` が未作成） | 2 | 8 | `_load_secret_env` で 4（`team/global` は 404 → 空）。`env init` の後に控えを捨て、`_run_deploy_pipeline` で 4（決定 5） |
+| TUI の `up web`（操作 1 回あたり） | 1 | 4 | 入口で捨て、`_inject_secrets` で `web` の 4。起動時の `_load_secret_env` の分（認証 1 + GET 2〜4）は操作に含めない。TUI の往復数は条件にしない（PLAN55 対象範囲） |
 
-TUI（1 プロセスで操作を続ける）では、`_load_secret_env` が起動時に作った `SecretStore` を
-最初の操作が引き継ぎ、その操作の `finally` で捨てる。2 回目以降の操作は `_inject_secrets` が
-作り直すので、操作ごとに現物を読む。**最初の操作だけは TUI の起動時に読んだ値で起動する**
-（決定 3）。
+TUI（1 プロセスで操作を続ける）では、委譲の入口（`tui/dispatch.py` の `_preserve_cwd_env`）で
+控えを捨てる。`_load_secret_env` が起動時に作った `SecretStore` は最初の操作にも引き継がず、
+毎回 `_inject_secrets` が作り直して現物を読む。**TUI の中で機密を書いてから `up` しても、書いた
+値で起動する**（決定 3）。
 
 ### `store_for` の規則
 
@@ -190,14 +199,31 @@ TUI（1 プロセスで操作を続ける）では、`_load_secret_env` が起�
 `_dispatch_lifecycle` の**入口**で捨てる案は採らない。CLI では `_load_secret_env` が作った
 `SecretStore` を捨てることになり、認証が 2 回に戻る。
 
-### 決定 3: TUI の最初の操作は起動時に読んだ値で起動する
+### 決定 3: TUI は操作の入口で控えを捨て、操作ごとに現物を読む
 
-出口で捨てる規則の帰結である。TUI の起動から最初の操作までの間にサーバ側の値が変わって
-いても、その操作には反映しない。TUI は対話的で、起動から操作までは通常数秒〜数分である。
-起動時の値は同じプロセスが `os.environ` に載せたものと同じで、これまでも `_inject_secrets` が
-上書きするまでは子プロセスへ渡っていた。
+~~決定 3: TUI の最初の操作は起動時に読んだ値で起動する~~（2026-09-14、round 3 で改めた）。
 
-起動からの経過時間で捨てる案は採らない。境界の値を決める根拠が無く、テストで時刻を
+旧案は「出口で捨てる」規則の帰結として、起動時の `SecretStore` を最初の操作が引き継ぐものと
+していた。しかし TUI の `env` 操作（`edit` / `sync` / `init` / `project`）は `dispatch_group` →
+`commands/env.py` の `_secret_store()` が作る**別の** `SecretStore` で書き、`_dispatch_lifecycle` を
+通らない。起動 → `env edit` で共通機密を保存 → 最初の `up` の順に操作すると、起動時の `_seen`
+が残ったまま `_inject_secrets` / `_run_deploy_pipeline` が編集前の値を読む。今日は
+`_run_deploy_pipeline` が `SecretStore` を作り直しているので編集後の値で起動しており、旧案は
+これを失う（codex round 3）。
+
+規則: TUI の委譲層 `tui/dispatch.py` の `_preserve_cwd_env`（`dispatch_lifecycle` と
+`dispatch_group` の両方が通る）の**入口**で `runtime.release_store()` を呼ぶ。CWD と `os.environ`
+を操作の前後で復元する境界と同じ場所で、「TUI の操作は起動時や前の操作の状態を引き継がない」
+規則が 1 か所で読める。書く操作を数えて捨てる案（`env edit` の後だけ捨てる）は採らない。
+書く経路（`env set` / `import`、将来の操作）を列挙して追随する結合が増え、決定 5 で退けたのと
+同じ理由になる。読むだけの操作の後も捨てるが、失うのは次の操作の認証 1 回 + GET 4 回で、TUI の
+往復数は条件にしていない（PLAN55 対象範囲）。
+
+決定 2 の「入口で捨てない」は `commands/container.py` の `_dispatch_lifecycle`（CLI と TUI の
+共有）についての判断で、`_load_secret_env` の控えを CLI が使えるようにするためである。
+`tui/dispatch.py` は TUI だけが通るので、そこで捨てても CLI の往復は変わらない。
+
+起動からの経過時間で捨てる案は引き続き採らない。境界の値を決める根拠が無く、テストで時刻を
 偽る手間が増える。
 
 ### 決定 4: `_ensure_env_files` の存在判定の意味は変えない
@@ -240,6 +266,8 @@ TUI（1 プロセスで操作を続ける）では、`_load_secret_env` が起�
 | 6. 切替の回帰テストが通る | `tests/cli/test_project_name_resolution.py` を変更しない |
 | 7. `pytest` / `ruff` / `compileall` | `quality-gates` |
 | 8. `team/global` 未作成で `up`: `env init` が書いた値で起動する | 同 `::test_up_after_env_init_reads_written_values`。`FakeOpenBao` の `team/global` を未作成にし、`container.subprocess.run` を「偽サーバへ `INIT_KEY=value` を `save` して 0 で戻る」スタブに差し替える。`_run_deploy_pipeline` へ渡る `SecretEnv` と `os.environ` に `INIT_KEY` があり、`openbao.logins == 2`、GET が 8 件以下 |
+| 9. TUI で `env edit` → `up`: 書いた値で起動する | `tests/cli/tui/test_dispatch.py::test_lifecycle_after_env_edit_reads_written_values`。`FakeOpenBao` の `team/global` に `REVIEW_KEY=old` を置き、`_load_secret_env` 相当を通してから、同じプロセスで `dispatch_group(cmd_env, root, 'edit')` をエディタのスタブ（`REVIEW_KEY=new` を保存）で走らせ、`dispatch_lifecycle('up', name='web')` を docker 差し替えで走らせる。`_run_deploy_pipeline` へ渡る `SecretEnv` と子プロセスの環境の `REVIEW_KEY` が `new` |
+| 決定 3 の規則 | 同 `::test_preserve_cwd_env_releases_store_on_entry`。`store_for(root)` で控えを作ってから `dispatch_group` を no-op の handler で走らせ、handler の中で `store_for(root)` が別のインスタンスを返す |
 | `store_for` の規則の表 | `tests/env/test_runtime_store.py`（同一性・`root` 変更・解放） |
 
 ## 未確認のまま残ること
