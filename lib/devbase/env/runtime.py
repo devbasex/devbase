@@ -26,6 +26,42 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# SecretStore の持ち回り (PLAN55)
+# ---------------------------------------------------------------------------
+
+#: 1 回のライフサイクル操作の間、持ち回る :class:`SecretStore` とその ``root``。
+#:
+#: 注入は ``cli._load_secret_env`` (dispatch 前) / ``_dispatch_lifecycle`` (切替後) /
+#: ``_run_deploy_pipeline`` (起動直前) の 3 か所で行われ、それぞれ別の理由で置かれている。
+#: 注入のたびに ``SecretStore`` を作り直すとサーバ backend では認証と取得が繰り返される
+#: ため、インスタンスの寿命を操作 1 回に揃えて 2 度目以降の解決を控え (``_seen``) から
+#: 返す。捨てる契機は呼び出し側 (``_dispatch_lifecycle`` の ``finally`` など) が持つ。
+_store: Optional[SecretStore] = None
+_store_root: Optional[Path] = None
+
+
+def store_for(devbase_root: Path) -> SecretStore:
+    """持ち回っている :class:`SecretStore` を返す。無ければ作り、``root`` が違えば作り直す。"""
+    global _store, _store_root
+    root = Path(devbase_root)
+    if _store is None or _store_root != root:
+        _store = SecretStore(root)
+        _store_root = root
+    return _store
+
+
+def release_store() -> None:
+    """持ち回っている :class:`SecretStore` を捨てる。次の :func:`store_for` は作り直す。
+
+    子プロセス (``env init``) がストアへ書いた後や、TUI の操作の入口で呼ぶ。控えを
+    持ったまま続けると、現物と違う値で起動する。
+    """
+    global _store, _store_root
+    _store = None
+    _store_root = None
+
+
+# ---------------------------------------------------------------------------
 # プロジェクトの特定
 # ---------------------------------------------------------------------------
 
@@ -162,7 +198,7 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
     結果は従来と同じになる (前提 3)。
     """
     root = Path(devbase_root)
-    store = store if store is not None else SecretStore(root)
+    store = store if store is not None else store_for(root)
 
     team_global = store.load(SecretRef.for_global())
     user_global = store.load(SecretRef.for_global(owner='user'))

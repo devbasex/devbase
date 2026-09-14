@@ -319,6 +319,16 @@ class _Handler(BaseHTTPRequestHandler):
                           truncate=state.truncate_get_body)
 
 
+@pytest.fixture(autouse=True)
+def _release_shared_secret_store():
+    """持ち回りの SecretStore (PLAN55) をテストごとに捨て、控えが隣のテストへ漏れないようにする"""
+    from devbase.env import runtime
+
+    runtime.release_store()
+    yield
+    runtime.release_store()
+
+
 @pytest.fixture
 def openbao():
     """偽 OpenBao サーバ。テスト終了時に落とす。"""

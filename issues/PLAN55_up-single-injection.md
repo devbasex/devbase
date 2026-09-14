@@ -182,3 +182,73 @@
 | 項目 | 誰が決めるか | 期限 |
 | --- | --- | --- |
 | ~~解決結果を引き継ぐ置き場~~ → 決まった: `runtime` モジュールが `SecretStore` を持ち回り、`_dispatch_lifecycle` の `finally` で捨てる（設計の決定 1・2） | 設計 Pull Request のマージで利用者が承認する | 設計 |
+
+## 実装計画
+
+設計は `issues/PLAN55_up-single-injection-design.md`（マージ済み #176）。タスクは設計の
+「構成要素」の行から導く。1 タスクが独立して検証できる単位にし、失敗するテスト → 最小実装 →
+整理の順で進める。
+
+### 修正対象
+
+- `lib/devbase/env/runtime.py`、`lib/devbase/commands/container.py`、`lib/devbase/tui/dispatch.py`
+- `tests/env/test_runtime_store.py`（新設）、`tests/cli/test_up_roundtrips.py`（新設）、
+  `tests/cli/tui/test_dispatch.py`（足す）、`tests/conftest.py`（autouse で `release_store()`）
+
+### Task 1: `runtime.store_for` / `release_store` と、`resolve` / `inject` / `child_env` の切り替え
+
+- **対象ファイル:** `lib/devbase/env/runtime.py`、`tests/env/test_runtime_store.py`
+- **変更内容:** モジュールの控え（`_store` / `_store_root`）と 2 関数を足す。`store` 引数が
+  `None` のとき `store_for(root)` を使う。明示的に渡された `store` は控えに入れない
+- **満たす受け入れ条件:** `store_for` の規則の表（設計）
+- **進め方:** 同一性・`root` 変更・解放後の作り直し・明示 `store` を控えない、の 4 テストを先に書く
+
+### Task 2: `_ensure_env_files` を持ち回った store に切り替え、`env init` の後に捨てる
+
+- **対象ファイル:** `lib/devbase/commands/container.py`、`tests/cli/test_up_roundtrips.py`
+- **変更内容:** `SecretStore(devbase_root)` → `runtime.store_for(devbase_root)`。`env init` の
+  子プロセスから戻ったら終了コードによらず `runtime.release_store()`（決定 5）
+- **満たす受け入れ条件:** 4（GET が増えない）、8（`env init` が書いた値で起動する）
+- **進め方:** 偽サーバで注入 → `_ensure_env_files()` → GET 件数不変のテスト、`subprocess.run` を
+  偽サーバへ書くスタブに差し替えて `_run_deploy_pipeline` へ渡る `SecretEnv` を見るテスト
+
+### Task 3: `_dispatch_lifecycle` の `finally` で捨てる（3 経路の往復を固定）
+
+- **対象ファイル:** `lib/devbase/commands/container.py`、`tests/cli/test_up_roundtrips.py`
+- **変更内容:** `finally` に `runtime.release_store()` を並べる
+- **満たす受け入れ条件:** 1・2・3（認証 1 回 + GET 4 / ≤6 / 4）、5・6（既存テスト無変更）
+- **進め方:** `cli._load_secret_env` → `container.cmd_project(ns)` を偽サーバ + docker 差し替えで
+  走らせ、`openbao.logins` と GET の `kv_path` の集合を固定する
+
+### Task 4: TUI の委譲の入口で捨てる
+
+- **対象ファイル:** `lib/devbase/tui/dispatch.py`、`tests/cli/tui/test_dispatch.py`
+- **変更内容:** `_preserve_cwd_env` の入口で `runtime.release_store()`（決定 3）
+- **満たす受け入れ条件:** 9、決定 3 の規則
+- **進め方:** `store_for(root)` で控えを作ってから `dispatch_group` の handler 内で別インスタンスに
+  なるテスト、`env edit`（エディタのスタブ）→ `up` で新しい値が渡るテスト
+
+### Task 5: 既存テストの独立性
+
+- **対象ファイル:** `tests/conftest.py`
+- **変更内容:** autouse fixture で各テストの前後に `runtime.release_store()`。モジュールの控えが
+  テストをまたいで残らない
+- **満たす受け入れ条件:** 5・7
+- **進め方:** `uv run pytest tests/` 全件
+
+### リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| `tests/cli/` の既存 harness が `SecretStore(root)` を直接作り `monkeypatch` している | Task 5 の autouse fixture。実装時に `grep -rn "SecretStore(" tests/` で数える |
+| `container.py` は 1300 行超で、`_ensure_env_files` と `_dispatch_lifecycle` が離れている | 触るのは 2 関数の数行。タスクごとにテストを通す |
+
+### 切り戻し手順
+
+- 差分を戻すだけ（永続データ・スキーマの変更なし）。`release_store()` を呼ばない古い経路が
+  残っても、`SecretStore` を作り直す従来の動きに戻るだけで壊れない
+
+### 完了の定義
+
+- [ ] 受け入れ条件 1〜9 をすべて満たし、条件ごとに検証手段と結果が対応している
+- [ ] `uv run pytest tests/` / `ruff check lib` / `python -m compileall -q lib bin` が exit=0

@@ -563,6 +563,11 @@ def _dispatch_lifecycle(args) -> int:
         return 1
     finally:
         docker_context.reset()
+        # 持ち回った SecretStore の寿命はライフサイクル操作 1 回 (PLAN55 決定 2)。
+        # 入口ではなく出口で捨てるのは、CLI では dispatch 前の注入 (cli._load_secret_env)
+        # が作ったものをこの操作の中で使い回すため。
+        from devbase.env import runtime as _runtime
+        _runtime.release_store()
 
 
 def cmd_project(args) -> int:
@@ -1302,10 +1307,14 @@ def _ensure_env_files() -> bool:
     # 機密が暗号化されていれば平文の .env は存在しない。ファイルの有無ではなく
     # 秘密ストアに設定があるかで判定しないと、移行済みの環境で毎回 env init が
     # 走ってしまう。
+    #
+    # SecretStore は注入と同じものを持ち回る (PLAN55)。作り直すとサーバ backend では
+    # 認証と参照ごとの取得がもう 1 巡走る。同じインスタンスなら注入で取得済みの控えから
+    # 返るので、ここはサーバへ行かない。
     from devbase.env import runtime as _runtime
-    from devbase.env.secret_store import SecretRef, SecretStore
+    from devbase.env.secret_store import SecretRef
 
-    store = SecretStore(devbase_root)
+    store = _runtime.store_for(devbase_root)
     has_global = store.exists(SecretRef.for_global())
 
     project_name = _runtime.current_project_name(devbase_root)
@@ -1343,6 +1352,12 @@ def _ensure_env_files() -> bool:
         except Exception as e:
             logger.error("Running env init for devbase root: %s", e)
             success = False
+        finally:
+            # 書いたのは子プロセスで、持ち回っている SecretStore の控えは更新されない。
+            # サーバ backend では最初の 404 が空として残り、そのまま起動すると env init が
+            # 書いた共通機密が渡らない。終了コードによらず捨て、以後は現物を読み直す
+            # (PLAN55 決定 5)。
+            _runtime.release_store()
 
     if not has_project:
         logger.info("Creating project .env...")

@@ -34,8 +34,14 @@ def _preserve_cwd_env():
     しまう (PR #55 round1 codex/gemini major 指摘)。委譲チョークポイントである本層で
     一括復元し、各 actions_* / 共有ハンドラへ復元処理を散らさない。
     """
+    from devbase.env import runtime as _runtime
+
     old_cwd = os.getcwd()
     old_env = os.environ.copy()
+    # 持ち回った SecretStore は操作の入口で捨てる (PLAN55 決定 3)。TUI は 1 プロセスで
+    # 操作を続けるため、起動時や前の操作の控え (``_seen``) を持ち越すと、``env edit`` で
+    # 書いた直後の ``up`` が編集前の値で起動する。lifecycle / group のどちらもここを通る。
+    _runtime.release_store()
     try:
         yield
     finally:
