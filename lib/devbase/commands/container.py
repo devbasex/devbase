@@ -40,9 +40,36 @@ _SCALE_COMPOSE_FILE = Path('.docker-compose.scale.yml')
 # 共通ヘルパー
 # ---------------------------------------------------------------------------
 
+def _exit_code(ok: bool) -> int:
+    """ビルド成否 (bool) をプロセス互換の終了コードへ写す (True=0 / False=1)。"""
+    return 0 if ok else 1
+
+
 def _devbase_root() -> Optional[Path]:
     root = os.environ.get('DEVBASE_ROOT')
     return Path(root) if root else None
+
+
+def _env_non_negative_int(env_name: str, default: int) -> int:
+    """環境変数から非負整数を読み出す。
+
+    未設定・空文字なら default を返す。
+    負値または整数に変換できない場合は warning を出力して default にフォールバックする。
+    """
+    raw = os.environ.get(env_name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+        if value < 0:
+            raise ValueError
+        return value
+    except ValueError:
+        logger.warning(
+            "Invalid %s=%r, using default %d",
+            env_name, raw, default
+        )
+        return default
 
 
 def _inject_secrets(*, required: bool):
@@ -208,14 +235,26 @@ def _previous_scale_compose():
         backup.unlink(missing_ok=True)
 
 
+def _prepare_compose(context: Optional[str]) -> None:
+    """Compose の接続先を反映してから機密を任意注入する。"""
+    _apply_context(context)
+    _inject_secrets(required=False)
+
+
+def _compose_base_args(compose_file: Optional[Path]) -> list[str]:
+    """指定された override を付与した Compose のベース引数を返す。"""
+    cmd = ['docker', 'compose']
+    if compose_file is not None:
+        cmd.extend(['-f', str(compose_file)])
+    return cmd
+
+
 def _compose_run(subcommand: str, *extra_args: str,
                  context: Optional[str] = None) -> int:
     """docker compose コマンドを実行する共通関数"""
-    _apply_context(context)
-    _inject_secrets(required=False)
-    cmd = ['docker', 'compose']
-    if _SCALE_COMPOSE_FILE.exists():
-        cmd.extend(['-f', str(_SCALE_COMPOSE_FILE)])
+    _prepare_compose(context)
+    compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
+    cmd = _compose_base_args(compose_file)
     cmd.append(subcommand)
     cmd.extend(extra_args)
     return subprocess.run(cmd).returncode
@@ -431,6 +470,24 @@ def _load_project_env(env_file: Path) -> None:
         os.environ[key] = value
 
 
+def _unset_caller_only_env_keys(caller_keys: set, target_dir: Path) -> None:
+    """呼び出し元 env にしか無いキーを os.environ から unset する。
+
+    別プロジェクトから `project up other` を直接起動した場合、呼び出し元 env に
+    しか無いキー (例: DEV_SERVICE_NAME) が os.environ に残留し対象へ誤って
+    引き継がれる。対象 (``target_dir`` = 現 CWD) の env を読み、呼び出し元にしか
+    無いキーを unset してクリーンにする
+    (codex 指摘 / wrapper の _CALLER_ENV_KEYS と同等のフォールバック)。
+
+    Args:
+        caller_keys: chdir 前に記録した呼び出し元 env のキー集合。
+        target_dir:  切替先プロジェクトのディレクトリ (既に chdir 済みの CWD)。
+    """
+    target_env_keys = _env_var_keys(target_dir / 'env')
+    for key in caller_keys - target_env_keys:
+        os.environ.pop(key, None)
+
+
 def _resolve_project_name(project_name: str) -> bool:
     """project name を $DEVBASE_ROOT/projects/<name> へ解決し chdir する。
 
@@ -468,12 +525,10 @@ def _resolve_project_name(project_name: str) -> bool:
 
     # chdir 前に呼び出し元 (現 CWD) の env が定義するキーを記録しておく。
     # 別プロジェクトから `project up other` を直接起動した場合、呼び出し元 env に
-    # しか無いキー (例: DEV_SERVICE_NAME) が os.environ に残留し対象へ誤って
-    # 引き継がれるため、対象 env を読む前に unset してクリーンにする
-    # (codex 指摘 / wrapper の _CALLER_ENV_KEYS と同等のフォールバック)。
+    # しか無いキーを chdir 後に unset するために使う (詳細は
+    # :func:`_unset_caller_only_env_keys`)。
     # already_there (= 既に対象ディレクトリ。通常 wrapper 経由) の場合は呼び出し元
     # ＝対象であり、wrapper 側で既にクリーン化済みのため何もしない。
-    caller_env_keys: set = set()
     if not already_there:
         caller_env_keys = _env_var_keys(Path('env'))
         os.chdir(target)
@@ -483,9 +538,7 @@ def _resolve_project_name(project_name: str) -> bool:
         # 切替先ではなく呼び出し元プロジェクトの機密を読んでしまう
         # (TUI の ``_run_in_project`` が PWD を差し替えているのと同じ理由)。
         os.environ['PWD'] = str(target)
-        target_env_keys = _env_var_keys(Path('env'))
-        for key in caller_env_keys - target_env_keys:
-            os.environ.pop(key, None)
+        _unset_caller_only_env_keys(caller_env_keys, target)
 
     # wrapper の `source ./env` と同等に project env を os.environ へ反映する。
     # wrapper 経由なら既に同じ値が載っているため冪等。
@@ -563,6 +616,11 @@ def _dispatch_lifecycle(args) -> int:
         return 1
     finally:
         docker_context.reset()
+        # 持ち回った SecretStore の寿命はライフサイクル操作 1 回 (PLAN55 決定 2)。
+        # 入口ではなく出口で捨てるのは、CLI では dispatch 前の注入 (cli._load_secret_env)
+        # が作ったものをこの操作の中で使い回すため。
+        from devbase.env import runtime as _runtime
+        _runtime.release_store()
 
 
 def cmd_project(args) -> int:
@@ -597,20 +655,10 @@ def _snapshot_min_interval_minutes() -> int:
     DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES で上書き可能 (0 で無効化＝毎回取得)。
     値が不正な場合は既定値にフォールバックする。
     """
-    raw = os.environ.get('DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES')
-    if not raw:
-        return _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
-    try:
-        value = int(raw)
-        if value < 0:
-            raise ValueError
-        return value
-    except ValueError:
-        logger.warning(
-            "Invalid DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES=%r, using default %d",
-            raw, _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
-        )
-        return _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT
+    return _env_non_negative_int(
+        'DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES',
+        _SNAPSHOT_MIN_INTERVAL_MINUTES_DEFAULT,
+    )
 
 
 def _auto_snapshot(remote: bool = False) -> None:
@@ -979,16 +1027,14 @@ def cmd_down(context: Optional[str] = None) -> int:
 
 def cmd_login(index: str = '1', context: Optional[str] = None) -> int:
     """Login to container"""
-    _apply_context(context)
-    _inject_secrets(required=False)
+    _prepare_compose(context)
     dev_service = get_dev_service_name()
-
-    if _SCALE_COMPOSE_FILE.exists():
-        cmd = ['docker', 'compose', '-f', str(_SCALE_COMPOSE_FILE),
-               'exec', f'{dev_service}-{index}', 'bash']
+    compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
+    cmd = _compose_base_args(compose_file)
+    if compose_file is not None:
+        cmd.extend(['exec', f'{dev_service}-{index}', 'bash'])
     else:
-        cmd = ['docker', 'compose', 'exec', f'--index={index}',
-               dev_service, 'bash']
+        cmd.extend(['exec', f'--index={index}', dev_service, 'bash'])
 
     return subprocess.run(cmd).returncode
 
@@ -1243,18 +1289,18 @@ def _build_resolved(expires: Optional[int], no_cache: bool) -> int:
         return 1
 
     if no_cache:
-        return 0 if _run_build(no_cache=True) else 1
+        return _exit_code(_run_build(no_cache=True))
     if expires is None:
-        return 0 if _run_build() else 1
+        return _exit_code(_run_build())
 
     # expires 指定: project イメージの作成日と dev サービス定義 (base 判定用) が必要。
     dev_service = _resolve_dev_service()
     if not dev_service:
         logger.info("Unable to read compose config; building with cache")
-        return 0 if _run_build() else 1
+        return _exit_code(_run_build())
     image_name = dev_service.get('image', '')
     if not image_name:
-        return 0 if _run_build() else 1
+        return _exit_code(_run_build())
     inspect = subprocess.run(
         ['docker', 'image', 'inspect', image_name],
         capture_output=True, text=True, check=False
@@ -1262,8 +1308,8 @@ def _build_resolved(expires: Optional[int], no_cache: bool) -> int:
     if inspect.returncode != 0:
         # イメージ未存在 → キャッシュビルドで作成する。
         logger.info("Container image '%s' not found; building...", image_name)
-        return 0 if _run_build() else 1
-    return 0 if _build_with_expires(expires, image_name, inspect.stdout, dev_service) else 1
+        return _exit_code(_run_build())
+    return _exit_code(_build_with_expires(expires, image_name, inspect.stdout, dev_service))
 
 
 def cmd_rebuild(expires: int = None, context: Optional[str] = None) -> int:
@@ -1302,10 +1348,14 @@ def _ensure_env_files() -> bool:
     # 機密が暗号化されていれば平文の .env は存在しない。ファイルの有無ではなく
     # 秘密ストアに設定があるかで判定しないと、移行済みの環境で毎回 env init が
     # 走ってしまう。
+    #
+    # SecretStore は注入と同じものを持ち回る (PLAN55)。作り直すとサーバ backend では
+    # 認証と参照ごとの取得がもう 1 巡走る。同じインスタンスなら注入で取得済みの控えから
+    # 返るので、ここはサーバへ行かない。
     from devbase.env import runtime as _runtime
-    from devbase.env.secret_store import SecretRef, SecretStore
+    from devbase.env.secret_store import SecretRef
 
-    store = SecretStore(devbase_root)
+    store = _runtime.store_for(devbase_root)
     has_global = store.exists(SecretRef.for_global())
 
     project_name = _runtime.current_project_name(devbase_root)
@@ -1343,6 +1393,12 @@ def _ensure_env_files() -> bool:
         except Exception as e:
             logger.error("Running env init for devbase root: %s", e)
             success = False
+        finally:
+            # 書いたのは子プロセスで、持ち回っている SecretStore の控えは更新されない。
+            # サーバ backend では最初の 404 が空として残り、そのまま起動すると env init が
+            # 書いた共通機密が渡らない。終了コードによらず捨て、以後は現物を読み直す
+            # (PLAN55 決定 5)。
+            _runtime.release_store()
 
     if not has_project:
         logger.info("Creating project .env...")
@@ -1365,20 +1421,32 @@ def _image_max_age_days() -> int:
     Override via the DEVBASE_IMAGE_MAX_AGE_DAYS environment variable.
     Falls back to the default on missing or malformed values.
     """
-    raw = os.environ.get('DEVBASE_IMAGE_MAX_AGE_DAYS')
-    if not raw:
-        return _IMAGE_MAX_AGE_DAYS_DEFAULT
-    try:
-        value = int(raw)
-        if value < 0:
-            raise ValueError
-        return value
-    except ValueError:
-        logger.warning(
-            "Invalid DEVBASE_IMAGE_MAX_AGE_DAYS=%r, using default %d",
-            raw, _IMAGE_MAX_AGE_DAYS_DEFAULT
-        )
-        return _IMAGE_MAX_AGE_DAYS_DEFAULT
+    return _env_non_negative_int(
+        'DEVBASE_IMAGE_MAX_AGE_DAYS',
+        _IMAGE_MAX_AGE_DAYS_DEFAULT,
+    )
+
+
+def _read_compose_services() -> tuple[int, dict]:
+    """Compose 設定の終了コードと services を取得する。"""
+    result = subprocess.run(
+        ['docker', 'compose', 'config', '--format', 'json'],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    if result.returncode != 0:
+        return result.returncode, {}
+    config = json.loads(result.stdout)
+    return result.returncode, config.get('services', {})
+
+
+def _dev_image_spec(services: dict, dev_service_name: str) -> tuple[dict, str, bool]:
+    """dev サービスと、そのイメージ名・ビルド定義の有無を取り出す。"""
+    dev_service = services.get(dev_service_name, {})
+    image_name = dev_service.get('image', '')
+    has_build = bool(dev_service.get('build'))
+    return dev_service, image_name, has_build
 
 
 def _ensure_images() -> bool:
@@ -1410,23 +1478,13 @@ def _ensure_images() -> bool:
     dev_service_name = get_dev_service_name()
 
     try:
-        result = subprocess.run(
-            ['docker', 'compose', 'config', '--format', 'json'],
-            capture_output=True,
-            text=True,
-            check=False
-        )
-
-        if result.returncode != 0:
+        returncode, services = _read_compose_services()
+        if returncode != 0:
             logger.info("Unable to check image status")
             logger.info("Running 'devbase container build' to ensure images exist...")
             return _run_build()
 
-        config = json.loads(result.stdout)
-        services = config.get('services', {})
-        dev_service = services.get(dev_service_name, {})
-        image_name = dev_service.get('image', '')
-        has_build = bool(dev_service.get('build'))
+        dev_service, image_name, has_build = _dev_image_spec(services, dev_service_name)
 
         if not image_name:
             logger.warning("No image specified for %s service", dev_service_name)
