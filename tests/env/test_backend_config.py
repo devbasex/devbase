@@ -110,6 +110,22 @@ def test_https_and_loopback_http_are_accepted(root, url):
     assert bc.load(root).openbao.url == url
 
 
+@pytest.mark.parametrize('url', ['https://openbao.example.com/v1', 'https://openbao.example.com/?x=1',
+                                 'https://openbao.example.com/#f'])
+def test_url_with_a_path_query_or_fragment_is_rejected(root, url):
+    write_yaml(root, OPENBAO_MINIMAL.replace('https://openbao.example.com', url))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'openbao.url' in str(exc.value) and 'ホスト' in str(exc.value)
+
+
+def test_url_with_a_trailing_slash_is_accepted(root):
+    write_yaml(root, OPENBAO_MINIMAL.replace('https://openbao.example.com', 'https://openbao.example.com/'))
+
+    assert bc.load(root).openbao.url == 'https://openbao.example.com/'
+
+
 def test_http_to_a_remote_host_is_rejected(root):
     write_yaml(root, OPENBAO_MINIMAL.replace('https://', 'http://'))
 

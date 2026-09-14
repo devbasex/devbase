@@ -32,7 +32,7 @@ age の鍵は必要です。** 先に `devbase env keygen` を済ませてくだ
 
 | 値 | 例 |
 |---|---|
-| 接続先 URL（`https`） | `https://openbao.example.com` |
+| 接続先 URL（`https`。ホストとポートまで） | `https://openbao.example.com` |
 | KV v2 のマウント名（既定 `devbase`） | `devbase` |
 | あなたの識別子（個人単位の機密の置き場に使う。社内メールアドレスの `@` より前） | `member01` |
 | あなたの AppRole の `role_id` | — |
@@ -168,10 +168,12 @@ OpenBao の KV v2 にはコメント・空行の置き場がありません。`d
 使われません。
 
 キャッシュを持ちたくない場合は `--no-cache` を付けて `use` してください。無効にすると、
-既存の控えも次の実行で消えます。
+既存の控えも次の実行で消えます。戻すときは `--cache` を付けます（どちらも付けなければ
+現在の設定を引き継ぎます）。
 
 ```bash
 devbase env backend use openbao --no-cache
+devbase env backend use openbao --cache      # 元に戻す
 ```
 
 ## 元へ戻す
@@ -230,7 +232,7 @@ cache:
 | コマンド | 内容 |
 |---|---|
 | `devbase env backend status` | 現在の backend、保存先、参照ごとの置き場、キャッシュの状態 |
-| `devbase env backend use <name> [--url] [--mount] [--user ID] [--role-id] [--secret-id-stdin] [--no-cache]` | backend を切り替える。検証に失敗したときは書き換えない |
+| `devbase env backend use <name> [--url] [--mount] [--user ID] [--role-id] [--secret-id-stdin] [--cache\|--no-cache]` | backend を切り替える。検証に失敗したときは書き換えない |
 | `devbase env backend test` | サーバへ接続し、参照ごとに読めるかを確かめる |
 | `devbase env backend migrate --to age\|openbao [--dry-run] [--yes]` | チーム単位の機密を別の backend へ写す |
 

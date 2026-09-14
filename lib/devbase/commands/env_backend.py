@@ -193,7 +193,8 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
         logger.warning("既存の設定を読めないため、引数だけで組み立てます: %s", e)
         current = _bc.BackendConfig()
 
-    cache_enabled = False if getattr(args, 'no_cache', False) else current.cache_enabled
+    cache_arg = getattr(args, 'cache', None)
+    cache_enabled = current.cache_enabled if cache_arg is None else bool(cache_arg)
     openbao = current.openbao
     if name == _bc.BACKEND_OPENBAO:
         openbao = _build_openbao_settings(current.openbao, args)

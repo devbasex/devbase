@@ -318,7 +318,7 @@ devbase env import <bundle>
 ```
 devbase env backend status
 devbase env backend use <name> [--url URL] [--mount NAME] [--user ID]
-                               [--role-id ID] [--secret-id-stdin] [--no-cache]
+                               [--role-id ID] [--secret-id-stdin] [--cache|--no-cache]
 devbase env backend test
 devbase env backend migrate --to <age|openbao> [--dry-run] [--yes]
 ```

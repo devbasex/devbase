@@ -148,7 +148,7 @@ flowchart LR
 | コマンド | 入力 | 成功 | 失敗 |
 | --- | --- | --- | --- |
 | `status` | なし | backend 名、保存先、`mount`、4 参照のパス、個人単位の識別子、接続資格情報の有無と `role_id`、キャッシュの有無と最終取得時刻。0 | 設定が壊れていれば理由を述べて 1 |
-| `use <name>` | `--url` `--mount` `--user ID` `--role-id` `--secret-id-stdin` `--no-cache` | 検証 → 資格情報の保存 → 設定の保存の順で行い、要約を表示（`secret_id` は伏せる）。0 | 未知の名前・必須項目の欠落は 2、鍵が無いなどは 1。**いずれも設定を書き換えない** |
+| `use <name>` | `--url` `--mount` `--user ID` `--role-id` `--secret-id-stdin` `--cache` / `--no-cache` | 検証 → 資格情報の保存 → 設定の保存の順で行い、要約を表示（`secret_id` は伏せる）。0 | 未知の名前・必須項目の欠落は 2、鍵が無いなどは 1。**いずれも設定を書き換えない** |
 | `test` | なし | 認証と参照ごとの取得（キャッシュへ落ちない）を行い、接続先 URL と読めた参照の件数を表示。0 | 到達できない・認証できない・サーバ backend でない → 1 |
 | `migrate --to <name>` | `--to age\|openbao` `--dry-run` `--yes` | 後述 | 衝突は 2、読み戻しの不一致・書き込み失敗は 1 |
 
@@ -363,8 +363,9 @@ flowchart TD
 - サーバ backend への 1 つの参照の書き込みは、丸ごと反映されるか、何も反映されないかの
   どちらかである
 - 対応していない設定値は既定へ読み替えず、キー名と受け付ける値を添えて拒む。対象は
-  `version` が 1 以外、未知の backend 名、ループバック以外への `http`、パス区切りや `..` を
-  含む `user` / `mount`、`/` で始まる・終わる・`..` を含む `path_*` である
+  `version` が 1 以外、未知の backend 名、ループバック以外への `http`、パスやクエリを含む
+  `url`、パス区切りや `..` を含む `user` / `mount`、`/` で始まる・終わる・`..` を含む
+  `path_*` である
 
 ## データ・設定
 
@@ -389,7 +390,7 @@ cache:
 | --- | --- | --- |
 | `version` | 形式の版。`1` だけを受け付ける | `1` |
 | `backend` | `auto` / `plaintext` / `age` / `openbao` | `auto` |
-| `openbao.url` | 接続先。`https` に限る。`http` はホストが `localhost` / `127.0.0.1` / `::1` のときだけ受け付ける | `openbao` のとき必須 |
+| `openbao.url` | 接続先。ホスト（とポート）まで。パス・クエリ・フラグメントは不可。`https` に限り、`http` はホストが `localhost` / `127.0.0.1` / `::1` のときだけ受け付ける | `openbao` のとき必須 |
 | `openbao.mount` | KV v2 シークレットエンジンのマウント名。パス区切りと `..` は不可 | `devbase` |
 | `openbao.user` | 個人単位の置き場に使う識別子（entity 名）。パス区切りと `..` は不可 | `openbao` のとき必須 |
 | `openbao.path_team_global` / `path_team_project_prefix` / `path_user_prefix` | パスの親。`/` で始めない・終えない | 上記の既定 |

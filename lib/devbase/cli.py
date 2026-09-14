@@ -434,8 +434,14 @@ def _add_env_backend_parser(env_sub):
     use.add_argument('--secret-id-stdin', dest='secret_id_stdin',
                      action='store_true',
                      help='Read the AppRole secret_id for this machine from stdin')
-    use.add_argument('--no-cache', dest='no_cache', action='store_true',
-                     help='Do not keep an encrypted local cache of server secrets')
+    # 指定が無ければ既存の設定を引き継ぐ (None)。一度 --no-cache にした後も CLI だけで
+    # 戻せるよう、対になる --cache を置く
+    cache_group = use.add_mutually_exclusive_group()
+    cache_group.add_argument('--cache', dest='cache', action='store_const', const=True,
+                             default=None,
+                             help='Keep an encrypted local cache of server secrets')
+    cache_group.add_argument('--no-cache', dest='cache', action='store_const', const=False,
+                             help='Do not keep an encrypted local cache of server secrets')
 
     backend_sub.add_parser('test', help='Check the connection to the server backend')
 

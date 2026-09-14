@@ -34,7 +34,7 @@ def with_key(root):
 
 def use_args(name, **kw):
     base = dict(name=name, url=None, mount=None, user=None, role_id=None,
-                secret_id_stdin=False, no_cache=False)
+                secret_id_stdin=False, cache=None)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -122,8 +122,32 @@ def test_use_openbao_saves_config_and_bootstrap(root, with_key, monkeypatch, cap
 
 
 def test_use_openbao_with_no_cache(root, with_key, monkeypatch):
-    assert use_openbao(root, monkeypatch, no_cache=True) == 0
+    assert use_openbao(root, monkeypatch, cache=False) == 0
     assert bc.load(root).cache_enabled is False
+
+
+def test_use_inherits_the_cache_setting_and_cache_turns_it_back_on(root, with_key, monkeypatch):
+    assert use_openbao(root, monkeypatch, cache=False) == 0
+
+    assert env_backend.cmd_env_backend_use(root, use_args('openbao')) == 0
+    assert bc.load(root).cache_enabled is False          # 指定が無ければ引き継ぐ
+
+    assert env_backend.cmd_env_backend_use(root, use_args('openbao', cache=True)) == 0
+    assert bc.load(root).cache_enabled is True
+
+
+def test_use_parser_cache_flags_are_exclusive_and_default_to_none():
+    import argparse
+
+    from devbase import cli
+
+    parser = argparse.ArgumentParser()
+    cli._add_env_parser(parser.add_subparsers(dest='command'))
+    assert parser.parse_args(['env', 'backend', 'use', 'age']).cache is None
+    assert parser.parse_args(['env', 'backend', 'use', 'age', '--cache']).cache is True
+    assert parser.parse_args(['env', 'backend', 'use', 'age', '--no-cache']).cache is False
+    with pytest.raises(SystemExit):
+        parser.parse_args(['env', 'backend', 'use', 'age', '--cache', '--no-cache'])
 
 
 def test_use_rejects_unknown_backend_without_writing(root, caplog):

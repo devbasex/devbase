@@ -80,13 +80,19 @@ def _validate_relative_path(value: str, key: str) -> str:
 
 def _validate_url(url: str) -> str:
     parts = urlsplit(url)
-    if parts.scheme == 'https' and parts.hostname:
-        return url
-    if parts.scheme == 'http' and parts.hostname in _LOOPBACK_HOSTS:
-        return url
-    raise BackendConfigError(
-        f"openbao.url は https でなければなりません: {url!r}\n"
-        "  http を使えるのは localhost / 127.0.0.1 / ::1 宛てだけです")
+    scheme_ok = ((parts.scheme == 'https' and parts.hostname)
+                 or (parts.scheme == 'http' and parts.hostname in _LOOPBACK_HOSTS))
+    if not scheme_ok:
+        raise BackendConfigError(
+            f"openbao.url は https でなければなりません: {url!r}\n"
+            "  http を使えるのは localhost / 127.0.0.1 / ::1 宛てだけです")
+    # 経路は devbase が /v1/<mount>/... を足して組む。URL にパスが付いていると経路が
+    # 二重になり、設定ミスが「機密 0 件」に見える 404 として現れる
+    if parts.path.strip('/') or parts.query or parts.fragment:
+        raise BackendConfigError(
+            f"openbao.url はホスト (とポート) までで指定してください: {url!r}\n"
+            "  パス・クエリ・フラグメントは付けられません (経路は devbase が組みます)")
+    return url
 
 
 @dataclass(frozen=True)
