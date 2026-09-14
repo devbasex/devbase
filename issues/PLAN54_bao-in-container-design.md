@@ -27,6 +27,7 @@
 | `commands/env.py` `cmd_env_token()`（足す） | `devbase env token [--print] [--context NAME]`。既定は現在地のプロジェクトの起動中の dev コンテナへ届ける（プロジェクトと接続先の解決 → `docker ps` で対象の解決 → `issue_token()` → `push()`。token はコンテナが見つかってから取る）。`--print` は標準出力へ token だけを出す |
 | `cli.py`（変える） | parser に `env token` のサブコマンドと `--print` を足し、`--context` は `env exec` と同じ `_add_context_arg` で足す。`SUBCMD_MAP[('env',)]` に `token` を足す（`tests/cli/test_prefix_resolution.py` が parser と `SUBCMD_MAP` の一致を固定している）。`_NO_SECRET_INJECTION` に `('env', 'token')` を足す |
 | `docs/user/env-backend.md`（変える） | 「コンテナの中から `bao` を使う」の節（F4） |
+| `docs/specifications/secret-backend.md`（変える。実装 PR のマージ後に `plan-to-spec` で。要求仕様の対象範囲の最後の項目） | 確定仕様の追記先。節ごとに足すもの: 「構成要素」の表に `env/container_token.py` の行、図に上の 2 本の辺（`bao` → サーバ、ホスト → コンテナの `~/.vault-token`）。「OpenBao との契約」の「token は実行のたびに取り直し、ディスクへ保存しない」を「ホストでは保存せず、コンテナへは `docker exec` の stdin で渡して `~/.vault-token`（`0600`）に置く」へ改め、`BAO_ADDR`（compose の `environment`、リテラル）と `~/.vault-token`（`mktemp` → `mv -f`、token は argv に出さない）の入出力の契約を箇条書きで足す（#168（PLAN55）も同じ節へ足す予定なので、節を新設せず箇条書きを増やす）。「`devbase env backend`」の次に「`devbase env token`」の節（引数・処理の順・終了コード。この文書の「入出力の契約」を移す）。「セキュリティ」に「コンテナに置く資格情報は 1 時間の token だけで `secret_id` はホストから出ない。token を環境変数にしない理由」（決定 1）。「運用」に token の期限と `devbase env token` での取り直し。「テスト観点」にこの表の新設テスト 4 本 |
 | `tests/containers/test_base_dockerfile_bao.py`（新設） | Dockerfile の `bao` 導入行を固定する（版・両アーキテクチャ・検証） |
 | `tests/env/test_container_token.py`（新設） | `docker exec` の呼び出しの形（コマンド・stdin・`umask`・`mktemp` した一時ファイルからの `mv`）と、replica の繰り返し |
 | `tests/commands/test_container_bao.py`（新設） | `up` が `BAO_ADDR` を足す／足さない、`_push_bao_token` の要否 |
@@ -336,6 +337,8 @@ CLI だけが要る base イメージには余計である。tar.gz は `bao` �
 | 8. token がログと compose に書かれない | `tests/env/test_container_token.py`: `docker exec` の argv に token が無く stdin にある。`caplog` に token が無い。シェルの文言に `mktemp` と `umask 077` があり、固定名の一時ファイルが無い |
 | 9. `pytest` / `ruff` / `shellcheck` | `quality-gates` |
 | 10. Dockerfile の導入行を固定するテスト | `tests/containers/test_base_dockerfile_bao.py`（版・`amd64` / `arm64` の分岐・`sha256sum -c`） |
+
+成果物のうち `docs/specifications/secret-backend.md` の追記は受け入れ条件を持たず、テストも無い。`plan-to-spec` のとき、構成要素の表の同じ行に書いた節の一覧と追記後の spec の見出しを突き合わせる。
 
 ## 未確認のまま残ること
 
