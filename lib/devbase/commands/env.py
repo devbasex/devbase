@@ -36,13 +36,13 @@ def _owner(user: bool) -> str:
     return 'user' if user else 'team'
 
 
-def _global_env(devbase_root: Path, user: bool = False, store=None):
-    """共通設定のビューを返す (``user`` なら個人共通)"""
+def _global_env(devbase_root: Path, user: bool = False, store=None, *, fresh: bool = False):
+    """共通設定のビューを返す (``user`` なら個人共通。``fresh`` なら控えへ落ちない)"""
     from devbase.env.secret_store import SecretRef
     from devbase.env.secret_view import SecretEnvFile
 
     store = store if store is not None else _secret_store(devbase_root)
-    return SecretEnvFile(store, SecretRef.for_global(owner=_owner(user)))
+    return SecretEnvFile(store, SecretRef.for_global(owner=_owner(user)), fresh=fresh)
 
 
 def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
@@ -56,7 +56,7 @@ def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Opt
 
 
 def _project_env(devbase_root: Path, cwd: Optional[Path] = None,
-                 user: bool = False, store=None):
+                 user: bool = False, store=None, *, fresh: bool = False):
     """CWD のプロジェクト設定のビューを返す (projects/ 配下でなければ ``None``)"""
     from devbase.env.secret_store import SecretRef
     from devbase.env.secret_view import SecretEnvFile
@@ -65,7 +65,7 @@ def _project_env(devbase_root: Path, cwd: Optional[Path] = None,
     if name is None:
         return None
     store = store if store is not None else _secret_store(devbase_root)
-    return SecretEnvFile(store, SecretRef.for_project(name, owner=_owner(user)))
+    return SecretEnvFile(store, SecretRef.for_project(name, owner=_owner(user)), fresh=fresh)
 
 
 def _target_env(devbase_root: Path, project: bool, user: bool = False):
@@ -80,11 +80,14 @@ def _target_env(devbase_root: Path, project: bool, user: bool = False):
 
     set / delete / edit の 3 つが同じ判断とエラー文言を持つ必要があるので、
     ここへ集約して振る舞いがずれないようにする。
+
+    3 つとも書き込みを伴うため、読み出しは控えへ落ちない (``fresh``)。控えから
+    読んだ内容を元に書き戻すと、不達の間の他の利用者の更新を上書きする。
     """
     if not project:
-        env_file = _global_env(devbase_root, user=user)
+        env_file = _global_env(devbase_root, user=user, fresh=True)
     else:
-        env_file = _project_env(devbase_root, user=user)
+        env_file = _project_env(devbase_root, user=user, fresh=True)
         if env_file is None:
             logger.error(
                 "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
@@ -97,7 +100,7 @@ def _target_env(devbase_root: Path, project: bool, user: bool = False):
         logger.error(
             "%s backend は個人単位の機密を扱えません (--user)。"
             "個人単位の機密を置くにはサーバ backend を設定してください: "
-            "devbase env backend use infisical ...", env_file.mode_name())
+            "devbase env backend use openbao ...", env_file.mode_name())
         return None
     return env_file
 
@@ -483,8 +486,12 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
     if env_file is None:
         return 1
 
-    env_file.set(key, value)
-    env_file.save()
+    try:
+        env_file.set(key, value)
+        env_file.save()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
 
     logger.info("%s を設定しました (%s)", key, env_file.path)
     return 0
@@ -532,10 +539,14 @@ def cmd_env_delete(devbase_root: Path, key: str, project: bool = False,
     if env_file is None:
         return 1
 
-    if env_file.delete(key):
-        env_file.save()
-        logger.info("%s を削除しました (%s)", key, env_file.path)
-        return 0
+    try:
+        if env_file.delete(key):
+            env_file.save()
+            logger.info("%s を削除しました (%s)", key, env_file.path)
+            return 0
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
 
     logger.error("変数 '%s' は存在しません", key)
     return 1
@@ -548,7 +559,7 @@ def cmd_env_edit(devbase_root: Path, project: bool = False, user: bool = False) 
     よいのは平文の backend だけで (``direct_edit``)、それ以外は
     ``_edit_via_tempfile`` 経由で 読み出し → 編集 → 書き戻し する。判定を
     「暗号化されているか」ではなく「直接編集できるか」にするのは、サーバ backend の
-    ``path()`` が ``secretPath`` を ``Path`` にしただけの値で、開いても機密は無いため。
+    ``path()`` が ``<mount>/<パス>`` を ``Path`` にしただけの値で、開いても機密は無いため。
     """
     env_file = _target_env(devbase_root, project, user=user)
     if env_file is None:

@@ -22,16 +22,24 @@ logger = get_logger(__name__)
 class SecretEnvFile:
     """``SecretStore`` の 1 参照を ``EnvFile`` 互換の操作で読み書きする"""
 
-    def __init__(self, store: SecretStore, ref: SecretRef):
+    def __init__(self, store: SecretStore, ref: SecretRef, *, fresh: bool = False):
+        """``fresh`` が真なら読み出しに現物を使う (サーバ backend で控えへ落ちない)。
+
+        書き込みを伴う操作 (``set`` / ``delete`` / ``edit``) のビューに使う。控えから
+        読んだ内容を元に書き戻すと、不達の間の他の利用者の更新を上書きするため、
+        不達ならエディタを開く前・値を変える前に止める。
+        """
         self._store = store
         self._ref = ref
+        self._fresh = fresh
         self._data: Dict[str, str] = {}
         self._loaded = False
 
     # -- 読み書き -----------------------------------------------------------
 
     def load(self) -> Dict[str, str]:
-        self._data = self._store.load(self._ref)
+        self._data = (self._store.fetch(self._ref) if self._fresh
+                      else self._store.load(self._ref))
         self._loaded = True
         return self._data
 
@@ -53,6 +61,8 @@ class SecretEnvFile:
 
     def load_bytes(self) -> bytes:
         """保存されている内容を **原文のバイト列のまま** 返す (不在なら空)"""
+        if self._fresh:
+            return self._store.fetch_bytes(self._ref)
         return self._store.load_bytes(self._ref)
 
     def save_bytes(self, data: bytes) -> None:

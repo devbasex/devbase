@@ -19,7 +19,7 @@
 
 ``secrets/backend.yml`` (:mod:`devbase.env.backend_config`) で backend を明示的に
 選ぶこともできる (PLAN51)。設定があるときは ``backend_for`` がその backend を返し、
-サーバ backend (``infisical``) もここへ載る。設定が無ければ ``auto`` = 上記の自動判定で、
+サーバ backend (``openbao``) もここへ載る。設定が無ければ ``auto`` = 上記の自動判定で、
 設定を持たない端末の挙動は変わらない。
 
 参照には**持ち主** (``owner``) の軸がある。``team`` はチームの全員が同じ値を使う機密、
@@ -440,7 +440,7 @@ class SecretStore:
         return self.age if age_exists else self.plaintext
 
     def mode(self, ref: SecretRef) -> str:
-        """選択中の backend 名 (``'age'`` / ``'plaintext'`` / ``'infisical'``) か ``'absent'``"""
+        """選択中の backend 名 (``'age'`` / ``'plaintext'`` / ``'openbao'``) か ``'absent'``"""
         selected = self._selected_backend()
         if selected is not None:
             return selected.name if selected.exists(ref) else MODE_ABSENT
@@ -474,6 +474,26 @@ class SecretStore:
 
     def load(self, ref: SecretRef) -> Dict[str, str]:
         return self.backend_for(ref).load(ref)
+
+    def fetch(self, ref: SecretRef) -> Dict[str, str]:
+        """現物から読む (サーバ backend では控えへ落ちない)。
+
+        書き込みを伴う操作の読み出しに使う。控えから読んだ内容を元に書き戻すと、
+        不達の間の他の利用者の更新を上書きするため。ファイル backend では ``load`` と
+        同じである。
+        """
+        backend = self.backend_for(ref)
+        fetch = getattr(backend, 'fetch', None)
+        return fetch(ref) if callable(fetch) else backend.load(ref)
+
+    def fetch_bytes(self, ref: SecretRef) -> bytes:
+        """``fetch`` の原文のバイト列版"""
+        backend = self.backend_for(ref)
+        if callable(getattr(backend, 'fetch', None)):
+            from devbase.env.store import EnvFile
+
+            return EnvFile.dump_bytes(backend.fetch(ref))
+        return backend.load_bytes(ref)
 
     def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
         """既存の保存形式を維持したまま保存する。
