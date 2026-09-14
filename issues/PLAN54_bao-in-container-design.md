@@ -24,7 +24,7 @@
 | `env/container_token.py`（新設） | 受け取った token をコンテナへ届ける。`docker exec` で `~/.vault-token`（`0600`）へ書く。replica ごとの繰り返しを持つ。token の取得と backend の判定は持たない（呼び出し側の責務） |
 | `commands/container.py` `_push_bao_token()`（足す） | `up` の [5/6] の後に呼ぶ。backend が `openbao` でなければ何もしない。`issue_token()` で token を得て `push()` へ渡す。失敗しても `up` を倒さない（`_apply_window_titles` と同じ扱い） |
 | `commands/container.py` `_generate_compose_for()` の `dev_environment`（変える） | backend が `openbao` のとき `BAO_ADDR=<url>` を dev サービスの `environment` に足す（値はリテラル。機密ではない） |
-| `commands/env.py` `cmd_env_token()`（足す） | `devbase env token [--print] [--context NAME]`。既定は現在地のプロジェクトの起動中の dev コンテナへ届ける（プロジェクトと接続先の解決 → `docker ps` で対象の解決 → `issue_token()` → `push()`。token はコンテナが見つかってから取る）。`--print` は標準出力へ token だけを出す |
+| `commands/env.py` `cmd_env_token()`（足す） | `devbase env token [--print] [--context NAME]`。既定は現在地のプロジェクトの起動中の dev コンテナへ届ける（プロジェクトの解決 → プロジェクト直下の `env` から dev サービス名の解決 → 接続先の解決 → `docker ps` で対象の解決 → `issue_token()` → `push()`。token はコンテナが見つかってから取る）。`--print` は標準出力へ token だけを出す |
 | `cli.py`（変える） | parser に `env token` のサブコマンドと `--print` を足し、`--context` は `env exec` と同じ `_add_context_arg` で足す。`SUBCMD_MAP[('env',)]` に `token` を足す（`tests/cli/test_prefix_resolution.py` が parser と `SUBCMD_MAP` の一致を固定している）。`_NO_SECRET_INJECTION` に `('env', 'token')` を足す |
 | `docs/user/env-backend.md`（変える） | 「コンテナの中から `bao` を使う」の節（F4） |
 | `docs/specifications/secret-backend.md`（変える。実装 PR のマージ後に `plan-to-spec` で。要求仕様の対象範囲の最後の項目） | 確定仕様の追記先。節ごとに足すもの: 「構成要素」の表に `env/container_token.py` の行、図に上の 2 本の辺（`bao` → サーバ、ホスト → コンテナの `~/.vault-token`）。「OpenBao との契約」の「token は実行のたびに取り直し、ディスクへ保存しない」を「ホストでは保存せず、コンテナへは `docker exec` の stdin で渡して `~/.vault-token`（`0600`）に置く」へ改め、`BAO_ADDR`（compose の `environment`、リテラル）と `~/.vault-token`（`mktemp` → `mv -f`、token は argv に出さない）の入出力の契約を箇条書きで足す（#168（PLAN55）も同じ節へ足す予定なので、節を新設せず箇条書きを増やす）。「`devbase env backend`」の次に「`devbase env token`」の節（引数・処理の順・終了コード。この文書の「入出力の契約」を移す）。「セキュリティ」に「コンテナに置く資格情報は 1 時間の token だけで `secret_id` はホストから出ない。token を環境変数にしない理由」（決定 1）。「運用」に token の期限と `devbase env token` での取り直し。「テスト観点」にこの表の新設テスト 4 本 |
@@ -140,17 +140,27 @@ devbase env token [--print] [--context NAME]
 `env token` だけ引数を取る `-p` にすると意味が割れる。別のプロジェクトへ届けたいときは
 そのディレクトリで打つ。
 
-処理の順は「backend の判定 → プロジェクトの解決 → 接続先の解決 → 対象の解決 → ログイン
-（`issue_token()`）→ 書き込み」で、`--print` は backend の判定の後すぐログインして token を出す
+処理の順は「backend の判定 → プロジェクトの解決 → dev サービス名の解決 → 接続先の解決 →
+対象の解決 → ログイン（`issue_token()`）→ 書き込み」で、`--print` は backend の判定の後すぐログインして token を出す
 （プロジェクトもコンテナも見ない）。ログインを対象の解決より**後**に置くのは、届け先が無い
 （`projects/` の下ではない、起動中の dev コンテナが無い）ときにサーバへ token を発行させない
 ためである。発行した token は使われないまま 1 時間サーバに残る。サーバへ届かない端末では
 「プロジェクトの外で打った」より先に「サーバへ到達できない」が出て、本当の誤りが読めない
 （round 3 のレビュー）。
 
+dev サービス名は、対象の解決より**前**に、解決済みプロジェクトの直下の非機密設定
+`projects/<project>/env` から取る。起動ラッパー `bin/devbase` が `source ./env` するのは
+実行時のディレクトリの `env` だけなので、`projects/<project>/src` などの下位ディレクトリから
+打つと `DEV_SERVICE_NAME` が環境に載らず、`get_dev_service_name()` は既定の `dev` を返す。
+`env` に `DEV_SERVICE_NAME=workspace` を置いて起動した `workspace-1` が、`<dev>-<n>` の絞り込みで
+対象から外れる（round 5 のレビュー）。そこで `_current_project_name` で決めたプロジェクトの
+`env` を `_load_project_env`（`commands/container.py`。ラッパーと同じ `KEY=VALUE` の解釈）で
+`os.environ` へ載せてから `get_dev_service_name()` を呼ぶ。プロジェクト直下で打ったときは
+ラッパーが載せた値と同じ値を載せ直すだけで、結果は変わらない。
+
 対象の解決は `docker ps` 1 回で行う。`--filter label=com.docker.compose.project=<project>` で
 現在地のプロジェクトに絞り、`--format '{{.Names}}\t{{.Label "com.docker.compose.service"}}'` で
-名前とサービス名を取り、サービス名が `<dev>-<n>`（`<dev>` は `get_dev_service_name()`、`<n>` は
+名前とサービス名を取り、サービス名が `<dev>-<n>`（`<dev>` は上で解決した dev サービス名、`<n>` は
 1 以上の整数）のものだけを残す。`up` が生成する `.docker-compose.scale.yml` は dev の各インスタンスを
 サービス `{dev}-{i}`・`container_name` `${COMPOSE_PROJECT_NAME}-{dev}-{i}` で定義する
 （`volume/compose.py` `_build_scaled_services`）ので、このラベルで dev 以外のサービス（DB、
@@ -241,7 +251,8 @@ sequenceDiagram
     Note over C: 1 時間後に token が切れる
     U->>C: bao kv get … → 403
     U->>UP: devbase env token
-    UP->>UP: プロジェクトと docker context を決めて当てる（project.local.yml / DEVBASE_DOCKER_CONTEXT / --context）
+    UP->>UP: プロジェクトを決め、その直下の env から dev サービス名を取る（下位ディレクトリからでも同じ）
+    UP->>UP: docker context を決めて当てる（project.local.yml / DEVBASE_DOCKER_CONTEXT / --context）
     UP->>D: docker ps --filter label=com.docker.compose.project=<project>（service が <dev>-<n> のものだけ残す）
     UP->>ST: issue_token()（新しい token。コンテナが見つかってから）
     UP->>P: push([<c>…], token)
@@ -250,8 +261,12 @@ sequenceDiagram
 ```
 
 `up` の途中で `issue_token()` が返す token は、`_inject_secrets(required=True)` と同じ
-インスタンスのものである。`_run_deploy_pipeline` が `SecretEnv` を作った `SecretStore` を
-保持して渡す。`up` の往復は増えない。
+インスタンスのものにする。現行の `_inject_secrets` は `runtime.inject(root, project)` を
+`store` 引数なしで呼び、戻り値の `SecretEnv` をその場で `_generate_compose_for` へ渡すだけで、
+`SecretStore` は保持していない（`commands/container.py`）。この実装で、`_run_deploy_pipeline`
+が `SecretStore` を 1 つ作って `inject(..., store=)` へ渡し、同じものを `_push_bao_token` へも
+渡すよう変える（下の表「PLAN55 の前」）。既存コードに再利用できる `SecretStore` があるわけでは
+ない。こうして `up` の往復を増やさない（ログインは注入と token で 1 回）。
 
 **#168（PLAN55）が `SecretStore` の引き回しを変える場合は、この呼び出しもそちらの経路に乗せる。**
 
@@ -332,7 +347,7 @@ CLI だけが要る base イメージには余計である。tar.gz は `bao` �
 | 3. コンテナ内 `bao kv get` がホストの `env get --user` と同じ値 | 手動（リリース後テスト。PLAN53 の後の端末で） |
 | 4. コンテナ内 `kv patch` がホストの `env get --user` に見える | 手動（同上） |
 | 5. `team/global` は読めて書けない | 手動（同上。サーバのポリシーの確認） |
-| 6. 1 時間後に `devbase env token` で読める | 手動（同上）。`tests/commands/test_env_token.py` で `docker ps` → `issue_token` → `push` の順、`projects/` の外と起動中の dev コンテナが無いときに `issue_token` を呼ばないこと、`docker ps` の結果から service が `<dev>-<n>` でないコンテナ（DB・`snapshot`）を外すこと、`--print` がコンテナを見ないこと、`project.local.yml` の `docker.context` をリモートにしたとき `docker ps` と `docker exec` が両方ともその context で呼ばれることを固定。`tests/cli/test_prefix_resolution.py`（既存）が `SUBCMD_MAP` への登録を固定 |
+| 6. 1 時間後に `devbase env token` で読める | 手動（同上）。`tests/commands/test_env_token.py` で `docker ps` → `issue_token` → `push` の順、`projects/` の外と起動中の dev コンテナが無いときに `issue_token` を呼ばないこと、`docker ps` の結果から service が `<dev>-<n>` でないコンテナ（DB・`snapshot`）を外すこと、`env` に `DEV_SERVICE_NAME=workspace` を持つプロジェクトの `projects/<project>/src`（下位ディレクトリ）を CWD にし `DEV_SERVICE_NAME` を環境に載せない状態で、`workspace-1` が対象に残り `docker exec` が呼ばれること（プロジェクト直下の `env` から dev サービス名を取る条件の検証）、`--print` がコンテナを見ないこと、`project.local.yml` の `docker.context` をリモートにしたとき `docker ps` と `docker exec` が両方ともその context で呼ばれることを固定。`tests/cli/test_prefix_resolution.py`（既存）が `SUBCMD_MAP` への登録を固定 |
 | 7. backend が `age` なら `BAO_ADDR` / token が無く compose が同じ | `tests/commands/test_container_bao.py`: `up` の harness で生成 compose の差分 0、`_push_bao_token` が `docker exec` を呼ばない |
 | 8. token がログと compose に書かれない | `tests/env/test_container_token.py`: `docker exec` の argv に token が無く stdin にある。`caplog` に token が無い。シェルの文言に `mktemp` と `umask 077` があり、固定名の一時ファイルが無い |
 | 9. `pytest` / `ruff` / `shellcheck` | `quality-gates` |
