@@ -1239,13 +1239,17 @@ def cmd_build(image: Optional[str] = None, no_cache: bool = False,
 
 def _resolve_dev_service() -> Optional[dict]:
     """compose config から dev サービス定義を取得する。失敗時は None。"""
+    result = subprocess.run(
+        ['docker', 'compose', 'config', '--format', 'json'],
+        capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        return None
     try:
-        returncode, services = _read_compose_services()
+        config = json.loads(result.stdout)
     except json.JSONDecodeError:
         return None
-    if returncode != 0:
-        return None
-    return services.get(get_dev_service_name(), {})
+    return config.get('services', {}).get(get_dev_service_name(), {})
 
 
 def _build_resolved(expires: Optional[int], no_cache: bool) -> int:
