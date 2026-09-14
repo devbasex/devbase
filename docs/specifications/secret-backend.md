@@ -51,7 +51,8 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | --- | --- | --- |
 | backend の設定 | `lib/devbase/env/backend_config.py` | `secrets/backend.yml` の読み書きと検証、参照ごとのパスの組み立て |
 | 登録簿 | `lib/devbase/env/backends.py` | backend 名から実装を作る。未知の名前は一覧を添えて拒む |
-| ストアの窓口 | `lib/devbase/env/secret_store.py` | `SecretRef`（持ち主の軸）、`PlaintextBackend` / `AgeBackend`、設定を見て backend を選ぶ `SecretStore` |
+| ストアの窓口 | `lib/devbase/env/secret_store.py` | `SecretRef`（持ち主の軸）、`PlaintextBackend` / `AgeBackend`、設定を見て backend を選ぶ `SecretStore`（`fetch` は現物を読み、控えへ落ちない） |
+| 参照のビュー | `lib/devbase/env/secret_view.py` | `SecretEnvFile`。`fresh=True` なら読み出しに `fetch` を使う（`set` / `delete` / `edit` の入口） |
 | OpenBao adapter | `lib/devbase/env/openbao.py` | AppRole 認証、参照ごとの取得、版を指定した丸ごとの書き込み、失敗の種類の判定 |
 | ブートストラップ | `lib/devbase/env/bootstrap.py` | 接続資格情報を登録簿を経由せず age で直接読み書きする |
 | キャッシュ | `lib/devbase/env/cache.py` | 参照ごとの控えの書き込み・読み出し・破棄・全消去 |
@@ -60,7 +61,7 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | `env` コマンド | `lib/devbase/commands/env.py` | `--user` の受け取り、`edit` の分岐、一覧の保存形式表示 |
 | `rekey` / `doctor` | `lib/devbase/commands/env_ops.py` | 手元の age 暗号文すべての再暗号化、backend 設定と権限の点検 |
 | `encrypt` / `decrypt` | `lib/devbase/commands/env_migrate.py` | age ストアと平文の間の移動（backend の向きと突き合わせる） |
-| `import` | `lib/devbase/env/io_import.py` | サーバ backend の参照への取り込みと age 暗号化した退避 |
+| `import` | `lib/devbase/env/io_import.py` | サーバ backend の参照への取り込みと age 暗号化した退避。計画の元にした値（`Plan.before`）を退避と巻き戻しに使う |
 
 ```mermaid
 flowchart LR
@@ -471,23 +472,28 @@ cache:
 - 参照の持ち主、登録簿、設定による backend の選択、`auto` の互換（`tests/env/test_secret_store_backend.py`）
 - ブートストラップの往復と鍵が無いときの失敗（`tests/env/test_bootstrap.py`）
 - 偽 OpenBao サーバに対する読んだ版を基準にした丸ごと書き込み・読んでから書くまでの間の
-  他人の更新による版の不一致・往復回数・ログインの
-  400 / 403・取得と書き込みの 403・404 と論理削除後の版・不達・パス要素の符号化・
-  `backend test`（`tests/env/test_openbao.py`）。偽サーバは `tests/conftest.py` の
+  他人の更新による版の不一致・保存後の版の引き継ぎ・往復回数・ログインの 400 / 403・
+  取得と書き込みの 403・拒否が確定した 4xx・404 と論理削除後の版・不達・文字列以外の値・
+  パス要素の符号化・token の事前の取り直し・`backend test`（`tests/env/test_openbao.py`）。偽サーバは `tests/conftest.py` の
   `http.server` で、AppRole のログインと KV v2 の取得・版付き保存・メタデータ削除を持つ。
   ポリシーの代わりに、`users/<user>/` 以外への書き込みと他人のパスを 403 にする
 - キャッシュの配置・不達時の復帰・認証拒否での不使用・`scope`・書き込みとの同期・版の不一致
   と結果不明の書き込みでの破棄・控えから読んだ参照の書き戻し拒否・無効化・原子性・本文の
   途中切れ（`tests/env/test_cache.py`）
 - 4 層の重ね順とファイル backend での不変（`tests/env/test_runtime.py`）
-- `status` / `use` と argv に `secret_id` を取る経路が無いこと（`tests/commands/test_env_backend.py`）
-- `--user` の宛先、`list` / `get` の順序、ファイル backend での拒否、`edit` / `init --reset`
+- `status` / `use`、`--cache` / `--no-cache` の引き継ぎ、argv に `secret_id` を取る経路が
+  無いこと（`tests/commands/test_env_backend.py`）
+- `--user` の宛先、`list` / `get` の順序、ファイル backend での拒否、`edit` / `init --reset`、
+  不達時に `set` / `delete` / `edit` が控えへ落ちずに止まり、`list` / `get` は控えを使うこと
   （`tests/commands/test_env_user_axis.py`）
-- 移行の衝突・読み戻し・巻き戻し・設定の切替の順序・両方向・書き込み権限が無いとき
-  （`tests/commands/test_env_backend_migrate.py`）
+- 移行の衝突・読み戻し・巻き戻し（他の利用者が更新したキーは残す）・設定の切替の順序・
+  両方向・書き込み権限が無いとき（`tests/commands/test_env_backend_migrate.py`）
 - `rekey` の対象、`encrypt` / `decrypt` の向き、`doctor` の点検（`tests/commands/test_env_ops_backend.py`）
 - `export` / `import` がサーバ backend 越しに動き、個人単位を触らないこと、暗号化した退避、
-  巻き戻し、`backend: age` への import（`tests/cli/test_env_bundle_backend.py`）
+  保存後の版での巻き戻し、結果不明の参照の巻き戻し、拒まれた参照を巻き戻さないこと、
+  計画の元と現物の間の他人の更新が CAS で止まること、サーバ側が失敗したときに
+  `sources.yml` を確定しないこと、不達で書く前に止まること、`backend: age` への import
+  （`tests/cli/test_env_bundle_backend.py`）
 - 実サーバに対する `devbase env backend test` / `devbase up` は手動確認。ポリシーによる
   他人のパスと `users/` 直下の一覧の拒否、端末 1 台の `secret_id` の失効も同じ（開発モードの
   サーバでの確認結果は #166。本番のサーバでは配布後に確かめる）
@@ -498,6 +504,7 @@ cache:
 - [環境変数の暗号化](../user/env-encryption.md)
 - [CLI リファレンス: env](../user/cli-reference/03-env.md)
 - 発端の依頼: `issues/security-key.md`
+- 実装 PR: devbasex/devbase#171（Infisical 版 #167 を置き換え）
 - Infisical から OpenBao への切り替えの経緯: devbasex/devbase#166
 - [OpenBao: KV v2 API](https://openbao.org/api-docs/secret/kv/kv-v2/)
 - [OpenBao: AppRole auth](https://openbao.org/docs/auth/approle/)
