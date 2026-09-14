@@ -181,8 +181,8 @@ def test_import_rolls_back_a_reference_whose_result_is_unknown(openbao_root, ope
     assert openbao.get(TEAM_GLOBAL) == {'OLD': '1'}
     posts = [r for r in openbao.requests_of('POST') if r.kv_path == TEAM_GLOBAL]
     assert [p.cas for p in posts] == [1, 2]
-    # 計画の元 + 退避 + 巻き戻し前の読み直し (結果不明の参照は基準を捨てる)
-    assert len(openbao.requests_of('GET')) == 3
+    # 計画の元 + 巻き戻し前の読み直し (結果不明の参照は基準を捨てる)。退避は取り直さない
+    assert len(openbao.requests_of('GET')) == 2
 
 
 def test_import_does_not_roll_back_a_reference_the_server_refused(openbao_root, openbao,
@@ -217,6 +217,34 @@ def test_import_does_not_roll_back_a_reference_the_server_refused(openbao_root, 
     assert openbao.get(TEAM_GLOBAL) == {'OLD': '1'}          # 先に書けた参照は戻る
     assert openbao.get(TEAM_WEB) == {'W': 'theirs'}          # 他の利用者の更新は残る
     assert not any(r.kv_path == TEAM_WEB and r.cas == 2 for r in openbao.requests_of('POST'))
+
+
+def test_import_backs_up_the_value_the_plan_was_built_from_without_refetching(
+        openbao_root, openbao, bundle_keys, tmp_path):
+    """計画の元と現物の間に入った他の利用者の更新は、CAS で止まる (取り直して上書きしない)"""
+    import devbase.env.io_import as io_import_mod
+
+    pub, key = bundle_keys
+    openbao.put(TEAM_GLOBAL, {'OLD': '1'})
+    src = make_bundle(tmp_path, pub, {'env/global.env': b'NEW=2\n'})
+    original = io_import_mod._backup_via_backend
+
+    def backup_after_a_race(store, plans, backup_dir):
+        openbao.put(TEAM_GLOBAL, {'OLD': '1', 'THEIRS': 'x'})
+        return original(store, plans, backup_dir)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(io_import_mod, '_backup_via_backend', backup_after_a_race)
+    try:
+        with pytest.raises(EnvImportError):
+            import_bundle(openbao_root, ImportOptions(
+                source=str(src), merge='prefer-incoming', identities=[str(key)],
+                include_metadata=False))
+    finally:
+        monkey.undo()
+
+    assert openbao.get(TEAM_GLOBAL) == {'OLD': '1', 'THEIRS': 'x'}
+    assert len(openbao.requests_of('GET')) == 1
 
 
 def test_import_does_not_commit_metadata_when_the_server_refuses(openbao_root, openbao,

@@ -185,7 +185,7 @@ def _build_plans(
                 target_exists=exists,
             )
             if not _is_file_backend(store, ref):
-                plan = _dc_replace(plan, ref=ref)
+                plan = _dc_replace(plan, ref=ref, before=existing or None)
             elif store.backend_for(ref) is store.age:
                 # merge の結果は平文のバイト列なので、暗号化されている保存先へ
                 # 書く前にここで暗号文へ変換する。以降の原子的書き込み・
@@ -295,6 +295,10 @@ def _backup_via_backend(store, plans: List[_merge.Plan], backup_dir: Path
                         ) -> List[Tuple[_merge.Plan, Optional[bytes]]]:
     """サーバ backend の参照を、取り込み前の値を age 暗号化して ``backup_dir`` へ控える。
 
+    取り込み前の値は計画が持つ (``Plan.before``。計画を作るときに現物を読んだもの)。
+    ここで取り直すと CAS の基準の版が進み、計画の元と現物の間に入った他の利用者の更新を
+    後続の保存が上書きする。
+
     Returns:
         ``(計画, 取り込み前の平文バイト列 (無ければ None))`` の並び。巻き戻しに使う
     """
@@ -304,9 +308,7 @@ def _backup_via_backend(store, plans: List[_merge.Plan], backup_dir: Path
     for plan in plans:
         ref = plan.ref
         try:
-            # 現物を読む (控えへ落ちない)。控えの値を退避して書き戻すと、不達の間の
-            # 他の利用者の更新を上書きする
-            before = store.fetch_bytes(ref) or None
+            before = plan.before
             if before is not None:
                 blob = store.age.encrypt_bytes(before)
                 _io_common.write_secure_bytes_atomic(backup_dir / _backup_name(ref), blob)

@@ -65,6 +65,10 @@ class Plan:
     #: 保存先がローカルのファイルではなく backend (サーバ) の参照であるとき、その参照。
     #: ``None`` なら ``target`` は書き込んでよいローカルパス (PLAN51 設計 2)。
     ref: Optional[object] = None
+    #: backend の参照で、merge の元にした取り込み前の原文 (無ければ ``None``)。退避と
+    #: 巻き戻しはこれを使い、取り直さない (取り直すと CAS の基準の版が進み、計画の元と
+    #: 現物の間に入った他の利用者の更新を上書きする)
+    before: Optional[bytes] = None
 
 
 def target_for(arcname: str, devbase_root: Path) -> Path:
