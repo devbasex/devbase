@@ -74,3 +74,30 @@ def test_container_injection_without_root_returns_empty_secrets(monkeypatch, req
     assert not secrets
     assert secrets.values == {}
     assert secrets.names == []
+
+
+def test_container_injection_error_swallowed_when_not_required(tmp_path, monkeypatch):
+    """現状固定: required=False では DevbaseError を握り潰して空の SecretEnv を返し、
+    required=True では再送出する。
+    """
+    from devbase.commands import container
+    from devbase.env import runtime
+    from devbase.env.runtime import SecretEnv
+    from devbase.errors import DevbaseError
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+
+    def stub_inject(*_args, **_kwargs):
+        raise DevbaseError('failed to inject secrets')
+
+    monkeypatch.setattr(runtime, 'inject', stub_inject)
+
+    secrets = container._inject_secrets(required=False)
+    assert isinstance(secrets, SecretEnv)
+    assert not secrets
+    assert secrets.values == {}
+    assert secrets.names == []
+
+    with pytest.raises(DevbaseError, match='failed to inject secrets'):
+        container._inject_secrets(required=True)
+
