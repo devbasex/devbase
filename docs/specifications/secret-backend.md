@@ -243,9 +243,13 @@ flowchart LR
 | 書き込みの成功 | — | 書いた内容で置き換える。置き換えられなければ消す | — |
 | 書き込みの版が合わない（400 で `errors` に check-and-set の不一致） | `SecretConflictError` | 消す | — |
 | 書き込みの結果が分からない（送った後の接続断・タイムアウト・本文の途中切れ・5xx・解釈できない応答） | `SecretUnreachableError` | **消す** | — |
-| 書き込みをサーバが拒んだと確定した（403 と版の不一致の 400 を除く 4xx） | `SecretUnreachableError` | 残す | — |
+| 書き込みをサーバが拒んだと確定した（403 と版の不一致の 400 を除く 4xx） | `SecretRefusedError` | 残す | — |
 | 取得で通信できない（接続不能・タイムアウト・5xx・本文の途中切れ）・応答を解釈できない（上記以外の 4xx を含む） | `SecretUnreachableError` | 残す | 使う |
 | 認証拒否（ログインの 400 / 403）・権限の不足（取得の 403・書き込みの 403） | `SecretAuthError` | 残す | **使わず、非ゼロで終了する** |
+
+`SecretAuthError` と `SecretConflictError` は `SecretRefusedError`（サーバが拒んだと確定した。
+サーバは変わっていない）の派生で、`import` / `migrate` の巻き戻しはこの型で落ちた参照を対象から
+外す（巻き戻すと読み直した版で控えた値を書き戻し、CAS が守った他の利用者の更新を消す）。
 
 `SecretAuthError` の文言は原因ごとに分ける。
 
@@ -323,7 +327,10 @@ flowchart TD
 2. 移行先に元からあった内容へ移行元を重ねたものを保存する（`save` は参照の全体を受け取る
    ため、移行元だけを渡すと移行先の既存キーが消える）
 3. 読み戻して、移行元の全キーと移行先に元からあった全キーが期待どおりの値で返ることを
-   確かめる。一致しなければこの実行で作成したキーだけを消し、移行前の設定のまま 1 で終了する
+   確かめる。一致しなければこの実行で作成したキーだけを消し、移行前の設定のまま 1 で終了する。
+   サーバ側では、作成したキーでも値が保存したときと違えば残す（読み直してから消すまでの間に
+   他の利用者がそのキーを更新している）。サーバが拒んだと確定した参照は何も書けていない
+   ので消さない
 4. `backend.yml` を `--to` の値へ書き換える
 5. `--to openbao` では移行元の age / 平文ファイルを `backups/env-backend-migrate/<日時>/` へ
    移し、退避先を表示する。`--to age` ではサーバ上の機密を消さず、残っている場所（接続先
@@ -346,7 +353,7 @@ flowchart TD
 | `env encrypt` / `decrypt` | age 専用。backend が `openbao` なら止める。明示的な設定が変換後の保存先と逆（`plaintext` で `encrypt`、`age` で `decrypt`）でも止める（設定が指す先から機密が消える）。`auto` と一致する設定ではファイルの存在で判定する |
 | `env rekey` | backend の選択に関わらず実行でき、手元の age 暗号文すべて（機密の参照、`bootstrap.env.age`、`cache/` 配下）を 1 つのまとまりとして再暗号化する |
 | `env export` | チーム単位の 2 種の参照だけを backend 越しに読む。個人単位のパスへ要求は届かない。バンドルの名前と `manifest.yml` の `version` は変わらない |
-| `env import` | チーム単位の参照へ backend 越しに書く。ファイル backend では従来どおり複製と原子的な rename。サーバ backend では取り込み前の値を age で暗号化して `backups/` へ全件控えてから参照ごとに `save_bytes()` し、失敗した参照までを（失敗した参照自身も含めて）控えた値で巻き戻す。受信者鍵が無ければ 1 件も取り込まない。暗号化の判定は「保存先が age か」で行い、`backend: age` で保存先がまだ無い参照も暗号文として保存する |
+| `env import` | チーム単位の参照へ backend 越しに書く。ファイル backend では従来どおり複製と原子的な rename。サーバ backend では現物を `fetch` で読んで merge の元と退避（age 暗号化して `backups/` へ全件）にし、参照ごとに `save_bytes()` する。失敗した参照までを控えた値で巻き戻す（結果が分からない参照は含め、サーバが拒んだと確定した参照は含めない）。サーバへの適用はローカルの計画（ファイル backend の参照、`--merge-metadata` の `sources.yml`）の確定より先に行い、サーバ側が失敗したときにメタデータだけが取り込み済みにならないようにする。受信者鍵が無ければ 1 件も取り込まない。暗号化の判定は「保存先が age か」で行い、`backend: age` で保存先がまだ無い参照も暗号文として保存する |
 | `env doctor` | `backend.yml` の読み込みと登録簿の名前、`backend: openbao` でのブートストラップの 2 キー、`backend.yml` / `bootstrap.env.age` / `cache/` 配下の権限（ファイル `0600`、ディレクトリ `0700`）、`git check-ignore` による除外（`secrets/backend.yml` / `secrets/bootstrap.env.age` / `secrets/cache/team/global.env.age`）を点検する |
 
 ### 常に成り立つ条件

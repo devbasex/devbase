@@ -89,12 +89,17 @@ def test_user_references_are_never_touched(age_root, openbao):
 
 
 def test_readback_mismatch_rolls_back_created_keys_only(age_root, openbao, caplog):
+    """作成したキーのうち値が保存したままのものだけを消す。
+
+    偽サーバの ``readback_tamper`` は「A を他の利用者が書き換えた」を再現する。
+    A は作成したキーだが値が変わっているので残し、SHARED だけを消す。
+    """
     openbao.put(TEAM_GLOBAL, {'B': 'pre-existing'})
     openbao.readback_tamper[TEAM_GLOBAL] = {'A': 'corrupted'}
 
     assert migrate(age_root, 'openbao') == 1
 
-    assert openbao.get(TEAM_GLOBAL) == {'B': 'pre-existing'}
+    assert openbao.get(TEAM_GLOBAL) == {'A': 'corrupted', 'B': 'pre-existing'}
     assert openbao.get(TEAM_WEB) == {}
     assert bc.load(age_root).backend == 'age'
     assert (age_root / 'secrets' / 'global.env.age').exists()

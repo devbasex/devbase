@@ -499,8 +499,9 @@ class _MigrationPlan:
                 merged.update(self.source[ref])
                 # 結果が分からない失敗に備え、書く前から巻き戻しの対象に入れる。
                 # サーバが拒んだと確定した応答 (権限の不足・版の不一致) では何も
-                # 書けていないので、その参照は対象から外す
-                created[ref] = list(keys)
+                # 書けていないので、その参照は対象から外す。消すのは「作成したキー」
+                # ではなく「作成したキーのうち、値が保存したままのもの」なので値も控える
+                created[ref] = {key: merged[key] for key in keys}
                 try:
                     dest.save(ref, merged)
                 except SecretRefusedError:
@@ -526,15 +527,27 @@ class _MigrationPlan:
         return self.file_store.age.load(ref)
 
     def _rollback(self, created: dict) -> None:
-        """この実行で作成したキーだけを消す。移行先に元からあったキーは触らない。"""
+        """この実行で作成したキーだけを消す。移行先に元からあったキーは触らない。
+
+        作成したキーでも、値が保存したときと違えば残す。読み直してから消すまでの間に
+        他の利用者がそのキーを更新していることがあり、キー名だけで消すとその更新まで
+        消える。
+        """
         dest = self._dest_backend()
-        for ref, keys in created.items():
+        for ref, written in created.items():
             try:
                 if self.to == 'age' and not self.existing[ref]:
                     self.file_store.age.remove(ref)
                     continue
                 current = self._read_back(ref)
-                dest.save(ref, {k: v for k, v in current.items() if k not in keys})
+                if self.to == _bc.BACKEND_OPENBAO:
+                    kept = {k: v for k, v in current.items()
+                            if not (k in written and written[k] == v)}
+                else:
+                    # 手元の age ファイルに他の書き手はいない。読み戻しの不一致は
+                    # 壊れた値なので、作成したキーはそのまま消す
+                    kept = {k: v for k, v in current.items() if k not in written}
+                dest.save(ref, kept)
                 logger.warning("rollback: %s に作成したキーを消しました", ref.label())
             except DevbaseError as e:
                 logger.error("rollback 失敗: %s: %s", ref.label(), e)

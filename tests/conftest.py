@@ -88,6 +88,8 @@ class FakeOpenBao:
     garble_write_response: bool = False
     #: 書き込みの 500 の本文を Content-Length より短く切る (失敗応答の途中切れ)
     truncate_write_error_body: bool = False
+    #: 書き込みに返す HTTP 状態 (None なら正常)。4xx の拒否を再現する
+    write_status: Optional[int] = None
     #: 書き込みが 1 度でも起きた後の取得で値を差し替える (読み戻しの検証を失敗させる):
     #: path → {key: value}
     readback_tamper: Dict[str, Dict[str, str]] = field(default_factory=dict)
@@ -240,6 +242,8 @@ class _Handler(BaseHTTPRequestHandler):
         state.write_attempts += 1
         if state.write_attempts in state.fail_write_attempts:
             return self._send(500, {'errors': ['boom']}, truncate=state.truncate_write_error_body)
+        if state.write_status is not None:
+            return self._send(state.write_status, {'errors': ['refused']})
         data = rec.body.get('data')
         if not isinstance(data, dict):
             return self._send(400, {'errors': ['data must be a map']})

@@ -11,6 +11,7 @@ from devbase.env.openbao import (
     OpenBaoBackend,
     SecretAuthError,
     SecretConflictError,
+    SecretRefusedError,
     SecretUnreachableError,
 )
 from devbase.env.secret_store import SecretRef, SecretStore, SecretStoreError
@@ -309,6 +310,22 @@ def test_write_403_names_the_write_permission_not_the_credentials(store, openbao
     message = str(exc.value)
     assert '書き込み権限' in message
     assert '資格' not in message and '読む権限' not in message
+    assert openbao.get(TEAM_GLOBAL_PATH) == {'A': '1'}
+
+
+@pytest.mark.parametrize('status', [400, 422, 429])
+def test_other_4xx_on_write_is_a_refusal_not_an_outage(store, openbao, status):
+    """サーバが拒んだと確定した応答。巻き戻しの対象から外れ、控えは残る"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    store.load(GLOBAL)
+    openbao.write_status = status
+
+    with pytest.raises(SecretRefusedError) as exc:
+        store.save(GLOBAL, {'A': '2'})
+
+    assert not isinstance(exc.value, (SecretAuthError, SecretConflictError))
+    assert not isinstance(exc.value, SecretUnreachableError)
+    assert '拒み' in str(exc.value) and str(status) in str(exc.value)
     assert openbao.get(TEAM_GLOBAL_PATH) == {'A': '1'}
 
 

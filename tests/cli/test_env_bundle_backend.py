@@ -181,7 +181,8 @@ def test_import_rolls_back_a_reference_whose_result_is_unknown(openbao_root, ope
     assert openbao.get(TEAM_GLOBAL) == {'OLD': '1'}
     posts = [r for r in openbao.requests_of('POST') if r.kv_path == TEAM_GLOBAL]
     assert [p.cas for p in posts] == [1, 2]
-    assert len(openbao.requests_of('GET')) == 2      # 取り込み前 + 巻き戻し前の読み直し
+    # 計画の元 + 退避 + 巻き戻し前の読み直し (結果不明の参照は基準を捨てる)
+    assert len(openbao.requests_of('GET')) == 3
 
 
 def test_import_does_not_roll_back_a_reference_the_server_refused(openbao_root, openbao,
@@ -218,6 +219,26 @@ def test_import_does_not_roll_back_a_reference_the_server_refused(openbao_root, 
     assert not any(r.kv_path == TEAM_WEB and r.cas == 2 for r in openbao.requests_of('POST'))
 
 
+def test_import_does_not_commit_metadata_when_the_server_refuses(openbao_root, openbao,
+                                                                 bundle_keys, tmp_path):
+    """--merge-metadata の sources.yml はサーバへの適用が通ってから確定する"""
+    pub, key = bundle_keys
+    openbao.team_writable = False
+    src = make_bundle(tmp_path, pub, {
+        'env/global.env': b'NEW=1\n',
+        'env/sources.yml': b'aws:\n  path: /tmp/x\n',
+    })
+
+    with pytest.raises(EnvImportError):
+        import_bundle(openbao_root, ImportOptions(
+            source=str(src), merge='prefer-incoming', identities=[str(key)],
+            include_metadata=True, merge_metadata=True))
+
+    assert not (openbao_root / '.env.sources.yml').exists()
+    assert openbao.get(TEAM_GLOBAL) == {}
+    assert not list(openbao_root.glob('*.import.tmp'))
+
+
 def test_import_stops_before_writing_when_the_server_is_unreachable(openbao_root, openbao,
                                                                     bundle_keys, tmp_path):
     """控えがあっても、取り込みは現物を読めなければ始めない"""
@@ -229,10 +250,13 @@ def test_import_stops_before_writing_when_the_server_is_unreachable(openbao_root
     src = make_bundle(tmp_path, pub, {'env/global.env': b'NEW=2\n'})
     openbao.stop()
 
-    with pytest.raises(EnvImportError):
+    with pytest.raises(EnvImportError) as exc:
         import_bundle(openbao_root, ImportOptions(
             source=str(src), merge='prefer-incoming', identities=[str(key)],
             include_metadata=False))
+
+    assert '到達' in str(exc.value)
+    assert not (openbao_root / 'backups').exists()     # 退避も作らず、書く前に止まる
 
 
 def test_import_into_an_explicit_age_backend_encrypts_new_references(tmp_path, monkeypatch,

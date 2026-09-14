@@ -148,7 +148,7 @@ def _build_plans(
     """
     from dataclasses import replace as _dc_replace
 
-    from devbase.env.secret_store import SecretStore
+    from devbase.env.secret_store import SecretStore, SecretStoreError
 
     store = store if store is not None else SecretStore(devbase_root)
     plans: List[_merge.Plan] = []
@@ -169,13 +169,19 @@ def _build_plans(
             if ref is None:
                 raise _merge.MergeError(f"未対応のバンドルエントリ: {arcname}")
 
-            exists = store.exists(ref)
+            if _is_file_backend(store, ref):
+                exists = store.exists(ref)
+                existing = store.load_bytes(ref) if exists else b''
+            else:
+                # サーバの現物を merge の元にする (控えへ落ちない)
+                existing = store.fetch_bytes(ref)
+                exists = bool(existing)
             plan = _merge.plan_env_merge(
                 store.path(ref), data, arcname,
                 merge=opts.merge,
                 replace=opts.replace,
                 replace_keys=opts.replace_keys,
-                existing_bytes=store.load_bytes(ref) if exists else b'',
+                existing_bytes=existing,
                 target_exists=exists,
             )
             if not _is_file_backend(store, ref):
@@ -190,7 +196,7 @@ def _build_plans(
                 plan = _dc_replace(
                     plan, new_bytes=store.age.encrypt_bytes(plan.new_bytes))
             plans.append(plan)
-    except _merge.MergeError as e:
+    except (_merge.MergeError, SecretStoreError) as e:
         raise ImportError(str(e)) from e
     return plans, sources_reference
 
@@ -259,6 +265,10 @@ def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
         for plan in local_plans:
             tmp = _atomic.write_atomic(plan)
             plans_and_tmps.append((plan, tmp))
+        # サーバへの適用を先に行う。ローカルの計画 (ファイル backend の参照や
+        # --merge-metadata の sources.yml) を先に確定させると、サーバ側が 403 などで
+        # 失敗したときにメタデータだけが取り込み済みになる
+        _apply_via_backend(store, backend_plans, backend_backups)
     except Exception:
         _atomic.cleanup_tmps(tmp for _, tmp in plans_and_tmps)
         raise
@@ -266,9 +276,10 @@ def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
     try:
         _atomic.commit(plans_and_tmps, backup_dir, devbase_root)
     except _atomic.AtomicError as e:
+        # ローカルの確定は commit 自身が巻き戻す。サーバ側も取り込み前へ戻す
+        _rollback_via_backend(store, backend_plans,
+                              {id(plan): before for plan, before in backend_backups})
         raise ImportError(str(e)) from e
-
-    _apply_via_backend(store, backend_plans, backend_backups)
     logger.info("import 完了: %d ファイル更新", len(plans))
 
     _atomic.gc_backups(backup_dir, opts.keep_last)
@@ -293,8 +304,9 @@ def _backup_via_backend(store, plans: List[_merge.Plan], backup_dir: Path
     for plan in plans:
         ref = plan.ref
         try:
-            existed = store.exists(ref)
-            before = store.load_bytes(ref) if existed else None
+            # 現物を読む (控えへ落ちない)。控えの値を退避して書き戻すと、不達の間の
+            # 他の利用者の更新を上書きする
+            before = store.fetch_bytes(ref) or None
             if before is not None:
                 blob = store.age.encrypt_bytes(before)
                 _io_common.write_secure_bytes_atomic(backup_dir / _backup_name(ref), blob)

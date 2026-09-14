@@ -410,7 +410,10 @@ class OpenBaoBackend:
                     "利用者だけです") from None
             if 400 <= e.status < 500:
                 # サーバが拒んだと確定した。サーバは変わっておらず、控えはそのまま正しい
-                raise self._unreachable(e.status, ref) from None
+                raise SecretRefusedError(
+                    f"OpenBao が書き込みを拒みました ({ref.label()}: HTTP {e.status})\n"
+                    f"  接続先: {self.url}\n"
+                    f"  パス: {self.display_path(ref)}") from None
             # 5xx はサーバが更新を確定した後で応答だけが失われた可能性がある
             self._forget(ref)
             raise self._unreachable(e.status, ref) from None
