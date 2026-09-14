@@ -669,6 +669,8 @@ def _build_open_uri(ctx: EditorContext, env, container: str, workdir: str,
 
     ネスト URI (ssh_host + docker_context) のときは、手元 VS Code に同名 context が
     あれば ssh 先を経由せず直接 attach できるフラット URI を info ログで提示する。
+    あわせて、``DEVBASE_EDITOR_SSH_HOST=`` (空) で恒久的にフラット URI へ切り替えられる
+    ことも示す (案内だけでは毎回手で貼ることになる)。
 
     戻り値は ``(uri, uri_flag)``。
     """
@@ -694,6 +696,11 @@ def _build_open_uri(ctx: EditorContext, env, container: str, workdir: str,
             "次で直接 attach できます:", docker_context)
         logger.info("  %s %s '%s'",
                     " ".join(shlex.quote(c) for c in display), uri_flag, flat)
+        # 空文字の明示はネストのオプトアウト (resolve_editor_ssh_host)。毎回手で貼る
+        # 代わりに恒久化する方法を、その場で示す。
+        logger.info(
+            "  env に DEVBASE_EDITOR_SSH_HOST= (空) を書くと、次回からこのフラット URI で"
+            "直接開きます")
     return uri, uri_flag
 
 

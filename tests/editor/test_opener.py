@@ -967,6 +967,39 @@ def test_open_editor_remote_ssh_with_docker_context_nested_and_flat_hint(monkeyp
     text = "\n".join(r.getMessage() for r in caplog.records)
     flat = uri.replace("@ssh-remote+mac2", "")
     assert flat in text and "同名" in text
+    # 恒久化の方法 (空文字オプトアウト) もその場で示す。
+    assert "DEVBASE_EDITOR_SSH_HOST=" in text
+
+
+def test_open_editor_remote_ssh_empty_ssh_host_launches_flat_uri_with_context(monkeypatch, caplog):
+    """Remote-SSH + 解決した context でも DEVBASE_EDITOR_SSH_HOST= (空) ならフラット URI で launch。
+
+    手元の VS Code に同名 context がある構成 (Windows → WSL の docker を直接) で、案内の
+    フラット URI を毎回手で貼らずに済ませる経路。settings.context は残す。
+    """
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+
+    def boom(*a, **kw):
+        raise AssertionError("docker context show should not run")
+
+    monkeypatch.setattr(opener.subprocess, "run", boom)
+    monkeypatch.setattr(opener, "_query_container_name", lambda *a, **kw: None)
+    calls = []
+    with caplog.at_level(logging.INFO):
+        opener.open_editor(
+            project_name="investment", dev_service_name="dev", workdir="/work/investment",
+            environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
+                     "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22",
+                     "DEVBASE_EDITOR_SSH_HOST": ""},
+            isatty=True, ipc_alive=True, launcher=lambda cmd, env: calls.append(cmd),
+            docker_context="wsl",
+        )
+    uri = calls[0][2]
+    assert "@ssh-remote+" not in uri and uri.endswith("/work/investment")
+    assert _decode(uri)["settings"]["context"] == "wsl"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "同名" not in text  # ネストしていないので案内は出ない
 
 
 def test_open_editor_explicit_editor_context_beats_resolved(monkeypatch):

@@ -277,7 +277,7 @@ DEVBASE_ACCOUNT_GROUP=kkg
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
 | `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。**効くのはリポジトリ 1 件の構成だけ**です。2 件以上の構成では `devbase up` が自動生成した `/work/<プロジェクト名>.code-workspace` を直接開くため、この env を設定しても上書きできません。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
-| `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。下記「リモート Docker」参照 |
+| `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。**空文字（`DEVBASE_EDITOR_SSH_HOST=`）はネストのオプトアウト**で、フラット URI を強制する。下記「リモート Docker」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | attach に使う docker context を手で決めたいときだけ明示する。未設定なら devbase が解決した context（`--context` / `DEVBASE_DOCKER_CONTEXT` / `project.local.yml`）、それも無ければ跨ホスト時にホストの `docker context show` |
 | `DEVBASE_DOCKER_CONTEXT` | `devbase up/down/ps/logs/login/scale/build/rebuild` が向ける docker context。`project.local.yml` の `docker.context` より優先し、CLI `--context` に負ける。グローバル `.env` に書くと全プロジェクトが同じホストへ向くため、通常は `project.local.yml` に書く。下記「リモート Docker」参照 |
 | `DEVBASE_WINDOW_TITLE` | attach 先 VS Code の `window.title` テンプレート。`{container}` が実コンテナ名（例 `nyle-dx-dev-1`）に置換される。既定は `{container}${separator}${dirty}${activeEditorShort}`。`0` / `false` / `off` / 空文字で無効化。下記「ウィンドウタイトル」参照 |
@@ -404,7 +404,7 @@ gid が変わったらファイルを消すか `docker.gid` を書いてくだ�
 | ローカル端末（Mac / Linux / WSL） | 同じマシン（従来） | フラット URI |
 | ローカル端末 | リモート context | フラット URI + `settings.context=<ctx>`。手元の Dev Containers 拡張がその context 経由で attach する |
 | Remote-SSH 統合ターミナル（Windows VS Code → Mac） | Mac | ネスト URI `…@ssh-remote+<host>`（下記） |
-| Remote-SSH 統合ターミナル | リモート context（WSL / EC2 など） | ネスト URI + `settings.context=<ctx>`。Mac の Dev Containers が context 経由で attach する。あわせて、手元の VS Code に同名の context があれば直接 attach できるフラット URI も表示する（Windows → Mac → WSL(Windows) の一周を避けたいとき） |
+| Remote-SSH 統合ターミナル | リモート context（WSL / EC2 など） | ネスト URI + `settings.context=<ctx>`。Mac の Dev Containers が context 経由で attach する。あわせて、手元の VS Code に同名の context があれば直接 attach できるフラット URI も表示する（Windows → Mac → WSL(Windows) の一周を避けたいとき）。毎回そのフラット URI で開きたければ `DEVBASE_EDITOR_SSH_HOST=`（空）を書く（下記「手元の context で直接開く」） |
 
 `settings.context` は「`DEVBASE_EDITOR_DOCKER_CONTEXT` の明示 → devbase が解決した context →
 （ssh 先のときだけ）`docker context show`」の順で決まります。
@@ -429,6 +429,17 @@ DEVBASE_EDITOR_SSH_HOST=mac2
 解決順は **`DEVBASE_EDITOR_SSH_HOST` 明示 → `~/.vscode-server` 自動検出 → フラット URI**。
 
 > 同一ホスト構成（手元 Mac/Linux で直接、または ssh 先の Docker にコンテナが無い場合）では ssh-remote ホストは付かず、従来どおりフラット URI で開きます。
+
+##### 手元の context で直接開く（ネストのオプトアウト）
+
+コンテナが ssh 先とも別のホスト（例 WSL2）にあり、**手元の VS Code 側にも同名の docker context がある**なら、ssh 先を経由するネスト URI ではなく、手元の Dev Containers 拡張にその context で直接 attach させられます。`DEVBASE_EDITOR_SSH_HOST` を**空文字で明示**すると自動検出を行わず、`settings.context` 付きのフラット URI で `code` を起動します:
+
+```sh
+# projects/<name>/env（その context を使うプロジェクトだけに効かせる）
+DEVBASE_EDITOR_SSH_HOST=
+```
+
+前提は、`code` の実行先（手元の VS Code が docker CLI を呼ぶ側）で `docker --context <ctx> ps` がコンテナを返すことです。Windows の VS Code で `dev.containers.executeInWSL` が `true` なら WSL 内の CLI が使われるので、WSL 内に `docker context create <ctx> --docker host=unix:///var/run/docker.sock` で同名 context を作れば足ります。行を消せば自動検出（ネスト URI）に戻ります。
 
 ##### 制約
 
