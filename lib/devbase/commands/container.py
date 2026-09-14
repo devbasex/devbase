@@ -202,6 +202,23 @@ def _generate_compose_for(scale: int, secrets, dev_environment=None,
     )
 
 
+def _build_scaled_override(scale: int, config, project_name: str,
+                           target: docker_context.DockerTarget) -> Path:
+    """スケール構成 (override compose) を生成して返す。
+
+    デプロイ (``_run_deploy_pipeline``) とスケール (``cmd_scale``) が共有する
+    「機密の復号 → dev 環境変数 (``BAO_ADDR`` 含む) の合成 → 構成生成」という
+    同じ 3 手をまとめる。bao 環境やリモート引数の追加は片方だけを直すと食い違う
+    ため、1 箇所へ寄せる。
+    """
+    secrets = _inject_secrets(required=True)
+    dev_environment = {**project_runtime.container_env(config, project_name),
+                       **_bao_environment()}
+    return _generate_compose_for(
+        scale, secrets, dev_environment=dev_environment,
+        **_remote_generate_kwargs(target))
+
+
 @contextmanager
 def _previous_scale_compose():
     """生成前の override compose を退避し、``down`` へ渡すパスとして貸し出す。
@@ -970,12 +987,7 @@ def _run_deploy_pipeline(project_name: str, scale: int, config,
     # にしないため。
     with _previous_scale_compose() as down_compose_file:
         logger.info("[2/6] Generating scaled compose file...")
-        secrets = _inject_secrets(required=True)
-        dev_environment = {**project_runtime.container_env(config, project_name),
-                           **_bao_environment()}
-        override_file = _generate_compose_for(
-            scale, secrets, dev_environment=dev_environment,
-            **_remote_generate_kwargs(target))
+        override_file = _build_scaled_override(scale, config, project_name, target)
         logger.info("Generated: %s", override_file)
 
         logger.info("[3/6] Stopping existing containers...")
@@ -1178,12 +1190,7 @@ def cmd_scale(new_scale: int, project_name: str = None,
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
-        secrets = _inject_secrets(required=True)
-        dev_environment = {**project_runtime.container_env(config, project_name),
-                           **_bao_environment()}
-        override_file = _generate_compose_for(
-            new_scale, secrets, dev_environment=dev_environment,
-            **_remote_generate_kwargs(target))
+        override_file = _build_scaled_override(new_scale, config, project_name, target)
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)

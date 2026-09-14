@@ -281,6 +281,23 @@ class OpenBaoBackend:
         return SecretUnreachableError(
             f"OpenBao の応答を解釈できません ({ref.label()}: {why})\n  接続先: {self.url}")
 
+    def _forbidden(self, ref: SecretRef, action: str, *,
+                   hint: str = '', show_path: bool = True) -> SecretAuthError:
+        """HTTP 403 の共通の封筒 (label・HTTP 403・接続先) を組む。
+
+        ``action`` は「参照」に続く操作固有の語 (``を読む`` / ``への書き込み`` /
+        ``を削除する``)。``show_path`` が真ならパス行を足す。``hint`` があれば
+        末尾へ足す (削除は付けない)。
+        """
+        message = (
+            f"OpenBao でこの参照{action}権限がありません ({ref.label()}: HTTP 403)\n"
+            f"  接続先: {self.url}")
+        if show_path:
+            message += f"\n  パス: {self.display_path(ref)}"
+        if hint:
+            message += f"\n{hint}"
+        return SecretAuthError(message)
+
     # -- 取得 -----------------------------------------------------------------
 
     @staticmethod
@@ -327,12 +344,10 @@ class OpenBaoBackend:
                 self._remember(ref, {}, version if version is not None else 0)
                 return {}
             if e.status == 403:
-                raise SecretAuthError(
-                    f"OpenBao でこの参照を読む権限がありません ({ref.label()}: HTTP 403)\n"
-                    f"  接続先: {self.url}\n"
-                    f"  パス: {self.display_path(ref)}\n"
-                    f"  backend.yml の openbao.user (現在: {self._settings.user}) が"
-                    "本人の識別子と違う可能性があります") from None
+                raise self._forbidden(
+                    ref, 'を読む',
+                    hint=f"  backend.yml の openbao.user (現在: {self._settings.user}) が"
+                         "本人の識別子と違う可能性があります") from None
             raise self._unreachable(e.status, ref) from None
         secrets = self._parse_secrets(ref, data)
         version = self._version_of(data)
@@ -411,12 +426,10 @@ class OpenBaoBackend:
                     "  もう一度読み直してから同じ操作をやり直してください") from None
             if e.status == 403:
                 # ログインは通っている。資格の取り消しではなく、このパスへ書く権限が無い
-                raise SecretAuthError(
-                    f"OpenBao でこの参照への書き込み権限がありません ({ref.label()}: HTTP 403)\n"
-                    f"  接続先: {self.url}\n"
-                    f"  パス: {self.display_path(ref)}\n"
-                    "  チーム単位の置き場へ書けるのは、書き込み権限を付けられた"
-                    "利用者だけです") from None
+                raise self._forbidden(
+                    ref, 'への書き込み',
+                    hint="  チーム単位の置き場へ書けるのは、書き込み権限を付けられた"
+                         "利用者だけです") from None
             if 400 <= e.status < 500:
                 # サーバが拒んだと確定した。サーバは変わっておらず、控えはそのまま正しい
                 raise SecretRefusedError(
@@ -455,9 +468,7 @@ class OpenBaoBackend:
             self._http('DELETE', self._kv_path('metadata', ref))
         except _HttpStatus as e:
             if e.status == 403:
-                raise SecretAuthError(
-                    f"OpenBao でこの参照を削除する権限がありません ({ref.label()}: HTTP 403)\n"
-                    f"  接続先: {self.url}") from None
+                raise self._forbidden(ref, 'を削除する', show_path=False) from None
             self._forget(ref)
             raise self._unreachable(e.status, ref) from None
         except SecretUnreachableError:
