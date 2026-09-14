@@ -748,6 +748,59 @@ def _edit_via_tempfile(env_file, editor: str) -> int:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def _collect_from_env_yml(env_file, variables: list) -> bool:
+    """env.yml の変数定義に従って設定値を収集する。必須値未入力なら False を返す。"""
+    for var in variables:
+        name = var.get('name', '')
+        prompt = var.get('prompt', name)
+        default = var.get('default', '')
+        required = var.get('required', False)
+        generate = var.get('generate', '')
+
+        existing = env_file.get(name)
+        if existing:
+            print(f"{name}: 設定済み")
+            continue
+
+        if generate:
+            import secrets
+            length = 64
+            if ':' in generate:
+                _, length_str = generate.split(':', 1)
+                length = int(length_str)
+            value = secrets.token_hex(length // 2)
+            env_file.set(name, value)
+            print(f"{name}: (自動生成)")
+        else:
+            suffix = f" (デフォルト: {default})" if default else ""
+            suffix += " (必須)" if required else " (空でスキップ)"
+            value = safe_input(f"{prompt}{suffix}: ", default)
+            if value:
+                env_file.set(name, value)
+            elif required:
+                logger.error("必須変数 '%s' が設定されていません", name)
+                return False
+    return True
+
+
+def _collect_interactively(env_file) -> None:
+    """env.yml 不在時の手入力ループ"""
+    print("env.yml が見つかりません。手動で変数を追加してください。")
+    print("(Ctrl+Dで終了)")
+    try:
+        while True:
+            line = safe_input("\nKEY=VALUE (空で終了): ")
+            if not line:
+                break
+            if '=' in line:
+                key, _, value = line.partition('=')
+                env_file.set(key.strip(), value.strip())
+            else:
+                print("形式: KEY=VALUE")
+    except EOFError:
+        pass
+
+
 def cmd_env_project(devbase_root: Path) -> int:
     """プロジェクト固有変数の設定（対話式）"""
     env_file = _project_env(devbase_root)
@@ -766,51 +819,10 @@ def cmd_env_project(devbase_root: Path) -> int:
             config = yaml.safe_load(f) or {}
 
         variables = config.get('variables', [])
-        for var in variables:
-            name = var.get('name', '')
-            prompt = var.get('prompt', name)
-            default = var.get('default', '')
-            required = var.get('required', False)
-            generate = var.get('generate', '')
-
-            existing = env_file.get(name)
-            if existing:
-                print(f"{name}: 設定済み")
-                continue
-
-            if generate:
-                import secrets
-                length = 64
-                if ':' in generate:
-                    _, length_str = generate.split(':', 1)
-                    length = int(length_str)
-                value = secrets.token_hex(length // 2)
-                env_file.set(name, value)
-                print(f"{name}: (自動生成)")
-            else:
-                suffix = f" (デフォルト: {default})" if default else ""
-                suffix += " (必須)" if required else " (空でスキップ)"
-                value = safe_input(f"{prompt}{suffix}: ", default)
-                if value:
-                    env_file.set(name, value)
-                elif required:
-                    logger.error("必須変数 '%s' が設定されていません", name)
-                    return 1
+        if not _collect_from_env_yml(env_file, variables):
+            return 1
     else:
-        print("env.yml が見つかりません。手動で変数を追加してください。")
-        print("(Ctrl+Dで終了)")
-        try:
-            while True:
-                line = safe_input("\nKEY=VALUE (空で終了): ")
-                if not line:
-                    break
-                if '=' in line:
-                    key, _, value = line.partition('=')
-                    env_file.set(key.strip(), value.strip())
-                else:
-                    print("形式: KEY=VALUE")
-        except EOFError:
-            pass
+        _collect_interactively(env_file)
 
     env_file.save()
     logger.info("保存完了: %s (%d変数)", env_file.path, env_file.count())

@@ -78,6 +78,10 @@ class SecretConflictError(SecretRefusedError):
     """版の不一致。読んでから書くまでの間に他の誰かが書いた"""
 
 
+def _dict_get(value: Any, key: str) -> Any:
+    return value.get(key) if isinstance(value, dict) else None
+
+
 class _HttpStatus(Exception):
     """HTTP の失敗応答 (内部用)"""
 
@@ -92,7 +96,7 @@ class _HttpStatus(Exception):
             data = json.loads(self.body.decode('utf-8'))
         except (ValueError, UnicodeDecodeError):
             return []
-        errors = data.get('errors') if isinstance(data, dict) else None
+        errors = _dict_get(data, 'errors')
         return [str(e) for e in errors] if isinstance(errors, list) else []
 
 
@@ -198,8 +202,8 @@ class OpenBaoBackend:
                     "確認してください") from None
             raise SecretUnreachableError(
                 f"OpenBao へ到達できません (HTTP {e.status})\n  接続先: {self.url}") from None
-        auth = data.get('auth') if isinstance(data, dict) else None
-        token = auth.get('client_token') if isinstance(auth, dict) else None
+        auth = _dict_get(data, 'auth')
+        token = _dict_get(auth, 'client_token')
         if not isinstance(token, str) or not token:
             raise SecretUnreachableError(
                 f"OpenBao の認証応答を解釈できません\n  接続先: {self.url}")
@@ -303,14 +307,14 @@ class OpenBaoBackend:
     @staticmethod
     def _version_of(data: Any) -> Optional[int]:
         """応答の ``data.metadata.version`` (無ければ ``None``)"""
-        inner = data.get('data') if isinstance(data, dict) else None
-        metadata = inner.get('metadata') if isinstance(inner, dict) else None
-        version = metadata.get('version') if isinstance(metadata, dict) else None
+        inner = _dict_get(data, 'data')
+        metadata = _dict_get(inner, 'metadata')
+        version = _dict_get(metadata, 'version')
         return version if isinstance(version, int) and not isinstance(version, bool) else None
 
     def _parse_secrets(self, ref: SecretRef, data: Any) -> Dict[str, str]:
-        inner = data.get('data') if isinstance(data, dict) else None
-        values = inner.get('data') if isinstance(inner, dict) else None
+        inner = _dict_get(data, 'data')
+        values = _dict_get(inner, 'data')
         if not isinstance(values, dict):
             raise self._unreadable(ref, 'data.data が辞書ではありません')
         result: Dict[str, str] = {}
@@ -443,8 +447,8 @@ class OpenBaoBackend:
             # 送った後の接続断・タイムアウト・途中切れ・解釈できない応答。結果が分からない
             self._forget(ref)
             raise
-        inner = response.get('data') if isinstance(response, dict) else None
-        new_version = inner.get('version') if isinstance(inner, dict) else None
+        inner = _dict_get(response, 'data')
+        new_version = _dict_get(inner, 'version')
         if not isinstance(new_version, int) or isinstance(new_version, bool):
             self._forget(ref)
             raise self._unreadable(ref, '保存の応答に data.version がありません')
