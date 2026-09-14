@@ -80,6 +80,10 @@ def up_root(openbao_root, openbao, monkeypatch):
     monkeypatch.setattr(container, '_apply_window_titles', lambda *a, **k: None)
     monkeypatch.setattr(container, '_report_missing_repos', lambda *a, **k: None)
     monkeypatch.setattr(container, '_maybe_open_editor', lambda *a, **k: None)
+    # PLAN54: up の後処理が token を書く。docker は叩かず、token の取得 (往復) は数える
+    monkeypatch.setattr('devbase.editor.opener._query_container_name', lambda *a, **k: None)
+    monkeypatch.setattr('devbase.env.container_token.push',
+                        lambda names, token, runner=None: list(names))
 
     def fake_generate(scale, secrets, dev_environment=None, **kw):
         seen['secrets'] = secrets
@@ -199,7 +203,11 @@ def test_up_after_env_init_reads_written_values(up_root, openbao, monkeypatch):
 
     child: dict = {}
 
+    real_run = subprocess.run
+
     def fake_env_init(argv, **kwargs):
+        if list(argv[-2:]) != ['env', 'init']:
+            return real_run(argv, **kwargs)
         # 子プロセスの `env init` は別の SecretStore で書く。親の控えは更新されない。
         # 子の往復 (認証 1 + 書く前の GET) は親の数に入れないので、ここで分けて数える
         logins, gets = openbao.logins, len(openbao.requests_of('GET'))

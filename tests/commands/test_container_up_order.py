@@ -69,6 +69,9 @@ def up_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(container, 'docker_compose_up', lambda **k: calls.append(('up', k)))
     monkeypatch.setattr(container, 'wait_for_containers_ready', lambda **k: None)
     monkeypatch.setattr(container, '_maybe_open_editor', lambda *a, **k: None)
+    # PLAN54: 実行シェルの DEVBASE_ROOT (利用者の実環境) の backend を読まない
+    monkeypatch.setattr(container, '_bao_environment', lambda: {})
+    monkeypatch.setattr(container, '_push_bao_token', lambda *a, **k: None)
 
     def fake_down(compose_file=None):
         # 停止時点で渡された compose の中身も記録する (旧構成であること)

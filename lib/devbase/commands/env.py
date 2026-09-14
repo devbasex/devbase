@@ -3,7 +3,7 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import yaml
 
@@ -132,6 +132,9 @@ def cmd_env(devbase_root: Path, args) -> int:
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
+        'token':   lambda: cmd_env_token(devbase_root,
+                                         print_only=getattr(args, 'print_only', False),
+                                         context=getattr(args, 'context', None)),
         'exec':    lambda: cmd_env_exec(devbase_root,
                                         list(getattr(args, 'argv', []) or []),
                                         context=getattr(args, 'context', None)),
@@ -229,6 +232,113 @@ def cmd_env_exec(devbase_root: Path, argv, context: Optional[str] = None) -> int
     except OSError as e:
         logger.error("コマンドを実行できませんでした (%s): %s", argv[0], e)
         return 1
+
+
+def _running_dev_containers(project: str, dev_service_name: str, runner) -> Optional[List[str]]:
+    """起動中の dev コンテナの名前を ``<dev>-<n>`` の番号順に返す。docker を呼べなければ ``None``。
+
+    ``up`` の構成は dev の各インスタンスをサービス ``<dev>-<n>`` として定義する
+    (``volume/compose.py``)。プロジェクトのラベルだけで絞ると DB や snapshot にも届く。
+    """
+    import re
+
+    try:
+        result = runner(
+            ['docker', 'ps', '--filter', f'label=com.docker.compose.project={project}',
+             '--format', '{{.Names}}\t{{.Label "com.docker.compose.service"}}'],
+            capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.error("docker ps を実行できませんでした: %s", e)
+        return None
+    if result.returncode != 0:
+        logger.error("docker ps が失敗しました (exit=%d): %s", result.returncode,
+                     (result.stderr or '').strip())
+        return None
+    pattern = re.compile(rf'^{re.escape(dev_service_name)}-([1-9][0-9]*)$')
+    found = []
+    for line in (result.stdout or '').splitlines():
+        name, _, service = line.partition('\t')
+        match = pattern.match(service.strip())
+        if name and match:
+            found.append((int(match.group(1)), name.strip()))
+    return [name for _index, name in sorted(found)]
+
+
+def cmd_env_token(devbase_root: Path, print_only: bool = False,
+                  context: Optional[str] = None, runner=None) -> int:
+    """起動中の dev コンテナの ``~/.vault-token`` を新しい token で置き換える (PLAN54)。
+
+    コンテナの中の ``bao`` が使う token は 1 時間で切れる。コンテナに資格情報は置かず、
+    ホストの資格情報でログインし直して届ける。処理の順は「backend の判定 → プロジェクト
+    → dev サービス名 → 接続先 → 対象のコンテナ → ログイン → 書き込み」で、ログインを
+    対象が見つかった後に置く (届け先が無いのに token を発行させない)。``--print`` は
+    backend の判定の後すぐログインし、token だけを標準出力へ出す。
+    """
+    from devbase.commands.container import _load_project_env
+    from devbase.env import container_token
+    from devbase.env import runtime as _runtime
+    from devbase.env.secret_store import SecretRef, SecretStoreError
+    from devbase.errors import DevbaseError
+    from devbase.project.local_config import load_project_local_config
+    from devbase.utils import docker_context
+    from devbase.volume.compose import get_dev_service_name
+
+    run = runner or subprocess.run
+    store = _runtime.store_for(devbase_root)
+    try:
+        backend_name = store.backend_name
+    except SecretStoreError as e:
+        logger.error("%s", e)
+        return 1
+    if backend_name != 'openbao':
+        logger.error("backend が openbao ではありません (現在: %s)。コンテナの bao へ渡す "
+                     "token はサーバ backend でだけ発行できます", backend_name)
+        return 1
+    backend = store.backend_for(SecretRef.for_global())
+
+    if print_only:
+        try:
+            print(backend.issue_token())
+        except DevbaseError as e:
+            logger.error("%s", e)
+            return 1
+        return 0
+
+    project = _current_project_name(devbase_root)
+    if not project:
+        logger.error("プロジェクトのディレクトリ ($DEVBASE_ROOT/projects/<name>) で実行してください")
+        return 1
+    project_dir = Path(devbase_root) / 'projects' / project
+
+    # 起動ラッパーが source するのは実行時のディレクトリの env だけ。下位ディレクトリから
+    # 打っても dev サービス名 (DEV_SERVICE_NAME) を取れるよう、プロジェクト直下の env を載せる
+    _load_project_env(project_dir / 'env')
+    dev_service_name = get_dev_service_name()
+
+    settings = load_project_local_config(project_dir).docker
+    docker_context.apply(docker_context.choose_context(settings, cli_context=context),
+                         track=False)
+
+    names = _running_dev_containers(project, dev_service_name, run)
+    if names is None:
+        return 1
+    if not names:
+        logger.error("起動中の dev コンテナがありません: %s", project)
+        return 1
+
+    try:
+        token = backend.issue_token()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    written = container_token.push(names, token, runner=runner)
+    for name in written:
+        print(name)
+    failed = [name for name in names if name not in written]
+    for name in failed:
+        logger.error("token を書けませんでした: %s", name)
+    return 1 if failed else 0
 
 
 def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:

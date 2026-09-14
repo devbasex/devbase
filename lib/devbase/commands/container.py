@@ -730,6 +730,70 @@ def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     return open_index
 
 
+def _openbao_store():
+    """backend が ``openbao`` なら注入と同じ ``SecretStore`` を、そうでなければ ``None`` を返す。
+
+    ``runtime.store_for`` は ``up`` の注入が作ったものを返す (PLAN55)。ここで読み直すと
+    サーバへの往復が増えるため、同じインスタンスを使う。設定を読めないときは ``None``
+    (注入の側が既にその誤りで止めている)。
+    """
+    from devbase.env import runtime as _runtime
+    from devbase.env.secret_store import SecretStoreError
+
+    root = _devbase_root()
+    if root is None:
+        return None
+    store = _runtime.store_for(root)
+    try:
+        return store if store.backend_name == 'openbao' else None
+    except SecretStoreError:
+        return None
+
+
+def _bao_environment() -> dict:
+    """dev サービスへ足す ``BAO_ADDR`` (PLAN54)。backend が ``openbao`` でなければ空。
+
+    接続先は機密ではないので compose の ``environment`` にリテラルで書く。token は
+    ここに載せない (``docker inspect`` に残る)。``~/.vault-token`` は起動後に
+    :func:`_push_bao_token` が書く。
+    """
+    store = _openbao_store()
+    if store is None:
+        return {}
+    return {'BAO_ADDR': store.config.openbao.url}
+
+
+def _push_bao_token(project_name: str, scale: int, dev_service_name: str,
+                    compose_file=None, start: int = 1) -> None:
+    """各 dev コンテナの ``~/.vault-token`` へ token を書く (PLAN54)。
+
+    backend が ``openbao`` でなければ何もしない。token が取れない・書けないときは
+    警告にとどめる (起動は済んでおり、``devbase env token`` でやり直せる)。
+    """
+    from devbase.editor import opener
+    from devbase.env import container_token
+    from devbase.env.secret_store import SecretRef
+
+    store = _openbao_store()
+    if store is None:
+        return
+    try:
+        token = store.backend_for(SecretRef.for_global()).issue_token()
+        names = [opener.resolve_container_name(dev_service_name, project_name, index,
+                                               compose_file=compose_file)
+                 for index in range(start, scale + 1)]
+        written = container_token.push(names, token)
+    except Exception as e:  # noqa: BLE001 - 付随処理で up を倒さない
+        logger.warning("コンテナへ bao の token を書けませんでした (devbase env token で"
+                       "やり直せます): %s", e)
+        return
+    if len(written) < len(names):
+        logger.warning("bao の token を書けなかったコンテナがあります "
+                       "(devbase env token でやり直せます)")
+    elif written:
+        logger.info("bao の token を書きました: %s", ', '.join(written))
+
+
 def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
                          compose_file=None) -> None:
     """各 dev コンテナの VS Code ウィンドウタイトルをコンテナ名始まりにする。
@@ -906,9 +970,11 @@ def _run_deploy_pipeline(project_name: str, scale: int, config,
     # にしないため。
     with _previous_scale_compose() as down_compose_file:
         logger.info("[2/6] Generating scaled compose file...")
+        secrets = _inject_secrets(required=True)
+        dev_environment = {**project_runtime.container_env(config, project_name),
+                           **_bao_environment()}
         override_file = _generate_compose_for(
-            scale, _inject_secrets(required=True),
-            dev_environment=project_runtime.container_env(config, project_name),
+            scale, secrets, dev_environment=dev_environment,
             **_remote_generate_kwargs(target))
         logger.info("Generated: %s", override_file)
 
@@ -977,6 +1043,10 @@ def cmd_up(project_name: str = None, scale: int = None,
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(1, scale + 1),
                                              config)
+
+        # 起動中のコンテナの bao が使う token を書く (PLAN54)。backend が openbao の
+        # ときだけ。書けなくても起動は済んでいるので up は倒さない。
+        _push_bao_token(project_name, scale, dev_service_name, compose_file=override_file)
 
         # VS Code のウィンドウタイトルをコンテナ名始まりに固定する
         # (自動オープンの有無に関わらず、手動アタッチにも効かせるため up 側で行う)。
@@ -1108,9 +1178,11 @@ def cmd_scale(new_scale: int, project_name: str = None,
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
+        secrets = _inject_secrets(required=True)
+        dev_environment = {**project_runtime.container_env(config, project_name),
+                           **_bao_environment()}
         override_file = _generate_compose_for(
-            new_scale, _inject_secrets(required=True),
-            dev_environment=project_runtime.container_env(config, project_name),
+            new_scale, secrets, dev_environment=dev_environment,
             **_remote_generate_kwargs(target))
         logger.info("Generated: %s", override_file)
 
@@ -1133,6 +1205,10 @@ def cmd_scale(new_scale: int, project_name: str = None,
             compose_file=override_file,
             timeout=60
         )
+
+        # 増やしたインスタンスにも bao の token を書く (PLAN54。既存のものは up で書いてある)
+        _push_bao_token(project_name, new_scale, dev_service_name, compose_file=override_file,
+                        start=current_scale + 1)
 
         # Run project-specific deploy script for newly added instances
         deploy_script = Path('./deploy')

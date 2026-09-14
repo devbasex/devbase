@@ -430,3 +430,42 @@ def test_backend_test_fails_without_a_server_backend(tmp_path, caplog):
 
     assert env_backend.cmd_env_backend_test(tmp_path) == 1
     assert 'openbao' in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# token の発行 (PLAN54: コンテナの ~/.vault-token へ届ける)
+# ---------------------------------------------------------------------------
+
+def test_issue_token_returns_the_login_token(store, openbao):
+    backend = store.backend_for(GLOBAL)
+
+    token = backend.issue_token()
+
+    assert token == openbao.token
+    assert openbao.logins == 1
+
+
+def test_issue_token_reuses_the_token_obtained_for_reads(store, openbao):
+    """注入で読んだ同じ SecretStore からなら、ログインし直さない (up の往復を増やさない)"""
+    store.load(GLOBAL)
+    backend = store.backend_for(GLOBAL)
+
+    assert backend.issue_token() == openbao.token
+    assert openbao.logins == 1
+
+
+def test_issue_token_logs_in_again_near_expiry(store, openbao, monkeypatch):
+    backend = store.backend_for(GLOBAL)
+    backend.issue_token()
+    monkeypatch.setattr(backend, '_token_expires_at', 0.0)
+
+    backend.issue_token()
+
+    assert openbao.logins == 2
+
+
+def test_issue_token_raises_auth_error_on_rejected_login(store, openbao):
+    openbao.reject_login = True
+
+    with pytest.raises(SecretAuthError):
+        store.backend_for(GLOBAL).issue_token()

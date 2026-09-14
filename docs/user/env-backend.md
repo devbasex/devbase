@@ -144,6 +144,65 @@ OpenBao の KV v2 にはコメント・空行の置き場がありません。`d
 「他の誰かが先に書きました」と表示して止まります。黙って上書きすることはありません。
 もう一度 `env edit`（または `set`）をやり直してください。
 
+## コンテナの中から `bao` を使う
+
+base イメージには OpenBao の CLI `bao`（サーバと同じ 2.6 系）が入っています。backend が
+`openbao` の端末で `devbase up` すると、dev コンテナに次の 2 つが渡り、**再起動せずに**
+自分の機密を読み書きできます。
+
+| 渡るもの | 形 |
+|---|---|
+| 接続先 | 環境変数 `BAO_ADDR`（`backend.yml` の `openbao.url`） |
+| token | ファイル `~/.vault-token`（`0600`）。`bao` が既定で読む |
+
+コンテナに置くのは 1 時間で切れる token だけで、`secret_id` はホストから出ません。token を
+環境変数にしないのは、`docker inspect` や子プロセスの環境に残るためです。
+
+### 読む・書く
+
+置き場のパスは `-mount=devbase` からの相対で、`<user>` は `backend.yml` の `openbao.user` です。
+
+| 置き場 | パス |
+|---|---|
+| 個人共通 | `users/<user>/global` |
+| 個人のプロジェクト | `users/<user>/projects/<name>` |
+| チーム共通（読むだけ） | `team/global` |
+| チームのプロジェクト（読むだけ） | `team/projects/<name>` |
+
+```bash
+bao kv get -mount=devbase users/<user>/global                  # 一覧
+bao kv get -mount=devbase -field=API_KEY users/<user>/global   # 1 キー
+bao kv patch -mount=devbase users/<user>/global NEW_KEY=value  # 1 キーを足す・変える
+```
+
+**`kv put` はパスの中身を丸ごと置き換えます。** 指定しなかったキーは消えるので、1 キーだけを
+足す・変えるときは `kv patch` を使ってください。キーを消すのは、ホストの
+`devbase env delete --user KEY` が確実です（残すキーを読み直して丸ごと書き戻します）。
+
+起動中のシェルの環境変数は、書き換えても変わりません。今のシェルで新しい値を使うときは
+読み直します。次の `devbase up` からはコンテナの環境変数にも載ります。
+
+```bash
+export API_KEY="$(bao kv get -mount=devbase -field=API_KEY users/<user>/global)"
+```
+
+コンテナで書いた値は、ホストの手元キャッシュ（`secrets/cache/`）には反映されません。ホストの
+`devbase up` / `env get` はサーバの現物を読むため、到達できる限り食い違いません。
+
+### token が切れたら
+
+`bao` が `permission denied`（`Code: 403`）を返したら、token の期限（1 時間）が切れています。
+**ホストの**プロジェクトのディレクトリで次を実行すると、起動中の dev コンテナすべての
+`~/.vault-token` を新しい token に置き換えます。
+
+```bash
+devbase env token                 # 起動中の dev コンテナへ書く
+devbase env token --print         # token を表示するだけ（手で渡すとき）
+```
+
+別ホストの Docker（`project.local.yml` の `docker.context`）で動かしているコンテナにも、同じ
+接続先で届きます。`--context NAME` で一時的に上書きできます。
+
 ## サーバへ到達できないとき
 
 取得できた機密は、参照ごとに age で暗号化して `secrets/cache/` に控えられます

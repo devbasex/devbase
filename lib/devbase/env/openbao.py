@@ -216,6 +216,15 @@ class OpenBaoBackend:
         assert self._token is not None
         return self._token
 
+    def issue_token(self) -> str:
+        """起動中のコンテナの ``bao`` へ渡す token を返す (PLAN54)。
+
+        読み書きに使っている token と同じもので、無いか期限が近ければログインし直す。
+        同じ ``SecretStore`` で注入した直後に呼べば、ログインは増えない。token は
+        控えない (控えから起動したときに書き戻せないのと同じく、サーバの答えが要る)。
+        """
+        return self._ensure_token()
+
     # -- HTTP -----------------------------------------------------------------
 
     def _kv_path(self, kind: str, ref: SecretRef) -> str:
