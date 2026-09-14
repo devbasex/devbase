@@ -171,7 +171,8 @@ RUN set -eux; \
     cd /tmp; \
     curl -fsSL "${bao_base}/${bao_tar}" -o "${bao_tar}"; \
     curl -fsSL "${bao_base}/checksums.txt" -o bao-checksums.txt; \
-    grep " ${bao_tar}\$" bao-checksums.txt | sha256sum -c -; \
+    bao_sum="$(grep " ${bao_tar}\$" bao-checksums.txt)"; \
+    echo "${bao_sum}" | sha256sum -c -; \
     tar -xzf "${bao_tar}" -C /usr/local/bin bao; \
     rm -f "${bao_tar}" bao-checksums.txt; \
     bao version

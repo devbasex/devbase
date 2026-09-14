@@ -60,6 +60,17 @@ def test_tarball_is_verified_against_the_release_checksums():
     assert block.index("sha256sum -c") < block.index("tar -xzf")
 
 
+def test_checksum_line_lookup_must_hit_before_verification():
+    block = _bao_run_block()
+    # checksums.txt から対象行を取り出すことを独立の命令にし、0 件なら set -e でそこで止める。
+    # grep をパイプの先頭に置くと終了値が捨てられ、sha256sum の空入力の挙動に検証が依存する
+    assert 'bao_sum="$(grep " ${bao_tar}\\$" bao-checksums.txt)"' in block
+    assert 'echo "${bao_sum}" | sha256sum -c -' in block
+    assert not re.search(r"grep [^;]*\| *sha256sum", block)
+    assert "set -eux" in block
+    assert block.index('bao_sum="$(grep') < block.index("sha256sum -c")
+
+
 def test_only_the_bao_binary_is_installed_and_checked():
     block = _bao_run_block()
     assert re.search(r"tar -xzf \S+ -C /usr/local/bin bao", block)
