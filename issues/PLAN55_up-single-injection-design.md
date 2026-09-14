@@ -14,6 +14,7 @@
 | F1 | `devbase up`（3 経路）が、backend `openbao` でも認証 1 回 + 参照ごとに GET 1 回で起動する | 開発者（意識せずに使う） |
 | F2 | `_ensure_env_files` の存在判定がサーバへ問い合わせない | 開発者（同上） |
 | F3 | `up` 1 回の往復回数がテストで固定される | 保守する人 |
+| F4 | 共通機密が未作成で `env init` を走らせた `up` は、`env init` が書いた変数でコンテナを起動する（従来どおり） | 開発者（初回の `up`） |
 
 ## 構成要素
 
@@ -22,11 +23,11 @@
 | `env/runtime.py` `store_for(root)`（足す） | プロセス内で持ち回る `SecretStore` を返す。無ければ作る。`root` が変われば作り直す |
 | `env/runtime.py` `release_store()`（足す） | 持ち回っている `SecretStore` を捨てる。次の `store_for` は作り直す |
 | `env/runtime.py` `resolve()` / `inject()` / `child_env()`（変える） | `store` 引数が `None` のとき `SecretStore(root)` ではなく `store_for(root)` を使う。引数の形は変えない |
-| `commands/container.py` `_ensure_env_files()`（変える） | `SecretStore(devbase_root)` を `runtime.store_for(devbase_root)` に置き換える |
+| `commands/container.py` `_ensure_env_files()`（変える） | `SecretStore(devbase_root)` を `runtime.store_for(devbase_root)` に置き換える。子プロセスの `env init` を走らせたら、戻った直後に `runtime.release_store()` を呼ぶ（決定 5） |
 | `commands/container.py` `_dispatch_lifecycle()`（変える） | `finally` で `docker_context.reset()` に並べて `runtime.release_store()` を呼ぶ |
 | `cli.py` `_load_secret_env()`（変えない） | dispatch 前の注入はそのまま。作った `SecretStore` が `store_for` の控えになる |
 | `tests/env/test_runtime_store.py`（新設） | `store_for` / `release_store` の振る舞い（同一性・`root` 変更・解放後の作り直し） |
-| `tests/cli/test_up_roundtrips.py`（新設） | 3 経路の `up` を `FakeOpenBao` で走らせ、認証と GET の回数を固定する |
+| `tests/cli/test_up_roundtrips.py`（新設） | 3 経路の `up` を `FakeOpenBao` で走らせ、認証と GET の回数を固定する。`env init` を走らせた `up` が書いた値で起動することも固定する |
 | `docs/specifications/secret-backend.md`「OpenBao との契約」（`plan-to-spec` で変える） | 「`devbase up` 1 回あたり」の文を、持ち回りの規則とともに確定仕様にする |
 
 構成要素の関係:
@@ -54,6 +55,7 @@ graph TD
     DL -->|finally| RS
     INJ --> RES
     ENS --> SF
+    ENS -.env init の後.-> RS
     DEP --> INJ
     RES --> SF
     SF --> ST
@@ -118,7 +120,7 @@ sequenceDiagram
     RT->>ST: load × 4
     ST->>SRV: GET 2（team/projects/web, users/me/projects/web）。共通の 2 参照は _seen
     DL->>UP: cmd_up
-    UP->>RT: store_for(root).exists × 2（_ensure_env_files）
+    UP->>RT: store_for(root).exists × 1〜2（_ensure_env_files。プロジェクト側はローカル .env が無いときだけ）
     RT->>ST: _seen から返す（GET 0）
     UP->>RT: inject(root, "web")（_run_deploy_pipeline）
     RT->>ST: _seen から返す（GET 0）
@@ -131,6 +133,7 @@ sequenceDiagram
 | `devbase up`（`web` の中） | 1 | 4 | `_load_secret_env` で 4。以降はすべて `_seen` |
 | `devbase up web`（`api` の中） | 1 | 6 | `_load_secret_env` で `api` の 4、切替後に `web` の 2 |
 | `devbase up web`（`projects/` の外） | 1 | 4 | `_load_secret_env` で共通 2、切替後に `web` の 2 |
+| `devbase up`（`web` の中、`team/global` が未作成） | 2 | 8 | `_load_secret_env` で 4（`team/global` は 404 → 空）。`env init` の後に控えを捨て、`_run_deploy_pipeline` で 4（決定 5） |
 
 TUI（1 プロセスで操作を続ける）では、`_load_secret_env` が起動時に作った `SecretStore` を
 最初の操作が引き継ぎ、その操作の `finally` で捨てる。2 回目以降の操作は `_inject_secrets` が
@@ -207,6 +210,24 @@ TUI（1 プロセスで操作を続ける）では、`_load_secret_env` が起�
 空ファイルは今日「存在する」と判定されるが、`global_names` は空になり `env init` が走る。
 ファイル backend の振る舞いが変わる（PLAN51 前提 3 に触れる）。
 
+### 決定 5: 子プロセスの `env init` がストアへ書いたら、控えを捨てて読み直す
+
+`_ensure_env_files` は共通機密が無いとき、子プロセスで `devbase env init` を走らせる。
+書くのは子プロセスなので、親の `SecretStore` の `_seen` は更新されない。`openbao` では
+最初の 404 が `_seen` に空として残り（`OpenBaoBackend.fetch`）、そのまま持ち回ると後続の
+`_run_deploy_pipeline` の注入も空の共通機密を使う。今日は `_run_deploy_pipeline` が
+`SecretStore` を作り直しているので `env init` が書いた変数は渡っている。寿命を延ばすと
+これを失う。
+
+規則: `_ensure_env_files` は `env init` の子プロセスから戻ったら、終了コードによらず
+`runtime.release_store()` を呼ぶ。次の `store_for` が作り直し、`_run_deploy_pipeline` は
+現物を読む。この `up` に限り認証 1 回 + GET 4 回が足される（上の表の 4 行目）。
+
+捨てる代わりに `store.fetch(SecretRef.for_global())` で該当参照だけ取り直す案は採らない。
+`env init` が書く参照の一覧を `_ensure_env_files` が知っていなければならず、`env init` の
+収集器が書く先を増やしたときに追随を忘れる。初回の `up` だけの 1 往復を惜しんで結合を
+増やす理由が無い。ファイル backend は `_seen` を持たず、捨てても変わらない（PLAN51 前提 3）。
+
 ## テスト設計
 
 | 受け入れ条件（PLAN55） | 何で確かめるか |
@@ -218,6 +239,7 @@ TUI（1 プロセスで操作を続ける）では、`_load_secret_env` が起�
 | 5. backend `age` で 3 経路の結果が同じ | 既存の `tests/cli/test_project_name_resolution.py` / `tests/commands/test_container_up_order.py` / `tests/commands/test_container_context.py` が変更なしで通る |
 | 6. 切替の回帰テストが通る | `tests/cli/test_project_name_resolution.py` を変更しない |
 | 7. `pytest` / `ruff` / `compileall` | `quality-gates` |
+| 8. `team/global` 未作成で `up`: `env init` が書いた値で起動する | 同 `::test_up_after_env_init_reads_written_values`。`FakeOpenBao` の `team/global` を未作成にし、`container.subprocess.run` を「偽サーバへ `INIT_KEY=value` を `save` して 0 で戻る」スタブに差し替える。`_run_deploy_pipeline` へ渡る `SecretEnv` と `os.environ` に `INIT_KEY` があり、`openbao.logins == 2`、GET が 8 件以下 |
 | `store_for` の規則の表 | `tests/env/test_runtime_store.py`（同一性・`root` 変更・解放） |
 
 ## 未確認のまま残ること
@@ -225,4 +247,5 @@ TUI（1 プロセスで操作を続ける）では、`_load_secret_env` が起�
 | 項目 | 内容 |
 | --- | --- |
 | `tests/cli/` の既存 harness が `SecretStore` を直接作っている箇所 | `runtime.resolve(store=...)` で渡している箇所は影響を受けない。`SecretStore(root)` を各テストで作って `monkeypatch` している箇所があれば、`release_store()` を `conftest` の autouse fixture で呼ぶ。実装時に数える |
+| `pre-up` フックが OpenBao へ書く運用があるか | `./pre-up` も子プロセスで、`env init` と同じく親の `_seen` を更新しない。手元にある `projects/*/pre-up` は 1 本（`carmo-system-console`。S3 から平文 `.env` を取る。`bao` / `env set` / `env import` を含まない）で OpenBao へは書かない。書く運用が見つかれば `_run_pre_up_hook` の後にも決定 5 の規則を置く。実装時に `projects/*/pre-up` を読んで数える |
 | PLAN54（#169）との順序 | PLAN54 の `_push_bao_token` は `store_for(root)` から token を取れば、`_run_deploy_pipeline` に `SecretStore` を渡す配線が要らない。PLAN55 を先にマージするのが簡単 |
