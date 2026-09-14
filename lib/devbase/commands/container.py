@@ -40,6 +40,11 @@ _SCALE_COMPOSE_FILE = Path('.docker-compose.scale.yml')
 # 共通ヘルパー
 # ---------------------------------------------------------------------------
 
+def _exit_code(ok: bool) -> int:
+    """ビルド成否 (bool) をプロセス互換の終了コードへ写す (True=0 / False=1)。"""
+    return 0 if ok else 1
+
+
 def _devbase_root() -> Optional[Path]:
     root = os.environ.get('DEVBASE_ROOT')
     return Path(root) if root else None
@@ -1262,18 +1267,18 @@ def _build_resolved(expires: Optional[int], no_cache: bool) -> int:
         return 1
 
     if no_cache:
-        return 0 if _run_build(no_cache=True) else 1
+        return _exit_code(_run_build(no_cache=True))
     if expires is None:
-        return 0 if _run_build() else 1
+        return _exit_code(_run_build())
 
     # expires 指定: project イメージの作成日と dev サービス定義 (base 判定用) が必要。
     dev_service = _resolve_dev_service()
     if not dev_service:
         logger.info("Unable to read compose config; building with cache")
-        return 0 if _run_build() else 1
+        return _exit_code(_run_build())
     image_name = dev_service.get('image', '')
     if not image_name:
-        return 0 if _run_build() else 1
+        return _exit_code(_run_build())
     inspect = subprocess.run(
         ['docker', 'image', 'inspect', image_name],
         capture_output=True, text=True, check=False
@@ -1281,8 +1286,8 @@ def _build_resolved(expires: Optional[int], no_cache: bool) -> int:
     if inspect.returncode != 0:
         # イメージ未存在 → キャッシュビルドで作成する。
         logger.info("Container image '%s' not found; building...", image_name)
-        return 0 if _run_build() else 1
-    return 0 if _build_with_expires(expires, image_name, inspect.stdout, dev_service) else 1
+        return _exit_code(_run_build())
+    return _exit_code(_build_with_expires(expires, image_name, inspect.stdout, dev_service))
 
 
 def cmd_rebuild(expires: int = None, context: Optional[str] = None) -> int:
