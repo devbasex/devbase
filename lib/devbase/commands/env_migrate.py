@@ -113,12 +113,47 @@ def _confirm(prompt: str, assume_yes: bool) -> bool:
 # encrypt
 # ---------------------------------------------------------------------------
 
+def _age_file_store(root: Path, *, target: str) -> Optional[SecretStore]:
+    """encrypt / decrypt が使う、ファイルの存在で判定する店。
+
+    どちらも age ストアと平文ストアの間で機密を移す age 固有の操作で、サーバ backend
+    には対応する概念が無い (PLAN51 決定 8)。有効な backend が age 系でなければ
+    ``None`` を返し、呼び出し側はその旨を述べて止める。
+
+    ``target`` は変換後の保存先 (``age`` / ``plaintext``)。**明示的な backend 設定が
+    変換後の保存先と逆を指すときも拒む。** ``backend: plaintext`` のまま encrypt すると
+    平文が消えて設定は平文を指し続け、次の読み込みが空になる (decrypt と ``age`` も同じ)。
+    ``auto`` と変換後の保存先に一致する設定では、設定ファイルの選択に関わらずファイルの
+    存在で判定する (``backend: age`` でも平文が対象になる)。
+    """
+    from devbase.env import backend_config as _bc
+
+    try:
+        name = _bc.load(root).backend
+    except _bc.BackendConfigError as e:
+        logger.error("%s", e)
+        return None
+    if name not in (_bc.BACKEND_AUTO, 'age', 'plaintext'):
+        logger.error("encrypt / decrypt は age ストア専用のコマンドです "
+                     "(現在の backend: %s)。サーバ backend との間で移すには "
+                     "`devbase env backend migrate` を使ってください", name)
+        return None
+    if name != _bc.BACKEND_AUTO and name != target:
+        logger.error("backend が %s に固定されているため、%s へ移すと設定の指す先から機密が"
+                     "消えます。先に `devbase env backend use %s` (または auto) に切り替えて"
+                     "ください", name, target, target)
+        return None
+    return SecretStore(root, config=_bc.BackendConfig())
+
+
 def cmd_env_encrypt(devbase_root: Path, *, dry_run: bool = False,
                     assume_yes: bool = False,
                     projects: Optional[Sequence[str]] = None) -> int:
     """平文の設定を暗号化ストアへ移す"""
     root = Path(devbase_root)
-    store = SecretStore(root)
+    store = _age_file_store(root, target=MODE_AGE)
+    if store is None:
+        return 1
 
     try:
         recipients = agekeys.resolve_recipients(root)
@@ -339,7 +374,9 @@ def cmd_env_decrypt(devbase_root: Path, *, dry_run: bool = False,
                     projects: Optional[Sequence[str]] = None) -> int:
     """暗号化された設定を平文へ戻す"""
     root = Path(devbase_root)
-    store = SecretStore(root)
+    store = _age_file_store(root, target=MODE_PLAINTEXT)
+    if store is None:
+        return 1
 
     refs = _select_refs(root, store, MODE_AGE, projects)
     if not refs:
@@ -509,48 +546,69 @@ def _plan_compose_changes(devbase_root: Path, refs: Sequence[SecretRef],
             raise MigrationError(
                 f"構成ファイルを読めませんでした ({path}): {e}") from e
 
-        # 行単位では書き換えられない記法 (インライン配列・続きの行を持つ
-        # long syntax など) は対象から漏れる。黙って漏らすと壊れた構成の
-        # まま起動して初めて気付くため、どのファイルの何行目かを警告しておく。
-        compose_migrate.warn_unsupported_env_file(before, path)
-
         wanted = _compose_targets(path, has_global=has_global,
                                   project_names=project_names)
-        if not restore:
-            # 扱えない記法のうち **機密を指しているもの** は警告では済まない。
-            # 平文を退避したあとも参照が有効なまま残り、Compose が存在しない
-            # ファイルを読もうとして起動できなくなる。手で直してから再実行して
-            # もらう (機密と無関係なものは移行に影響しないので警告のみ)。
-            #
-            # 復元 (decrypt) 側では止めない。平文が戻る以上その参照は有効に
-            # なるうえ、ここで失敗させると壊れた状態からの復帰手段まで
-            # 塞いでしまう。
-            blocking = compose_migrate.secret_unsupported_env_file_lines(
-                before, wanted)
-            if blocking:
-                detail = '\n'.join(f"  {path}:{number}: {line}"
-                                   for number, line in blocking)
-                raise MigrationError(
-                    "自動で書き換えられない env_file の記法が機密ファイルを"
-                    "参照しています。次の行を `env_file:` の下に `- ...` を"
-                    "並べる書き方へ手で直してから再実行してください:\n"
-                    f"{detail}")
-        if restore:
-            after, touched = compose_migrate.enable(before, wanted)
-        else:
-            after, touched = compose_migrate.disable(before, wanted)
-            # 行ベースの走査が終わったところで、書き換えた結果を YAML として
-            # 読み直し、機密参照が本当に消えたことを確かめる。走査は記法の
-            # 判別に頼っている以上いつでも取りこぼしうるので、記法に依らない
-            # この検証を最後の砦として必ず通す (compose_migrate 冒頭
-            # 「二段構えの保証」)。差分が出なかったファイルも対象にする。
-            _verify_secrets_are_unreferenced(path, after, wanted)
+        after, touched = _transform_compose(path, before, wanted,
+                                             restore=restore)
 
         if touched and after != before:
             changes[path] = (before, after,
                              compose_migrate.diff(before, after, path))
 
     return changes
+
+
+def _transform_compose(path: Path, before: str, wanted: Set[str],
+                       *, restore: bool) -> Tuple[str, bool]:
+    """1 つの ``compose.yml`` の本文を書き換え後の内容へ変換する。
+
+    未対応記法の警告・暗号化時の中止判定・enable/disable・暗号化後の事後検証を
+    ここに集約する。差分の集約 (呼び出し元) からは、書き換え前後のテキストと
+    「触ったか」だけを返す。
+
+    Returns:
+        ``(書き換え後のテキスト, 触ったかどうか)``
+
+    Raises:
+        MigrationError: 暗号化側で自動では書き換えられない機密参照が残っている
+            場合、または事後検証が機密参照の取りこぼしを見つけた場合
+    """
+    # 行単位では書き換えられない記法 (インライン配列・続きの行を持つ
+    # long syntax など) は対象から漏れる。黙って漏らすと壊れた構成の
+    # まま起動して初めて気付くため、どのファイルの何行目かを警告しておく。
+    compose_migrate.warn_unsupported_env_file(before, path)
+
+    if not restore:
+        # 扱えない記法のうち **機密を指しているもの** は警告では済まない。
+        # 平文を退避したあとも参照が有効なまま残り、Compose が存在しない
+        # ファイルを読もうとして起動できなくなる。手で直してから再実行して
+        # もらう (機密と無関係なものは移行に影響しないので警告のみ)。
+        #
+        # 復元 (decrypt) 側では止めない。平文が戻る以上その参照は有効に
+        # なるうえ、ここで失敗させると壊れた状態からの復帰手段まで
+        # 塞いでしまう。
+        blocking = compose_migrate.secret_unsupported_env_file_lines(
+            before, wanted)
+        if blocking:
+            detail = '\n'.join(f"  {path}:{number}: {line}"
+                               for number, line in blocking)
+            raise MigrationError(
+                "自動で書き換えられない env_file の記法が機密ファイルを"
+                "参照しています。次の行を `env_file:` の下に `- ...` を"
+                "並べる書き方へ手で直してから再実行してください:\n"
+                f"{detail}")
+    if restore:
+        after, touched = compose_migrate.enable(before, wanted)
+    else:
+        after, touched = compose_migrate.disable(before, wanted)
+        # 行ベースの走査が終わったところで、書き換えた結果を YAML として
+        # 読み直し、機密参照が本当に消えたことを確かめる。走査は記法の
+        # 判別に頼っている以上いつでも取りこぼしうるので、記法に依らない
+        # この検証を最後の砦として必ず通す (compose_migrate 冒頭
+        # 「二段構えの保証」)。差分が出なかったファイルも対象にする。
+        _verify_secrets_are_unreferenced(path, after, wanted)
+
+    return after, touched
 
 
 def _verify_secrets_are_unreferenced(path: Path, after: str,

@@ -57,7 +57,7 @@ SUBCMD_MAP = {
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
                           'exec', 'encrypt', 'decrypt', 'rekey', 'doctor',
-                          'export', 'import'],
+                          'export', 'import', 'backend'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
@@ -343,6 +343,13 @@ def _add_env_parser(subparsers):
     env_edit.add_argument('--project', '-p', action='store_true',
                           help='Edit project .env')
 
+    # 持ち主の軸 (PLAN51 決定 14)。`-p` が適用範囲を、`--user` が持ち主を選び、
+    # 片方の指定がもう片方の軸を動かさない。値を取らない真偽フラグである点も `-p` と
+    # 揃える。init / sync / project / export / import には足さない。
+    for sub in (env_list, env_get, env_set, env_delete, env_edit):
+        sub.add_argument('--user', action='store_true', dest='user',
+                         help="Use this user's personal secrets instead of the team's")
+
     env_sub.add_parser('project', help='Setup project-specific variables')
 
     # 生成先を選ぶオプションは置かない。復号側は $DEVBASE_AGE_KEY_FILE か既定パスしか
@@ -403,6 +410,49 @@ def _add_env_parser(subparsers):
 
     _add_env_export_parser(env_sub)
     _add_env_import_parser(env_sub)
+    _add_env_backend_parser(env_sub)
+
+
+def _add_env_backend_parser(env_sub):
+    """`env backend` サブコマンド群を登録する (PLAN51)。"""
+    env_backend = env_sub.add_parser(
+        'backend', help='Choose where secrets are stored (age / plaintext / openbao)')
+    backend_sub = env_backend.add_subparsers(dest='backend_action')
+
+    backend_sub.add_parser('status', help='Show the active backend and its locations')
+
+    use = backend_sub.add_parser('use', help='Switch to another backend')
+    use.add_argument('name', help='Backend name (auto / plaintext / age / openbao)')
+    use.add_argument('--url', default=None, help='OpenBao server URL (https)')
+    use.add_argument('--mount', default=None, metavar='NAME',
+                     help='KV v2 mount name (default: devbase)')
+    use.add_argument('--user', default=None, metavar='ID',
+                     help='Identifier for this user\'s personal secrets (entity name)')
+    use.add_argument('--role-id', dest='role_id', default=None,
+                     help='AppRole role_id')
+    # secret_id は argv で受けない (ps から読める位置に置かない)。
+    use.add_argument('--secret-id-stdin', dest='secret_id_stdin',
+                     action='store_true',
+                     help='Read the AppRole secret_id for this machine from stdin')
+    # 指定が無ければ既存の設定を引き継ぐ (None)。一度 --no-cache にした後も CLI だけで
+    # 戻せるよう、対になる --cache を置く
+    cache_group = use.add_mutually_exclusive_group()
+    cache_group.add_argument('--cache', dest='cache', action='store_const', const=True,
+                             default=None,
+                             help='Keep an encrypted local cache of server secrets')
+    cache_group.add_argument('--no-cache', dest='cache', action='store_const', const=False,
+                             help='Do not keep an encrypted local cache of server secrets')
+
+    backend_sub.add_parser('test', help='Check the connection to the server backend')
+
+    migrate = backend_sub.add_parser(
+        'migrate', help='Copy team secrets to another backend (age <-> openbao)')
+    migrate.add_argument('--to', required=True, metavar='NAME',
+                         help='Destination backend (age / openbao)')
+    migrate.add_argument('--dry-run', action='store_true',
+                         help='Show what would move (key names only) without writing')
+    migrate.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
+                         help='Skip the confirmation prompt')
 
 
 def _add_env_export_parser(env_sub):
@@ -750,6 +800,9 @@ _NO_SECRET_INJECTION = frozenset({
     ('env', 'keygen'),
     ('env', 'encrypt'),
     ('env', 'decrypt'),
+    # backend の設定を触るコマンド。設定が壊れている・サーバに届かない状態でこそ
+    # 実行されるため、注入で先に落ちないようにする。
+    ('env', 'backend'),
 })
 
 

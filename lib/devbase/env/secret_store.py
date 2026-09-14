@@ -13,9 +13,18 @@
 プロジェクト         ``projects/<name>/.env``             ``secrets/projects/<name>.env.age``
 ===================  ==================================  ==========================================
 
-どちらを使うかは**ファイルの存在で自動判定**する。暗号化ファイルがあればそれを使い、
-無ければ平文を使う。同じ参照に対して両方が存在する状態は、どちらが正なのか判断できない
+どちらを使うかは、既定では**ファイルの存在で自動判定**する。暗号化ファイルがあればそれを
+使い、無ければ平文を使う。同じ参照に対して両方が存在する状態は、どちらが正なのか判断できない
 ため明示的なエラーにして利用者に解消させる (plan35 §9)。
+
+``secrets/backend.yml`` (:mod:`devbase.env.backend_config`) で backend を明示的に
+選ぶこともできる (PLAN51)。設定があるときは ``backend_for`` がその backend を返し、
+サーバ backend (``openbao``) もここへ載る。設定が無ければ ``auto`` = 上記の自動判定で、
+設定を持たない端末の挙動は変わらない。
+
+参照には**持ち主** (``owner``) の軸がある。``team`` はチームの全員が同じ値を使う機密、
+``user`` は利用者ごとに値が違う機密を指す。ファイル backend は 1 台の端末に閉じている
+ため個人単位の参照を持たず、``user`` に対しては存在しない参照として振る舞う。
 
 読み書きの経路は 2 つある:
 
@@ -76,26 +85,57 @@ def _validate_project_name(name: str) -> str:
     return name
 
 
+OWNER_TEAM = 'team'
+OWNER_USER = 'user'
+_OWNERS = (OWNER_TEAM, OWNER_USER)
+
+
+def _validate_owner(owner: str) -> str:
+    if owner not in _OWNERS:
+        raise SecretStoreError(
+            f"参照の持ち主は {' / '.join(_OWNERS)} のいずれかです: {owner!r}")
+    return owner
+
+
 @dataclass(frozen=True)
 class SecretRef:
-    """機密の参照 (共通 / プロジェクト)"""
+    """機密の参照 (共通 / プロジェクト × チーム単位 / 個人単位)
+
+    ``owner`` を末尾の既定値付きフィールドにしているのは、``name`` を位置引数で
+    渡している既存の生成をそのまま残すため。既存の呼び出しはすべてチーム単位を指す。
+    ファクトリは ``for_global`` / ``for_project`` の 2 つのままにし、持ち主は
+    キーワード引数 ``owner`` で受ける (PLAN51 設計 1「参照の形」)。
+    """
     kind: str                      # 'global' | 'project'
     name: Optional[str] = None
+    owner: str = OWNER_TEAM        # 'team' | 'user'
 
     @staticmethod
-    def for_global() -> 'SecretRef':
-        return SecretRef(kind='global')
+    def for_global(*, owner: str = OWNER_TEAM) -> 'SecretRef':
+        return SecretRef(kind='global', owner=_validate_owner(owner))
 
     @staticmethod
-    def for_project(name: str) -> 'SecretRef':
-        return SecretRef(kind='project', name=_validate_project_name(name))
+    def for_project(name: str, *, owner: str = OWNER_TEAM) -> 'SecretRef':
+        return SecretRef(kind='project', name=_validate_project_name(name),
+                         owner=_validate_owner(owner))
+
+    @property
+    def is_user(self) -> bool:
+        return self.owner == OWNER_USER
 
     def label(self) -> str:
-        return 'グローバル' if self.kind == 'global' else f"プロジェクト '{self.name}'"
+        # チーム単位の文字列は変えない。誤りの伝達や桁揃えに埋め込まれており、
+        # 変えると既存の表示とテストが一斉に動く。
+        base = 'グローバル' if self.kind == 'global' else f"プロジェクト '{self.name}'"
+        return f'個人の{base}' if self.is_user else base
 
 
 class SecretBackend(Protocol):
     name: str
+    #: 保存先をファイルとして直接エディタで開いてよいか。平文だけ真。
+    direct_edit: bool
+    #: 個人単位の参照 (``owner='user'``) を持つか。ファイル backend は持たない。
+    has_user_refs: bool
 
     def path(self, ref: SecretRef) -> Path: ...
     def exists(self, ref: SecretRef) -> bool: ...
@@ -106,10 +146,23 @@ class SecretBackend(Protocol):
     def remove(self, ref: SecretRef) -> bool: ...
 
 
+def _reject_user_ref(backend_name: str, ref: SecretRef) -> None:
+    """ファイル backend への個人単位の書き込みを拒む。
+
+    黙ってチーム単位の置き場へ落とすと、個人の資格情報が全員から見える場所へ入る。
+    """
+    if ref.is_user:
+        raise SecretStoreError(
+            f"{backend_name} backend は個人単位の機密を扱えません "
+            f"({ref.label()})。個人単位の機密を置くにはサーバ backend を設定してください")
+
+
 class PlaintextBackend:
     """従来どおり平文の ``.env`` を読み書きする"""
 
     name = MODE_PLAINTEXT
+    direct_edit = True
+    has_user_refs = False
 
     def __init__(self, devbase_root: Path):
         self._root = Path(devbase_root)
@@ -120,12 +173,12 @@ class PlaintextBackend:
         return self._root / 'projects' / _validate_project_name(ref.name or '') / '.env'
 
     def exists(self, ref: SecretRef) -> bool:
-        return self.path(ref).is_file()
+        return not ref.is_user and self.path(ref).is_file()
 
     def load_bytes(self, ref: SecretRef) -> bytes:
         """``.env`` の中身を **原文のバイト列のまま** 返す (不在なら空)"""
         path = self.path(ref)
-        if not path.is_file():
+        if ref.is_user or not path.is_file():
             return b''
         try:
             return path.read_bytes()
@@ -134,6 +187,7 @@ class PlaintextBackend:
 
     def save_bytes(self, ref: SecretRef, data: bytes) -> Path:
         """バイト列を **加工せずそのまま** ``.env`` へ書き出す"""
+        _reject_user_ref(self.name, ref)
         path = self.path(ref)
         try:
             # 平文とはいえ機密の入れ物なので、暗号化側と同じく atomic に差し替える。
@@ -162,6 +216,10 @@ class PlaintextBackend:
         return self.save_bytes(ref, EnvFile.dump_bytes(data))
 
     def remove(self, ref: SecretRef) -> bool:
+        # 個人単位の参照は持たない。path() はチーム単位のファイルを指すため、
+        # ここで止めないとチームの機密を消してしまう。
+        if ref.is_user:
+            return False
         path = self.path(ref)
         if not path.exists():
             return False
@@ -176,6 +234,8 @@ class AgeBackend:
     """age で暗号化したファイルを読み書きする"""
 
     name = MODE_AGE
+    direct_edit = False
+    has_user_refs = False
 
     def __init__(self, devbase_root: Path, *,
                  recipients: Optional[Sequence[str]] = None,
@@ -213,7 +273,7 @@ class AgeBackend:
         return base / 'projects' / f'{name}.env.age'
 
     def exists(self, ref: SecretRef) -> bool:
-        return self.path(ref).is_file()
+        return not ref.is_user and self.path(ref).is_file()
 
     # -- 読み書き -----------------------------------------------------------
 
@@ -224,7 +284,7 @@ class AgeBackend:
         表記を含む原文をそのまま取り出せる。
         """
         path = self.path(ref)
-        if not path.is_file():
+        if ref.is_user or not path.is_file():
             return b''
         try:
             blob = path.read_bytes()
@@ -252,6 +312,7 @@ class AgeBackend:
 
     def save_bytes(self, ref: SecretRef, data: bytes) -> Path:
         """バイト列を **加工せずそのまま** 暗号化して保存する"""
+        _reject_user_ref(self.name, ref)
         path = self.path(ref)
         blob = self.encrypt_bytes(data)
         try:
@@ -285,6 +346,8 @@ class AgeBackend:
         return self.save_bytes(ref, EnvFile.dump_bytes(data))
 
     def remove(self, ref: SecretRef) -> bool:
+        if ref.is_user:
+            return False
         path = self.path(ref)
         if not path.exists():
             return False
@@ -296,25 +359,74 @@ class AgeBackend:
 
 
 class SecretStore:
-    """保存先を自動判定して機密を読み書きする窓口"""
+    """保存先を選んで機密を読み書きする窓口
+
+    backend の選択は ``secrets/backend.yml`` が決め、設定が無ければ ``auto``
+    (ファイルの存在による自動判定) になる。設定はこのインスタンスで最初に必要に
+    なったときに 1 度だけ読む。生成時に読まないのは、``SecretStore(...)`` の生成箇所
+    (11 か所) を変えずに済ませ、設定ファイルが壊れていても設定を触らない経路
+    (``env keygen`` など) を止めないため。
+    """
 
     def __init__(self, devbase_root: Path, *,
                  recipients: Optional[Sequence[str]] = None,
-                 identities: Optional[Sequence[str]] = None):
+                 identities: Optional[Sequence[str]] = None,
+                 config=None):
+        """``config`` を渡すと ``secrets/backend.yml`` を読まずにその設定で動く。
+
+        移行 (``env backend migrate``) のように、設定ファイルが指す backend とは別の
+        backend を相手にする処理のための入口。通常の呼び出しでは渡さない。
+        """
         self.root = Path(devbase_root)
         self.plaintext = PlaintextBackend(self.root)
         self.age = AgeBackend(self.root, recipients=recipients,
                               identities=identities)
+        self._config = config
+        self._selected: Optional[SecretBackend] = None
+
+    # -- 設定 ---------------------------------------------------------------
+
+    @property
+    def config(self):
+        """読み込んだ backend 設定 (:class:`devbase.env.backend_config.BackendConfig`)"""
+        if self._config is None:
+            from devbase.env import backend_config as _bc
+
+            try:
+                self._config = _bc.load(self.root)
+            except _bc.BackendConfigError as e:
+                raise SecretStoreError(f"backend の設定を読めませんでした: {e}") from e
+        return self._config
+
+    @property
+    def backend_name(self) -> str:
+        """設定で選ばれている backend 名 (``auto`` を含む)"""
+        return self.config.backend
+
+    def _selected_backend(self) -> Optional[SecretBackend]:
+        """設定で明示的に選ばれた backend (``auto`` なら ``None``)"""
+        if self.backend_name == 'auto':
+            return None
+        if self._selected is None:
+            # 登録簿はこのモジュールの backend を参照するため、先頭で import すると循環する
+            from devbase.env import backends as _backends
+
+            self._selected = _backends.create_backend(self.backend_name, self)
+        return self._selected
 
     # -- 判定 ---------------------------------------------------------------
 
     def backend_for(self, ref: SecretRef) -> SecretBackend:
         """参照に対して使うべき backend を返す。
 
-        暗号化ファイルと平文ファイルが同時に存在する場合は、どちらが最新なのか
-        devbase 側では判断できない。黙って一方を採用すると「編集したはずの値が
-        反映されない」形で事故になるため、明示的に停止して利用者に解消させる。
+        設定で選ばれていればそれを返す。``auto`` では、暗号化ファイルと平文ファイルが
+        同時に存在する場合にどちらが最新なのか devbase 側では判断できない。黙って
+        一方を採用すると「編集したはずの値が反映されない」形で事故になるため、
+        明示的に停止して利用者に解消させる。
         """
+        selected = self._selected_backend()
+        if selected is not None:
+            return selected
         age_exists = self.age.exists(ref)
         plain_exists = self.plaintext.exists(ref)
         if age_exists and plain_exists:
@@ -328,7 +440,10 @@ class SecretStore:
         return self.age if age_exists else self.plaintext
 
     def mode(self, ref: SecretRef) -> str:
-        """``'age'`` / ``'plaintext'`` / ``'absent'`` のいずれかを返す"""
+        """選択中の backend 名 (``'age'`` / ``'plaintext'`` / ``'openbao'``) か ``'absent'``"""
+        selected = self._selected_backend()
+        if selected is not None:
+            return selected.name if selected.exists(ref) else MODE_ABSENT
         if self.age.exists(ref):
             if self.plaintext.exists(ref):
                 # backend_for と同じ理由でここでも停止させる
@@ -341,6 +456,14 @@ class SecretStore:
     def is_encrypted(self, ref: SecretRef) -> bool:
         return self.mode(ref) == MODE_AGE
 
+    def direct_edit(self, ref: SecretRef) -> bool:
+        """保存先をファイルとして直接エディタで開いてよいか"""
+        return bool(self.backend_for(ref).direct_edit)
+
+    def has_user_refs(self, ref: SecretRef) -> bool:
+        """選択中の backend が個人単位の参照を持つか (ファイル backend は持たない)"""
+        return bool(getattr(self.backend_for(ref), 'has_user_refs', False))
+
     # -- 読み書き -----------------------------------------------------------
 
     def exists(self, ref: SecretRef) -> bool:
@@ -351,6 +474,26 @@ class SecretStore:
 
     def load(self, ref: SecretRef) -> Dict[str, str]:
         return self.backend_for(ref).load(ref)
+
+    def fetch(self, ref: SecretRef) -> Dict[str, str]:
+        """現物から読む (サーバ backend では控えへ落ちない)。
+
+        書き込みを伴う操作の読み出しに使う。控えから読んだ内容を元に書き戻すと、
+        不達の間の他の利用者の更新を上書きするため。ファイル backend では ``load`` と
+        同じである。
+        """
+        backend = self.backend_for(ref)
+        fetch = getattr(backend, 'fetch', None)
+        return fetch(ref) if callable(fetch) else backend.load(ref)
+
+    def fetch_bytes(self, ref: SecretRef) -> bytes:
+        """``fetch`` の原文のバイト列版"""
+        backend = self.backend_for(ref)
+        if callable(getattr(backend, 'fetch', None)):
+            from devbase.env.store import EnvFile
+
+            return EnvFile.dump_bytes(backend.fetch(ref))
+        return backend.load_bytes(ref)
 
     def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
         """既存の保存形式を維持したまま保存する。

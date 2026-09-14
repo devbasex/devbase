@@ -139,29 +139,46 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
             *, store: Optional[SecretStore] = None) -> SecretEnv:
     """機密を合成して返す。
 
-    重ね順は従来の ``env_file`` の並びを踏襲する:
-    共通の機密 → プロジェクトの非機密設定 → プロジェクトの機密。
+    重ね順は従来の ``env_file`` の並びを踏襲し、持ち主の軸をその内側へ足す
+    (PLAN51 設計 2「重ね順」/ 決定 12):
 
-    コンテナへ列挙するのは共通機密とプロジェクト機密のキーだけで、非機密設定は
-    構成ファイルが ``env_file`` として直接読むため列挙しない。ただし両方に同じ
-    キーがある場合は、列挙した変数の**値**として非機密設定側を採用する。
-    ``environment`` は ``env_file`` より優先されるため、こうしないと
-    「プロジェクト設定が共通設定を上書きする」という従来の関係が反転する。
+    1. チーム共通の機密
+    2. 個人共通の機密 (チーム共通に勝つ)
+    3. プロジェクトの非機密設定 (``projects/<name>/env``。共通の 2 層に勝つ)
+    4. プロジェクトのチーム機密 (非機密設定に勝つ)
+    5. プロジェクトの個人機密 (同じプロジェクトのチーム機密に勝つ)
+
+    規則は 2 つ。**適用範囲が狭いものが勝つ** (プロジェクトが共通に勝つ) と、
+    **同じ適用範囲では個人単位がチーム単位に勝つ**。前者は現行の重ね順そのままで、
+    後者を内側へ足した形になる。
+
+    コンテナへ列挙するのは機密のキーだけで、非機密設定は構成ファイルが ``env_file``
+    として直接読むため列挙しない。ただし両方に同じキーがある場合は、列挙した変数の
+    **値**として非機密設定側を採用する。``environment`` は ``env_file`` より優先される
+    ため、こうしないと「プロジェクト設定が共通設定を上書きする」という従来の関係が
+    反転する。
+
+    個人単位の参照を持たない backend (``age`` / ``plaintext``) では 2 と 5 が空になり、
+    結果は従来と同じになる (前提 3)。
     """
     root = Path(devbase_root)
     store = store if store is not None else SecretStore(root)
 
-    global_secrets = store.load(SecretRef.for_global())
-    global_names = list(global_secrets)
+    team_global = store.load(SecretRef.for_global())
+    user_global = store.load(SecretRef.for_global(owner='user'))
+    global_names = list(dict.fromkeys([*team_global, *user_global]))
     project_names: List[str] = []
 
-    merged: Dict[str, str] = dict(global_secrets)
+    merged: Dict[str, str] = dict(team_global)
+    merged.update(user_global)
 
     if project:
         merged.update(_project_env_overrides(root, project))
-        project_secrets = store.load(SecretRef.for_project(project))
-        merged.update(project_secrets)
-        project_names = list(project_secrets)
+        team_project = store.load(SecretRef.for_project(project))
+        user_project = store.load(SecretRef.for_project(project, owner='user'))
+        merged.update(team_project)
+        merged.update(user_project)
+        project_names = list(dict.fromkeys([*team_project, *user_project]))
 
     resolved = SecretEnv(global_names=global_names, project_names=project_names)
     resolved.values = {

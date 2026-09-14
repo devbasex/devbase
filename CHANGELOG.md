@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **機密の保存先を差し替えられるようにしました（PLAN51 / #159, #166, #170）。** `secrets/backend.yml` で
+  `auto` / `plaintext` / `age` / `openbao` を選べます。最初のサーバ backend として
+  [OpenBao](https://openbao.org/)（KV v2 + AppRole）に対応し、REST を標準ライブラリで叩くため
+  常時の依存は増えません。設定していない端末の挙動は変わりません。
+  - `devbase env backend status` / `use` / `test` / `migrate` を追加しました。`secret_id` は
+    `--secret-id-stdin` か伏せ字入力で受け取り、引数では受け取りません
+  - `devbase env list` / `get` / `set` / `delete` / `edit` に `--user` を追加しました。持ち主の軸
+    （チーム / 個人）を選び、個人単位の機密は `users/<user>/...` へ分けて置きます。`-p` の意味と
+    既定の宛先は変わりません
+  - 保存は読んだときの版を指定した丸ごとの置き換え（check-and-set）で、同時に編集しても後から
+    書いた側が止まり、黙って上書きしません
+  - サーバへ到達できないときは、age 暗号化した手元のキャッシュ（`secrets/cache/`）で起動します。
+    認証を拒まれたときはキャッシュを使わずに止まり、`set` / `delete` / `edit` は控えを元に
+    書き戻しません
+  - `devbase env rekey` は `bootstrap.env.age` とキャッシュも再暗号化し、`devbase env doctor` は
+    backend 設定・資格情報・権限・Git の除外設定を点検します
+  - 詳細は `docs/user/env-backend.md`
+
+### Changed
+
+- `devbase env encrypt` / `decrypt` は backend が `openbao` のとき止まります（age ストア専用）
+
 ## [3.3.0] - 2026-09-13
 
 別ホストの Docker（Windows/WSL2・別 PC・EC2）に dev コンテナを立てられるようになりました。

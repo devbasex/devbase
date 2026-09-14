@@ -214,6 +214,95 @@ def _validate_manifest(manifest: Dict, members: Dict[str, bytes]) -> None:
         )
 
 
+def _origin(path, devbase_root) -> str:
+    """保存先を ``$DEVBASE_ROOT`` 相対の表記へ直す (manifest の可読性のため)"""
+    from pathlib import Path
+
+    try:
+        return f'$DEVBASE_ROOT/{Path(path).relative_to(devbase_root)}'
+    except ValueError:
+        return str(path)
+
+
+def _collect_global(store, devbase_root) -> List[BundleEntry]:
+    """``$DEVBASE_ROOT/.env`` を秘密ストア越しに 1 件 (無ければ 0 件) 集める"""
+    from devbase.env.secret_store import SecretRef
+
+    global_ref = SecretRef.for_global()
+    if not store.exists(global_ref):
+        return []
+    return [BundleEntry(
+        arcname='env/global.env',
+        origin=_origin(store.path(global_ref), devbase_root),
+        data=store.load_bytes(global_ref),
+    )]
+
+
+def _collect_metadata(devbase_root) -> List[BundleEntry]:
+    """``$DEVBASE_ROOT/.env.sources.yml`` を 1 件 (無ければ 0 件) 集める"""
+    sources_yml = devbase_root / '.env.sources.yml'
+    if not sources_yml.is_file():
+        return []
+    return [BundleEntry(
+        arcname='env/sources.yml',
+        origin='$DEVBASE_ROOT/.env.sources.yml',
+        data=sources_yml.read_bytes(),
+    )]
+
+
+def _should_skip_project(name: str, proj_dir,
+                         included: Optional[set], excluded: set) -> bool:
+    """include/exclude 指定と project 名の妥当性から、export 対象外なら True"""
+    if name in excluded:
+        return True
+    if included is not None and name not in included:
+        return True
+    # import 側で `_PROJECT_ENV_RE` により制限されている project 名と同じ
+    # validator で fail-fast する。空白や先頭 `.` などを含むディレクトリを
+    # そのまま arcname にすると export は成功しても後続の import が
+    # `未対応の arcname` で失敗し、round-trip できない bundle が生成される
+    # (PR #13 codex round 5 指摘)。明示エラーではなく "警告 + スキップ" 方針:
+    #   - レビュー指摘の選択肢が「明示エラー or skip with warning」だったこと
+    #   - 一時ディレクトリや leftover (e.g. `.git`, `.DS_Store` でも `.` 始まりで弾かれる)
+    #     が混在しても valid な project だけは export を成功させたいユースケース
+    # のため後者を採用。include_projects で明示指定された名前が invalid な
+    # ときも warning のみで落とすことで、暗黙的に round-trip 不能なバンドル
+    # を作らないようにする。
+    if not is_valid_project_name(name):
+        logger.warning(
+            "project '%s' は bundle に含められない名前 (空白 / 先頭 `.` / `/` 等) "
+            "のためスキップします: %s",
+            name, proj_dir,
+        )
+        return True
+    return False
+
+
+def _collect_projects(store, devbase_root,
+                      included: Optional[set], excluded: set) -> List[BundleEntry]:
+    """``$DEVBASE_ROOT/projects/<name>/.env`` を名前順に集める"""
+    from devbase.env.secret_store import SecretRef
+
+    projects_dir = devbase_root / 'projects'
+    if not projects_dir.is_dir():
+        return []
+
+    entries: List[BundleEntry] = []
+    candidates = sorted(p for p in projects_dir.iterdir() if p.is_dir())
+    for proj_dir in candidates:
+        name = proj_dir.name
+        if _should_skip_project(name, proj_dir, included, excluded):
+            continue
+        project_ref = SecretRef.for_project(name)
+        if store.exists(project_ref):
+            entries.append(BundleEntry(
+                arcname=f'env/projects/{name}/.env',
+                origin=_origin(store.path(project_ref), devbase_root),
+                data=store.load_bytes(project_ref),
+            ))
+    return entries
+
+
 def make_entries_from_disk(devbase_root,
                            include_global: bool = True,
                            include_metadata: bool = True,
@@ -230,77 +319,23 @@ def make_entries_from_disk(devbase_root,
     """
     from pathlib import Path
 
-    from devbase.env.secret_store import SecretRef, SecretStore
+    from devbase.env.secret_store import SecretStore
 
     devbase_root = Path(devbase_root)
-    entries: List[BundleEntry] = []
 
     # 保存先は秘密ストアに聞く。暗号化済みの機密でも export できるようにするため、
     # ファイルパスを直接読まずに復号後のバイト列を受け取る。バンドル自体は age で
     # 暗号化されるので、ここで平文に戻しても保存時の平文は生まれない。
     store = SecretStore(devbase_root)
 
-    def _origin(path) -> str:
-        """保存先を ``$DEVBASE_ROOT`` 相対の表記へ直す (manifest の可読性のため)"""
-        try:
-            return f'$DEVBASE_ROOT/{Path(path).relative_to(devbase_root)}'
-        except ValueError:
-            return str(path)
-
+    entries: List[BundleEntry] = []
     if include_global:
-        global_ref = SecretRef.for_global()
-        if store.exists(global_ref):
-            entries.append(BundleEntry(
-                arcname='env/global.env',
-                origin=_origin(store.path(global_ref)),
-                data=store.load_bytes(global_ref),
-            ))
-
+        entries.extend(_collect_global(store, devbase_root))
     if include_metadata:
-        sources_yml = devbase_root / '.env.sources.yml'
-        if sources_yml.is_file():
-            entries.append(BundleEntry(
-                arcname='env/sources.yml',
-                origin='$DEVBASE_ROOT/.env.sources.yml',
-                data=sources_yml.read_bytes(),
-            ))
-
-    projects_dir = devbase_root / 'projects'
-    if projects_dir.is_dir():
-        excluded = set(exclude_projects)
-        included = set(include_projects) if include_projects else None
-
-        candidates = sorted(p for p in projects_dir.iterdir() if p.is_dir())
-        for proj_dir in candidates:
-            name = proj_dir.name
-            if name in excluded:
-                continue
-            if included is not None and name not in included:
-                continue
-            # import 側で `_PROJECT_ENV_RE` により制限されている project 名と同じ
-            # validator で fail-fast する。空白や先頭 `.` などを含むディレクトリを
-            # そのまま arcname にすると export は成功しても後続の import が
-            # `未対応の arcname` で失敗し、round-trip できない bundle が生成される
-            # (PR #13 codex round 5 指摘)。明示エラーではなく "警告 + スキップ" 方針:
-            #   - レビュー指摘の選択肢が「明示エラー or skip with warning」だったこと
-            #   - 一時ディレクトリや leftover (e.g. `.git`, `.DS_Store` でも `.` 始まりで弾かれる)
-            #     が混在しても valid な project だけは export を成功させたいユースケース
-            # のため後者を採用。include_projects で明示指定された名前が invalid な
-            # ときも warning のみで落とすことで、暗黙的に round-trip 不能なバンドル
-            # を作らないようにする。
-            if not is_valid_project_name(name):
-                logger.warning(
-                    "project '%s' は bundle に含められない名前 (空白 / 先頭 `.` / `/` 等) "
-                    "のためスキップします: %s",
-                    name, proj_dir,
-                )
-                continue
-            project_ref = SecretRef.for_project(name)
-            if store.exists(project_ref):
-                entries.append(BundleEntry(
-                    arcname=f'env/projects/{name}/.env',
-                    origin=_origin(store.path(project_ref)),
-                    data=store.load_bytes(project_ref),
-                ))
-
+        entries.extend(_collect_metadata(devbase_root))
+    entries.extend(_collect_projects(
+        store, devbase_root,
+        included=set(include_projects) if include_projects else None,
+        excluded=set(exclude_projects),
+    ))
     return entries

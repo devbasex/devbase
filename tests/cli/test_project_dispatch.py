@@ -443,3 +443,42 @@ def test_maybe_open_editor_forwards_compose_file(monkeypatch):
     container._maybe_open_editor('carmo', True, 1, 1, _project_config(),
                                  compose_file='override.yml')
     assert called[0]['compose_file'] == 'override.yml'
+
+
+@pytest.mark.parametrize('command', ['env', 'plugin', 'snapshot'])
+def test_dispatch_root_command_passes_root_and_args(monkeypatch, tmp_path, command):
+    """現在の root 必須コマンドへの委譲を固定する。"""
+    calls = []
+
+    def handler(root, args):
+        calls.append((root, args))
+        return 0
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr(f'devbase.commands.{command}.cmd_{command}', handler)
+    args = _args(command=command)
+
+    assert cli._dispatch(command, args) == 0
+    assert calls == [(tmp_path, args)]
+
+
+@pytest.mark.parametrize('command', ['init', 'status'])
+def test_dispatch_root_command_passes_only_root(monkeypatch, tmp_path, command):
+    """init/status が root のみを受け取る現在の呼び出しを固定する。"""
+    calls = []
+
+    def handler(root):
+        calls.append(root)
+        return 0
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr(f'devbase.commands.{command}.cmd_{command}', handler)
+
+    assert cli._dispatch(command, _args(command=command)) == 0
+    assert calls == [tmp_path]
+
+
+def test_dispatch_unknown_command_returns_one():
+    """未知コマンドで spec is None となり return 1 する経路を固定する。"""
+    args = _args(command='bogus')
+    assert cli._dispatch('bogus', args) == 1

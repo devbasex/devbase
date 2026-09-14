@@ -38,16 +38,49 @@ class EnvOpsError(DevbaseError):
 # rekey
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class Ciphertext:
+    """再暗号化の対象 1 件 (表示名と age 暗号文のパス)
+
+    機密の参照に当たるものは ``ref`` を持ち、復号は ``AgeBackend.load_bytes`` を通す。
+    ブートストラップとキャッシュは参照を持たないため、暗号文を直接復号する。
+    """
+
+    label: str
+    path: Path
+    ref: Optional[SecretRef] = None
+
+
 def _encrypted_refs(devbase_root: Path, store: SecretStore) -> List[SecretRef]:
-    """暗号化済みの参照をすべて集める"""
+    """暗号化済みの参照をすべて集める (backend の選択に関わらずファイルの存在で見る)"""
     refs: List[SecretRef] = []
-    if store.mode(SecretRef.for_global()) == MODE_AGE:
+    if store.age.exists(SecretRef.for_global()):
         refs.append(SecretRef.for_global())
     for name in store.project_names():
         ref = SecretRef.for_project(name)
-        if store.mode(ref) == MODE_AGE:
+        if store.age.exists(ref):
             refs.append(ref)
     return refs
+
+
+def _encrypted_paths(devbase_root: Path, store: SecretStore) -> List[Ciphertext]:
+    """手元にある age 暗号文をすべて集める。
+
+    機密の参照に加えて、ブートストラップ機密とサーバ backend のキャッシュも含める
+    (PLAN51 決定 8)。``backend: openbao`` のときもこれらは age 暗号文として手元に
+    残り、受信者を入れ替える手段は ``rekey`` 以外に無いため。
+    """
+    from devbase.env import bootstrap as _bootstrap
+    from devbase.env import cache as _cache
+
+    items = [Ciphertext(ref.label(), store.age.path(ref), ref)
+             for ref in _encrypted_refs(devbase_root, store)]
+    if _bootstrap.exists(devbase_root):
+        items.append(Ciphertext('ブートストラップ機密', _bootstrap.path(devbase_root)))
+    for path in _cache.cached_files(devbase_root):
+        rel = path.relative_to(_cache.cache_dir(devbase_root))
+        items.append(Ciphertext(f'キャッシュ {rel}', path))
+    return items
 
 
 def _own_public_key() -> Optional[str]:
@@ -119,7 +152,7 @@ def cmd_env_rekey(devbase_root: Path, *,
         print("受信者に変更はありません")
         return 0
 
-    refs = _encrypted_refs(root, store)
+    targets = _encrypted_paths(root, store)
 
     print("\n=== 受信者の変更 ===")
     for spec in updated:
@@ -129,9 +162,9 @@ def cmd_env_rekey(devbase_root: Path, *,
         if spec not in updated:
             print(f"  - {spec}")
 
-    print(f"\n再暗号化する機密: {len(refs)} 件")
-    for ref in refs:
-        print(f"  {ref.label():<24} {store.age.path(ref)}")
+    print(f"\n再暗号化する機密: {len(targets)} 件")
+    for item in targets:
+        print(f"  {item.label:<24} {item.path}")
 
     if own is not None and own not in updated:
         print("\n⚠ 自分の公開鍵が受信者から外れています。"
@@ -160,26 +193,26 @@ def cmd_env_rekey(devbase_root: Path, *,
         # 2. 新しい受信者宛の暗号文を全件用意する (ここもまだ触らない)
         # 3. 受信者リストを更新する
         # 4. 各暗号文を差し替える
-        prepared = _prepare_reencryption(root, store, refs, updated)
+        prepared = _prepare_reencryption(root, store, targets, updated)
         _replace_recipients(root, updated, rollback)
-        _replace_ciphertexts(store, prepared, rollback)
+        _replace_ciphertexts(prepared, rollback)
     except (DevbaseError, OSError) as e:
         logger.error("受信者の更新を中止し、変更を巻き戻します: %s", e)
         rollback.unwind()
         return 1
 
-    print(f"\n=== 完了 === (受信者 {len(updated)} 名 / 機密 {len(refs)} 件)")
+    print(f"\n=== 完了 === (受信者 {len(updated)} 名 / 機密 {len(targets)} 件)")
     return 0
 
 
 def _prepare_reencryption(root: Path, store: SecretStore,
-                          refs: Sequence[SecretRef],
+                          targets: Sequence[Ciphertext],
                           updated: Sequence[str],
-                          ) -> List[Tuple[SecretRef, bytes, bytes]]:
+                          ) -> List[Tuple[Ciphertext, bytes, bytes]]:
     """全件を復号し、新しい受信者宛の暗号文を用意する (ディスクは触らない)。
 
     Returns:
-        ``(参照, 旧暗号文の生バイト列, 新受信者宛の暗号文)`` の並び
+        ``(対象, 旧暗号文の生バイト列, 新受信者宛の暗号文)`` の並び
 
     旧暗号文は再暗号化ではなく **生バイト列のまま** 控える。巻き戻しで元の
     ファイルへ 1 バイト違わず戻せるようにするため (age は暗号化のたびに異なる
@@ -187,24 +220,28 @@ def _prepare_reencryption(root: Path, store: SecretStore,
 
     ここで失敗しても、受信者リストも暗号文もまだ 1 つも書き換えていない。
     """
+    from devbase.env import cipher as _cipher
+
     rewritten = SecretStore(root, recipients=list(updated))
-    prepared: List[Tuple[SecretRef, bytes, bytes]] = []
-    for ref in refs:
-        path = store.age.path(ref)
+    prepared: List[Tuple[Ciphertext, bytes, bytes]] = []
+    for item in targets:
         try:
-            old_blob = path.read_bytes()
+            old_blob = item.path.read_bytes()
         except OSError as e:
-            raise EnvOpsError(f"暗号文を読み込めませんでした ({path}): {e}") from e
+            raise EnvOpsError(f"暗号文を読み込めませんでした ({item.path}): {e}") from e
         try:
-            plain = store.age.load_bytes(ref)
-        except DevbaseError as e:
-            raise EnvOpsError(f"{ref.label()}を復号できませんでした: {e}") from e
+            if item.ref is not None:
+                plain = store.age.load_bytes(item.ref)
+            else:
+                plain = _cipher.decrypt(old_blob, identities=store.age.identities())
+        except (DevbaseError, _cipher.CipherError) as e:
+            raise EnvOpsError(f"{item.label}を復号できませんでした ({item.path}): {e}") from e
         try:
             new_blob = rewritten.age.encrypt_bytes(plain)
         except DevbaseError as e:
             raise EnvOpsError(
-                f"{ref.label()}を新しい受信者宛に暗号化できませんでした: {e}") from e
-        prepared.append((ref, old_blob, new_blob))
+                f"{item.label}を新しい受信者宛に暗号化できませんでした: {e}") from e
+        prepared.append((item, old_blob, new_blob))
     return prepared
 
 
@@ -240,20 +277,19 @@ def _replace_recipients(root: Path, updated: Sequence[str],
                       lambda p=path, b=before: _write_blob(p, b))
 
 
-def _replace_ciphertexts(store: SecretStore,
-                         prepared: Sequence[Tuple[SecretRef, bytes, bytes]],
+def _replace_ciphertexts(prepared: Sequence[Tuple[Ciphertext, bytes, bytes]],
                          rollback: Rollback) -> None:
     """用意済みの暗号文でファイルを差し替える (取り消し: 旧バイト列を書き戻す)"""
-    for ref, old_blob, new_blob in prepared:
-        path = store.age.path(ref)
+    for item, old_blob, new_blob in prepared:
+        path = item.path
         try:
             _write_blob(path, new_blob)
         except OSError as e:
             raise EnvOpsError(
-                f"{ref.label()}の再暗号化に失敗しました ({path}): {e}") from e
-        rollback.push(f"{ref.label()}の暗号文 {path} を元の内容へ戻す",
+                f"{item.label}の再暗号化に失敗しました ({path}): {e}") from e
+        rollback.push(f"{item.label}の暗号文 {path} を元の内容へ戻す",
                       lambda p=path, b=old_blob: _write_blob(p, b))
-        logger.info("%s を再暗号化しました", ref.label())
+        logger.info("%s を再暗号化しました", item.label)
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +339,10 @@ _IGNORE_PROBE_PATHS = (
     'secrets/projects/sample.env.age',
     # ``secrets/*.age`` のように配下の一部だけを除外していると漏れる位置
     'secrets/leftover.env',
+    # backend の設定・ブートストラップ機密・キャッシュ (PLAN51)
+    'secrets/backend.yml',
+    'secrets/bootstrap.env.age',
+    'secrets/cache/team/global.env.age',
 )
 
 #: ``projects/`` が空のときに使うプロジェクト名。``projects/<name>/.env`` が
@@ -547,6 +587,64 @@ def _check_gitignore(root: Path, report: Report) -> None:
                    'を実行し、除外されることを確かめてください')
 
 
+def _check_file_mode(report: Report, path: Path, *, what: str, is_dir: bool = False) -> None:
+    mode = _mode_of(path)
+    if mode is None or not mode & 0o077:
+        return
+    want = '700' if is_dir else '600'
+    report.add('error', f'{what}が他ユーザーから読めます',
+               f'{path} (mode {mode:04o})', f'chmod {want} {path}')
+
+
+def _check_backend(root: Path, report: Report) -> None:
+    """backend の設定・ブートストラップ機密・キャッシュを点検する (PLAN51)"""
+    from devbase.env import backend_config as _bc
+    from devbase.env import bootstrap as _bootstrap
+    from devbase.env import cache as _cache
+
+    config_path = _bc.config_path(root)
+    if not config_path.is_file():
+        return
+    report.checked.append(f"backend 設定: {config_path}")
+    _check_file_mode(report, config_path, what='backend の設定')
+    try:
+        config = _bc.load(root)
+    except _bc.BackendConfigError as e:
+        report.add('error', 'backend の設定を読めません', str(e),
+                   f'{config_path} を直すか、`devbase env backend use <name>` で書き直してください')
+        return
+
+    bootstrap_path = _bootstrap.path(root)
+    if bootstrap_path.exists():
+        _check_file_mode(report, bootstrap_path, what='ブートストラップ機密')
+    if config.backend == _bc.BACKEND_OPENBAO:
+        try:
+            creds = _bootstrap.load(root)
+        except DevbaseError as e:
+            report.add('error', 'ブートストラップ機密を読めません', str(e),
+                       '`devbase env backend use openbao --role-id ID '
+                       '--secret-id-stdin` で入れ直してください')
+        else:
+            if creds is None:
+                report.add('error', 'OpenBao の接続資格情報がありません',
+                           f'{bootstrap_path} が無く、{_bootstrap.ROLE_ID_KEY} / '
+                           f'{_bootstrap.SECRET_ID_KEY} を読めません',
+                           '`devbase env backend use openbao --role-id ID '
+                           '--secret-id-stdin` で設定してください')
+
+    cache_dir = _cache.cache_dir(root)
+    if cache_dir.is_dir():
+        _check_file_mode(report, cache_dir, what='キャッシュの置き場', is_dir=True)
+        for sub in sorted(p for p in cache_dir.rglob('*') if p.is_dir()):
+            _check_file_mode(report, sub, what='キャッシュの置き場', is_dir=True)
+        for path in _cache.cached_files(root):
+            _check_file_mode(report, path, what='キャッシュ')
+        if not config.cache_enabled and _cache.cached_files(root):
+            report.add('warning', 'キャッシュが無効なのに控えが残っています',
+                       '\n    '.join(str(p) for p in _cache.cached_files(root)[:_MAX_LISTED]),
+                       '次の `devbase up` で消えます。消えなければ手で削除してください')
+
+
 def cmd_env_doctor(devbase_root: Path) -> int:
     """端末上に残る平文と設定の穴を点検する"""
     root = Path(devbase_root)
@@ -554,6 +652,7 @@ def cmd_env_doctor(devbase_root: Path) -> int:
     report = Report()
 
     _check_key(report)
+    _check_backend(root, report)
     _check_conflicts(root, store, report)
     _check_leftovers(root, store, report)
     _check_gitignore(root, report)
