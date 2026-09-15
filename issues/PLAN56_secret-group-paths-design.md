@@ -39,7 +39,7 @@
 | `commands/env.py`（変える） | `_global_env` / `_project_env` / `_target_env` がグループを決める。`--group` の検証と、`-p` とプロジェクトのグループの食い違いを拒む。`list` の見出しにグループを出す。`init` / `sync` / `project` / `export` / `import` も同じ決め方を使う |
 | `env/bundle.py` / `env/io_import.py`（変える） | 共通の参照は対象のグループ、プロジェクトの参照はそのプロジェクトのグループで作る。`export` は対象のグループに属するプロジェクトだけを集め、`import` はバンドルに別グループのプロジェクトがあれば 1 件も取り込まずに止める（決定 12） |
 | `commands/env_backend.py`（変える） | `status` にグループの行と 4 パス。`use` に `--layout` / `--group-alias`。レイアウトが変わったらキャッシュを消す。`test` は対象のグループに属するプロジェクトだけ調べる。`migrate` に `--exclude-project` と、参照ごとのグループ |
-| `commands/container.py` `_ensure_env_files` / `_run_deploy_pipeline` / `cmd_scale`（変える） | 存在判定の参照にグループを渡す。子プロセスの `env init`（`cwd` は `$DEVBASE_ROOT`）へ `--group <プロジェクトのグループ>` を渡す（決定 10）。`up` と `scale` がコンテナを作る前に、共通の検査 `_check_group_consistency(project)` でボリュームのグループ（`resolve_account_group()`）と `declared_group` を比べ、`layout: group` で食い違えば止める（決定 7） |
+| `commands/container.py` `_ensure_env_files` / `_run_pre_up_checks` / `cmd_scale`（変える） | 存在判定の参照にグループを渡す。子プロセスの `env init`（`cwd` は `$DEVBASE_ROOT`）へ `--group <プロジェクトのグループ>` を渡す（決定 10）。共通の検査 `_check_group_consistency(project)` でボリュームのグループ（`resolve_account_group()`）と `declared_group` を比べ、`layout: group` で食い違えば止める（決定 7）。呼ぶ位置は `_run_pre_up_checks` の冒頭（`_ensure_env_files` より前）と `cmd_scale` の冒頭 |
 | `cli.py` `_load_secret_env`（変える） | `layout: group` で、名前を指定したライフサイクル操作（`up <name>` など）の dispatch 前の注入を、実行時のディレクトリではなく指定したプロジェクトで解決する（決定 11） |
 | `commands/env_ops.py` `doctor`（変える） | `git check-ignore` で点検するキャッシュのパスを設定の `cache_relpath` から組む |
 | `cli.py` の引数（変える） | `env list/get/set/delete/edit` と `env init` に `--group NAME`、`env backend use` に `--layout {flat,group}` と `--group-alias FROM=TO`（繰り返し可）、`env backend migrate` に `--exclude-project NAME`（繰り返し可） |
@@ -173,14 +173,14 @@ cache:
 
 | キー | `version: 1` | `version: 2` |
 | --- | --- | --- |
-| `openbao.layout` | 置けない（`flat` として動く） | `group` だけを受け付ける。不在なら `group` |
+| `openbao.layout` | 置けない（`flat` として動く） | 必須。`group` だけを受け付ける。不在なら拒む |
 | `openbao.path_team_global` / `path_team_project_prefix` | 今と同じ | 置けない（置けば拒む） |
 | `openbao.path_team_prefix` | 置けない | チーム単位の親。既定 `team` |
 | `openbao.path_user_prefix` | 今と同じ | 今と同じ（既定 `users`） |
 | `openbao.group_aliases` | 置けない | グループ名 → 置き場のグループ名の対応。キーも値も `resolve_account_group` の検証を通す。既定は空 |
 
 **版とレイアウトを 1 対 1 にする。** `version: 1` は `flat`、`version: 2` は `group` である。
-`layout` を明示させるのは、読み手が版の番号から並びを思い出さなくて済むためである。
+`version: 2` で `layout` を必須にするのは、読み手が版の番号から並びを思い出さなくて済むためである。
 置けないキーを置いたときは、キー名と版を添えて拒む（今の「対応していない値は既定へ
 読み替えない」規則に揃える）。
 
@@ -207,7 +207,7 @@ cache:
 | チームのプロジェクト | `cache/team/projects/<name>.env.age` | `cache/team/<g>/projects/<name>.env.age` |
 | 個人共通 | `cache/user/global.env.age` | `cache/user/<g>/global.env.age` |
 | 個人のプロジェクト | `cache/user/projects/<name>.env.age` | `cache/user/<g>/projects/<name>.env.age` |
-| `index.json` のキー | `team:global` / `user:project:<name>` | `team:<g>:global` / `user:<g>:project:<name>` |
+| `index.json` のキー（チーム共通 / チームのプロジェクト / 個人共通 / 個人のプロジェクト） | `team:global` / `team:project:<name>` / `user:global` / `user:project:<name>` | `team:<g>:global` / `team:<g>:project:<name>` / `user:<g>:global` / `user:<g>:project:<name>` |
 
 控えの中身と `scope`（URL・`mount`・パス・`role_id` の SHA-256）は変えない。パスが変わる
 ため、`version: 1` の控えを `version: 2` の参照に使うことは `scope` の不一致で起きない。
@@ -289,9 +289,12 @@ devbase env backend migrate --to openbao [--exclude-project NAME]... [--dry-run]
   上の 2 行と同じ規則でグループを持ち、移行先（age）の参照はグループを持たない（ファイル backend は
   分けない）。移行元の参照をグループなしで作ると、`OpenBaoBackend` が空のグループを拒んで読めない
 - `--to age` で移せる共通の参照は 1 つ（`secrets/global.env.age`）だけである。`$DEVBASE_ROOT/env` の
-  グループの共通の参照を移し、他のグループの共通の参照は移さない。移さなかったグループ名と
-  パスを表示し、サーバ上に残す（今の `--to age` がサーバ側を消さないのと同じ扱い）。プロジェクトの
-  参照は、それぞれのプロジェクトのグループから移す
+  グループの共通の参照を移し、他のグループの共通の参照は移さない。プロジェクトの参照は、
+  それぞれのプロジェクトのグループから移す
+- 「他のグループ」は、移す対象のプロジェクト（`--exclude-project` で外したものを除く）の
+  `declared_group` のうち、`$DEVBASE_ROOT/env` のグループと違う置き場のものである。**その共通の
+  参照へは要求を出さない。** 組み立てたパスを表示し、サーバ上に残す旨を述べるだけにする
+  （今の `--to age` がサーバ側を消さないのと同じ扱い）
 - `migrate --to openbao` は全プロジェクトのグループへ書く。グループ単位のポリシーで書けない
   グループのプロジェクトは `--exclude-project` で外す（外さなければ今と同じく「書き込み権限が
   無い」で止まる）
@@ -302,7 +305,7 @@ devbase env backend migrate --to openbao [--exclude-project NAME]... [--dry-run]
 
 | コマンド | 検査の位置 | その後にある副作用 |
 | --- | --- | --- |
-| `up` | `cmd_up` の `_run_pre_up_checks` の中 | 自動スナップショット、ボリュームの作成、機密の注入、構成の生成 |
+| `up` | `_run_pre_up_checks` の冒頭（`_ensure_env_files` より前） | 子プロセスの `env init`、`pre-up` フック、自動スナップショット、ボリュームの作成、機密の注入、構成の生成 |
 | `scale` | `cmd_scale` の冒頭（`project_runtime.write_scale` の前） | `project.local.yml` の `scale` の書き換え、ボリュームの作成、構成の生成 |
 
 途中で止めると、別グループの名前のボリュームや書き換えた `scale` が残るためである。
@@ -325,6 +328,7 @@ sequenceDiagram
     participant OB as OpenBaoBackend
     participant SRV as OpenBao
     participant DL as _dispatch_lifecycle
+    participant PRE as _run_pre_up_checks
     participant DEP as _run_deploy_pipeline
     CLI->>RT: inject(root, "web")（指定した名前で解決。決定 11）
     RT->>ST: ref_group("web")
@@ -334,8 +338,10 @@ sequenceDiagram
     OB->>SRV: login + GET team/with/global ほか 3
     CLI->>DL: up web（chdir と env の載せ直し）
     DL->>RT: clear_injected → inject(root, "web")（控えから返る）
-    DL->>DEP: 起動
-    DEP->>GR: declared_group(root, "web") と resolve_account_group() を比べる
+    DL->>PRE: 起動前の検査
+    PRE->>GR: 冒頭で declared_group(root, "web") と resolve_account_group() を比べる
+    PRE->>PRE: _ensure_env_files（食い違わなかったときだけ）
+    DL->>DEP: スナップショットの後に起動
     DEP->>RT: inject(root, "web")（控えから返る）
 ```
 
@@ -487,21 +493,22 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 | 2 | 同上。宣言なし + `group_aliases: {default: nyle}` で `team/nyle/…`。生成される構成のボリュームが `devbase_home_default` |
 | 3 | `tests/commands/test_env_user_axis.py` に、`projects/web/src` を実行時のディレクトリにした `set` / `set -p` / `set --user` の書き込み先 |
 | 4 | `tests/env/test_groups.py`（新設）で、置き場に `DEVBASE_ACCOUNT_GROUP` があってもファイルの値を返すこと。`declared_group` はストアを受け取らない（シグネチャで固定） |
-| 5 | `tests/commands/test_env_user_axis.py` に `$DEVBASE_ROOT` での `--group kkg` の 5 コマンドの宛先と `list` の見出し。`projects/web`（`with`）での `set -p --group kkg` が 1 で要求 0 回、`get --group kkg` がプロジェクトの参照を探さないこと。宣言の無いプロジェクトで `set -p --group nyle`（`default: nyle`）が通ること |
+| 5 | `tests/commands/test_env_user_axis.py` に `$DEVBASE_ROOT` での `--group kkg` の 5 コマンドの宛先と `list` の見出し |
+| 5a | 同上。`projects/web`（`with`）での `set -p --group kkg` が 1 で要求 0 回、`get --group kkg` がプロジェクトの参照を探さないこと。宣言の無いプロジェクトで `set -p --group nyle`（`default: nyle`）が通ること |
 | 6 | 同上。使えない名前 4 つで終了コード 2 と偽サーバへの要求 0 回。`version: 1` とファイル backend での `--group` の拒否 |
 | 7 | `tests/cli/test_up_roundtrips.py` の切替の場合に、グループの違う 2 プロジェクト。偽サーバへの要求に `team/nyle/…` / `users/<user>/nyle/…` が無く、認証 1 回・取得 4 回。`api` 固有のキーが残らない |
 | 8 | `tests/env/test_cache.py` に、`nyle` と `with` の控えが別ファイルに置かれ、不達で各グループの控えが使われること |
 | 9 | 既存の `tests/env/` / `tests/commands/` / `tests/cli/` が期待値を変えずに通ること。`tests/env/test_backend_config.py` に `version: 1` のパスの対応を固定する表を足す |
 | 10 | 既存のファイル backend のテストが変更なしで通ること |
 | 11 | `tests/commands/test_env_backend.py` に `status` のレイアウト・グループ・出所・4 パスの行 |
-| 12 | `tests/commands/test_env_backend_migrate.py` に、グループの違う 2 プロジェクトと `--exclude-project` の場合、存在しない名前の 2、`--dry-run` がパスとキー名だけを出すこと。`version: 2` の OpenBao から `--to age` へ戻す場合に、`$DEVBASE_ROOT/env` のグループの共通の参照とプロジェクトごとのグループの参照が age へ移り、他のグループの共通の参照は移さずに名前とパスが表示されること |
+| 12 | `tests/commands/test_env_backend_migrate.py` に、グループの違う 2 プロジェクトと `--exclude-project` の場合、存在しない名前の 2、`--dry-run` がパスとキー名だけを出すこと。`version: 2` の OpenBao から `--to age` へ戻す場合に、`$DEVBASE_ROOT/env` のグループの共通の参照とプロジェクトごとのグループの参照が age へ移り、他のグループの共通の参照は移さずに名前とパスが表示され、そのパスへの要求が 0 回であること |
 | 13 | `tests/cli/test_env_bundle_backend.py` に、`nyle` と `with` のプロジェクトがある `version: 2` で、`export` が要求するパスの一覧が対象のグループだけであること、`import` が別グループのプロジェクトを含むバンドルで 1 かつ要求 0 回であること。`env init` / `sync` / `project` の書き込み先 |
 | 14 | 追加した出力を検査するテストで、偽サーバに置いた値と `secret_id` が標準出力・標準エラー・ログに現れないこと |
 | 15 | `uv run pytest tests/`、`ruff check lib`、`python -m compileall -q lib bin` |
 | 16 | `tests/commands/test_container_up_order.py` に、`layout: group` でボリュームとファイルのグループが違うと `up` と `scale` が 1 で終わり、スナップショット・ボリュームの作成・`project.local.yml` の書き換えが起きていないこと。`version: 1` では止めないこと |
 | 17 | `tests/commands/test_env_backend.py` に、`nyle` と `with` のプロジェクトがある `projects/` で `test` を打ち、偽サーバへの要求が対象のグループのパスだけであること |
 | 18 | `tests/cli/test_up_roundtrips.py` の `env init` を走らせる場合を `version: 2` と `with` のプロジェクトで行い、子プロセスの引数に `--group with` があり、書いた値でその `up` が起動すること |
-| 決定 1 | `tests/env/test_backend_config.py` に、`version: 2` で `path_team_global` を置いたときの拒否、`version: 1` で `group_aliases` を置いたときの拒否、読み替えた後の `global` / `projects` の拒否。`use --group-alias default=global` の 2 |
+| 決定 1 | `tests/env/test_backend_config.py` に、`version: 2` で `layout` が無いときと `path_team_global` を置いたときの拒否、`version: 1` で `group_aliases` を置いたときの拒否、読み替えた後の `global` / `projects` の拒否。`use --group-alias default=global` の 2 |
 
 ## 未確認のまま残ること
 
