@@ -259,7 +259,8 @@ devbase env backend use openbao [--layout {flat,group}] [--group-alias FROM=TO].
 | `--layout` なし・既存の設定あり | 既存の版とレイアウトを引き継ぐ |
 | `--layout` なし・既存の設定なし | `group`（`version: 2`）で書く |
 | `--layout group` | `version: 2` で書く。`path_team_global` / `path_team_project_prefix` は捨てる |
-| `--layout flat` | `version: 1` で書く。`group_aliases` があれば捨てた旨を出す |
+| `--layout flat` | `version: 1` で書く。既存の `group_aliases` があれば捨てた旨を出す |
+| `--group-alias` と、`--layout flat` または（`--layout` なしで）既存の設定が `version: 1` | 組み合わせの誤りとして 2。設定を書き換えない（`version: 1` の `--group` を 2 で拒むのと揃える） |
 | `--group-alias default=nyle` | `group_aliases` を**この指定で置き換える**（1 つも無ければ既存を引き継ぐ）。`FROM` と `TO` は `resolve_account_group` の検証を通す。`TO` が `global` / `projects` のときも拒む（`FROM` は拒まない。`global` という名前のグループを別の置き場へ向ける対応は成り立つ）。通らなければ 2、設定を書き換えない |
 | レイアウトが変わった | 設定を書いた後に `cache/` を消し、消した旨を出す |
 
@@ -278,7 +279,7 @@ devbase env backend use openbao [--layout {flat,group}] [--group-alias FROM=TO].
 ### `env backend migrate`
 
 ```text
-devbase env backend migrate --to openbao [--exclude-project NAME]... [--dry-run] [--yes]
+devbase env backend migrate --to {openbao,age} [--exclude-project NAME]... [--dry-run] [--yes]
 ```
 
 - 共通の参照は `declared_group(root, None)` で作る（`$DEVBASE_ROOT/env` → `default`）
