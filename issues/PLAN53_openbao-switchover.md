@@ -82,9 +82,15 @@
       操作: 切替前に採った `devbase env exec -- env | sort` と、切替後の同じ出力を比べる
       結果: 差分が 0 行（`DEVBASE_OPENBAO_*` などブートストラップ由来の変数を除く。除いた
       変数名は記録に書く）
-- [x] 単位 6 の後、`secrets/global.env.age` / `secrets/projects/*.env.age` / `.env` /
-      `projects/*/.env` が存在しない（`backups/env-backend-migrate/` の下は除く）
-      → 2026-09-15: 機密を持つファイルは残っていない。残っているのは 0 キーの空ファイル（age 14 本、平文 `.env` 7 本）と、
+- [x] 単位 6 の後、~~`secrets/global.env.age` / `secrets/projects/*.env.age` / `.env` /
+      `projects/*/.env` が存在しない（`backups/env-backend-migrate/` の下は除く）~~
+      → `secrets/global.env.age` / `secrets/projects/*.env.age` / `.env` / `projects/*/.env` のうち、
+      機密（キー）を持つファイルが存在しない（`backups/env-backend-migrate/` の下、0 キーの空ファイル、
+      対象外と決めた carmo-system-console の `.env` を除く）
+      （2026-09-15、単位 6 の後にも 0 キーの空ファイルが残り、carmo-system-console は前提 5 で対象外と
+      決めていた。目的は「手元に機密が残らない」ことなので、字義どおりの「存在しない」から機密を持たないことへ
+      条件を合わせた。`[x]` は改めた条件に対する判定）
+      記録（2026-09-15）: 機密を持つファイルは残っていない。残っているのは 0 キーの空ファイル（age 14 本、平文 `.env` 7 本）と、
       対象外と決めた carmo-system-console の `.env`（215 キー、S3 から配る本番の仕組み）。`secrets/global.env.age` は無い
 - [x] 単位 6 の後、`bao kv get -mount=devbase team/global` がチーム共通のキー一覧を返し、
       `users/takemi_ohama/global` が個人単位のキー一覧を返す（値は記録に書かない）
@@ -163,7 +169,8 @@
   `team/global` から消す（同じキーを 2 か所に残すと、個人単位に分けた意味が無くなる）
 - **元ファイルの削除（単位 6）を最後に置き、`devbase up` の確認を挟む。** `migrate` は退避
   するだけで消さない。確認前に消すと、戻す手段が `migrate --to age`（サーバから読み戻す）
-  だけになる
+  だけになり、しかも `migrate --to age` はチーム単位の参照しか写さないため、単位 5 の後は個人単位の
+  キーを別に入れ直す必要がある（「age ストアへ戻す手順」）
 
 ### 非機能設計表
 
@@ -191,6 +198,11 @@
 消すのは、チーム共通の一覧に個人の資格情報が残ると、後から加わる利用者がそれを読めるためで
 ある。消すのは `devbase env delete <KEY>`（CAS 付きの丸ごと置き換え）で、1 キーずつ戻せる。
 
+追記（2026-09-15、レビューの指摘）: CAS 付きの置き換えは KV v2 に新しい版を作るだけで、個人の資格情報を
+含む旧版は `team/global` に残り、読取権限を持つ利用者が版を指定して取得できる。この決定の順序
+（チーム共通へ一旦入れてから分ける）は版の履歴に個人の資格情報を残すため、旧版の削除を後から行った
+（実行の記録「単位 5 の後始末」）。
+
 #### 決定 3: #152 の確認は `with-ai-dev` の `devbase up` で行い、切替後に 1 回だけ行う
 
 切替前（age）でも `env exec` は空上書きを返すことを確認済み（#152 のコメント）。切替後の
@@ -212,12 +224,13 @@
 | 4 | `bin/devbase env backend migrate --to openbao --dry-run` → 衝突が無ければ `bin/devbase env backend migrate --to openbao` → `bin/devbase env backend status` → `cd projects/with-ai-dev && bin/devbase env exec -- env \| sort > <退避先>/after.env` → `diff before.env after.env` | OpenBao（`team/global` + `team/projects/<name>` × 19）と手元（元ファイルは `backups/env-backend-migrate/<日時>/` へ退避） | **本番** | `bin/devbase env backend migrate --to age`（サーバ側は残る。退避先から戻す） |
 | 4' | 不達時の確認: `backend.yml` の `url` は変えず `HTTPS_PROXY=http://127.0.0.1:9 bin/devbase env exec -- true`（通信だけを届かなくする。`url` を変えると控えの `scope` から外れて exit=1 になる） | 手元 | 検証 | 不要（環境変数はそのコマンドにだけ効き、ファイルを変えない） |
 | 5 | 利用者が仕分けたキーごとに `bin/devbase env set --user KEY`（値は伏せ字入力）→ `bin/devbase env delete KEY`（`team/global` から消す） | OpenBao（`users/takemi_ohama/global`、`team/global`） | **本番** | `env delete --user KEY` と `env set KEY`（退避先の age ファイルから値を読める） |
-| 6 | `cd projects/with-ai-dev && bin/devbase up` → `docker exec with-ai-dev-dev-1 bash -lc 'echo "[$GOOGLE_CLOUD_PROJECT] [$GCP_ACTIVE_PROFILE]"'`（#152）→ ホストの `bao kv get -mount=devbase team/global` でキー名を別経路で確認 → 問題が無ければ `rm -r backups/env-backend-migrate/<日時>/` | 手元（コンテナの作り直し、退避先の削除） | **本番** | 退避先の削除は**戻せない**（サーバの値から `migrate --to age` で再生成はできる）。コンテナの作り直しは `devbase up` でやり直せる |
+| 6 | `cd projects/with-ai-dev && bin/devbase up` → `docker exec with-ai-dev-dev-1 bash -lc 'echo "[$GOOGLE_CLOUD_PROJECT] [$GCP_ACTIVE_PROFILE]"'`（#152）→ ホストの `bao kv get -mount=devbase team/global` でキー名を別経路で確認 → 問題が無ければ `rm -r backups/env-backend-migrate/<日時>/` | 手元（コンテナの作り直し、退避先の削除） | **本番** | 退避先の削除は**戻せない**（~~サーバの値から `migrate --to age` で再生成はできる~~ → `migrate --to age` が戻すのはチーム単位だけで、個人単位のキーは別に入れ直す。2026-09-15、レビューの指摘で誤りと分かった。手順は「age ストアへ戻す手順」）。コンテナの作り直しは `devbase up` でやり直せる |
 
 - 単位 1 と 3 は管理者の操作で、この会話は代行しない。実行の結果（JSON の**キー名**と終了コード）を
   利用者から受け取って記録する
 - **失敗した単位より後は実行しない**（`operation-run.md` の 6）
 - **取り消せない単位**: 6 の退避先の削除。実行の前にそのことを示す
+  （2026-09-15 追記: レビューの指摘で足した「単位 5 の後始末」の全版の削除も戻せない。承認を得て実施した）
 
 ## 個人単位へ移すキー（前提 4、利用者が決める）
 
@@ -456,8 +469,67 @@ $ bao kv list -mount=devbase team → ['global', 'projects/']
 影響: 作成から削除まで数十秒。値は無意味な `X=1`。監査ログには作成と削除が残る。
 PLAN54 の受け入れ条件 5（「チーム共通へは書けない」）は、書き手の権限を持たない利用者で確かめる必要がある。
 
+### 単位 5 の後始末: `team/global` の旧版を消す（2026-09-15）
+
+対象の系: OpenBao（`team/global` の版の履歴）  区分: 本番
+取り消し: **戻せない**（全版の履歴を削除する）
+発端: PR #181 のレビュー指摘（単位 5 の CAS 付き置き換えは新しい版を作るだけで、個人の資格情報を含む旧版が残る）。
+利用者の承認を得て実施した。
+
+確認（指摘どおり旧版に残っていた）:
+
+$ bao kv metadata get -mount=devbase team/global
+current 2 / v1（2026-09-15T07:59:41Z、47 キー。`GH_TOKEN` など個人単位のキーを含む）/ v2（08:20:18Z、21 キー）。
+いずれも deleted / destroyed なし
+終了コード: 0
+
+$ bao token capabilities devbase/destroy/team/global
+deny
+（版だけを消す destroy は現行のポリシーに無い。そのため metadata ごと消して作り直す方式にした）
+
+実施（1 プロセスで、値を画面に出さない）:
+
+1. `OpenBaoBackend.fetch` で現行の v2（21 キー）を読み、個人単位の 26 キーのどれも含まないことを assert
+2. `remove`（`DELETE devbase/metadata/team/global`、全版を削除）
+3. `SecretStore.save` で 21 キーを新しい版 1 として書く
+4. 読み戻して 1 の内容と一致することを確認
+
+$ DEVBASE_ROOT=$PWD PYTHONPATH=lib uv run python <作り直しのスクリプト>
+rebuilt team/global: 21 keys, empty window 0.25s
+終了コード: 0
+
+反映の確認:
+- `bao kv metadata get -mount=devbase team/global` → `current 1 versions ['1']`
+- `bao kv get -mount=devbase -version=2 team/global` → 終了コード 2（旧版は取得できない）
+- `projects/with-ai-dev` の `env exec -- env | sort` と単位 0 の基準の差分: 直後の 1 回目は 1 行（差の変数名は
+  控えておらず未特定）、続けて 2 回やり直していずれも 0 行（`CLAUDE_*` を除く）
+
+同じ性質の残り:
+- `users/takemi_ohama/global` は版 1〜3 を持つ。本人しか読めないパスなので対処しない
+- 単位 6 で誤って作った `team/zz-write-probe` は metadata delete 済みで、版も残らない
+
+教訓: チーム共通へ一旦入れてから個人単位へ分ける順序（決定 2）は、KV v2 の版の履歴に個人の資格情報を残す。
+次に同じ移行をするなら、`migrate` の前に個人単位を分けるか、分けた後に全版の削除まで含める。
+
+### age ストアへ戻す手順（単位 5 の後）
+
+`migrate --to age` はチーム単位の参照（`_team_refs()`: チーム共通と各プロジェクトのチーム機密）だけを写す。
+単位 5 の後は個人単位の 26 キーが `users/takemi_ohama/global` にあるため、`migrate --to age` だけでは
+`GH_TOKEN` などが欠ける。退避先は利用者の判断で残している。
+
+- (a) 退避先 `backups/env-backend-migrate/20260915-165942/` が残っている間: `global.env.age` を
+  `secrets/global.env.age` へ、`projects/*.env.age`（5 本）を `secrets/projects/` へ戻し、
+  `bin/devbase env backend use age`（または `auto`）で切替前の状態（グローバル 47 キー）に戻る
+- (b) 退避先を消した後:
+  1. OpenBao のまま `bin/devbase env get --user <KEY>` で個人単位の 26 キー（単位 5 の一覧）の値を読む
+  2. `bin/devbase env backend migrate --to age` でチーム単位（グローバル 21 キーとプロジェクトのチーム機密）を戻す
+  3. `bin/devbase env backend use age` の後、26 キーを `env set` で入れ直す。値がコマンド引数に載らないよう
+     `bin/devbase env edit` で入れる
+- (c) どちらの場合も、戻した後に `projects/with-ai-dev` で `bin/devbase env exec -- env | sort` を採り、単位 0 の基準
+  `backups/plan53/before.env` と比べて差分 0 行（`CLAUDE_*` を除く）を確かめる
+
 ### 残したもの
 
-- `backups/env-backend-migrate/20260915-165942/`（元の age。利用者の判断で残す）
+- `backups/env-backend-migrate/20260915-165942/`（元の age。利用者の判断で残す。消すと「age ストアへ戻す手順」の (b) になる）
 - `backups/plan53/`（単位 0 の基準。機密の値を含むので、確認が済んだら利用者が消す）
 - 端末 `macbook` の `secret_id`（使用中）
