@@ -23,7 +23,7 @@
 | F5 | `env backend use openbao --layout group --group-alias default=nyle` でグループ別の置き場へ切り替える | 端末の設定者 |
 | F6 | `env backend migrate --to openbao` がプロジェクトごとのグループへ書き、`--exclude-project` で移行から外す | 端末の設定者 |
 | F7 | 手元のキャッシュがグループごとに分かれ、不達のときに自分のグループの控えで起動する | 開発者（意識せずに使う） |
-| F8 | 起動するボリュームのグループと機密のグループが食い違えば `up` を止める | 開発者（誤設定の検出） |
+| F8 | 起動するボリュームのグループと機密のグループが食い違えば `up` / `scale` を止める | 開発者（誤設定の検出） |
 
 ## 構成要素
 
@@ -37,6 +37,7 @@
 | `env/cache.py`（変える） | `entry_path` / `entry_key` を設定の `cache_relpath` から組む。`layout: flat` では今と同じ位置 |
 | `env/runtime.py` `resolve()`（変える） | `store.ref_group(project)` で得たグループを 4 参照に渡す |
 | `commands/env.py`（変える） | `_global_env` / `_project_env` / `_target_env` がグループを決める。`--group` の検証と、`-p` とプロジェクトのグループの食い違いを拒む。`list` の見出しにグループを出す。`init` / `sync` / `project` / `export` / `import` も同じ決め方を使う |
+| `env/sources.py` `SourcesManager`（変える） | 同期済みのハッシュの控えを置き場のグループごとに持つ。`layout: group` では `$DEVBASE_ROOT/.env.sources.<g>.yml`、それ以外は今の `.env.sources.yml`（決定 13） |
 | `env/bundle.py` / `env/io_import.py`（変える） | 共通の参照は対象のグループ、プロジェクトの参照はそのプロジェクトのグループで作る。`export` は対象のグループに属するプロジェクトだけを集め、`import` はバンドルに別グループのプロジェクトがあれば 1 件も取り込まずに止める（決定 12） |
 | `commands/env_backend.py`（変える） | `status` にグループの行と 4 パス。`use` に `--layout` / `--group-alias`。レイアウトが変わったらキャッシュを消す。`test` は対象のグループに属するプロジェクトだけ調べる。`migrate` に `--exclude-project` と、参照ごとのグループ |
 | `commands/container.py` `_ensure_env_files` / `_run_pre_up_checks` / `cmd_scale`（変える） | 存在判定の参照にグループを渡す。子プロセスの `env init`（`cwd` は `$DEVBASE_ROOT`）へ `--group <プロジェクトのグループ>` を渡す（決定 10）。共通の検査 `_check_group_consistency(project)` でボリュームのグループ（`resolve_account_group()`）と `declared_group` を比べ、`layout: group` で食い違えば止める（決定 7）。呼ぶ位置は `_run_pre_up_checks` の冒頭（`_ensure_env_files` より前）と `cmd_scale` の冒頭 |
@@ -485,6 +486,17 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 名前とグループを挙げて 1 件も取り込まずに 1 で終了し、既存の `--exclude-project NAME`（繰り返し可）での
 除外を案内する。
 
+### 決定 13: `env sync` の同期済みハッシュは置き場のグループごとに持つ
+
+`SourcesManager` は `$DEVBASE_ROOT/.env.sources.yml` 1 つに、ソースファイルのハッシュを記録する。
+`env sync` の宛先だけをグループ別にすると、グループ A で同期した時点でハッシュが更新され、
+グループ B の同期は「変更なし」と判定される。B の置き場には古い認証情報が残る。
+`layout: group` では控えのファイル名に置き場のグループ名を入れ、`env sync` / `export` / `import` の
+`--merge-metadata` が対象のグループの控えを読み書きする。
+
+控えを 1 つのファイルの中でグループごとの節に分ける案は採らない。`version: 1` の端末と
+同じファイルの形が変わり、古い devbase が読むと節を知らずに全体を書き戻す。
+
 ## テスト設計
 
 | 受け入れ条件 | 何で確かめるか |
@@ -503,6 +515,7 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 | 11 | `tests/commands/test_env_backend.py` に `status` のレイアウト・グループ・出所・4 パスの行 |
 | 12 | `tests/commands/test_env_backend_migrate.py` に、グループの違う 2 プロジェクトと `--exclude-project` の場合、存在しない名前の 2、`--dry-run` がパスとキー名だけを出すこと。`version: 2` の OpenBao から `--to age` へ戻す場合に、`$DEVBASE_ROOT/env` のグループの共通の参照とプロジェクトごとのグループの参照が age へ移り、他のグループの共通の参照は移さずに名前とパスが表示され、そのパスへの要求が 0 回であること |
 | 13 | `tests/cli/test_env_bundle_backend.py` に、`nyle` と `with` のプロジェクトがある `version: 2` で、`export` が要求するパスの一覧が対象のグループだけであること、`import` が別グループのプロジェクトを含むバンドルで 1 かつ要求 0 回であること。`env init` / `sync` / `project` の書き込み先 |
+| 決定 13 | `tests/commands/` の `env sync` のテストに、`layout: group` で `nyle` と `with` を順に同期し、ソースファイルを更新した後の 2 回目もそれぞれの置き場へ書かれること。`version: 1` では `.env.sources.yml` を使うこと |
 | 14 | 追加した出力を検査するテストで、偽サーバに置いた値と `secret_id` が標準出力・標準エラー・ログに現れないこと |
 | 15 | `uv run pytest tests/`、`ruff check lib`、`python -m compileall -q lib bin` |
 | 16 | `tests/commands/test_container_up_order.py` に、`layout: group` でボリュームとファイルのグループが違うと `up` と `scale` が 1 で終わり、スナップショット・ボリュームの作成・`project.local.yml` の書き換えが起きていないこと。`version: 1` では止めないこと |
