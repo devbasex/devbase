@@ -6,11 +6,12 @@ import os
 import shutil
 import stat
 import subprocess
+from types import SimpleNamespace
 
 import pyrage
 import pytest
 
-from devbase.commands import env_ops
+from devbase.commands import env as env_cmd, env_ops
 from devbase.env import agekeys
 from devbase.env.secret_store import SecretRef, SecretStore
 
@@ -482,3 +483,9 @@ def test_doctor_reports_a_missing_key(root, capsys):
 
     assert env_ops.cmd_env_doctor(root) == 1
     assert '暗号化に使う鍵がありません' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('subcommand', [None, 'unknown'])
+def test_env_dispatch_without_handler_returns_one(root, subcommand):
+    """現状固定: 未指定・未知のサブコマンドは失敗を返す。"""
+    assert env_cmd.cmd_env(root, SimpleNamespace(subcommand=subcommand)) == 1

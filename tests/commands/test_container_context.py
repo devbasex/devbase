@@ -416,3 +416,18 @@ def test_dispatch_clears_source_secrets_before_loading_target_env(project, monke
     assert container._dispatch_lifecycle(types.SimpleNamespace(subcommand='down', name='B')) == 0
     assert seen[-1]['DOCKER_CONTEXT'] == 'b'
     secret_runtime.clear_injected()
+
+
+@pytest.mark.parametrize(('raw', 'expected'), [
+    ('', None),
+    ('# c', None),
+    ('  # c', None),
+    ('export FOO=bar', ('FOO', 'bar')),
+    ('FOO', None),
+    ('=x', None),
+    ('  A = b ', ('A', ' b')),
+    ('export  =y', None),
+])
+def test_parse_env_assignment_current_branches(raw, expected):
+    """現状固定: 行全体の strip 後も、値の先頭の空白は残る。"""
+    assert container._parse_env_assignment(raw) == expected

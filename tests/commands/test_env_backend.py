@@ -578,3 +578,11 @@ def test_grouped_backend_test_outside_projects_uses_the_root_group(grouped, open
         'team/nyle/global', 'users/member01/nyle/global',
         'team/nyle/projects/api', 'users/member01/nyle/projects/api',
     }
+
+
+def test_backend_test_without_openbao_returns_one(root, capsys):
+    """現状固定: サーバ未設定では参照の検査結果を出力しない。"""
+    assert env_backend.cmd_env_backend_test(root) == 1
+    out = capsys.readouterr().out
+    assert '読めた参照:' not in out
+    assert '接続先:' not in out
