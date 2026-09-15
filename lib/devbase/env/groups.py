@@ -54,16 +54,20 @@ def _read_declaration(path: Path) -> Optional[str]:
     if not path.is_file():
         return None
     try:
-        data = EnvFile.parse_bytes(path.read_bytes())
+        entries = EnvFile.parse_entries(path.read_bytes())
     except (OSError, UnicodeDecodeError) as e:
         raise DevbaseError(f"{path} を読めませんでした: {e}") from e
-    # ラッパーの ``source`` と ``_load_project_env`` は ``export KEY=...`` も読む。パーサは
-    # ``export KEY`` をキーにするため、接頭辞を外して比べる。後に書いた行が勝つ (source と同じ)
+    # ラッパーの ``source`` と ``_load_project_env`` は ``export KEY=...`` も読み、後に書いた行が
+    # 勝つ。パーサは ``export KEY`` をキーにし、辞書にすると同じキーの位置が最初の行のまま
+    # 残るため、行の順に走査して接頭辞を外して比べる
     found = None
-    for key, value in data.items():
+    for entry in entries:
+        if entry.kind != 'kv' or entry.key is None:
+            continue
+        key = entry.key
         name = key[len('export '):].strip() if key.startswith('export ') else key
         if name == keys.DEVBASE_ACCOUNT_GROUP:
-            found = value
+            found = entry.value or ''
     return found
 
 

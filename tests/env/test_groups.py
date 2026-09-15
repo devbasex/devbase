@@ -193,3 +193,12 @@ def test_export_prefixed_declaration_is_read(root):
     write_env(root / 'projects' / 'web' / 'env', 'export DEVBASE_ACCOUNT_GROUP=with\n')
 
     assert groups.declared_group(root, 'web') == 'with'
+
+
+def test_last_declaration_wins_across_export_and_plain_lines(root):
+    """同じキーを ``export`` の有無を混ぜて繰り返したときも、``source`` と同じく最後の行が勝つ"""
+    write_env(root / 'projects' / 'web' / 'env',
+              'DEVBASE_ACCOUNT_GROUP=nyle\nexport DEVBASE_ACCOUNT_GROUP=kkg\n'
+              'DEVBASE_ACCOUNT_GROUP=with\n')
+
+    assert groups.declared_group(root, 'web') == 'with'
