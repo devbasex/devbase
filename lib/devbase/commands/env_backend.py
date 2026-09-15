@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import getpass
 import sys
+from dataclasses import dataclass
 from dataclasses import replace as _dc_replace
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from devbase.env import backend_config as _bc
 from devbase.env import bootstrap as _bootstrap
@@ -39,7 +40,8 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
         'migrate': lambda: cmd_env_backend_migrate(
             devbase_root, to=getattr(args, 'to', None),
             dry_run=getattr(args, 'dry_run', False),
-            assume_yes=getattr(args, 'assume_yes', False)),
+            assume_yes=getattr(args, 'assume_yes', False),
+            exclude_projects=getattr(args, 'exclude_projects', None) or ()),
     }
     handler = handlers.get(action)
     if handler is None:
@@ -65,12 +67,6 @@ def _project_names(devbase_root: Path) -> List[str]:
                     continue
                 names.append(entry.name)
     return names
-
-
-def _team_refs(devbase_root: Path) -> List[SecretRef]:
-    """チーム単位の参照 (共通 + 実在するプロジェクト)"""
-    return [SecretRef.for_global()] + [SecretRef.for_project(name)
-                                       for name in _project_names(devbase_root)]
 
 
 def cmd_env_backend_status(devbase_root: Path) -> int:
@@ -479,13 +475,17 @@ MIGRATE_TARGETS = ('age', _bc.BACKEND_OPENBAO)
 
 
 def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
-                            dry_run: bool = False, assume_yes: bool = False) -> int:
+                            dry_run: bool = False, assume_yes: bool = False,
+                            exclude_projects: Sequence[str] = ()) -> int:
     """チーム単位の機密を別の backend へ写す (PLAN51 決定 7)。
 
     手順は両方向とも同じ: 移行先の同じ参照を読んで衝突を確かめる → 移行先の内容へ
     移行元を重ねて保存する → 読み戻して一致を確かめる → 一致しなければこの実行で
     作成したキーだけを消す → 成功したときだけ ``backend.yml`` を書き換える。
     移行元の機密は自動削除しない。
+
+    ``exclude_projects`` のプロジェクトの参照は、読まない・書かない・退避しない。
+    ``projects/`` に無い名前は打ち間違いとして 2 で止める (PLAN56)。
     """
     from devbase.env import cache as _cache
     from devbase.env.openbao import OpenBaoBackend
@@ -494,6 +494,11 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
     if to not in MIGRATE_TARGETS:
         logger.error("--to には %s のいずれかを指定してください: %r",
                      ' / '.join(MIGRATE_TARGETS), to)
+        return EXIT_USAGE
+    unknown = sorted(set(exclude_projects) - set(_project_names(root)))
+    if unknown:
+        logger.error("--exclude-project に指定したプロジェクトが $DEVBASE_ROOT/projects/ に"
+                     "ありません: %s", ', '.join(unknown))
         return EXIT_USAGE
 
     try:
@@ -523,7 +528,8 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         return 1
     assert isinstance(server, OpenBaoBackend)
 
-    plan = _MigrationPlan(root, file_store, server, to)
+    plan = _MigrationPlan(root, file_store, server_store, server, to,
+                          exclude_projects=exclude_projects)
     try:
         plan.prepare()
     except DevbaseError as e:
@@ -532,6 +538,7 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
 
     if not plan.moves:
         print("移す機密はありません")
+        plan.print_left_on_server()
         return 0
 
     plan.print_summary()
@@ -577,33 +584,85 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
     else:
         print("サーバ上の機密はそのまま残っています (devbase は消しません):")
         print(f"  接続先: {server.url}")
-        for ref, _ in plan.moves:
-            print(f"  {ref.label():<24} {server.display_path(ref)}")
+        for unit, _ in plan.moves:
+            print(f"  {unit.server_ref.label():<24} {server.display_path(unit.server_ref)}")
+        plan.print_left_on_server()
     return 0
+
+
+@dataclass(frozen=True)
+class _MoveUnit:
+    """移行の 1 単位。ファイル backend 側と OpenBao 側で参照を分けて持つ (PLAN56)。
+
+    ファイル backend はグループで分けないため ``file_ref`` はグループを持たず、
+    ``layout: group`` の OpenBao の ``server_ref`` はグループを持つ。同じ参照を両側に使うと、
+    ``OpenBaoBackend`` がグループの無い参照を拒んで読み書きできない。``version: 1`` では
+    両者は同じ値になる。
+    """
+
+    file_ref: SecretRef
+    server_ref: SecretRef
 
 
 class _MigrationPlan:
     """1 回の移行の計画と実行"""
 
-    def __init__(self, root: Path, file_store: SecretStore, server, to: str):
+    def __init__(self, root: Path, file_store: SecretStore, server_store: SecretStore,
+                 server, to: str, *, exclude_projects: Sequence[str] = ()):
         self.root = root
         self.file_store = file_store
+        self.server_store = server_store
         self.server = server
         self.to = to
-        #: (参照, 移行元のキー名) の並び
+        self.exclude_projects = set(exclude_projects)
+        #: (移行の単位, 移行元のキー名) の並び
         self.moves: List[tuple] = []
-        #: 参照 → 移行先に元からあった内容
+        #: 単位 → 移行先に元からあった内容
         self.existing: dict = {}
-        #: 参照 → 移行元の内容
+        #: 単位 → 移行元の内容
         self.source: dict = {}
-        #: 参照 → 衝突したキー名
+        #: 単位 → 衝突したキー名
         self.conflicts: dict = {}
+        #: ``--to age`` で移さずサーバ上に残す、他のグループの共通の参照
+        self.left_on_server: List[SecretRef] = []
 
-    def _source_backend(self):
-        return self.file_store if self.to == _bc.BACKEND_OPENBAO else self.server
+    @property
+    def _grouped(self) -> bool:
+        return self.server_store.config.openbao.grouped
 
-    def _dest_backend(self):
-        return self.server if self.to == _bc.BACKEND_OPENBAO else self.file_store.age
+    def _units(self) -> List[_MoveUnit]:
+        """移す単位を組み、``--to age`` で移さない他のグループの共通の参照を控える。
+
+        共通の参照のグループは ``$DEVBASE_ROOT/env``、プロジェクトの参照はそのプロジェクトの
+        ``env`` から決める (``SecretStore.ref_group``。実行時のディレクトリに左右されない)。
+        age へ移せる共通の参照は 1 つだけなので、``$DEVBASE_ROOT/env`` のグループのものを移し、
+        移すプロジェクトの置き場のうちそれと違うグループの共通の参照には要求を出さない。
+        """
+        store = self.server_store
+        common_group = store.ref_group(None)
+        units = [_MoveUnit(SecretRef.for_global(), SecretRef.for_global(group=common_group))]
+        others: dict = {}
+        for name in _project_names(self.root):
+            if name in self.exclude_projects:
+                continue
+            group = store.ref_group(name)
+            units.append(_MoveUnit(SecretRef.for_project(name),
+                                   SecretRef.for_project(name, group=group)))
+            storage = store.storage_group(group)
+            if self.to == 'age' and storage != store.storage_group(common_group):
+                others.setdefault(storage, group)
+        self.left_on_server = [SecretRef.for_global(group=group) for group in others.values()]
+        return units
+
+    def _source_side(self, unit: _MoveUnit):
+        if self.to == _bc.BACKEND_OPENBAO:
+            return self.file_store, unit.file_ref
+        return self.server, unit.server_ref
+
+    def _dest_side(self, unit: _MoveUnit):
+        if self.to == _bc.BACKEND_OPENBAO:
+            return self.server, unit.server_ref
+        return self.file_store.age, unit.file_ref
 
     def _read_current(self, backend, ref: SecretRef) -> dict:
         """移行元・移行先の現物を読む。
@@ -617,58 +676,79 @@ class _MigrationPlan:
         return backend.load(ref) if backend.exists(ref) else {}
 
     def prepare(self) -> None:
-        for ref in _team_refs(self.root):
-            data = self._read_current(self._source_backend(), ref)
+        for unit in self._units():
+            data = self._read_current(*self._source_side(unit))
             if not data:
                 continue
+            ref = unit.file_ref
             if self.to == 'age' and self.file_store.plaintext.exists(ref):
                 raise DevbaseError(
                     f"{ref.label()}の平文 {self.file_store.plaintext.path(ref)} が残っています。"
                     "age へ移すと暗号化・平文が同時に存在する状態になるため、"
                     "先に `devbase env encrypt` で暗号化するか退避してください")
-            current = self._read_current(self._dest_backend(), ref)
-            self.source[ref] = data
-            self.existing[ref] = current
-            self.moves.append((ref, sorted(data)))
+            current = self._read_current(*self._dest_side(unit))
+            self.source[unit] = data
+            self.existing[unit] = current
+            self.moves.append((unit, sorted(data)))
             clash = sorted(k for k in data if k in current)
             if clash:
-                self.conflicts[ref] = clash
+                self.conflicts[unit] = clash
+
+    def _heading(self, unit: _MoveUnit) -> str:
+        """参照の見出し。グループ別の置き場ではサーバ上のパスを添える (値は出さない)"""
+        label = f"{unit.server_ref.label():<24}"
+        if self._grouped:
+            label += f" {self.server.display_path(unit.server_ref)}"
+        return label
 
     def print_summary(self) -> None:
         direction = ('age / 平文 → openbao' if self.to == _bc.BACKEND_OPENBAO
                      else 'openbao → age')
         print(f"\n=== 移行する機密 ({direction}) ===")
-        for ref, keys in self.moves:
-            print(f"  {ref.label():<24} {len(keys)} 件: {', '.join(keys)}")
+        for unit, keys in self.moves:
+            print(f"  {self._heading(unit)} {len(keys)} 件: {', '.join(keys)}")
         if self.conflicts:
             print("\n移行先に同じキーがあります:")
-            for ref, keys in self.conflicts.items():
-                print(f"  {ref.label():<24} {', '.join(keys)}")
+            for unit, keys in self.conflicts.items():
+                print(f"  {self._heading(unit)} {', '.join(keys)}")
+        self.print_left_on_server()
+
+    def print_left_on_server(self) -> None:
+        """``--to age`` で移さない他のグループの共通の参照 (要求を出さずにパスだけを出す)"""
+        if not self.left_on_server:
+            return
+        settings = self.server_store.config.openbao
+        print("\n次のグループの共通の参照は age へ移さず、サーバ上に残します "
+              "(ファイル backend の共通は 1 つだけのため。読み取りの要求も出していません):")
+        for ref in self.left_on_server:
+            print(f"  グループ {settings.display_group(ref.group):<16} "
+                  f"{self.server.display_path(ref)}")
 
     def apply(self) -> None:
         from devbase.env.openbao import SecretRefusedError
 
-        dest = self._dest_backend()
         created: dict = {}
         try:
-            for ref, keys in self.moves:
-                merged = dict(self.existing[ref])
-                merged.update(self.source[ref])
+            for unit, keys in self.moves:
+                dest, ref = self._dest_side(unit)
+                merged = dict(self.existing[unit])
+                merged.update(self.source[unit])
                 # 結果が分からない失敗に備え、書く前から巻き戻しの対象に入れる。
                 # サーバが拒んだと確定した応答 (権限の不足・版の不一致) では何も
                 # 書けていないので、その参照は対象から外す。消すのは「作成したキー」
                 # ではなく「作成したキーのうち、値が保存したままのもの」なので値も控える
-                created[ref] = {key: merged[key] for key in keys}
+                created[unit] = {key: merged[key] for key in keys}
                 try:
                     dest.save(ref, merged)
                 except SecretRefusedError:
-                    created.pop(ref, None)
+                    created.pop(unit, None)
                     raise
                 logger.info("%s を書き込みました", ref.label())
-            for ref, _ in self.moves:
-                expected = dict(self.existing[ref])
-                expected.update(self.source[ref])
-                actual = self._read_back(ref)
+            for unit, _ in self.moves:
+                ref = self._dest_side(unit)[1]
+                expected = dict(self.existing[unit])
+                expected.update(self.source[unit])
+                actual = self._read_back(unit)
                 if actual != expected:
                     diff = sorted(k for k in expected if actual.get(k) != expected[k])
                     raise DevbaseError(
@@ -678,10 +758,10 @@ class _MigrationPlan:
             self._rollback(created)
             raise
 
-    def _read_back(self, ref: SecretRef) -> dict:
+    def _read_back(self, unit: _MoveUnit) -> dict:
         if self.to == _bc.BACKEND_OPENBAO:
-            return self.server.fetch(ref)
-        return self.file_store.age.load(ref)
+            return self.server.fetch(unit.server_ref)
+        return self.file_store.age.load(unit.file_ref)
 
     def _rollback(self, created: dict) -> None:
         """この実行で作成したキーだけを消す。移行先に元からあったキーは触らない。
@@ -690,13 +770,13 @@ class _MigrationPlan:
         他の利用者がそのキーを更新していることがあり、キー名だけで消すとその更新まで
         消える。
         """
-        dest = self._dest_backend()
-        for ref, written in created.items():
+        for unit, written in created.items():
+            dest, ref = self._dest_side(unit)
             try:
-                if self.to == 'age' and not self.existing[ref]:
+                if self.to == 'age' and not self.existing[unit]:
                     self.file_store.age.remove(ref)
                     continue
-                current = self._read_back(ref)
+                current = self._read_back(unit)
                 if self.to == _bc.BACKEND_OPENBAO:
                     kept = {k: v for k, v in current.items()
                             if not (k in written and written[k] == v)}
@@ -717,7 +797,8 @@ class _MigrationPlan:
         backup_dir = (self.root / 'backups' / 'env-backend-migrate'
                       / datetime.now().strftime('%Y%m%d-%H%M%S'))
         backup_dir.mkdir(parents=True, exist_ok=True)
-        for ref, _ in self.moves:
+        for unit, _ in self.moves:
+            ref = unit.file_ref
             backend = self.file_store.backend_for(ref)
             source = backend.path(ref)
             if not source.is_file():

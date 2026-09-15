@@ -475,6 +475,10 @@ def _add_env_backend_parser(env_sub):
                          help='Destination backend (age / openbao)')
     migrate.add_argument('--dry-run', action='store_true',
                          help='Show what would move (key names only) without writing')
+    migrate.add_argument('--exclude-project', action='append', default=[],
+                         metavar='NAME', dest='exclude_projects',
+                         help='Leave this project out of the migration: its secrets are '
+                              'neither read, written nor moved aside (repeatable)')
     migrate.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
                          help='Skip the confirmation prompt')
 
