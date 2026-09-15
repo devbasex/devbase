@@ -176,7 +176,7 @@ class OpenBaoSettings:
         if self.layout not in (LAYOUT_FLAT, LAYOUT_GROUP):
             raise BackendConfigError(
                 f"openbao.layout の値 {self.layout!r} には対応していません "
-                f"(受け付ける値: {LAYOUT_GROUP})")
+                f"(受け付ける値: {LAYOUT_FLAT} / {LAYOUT_GROUP})")
         if self.grouped:
             keys = ('path_team_prefix', 'path_user_prefix')
         else:
