@@ -837,6 +837,28 @@ _NO_SECRET_INJECTION = frozenset({
 })
 
 
+#: 対象の参照を自分で決めて読み書きする ``env`` のサブコマンド (PLAN56)。
+#:
+#: グループ別の置き場では、``--group`` や ``-p`` の検証より前に実行時のディレクトリの
+#: グループで注入すると、拒むはずの操作でも別グループのパスへ要求が出る。値を環境変数から
+#: 使わないので、``layout: group`` のときだけ dispatch 前の注入を行わない。
+_GROUPED_SELF_RESOLVING_ENV = frozenset({
+    'list', 'get', 'set', 'delete', 'edit', 'init', 'sync', 'project', 'export', 'import',
+})
+
+
+def _grouped_layout(root: Path) -> bool:
+    """``backend.yml`` がグループ別の置き場 (``openbao`` かつ ``layout: group``) を選んでいるか"""
+    from devbase.env.secret_store import SecretStore
+
+    try:
+        config = SecretStore(root).config
+    except DevbaseError:
+        return False
+    return (config.backend == 'openbao' and config.openbao is not None
+            and config.openbao.grouped)
+
+
 def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
     return ((cmd, None) in _NO_SECRET_INJECTION
             or (cmd, subcommand) in _NO_SECRET_INJECTION)
@@ -889,6 +911,9 @@ def _load_secret_env(cmd: str, subcommand: Optional[str] = None,
         return
     root = os.environ.get('DEVBASE_ROOT')
     if not root:
+        return
+    if (cmd == 'env' and subcommand in _GROUPED_SELF_RESOLVING_ENV
+            and _grouped_layout(Path(root))):
         return
     try:
         from devbase.env import runtime as _runtime

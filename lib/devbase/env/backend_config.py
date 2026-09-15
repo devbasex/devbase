@@ -114,6 +114,9 @@ def _validate_group_name(value: Any, what: str) -> str:
 
     if not isinstance(value, str) or not value.strip():
         raise BackendConfigError(f"{what} が空です: {value!r}")
+    if value != value.strip():
+        # 検証が前後の空白を落とした名前を返しても、呼び出し側が元の値を使うとパスに空白が入る
+        raise BackendConfigError(f"{what} に前後の空白は使えません: {value!r}")
     try:
         return resolve_account_group(value)
     except DevbaseError as e:

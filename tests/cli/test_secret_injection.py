@@ -169,3 +169,23 @@ def test_main_passes_the_parsed_name(monkeypatch):
 
     assert cli.main() == 0
     assert seen == {'cmd': 'project', 'subcommand': 'up', 'name': 'web'}
+
+
+@pytest.mark.parametrize('subcommand', ['list', 'get', 'set', 'delete', 'edit', 'init',
+                                        'sync', 'project', 'export', 'import'])
+def test_env_subcommands_resolve_their_own_group_with_the_group_layout(calls, tmp_path,
+                                                                        subcommand):
+    """PLAN56: ``--group`` / ``-p`` の検証より前に実行時のディレクトリのグループで注入しない"""
+    _grouped(tmp_path)
+
+    cli._load_secret_env('env', subcommand)
+
+    assert calls == []
+
+
+def test_env_exec_still_injects_with_the_group_layout(calls, tmp_path):
+    _grouped(tmp_path)
+
+    cli._load_secret_env('env', 'exec')
+
+    assert len(calls) == 1

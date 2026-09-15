@@ -57,7 +57,14 @@ def _read_declaration(path: Path) -> Optional[str]:
         data = EnvFile.parse_bytes(path.read_bytes())
     except (OSError, UnicodeDecodeError) as e:
         raise DevbaseError(f"{path} を読めませんでした: {e}") from e
-    return data.get(keys.DEVBASE_ACCOUNT_GROUP)
+    # ラッパーの ``source`` と ``_load_project_env`` は ``export KEY=...`` も読む。パーサは
+    # ``export KEY`` をキーにするため、接頭辞を外して比べる。後に書いた行が勝つ (source と同じ)
+    found = None
+    for key, value in data.items():
+        name = key[len('export '):].strip() if key.startswith('export ') else key
+        if name == keys.DEVBASE_ACCOUNT_GROUP:
+            found = value
+    return found
 
 
 def declare(root: Path, project: Optional[str]) -> DeclaredGroup:

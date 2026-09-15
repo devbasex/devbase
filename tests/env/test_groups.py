@@ -185,3 +185,11 @@ def test_describe_source_names_root_env_explicitly(tmp_path):
     (tmp_path / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
     declared = groups.declare(tmp_path, None)
     assert groups.describe_source(tmp_path, declared, None) == '$DEVBASE_ROOT/env'
+
+
+def test_export_prefixed_declaration_is_read(root):
+    """ラッパーの ``source`` と同じく ``export DEVBASE_ACCOUNT_GROUP=...`` も宣言として読む"""
+    write_env(root / 'env', 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+    write_env(root / 'projects' / 'web' / 'env', 'export DEVBASE_ACCOUNT_GROUP=with\n')
+
+    assert groups.declared_group(root, 'web') == 'with'

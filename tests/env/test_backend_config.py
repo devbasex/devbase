@@ -473,3 +473,13 @@ def test_config_with_mismatched_version_and_layout_is_not_saved(root):
     with pytest.raises(bc.BackendConfigError):
         bc.save(root, config)
     assert not (root / 'secrets' / 'backend.yml').exists()
+
+
+@pytest.mark.parametrize('alias', ["default: ' with '", "' default ': with", "default: 'global '"])
+def test_alias_with_surrounding_spaces_is_rejected(root, alias):
+    """前後の空白を黙って落とすと、パスに空白が入るか読み替えが効かない"""
+    write_yaml(root, OPENBAO_V2.replace('default: nyle', alias))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert '空白' in str(exc.value)
