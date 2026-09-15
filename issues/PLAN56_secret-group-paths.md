@@ -206,7 +206,7 @@
       操作: `projects/web` で `DEVBASE_ACCOUNT_GROUP=kkg devbase up`（ボリュームのグループが `kkg`）と、
       同じ環境変数での `devbase scale 2`
       結果: どちらも両方のグループ名と出所を述べて非ゼロで終了し、コンテナ・ボリューム・
-      スナップショットを作らず、`project.local.yml` の `scale` を書き換えない。今の形の
+      スナップショットを作らず、子プロセスの `env init` を起動せず、`project.local.yml` の `scale` を書き換えない。今の形の
       `backend.yml` では同じ操作で止めない（2026-09-15 に追記。設計の決定 7）
 - [ ] 17. 前提: グループ別の置き場。`projects/` に `nyle` と `with` のプロジェクトがある
       操作: `projects/web`（`with`）で `devbase env backend test`
