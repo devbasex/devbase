@@ -42,7 +42,8 @@
 | `commands/env_backend.py`（変える） | `status` にグループの行と 4 パス。`use` に `--layout` / `--group-alias`。レイアウトが変わったらキャッシュを消す。`test` は対象のグループに属するプロジェクトだけ調べる。`migrate` に `--exclude-project` と、参照ごとのグループ |
 | `commands/container.py` `_ensure_env_files` / `_run_pre_up_checks` / `cmd_scale`（変える） | 存在判定の参照にグループを渡す。子プロセスの `env init`（`cwd` は `$DEVBASE_ROOT`）へ `--group <プロジェクトのグループ>` を渡す（決定 10）。共通の検査 `_check_group_consistency(project)` でボリュームのグループ（`resolve_account_group()`）と `declared_group` を比べ、`layout: group` で食い違えば止める（決定 7）。呼ぶ位置は `_run_pre_up_checks` の冒頭（`_ensure_env_files` より前）と `cmd_scale` の冒頭 |
 | `cli.py` `_load_secret_env`（変える） | `layout: group` で、名前を指定したライフサイクル操作（`up <name>` など）の dispatch 前の注入を、実行時のディレクトリではなく指定したプロジェクトで解決する（決定 11） |
-| `commands/env_ops.py` `doctor`（変える） | `git check-ignore` で点検するキャッシュのパスを設定の `cache_relpath` から組む |
+| `commands/env_ops.py` `doctor`（変える） | `git check-ignore` で点検するキャッシュのパスを設定の `cache_relpath` から組む。`layout: group` では `.env.sources.<g>.yml` も点検する |
+| `.gitignore`（変える） | `.env.sources.yml` の行を `.env.sources*.yml` に広げ、グループごとの控えを追跡対象から外す（決定 13） |
 | `cli.py` の引数（変える） | `env list/get/set/delete/edit` と `env init` に `--group NAME`、`env backend use` に `--layout {flat,group}` と `--group-alias FROM=TO`（繰り返し可）、`env backend migrate` に `--exclude-project NAME`（繰り返し可） |
 | 文書（変える） | `docs/user/env-backend.md`・`docs/user/environment-variables.md`「アカウントグループ」・`docs/user/cli-reference/03-env.md`。確定仕様 `docs/specifications/secret-backend.md` は `plan-to-spec` で |
 
@@ -404,8 +405,11 @@ graph TD
 下位ディレクトリからでも同じグループになる（受け入れ条件 3）。置き場から読んだ値も
 使わないため、置き場を決める値をその置き場から読む循環も起きない（受け入れ条件 4）。
 
-シェルで `DEVBASE_ACCOUNT_GROUP=kkg devbase up` と打った場合は、ボリュームは `kkg`、機密は
-ファイルのグループになり食い違う。この食い違いは決定 7 で起動を止めて知らせる。
+グループを宣言していないプロジェクト（`$DEVBASE_ROOT/env` にも宣言なし）でシェルから
+`DEVBASE_ACCOUNT_GROUP=kkg devbase up` と打つと、ラッパーが source する `env` に同じキーが無い
+ため環境変数が残り、ボリュームは `kkg`、機密は `default` になり食い違う。プロジェクトの `env` が
+宣言していれば、ラッパーの source が環境変数を上書きするので食い違わない。この食い違いは
+決定 7 で起動を止めて知らせる。
 
 ### 決定 4: `default` の読み替えは `group_aliases` で置き場の上だけ行う
 
@@ -492,7 +496,9 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 `env sync` の宛先だけをグループ別にすると、グループ A で同期した時点でハッシュが更新され、
 グループ B の同期は「変更なし」と判定される。B の置き場には古い認証情報が残る。
 `layout: group` では控えのファイル名に置き場のグループ名を入れ、`env sync` / `export` / `import` の
-`--merge-metadata` が対象のグループの控えを読み書きする。
+`--merge-metadata` が対象のグループの控えを読み書きする。控えは認証情報のソースの位置とハッシュを
+持つため、今の `.env.sources.yml` と同じく Git の追跡から外す。`.gitignore` を `.env.sources*.yml` へ
+広げ、`env doctor` の除外の点検に加える。
 
 控えを 1 つのファイルの中でグループごとの節に分ける案は採らない。`version: 1` の端末と
 同じファイルの形が変わり、古い devbase が読むと節を知らずに全体を書き戻す。
@@ -515,7 +521,7 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 | 11 | `tests/commands/test_env_backend.py` に `status` のレイアウト・グループ・出所・4 パスの行 |
 | 12 | `tests/commands/test_env_backend_migrate.py` に、グループの違う 2 プロジェクトと `--exclude-project` の場合、存在しない名前の 2、`--dry-run` がパスとキー名だけを出すこと。`version: 2` の OpenBao から `--to age` へ戻す場合に、`$DEVBASE_ROOT/env` のグループの共通の参照とプロジェクトごとのグループの参照が age へ移り、他のグループの共通の参照は移さずに名前とパスが表示され、そのパスへの要求が 0 回であること |
 | 13 | `tests/cli/test_env_bundle_backend.py` に、`nyle` と `with` のプロジェクトがある `version: 2` で、`export` が要求するパスの一覧が対象のグループだけであること、`import` が別グループのプロジェクトを含むバンドルで 1 かつ要求 0 回であること。`env init` / `sync` / `project` の書き込み先 |
-| 決定 13 | `tests/commands/` の `env sync` のテストに、`layout: group` で `nyle` と `with` を順に同期し、ソースファイルを更新した後の 2 回目もそれぞれの置き場へ書かれること。`version: 1` では `.env.sources.yml` を使うこと |
+| 決定 13 | `tests/commands/` の `env sync` のテストに、`layout: group` で `nyle` と `with` を順に同期し、ソースファイルを更新した後の 2 回目もそれぞれの置き場へ書かれること。`version: 1` では `.env.sources.yml` を使うこと。`tests/commands/test_env_ops_backend.py` に、`doctor` が `.env.sources.<g>.yml` の除外を点検すること |
 | 14 | 追加した出力を検査するテストで、偽サーバに置いた値と `secret_id` が標準出力・標準エラー・ログに現れないこと |
 | 15 | `uv run pytest tests/`、`ruff check lib`、`python -m compileall -q lib bin` |
 | 16 | `tests/commands/test_container_up_order.py` に、`layout: group` でボリュームとファイルのグループが違うと `up` と `scale` が 1 で終わり、スナップショット・ボリュームの作成・`project.local.yml` の書き換えが起きていないこと。`version: 1` では止めないこと |

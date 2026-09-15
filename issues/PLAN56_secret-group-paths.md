@@ -95,7 +95,9 @@
   （`test` は 2026-09-15 に追記。設計の決定 8）
 - `devbase up` の起動の前に、ボリュームのグループと機密のグループの食い違いを検査すること
   （2026-09-15 に追記。設計の決定 7）
-- 手元のキャッシュ（`secrets/cache/`）をグループごとに分けること
+- 手元のキャッシュ（`secrets/cache/`）と `env sync` の同期済みハッシュの控えをグループごとに
+  分けること。控えを Git の追跡から外す `.gitignore` の更新と `env doctor` の点検（2026-09-15 に
+  追記。設計の決定 13）
 - 利用者向け文書（`docs/user/env-backend.md`・`docs/user/environment-variables.md`・
   `docs/user/cli-reference/03-env.md`）の更新と、`docs/specifications/secret-backend.md` への
   取り込み（`plan-to-spec`）
@@ -204,9 +206,11 @@
       誤りの文言）に載らない
 - [ ] 15. `uv run pytest tests/` が全件通り、`ruff check lib` と `python -m compileall -q lib bin`
       が変更前と同じ結果
-- [ ] 16. 前提: グループ別の置き場。`projects/web/env` に `DEVBASE_ACCOUNT_GROUP=with`
-      操作: `projects/web` で `DEVBASE_ACCOUNT_GROUP=kkg devbase up`（ボリュームのグループが `kkg`）と、
-      同じ環境変数での `devbase scale 2`
+- [ ] 16. 前提: グループ別の置き場。~~`projects/web/env` に `DEVBASE_ACCOUNT_GROUP=with`~~ →
+      `projects/api/env` にも `$DEVBASE_ROOT/env` にも `DEVBASE_ACCOUNT_GROUP` が無い（2026-09-15。
+      宣言のあるプロジェクトではラッパーの source が環境変数を上書きし、食い違いが起きない）
+      操作: ~~`projects/web` で~~ `projects/api` で `DEVBASE_ACCOUNT_GROUP=kkg devbase up`（ボリュームの
+      グループが `kkg`、機密のグループが `default`）と、同じ環境変数での `devbase scale 2`
       結果: どちらも両方のグループ名と出所を述べて非ゼロで終了し、コンテナ・ボリューム・
       スナップショットを作らず、子プロセスの `env init` を起動せず、`project.local.yml` の `scale` を書き換えない。今の形の
       `backend.yml` では同じ操作で止めない（2026-09-15 に追記。設計の決定 7）
