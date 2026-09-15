@@ -502,3 +502,46 @@ def test_issue_token_raises_auth_error_on_rejected_login(store, openbao):
 
     with pytest.raises(SecretAuthError):
         store.backend_for(GLOBAL).issue_token()
+
+
+# ---------------------------------------------------------------------------
+# グループ別の置き場 (PLAN56)
+# ---------------------------------------------------------------------------
+
+def test_group_layout_refuses_a_reference_without_a_group(openbao_root, openbao):
+    """呼び出しの誤りを従来のパスへ落とさない。サーバへ要求もしない"""
+    from tests.conftest import configure_openbao
+
+    configure_openbao(openbao_root, openbao, layout='group')
+    openbao.put(TEAM_GLOBAL_PATH, {'A': 'flat'})
+    store = SecretStore(openbao_root)
+
+    for call in (lambda: store.load(GLOBAL), lambda: store.fetch(WEB),
+                 lambda: store.save(USER_GLOBAL, {'A': '1'})):
+        with pytest.raises(SecretStoreError) as exc:
+            call()
+        assert not isinstance(exc.value, SecretUnreachableError)
+        assert 'グループ' in str(exc.value)
+    assert openbao.received == []
+
+
+def test_flat_layout_refuses_a_reference_with_a_group(store, openbao):
+    """``version: 1`` の参照は常にグループを持たない (決定 5)。持っていれば黙って無視しない"""
+    with pytest.raises(SecretStoreError):
+        store.load(SecretRef.for_global(group='with'))
+    assert openbao.received == []
+
+
+def test_group_layout_reads_and_writes_the_group_paths(openbao_root, openbao):
+    from tests.conftest import configure_openbao
+
+    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    store = SecretStore(openbao_root)
+
+    store.save(SecretRef.for_project('web', group='with'), {'A': '1'})
+    store.save(SecretRef.for_global(owner='user', group='default'), {'B': '2'})
+
+    assert openbao.get('team/with/projects/web') == {'A': '1'}
+    assert openbao.get('users/member01/nyle/global') == {'B': '2'}
+    assert {r.kv_path for r in openbao.received if r.kv_path} == {
+        'team/with/projects/web', 'users/member01/nyle/global'}
