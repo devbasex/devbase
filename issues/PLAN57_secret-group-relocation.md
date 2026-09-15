@@ -127,4 +127,131 @@
 
 ## 実行の記録
 
-（承認を得た後に、単位ごとにコマンド・出力・終了コードを残す）
+### 単位 0: 基準を採る（2026-09-16 02:13）
+
+対象の系: 手元（読むだけ）  区分: —
+取り消し: 不要
+
+`projects/*` はシンボリックリンクのため、出力先を相対パスで書くと外れた（1 回目は 3 件とも `No such file or directory`、
+終了コード 127、何も書かれていない）。絶対パスで採り直した。
+
+$ B=~/devbase/backups/plan57; umask 077
+$ for p in with-ai-dev project-trygroup-prd bi-tools; do (cd projects/$p && ~/devbase/bin/devbase env exec -- env | sort > $B/before-$p.env); done
+with-ai-dev exit=0 lines=106 / project-trygroup-prd exit=0 lines=106 / bi-tools exit=0 lines=104
+終了コード: 0（3 件とも）
+
+### 実行の前の確認: サーバのポリシー（2026-09-16 03:0x）
+
+carmo-cdk#365（グループ単位のポリシー）が実環境へ反映されたと利用者から連絡を受け、計画の前提 4 を確かめ直した。
+
+$ T=$(bin/devbase env token --print); BAO_TOKEN=$T bao token lookup -format=json | jq .data.identity_policies
+["devbase-admin","devbase-team-kkg","devbase-team-nyle","devbase-team-with","devbase-team-writer-kkg","devbase-team-writer-nyle","devbase-team-writer-with"]
+$ BAO_TOKEN=$T bao token capabilities devbase/<パス>
+data/team/global: read / data/team/{nyle,with,kkg}/global: create, delete, patch, read, update /
+data/users/takemi_ohama/nyle/global: create, delete, patch, read, update / data/team/projects/with-ai-dev: read /
+metadata/team/global・metadata/team/projects/with-ai-dev・metadata/users/takemi_ohama/global: delete, list, read
+終了コード: 0
+
+（token の値は変数に置いただけで表示していない）
+
+### 単位 1: 新しい 9 パスへ書く（2026-09-16 03:30）
+
+対象の系: OpenBao（新しい 9 パス）  区分: 本番
+取り消し: 戻せる（新しい 9 パスを `metadata` ごと消す）
+
+スクリプト（`backups/plan57/relocate.py`、`0600`。値を出さない）の処理:
+
+1. 今の `backend.yml`（`version: 1`）の `SecretStore` と、同じ接続先で `version: 2`（`layout: group`、
+   `default → nyle`）の設定を明示した `SecretStore` を作る（`backend.yml` は書き換えない）
+2. 古いパスを `fetch`: `team/global` が 21 キー、`users/takemi_ohama/global` が 26 キーであること、
+   `GCP_CREDENTIALS_BASE64__default` が個人単位にあること、会社に依らない 17 キーがそろうこと、
+   `team/projects/<5 件>` が `ENABLE_SSH` だけであることを assert
+3. 新しいパスが空であることを assert してから、「配る先」の表どおりに `save`（読んだ版を基準にした CAS）
+4. 控えを持たない別の `SecretStore` で読み戻し、書いた内容と一致することを assert
+
+$ DEVBASE_ROOT=$PWD PYTHONPATH=lib uv run python backups/plan57/relocate.py
+devbase/team/nyle/global: 22 keys (読み戻し一致)
+devbase/users/takemi_ohama/nyle/global: 25 keys (読み戻し一致)
+devbase/users/takemi_ohama/with/global: 17 keys (読み戻し一致)
+devbase/users/takemi_ohama/kkg/global: 17 keys (読み戻し一致)
+devbase/team/nyle/projects/bi-tools: 1 keys (読み戻し一致)
+devbase/team/nyle/projects/car-pricing: 1 keys (読み戻し一致)
+devbase/team/nyle/projects/carmo-screening: 1 keys (読み戻し一致)
+devbase/team/kkg/projects/project-trygroup-prd: 1 keys (読み戻し一致)
+devbase/team/with/projects/with-ai-dev: 1 keys (読み戻し一致)
+終了コード: 0
+
+反映の確認: 単位 3 の `bao kv get`（別経路）
+
+### 単位 2: この端末を `version: 2` へ切り替える（2026-09-16 03:31）
+
+対象の系: 手元（`secrets/backend.yml`、`secrets/cache/`）  区分: 本番（利用者の実環境）
+取り消し: 戻せる（`bin/devbase env backend use openbao --layout flat`。古いパスは単位 4 まで残る）
+
+$ bin/devbase env backend use openbao --layout group --group-alias default=nyle
+backend を openbao に設定しました: ~/devbase/secrets/backend.yml
+  レイアウト: group (version 2)
+  グループの読み替え: default → nyle
+  キャッシュ (~/devbase/secrets/cache) を消しました (レイアウトが flat から group へ変わったため)
+終了コード: 0
+
+$ bin/devbase env backend status
+  レイアウト: group (version 2)
+  グループ:   default → nyle ($DEVBASE_ROOT/env に宣言なし)
+  置き場: devbase/team/nyle/global / devbase/team/nyle/projects/<name> / devbase/users/takemi_ohama/nyle/global / devbase/users/takemi_ohama/nyle/projects/<name>
+  接続資格情報: role_id [伏せた] (~/devbase/secrets/bootstrap.env.age)
+終了コード: 0
+
+$ cd projects/with-ai-dev && bin/devbase env backend status
+  グループ:   with (projects/with-ai-dev/env)
+  置き場: devbase/team/with/global / devbase/team/with/projects/with-ai-dev / devbase/users/takemi_ohama/with/global / devbase/users/takemi_ohama/with/projects/with-ai-dev
+終了コード: 0
+
+$ bin/devbase env backend test
+対象のグループと違う置き場のプロジェクトは調べていません: project-trygroup-prd (kkg), with-ai-dev (with)
+読めた参照: 74 件（0 変数でないもの: team/nyle/global 22 / users/takemi_ohama/nyle/global 25 / team/nyle/projects/{bi-tools,car-pricing,carmo-screening} 各 1）
+終了コード: 0
+
+受け入れ条件 1: 満たす
+
+### 単位 3: 確かめる（2026-09-16 03:31）
+
+対象の系: 手元（読むだけ）/ OpenBao（読むだけ）  区分: —
+取り消し: 不要
+
+$ for p in with-ai-dev project-trygroup-prd bi-tools; do (cd projects/$p && bin/devbase env exec -- env | sort > $B/after-$p.env); done
+with-ai-dev exit=0 lines=85 / project-trygroup-prd exit=0 lines=84 / bi-tools exit=0 lines=104
+終了コード: 0（3 件とも）
+
+基準との比較（変数名と、値の SHA-256 の一致だけを見た。値は出していない。`CLAUDE_*` を除く）:
+
+| プロジェクト | 無くなった変数 | 値が変わった変数 |
+| --- | --- | --- |
+| with-ai-dev | `AWS_DEFAULT_REGION` / `BIGQUERY_KEY_FILE` / `DEVIN_API_KEY` / `DEVIN_API_ORG_WIDE` / `DEVIN_ORG_ID` / `DEVIN_SERVICE_ADMIN` / `DEVIN_SERVICE_USER` / `GCP_CREDENTIALS_BASE64__default` / `GOOGLE_APPLICATION_CREDENTIALS` / `GOOGLE_APPLICATION_CREDENTIALS_BASE64` / `REDASH_API_KEY` / `REDASH_DEV_API_KEY` / `REDASH_DEV_URL` / `REDASH_URL` / `REDMINE_API_KEY` / `SLACK_ADMIN_CLIENT_ID` / `SLACK_ADMIN_CLIENT_SECRET` / `SLACK_ADMIN_REDIRECT_URI` / `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` / `SLACK_TEAM_ID`（21 件） | なし |
+| project-trygroup-prd | 上の 21 件 + `AWS_CONFIG_BASE64`（22 件） | なし |
+| bi-tools（nyle） | なし（基準との差分 0 行） | なし |
+
+- 無くなった変数は「with / kkg に届かなくなるキー」の表のとおり。`AWS_CONFIG_BASE64` は with-ai-dev では前から
+  プロジェクトの `env` で空にしており、名前は残る
+- `GOOGLE_CLOUD_LOCATION` は with / kkg の出力にも値が残った。ホストのシェルの環境変数にあり、`env exec` がそれを
+  引き継いだもので、機密の置き場から来たものではない（`$DEVBASE_ROOT/env` とプロジェクトの `env` には無い）
+
+別経路（ホストの `bao kv get -mount=devbase -format=json <パス> | jq '.data.data|length'`）:
+
+| パス | キー数 | 終了コード |
+| --- | ---: | ---: |
+| team/nyle/global | 22 | 0 |
+| users/takemi_ohama/nyle/global | 25 | 0 |
+| users/takemi_ohama/with/global | 17 | 0 |
+| users/takemi_ohama/kkg/global | 17 | 0 |
+| team/nyle/projects/bi-tools | 1 | 0 |
+| team/nyle/projects/car-pricing | 1 | 0 |
+| team/nyle/projects/carmo-screening | 1 | 0 |
+| team/kkg/projects/project-trygroup-prd | 1 | 0 |
+| team/with/projects/with-ai-dev | 1 | 0 |
+| team/with/global / team/kkg/global | 無し（作っていない） | — |
+
+- `secrets/cache/` には `team/{nyle,with,kkg}/…` と `user/{nyle,with,kkg}/…` の控えだけがあり、`version: 1` の
+  位置（`team/global.env.age` など）のファイルは無い
+
+受け入れ条件 2・3: 満たす
