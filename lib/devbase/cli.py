@@ -313,6 +313,10 @@ def _add_env_parser(subparsers):
 
     env_init = env_sub.add_parser('init', help='Initial setup (interactive)')
     env_init.add_argument('--reset', action='store_true', help='Reset existing config')
+    # グループ別の置き場 (PLAN56)。`up` の子プロセスがプロジェクトのグループを渡す (決定 10)
+    env_init.add_argument('--group', metavar='NAME', default=None,
+                          help='Account group whose team secrets to set up '
+                               '(only with the grouped layout of the openbao backend)')
 
     env_sub.add_parser('sync', help='Resync credentials from sources')
 

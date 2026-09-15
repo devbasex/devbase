@@ -36,13 +36,46 @@ def _owner(user: bool) -> str:
     return 'user' if user else 'team'
 
 
-def _global_env(devbase_root: Path, user: bool = False, store=None, *, fresh: bool = False):
-    """共通設定のビューを返す (``user`` なら個人共通。``fresh`` なら控えへ落ちない)"""
+def _global_env(devbase_root: Path, user: bool = False, store=None, *, fresh: bool = False,
+                group: Optional[str] = None):
+    """共通設定のビューを返す (``user`` なら個人共通。``fresh`` なら控えへ落ちない)。
+
+    ``group`` はグループ別の置き場 (PLAN56) で参照に持たせるグループ。
+    """
     from devbase.env.secret_store import SecretRef
     from devbase.env.secret_view import SecretEnvFile
 
     store = store if store is not None else _secret_store(devbase_root)
-    return SecretEnvFile(store, SecretRef.for_global(owner=_owner(user)), fresh=fresh)
+    return SecretEnvFile(store, SecretRef.for_global(owner=_owner(user), group=group),
+                         fresh=fresh)
+
+
+#: ``--group`` の誤り (使えない名前・グループ別の置き場でない設定) の終了コード
+EXIT_USAGE = 2
+
+
+def _init_group(devbase_root: Path, store, group: Optional[str]) -> Optional[str]:
+    """``env init`` が相手にするグループ。使えなければ ``DevbaseError`` (終了コード 2)。
+
+    ``--group`` があれば、グループ別の置き場を選んだ設定でだけ受け付け、名前を
+    ``DEVBASE_ACCOUNT_GROUP`` と同じ規則と読み替え後の予約語で検証する。無ければ
+    実行時のプロジェクトのグループ (``SecretStore.ref_group``。それ以外の設定では ``None``)。
+    """
+    if group is None:
+        return store.ref_group(_current_project_name(devbase_root))
+    config = store.config
+    settings = config.openbao
+    if config.backend != 'openbao' or settings is None or not settings.grouped:
+        raise DevbaseError(
+            "--group はグループ別の置き場 (backend: openbao、version: 2) を選んだ設定で"
+            "だけ使えます")
+    from devbase.env.backend_config import BackendConfigError
+
+    try:
+        settings.storage_group(group)
+    except BackendConfigError as e:
+        raise DevbaseError(f"--group に使えない名前です: {e}") from None
+    return group
 
 
 def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
@@ -110,7 +143,8 @@ def cmd_env(devbase_root: Path, args) -> int:
     subcmd = getattr(args, 'subcommand', None)
 
     handlers = {
-        'init':    lambda: cmd_env_init(devbase_root, reset=getattr(args, 'reset', False)),
+        'init':    lambda: cmd_env_init(devbase_root, reset=getattr(args, 'reset', False),
+                                        group=getattr(args, 'group', None)),
         'sync':    lambda: cmd_env_sync(devbase_root),
         'list':    lambda: cmd_env_list(devbase_root,
                                         global_only=getattr(args, 'global_only', False),
@@ -366,9 +400,19 @@ def cmd_env_token(devbase_root: Path, print_only: bool = False,
     return _push_token_to_running(devbase_root, backend, context, run, runner)
 
 
-def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
-    """全体環境の初期セットアップ（対話式）"""
-    env_file = _global_env(devbase_root)
+def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] = None) -> int:
+    """全体環境の初期セットアップ（対話式）
+
+    ``group`` を渡すと、そのグループのチーム共通の参照へ書く (PLAN56)。``up`` の子プロセスは
+    ``cwd=$DEVBASE_ROOT`` で起動するため、プロジェクトのグループを明示して受け取る (決定 10)。
+    """
+    store = _secret_store(devbase_root)
+    try:
+        target_group = _init_group(devbase_root, store, group)
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return EXIT_USAGE
+    env_file = _global_env(devbase_root, store=store, group=target_group)
     env_file.load()
 
     if env_file.count() > 0 and not reset:
@@ -378,8 +422,6 @@ def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
         return 0
 
     if reset and env_file.file_exists():
-        from devbase.errors import DevbaseError
-
         try:
             env_file.backup()
         except DevbaseError as e:
