@@ -45,6 +45,7 @@
       `グループ: default → nyle` を出す（終了コード 0）
 - [x] 2. 単位 3 で、`projects/with-ai-dev` と `projects/project-trygroup-prd` の
       `bin/devbase env exec -- env | sort` に「with / kkg に届かなくなるキー」（下の節）の値が無い。
+      ホストのシェルに同名の変数があるキーは、その変数を外して（`env -u`）確かめる（2026-09-16 に追記）。
       `projects/bi-tools`（nyle）の同じ出力は単位 0 の基準と差分 0 行（`CLAUDE_*` を除く）
 - [x] 3. 単位 3 で、別経路（ホストの `bao kv get -mount=devbase`、キー数のみ）で新しいパスのキー数が
       「配る先」の表と一致する
@@ -234,7 +235,16 @@ with-ai-dev exit=0 lines=85 / project-trygroup-prd exit=0 lines=84 / bi-tools ex
 - 無くなった変数は「with / kkg に届かなくなるキー」の表のとおり。`AWS_CONFIG_BASE64` は with-ai-dev では前から
   プロジェクトの `env` で空にしており、名前は残る
 - `GOOGLE_CLOUD_LOCATION` は with / kkg の出力にも値が残った。ホストのシェルの環境変数にあり、`env exec` がそれを
-  引き継いだもので、機密の置き場から来たものではない（`$DEVBASE_ROOT/env` とプロジェクトの `env` には無い）
+  引き継いだもので、`$DEVBASE_ROOT/env` とプロジェクトの `env` には無い。~~機密の置き場から来たものではない~~ →
+  この比較ではホストの値に隠れて、置き場から来なくなったことを確かめられていなかった（2026-09-16、PR #187 の
+  レビュー）。ホストの同名の変数を外して確かめ直した:
+
+  $ for p in with-ai-dev project-trygroup-prd bi-tools; do (cd projects/$p && env -u GOOGLE_CLOUD_LOCATION bin/devbase env exec -- env | grep -q '^GOOGLE_CLOUD_LOCATION=.'); done
+  with-ai-dev: 値なし（exit=0）/ project-trygroup-prd: 値なし（exit=0）/ bi-tools（nyle、対照）: 値あり（exit=0）
+  $ bao kv get -mount=devbase -format=json team/nyle/global | jq '.data.data | has("GOOGLE_CLOUD_LOCATION")'
+  true（exit=0）
+
+  with / kkg へは置き場から届かず、nyle の置き場には残っている
 
 別経路（ホストの `bao kv get -mount=devbase -format=json <パス> | jq '.data.data|length'`）:
 
@@ -254,7 +264,7 @@ with-ai-dev exit=0 lines=85 / project-trygroup-prd exit=0 lines=84 / bi-tools ex
 - `secrets/cache/` には `team/{nyle,with,kkg}/…` と `user/{nyle,with,kkg}/…` の控えだけがあり、`version: 1` の
   位置（`team/global.env.age` など）のファイルは無い
 
-受け入れ条件 2・3: 満たす
+受け入れ条件 2・3: 満たす（条件 2 の `GOOGLE_CLOUD_LOCATION` はホストの同名の変数を外した再検証で判定した）
 
 ### 単位 4: 古い 7 パスを版の履歴ごと消す（2026-09-16 05:24）
 
