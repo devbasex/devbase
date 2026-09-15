@@ -93,6 +93,35 @@ def _own_public_key() -> Optional[str]:
         return None
 
 
+def _updated_recipients(current: Sequence[str],
+                        add: Sequence[str] = (),
+                        remove: Sequence[str] = ()) -> List[str]:
+    """既存の受信者リストに追加・削除を適用して新しいリストを返す"""
+    from devbase.env import cipher as _cipher
+
+    updated = list(current)
+    for spec in add:
+        spec = spec.strip()
+        if not spec:
+            continue
+        _cipher.validate_recipient(spec)
+        if spec not in updated:
+            updated.append(spec)
+
+    missing = [spec for spec in remove if spec.strip() not in updated]
+    if missing:
+        raise EnvOpsError(f"受信者リストに無いため削除できません: {', '.join(missing)}")
+    for spec in remove:
+        updated = [r for r in updated if r != spec.strip()]
+
+    if not updated:
+        raise EnvOpsError(
+            "受信者を全員削除すると、以後の機密を誰も復号できなくなります。"
+            "少なくとも 1 人は残してください")
+
+    return updated
+
+
 def cmd_env_rekey(devbase_root: Path, *,
                   add: Sequence[str] = (),
                   remove: Sequence[str] = (),
@@ -120,32 +149,10 @@ def cmd_env_rekey(devbase_root: Path, *,
             return 1
         current = [own]
 
-    updated = list(current)
-    for spec in add:
-        spec = spec.strip()
-        if not spec:
-            continue
-        try:
-            from devbase.env import cipher as _cipher
-
-            _cipher.validate_recipient(spec)
-        except DevbaseError as e:
-            logger.error("%s", e)
-            return 1
-        if spec not in updated:
-            updated.append(spec)
-
-    missing = [spec for spec in remove if spec.strip() not in updated]
-    if missing:
-        logger.error("受信者リストに無いため削除できません: %s", ', '.join(missing))
-        return 1
-    for spec in remove:
-        updated = [r for r in updated if r != spec.strip()]
-
-    if not updated:
-        logger.error(
-            "受信者を全員削除すると、以後の機密を誰も復号できなくなります。"
-            "少なくとも 1 人は残してください")
+    try:
+        updated = _updated_recipients(current, add, remove)
+    except DevbaseError as e:
+        logger.error("%s", e)
         return 1
 
     if updated == current:
