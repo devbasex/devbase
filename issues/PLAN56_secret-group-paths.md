@@ -165,8 +165,10 @@
 - [ ] 7. 前提: グループ別の置き場。プロジェクト `api`（グループ `nyle`）の中
       操作: `devbase up web`（`web` のグループは `with`）
       結果: 認証 1 回。起動時の環境変数に `api` の 4 参照だけにあるキーが残っていない。
-      取得は `team/with/…` / `users/<user>/with/…` の 4 パスを含み、`web` の起動に
-      `nyle` の置き場の値が使われない
+      ~~取得は `team/with/…` / `users/<user>/with/…` の 4 パスを含み、`web` の起動に
+      `nyle` の置き場の値が使われない~~ → 取得は `team/with/…` / `users/<user>/with/…` の
+      4 パスだけで、`nyle` の置き場へ要求しない（2026-09-15、目的の「対象のグループ以外の
+      パスへ要求を出さない」に揃えた。設計の決定 11）。Python を直接起動する経路（TUI など）でも同じ
 - [ ] 8. 前提: グループ別の置き場。`nyle` のプロジェクトと `with` のプロジェクトをそれぞれ 1 回
       `devbase up` した後、サーバへ到達できなくする
       操作: 2 つのプロジェクトで順に `devbase up`
@@ -189,12 +191,18 @@
       参照はサーバへ書かれず、ファイルは退避されずに元の位置に残る。`--dry-run` は書き先の
       パスとキー名を出し、値を出さない
 - [ ] 13. `env init` / `sync` / `project` / `export` / `import` は、対象のグループのチーム単位の
-      参照だけを読み書きし、他のグループのパスへ要求を出さない
+      参照だけを読み書きし、他のグループのパスへ要求を出さない。`export` は対象のグループに
+      属するプロジェクトだけを集め、外したプロジェクト名を出す。`import` はバンドルに別グループの
+      プロジェクトがあれば 1 件も取り込まずに名前とグループを挙げて非ゼロで終了する
+      （2026-09-15 に追記。設計の決定 12）
 - [ ] 14. 機密の値・`secret_id`・token が、追加した出力（`status` のグループの行、`--dry-run`、
       誤りの文言）に載らない
+- [ ] 15. `uv run pytest tests/` が全件通り、`ruff check lib` と `python -m compileall -q lib bin`
+      が変更前と同じ結果
 - [ ] 16. 前提: グループ別の置き場。`projects/web/env` に `DEVBASE_ACCOUNT_GROUP=with`
-      操作: `projects/web` で `DEVBASE_ACCOUNT_GROUP=kkg devbase up`（ボリュームのグループが `kkg`）
-      結果: 両方のグループ名と出所を述べて非ゼロで終了し、コンテナを起動しない。今の形の
+      操作: `projects/web` で `DEVBASE_ACCOUNT_GROUP=kkg devbase up`（ボリュームのグループが `kkg`）と、
+      同じ環境変数での `devbase scale 2`
+      結果: どちらも両方のグループ名と出所を述べて非ゼロで終了し、コンテナを作らない。今の形の
       `backend.yml` では同じ操作で止めない（2026-09-15 に追記。設計の決定 7）
 - [ ] 17. 前提: グループ別の置き場。`projects/` に `nyle` と `with` のプロジェクトがある
       操作: `projects/web`（`with`）で `devbase env backend test`
@@ -205,8 +213,6 @@
       操作: `projects/web`（`with`）で `devbase up`
       結果: 子プロセスが `team/with/global` へ書き、その `up` のコンテナへ `INIT_KEY` が渡る
       （2026-09-15 に追記。設計の決定 10）
-- [ ] 15. `uv run pytest tests/` が全件通り、`ruff check lib` と `python -m compileall -q lib bin`
-      が変更前と同じ結果
 
 ## 非機能の条件
 
