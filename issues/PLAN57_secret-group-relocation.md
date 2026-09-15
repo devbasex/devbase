@@ -239,8 +239,13 @@ with-ai-dev exit=0 lines=85 / project-trygroup-prd exit=0 lines=84 / bi-tools ex
   この比較ではホストの値に隠れて、置き場から来なくなったことを確かめられていなかった（2026-09-16、PR #187 の
   レビュー）。ホストの同名の変数を外して確かめ直した:
 
-  $ for p in with-ai-dev project-trygroup-prd bi-tools; do (cd projects/$p && env -u GOOGLE_CLOUD_LOCATION bin/devbase env exec -- env | grep -q '^GOOGLE_CLOUD_LOCATION=.'); done
-  with-ai-dev: 値なし（exit=0）/ project-trygroup-prd: 値なし（exit=0）/ bi-tools（nyle、対照）: 値あり（exit=0）
+  （`env exec` の終了コードと、値の有無を判定する `grep -q` の終了コードを分けて採った。`grep -q` は値があれば 0、
+  無ければ 1。2026-09-16 05:47 に採り直した）
+
+  $ for p in with-ai-dev project-trygroup-prd bi-tools; do (cd projects/$p && out=$(env -u GOOGLE_CLOUD_LOCATION bin/devbase env exec -- env); rc_exec=$?; printf '%s\n' "$out" | grep -q '^GOOGLE_CLOUD_LOCATION=.'; echo "$p: env exec exit=$rc_exec / grep exit=$?"); done
+  with-ai-dev: env exec exit=0 / grep exit=1（値なし）
+  project-trygroup-prd: env exec exit=0 / grep exit=1（値なし）
+  bi-tools: env exec exit=0 / grep exit=0（値あり。nyle の対照）
   $ bao kv get -mount=devbase -format=json team/nyle/global | jq '.data.data | has("GOOGLE_CLOUD_LOCATION")'
   true（exit=0）
 
