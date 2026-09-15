@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-09-15
+
+機密の保存先に OpenBao を選べるようになりました。起動中の dev コンテナの中からも `bao` で
+自分の機密を読み書きでき、`devbase up` のサーバへの往復は認証 1 回 + 参照ごとに 1 回です。
+
 ### Added
 
 - **機密の保存先を差し替えられるようにしました（PLAN51 / #159, #166, #170）。** `secrets/backend.yml` で
@@ -23,10 +28,24 @@
   - `devbase env rekey` は `bootstrap.env.age` とキャッシュも再暗号化し、`devbase env doctor` は
     backend 設定・資格情報・権限・Git の除外設定を点検します
   - 詳細は `docs/user/env-backend.md`
+- **base イメージに OpenBao の CLI `bao`（2.6.2）を入れ、起動中のコンテナから機密を読み書き
+  できるようにしました（PLAN54 / #169, #178）。** backend が `openbao` の端末では、`devbase up` /
+  `scale` が dev コンテナへ接続先 `BAO_ADDR` と `~/.vault-token`（`0600`）を渡します。コンテナに
+  置くのは 1 時間で切れる token だけで、`secret_id` はホストから出ません
+  - `devbase env token [--print] [--context NAME]` を追加しました。token が切れたら、ホストの
+    プロジェクトのディレクトリで打つと起動中の dev コンテナの token を置き換えます
+  - `bao` は同じリリースの `checksums.txt` で検証して入れます。**利用には base イメージの
+    作り直し（`devbase build`）が要ります**
+  - 詳細は `docs/user/env-backend.md` の「コンテナの中から `bao` を使う」
 
 ### Changed
 
 - `devbase env encrypt` / `decrypt` は backend が `openbao` のとき止まります（age ストア専用）
+- `devbase up` は機密の注入と存在判定で `SecretStore` を持ち回り、サーバ backend への往復を
+  認証 1 回 + 参照ごとに 1 回に減らしました（従来は認証 4 回 + 取得 12〜14 回。PLAN55 / #168, #177）。
+  ファイル backend の挙動は変わりません
+- Remote-SSH 統合端末で表示するフラット URI の案内に、`DEVBASE_EDITOR_SSH_HOST=`（空）で
+  恒久化する方法を添えました（#174）
 
 ## [3.3.0] - 2026-09-13
 
@@ -579,7 +598,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.3.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.4.0...HEAD
+[3.4.0]: https://github.com/devbasex/devbase/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/devbasex/devbase/compare/v3.2.2...v3.3.0
 [3.2.2]: https://github.com/devbasex/devbase/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/devbasex/devbase/compare/v3.2.0...v3.2.1
