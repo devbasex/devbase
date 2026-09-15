@@ -54,3 +54,12 @@ def test_check_changed_unsupported_source_type(manager):
                        'CREDENTIALS_BASE64', 'saved-hash')
 
     assert manager.check_changed('credentials') is None
+
+
+def test_sources_file_is_kept_per_storage_group(tmp_path):
+    """PLAN56 決定 13: グループ別の置き場では控えを置き場のグループごとに持つ"""
+    assert sources.SourcesManager(tmp_path).sources_path == tmp_path / '.env.sources.yml'
+    assert sources.SourcesManager(tmp_path, 'nyle').sources_path \
+        == tmp_path / '.env.sources.nyle.yml'
+    assert sources.sources_path(tmp_path, 'with') == tmp_path / '.env.sources.with.yml'
+    assert sources.sources_path(tmp_path, None) == tmp_path / '.env.sources.yml'

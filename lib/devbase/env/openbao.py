@@ -45,6 +45,7 @@ from urllib.parse import quote, urlsplit
 from devbase.env import bootstrap as _bootstrap
 from devbase.env.secret_store import SecretRef, SecretStore, SecretStoreError
 from devbase.env.store import EnvFile
+from devbase.errors import DevbaseError
 from devbase.log import get_logger
 
 logger = get_logger(__name__)
@@ -148,9 +149,34 @@ class OpenBaoBackend:
     def url(self) -> str:
         return self._settings.url
 
+    def _check_group(self, ref: SecretRef) -> None:
+        """参照のグループが設定のレイアウトと合うことを確かめる (PLAN56)。
+
+        ``layout: group`` でグループの無い参照は、呼び出し側がグループを渡し忘れた誤りである。
+        従来のパスへ落とすと別グループの機密を読み書きするため、サーバへ要求する前に止める。
+        ``layout: flat`` でグループの付いた参照も、黙ってグループを無視せずに止める
+        (``version: 1`` の参照は常にグループを持たない。決定 5)。
+        """
+        if self._settings.grouped and not ref.group:
+            raise SecretStoreError(
+                f"グループ別の置き場 (layout: group) でグループの無い参照は扱えません "
+                f"({ref.label()})")
+        if not self._settings.grouped and ref.group:
+            raise SecretStoreError(
+                f"従来の置き場 (layout: flat) ではグループの付いた参照は扱えません "
+                f"({ref.label()})")
+
     def path_of(self, ref: SecretRef) -> str:
-        """KV v2 のパス (``<mount>`` を含まない)"""
-        return self._settings.path_of(ref)
+        """KV v2 のパス (``<mount>`` を含まない)。
+
+        取得・保存・削除とキャッシュの位置はすべてここを通るため、グループの検査もここで行う。
+        """
+        self._check_group(ref)
+        try:
+            return self._settings.path_of(ref)
+        except DevbaseError as e:
+            # 読み替え先の予約語など。設定の誤りも SecretStoreError として呼び出し側へ返す
+            raise SecretStoreError(str(e)) from None
 
     def display_path(self, ref: SecretRef) -> str:
         """表示用の ``<mount>/<パス>``"""

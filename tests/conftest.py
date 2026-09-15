@@ -341,18 +341,23 @@ def openbao():
 
 def configure_openbao(root, server: FakeOpenBao, *, user: str = 'member01',
                       cache_enabled: bool = True, with_bootstrap: bool = True,
-                      mount: Optional[str] = None):
+                      mount: Optional[str] = None, layout: str = 'flat',
+                      group_aliases: Optional[Dict[str, str]] = None):
     """DEVBASE_ROOT を偽サーバ向けの ``backend: openbao`` に設定する。
 
     age 鍵は呼び出し側が用意している前提 (ブートストラップとキャッシュの暗号化に使う)。
+    ``layout='group'`` なら ``version: 2`` のグループ別の置き場にする (PLAN56)。
     """
     from devbase.env import backend_config as bc
     from devbase.env import bootstrap
 
+    grouped = layout == bc.LAYOUT_GROUP
     config = bc.BackendConfig(
         backend='openbao',
-        openbao=bc.OpenBaoSettings(url=server.url, user=user, mount=mount or server.mount),
+        openbao=bc.OpenBaoSettings(url=server.url, user=user, mount=mount or server.mount,
+                                   layout=layout, group_aliases=dict(group_aliases or {})),
         cache_enabled=cache_enabled,
+        version=2 if grouped else 1,
     )
     bc.save(root, config)
     if with_bootstrap:

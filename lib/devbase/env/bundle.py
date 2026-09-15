@@ -224,11 +224,14 @@ def _origin(path, devbase_root) -> str:
         return str(path)
 
 
-def _collect_global(store, devbase_root) -> List[BundleEntry]:
-    """``$DEVBASE_ROOT/.env`` を秘密ストア越しに 1 件 (無ければ 0 件) 集める"""
+def _collect_global(store, devbase_root, group: Optional[str] = None) -> List[BundleEntry]:
+    """``$DEVBASE_ROOT/.env`` を秘密ストア越しに 1 件 (無ければ 0 件) 集める。
+
+    ``group`` はグループ別の置き場 (PLAN56) で対象のグループ。
+    """
     from devbase.env.secret_store import SecretRef
 
-    global_ref = SecretRef.for_global()
+    global_ref = SecretRef.for_global(group=group)
     if not store.exists(global_ref):
         return []
     return [BundleEntry(
@@ -238,14 +241,20 @@ def _collect_global(store, devbase_root) -> List[BundleEntry]:
     )]
 
 
-def _collect_metadata(devbase_root) -> List[BundleEntry]:
-    """``$DEVBASE_ROOT/.env.sources.yml`` を 1 件 (無ければ 0 件) 集める"""
-    sources_yml = devbase_root / '.env.sources.yml'
+def _collect_metadata(devbase_root, storage_group: Optional[str] = None) -> List[BundleEntry]:
+    """``$DEVBASE_ROOT/.env.sources.yml`` を 1 件 (無ければ 0 件) 集める。
+
+    グループ別の置き場では対象のグループの控え (``.env.sources.<g>.yml``) を集める
+    (PLAN56 決定 13)。バンドルの中の名前は変えない。
+    """
+    from devbase.env.sources import sources_path
+
+    sources_yml = sources_path(devbase_root, storage_group)
     if not sources_yml.is_file():
         return []
     return [BundleEntry(
         arcname='env/sources.yml',
-        origin='$DEVBASE_ROOT/.env.sources.yml',
+        origin=f'$DEVBASE_ROOT/{sources_yml.name}',
         data=sources_yml.read_bytes(),
     )]
 
@@ -279,8 +288,14 @@ def _should_skip_project(name: str, proj_dir,
 
 
 def _collect_projects(store, devbase_root,
-                      included: Optional[set], excluded: set) -> List[BundleEntry]:
-    """``$DEVBASE_ROOT/projects/<name>/.env`` を名前順に集める"""
+                      included: Optional[set], excluded: set,
+                      group: Optional[str] = None) -> List[BundleEntry]:
+    """``$DEVBASE_ROOT/projects/<name>/.env`` を名前順に集める。
+
+    グループ別の置き場では、対象のグループ ``group`` と同じ置き場のプロジェクトだけを集め、
+    外したプロジェクトの名前とグループを標準エラーへ出す (PLAN56 決定 12)。外したプロジェクトの
+    参照へは要求を出さない。
+    """
     from devbase.env.secret_store import SecretRef
 
     projects_dir = devbase_root / 'projects'
@@ -288,18 +303,26 @@ def _collect_projects(store, devbase_root,
         return []
 
     entries: List[BundleEntry] = []
+    other_groups: List[str] = []
     candidates = sorted(p for p in projects_dir.iterdir() if p.is_dir())
     for proj_dir in candidates:
         name = proj_dir.name
         if _should_skip_project(name, proj_dir, included, excluded):
             continue
-        project_ref = SecretRef.for_project(name)
+        project_group = store.ref_group(name)
+        if not store.same_storage_group(project_group, group):
+            other_groups.append(f"{name} ({store.config.openbao.display_group(project_group)})")
+            continue
+        project_ref = SecretRef.for_project(name, group=project_group)
         if store.exists(project_ref):
             entries.append(BundleEntry(
                 arcname=f'env/projects/{name}/.env',
                 origin=_origin(store.path(project_ref), devbase_root),
                 data=store.load_bytes(project_ref),
             ))
+    if other_groups:
+        logger.warning("グループ %s と違う置き場のプロジェクトは export しません: %s",
+                       store.config.openbao.display_group(group), ', '.join(other_groups))
     return entries
 
 
@@ -319,6 +342,7 @@ def make_entries_from_disk(devbase_root,
     """
     from pathlib import Path
 
+    from devbase.env import runtime as _runtime
     from devbase.env.secret_store import SecretStore
 
     devbase_root = Path(devbase_root)
@@ -327,15 +351,18 @@ def make_entries_from_disk(devbase_root,
     # ファイルパスを直接読まずに復号後のバイト列を受け取る。バンドル自体は age で
     # 暗号化されるので、ここで平文に戻しても保存時の平文は生まれない。
     store = SecretStore(devbase_root)
+    # 対象のグループ (PLAN56)。グループ別の置き場でなければ None で、参照は今と同じ
+    group = store.ref_group(_runtime.current_project_name(devbase_root))
 
     entries: List[BundleEntry] = []
     if include_global:
-        entries.extend(_collect_global(store, devbase_root))
+        entries.extend(_collect_global(store, devbase_root, group))
     if include_metadata:
-        entries.extend(_collect_metadata(devbase_root))
+        entries.extend(_collect_metadata(devbase_root, store.storage_group(group)))
     entries.extend(_collect_projects(
         store, devbase_root,
         included=set(include_projects) if include_projects else None,
         excluded=set(exclude_projects),
+        group=group,
     ))
     return entries

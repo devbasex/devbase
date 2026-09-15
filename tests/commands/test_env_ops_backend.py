@@ -234,3 +234,23 @@ def test_doctor_without_a_backend_config_is_unchanged(tmp_path, monkeypatch, cap
 
     assert env_ops.cmd_env_doctor(tmp_path) == 0
     assert '問題は見つかりませんでした' in capsys.readouterr().out
+
+
+def test_doctor_probes_the_grouped_sources_file_and_cache_for_git_ignore(git_root, openbao,
+                                                                        capsys):
+    """PLAN56 決定 13: layout: group では .env.sources.<g>.yml の除外も確かめる"""
+    from tests.conftest import configure_openbao
+
+    configure_openbao(git_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    (git_root / '.gitignore').write_text(
+        '.env\n.env.bak*\nsecrets/*.age\nsecrets/projects/\nsecrets/backend.yml\n'
+        'secrets/leftover.env\nprojects/*/.env\n.env.sources.yml\n')
+
+    assert env_ops.cmd_env_doctor(git_root) == 1
+    out = capsys.readouterr().out
+    assert '.env.sources.nyle.yml' in out
+    assert 'secrets/cache/team/nyle/global.env.age' in out
+
+    (git_root / '.gitignore').write_text(
+        '.env\n.env.bak*\nsecrets/\nprojects/*/.env\n.env.sources*.yml\n')
+    assert env_ops.cmd_env_doctor(git_root) == 0

@@ -11,6 +11,12 @@
 - ``cache/index.json`` — 参照ごとの最終取得時刻と接続先ホスト。**表示のためだけ**に
   置き、キャッシュを使えるかの判定には使わない。キー名も値も入れない
 
+``backend.yml`` が ``version: 2`` (``openbao.layout: group``) のときは、持ち主の次に置き場の
+グループ名を挟む (``cache/team/<g>/global.env.age``、``index.json`` のキーは
+``team:<g>:global``。PLAN56)。グループの違うプロジェクトを順に起動しても、後の控えが
+先の控えを上書きしない。位置は設定の :meth:`~devbase.env.backend_config.OpenBaoSettings.cache_relpath`
+が組み、``version: 1`` では上の位置のままである。
+
 **1 つの参照のキャッシュは 1 ファイルに収める。** 控えた機密と、取得元を表す ``scope``
 (接続先 URL・mount・パス・role_id の SHA-256) を同じ age 暗号文の
 中へ入れ、``write_secure_bytes_atomic`` で 1 回の置き換えとして書く。復号すると両方が
@@ -45,6 +51,7 @@ from devbase.env.store import EnvFile
 from devbase.log import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover
+    from devbase.env.backend_config import OpenBaoSettings
     from devbase.env.openbao import OpenBaoBackend
 
 logger = get_logger(__name__)
@@ -66,18 +73,29 @@ def index_path(devbase_root: Path) -> Path:
     return cache_dir(devbase_root) / INDEX_FILENAME
 
 
-def entry_path(devbase_root: Path, ref: SecretRef) -> Path:
-    base = cache_dir(devbase_root) / ref.owner
-    if ref.kind == 'global':
-        return base / 'global.env.age'
-    return base / 'projects' / f'{ref.name}.env.age'
+def _flat_settings(ref: SecretRef) -> 'OpenBaoSettings':
+    """設定を渡されなかったときの位置の組み立て役 (``version: 1`` の並び)。
+
+    グループの付いた参照の位置は読み替えを含む設定が無いと決まらないため、ここでは拒む。
+    """
+    from devbase.env.backend_config import OpenBaoSettings
+
+    if ref.group:
+        raise CacheError(f"{ref.label()}の控えの位置は backend の設定なしに決まりません")
+    return OpenBaoSettings(url='', user='')
 
 
-def entry_key(ref: SecretRef) -> str:
-    """``index.json`` のキー (``team:global`` / ``user:project:<name>``)"""
-    if ref.kind == 'global':
-        return f'{ref.owner}:global'
-    return f'{ref.owner}:project:{ref.name}'
+def entry_path(devbase_root: Path, ref: SecretRef,
+               settings: Optional['OpenBaoSettings'] = None) -> Path:
+    """控えのファイルの位置。``settings`` を省くと ``version: 1`` の並びで組む"""
+    settings = settings if settings is not None else _flat_settings(ref)
+    return cache_dir(devbase_root).joinpath(*settings.cache_relpath(ref).split('/'))
+
+
+def entry_key(ref: SecretRef, settings: Optional['OpenBaoSettings'] = None) -> str:
+    """``index.json`` のキー (``team:global`` / ``user:project:<name>`` / ``team:<g>:global``)"""
+    settings = settings if settings is not None else _flat_settings(ref)
+    return settings.cache_key(ref)
 
 
 def cached_files(devbase_root: Path) -> List[Path]:
@@ -151,6 +169,18 @@ class SecretCache:
         self._store = store
         self._root = Path(store.root)
 
+    def _settings(self) -> 'OpenBaoSettings':
+        """控えの位置を組む設定 (``version: 1`` / ``2`` で並びが違う)"""
+        settings = self._store.config.openbao
+        if settings is None:
+            raise CacheError("backend: openbao の設定がありません")
+        return settings
+
+    def _path(self, ref: SecretRef, backend: 'OpenBaoBackend') -> Path:
+        # 参照とレイアウトの食い違いは backend が先に止める (path_of と同じ検査を通す)
+        backend.path_of(ref)
+        return entry_path(self._root, ref, backend.settings)
+
     def _scope(self, ref: SecretRef, backend: 'OpenBaoBackend') -> str:
         # 材料は backend が持つ (cache は設定の形を知らない)
         return backend.cache_scope(ref)
@@ -175,7 +205,7 @@ class SecretCache:
             'fetched_at': fetched_at,
             'secrets': EnvFile.dump_bytes(secrets).decode('utf-8'),
         }
-        path = entry_path(self._root, ref)
+        path = self._path(ref, backend)
         try:
             blob = self._store.age.encrypt_bytes(
                 json.dumps(payload, ensure_ascii=False).encode('utf-8'))
@@ -186,7 +216,7 @@ class SecretCache:
             self.discard(ref)
             return
         entries = read_index(self._root)
-        entries[entry_key(ref)] = {
+        entries[entry_key(ref, backend.settings)] = {
             'fetched_at': fetched_at,
             'backend': backend.name,
             'url_host': url_host(backend.url),
@@ -194,7 +224,8 @@ class SecretCache:
         _write_index(self._root, entries)
 
     def discard(self, ref: SecretRef) -> None:
-        path = entry_path(self._root, ref)
+        settings = self._settings()
+        path = entry_path(self._root, ref, settings)
         try:
             path.unlink()
         except FileNotFoundError:
@@ -202,14 +233,14 @@ class SecretCache:
         except OSError as e:
             logger.warning("%sのキャッシュを消せませんでした (%s): %s", ref.label(), path, e)
         entries = read_index(self._root)
-        if entries.pop(entry_key(ref), None) is not None:
+        if entries.pop(entry_key(ref, settings), None) is not None:
             _write_index(self._root, entries)
 
     # -- 読む -----------------------------------------------------------------
 
     def read(self, ref: SecretRef, backend: 'OpenBaoBackend') -> Optional[CachedEntry]:
         """現在の設定と ``scope`` が一致する控えを返す (無ければ ``None``)"""
-        path = entry_path(self._root, ref)
+        path = self._path(ref, backend)
         if not path.is_file():
             return None
         try:

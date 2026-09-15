@@ -93,6 +93,35 @@ def _own_public_key() -> Optional[str]:
         return None
 
 
+def _updated_recipients(current: Sequence[str],
+                        add: Sequence[str] = (),
+                        remove: Sequence[str] = ()) -> List[str]:
+    """既存の受信者リストに追加・削除を適用して新しいリストを返す"""
+    from devbase.env import cipher as _cipher
+
+    updated = list(current)
+    for spec in add:
+        spec = spec.strip()
+        if not spec:
+            continue
+        _cipher.validate_recipient(spec)
+        if spec not in updated:
+            updated.append(spec)
+
+    missing = [spec for spec in remove if spec.strip() not in updated]
+    if missing:
+        raise EnvOpsError(f"受信者リストに無いため削除できません: {', '.join(missing)}")
+    for spec in remove:
+        updated = [r for r in updated if r != spec.strip()]
+
+    if not updated:
+        raise EnvOpsError(
+            "受信者を全員削除すると、以後の機密を誰も復号できなくなります。"
+            "少なくとも 1 人は残してください")
+
+    return updated
+
+
 def cmd_env_rekey(devbase_root: Path, *,
                   add: Sequence[str] = (),
                   remove: Sequence[str] = (),
@@ -120,32 +149,10 @@ def cmd_env_rekey(devbase_root: Path, *,
             return 1
         current = [own]
 
-    updated = list(current)
-    for spec in add:
-        spec = spec.strip()
-        if not spec:
-            continue
-        try:
-            from devbase.env import cipher as _cipher
-
-            _cipher.validate_recipient(spec)
-        except DevbaseError as e:
-            logger.error("%s", e)
-            return 1
-        if spec not in updated:
-            updated.append(spec)
-
-    missing = [spec for spec in remove if spec.strip() not in updated]
-    if missing:
-        logger.error("受信者リストに無いため削除できません: %s", ', '.join(missing))
-        return 1
-    for spec in remove:
-        updated = [r for r in updated if r != spec.strip()]
-
-    if not updated:
-        logger.error(
-            "受信者を全員削除すると、以後の機密を誰も復号できなくなります。"
-            "少なくとも 1 人は残してください")
+    try:
+        updated = _updated_recipients(current, add, remove)
+    except DevbaseError as e:
+        logger.error("%s", e)
         return 1
 
     if updated == current:
@@ -531,9 +538,32 @@ def _probe_location(root: Path, rel: str) -> Optional[Tuple[Path, str]]:
         return None
 
 
-def _ignore_probe_paths(root: Path) -> List[str]:
+def _grouped_probe_paths(root: Path, store: Optional[SecretStore]) -> List[str]:
+    """グループ別の置き場で足す代表パス (対象のグループの控えとキャッシュ。PLAN56 決定 13)。
+
+    ``version: 1`` とファイル backend では足さない (点検の結果を変えない)。設定を読めない
+    ときは ``_check_backend`` が報告するため、ここでは足さずに進む。
+    """
+    from devbase.env import cache as _cache
+    from devbase.env import runtime as _runtime
+    from devbase.env.sources import sources_path
+
+    if store is None:
+        return []
+    try:
+        group = store.ref_group(_runtime.current_project_name(root))
+    except DevbaseError:
+        return []
+    if group is None:
+        return []
+    cache_entry = _cache.entry_path(root, SecretRef.for_global(group=group), store.config.openbao)
+    return [sources_path(root, store.storage_group(group)).name,
+            cache_entry.relative_to(root).as_posix()]
+
+
+def _ignore_probe_paths(root: Path, store: Optional[SecretStore] = None) -> List[str]:
     """除外されているか確かめる代表パスを組み立てる"""
-    paths = list(_IGNORE_PROBE_PATHS)
+    paths = list(_IGNORE_PROBE_PATHS) + _grouped_probe_paths(root, store)
 
     # プロジェクトごとの平文。実在するものがあればその名前で確かめるほうが、
     # 報告をそのまま直す手がかりにできる。
@@ -545,14 +575,14 @@ def _ignore_probe_paths(root: Path) -> List[str]:
     return paths
 
 
-def _check_gitignore(root: Path, report: Report) -> None:
+def _check_gitignore(root: Path, report: Report, store: Optional[SecretStore] = None) -> None:
     """平文が置かれうるパスが実際に除外されるかを Git に確かめてもらう"""
     path = root / '.gitignore'
     report.checked.append(f"除外設定: {path} (git check-ignore で確認)")
 
     exposed: List[str] = []
     unknown: List[str] = []
-    for rel in _ignore_probe_paths(root):
+    for rel in _ignore_probe_paths(root, store):
         location = _probe_location(root, rel)
         ignored = None if location is None else _git_check_ignore(*location)
         if ignored is None:
@@ -655,7 +685,7 @@ def cmd_env_doctor(devbase_root: Path) -> int:
     _check_backend(root, report)
     _check_conflicts(root, store, report)
     _check_leftovers(root, store, report)
-    _check_gitignore(root, report)
+    _check_gitignore(root, report, store)
 
     print("\n=== devbase env doctor ===")
     for line in report.checked:

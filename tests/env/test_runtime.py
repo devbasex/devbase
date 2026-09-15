@@ -431,3 +431,67 @@ def test_file_backends_resolve_exactly_as_before(root, store):
     assert resolved.values == {'TOKEN': 'project', 'ONLY_GLOBAL': 'g'}
     assert resolved.global_names == ['ONLY_GLOBAL', 'TOKEN']   # 保存時に昇順へ正規化される
     assert resolved.project_names == ['TOKEN']
+
+
+# ---------------------------------------------------------------------------
+# グループ別の置き場 (PLAN56)
+# ---------------------------------------------------------------------------
+
+class _GroupedStore(_FourLayerStore):
+    """``ref_group`` が決めたグループを、読んだ参照ごとに記録する"""
+
+    def __init__(self, layers, group):
+        super().__init__(layers)
+        self._group = group
+        self.asked = []
+        self.loaded = []
+
+    def ref_group(self, project):
+        self.asked.append(project)
+        return self._group
+
+    def load(self, ref):
+        self.loaded.append(ref)
+        return super().load(ref)
+
+
+def test_resolve_passes_the_projects_group_to_the_four_references(root):
+    store = _GroupedStore(_layers(team_global={'K': 'tg'}), 'with')
+
+    runtime.resolve(root, 'web', store=store)
+
+    assert store.asked == ['web']
+    assert store.loaded == [
+        SecretRef.for_global(group='with'), SecretRef.for_global(owner='user', group='with'),
+        SecretRef.for_project('web', group='with'),
+        SecretRef.for_project('web', owner='user', group='with')]
+
+
+def test_resolve_without_a_group_builds_the_same_references_as_before(root):
+    """決定 5: ``ref_group`` が ``None`` なら参照は今と同じ値"""
+    store = _GroupedStore({}, None)
+
+    runtime.resolve(root, None, store=store)
+
+    assert store.asked == [None]
+    assert store.loaded == [GLOBAL, USER_GLOBAL]
+
+
+def test_resolve_with_the_group_layout_requests_only_the_group_paths(openbao_root, openbao):
+    """受け入れ条件 1 (単体): ``with`` のプロジェクトは ``with`` の 4 パスだけを取得する"""
+    from tests.conftest import configure_openbao
+
+    root = openbao_root
+    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    openbao.put('team/with/global', {'A': 'with'})
+    openbao.put('team/global', {'A': 'flat'})
+    openbao.put('team/nyle/global', {'A': 'nyle'})
+
+    resolved = runtime.resolve(root, 'web', store=SecretStore(root))
+
+    assert resolved.values == {'A': 'with'}
+    assert openbao.logins == 1
+    assert sorted(r.kv_path for r in openbao.requests_of('GET')) == sorted([
+        'team/with/global', 'users/member01/with/global',
+        'team/with/projects/web', 'users/member01/with/projects/web'])

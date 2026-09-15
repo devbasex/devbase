@@ -936,13 +936,90 @@ def _report_missing_repos(config, scale: int, dev_service_name: str,
                        project_name)
 
 
-def _run_pre_up_checks(config) -> bool:
-    """`up` の起動前チェック 3 つを順に実行する。
+def _grouped_store():
+    """backend が ``openbao`` かつ ``layout: group`` なら持ち回りの ``SecretStore`` を返す。
 
-    順序と早期 return はそのまま: (1) ``.env`` の存在確認、(2) ``./pre-up`` フック、
-    (3) コンテナイメージの存在確認。どれかが失敗したら False を返し、``cmd_up`` は
-    起動へ進まない。すべて満たせば True。
+    それ以外 (``version: 1``・ファイル backend・``DEVBASE_ROOT`` 未設定) と、設定を読めない
+    ときは ``None`` (設定の誤りは注入の側がその理由で止める)。
     """
+    from devbase.env import runtime as _runtime
+    from devbase.env.secret_store import SecretStoreError
+
+    root = _devbase_root()
+    if root is None:
+        return None
+    store = _runtime.store_for(root)
+    try:
+        config = store.config
+    except SecretStoreError:
+        return None
+    if config.backend != 'openbao' or config.openbao is None or not config.openbao.grouped:
+        return None
+    return store
+
+
+def _check_group_consistency(project: Optional[str] = None) -> bool:
+    """ボリュームのグループと機密のグループが揃っているかを確かめる (PLAN56 決定 7)。
+
+    ボリュームは :func:`~devbase.volume.manager.resolve_account_group` (プロセスの環境変数)、
+    機密は :func:`~devbase.env.groups.declared_group` (``env`` ファイル) で決まり、経路が
+    2 つある。宣言の無いプロジェクトでシェルから ``DEVBASE_ACCOUNT_GROUP=kkg devbase up`` と
+    打つと、ボリュームは ``kkg``、機密は ``default`` になる。食い違ったまま起動すると、
+    別グループのボリュームの認証で機密を使うコンテナができるため止める。
+
+    ``layout: group`` のときだけ検査する (``version: 1`` の起動は止めない)。途中で止めると
+    別グループの名前のボリュームや書き換えた ``scale`` が残るため、``up`` と ``scale`` は
+    副作用のある処理より前にここを呼ぶ。
+
+    Args:
+        project: 機密のグループを決めるプロジェクト名。省略時は実行時のディレクトリから決める。
+
+    Returns:
+        True: 揃っている、または検査の対象外。False: 食い違った (理由はログへ出した)
+    """
+    from devbase.env import groups as _groups
+    from devbase.env import runtime as _runtime
+    from devbase.volume.manager import resolve_account_group
+
+    store = _grouped_store()
+    if store is None:
+        return True
+    root = store.root
+    if project is None:
+        project = _runtime.current_project_name(root)
+    try:
+        declared = _groups.declare(root, project)
+        volume_group = resolve_account_group()
+    except DevbaseError as e:
+        logger.error("アカウントグループを決められないため起動しません: %s", e)
+        return False
+    if volume_group == declared.name:
+        return True
+    env_value = os.environ.get('DEVBASE_ACCOUNT_GROUP')
+    volume_source = ('DEVBASE_ACCOUNT_GROUP が未設定' if not env_value
+                     else 'プロセスの環境変数 DEVBASE_ACCOUNT_GROUP')
+    logger.error(
+        "ボリュームと機密のアカウントグループが食い違うため起動しません\n"
+        "  ボリューム: %s (%s)\n"
+        "  機密:       %s (%s)\n"
+        "  グループを変えるならプロジェクトの env に DEVBASE_ACCOUNT_GROUP を書いてください",
+        volume_group, volume_source,
+        declared.name, _groups.describe_source(root, declared, project))
+    return False
+
+
+def _run_pre_up_checks(config) -> bool:
+    """`up` の起動前チェックを順に実行する。
+
+    順序と早期 return はそのまま: (0) ボリュームと機密のグループの食い違い (PLAN56)、
+    (1) ``.env`` の存在確認、(2) ``./pre-up`` フック、(3) コンテナイメージの存在確認。
+    どれかが失敗したら False を返し、``cmd_up`` は起動へ進まない。すべて満たせば True。
+    (0) を先頭に置くのは、(1) が子プロセスの ``env init`` で置き場へ書くため。
+    """
+    # Pre-check 0: ボリュームと機密のグループが揃っている (layout: group のときだけ)
+    if not _check_group_consistency():
+        return False
+
     # Pre-check 1: Ensure .env file exists with content
     if not _ensure_env_files():
         logger.error("Failed to create .env file. Please run 'devbase env init' manually.")
@@ -1153,6 +1230,11 @@ def cmd_logs(follow: bool = False, tail: Optional[int] = None,
 def cmd_scale(new_scale: int, project_name: str = None,
               context: Optional[str] = None) -> int:
     """Scale containers online without restarting existing ones"""
+    # scale は _run_deploy_pipeline を通らずにコンテナを足す。project.yml の scale を
+    # 書き換える前に、up と同じ食い違いの検査を行う (PLAN56 決定 7)
+    if not _check_group_consistency():
+        return 1
+
     if project_name is None:
         project_name = get_project_name()
 
@@ -1435,16 +1517,20 @@ def _ensure_env_files() -> bool:
     # SecretStore は注入と同じものを持ち回る (PLAN55)。作り直すとサーバ backend では
     # 認証と参照ごとの取得がもう 1 巡走る。同じインスタンスなら注入で取得済みの控えから
     # 返るので、ここはサーバへ行かない。
+    #
+    # グループ別の置き場 (layout: group) では、存在判定の参照にプロジェクトのグループを
+    # 持たせる (PLAN56)。それ以外では group は None で、参照は今と同じになる。
     from devbase.env import runtime as _runtime
     from devbase.env.secret_store import SecretRef
 
     store = _runtime.store_for(devbase_root)
-    has_global = store.exists(SecretRef.for_global())
-
     project_name = _runtime.current_project_name(devbase_root)
+    group = store.ref_group(project_name)
+    has_global = store.exists(SecretRef.for_global(group=group))
+
     has_project = project_env.exists()
     if not has_project and project_name:
-        has_project = store.exists(SecretRef.for_project(project_name))
+        has_project = store.exists(SecretRef.for_project(project_name, group=group))
 
     if has_project and has_global:
         return True
@@ -1460,12 +1546,18 @@ def _ensure_env_files() -> bool:
 
     success = True
     child_env = {**os.environ, 'PYTHONPATH': str(devbase_root / 'lib')}
+    # 子プロセスは cwd=$DEVBASE_ROOT で起動し、実行時のプロジェクトを持たない。グループを
+    # 渡さないと $DEVBASE_ROOT/env のグループの共通の参照へ書き、親が読み直す参照と
+    # 揃わない (PLAN56 決定 10)。layout: group でないときは渡さない
+    init_argv = [sys.executable, '-m', 'devbase.cli', 'env', 'init']
+    if group is not None:
+        init_argv += ['--group', group]
 
     if not has_global:
         logger.info("Creating devbase root .env...")
         try:
             result = subprocess.run(
-                [sys.executable, '-m', 'devbase.cli', 'env', 'init'],
+                init_argv,
                 env=child_env,
                 cwd=str(devbase_root),
                 check=False

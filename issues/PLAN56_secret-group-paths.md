@@ -273,3 +273,111 @@
 | ~~`default` の読み替えの書き方~~ → `openbao.group_aliases`（設計の決定 4） | 設計 | 決定済み |
 | ~~`-p` と `--group` の組み合わせ~~ → プロジェクトのグループと違えば拒む（設計の決定 6） | 設計 | 決定済み |
 | 前提 2〜4（`default` は置き場だけ読み替える・全グループ共通の置き場を持たない・ファイル backend は分けない） | 利用者（設計 Pull Request の承認で確定） | 設計 Pull Request のマージ |
+
+## 実装計画
+
+設計は `issues/PLAN56_secret-group-paths-design.md`、決定の理由は
+`issues/PLAN56_secret-group-paths-decisions.md` にある。タスクは機能の単位で分け、各タスクの
+終わりに `uv run pytest tests/` を通す（既存テストの期待値は変えない。受け入れ条件 9・10）。
+
+### 修正対象
+
+- `lib/devbase/env/groups.py`（新設）、`backend_config.py`、`secret_store.py`、`openbao.py`、
+  `cache.py`、`runtime.py`、`sources.py`、`bundle.py`、`io_import.py`
+- `lib/devbase/commands/env.py`、`env_backend.py`、`container.py`、`env_ops.py`
+- `lib/devbase/cli.py`、`.gitignore`
+- `docs/user/env-backend.md`、`docs/user/environment-variables.md`、`docs/user/cli-reference/03-env.md`
+- テスト: `tests/env/`、`tests/commands/`、`tests/cli/`
+
+### Task 1: `version: 2` の設定とグループ付きの参照
+
+- **対象ファイル:** `env/groups.py`、`env/backend_config.py`、`env/secret_store.py`、`env/openbao.py`、
+  `env/cache.py`、`tests/env/test_groups.py`（新設）、`tests/env/test_backend_config.py`、
+  `tests/env/test_cache.py`
+- **変更内容:** `declared_group`、`OpenBaoSettings` の `layout` / `path_team_prefix` /
+  `group_aliases` / `storage_group` / `cache_relpath`、`version: 2` の検証（`layout` 必須、置けない
+  キーの拒否、`global` / `projects` の拒否）、`SecretRef.group`、`SecretStore.ref_group`、
+  `OpenBaoBackend` の空グループの拒否、キャッシュの位置と `index.json` のキー
+- **満たす受け入れ条件:** 4・8・9、決定 1〜5
+- **進め方:** 失敗するテスト → 最小実装 → 整理
+
+### Task 2: 注入がプロジェクトのグループの置き場を読む
+
+- **対象ファイル:** `env/runtime.py`、`cli.py`（`_load_secret_env`）、`tests/cli/test_up_roundtrips.py`、
+  `tests/env/test_runtime.py`
+- **変更内容:** `resolve()` が `store.ref_group(project)` を参照へ渡す。`layout: group` で名前を
+  指定したライフサイクル操作の dispatch 前の注入を切替先で解決する（決定 11）
+- **満たす受け入れ条件:** 1・2・7
+- **進め方:** 偽サーバの要求のパスを数えるテストを先に書く
+
+### Task 3: `env` コマンドの対象グループと `--group`
+
+- **対象ファイル:** `commands/env.py`、`cli.py`、`tests/commands/test_env_user_axis.py`
+- **変更内容:** `--group`（`list` / `get` / `set` / `delete` / `edit` / `init`）、読み替え後の名前での
+  比較、`-p` との食い違いの拒否、`-p` なしの `list` / `get` がプロジェクトの参照を含めない場合、
+  見出しのグループ名、`version: 1` とファイル backend での拒否
+- **満たす受け入れ条件:** 3・5・5a・6・14
+- **進め方:** 失敗するテスト → 最小実装 → 整理
+
+### Task 4: `up` / `scale` の食い違いの検査と `env init` への `--group`
+
+- **対象ファイル:** `commands/container.py`、`tests/commands/test_container_up_order.py`、
+  `tests/cli/test_up_roundtrips.py`
+- **変更内容:** `_check_group_consistency` を `_run_pre_up_checks` の冒頭と `cmd_scale` の冒頭で
+  呼ぶ。`_ensure_env_files` の存在判定の参照にグループ、子プロセスへ `--group`
+- **満たす受け入れ条件:** 16・18
+- **進め方:** 副作用が起きないことを先にテストで固定する
+
+### Task 5: `env backend status` / `use` / `test`
+
+- **対象ファイル:** `commands/env_backend.py`、`cli.py`、`tests/commands/test_env_backend.py`
+- **変更内容:** `status` のレイアウト・グループ・出所・4 パス、`use --layout` / `--group-alias`
+  （組み合わせの拒否、レイアウトが変わったらキャッシュを消す）、`test` を対象のグループへ絞る
+- **満たす受け入れ条件:** 11・17、決定 1
+- **進め方:** 失敗するテスト → 最小実装 → 整理
+
+### Task 6: `env backend migrate` のグループと `--exclude-project`
+
+- **対象ファイル:** `commands/env_backend.py`、`cli.py`、`tests/commands/test_env_backend_migrate.py`
+- **変更内容:** 参照ごとのグループ、`--exclude-project`、`--dry-run` のパス表示、`--to age` で
+  移行元と移行先の参照を分け、他グループの共通の参照へ要求しない
+- **満たす受け入れ条件:** 12
+- **進め方:** 失敗するテスト → 最小実装 → 整理
+
+### Task 7: `init` / `sync` / `project` / `export` / `import` と同期済みハッシュ
+
+- **対象ファイル:** `commands/env.py`、`env/bundle.py`、`env/io_import.py`、`env/sources.py`、
+  `commands/env_ops.py`、`.gitignore`、`tests/cli/test_env_bundle_backend.py`、
+  `tests/commands/test_env_ops_backend.py`
+- **変更内容:** 対象グループの参照、`export` のプロジェクトの絞り込み、`import` の拒否、
+  `.env.sources.<g>.yml`、`doctor` の点検、`.gitignore` の `.env.sources*.yml`
+- **満たす受け入れ条件:** 13、決定 12・13
+- **進め方:** 失敗するテスト → 最小実装 → 整理
+
+### Task 8: 利用者向け文書
+
+- **対象ファイル:** `docs/user/env-backend.md`、`docs/user/environment-variables.md`、
+  `docs/user/cli-reference/03-env.md`
+- **変更内容:** `version: 2` の設定例、パスの対応、`--group` / `--layout` / `--group-alias` /
+  `--exclude-project`、食い違いで止まったときの直し方
+- **満たす受け入れ条件:** 対象範囲の文書の項目
+- **進め方:** テスト駆動を適用しない（文書のみ）
+
+### リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| `commands/env.py`（1082 行）を Task 3・7 が触る | タスクごとにテストを通す。構造の整理は構造改善の工程へ回す |
+| `SecretRef` の等価性が変わり、`version: 1` の往復やキャッシュが変わる | 決定 5 のとおりグループを `None` に保ち、既存テストの期待値を変えないことで検出する |
+
+### 切り戻し手順
+
+- 設定を `version: 1` のまま使う端末は影響を受けない。問題が出たら、この Pull Request の
+  マージを revert する。`version: 2` へ切り替えた端末は `devbase env backend use openbao
+  --layout flat` で従来の置き場へ戻す（サーバ上のデータは移さないため、移し直しの前なら従来の
+  パスに値が残っている）
+
+### 完了の定義
+
+- [ ] 受け入れ条件 1〜18（5a を含む）をすべて満たし、テスト設計の各行に対応するテストがある
+- [ ] `uv run pytest tests/`、`ruff check lib`、`python -m compileall -q lib bin` がいずれも exit=0

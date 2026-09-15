@@ -225,3 +225,182 @@ def test_up_after_env_init_reads_written_values(up_root, openbao, monkeypatch):
     # 親は、捨てて読み直した分 (認証 1 回 + 参照ごとに 1 回) だけ増える
     assert openbao.logins - child['logins'] == 2
     assert len(openbao.requests_of('GET')) - child['gets'] <= 8
+
+
+# ---------------------------------------------------------------------------
+# グループ別の置き場 (PLAN56)
+# ---------------------------------------------------------------------------
+
+G_WITH = ['team/with/global', 'users/member01/with/global',
+          'team/with/projects/web', 'users/member01/with/projects/web']
+G_NYLE_API = ['team/nyle/global', 'users/member01/nyle/global',
+              'team/nyle/projects/api', 'users/member01/nyle/projects/api']
+
+
+@pytest.fixture
+def grouped(up_root, openbao, monkeypatch):
+    """``version: 2`` (``default`` → ``nyle``)。``web`` は ``with``、``api`` は宣言なし。
+
+    ``up_root`` の従来のパスの機密 (``team/global`` など) は置いたままにし、要求が 0 回で
+    あることを確かめる。``_resolve_project_name`` が載せる変数は、元が未設定でも復元
+    されるよう ``setenv`` → ``delenv`` で控えを作る。
+    """
+    from devbase.volume.manager import get_group_volume
+    from tests.conftest import configure_openbao
+
+    root = up_root['root']
+    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    with (root / 'projects' / 'web' / 'env').open('a') as f:
+        f.write('DEVBASE_ACCOUNT_GROUP=with\n')
+    openbao.put('team/with/global', {'SHARED': 'with-team'})
+    openbao.put('users/member01/with/global', {'MINE': 'with-me'})
+    openbao.put('team/with/projects/web', {'WEB_ONLY': 'w'})
+    openbao.put('team/nyle/global', {'SHARED': 'nyle-team', 'NYLE_ONLY': 'n'})
+    openbao.put('users/member01/nyle/global', {'MINE': 'nyle-me'})
+    openbao.put('team/nyle/projects/api', {'API_ONLY': 'a'})
+    for name in ('DEVBASE_ACCOUNT_GROUP', 'NYLE_ONLY', 'COMPOSE_PROJECT_NAME', 'PROJECT_MARK',
+                 'SHARED', 'MINE', 'WEB_ONLY', 'API_ONLY', 'INIT_KEY', 'PWD'):
+        monkeypatch.setenv(name, 'x')
+        monkeypatch.delenv(name)
+
+    generate = container._generate_compose_for
+
+    def recording_generate(scale, secrets, dev_environment=None, **kw):
+        up_root['group_volume'] = get_group_volume()
+        return generate(scale, secrets, dev_environment, **kw)
+
+    monkeypatch.setattr(container, '_generate_compose_for', recording_generate)
+    return up_root
+
+
+def _enter(root, name, monkeypatch, *, declared: str = None):
+    """``projects/<name>`` へ移る。``declared`` はラッパーが ``source`` した ``env`` の値"""
+    monkeypatch.chdir(root / 'projects' / name)
+    monkeypatch.setenv('PWD', str(root / 'projects' / name))
+    if declared is not None:
+        monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', declared)
+
+
+def _run_named_up(name=None) -> int:
+    """CLI の ``main`` と同じく、dispatch 前の注入へ ``name`` を渡す"""
+    cli._load_secret_env('project', 'up', name=name)
+    ns = types.SimpleNamespace(subcommand='up', name=name, scale=None,
+                               open_editor=False, open_index=None, context=None)
+    return container.cmd_project(ns)
+
+
+def _all_kv_paths(openbao):
+    return {r.kv_path for r in openbao.received if r.kv_path}
+
+
+def test_grouped_up_in_project_reads_only_its_group(grouped, openbao, monkeypatch):
+    """受け入れ条件 1: ``web`` (``with``) の ``up`` は ``with`` の 4 パスだけ、認証 1 回"""
+    _enter(grouped['root'], 'web', monkeypatch, declared='with')
+
+    assert _run_named_up() == 0
+
+    assert openbao.logins == 1
+    assert _gets(openbao) == sorted(G_WITH)
+    assert _all_kv_paths(openbao) == set(G_WITH)
+    assert grouped['secrets'].values['SHARED'] == 'with-team'
+    assert grouped['environ']['MINE'] == 'with-me'
+
+
+def test_grouped_up_without_a_declaration_reads_the_aliased_group(grouped, openbao, monkeypatch):
+    """受け入れ条件 2: 宣言なしは ``team/nyle/…``。ボリュームは ``devbase_home_default`` のまま"""
+    _enter(grouped['root'], 'api', monkeypatch)
+
+    assert _run_named_up() == 0
+
+    assert openbao.logins == 1
+    assert _gets(openbao) == sorted(G_NYLE_API)
+    assert _all_kv_paths(openbao) == set(G_NYLE_API)
+    assert grouped['group_volume'] == 'devbase_home_default'
+    assert grouped['secrets'].values['NYLE_ONLY'] == 'n'
+
+
+def test_grouped_up_other_project_does_not_touch_the_callers_group(grouped, openbao,
+                                                                   monkeypatch):
+    """受け入れ条件 7: ``api`` (``nyle``) の中で ``up web`` → ``with`` の 4 パスだけ、認証 1 回"""
+    _enter(grouped['root'], 'api', monkeypatch)
+
+    assert _run_named_up('web') == 0
+
+    assert openbao.logins == 1
+    assert _gets(openbao) == sorted(G_WITH)
+    assert _all_kv_paths(openbao) == set(G_WITH)
+    for key in ('API_ONLY', 'NYLE_ONLY'):
+        assert key not in grouped['environ']
+        assert key not in grouped['secrets'].values
+    assert grouped['secrets'].values['SHARED'] == 'with-team'
+
+
+def test_grouped_up_after_env_init_reads_the_value_written_to_its_group(grouped, openbao,
+                                                                        monkeypatch):
+    """受け入れ条件 18: 子プロセスの ``env init`` が ``--group with`` で ``team/with/global`` へ書く"""
+    from devbase.commands import env as env_cmd
+
+    root = grouped['root']
+    openbao.secrets.pop('team/with/global')
+    openbao.versions.pop('team/with/global')
+    _enter(root, 'web', monkeypatch, declared='with')
+
+    class _Registry:
+        collectors = [types.SimpleNamespace(
+            display_name='init', collect_fn=lambda env_file: env_file.set('INIT_KEY', 'value'))]
+
+        def discover(self):
+            pass
+
+    monkeypatch.setattr(env_cmd, 'CollectorRegistry', _Registry)
+    monkeypatch.setattr(env_cmd, '_update_source_metadata', lambda root, env_file: None)
+    child: dict = {}
+    real_run = subprocess.run
+
+    def fake_env_init(argv, **kwargs):
+        if 'env' not in argv or 'init' not in argv:
+            return real_run(argv, **kwargs)
+        child['argv'] = list(argv)
+        child['cwd'] = kwargs.get('cwd')
+        # 子プロセスは cwd=$DEVBASE_ROOT で、実行時のプロジェクトを持たない (決定 10 の前提)
+        args = cli._create_parser().parse_args(list(argv[argv.index('env'):]))
+        cwd, pwd = os.getcwd(), os.environ['PWD']
+        os.chdir(kwargs['cwd'])
+        os.environ['PWD'] = kwargs['cwd']
+        try:
+            rc = env_cmd.cmd_env(root, args)
+        finally:
+            os.chdir(cwd)
+            os.environ['PWD'] = pwd
+        return subprocess.CompletedProcess(argv, rc)
+
+    monkeypatch.setattr(container.subprocess, 'run', fake_env_init)
+
+    assert _run_named_up() == 0
+
+    assert child['argv'][-4:] == ['env', 'init', '--group', 'with']
+    assert child['cwd'] == str(root)
+    assert openbao.get('team/with/global') == {'INIT_KEY': 'value'}
+    assert grouped['secrets'].values['INIT_KEY'] == 'value'
+    assert grouped['environ']['INIT_KEY'] == 'value'
+    assert _all_kv_paths(openbao) == set(G_WITH)
+
+
+def test_flat_up_does_not_pass_a_group_to_env_init(up_root, openbao, monkeypatch):
+    """決定 10: ``layout: group`` でないときは ``--group`` を渡さない"""
+    root = up_root['root']
+    openbao.secrets.pop(TEAM_GLOBAL)
+    openbao.versions.pop(TEAM_GLOBAL)
+    monkeypatch.chdir(root / 'projects' / 'web')
+    monkeypatch.setenv('PWD', str(root / 'projects' / 'web'))
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen['argv'] = list(argv)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(container.subprocess, 'run', fake_run)
+
+    container._ensure_env_files()
+
+    assert seen['argv'][-2:] == ['env', 'init']

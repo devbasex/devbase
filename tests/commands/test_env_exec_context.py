@@ -66,3 +66,22 @@ def test_local_yml_is_read_from_project_root_when_run_in_subdir(harness, monkeyp
     monkeypatch.setattr(secret_runtime, 'current_project_name', lambda r: 'A')
     assert env_cmd.cmd_env_exec(root, ['--', 'true']) == 0
     assert harness['env']['DOCKER_CONTEXT'] == 'gpu-wsl'
+
+
+@pytest.mark.parametrize('argv', [['--'], []])
+def test_env_exec_empty_command_returns_one(harness, argv):
+    """現状固定: 区切りだけの場合も空コマンドとして扱う。"""
+    assert env_cmd.cmd_env_exec(harness['root'], argv) == 1
+
+
+@pytest.mark.parametrize(('error', 'expected'), [
+    (FileNotFoundError, 127),
+    (OSError, 1),
+])
+def test_env_exec_process_error_return_code(harness, monkeypatch, error, expected):
+    """現状固定: 子プロセスを起動できない場合の終了コード。"""
+    def fail_run(*args, **kwargs):
+        raise error('cannot execute')
+
+    monkeypatch.setattr(env_cmd.subprocess, 'run', fail_run)
+    assert env_cmd.cmd_env_exec(harness['root'], ['true']) == expected

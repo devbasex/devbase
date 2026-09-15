@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import getpass
 import sys
+from dataclasses import dataclass
 from dataclasses import replace as _dc_replace
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from devbase.env import backend_config as _bc
 from devbase.env import bootstrap as _bootstrap
@@ -39,7 +40,8 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
         'migrate': lambda: cmd_env_backend_migrate(
             devbase_root, to=getattr(args, 'to', None),
             dry_run=getattr(args, 'dry_run', False),
-            assume_yes=getattr(args, 'assume_yes', False)),
+            assume_yes=getattr(args, 'assume_yes', False),
+            exclude_projects=getattr(args, 'exclude_projects', None) or ()),
     }
     handler = handlers.get(action)
     if handler is None:
@@ -52,18 +54,19 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
 # status
 # ---------------------------------------------------------------------------
 
-def _team_refs(devbase_root: Path) -> List[SecretRef]:
-    """チーム単位の参照 (共通 + 実在するプロジェクト)"""
-    refs = [SecretRef.for_global()]
+def _project_names(devbase_root: Path) -> List[str]:
+    """``projects/`` に実在し、参照の名前に使えるプロジェクト名 (名前順)"""
+    names: List[str] = []
     projects_dir = Path(devbase_root) / 'projects'
     if projects_dir.is_dir():
         for entry in sorted(projects_dir.iterdir()):
             if entry.is_dir():
                 try:
-                    refs.append(SecretRef.for_project(entry.name))
+                    SecretRef.for_project(entry.name)
                 except DevbaseError:
                     continue
-    return refs
+                names.append(entry.name)
+    return names
 
 
 def cmd_env_backend_status(devbase_root: Path) -> int:
@@ -106,11 +109,15 @@ def _print_openbao_status(root: Path, store: SecretStore, config) -> None:
     print(f"  接続先:  {ob.url}")
     print(f"  mount:   {ob.mount}")
     print(f"  個人単位の識別子: {ob.user}")
-    print("\n  置き場 (<mount>/<path>):")
-    print(f"    チーム共通:           {ob.display_path(SecretRef.for_global())}")
-    print(f"    チームのプロジェクト: {ob.mount}/{ob.path_team_project_prefix}/<name>")
-    print(f"    個人共通:             {ob.display_path(SecretRef.for_global(owner='user'))}")
-    print(f"    個人のプロジェクト:   {ob.mount}/{ob.path_user_prefix}/{ob.user}/projects/<name>")
+    if ob.grouped:
+        _print_grouped_locations(root, config)
+    else:
+        print("\n  置き場 (<mount>/<path>):")
+        print(f"    チーム共通:           {ob.display_path(SecretRef.for_global())}")
+        print(f"    チームのプロジェクト: {ob.mount}/{ob.path_team_project_prefix}/<name>")
+        print(f"    個人共通:             {ob.display_path(SecretRef.for_global(owner='user'))}")
+        print(f"    個人のプロジェクト:   "
+              f"{ob.mount}/{ob.path_user_prefix}/{ob.user}/projects/<name>")
 
     try:
         creds = _bootstrap.load(root)
@@ -123,6 +130,42 @@ def _print_openbao_status(root: Path, store: SecretStore, config) -> None:
             print(f"\n  接続資格情報: role_id {creds.role_id} ({_bootstrap.path(root)})")
 
     _print_cache_status(root, store, config)
+
+
+def _print_grouped_locations(root: Path, config) -> None:
+    """``version: 2`` のレイアウト・対象のグループと出所・そのグループで組んだ 4 パス (受け入れ条件 11)。
+
+    対象のグループは実行時のプロジェクトのもの (プロジェクトの外なら ``$DEVBASE_ROOT/env``)。
+    プロジェクトの外ではプロジェクト名が決まらないため、プロジェクトのパスは ``<name>`` のまま出す。
+    """
+    from devbase.env import groups as _groups
+    from devbase.env import runtime as _runtime
+
+    ob = config.openbao
+    project = _runtime.current_project_name(root)
+    print(f"  レイアウト: {ob.layout} (version {config.version})")
+    try:
+        declared = _groups.declare(root, project)
+        shown = ob.display_group(declared.name)
+    except DevbaseError as e:
+        print(f"  グループ:   決められません ({e})")
+        return
+    print(f"  グループ:   {shown} ({_groups.describe_source(root, declared, project)})")
+
+    def project_path(owner: str) -> str:
+        if project is not None:
+            return ob.display_path(SecretRef.for_project(project, owner=owner, group=declared.name))
+        # <name> はプロジェクト名の検査を通らないため、共通のパスの隣として出す
+        common = ob.display_path(SecretRef.for_global(owner=owner, group=declared.name))
+        return f"{common.rsplit('/', 1)[0]}/projects/<name>"
+
+    team_global = ob.display_path(SecretRef.for_global(group=declared.name))
+    user_global = ob.display_path(SecretRef.for_global(owner='user', group=declared.name))
+    print("\n  置き場 (<mount>/<path>):")
+    print(f"    チーム共通:           {team_global}")
+    print(f"    チームのプロジェクト: {project_path('team')}")
+    print(f"    個人共通:             {user_global}")
+    print(f"    個人のプロジェクト:   {project_path('user')}")
 
 
 def _print_cache_status(root: Path, store: SecretStore, config) -> None:
@@ -176,6 +219,70 @@ def _build_openbao_settings(current: Optional[_bc.OpenBaoSettings], args
     return _dc_replace(base, **updates)
 
 
+class _UseOptionError(DevbaseError):
+    """``use`` の ``--layout`` / ``--group-alias`` の誤り (終了コード 2、設定を書き換えない)"""
+
+
+def _apply_layout(settings: _bc.OpenBaoSettings, current: Optional[_bc.OpenBaoSettings],
+                  args) -> _bc.OpenBaoSettings:
+    """``--layout`` と ``--group-alias`` を設定へ当てる (PLAN56 決定 1)。
+
+    ``--layout`` が無ければ既存のレイアウトを引き継ぎ、既存の設定が無ければ ``group`` にする。
+    ``group`` では ``version: 1`` のチーム単位のパスを捨て、``flat`` では読み替えを捨てる。
+    ``--group-alias`` は指定があれば既存の対応を置き換え、無ければ引き継ぐ。
+    """
+    layout = getattr(args, 'layout', None)
+    if layout is None:
+        layout = current.layout if current is not None else _bc.LAYOUT_GROUP
+    alias_args = getattr(args, 'group_aliases', None)
+    defaults = _bc.OpenBaoSettings(url='', user='')
+
+    if layout == _bc.LAYOUT_FLAT:
+        if alias_args:
+            raise _UseOptionError(
+                "--group-alias はグループ別の置き場 (--layout group、version: 2) でだけ使えます "
+                "(書き出すレイアウト: flat、version: 1)")
+        return _dc_replace(settings, layout=_bc.LAYOUT_FLAT, group_aliases={},
+                           path_team_prefix=defaults.path_team_prefix)
+
+    aliases = dict(settings.group_aliases)
+    if alias_args:
+        try:
+            aliases = _bc.parse_group_aliases(alias_args)
+        except _bc.BackendConfigError as e:
+            raise _UseOptionError(f"--group-alias に使えない指定です: {e}") from None
+    return _dc_replace(settings, layout=_bc.LAYOUT_GROUP, group_aliases=aliases,
+                       path_team_global=defaults.path_team_global,
+                       path_team_project_prefix=defaults.path_team_project_prefix)
+
+
+def _describe_aliases(aliases) -> str:
+    return ', '.join(f'{source} → {target}' for source, target in aliases.items())
+
+
+def _build_backend_config(current: _bc.BackendConfig, name: str, args) -> _bc.BackendConfig:
+    """既存の設定と引数から、保存する ``BackendConfig`` を組み立てて検証して返す。
+
+    キャッシュ・OpenBao 設定・版を既存から継ぎ、``openbao`` を選ぶときだけ ``--layout`` /
+    ``--group-alias`` を当てて版を決め直す。検証に失敗した場合は例外を投げ、副作用は起こさない。
+    """
+    cache_arg = getattr(args, 'cache', None)
+    cache_enabled = current.cache_enabled if cache_arg is None else bool(cache_arg)
+    openbao = current.openbao
+    # 版はレイアウトと 1 対 1。openbao 以外へ切り替えるときも既存の版を引き継がないと、
+    # version: 2 の openbao 節と食い違って書けない
+    version = current.version
+    if name == _bc.BACKEND_OPENBAO:
+        openbao = _apply_layout(_build_openbao_settings(current.openbao, args),
+                                current.openbao, args)
+        version = 2 if openbao.grouped else 1
+
+    new_config = _bc.BackendConfig(backend=name, openbao=openbao,
+                                   cache_enabled=cache_enabled, version=version)
+    new_config.validate()
+    return new_config
+
+
 def cmd_env_backend_use(devbase_root: Path, args) -> int:
     root = Path(devbase_root)
     name = getattr(args, 'name', None) or ''
@@ -183,6 +290,12 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
     if name not in _bc.BACKEND_NAMES:
         logger.error("backend '%s' は登録されていません (利用できる backend: %s)",
                      name, ', '.join(_bc.BACKEND_NAMES))
+        return EXIT_USAGE
+
+    if name != _bc.BACKEND_OPENBAO and (getattr(args, 'layout', None) is not None
+                                        or getattr(args, 'group_aliases', None)):
+        logger.error("--layout / --group-alias は backend openbao を選ぶときだけ使えます "
+                     "(指定した backend: %s)", name)
         return EXIT_USAGE
 
     try:
@@ -193,17 +306,9 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
         logger.warning("既存の設定を読めないため、引数だけで組み立てます: %s", e)
         current = _bc.BackendConfig()
 
-    cache_arg = getattr(args, 'cache', None)
-    cache_enabled = current.cache_enabled if cache_arg is None else bool(cache_arg)
-    openbao = current.openbao
-    if name == _bc.BACKEND_OPENBAO:
-        openbao = _build_openbao_settings(current.openbao, args)
-
-    new_config = _bc.BackendConfig(backend=name, openbao=openbao,
-                                   cache_enabled=cache_enabled)
     try:
-        new_config.validate()
-    except _bc.BackendConfigError as e:
+        new_config = _build_backend_config(current, name, args)
+    except (_UseOptionError, _bc.BackendConfigError) as e:
         logger.error("%s", e)
         return EXIT_USAGE
 
@@ -219,13 +324,45 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
         return 1
 
     print(f"backend を {name} に設定しました: {path}")
-    if name == _bc.BACKEND_OPENBAO:
-        ob = new_config.openbao
-        print(f"  接続先:  {ob.url}")
-        print(f"  mount:   {ob.mount}")
-        print(f"  個人単位の識別子: {ob.user}")
-        print(f"  キャッシュ: {'有効' if cache_enabled else '無効'}")
-        print("  接続を確かめる: devbase env backend test")
+    if name != _bc.BACKEND_OPENBAO:
+        return 0
+    ob = new_config.openbao
+    print(f"  接続先:  {ob.url}")
+    print(f"  mount:   {ob.mount}")
+    print(f"  個人単位の識別子: {ob.user}")
+    print(f"  レイアウト: {ob.layout} (version {new_config.version})")
+    if ob.group_aliases:
+        print(f"  グループの読み替え: {_describe_aliases(ob.group_aliases)}")
+    dropped = current.openbao.group_aliases if current.openbao is not None else {}
+    if dropped and not ob.grouped:
+        print(f"  group_aliases ({_describe_aliases(dropped)}) を捨てました "
+              "(version: 1 は読み替えを持ちません)")
+    print(f"  キャッシュ: {'有効' if new_config.cache_enabled else '無効'}")
+    if current.openbao is not None and current.openbao.layout != ob.layout:
+        rc = _purge_cache_after_layout_change(root, current.openbao.layout, ob.layout)
+        if rc != 0:
+            return rc
+    print("  接続を確かめる: devbase env backend test")
+    return 0
+
+
+def _purge_cache_after_layout_change(root: Path, before: str, after: str) -> int:
+    """レイアウトが変わったら控えを消す。
+
+    パスが変わるため古い控えが使われることは ``scope`` の不一致で起きないが、別グループの
+    機密が暗号文のまま残り続けるのを避ける (設計「キャッシュ」)。設定は書いた後なので、
+    消せなかったときは残ったパスを述べて 1 で終える。
+    """
+    from devbase.env import cache as _cache
+
+    try:
+        _cache.purge(root)
+    except DevbaseError as e:
+        logger.error("レイアウトを %s から %s へ変えましたが、キャッシュを消せませんでした: %s",
+                     before, after, e)
+        return 1
+    print(f"  キャッシュ ({_cache.cache_dir(root)}) を消しました "
+          f"(レイアウトが {before} から {after} へ変わったため)")
     return 0
 
 
@@ -283,6 +420,30 @@ def _store_credentials(root: Path, args) -> int:
 # test / migrate (後続タスクで実装)
 # ---------------------------------------------------------------------------
 
+def _probe_refs(root: Path, store: SecretStore):
+    """``test`` が読む参照 (チーム単位と個人単位の組) と、対象外にしたプロジェクトの表示。
+
+    グループ別の置き場では、対象のグループ (実行時のプロジェクト、プロジェクトの外なら
+    ``$DEVBASE_ROOT/env``) と同じ置き場のプロジェクトだけを調べる。グループ単位のポリシーの
+    サーバでは、別グループのプロジェクトの参照が正しい設定でも 403 になるため (PLAN56 決定 8)。
+    それ以外の設定ではグループが ``None`` で、全プロジェクトを今どおり調べる。
+    """
+    from devbase.env import runtime as _runtime
+
+    group = store.ref_group(_runtime.current_project_name(root))
+    refs: List[SecretRef] = [SecretRef.for_global(group=group),
+                             SecretRef.for_global(owner='user', group=group)]
+    skipped: List[str] = []
+    for name in _project_names(root):
+        project_group = store.ref_group(name)
+        if not store.same_storage_group(project_group, group):
+            skipped.append(f"{name} ({store.config.openbao.display_group(project_group)})")
+            continue
+        refs.append(SecretRef.for_project(name, group=project_group))
+        refs.append(SecretRef.for_project(name, owner='user', group=project_group))
+    return refs, skipped
+
+
 def cmd_env_backend_test(devbase_root: Path) -> int:
     """サーバへ接続し、参照ごとに読めるかを確かめる (キャッシュへは落ちない)"""
     from devbase.env.openbao import OpenBaoBackend
@@ -297,17 +458,15 @@ def cmd_env_backend_test(devbase_root: Path) -> int:
             return 1
         backend = store.backend_for(SecretRef.for_global())
         assert isinstance(backend, OpenBaoBackend)
-        refs: List[SecretRef] = []
-        for ref in _team_refs(root):
-            refs.append(ref)
-            refs.append(SecretRef.for_global(owner='user') if ref.kind == 'global'
-                        else SecretRef.for_project(ref.name, owner='user'))
+        refs, skipped = _probe_refs(root, store)
         results = backend.probe(refs)
     except DevbaseError as e:
         logger.error("%s", e)
         return 1
 
     print(f"\n接続先: {backend.url}")
+    if skipped:
+        print(f"対象のグループと違う置き場のプロジェクトは調べていません: {', '.join(skipped)}")
     print(f"読めた参照: {len(results)} 件")
     for ref, count in results:
         print(f"  {ref.label():<28} {backend.display_path(ref):<40} {count} 変数")
@@ -322,13 +481,17 @@ MIGRATE_TARGETS = ('age', _bc.BACKEND_OPENBAO)
 
 
 def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
-                            dry_run: bool = False, assume_yes: bool = False) -> int:
+                            dry_run: bool = False, assume_yes: bool = False,
+                            exclude_projects: Sequence[str] = ()) -> int:
     """チーム単位の機密を別の backend へ写す (PLAN51 決定 7)。
 
     手順は両方向とも同じ: 移行先の同じ参照を読んで衝突を確かめる → 移行先の内容へ
     移行元を重ねて保存する → 読み戻して一致を確かめる → 一致しなければこの実行で
     作成したキーだけを消す → 成功したときだけ ``backend.yml`` を書き換える。
     移行元の機密は自動削除しない。
+
+    ``exclude_projects`` のプロジェクトの参照は、読まない・書かない・退避しない。
+    ``projects/`` に無い名前は打ち間違いとして 2 で止める (PLAN56)。
     """
     from devbase.env import cache as _cache
     from devbase.env.openbao import OpenBaoBackend
@@ -337,6 +500,11 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
     if to not in MIGRATE_TARGETS:
         logger.error("--to には %s のいずれかを指定してください: %r",
                      ' / '.join(MIGRATE_TARGETS), to)
+        return EXIT_USAGE
+    unknown = sorted(set(exclude_projects) - set(_project_names(root)))
+    if unknown:
+        logger.error("--exclude-project に指定したプロジェクトが $DEVBASE_ROOT/projects/ に"
+                     "ありません: %s", ', '.join(unknown))
         return EXIT_USAGE
 
     try:
@@ -366,7 +534,8 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         return 1
     assert isinstance(server, OpenBaoBackend)
 
-    plan = _MigrationPlan(root, file_store, server, to)
+    plan = _MigrationPlan(root, file_store, server_store, server, to,
+                          exclude_projects=exclude_projects)
     try:
         plan.prepare()
     except DevbaseError as e:
@@ -375,6 +544,7 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
 
     if not plan.moves:
         print("移す機密はありません")
+        plan.print_left_on_server()
         return 0
 
     plan.print_summary()
@@ -420,33 +590,85 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
     else:
         print("サーバ上の機密はそのまま残っています (devbase は消しません):")
         print(f"  接続先: {server.url}")
-        for ref, _ in plan.moves:
-            print(f"  {ref.label():<24} {server.display_path(ref)}")
+        for unit, _ in plan.moves:
+            print(f"  {unit.server_ref.label():<24} {server.display_path(unit.server_ref)}")
+        plan.print_left_on_server()
     return 0
+
+
+@dataclass(frozen=True)
+class _MoveUnit:
+    """移行の 1 単位。ファイル backend 側と OpenBao 側で参照を分けて持つ (PLAN56)。
+
+    ファイル backend はグループで分けないため ``file_ref`` はグループを持たず、
+    ``layout: group`` の OpenBao の ``server_ref`` はグループを持つ。同じ参照を両側に使うと、
+    ``OpenBaoBackend`` がグループの無い参照を拒んで読み書きできない。``version: 1`` では
+    両者は同じ値になる。
+    """
+
+    file_ref: SecretRef
+    server_ref: SecretRef
 
 
 class _MigrationPlan:
     """1 回の移行の計画と実行"""
 
-    def __init__(self, root: Path, file_store: SecretStore, server, to: str):
+    def __init__(self, root: Path, file_store: SecretStore, server_store: SecretStore,
+                 server, to: str, *, exclude_projects: Sequence[str] = ()):
         self.root = root
         self.file_store = file_store
+        self.server_store = server_store
         self.server = server
         self.to = to
-        #: (参照, 移行元のキー名) の並び
+        self.exclude_projects = set(exclude_projects)
+        #: (移行の単位, 移行元のキー名) の並び
         self.moves: List[tuple] = []
-        #: 参照 → 移行先に元からあった内容
+        #: 単位 → 移行先に元からあった内容
         self.existing: dict = {}
-        #: 参照 → 移行元の内容
+        #: 単位 → 移行元の内容
         self.source: dict = {}
-        #: 参照 → 衝突したキー名
+        #: 単位 → 衝突したキー名
         self.conflicts: dict = {}
+        #: ``--to age`` で移さずサーバ上に残す、他のグループの共通の参照
+        self.left_on_server: List[SecretRef] = []
 
-    def _source_backend(self):
-        return self.file_store if self.to == _bc.BACKEND_OPENBAO else self.server
+    @property
+    def _grouped(self) -> bool:
+        return self.server_store.config.openbao.grouped
 
-    def _dest_backend(self):
-        return self.server if self.to == _bc.BACKEND_OPENBAO else self.file_store.age
+    def _units(self) -> List[_MoveUnit]:
+        """移す単位を組み、``--to age`` で移さない他のグループの共通の参照を控える。
+
+        共通の参照のグループは ``$DEVBASE_ROOT/env``、プロジェクトの参照はそのプロジェクトの
+        ``env`` から決める (``SecretStore.ref_group``。実行時のディレクトリに左右されない)。
+        age へ移せる共通の参照は 1 つだけなので、``$DEVBASE_ROOT/env`` のグループのものを移し、
+        移すプロジェクトの置き場のうちそれと違うグループの共通の参照には要求を出さない。
+        """
+        store = self.server_store
+        common_group = store.ref_group(None)
+        units = [_MoveUnit(SecretRef.for_global(), SecretRef.for_global(group=common_group))]
+        others: dict = {}
+        for name in _project_names(self.root):
+            if name in self.exclude_projects:
+                continue
+            group = store.ref_group(name)
+            units.append(_MoveUnit(SecretRef.for_project(name),
+                                   SecretRef.for_project(name, group=group)))
+            storage = store.storage_group(group)
+            if self.to == 'age' and not store.same_storage_group(group, common_group):
+                others.setdefault(storage, group)
+        self.left_on_server = [SecretRef.for_global(group=group) for group in others.values()]
+        return units
+
+    def _source_side(self, unit: _MoveUnit):
+        if self.to == _bc.BACKEND_OPENBAO:
+            return self.file_store, unit.file_ref
+        return self.server, unit.server_ref
+
+    def _dest_side(self, unit: _MoveUnit):
+        if self.to == _bc.BACKEND_OPENBAO:
+            return self.server, unit.server_ref
+        return self.file_store.age, unit.file_ref
 
     def _read_current(self, backend, ref: SecretRef) -> dict:
         """移行元・移行先の現物を読む。
@@ -460,58 +682,79 @@ class _MigrationPlan:
         return backend.load(ref) if backend.exists(ref) else {}
 
     def prepare(self) -> None:
-        for ref in _team_refs(self.root):
-            data = self._read_current(self._source_backend(), ref)
+        for unit in self._units():
+            data = self._read_current(*self._source_side(unit))
             if not data:
                 continue
+            ref = unit.file_ref
             if self.to == 'age' and self.file_store.plaintext.exists(ref):
                 raise DevbaseError(
                     f"{ref.label()}の平文 {self.file_store.plaintext.path(ref)} が残っています。"
                     "age へ移すと暗号化・平文が同時に存在する状態になるため、"
                     "先に `devbase env encrypt` で暗号化するか退避してください")
-            current = self._read_current(self._dest_backend(), ref)
-            self.source[ref] = data
-            self.existing[ref] = current
-            self.moves.append((ref, sorted(data)))
+            current = self._read_current(*self._dest_side(unit))
+            self.source[unit] = data
+            self.existing[unit] = current
+            self.moves.append((unit, sorted(data)))
             clash = sorted(k for k in data if k in current)
             if clash:
-                self.conflicts[ref] = clash
+                self.conflicts[unit] = clash
+
+    def _heading(self, unit: _MoveUnit) -> str:
+        """参照の見出し。グループ別の置き場ではサーバ上のパスを添える (値は出さない)"""
+        label = f"{unit.server_ref.label():<24}"
+        if self._grouped:
+            label += f" {self.server.display_path(unit.server_ref)}"
+        return label
 
     def print_summary(self) -> None:
         direction = ('age / 平文 → openbao' if self.to == _bc.BACKEND_OPENBAO
                      else 'openbao → age')
         print(f"\n=== 移行する機密 ({direction}) ===")
-        for ref, keys in self.moves:
-            print(f"  {ref.label():<24} {len(keys)} 件: {', '.join(keys)}")
+        for unit, keys in self.moves:
+            print(f"  {self._heading(unit)} {len(keys)} 件: {', '.join(keys)}")
         if self.conflicts:
             print("\n移行先に同じキーがあります:")
-            for ref, keys in self.conflicts.items():
-                print(f"  {ref.label():<24} {', '.join(keys)}")
+            for unit, keys in self.conflicts.items():
+                print(f"  {self._heading(unit)} {', '.join(keys)}")
+        self.print_left_on_server()
+
+    def print_left_on_server(self) -> None:
+        """``--to age`` で移さない他のグループの共通の参照 (要求を出さずにパスだけを出す)"""
+        if not self.left_on_server:
+            return
+        settings = self.server_store.config.openbao
+        print("\n次のグループの共通の参照は age へ移さず、サーバ上に残します "
+              "(ファイル backend の共通は 1 つだけのため。読み取りの要求も出していません):")
+        for ref in self.left_on_server:
+            print(f"  グループ {settings.display_group(ref.group):<16} "
+                  f"{self.server.display_path(ref)}")
 
     def apply(self) -> None:
         from devbase.env.openbao import SecretRefusedError
 
-        dest = self._dest_backend()
         created: dict = {}
         try:
-            for ref, keys in self.moves:
-                merged = dict(self.existing[ref])
-                merged.update(self.source[ref])
+            for unit, keys in self.moves:
+                dest, ref = self._dest_side(unit)
+                merged = dict(self.existing[unit])
+                merged.update(self.source[unit])
                 # 結果が分からない失敗に備え、書く前から巻き戻しの対象に入れる。
                 # サーバが拒んだと確定した応答 (権限の不足・版の不一致) では何も
                 # 書けていないので、その参照は対象から外す。消すのは「作成したキー」
                 # ではなく「作成したキーのうち、値が保存したままのもの」なので値も控える
-                created[ref] = {key: merged[key] for key in keys}
+                created[unit] = {key: merged[key] for key in keys}
                 try:
                     dest.save(ref, merged)
                 except SecretRefusedError:
-                    created.pop(ref, None)
+                    created.pop(unit, None)
                     raise
                 logger.info("%s を書き込みました", ref.label())
-            for ref, _ in self.moves:
-                expected = dict(self.existing[ref])
-                expected.update(self.source[ref])
-                actual = self._read_back(ref)
+            for unit, _ in self.moves:
+                ref = self._dest_side(unit)[1]
+                expected = dict(self.existing[unit])
+                expected.update(self.source[unit])
+                actual = self._read_back(unit)
                 if actual != expected:
                     diff = sorted(k for k in expected if actual.get(k) != expected[k])
                     raise DevbaseError(
@@ -521,10 +764,10 @@ class _MigrationPlan:
             self._rollback(created)
             raise
 
-    def _read_back(self, ref: SecretRef) -> dict:
+    def _read_back(self, unit: _MoveUnit) -> dict:
         if self.to == _bc.BACKEND_OPENBAO:
-            return self.server.fetch(ref)
-        return self.file_store.age.load(ref)
+            return self.server.fetch(unit.server_ref)
+        return self.file_store.age.load(unit.file_ref)
 
     def _rollback(self, created: dict) -> None:
         """この実行で作成したキーだけを消す。移行先に元からあったキーは触らない。
@@ -533,13 +776,13 @@ class _MigrationPlan:
         他の利用者がそのキーを更新していることがあり、キー名だけで消すとその更新まで
         消える。
         """
-        dest = self._dest_backend()
-        for ref, written in created.items():
+        for unit, written in created.items():
+            dest, ref = self._dest_side(unit)
             try:
-                if self.to == 'age' and not self.existing[ref]:
+                if self.to == 'age' and not self.existing[unit]:
                     self.file_store.age.remove(ref)
                     continue
-                current = self._read_back(ref)
+                current = self._read_back(unit)
                 if self.to == _bc.BACKEND_OPENBAO:
                     kept = {k: v for k, v in current.items()
                             if not (k in written and written[k] == v)}
@@ -560,7 +803,8 @@ class _MigrationPlan:
         backup_dir = (self.root / 'backups' / 'env-backend-migrate'
                       / datetime.now().strftime('%Y%m%d-%H%M%S'))
         backup_dir.mkdir(parents=True, exist_ok=True)
-        for ref, _ in self.moves:
+        for unit, _ in self.moves:
+            ref = unit.file_ref
             backend = self.file_store.backend_for(ref)
             source = backend.path(ref)
             if not source.is_file():

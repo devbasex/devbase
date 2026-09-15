@@ -72,6 +72,8 @@ def up_harness(tmp_path, monkeypatch):
     # PLAN54: 実行シェルの DEVBASE_ROOT (利用者の実環境) の backend を読まない
     monkeypatch.setattr(container, '_bao_environment', lambda: {})
     monkeypatch.setattr(container, '_push_bao_token', lambda *a, **k: None)
+    # PLAN56: グループの食い違いの検査も実行シェルの DEVBASE_ROOT の backend を読む
+    monkeypatch.setattr(container, '_check_group_consistency', lambda project=None: True)
 
     def fake_down(compose_file=None):
         # 停止時点で渡された compose の中身も記録する (旧構成であること)
@@ -156,3 +158,132 @@ def test_first_run_without_previous_compose(up_harness, monkeypatch):
 
     assert [c[0] for c in calls] == ['down', 'up']
     assert calls[0][1] is None
+
+
+# ---------------------------------------------------------------------------
+# ボリュームと機密のグループの食い違い (PLAN56 決定 7 / 受け入れ条件 16)
+# ---------------------------------------------------------------------------
+
+GROUPED_CONFIG = """\
+version: 2
+backend: openbao
+openbao:
+  url: https://openbao.example.com
+  user: member01
+  layout: group
+  group_aliases:
+    default: nyle
+"""
+
+FLAT_CONFIG = """\
+version: 1
+backend: openbao
+openbao:
+  url: https://openbao.example.com
+  user: member01
+"""
+
+PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+
+
+@pytest.fixture
+def mismatch(tmp_path, monkeypatch):
+    """``projects/api`` (宣言なし) で ``DEVBASE_ACCOUNT_GROUP=kkg``。副作用の呼び出しを記録する。
+
+    ``DEVBASE_ROOT`` は tmp へ向け、実行シェルの backend を読まない。
+    """
+    from devbase.env import runtime
+    from devbase.utils import docker_context as dc
+
+    root = tmp_path / 'root'
+    project = root / 'projects' / 'api'
+    project.mkdir(parents=True)
+    (project / 'project.yml').write_text(PROJECT_YML)
+    (root / 'secrets').mkdir()
+    monkeypatch.setenv('DEVBASE_ROOT', str(root))
+    monkeypatch.setenv('PWD', str(project))
+    monkeypatch.chdir(project)
+    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'kkg')
+    for name in ('DOCKER_CONTEXT', 'DOCKER_HOST', 'DEVBASE_DOCKER_CONTEXT'):
+        monkeypatch.delenv(name, raising=False)
+    dc.reset()
+    runtime.release_store()
+
+    calls: list = []
+    monkeypatch.setattr(container, 'get_project_name', lambda: 'api')
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    monkeypatch.setattr(container, '_resolve_docker_target', lambda context=None: dc.DockerTarget(
+        context=None, source='none', remote=False, home=None, gid=None))
+    monkeypatch.setattr(container.subprocess, 'run',
+                        lambda argv, **k: calls.append(('subprocess', list(argv))))
+    monkeypatch.setattr(container, '_run_pre_up_hook',
+                        lambda config=None: calls.append(('pre-up',)) or True)
+    monkeypatch.setattr(container, '_ensure_images', lambda: calls.append(('images',)) or True)
+    monkeypatch.setattr(container, '_auto_snapshot', lambda *a, **k: calls.append(('snapshot',)))
+    monkeypatch.setattr(container, 'ensure_volumes', lambda *a, **k: calls.append(('volumes',)))
+    monkeypatch.setattr(container, 'ensure_network', lambda *a, **k: calls.append(('network',)))
+    monkeypatch.setattr(container, '_inject_secrets',
+                        lambda *, required: calls.append(('inject',)))
+    yield {'root': root, 'project': project, 'calls': calls}
+    runtime.release_store()
+
+
+def _config(root, text):
+    (root / 'secrets' / 'backend.yml').write_text(text)
+
+
+def test_up_stops_on_a_group_mismatch_before_any_side_effect(mismatch, caplog):
+    """受け入れ条件 16: 両方のグループ名と出所を述べて 1。env init・フック・スナップショットを起動しない"""
+    _config(mismatch['root'], GROUPED_CONFIG)
+
+    assert container.cmd_up() == 1
+
+    assert mismatch['calls'] == []
+    assert not (mismatch['project'] / '.env').exists()
+    text = caplog.text
+    assert 'kkg' in text and 'default' in text
+    assert 'DEVBASE_ACCOUNT_GROUP' in text
+    assert 'projects/api/env にも $DEVBASE_ROOT/env にも宣言なし' in text
+
+
+def test_scale_stops_on_a_group_mismatch_without_rewriting_the_scale(mismatch, caplog):
+    """受け入れ条件 16: ``scale`` は ``project.yml`` の ``scale`` を書き換えない"""
+    _config(mismatch['root'], GROUPED_CONFIG)
+
+    assert container.cmd_scale(2) == 1
+
+    assert mismatch['calls'] == []
+    assert (mismatch['project'] / 'project.yml').read_text() == PROJECT_YML
+    assert 'kkg' in caplog.text and 'default' in caplog.text
+
+
+def test_matching_groups_pass_the_check(mismatch):
+    _config(mismatch['root'], GROUPED_CONFIG)
+    (mismatch['project'] / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
+
+    assert container._check_group_consistency() is True
+
+
+def test_flat_layout_does_not_stop_the_same_up(mismatch, monkeypatch):
+    """受け入れ条件 16: 今の形の ``backend.yml`` では同じ操作で止めない"""
+    _config(mismatch['root'], FLAT_CONFIG)
+    monkeypatch.setattr(container, '_ensure_env_files',
+                        lambda: mismatch['calls'].append(('env-files',)) or False)
+
+    assert container.cmd_up() == 1
+
+    assert mismatch['calls'] == [('env-files',)]
+
+
+def test_flat_layout_does_not_stop_the_same_scale(mismatch, monkeypatch):
+    _config(mismatch['root'], FLAT_CONFIG)
+
+    def stop_here(*args, **kwargs):
+        raise DevbaseError('ここで止める')
+
+    monkeypatch.setattr(container, '_build_scaled_override', stop_here)
+
+    assert container.cmd_scale(2) == 1
+
+    assert 'scale: 2' in (mismatch['project'] / 'project.yml').read_text()
+    assert ('volumes',) in mismatch['calls']

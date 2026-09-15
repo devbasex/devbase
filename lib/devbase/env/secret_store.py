@@ -97,6 +97,22 @@ def _validate_owner(owner: str) -> str:
     return owner
 
 
+def _validate_group(group: Optional[str]) -> Optional[str]:
+    """参照のグループ名を ``DEVBASE_ACCOUNT_GROUP`` と同じ規則で検証する (空は ``None``)。
+
+    グループ名はパスの 1 要素になるため、区切り文字や予約語を参照の時点で弾く。
+    規則は :func:`devbase.volume.manager.resolve_account_group` を使い、写さない。
+    """
+    if group is None or not str(group).strip():
+        return None
+    from devbase.volume.manager import resolve_account_group
+
+    try:
+        return resolve_account_group(str(group))
+    except DevbaseError as e:
+        raise SecretStoreError(str(e)) from None
+
+
 @dataclass(frozen=True)
 class SecretRef:
     """機密の参照 (共通 / プロジェクト × チーム単位 / 個人単位)
@@ -105,19 +121,28 @@ class SecretRef:
     渡している既存の生成をそのまま残すため。既存の呼び出しはすべてチーム単位を指す。
     ファクトリは ``for_global`` / ``for_project`` の 2 つのままにし、持ち主は
     キーワード引数 ``owner`` で受ける (PLAN51 設計 1「参照の形」)。
+
+    ``group`` はアカウントグループ (PLAN56 決定 2)。``backend.yml`` が ``version: 2``
+    (``openbao.layout: group``) のときだけ入り、それ以外では常に ``None`` で、参照の値・
+    等価性・キャッシュの位置は今と同じになる (決定 5)。グループを参照が持つため、
+    1 つの ``SecretStore`` の中でグループが変わっても控え (``_seen``) を取り違えない。
+    読み替え (``group_aliases``) の前の名前を持ち、読み替えはパスを組むときに行う。
     """
     kind: str                      # 'global' | 'project'
     name: Optional[str] = None
     owner: str = OWNER_TEAM        # 'team' | 'user'
+    group: Optional[str] = None
 
     @staticmethod
-    def for_global(*, owner: str = OWNER_TEAM) -> 'SecretRef':
-        return SecretRef(kind='global', owner=_validate_owner(owner))
+    def for_global(*, owner: str = OWNER_TEAM, group: Optional[str] = None) -> 'SecretRef':
+        return SecretRef(kind='global', owner=_validate_owner(owner),
+                         group=_validate_group(group))
 
     @staticmethod
-    def for_project(name: str, *, owner: str = OWNER_TEAM) -> 'SecretRef':
+    def for_project(name: str, *, owner: str = OWNER_TEAM,
+                    group: Optional[str] = None) -> 'SecretRef':
         return SecretRef(kind='project', name=_validate_project_name(name),
-                         owner=_validate_owner(owner))
+                         owner=_validate_owner(owner), group=_validate_group(group))
 
     @property
     def is_user(self) -> bool:
@@ -127,7 +152,8 @@ class SecretRef:
         # チーム単位の文字列は変えない。誤りの伝達や桁揃えに埋め込まれており、
         # 変えると既存の表示とテストが一斉に動く。
         base = 'グローバル' if self.kind == 'global' else f"プロジェクト '{self.name}'"
-        return f'個人の{base}' if self.is_user else base
+        text = f'個人の{base}' if self.is_user else base
+        return f'{text}（グループ {self.group}）' if self.group else text
 
 
 class SecretBackend(Protocol):
@@ -402,6 +428,43 @@ class SecretStore:
     def backend_name(self) -> str:
         """設定で選ばれている backend 名 (``auto`` を含む)"""
         return self.config.backend
+
+    def ref_group(self, project: Optional[str]) -> Optional[str]:
+        """参照に持たせるグループ。``openbao`` かつ ``layout: group`` のときだけ値を返す。
+
+        グループは非機密の ``env`` ファイルから決める
+        (:func:`devbase.env.groups.declared_group`。機密の置き場は読まない)。それ以外の
+        設定では ``None`` を返し、参照は今と同じ値になる (PLAN56 決定 5)。
+        """
+        config = self.config
+        settings = config.openbao
+        if config.backend != 'openbao' or settings is None or not settings.grouped:
+            return None
+        from devbase.env.groups import declared_group
+
+        return declared_group(self.root, project)
+
+    def storage_group(self, group: Optional[str]) -> Optional[str]:
+        """参照のグループを置き場のグループ名へ写す (``group_aliases`` の読み替え)。
+
+        グループの無い参照 (``version: 1`` とファイル backend) では ``None``。2 つの参照が
+        同じ置き場かは、この結果で比べる (PLAN56 決定 6)。
+        """
+        config = self.config
+        settings = config.openbao
+        if (group is None or config.backend != 'openbao' or settings is None
+                or not settings.grouped):
+            return None
+        return settings.storage_group(group)
+
+    def same_storage_group(self, a: Optional[str], b: Optional[str]) -> bool:
+        """2 つのグループが同じ置き場へ写るか (``storage_group`` 同士の比較)。
+
+        グループの振り分け規則 (PLAN56) を 1 箇所に閉じる。``storage_group`` が同値なら真。
+        あるプロジェクトの参照が対象グループと同じ置き場かの判定 (export / import / test /
+        migrate の 4 経路) は、すべてこれを使う。
+        """
+        return self.storage_group(a) == self.storage_group(b)
 
     def _selected_backend(self) -> Optional[SecretBackend]:
         """設定で明示的に選ばれた backend (``auto`` なら ``None``)"""

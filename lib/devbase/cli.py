@@ -313,6 +313,10 @@ def _add_env_parser(subparsers):
 
     env_init = env_sub.add_parser('init', help='Initial setup (interactive)')
     env_init.add_argument('--reset', action='store_true', help='Reset existing config')
+    # グループ別の置き場 (PLAN56)。`up` の子プロセスがプロジェクトのグループを渡す (決定 10)
+    env_init.add_argument('--group', metavar='NAME', default=None,
+                          help='Account group whose team secrets to set up '
+                               '(only with the grouped layout of the openbao backend)')
 
     env_sub.add_parser('sync', help='Resync credentials from sources')
 
@@ -349,6 +353,10 @@ def _add_env_parser(subparsers):
     for sub in (env_list, env_get, env_set, env_delete, env_edit):
         sub.add_argument('--user', action='store_true', dest='user',
                          help="Use this user's personal secrets instead of the team's")
+        # グループ別の置き場 (PLAN56)。省略時は実行時のプロジェクトのグループ
+        sub.add_argument('--group', metavar='NAME', default=None,
+                         help='Account group whose secrets to use '
+                              '(only with the grouped layout of the openbao backend)')
 
     env_sub.add_parser('project', help='Setup project-specific variables')
 
@@ -449,6 +457,15 @@ def _add_env_backend_parser(env_sub):
                              help='Keep an encrypted local cache of server secrets')
     cache_group.add_argument('--no-cache', dest='cache', action='store_const', const=False,
                              help='Do not keep an encrypted local cache of server secrets')
+    # 指定が無ければ既存のレイアウトと読み替えを引き継ぐ (None。PLAN56 決定 1)
+    use.add_argument('--layout', choices=('flat', 'group'), default=None,
+                     help='Path layout on the server: group splits secrets by account group '
+                          '(version 2), flat keeps the ungrouped paths (version 1). '
+                          'Default: keep the current layout (group for a new setting)')
+    use.add_argument('--group-alias', action='append', default=None, metavar='FROM=TO',
+                     dest='group_aliases',
+                     help='Store account group FROM under the name TO (repeatable; '
+                          'replaces the current aliases; only with the group layout)')
 
     backend_sub.add_parser('test', help='Check the connection to the server backend')
 
@@ -458,6 +475,10 @@ def _add_env_backend_parser(env_sub):
                          help='Destination backend (age / openbao)')
     migrate.add_argument('--dry-run', action='store_true',
                          help='Show what would move (key names only) without writing')
+    migrate.add_argument('--exclude-project', action='append', default=[],
+                         metavar='NAME', dest='exclude_projects',
+                         help='Leave this project out of the migration: its secrets are '
+                              'neither read, written nor moved aside (repeatable)')
     migrate.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
                          help='Skip the confirmation prompt')
 
@@ -786,7 +807,7 @@ def main():
 
     cmd = args.command
 
-    _load_secret_env(cmd, getattr(args, 'subcommand', None))
+    _load_secret_env(cmd, getattr(args, 'subcommand', None), name=getattr(args, 'name', None))
 
     try:
         return _dispatch(cmd, args)
@@ -816,12 +837,61 @@ _NO_SECRET_INJECTION = frozenset({
 })
 
 
+#: 対象の参照を自分で決めて読み書きする ``env`` のサブコマンド (PLAN56)。
+#:
+#: グループ別の置き場では、``--group`` や ``-p`` の検証より前に実行時のディレクトリの
+#: グループで注入すると、拒むはずの操作でも別グループのパスへ要求が出る。値を環境変数から
+#: 使わないので、``layout: group`` のときだけ dispatch 前の注入を行わない。
+_GROUPED_SELF_RESOLVING_ENV = frozenset({
+    'list', 'get', 'set', 'delete', 'edit', 'init', 'sync', 'project', 'export', 'import',
+})
+
+
+def _grouped_layout(root: Path) -> bool:
+    """``backend.yml`` がグループ別の置き場 (``openbao`` かつ ``layout: group``) を選んでいるか"""
+    from devbase.env.secret_store import SecretStore
+
+    try:
+        config = SecretStore(root).config
+    except DevbaseError:
+        return False
+    return (config.backend == 'openbao' and config.openbao is not None
+            and config.openbao.grouped)
+
+
 def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
     return ((cmd, None) in _NO_SECRET_INJECTION
             or (cmd, subcommand) in _NO_SECRET_INJECTION)
 
 
-def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
+def _named_lifecycle_project(root: Path, cmd: str, subcommand: Optional[str],
+                             name: Optional[str]) -> Optional[str]:
+    """名前を指定したライフサイクル操作で、dispatch 前の注入に使うプロジェクト名 (PLAN56 決定 11)。
+
+    グループ別の置き場 (``layout: group``) で、``up <name>`` などの ``name`` が
+    ``projects/`` に実在するときだけその名前を返す。実行時のディレクトリのプロジェクトで
+    注入すると、切替元のグループのパスへ要求し、別グループの機密をいったんホストの
+    プロセスへ載せるため。
+
+    ``version: 1`` では ``None`` を返し、今どおり実行時のディレクトリで解決する (PLAN55 の
+    往復の表を変えない)。``name`` を取るのはショートカットと ``project`` のサブコマンド
+    だけで、他のコマンドの ``name`` (``plugin`` など) はプロジェクト名ではない。
+    """
+    if not name:
+        return None
+    if cmd not in SHORTCUTS and GROUP_ALIASES.get(cmd, cmd) != 'project':
+        return None
+    if not (root / 'projects' / name).is_dir():
+        return None
+    from devbase.env import runtime as _runtime
+
+    # 注入と同じ SecretStore で設定を読む (設定を読むだけで、サーバへは要求しない)
+    store = _runtime.store_for(root)
+    return name if store.ref_group(name) is not None else None
+
+
+def _load_secret_env(cmd: str, subcommand: Optional[str] = None,
+                     name: Optional[str] = None) -> None:
     """機密を復号して自プロセスの環境変数へ載せる。
 
     起動ラッパーは共通の機密ファイルを読み込まなくなった (plan35 §4.4)。
@@ -832,16 +902,25 @@ def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
     復号に失敗しても停止しない。鍵が未整備でも `env keygen` や `--help` は
     使えるべきで、値が本当に要る操作 (コンテナ起動など) は各コマンド側で
     改めて必須として読み込む。
+
+    ``name`` はコマンドの ``name`` 引数。グループ別の置き場では、名前を指定した
+    ライフサイクル操作をその名前のプロジェクトで解決する
+    (:func:`_named_lifecycle_project`)。
     """
     if _skip_secret_injection(cmd, subcommand):
         return
     root = os.environ.get('DEVBASE_ROOT')
     if not root:
         return
+    if (cmd == 'env' and subcommand in _GROUPED_SELF_RESOLVING_ENV
+            and _grouped_layout(Path(root))):
+        return
     try:
         from devbase.env import runtime as _runtime
 
-        _runtime.inject(Path(root), _runtime.current_project_name(Path(root)))
+        project = (_named_lifecycle_project(Path(root), cmd, subcommand, name)
+                   or _runtime.current_project_name(Path(root)))
+        _runtime.inject(Path(root), project)
     except DevbaseError as e:
         logger.debug("機密を読み込めませんでした: %s", e)
     except Exception as e:  # noqa: BLE001 - 通常コマンドを暗号化都合で倒さない

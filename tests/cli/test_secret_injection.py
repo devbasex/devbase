@@ -101,3 +101,91 @@ def test_container_injection_error_swallowed_when_not_required(tmp_path, monkeyp
     with pytest.raises(DevbaseError, match='failed to inject secrets'):
         container._inject_secrets(required=True)
 
+
+# ---------------------------------------------------------------------------
+# 名前を指定したライフサイクル操作の dispatch 前の注入 (PLAN56 決定 11)
+# ---------------------------------------------------------------------------
+
+GROUPED_CONFIG = """\
+version: 2
+backend: openbao
+openbao:
+  url: https://openbao.example.com
+  user: member01
+  layout: group
+"""
+
+
+def _grouped(root):
+    path = root / 'secrets' / 'backend.yml'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(GROUPED_CONFIG, encoding='utf-8')
+    (root / 'projects' / 'web').mkdir(parents=True)
+
+
+@pytest.mark.parametrize(('cmd', 'subcommand'), [('up', None), ('scale', None),
+                                                  ('project', 'up'), ('project', 'down')])
+def test_named_lifecycle_injects_the_target_with_the_group_layout(calls, tmp_path, cmd,
+                                                                  subcommand):
+    _grouped(tmp_path)
+
+    cli._load_secret_env(cmd, subcommand, name='web')
+
+    assert calls == [(tmp_path, 'web')]
+
+
+def test_named_lifecycle_keeps_the_current_project_with_the_flat_layout(calls, tmp_path):
+    """``version: 1`` では PLAN55 の往復の表のまま、実行時のディレクトリで解決する"""
+    (tmp_path / 'projects' / 'web').mkdir(parents=True)
+
+    cli._load_secret_env('project', 'up', name='web')
+
+    assert calls == [(tmp_path, None)]
+
+
+def test_unknown_name_keeps_the_current_project(calls, tmp_path):
+    _grouped(tmp_path)
+
+    cli._load_secret_env('project', 'up', name='missing')
+
+    assert calls == [(tmp_path, None)]
+
+
+def test_name_of_a_non_lifecycle_command_is_not_a_project(calls, tmp_path):
+    _grouped(tmp_path)
+
+    cli._load_secret_env('plugin', 'info', name='web')
+
+    assert calls == [(tmp_path, None)]
+
+
+def test_main_passes_the_parsed_name(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli, '_load_secret_env',
+                        lambda cmd, subcommand=None, name=None: seen.update(
+                            cmd=cmd, subcommand=subcommand, name=name))
+    monkeypatch.setattr(cli, '_dispatch', lambda cmd, args: 0)
+    monkeypatch.setattr('sys.argv', ['devbase', 'project', 'up', 'web'])
+
+    assert cli.main() == 0
+    assert seen == {'cmd': 'project', 'subcommand': 'up', 'name': 'web'}
+
+
+@pytest.mark.parametrize('subcommand', ['list', 'get', 'set', 'delete', 'edit', 'init',
+                                        'sync', 'project', 'export', 'import'])
+def test_env_subcommands_resolve_their_own_group_with_the_group_layout(calls, tmp_path,
+                                                                        subcommand):
+    """PLAN56: ``--group`` / ``-p`` の検証より前に実行時のディレクトリのグループで注入しない"""
+    _grouped(tmp_path)
+
+    cli._load_secret_env('env', subcommand)
+
+    assert calls == []
+
+
+def test_env_exec_still_injects_with_the_group_layout(calls, tmp_path):
+    _grouped(tmp_path)
+
+    cli._load_secret_env('env', 'exec')
+
+    assert len(calls) == 1

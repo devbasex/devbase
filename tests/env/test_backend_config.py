@@ -261,3 +261,225 @@ def test_unsupported_version_is_a_config_error(root):
     with pytest.raises(bc.BackendConfigError) as exc:
         bc.load(root)
     assert 'version' in str(exc.value) and '1' in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# グループ別の置き場 (PLAN56 決定 1・4・5)
+# ---------------------------------------------------------------------------
+
+OPENBAO_V2 = """\
+version: 2
+backend: openbao
+openbao:
+  url: https://openbao.example.com
+  user: member01
+  layout: group
+  group_aliases:
+    default: nyle
+"""
+
+
+def _refs(group):
+    from devbase.env.secret_store import SecretRef
+
+    return [SecretRef.for_global(group=group), SecretRef.for_project('web', group=group),
+            SecretRef.for_global(owner='user', group=group),
+            SecretRef.for_project('web', owner='user', group=group)]
+
+
+def test_version_1_paths_and_cache_positions_are_unchanged(root):
+    """受け入れ条件 9: ``version: 1`` のパスとキャッシュの位置の対応表を固定する"""
+    write_yaml(root, OPENBAO_MINIMAL)
+    ob = bc.load(root).openbao
+
+    assert ob.layout == 'flat'
+    assert [ob.path_of(ref) for ref in _refs(None)] == [
+        'team/global', 'team/projects/web',
+        'users/member01/global', 'users/member01/projects/web']
+    assert [ob.cache_relpath(ref) for ref in _refs(None)] == [
+        'team/global.env.age', 'team/projects/web.env.age',
+        'user/global.env.age', 'user/projects/web.env.age']
+
+
+def test_version_2_is_loaded_with_the_group_layout(root):
+    write_yaml(root, OPENBAO_V2)
+
+    config = bc.load(root)
+
+    assert config.version == 2
+    ob = config.openbao
+    assert ob.layout == 'group'
+    assert ob.path_team_prefix == 'team'
+    assert ob.path_user_prefix == 'users'
+    assert ob.group_aliases == {'default': 'nyle'}
+
+
+def test_version_2_paths_and_cache_positions_follow_the_table(root):
+    write_yaml(root, OPENBAO_V2)
+    ob = bc.load(root).openbao
+
+    assert [ob.path_of(ref) for ref in _refs('with')] == [
+        'team/with/global', 'team/with/projects/web',
+        'users/member01/with/global', 'users/member01/with/projects/web']
+    # 読み替えはパスの上だけ (default → nyle)
+    assert [ob.path_of(ref) for ref in _refs('default')] == [
+        'team/nyle/global', 'team/nyle/projects/web',
+        'users/member01/nyle/global', 'users/member01/nyle/projects/web']
+    assert [ob.cache_relpath(ref) for ref in _refs('default')] == [
+        'team/nyle/global.env.age', 'team/nyle/projects/web.env.age',
+        'user/nyle/global.env.age', 'user/nyle/projects/web.env.age']
+    assert ob.display_path(_refs('with')[0]) == 'devbase/team/with/global'
+
+
+def test_version_2_honors_the_team_and_user_prefixes(root):
+    write_yaml(root, OPENBAO_V2 + "  path_team_prefix: shared/t\n  path_user_prefix: people\n")
+    ob = bc.load(root).openbao
+
+    assert [ob.path_of(ref) for ref in _refs('with')] == [
+        'shared/t/with/global', 'shared/t/with/projects/web',
+        'people/member01/with/global', 'people/member01/with/projects/web']
+
+
+def test_version_2_path_without_a_group_is_refused(root):
+    from devbase.env.secret_store import SecretRef
+
+    write_yaml(root, OPENBAO_V2)
+    ob = bc.load(root).openbao
+
+    with pytest.raises(bc.BackendConfigError):
+        ob.path_of(SecretRef.for_global())
+
+
+def test_storage_group_applies_the_alias(root):
+    write_yaml(root, OPENBAO_V2)
+    ob = bc.load(root).openbao
+
+    assert ob.storage_group('default') == 'nyle'
+    assert ob.storage_group('with') == 'with'
+
+
+def test_version_2_roundtrips_through_save(root):
+    write_yaml(root, OPENBAO_V2)
+    config = bc.load(root)
+
+    bc.save(root, config)
+    text = (root / 'secrets' / 'backend.yml').read_text()
+
+    assert 'path_team_global' not in text and 'path_team_project_prefix' not in text
+    assert 'layout: group' in text and 'path_team_prefix: team' in text
+    assert bc.load(root) == config
+
+
+def test_version_1_save_does_not_write_the_group_keys(root):
+    write_yaml(root, OPENBAO_MINIMAL)
+
+    bc.save(root, bc.load(root))
+    text = (root / 'secrets' / 'backend.yml').read_text()
+
+    for key in ('layout', 'path_team_prefix', 'group_aliases'):
+        assert key not in text
+
+
+def test_version_2_without_layout_is_rejected(root):
+    """決定 1: 版の番号から並びを思い出さなくて済むよう ``layout`` を必須にする"""
+    write_yaml(root, OPENBAO_V2.replace("  layout: group\n", ""))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'openbao.layout' in str(exc.value)
+
+
+def test_version_2_with_the_flat_layout_is_rejected(root):
+    write_yaml(root, OPENBAO_V2.replace("layout: group", "layout: flat"))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'openbao.layout' in str(exc.value) and 'group' in str(exc.value)
+
+
+@pytest.mark.parametrize('key', ['path_team_global', 'path_team_project_prefix'])
+def test_version_2_rejects_the_flat_path_keys(root, key):
+    write_yaml(root, OPENBAO_V2 + f"  {key}: team/x\n")
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert f'openbao.{key}' in str(exc.value) and '2' in str(exc.value)
+
+
+@pytest.mark.parametrize('line', ['  layout: group\n', '  layout: flat\n',
+                                  '  path_team_prefix: team\n',
+                                  '  group_aliases:\n    default: nyle\n'])
+def test_version_1_rejects_the_group_keys(root, line):
+    write_yaml(root, OPENBAO_MINIMAL + line)
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    key = line.strip().split(':')[0]
+    assert f'openbao.{key}' in str(exc.value) and '1' in str(exc.value)
+
+
+@pytest.mark.parametrize('pair', ['ubuntu: nyle', '"1": nyle', '"bad name": nyle',
+                                  'default: ubuntu', 'default: "1"', 'default: "a/b"'])
+def test_aliases_must_be_valid_group_names(root, pair):
+    write_yaml(root, OPENBAO_V2.replace('default: nyle', pair))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'group_aliases' in str(exc.value)
+    assert 'DEVBASE_ACCOUNT_GROUP' in str(exc.value)
+
+
+@pytest.mark.parametrize('target', ['global', 'projects'])
+def test_alias_target_cannot_be_a_reserved_storage_name(root, target):
+    """決定 1: ``team/projects/global`` などの ``version: 1`` のパスと重なる名前は拒む"""
+    write_yaml(root, OPENBAO_V2.replace('default: nyle', f'default: {target}'))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert target in str(exc.value)
+
+
+@pytest.mark.parametrize('group', ['global', 'projects'])
+def test_reserved_storage_name_without_an_alias_is_rejected(root, group):
+    write_yaml(root, OPENBAO_V2)
+    ob = bc.load(root).openbao
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        ob.storage_group(group)
+    assert group in str(exc.value)
+
+
+def test_alias_from_a_reserved_storage_name_is_accepted(root):
+    """``global`` という名前のグループを別の置き場へ向ける対応は成り立つ"""
+    write_yaml(root, OPENBAO_V2.replace('default: nyle', 'global: nyle'))
+
+    assert bc.load(root).openbao.storage_group('global') == 'nyle'
+
+
+def test_version_3_is_still_rejected(root):
+    write_yaml(root, OPENBAO_V2.replace('version: 2', 'version: 3'))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert 'version' in str(exc.value)
+
+
+def test_config_with_mismatched_version_and_layout_is_not_saved(root):
+    """``use`` が版を引き継ぎ損ねた設定を書かない (版とレイアウトは 1 対 1)"""
+    config = bc.BackendConfig(
+        backend='openbao', version=1,
+        openbao=bc.OpenBaoSettings(url='https://x.example.com', user='me', layout='group'))
+
+    with pytest.raises(bc.BackendConfigError):
+        bc.save(root, config)
+    assert not (root / 'secrets' / 'backend.yml').exists()
+
+
+@pytest.mark.parametrize('alias', ["default: ' with '", "' default ': with", "default: 'global '"])
+def test_alias_with_surrounding_spaces_is_rejected(root, alias):
+    """前後の空白を黙って落とすと、パスに空白が入るか読み替えが効かない"""
+    write_yaml(root, OPENBAO_V2.replace('default: nyle', alias))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    assert '空白' in str(exc.value)
