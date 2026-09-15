@@ -280,7 +280,7 @@ flowchart LR
 | `devbase up`（プロジェクト `web` の中） | 1 | 4 |
 | `devbase up web`（別のプロジェクト `api` の中） | 1 | 6（`api` の 4 + 切替後の `web` 固有の 2） |
 | `devbase up web`（`projects/` の外） | 1 | 4 |
-| 共通機密が未作成で `env init` を走らせた `up` | 2 | 8 以下 |
+| 共通機密が未作成で `env init` を走らせた `up`（`up` のプロセスの分だけ。子プロセスの `env init` の往復は含まない） | 2 | 8 以下 |
 
 ### コンテナの中の `bao`
 
