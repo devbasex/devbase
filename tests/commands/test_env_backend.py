@@ -330,7 +330,7 @@ def test_grouped_status_outside_projects_uses_the_root_env(grouped, monkeypatch,
     assert env_backend.cmd_env_backend_status(grouped) == 0
 
     out = capsys.readouterr().out
-    assert 'kkg (env)' in out
+    assert 'kkg ($DEVBASE_ROOT/env)' in out
     assert 'devbase/team/kkg/global' in out
     assert 'devbase/team/kkg/projects/<name>' in out
     assert 'devbase/users/member01/kkg/global' in out

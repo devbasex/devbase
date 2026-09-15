@@ -167,3 +167,10 @@ def test_ref_group_reads_the_declaration_for_the_group_layout(root):
     # 読み替えは参照ではなくパスの組み立てで行う (参照は宣言どおりの名前を持つ)
     assert store.ref_group('api') == 'default'
     assert store.ref_group(None) == 'default'
+
+
+def test_describe_source_names_root_env_explicitly(tmp_path):
+    """``$DEVBASE_ROOT/env`` で決まったときは、プロジェクトの ``env`` と見分けられる名前で出す"""
+    (tmp_path / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
+    declared = groups.declare(tmp_path, None)
+    assert groups.describe_source(tmp_path, declared, None) == '$DEVBASE_ROOT/env'

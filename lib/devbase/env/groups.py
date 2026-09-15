@@ -94,9 +94,11 @@ def describe_source(root: Path, declared: DeclaredGroup, project: Optional[str])
     root = Path(root)
     if declared.source is not None:
         try:
-            return str(declared.source.relative_to(root))
+            relative = declared.source.relative_to(root)
         except ValueError:
             return str(declared.source)
+        # 直下の ``env`` を相対名のまま出すと、プロジェクトの ``env`` と見分けが付かない
+        return '$DEVBASE_ROOT/env' if relative == Path('env') else str(relative)
     if project:
         return f"projects/{project}/env にも $DEVBASE_ROOT/env にも宣言なし"
     return "$DEVBASE_ROOT/env に宣言なし"
