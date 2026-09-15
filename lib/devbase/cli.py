@@ -786,7 +786,7 @@ def main():
 
     cmd = args.command
 
-    _load_secret_env(cmd, getattr(args, 'subcommand', None))
+    _load_secret_env(cmd, getattr(args, 'subcommand', None), name=getattr(args, 'name', None))
 
     try:
         return _dispatch(cmd, args)
@@ -821,7 +821,34 @@ def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
             or (cmd, subcommand) in _NO_SECRET_INJECTION)
 
 
-def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
+def _named_lifecycle_project(root: Path, cmd: str, subcommand: Optional[str],
+                             name: Optional[str]) -> Optional[str]:
+    """名前を指定したライフサイクル操作で、dispatch 前の注入に使うプロジェクト名 (PLAN56 決定 11)。
+
+    グループ別の置き場 (``layout: group``) で、``up <name>`` などの ``name`` が
+    ``projects/`` に実在するときだけその名前を返す。実行時のディレクトリのプロジェクトで
+    注入すると、切替元のグループのパスへ要求し、別グループの機密をいったんホストの
+    プロセスへ載せるため。
+
+    ``version: 1`` では ``None`` を返し、今どおり実行時のディレクトリで解決する (PLAN55 の
+    往復の表を変えない)。``name`` を取るのはショートカットと ``project`` のサブコマンド
+    だけで、他のコマンドの ``name`` (``plugin`` など) はプロジェクト名ではない。
+    """
+    if not name:
+        return None
+    if cmd not in SHORTCUTS and GROUP_ALIASES.get(cmd, cmd) != 'project':
+        return None
+    if not (root / 'projects' / name).is_dir():
+        return None
+    from devbase.env import runtime as _runtime
+
+    # 注入と同じ SecretStore で設定を読む (設定を読むだけで、サーバへは要求しない)
+    store = _runtime.store_for(root)
+    return name if store.ref_group(name) is not None else None
+
+
+def _load_secret_env(cmd: str, subcommand: Optional[str] = None,
+                     name: Optional[str] = None) -> None:
     """機密を復号して自プロセスの環境変数へ載せる。
 
     起動ラッパーは共通の機密ファイルを読み込まなくなった (plan35 §4.4)。
@@ -832,6 +859,10 @@ def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
     復号に失敗しても停止しない。鍵が未整備でも `env keygen` や `--help` は
     使えるべきで、値が本当に要る操作 (コンテナ起動など) は各コマンド側で
     改めて必須として読み込む。
+
+    ``name`` はコマンドの ``name`` 引数。グループ別の置き場では、名前を指定した
+    ライフサイクル操作をその名前のプロジェクトで解決する
+    (:func:`_named_lifecycle_project`)。
     """
     if _skip_secret_injection(cmd, subcommand):
         return
@@ -841,7 +872,9 @@ def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
     try:
         from devbase.env import runtime as _runtime
 
-        _runtime.inject(Path(root), _runtime.current_project_name(Path(root)))
+        project = (_named_lifecycle_project(Path(root), cmd, subcommand, name)
+                   or _runtime.current_project_name(Path(root)))
+        _runtime.inject(Path(root), project)
     except DevbaseError as e:
         logger.debug("機密を読み込めませんでした: %s", e)
     except Exception as e:  # noqa: BLE001 - 通常コマンドを暗号化都合で倒さない

@@ -300,11 +300,10 @@ class BackendConfig:
             raise BackendConfigError(
                 f"backend の値 {self.backend!r} は登録されていません "
                 f"(利用できる backend: {', '.join(BACKEND_NAMES)})")
-        if self.backend == BACKEND_OPENBAO:
-            if self.openbao is None:
-                raise BackendConfigError(
-                    "backend: openbao に必要な設定が欠けています: "
-                    "openbao.url, openbao.user")
+        if self.backend == BACKEND_OPENBAO and self.openbao is None:
+            raise BackendConfigError(
+                "backend: openbao に必要な設定が欠けています: "
+                "openbao.url, openbao.user")
         layout = SUPPORTED_VERSIONS.get(self.version)
         if layout is None:
             raise BackendConfigError(

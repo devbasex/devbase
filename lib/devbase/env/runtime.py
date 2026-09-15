@@ -196,12 +196,21 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
 
     個人単位の参照を持たない backend (``age`` / ``plaintext``) では 2 と 5 が空になり、
     結果は従来と同じになる (前提 3)。
+
+    4 参照はプロジェクトのアカウントグループ (:meth:`SecretStore.ref_group`) を持つ
+    (PLAN56)。グループ別の置き場 (``layout: group``) では、``project`` のグループの
+    置き場だけを読み、他のグループのパスへは要求しない。それ以外の設定ではグループが
+    ``None`` で、参照は今と同じ値になる (決定 5)。
     """
     root = Path(devbase_root)
     store = store if store is not None else store_for(root)
+    # 重ね順だけを見る差し替えの店 (テストなど) は ref_group を持たない。持たなければ
+    # グループの無い参照 = 今と同じ参照で読む
+    ref_group = getattr(store, 'ref_group', None)
+    group = ref_group(project) if callable(ref_group) else None
 
-    team_global = store.load(SecretRef.for_global())
-    user_global = store.load(SecretRef.for_global(owner='user'))
+    team_global = store.load(SecretRef.for_global(group=group))
+    user_global = store.load(SecretRef.for_global(owner='user', group=group))
     global_names = list(dict.fromkeys([*team_global, *user_global]))
     project_names: List[str] = []
 
@@ -210,8 +219,8 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
 
     if project:
         merged.update(_project_env_overrides(root, project))
-        team_project = store.load(SecretRef.for_project(project))
-        user_project = store.load(SecretRef.for_project(project, owner='user'))
+        team_project = store.load(SecretRef.for_project(project, group=group))
+        user_project = store.load(SecretRef.for_project(project, owner='user', group=group))
         merged.update(team_project)
         merged.update(user_project)
         project_names = list(dict.fromkeys([*team_project, *user_project]))

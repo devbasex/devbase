@@ -431,3 +431,73 @@ def test_concurrent_generations_do_not_mix(openbao_root, openbao):
 
     assert cache_a.read(GLOBAL, backend_a) is None
     assert cache_b.read(GLOBAL, backend_b).secrets == {'A': 'b-value'}
+
+
+# ---------------------------------------------------------------------------
+# グループ別の置き場 (PLAN56 受け入れ条件 8)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def grouped_root(openbao_root, openbao):
+    """``version: 2`` (``default`` → ``nyle``)。``web`` は ``with``、``api`` は宣言なし"""
+    from tests.conftest import configure_openbao
+
+    root = openbao_root
+    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    (root / 'projects' / 'api').mkdir(parents=True, exist_ok=True)
+    openbao.put('team/with/global', {'A': 'with-global'})
+    openbao.put('team/with/projects/web', {'B': 'with-web'})
+    openbao.put('team/nyle/global', {'A': 'nyle-global'})
+    openbao.put('team/nyle/projects/api', {'B': 'nyle-api'})
+    return root
+
+
+def test_grouped_caches_are_separate_files_and_index_keys(grouped_root):
+    root = grouped_root
+    runtime.resolve(root, 'web', store=SecretStore(root))
+    runtime.resolve(root, 'api', store=SecretStore(root))
+
+    base = root / 'secrets' / 'cache'
+    assert cache.cached_files(root) == sorted([
+        base / 'team' / 'nyle' / 'global.env.age',
+        base / 'team' / 'nyle' / 'projects' / 'api.env.age',
+        base / 'team' / 'with' / 'global.env.age',
+        base / 'team' / 'with' / 'projects' / 'web.env.age',
+        base / 'user' / 'nyle' / 'global.env.age',
+        base / 'user' / 'nyle' / 'projects' / 'api.env.age',
+        base / 'user' / 'with' / 'global.env.age',
+        base / 'user' / 'with' / 'projects' / 'web.env.age'])
+    assert set(cache.read_index(root)) == {
+        'team:nyle:global', 'team:nyle:project:api', 'user:nyle:global',
+        'user:nyle:project:api', 'team:with:global', 'team:with:project:web',
+        'user:with:global', 'user:with:project:web'}
+
+
+def test_unreachable_uses_each_groups_own_cache(grouped_root, openbao):
+    """受け入れ条件 8: 後から起動した方の控えが先の控えを上書きせず、取り違えない"""
+    root = grouped_root
+    runtime.resolve(root, 'api', store=SecretStore(root))
+    runtime.resolve(root, 'web', store=SecretStore(root))
+    openbao.stop()
+
+    api = runtime.resolve(root, 'api', store=SecretStore(root))
+    web = runtime.resolve(root, 'web', store=SecretStore(root))
+
+    assert api.values == {'A': 'nyle-global', 'B': 'nyle-api'}
+    assert web.values == {'A': 'with-global', 'B': 'with-web'}
+
+
+def test_flat_cache_is_not_used_for_a_grouped_reference(openbao_root, openbao):
+    """移行性: ``version: 1`` の控えを ``version: 2`` の参照に使わない"""
+    from tests.conftest import configure_openbao
+
+    root = openbao_root
+    openbao.put('team/global', {'A': 'flat'})
+    runtime.resolve(root, store=SecretStore(root))
+    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    openbao.stop()
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        runtime.resolve(root, store=SecretStore(root))
+    assert 'キャッシュもありません' in str(exc.value)
