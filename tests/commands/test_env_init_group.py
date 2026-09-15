@@ -36,10 +36,9 @@ def _init(root, *argv):
     return env_cmd.cmd_env(root, args)
 
 
-def test_parser_accepts_group_only_on_init():
+def test_parser_accepts_group_on_init():
     args = cli._create_parser().parse_args(['env', 'init', '--group', 'with'])
     assert args.group == 'with'
-    # init 以外の --group は別のタスクで足す。ここでは受け付けないことを固定しない
     assert cli._create_parser().parse_args(['env', 'init']).group is None
 
 

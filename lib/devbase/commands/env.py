@@ -54,19 +54,29 @@ def _global_env(devbase_root: Path, user: bool = False, store=None, *, fresh: bo
 EXIT_USAGE = 2
 
 
-def _init_group(devbase_root: Path, store, group: Optional[str]) -> Optional[str]:
-    """``env init`` が相手にするグループ。使えなければ ``DevbaseError`` (終了コード 2)。
+class GroupOptionError(DevbaseError):
+    """``--group`` を受け付けられないときの誤り。``exit_code`` がコマンドの終了コード"""
+
+    def __init__(self, message: str, exit_code: int = EXIT_USAGE):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[str]:
+    """コマンドが相手にするグループ (PLAN56「対象のグループ」)。
 
     ``--group`` があれば、グループ別の置き場を選んだ設定でだけ受け付け、名前を
-    ``DEVBASE_ACCOUNT_GROUP`` と同じ規則と読み替え後の予約語で検証する。無ければ
-    実行時のプロジェクトのグループ (``SecretStore.ref_group``。それ以外の設定では ``None``)。
+    ``DEVBASE_ACCOUNT_GROUP`` と同じ規則と読み替え後の予約語で検証する (通らなければ
+    :class:`GroupOptionError`、終了コード 2)。無ければ実行時のプロジェクトのグループ
+    (``SecretStore.ref_group``。プロジェクトの外なら ``$DEVBASE_ROOT/env`` → ``default``、
+    それ以外の設定では ``None``)。
     """
     if group is None:
         return store.ref_group(_current_project_name(devbase_root))
     config = store.config
     settings = config.openbao
     if config.backend != 'openbao' or settings is None or not settings.grouped:
-        raise DevbaseError(
+        raise GroupOptionError(
             "--group はグループ別の置き場 (backend: openbao、version: 2) を選んだ設定で"
             "だけ使えます")
     from devbase.env.backend_config import BackendConfigError
@@ -74,8 +84,35 @@ def _init_group(devbase_root: Path, store, group: Optional[str]) -> Optional[str
     try:
         settings.storage_group(group)
     except BackendConfigError as e:
-        raise DevbaseError(f"--group に使えない名前です: {e}") from None
+        raise GroupOptionError(f"--group に使えない名前です: {e}") from None
     return group
+
+
+def _group_display(settings, name: str) -> str:
+    """誤りの文言でのグループ名。読み替えがあれば前と後の両方 (``default → nyle``)"""
+    stored = settings.storage_group(name)
+    return name if stored == name else f'{name} → {stored}'
+
+
+def _project_group_mismatch(devbase_root: Path, store, group: Optional[str],
+                            project: Optional[str]) -> Optional[str]:
+    """``--group`` がプロジェクトのグループと違う置き場なら、その旨の文言を返す。
+
+    比べるのは読み替えた後の名前 (``storage_group``) で、``default: nyle`` の対応があれば
+    宣言の無いプロジェクトに ``--group nyle`` は同じ置き場である (決定 6)。``--group`` が
+    無い・プロジェクトの外なら ``None``。``group`` は :func:`_target_group` で検証済みとする。
+    """
+    if group is None or project is None:
+        return None
+    from devbase.env import groups as _groups
+
+    settings = store.config.openbao
+    declared = _groups.declare(devbase_root, project)
+    if settings.storage_group(group) == settings.storage_group(declared.name):
+        return None
+    source = _groups.describe_source(devbase_root, declared, project)
+    return (f"--group {_group_display(settings, group)} は、プロジェクト {project} のグループ "
+            f"{_group_display(settings, declared.name)} ({source}) と違う置き場です")
 
 
 def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
@@ -89,8 +126,12 @@ def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Opt
 
 
 def _project_env(devbase_root: Path, cwd: Optional[Path] = None,
-                 user: bool = False, store=None, *, fresh: bool = False):
-    """CWD のプロジェクト設定のビューを返す (projects/ 配下でなければ ``None``)"""
+                 user: bool = False, store=None, *, fresh: bool = False,
+                 group: Optional[str] = None):
+    """CWD のプロジェクト設定のビューを返す (projects/ 配下でなければ ``None``)。
+
+    ``group`` はグループ別の置き場 (PLAN56) で参照に持たせるグループ。
+    """
     from devbase.env.secret_store import SecretRef
     from devbase.env.secret_view import SecretEnvFile
 
@@ -98,10 +139,12 @@ def _project_env(devbase_root: Path, cwd: Optional[Path] = None,
     if name is None:
         return None
     store = store if store is not None else _secret_store(devbase_root)
-    return SecretEnvFile(store, SecretRef.for_project(name, owner=_owner(user)), fresh=fresh)
+    return SecretEnvFile(store, SecretRef.for_project(name, owner=_owner(user), group=group),
+                         fresh=fresh)
 
 
-def _target_env(devbase_root: Path, project: bool, user: bool = False):
+def _target_env(devbase_root: Path, project: bool, user: bool = False,
+                group: Optional[str] = None):
     """``--project`` / ``--user`` から操作対象の設定ビューを返す (解決できなければ ``None``)。
 
     ``-p`` は適用範囲の軸を、``--user`` は持ち主の軸を選び、片方の指定がもう片方の軸を
@@ -116,11 +159,24 @@ def _target_env(devbase_root: Path, project: bool, user: bool = False):
 
     3 つとも書き込みを伴うため、読み出しは控えへ落ちない (``fresh``)。控えから
     読んだ内容を元に書き戻すと、不達の間の他の利用者の更新を上書きする。
+
+    ``group`` は ``--group`` (PLAN56)。参照は対象のグループ (:func:`_target_group`) で作る。
+    受け付けられなければ読み書きの前に :class:`GroupOptionError` を送る。``-p`` で
+    プロジェクトのグループと違う置き場を指したときは終了コード 1 (決定 6)。
     """
+    store = _secret_store(devbase_root)
+    target = _target_group(devbase_root, store, group)
     if not project:
-        env_file = _global_env(devbase_root, user=user, fresh=True)
+        env_file = _global_env(devbase_root, user=user, store=store, fresh=True, group=target)
     else:
-        env_file = _project_env(devbase_root, user=user, fresh=True)
+        name = _current_project_name(devbase_root)
+        mismatch = _project_group_mismatch(devbase_root, store, group, name)
+        if mismatch is not None:
+            raise GroupOptionError(
+                f"{mismatch}。-p で読み書きできるのはプロジェクトのグループの置き場だけです "
+                f"(グループを変えるなら projects/{name}/env の "
+                f"{keys.DEVBASE_ACCOUNT_GROUP} を直してください)", exit_code=1)
+        env_file = _project_env(devbase_root, user=user, store=store, fresh=True, group=target)
         if env_file is None:
             logger.error(
                 "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
@@ -151,18 +207,23 @@ def cmd_env(devbase_root: Path, args) -> int:
                                         project_only=getattr(args, 'project_only', False),
                                         reveal=getattr(args, 'reveal', False),
                                         keys_only=getattr(args, 'keys_only', False),
-                                        user=getattr(args, 'user', False)),
+                                        user=getattr(args, 'user', False),
+                                        group=getattr(args, 'group', None)),
         'set':     lambda: cmd_env_set(devbase_root, getattr(args, 'assignment', ''),
                                        project=getattr(args, 'project', False),
-                                       user=getattr(args, 'user', False)),
+                                       user=getattr(args, 'user', False),
+                                       group=getattr(args, 'group', None)),
         'get':     lambda: cmd_env_get(devbase_root, getattr(args, 'key', ''),
-                                       user=getattr(args, 'user', False)),
+                                       user=getattr(args, 'user', False),
+                                       group=getattr(args, 'group', None)),
         'delete':  lambda: cmd_env_delete(devbase_root, getattr(args, 'key', ''),
                                           project=getattr(args, 'project', False),
-                                          user=getattr(args, 'user', False)),
+                                          user=getattr(args, 'user', False),
+                                          group=getattr(args, 'group', None)),
         'edit':    lambda: cmd_env_edit(devbase_root,
                                         project=getattr(args, 'project', False),
-                                        user=getattr(args, 'user', False)),
+                                        user=getattr(args, 'user', False),
+                                        group=getattr(args, 'group', None)),
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
@@ -408,10 +469,10 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
     """
     store = _secret_store(devbase_root)
     try:
-        target_group = _init_group(devbase_root, store, group)
-    except DevbaseError as e:
+        target_group = _target_group(devbase_root, store, group)
+    except GroupOptionError as e:
         logger.error("%s", e)
-        return EXIT_USAGE
+        return e.exit_code
     env_file = _global_env(devbase_root, store=store, group=target_group)
     env_file.load()
 
@@ -582,41 +643,82 @@ def _print_env_vars(vars_dict, keys_only, reveal):
 
 def cmd_env_list(devbase_root: Path, global_only: bool = False,
                  project_only: bool = False, reveal: bool = False,
-                 keys_only: bool = False, user: bool = False) -> int:
+                 keys_only: bool = False, user: bool = False,
+                 group: Optional[str] = None) -> int:
     """設定済み変数の一覧表示
 
     適用範囲の軸は ``-g`` / ``-p`` で、持ち主の軸は ``--user`` で絞る。指定の無い軸は
     絞らない。チーム共通の節は変数が 0 件でも出し、それ以外は存在する参照だけ出す
     (個人単位の参照を持たない backend では、出力は従来と同じになる)。
+
+    ``group`` は ``--group`` (PLAN56)。プロジェクトのグループと違う置き場なら、``-p`` は
+    1 で止め、``-p`` なしはプロジェクトの節を出さない (その旨を標準エラーへ 1 行出す)。
     """
     store = _secret_store(devbase_root)
     owners = (True,) if user else (False, True)
+    try:
+        target = _target_group(devbase_root, store, group)
+        include_project = not global_only and _include_project_refs(
+            devbase_root, store, group, refuse=project_only)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
 
     if not project_only:
         for as_user in owners:
-            env_file = _global_env(devbase_root, user=as_user, store=store)
+            env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
             if as_user and not env_file.file_exists():
                 continue
             all_vars = env_file.get_all()
-            label = '個人のグローバル' if as_user else 'グローバル'
+            label = env_file.ref.label()
 
             print(f"\n=== {label} ({env_file.path}{_mode_suffix(env_file)}) ===")
             _print_env_vars(all_vars, keys_only, reveal)
             print(f"\n{label}: {len(all_vars)}変数")
 
-    if not global_only:
+    if include_project:
         for as_user in owners:
-            proj_env = _project_env(devbase_root, user=as_user, store=store)
+            proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
             if proj_env is not None and proj_env.file_exists():
                 proj_vars = proj_env.get_all()
                 label = '個人のプロジェクト' if as_user else 'プロジェクト'
+                suffix = _group_suffix(proj_env.ref)
 
-                print(f"\n=== {label}: {proj_env.ref.name} "
+                print(f"\n=== {label}: {proj_env.ref.name}{suffix} "
                       f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
                 _print_env_vars(proj_vars, keys_only, reveal)
-                print(f"\n{label}: {len(proj_vars)}変数")
+                print(f"\n{label}{suffix}: {len(proj_vars)}変数")
 
     return 0
+
+
+def _group_suffix(ref) -> str:
+    """見出しに付けるグループの表示 (``（グループ with）``)。グループの無い参照では空。
+
+    文言は ``SecretRef.label()`` が持ち、ここでは写さずに差分だけを取り出す。
+    """
+    from dataclasses import replace
+
+    return ref.label()[len(replace(ref, group=None).label()):]
+
+
+def _include_project_refs(devbase_root: Path, store, group: Optional[str], *,
+                          refuse: bool) -> bool:
+    """``list`` / ``get`` がプロジェクトの参照を含めるか。
+
+    ``--group`` がプロジェクトのグループと違う置き場なら含めない。``refuse`` (``list -p``) は
+    :class:`GroupOptionError` (終了コード 1) で止め、それ以外は標準エラーへ 1 行出す。
+    """
+    name = _current_project_name(devbase_root)
+    if name is None:
+        return False
+    mismatch = _project_group_mismatch(devbase_root, store, group, name)
+    if mismatch is None:
+        return True
+    if refuse:
+        raise GroupOptionError(f"{mismatch}。-p では読めません", exit_code=1)
+    logger.warning("%s。プロジェクト %s の参照は含めません", mismatch, name)
+    return False
 
 
 def _mode_suffix(env_file) -> str:
@@ -645,7 +747,7 @@ def _format_value(key: str, value: str, reveal: bool) -> str:
 
 
 def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
-                user: bool = False) -> int:
+                user: bool = False, group: Optional[str] = None) -> int:
     """変数を設定する"""
     if '=' not in assignment:
         logger.error("形式: devbase env set KEY=VALUE")
@@ -659,7 +761,11 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
         logger.error("キー名が空です")
         return 1
 
-    env_file = _target_env(devbase_root, project, user=user)
+    try:
+        env_file = _target_env(devbase_root, project, user=user, group=group)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
     if env_file is None:
         return 1
 
@@ -674,18 +780,28 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
     return 0
 
 
-def cmd_env_get(devbase_root: Path, key: str, user: bool = False) -> int:
+def cmd_env_get(devbase_root: Path, key: str, user: bool = False,
+                group: Optional[str] = None) -> int:
     """変数の値を取得する
 
     探索順は 個人共通 → チーム共通 → 個人のプロジェクト → チームのプロジェクト。
     適用範囲の順は現行のまま共通が先で、同じ適用範囲では個人単位を先に見る
     (PLAN51 設計 2)。``--user`` を付けると個人単位だけを探す。
+
+    ``group`` は ``--group`` (PLAN56)。プロジェクトのグループと違う置き場なら、共通の参照
+    だけを探す (プロジェクトの参照を含めなかった旨を標準エラーへ 1 行出す)。
     """
     store = _secret_store(devbase_root)
     owners = (True,) if user else (True, False)
+    try:
+        target = _target_group(devbase_root, store, group)
+        include_project = _include_project_refs(devbase_root, store, group, refuse=False)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
 
     for as_user in owners:
-        env_file = _global_env(devbase_root, user=as_user, store=store)
+        env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
         if as_user and not env_file.file_exists():
             continue
         value = env_file.get(key)
@@ -693,8 +809,8 @@ def cmd_env_get(devbase_root: Path, key: str, user: bool = False) -> int:
             print(value)
             return 0
 
-    for as_user in owners:
-        proj_env = _project_env(devbase_root, user=as_user, store=store)
+    for as_user in owners if include_project else ():
+        proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
         if proj_env is not None and proj_env.file_exists():
             value = proj_env.get(key)
             if value is not None:
@@ -706,13 +822,17 @@ def cmd_env_get(devbase_root: Path, key: str, user: bool = False) -> int:
 
 
 def cmd_env_delete(devbase_root: Path, key: str, project: bool = False,
-                   user: bool = False) -> int:
+                   user: bool = False, group: Optional[str] = None) -> int:
     """変数を削除する
 
     ``--project`` を受けるのは、暗号化された設定は利用者がエディタで直接開いて
     不要なキーを消せないため。CLI からプロジェクト設定を掃除する手段が要る。
     """
-    env_file = _target_env(devbase_root, project, user=user)
+    try:
+        env_file = _target_env(devbase_root, project, user=user, group=group)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
     if env_file is None:
         return 1
 
@@ -729,7 +849,8 @@ def cmd_env_delete(devbase_root: Path, key: str, project: bool = False,
     return 1
 
 
-def cmd_env_edit(devbase_root: Path, project: bool = False, user: bool = False) -> int:
+def cmd_env_edit(devbase_root: Path, project: bool = False, user: bool = False,
+                 group: Optional[str] = None) -> int:
     """エディタで.envを開く
 
     ``--project`` を受けるのは delete と同じ理由。保存先をファイルとして直接開いて
@@ -738,7 +859,11 @@ def cmd_env_edit(devbase_root: Path, project: bool = False, user: bool = False) 
     「暗号化されているか」ではなく「直接編集できるか」にするのは、サーバ backend の
     ``path()`` が ``<mount>/<パス>`` を ``Path`` にしただけの値で、開いても機密は無いため。
     """
-    env_file = _target_env(devbase_root, project, user=user)
+    try:
+        env_file = _target_env(devbase_root, project, user=user, group=group)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
     if env_file is None:
         return 1
 

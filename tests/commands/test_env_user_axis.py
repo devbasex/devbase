@@ -406,3 +406,211 @@ def test_edit_user_on_file_backends_does_not_open_the_team_file(file_root, prepa
     assert '個人単位' in errors(caplog)
     expected = {} if prepare == 'unset' else {'KEEP': '1'}
     assert SecretStore(file_root).load(GLOBAL) == expected
+
+
+# ---------------------------------------------------------------------------
+# グループ別の置き場での対象グループと --group (PLAN56 受け入れ条件 3・5・5a・6・14)
+# ---------------------------------------------------------------------------
+
+SECRET_VALUE = 'do-not-print-this-value'
+
+
+@pytest.fixture
+def grouped(openbao_root, openbao):
+    """``version: 2`` (``default`` → ``nyle``)。``web`` は ``with``、``api`` は宣言なし"""
+    from tests.conftest import configure_openbao
+
+    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    (openbao_root / 'projects' / 'api').mkdir()
+    return openbao_root
+
+
+def at(monkeypatch, root, rel=''):
+    monkeypatch.setenv('PWD', str(root / rel) if rel else str(root))
+
+
+def run_env(root, *argv):
+    from devbase import cli
+
+    return env_cmd.cmd_env(root, cli._create_parser().parse_args(['env', *argv]))
+
+
+def kv_paths(openbao):
+    return {r.kv_path for r in openbao.received if r.kv_path}
+
+
+def fake_editor(monkeypatch, text='EDITED=1\n'):
+    def fake_call(argv):
+        Path(argv[-1]).write_text(text)
+        return 0
+
+    monkeypatch.setattr(env_cmd.subprocess, 'call', fake_call)
+
+
+def test_grouped_set_from_a_subdirectory_targets_the_projects_group(grouped, openbao,
+                                                                    monkeypatch):
+    """受け入れ条件 3"""
+    at(monkeypatch, grouped, 'projects/web/src')
+
+    assert run_env(grouped, 'set', 'FOO=1') == 0
+    assert run_env(grouped, 'set', '-p', 'FOO=2') == 0
+    assert run_env(grouped, 'set', '--user', 'FOO=3') == 0
+
+    assert openbao.get('team/with/global') == {'FOO': '1'}
+    assert openbao.get('team/with/projects/web') == {'FOO': '2'}
+    assert openbao.get('users/member01/with/global') == {'FOO': '3'}
+    assert kv_paths(openbao) == {'team/with/global', 'team/with/projects/web',
+                                 'users/member01/with/global'}
+
+
+def test_grouped_commands_with_group_outside_projects_use_that_group(grouped, openbao,
+                                                                    monkeypatch, capsys):
+    """受け入れ条件 5: $DEVBASE_ROOT で --group kkg の 5 コマンド"""
+    openbao.put('team/kkg/global', {'KEY': 'v'})
+    fake_editor(monkeypatch)
+
+    assert run_env(grouped, 'list', '--group', 'kkg', '--keys') == 0
+    out = capsys.readouterr().out
+    assert '=== グローバル（グループ kkg） (devbase/team/kkg/global [openbao]) ===' in out
+    assert run_env(grouped, 'get', '--group', 'kkg', 'KEY') == 0
+    assert capsys.readouterr().out.strip() == 'v'
+    assert run_env(grouped, 'set', '--group', 'kkg', 'NEW=v') == 0
+    assert run_env(grouped, 'set', '--group', 'kkg', '--user', 'MINE=u') == 0
+    assert run_env(grouped, 'delete', '--group', 'kkg', 'KEY') == 0
+    assert run_env(grouped, 'edit', '--group', 'kkg', '--user') == 0
+
+    assert openbao.get('team/kkg/global') == {'NEW': 'v'}
+    assert openbao.get('users/member01/kkg/global') == {'EDITED': '1'}
+    assert kv_paths(openbao) == {'team/kkg/global', 'users/member01/kkg/global'}
+
+
+def test_grouped_list_headings_show_the_group(grouped, openbao, monkeypatch, capsys):
+    """受け入れ条件 5: 一覧の見出しにグループ名が出る"""
+    openbao.put('team/with/global', {'A': '1'})
+    openbao.put('users/member01/with/global', {'B': '2'})
+    openbao.put('team/with/projects/web', {'C': '3'})
+    openbao.put('users/member01/with/projects/web', {'D': '4'})
+    at(monkeypatch, grouped, 'projects/web')
+
+    assert run_env(grouped, 'list', '--keys') == 0
+
+    out = capsys.readouterr().out
+    for heading in ('=== グローバル（グループ with） ', '=== 個人のグローバル（グループ with） ',
+                    '=== プロジェクト: web（グループ with） ',
+                    '=== 個人のプロジェクト: web（グループ with） '):
+        assert heading in out
+    assert 'グローバル（グループ with）: 1変数' in out
+
+
+def test_grouped_project_write_with_another_group_is_refused(grouped, openbao, monkeypatch,
+                                                            caplog):
+    """受け入れ条件 5a: web (with) で set -p --group kkg は 1、要求 0 回"""
+    at(monkeypatch, grouped, 'projects/web')
+
+    assert run_env(grouped, 'set', '-p', '--group', 'kkg', f'FOO={SECRET_VALUE}') == 1
+    assert run_env(grouped, 'delete', '-p', '--group', 'kkg', 'FOO') == 1
+    assert run_env(grouped, 'edit', '-p', '--group', 'kkg') == 1
+    assert run_env(grouped, 'list', '-p', '--group', 'kkg') == 1
+
+    assert openbao.received == []
+    text = errors(caplog)
+    assert 'kkg' in text and 'with' in text and 'projects/web/env' in text
+    assert SECRET_VALUE not in caplog.text
+
+
+def test_grouped_get_with_another_group_searches_only_the_common_references(
+        grouped, openbao, monkeypatch, caplog, capsys):
+    """受け入れ条件 5a: web で get --group kkg は kkg の共通の参照だけを探す"""
+    openbao.put('team/with/projects/web', {'FOO': SECRET_VALUE})
+    at(monkeypatch, grouped, 'projects/web')
+
+    assert run_env(grouped, 'get', '--group', 'kkg', 'FOO') == 1
+
+    assert kv_paths(openbao) == {'team/kkg/global', 'users/member01/kkg/global'}
+    notices = [r.getMessage() for r in caplog.records
+               if r.levelno >= logging.WARNING and 'プロジェクト' in r.getMessage()]
+    assert len(notices) == 1 and 'kkg' in notices[0] and 'with' in notices[0]
+    captured = capsys.readouterr()
+    assert SECRET_VALUE not in captured.out + captured.err + caplog.text
+
+
+def test_grouped_list_with_another_group_leaves_out_the_project(grouped, openbao, monkeypatch,
+                                                               caplog, capsys):
+    openbao.put('team/kkg/global', {'A': '1'})
+    openbao.put('team/with/projects/web', {'C': SECRET_VALUE})
+    at(monkeypatch, grouped, 'projects/web')
+
+    assert run_env(grouped, 'list', '--group', 'kkg') == 0
+
+    assert kv_paths(openbao) == {'team/kkg/global', 'users/member01/kkg/global'}
+    out = capsys.readouterr().out
+    assert 'プロジェクト' not in out
+    assert SECRET_VALUE not in out + caplog.text
+    assert len([r for r in caplog.records if r.levelno >= logging.WARNING]) == 1
+
+
+@pytest.mark.parametrize('group', ['nyle', 'default'])
+def test_grouped_project_write_compares_the_aliased_names(grouped, openbao, monkeypatch, group):
+    """受け入れ条件 5a: 宣言の無い api で -p --group nyle / default は team/nyle/projects/api"""
+    at(monkeypatch, grouped, 'projects/api')
+
+    assert run_env(grouped, 'set', '-p', '--group', group, 'FOO=1') == 0
+
+    assert openbao.get('team/nyle/projects/api') == {'FOO': '1'}
+    assert kv_paths(openbao) == {'team/nyle/projects/api'}
+
+
+def test_grouped_mismatch_message_shows_the_names_before_and_after_the_alias(
+        grouped, openbao, monkeypatch, caplog):
+    at(monkeypatch, grouped, 'projects/api')
+
+    assert run_env(grouped, 'set', '-p', '--group', 'with', 'FOO=1') == 1
+
+    assert 'default → nyle' in errors(caplog)
+    assert openbao.received == []
+
+
+COMMANDS_WITH_GROUP = [
+    ['list'], ['get', 'KEY'], ['set', 'KEY=1'], ['delete', 'KEY'], ['edit'],
+]
+
+
+@pytest.mark.parametrize('argv', COMMANDS_WITH_GROUP)
+@pytest.mark.parametrize('name', ['ubuntu', '1', 'bad name', 'a/b', 'global', 'projects'])
+def test_grouped_unusable_group_names_exit_2_without_requests(grouped, openbao, monkeypatch,
+                                                              caplog, argv, name):
+    """受け入れ条件 6"""
+    fake_editor(monkeypatch)
+
+    assert run_env(grouped, *argv, '--group', name) == 2
+
+    assert openbao.received == []
+    assert '--group' in errors(caplog)
+    assert openbao.secret_id not in caplog.text
+
+
+@pytest.mark.parametrize('argv', COMMANDS_WITH_GROUP)
+def test_group_is_refused_with_the_flat_layout(openbao_root, openbao, monkeypatch, caplog,
+                                               argv):
+    """受け入れ条件 6: version 1 で --group は 2"""
+    fake_editor(monkeypatch)
+
+    assert run_env(openbao_root, *argv, '--group', 'with') == 2
+
+    assert openbao.received == []
+    assert 'グループ別の置き場' in errors(caplog)
+
+
+@pytest.mark.parametrize('argv', COMMANDS_WITH_GROUP)
+def test_group_is_refused_with_a_file_backend(file_root, monkeypatch, caplog, argv):
+    """受け入れ条件 6: ファイル backend で --group は 2"""
+    SecretStore(file_root).age.save(GLOBAL, {'KEY': 'x'})
+    calls = []
+    monkeypatch.setattr(env_cmd.subprocess, 'call', lambda argv: calls.append(argv) or 0)
+
+    assert run_env(file_root, *argv, '--group', 'with') == 2
+
+    assert calls == []
+    assert SecretStore(file_root).load(GLOBAL) == {'KEY': 'x'}
+    assert 'グループ別の置き場' in errors(caplog)

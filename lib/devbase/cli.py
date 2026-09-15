@@ -353,6 +353,10 @@ def _add_env_parser(subparsers):
     for sub in (env_list, env_get, env_set, env_delete, env_edit):
         sub.add_argument('--user', action='store_true', dest='user',
                          help="Use this user's personal secrets instead of the team's")
+        # グループ別の置き場 (PLAN56)。省略時は実行時のプロジェクトのグループ
+        sub.add_argument('--group', metavar='NAME', default=None,
+                         help='Account group whose secrets to use '
+                              '(only with the grouped layout of the openbao backend)')
 
     env_sub.add_parser('project', help='Setup project-specific variables')
 
