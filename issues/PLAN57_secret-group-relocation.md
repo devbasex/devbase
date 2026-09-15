@@ -28,8 +28,13 @@
   `kkg`、それ以外（宣言なし）は `default` → `nyle`
 - 前提 2: 個人単位のキーの配り方は利用者が 2026-09-15 に決めた（「配る先」の節）
 - 前提 3: `GCP_CREDENTIALS_BASE64__default` は `team/nyle/global` へ置く（利用者が 2026-09-15 に決めた）
-- 前提 4: 書き込みに使う権限は、この端末の AppRole（`devbase-user` + entity の `devbase-team-writer`）。
-  PLAN53 の単位 3 で付けたもの。サーバのポリシーはまだグループ単位ではない（volareinc/carmo-cdk#363）
+- 前提 4: ~~書き込みに使う権限は、この端末の AppRole（`devbase-user` + entity の `devbase-team-writer`）。
+  PLAN53 の単位 3 で付けたもの。サーバのポリシーはまだグループ単位ではない（volareinc/carmo-cdk#363）~~ →
+  サーバのポリシーはグループ単位に切り替わっている（carmo-cdk#365、2026-09-16 に実環境へ反映済み）。この端末の
+  AppRole の token の `identity_policies` は `devbase-admin` / `devbase-team-{nyle,with,kkg}` /
+  `devbase-team-writer-{nyle,with,kkg}`。`bao token capabilities` で、新しいパス（`team/<g>/global`・
+  `users/takemi_ohama/<g>/global`）は読み書き、古いパスは `data` の読み取りと `metadata` の削除ができることを確かめた
+  （古いパスを読めるのは管理者だけ。2026-09-16）
 - 前提 5: with / kkg のプロジェクトの `env` にある空の上書き（`BIGQUERY_*` など）はこの作業では消さない
   （残っていても害が無い。消すかは別に決める）
 
