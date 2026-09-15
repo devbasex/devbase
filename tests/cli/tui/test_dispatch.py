@@ -192,6 +192,10 @@ def test_lifecycle_after_env_edit_reads_written_values(openbao_root, openbao, mo
         return compose
 
     monkeypatch.setattr(container, '_generate_compose_for', fake_generate)
+    # PLAN54: up の後処理が token を書く。docker は叩かない
+    monkeypatch.setattr('devbase.editor.opener._query_container_name', lambda *a, **k: None)
+    monkeypatch.setattr('devbase.env.container_token.push',
+                        lambda names, token, runner=None: list(names))
 
     def fake_editor(argv):
         Path(argv[1]).write_text("REVIEW_KEY=new\n")

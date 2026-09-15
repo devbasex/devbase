@@ -168,3 +168,25 @@
 | 項目 | 誰が決めるか | 期限 |
 | --- | --- | --- |
 | ~~token を取り直す手段~~ → 決まった: ホストの `devbase env token` が起動中のコンテナの `~/.vault-token` を書き換える（設計の決定 2。(b) `secret_id` をコンテナへ渡す案と (c) OIDC 案は採らない） | 設計 Pull Request のマージで利用者が承認する | 設計 |
+
+## 実装計画
+
+設計は `issues/PLAN54_bao-in-container-design.md`（マージ済み #175）。PLAN55 (#177) が先に入ったため、
+`_push_bao_token` の token は `runtime.store_for(root)`（注入と同じ `SecretStore`）から取る
+（設計「処理の流れ」の表「PLAN55 の後」）。
+
+| Task | 対象ファイル | 変更内容 | 満たす受け入れ条件 | 進め方 |
+| --- | --- | --- | --- | --- |
+| 1 | `containers/base/Dockerfile`、`tests/containers/test_base_dockerfile_bao.py` | `ARG BAO_VERSION=2.6.2`、tar.gz + `checksums.txt` を取得し `sha256sum -c`、`bao` だけを `/usr/local/bin` へ | 1・2・10 | 文言を固定するテスト → Dockerfile。実ビルドは手で 1 度 |
+| 2 | `lib/devbase/env/openbao.py`、`tests/env/test_openbao.py` | `issue_token()`（期限内なら再ログインしない） | 6 の土台 | 偽サーバで login 回数を固定 → 実装 |
+| 3 | `lib/devbase/env/container_token.py`、`tests/env/test_container_token.py` | `push(names, token, runner=)`: `docker exec -i` + `mktemp` → `mv -f`、token は stdin のみ | 8 | runner のスタブで argv / input / 文言を固定 → 実装 |
+| 4 | `lib/devbase/commands/container.py`、`tests/commands/test_container_bao.py` | openbao のとき `dev_environment` に `BAO_ADDR`、[5/6] の後に `_push_bao_token`（失敗は警告） | 7 | up の harness で compose 引数と docker exec の有無を固定 → 実装 |
+| 5 | `lib/devbase/commands/env.py`、`lib/devbase/cli.py`、`tests/commands/test_env_token.py` | `devbase env token [--print] [--context NAME]`、`SUBCMD_MAP`、`_NO_SECRET_INJECTION` | 6 | 設計の状況表の行ごとにテスト → 実装 |
+| 6 | `docs/user/env-backend.md` | 「コンテナの中から `bao` を使う」の節 | F4 | 文書 |
+
+設計からの追加（実装で決めたこと）: `cmd_scale` も構成を作り直すため、`up` と同じく `BAO_ADDR` を足し、
+増やしたインスタンス（`current_scale + 1`〜）へ token を書く（2026-09-14。設計は `up` だけを挙げていたが、
+`scale` で増えたコンテナに `BAO_ADDR` と token が無い状態を作らないため）。
+
+リスク: `container.py` は 1300 行超。触るのは `_run_deploy_pipeline` と `cmd_up` の後処理の数行に限る。
+切り戻し: 差分を戻すだけ（永続データなし）。イメージは再ビルドで元に戻る。

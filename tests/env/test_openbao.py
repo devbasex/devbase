@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
+from urllib import request
 
 import pytest
 
@@ -26,6 +29,36 @@ TEAM_GLOBAL_PATH = 'team/global'
 TEAM_WEB_PATH = 'team/projects/web'
 USER_GLOBAL_PATH = 'users/member01/global'
 USER_WEB_PATH = 'users/member01/projects/web'
+
+
+@pytest.mark.parametrize('body', [
+    [], {}, {'auth': None}, {'auth': {}},
+    {'auth': {'client_token': 123}}, {'auth': {'client_token': ''}},
+], ids=['array', 'missing-auth', 'null-auth', 'missing-token', 'numeric-token', 'empty-token'])
+def test_issue_token_recovers_after_an_unreadable_login_response(tmp_path, monkeypatch, body):
+    """現状固定: HTTP 成功でも不正な認証応答は拒み、次の発行で再試行する。"""
+    from devbase.env import backend_config, bootstrap
+
+    backend_config.save(tmp_path, backend_config.BackendConfig(
+        backend='openbao', cache_enabled=False,
+        openbao=backend_config.OpenBaoSettings(url='https://openbao.invalid', user='member01'),
+    ))
+    credentials = bootstrap.Credentials('fake-role-id', 'fake-secret-id')
+    monkeypatch.setattr(bootstrap, 'load', lambda root: credentials)
+
+    def urlopen(req, **kwargs):
+        response = io.BytesIO(json.dumps(body).encode('utf-8'))
+        response.status = 200
+        return response
+
+    monkeypatch.setattr(request, 'urlopen', urlopen)
+    backend = OpenBaoBackend(SecretStore(tmp_path))
+
+    with pytest.raises(SecretUnreachableError):
+        backend.issue_token()
+
+    body = {'auth': {'client_token': 's.fake-recovered-token', 'lease_duration': 3600}}
+    assert backend.issue_token() == 's.fake-recovered-token'
 
 
 @pytest.fixture
@@ -430,3 +463,42 @@ def test_backend_test_fails_without_a_server_backend(tmp_path, caplog):
 
     assert env_backend.cmd_env_backend_test(tmp_path) == 1
     assert 'openbao' in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# token の発行 (PLAN54: コンテナの ~/.vault-token へ届ける)
+# ---------------------------------------------------------------------------
+
+def test_issue_token_returns_the_login_token(store, openbao):
+    backend = store.backend_for(GLOBAL)
+
+    token = backend.issue_token()
+
+    assert token == openbao.token
+    assert openbao.logins == 1
+
+
+def test_issue_token_reuses_the_token_obtained_for_reads(store, openbao):
+    """注入で読んだ同じ SecretStore からなら、ログインし直さない (up の往復を増やさない)"""
+    store.load(GLOBAL)
+    backend = store.backend_for(GLOBAL)
+
+    assert backend.issue_token() == openbao.token
+    assert openbao.logins == 1
+
+
+def test_issue_token_logs_in_again_near_expiry(store, openbao, monkeypatch):
+    backend = store.backend_for(GLOBAL)
+    backend.issue_token()
+    monkeypatch.setattr(backend, '_token_expires_at', 0.0)
+
+    backend.issue_token()
+
+    assert openbao.logins == 2
+
+
+def test_issue_token_raises_auth_error_on_rejected_login(store, openbao):
+    openbao.reject_login = True
+
+    with pytest.raises(SecretAuthError):
+        store.backend_for(GLOBAL).issue_token()

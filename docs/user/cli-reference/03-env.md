@@ -233,6 +233,25 @@ devbase env exec -- docker compose config
 
 > `devbase env exec -- printenv` のように値を表示するコマンドは、画面共有や端末ログに認証情報がそのまま残ります。実行する場面に注意してください。
 
+## `devbase env token`
+
+起動中の dev コンテナの `~/.vault-token` を、OpenBao の新しい token で置き換えます（backend が
+`openbao` のときだけ）。コンテナの中の `bao` の token が切れたときに使います。詳しくは
+[機密の保存先を選ぶ](../env-backend.md) の「コンテナの中から `bao` を使う」を参照してください。
+
+```
+devbase env token [--print] [--context NAME]
+```
+
+| オプション | 説明 |
+|---|---|
+| なし | 現在地のプロジェクトの起動中の dev コンテナ（サービス `<dev>-<n>`）すべてへ書き、書いたコンテナ名を表示する |
+| `--print` | コンテナへ書かず、token だけを標準出力へ出す |
+| `--context NAME` | docker context を一時的に上書きする |
+
+プロジェクトの外で実行したとき、起動中の dev コンテナが無いときは、token を発行せずに
+終了コード 1 で止まります。一部のコンテナへ書けなかったときも 1 です。
+
 ## `devbase env rekey`
 
 誰が機密を復号できるかを変更し、暗号化済みの機密をまとめて暗号化し直します。

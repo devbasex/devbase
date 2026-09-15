@@ -56,7 +56,7 @@ SUBCMD_MAP = {
     ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
-                          'exec', 'encrypt', 'decrypt', 'rekey', 'doctor',
+                          'exec', 'token', 'encrypt', 'decrypt', 'rekey', 'doctor',
                           'export', 'import', 'backend'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
@@ -367,6 +367,13 @@ def _add_env_parser(subparsers):
     env_exec.add_argument('argv', nargs=argparse.REMAINDER,
                           metavar='-- CMD [ARGS...]',
                           help='Command to run (prefix with -- to pass flags)')
+
+    env_token = env_sub.add_parser(
+        'token',
+        help='Refresh the OpenBao token in running dev containers (~/.vault-token)')
+    env_token.add_argument('--print', dest='print_only', action='store_true',
+                           help='Print a token to stdout instead of writing it into containers')
+    _add_context_arg(env_token)
 
     for name, action in (('encrypt', 'Move plaintext settings into the encrypted store'),
                          ('decrypt', 'Move encrypted settings back to plaintext')):
@@ -803,6 +810,9 @@ _NO_SECRET_INJECTION = frozenset({
     # backend の設定を触るコマンド。設定が壊れている・サーバに届かない状態でこそ
     # 実行されるため、注入で先に落ちないようにする。
     ('env', 'backend'),
+    # コンテナの bao へ token を届けるだけで、機密の値は要らない。注入するとサーバへの
+    # 往復が増える (PLAN54)。
+    ('env', 'token'),
 })
 
 

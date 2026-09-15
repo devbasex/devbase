@@ -3,7 +3,7 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import yaml
 
@@ -132,6 +132,9 @@ def cmd_env(devbase_root: Path, args) -> int:
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
+        'token':   lambda: cmd_env_token(devbase_root,
+                                         print_only=getattr(args, 'print_only', False),
+                                         context=getattr(args, 'context', None)),
         'exec':    lambda: cmd_env_exec(devbase_root,
                                         list(getattr(args, 'argv', []) or []),
                                         context=getattr(args, 'context', None)),
@@ -229,6 +232,138 @@ def cmd_env_exec(devbase_root: Path, argv, context: Optional[str] = None) -> int
     except OSError as e:
         logger.error("コマンドを実行できませんでした (%s): %s", argv[0], e)
         return 1
+
+
+def _running_dev_containers(project: str, dev_service_name: str, runner) -> Optional[List[str]]:
+    """起動中の dev コンテナの名前を ``<dev>-<n>`` の番号順に返す。docker を呼べなければ ``None``。
+
+    ``up`` の構成は dev の各インスタンスをサービス ``<dev>-<n>`` として定義する
+    (``volume/compose.py``)。プロジェクトのラベルだけで絞ると DB や snapshot にも届く。
+    """
+    import re
+
+    try:
+        result = runner(
+            ['docker', 'ps', '--filter', f'label=com.docker.compose.project={project}',
+             '--format', '{{.Names}}\t{{.Label "com.docker.compose.service"}}'],
+            capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.error("docker ps を実行できませんでした: %s", e)
+        return None
+    if result.returncode != 0:
+        logger.error("docker ps が失敗しました (exit=%d): %s", result.returncode,
+                     (result.stderr or '').strip())
+        return None
+    pattern = re.compile(rf'^{re.escape(dev_service_name)}-([1-9][0-9]*)$')
+    found = []
+    for line in (result.stdout or '').splitlines():
+        name, _, service = line.partition('\t')
+        match = pattern.match(service.strip())
+        if name and match:
+            found.append((int(match.group(1)), name.strip()))
+    return [name for _index, name in sorted(found)]
+
+
+def _require_openbao_backend(store):
+    """backend が openbao であることを確かめ、対象の backend を返す。満たさなければ ``None``。"""
+    from devbase.env.secret_store import SecretRef, SecretStoreError
+
+    try:
+        backend_name = store.backend_name
+    except SecretStoreError as e:
+        logger.error("%s", e)
+        return None
+    if backend_name != 'openbao':
+        logger.error("backend が openbao ではありません (現在: %s)。コンテナの bao へ渡す "
+                     "token はサーバ backend でだけ発行できます", backend_name)
+        return None
+    return store.backend_for(SecretRef.for_global())
+
+
+def _issue_or_error(backend) -> Optional[str]:
+    """token を発行する。``DevbaseError`` はログへ落として ``None`` を返す。"""
+    from devbase.errors import DevbaseError
+
+    try:
+        return backend.issue_token()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return None
+
+
+def _push_token_to_running(devbase_root: Path, backend, context: Optional[str],
+                           run, runner) -> int:
+    """起動中の dev コンテナへ token を配る。プロジェクト解決から書き込みまでを担う。
+
+    ``run`` は列挙・context 反映で使う (``runner or subprocess.run``)。``runner`` は
+    書き込みへそのまま渡す元の値 (未指定なら ``None``)。
+    """
+    from devbase.commands.container import _load_project_env
+    from devbase.env import container_token
+    from devbase.project.local_config import load_project_local_config
+    from devbase.utils import docker_context
+    from devbase.volume.compose import get_dev_service_name
+
+    project = _current_project_name(devbase_root)
+    if not project:
+        logger.error("プロジェクトのディレクトリ ($DEVBASE_ROOT/projects/<name>) で実行してください")
+        return 1
+    project_dir = Path(devbase_root) / 'projects' / project
+
+    # 起動ラッパーが source するのは実行時のディレクトリの env だけ。下位ディレクトリから
+    # 打っても dev サービス名 (DEV_SERVICE_NAME) を取れるよう、プロジェクト直下の env を載せる
+    _load_project_env(project_dir / 'env')
+    dev_service_name = get_dev_service_name()
+
+    settings = load_project_local_config(project_dir).docker
+    docker_context.apply(docker_context.choose_context(settings, cli_context=context),
+                         track=False)
+
+    names = _running_dev_containers(project, dev_service_name, run)
+    if names is None:
+        return 1
+    if not names:
+        logger.error("起動中の dev コンテナがありません: %s", project)
+        return 1
+
+    token = _issue_or_error(backend)
+    if token is None:
+        return 1
+
+    written = container_token.push(names, token, runner=runner)
+    for name in written:
+        print(name)
+    failed = [name for name in names if name not in written]
+    for name in failed:
+        logger.error("token を書けませんでした: %s", name)
+    return 1 if failed else 0
+
+
+def cmd_env_token(devbase_root: Path, print_only: bool = False,
+                  context: Optional[str] = None, runner=None) -> int:
+    """起動中の dev コンテナの ``~/.vault-token`` を新しい token で置き換える (PLAN54)。
+
+    コンテナの中の ``bao`` が使う token は 1 時間で切れる。コンテナに資格情報は置かず、
+    ホストの資格情報でログインし直して届ける。処理の順は「backend の判定 → プロジェクト
+    → dev サービス名 → 接続先 → 対象のコンテナ → ログイン → 書き込み」で、ログインを
+    対象が見つかった後に置く (届け先が無いのに token を発行させない)。``--print`` は
+    backend の判定の後すぐログインし、token だけを標準出力へ出す。
+    """
+    from devbase.env import runtime as _runtime
+
+    run = runner or subprocess.run
+    backend = _require_openbao_backend(_runtime.store_for(devbase_root))
+    if backend is None:
+        return 1
+
+    if print_only:
+        token = _issue_or_error(backend)
+        if token is None:
+            return 1
+        print(token)
+        return 0
+
+    return _push_token_to_running(devbase_root, backend, context, run, runner)
 
 
 def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
@@ -638,6 +773,59 @@ def _edit_via_tempfile(env_file, editor: str) -> int:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def _collect_from_env_yml(env_file, variables: list) -> bool:
+    """env.yml の変数定義に従って設定値を収集する。必須値未入力なら False を返す。"""
+    for var in variables:
+        name = var.get('name', '')
+        prompt = var.get('prompt', name)
+        default = var.get('default', '')
+        required = var.get('required', False)
+        generate = var.get('generate', '')
+
+        existing = env_file.get(name)
+        if existing:
+            print(f"{name}: 設定済み")
+            continue
+
+        if generate:
+            import secrets
+            length = 64
+            if ':' in generate:
+                _, length_str = generate.split(':', 1)
+                length = int(length_str)
+            value = secrets.token_hex(length // 2)
+            env_file.set(name, value)
+            print(f"{name}: (自動生成)")
+        else:
+            suffix = f" (デフォルト: {default})" if default else ""
+            suffix += " (必須)" if required else " (空でスキップ)"
+            value = safe_input(f"{prompt}{suffix}: ", default)
+            if value:
+                env_file.set(name, value)
+            elif required:
+                logger.error("必須変数 '%s' が設定されていません", name)
+                return False
+    return True
+
+
+def _collect_interactively(env_file) -> None:
+    """env.yml 不在時の手入力ループ"""
+    print("env.yml が見つかりません。手動で変数を追加してください。")
+    print("(Ctrl+Dで終了)")
+    try:
+        while True:
+            line = safe_input("\nKEY=VALUE (空で終了): ")
+            if not line:
+                break
+            if '=' in line:
+                key, _, value = line.partition('=')
+                env_file.set(key.strip(), value.strip())
+            else:
+                print("形式: KEY=VALUE")
+    except EOFError:
+        pass
+
+
 def cmd_env_project(devbase_root: Path) -> int:
     """プロジェクト固有変数の設定（対話式）"""
     env_file = _project_env(devbase_root)
@@ -656,51 +844,10 @@ def cmd_env_project(devbase_root: Path) -> int:
             config = yaml.safe_load(f) or {}
 
         variables = config.get('variables', [])
-        for var in variables:
-            name = var.get('name', '')
-            prompt = var.get('prompt', name)
-            default = var.get('default', '')
-            required = var.get('required', False)
-            generate = var.get('generate', '')
-
-            existing = env_file.get(name)
-            if existing:
-                print(f"{name}: 設定済み")
-                continue
-
-            if generate:
-                import secrets
-                length = 64
-                if ':' in generate:
-                    _, length_str = generate.split(':', 1)
-                    length = int(length_str)
-                value = secrets.token_hex(length // 2)
-                env_file.set(name, value)
-                print(f"{name}: (自動生成)")
-            else:
-                suffix = f" (デフォルト: {default})" if default else ""
-                suffix += " (必須)" if required else " (空でスキップ)"
-                value = safe_input(f"{prompt}{suffix}: ", default)
-                if value:
-                    env_file.set(name, value)
-                elif required:
-                    logger.error("必須変数 '%s' が設定されていません", name)
-                    return 1
+        if not _collect_from_env_yml(env_file, variables):
+            return 1
     else:
-        print("env.yml が見つかりません。手動で変数を追加してください。")
-        print("(Ctrl+Dで終了)")
-        try:
-            while True:
-                line = safe_input("\nKEY=VALUE (空で終了): ")
-                if not line:
-                    break
-                if '=' in line:
-                    key, _, value = line.partition('=')
-                    env_file.set(key.strip(), value.strip())
-                else:
-                    print("形式: KEY=VALUE")
-        except EOFError:
-            pass
+        _collect_interactively(env_file)
 
     env_file.save()
     logger.info("保存完了: %s (%d変数)", env_file.path, env_file.count())

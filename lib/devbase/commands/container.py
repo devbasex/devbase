@@ -202,6 +202,23 @@ def _generate_compose_for(scale: int, secrets, dev_environment=None,
     )
 
 
+def _build_scaled_override(scale: int, config, project_name: str,
+                           target: docker_context.DockerTarget) -> Path:
+    """スケール構成 (override compose) を生成して返す。
+
+    デプロイ (``_run_deploy_pipeline``) とスケール (``cmd_scale``) が共有する
+    「機密の復号 → dev 環境変数 (``BAO_ADDR`` 含む) の合成 → 構成生成」という
+    同じ 3 手をまとめる。bao 環境やリモート引数の追加は片方だけを直すと食い違う
+    ため、1 箇所へ寄せる。
+    """
+    secrets = _inject_secrets(required=True)
+    dev_environment = {**project_runtime.container_env(config, project_name),
+                       **_bao_environment()}
+    return _generate_compose_for(
+        scale, secrets, dev_environment=dev_environment,
+        **_remote_generate_kwargs(target))
+
+
 @contextmanager
 def _previous_scale_compose():
     """生成前の override compose を退避し、``down`` へ渡すパスとして貸し出す。
@@ -730,6 +747,70 @@ def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     return open_index
 
 
+def _openbao_store():
+    """backend が ``openbao`` なら注入と同じ ``SecretStore`` を、そうでなければ ``None`` を返す。
+
+    ``runtime.store_for`` は ``up`` の注入が作ったものを返す (PLAN55)。ここで読み直すと
+    サーバへの往復が増えるため、同じインスタンスを使う。設定を読めないときは ``None``
+    (注入の側が既にその誤りで止めている)。
+    """
+    from devbase.env import runtime as _runtime
+    from devbase.env.secret_store import SecretStoreError
+
+    root = _devbase_root()
+    if root is None:
+        return None
+    store = _runtime.store_for(root)
+    try:
+        return store if store.backend_name == 'openbao' else None
+    except SecretStoreError:
+        return None
+
+
+def _bao_environment() -> dict:
+    """dev サービスへ足す ``BAO_ADDR`` (PLAN54)。backend が ``openbao`` でなければ空。
+
+    接続先は機密ではないので compose の ``environment`` にリテラルで書く。token は
+    ここに載せない (``docker inspect`` に残る)。``~/.vault-token`` は起動後に
+    :func:`_push_bao_token` が書く。
+    """
+    store = _openbao_store()
+    if store is None:
+        return {}
+    return {'BAO_ADDR': store.config.openbao.url}
+
+
+def _push_bao_token(project_name: str, scale: int, dev_service_name: str,
+                    compose_file=None, start: int = 1) -> None:
+    """各 dev コンテナの ``~/.vault-token`` へ token を書く (PLAN54)。
+
+    backend が ``openbao`` でなければ何もしない。token が取れない・書けないときは
+    警告にとどめる (起動は済んでおり、``devbase env token`` でやり直せる)。
+    """
+    from devbase.editor import opener
+    from devbase.env import container_token
+    from devbase.env.secret_store import SecretRef
+
+    store = _openbao_store()
+    if store is None:
+        return
+    try:
+        token = store.backend_for(SecretRef.for_global()).issue_token()
+        names = [opener.resolve_container_name(dev_service_name, project_name, index,
+                                               compose_file=compose_file)
+                 for index in range(start, scale + 1)]
+        written = container_token.push(names, token)
+    except Exception as e:  # noqa: BLE001 - 付随処理で up を倒さない
+        logger.warning("コンテナへ bao の token を書けませんでした (devbase env token で"
+                       "やり直せます): %s", e)
+        return
+    if len(written) < len(names):
+        logger.warning("bao の token を書けなかったコンテナがあります "
+                       "(devbase env token でやり直せます)")
+    elif written:
+        logger.info("bao の token を書きました: %s", ', '.join(written))
+
+
 def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
                          compose_file=None) -> None:
     """各 dev コンテナの VS Code ウィンドウタイトルをコンテナ名始まりにする。
@@ -906,10 +987,7 @@ def _run_deploy_pipeline(project_name: str, scale: int, config,
     # にしないため。
     with _previous_scale_compose() as down_compose_file:
         logger.info("[2/6] Generating scaled compose file...")
-        override_file = _generate_compose_for(
-            scale, _inject_secrets(required=True),
-            dev_environment=project_runtime.container_env(config, project_name),
-            **_remote_generate_kwargs(target))
+        override_file = _build_scaled_override(scale, config, project_name, target)
         logger.info("Generated: %s", override_file)
 
         logger.info("[3/6] Stopping existing containers...")
@@ -977,6 +1055,10 @@ def cmd_up(project_name: str = None, scale: int = None,
         if deploy_script.exists() and deploy_script.is_file():
             _run_deploy_script_for_instances(deploy_script, range(1, scale + 1),
                                              config)
+
+        # 起動中のコンテナの bao が使う token を書く (PLAN54)。backend が openbao の
+        # ときだけ。書けなくても起動は済んでいるので up は倒さない。
+        _push_bao_token(project_name, scale, dev_service_name, compose_file=override_file)
 
         # VS Code のウィンドウタイトルをコンテナ名始まりに固定する
         # (自動オープンの有無に関わらず、手動アタッチにも効かせるため up 側で行う)。
@@ -1108,10 +1190,7 @@ def cmd_scale(new_scale: int, project_name: str = None,
         ensure_network('devbase_net')
 
         logger.info("[3/5] Generating scaled compose file...")
-        override_file = _generate_compose_for(
-            new_scale, _inject_secrets(required=True),
-            dev_environment=project_runtime.container_env(config, project_name),
-            **_remote_generate_kwargs(target))
+        override_file = _build_scaled_override(new_scale, config, project_name, target)
         logger.info("Generated: %s", override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
@@ -1133,6 +1212,10 @@ def cmd_scale(new_scale: int, project_name: str = None,
             compose_file=override_file,
             timeout=60
         )
+
+        # 増やしたインスタンスにも bao の token を書く (PLAN54。既存のものは up で書いてある)
+        _push_bao_token(project_name, new_scale, dev_service_name, compose_file=override_file,
+                        start=current_scale + 1)
 
         # Run project-specific deploy script for newly added instances
         deploy_script = Path('./deploy')
@@ -1598,15 +1681,7 @@ def _base_image_is_fresh(dev_service: dict, max_age: int) -> bool:
     base_ref = _get_base_image_ref(dev_service)
     if not base_ref:
         return False
-    inspect = subprocess.run(
-        ['docker', 'image', 'inspect', base_ref],
-        capture_output=True,
-        text=True,
-        check=False
-    )
-    if inspect.returncode != 0:
-        return False
-    age_days = _get_image_age_days(inspect.stdout)
+    age_days = _inspect_image_age(base_ref)
     if age_days is None:
         return False
     if age_days < max_age:
@@ -1662,6 +1737,19 @@ def _pull_and_mark(image_name: str) -> bool:
     if ok:
         _mark_pulled(image_name)
     return ok
+
+
+def _inspect_image_age(ref: str) -> Optional[int]:
+    """Inspect an image and return its age in days, or None on failure."""
+    inspect = subprocess.run(
+        ['docker', 'image', 'inspect', ref],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    if inspect.returncode != 0:
+        return None
+    return _get_image_age_days(inspect.stdout)
 
 
 def _get_image_age_days(inspect_json: str) -> Optional[int]:
