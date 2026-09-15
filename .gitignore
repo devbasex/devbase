@@ -14,7 +14,9 @@ plugins/*/
 !plugins/.gitkeep
 projects/*
 !projects/.gitkeep
-.env.sources.yml
+# env sync の同期済みハッシュの控え。グループ別の置き場ではグループごとに
+# .env.sources.<g>.yml を持つ (PLAN56 決定 13)
+.env.sources*.yml
 .cache/
 
 # 暗号化した機密の保存先 (PLAN35)。暗号文とはいえリポジトリには載せない。

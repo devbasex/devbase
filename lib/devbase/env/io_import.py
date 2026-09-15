@@ -114,16 +114,51 @@ def _decrypt_if_needed(blob: bytes, opts: ImportOptions) -> bytes:
     return _cipher.decrypt(blob, identities=identities)
 
 
-def _secret_ref_for(arcname: str):
-    """バンドル内 arcname に対応する秘密ストアの参照 (機密でなければ ``None``)"""
+def _secret_ref_for(arcname: str, store=None, group: Optional[str] = None):
+    """バンドル内 arcname に対応する秘密ストアの参照 (機密でなければ ``None``)。
+
+    グループ別の置き場 (PLAN56) では、共通の参照は対象のグループ ``group``、プロジェクトの
+    参照はそのプロジェクトのグループ (``store.ref_group``) で作る。
+    """
     from devbase.env.secret_store import SecretRef
 
     if arcname == 'env/global.env':
-        return SecretRef.for_global()
+        return SecretRef.for_global(group=group)
     match = _merge._PROJECT_ENV_RE.match(arcname)
     if match:
-        return SecretRef.for_project(match.group(1))
+        name = match.group(1)
+        return SecretRef.for_project(
+            name, group=store.ref_group(name) if store is not None else None)
     return None
+
+
+def _refuse_other_group_projects(store, filtered: dict, group: Optional[str]) -> None:
+    """バンドルに対象のグループと違う置き場のプロジェクトがあれば、1 件も取り込まずに止める。
+
+    黙って飛ばすと、取り込んだつもりの機密が欠ける (PLAN56 決定 12)。名前とグループを挙げ、
+    ``--exclude-project`` での除外を案内する。判定は非機密の ``env`` ファイルだけで行い、
+    サーバへ要求しない。グループ別の置き場でない設定では何もしない。
+    """
+    if group is None:
+        return
+    settings = store.config.openbao
+    others = []
+    for arcname in sorted(filtered):
+        match = _merge._PROJECT_ENV_RE.match(arcname)
+        if not match:
+            continue
+        name = match.group(1)
+        project_group = store.ref_group(name)
+        if store.storage_group(project_group) != store.storage_group(group):
+            others.append((name, settings.display_group(project_group)))
+    if not others:
+        return
+    listed = ', '.join(f"{name} ({shown})" for name, shown in others)
+    hint = ' '.join(f"--exclude-project {name}" for name, _ in others)
+    raise ImportError(
+        f"バンドルに対象のグループ {settings.display_group(group)} と違う置き場のプロジェクトが"
+        f"あるため、1 件も取り込みません: {listed}\n"
+        f"  外して取り込むには次を付けてください: {hint}")
 
 
 def _is_file_backend(store, ref) -> bool:
@@ -135,6 +170,7 @@ def _is_file_backend(store, ref) -> bool:
 
 def _build_plans(
     filtered: dict, devbase_root: Path, opts: ImportOptions, store=None,
+    group: Optional[str] = None,
 ) -> Tuple[List[_merge.Plan], Optional[Tuple[Path, bytes]]]:
     """フィルタ済みメンバーから書き出し計画と sources.yml の参照用コピー対象を返す
 
@@ -145,10 +181,14 @@ def _build_plans(
 
     保存先がサーバ backend の参照は、``target`` がローカルのファイルではないため
     ``Plan.ref`` に参照を入れて印を付ける。適用は :func:`_apply_via_backend` が行う。
+
+    ``group`` はグループ別の置き場 (PLAN56) の対象のグループ。参照のグループと
+    ``--merge-metadata`` の控えの位置 (``.env.sources.<g>.yml``) に使う。
     """
     from dataclasses import replace as _dc_replace
 
     from devbase.env.secret_store import SecretStore, SecretStoreError
+    from devbase.env.sources import sources_path
 
     store = store if store is not None else SecretStore(devbase_root)
     plans: List[_merge.Plan] = []
@@ -156,7 +196,7 @@ def _build_plans(
     try:
         for arcname, data in sorted(filtered.items()):
             if arcname == 'env/sources.yml':
-                target = _merge.target_for(arcname, devbase_root)
+                target = sources_path(devbase_root, store.storage_group(group))
                 plan = _merge.plan_sources(target, data,
                                            merge_metadata=opts.merge_metadata)
                 if plan is not None:
@@ -165,7 +205,7 @@ def _build_plans(
                     sources_reference = (target, data)
                 continue
 
-            ref = _secret_ref_for(arcname)
+            ref = _secret_ref_for(arcname, store, group)
             if ref is None:
                 raise _merge.MergeError(f"未対応のバンドルエントリ: {arcname}")
 
@@ -228,10 +268,15 @@ def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
             "(--no-global / --include-project の指定とバンドル内容を確認してください)"
         )
 
+    from devbase.env import runtime as _runtime
     from devbase.env.secret_store import SecretStore
 
     store = SecretStore(devbase_root)
-    plans, sources_reference = _build_plans(filtered, devbase_root, opts, store=store)
+    # 対象のグループ (PLAN56)。グループ別の置き場でなければ None で、参照は今と同じ
+    group = store.ref_group(_runtime.current_project_name(devbase_root))
+    _refuse_other_group_projects(store, filtered, group)
+    plans, sources_reference = _build_plans(filtered, devbase_root, opts, store=store,
+                                            group=group)
 
     _merge.log_plans(plans, opts.dry_run)
     if sources_reference is not None and not opts.merge_metadata:

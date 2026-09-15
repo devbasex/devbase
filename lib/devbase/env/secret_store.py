@@ -444,6 +444,16 @@ class SecretStore:
 
         return declared_group(self.root, project)
 
+    def storage_group(self, group: Optional[str]) -> Optional[str]:
+        """参照のグループを置き場のグループ名へ写す (``group_aliases`` の読み替え)。
+
+        グループの無い参照 (``version: 1`` とファイル backend) では ``None``。2 つの参照が
+        同じ置き場かは、この結果で比べる (PLAN56 決定 6)。
+        """
+        if group is None:
+            return None
+        return self.config.openbao.storage_group(group)
+
     def _selected_backend(self) -> Optional[SecretBackend]:
         """設定で明示的に選ばれた backend (``auto`` なら ``None``)"""
         if self.backend_name == 'auto':

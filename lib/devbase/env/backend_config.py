@@ -211,6 +211,11 @@ class OpenBaoSettings:
             self._check_reserved(mapped, 'グループ名')
         return mapped
 
+    def display_group(self, group: str) -> str:
+        """文言に出すグループ名。読み替えがあれば前と後の両方 (``default → nyle``)"""
+        mapped = self.storage_group(group)
+        return group if mapped == group else f'{group} → {mapped}'
+
     def _group_of(self, ref) -> str:
         if not ref.group:
             raise BackendConfigError(

@@ -29,15 +29,31 @@ def dir_hash(directory: Path, filenames: List[str]) -> Optional[str]:
     return h.hexdigest() if found else None
 
 
+#: 同期済みハッシュの控えのファイル名 (グループ別の置き場でない設定)
+SOURCES_FILENAME = '.env.sources.yml'
+
+
+def sources_path(devbase_root: Path, storage_group: Optional[str] = None) -> Path:
+    """控えの位置。グループ別の置き場では置き場のグループごとに分ける (PLAN56 決定 13)。
+
+    ``storage_group`` は読み替えた後の名前 (``SecretStore.storage_group``)。``None`` なら
+    今の ``$DEVBASE_ROOT/.env.sources.yml``、あれば ``$DEVBASE_ROOT/.env.sources.<g>.yml``。
+    グループ A の同期でハッシュを更新しても、グループ B の同期が変更を見落とさない。
+    """
+    name = f'.env.sources.{storage_group}.yml' if storage_group else SOURCES_FILENAME
+    return Path(devbase_root) / name
+
+
 class SourcesManager:
     """
     .env.sources.yml の管理。
     認証情報のソースファイルとハッシュを記録し、変更検出に使う。
+    ``storage_group`` があれば、その置き場のグループの控え (:func:`sources_path`) を扱う。
     """
 
-    def __init__(self, devbase_root: Path):
+    def __init__(self, devbase_root: Path, storage_group: Optional[str] = None):
         self.devbase_root = devbase_root
-        self.sources_path = devbase_root / '.env.sources.yml'
+        self.sources_path = sources_path(devbase_root, storage_group)
         self._data: Dict = {}
         self._loaded = False
 

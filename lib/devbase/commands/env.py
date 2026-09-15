@@ -88,12 +88,6 @@ def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[s
     return group
 
 
-def _group_display(settings, name: str) -> str:
-    """誤りの文言でのグループ名。読み替えがあれば前と後の両方 (``default → nyle``)"""
-    stored = settings.storage_group(name)
-    return name if stored == name else f'{name} → {stored}'
-
-
 def _project_group_mismatch(devbase_root: Path, store, group: Optional[str],
                             project: Optional[str]) -> Optional[str]:
     """``--group`` がプロジェクトのグループと違う置き場なら、その旨の文言を返す。
@@ -106,13 +100,13 @@ def _project_group_mismatch(devbase_root: Path, store, group: Optional[str],
         return None
     from devbase.env import groups as _groups
 
-    settings = store.config.openbao
     declared = _groups.declare(devbase_root, project)
-    if settings.storage_group(group) == settings.storage_group(declared.name):
+    if store.storage_group(group) == store.storage_group(declared.name):
         return None
+    settings = store.config.openbao
     source = _groups.describe_source(devbase_root, declared, project)
-    return (f"--group {_group_display(settings, group)} は、プロジェクト {project} のグループ "
-            f"{_group_display(settings, declared.name)} ({source}) と違う置き場です")
+    return (f"--group {settings.display_group(group)} は、プロジェクト {project} のグループ "
+            f"{settings.display_group(declared.name)} ({source}) と違う置き場です")
 
 
 def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
@@ -514,11 +508,17 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
 
 
 def cmd_env_sync(devbase_root: Path) -> int:
-    """ソースファイルから認証情報を再同期する"""
-    env_file = _global_env(devbase_root)
+    """ソースファイルから認証情報を再同期する
+
+    宛先は対象のグループのチーム共通の参照で、同期済みのハッシュもそのグループの控えを
+    使う (PLAN56 決定 13)。
+    """
+    store = _secret_store(devbase_root)
+    group = _target_group(devbase_root, store, None)
+    env_file = _global_env(devbase_root, store=store, group=group)
     env_file.load()
 
-    sources = SourcesManager(devbase_root)
+    sources = SourcesManager(devbase_root, store.storage_group(group))
     sources.load()
 
     updated = 0
@@ -994,8 +994,11 @@ def _collect_interactively(env_file) -> None:
 
 
 def cmd_env_project(devbase_root: Path) -> int:
-    """プロジェクト固有変数の設定（対話式）"""
-    env_file = _project_env(devbase_root)
+    """プロジェクト固有変数の設定（対話式）。宛先はプロジェクトのグループの参照 (PLAN56)"""
+    store = _secret_store(devbase_root)
+    name = _current_project_name(devbase_root)
+    env_file = None if name is None else _project_env(
+        devbase_root, store=store, group=store.ref_group(name))
     if env_file is None:
         logger.error("projects/ 配下で実行してください")
         return 1
@@ -1188,8 +1191,10 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
 
 
 def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:
-    """ソースメタデータを更新する"""
-    sources = SourcesManager(devbase_root)
+    """ソースメタデータを更新する (``env_file`` の参照のグループの控え。PLAN56 決定 13)"""
+    group = getattr(getattr(env_file, 'ref', None), 'group', None)
+    storage_group = _secret_store(devbase_root).storage_group(group) if group else None
+    sources = SourcesManager(devbase_root, storage_group)
     sources.load()
 
     # AWS
