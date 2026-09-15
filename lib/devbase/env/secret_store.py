@@ -454,6 +454,15 @@ class SecretStore:
             return None
         return self.config.openbao.storage_group(group)
 
+    def same_storage_group(self, a: Optional[str], b: Optional[str]) -> bool:
+        """2 つのグループが同じ置き場へ写るか (``storage_group`` 同士の比較)。
+
+        グループの振り分け規則 (PLAN56) を 1 箇所に閉じる。``storage_group`` が同値なら真。
+        あるプロジェクトの参照が対象グループと同じ置き場かの判定 (export / import / test /
+        migrate の 4 経路) は、すべてこれを使う。
+        """
+        return self.storage_group(a) == self.storage_group(b)
+
     def _selected_backend(self) -> Optional[SecretBackend]:
         """設定で明示的に選ばれた backend (``auto`` なら ``None``)"""
         if self.backend_name == 'auto':

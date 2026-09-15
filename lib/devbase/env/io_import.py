@@ -149,7 +149,7 @@ def _refuse_other_group_projects(store, filtered: dict, group: Optional[str]) ->
             continue
         name = match.group(1)
         project_group = store.ref_group(name)
-        if store.storage_group(project_group) != store.storage_group(group):
+        if not store.same_storage_group(project_group, group):
             others.append((name, settings.display_group(project_group)))
     if not others:
         return
@@ -296,6 +296,22 @@ def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
     backup_dir = _atomic.make_backup_dir(devbase_root, opts.backup_dir)
     logger.info("backup ディレクトリ: %s", backup_dir)
 
+    _apply_plans(store, plans, sources_reference, backup_dir)
+    logger.info("import 完了: %d ファイル更新", len(plans))
+
+    _atomic.gc_backups(backup_dir, opts.keep_last)
+    return 0
+
+
+def _apply_plans(store, plans: List[_merge.Plan],
+                 sources_reference: Optional[Tuple[Path, bytes]],
+                 backup_dir: Path) -> None:
+    """計画を退避・書き込み・確定する (サーバ先行適用・ローカル確定・失敗時の両系巻き戻し)。
+
+    ローカル処理へ渡す root は ``store.root`` (入口で ``devbase_root`` から生成済み)。
+    退避は取り込みを始める前に全件作り、作れなければ書き込み前に例外で止まる。
+    """
+    root = store.root
     local_plans = [p for p in plans if p.ref is None]
     backend_plans = [p for p in plans if p.ref is not None]
 
@@ -303,7 +319,7 @@ def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
     # サーバから読めないといった理由で作れなければ、ここで止まる (設計 2)。
     backend_backups = _backup_via_backend(store, backend_plans, backup_dir)
 
-    _atomic.backup_existing(local_plans, sources_reference, backup_dir, devbase_root)
+    _atomic.backup_existing(local_plans, sources_reference, backup_dir, root)
 
     plans_and_tmps: List[Tuple[_merge.Plan, Path]] = []
     try:
@@ -319,16 +335,12 @@ def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
         raise
 
     try:
-        _atomic.commit(plans_and_tmps, backup_dir, devbase_root)
+        _atomic.commit(plans_and_tmps, backup_dir, root)
     except _atomic.AtomicError as e:
         # ローカルの確定は commit 自身が巻き戻す。サーバ側も取り込み前へ戻す
         _rollback_via_backend(store, backend_plans,
                               {id(plan): before for plan, before in backend_backups})
         raise ImportError(str(e)) from e
-    logger.info("import 完了: %d ファイル更新", len(plans))
-
-    _atomic.gc_backups(backup_dir, opts.keep_last)
-    return 0
 
 
 def _backup_name(ref) -> str:

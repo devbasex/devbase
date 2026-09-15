@@ -310,7 +310,7 @@ def _collect_projects(store, devbase_root,
         if _should_skip_project(name, proj_dir, included, excluded):
             continue
         project_group = store.ref_group(name)
-        if store.storage_group(project_group) != store.storage_group(group):
+        if not store.same_storage_group(project_group, group):
             other_groups.append(f"{name} ({store.config.openbao.display_group(project_group)})")
             continue
         project_ref = SecretRef.for_project(name, group=project_group)

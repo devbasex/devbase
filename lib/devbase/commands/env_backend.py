@@ -260,6 +260,29 @@ def _describe_aliases(aliases) -> str:
     return ', '.join(f'{source} → {target}' for source, target in aliases.items())
 
 
+def _build_backend_config(current: _bc.BackendConfig, name: str, args) -> _bc.BackendConfig:
+    """既存の設定と引数から、保存する ``BackendConfig`` を組み立てて検証して返す。
+
+    キャッシュ・OpenBao 設定・版を既存から継ぎ、``openbao`` を選ぶときだけ ``--layout`` /
+    ``--group-alias`` を当てて版を決め直す。検証に失敗した場合は例外を投げ、副作用は起こさない。
+    """
+    cache_arg = getattr(args, 'cache', None)
+    cache_enabled = current.cache_enabled if cache_arg is None else bool(cache_arg)
+    openbao = current.openbao
+    # 版はレイアウトと 1 対 1。openbao 以外へ切り替えるときも既存の版を引き継がないと、
+    # version: 2 の openbao 節と食い違って書けない
+    version = current.version
+    if name == _bc.BACKEND_OPENBAO:
+        openbao = _apply_layout(_build_openbao_settings(current.openbao, args),
+                                current.openbao, args)
+        version = 2 if openbao.grouped else 1
+
+    new_config = _bc.BackendConfig(backend=name, openbao=openbao,
+                                   cache_enabled=cache_enabled, version=version)
+    new_config.validate()
+    return new_config
+
+
 def cmd_env_backend_use(devbase_root: Path, args) -> int:
     root = Path(devbase_root)
     name = getattr(args, 'name', None) or ''
@@ -283,26 +306,9 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
         logger.warning("既存の設定を読めないため、引数だけで組み立てます: %s", e)
         current = _bc.BackendConfig()
 
-    cache_arg = getattr(args, 'cache', None)
-    cache_enabled = current.cache_enabled if cache_arg is None else bool(cache_arg)
-    openbao = current.openbao
-    # 版はレイアウトと 1 対 1。openbao 以外へ切り替えるときも既存の版を引き継がないと、
-    # version: 2 の openbao 節と食い違って書けない
-    version = current.version
-    if name == _bc.BACKEND_OPENBAO:
-        try:
-            openbao = _apply_layout(_build_openbao_settings(current.openbao, args),
-                                    current.openbao, args)
-        except _UseOptionError as e:
-            logger.error("%s", e)
-            return EXIT_USAGE
-        version = 2 if openbao.grouped else 1
-
-    new_config = _bc.BackendConfig(backend=name, openbao=openbao,
-                                   cache_enabled=cache_enabled, version=version)
     try:
-        new_config.validate()
-    except _bc.BackendConfigError as e:
+        new_config = _build_backend_config(current, name, args)
+    except (_UseOptionError, _bc.BackendConfigError) as e:
         logger.error("%s", e)
         return EXIT_USAGE
 
@@ -331,7 +337,7 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
     if dropped and not ob.grouped:
         print(f"  group_aliases ({_describe_aliases(dropped)}) を捨てました "
               "(version: 1 は読み替えを持ちません)")
-    print(f"  キャッシュ: {'有効' if cache_enabled else '無効'}")
+    print(f"  キャッシュ: {'有効' if new_config.cache_enabled else '無効'}")
     if current.openbao is not None and current.openbao.layout != ob.layout:
         rc = _purge_cache_after_layout_change(root, current.openbao.layout, ob.layout)
         if rc != 0:
@@ -430,7 +436,7 @@ def _probe_refs(root: Path, store: SecretStore):
     skipped: List[str] = []
     for name in _project_names(root):
         project_group = store.ref_group(name)
-        if store.storage_group(project_group) != store.storage_group(group):
+        if not store.same_storage_group(project_group, group):
             skipped.append(f"{name} ({store.config.openbao.display_group(project_group)})")
             continue
         refs.append(SecretRef.for_project(name, group=project_group))
@@ -649,7 +655,7 @@ class _MigrationPlan:
             units.append(_MoveUnit(SecretRef.for_project(name),
                                    SecretRef.for_project(name, group=group)))
             storage = store.storage_group(group)
-            if self.to == 'age' and storage != store.storage_group(common_group):
+            if self.to == 'age' and not store.same_storage_group(group, common_group):
                 others.setdefault(storage, group)
         self.left_on_server = [SecretRef.for_global(group=group) for group in others.values()]
         return units

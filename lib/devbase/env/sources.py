@@ -105,6 +105,18 @@ class SourcesManager:
             'synced_at': datetime.now().isoformat(),
         }
 
+    def _current_hash(self, source_type: str, files: List[str]) -> Optional[str]:
+        """``source_type`` と ``files`` から現在のハッシュを求める (未対応・空なら ``None``)"""
+        if source_type == 'tar_base64' and files:
+            # ディレクトリ内の複数ファイル
+            first_file = Path(files[0]).expanduser()
+            directory = first_file.parent
+            filenames = [Path(f).expanduser().name for f in files]
+            return dir_hash(directory, filenames)
+        elif source_type == 'file_base64' and files:
+            return file_hash(Path(files[0]).expanduser())
+        return None
+
     def check_changed(self, name: str) -> Optional[bool]:
         """
         ソースファイルが変更されたか確認する。
@@ -119,20 +131,7 @@ class SourcesManager:
         if not old_hash:
             return None
 
-        source_type = source.get('type', '')
-        files = source.get('files', [])
-
-        if source_type == 'tar_base64' and files:
-            # ディレクトリ内の複数ファイル
-            first_file = Path(files[0]).expanduser()
-            directory = first_file.parent
-            filenames = [Path(f).expanduser().name for f in files]
-            current = dir_hash(directory, filenames)
-        elif source_type == 'file_base64' and files:
-            current = file_hash(Path(files[0]).expanduser())
-        else:
-            return None
-
+        current = self._current_hash(source.get('type', ''), source.get('files', []))
         if current is None:
             return None
 
