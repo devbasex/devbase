@@ -39,9 +39,9 @@
 | `commands/env.py`（変える） | `_global_env` / `_project_env` / `_target_env` がグループを決める。`--group` の検証と、`-p` とプロジェクトのグループの食い違いを拒む。`list` の見出しにグループを出す。`init` / `sync` / `project` / `export` / `import` も同じ決め方を使う |
 | `env/bundle.py` / `env/io_import.py`（変える） | 共通の参照は実行時のプロジェクトのグループ、プロジェクトの参照はそのプロジェクトのグループで作る |
 | `commands/env_backend.py`（変える） | `status` にグループの行と 4 パス。`use` に `--layout` / `--group-alias`。レイアウトが変わったらキャッシュを消す。`test` は対象のグループに属するプロジェクトだけ調べる。`migrate` に `--exclude-project` と、参照ごとのグループ |
-| `commands/container.py` `_ensure_env_files` / `_run_deploy_pipeline`（変える） | 存在判定の参照にグループを渡す。起動の前にボリュームのグループ（`resolve_account_group()`）と `declared_group` を比べ、`layout: group` で食い違えば止める（決定 7） |
+| `commands/container.py` `_ensure_env_files` / `_run_deploy_pipeline`（変える） | 存在判定の参照にグループを渡す。子プロセスの `env init`（`cwd` は `$DEVBASE_ROOT`）へ `--group <プロジェクトのグループ>` を渡す（決定 10）。起動の前にボリュームのグループ（`resolve_account_group()`）と `declared_group` を比べ、`layout: group` で食い違えば止める（決定 7） |
 | `commands/env_ops.py` `doctor`（変える） | `git check-ignore` で点検するキャッシュのパスを設定の `cache_relpath` から組む |
-| `cli.py`（変える） | `env list/get/set/delete/edit` に `--group NAME`、`env backend use` に `--layout {flat,group}` と `--group-alias FROM=TO`（繰り返し可）、`env backend migrate` に `--exclude-project NAME`（繰り返し可） |
+| `cli.py`（変える） | `env list/get/set/delete/edit` と `env init` に `--group NAME`、`env backend use` に `--layout {flat,group}` と `--group-alias FROM=TO`（繰り返し可）、`env backend migrate` に `--exclude-project NAME`（繰り返し可） |
 | 文書（変える） | `docs/user/env-backend.md`・`docs/user/environment-variables.md`「アカウントグループ」・`docs/user/cli-reference/03-env.md`。確定仕様 `docs/specifications/secret-backend.md` は `plan-to-spec` で |
 
 **`version` の値の集合へ `2` を足すため、`1` だけを前提にした既存の規則を集めた。** 当てはまらない
@@ -217,20 +217,29 @@ cache:
 ### `env list` / `get` / `set` / `delete` / `edit`
 
 ```text
-devbase env {list|get|set|delete|edit} [-p] [--user] [--group NAME] ...
+devbase env {set|delete|edit} [-p] [--user] [--group NAME] ...
+devbase env list [-g|-p] [--user] [--group NAME] ...
+devbase env get [--user] [--group NAME] KEY
+devbase env init [--reset] [--group NAME]
 ```
+
+`set` / `delete` / `edit` の `-p` は宛先を、`list` の `-p` はプロジェクトの節だけを出すことを
+指す（今と同じ）。`get` は `-p` を取らず、プロジェクトの参照を実行時のディレクトリから
+自動で含める。以下の「`-p` あり」は、`list -p` を含めた 4 コマンドに当たる。
 
 | 状況 | 対象のグループ | 結果 |
 | --- | --- | --- |
 | `version: 2`、`--group` なし | `declared_group(root, 実行時のプロジェクト)` | そのグループの参照 |
-| `version: 2`、`--group NAME`、`-p` なし | `NAME` | そのグループの参照 |
-| `version: 2`、`--group NAME`、`-p` あり、プロジェクトのグループと同じ | `NAME` | そのグループの参照 |
-| `version: 2`、`--group NAME`、`-p` あり、プロジェクトのグループと違う | — | 両方の名前を述べて 1。読み書きしない（決定 6） |
-| `--group` の名前が使えない | — | `resolve_account_group` と同じ理由（予約語・数字だけ・文字種）、または `global` / `projects` を述べて 2 |
+| `version: 2`、`--group NAME`、`-p` なし | `NAME` | 共通の参照だけ `NAME` のもの |
+| `version: 2`、`--group NAME`、`-p` あり、プロジェクトと同じ置き場 | `NAME` | そのグループのプロジェクトの参照 |
+| `version: 2`、`--group NAME`、`-p` あり、プロジェクトと違う置き場 | — | 両方の名前を述べて 1。読み書きしない（決定 6） |
+| `version: 2`、`-p` なしの `list` と `get` で `--group NAME`、プロジェクトと違う置き場 | `NAME` | 共通の参照だけを出す・探す。プロジェクトの参照は含めず、含めなかった旨を標準エラーへ 1 行出す |
+| `--group` の名前が使えない | — | `resolve_account_group` と同じ理由（予約語・数字だけ・文字種）、または読み替えた後の名前が `global` / `projects` であることを述べて 2 |
 | `version: 1` またはファイル backend で `--group` | — | 「グループ別の置き場を選んだ設定でだけ使える」旨を述べて 2 |
 
-- `--group` の比較と表示は読み替える前のグループ名で行う。`--group default` と
-  `--group nyle` は、`default: nyle` の対応があれば同じ置き場を指す
+- **「同じ置き場」は読み替えた後の名前（`storage_group`）で比べる。** `default: nyle` の対応が
+  あれば、宣言の無いプロジェクトで `-p --group nyle` も `-p --group default` も通る。
+  誤りの文言には読み替える前と後の両方を出す（`default → nyle`）
 - `list` の各節の見出しは `グローバル（グループ with）` の形になる（`SecretRef.label()`）。
   `version: 1` では今と同じ
 - 終了コード 2 は、今の `env` コマンドの引数の誤りと同じ扱いである
@@ -247,7 +256,7 @@ devbase env backend use openbao [--layout {flat,group}] [--group-alias FROM=TO].
 | `--layout` なし・既存の設定なし | `group`（`version: 2`）で書く |
 | `--layout group` | `version: 2` で書く。`path_team_global` / `path_team_project_prefix` は捨てる |
 | `--layout flat` | `version: 1` で書く。`group_aliases` があれば捨てた旨を出す |
-| `--group-alias default=nyle` | `group_aliases` を**この指定で置き換える**（1 つも無ければ既存を引き継ぐ）。`FROM` か `TO` が検証を通らなければ 2、設定を書き換えない |
+| `--group-alias default=nyle` | `group_aliases` を**この指定で置き換える**（1 つも無ければ既存を引き継ぐ）。`FROM` と `TO` は `resolve_account_group` の検証を通す。`TO` が `global` / `projects` のときも拒む（`FROM` は拒まない。`global` という名前のグループを別の置き場へ向ける対応は成り立つ）。通らなければ 2、設定を書き換えない |
 | レイアウトが変わった | 設定を書いた後に `cache/` を消し、消した旨を出す |
 
 ### `env backend status`
@@ -422,6 +431,18 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 `env edit --group` で書けば足りる。版の履歴を消す操作（`kv metadata delete`）は権限が
 管理者側にあり（carmo-cdk#340）、devbase のコマンドに入れても利用者の端末からは実行できない。
 
+### 決定 10: `_ensure_env_files` は子プロセスの `env init` へ `--group` を渡す
+
+子プロセスは `cwd=$DEVBASE_ROOT` で起動する（`commands/container.py` の `_ensure_env_files`）。
+実行時のプロジェクトが無いため、共通の参照は `$DEVBASE_ROOT/env` のグループになる。`with` の
+プロジェクトの `up` で `team/with/global` が空だと、子プロセスは `team/nyle/global` へ書き、
+親は読み直しても空のまま起動する。`--group` でプロジェクトのグループを渡せば、書く先と読む先が
+揃う。
+
+子プロセスの `cwd` をプロジェクトのディレクトリへ変える案は採らない。`env init` の収集器が
+`cwd` に依存しないことを確かめる範囲が広がり、`version: 1` の端末の挙動まで変わりうる。
+`layout: group` でないときは `--group` を渡さない。
+
 ## テスト設計
 
 | 受け入れ条件 | 何で確かめるか |
@@ -430,7 +451,7 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 | 2 | 同上。宣言なし + `group_aliases: {default: nyle}` で `team/nyle/…`。生成される構成のボリュームが `devbase_home_default` |
 | 3 | `tests/commands/test_env_user_axis.py` に、`projects/web/src` を実行時のディレクトリにした `set` / `set -p` / `set --user` の書き込み先 |
 | 4 | `tests/env/test_groups.py`（新設）で、置き場に `DEVBASE_ACCOUNT_GROUP` があってもファイルの値を返すこと。`declared_group` はストアを受け取らない（シグネチャで固定） |
-| 5 | `tests/commands/test_env_user_axis.py` に `--group kkg` の 5 コマンドの宛先と `list` の見出し |
+| 5 | `tests/commands/test_env_user_axis.py` に `$DEVBASE_ROOT` での `--group kkg` の 5 コマンドの宛先と `list` の見出し。`projects/web`（`with`）での `set -p --group kkg` が 1 で要求 0 回、`get --group kkg` がプロジェクトの参照を探さないこと。宣言の無いプロジェクトで `set -p --group nyle`（`default: nyle`）が通ること |
 | 6 | 同上。使えない名前 4 つで終了コード 2 と偽サーバへの要求 0 回。`version: 1` とファイル backend での `--group` の拒否 |
 | 7 | `tests/cli/test_up_roundtrips.py` の切替の場合に、グループの違う 2 プロジェクト。`api` 固有のキーが残らず、`web` の起動の環境に `team/nyle/…` の値が無い |
 | 8 | `tests/env/test_cache.py` に、`nyle` と `with` の控えが別ファイルに置かれ、不達で各グループの控えが使われること |
@@ -442,13 +463,15 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 | 14 | 追加した出力を検査するテストで、偽サーバに置いた値と `secret_id` が標準出力・標準エラー・ログに現れないこと |
 | 15 | `uv run pytest tests/`、`ruff check lib`、`python -m compileall -q lib bin` |
 | 決定 1 | `tests/env/test_backend_config.py` に、`version: 2` で `path_team_global` を置いたときの拒否、`version: 1` で `group_aliases` を置いたときの拒否、`global` / `projects` の拒否 |
-| 決定 7 | `tests/commands/test_container_up_order.py` に、`layout: group` でボリュームとファイルのグループが違うと起動しないこと。`version: 1` では止めないこと |
+| 16 | `tests/commands/test_container_up_order.py` に、`layout: group` でボリュームとファイルのグループが違うと 1 で起動しないこと。`version: 1` では止めないこと |
+| 17 | `tests/commands/test_env_backend.py` に、`nyle` と `with` のプロジェクトがある `projects/` で `test` を打ち、偽サーバへの要求が対象のグループのパスだけであること |
+| 18 | `tests/cli/test_up_roundtrips.py` の `env init` を走らせる場合を `version: 2` と `with` のプロジェクトで行い、子プロセスの引数に `--group with` があり、書いた値でその `up` が起動すること |
+| 決定 1 | `tests/env/test_backend_config.py` に、`version: 2` で `path_team_global` を置いたときの拒否、`version: 1` で `group_aliases` を置いたときの拒否、読み替えた後の `global` / `projects` の拒否。`use --group-alias default=global` の 2 |
 
 ## 未確認のまま残ること
 
 | 項目 | 内容 |
 | --- | --- |
-| `_ensure_env_files` が起動する子プロセスの `env init` の実行時のディレクトリ | プロジェクトの直下で動くことを実装の最初のタスクで確かめる。違えば、子プロセスの共通の参照のグループが親と食い違う |
 | 実サーバでの `version: 2` のパスの読み書き | 今のポリシー（`team/*` の読み取り、`users/<entity>/*` の読み書き）がグループ別のパスを含むことを、リリース後テストで確かめる（前提 7） |
 | 移し直しで古いパスの版の履歴を消す権限 | チーム単位のパスの `kv metadata delete` は、管理者も今は実行できない（carmo-cdk#340）。移し直しの `operation` の計画で扱う |
 | ボリュームのグループがプロジェクトの下位ディレクトリで食い違う既存の挙動 | ラッパーが下位ディレクトリでプロジェクトの `env` を読まないため、今もボリュームのグループが共通の値になりうる。決定 7 の検査がこの場合も止めるかは、`up` を下位ディレクトリから打てるかに依存する。実装で確かめ、範囲外なら起票する |

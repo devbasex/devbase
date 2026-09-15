@@ -90,8 +90,11 @@
   オプション
 - `env init` / `sync` / `project` / `export` / `import` が扱うチーム単位の参照を、対象の
   グループのものにすること
-- `env backend status` の表示、`env backend use` での設定、`env backend migrate --to openbao`
-  でのグループの扱いと、移行からプロジェクトを外すオプション
+- `env backend status` の表示、`env backend use` での設定、`env backend test` が調べる参照、
+  `env backend migrate --to openbao` でのグループの扱いと、移行からプロジェクトを外すオプション
+  （`test` は 2026-09-15 に追記。設計の決定 8）
+- `devbase up` の起動の前に、ボリュームのグループと機密のグループの食い違いを検査すること
+  （2026-09-15 に追記。設計の決定 7）
 - 手元のキャッシュ（`secrets/cache/`）をグループごとに分けること
 - 利用者向け文書（`docs/user/env-backend.md`・`docs/user/environment-variables.md`・
   `docs/user/cli-reference/03-env.md`）の更新と、`docs/specifications/secret-backend.md` への
@@ -142,13 +145,19 @@
       操作: 条件 1 と同じ `devbase up`
       結果: 取得するパスは条件 1 と同じ（置き場に書いた値でグループが変わらない）
 - [ ] 5. 前提: グループ別の置き場
-      操作: `$DEVBASE_ROOT` で `devbase env list --group kkg`、`env get --group kkg KEY`、
+      操作: `$DEVBASE_ROOT`（プロジェクトの外）で `devbase env list --group kkg`、`env get --group kkg KEY`、
       `env set --group kkg KEY=v`、`env delete --group kkg KEY`、`env edit --group kkg`
-      結果: 読み書きの対象が `team/kkg/global`（`--user` を付ければ `users/<user>/kkg/global`、
-      ~~`-p` を付ければ実行時のプロジェクトの `team/kkg/projects/<name>`~~ → `-p` を付けたときは
-      実行時のプロジェクトのグループが `kkg` の場合だけ `team/kkg/projects/<name>`。違えば両方の
-      名前を述べて非ゼロで終了し、読み書きしない。2026-09-15、設計の決定 6）。一覧の見出しに
-      グループ名が出る
+      結果: 読み書きの対象が `team/kkg/global`（`--user` を付ければ `users/<user>/kkg/global`）。
+      一覧の見出しにグループ名が出る。
+      ~~`-p` を付ければ実行時のプロジェクトの `team/kkg/projects/<name>`~~ → 条件 5a へ分けた
+      （2026-09-15、設計の決定 6。`$DEVBASE_ROOT` では `-p` がそもそも使えない）
+- [ ] 5a. 前提: グループ別の置き場（`default: nyle` の対応あり）。`projects/web/env` に
+      `DEVBASE_ACCOUNT_GROUP=with`、`projects/api/env` に宣言なし
+      操作: `projects/web` で `env set -p --group kkg FOO=1` と `env get --group kkg FOO`。
+      `projects/api` で `env set -p --group nyle FOO=1`
+      結果: `web` の `set -p` は両方のグループ名を述べて非ゼロで終了し、サーバへ要求を出さない。
+      `web` の `get` は `team/kkg/global` / `users/<user>/kkg/global` だけを探す。`api` の `set -p` は
+      `team/nyle/projects/api` へ書く（読み替えた後の名前で同じ置き場と判定する）
 - [ ] 6. 操作: `--group` に使えない名前（`ubuntu`、`1`、`bad name`、`a/b`）を渡す
       結果: 1 件も読み書きせず、`DEVBASE_ACCOUNT_GROUP` の検証と同じ理由を述べて非ゼロで
       終了する。従来の置き場の設定とファイル backend で `--group` を渡しても、黙って無視せず
@@ -183,6 +192,19 @@
       参照だけを読み書きし、他のグループのパスへ要求を出さない
 - [ ] 14. 機密の値・`secret_id`・token が、追加した出力（`status` のグループの行、`--dry-run`、
       誤りの文言）に載らない
+- [ ] 16. 前提: グループ別の置き場。`projects/web/env` に `DEVBASE_ACCOUNT_GROUP=with`
+      操作: `projects/web` で `DEVBASE_ACCOUNT_GROUP=kkg devbase up`（ボリュームのグループが `kkg`）
+      結果: 両方のグループ名と出所を述べて非ゼロで終了し、コンテナを起動しない。今の形の
+      `backend.yml` では同じ操作で止めない（2026-09-15 に追記。設計の決定 7）
+- [ ] 17. 前提: グループ別の置き場。`projects/` に `nyle` と `with` のプロジェクトがある
+      操作: `projects/web`（`with`）で `devbase env backend test`
+      結果: 偽サーバへの要求が `with` の置き場のパスだけで、`nyle` のプロジェクトの参照を
+      調べない（2026-09-15 に追記。設計の決定 8）
+- [ ] 18. 前提: グループ別の置き場。`team/with/global` が未作成で、`env init` の子プロセスは
+      偽サーバへ `INIT_KEY=value` を保存して成功終了するものに差し替える
+      操作: `projects/web`（`with`）で `devbase up`
+      結果: 子プロセスが `team/with/global` へ書き、その `up` のコンテナへ `INIT_KEY` が渡る
+      （2026-09-15 に追記。設計の決定 10）
 - [ ] 15. `uv run pytest tests/` が全件通り、`ruff check lib` と `python -m compileall -q lib bin`
       が変更前と同じ結果
 
