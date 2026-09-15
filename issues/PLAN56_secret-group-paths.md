@@ -189,7 +189,10 @@
       操作: `devbase env backend migrate --to openbao --exclude-project csc`
       結果: 共通は `team/nyle/global`、`web` は `team/with/projects/web` へ書かれる。`csc` の
       参照はサーバへ書かれず、ファイルは退避されずに元の位置に残る。`--dry-run` は書き先の
-      パスとキー名を出し、値を出さない
+      パスとキー名を出し、値を出さない。
+      逆向き（グループ別の置き場の OpenBao から `--to age`）では、`$DEVBASE_ROOT/env` のグループの
+      共通の参照と各プロジェクトのグループのプロジェクトの参照が age へ移り、他のグループの共通の
+      参照は移さずにグループ名とパスを表示する（2026-09-15 に追記。設計の「`env backend migrate`」）
 - [ ] 13. `env init` / `sync` / `project` / `export` / `import` は、対象のグループのチーム単位の
       参照だけを読み書きし、他のグループのパスへ要求を出さない。`export` は対象のグループに
       属するプロジェクトだけを集め、外したプロジェクト名を出す。`import` はバンドルに別グループの
@@ -202,7 +205,8 @@
 - [ ] 16. 前提: グループ別の置き場。`projects/web/env` に `DEVBASE_ACCOUNT_GROUP=with`
       操作: `projects/web` で `DEVBASE_ACCOUNT_GROUP=kkg devbase up`（ボリュームのグループが `kkg`）と、
       同じ環境変数での `devbase scale 2`
-      結果: どちらも両方のグループ名と出所を述べて非ゼロで終了し、コンテナを作らない。今の形の
+      結果: どちらも両方のグループ名と出所を述べて非ゼロで終了し、コンテナ・ボリューム・
+      スナップショットを作らず、`project.local.yml` の `scale` を書き換えない。今の形の
       `backend.yml` では同じ操作で止めない（2026-09-15 に追記。設計の決定 7）
 - [ ] 17. 前提: グループ別の置き場。`projects/` に `nyle` と `with` のプロジェクトがある
       操作: `projects/web`（`with`）で `devbase env backend test`

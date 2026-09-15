@@ -285,12 +285,27 @@ devbase env backend migrate --to openbao [--exclude-project NAME]... [--dry-run]
 - `--exclude-project NAME` の参照は、読まない・書かない・退避しない。存在しないプロジェクト名は
   名前を述べて 2（打ち間違いで移行してしまうのを防ぐ）
 - `--dry-run` は参照ごとに `<mount>/<パス>` と衝突したキー名を出す。値は出さない
-- `--to age` は今と同じで、グループを持たない（ファイル backend は分けない）
+- `--to age` は**移行元と移行先で参照を分けて作る**。移行元（`layout: group` の OpenBao）の参照は
+  上の 2 行と同じ規則でグループを持ち、移行先（age）の参照はグループを持たない（ファイル backend は
+  分けない）。移行元の参照をグループなしで作ると、`OpenBaoBackend` が空のグループを拒んで読めない
+- `--to age` で移せる共通の参照は 1 つ（`secrets/global.env.age`）だけである。`$DEVBASE_ROOT/env` の
+  グループの共通の参照を移し、他のグループの共通の参照は移さない。移さなかったグループ名と
+  パスを表示し、サーバ上に残す（今の `--to age` がサーバ側を消さないのと同じ扱い）。プロジェクトの
+  参照は、それぞれのプロジェクトのグループから移す
+- `migrate --to openbao` は全プロジェクトのグループへ書く。グループ単位のポリシーで書けない
+  グループのプロジェクトは `--exclude-project` で外す（外さなければ今と同じく「書き込み権限が
+  無い」で止まる）
 
 ### `devbase up` / `scale` の食い違いの検査
 
-`layout: group` のときだけ、コンテナを作る前に行う。`up` は `_run_deploy_pipeline` の機密の注入の
-前、`scale` は増やすインスタンスの構成を生成する前である。
+`layout: group` のときだけ、**副作用のある処理より前に**行う。
+
+| コマンド | 検査の位置 | その後にある副作用 |
+| --- | --- | --- |
+| `up` | `cmd_up` の `_run_pre_up_checks` の中 | 自動スナップショット、ボリュームの作成、機密の注入、構成の生成 |
+| `scale` | `cmd_scale` の冒頭（`project_runtime.write_scale` の前） | `project.local.yml` の `scale` の書き換え、ボリュームの作成、構成の生成 |
+
+途中で止めると、別グループの名前のボリュームや書き換えた `scale` が残るためである。
 
 | 比べるもの | 食い違ったとき |
 | --- | --- |
@@ -461,7 +476,7 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 標準エラーへ出す。
 
 `import` で別グループのプロジェクトを黙って飛ばすと、取り込んだつもりの機密が欠ける。
-名前とグループを挙げて 1 件も取り込まずに 1 で終了し、既存の `--exclude-projects` での
+名前とグループを挙げて 1 件も取り込まずに 1 で終了し、既存の `--exclude-project NAME`（繰り返し可）での
 除外を案内する。
 
 ## テスト設計
@@ -479,11 +494,11 @@ entrypoint へ渡す値まで経路が変わり、この変更の範囲（前提
 | 9 | 既存の `tests/env/` / `tests/commands/` / `tests/cli/` が期待値を変えずに通ること。`tests/env/test_backend_config.py` に `version: 1` のパスの対応を固定する表を足す |
 | 10 | 既存のファイル backend のテストが変更なしで通ること |
 | 11 | `tests/commands/test_env_backend.py` に `status` のレイアウト・グループ・出所・4 パスの行 |
-| 12 | `tests/commands/test_env_backend_migrate.py` に、グループの違う 2 プロジェクトと `--exclude-project` の場合、存在しない名前の 2、`--dry-run` がパスとキー名だけを出すこと |
+| 12 | `tests/commands/test_env_backend_migrate.py` に、グループの違う 2 プロジェクトと `--exclude-project` の場合、存在しない名前の 2、`--dry-run` がパスとキー名だけを出すこと。`version: 2` の OpenBao から `--to age` へ戻す場合に、`$DEVBASE_ROOT/env` のグループの共通の参照とプロジェクトごとのグループの参照が age へ移り、他のグループの共通の参照は移さずに名前とパスが表示されること |
 | 13 | `tests/cli/test_env_bundle_backend.py` に、`nyle` と `with` のプロジェクトがある `version: 2` で、`export` が要求するパスの一覧が対象のグループだけであること、`import` が別グループのプロジェクトを含むバンドルで 1 かつ要求 0 回であること。`env init` / `sync` / `project` の書き込み先 |
 | 14 | 追加した出力を検査するテストで、偽サーバに置いた値と `secret_id` が標準出力・標準エラー・ログに現れないこと |
 | 15 | `uv run pytest tests/`、`ruff check lib`、`python -m compileall -q lib bin` |
-| 16 | `tests/commands/test_container_up_order.py` に、`layout: group` でボリュームとファイルのグループが違うと `up` と `scale` が 1 でコンテナを作らないこと。`version: 1` では止めないこと |
+| 16 | `tests/commands/test_container_up_order.py` に、`layout: group` でボリュームとファイルのグループが違うと `up` と `scale` が 1 で終わり、スナップショット・ボリュームの作成・`project.local.yml` の書き換えが起きていないこと。`version: 1` では止めないこと |
 | 17 | `tests/commands/test_env_backend.py` に、`nyle` と `with` のプロジェクトがある `projects/` で `test` を打ち、偽サーバへの要求が対象のグループのパスだけであること |
 | 18 | `tests/cli/test_up_roundtrips.py` の `env init` を走らせる場合を `version: 2` と `with` のプロジェクトで行い、子プロセスの引数に `--group with` があり、書いた値でその `up` が起動すること |
 | 決定 1 | `tests/env/test_backend_config.py` に、`version: 2` で `path_team_global` を置いたときの拒否、`version: 1` で `group_aliases` を置いたときの拒否、読み替えた後の `global` / `projects` の拒否。`use --group-alias default=global` の 2 |
