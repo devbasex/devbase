@@ -88,9 +88,14 @@
       対象外と決めた carmo-system-console の `.env`（215 キー、S3 から配る本番の仕組み）。`secrets/global.env.age` は無い
 - [x] 単位 6 の後、`bao kv get -mount=devbase team/global` がチーム共通のキー一覧を返し、
       `users/takemi_ohama/global` が個人単位のキー一覧を返す（値は記録に書かない）
-- [x] 不達時の起動: `secrets/backend.yml` の `url` を到達しないものへ一時的に変えて
+- [x] 不達時の起動: ~~`secrets/backend.yml` の `url` を到達しないものへ一時的に変えて
       `devbase env exec -- true` を実行すると、控えから読んだ旨の警告を出して終了コード 0
-      で終わる（サーバのデプロイ中の 2 分 20 秒を模す。元へ戻してから次へ進む）
+      で終わる（サーバのデプロイ中の 2 分 20 秒を模す。元へ戻してから次へ進む）~~
+      → `secrets/backend.yml` の `url` は変えずに `HTTPS_PROXY=http://127.0.0.1:9` を付けて
+      `devbase env exec -- true` を実行し、通信だけを届かなくすると、控えから読んだ旨の警告を出して
+      終了コード 0 で終わる（サーバのデプロイ中の 2 分 20 秒を模す）
+      （2026-09-15、`url` を変えると控えの `scope` に URL が含まれるため控えが見つからず exit=1 になる。
+      確かめ方の誤りだったので、実際に成功した通信の遮断へ改めた。単位 4' の記録を参照）
 - [x] #152: `projects/with-ai-dev` で `devbase up` した後、
       `docker exec with-ai-dev-dev-1 bash -lc 'echo "[$GOOGLE_CLOUD_PROJECT] [$GCP_ACTIVE_PROFILE]"'`
       が `[] [with]` を返す
@@ -164,7 +169,7 @@
 
 | 大項目 | 要求の条件 | 実現方式 | 確かめ方 |
 | --- | --- | --- | --- |
-| 可用性 | サーバ不達時に控えで `devbase up` できる。控えを無効にしない | `use openbao` に `--no-cache` を付けない（既定で `cache.enabled: true`）。単位 4 の後に `devbase env exec` を 1 度通して `secrets/cache/` に控えを作る | `backend.yml` の `url` を到達しない値へ変えて `devbase env exec -- true` が警告付きで 0 で終わる。戻してから次へ進む |
+| 可用性 | サーバ不達時に控えで `devbase up` できる。控えを無効にしない | `use openbao` に `--no-cache` を付けない（既定で `cache.enabled: true`）。単位 4 の後に `devbase env exec` を 1 度通して `secrets/cache/` に控えを作る | `backend.yml` の `url` は変えず、`HTTPS_PROXY=http://127.0.0.1:9` を付けて通信だけを届かなくし、`devbase env exec -- true` が警告付きで 0 で終わる（`url` を変えると控えの `scope` から外れて exit=1 になる） |
 | 移行性 | 単位ごとに戻す手順がある。`migrate` は衝突があれば 1 件も書かずに止まる。元ファイルは確認が済むまで退避先に残す | 各単位の「取り消し」の列（下の計画）。`--dry-run` を先に打って移すキー名と衝突を見る | 各単位の記録に取り消しの手順が書かれている。単位 6 の削除は `devbase up` の差分 0 を見た後 |
 | セキュリティ | `secret_id` は `--secret-id-stdin` で渡し、発行した JSON は使ったら消す。記録に資格情報・機密の値を書かない | 発行した JSON は `~/` 直下ではなく `secrets/` 配下の一時ファイル（`0600`、`gitignore` 対象）に置き、`use` の直後に `rm`。記録には `devbase env list` の**キー名**と件数だけを写す | 記録を `grep -E 'role_id|secret_id|hvs\.'` して値が無い。`ls secrets/` に一時ファイルが残っていない |
 | システム環境 | 実行する場所と届く先 | 実行はホスト（macOS、`~/devbase`、`bin/devbase` 3.3.0 + `main` @ 709f507）。届く先は OpenBao（`https://openbao.example.com`、KV v2 `devbase/`）と `~/devbase/secrets/`。管理操作（単位 1・3）は carmo-cdk の `main` から利用者が実行する | 各単位の記録に「対象の系」を書く |
@@ -205,7 +210,7 @@
 | 2 | `jq -r .secret_id secrets/device.json \| bin/devbase env backend use openbao --url <URL> --user takemi_ohama --role-id "$(jq -r .role_id secrets/device.json)" --secret-id-stdin` → `rm secrets/device.json` → `bin/devbase env backend test` | 手元（`secrets/backend.yml` / `bootstrap.env.age`） | **本番**（利用者の実環境） | `bin/devbase env backend use auto`（age ストアは触っていないので即時に元へ戻る） |
 | 3 | 管理者が `bin/openbao-admin.sh user-add takemi_ohama --team-writer`（403 になる既知の課題 carmo-cdk#350 があるため、代替として WebUI / `bao write identity/entity/name/takemi_ohama policies=…` で entity に `devbase-team-writer` を付ける） | OpenBao（entity のポリシー） | **本番** | 同じ経路でポリシーを外す |
 | 4 | `bin/devbase env backend migrate --to openbao --dry-run` → 衝突が無ければ `bin/devbase env backend migrate --to openbao` → `bin/devbase env backend status` → `cd projects/with-ai-dev && bin/devbase env exec -- env \| sort > <退避先>/after.env` → `diff before.env after.env` | OpenBao（`team/global` + `team/projects/<name>` × 19）と手元（元ファイルは `backups/env-backend-migrate/<日時>/` へ退避） | **本番** | `bin/devbase env backend migrate --to age`（サーバ側は残る。退避先から戻す） |
-| 4' | 不達時の確認: `backend.yml` の `url` を `https://127.0.0.1:9` へ一時的に変え `bin/devbase env exec -- true` → 元へ戻す | 手元 | 検証 | ファイルを元へ戻す（`cp` した控えから） |
+| 4' | 不達時の確認: `backend.yml` の `url` は変えず `HTTPS_PROXY=http://127.0.0.1:9 bin/devbase env exec -- true`（通信だけを届かなくする。`url` を変えると控えの `scope` から外れて exit=1 になる） | 手元 | 検証 | 不要（環境変数はそのコマンドにだけ効き、ファイルを変えない） |
 | 5 | 利用者が仕分けたキーごとに `bin/devbase env set --user KEY`（値は伏せ字入力）→ `bin/devbase env delete KEY`（`team/global` から消す） | OpenBao（`users/takemi_ohama/global`、`team/global`） | **本番** | `env delete --user KEY` と `env set KEY`（退避先の age ファイルから値を読める） |
 | 6 | `cd projects/with-ai-dev && bin/devbase up` → `docker exec with-ai-dev-dev-1 bash -lc 'echo "[$GOOGLE_CLOUD_PROJECT] [$GCP_ACTIVE_PROFILE]"'`（#152）→ ホストの `bao kv get -mount=devbase team/global` でキー名を別経路で確認 → 問題が無ければ `rm -r backups/env-backend-migrate/<日時>/` | 手元（コンテナの作り直し、退避先の削除） | **本番** | 退避先の削除は**戻せない**（サーバの値から `migrate --to age` で再生成はできる）。コンテナの作り直しは `devbase up` でやり直せる |
 
@@ -216,7 +221,7 @@
 
 ## 個人単位へ移すキー（前提 4、利用者が決める）
 
-（単位 5 の前に埋める。キー名だけ）
+利用者が 2026-09-15 に承認したキー名は、実行の記録の「単位 5」にある一覧を参照（ここには二重に持たない）。
 
 ## 実行の記録
 
@@ -393,7 +398,7 @@ GCP_ACTIVE_PROFILE=[with] GOOGLE_CLOUD_PROJECT=[]
 対象の系: OpenBao（`users/takemi_ohama/global`、`team/global`）  区分: 本番
 取り消し: 戻せる（`team/global` へ書き戻し、`users/.../global` から消す。値は `backups/env-backend-migrate/20260915-165942` の age にもある）
 
-## 個人単位へ移すキー（前提 4、利用者が 2026-09-15 に承認）
+#### 個人単位へ移すキー（前提 4、利用者が 2026-09-15 に承認）
 
 GH_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN / GIT_CREDENTIALS_BASE64 / GIT_CREDENTIAL_HELPER / GIT_USER_EMAIL / GIT_USER_NAME /
 AWS_CONFIG_BASE64 / AWS_PROFILE / GCP_CREDENTIALS_BASE64__default / GCP_ACTIVE_PROFILE /
@@ -421,10 +426,11 @@ $ (cd projects/with-ai-dev && bin/devbase up --no-open)
 [0/6]〜[5/6] … bao の token を書きました: with-ai-dev-dev-1 / === Deploy completed successfully ===
 終了コード: 0
 
-$ docker exec with-ai-dev-dev-1 bash -lc 'echo "[$GOOGLE_CLOUD_PROJECT] [$GCP_ACTIVE_PROFILE] ... "; stat -c "%a %s" ~/.vault-token; env | grep -c ^BAO_TOKEN='
+$ docker exec with-ai-dev-dev-1 bash -lc 'echo "[$GOOGLE_CLOUD_PROJECT] [$GCP_ACTIVE_PROFILE] [$DEVBASE_ACCOUNT_GROUP] ENABLE_SSH=[$ENABLE_SSH] SLACK_TEAM_ID_set=${SLACK_TEAM_ID:+yes} GH_TOKEN_set=${GH_TOKEN:+yes} BAO_ADDR_set=${BAO_ADDR:+yes}"; stat -c "%a %s" ~/.vault-token; env | grep -c "^BAO_TOKEN="; command -v bao || echo "bao not in image"'
 [] [with] [with] ENABLE_SSH=[true] SLACK_TEAM_ID_set=yes GH_TOKEN_set=yes BAO_ADDR_set=yes
 600 26
 0
+bao not in image
 終了コード: 0
 
 反映の確認:
