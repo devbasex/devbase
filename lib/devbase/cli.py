@@ -457,6 +457,15 @@ def _add_env_backend_parser(env_sub):
                              help='Keep an encrypted local cache of server secrets')
     cache_group.add_argument('--no-cache', dest='cache', action='store_const', const=False,
                              help='Do not keep an encrypted local cache of server secrets')
+    # 指定が無ければ既存のレイアウトと読み替えを引き継ぐ (None。PLAN56 決定 1)
+    use.add_argument('--layout', choices=('flat', 'group'), default=None,
+                     help='Path layout on the server: group splits secrets by account group '
+                          '(version 2), flat keeps the ungrouped paths (version 1). '
+                          'Default: keep the current layout (group for a new setting)')
+    use.add_argument('--group-alias', action='append', default=None, metavar='FROM=TO',
+                     dest='group_aliases',
+                     help='Store account group FROM under the name TO (repeatable; '
+                          'replaces the current aliases; only with the group layout)')
 
     backend_sub.add_parser('test', help='Check the connection to the server backend')
 

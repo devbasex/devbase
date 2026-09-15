@@ -52,18 +52,25 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
 # status
 # ---------------------------------------------------------------------------
 
-def _team_refs(devbase_root: Path) -> List[SecretRef]:
-    """チーム単位の参照 (共通 + 実在するプロジェクト)"""
-    refs = [SecretRef.for_global()]
+def _project_names(devbase_root: Path) -> List[str]:
+    """``projects/`` に実在し、参照の名前に使えるプロジェクト名 (名前順)"""
+    names: List[str] = []
     projects_dir = Path(devbase_root) / 'projects'
     if projects_dir.is_dir():
         for entry in sorted(projects_dir.iterdir()):
             if entry.is_dir():
                 try:
-                    refs.append(SecretRef.for_project(entry.name))
+                    SecretRef.for_project(entry.name)
                 except DevbaseError:
                     continue
-    return refs
+                names.append(entry.name)
+    return names
+
+
+def _team_refs(devbase_root: Path) -> List[SecretRef]:
+    """チーム単位の参照 (共通 + 実在するプロジェクト)"""
+    return [SecretRef.for_global()] + [SecretRef.for_project(name)
+                                       for name in _project_names(devbase_root)]
 
 
 def cmd_env_backend_status(devbase_root: Path) -> int:
@@ -106,11 +113,15 @@ def _print_openbao_status(root: Path, store: SecretStore, config) -> None:
     print(f"  接続先:  {ob.url}")
     print(f"  mount:   {ob.mount}")
     print(f"  個人単位の識別子: {ob.user}")
-    print("\n  置き場 (<mount>/<path>):")
-    print(f"    チーム共通:           {ob.display_path(SecretRef.for_global())}")
-    print(f"    チームのプロジェクト: {ob.mount}/{ob.path_team_project_prefix}/<name>")
-    print(f"    個人共通:             {ob.display_path(SecretRef.for_global(owner='user'))}")
-    print(f"    個人のプロジェクト:   {ob.mount}/{ob.path_user_prefix}/{ob.user}/projects/<name>")
+    if ob.grouped:
+        _print_grouped_locations(root, config)
+    else:
+        print("\n  置き場 (<mount>/<path>):")
+        print(f"    チーム共通:           {ob.display_path(SecretRef.for_global())}")
+        print(f"    チームのプロジェクト: {ob.mount}/{ob.path_team_project_prefix}/<name>")
+        print(f"    個人共通:             {ob.display_path(SecretRef.for_global(owner='user'))}")
+        print(f"    個人のプロジェクト:   "
+              f"{ob.mount}/{ob.path_user_prefix}/{ob.user}/projects/<name>")
 
     try:
         creds = _bootstrap.load(root)
@@ -123,6 +134,42 @@ def _print_openbao_status(root: Path, store: SecretStore, config) -> None:
             print(f"\n  接続資格情報: role_id {creds.role_id} ({_bootstrap.path(root)})")
 
     _print_cache_status(root, store, config)
+
+
+def _print_grouped_locations(root: Path, config) -> None:
+    """``version: 2`` のレイアウト・対象のグループと出所・そのグループで組んだ 4 パス (受け入れ条件 11)。
+
+    対象のグループは実行時のプロジェクトのもの (プロジェクトの外なら ``$DEVBASE_ROOT/env``)。
+    プロジェクトの外ではプロジェクト名が決まらないため、プロジェクトのパスは ``<name>`` のまま出す。
+    """
+    from devbase.env import groups as _groups
+    from devbase.env import runtime as _runtime
+
+    ob = config.openbao
+    project = _runtime.current_project_name(root)
+    print(f"  レイアウト: {ob.layout} (version {config.version})")
+    try:
+        declared = _groups.declare(root, project)
+        shown = ob.display_group(declared.name)
+    except DevbaseError as e:
+        print(f"  グループ:   決められません ({e})")
+        return
+    print(f"  グループ:   {shown} ({_groups.describe_source(root, declared, project)})")
+
+    def project_path(owner: str) -> str:
+        if project is not None:
+            return ob.display_path(SecretRef.for_project(project, owner=owner, group=declared.name))
+        # <name> はプロジェクト名の検査を通らないため、共通のパスの隣として出す
+        common = ob.display_path(SecretRef.for_global(owner=owner, group=declared.name))
+        return f"{common.rsplit('/', 1)[0]}/projects/<name>"
+
+    team_global = ob.display_path(SecretRef.for_global(group=declared.name))
+    user_global = ob.display_path(SecretRef.for_global(owner='user', group=declared.name))
+    print("\n  置き場 (<mount>/<path>):")
+    print(f"    チーム共通:           {team_global}")
+    print(f"    チームのプロジェクト: {project_path('team')}")
+    print(f"    個人共通:             {user_global}")
+    print(f"    個人のプロジェクト:   {project_path('user')}")
 
 
 def _print_cache_status(root: Path, store: SecretStore, config) -> None:
@@ -176,6 +223,47 @@ def _build_openbao_settings(current: Optional[_bc.OpenBaoSettings], args
     return _dc_replace(base, **updates)
 
 
+class _UseOptionError(DevbaseError):
+    """``use`` の ``--layout`` / ``--group-alias`` の誤り (終了コード 2、設定を書き換えない)"""
+
+
+def _apply_layout(settings: _bc.OpenBaoSettings, current: Optional[_bc.OpenBaoSettings],
+                  args) -> _bc.OpenBaoSettings:
+    """``--layout`` と ``--group-alias`` を設定へ当てる (PLAN56 決定 1)。
+
+    ``--layout`` が無ければ既存のレイアウトを引き継ぎ、既存の設定が無ければ ``group`` にする。
+    ``group`` では ``version: 1`` のチーム単位のパスを捨て、``flat`` では読み替えを捨てる。
+    ``--group-alias`` は指定があれば既存の対応を置き換え、無ければ引き継ぐ。
+    """
+    layout = getattr(args, 'layout', None)
+    if layout is None:
+        layout = current.layout if current is not None else _bc.LAYOUT_GROUP
+    alias_args = getattr(args, 'group_aliases', None)
+    defaults = _bc.OpenBaoSettings(url='', user='')
+
+    if layout == _bc.LAYOUT_FLAT:
+        if alias_args:
+            raise _UseOptionError(
+                "--group-alias はグループ別の置き場 (--layout group、version: 2) でだけ使えます "
+                "(書き出すレイアウト: flat、version: 1)")
+        return _dc_replace(settings, layout=_bc.LAYOUT_FLAT, group_aliases={},
+                           path_team_prefix=defaults.path_team_prefix)
+
+    aliases = dict(settings.group_aliases)
+    if alias_args:
+        try:
+            aliases = _bc.parse_group_aliases(alias_args)
+        except _bc.BackendConfigError as e:
+            raise _UseOptionError(f"--group-alias に使えない指定です: {e}") from None
+    return _dc_replace(settings, layout=_bc.LAYOUT_GROUP, group_aliases=aliases,
+                       path_team_global=defaults.path_team_global,
+                       path_team_project_prefix=defaults.path_team_project_prefix)
+
+
+def _describe_aliases(aliases) -> str:
+    return ', '.join(f'{source} → {target}' for source, target in aliases.items())
+
+
 def cmd_env_backend_use(devbase_root: Path, args) -> int:
     root = Path(devbase_root)
     name = getattr(args, 'name', None) or ''
@@ -183,6 +271,12 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
     if name not in _bc.BACKEND_NAMES:
         logger.error("backend '%s' は登録されていません (利用できる backend: %s)",
                      name, ', '.join(_bc.BACKEND_NAMES))
+        return EXIT_USAGE
+
+    if name != _bc.BACKEND_OPENBAO and (getattr(args, 'layout', None) is not None
+                                        or getattr(args, 'group_aliases', None)):
+        logger.error("--layout / --group-alias は backend openbao を選ぶときだけ使えます "
+                     "(指定した backend: %s)", name)
         return EXIT_USAGE
 
     try:
@@ -196,11 +290,20 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
     cache_arg = getattr(args, 'cache', None)
     cache_enabled = current.cache_enabled if cache_arg is None else bool(cache_arg)
     openbao = current.openbao
+    # 版はレイアウトと 1 対 1。openbao 以外へ切り替えるときも既存の版を引き継がないと、
+    # version: 2 の openbao 節と食い違って書けない
+    version = current.version
     if name == _bc.BACKEND_OPENBAO:
-        openbao = _build_openbao_settings(current.openbao, args)
+        try:
+            openbao = _apply_layout(_build_openbao_settings(current.openbao, args),
+                                    current.openbao, args)
+        except _UseOptionError as e:
+            logger.error("%s", e)
+            return EXIT_USAGE
+        version = 2 if openbao.grouped else 1
 
     new_config = _bc.BackendConfig(backend=name, openbao=openbao,
-                                   cache_enabled=cache_enabled)
+                                   cache_enabled=cache_enabled, version=version)
     try:
         new_config.validate()
     except _bc.BackendConfigError as e:
@@ -219,13 +322,45 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
         return 1
 
     print(f"backend を {name} に設定しました: {path}")
-    if name == _bc.BACKEND_OPENBAO:
-        ob = new_config.openbao
-        print(f"  接続先:  {ob.url}")
-        print(f"  mount:   {ob.mount}")
-        print(f"  個人単位の識別子: {ob.user}")
-        print(f"  キャッシュ: {'有効' if cache_enabled else '無効'}")
-        print("  接続を確かめる: devbase env backend test")
+    if name != _bc.BACKEND_OPENBAO:
+        return 0
+    ob = new_config.openbao
+    print(f"  接続先:  {ob.url}")
+    print(f"  mount:   {ob.mount}")
+    print(f"  個人単位の識別子: {ob.user}")
+    print(f"  レイアウト: {ob.layout} (version {new_config.version})")
+    if ob.group_aliases:
+        print(f"  グループの読み替え: {_describe_aliases(ob.group_aliases)}")
+    dropped = current.openbao.group_aliases if current.openbao is not None else {}
+    if dropped and not ob.grouped:
+        print(f"  group_aliases ({_describe_aliases(dropped)}) を捨てました "
+              "(version: 1 は読み替えを持ちません)")
+    print(f"  キャッシュ: {'有効' if cache_enabled else '無効'}")
+    if current.openbao is not None and current.openbao.layout != ob.layout:
+        rc = _purge_cache_after_layout_change(root, current.openbao.layout, ob.layout)
+        if rc != 0:
+            return rc
+    print("  接続を確かめる: devbase env backend test")
+    return 0
+
+
+def _purge_cache_after_layout_change(root: Path, before: str, after: str) -> int:
+    """レイアウトが変わったら控えを消す。
+
+    パスが変わるため古い控えが使われることは ``scope`` の不一致で起きないが、別グループの
+    機密が暗号文のまま残り続けるのを避ける (設計「キャッシュ」)。設定は書いた後なので、
+    消せなかったときは残ったパスを述べて 1 で終える。
+    """
+    from devbase.env import cache as _cache
+
+    try:
+        _cache.purge(root)
+    except DevbaseError as e:
+        logger.error("レイアウトを %s から %s へ変えましたが、キャッシュを消せませんでした: %s",
+                     before, after, e)
+        return 1
+    print(f"  キャッシュ ({_cache.cache_dir(root)}) を消しました "
+          f"(レイアウトが {before} から {after} へ変わったため)")
     return 0
 
 
@@ -283,6 +418,30 @@ def _store_credentials(root: Path, args) -> int:
 # test / migrate (後続タスクで実装)
 # ---------------------------------------------------------------------------
 
+def _probe_refs(root: Path, store: SecretStore):
+    """``test`` が読む参照 (チーム単位と個人単位の組) と、対象外にしたプロジェクトの表示。
+
+    グループ別の置き場では、対象のグループ (実行時のプロジェクト、プロジェクトの外なら
+    ``$DEVBASE_ROOT/env``) と同じ置き場のプロジェクトだけを調べる。グループ単位のポリシーの
+    サーバでは、別グループのプロジェクトの参照が正しい設定でも 403 になるため (PLAN56 決定 8)。
+    それ以外の設定ではグループが ``None`` で、全プロジェクトを今どおり調べる。
+    """
+    from devbase.env import runtime as _runtime
+
+    group = store.ref_group(_runtime.current_project_name(root))
+    refs: List[SecretRef] = [SecretRef.for_global(group=group),
+                             SecretRef.for_global(owner='user', group=group)]
+    skipped: List[str] = []
+    for name in _project_names(root):
+        project_group = store.ref_group(name)
+        if store.storage_group(project_group) != store.storage_group(group):
+            skipped.append(f"{name} ({store.config.openbao.display_group(project_group)})")
+            continue
+        refs.append(SecretRef.for_project(name, group=project_group))
+        refs.append(SecretRef.for_project(name, owner='user', group=project_group))
+    return refs, skipped
+
+
 def cmd_env_backend_test(devbase_root: Path) -> int:
     """サーバへ接続し、参照ごとに読めるかを確かめる (キャッシュへは落ちない)"""
     from devbase.env.openbao import OpenBaoBackend
@@ -297,17 +456,15 @@ def cmd_env_backend_test(devbase_root: Path) -> int:
             return 1
         backend = store.backend_for(SecretRef.for_global())
         assert isinstance(backend, OpenBaoBackend)
-        refs: List[SecretRef] = []
-        for ref in _team_refs(root):
-            refs.append(ref)
-            refs.append(SecretRef.for_global(owner='user') if ref.kind == 'global'
-                        else SecretRef.for_project(ref.name, owner='user'))
+        refs, skipped = _probe_refs(root, store)
         results = backend.probe(refs)
     except DevbaseError as e:
         logger.error("%s", e)
         return 1
 
     print(f"\n接続先: {backend.url}")
+    if skipped:
+        print(f"対象のグループと違う置き場のプロジェクトは調べていません: {', '.join(skipped)}")
     print(f"読めた参照: {len(results)} 件")
     for ref, count in results:
         print(f"  {ref.label():<28} {backend.display_path(ref):<40} {count} 変数")

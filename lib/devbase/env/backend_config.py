@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlsplit
 
 import yaml
@@ -380,6 +380,29 @@ def _aliases_from_dict(raw: Any) -> Dict[str, str]:
             f"openbao.group_aliases はグループ名の対応 (マッピング) で指定してください: {raw!r}")
     # 値の検証は OpenBaoSettings.validate が行う。ここでは型だけを揃える
     return {str(k): ('' if v is None else str(v)) for k, v in raw.items()}
+
+
+def parse_group_aliases(pairs: Sequence[str]) -> Dict[str, str]:
+    """``FROM=TO`` の並びをグループの読み替えの対応にする (``env backend use --group-alias``)。
+
+    ``FROM`` と ``TO`` は ``DEVBASE_ACCOUNT_GROUP`` と同じ規則で検証し、``TO`` が
+    ``global`` / ``projects`` なら拒む (``FROM`` は拒まない)。同じ ``FROM`` を違う ``TO`` へ
+    向ける指定は、どちらを採るか決められないため拒む。
+    """
+    aliases: Dict[str, str] = {}
+    for pair in pairs:
+        source, sep, target = str(pair).partition('=')
+        if not sep:
+            raise BackendConfigError(f"FROM=TO の形で指定してください: {pair!r}")
+        source = _validate_group_name(source, f"{pair!r} の FROM")
+        target = _validate_group_name(target, f"{pair!r} の TO")
+        OpenBaoSettings._check_reserved(target, f"{pair!r} の TO")
+        if aliases.get(source, target) != target:
+            raise BackendConfigError(
+                f"グループ {source} の読み替え先が 2 つ指定されています: "
+                f"{aliases[source]} / {target}")
+        aliases[source] = target
+    return aliases
 
 
 def _openbao_from_dict(raw: Any, backend: str, version: int = 1) -> Optional[OpenBaoSettings]:
