@@ -230,20 +230,15 @@ class OpenBaoSettings:
         組み立てた結果が設定した親の外へ出ることはない。``layout: group`` の ``<g>`` は
         :meth:`storage_group` の検証を通った名前 (区切り文字を含まない) である。
         """
+        suffix = 'global' if ref.kind == 'global' else f'projects/{ref.name}'
         if self.grouped:
             group = self._group_of(ref)
             if ref.owner == 'user':
-                base = f"{self.path_user_prefix}/{self.user}/{group}"
-            else:
-                base = f"{self.path_team_prefix}/{group}"
-            if ref.kind == 'global':
-                return f'{base}/global'
-            return f'{base}/projects/{ref.name}'
+                return f"{self.path_user_prefix}/{self.user}/{group}/{suffix}"
+            return f"{self.path_team_prefix}/{group}/{suffix}"
         if ref.owner == 'user':
-            base = f"{self.path_user_prefix}/{self.user}"
-            if ref.kind == 'global':
-                return f'{base}/global'
-            return f'{base}/projects/{ref.name}'
+            return f"{self.path_user_prefix}/{self.user}/{suffix}"
+        # version: 1 のチーム単位だけは親を 2 つの設定 (path_team_global / _project_prefix) で持つ
         if ref.kind == 'global':
             return self.path_team_global
         return f"{self.path_team_project_prefix}/{ref.name}"

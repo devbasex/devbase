@@ -164,6 +164,10 @@ def _target_env(devbase_root: Path, project: bool, user: bool = False,
         env_file = _global_env(devbase_root, user=user, store=store, fresh=True, group=target)
     else:
         name = _current_project_name(devbase_root)
+        if name is None:
+            logger.error(
+                "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
+            return None
         mismatch = _project_group_mismatch(devbase_root, store, group, name)
         if mismatch is not None:
             raise GroupOptionError(
@@ -171,10 +175,6 @@ def _target_env(devbase_root: Path, project: bool, user: bool = False,
                 f"(グループを変えるなら projects/{name}/env の "
                 f"{keys.DEVBASE_ACCOUNT_GROUP} を直してください)", exit_code=1)
         env_file = _project_env(devbase_root, user=user, store=store, fresh=True, group=target)
-        if env_file is None:
-            logger.error(
-                "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
-            return None
 
     # ファイル backend は個人単位の参照を持たない。backend の path() はチーム単位の
     # ファイルを指すため、ここで止めないと `edit --user` がチームの .env を開き、
@@ -186,6 +186,21 @@ def _target_env(devbase_root: Path, project: bool, user: bool = False,
             "devbase env backend use openbao ...", env_file.mode_name())
         return None
     return env_file
+
+
+def _open_target_env(devbase_root: Path, project: bool, user: bool = False,
+                     group: Optional[str] = None):
+    """set / delete / edit の入口。``(設定ビュー, None)`` か ``(None, 終了コード)`` を返す。
+
+    :func:`_target_env` の :class:`GroupOptionError` を文言と終了コードへ写す処理を、
+    3 つのコマンドで同じにするために 1 箇所へ置く。
+    """
+    try:
+        env_file = _target_env(devbase_root, project, user=user, group=group)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return None, e.exit_code
+    return (env_file, None) if env_file is not None else (None, 1)
 
 
 def cmd_env(devbase_root: Path, args) -> int:
@@ -761,13 +776,9 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
         logger.error("キー名が空です")
         return 1
 
-    try:
-        env_file = _target_env(devbase_root, project, user=user, group=group)
-    except GroupOptionError as e:
-        logger.error("%s", e)
-        return e.exit_code
+    env_file, rc = _open_target_env(devbase_root, project, user=user, group=group)
     if env_file is None:
-        return 1
+        return rc
 
     try:
         env_file.set(key, value)
@@ -828,13 +839,9 @@ def cmd_env_delete(devbase_root: Path, key: str, project: bool = False,
     ``--project`` を受けるのは、暗号化された設定は利用者がエディタで直接開いて
     不要なキーを消せないため。CLI からプロジェクト設定を掃除する手段が要る。
     """
-    try:
-        env_file = _target_env(devbase_root, project, user=user, group=group)
-    except GroupOptionError as e:
-        logger.error("%s", e)
-        return e.exit_code
+    env_file, rc = _open_target_env(devbase_root, project, user=user, group=group)
     if env_file is None:
-        return 1
+        return rc
 
     try:
         if env_file.delete(key):
@@ -859,13 +866,9 @@ def cmd_env_edit(devbase_root: Path, project: bool = False, user: bool = False,
     「暗号化されているか」ではなく「直接編集できるか」にするのは、サーバ backend の
     ``path()`` が ``<mount>/<パス>`` を ``Path`` にしただけの値で、開いても機密は無いため。
     """
-    try:
-        env_file = _target_env(devbase_root, project, user=user, group=group)
-    except GroupOptionError as e:
-        logger.error("%s", e)
-        return e.exit_code
+    env_file, rc = _open_target_env(devbase_root, project, user=user, group=group)
     if env_file is None:
-        return 1
+        return rc
 
     editor = os.environ.get('EDITOR', 'vi')
 

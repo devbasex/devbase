@@ -450,9 +450,12 @@ class SecretStore:
         グループの無い参照 (``version: 1`` とファイル backend) では ``None``。2 つの参照が
         同じ置き場かは、この結果で比べる (PLAN56 決定 6)。
         """
-        if group is None:
+        config = self.config
+        settings = config.openbao
+        if (group is None or config.backend != 'openbao' or settings is None
+                or not settings.grouped):
             return None
-        return self.config.openbao.storage_group(group)
+        return settings.storage_group(group)
 
     def same_storage_group(self, a: Optional[str], b: Optional[str]) -> bool:
         """2 つのグループが同じ置き場へ写るか (``storage_group`` 同士の比較)。

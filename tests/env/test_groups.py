@@ -156,6 +156,17 @@ def test_ref_group_is_none_for_the_flat_layout(root):
     assert SecretStore(root).ref_group('web') is None
 
 
+def test_storage_group_is_none_without_the_group_layout(root):
+    """グループ名を渡しても、グループ別の置き場でない設定では ``None`` (決定 5)"""
+    _write_config(root, 'version: 1\nbackend: age\n')
+    assert SecretStore(root).storage_group('with') is None
+    assert SecretStore(root, config=bc.BackendConfig()).storage_group('with') is None
+
+    _write_config(root, 'version: 1\nbackend: openbao\nopenbao:\n'
+                        '  url: https://x.example.com\n  user: me\n')
+    assert SecretStore(root).storage_group('with') is None
+
+
 def test_ref_group_reads_the_declaration_for_the_group_layout(root):
     write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
     _write_config(root, 'version: 2\nbackend: openbao\nopenbao:\n'
