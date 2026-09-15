@@ -14,6 +14,11 @@ KV v2 シークレットエンジンに対応し、REST を標準ライブラリ
 あり、`devbase env list` / `get` / `set` / `delete` / `edit` の `--user` で個人単位の置き場を
 相手にする。ファイル backend は個人単位の置き場を持たない。
 
+backend が `openbao` の端末では、dev コンテナの中の OpenBao CLI（`bao`、base イメージに同梱）が
+接続先 `BAO_ADDR` と `~/.vault-token` を受け取り、再起動せずに自分の機密を読み書きできる。
+コンテナに置く資格情報は 1 時間で切れる token だけで、切れたらホストの `devbase env token` で
+置き換える。
+
 ### サーバ backend に OpenBao を採る理由
 
 最初のサーバ backend は Infisical を予定していた。Community 版（ライセンス無し）では
@@ -43,6 +48,7 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | ブートストラップ機密 | サーバ backend が接続に使う AppRole の `role_id` / `secret_id`。`secrets/bootstrap.env.age` に age で暗号化して置く |
 | キャッシュ | サーバの内容と一致すると確かめられた機密を、参照ごとに age で暗号化して手元に控えたもの |
 | scope | キャッシュの取得元を表す指紋。接続先 URL・`mount`・パス・`role_id` の SHA-256 |
+| 持ち回る `SecretStore` | 1 回のライフサイクル操作（`up` など）の間、注入と存在判定と token の発行が共有する 1 つのインスタンス。`runtime.store_for()` が返し、`runtime.release_store()` が捨てる |
 | `role_id` / `secret_id` / token | `role_id` は利用者ごとの AppRole の識別子。`secret_id` は端末ごとに発行される長期の資格情報で手元に保存する。token は両者を交換して得る短期の資格情報でプロセス内にだけ持つ |
 
 ## 構成要素
@@ -56,9 +62,12 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | OpenBao adapter | `lib/devbase/env/openbao.py` | AppRole 認証、参照ごとの取得、版を指定した丸ごとの書き込み、失敗の種類の判定 |
 | ブートストラップ | `lib/devbase/env/bootstrap.py` | 接続資格情報を登録簿を経由せず age で直接読み書きする |
 | キャッシュ | `lib/devbase/env/cache.py` | 参照ごとの控えの書き込み・読み出し・破棄・全消去 |
-| 機密の合成 | `lib/devbase/env/runtime.py` | 4 層の機密を重ねてコンテナへ渡す |
+| 機密の合成 | `lib/devbase/env/runtime.py` | 4 層の機密を重ねてコンテナへ渡す。`SecretStore` をライフサイクル操作 1 回の間持ち回る（`store_for` / `release_store`） |
+| コンテナへの token の配送 | `lib/devbase/env/container_token.py` | 受け取った token を `docker exec` の stdin で各コンテナの `~/.vault-token` へ書く。token の取得と届け先の解決は持たない |
+| `up` / `scale` の後処理 | `lib/devbase/commands/container.py` | backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に token を書く |
+| base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
 | `env backend` コマンド | `lib/devbase/commands/env_backend.py` | `status` / `use` / `test` / `migrate` |
-| `env` コマンド | `lib/devbase/commands/env.py` | `--user` の受け取り、`edit` の分岐、一覧の保存形式表示 |
+| `env` コマンド | `lib/devbase/commands/env.py` | `--user` の受け取り、`edit` の分岐、一覧の保存形式表示、`env token` |
 | `rekey` / `doctor` | `lib/devbase/commands/env_ops.py` | 手元の age 暗号文すべての再暗号化、backend 設定と権限の点検 |
 | `encrypt` / `decrypt` | `lib/devbase/commands/env_migrate.py` | age ストアと平文の間の移動（backend の向きと突き合わせる） |
 | `import` | `lib/devbase/env/io_import.py` | サーバ backend の参照への取り込みと age 暗号化した退避。計画の元にした値（`Plan.before`）を退避と巻き戻しに使う |
@@ -75,6 +84,10 @@ flowchart LR
     OB --> CA[cache]
     BS --> AGEFILE[(secrets/bootstrap.env.age)]
     CA --> CAFILE[(secrets/cache/)]
+    CLI --> CT[container_token]
+    CT -->|docker exec: ~/.vault-token| DEV[dev コンテナの bao]
+    DEV -->|BAO_ADDR + token| SRV[(OpenBao)]
+    OB --> SRV
 ```
 
 ## 仕様
@@ -176,10 +189,11 @@ flowchart LR
 - 参照ごとに 1 回 `GET` を呼ぶ。`LIST` は使わない（個人単位のパスは利用者ごとに分かれて
   おり、親から辿ると他人のパスまで要求する。サーバのポリシーも `users/` 直下の一覧を拒む）。
   `runtime.resolve()` 1 回はプロジェクト指定ありで認証 1 回 + 取得 4 回、指定なしで認証
-  1 回 + 取得 2 回
+  1 回 + 取得 2 回。`devbase up` 1 回も同じ回数に収まる（「`SecretStore` の持ち回り」）
 - 同じ `SecretStore` の中では、取得した参照の内容と版を控えて `exists` → `load` の並びで
   2 度取りに行かない。この控えの版が、その参照を次に書くときの基準になる
-- token は実行のたびに取り直し、ディスクへ保存しない。`lease_duration` の少し前に取り直す
+- token は実行のたびに取り直し、ホストのディスクへ保存しない（コンテナの `~/.vault-token` へ
+  渡すものは「コンテナの中の `bao`」を参照）。`lease_duration` の少し前に取り直す
   （エディタを長く開いた `env edit` の書き戻しで、期限切れの token を送らないため）。
   応答の状態による再認証は置かない。認証以外の経路の 403 は権限の不足として確定する
   （サーバ側で token の期限を実行時間より十分長くする前提で、期限切れは事前の取り直しだけで
@@ -232,6 +246,98 @@ flowchart LR
 サーバ側の構成（KV v2 のマウント、ポリシー、AppRole、token の期限）は devbase の範囲外で、
 運用側のリポジトリ（carmo-cdk#312）が持つ。devbase が前提にするのは、上の 4 経路と
 「本人のパスは読み書きでき、チームのパスは読め、他人のパスは拒まれる」ことだけである。
+
+### `SecretStore` の持ち回り
+
+`devbase up` は機密を 3 か所で注入する。それぞれ別の理由で置かれている。
+
+| 注入 | 理由 |
+| --- | --- |
+| `cli._load_secret_env` | dispatch の前に現在地の機密を載せる（エディタ起動などが値を使う） |
+| `_dispatch_lifecycle`（名前を指定したとき） | 切替元の機密を落として切替先で載せ直す |
+| `_run_deploy_pipeline` | 起動の直前に必須として読む（鍵が無ければここで止める） |
+
+注入の回数は変えず、`SecretStore` の寿命をライフサイクル操作 1 回に揃える。同じインスタンスなら
+2 度目以降の解決は控え（取得した内容と版）から返り、サーバへは行かない。
+
+- `runtime.resolve` / `inject` / `child_env` は `store` を渡されなければ `store_for(root)` を使う。
+  控えが無ければ作り、`root` が違えば作り直す。明示的に渡された `store`（`migrate` のように
+  設定と違う backend を相手にする処理）は控えに入れない
+- `_ensure_env_files` の存在判定も `store_for(root)` を使う。判定の意味（ファイル backend は
+  ファイルの有無、`openbao` は取得した内容が空でない）は変えない
+- 捨てる契機は 3 つである
+
+  | 契機 | 理由 |
+  | --- | --- |
+  | `_dispatch_lifecycle` の `finally` | 寿命をライフサイクル操作 1 回にする。入口で捨てると、CLI で dispatch 前の注入が作ったものを捨てて認証が 2 回に戻る |
+  | TUI の委譲の入口（`tui/dispatch.py` の `_preserve_cwd_env`） | TUI は 1 プロセスで操作を続ける。起動時や前の操作の控えを持ち越すと、`env edit` で書いた直後の `up` が編集前の値で起動する |
+  | `_ensure_env_files` が子プロセスの `env init` から戻った直後（終了コードによらない） | 書いたのは子プロセスで、親の控えには最初の 404 が空として残る。捨てて読み直し、`env init` が書いた値でその `up` を起動する |
+
+`up` 1 回の往復（サーバ backend、4 参照）:
+
+| 経路 | 認証 | 取得 |
+| --- | ---: | ---: |
+| `devbase up`（プロジェクト `web` の中） | 1 | 4 |
+| `devbase up web`（別のプロジェクト `api` の中） | 1 | 6（`api` の 4 + 切替後の `web` 固有の 2） |
+| `devbase up web`（`projects/` の外） | 1 | 4 |
+| 共通機密が未作成で `env init` を走らせた `up` | 2 | 8 以下 |
+
+### コンテナの中の `bao`
+
+base イメージは OpenBao CLI `bao`（`ARG BAO_VERSION`、サーバと同じ 2.6 系）を含む。amd64 /
+arm64 の tar.gz を同じリリースの `checksums.txt` と突き合わせ、対象の行が無い・値が合わない
+ときはビルドを止める。`.deb` は systemd ユニットやシステムユーザーを伴うため使わない。
+backend によらず全端末のイメージに入れる（管理スクリプトが `bao` に依存し、管理者の端末の
+backend 設定とは関係しない）。
+
+backend が `openbao` のとき、`up` と `scale` は dev コンテナへ次を渡す。
+
+| 名前 | 形 | いつ |
+| --- | --- | --- |
+| `BAO_ADDR` | dev サービスの `environment` にリテラル（`openbao.url`）。機密ではない | 構成の生成時 |
+| `~/.vault-token` | ファイル `0600`、token 1 行（改行なし） | `up` の [5/6] の後（`scale` は増やしたインスタンスだけ）と `env token` |
+
+- コンテナに置く資格情報は 1 時間で切れる token だけで、`secret_id` はホストから出ない。
+  `role_id` / `secret_id` をコンテナへ渡す形は、コンテナの中の CLI や npm パッケージが長期の
+  資格情報を持つことになるため採らない
+- token を環境変数（`BAO_TOKEN`）にしない。`docker inspect` と子プロセスの環境に残るため。
+  `bao` は `BAO_TOKEN` が無ければ `~/.vault-token` を読む
+- token は注入と同じ `SecretStore` の `OpenBaoBackend.issue_token()` から取る（期限内なら
+  ログインし直さない）。書き込みは `docker exec -i <container> sh -c '…'` の stdin で渡し、
+  argv に載せない。コンテナの中では `mktemp "$HOME/.vault-token.XXXXXX"` に書き、
+  `chmod 0600` の後 `mv -f` で置き換える（固定名の一時ファイルは既存の inode へ書いて
+  `umask` が効かない。途中で切れても空の `~/.vault-token` を残さない）
+- 書けなくても `up` / `scale` は失敗にしない（起動は済んでおり、`env token` でやり直せる）。
+  警告を出す
+- コンテナの `bao` で書いた値は、ホストの控え（`secrets/cache/`）へ反映しない。控えは
+  読み取りにだけ使い、ホストの `set` / `delete` / `edit` は現物を読むため、到達できる限り
+  食い違わない
+- 接続先（`DOCKER_CONTEXT`）は呼び出し側が process の環境へ当てる。`up` / `scale` は
+  `_resolve_docker_target` が当てた同じ process の中で書くため、別ホストの Docker（[remote-docker-context.md](remote-docker-context.md)）にも
+  同じ形で届く
+
+### `devbase env token`
+
+```text
+devbase env token [--print] [--context NAME]
+```
+
+起動中の dev コンテナの `~/.vault-token` を新しい token で置き換える。機密の注入を行わない
+コマンドとして扱う（値は要らず、注入するとサーバへの往復が増える）。
+
+処理は次の順で行い、上の行で止まれば下は見ない。ログインを届け先が見つかった後に置くのは、
+使われない token をサーバに発行させないためである。
+
+| 順 | 処理 | 止まるとき（終了コード 1） |
+| --- | --- | --- |
+| 1 | backend の判定 | backend が `openbao` でない |
+| 2 | `--print` なら、ログインして token を 1 行出して 0 で終わる（プロジェクトもコンテナも見ない） | ログインが拒まれた・到達できない |
+| 3 | 実行時のディレクトリからプロジェクトを決める（`-p` と同じく名前は取らない） | `projects/` の下ではない |
+| 4 | プロジェクト直下の `env` を載せてから dev サービス名（`DEV_SERVICE_NAME`、既定 `dev`）を取る。下位ディレクトリから打っても同じ名前になる | — |
+| 5 | プロジェクト直下の `project.local.yml` と `--context` / `DEVBASE_DOCKER_CONTEXT` から接続先を決めて当てる（`env exec` と同じ優先順） | — |
+| 6 | `docker ps --filter label=com.docker.compose.project=<project>` で、サービス名が `<dev>-<n>`（`n` は 1 以上）のコンテナを番号順に集める。DB や snapshot は入らない | `docker ps` が失敗した、起動中の dev コンテナが無い |
+| 7 | ログイン（`issue_token()`）。控えは使わない | ログインが拒まれた・到達できない |
+| 8 | 各コンテナへ書き、書いたコンテナ名を 1 行ずつ出す（token は出さない） | 1 つでも書けなかった |
 
 ### 失敗の種類とキャッシュ
 
@@ -360,7 +466,10 @@ flowchart TD
 ### 常に成り立つ条件
 
 - 機密の値と `secret_id` は、ログ・例外メッセージ・`status` の出力・`--dry-run` の出力・
-  `index.json` に載らない
+  `index.json` に載らない。token はログ・構成ファイル・`docker exec` の argv・コンテナの
+  環境変数に載らない（`env token --print` の標準出力だけに出る）
+- `secret_id` はホストの `bootstrap.env.age` から出ない。コンテナに置かれる資格情報は
+  `~/.vault-token`（`0600`）の token だけである
 - `backend.yml` に機密は入らない。ブートストラップとキャッシュは age 暗号文としてしか
   ディスクに置かれない。age の識別鍵が無い端末では平文へ落とさず、鍵の用意を促して非ゼロで
   終了する
@@ -448,6 +557,10 @@ cache:
 - 端末ごとに `secret_id` を分けるため、1 台の失効が他の端末に及ばない。失効前に発行済みの
   token は期限まで使えるため、期限はサーバ側で短く保つ
 - `secrets/` は Git の除外対象で、`doctor` が実際に除外されることを確かめる
+- コンテナの `~/.vault-token` を読める者は、その token の期限（1 時間）まで本人として読み書き
+  できる。長期の資格情報はコンテナへ置かない
+- base イメージの `bao` は同じリリースの `checksums.txt` で検証する（署名は検証しない。
+  他のツールと同じ扱い）
 
 ## 運用
 
@@ -460,6 +573,9 @@ cache:
 - 1 台の端末が同時に使う backend は 1 つ、扱う個人単位の機密は 1 人分である
 - 複数人の同時編集は版の不一致として後から書いた側で止まる。黙って上書きせず、読み直して
   やり直す。不達のときに書き込みを控えへ溜める経路は無い
+- コンテナの `bao` の token は 1 時間で切れる。`permission denied`（403）が出たらホストの
+  プロジェクトのディレクトリで `devbase env token` を打つ。`bao` の版を上げるときは
+  `containers/base/Dockerfile` の `ARG BAO_VERSION` 1 行を変えて base イメージを作り直す
 - 個人単位の機密は `export` / `import` で持ち運ばない。端末を替えても backend の設定と認証で
   同じ値が読める
 - チーム単位のパスへ書けるのは、サーバ側で書き込みのポリシーを付けた利用者だけである。
@@ -494,7 +610,23 @@ cache:
   計画の元と現物の間の他人の更新が CAS で止まること、サーバ側が失敗したときに
   `sources.yml` を確定しないこと、不達で書く前に止まること、`backend: age` への import
   （`tests/cli/test_env_bundle_backend.py`）
-- 実サーバに対する `devbase env backend test` / `devbase up` は手動確認。ポリシーによる
+- `store_for` / `release_store` の規則（同一性・`root` の変更・解放後の作り直し・明示した
+  `store` を控えない）（`tests/env/test_runtime_store.py`）
+- `up` の 3 経路の往復回数、`_ensure_env_files` が取得を足さないこと、`env init` の後に
+  書いた値で起動すること（`tests/cli/test_up_roundtrips.py`）
+- TUI の委譲の入口で控えを捨て、`env edit` → `up` が新しい値で起動すること
+  （`tests/cli/tui/test_dispatch.py`）
+- `issue_token` がログインを増やさないこと・期限前の取り直し・拒否（`tests/env/test_openbao.py`）
+- token の書き込みの形（stdin だけで渡す、`mktemp` → `mv -f`、失敗の扱い）
+  （`tests/env/test_container_token.py`）
+- `up` / `scale` が `BAO_ADDR` を足し token を書くこと、ファイル backend で何も足さないこと、
+  書けなくても `up` が失敗しないこと（`tests/commands/test_container_bao.py`）
+- `env token` の処理の順、dev サービスの絞り込み、下位ディレクトリからの dev サービス名、
+  接続先の適用、`--print`（`tests/commands/test_env_token.py`）
+- base イメージの `bao` の版・両アーキテクチャ・チェックサムの検証の文言
+  （`tests/containers/test_base_dockerfile_bao.py`）
+- 実サーバに対する `devbase env backend test` / `devbase up` は手動確認。コンテナの中の
+  `bao kv get` / `patch`、チーム共通への書き込みの 403、`env token` での取り直しも同じ。ポリシーによる
   他人のパスと `users/` 直下の一覧の拒否、端末 1 台の `secret_id` の失効も同じ（開発モードの
   サーバでの確認結果は #166。本番のサーバでは配布後に確かめる）
 
@@ -504,8 +636,10 @@ cache:
 - [環境変数の暗号化](../user/env-encryption.md)
 - [CLI リファレンス: env](../user/cli-reference/03-env.md)
 - 発端の依頼: `issues/security-key.md`
-- 実装 PR: devbasex/devbase#171（Infisical 版 #167 を置き換え）
+- 実装 PR: devbasex/devbase#171（Infisical 版 #167 を置き換え）、#177（`up` の往復、#168）、
+  #178（コンテナの `bao`、#169）
 - Infisical から OpenBao への切り替えの経緯: devbasex/devbase#166
 - [OpenBao: KV v2 API](https://openbao.org/api-docs/secret/kv/kv-v2/)
 - [OpenBao: AppRole auth](https://openbao.org/docs/auth/approle/)
 - [OpenBao: Policies](https://openbao.org/docs/concepts/policies/)
+- [OpenBao: releases](https://github.com/openbao/openbao/releases)
