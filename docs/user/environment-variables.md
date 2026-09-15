@@ -260,6 +260,25 @@ DEVBASE_ACCOUNT_GROUP=kkg
 [コンテナ運用ガイド](container-operations.md)、Google 認証の手順は
 [Google 認証ガイド](google-auth.md) を参照してください。
 
+### 機密の置き場もグループで分ける（OpenBao）
+
+機密の保存先に OpenBao を使い、グループ別の置き場（`secrets/backend.yml` の `version: 2`）を
+選んだ端末では、**機密の置き場もこのグループで分かれます**。プロジェクトのコンテナへ届くのは、
+そのプロジェクトのグループの置き場（`team/<group>/…`・`users/<user>/<group>/…`）の機密だけです。
+設定・パスの対応・`default` を別の名前の置き場で扱う読み替えは
+[機密の保存先を選ぶ](env-backend.md#アカウントグループごとの置き場version-2)を参照してください。
+
+機密の置き場のグループは、機密を読む前に次のファイルだけから決まります。
+
+1. プロジェクトの `env`（`projects/<name>/env`）
+2. `$DEVBASE_ROOT/env`
+3. どちらにも無ければ `default`
+
+**機密の置き場（`devbase env set` で入れた値）に書いた `DEVBASE_ACCOUNT_GROUP` は使われません。**
+グループはここに挙げたファイルに書いてください。シェルの環境変数で渡したグループとファイルで
+決まるグループが食い違うと、`devbase up` / `scale` は起動せずに止まります（直し方は
+[`up` / `scale` がグループの食い違いで止まったとき](env-backend.md#up--scale-がグループの食い違いで止まったとき)）。
+
 ## `devbase up` 後のエディタ自動オープン
 
 `devbase up` 完了後、dev コンテナへ接続した VS Code を自動で開けます（VS Code の「Attach to Running Container」を CLI から起動）。
