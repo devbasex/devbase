@@ -40,17 +40,17 @@
 
 ## 受け入れ条件
 
-- [ ] 1. 単位 2 の後、`bin/devbase env backend status` が `レイアウト: group (version 2)` と、
+- [x] 1. 単位 2 の後、`bin/devbase env backend status` が `レイアウト: group (version 2)` と、
       `projects/with-ai-dev` で `グループ: with (projects/with-ai-dev/env)`、`$DEVBASE_ROOT` で
       `グループ: default → nyle` を出す（終了コード 0）
-- [ ] 2. 単位 3 で、`projects/with-ai-dev` と `projects/project-trygroup-prd` の
+- [x] 2. 単位 3 で、`projects/with-ai-dev` と `projects/project-trygroup-prd` の
       `bin/devbase env exec -- env | sort` に「with / kkg に届かなくなるキー」（下の節）の値が無い。
       `projects/bi-tools`（nyle）の同じ出力は単位 0 の基準と差分 0 行（`CLAUDE_*` を除く）
-- [ ] 3. 単位 3 で、別経路（ホストの `bao kv get -mount=devbase`、キー数のみ）で新しいパスのキー数が
+- [x] 3. 単位 3 で、別経路（ホストの `bao kv get -mount=devbase`、キー数のみ）で新しいパスのキー数が
       「配る先」の表と一致する
-- [ ] 4. 単位 4 の後、古いパス（`team/global`、`users/takemi_ohama/global`、`team/projects/<5 件>`）を
+- [x] 4. 単位 4 の後、古いパス（`team/global`、`users/takemi_ohama/global`、`team/projects/<5 件>`）を
       `bao kv metadata get` すると見つからない（版の履歴が残っていない）
-- [ ] 5. 記録に機密の値・`role_id` / `secret_id`・token が無い（`grep -E 'hvs\.|secret_id=|role_id='` で 0 件）
+- [x] 5. 記録に機密の値・`role_id` / `secret_id`・token が無い（`hvs.` / `secret_id=` / `role_id=` の grep で、この条件の行を除いて 0 件）
 
 ## 配る先
 
@@ -255,3 +255,47 @@ with-ai-dev exit=0 lines=85 / project-trygroup-prd exit=0 lines=84 / bi-tools ex
   位置（`team/global.env.age` など）のファイルは無い
 
 受け入れ条件 2・3: 満たす
+
+### 単位 4: 古い 7 パスを版の履歴ごと消す（2026-09-16 05:24）
+
+対象の系: OpenBao（古い 7 パス）、手元  区分: 本番
+取り消し: **戻せない**（利用者が 2026-09-16 に、戻せないことを示したうえで承認した）
+
+$ T=$(bin/devbase env token --print)
+$ for p in team/global users/takemi_ohama/global team/projects/{bi-tools,car-pricing,carmo-screening,project-trygroup-prd,with-ai-dev}; do BAO_TOKEN=$T bao kv metadata delete -mount=devbase $p; done
+Success! Data deleted (if it existed) at: devbase/metadata/team/global
+Success! Data deleted (if it existed) at: devbase/metadata/users/takemi_ohama/global
+Success! Data deleted (if it existed) at: devbase/metadata/team/projects/bi-tools
+Success! Data deleted (if it existed) at: devbase/metadata/team/projects/car-pricing
+Success! Data deleted (if it existed) at: devbase/metadata/team/projects/carmo-screening
+Success! Data deleted (if it existed) at: devbase/metadata/team/projects/project-trygroup-prd
+Success! Data deleted (if it existed) at: devbase/metadata/team/projects/with-ai-dev
+終了コード: 0（7 件とも）
+
+反映の確認:
+
+$ for p in <同じ 7 パス>; do BAO_TOKEN=$T bao kv metadata get -mount=devbase $p; done
+終了コード: 2（7 件とも）
+$ BAO_TOKEN=$T bao kv metadata get -mount=devbase team/global
+No value found at devbase/metadata/team/global
+（終了コード 2 は権限の不足ではなく「見つからない」。対照として `team/nyle/global` の metadata は `current_version 1` で読める）
+
+$ for p in with-ai-dev project-trygroup-prd bi-tools; do (cd projects/$p && bin/devbase env exec -- env | sort > $B/final-$p.env); done
+3 件とも終了コード 0。単位 3 の出力との差分 0 行（`CLAUDE_*` を除く）
+
+$ rm -r backups/plan57
+終了コード: 0
+
+受け入れ条件 4: 満たす
+
+### 残したもの
+
+- `backups/env-backend-migrate/20260915-165942/`（PLAN53 の退避。切り替え前のチーム単位の機密の age）。利用者の判断で残す
+- `backups/plan53/`（PLAN53 の単位 0 の基準）
+
+### 次に変えること（2026-09-16）
+
+- with / kkg のプロジェクトの `env` にある空の上書き（`BIGQUERY_*` / `GOOGLE_CLOUD_PROJECT` / `GOOGLE_GENAI_USE_VERTEXAI` /
+  with-ai-dev の `AWS_CONFIG_BASE64`）は、打ち消す相手が置き場から無くなったので不要になった。消すかは利用者が決める
+  （前提 5。projects/* は plugin リポジトリ側にある）
+- with / kkg で「届かなくなるキー」を使っていたら、`bin/devbase env set --group with KEY` などで入れ直す
