@@ -533,3 +533,10 @@ rebuilt team/global: 21 keys, empty window 0.25s
 - `backups/env-backend-migrate/20260915-165942/`（元の age。利用者の判断で残す。消すと「age ストアへ戻す手順」の (b) になる）
 - `backups/plan53/`（単位 0 の基準。機密の値を含むので、確認が済んだら利用者が消す）
 - 端末 `macbook` の `secret_id`（使用中）
+
+### 次に変えること（2026-09-15）
+
+- チーム共通と個人単位の置き場を、アカウントグループ（`nyle` / `with` / `kkg`）ごとに分ける → #182（v3.4.0 のマイルストーンで扱う）。
+  いまの `team/global` の 21 キーは nyle の値で、with / kkg のプロジェクトはプロジェクトの `env` の空上書きで打ち消している
+- 単位 5 で個人単位へ移した `GCP_CREDENTIALS_BASE64__default` は、中身が nyle の BigQuery 用サービスアカウント鍵（チームの鍵）だった。
+  置き場は #182 のグループ別の置き場で決め、それまでは動作に支障が無いので現状のままにする
