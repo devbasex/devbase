@@ -175,3 +175,16 @@ def test_zsh_completion_syntax_ok():
     proc = subprocess.run(["zsh", "-n", str(ZSH_COMPLETION)],
                           capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+# PLAN58: `profile` サブコマンド
+@pytest.mark.parametrize("group", ["project", "container", "ct"])
+def test_bash_profile_subcommand_and_operations(fake_root, group):
+    assert "profile" in _bash_complete(f"devbase {group} ''", 2, fake_root)
+    assert set(_bash_complete(f"devbase {group} profile ''", 3, fake_root)) == {"up", "down", "list"}
+
+
+def test_zsh_completion_mentions_profile():
+    text = ZSH_COMPLETION.read_text()
+    assert "'profile:" in text
+    assert "_values 'operation' up down list" in text

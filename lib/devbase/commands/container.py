@@ -684,6 +684,7 @@ def _dispatch_lifecycle(args) -> int:
                                        no_cache=getattr(args, 'no_cache', False),
                                        expires=getattr(args, 'expires', None), **ctx),
             'rebuild': lambda: cmd_rebuild(**ctx),
+            'profile': lambda: _dispatch_profile(args, ctx),
         }
 
         handler = handlers.get(subcmd)
@@ -699,6 +700,19 @@ def _dispatch_lifecycle(args) -> int:
         # が作ったものをこの操作の中で使い回すため。
         from devbase.env import runtime as _runtime
         _runtime.release_store()
+
+
+def _dispatch_profile(args, ctx: dict) -> int:
+    """`profile {up,down,list}` を振り分ける (PLAN58 決定 6)。"""
+    operation = getattr(args, 'profile_subcommand', None)
+    if operation == 'up':
+        return cmd_profile_up(args.profile, **ctx)
+    if operation == 'down':
+        return cmd_profile_down(args.profile, **ctx)
+    if operation == 'list':
+        return cmd_profile_list(**ctx)
+    logger.error("profile の操作を指定してください: up, down, list")
+    return 1
 
 
 def cmd_project(args) -> int:

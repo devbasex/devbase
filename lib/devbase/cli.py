@@ -53,8 +53,10 @@ GROUP_ALIASES = {
 
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
-    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list'],
-    ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild'],
+    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list',
+                          'profile'],
+    ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild',
+                          'profile'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
                           'exec', 'token', 'encrypt', 'decrypt', 'rekey', 'doctor',
                           'export', 'import', 'backend'],
@@ -66,6 +68,9 @@ SUBCMD_MAP = {
 # 優先的に解決させる。例えば `devbase env e` は従来 `edit` のみに解決されていたが、
 # `export` 追加後は ambiguous になるため、既存ショートカットを維持するために維持先を明示する。
 SUBCMD_PREFIX_PREFERENCES = {
+    # `profile` 追加 (PLAN58) の前は `p` が `ps` に一意に解決されていた。
+    ('project',): {'p': 'ps'},
+    ('container', 'ct'): {'p': 'ps'},
     ('env',): {
         'e': 'edit',
         # `import` 追加で `i` が `init` / `import` の両方にマッチして ambiguous に
@@ -186,6 +191,28 @@ def _add_build_subparser(sub):
                                  'DAYS days (default 7). Base image is judged independently.')
 
 
+def _add_profile_subparser(sub, *, with_name: bool):
+    """`profile {up,down,list}` を登録する (PLAN58 決定 6)。
+
+    入れ子は `dest='profile_subcommand'` を使う。親の `subcommand` を再利用すると
+    `_dispatch` が `project profile list` を `project list` へ流すため。`project` だけが
+    `[name]` を受け、並びは `scale` と同じ `[name] <profile>` にする。
+    """
+    p = sub.add_parser('profile', help='Start / stop compose profile services')
+    profile_sub = p.add_subparsers(dest='profile_subcommand')
+    for op, help_text in (('up', 'Start the services of a profile'),
+                          ('down', 'Stop and remove the services of a profile')):
+        op_parser = profile_sub.add_parser(op, help=help_text)
+        if with_name:
+            _add_name_arg(op_parser)
+        op_parser.add_argument('profile', help='Profile name in compose.yml')
+        _add_context_arg(op_parser)
+    list_parser = profile_sub.add_parser('list', help='List profiles and their state')
+    if with_name:
+        _add_name_arg(list_parser)
+    _add_context_arg(list_parser)
+
+
 def _add_container_parser(subparsers):
     """Container group parser"""
     ct_parser = subparsers.add_parser('container', aliases=['ct'],
@@ -214,6 +241,8 @@ def _add_container_parser(subparsers):
 
     _add_context_arg(ct_sub.add_parser(
         'rebuild', help='Rebuild stale images (= build --expires=7)'))
+
+    _add_profile_subparser(ct_sub, with_name=False)
 
 
 def _add_project_parser(subparsers):
@@ -268,6 +297,11 @@ def _add_project_parser(subparsers):
     # 追加すること。
     _add_context_arg(_add_name_arg(pj_sub.add_parser(
         'rebuild', help='Rebuild stale images (= build --expires=7)')))
+
+    # `profile` の `[name]` は Python 側 (_dispatch_lifecycle) で解決する。3 番目の引数は
+    # up / down / list になるため、wrapper の _PROJECT_NAME_SUBCOMMANDS には含めない
+    # (PLAN58 決定 6)。
+    _add_profile_subparser(pj_sub, with_name=True)
 
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
