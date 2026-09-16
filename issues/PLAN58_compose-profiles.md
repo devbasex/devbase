@@ -82,7 +82,8 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 - [ ] `devbase project profile list` は、`compose.yml` に書かれたプロファイルの名前と、そのサービスが稼働しているかを出す
 - [ ] `.docker-compose.scale.yml` が無い状態では、`devbase project profile up X` / `down X` / `list` のいずれも終了コード 1 で止まる。`devbase up` を促すメッセージを出し、コンテナは作らない
 - [ ] `compose.yml` に無いプロファイル名を `up` / `down` へ渡すと、存在する名前の一覧を出して終了コード 1 で止まる
-- [ ] Docker へ接続できない状態では、`devbase project profile up X` / `down X` / `list` のいずれも、その旨を出して終了コード 1 で止まる
+- [ ] Docker のデーモンへ接続できない状態では、`devbase project profile up X` / `down X` は Compose の終了コード 1 をそのまま返す
+- [ ] 同じ状態で `devbase project profile list` は、プロファイル名と対応を出し、稼働状況の列を `不明` にして終了コード 0 で終わる
 - [ ] `devbase project profile up <プロジェクト> X` の結果は、そのプロジェクトのディレクトリで `devbase project profile up X` を実行した場合と同じになる。`down` と `list` も同じである
 - [ ] `devbase container profile ...` と `devbase ct profile ...` は `devbase project profile ...` と同じ結果になる。非推奨の警告を 1 行出す
 

@@ -116,7 +116,7 @@ tests/
 
 | 関数 | 変更 | 責務 |
 | --- | --- | --- |
-| `profile_services(compose_file, environ) -> dict[str, list[str]]` | 新設（`commands/container.py`） | `config --profiles` と `config --services` を呼び、「プロファイル名 → サービス名」を作る（決定 1）。Docker へ接続できないときは `DockerError` を送出する |
+| `profile_services(compose_file, environ) -> dict[str, list[str]]` | 新設（`commands/container.py`） | `config --profiles` で名前を取り、各プロファイル X について `--profile X config --services` を呼び、`config --services`（既定のサービス）を差し引いて対応を作る（決定 1）。デーモンへの接続は要らない |
 | `default_services(compose_file, environ) -> list[str]` | 新設（`commands/container.py`） | `config --services` を番兵入りの環境で呼び、既定のサービス名を返す。`cmd_up` が起動の対象として渡す（決定 1・決定 7） |
 | `cmd_profile_up(profile, context)` | 新設 | F1。プロファイルのサービスをすべて明示し、`--no-deps` を付けて起動する（決定 2）。終了コードを返す |
 | `cmd_profile_down(profile, context)` | 新設 | F2。`docker_compose_down` は通さず、`stop` と `rm -f` の 2 段をサービス名付きで組む（決定 5）。終了コードを返す |
@@ -168,7 +168,7 @@ tests/
 | --- | --- | --- | --- |
 | `devbase project profile up [name] <profile>` | プロファイル名（必須）、プロジェクト名（省略時は現在地） | 対象サービスを起動し、フックを実行して 0 | 構成ファイルが無い / 未知のプロファイル / Compose かフックが失敗 → 1 |
 | `devbase project profile down [name] <profile>` | 同上 | 対象サービスを停止し、そのコンテナを削除して 0 | 同上。`stop` と `rm -f` のどちらかが失敗すれば 1（フックは呼ばない） |
-| `devbase project profile list [name]` | プロジェクト名（省略可） | プロファイルと稼働状況を表で出して 0 | 構成ファイルが無い → 1 |
+| `devbase project profile list [name]` | プロジェクト名（省略可） | プロファイルと稼働状況を表で出して 0 | 構成ファイルが無い → 1。デーモンへ接続できないときは稼働状況を `不明` にして 0 |
 | `devbase container profile up <profile>` / `down <profile>` / `list`（`ct` も同じ） | プロファイル名のみ。プロジェクト名は受け付けない | 同上。非推奨の警告を 1 行出す | 同上 |
 
 `project` の `[name]` と `<profile>` の並びは既存の `scale` と同じ規則に従う。値が 1 個ならプロファイル名に割り当てられる。2 個なら（プロジェクト名、プロファイル名）になる。
@@ -186,7 +186,7 @@ tests/
 
 **2 項目が出るのは、そのプロジェクトがプロファイルを持つときだけである**（決定 8）。持たないプロジェクトでは一覧の中身が現在と同じになる。
 
-プロファイル名の選択は、名前が 1 つだけのときも選択として出す。名前は `profile_services` が返す一覧を使う（決定 1）。生成物が無い（`devbase up` の前）ときと、Docker へ接続できないときは 2 項目を出さない。
+プロファイル名の選択は、名前が 1 つだけのときも選択として出す。名前は `profile_services` が返す一覧を使う（決定 1）。生成物が無い（`devbase up` の前）ときは 2 項目を出さない。解決にデーモンは要らないため、接続できない状態でも項目は出る。
 
 実行は `dispatch_lifecycle('profile', name, profile_subcommand='up', profile='<名前>')` で共有のハンドラへ渡す。TUI はコマンドの中身を持たない。
 
@@ -375,7 +375,8 @@ graph LR
 | `profiles` に変数の式が書かれていても名前が一致する | `config --profiles` と `config --services` の出力を差し替え、`profile_services` が展開後の名前で対応を作ることを検査する。実際の展開は Compose が行うため、式を持つ構成での `list` と `profile up test` は手動確認で見る |
 | `container profile` / `ct profile` が非推奨の警告を出す | 両方の入口を呼び、警告が 1 行だけ出ることと、委譲先の引数が `project profile` と同じであることを `caplog` で検査する |
 | `DEV_SERVICE_NAME` が既定以外でもフックが全インスタンスへ走る | `DEV_SERVICE_NAME=workspace` と scale 2 の生成物を与え、`_run_deploy_script_for_instances` へ渡る番号が 1 と 2 になることを検査する |
-| Docker へ接続できないとき `profile list` が 1 で止まる | `config --profiles` が失敗する状態を与え、終了コードとメッセージを検査する。コンテナを作る呼び出しが発生しないことも見る |
+| デーモンへ接続できないとき `profile list` が稼働状況を `不明` にして 0 で終わる | `ps` が失敗する状態を与え、名前と対応が出ること、稼働状況の列が `不明` になること、終了コードが 0 であることを検査する |
+| デーモンへ接続できないとき `profile up` / `down` が 1 で終わる | Compose の終了コード 1 をそのまま返すことを検査する |
 | 一覧の操作に 2 項目が並ぶ | プロファイルを持つ構成で `_running_ops` の戻り値を検査する |
 | プロファイルを持たないプロジェクトでは 2 項目が出ない | 同じ関数へプロファイルの無い構成を与え、現在と同じ並びになることを検査する |
 | 一覧から実行しても dev が変わらない | 委譲へ渡る属性が `profile` のサブコマンドと名前であることを検査する。実際の状態は手動確認 |
