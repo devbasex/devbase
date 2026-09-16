@@ -116,6 +116,10 @@
 - **対象:** 要求仕様「検証手段」の手動確認 7 行
 - **進め方:** `alpine:3` の最小構成を scratchpad に作り、この作業ツリーの `bin/devbase` で通す。結果（Container ID / `StartedAt` の前後）は Pull Request 本文へ貼る。実 docker を使うため、自分のプロジェクトとは別の `COMPOSE_PROJECT_NAME` で行う
 
+## 実装中に範囲へ入れたもの
+
+- `tui/dispatch.py` の `_preserve_cwd_env()` が機密の注入履歴を戻さず、TUI で別プロジェクトを 2 回続けて操作すると最初のプロジェクト固有の機密が次の Compose へ渡る欠陥（PR 前からの `dispatch_lifecycle` 経路にもある）。Task 7 のメニュー表示時の照会が同じ欠陥を操作前に踏ませるため、原因と形が同じとして範囲に入れ、`runtime.snapshot_injected` / `restore_injected` で両経路を 1 か所で直した（PR #191 レビュー round 3）
+
 ## リスクと対処
 
 | リスク | 対処 |
