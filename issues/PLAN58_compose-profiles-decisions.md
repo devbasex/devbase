@@ -127,22 +127,27 @@
 
 | 経路 | プロファイルの指定 | 対象の渡し方 | `COMPOSE_PROFILES` |
 | --- | --- | --- | --- |
-| `devbase up` の起動 | 付けない | 既定のサービスをすべて明示する | 外す |
-| `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 渡さない（全体が対象） | 外す |
-| `profile up X` | `--profile X` | そのプロファイルのサービスをすべて明示し、`--no-deps` を付ける | 外す |
-| `profile down X` | `--profile X` | 同じ一覧を `stop` と `rm -f` へ渡す | 外す |
+| `devbase up` の起動 | 付けない | 既定のサービスをすべて明示する | 番兵の名前を入れる |
+| `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 渡さない（全体が対象） | 番兵の名前を入れる |
+| `profile up X` | `--profile X` | そのプロファイルのサービスをすべて明示し、`--no-deps` を付ける | 番兵の名前を入れる |
+| `profile down X` | `--profile X` | 同じ一覧を `stop` と `rm -f` へ渡す | 番兵の名前を入れる |
 
 **この方式の前提と限界。** 前提は、生成物が `up` のたびに作り直されることである。限界は、対象を明示するため、生成物に無いサービスは `up` で起動しないことである。生成物には必ず `dev-1`..`dev-N` が入るため、一覧が空になることはない。
 
 **停止には要らない。** 停止は `--profile '*'` で対象を広げる向きの指定である。`.env` が別のプロファイルを有効にしても、対象が狭まることはない。
 
-**`docker compose` を呼ぶ経路の棚卸し。** 現在は 3 か所ある。扱いは次のとおりである。
+**`docker compose` を呼ぶ経路の棚卸し。** 現在は 6 か所ある。扱いは次のとおりである。
 
 | 経路 | 場所 | 扱い |
 | --- | --- | --- |
 | `docker_compose` | `lib/devbase/utils/docker.py:14` | 対象。`up` / `down` / `profile` の各操作はここを通る |
 | `_compose_run`（`ps` / `logs`） | `lib/devbase/commands/container.py:269` | 対象。`docker_compose` を経由せず直接 `subprocess.run` するため、同じ `env=` を別に組み立てる |
-| `cmd_scale` の直接呼び出し | `lib/devbase/commands/container.py:1282` | 範囲外。要求仕様の「対象範囲・含まない」に挙げる |
+| `_resolve_dev_service`（`config --format json`） | `lib/devbase/commands/container.py:1430` | 対象。`config` は有効なプロファイルのサービスを解決結果へ含めるため、読む集合が利用者の設定で変わる |
+| `_read_compose_services`（`config --format json`） | `lib/devbase/commands/container.py:1608` | 対象。同上。イメージの確認が読むサービスの集合を devbase が決める |
+| エディタを開く経路（`ps --format json`） | `lib/devbase/editor/opener.py:395` | 対象。`ps` の解釈もプロファイルに依るため、`_compose_run` と同じ扱いにする |
+| `cmd_scale` の直接呼び出し | `lib/devbase/commands/container.py:1282` | 範囲外。プロファイルの入口ではない。要求仕様の「対象範囲・含まない」に挙げる |
+
+**5 か所を対象にする。** どれも「devbase が読むサービスの集合」か「devbase が起動するサービスの集合」を決める経路である。集合が利用者の設定で変わると、同じプロジェクトでも devbase の判断が端末ごとに変わる。
 
 `ps` / `logs` はコンテナを起動しない読み取りの操作である。それでも対象に含めるのは、`COMPOSE_PROFILES` が効くと Compose が解釈するサービスの集合が変わり、表示の中身が利用者の環境に左右されるためである。devbase の表示は、devbase が決めたプロファイルに揃える。
 

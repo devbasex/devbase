@@ -105,7 +105,7 @@ tests/
 ├── commands/
 │   └── test_container_profile.py   # 新設
 ├── utils/
-│   └── test_docker_profiles.py     # 新設（子プロセスの env から COMPOSE_PROFILES が外れることの検査）
+│   └── test_docker_profiles.py     # 新設（子プロセスの env の COMPOSE_PROFILES が番兵の名前になることの検査）
 └── volume/
     └── test_compose_profiles.py    # 新設
 ```
@@ -124,6 +124,8 @@ tests/
 | `docker_compose(command, ...)` | 変更（`utils/docker.py`） | F1 / F2 / F4 の共通の土台。現在は `subprocess.run(cmd, ...)` を `env=` なしで呼ぶ。`env=` を新たに構築し、`COMPOSE_PROFILES` へ番兵の名前 `__devbase_none__` を入れて渡す（決定 7）。コマンド列の組み立て方は変えない |
 | `docker_compose_up(compose_file, detach=True, services=())` | 変更（`utils/docker.py`） | 起動の対象を受け取り、`['up', '-d', *services]` を組む。空なら現在と同じ `['up', '-d']` になる |
 | `_compose_run(subcommand, ...)` | 変更（`commands/container.py:269`） | `docker_compose` を経由せず直接 `subprocess.run` する経路（`ps` / `logs`）。同じ `env=` を組み立てて渡す（決定 7） |
+| `_resolve_dev_service` / `_read_compose_services` | 変更（`commands/container.py`） | `config --format json` を直接呼ぶ経路。同じ `env=` を渡し、読むサービスの集合を devbase が決める（決定 7） |
+| エディタを開く経路の `ps` | 変更（`editor/opener.py:395`） | `ps --format json` を直接呼ぶ経路。同じ `env=` を渡す（決定 7） |
 | `_run_deploy_pipeline(...)` | 変更（`commands/container.py`） | 生成した `.docker-compose.scale.yml` から `default_services` を求め、`docker_compose_up` へ渡す |
 | `docker_compose_down(compose_file)` | 変更（`utils/docker.py`） | F4。引数は増やさず、内部で無条件に `--profile '*'` を足す。`['down', '-t0']` という固定の形は変えない（決定 5） |
 | `hook_env(config, active_profiles=())` | 変更（`project/runtime.py`） | F5。`DEVBASE_ACTIVE_PROFILES` を足す。`_run_pre_up_hook` と `_run_deploy_script_for_instances` の両方に効く |
@@ -234,7 +236,7 @@ tests/
 
 ### 検査の手段
 
-`uv run pytest tests/commands/test_container_profile.py -q` が、組み立てたコマンド列と終了コードを検査する。`uv run pytest tests/utils/test_docker_profiles.py -q` が、子プロセスへ渡す環境から `COMPOSE_PROFILES` が外れていることを検査する。同じテストで、`devbase up` の起動が既定のサービス名をすべて渡すことも検査する。
+`uv run pytest tests/commands/test_container_profile.py -q` が、組み立てたコマンド列と終了コードを検査する。`uv run pytest tests/utils/test_docker_profiles.py -q` が、子プロセスへ渡す環境の `COMPOSE_PROFILES` が番兵の名前になっていることを検査する。同じテストで、`devbase up` の起動が既定のサービス名をすべて渡すことも検査する。
 
 ## 処理の流れ
 
