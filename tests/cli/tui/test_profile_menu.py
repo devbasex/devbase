@@ -119,6 +119,21 @@ def test_profile_selection_back_returns_to_submenu(root, monkeypatch):
     assert delegated == []
 
 
+@pytest.mark.parametrize("result", [{}, DevbaseError("config failed")])
+def test_profile_item_without_resolved_names_returns_to_submenu(root, monkeypatch, result):
+    """項目を出した後に解決が空になっても、空の選択メニューを出さずにサブメニューへ戻る。"""
+    generated(root)
+    resolve_to(monkeypatch, result)
+    prompts = []
+    monkeypatch.setattr(menu, "select", lambda *a, **k: prompts.append(a) or "test")
+    delegated = []
+    monkeypatch.setattr(container, "cmd_project", lambda args: delegated.append(args) or 0)
+
+    assert actions_project._run_operation(root, "carmo", "profile-up") is flow.ARG_CANCEL
+    assert prompts == []
+    assert delegated == []
+
+
 @pytest.mark.parametrize("op", ["profile-up", "profile-down"])
 def test_profile_ops_return_to_project_list(root, monkeypatch, op):
     generated(root)

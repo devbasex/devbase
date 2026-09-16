@@ -154,6 +154,11 @@ def _op_profile(operation: str):
     """プロファイルの起動・停止。名前が 1 つだけでも選択として出す (PLAN58)。"""
     def run(devbase_root: Path, name: str):
         names = _profile_names(name)
+        if not names:
+            # 項目を出した後に解決が空になった (状態変化・解決失敗)。空の選択肢は
+            # questionary が ValueError で落ちるため、選択を出さずサブメニューへ戻る。
+            logger.warning("'%s' のプロファイルを解決できませんでした。", name)
+            raise flow.BackOut
         profile = flow.need(menu.select(
             f"'{name}' のプロファイルを選択 {menu.HINT_BACK}:",
             [(n, n) for n in names], back=True, search=False))
