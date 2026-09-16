@@ -143,14 +143,16 @@ tests/
 
 この変更では、渡る値は常にプロファイル名 1 つである。`cmd_profile_up` が受ける名前が 1 つだけで、同時に 2 つ以上を起動する操作を作らないためである。カンマ区切りは将来の拡張のための予約であり、現時点でその形になる経路は無い（「未確認のまま残ること」）。
 
-`_run_deploy_script_for_instances` へ渡す `indices` は、**操作に使う生成物が持つ `dev-*` の番号**である。`.docker-compose.scale.yml` の `services` から `dev-1`..`dev-N` を読み、その番号を渡す。
+`_run_deploy_script_for_instances` へ渡す `indices` は、**操作に使う生成物が持つ開発コンテナの番号**である。`.docker-compose.scale.yml` の `services` から `<開発サービス名>-1`..`<開発サービス名>-N` を読み、その番号を渡す。
+
+**開発サービス名は固定ではない。** `get_dev_service_name()`（`DEV_SERVICE_NAME` または既定の `dev`）が返す名前を使う。生成処理も同じ名前で複製するため（`volume/compose.py` の `_build_scaled_services`）、`dev-*` を固定で探すと、既定以外の名前を使うプロジェクトで 1 件も拾えない。
 
 `project.yml` の `config.scale` は使わない。`up` の後に `project.yml` を書き換えてから `profile up X` を呼ぶと、設定の値と稼働中のインスタンスが食い違う。減らした後なら稼働中の `dev-2` へフックが走らず、増やした後なら作られていない番号へ走る。生成物は `up` が作ったもので、稼働中の構成と一致する。
 
 | 何を数えるか | 減らした後 | 増やした後 |
 | --- | --- | --- |
-| `project.yml` の `config.scale` | 稼働中の `dev-2` を飛ばす | 未作成の番号へ走る |
-| 生成物の `dev-*` | 稼働中の全インスタンスへ走る | 同左 |
+| `project.yml` の `config.scale` | 稼働中の 2 台目を飛ばす | 未作成の番号へ走る |
+| 生成物の開発コンテナ | 稼働中の全インスタンスへ走る | 同左 |
 
 `cmd_up` は生成の直後に呼ぶため、どちらの数え方でも同じ値になる。こちらは現在の実装を変えない。
 
@@ -372,6 +374,7 @@ graph LR
 | フックの失敗が終了コードへ出る | 失敗する `./deploy` を置き、戻り値が 1 になることを検査する |
 | `profiles` に変数の式が書かれていても名前が一致する | `config --profiles` と `config --services` の出力を差し替え、`profile_services` が展開後の名前で対応を作ることを検査する。実際の展開は Compose が行うため、式を持つ構成での `list` と `profile up test` は手動確認で見る |
 | `container profile` / `ct profile` が非推奨の警告を出す | 両方の入口を呼び、警告が 1 行だけ出ることと、委譲先の引数が `project profile` と同じであることを `caplog` で検査する |
+| `DEV_SERVICE_NAME` が既定以外でもフックが全インスタンスへ走る | `DEV_SERVICE_NAME=workspace` と scale 2 の生成物を与え、`_run_deploy_script_for_instances` へ渡る番号が 1 と 2 になることを検査する |
 | Docker へ接続できないとき `profile list` が 1 で止まる | `config --profiles` が失敗する状態を与え、終了コードとメッセージを検査する。コンテナを作る呼び出しが発生しないことも見る |
 | 一覧の操作に 2 項目が並ぶ | プロファイルを持つ構成で `_running_ops` の戻り値を検査する |
 | プロファイルを持たないプロジェクトでは 2 項目が出ない | 同じ関数へプロファイルの無い構成を与え、現在と同じ並びになることを検査する |

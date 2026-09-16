@@ -82,6 +82,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 - [ ] `devbase project profile list` は、`compose.yml` に書かれたプロファイルの名前と、そのサービスが稼働しているかを出す
 - [ ] `.docker-compose.scale.yml` が無い状態では、`devbase project profile up X` / `down X` / `list` のいずれも終了コード 1 で止まる。`devbase up` を促すメッセージを出し、コンテナは作らない
 - [ ] `compose.yml` に無いプロファイル名を `up` / `down` へ渡すと、存在する名前の一覧を出して終了コード 1 で止まる
+- [ ] Docker へ接続できない状態では、`devbase project profile up X` / `down X` / `list` のいずれも、その旨を出して終了コード 1 で止まる
 - [ ] `devbase project profile up <プロジェクト> X` の結果は、そのプロジェクトのディレクトリで `devbase project profile up X` を実行した場合と同じになる。`down` と `list` も同じである
 - [ ] `devbase container profile ...` と `devbase ct profile ...` は `devbase project profile ...` と同じ結果になる。非推奨の警告を 1 行出す
 
@@ -111,7 +112,8 @@ TUI:
 - [ ] `devbase project profile up X` の後の `./deploy` は `DEVBASE_ACTIVE_PROFILES=X` を受け取る。値はプロファイル名 1 つである
 - [ ] 前提: `devbase up` を scale 2 で通した後、`project.yml` の `scale` を 1 へ書き換える
       操作: `devbase project profile up X` を実行する
-      結果: 稼働中の dev-1 と dev-2 の両方で `./deploy` が実行される
+      結果: 稼働中の 2 つの開発コンテナの両方で `./deploy` が実行される
+- [ ] `DEV_SERVICE_NAME` を既定以外（例: `workspace`）にしたプロジェクトでも、scale 2 の状態で `devbase project profile up X` の後に 2 インスタンスとも `./deploy` が実行される
 - [ ] 同時に 2 つ以上のプロファイルを起動する操作は作らない。よって複数の値が渡る経路は無い。カンマ区切りは将来の拡張のための予約であり、この変更では受け入れ条件にしない
 - [ ] `devbase project profile up X` は `./pre-up` を呼ばない
 - [ ] `devbase project profile up X` は、サービスの起動が終わった後にプロジェクトのフックを呼ぶ。フックが終了コード 0 以外を返したら、コマンドも 0 以外で終わる
