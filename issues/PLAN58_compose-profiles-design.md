@@ -123,6 +123,8 @@ tests/
 
 `_run_deploy_script_for_instances` は受け取った値を加工せず `hook_env(config, active_profiles=active_profiles)` へ渡す。環境変数の名前と区切り（カンマ）を決めるのは `hook_env` だけである。
 
+今回の範囲では、渡る値は常にプロファイル名 1 つである。`cmd_profile_up` が受ける名前が 1 つだけで、同時に 2 つ以上を起動する操作を作らないためである。カンマ区切りは将来の拡張のための予約であり、現時点でその形になる経路は無い（「未確認のまま残ること」）。
+
 `_run_deploy_script_for_instances` へ渡す `indices` は `range(1, scale + 1)` である。`scale` は `project.yml` の `config.scale` から取る。未指定なら `project_runtime.DEFAULT_SCALE`（現在は 2）を使う。`cmd_up` が使っている解決の式をそのまま再利用する。`.docker-compose.scale.yml` の `dev-*` を数え直すことはしない。
 
 `profile` の subparser は `dest` を親と分ける。親の `project` / `container` は `dest='subcommand'` のままとし、入れ子側は `dest='profile_subcommand'` を使う。`cli.py` の `_dispatch` は `args.subcommand == 'list'` を見て `project list`（プロジェクト一覧）へ振り分けるためである。入れ子で `subcommand` を再利用すると、`devbase project profile list` がそちらへ流れてしまう。`_dispatch_lifecycle` の handlers には `'profile'` を 1 つだけ足す。その中で `profile_subcommand` を見て up / down / list を選ぶ。
@@ -167,8 +169,17 @@ tests/
 | 変更 | 既存の呼び出し側への影響 |
 | --- | --- |
 | `profile` サブコマンドの追加 | 無い。既存の引数の形を変えない |
-| `docker compose down` に `--profile '*'` を付ける | プロファイルを持たないプロジェクトでは対象が同じで、観測できる違いを生まない |
+| `docker compose down` に `--profile '*'` を付ける | プロファイルを持たないプロジェクトでは対象が同じになる。Docker Compose v5.1.4 で確認済み。2.20.0 以上 5.x 未満は未検証 |
 | `DEVBASE_ACTIVE_PROFILES` の追加 | 無い。既存のフックは読まなければ従来どおり動く |
+
+`--profile '*'` の行だけは、影響の範囲が広い。この経路は `devbase down` と `devbase up` 冒頭の停止に入るため、プロファイルを使わない既存の全プロジェクトを通る。だから「退行しないこと」の受け入れ条件に直結する。
+
+対象が変わらないと言えるのは、確かめた版だけである。ワイルドカードを解釈しない版で `*` がリテラルのプロファイル名として扱われるかは「未確認のまま残ること」に載せたままであり、ここでも断定しない。
+
+| 版 | `--profile '*'` を付けた `down` の対象 | 根拠 |
+| --- | --- | --- |
+| v5.1.4 | 現在と同じ | 手元で確認済み |
+| 2.20.0 以上 5.x 未満 | 現在と同じになる想定 | 未検証 |
 
 `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` は変えない。現在の中身は `up down ps logs scale rebuild` である。この一覧は「3 番目の引数をプロジェクト名として解決してよいサブコマンド」を表す。`profile` ではその位置に `up` / `down` / `list` が来る。一覧へ足すと、`up` という名前のプロジェクトが実在したときにそちらへ移動してしまう。プロジェクト名の解決は Python 側の `_dispatch_lifecycle` に任せる。
 
@@ -228,7 +239,7 @@ graph LR
 | --- | --- | --- | --- |
 | 運用・保守性 | プロファイルのサービスを起動・停止した記録が、既存のログと同じ体裁（`logger.info`）で残る | 対象サービス名とプロファイル名を `logger.info` で 1 行ずつ出す。Compose の出力はそのまま標準出力へ流す | `caplog` で起動・停止の各 1 行を検査する |
 | セキュリティ | プロファイルのサービスへ渡す機密は、そのサービスが元々 `env_file` で参照していた由来のキーだけに限る | 生成済みの `.docker-compose.scale.yml` をそのまま使う。機密の列挙はこのファイルが既に持つため、プロファイルの操作は新しい注入経路を作らない。実行前に `_prepare_compose` で既存と同じ注入を通す | 生成物のサービスごとの `environment` が、プロファイルの有無で変わらないことをテストで検査する |
-| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'` と `--no-deps` である | 最低対応版を 2.20.0 とする。`--no-deps` は起動にだけ、`--profile '*'` は停止にだけ使う。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる | v5.1.4 で全サービスが消えることを手動で確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、「未確認のまま残ること」に載せる |
+| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'` と `--no-deps` である | 最低対応版を 2.20.0 とする。`--no-deps` は起動にだけ、`--profile '*'` は停止にだけ使う。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる想定である（未検証） | v5.1.4 で全サービスが消えることを手動で確かめる。同じ版で、プロファイルを持たないプロジェクトの `up` / `down` が従来どおり動くことも確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、2.20.0 以上 5.x 未満は未検証のまま「未確認のまま残ること」に載せる |
 
 既定のサービスを対象から外すのは `--no-deps` である。この選択肢は古くからあり、版の下限を作らない。下限を決めるのは `depends_on.required` のほうである。この属性は 2.20.0 からの機能で、受け入れ条件と文書の構成例が使う。そのため 2.20.0 未満では、構成の検証そのものに失敗する。
 
@@ -284,7 +295,7 @@ graph LR
 | --- | --- | --- |
 | `./pre-up` | `cmd_up` のみ | 常に空 |
 | `./deploy` | `cmd_up` | 空 |
-| `./deploy` | `cmd_profile_up` | 起動したプロファイル名 |
+| `./deploy` | `cmd_profile_up` | 起動したプロファイル名 1 つ |
 
 ### 決定 4: 停止は全プロファイルを対象にし、`up` は既定の状態へ揃える
 
@@ -336,9 +347,10 @@ graph LR
 | `project profile up <名前> X` が同じ結果になる | 引数の解釈（`[name] <profile>` の割り当て）を `tests/cli` の既存の書き方で検査する |
 | `devbase down` が全プロファイルを消し、0 で終わる | 引数列に `--profile *` が含まれることを検査する。全体の削除は手動確認 |
 | `devbase up` の後は既定のサービスだけが動く | 冒頭の停止が `--profile *` を通ることを検査する。実際の状態は手動確認 |
-| フックが `DEVBASE_ACTIVE_PROFILES` を受け取る | `hook_env` の戻り値と、`subprocess.run` へ渡された `env` を検査する |
+| フックが `DEVBASE_ACTIVE_PROFILES` を受け取る | `hook_env` の戻り値と、`subprocess.run` へ渡された `env` を検査する。`cmd_up` 経由は空文字列、`cmd_profile_up` 経由はプロファイル名 1 つになることを見る。複数値はこの範囲では作れないため検査しない |
 | フックの失敗が終了コードへ出る | 失敗する `./deploy` を置き、戻り値が 1 になることを検査する |
 | プロファイルを持たないプロジェクトの挙動が変わらない | 既存の `tests/commands/test_container_up_order.py` と `tests/cli/test_up_roundtrips.py` が通ること |
+| プロファイルを持たないプロジェクトで `up` / `down` が従来どおり動く | 手動確認（確認済みの v5.1.4 で実施）。`profiles:` を持たない既存のプロジェクトで `devbase up` と `devbase down` を通し、起動するコンテナの集合と `down` 後に残らないことを確かめる。`--profile '*'` がこの経路に入るため |
 | 生成物が `profiles` を保つ | `generate_scaled_compose` の出力を読み、非 dev サービスの `profiles` が残ることを検査する |
 
 テストは実 docker と実 `DEVBASE_ROOT` に触れない。`subprocess.run` を差し替える。作業ディレクトリは `tmp_path` を使う。
@@ -348,5 +360,5 @@ graph LR
 | 項目 | 内容 |
 | --- | --- |
 | `--profile '*'` が使える最古の版 | 公式ドキュメント（[profiles](https://docs.docker.com/compose/how-tos/profiles/)）に版の記載が無く、確かめられなかった。最低対応版は `depends_on.required` の 2.20.0 を根拠に定めた |
-| 古い Compose での `--profile '*'` | 手元で確かめたのは v5.1.4 のみ。ワイルドカードを解釈しない版での挙動（対象が現在と同じに留まる想定）は未確認 |
-| プロファイルが複数同時に有効な場合 | `DEVBASE_ACTIVE_PROFILES` はカンマ区切りを許すが、同時に 2 つ以上を起動する操作は今回作らない。`profile up` を 2 回呼ぶと、2 回目のフックへ渡るのは 2 つ目の名前だけになる |
+| 古い Compose での `--profile '*'` | 確認済みは v5.1.4 のみ。2.20.0 以上 5.x 未満は未検証。ワイルドカードを解釈しない版で `*` がリテラルのプロファイル名として扱われるか（対象が現在と同じに留まる想定）は未確認 |
+| プロファイルが複数同時に有効な場合 | 同時に 2 つ以上を起動する操作は今回作らない。よって `DEVBASE_ACTIVE_PROFILES` は常に単一値で、カンマ区切りは将来の拡張のための予約である。`profile up` を 2 回呼ぶと、2 回目のフックへ渡るのは 2 つ目の名前だけになる |
