@@ -25,7 +25,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 - 前提 2: プロファイル付きのサービスは scale の対象にしない。dev だけが `dev-1`..`dev-N` へ複製される現在の仕組みは変えない
 - 前提 3: `devbase up` はテスト用サーバが起動していても、既定の状態（dev だけ）へ揃える。継続したい利用者は `up` の後にもう一度プロファイルを起動する（利用者の指示、2026-09-16）
 - 前提 4: プロファイルを使っていないプロジェクトの `up` / `down` / `scale` の挙動は変えない
-- 前提 5: プロファイルのサービスは、既定のサービス（dev を含む）を `depends_on` に持たない。持つ場合は `required: false` を付ける。この前提が崩れると、プロファイルの起動が dev を巻き込んで再作成しうる（設計の決定 2）
+- 前提 5: プロファイルの起動は `--no-deps` を付けて Compose を呼ぶ。そのため既定のサービス（dev を含む）は操作の対象に入らない。あわせて、そのプロファイルに属するサービスをすべて明示して渡す。`--no-deps` は依存先を自動起動しないためである。1 つでも渡し漏らすと、そのサービスは起動しない（設計の決定 2）
 
 ## 対象範囲
 
@@ -63,7 +63,10 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 - [ ] `profiles: [X]` を持つサービスは `devbase up` で起動せず、`docker ps` に現れない
 - [ ] `devbase container profile up X` を実行すると、プロファイル X のサービスだけが起動する。既定のサービス（dev を含む）の Container ID と `StartedAt` は実行の前後で変わらない
 - [ ] `devbase container profile down X` を実行すると、プロファイル X のサービスのコンテナが削除される。既定のサービスの Container ID と `StartedAt` は実行の前後で変わらない
-- [ ] `depends_on: {dev: {required: false}}` を持つプロファイル X のサービスを `devbase container profile up X` で起動しても、既定のサービスの Container ID と `StartedAt` は変わらない
+- [ ] `devbase container profile up X` は、プロファイル X に属するサービスをすべて Compose へ渡し、`--no-deps` を付ける
+- [ ] `depends_on: {dev: {condition: service_started, required: false}}` を持つプロファイル X のサービスを `devbase container profile up X` で起動しても、既定のサービスの Container ID と `StartedAt` は変わらない
+- [ ] `depends_on: [dev]`（`required` を書かない形）を持つサービスでも、`devbase container profile up X` で既定のサービスの Container ID と `StartedAt` は変わらない
+- [ ] dev の環境変数の値を変えた後でも、`devbase container profile up X` は dev を再作成しない
 - [ ] `devbase container profile down X` の後も、そのサービスが使う名前付きボリュームは残る
 - [ ] `devbase container profile list` は、`compose.yml` に書かれたプロファイルの名前と、そのサービスが稼働しているかを出す
 - [ ] `.docker-compose.scale.yml` が無い状態では、`devbase container profile up X` / `down X` / `list` のいずれも終了コード 1 で止まる。`devbase up` を促すメッセージを出し、コンテナは作らない
@@ -93,16 +96,17 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | --- | --- |
 | 運用・保守性 | プロファイルのサービスを起動・停止した記録が、既存のログと同じ体裁（`logger.info`）で残る |
 | セキュリティ | プロファイルのサービスへ渡す機密は、そのサービスが元々 `env_file` で参照していた由来のキーだけに限る（`_services_receiving_secrets` の現在の規則を変えない）。素の `docker compose` を使わず devbase を通すのは、機密の注入と対象サービスの限定をこの規則の中で行うためである |
-| システム環境 | Docker Compose 2.20.0 以上で動く。`--profile '*'` と `depends_on.required` を使う。2.20.0 未満は対象外とする |
+| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'` と `--no-deps` である。案内する `depends_on.required` が 2.20.0 以上を要するため、2.20.0 未満は対象外とする |
 
 最低対応版を 2.20.0 とする根拠は次のとおりである。
 
 | 使う機能 | 使える版 | 根拠 |
 | --- | --- | --- |
+| `--no-deps` | 2 系全般 | `docker compose up` の古くからある選択肢。版の下限を作らない |
 | `depends_on.required` | 2.20.0 以上 | [公式仕様](https://docs.docker.com/reference/compose-file/services/#depends_on)に「Introduced in Docker Compose version 2.20.0」とある |
 | `--profile '*'` | 未確認 | 公式ドキュメントに版の記載が無い（設計の「未確認のまま残ること」） |
 
-2.20.0 未満の v2 では、`required: false` を書いた構成の検証に失敗する。前提 5 はこの属性を要求するため、その版では起動できない構成になる。だから「機能は落ちるが壊れない」とは言わず、対象外と定める。動作を確かめたのは Docker Compose v5.1.4 である。
+既定のサービスを対象から外すのは `--no-deps` である。この選択肢は版の下限を作らない。下限を決めるのは `depends_on.required` のほうである。2.20.0 未満の v2 では、`required: false` を書いた構成の検証に失敗する。受け入れ条件と文書の例はこの属性を使う。だから「機能は落ちるが壊れない」とは言わず、対象外と定める。動作を確かめたのは Docker Compose v5.1.4 である。
 
 ## 影響
 
@@ -118,7 +122,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | --- | --- |
 | テスト | `uv run pytest tests/ -q`（コマンドの組み立てと生成物の検証。実 docker には触れない） |
 | 静的解析 | `uv run ruff check lib/ tests/`（設定がある場合。無ければ省く） |
-| 手動確認 | `profiles` を付けた最小の compose（dev / app、`alpine:3`）で `devbase up` → `devbase container profile up X` → `devbase container profile down X` → `devbase down` を通し、各段で `docker ps` の Container ID と `StartedAt` を記録する。app へ `depends_on: {dev: {required: false}}` を付けた版でも同じ手順を通す |
+| 手動確認 | `profiles` を付けた最小の compose（dev / app、`alpine:3`）で `devbase up` → `devbase container profile up X` → `devbase container profile down X` → `devbase down` を通し、各段で `docker ps` の Container ID と `StartedAt` を記録する。app へ `depends_on: {dev: {condition: service_started, required: false}}` を付けた版と、`depends_on: [dev]` を付けた版でも同じ手順を通す。さらに dev の環境変数の値を変えてから `profile up X` を実行し、dev が再作成されないことを確かめる |
 
 自動テストで dev の Container ID の不変を確かめることはできない（実コンテナが要る）。この条件は手動確認で判定する。
 
