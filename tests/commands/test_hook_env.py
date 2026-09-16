@@ -85,3 +85,72 @@ def test_hook_env_does_not_leak_into_the_parent_process(tmp_path, monkeypatch, c
     container._run_pre_up_hook(config)
 
     assert "DEVBASE_WORK_DIR" not in os.environ
+
+
+# ---------------------------------------------------------------------------
+# PLAN58 決定 3: 有効なプロファイルをフックへ伝える
+# ---------------------------------------------------------------------------
+
+PROFILE_DUMP = '''#!/bin/bash
+echo "${DEVBASE_ACTIVE_PROFILES-unset}" >> profiles.txt
+'''
+
+
+def dumped_profiles(tmp_path: Path) -> list:
+    return (tmp_path / "profiles.txt").read_text().splitlines()
+
+
+def test_hook_env_carries_active_profiles(config):
+    assert project_hook_env(config)["DEVBASE_ACTIVE_PROFILES"] == ""
+    assert project_hook_env(config, active_profiles=("test",))["DEVBASE_ACTIVE_PROFILES"] == "test"
+
+
+def project_hook_env(config, **kwargs):
+    from devbase.project import runtime
+    return runtime.hook_env(config, **kwargs)
+
+
+def test_hooks_from_up_receive_empty_active_profiles(tmp_path, monkeypatch, config):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DEVBASE_ACTIVE_PROFILES", "stale")
+    (tmp_path / "pre-up").write_text(PROFILE_DUMP)
+    (tmp_path / "deploy").write_text(PROFILE_DUMP)
+
+    container._run_pre_up_hook(config)
+    container._run_deploy_script_for_instances(tmp_path / "deploy", [1], config)
+
+    assert dumped_profiles(tmp_path) == ["", ""]
+
+
+def test_deploy_receives_the_started_profile_for_every_instance(tmp_path, monkeypatch, config):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deploy").write_text(PROFILE_DUMP)
+
+    ok = container._run_deploy_script_for_instances(
+        tmp_path / "deploy", [1, 2], config, active_profiles=("test",))
+
+    assert ok is True
+    assert dumped_profiles(tmp_path) == ["test", "test"]
+
+
+def test_deploy_without_config_still_receives_active_profiles(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deploy").write_text(PROFILE_DUMP)
+
+    container._run_deploy_script_for_instances(tmp_path / "deploy", [1],
+                                               active_profiles=("test",))
+
+    assert dumped_profiles(tmp_path) == ["test"]
+
+
+def test_deploy_reports_failure_of_any_instance(tmp_path, monkeypatch, config):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "deploy").write_text(
+        '#!/bin/bash\necho "$DEVBASE_INSTANCE_INDEX" >> ran.txt\n'
+        '[ "$DEVBASE_INSTANCE_INDEX" != 1 ]\n')
+
+    ok = container._run_deploy_script_for_instances(tmp_path / "deploy", [1, 2], config)
+
+    assert ok is False
+    # 失敗しても残りのインスタンスは従来どおり実行する
+    assert (tmp_path / "ran.txt").read_text().split() == ["1", "2"]

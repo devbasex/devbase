@@ -323,14 +323,27 @@ def profile_services(compose_file: Path, environ=None) -> dict[str, list[str]]:
     }
 
 
+def _hook_vars(config=None, active_profiles=()) -> dict:
+    """フックへ渡す環境変数。``config`` が無くても有効なプロファイルは伝える。"""
+    if config is None:
+        return project_runtime.active_profiles_env(active_profiles)
+    return project_runtime.hook_env(config, active_profiles=active_profiles)
+
+
 def _run_deploy_script_for_instances(deploy_script: Path, indices,
-                                     config=None) -> None:
+                                     config=None, active_profiles=()) -> bool:
     """デプロイスクリプトをスケールされた各インスタンスに対して実行する。
 
     ``config`` (``project.yml``) を渡すと、clone 先やリポジトリ URL をフックへ
-    環境変数で伝える (:func:`devbase.project.runtime.hook_env`)。
+    環境変数で伝える (:func:`devbase.project.runtime.hook_env`)。``active_profiles``
+    は加工せずに渡す (PLAN58 決定 3)。
+
+    失敗したインスタンスがあっても残りは実行し、全インスタンスで成功したかを返す。
+    ``cmd_up`` / ``cmd_scale`` は戻り値を使わず警告だけにとどめ、``profile up`` は
+    終了コードへ反映する。
     """
-    hook_vars = project_runtime.hook_env(config) if config is not None else {}
+    hook_vars = _hook_vars(config, active_profiles)
+    ok = True
     for i in indices:
         logger.info("[Bonus] Running deploy script for instance %d...", i)
         env = {**os.environ, **hook_vars, 'DEVBASE_INSTANCE_INDEX': str(i)}
@@ -339,6 +352,8 @@ def _run_deploy_script_for_instances(deploy_script: Path, indices,
             logger.info("Deploy script completed for instance %d", i)
         except subprocess.CalledProcessError as e:
             logger.warning("Deploy script failed for instance %d (exit code %d)", i, e.returncode)
+            ok = False
+    return ok
 
 
 def _run_pre_up_hook(config=None) -> bool:
@@ -361,7 +376,7 @@ def _run_pre_up_hook(config=None) -> bool:
         return True
 
     logger.info("Running pre-up hook: %s", pre_up_script)
-    hook_vars = project_runtime.hook_env(config) if config is not None else {}
+    hook_vars = _hook_vars(config)
     try:
         subprocess.run(['bash', str(pre_up_script)], check=True,
                        env={**os.environ, **hook_vars})
