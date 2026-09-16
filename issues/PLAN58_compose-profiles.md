@@ -41,6 +41,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 
 - プロファイル付きサービスの scale（インスタンスごとの複製）
 - `project.yml` で既定の有効プロファイルを宣言する仕組み（必要になってから別 issue で扱う）
+- `devbase scale` が直接呼ぶ `compose up -d --no-recreate` の `COMPOSE_PROFILES` の扱い（プロファイルの入口ではない。必要になってから別 issue で扱う）
 - carmo-system-console 側の `compose.yml` / フックの書き換え（volareinc/devbase-ext#31）
 - 新しい型・クラスの追加。実装は既存のモジュール関数の並びに足す（そのためクラス図を作らない）
 - 永続データの追加・変更（そのため ER 図・テーブル定義・CRUD 図を作らない）
@@ -80,6 +81,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 - [ ] 同じ状態で `devbase up` を実行すると、冒頭の停止でプロファイル X のサービスも止まり、起動後は既定のサービスだけが動いている
 - [ ] `COMPOSE_PROFILES` が環境変数に設定された状態でも、`devbase up` は既定のサービスだけを起動する
 - [ ] プロジェクトの `.env` に `COMPOSE_PROFILES` が書かれた状態でも、`devbase up` は既定のサービスだけを起動する（起動の対象をサービス名で明示するため。設計の決定 7）
+- [ ] `devbase up` の起動は、生成物の `profiles` を持たないサービスをすべてサービス名として Compose へ渡す
 
 フック:
 
@@ -100,21 +102,22 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | --- | --- |
 | 運用・保守性 | プロファイルのサービスを起動・停止した記録が、既存のログと同じ体裁（`logger.info`）で残る |
 | セキュリティ | プロファイルのサービスへ渡す機密は、そのサービスが元々 `env_file` で参照していた由来のキーだけに限る（`_services_receiving_secrets` の現在の規則を変えない）。素の `docker compose` を使わず devbase を通すのは、機密の注入と対象サービスの限定をこの規則の中で行うためである |
-| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'`、`--no-deps`、サービスを明示した `stop` / `rm -f` である。案内する `depends_on.required` が 2.20.0 以上を要するため、2.20.0 未満は対象外とする |
-| 再現性 | 有効なプロファイルは devbase が `--profile` で決める。利用者の `COMPOSE_PROFILES` に結果が左右されない（設計の決定 7） |
+| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'`、`--no-deps`、サービスを明示した `up` / `stop` / `rm -f` である。案内する `depends_on.required` が 2.20.0 以上を要するため、2.20.0 未満は対象外とする |
+| 再現性 | 有効なプロファイルは devbase が `--profile` で決め、`devbase up` の起動では対象のサービスも明示する。利用者の `COMPOSE_PROFILES` に結果が左右されない。環境変数でも `.env` でも同じである（設計の決定 7） |
 
 最低対応版を 2.20.0 とする根拠は次のとおりである。
 
 | 使う機能 | 使える版 | 根拠 |
 | --- | --- | --- |
 | `--no-deps` | 2 系全般 | `docker compose up` の古くからある選択肢。版の下限を作らない |
+| `up <サービス...>` | 2 系全般 | `docker compose up` は古くからサービス名の位置引数を受ける。版の下限を作らない |
 | `stop <サービス...>` / `rm -f <サービス...>` | 2 系全般 | どちらもサービス指定が古くから安定している。版の下限を作らない |
 | `depends_on.required` | 2.20.0 以上 | [公式仕様](https://docs.docker.com/reference/compose-file/services/#depends_on)に「Introduced in Docker Compose version 2.20.0」とある |
 | `--profile '*'` | v5.1.4 で確認済み。2.20.0 以上 5.x 未満は未検証 | 公式ドキュメントに版の記載が無い（設計の「未確認のまま残ること」） |
 
 `down` の `[SERVICES]` 位置引数は使わない。プロファイルの停止は `stop` と `rm -f` の 2 段で行う（設計の決定 5）。この位置引数は比較的新しい追加で、対応版を調べないと下限を決められない。加えて、指定したサービスへ `depends_on` を持つ側まで対象に含める。使わないことで、どちらの問題も起きない。
 
-版の下限を作る機能は `depends_on.required` だけである。`--no-deps` も `stop` / `rm -f` も 2 系全般で使える。`--profile '*'` は停止の対象を広げる向きの指定であり、解釈しない版でも対象が現在と同じになる想定のため、下限を引き上げない（未検証。設計の「未確認のまま残ること」）。よって 2.20.0 という下限は `depends_on.required` だけで閉じる。2.20.0 未満の v2 では、`required: false` を書いた構成の検証に失敗する。受け入れ条件と文書の例はこの属性を使う。だから「機能は落ちるが壊れない」とは言わず、対象外と定める。動作を確かめたのは Docker Compose v5.1.4 である。
+版の下限を作る機能は `depends_on.required` だけである。`--no-deps` も、サービスを明示した `up` / `stop` / `rm -f` も 2 系全般で使える。`--profile '*'` は停止の対象を広げる向きの指定であり、解釈しない版でも対象が現在と同じになる想定のため、下限を引き上げない（未検証。設計の「未確認のまま残ること」）。よって 2.20.0 という下限は `depends_on.required` だけで閉じる。2.20.0 未満の v2 では、`required: false` を書いた構成の検証に失敗する。受け入れ条件と文書の例はこの属性を使う。だから「機能は落ちるが壊れない」とは言わず、対象外と定める。動作を確かめたのは Docker Compose v5.1.4 である。
 
 ## 影響
 
@@ -122,7 +125,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | --- | --- |
 | 公開インタフェース | `devbase container profile` と `devbase project profile` を追加する。既存のコマンドの引数は変えない。`devbase down` は内部で `--profile '*'` を付ける |
 | データ | なし（スキーマも名前付きボリュームの構成も変えない） |
-| 既存の振る舞い | `down` が全プロファイルを対象にする。devbase 経由の Compose へ `COMPOSE_PROFILES` を渡さなくなる。フックへ渡す環境変数が 1 つ増える。`profiles:` を使っていないプロジェクトでは、どちらも対象が変わらない。`--profile '*'` を確認済みなのは v5.1.4 で、2.20.0 以上 5.x 未満は未検証である |
+| 既存の振る舞い | `down` が全プロファイルを対象にする。devbase 経由の Compose へ `COMPOSE_PROFILES` を渡さなくなる。`up` の起動は既定のサービスを明示して渡す（対象は現在と同じ）。フックへ渡す環境変数が 1 つ増える。`profiles:` を使っていないプロジェクトでは、どちらも対象が変わらない。`--profile '*'` を確認済みなのは v5.1.4 で、2.20.0 以上 5.x 未満は未検証である |
 
 ## 検証手段
 
@@ -132,7 +135,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | 静的解析 | `uv run ruff check lib/ tests/`（設定がある場合。無ければ省く） |
 | 手動確認 | `profiles` を付けた最小の compose（dev / app、`alpine:3`）で `devbase up` → `devbase container profile up X` → `devbase container profile down X` → `devbase down` を通し、各段で `docker ps` の Container ID と `StartedAt` を記録する。app へ `depends_on: {dev: {condition: service_started, required: false}}` を付けた版と、`depends_on: [dev]` を付けた版でも同じ手順を通す。さらに dev の環境変数の値を変えてから `profile up X` を実行し、dev が再作成されないことを確かめる |
 | 手動確認（依存の向きが逆の構成） | dev へ `depends_on: {db: {condition: service_started, required: false}}` を書き、db をプロファイル X に入れた構成で `profile up X` → `profile down X` を通す。停止の前後で dev の Container ID と `StartedAt` が変わらないことを見る。`stop` / `rm -f` が依存元を対象に含めないことの確認である（設計の決定 5） |
-| 手動確認（`COMPOSE_PROFILES` が有効な環境） | `COMPOSE_PROFILES=X` を環境変数に設定した状態と、プロジェクトの `.env` に書いた状態の両方で `devbase up` を通す。`docker ps` に既定のサービスだけが並ぶことを見る。続けて `profile up X` → `profile down X` が従来どおり効くことも確かめる |
+| 手動確認（`COMPOSE_PROFILES` が有効な環境） | `COMPOSE_PROFILES=X` を環境変数に設定した状態と、プロジェクトの `.env` に書いた状態の両方で `devbase up` を通す。`docker ps` に既定のサービスだけが並ぶことを見る。`.env` の側は、起動のコマンド列に既定のサービス名が並ぶことも見る（設計の決定 7）。続けて `profile up X` → `profile down X` が従来どおり効くことも確かめる |
 | 手動確認（退行） | 確認済みの Docker Compose v5.1.4 で実施する。`profiles:` を持たないプロジェクトで `devbase up` と `devbase down` を通し、従来どおり動くことを確かめる。起動するコンテナの集合と順序、`down` 後に何も残らないことを見る。`--profile '*'` がこの経路に入るためである |
 
 自動テストで dev の Container ID の不変を確かめることはできない（実コンテナが要る）。この条件は手動確認で判定する。
