@@ -1288,6 +1288,156 @@ def cmd_logs(follow: bool = False, tail: Optional[int] = None,
 
 
 # ---------------------------------------------------------------------------
+# cmd_profile_up / cmd_profile_down / cmd_profile_list  (PLAN58)
+# ---------------------------------------------------------------------------
+
+def _profile_targets(profile: Optional[str], context: Optional[str]):
+    """プロファイルの操作の共通の前段。
+
+    接続先の反映と機密の注入を済ませ、生成物からプロファイルとサービスの対応を得る。
+    ``profile`` を渡すとその名前を検査する。止まるべきときは ``None`` を返す
+    (理由はログへ出す)。
+    """
+    _prepare_compose(context)
+    if not _SCALE_COMPOSE_FILE.exists():
+        logger.error("%s がありません。先に `devbase up` を実行してください。",
+                     _SCALE_COMPOSE_FILE)
+        return None
+    try:
+        profiles = profile_services(_SCALE_COMPOSE_FILE)
+    except DevbaseError as e:
+        logger.error("プロファイルを解決できません: %s", e)
+        return None
+    if profile is not None and profile not in profiles:
+        logger.error("プロファイル '%s' はありません。使えるプロファイル: %s",
+                     profile, ', '.join(profiles) or '(なし)')
+        return None
+    return profiles
+
+
+def _dev_instance_indices(compose_file: Path) -> list[int]:
+    """生成物が持つ開発コンテナ ``<開発サービス名>-<N>`` の番号を昇順で返す。
+
+    ``project.yml`` の ``scale`` は使わない。``up`` の後に書き換えられると稼働中の
+    インスタンスと食い違うため、``up`` が作った生成物から数える (PLAN58 設計「構造」)。
+    """
+    import yaml
+    with open(compose_file, encoding='utf-8') as f:
+        services = (yaml.safe_load(f) or {}).get('services') or {}
+    pattern = re.compile(rf'{re.escape(get_dev_service_name())}-(\d+)')
+    return sorted(int(m.group(1)) for name in services
+                  if (m := pattern.fullmatch(name)))
+
+
+def cmd_profile_up(profile: str, context: Optional[str] = None) -> int:
+    """プロファイルのサービスを起動し、``./deploy`` を呼び直す (PLAN58 F1)。
+
+    サービス名をすべて明示し ``--no-deps`` を付ける。依存先の dev-1..N を操作の対象に
+    入れず、再作成も再起動もしないため (決定 2)。``./pre-up`` は呼ばない (決定 3)。
+    """
+    profiles = _profile_targets(profile, context)
+    if profiles is None:
+        return 1
+    services = profiles[profile]
+    deploy_script = Path('./deploy')
+    config = None
+    if deploy_script.is_file():
+        try:
+            config = project_runtime.current_project_config()
+        except DevbaseError as e:
+            logger.error("Profile up failed: %s", e)
+            return 1
+
+    logger.info("Starting profile '%s': %s", profile, ', '.join(services))
+    result = docker_compose(['--profile', profile, 'up', '-d', '--no-deps', *services],
+                            compose_file=_SCALE_COMPOSE_FILE, check=False)
+    if result.returncode != 0:
+        logger.error("Failed to start profile '%s' (exit code %d)", profile, result.returncode)
+        return result.returncode
+
+    if deploy_script.is_file():
+        ok = _run_deploy_script_for_instances(
+            deploy_script, _dev_instance_indices(_SCALE_COMPOSE_FILE), config,
+            active_profiles=(profile,))
+        if not ok:
+            return 1
+    return 0
+
+
+def cmd_profile_down(profile: str, context: Optional[str] = None) -> int:
+    """プロファイルのサービスを停止してコンテナを削除する (PLAN58 F2)。
+
+    ``down <サービス>`` は依存元 (dev) も対象に含めるため使わず、``stop`` と ``rm -f``
+    の 2 段で行う (決定 5)。猶予は既定、ボリュームは残す。フックは呼ばない。
+    """
+    profiles = _profile_targets(profile, context)
+    if profiles is None:
+        return 1
+    services = profiles[profile]
+
+    logger.info("Stopping profile '%s': %s", profile, ', '.join(services))
+    for step in (['stop'], ['rm', '-f']):
+        result = docker_compose(['--profile', profile, *step, *services],
+                                compose_file=_SCALE_COMPOSE_FILE, check=False)
+        if result.returncode != 0:
+            logger.error("Failed to %s profile '%s' (exit code %d)",
+                         step[0], profile, result.returncode)
+            return result.returncode
+    return 0
+
+
+def _running_services(compose_file: Path) -> Optional[set]:
+    """``ps --format json`` で ``State`` が ``running`` のサービス名を返す。失敗なら ``None``。
+
+    出力は版により 1 行 1 JSON (新しめ) か JSON 配列 (古め) になる。
+    """
+    try:
+        result = docker_compose(['ps', '--format', 'json'], compose_file=compose_file,
+                                check=False, capture_output=True, silent_error=True)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    text = (result.stdout or '').strip()
+    try:
+        parsed = json.loads(text) if text.startswith('[') else [
+            json.loads(line) for line in text.splitlines() if line.strip()]
+    except ValueError:
+        return None
+    return {item.get('Service') for item in parsed
+            if isinstance(item, dict) and item.get('State') == 'running'}
+
+
+def _running_label(services: list[str], running: Optional[set]) -> str:
+    if running is None:
+        return '不明'
+    count = sum(1 for service in services if service in running)
+    state = ('running' if count == len(services)
+             else 'partial' if count else 'stopped')
+    return f'{count}/{len(services)} {state}'
+
+
+def cmd_profile_list(context: Optional[str] = None) -> int:
+    """プロファイルの名前・サービス・稼働状況を表で出す (PLAN58 F3)。
+
+    名前と対応の解決にデーモンは要らない。接続できないときは稼働状況を ``不明`` にして
+    0 で終わる (決定 1)。
+    """
+    profiles = _profile_targets(None, context)
+    if profiles is None:
+        return 1
+    running = _running_services(_SCALE_COMPOSE_FILE) if profiles else set()
+    rows = [('PROFILE', 'SERVICES', 'RUNNING')] + [
+        (name, ','.join(services), _running_label(services, running))
+        for name, services in profiles.items()
+    ]
+    widths = [max(len(row[i]) for row in rows) for i in range(2)]
+    for name, services, label in rows:
+        print(f'{name:<{widths[0]}}  {services:<{widths[1]}}  {label}')
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # cmd_scale
 # ---------------------------------------------------------------------------
 
