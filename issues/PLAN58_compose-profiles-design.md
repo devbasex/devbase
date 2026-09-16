@@ -219,9 +219,16 @@ graph LR
 | --- | --- | --- | --- |
 | 運用・保守性 | プロファイルのサービスを起動・停止した記録が、既存のログと同じ体裁（`logger.info`）で残る | 対象サービス名とプロファイル名を `logger.info` で 1 行ずつ出す。Compose の出力はそのまま標準出力へ流す | `caplog` で起動・停止の各 1 行を検査する |
 | セキュリティ | プロファイルのサービスへ渡す機密は、そのサービスが元々 `env_file` で参照していた由来のキーだけに限る | 生成済みの `.docker-compose.scale.yml` をそのまま使う。機密の列挙はこのファイルが既に持つため、プロファイルの操作は新しい注入経路を作らない。実行前に `_prepare_compose` で既存と同じ注入を通す | 生成物のサービスごとの `environment` が、プロファイルの有無で変わらないことをテストで検査する |
-| システム環境 | Docker Compose v2 系および v5 系で動く。`--profile '*'` と `depends_on.required` を使う | `--profile '*'` は停止にだけ使う。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる（機能は落ちるが壊れない） | v5.1.4 で全サービスが消えることを手動で確かめる。古い版は「未確認のまま残ること」に載せる |
+| システム環境 | Docker Compose 2.20.0 以上で動く。`--profile '*'` と `depends_on.required` を使う | 最低対応版を 2.20.0 とする。`--profile '*'` は停止にだけ使う。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる | v5.1.4 で全サービスが消えることを手動で確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、「未確認のまま残ること」に載せる |
 
-`depends_on.required: false` はプロジェクト側の書き方であり、devbase の実装には現れない。文書で案内する。
+最低対応版は `depends_on.required` が決める。この属性は 2.20.0 からの機能である。前提 5 はプロファイルのサービスへこの属性を要求する。そのため 2.20.0 未満では、構成の検証そのものに失敗する。
+
+| 版 | 扱い |
+| --- | --- |
+| 2.20.0 以上 | 対応する。手元で確かめたのは v5.1.4 |
+| 2.20.0 未満の v2 | 対象外。`required: false` を書いた構成の検証に失敗する |
+
+`depends_on.required: false` を書くのはプロジェクト側であり、devbase の実装には現れない。文書で案内する。ただし任意の推奨ではなく、順方向の依存を持つ場合の必須条件である（決定 2）。
 
 ## 決定の記録
 
@@ -236,6 +243,18 @@ graph LR
 ### 決定 2: プロファイルの操作はサービス名を明示して渡す
 
 サービス名を省いて `--profile X up -d` とすると、既定のサービスも照合の対象に入る。機密は名前だけを列挙する形で生成物に書かれる。値はプロセスの環境から解決される。**照合の対象に入った時点で dev の構成が変わりうる。** そのため対象を明示し、dev を照合から外す。
+
+**サービス名を明示しても、順方向の依存は対象を広げる。** `_build_scaled_services` は非 dev サービスにも `_rewrite_depends_on` を適用する（`lib/devbase/volume/compose.py:488`）。プロファイルのサービスが `depends_on: dev` を書いていると、生成物では `dev-1`..`dev-N` になる。`depends_on` の既定は `required: true` である。Compose はこれを解決し、dev-1..N を対象へ取り込んで再作成しうる。受け入れ条件の「既定のサービスの Container ID と `StartedAt` が変わらない」はこれで崩れる。
+
+そこで、プロファイルのサービスが既定のサービスへ依存を持つ場合は `required: false` を必須とする（要求仕様の前提 5）。
+
+| プロファイルのサービスの書き方 | `profile up X` が触るもの | 判定 |
+| --- | --- | --- |
+| `depends_on` を書かない | そのサービスだけ | 可 |
+| `depends_on: {dev: {required: false}}` | そのサービスだけ | 可 |
+| `depends_on: [dev]`（既定の `required: true`） | そのサービスと dev-1..N | 不可。dev を再作成しうる |
+
+生成のときに devbase が `required: false` を補う案は採らない。依存が必須かどうかはプロジェクトが決める意図であり、生成物が黙って緩めると `devbase up` の起動順の意図が読めなくなる。2.20.0 未満でしか動かせない利用者にも、書いていない属性を押し付けることになる。
 
 ### 決定 3: プロファイル起動の後は `./deploy` を呼び直す。新しいフックは作らない
 
@@ -289,6 +308,8 @@ graph LR
 | `profiles` 付きのサービスは `devbase up` で起動しない | Compose の既定の挙動。生成物が `profiles` を保つことを `tests/volume/test_compose_profiles.py` で検査する |
 | `profile up X` で対象サービスだけが起動する | `subprocess.run` を差し替え、組み立てた引数列が `--profile X up -d <対象サービス>` であり、dev を含まないことを検査する |
 | 既定のサービスの Container ID と `StartedAt` が変わらない | 手動確認（`alpine:3` の最小構成で `docker inspect` の値を前後で比較する） |
+| `depends_on: dev` を持つプロファイルサービスで dev が再作成されない | 手動確認。`required: false` を付けた構成で `profile up X` を実行し、dev-1..N の Container ID と `StartedAt` を前後で比べる。同じ構成から `required: false` を外すと dev が対象に入ることも確かめ、前提 5 が要ることを示す |
+| 生成物が `depends_on` の `required` を保つ | `generate_scaled_compose` の出力で、`depends_on: {dev: {required: false}}` が `dev-1`..`dev-N` へ写り、各要素に `required: false` が残ることを検査する |
 | `profile down X` でコンテナが削除され、ボリュームは残る | 引数列に `down <対象サービス>` が含まれ、`--volumes` を含まないことを検査する |
 | `profile list` がプロファイル名と稼働状況を出す | 稼働中のサービスを返す偽の `docker compose ps` を与え、出力の行を検査する。全稼働・一部稼働・全停止の 3 通りで `3/3 running` / `1/3 partial` / `0/3 stopped` を確かめる |
 | `project profile list` が `project list` へ流れない | `profile_subcommand` の分離を、`devbase project profile list` の解析結果と呼ばれたハンドラで検査する |
@@ -308,6 +329,6 @@ graph LR
 
 | 項目 | 内容 |
 | --- | --- |
+| `--profile '*'` が使える最古の版 | 公式ドキュメント（[profiles](https://docs.docker.com/compose/how-tos/profiles/)）に版の記載が無く、確かめられなかった。最低対応版は `depends_on.required` の 2.20.0 を根拠に定めた |
 | 古い Compose での `--profile '*'` | 手元で確かめたのは v5.1.4 のみ。ワイルドカードを解釈しない版での挙動（対象が現在と同じに留まる想定）は未確認 |
 | プロファイルが複数同時に有効な場合 | `DEVBASE_ACTIVE_PROFILES` はカンマ区切りを許すが、同時に 2 つ以上を起動する操作は今回作らない。`profile up` を 2 回呼ぶと、2 回目のフックへ渡るのは 2 つ目の名前だけになる |
-| プロファイルのサービスが dev を `depends_on` に持つ構成 | 今回の対象（dev → プロファイル）と向きが逆の依存は検証していない |
