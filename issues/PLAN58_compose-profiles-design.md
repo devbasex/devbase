@@ -18,7 +18,7 @@
 | --- | --- |
 | プロファイルの解決 | 生成済みの構成ファイルを読み、プロファイル名からサービス名の集合を求める。稼働状況は持たない |
 | プロファイルの操作 | 起動・停止・一覧の 3 つの入口。接続先の反映と機密の注入を済ませてから Compose を呼ぶ |
-| Compose の呼び出し | `docker compose` のコマンド列を組み立てて実行する。起動には `--no-deps` を付ける。プロファイルの停止は `stop` と `rm -f` の 2 段で行う。全体の停止には全プロファイルを指定する |
+| Compose の呼び出し | `docker compose` のコマンド列を組み立てて実行する。起動には `--no-deps` を付ける。プロファイルの停止は `stop` と `rm -f` の 2 段で行う。全体の停止には全プロファイルを指定する。有効なプロファイルは devbase が `--profile` で決め、`COMPOSE_PROFILES` は子プロセスの環境から外す（決定 7） |
 | フックの実行 | プロジェクトの `./deploy` を、有効なプロファイルを環境変数へ載せて呼ぶ。同じ環境変数は `./pre-up` にも渡る |
 | 引数の受け口 | `project` / `container` の配下に `profile` のサブコマンドを足す |
 
@@ -76,7 +76,7 @@ graph TD
     P -.->|触らない| D1
 ```
 
-境界をまたぐのは 2 つである。Compose へ渡すコマンド列と、`_inject_secrets` がプロセスの環境へ載せた機密である。プロファイルの操作はサービス名をすべて明示して渡す。起動はさらに `--no-deps` を付ける。停止は対象を広げない `stop` と `rm -f` を使う（決定 5）。そのため dev-1..N はどちらの操作の対象にも入らない。
+境界をまたぐのは 2 つである。Compose へ渡すコマンド列と、`_inject_secrets` がプロセスの環境へ載せた機密である。この環境からは `COMPOSE_PROFILES` を取り除く。有効なプロファイルを決めるのは devbase の `--profile` だけにするためである（決定 7）。プロファイルの操作はサービス名をすべて明示して渡す。起動はさらに `--no-deps` を付ける。停止は対象を広げない `stop` と `rm -f` を使う（決定 5）。そのため dev-1..N はどちらの操作の対象にも入らない。
 
 ## 置き場所
 
@@ -88,13 +88,15 @@ lib/devbase/
 ├── project/
 │   └── runtime.py             # hook_env に有効なプロファイルを足す（変更）
 ├── utils/
-│   └── docker.py              # docker_compose_down を全プロファイル対応へ（変更）
+│   └── docker.py              # docker_compose が COMPOSE_PROFILES を外す、docker_compose_down を全プロファイル対応へ（変更）
 └── volume/
     └── compose.py             # profiles を保つことの確認のみ（変更なし）
 
 tests/
 ├── commands/
 │   └── test_container_profile.py   # 新設
+├── utils/
+│   └── test_docker_profiles.py     # 新設（子プロセスの env から COMPOSE_PROFILES が外れることの検査）
 └── volume/
     └── test_compose_profiles.py    # 新設
 ```
@@ -109,6 +111,7 @@ tests/
 | `cmd_profile_up(profile, context)` | 新設 | F1。プロファイルのサービスをすべて明示し、`--no-deps` を付けて起動する（決定 2）。終了コードを返す |
 | `cmd_profile_down(profile, context)` | 新設 | F2。`docker_compose_down` は通さず、`stop` と `rm -f` の 2 段をサービス名付きで組む（決定 5）。終了コードを返す |
 | `cmd_profile_list(context)` | 新設 | F3。終了コードを返す |
+| `docker_compose(command, ...)` | 変更（`utils/docker.py`） | F1 / F2 / F4 の共通の土台。子プロセスの環境を組み立てる箇所で `COMPOSE_PROFILES` を取り除いてから `subprocess.run` を呼ぶ（決定 7）。コマンド列の組み立て方は変えない |
 | `docker_compose_down(compose_file, all_profiles=True)` | 変更（`utils/docker.py`） | F4。`--profile '*'` を付けて呼ぶ。`['down', '-t0']` という固定の形は変えない |
 | `hook_env(config, active_profiles=())` | 変更（`project/runtime.py`） | F5。`DEVBASE_ACTIVE_PROFILES` を足す。`_run_pre_up_hook` と `_run_deploy_script_for_instances` の両方に効く |
 | `_run_deploy_script_for_instances(deploy_script, indices, config=None, active_profiles=()) -> bool` | 変更（`commands/container.py`） | 全インスタンスで成功したかを返す。`active_profiles` を受け取り、加工せず `hook_env` へ渡す。`cmd_up` は戻り値を使わず、現在の警告だけの扱いを保つ |
@@ -146,6 +149,18 @@ tests/
 
 `container` / `ct` は `[name]` を持たない。値は常にプロファイル名である。`container` 群のサブコマンドは現在地のプロジェクトで動く既存の規約に従う。この非対称は `project` / `container` の既存の作りと同じである。
 
+### プロファイルの決め方
+
+有効なプロファイルは devbase が経路ごとに明示して決める。利用者の環境や `.env` には従わない（決定 7）。
+
+| 経路 | `--profile` | `COMPOSE_PROFILES` |
+| --- | --- | --- |
+| `devbase up` の起動 | 付けない | 子プロセスの環境から外す |
+| `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 同上 |
+| `profile up X` / `profile down X` | `--profile X` | 同上 |
+
+`COMPOSE_PROFILES` は空文字列にするのではなく、渡さない。空文字列を渡す版の扱いを調べずに済むためである。
+
 ### `profile list` の表
 
 | 列 | 内容 |
@@ -171,6 +186,7 @@ tests/
 | `profile` サブコマンドの追加 | 無い。既存の引数の形を変えない |
 | `docker compose down` に `--profile '*'` を付ける | プロファイルを持たないプロジェクトでは対象が同じになる。Docker Compose v5.1.4 で確認済み。2.20.0 以上 5.x 未満は未検証 |
 | `DEVBASE_ACTIVE_PROFILES` の追加 | 無い。既存のフックは読まなければ従来どおり動く |
+| `COMPOSE_PROFILES` を子プロセスへ渡さない | devbase 経由の Compose だけが対象。素の `docker compose` を手で叩く経路には影響しない |
 
 `--profile '*'` の行だけは、影響の範囲が広い。この経路は `devbase down` と `devbase up` 冒頭の停止に入るため、プロファイルを使わない既存の全プロジェクトを通る。だから「退行しないこと」の受け入れ条件に直結する。
 
@@ -187,7 +203,7 @@ tests/
 
 ### 検査の手段
 
-`uv run pytest tests/commands/test_container_profile.py -q` が、組み立てたコマンド列と終了コードを検査する。
+`uv run pytest tests/commands/test_container_profile.py -q` が、組み立てたコマンド列と終了コードを検査する。`uv run pytest tests/utils/test_docker_profiles.py -q` が、子プロセスへ渡す環境から `COMPOSE_PROFILES` が外れていることを検査する。
 
 ## 処理の流れ
 
@@ -245,21 +261,25 @@ sequenceDiagram
 
 `--profile` は subcommand より前に置く必要がある。`docker_compose` は `-f` の後に、渡された配列をそのまま並べる。そのため `--profile X` を配列の先頭へ入れる。組み立てるコマンド列は次のとおりである。`<サービス...>` はどれもプロファイル X に属するサービスの全件である（決定 2）。
 
-| 操作 | コマンド列 |
-| --- | --- |
-| 起動 | `['--profile', X, 'up', '-d', '--no-deps', <サービス...>]` |
-| 停止（1 段目） | `['--profile', X, 'stop', <サービス...>]` |
-| 停止（2 段目） | `['--profile', X, 'rm', '-f', <サービス...>]` |
+| 操作 | コマンド列 | 子プロセスの `COMPOSE_PROFILES` |
+| --- | --- | --- |
+| プロファイルの起動 | `['--profile', X, 'up', '-d', '--no-deps', <サービス...>]` | 外す |
+| プロファイルの停止（1 段目） | `['--profile', X, 'stop', <サービス...>]` | 外す |
+| プロファイルの停止（2 段目） | `['--profile', X, 'rm', '-f', <サービス...>]` | 外す |
+| `devbase up` の起動 | `['up', '-d', ...]`（`--profile` を付けない） | 外す |
+| `devbase down` / `up` 冒頭の停止 | `['--profile', '*', 'down', '-t0']` | 外す |
 
-`up` と `down` の冒頭の停止（F4）は次のように変わる。
+`up` と `down` の冒頭の停止（F4）は次のように変わる。`COMPOSE_PROFILES` の除去はどの経路にも共通で効く（決定 7）。
 
 ```mermaid
 graph LR
-    A[devbase down] --> B[compose --profile '*' down -t0]
-    C[devbase up] --> D[compose --profile '*' down -t0]
-    D --> E[compose up -d]
+    A[devbase down] --> B["env から COMPOSE_PROFILES を外す → compose --profile '*' down -t0"]
+    C[devbase up] --> D["env から COMPOSE_PROFILES を外す → compose --profile '*' down -t0"]
+    D --> E["env から COMPOSE_PROFILES を外す → compose up -d、--profile なし"]
     E --> F[既定のサービスだけが動く]
 ```
+
+この除去が無いと、`COMPOSE_PROFILES=test` を持つ環境で `devbase up` が test のサービスまで起動する。`up` 冒頭の停止は `--profile '*'` で全部を落とすため、残骸ではなく新しい起動として現れる。
 
 ## 非機能の実現方式
 
@@ -267,7 +287,7 @@ graph LR
 | --- | --- | --- | --- |
 | 運用・保守性 | プロファイルのサービスを起動・停止した記録が、既存のログと同じ体裁（`logger.info`）で残る | 対象サービス名とプロファイル名を `logger.info` で 1 行ずつ出す。Compose の出力はそのまま標準出力へ流す | `caplog` で起動・停止の各 1 行を検査する |
 | セキュリティ | プロファイルのサービスへ渡す機密は、そのサービスが元々 `env_file` で参照していた由来のキーだけに限る | 生成済みの `.docker-compose.scale.yml` をそのまま使う。機密の列挙はこのファイルが既に持つため、プロファイルの操作は新しい注入経路を作らない。実行前に `_prepare_compose` で既存と同じ注入を通す | 生成物のサービスごとの `environment` が、プロファイルの有無で変わらないことをテストで検査する |
-| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'`、`--no-deps`、サービスを明示した `stop` / `rm -f` である | 最低対応版を 2.20.0 とする。`--no-deps` は起動にだけ、`--profile '*'` は全体の停止にだけ使う。プロファイルの停止は `stop` と `rm -f` で行い、`down` のサービス指定は使わない（決定 5）。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる想定である（未検証） | v5.1.4 で全サービスが消えることを手動で確かめる。同じ版で、プロファイルを持たないプロジェクトの `up` / `down` が従来どおり動くことも確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、2.20.0 以上 5.x 未満は未検証のまま「未確認のまま残ること」に載せる |
+| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'`、`--no-deps`、サービスを明示した `stop` / `rm -f` である | 最低対応版を 2.20.0 とする。`--no-deps` は起動にだけ、`--profile '*'` は全体の停止にだけ使う。プロファイルの停止は `stop` と `rm -f` で行い、`down` のサービス指定は使わない（決定 5）。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる想定である（未検証）。あわせて `docker_compose` が `COMPOSE_PROFILES` を子プロセスの環境から外し、有効なプロファイルを devbase が決める（決定 7）。この除去は版に依らない | v5.1.4 で全サービスが消えることを手動で確かめる。同じ版で、プロファイルを持たないプロジェクトの `up` / `down` が従来どおり動くことも確かめる。`COMPOSE_PROFILES=test` を設定した環境で `devbase up` を通し、既定のサービスだけが動くことも確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、2.20.0 以上 5.x 未満は未検証のまま「未確認のまま残ること」に載せる |
 
 起動で既定のサービスを対象から外すのは `--no-deps` である。停止で対象から外すのは、サービスを明示した `stop` / `rm -f` である。どれも古くからある形で、版の下限を作らない。下限を決めるのは `depends_on.required` だけである。この属性は 2.20.0 からの機能で、受け入れ条件と文書の構成例が使う。そのため 2.20.0 未満では、構成の検証そのものに失敗する。
 
@@ -369,6 +389,30 @@ graph LR
 | `devbase container profile up <profile>` | 受けない | しない（現在地で動く） |
 | `devbase ct profile up <profile>` | 受けない | しない（現在地で動く） |
 
+### 決定 7: 有効なプロファイルは devbase が決め、`COMPOSE_PROFILES` は子プロセスへ渡さない
+
+`docker_compose` は現在のプロセスの環境をそのまま子へ継承する（`lib/devbase/utils/docker.py`）。`COMPOSE_PROFILES=test` が設定された端末では、`devbase up` の `compose up -d` が test のサービスまで起動する。受け入れ条件「`up` の後は既定のサービスだけが動く」はこれで崩れる。v5.1.4 の最小構成で確認済みである。
+
+そこで `docker_compose` が子プロセスの環境を組み立てる箇所で `COMPOSE_PROFILES` を取り除く。有効なプロファイルは経路ごとに `--profile` で明示する。
+
+| 経路 | プロファイルの指定 | `COMPOSE_PROFILES` |
+| --- | --- | --- |
+| `devbase up` の起動 | 付けない（既定のサービスだけ） | 外す |
+| `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 外す |
+| `profile up X` / `profile down X` | `--profile X` | 外す |
+
+**空文字列にはしない。** `COMPOSE_PROFILES=` を渡す形は、版によって「空の一覧」と「未設定」のどちらに解釈されるかを調べる必要が出る。キーごと外せばその判断が要らない。
+
+**`.env` は書き換えない。** Compose はプロジェクトの `.env` を自動で読み、そこに書かれた `COMPOSE_PROFILES` も効く。ただし `.env` は利用者とプロジェクトの持ち物であり、devbase が値を消すと素の `docker compose` を叩いたときの挙動まで変わる。`--profile` の明示と環境変数の除去なら、影響は devbase 経由の呼び出しだけに閉じる。
+
+| 案 | 効く範囲 | 判定 |
+| --- | --- | --- |
+| `.env` から `COMPOSE_PROFILES` を消す | 素の `docker compose` にも及ぶ | 不可。利用者の持ち物を変える |
+| 環境変数を空文字列にする | devbase 経由のみ | 不可。空の解釈が版に依る |
+| 環境変数を外し、`--profile` で明示する | devbase 経由のみ | 可 |
+
+`--profile` を明示する経路では、環境変数を外しても対象は変わらない。`--profile` と `COMPOSE_PROFILES` は和集合として扱われるため、外して困るのは「環境変数だけでプロファイルを有効にしていた」場合である。devbase はその使い方を約束していない。プロファイルの起動は `profile up` が唯一の入口である。
+
 ## テスト設計
 
 | 受け入れ条件 | 何で確かめるか |
@@ -388,7 +432,8 @@ graph LR
 | 未知のプロファイル名で 1 で止まる | 既知の名前が出力に並ぶことと終了コードを検査する |
 | `project profile up <名前> X` が同じ結果になる | 引数の解釈（`[name] <profile>` の割り当て）を `tests/cli` の既存の書き方で検査する |
 | `devbase down` が全プロファイルを消し、0 で終わる | 引数列に `--profile *` が含まれることを検査する。全体の削除は手動確認 |
-| `devbase up` の後は既定のサービスだけが動く | 冒頭の停止が `--profile *` を通ることを検査する。実際の状態は手動確認 |
+| `devbase up` の後は既定のサービスだけが動く | 冒頭の停止が `--profile *` を通ることと、起動の引数列に `--profile` が入らないことを検査する。実際の状態は手動確認 |
+| `COMPOSE_PROFILES` が設定された環境でも `devbase up` は既定のサービスだけを起動する | `COMPOSE_PROFILES=test` を `monkeypatch.setenv` で置き、`docker_compose` が組み立てた `env` にこのキーが無いことを検査する。`up` の起動・`down`・`profile up` / `down` の各経路で見る。実際の状態は手動確認 |
 | フックが `DEVBASE_ACTIVE_PROFILES` を受け取る | `hook_env` の戻り値と、`subprocess.run` へ渡された `env` を検査する。`cmd_up` 経由は空文字列、`cmd_profile_up` 経由はプロファイル名 1 つになることを見る。複数値はこの範囲では作れないため検査しない |
 | フックの失敗が終了コードへ出る | 失敗する `./deploy` を置き、戻り値が 1 になることを検査する |
 | プロファイルを持たないプロジェクトの挙動が変わらない | 既存の `tests/commands/test_container_up_order.py` と `tests/cli/test_up_roundtrips.py` が通ること |

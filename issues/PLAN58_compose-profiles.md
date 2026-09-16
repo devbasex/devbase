@@ -78,6 +78,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 
 - [ ] プロファイル X のサービスが起動している状態で `devbase down` を実行すると、既定のサービスとプロファイル X のサービスの両方が削除され、終了コード 0 で終わる
 - [ ] 同じ状態で `devbase up` を実行すると、冒頭の停止でプロファイル X のサービスも止まり、起動後は既定のサービスだけが動いている
+- [ ] `COMPOSE_PROFILES` が設定された環境でも `devbase up` は既定のサービスだけを起動する。環境変数でも `.env` でも同じである（設計の決定 7）
 
 フック:
 
@@ -99,6 +100,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | 運用・保守性 | プロファイルのサービスを起動・停止した記録が、既存のログと同じ体裁（`logger.info`）で残る |
 | セキュリティ | プロファイルのサービスへ渡す機密は、そのサービスが元々 `env_file` で参照していた由来のキーだけに限る（`_services_receiving_secrets` の現在の規則を変えない）。素の `docker compose` を使わず devbase を通すのは、機密の注入と対象サービスの限定をこの規則の中で行うためである |
 | システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'`、`--no-deps`、サービスを明示した `stop` / `rm -f` である。案内する `depends_on.required` が 2.20.0 以上を要するため、2.20.0 未満は対象外とする |
+| 再現性 | 有効なプロファイルは devbase が `--profile` で決める。利用者の `COMPOSE_PROFILES` に結果が左右されない（設計の決定 7） |
 
 最低対応版を 2.20.0 とする根拠は次のとおりである。
 
@@ -119,7 +121,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | --- | --- |
 | 公開インタフェース | `devbase container profile` と `devbase project profile` を追加する。既存のコマンドの引数は変えない。`devbase down` は内部で `--profile '*'` を付ける |
 | データ | なし（スキーマも名前付きボリュームの構成も変えない） |
-| 既存の振る舞い | `down` が全プロファイルを対象にする。フックへ渡す環境変数が 1 つ増える。`profiles:` を使っていないプロジェクトでは、どちらも対象が変わらない。`--profile '*'` を確認済みなのは v5.1.4 で、2.20.0 以上 5.x 未満は未検証である |
+| 既存の振る舞い | `down` が全プロファイルを対象にする。devbase 経由の Compose へ `COMPOSE_PROFILES` を渡さなくなる。フックへ渡す環境変数が 1 つ増える。`profiles:` を使っていないプロジェクトでは、どちらも対象が変わらない。`--profile '*'` を確認済みなのは v5.1.4 で、2.20.0 以上 5.x 未満は未検証である |
 
 ## 検証手段
 
@@ -129,6 +131,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | 静的解析 | `uv run ruff check lib/ tests/`（設定がある場合。無ければ省く） |
 | 手動確認 | `profiles` を付けた最小の compose（dev / app、`alpine:3`）で `devbase up` → `devbase container profile up X` → `devbase container profile down X` → `devbase down` を通し、各段で `docker ps` の Container ID と `StartedAt` を記録する。app へ `depends_on: {dev: {condition: service_started, required: false}}` を付けた版と、`depends_on: [dev]` を付けた版でも同じ手順を通す。さらに dev の環境変数の値を変えてから `profile up X` を実行し、dev が再作成されないことを確かめる |
 | 手動確認（依存の向きが逆の構成） | dev へ `depends_on: {db: {condition: service_started, required: false}}` を書き、db をプロファイル X に入れた構成で `profile up X` → `profile down X` を通す。停止の前後で dev の Container ID と `StartedAt` が変わらないことを見る。`stop` / `rm -f` が依存元を対象に含めないことの確認である（設計の決定 5） |
+| 手動確認（`COMPOSE_PROFILES` が有効な環境） | `COMPOSE_PROFILES=X` を環境変数に設定した状態と、プロジェクトの `.env` に書いた状態の両方で `devbase up` を通す。`docker ps` に既定のサービスだけが並ぶことを見る。続けて `profile up X` → `profile down X` が従来どおり効くことも確かめる |
 | 手動確認（退行） | 確認済みの Docker Compose v5.1.4 で実施する。`profiles:` を持たないプロジェクトで `devbase up` と `devbase down` を通し、従来どおり動くことを確かめる。起動するコンテナの集合と順序、`down` 後に何も残らないことを見る。`--profile '*'` がこの経路に入るためである |
 
 自動テストで dev の Container ID の不変を確かめることはできない（実コンテナが要る）。この条件は手動確認で判定する。
