@@ -315,3 +315,30 @@ def test_up_names_default_services_from_generated_compose(up_harness, monkeypatc
     up = [k for name, k in calls if name == 'up']
     assert up == [{'compose_file': container._SCALE_COMPOSE_FILE, 'detach': True,
                    'services': ['dev-1', 'redis']}]
+
+
+def test_default_services_failure_keeps_containers_running(up_harness, monkeypatch):
+    """起動対象の解決に失敗したら停止も起動もせず、旧構成を書き戻して失敗する。
+
+    ``config --services`` の失敗 (補間エラー・CLI の不整合) を停止の後に知ると、
+    稼働中の開発環境が止まったまま残る。構成の解決は停止より前に済ませる。
+    """
+    calls = up_harness
+    container._SCALE_COMPOSE_FILE.write_text(OLD_COMPOSE)
+
+    def fake_generate(scale, secrets, dev_environment=None):
+        container._SCALE_COMPOSE_FILE.write_text(NEW_COMPOSE)
+        return container._SCALE_COMPOSE_FILE
+
+    def broken_defaults(compose_file, environ=None):
+        raise DevbaseError('docker compose config --services failed')
+
+    monkeypatch.setattr(container, '_inject_secrets', lambda *, required: object())
+    monkeypatch.setattr(container, '_generate_compose_for', fake_generate)
+    monkeypatch.setattr(container, 'default_services', broken_defaults)
+
+    assert container.cmd_up() == 1
+
+    assert calls == []                          # down も up も呼ばれていない
+    assert container._SCALE_COMPOSE_FILE.read_text() == OLD_COMPOSE
+    assert not Path(f'{container._SCALE_COMPOSE_FILE}.prev').exists()

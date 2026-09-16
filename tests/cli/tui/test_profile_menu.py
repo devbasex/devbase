@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from devbase.commands import container
@@ -23,8 +26,19 @@ def _no_pause(monkeypatch):
 
 
 @pytest.fixture
-def root(tmp_path):
+def root(tmp_path, monkeypatch):
+    """``$DEVBASE_ROOT`` を tmp へ向け、機密の注入は実 backend に触れないよう差し替える。
+
+    解決は対象プロジェクトへ chdir してから行う。テストの CWD は ``elsewhere`` に置き、
+    別ディレクトリから一覧を開いた状況にする。
+    """
     (tmp_path / "projects" / "carmo").mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setenv("DEVBASE_ROOT", str(tmp_path))
+    monkeypatch.setenv("PWD", str(elsewhere))
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(container, "_inject_secrets", lambda *, required: None)
     return tmp_path
 
 
@@ -38,7 +52,7 @@ def resolve_to(monkeypatch, result):
     asked = []
 
     def fake(compose_file, environ=None):
-        asked.append(compose_file)
+        asked.append(Path(compose_file).resolve())
         if isinstance(result, Exception):
             raise result
         return result
@@ -54,7 +68,7 @@ def test_profile_items_follow_running_ops_when_profiles_exist(root, monkeypatch)
     ops = actions_project._running_ops(root, "carmo")
 
     assert ops == list(actions_project._RUNNING_OPS) + PROFILE_ITEMS
-    assert asked == [path]
+    assert asked == [path.resolve()]
 
 
 @pytest.mark.parametrize("result", [{}, DevbaseError("config failed")])
@@ -123,3 +137,39 @@ def test_profile_ops_return_to_project_list(root, monkeypatch, op):
 
     assert result is menu.MENU_BACK        # 1 回の実行で一覧へ戻る (2 回目の選択が無い)
     assert len(shown) == 1 and PROFILE_ITEMS[0] in shown[0]
+
+
+def test_profiles_resolve_inside_target_project_and_restore_session(root, monkeypatch):
+    """別ディレクトリから開いても、対象プロジェクトの env と機密を載せた上で解決する。
+
+    生成物が ``${REVIEW_APP_IMAGE:?required}`` のように対象の env にだけある変数を
+    参照しても解決できるようにするため。終わった後は CWD と ``os.environ`` を戻し、
+    TUI セッションへ残さない。
+    """
+    project = root / "projects" / "carmo"
+    (project / "env").write_text("REVIEW_APP_IMAGE=review:latest\n")
+    generated(root)
+    injected = []
+    monkeypatch.setattr(container, "_inject_secrets",
+                        lambda *, required: injected.append(
+                            (required, Path.cwd().resolve())))
+    seen = {}
+
+    def fake(compose_file, environ=None):
+        seen["cwd"] = Path.cwd().resolve()
+        seen["image"] = os.environ.get("REVIEW_APP_IMAGE")
+        seen["project"] = os.environ.get("COMPOSE_PROJECT_NAME")
+        return {"test": ["app"]}
+
+    monkeypatch.setattr(container, "profile_services", fake)
+    monkeypatch.delenv("REVIEW_APP_IMAGE", raising=False)
+    before_cwd = Path.cwd()
+    before_env = os.environ.copy()
+
+    ops = actions_project._running_ops(root, "carmo")
+
+    assert ops == list(actions_project._RUNNING_OPS) + PROFILE_ITEMS
+    assert seen == {"cwd": project.resolve(), "image": "review:latest", "project": "carmo"}
+    assert injected == [(False, project.resolve())]
+    assert Path.cwd() == before_cwd
+    assert os.environ.copy() == before_env

@@ -22,7 +22,7 @@ from pathlib import Path
 
 from devbase.log import get_logger
 from devbase.tui import flow, menu
-from devbase.tui.dispatch import dispatch_lifecycle
+from devbase.tui.dispatch import _preserve_cwd_env, dispatch_lifecycle
 
 logger = get_logger(__name__)
 
@@ -57,29 +57,22 @@ _ARG_CANCEL = flow.ARG_CANCEL
 _ABORT = flow.ABORT
 
 
-def _profile_names(devbase_root: Path, name: str) -> list[str]:
+def _profile_names(name: str) -> list[str]:
     """プロジェクトのプロファイル名。生成物が無い・解決に失敗したときは空。
 
-    解決は ``docker compose config`` で行い、デーモンへの接続は要らない (PLAN58 決定 1)。
-    失敗を「持たない」として扱うのは、一覧の操作メニューを出すこと自体を止めないため。
+    解決は対象プロジェクトの env と機密を載せて ``docker compose config`` で行う
+    (PLAN58 決定 1)。切替による CWD / 環境変数の変更は TUI セッションへ残さない。
     """
     from devbase.commands import container
-    from devbase.errors import DevbaseError
 
-    compose_file = Path(devbase_root) / "projects" / name / container._SCALE_COMPOSE_FILE
-    if not compose_file.is_file():
-        return []
-    try:
-        return list(container.profile_services(compose_file))
-    except (DevbaseError, OSError) as e:
-        logger.debug("プロファイルを解決できません (%s): %s", name, e)
-        return []
+    with _preserve_cwd_env():
+        return container.project_profile_names(name)
 
 
 def _running_ops(devbase_root: Path, name: str) -> list[tuple[str, str]]:
     """running 行で選べる操作。プロファイルを持つときだけ起動・停止の 2 項目を足す。"""
     ops = list(_RUNNING_OPS)
-    if _profile_names(devbase_root, name):
+    if _profile_names(name):
         ops += _PROFILE_OPS
     return ops
 
@@ -160,7 +153,7 @@ def _op_build(devbase_root: Path, name: str):
 def _op_profile(operation: str):
     """プロファイルの起動・停止。名前が 1 つだけでも選択として出す (PLAN58)。"""
     def run(devbase_root: Path, name: str):
-        names = _profile_names(devbase_root, name)
+        names = _profile_names(name)
         profile = flow.need(menu.select(
             f"'{name}' のプロファイルを選択 {menu.HINT_BACK}:",
             [(n, n) for n in names], back=True, search=False))

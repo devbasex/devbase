@@ -628,6 +628,49 @@ def _resolve_project_name(project_name: str) -> bool:
     return True
 
 
+def _enter_project(project_name: str) -> bool:
+    """対象プロジェクトへ切り替え、その env と機密を載せる。解決できなければ False。
+
+    CWD と ``os.environ`` を書き換える。元へ戻すのは呼び出し側の責務 (CLI はプロセスの
+    終了で、TUI は ``tui.dispatch._preserve_cwd_env`` で戻す)。
+    """
+    # cli.main() は dispatch の前に**現在地**の機密を注入している。切替先の
+    # env を読む**前**に切替元の機密を落とす (PLAN52)。後に落とすと、
+    # clear_injected が「注入前の値」へ戻す動きで、切替先の env が載せた
+    # 同名キー (DEVBASE_DOCKER_CONTEXT など) まで消してしまう。
+    from devbase.env import runtime as _runtime
+    _runtime.clear_injected()
+    if not _resolve_project_name(project_name):
+        return False
+    # 切替先の機密で作り直してから context を解決する。
+    _inject_secrets(required=False)
+    return True
+
+
+def project_profile_names(project_name: str) -> list[str]:
+    """プロジェクトのプロファイル名。生成物が無い・解決に失敗したときは空 (PLAN58 決定 8)。
+
+    別ディレクトリから開いた一覧 (TUI) から呼ばれるため、CLI と同じく対象プロジェクトへ
+    切り替えて env と機密を載せてから Compose に解決させる。生成物が対象の env にだけある
+    変数を参照していても解決できるようにするため。CWD と ``os.environ`` は戻さないので、
+    呼び出し側が復元の範囲を張る。失敗を「持たない」とするのは、操作メニューを出すこと
+    自体を止めないため。
+    """
+    from devbase.env import runtime as _runtime
+
+    docker_context.reset()
+    try:
+        if not _enter_project(project_name) or not _SCALE_COMPOSE_FILE.is_file():
+            return []
+        return list(profile_services(_SCALE_COMPOSE_FILE))
+    except (DevbaseError, OSError) as e:
+        logger.debug("プロファイルを解決できません (%s): %s", project_name, e)
+        return []
+    finally:
+        docker_context.reset()
+        _runtime.release_store()
+
+
 def _dispatch_lifecycle(args) -> int:
     """`project` / `container` 共有のサブコマンドディスパッチャ。
 
@@ -652,17 +695,8 @@ def _dispatch_lifecycle(args) -> int:
     try:
         # name 指定時はディレクトリを解決して chdir する。解決失敗 (DEVBASE_ROOT 未設定
         # / 存在しない name) は候補提示の上でエラー終了する。
-        if project_name:
-            # cli.main() は dispatch の前に**現在地**の機密を注入している。切替先の
-            # env を読む**前**に切替元の機密を落とす (PLAN52)。後に落とすと、
-            # clear_injected が「注入前の値」へ戻す動きで、切替先の env が載せた
-            # 同名キー (DEVBASE_DOCKER_CONTEXT など) まで消してしまう。
-            from devbase.env import runtime as _runtime
-            _runtime.clear_injected()
-            if not _resolve_project_name(project_name):
-                return 1
-            # 切替先の機密で作り直してから context を解決する。
-            _inject_secrets(required=False)
+        if project_name and not _enter_project(project_name):
+            return 1
 
         # `--context` は指定されたときだけ渡す。各 handler の既定は None なので結果は
         # 同じで、指定が無い経路は従来と同じ呼び出しの形を保つ。
@@ -1141,15 +1175,17 @@ def _run_deploy_pipeline(project_name: str, scale: int, config,
         logger.info("[2/6] Generating scaled compose file...")
         override_file = _build_scaled_override(scale, config, project_name, target)
         logger.info("Generated: %s", override_file)
+        # 起動の対象は既定のサービスに限る。端末や .env の COMPOSE_PROFILES でプロファイルが
+        # 有効になっても、プロファイルのサービスは起動しない (PLAN58 決定 7)。
+        # 構成の解決 (docker compose config) も停止より前に済ませる。補間エラーなどで
+        # 失敗しても、稼働中の環境を落としたままにせず旧構成を書き戻して止まる
+        services = default_services(override_file)
 
         logger.info("[3/6] Stopping existing containers...")
         docker_compose_down(compose_file=down_compose_file)
 
     logger.info("[4/6] Starting containers...")
-    # 起動の対象は既定のサービスに限る。端末や .env の COMPOSE_PROFILES でプロファイルが
-    # 有効になっても、プロファイルのサービスは起動しない (PLAN58 決定 7)
-    docker_compose_up(compose_file=override_file, detach=True,
-                      services=default_services(override_file))
+    docker_compose_up(compose_file=override_file, detach=True, services=services)
 
     logger.info("[5/6] Waiting for containers to be ready...")
     wait_for_containers_ready(
