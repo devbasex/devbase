@@ -116,7 +116,7 @@ tests/
 
 | 関数 | 変更 | 責務 |
 | --- | --- | --- |
-| `profile_services(compose: dict) -> dict[str, list[str]]` | 新設（`commands/container.py`） | 構成の辞書から「プロファイル名 → サービス名」を作る。純粋な処理で、終了コードも出力も持たない |
+| `profile_services(compose: dict, environ) -> dict[str, list[str]]` | 新設（`commands/container.py`） | 構成の辞書から「プロファイル名 → サービス名」を作る。名前は `_expand_env_vars` で展開してから使う（決定 1）。純粋な処理で、終了コードも出力も持たない |
 | `default_services(compose: dict) -> list[str]` | 新設（`commands/container.py`） | 構成の辞書から `profiles` を持たないサービス名を宣言順に返す。`cmd_up` が起動の対象として渡す（決定 7）。純粋な処理である |
 | `cmd_profile_up(profile, context)` | 新設 | F1。プロファイルのサービスをすべて明示し、`--no-deps` を付けて起動する（決定 2）。終了コードを返す |
 | `cmd_profile_down(profile, context)` | 新設 | F2。`docker_compose_down` は通さず、`stop` と `rm -f` の 2 段をサービス名付きで組む（決定 5）。終了コードを返す |
@@ -361,6 +361,7 @@ graph LR
 | `.env` に `COMPOSE_PROFILES` が書かれていても `devbase up` は既定のサービスだけを起動する | 組み立てた `env` の値と、`up -d` の引数へ並ぶ既定のサービス名を検査する。既定のサービスがプロファイルのサービスへ `depends_on` を持つ構成での実際の起動は手動確認で見る |
 | フックが `DEVBASE_ACTIVE_PROFILES` を受け取る | `hook_env` の戻り値と、`subprocess.run` へ渡された `env` を検査する。`cmd_up` 経由は空文字列、`cmd_profile_up` 経由はプロファイル名 1 つになることを見る。複数値はこの範囲では作れないため検査しない |
 | フックの失敗が終了コードへ出る | 失敗する `./deploy` を置き、戻り値が 1 になることを検査する |
+| `profiles` に変数の式が書かれていても名前が一致する | `profiles: ["${TEST_PROFILE:-test}"]` を持つ構成と `TEST_PROFILE` 未設定の環境を与え、`profile_services` が `test` を返すことを検査する。`list` の表示と `profile up test` が同じ名前で通ることも見る |
 | 一覧の操作に 2 項目が並ぶ | プロファイルを持つ構成で `_running_ops` の戻り値を検査する |
 | プロファイルを持たないプロジェクトでは 2 項目が出ない | 同じ関数へプロファイルの無い構成を与え、現在と同じ並びになることを検査する |
 | 一覧から実行しても dev が変わらない | 委譲へ渡る属性が `profile` のサブコマンドと名前であることを検査する。実際の状態は手動確認 |
