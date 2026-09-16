@@ -18,7 +18,7 @@
 | --- | --- |
 | プロファイルの解決 | 生成済みの構成ファイルを読み、プロファイル名からサービス名の集合を求める。稼働状況は持たない |
 | プロファイルの操作 | 起動・停止・一覧の 3 つの入口。接続先の反映と機密の注入を済ませてから Compose を呼ぶ |
-| Compose の呼び出し | `docker compose` のコマンド列を組み立てて実行する。起動には `--no-deps` を付け、停止には全プロファイルを指定する |
+| Compose の呼び出し | `docker compose` のコマンド列を組み立てて実行する。起動には `--no-deps` を付ける。プロファイルの停止は `stop` と `rm -f` の 2 段で行う。全体の停止には全プロファイルを指定する |
 | フックの実行 | プロジェクトの `./deploy` を、有効なプロファイルを環境変数へ載せて呼ぶ。同じ環境変数は `./pre-up` にも渡る |
 | 引数の受け口 | `project` / `container` の配下に `profile` のサブコマンドを足す |
 
@@ -76,7 +76,7 @@ graph TD
     P -.->|触らない| D1
 ```
 
-境界をまたぐのは 2 つである。Compose へ渡すコマンド列と、`_inject_secrets` がプロセスの環境へ載せた機密である。プロファイルの操作はサービス名をすべて明示し、`--no-deps` を付けて渡す。そのため dev-1..N は操作の対象に入らない。
+境界をまたぐのは 2 つである。Compose へ渡すコマンド列と、`_inject_secrets` がプロセスの環境へ載せた機密である。プロファイルの操作はサービス名をすべて明示して渡す。起動はさらに `--no-deps` を付ける。停止は対象を広げない `stop` と `rm -f` を使う（決定 5）。そのため dev-1..N はどちらの操作の対象にも入らない。
 
 ## 置き場所
 
@@ -107,7 +107,7 @@ tests/
 | --- | --- | --- |
 | `profile_services(compose: dict) -> dict[str, list[str]]` | 新設（`commands/container.py`） | 構成の辞書から「プロファイル名 → サービス名」を作る。純粋な処理で、終了コードも出力も持たない |
 | `cmd_profile_up(profile, context)` | 新設 | F1。プロファイルのサービスをすべて明示し、`--no-deps` を付けて起動する（決定 2）。終了コードを返す |
-| `cmd_profile_down(profile, context)` | 新設 | F2。`docker_compose_down` は通さず、自分で `down` のコマンド列を組む（決定 5）。終了コードを返す |
+| `cmd_profile_down(profile, context)` | 新設 | F2。`docker_compose_down` は通さず、`stop` と `rm -f` の 2 段をサービス名付きで組む（決定 5）。終了コードを返す |
 | `cmd_profile_list(context)` | 新設 | F3。終了コードを返す |
 | `docker_compose_down(compose_file, all_profiles=True)` | 変更（`utils/docker.py`） | F4。`--profile '*'` を付けて呼ぶ。`['down', '-t0']` という固定の形は変えない |
 | `hook_env(config, active_profiles=())` | 変更（`project/runtime.py`） | F5。`DEVBASE_ACTIVE_PROFILES` を足す。`_run_pre_up_hook` と `_run_deploy_script_for_instances` の両方に効く |
@@ -138,7 +138,7 @@ tests/
 | 名前 | 入力 | 出力（成功） | 失敗の形 |
 | --- | --- | --- | --- |
 | `devbase project profile up [name] <profile>` | プロファイル名（必須）、プロジェクト名（省略時は現在地） | 対象サービスを起動し、フックを実行して 0 | 構成ファイルが無い / 未知のプロファイル / Compose かフックが失敗 → 1 |
-| `devbase project profile down [name] <profile>` | 同上 | 対象サービスのコンテナを削除して 0 | 同上（フックは呼ばない） |
+| `devbase project profile down [name] <profile>` | 同上 | 対象サービスを停止し、そのコンテナを削除して 0 | 同上。`stop` と `rm -f` のどちらかが失敗すれば 1（フックは呼ばない） |
 | `devbase project profile list [name]` | プロジェクト名（省略可） | プロファイルと稼働状況を表で出して 0 | 構成ファイルが無い → 1 |
 | `devbase container profile up <profile>` / `down <profile>` / `list`（`ct` も同じ） | プロファイル名のみ。プロジェクト名は受け付けない | 同上。非推奨の警告を 1 行出す | 同上 |
 
@@ -219,9 +219,37 @@ sequenceDiagram
     end
 ```
 
-停止（F2）は同じ並びから、フックの呼び出しを除いたものである。渡すのは `up -d` ではなく `down <サービス...>` である。`docker_compose_down` は通らない。理由は決定 5 に書く。
+停止（F2）は同じ並びから、フックの呼び出しを除いたものである。Compose を呼ぶ回数だけが 2 回になる。
 
-`--profile` は subcommand より前に置く必要がある。`docker_compose` は `-f` の後に、渡された配列をそのまま並べる。そのため `--profile X` を配列の先頭へ入れる。起動は `['--profile', X, 'up', '-d', '--no-deps', <サービス...>]`、停止は `['--profile', X, 'down', <サービス...>]` になる。`<サービス...>` はプロファイル X に属するサービスの全件である（決定 2）。
+```mermaid
+sequenceDiagram
+    participant U as 利用者
+    participant OP as プロファイルの操作
+    participant RS as プロファイルの解決
+    participant DC as Compose の呼び出し
+    U->>OP: cmd_profile_down("local-app")
+    OP->>RS: 生成済みの構成を読む
+    RS-->>OP: サービス名の集合
+    OP->>DC: compose --profile local-app stop <サービス...>
+    DC-->>OP: 終了コード
+    alt stop が失敗
+        OP-->>U: 1（rm は呼ばない）
+    else
+        OP->>DC: compose --profile local-app rm -f <サービス...>
+        DC-->>OP: 終了コード
+        OP-->>U: 0 または 1
+    end
+```
+
+`down` は使わない。`docker_compose_down` も通らない。理由は決定 5 に書く。
+
+`--profile` は subcommand より前に置く必要がある。`docker_compose` は `-f` の後に、渡された配列をそのまま並べる。そのため `--profile X` を配列の先頭へ入れる。組み立てるコマンド列は次のとおりである。`<サービス...>` はどれもプロファイル X に属するサービスの全件である（決定 2）。
+
+| 操作 | コマンド列 |
+| --- | --- |
+| 起動 | `['--profile', X, 'up', '-d', '--no-deps', <サービス...>]` |
+| 停止（1 段目） | `['--profile', X, 'stop', <サービス...>]` |
+| 停止（2 段目） | `['--profile', X, 'rm', '-f', <サービス...>]` |
 
 `up` と `down` の冒頭の停止（F4）は次のように変わる。
 
@@ -239,9 +267,9 @@ graph LR
 | --- | --- | --- | --- |
 | 運用・保守性 | プロファイルのサービスを起動・停止した記録が、既存のログと同じ体裁（`logger.info`）で残る | 対象サービス名とプロファイル名を `logger.info` で 1 行ずつ出す。Compose の出力はそのまま標準出力へ流す | `caplog` で起動・停止の各 1 行を検査する |
 | セキュリティ | プロファイルのサービスへ渡す機密は、そのサービスが元々 `env_file` で参照していた由来のキーだけに限る | 生成済みの `.docker-compose.scale.yml` をそのまま使う。機密の列挙はこのファイルが既に持つため、プロファイルの操作は新しい注入経路を作らない。実行前に `_prepare_compose` で既存と同じ注入を通す | 生成物のサービスごとの `environment` が、プロファイルの有無で変わらないことをテストで検査する |
-| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'` と `--no-deps` である | 最低対応版を 2.20.0 とする。`--no-deps` は起動にだけ、`--profile '*'` は停止にだけ使う。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる想定である（未検証） | v5.1.4 で全サービスが消えることを手動で確かめる。同じ版で、プロファイルを持たないプロジェクトの `up` / `down` が従来どおり動くことも確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、2.20.0 以上 5.x 未満は未検証のまま「未確認のまま残ること」に載せる |
+| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'`、`--no-deps`、サービスを明示した `stop` / `rm -f` である | 最低対応版を 2.20.0 とする。`--no-deps` は起動にだけ、`--profile '*'` は全体の停止にだけ使う。プロファイルの停止は `stop` と `rm -f` で行い、`down` のサービス指定は使わない（決定 5）。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる想定である（未検証） | v5.1.4 で全サービスが消えることを手動で確かめる。同じ版で、プロファイルを持たないプロジェクトの `up` / `down` が従来どおり動くことも確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、2.20.0 以上 5.x 未満は未検証のまま「未確認のまま残ること」に載せる |
 
-既定のサービスを対象から外すのは `--no-deps` である。この選択肢は古くからあり、版の下限を作らない。下限を決めるのは `depends_on.required` のほうである。この属性は 2.20.0 からの機能で、受け入れ条件と文書の構成例が使う。そのため 2.20.0 未満では、構成の検証そのものに失敗する。
+起動で既定のサービスを対象から外すのは `--no-deps` である。停止で対象から外すのは、サービスを明示した `stop` / `rm -f` である。どれも古くからある形で、版の下限を作らない。下限を決めるのは `depends_on.required` だけである。この属性は 2.20.0 からの機能で、受け入れ条件と文書の構成例が使う。そのため 2.20.0 未満では、構成の検証そのものに失敗する。
 
 | 版 | 扱い |
 | --- | --- |
@@ -303,18 +331,31 @@ graph LR
 
 `up` の冒頭の停止を dev-1..N だけに絞る案は採らない（利用者の指示、2026-09-16）。テストを続けたい場合は `up` の後にもう一度プロファイルを起動する。
 
-### 決定 5: プロファイルの停止に `-t0` を使わない
+### 決定 5: プロファイルの停止は `down` を使わず、`stop` と `rm -f` の 2 段で行う
 
-プロファイルに入るのはデータベースのような状態を持つサービスである。`devbase down` は開発環境ごと畳む操作のため `-t0` で即座に落とす。プロファイルの停止は稼働中の開発環境を残したまま行う。こちらは既定の猶予（10 秒）で落とす。
+`cmd_profile_down` はまず `docker_compose(['--profile', X, 'stop', <サービス...>])` を呼ぶ。続けて `docker_compose(['--profile', X, 'rm', '-f', <サービス...>])` を呼ぶ。`<サービス...>` はプロファイル X の全件である（決定 2）。1 段目が失敗したら 2 段目は呼ばず、1 を返す。
 
-そのため `cmd_profile_down` は既存の `docker_compose_down` を通らない。この関数は `['down', '-t0']` を固定で組み立て、サービス名の引数も受け取らないためである。`cmd_profile_down` は `docker_compose(['--profile', X, 'down', <サービス...>])` を直接呼ぶ。`-t0` は付けない。
+`down <サービス...>` を渡す案は採らない。理由は 2 つある。
+
+| 理由 | 中身 |
+| --- | --- |
+| 対象が広がらない | `stop` / `rm` のサービス指定は古くから安定しており、依存元をたどって対象を広げない |
+| 版の下限を作らない | `down [SERVICES]` の対応版を調べる必要がなくなり、最低対応版の根拠が `depends_on.required` の 2.20.0 だけで閉じる |
+
+**`down <サービス...>` は依存元も削除する。** Compose の対象選択は、指定したサービスの祖先も含める。祖先とは、そのサービスへ `depends_on` を持つ側である。根拠は [v5.1.4 の実装](https://github.com/docker/compose/blob/v5.1.4/pkg/compose/dependencies.go#L104-L129)である。dev が `depends_on: {db: {condition: service_started, required: false}}` を持つ構成では、`down db` が dev も消す。受け入れ条件「既定のサービスの Container ID と `StartedAt` が変わらない」はこれで崩れる。`required: false` はこれを止めない（決定 2 と同じ理由）。
+
+**`down [SERVICES]` は版の下限を左右する。** この位置引数は比較的新しい追加で、宣言している最低対応版 2.20.0 が受け付ける保証が無い。受け付けない版では、`down` がプロジェクト全体（dev を含む）を落とす。`stop` / `rm` へ寄せると、対応版を調べる必要そのものが消える。
+
+**猶予は既定の 10 秒とする。** プロファイルに入るのはデータベースのような状態を持つサービスである。`devbase down` は開発環境ごと畳む操作のため `-t0` で即座に落とす。プロファイルの停止は稼働中の開発環境を残したまま行うため、`stop` に `-t` を付けず、既定の猶予で落とす。
+
+**ボリュームは消さない。** `rm` には `-f` だけを付け、`-v` は付けない。`-v` は匿名ボリュームを消す選択肢である。名前付きボリュームが残ることは受け入れ条件にある。`-f` は削除の確認を省くためだけに要る。
 
 `docker_compose_down` に `services` と `timeout` の引数を足す案は採らない。この関数の呼び出し側は `devbase down` と `up` 冒頭の停止だけであり、どちらも全体を `-t0` で落とす。引数を増やすと、使われない組み合わせが関数の表に残る。変更は `--profile '*'` を足すことに留める（決定 4）。
 
-| 関数 | 用途 | タイムアウト | サービスの指定 |
-| --- | --- | --- | --- |
-| `docker_compose_down` | `devbase down` / `up` 冒頭の停止 | `-t0` | しない（全体） |
-| `cmd_profile_down` | プロファイルの停止 | 既定（10 秒） | する |
+| 関数 | 用途 | 使う subcommand | 猶予 | サービスの指定 |
+| --- | --- | --- | --- | --- |
+| `docker_compose_down` | `devbase down` / `up` 冒頭の停止 | `down` | `-t0` | しない（全体） |
+| `cmd_profile_down` | プロファイルの停止 | `stop` → `rm -f` | 既定（10 秒） | する |
 
 ### 決定 6: プロジェクト名は位置引数で受け、`bin/devbase` は変えない
 
@@ -339,7 +380,8 @@ graph LR
 | `depends_on: dev` を持つプロファイルサービスで dev が再作成されない | 手動確認。`depends_on: {dev: {condition: service_started, required: false}}` の構成と `depends_on: [dev]` の構成の両方で `profile up X` を実行し、dev-1..N の Container ID と `StartedAt` を前後で比べる |
 | dev の環境変数の値が変わっても dev が再作成されない | 手動確認。機密など dev の環境変数の値を変えてから `profile up X` を実行し、dev-1..N の Container ID と `StartedAt` を前後で比べる。`--no-deps` が無い組み立てでは再作成が起きることも確かめ、この選択肢が要ることを示す |
 | 生成物が `depends_on` の `required` を保つ | `generate_scaled_compose` の出力で、`depends_on: {dev: {condition: service_started, required: false}}` が `dev-1`..`dev-N` へ写り、各要素に `condition` と `required` が残ることを検査する |
-| `profile down X` でコンテナが削除され、ボリュームは残る | 引数列に `down <対象サービス>` が含まれ、`--volumes` を含まないことを検査する |
+| `profile down X` でコンテナが削除され、ボリュームは残る | 2 回の呼び出しが `--profile X stop <対象サービス...>` と `--profile X rm -f <対象サービス...>` であり、`down` も `-v` / `--volumes` も含まないことを検査する。`stop` が失敗したときに `rm` が呼ばれず 1 で終わることも見る |
+| dev がプロファイルのサービスへ `depends_on` を持っても dev が止まらない | 手動確認。dev に `depends_on: {db: {condition: service_started, required: false}}` を書いた構成で `profile up X` → `profile down X` を通し、dev-1..N の Container ID と `StartedAt` を停止の前後で比べる。`down db` の組み立てでは dev が消えることも確かめ、`stop` / `rm` へ寄せる必要を示す（決定 5） |
 | `profile list` がプロファイル名と稼働状況を出す | 稼働中のサービスを返す偽の `docker compose ps` を与え、出力の行を検査する。全稼働・一部稼働・全停止の 3 通りで `3/3 running` / `1/3 partial` / `0/3 stopped` を確かめる |
 | `project profile list` が `project list` へ流れない | `profile_subcommand` の分離を、`devbase project profile list` の解析結果と呼ばれたハンドラで検査する |
 | 構成ファイルが無いときに 1 で止まる | 空の一時ディレクトリで呼び、終了コードと、コンテナを作る呼び出しが発生しないことを検査する |
