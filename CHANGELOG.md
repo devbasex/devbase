@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Compose の `profiles` を付けた付随サービス群を、dev コンテナに触れずに後から起動・停止できるように
+  しました（PLAN58 / #189, #191）。** `devbase up` の既定では dev だけが起動します。
+  - `devbase project profile up|down [name] <profile>` / `devbase project profile list [name]` を追加しました
+    （`container` / `ct` にもあります。`[name]` は受け付けません）。起動は `--no-deps` で対象サービスだけを、
+    停止は `stop` → `rm -f` で行い、名前付きボリュームは残します
+  - `devbase list` の起動中の行の操作メニューに「テスト用サーバ起動 / 停止」を足しました（プロファイルを
+    持つプロジェクトだけ）
+  - `profile up` の後に `deploy` フックを呼び直します。フックは `DEVBASE_ACTIVE_PROFILES` で起動した
+    プロファイル名を受け取ります（`devbase up` からは空）
+  - 利用には Docker Compose 2.20.0 以上が要ります（`depends_on.required` のため）。書き方は
+    `docs/plugin-dev/compose-profiles.md`
+
+### Changed
+
+- `devbase down` と `devbase up` の冒頭の停止は、プロファイルのサービスも止めるようになりました
+  （`--profile '*'`）。`devbase up` の起動は `profiles` を持たないサービスを名前で明示して起動します
+- devbase 経由の `docker compose` には、端末の環境変数やプロジェクトの `.env` の `COMPOSE_PROFILES` が
+  効かなくなりました（devbase が `__devbase_none__` で上書きします）。素の `docker compose` には影響しません
+
+### Fixed
+
+- `devbase list` から別のプロジェクトを続けて操作すると、最初のプロジェクトにだけある機密が次の
+  プロジェクトの `docker compose` へ渡ることがあった問題を直しました（#191）
+
 ## [3.4.0] - 2026-09-15
 
 機密の保存先に OpenBao を選べるようになりました。起動中の dev コンテナの中からも `bao` で
