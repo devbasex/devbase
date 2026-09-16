@@ -181,6 +181,7 @@ MY_SECRET_API_KEY=sk-xxxxxxxxxxxx
 | `DEVBASE_WORK_DIR` | コンテナ内の既定の作業ディレクトリ（`work_dir`。未指定なら `/work/$DEVBASE_PRIMARY_DIR`） | ✓ | ✓ |
 | `DEVBASE_REPO_DIRS` | 全リポジトリのディレクトリ名を `project.yml` の宣言順に空白区切りで並べたもの | ✓ | ✓ |
 | `DEVBASE_INSTANCE_INDEX` | 実行対象のインスタンス番号（1 始まり）。`pre-up` はインスタンスごとに実行されないため渡りません | -- | ✓ |
+| `DEVBASE_ACTIVE_PROFILES` | 有効な Compose のプロファイル名。`devbase up` からは空、`devbase project profile up <名前>` の後の `deploy` にはその名前（[テスト用サーバを後から起動・停止する](compose-profiles.md)） | ✓ | ✓ |
 
 primary は `repos` の先頭（または `primary: true` を付けた 1 件）で、常にちょうど 1 件です。primary 以外も含めて全リポジトリを回したい場合は `DEVBASE_REPO_DIRS` を使います。
 

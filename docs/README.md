@@ -77,6 +77,7 @@ graph LR
 | [plugin.yml リファレンス](plugin-dev/plugin-yml-reference.md) | プラグイン定義ファイルの全フィールド |
 | [compose.yml ガイドライン](plugin-dev/compose-yml-guidelines.md) | Docker Compose 設定のベストプラクティス |
 | [repo 連携プロジェクトと pre-up populate](plugin-dev/repo-backed-projects.md) | 外部リポジトリを共有 work ボリュームへ populate する `pre-up` パターンと冪等スキップ |
+| [テスト用サーバを後から起動・停止する](plugin-dev/compose-profiles.md) | Compose の `profiles` で付随サービス群を `devbase up` から外し、`devbase project profile` で起動・停止する |
 
 ### devbase 開発者（devbase 本体を改善したい方）
 
@@ -114,7 +115,8 @@ docs/
 │   ├── quickstart.md                  ← クイックスタート
 │   ├── plugin-yml-reference.md        ← plugin.yml リファレンス
 │   ├── compose-yml-guidelines.md      ← compose.yml ガイドライン
-│   └── repo-backed-projects.md        ← repo 連携 / pre-up populate パターン
+│   ├── repo-backed-projects.md        ← repo 連携 / pre-up populate パターン
+│   └── compose-profiles.md            ← profiles でテスト用サーバを後から起動・停止
 └── developer/                         ← devbase 開発者向け
     ├── architecture.md                ← アーキテクチャ
     ├── contributing.md                ← コントリビューション

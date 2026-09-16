@@ -42,7 +42,7 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 
 ## `--context NAME`（共通オプション）
 
-`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild`（`project` /
+`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` / `profile`（`project` /
 `container` 配下と、トップレベルのショートカット）は `--context NAME` を受け付けます。
 そのコマンドの `docker` / `docker compose` を、指定した docker context の daemon へ向けます。
 
@@ -182,6 +182,28 @@ devbase project scale adminer 3
 ```
 
 新しい値は `project.yml` の `scale` に書き戻されるため、次回の `devbase up` にも引き継がれます。
+
+## `devbase project profile`
+
+`compose.yml` で `profiles:` を付けたサービス群を、dev コンテナに触れずに後から起動・停止します。
+書き方は [テスト用サーバを後から起動・停止する](../../plugin-dev/compose-profiles.md) を参照してください。
+
+```
+devbase project profile up [name] <profile> [--context NAME]
+devbase project profile down [name] <profile> [--context NAME]
+devbase project profile list [name] [--context NAME]
+```
+
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| `name` | いいえ | 対象プロジェクト名（省略時はカレント）。`container profile` / `ct profile` では受け付けません |
+| `<profile>` | はい（`up` / `down`） | `compose.yml` に書いたプロファイル名 |
+
+- `up`: そのプロファイルのサービスをすべて `--no-deps` 付きで起動し、`deploy` フックを `DEVBASE_ACTIVE_PROFILES=<profile>` で稼働中の全インスタンスについて呼び直す
+- `down`: そのプロファイルのサービスを `stop` → `rm -f` で停止・削除する（ボリュームは残る。フックは呼ばない）
+- `list`: `PROFILE` / `SERVICES` / `RUNNING` の表を出す。Docker のデーモンへ接続できないときは `RUNNING` を `不明` にする
+- どれも `devbase up` の後（`.docker-compose.scale.yml` がある状態）で使う。無ければ終了コード 1
+- `devbase up` の冒頭の停止と `devbase down` は、プロファイルのサービスも止める
 
 ## `devbase project migrate-config`
 
