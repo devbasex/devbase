@@ -17,7 +17,7 @@
 
 | 要素 | 責務 |
 | --- | --- |
-| プロファイルの解決 | 生成済みの構成ファイルを読み、プロファイル名からサービス名の集合を求める。`profiles` を持たない既定のサービスの一覧も同じ場所から求める。稼働状況は持たない |
+| プロファイルの解決 | 生成済みの構成ファイルを `-f` で渡して `docker compose config` を呼び、プロファイル名とサービス名の対応を得る。既定のサービスの一覧も同じ経路で求める。稼働状況は持たない |
 | プロファイルの操作 | 起動・停止・一覧の 3 つの入口。接続先の反映と機密の注入を済ませてから Compose を呼ぶ |
 | Compose の呼び出し | `docker compose` のコマンド列を組み立てて実行する。起動には `--no-deps` を付ける。プロファイルの停止は `stop` と `rm -f` の 2 段で行う。全体の停止には全プロファイルを指定する。有効なプロファイルは devbase が `--profile` で決め、`COMPOSE_PROFILES` には番兵の名前を入れて渡す。`devbase up` の起動は既定のサービスを明示して渡す（決定 7） |
 | フックの実行 | プロジェクトの `./deploy` を、有効なプロファイルを環境変数へ載せて呼ぶ。同じ環境変数は `./pre-up` にも渡る |
@@ -116,8 +116,8 @@ tests/
 
 | 関数 | 変更 | 責務 |
 | --- | --- | --- |
-| `profile_services(compose: dict, environ) -> dict[str, list[str]]` | 新設（`commands/container.py`） | 構成の辞書から「プロファイル名 → サービス名」を作る。名前は `_expand_env_vars` で展開してから使う（決定 1）。純粋な処理で、終了コードも出力も持たない |
-| `default_services(compose: dict) -> list[str]` | 新設（`commands/container.py`） | 構成の辞書から `profiles` を持たないサービス名を宣言順に返す。`cmd_up` が起動の対象として渡す（決定 7）。純粋な処理である |
+| `profile_services(compose_file, environ) -> dict[str, list[str]]` | 新設（`commands/container.py`） | `config --profiles` と `config --services` を呼び、「プロファイル名 → サービス名」を作る（決定 1）。Docker へ接続できないときは `DockerError` を送出する |
+| `default_services(compose_file, environ) -> list[str]` | 新設（`commands/container.py`） | `config --services` を番兵入りの環境で呼び、既定のサービス名を返す。`cmd_up` が起動の対象として渡す（決定 1・決定 7） |
 | `cmd_profile_up(profile, context)` | 新設 | F1。プロファイルのサービスをすべて明示し、`--no-deps` を付けて起動する（決定 2）。終了コードを返す |
 | `cmd_profile_down(profile, context)` | 新設 | F2。`docker_compose_down` は通さず、`stop` と `rm -f` の 2 段をサービス名付きで組む（決定 5）。終了コードを返す |
 | `cmd_profile_list(context)` | 新設 | F3。終了コードを返す |
@@ -126,7 +126,7 @@ tests/
 | `_compose_run(subcommand, ...)` | 変更（`commands/container.py:269`） | `docker_compose` を経由せず直接 `subprocess.run` する経路（`ps` / `logs`）。同じ `env=` を組み立てて渡す（決定 7） |
 | `_resolve_dev_service` / `_read_compose_services` | 変更（`commands/container.py`） | `config --format json` を直接呼ぶ経路。同じ `env=` を渡し、読むサービスの集合を devbase が決める（決定 7） |
 | エディタを開く経路の `ps` | 変更（`editor/opener.py:395`） | `ps --format json` を直接呼ぶ経路。同じ `env=` を渡す（決定 7） |
-| `_run_deploy_pipeline(...)` | 変更（`commands/container.py`） | 生成した `.docker-compose.scale.yml` から `default_services` を求め、`docker_compose_up` へ渡す |
+| `_run_deploy_pipeline(...)` | 変更（`commands/container.py`） | 生成した `.docker-compose.scale.yml` を `config --services` へ渡して既定のサービスを求め、`docker_compose_up` へ渡す |
 | `docker_compose_down(compose_file)` | 変更（`utils/docker.py`） | F4。引数は増やさず、内部で無条件に `--profile '*'` を足す。`['down', '-t0']` という固定の形は変えない（決定 5） |
 | `hook_env(config, active_profiles=())` | 変更（`project/runtime.py`） | F5。`DEVBASE_ACTIVE_PROFILES` を足す。`_run_pre_up_hook` と `_run_deploy_script_for_instances` の両方に効く |
 | `_run_deploy_script_for_instances(deploy_script, indices, config=None, active_profiles=()) -> bool` | 変更（`commands/container.py`） | 全インスタンスで成功したかを返す。`active_profiles` を受け取り、加工せず `hook_env` へ渡す。`cmd_up` は戻り値を使わず、現在の警告だけの扱いを保つ |
@@ -175,7 +175,7 @@ tests/
 
 **2 項目が出るのは、そのプロジェクトがプロファイルを持つときだけである**（決定 8）。持たないプロジェクトでは一覧の中身が現在と同じになる。
 
-プロファイル名の選択は、名前が 1 つだけのときも選択として出す。名前は `.docker-compose.scale.yml` から読む。生成物が無い（`devbase up` の前）ときは 2 項目を出さない。
+プロファイル名の選択は、名前が 1 つだけのときも選択として出す。名前は `profile_services` が返す一覧を使う（決定 1）。生成物が無い（`devbase up` の前）ときと、Docker へ接続できないときは 2 項目を出さない。
 
 実行は `dispatch_lifecycle('profile', name, profile_subcommand='up', profile='<名前>')` で共有のハンドラへ渡す。TUI はコマンドの中身を持たない。
 
@@ -302,7 +302,7 @@ sequenceDiagram
 | `devbase up` の起動 | `['up', '-d', <既定のサービス...>]`（`--profile` を付けない） | 番兵 |
 | `devbase down` / `up` 冒頭の停止 | `['--profile', '*', 'down', '-t0']` | 番兵 |
 
-`devbase up` の `<既定のサービス...>` は、生成物のうち `profiles` を持たないサービスの全件である（決定 7）。`--profile` を付けないことと合わせて、プロファイルのサービスは対象に入らない。
+`devbase up` の `<既定のサービス...>` は、`config --services` が返す既定のサービスの全件である（決定 1）。`--profile` を付けないことと合わせて、プロファイルのサービスは対象に入らない。
 
 `up` と `down` の冒頭の停止（F4）は次のように変わる。`COMPOSE_PROFILES` の除去は `docker_compose` と `_compose_run` の両方に共通で効く（決定 7）。
 
@@ -361,7 +361,7 @@ graph LR
 | `.env` に `COMPOSE_PROFILES` が書かれていても `devbase up` は既定のサービスだけを起動する | 組み立てた `env` の値と、`up -d` の引数へ並ぶ既定のサービス名を検査する。既定のサービスがプロファイルのサービスへ `depends_on` を持つ構成での実際の起動は手動確認で見る |
 | フックが `DEVBASE_ACTIVE_PROFILES` を受け取る | `hook_env` の戻り値と、`subprocess.run` へ渡された `env` を検査する。`cmd_up` 経由は空文字列、`cmd_profile_up` 経由はプロファイル名 1 つになることを見る。複数値はこの範囲では作れないため検査しない |
 | フックの失敗が終了コードへ出る | 失敗する `./deploy` を置き、戻り値が 1 になることを検査する |
-| `profiles` に変数の式が書かれていても名前が一致する | `profiles: ["${TEST_PROFILE:-test}"]` を持つ構成と `TEST_PROFILE` 未設定の環境を与え、`profile_services` が `test` を返すことを検査する。`list` の表示と `profile up test` が同じ名前で通ることも見る |
+| `profiles` に変数の式が書かれていても名前が一致する | `config --profiles` と `config --services` の出力を差し替え、`profile_services` が展開後の名前で対応を作ることを検査する。実際の展開は Compose が行うため、式を持つ構成での `list` と `profile up test` は手動確認で見る |
 | 一覧の操作に 2 項目が並ぶ | プロファイルを持つ構成で `_running_ops` の戻り値を検査する |
 | プロファイルを持たないプロジェクトでは 2 項目が出ない | 同じ関数へプロファイルの無い構成を与え、現在と同じ並びになることを検査する |
 | 一覧から実行しても dev が変わらない | 委譲へ渡る属性が `profile` のサブコマンドと名前であることを検査する。実際の状態は手動確認 |
