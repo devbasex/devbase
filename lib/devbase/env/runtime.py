@@ -260,6 +260,27 @@ def _history_for(target) -> Dict[str, Optional[str]]:
     return originals
 
 
+def snapshot_injected(environ=None) -> Optional[Dict[str, Optional[str]]]:
+    """対象マッピングの注入履歴の複製を返す。履歴が無ければ None。
+
+    環境変数の**値**を控えて後で戻す呼び出し側 (TUI の
+    ``tui.dispatch._preserve_cwd_env``) が、値と一緒に履歴も戻すために使う。値だけを
+    戻すと、戻った機密を次の :func:`clear_injected` が知らずに残してしまう。
+    """
+    target = environ if environ is not None else os.environ
+    entry = _injected_originals.get(id(target))
+    return None if entry is None else dict(entry[1])
+
+
+def restore_injected(snapshot: Optional[Dict[str, Optional[str]]], environ=None) -> None:
+    """:func:`snapshot_injected` で控えた履歴を書き戻す。None なら履歴を消す。"""
+    target = environ if environ is not None else os.environ
+    if snapshot is None:
+        _injected_originals.pop(id(target), None)
+    else:
+        _injected_originals[id(target)] = (target, dict(snapshot))
+
+
 def clear_injected(environ=None) -> List[str]:
     """この実行で載せた機密を取り除き、注入前の状態へ戻す。
 

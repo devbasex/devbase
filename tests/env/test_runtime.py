@@ -304,6 +304,59 @@ def test_child_env_keeps_the_existing_environment(root, store):
     assert env['TOKEN'] == 'sk-1'
 
 
+def test_restore_injected_brings_back_the_history_of_the_snapshot(root, store):
+    """控えた履歴を書き戻すと、その後の解除は控えた時点で載っていた機密を落とす"""
+    (root / 'projects' / 'api').mkdir()
+    store.age.save(WEB, {'WEB_ONLY': 'w'})
+    store.age.save(API, {'API_ONLY': 'a'})
+    environ = {}
+
+    runtime.inject(root, 'web', environ=environ, store=store)
+    snapshot = runtime.snapshot_injected(environ)
+    saved_values = dict(environ)
+
+    # 控えた後の切替で履歴が入れ替わる
+    runtime.clear_injected(environ)
+    runtime.inject(root, 'api', environ=environ, store=store)
+
+    # 値と履歴を揃えて戻す
+    environ.clear()
+    environ.update(saved_values)
+    runtime.restore_injected(snapshot, environ)
+
+    assert runtime.clear_injected(environ) == ['WEB_ONLY']
+    assert environ == {}
+
+
+def test_snapshot_is_not_changed_by_later_injection(root, store):
+    """控えは複製なので、後の注入で書き足された履歴が混ざらない"""
+    store.age.save(WEB, {'WEB_ONLY': 'w'})
+    environ = {}
+
+    runtime.inject(root, 'web', environ=environ, store=store)
+    snapshot = runtime.snapshot_injected(environ)
+    store.age.save(GLOBAL, {'LATER': 'l'})
+    runtime.inject(root, 'web', environ=environ, store=store)
+
+    runtime.restore_injected(snapshot, environ)
+
+    assert runtime.clear_injected(environ) == ['WEB_ONLY']
+
+
+def test_restoring_an_empty_snapshot_drops_the_history(root, store):
+    """履歴が無い時点の控えを書き戻すと、その後に作られた履歴は消える"""
+    store.age.save(GLOBAL, {'TOKEN': 'from-secret'})
+    environ = {}
+
+    snapshot = runtime.snapshot_injected(environ)
+    runtime.inject(root, None, environ=environ, store=store)
+
+    runtime.restore_injected(snapshot, environ)
+
+    assert runtime.clear_injected(environ) == []
+    assert id(environ) not in runtime._injected_originals
+
+
 # ---------------------------------------------------------------------------
 # プロジェクトの特定
 # ---------------------------------------------------------------------------

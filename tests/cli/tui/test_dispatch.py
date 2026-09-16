@@ -218,3 +218,57 @@ def test_lifecycle_after_env_edit_reads_written_values(openbao_root, openbao, mo
     finally:
         runtime.release_store()
         runtime.clear_injected()
+
+
+# ---------------------------------------------------------------------------
+# PR #191 round 3: 機密の注入履歴も CWD・環境変数と揃えて戻す
+# ---------------------------------------------------------------------------
+
+def test_preserve_cwd_env_restores_the_injection_history(tmp_path, monkeypatch):
+    """切替先で注入し直しても、抜けた後の解除は切替元固有の機密を落とす。
+
+    値だけを戻して履歴を戻さないと、戻った切替元の機密を次の解除が知らず、
+    次に操作するプロジェクトの Compose 子プロセスへ渡ってしまう。
+    """
+    import pyrage
+
+    from devbase.env import runtime
+    from devbase.env.secret_store import SecretRef, SecretStore
+
+    (tmp_path / 'projects' / 'web').mkdir(parents=True)
+    (tmp_path / 'projects' / 'api').mkdir(parents=True)
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime, '_injected_originals', {})
+    for name in ('WEB_ONLY', 'API_ONLY'):
+        # 一度設定してから消し、失敗時にも monkeypatch が未設定へ戻すようにする
+        monkeypatch.setenv(name, '')
+        monkeypatch.delenv(name)
+
+    identity = pyrage.x25519.Identity.generate()
+    key = tmp_path / 'id.key'
+    key.write_text(str(identity))
+    store = SecretStore(tmp_path, recipients=[str(identity.to_public())],
+                        identities=[str(key)])
+    store.age.save(SecretRef.for_project('web'), {'WEB_ONLY': 'w'})
+    store.age.save(SecretRef.for_project('api'), {'API_ONLY': 'a'})
+
+    def enter_api(devbase_root, args):
+        runtime.clear_injected()
+        runtime.inject(devbase_root, 'api', store=store)
+        assert 'WEB_ONLY' not in os.environ
+        return 0
+
+    try:
+        # 現在地 (web) の機密を載せた状態から、別プロジェクト (api) を照会する
+        runtime.inject(tmp_path, 'web', store=store)
+        assert dispatch.dispatch_group(enter_api, tmp_path, 'list') == 0
+        assert os.environ['WEB_ONLY'] == 'w'
+
+        # 次の操作の切替で、切替元固有の機密が落ちる
+        runtime.clear_injected()
+        assert 'WEB_ONLY' not in os.environ
+        assert 'API_ONLY' not in os.environ
+    finally:
+        runtime.clear_injected()
+        runtime.release_store()
