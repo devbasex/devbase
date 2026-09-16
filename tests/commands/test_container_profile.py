@@ -260,6 +260,21 @@ def test_profile_up_fails_when_deploy_fails(project, monkeypatch):
     assert container.cmd_profile_up('test') != 0
 
 
+def test_profile_up_fails_when_project_config_raises_devbase_error(project, monkeypatch):
+    write_generated(project)
+    (project / 'deploy').write_text('#!/bin/bash\ntouch ran\n')
+    fake = use(monkeypatch, FakeCompose(profiles=TEST_PROFILES))
+
+    def failing_config():
+        raise DevbaseError("broken config")
+
+    monkeypatch.setattr(container.project_runtime, 'current_project_config', failing_config)
+
+    assert container.cmd_profile_up('test') == 1
+    assert creating_calls(fake) == []
+    assert not (project / 'ran').exists()
+
+
 def test_profile_down_stops_then_removes_without_volumes(project, monkeypatch, caplog):
     write_generated(project)
     fake = use(monkeypatch, FakeCompose(profiles=TEST_PROFILES))
