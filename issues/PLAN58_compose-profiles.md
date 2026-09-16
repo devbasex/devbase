@@ -35,6 +35,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 - プロファイル単位で起動・停止するコマンド
 - 停止（`devbase down` と `up` 冒頭の停止）を全プロファイルへ効かせること
 - プロジェクトのフックへ、有効なプロファイルを伝えること
+- `devbase list` の TUI から、プロファイルを起動・停止できること
 - プロファイルを使うプロジェクト作者向けの文書
 
 含まない:
@@ -62,18 +63,26 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 起動と停止:
 
 - [ ] `profiles: [X]` を持つサービスは `devbase up` で起動せず、`docker ps` に現れない
-- [ ] `devbase container profile up X` を実行すると、プロファイル X のサービスだけが起動する。既定のサービス（dev を含む）の Container ID と `StartedAt` は実行の前後で変わらない
-- [ ] `devbase container profile down X` を実行すると、プロファイル X のサービスのコンテナが削除される。既定のサービスの Container ID と `StartedAt` は実行の前後で変わらない
+- [ ] 前提: `devbase up` が済み、既定のサービスだけが動いている
+      操作: `devbase container profile up X` を実行する
+      結果: プロファイル X のサービスだけが起動し、既定のサービスの Container ID と `StartedAt` は変わらない
+- [ ] 前提: プロファイル X のサービスが動いている
+      操作: `devbase container profile down X` を実行する
+      結果: プロファイル X のサービスのコンテナだけが削除され、既定のサービスの Container ID と `StartedAt` は変わらない
 - [ ] `devbase container profile up X` は、プロファイル X に属するサービスをすべて Compose へ渡し、`--no-deps` を付ける
-- [ ] `depends_on: {dev: {condition: service_started, required: false}}` を持つプロファイル X のサービスを `devbase container profile up X` で起動しても、既定のサービスの Container ID と `StartedAt` は変わらない
+- [ ] 前提: プロファイル X のサービスが `depends_on: {dev: {condition: service_started, required: false}}` を持つ
+      操作: `devbase container profile up X` を実行する
+      結果: 既定のサービスの Container ID と `StartedAt` が変わらない
 - [ ] `depends_on: [dev]`（`required` を書かない形）を持つサービスでも、`devbase container profile up X` で既定のサービスの Container ID と `StartedAt` は変わらない
 - [ ] dev の環境変数の値を変えた後でも、`devbase container profile up X` は dev を再作成しない
-- [ ] dev が `depends_on: {db: {condition: service_started, required: false}}` を持ち、db をプロファイル X に入れた構成でも、`devbase container profile down X` の前後で dev の Container ID と `StartedAt` が変わらない
+- [ ] 前提: dev が `depends_on: {db: {condition: service_started, required: false}}` を持ち、db はプロファイル X に属する
+      操作: `devbase container profile down X` を実行する
+      結果: dev の Container ID と `StartedAt` が前後で変わらない
 - [ ] `devbase container profile down X` の後も、そのサービスが使う名前付きボリュームは残る
 - [ ] `devbase container profile list` は、`compose.yml` に書かれたプロファイルの名前と、そのサービスが稼働しているかを出す
 - [ ] `.docker-compose.scale.yml` が無い状態では、`devbase container profile up X` / `down X` / `list` のいずれも終了コード 1 で止まる。`devbase up` を促すメッセージを出し、コンテナは作らない
 - [ ] `compose.yml` に無いプロファイル名を `up` / `down` へ渡すと、存在する名前の一覧を出して終了コード 1 で止まる
-- [ ] `devbase project profile up <プロジェクト> X` は、そのプロジェクトのディレクトリで `devbase container profile up X` を実行したのと同じ結果になる（`down` / `list` も同じ）
+- [ ] `devbase project profile up <プロジェクト> X` の結果は、そのプロジェクトのディレクトリで `devbase container profile up X` を実行した場合と同じになる。`down` と `list` も同じである
 
 停止の網羅:
 
@@ -83,11 +92,20 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 - [ ] プロジェクトの `.env` に `COMPOSE_PROFILES` が書かれた状態でも、`devbase up` は既定のサービスだけを起動する（起動の対象をサービス名で明示するため。設計の決定 7）
 - [ ] `devbase up` の起動は、生成物の `profiles` を持たないサービスをすべてサービス名として Compose へ渡す
 
+TUI:
+
+- [ ] `devbase list` で起動中のプロジェクトを選ぶと、操作のメニューに「テスト用サーバ起動 (profile up)」と「テスト用サーバ停止 (profile down)」が並ぶ
+- [ ] `compose.yml` にプロファイルを 1 つも持たないプロジェクトでは、その 2 項目が出ない
+- [ ] 項目を選ぶとプロファイル名の選択が出る。名前が 1 つだけのときもその 1 件の選択として出す
+- [ ] TUI から起動・停止した後は一覧へ戻り、STATUS のコンテナ数が実際の数に変わる
+- [ ] TUI から起動・停止しても、dev-1..N の Container ID と `StartedAt` は変わらない
+- [ ] questionary が無い端末の代替経路（番号入力して `up`）の挙動は変わらない
+
 フック:
 
 - [ ] `./pre-up` と `./deploy` は `DEVBASE_ACTIVE_PROFILES` を受け取る。`devbase up` から呼ばれるときは、どちらも空である
-- [ ] `devbase container profile up X` の後の `./deploy` は `DEVBASE_ACTIVE_PROFILES=X` を受け取る。値は常にプロファイル名 1 つである
-- [ ] 同時に 2 つ以上のプロファイルを起動する操作は今回作らない。よって複数の値が渡る経路は無い。カンマ区切りは将来の拡張のための予約であり、この範囲では受け入れ条件にしない
+- [ ] `devbase container profile up X` の後の `./deploy` は `DEVBASE_ACTIVE_PROFILES=X` を受け取る。値はプロファイル名 1 つである
+- [ ] 同時に 2 つ以上のプロファイルを起動する操作は作らない。よって複数の値が渡る経路は無い。カンマ区切りは将来の拡張のための予約であり、この変更では受け入れ条件にしない
 - [ ] `devbase container profile up X` は `./pre-up` を呼ばない
 - [ ] `devbase container profile up X` は、サービスの起動が終わった後にプロジェクトのフックを呼ぶ。フックが終了コード 0 以外を返したら、コマンドも 0 以外で終わる
 
@@ -123,7 +141,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 
 | 対象 | 影響 |
 | --- | --- |
-| 公開インタフェース | `devbase container profile` と `devbase project profile` を追加する。既存のコマンドの引数は変えない。`devbase down` は内部で `--profile '*'` を付ける |
+| 公開インタフェース | `devbase container profile` と `devbase project profile` を追加する。`devbase list` の TUI の操作メニューに 2 項目を足す。既存のコマンドの引数は変えない。`devbase down` は内部で `--profile '*'` を付ける |
 | データ | なし（スキーマも名前付きボリュームの構成も変えない） |
 | 既存の振る舞い | `down` が全プロファイルを対象にする。devbase 経由の Compose へ `COMPOSE_PROFILES` を渡さなくなる。`up` の起動は既定のサービスを明示して渡す（対象は現在と同じ）。フックへ渡す環境変数が 1 つ増える。`profiles:` を使っていないプロジェクトでは、どちらも対象が変わらない。`--profile '*'` を確認済みなのは v5.1.4 で、2.20.0 以上 5.x 未満は未検証である |
 
@@ -131,11 +149,13 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 
 | 項目 | 手段 |
 | --- | --- |
+| テスト（TUI） | `uv run pytest tests/cli/tui -q`（メニューの項目と、委譲へ渡す属性の検査） |
 | テスト | `uv run pytest tests/ -q`（コマンドの組み立てと生成物の検証。実 docker には触れない） |
 | 静的解析 | `uv run ruff check lib/ tests/`（設定がある場合。無ければ省く） |
 | 手動確認 | `profiles` を付けた最小の compose（dev / app、`alpine:3`）で `devbase up` → `devbase container profile up X` → `devbase container profile down X` → `devbase down` を通し、各段で `docker ps` の Container ID と `StartedAt` を記録する。app へ `depends_on: {dev: {condition: service_started, required: false}}` を付けた版と、`depends_on: [dev]` を付けた版でも同じ手順を通す。さらに dev の環境変数の値を変えてから `profile up X` を実行し、dev が再作成されないことを確かめる |
 | 手動確認（依存の向きが逆の構成） | dev へ `depends_on: {db: {condition: service_started, required: false}}` を書き、db をプロファイル X に入れた構成で `profile up X` → `profile down X` を通す。停止の前後で dev の Container ID と `StartedAt` が変わらないことを見る。`stop` / `rm -f` が依存元を対象に含めないことの確認である（設計の決定 5） |
-| 手動確認（`COMPOSE_PROFILES` が有効な環境） | `COMPOSE_PROFILES=X` を環境変数に設定した状態と、プロジェクトの `.env` に書いた状態の両方で `devbase up` を通す。`docker ps` に既定のサービスだけが並ぶことを見る。`.env` の側は、起動のコマンド列に既定のサービス名が並ぶことも見る（設計の決定 7）。続けて `profile up X` → `profile down X` が従来どおり効くことも確かめる |
+| 手動確認（`COMPOSE_PROFILES` が設定された端末） | `COMPOSE_PROFILES=X` を環境変数に設定した状態と、プロジェクトの `.env` に書いた状態の両方で `devbase up` を通す。`docker ps` に既定のサービスだけが並ぶことを見る。`.env` の側は、起動のコマンド列に既定のサービス名が並ぶことも見る（設計の決定 7）。続けて `profile up X` → `profile down X` が従来どおり効くことも確かめる |
+| 手動確認（TUI） | `devbase list` を開き、起動中のプロジェクトで「テスト用サーバ起動」→ 一覧の STATUS のコンテナ数が増えることを見る。続けて「テスト用サーバ停止」で戻ることも見る。前後で dev-1..N の Container ID と `StartedAt` を比べる |
 | 手動確認（退行） | 確認済みの Docker Compose v5.1.4 で実施する。`profiles:` を持たないプロジェクトで `devbase up` と `devbase down` を通し、従来どおり動くことを確かめる。起動するコンテナの集合と順序、`down` 後に何も残らないことを見る。`--profile '*'` がこの経路に入るためである |
 
 自動テストで dev の Container ID の不変を確かめることはできない（実コンテナが要る）。この条件は手動確認で判定する。
