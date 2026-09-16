@@ -2,6 +2,8 @@
 
 設計は [PLAN58_compose-profiles-design.md](PLAN58_compose-profiles-design.md) にある。このファイルは、その設計で選んだ結論と理由、採らなかった案だけを持つ。
 
+## 決定の記録
+
 ### 決定 1: プロファイルの解決は生成済みの `.docker-compose.scale.yml` を読んで行う
 
 `devbase` が Compose へ渡すのはこのファイルである。プロファイルの割り当てもここで確定している。元の `compose.yml` を読むと、生成の過程で加わる差を二重に解釈することになる。その差は機密の列挙と dev の複製である。
