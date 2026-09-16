@@ -91,6 +91,7 @@ def up_harness(project, monkeypatch):
     monkeypatch.setattr(container, 'ensure_network', record('network'))
     monkeypatch.setattr(container, 'docker_compose_down', record('down'))
     monkeypatch.setattr(container, 'docker_compose_up', record('up'))
+    monkeypatch.setattr(container, 'default_services', lambda *a, **k: ['dev-1'])
     monkeypatch.setattr(container, 'wait_for_containers_ready', record('wait'))
     monkeypatch.setattr(container, '_apply_window_titles', record('titles'))
     monkeypatch.setattr(container, '_report_missing_repos', lambda *a, **k: None)

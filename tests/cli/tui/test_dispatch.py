@@ -183,6 +183,7 @@ def test_lifecycle_after_env_edit_reads_written_values(openbao_root, openbao, mo
                  'docker_compose_up', 'wait_for_containers_ready', '_apply_window_titles',
                  '_report_missing_repos', '_maybe_open_editor'):
         monkeypatch.setattr(container, name, lambda *a, **k: None)
+    monkeypatch.setattr(container, 'default_services', lambda *a, **k: ['dev-1'])
 
     def fake_generate(scale, secrets, dev_environment=None, **kw):
         seen['secrets'] = secrets

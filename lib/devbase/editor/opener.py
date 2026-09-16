@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from devbase.log import get_logger
+from devbase.utils.docker import compose_env
 
 logger = get_logger(__name__)
 
@@ -400,6 +401,9 @@ def _query_container_name(dev_service_name: str, index: int,
         proc = run(
             cmd,
             capture_output=True, text=True, timeout=10,
+            # ps が解釈するサービスの集合を利用者の COMPOSE_PROFILES に左右させない
+            # (PLAN58 決定 7)
+            env=compose_env(),
         )
     except Exception:  # noqa: BLE001 - docker 不在等は保険なので握り潰す
         return None

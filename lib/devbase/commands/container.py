@@ -20,6 +20,7 @@ from devbase.volume.compose import (
     get_dev_service_name,
 )
 from devbase.utils.docker import (
+    compose_env,
     docker_compose,
     docker_compose_down,
     docker_compose_up,
@@ -274,7 +275,52 @@ def _compose_run(subcommand: str, *extra_args: str,
     cmd = _compose_base_args(compose_file)
     cmd.append(subcommand)
     cmd.extend(extra_args)
-    return subprocess.run(cmd).returncode
+    # 表示するサービスの集合を利用者の COMPOSE_PROFILES に左右させない (PLAN58 決定 7)
+    return subprocess.run(cmd, env=compose_env()).returncode
+
+
+def _compose_lines(compose_file: Path, args: list[str], environ=None) -> list[str]:
+    """``docker compose -f <compose_file> <args>`` の標準出力を行の一覧で返す。
+
+    有効なプロファイルは ``args`` の ``--profile`` だけで決まる (PLAN58 決定 7)。
+    失敗は :class:`DevbaseError` にする。扱い (止める / 項目を出さない) は呼び出し側が決める。
+    """
+    cmd = [*_compose_base_args(compose_file), *args]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False,
+                            env=compose_env(environ))
+    if result.returncode != 0:
+        raise DevbaseError(
+            f"docker compose {' '.join(args)} failed: {(result.stderr or '').strip()}")
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def default_services(compose_file: Path, environ=None) -> list[str]:
+    """``profiles`` を持たない既定のサービス名を返す (PLAN58 決定 1)。
+
+    ``devbase up`` の起動はこの一覧を明示して渡す。プロファイルが何らかの形で有効に
+    なっても、一覧に無いサービスは起動しない (決定 7)。
+    """
+    return _compose_lines(compose_file, ['config', '--services'], environ)
+
+
+def profile_services(compose_file: Path, environ=None) -> dict[str, list[str]]:
+    """プロファイル名 → そのプロファイルに属するサービス名 の対応を返す (PLAN58 決定 1)。
+
+    生成物を自分で読まず Compose に解決させる。``profiles: ["${X:-test}"]`` のような
+    変数の式は Compose が展開する。``config --format json`` は有効でないプロファイルの
+    サービスを含まないため、プロファイルごとに ``--services`` を問い合わせて既定の
+    サービスを差し引く。デーモンへの接続は要らない。
+    """
+    names = _compose_lines(compose_file, ['config', '--profiles'], environ)
+    if not names:
+        return {}
+    defaults = set(default_services(compose_file, environ))
+    return {
+        name: [service for service in _compose_lines(
+            compose_file, ['--profile', name, 'config', '--services'], environ)
+            if service not in defaults]
+        for name in names
+    }
 
 
 def _run_deploy_script_for_instances(deploy_script: Path, indices,
@@ -1071,7 +1117,10 @@ def _run_deploy_pipeline(project_name: str, scale: int, config,
         docker_compose_down(compose_file=down_compose_file)
 
     logger.info("[4/6] Starting containers...")
-    docker_compose_up(compose_file=override_file, detach=True)
+    # 起動の対象は既定のサービスに限る。端末や .env の COMPOSE_PROFILES でプロファイルが
+    # 有効になっても、プロファイルのサービスは起動しない (PLAN58 決定 7)
+    docker_compose_up(compose_file=override_file, detach=True,
+                      services=default_services(override_file))
 
     logger.info("[5/6] Waiting for containers to be ready...")
     wait_for_containers_ready(
@@ -1428,7 +1477,7 @@ def _resolve_dev_service() -> Optional[dict]:
     """compose config から dev サービス定義を取得する。失敗時は None。"""
     result = subprocess.run(
         ['docker', 'compose', 'config', '--format', 'json'],
-        capture_output=True, text=True, check=False
+        capture_output=True, text=True, check=False, env=compose_env(),
     )
     if result.returncode != 0:
         return None
@@ -1608,7 +1657,8 @@ def _read_compose_services() -> tuple[int, dict]:
         ['docker', 'compose', 'config', '--format', 'json'],
         capture_output=True,
         text=True,
-        check=False
+        check=False,
+        env=compose_env(),
     )
     if result.returncode != 0:
         return result.returncode, {}

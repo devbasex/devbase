@@ -76,6 +76,7 @@ def up_root(openbao_root, openbao, monkeypatch):
     monkeypatch.setattr(container, 'ensure_network', lambda *a, **k: None)
     monkeypatch.setattr(container, 'docker_compose_down', lambda **k: None)
     monkeypatch.setattr(container, 'docker_compose_up', lambda **k: None)
+    monkeypatch.setattr(container, 'default_services', lambda *a, **k: ['dev-1'])
     monkeypatch.setattr(container, 'wait_for_containers_ready', lambda **k: None)
     monkeypatch.setattr(container, '_apply_window_titles', lambda *a, **k: None)
     monkeypatch.setattr(container, '_report_missing_repos', lambda *a, **k: None)

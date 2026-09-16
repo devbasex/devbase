@@ -45,6 +45,7 @@ def _harness(monkeypatch, root: Path, seen: dict):
                  'docker_compose_up', 'wait_for_containers_ready', '_apply_window_titles',
                  '_report_missing_repos', '_maybe_open_editor'):
         monkeypatch.setattr(container, name, lambda *a, **k: None)
+    monkeypatch.setattr(container, 'default_services', lambda *a, **k: ['dev-1'])
     # compose ps を叩かず、決定的な名前へ落とす
     monkeypatch.setattr('devbase.editor.opener._query_container_name', lambda *a, **k: None)
 

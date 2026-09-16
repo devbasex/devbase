@@ -67,6 +67,9 @@ def up_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(container, 'ensure_volumes', lambda *a, **k: None)
     monkeypatch.setattr(container, 'ensure_network', lambda *a, **k: None)
     monkeypatch.setattr(container, 'docker_compose_up', lambda **k: calls.append(('up', k)))
+    # PLAN58: 起動の対象は生成物を docker compose config で読んで決める。実 docker に触れない
+    monkeypatch.setattr(container, 'default_services',
+                        lambda compose_file, environ=None: ['dev-1'])
     monkeypatch.setattr(container, 'wait_for_containers_ready', lambda **k: None)
     monkeypatch.setattr(container, '_maybe_open_editor', lambda *a, **k: None)
     # PLAN54: 実行シェルの DEVBASE_ROOT (利用者の実環境) の backend を読まない
@@ -287,3 +290,28 @@ def test_flat_layout_does_not_stop_the_same_scale(mismatch, monkeypatch):
 
     assert 'scale: 2' in (mismatch['project'] / 'project.yml').read_text()
     assert ('volumes',) in mismatch['calls']
+
+
+def test_up_names_default_services_from_generated_compose(up_harness, monkeypatch):
+    """PLAN58 決定 7: 起動は生成物の既定のサービスをすべて明示して渡す。"""
+    calls = up_harness
+    asked = []
+
+    def fake_generate(scale, secrets, dev_environment=None):
+        container._SCALE_COMPOSE_FILE.write_text(NEW_COMPOSE)
+        return container._SCALE_COMPOSE_FILE
+
+    def fake_defaults(compose_file, environ=None):
+        asked.append(Path(compose_file).read_text())
+        return ['dev-1', 'redis']
+
+    monkeypatch.setattr(container, '_inject_secrets', lambda *, required: object())
+    monkeypatch.setattr(container, '_generate_compose_for', fake_generate)
+    monkeypatch.setattr(container, 'default_services', fake_defaults)
+
+    assert container.cmd_up() == 0
+
+    assert asked == [NEW_COMPOSE]               # 生成した新構成から求める
+    up = [k for name, k in calls if name == 'up']
+    assert up == [{'compose_file': container._SCALE_COMPOSE_FILE, 'detach': True,
+                   'services': ['dev-1', 'redis']}]

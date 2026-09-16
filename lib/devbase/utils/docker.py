@@ -1,14 +1,33 @@
 """Docker command utilities for devbase"""
 
+import os
 import subprocess
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from devbase.errors import DockerError
 from devbase.log import get_logger
 
 logger = get_logger("devbase.utils.docker")
+
+#: devbase 経由の Compose へ ``COMPOSE_PROFILES`` として渡す、打ち消し用のプロファイル名
+#: (PLAN58 決定 7)。どのプロジェクトも定義しない名前で、利用者の端末の値とプロジェクトの
+#: ``.env`` の値をどちらも無効にする。有効なプロファイルは経路ごとに ``--profile`` で決める。
+NO_PROFILE = '__devbase_none__'
+
+
+def compose_env(environ: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """devbase が ``docker compose`` を呼ぶときの子プロセスの環境を返す。
+
+    ``environ`` (既定は ``os.environ``) の複製の ``COMPOSE_PROFILES`` を
+    :data:`NO_PROFILE` にする。キーを外すだけでは足りない。Compose は環境変数が
+    無ければプロジェクトの ``.env`` の値を採るため、値を入れて上書きする。空文字列に
+    しないのは、空の解釈 (空の一覧 / 未設定) が版に依るかを調べずに済ませるため。
+    """
+    env = dict(os.environ if environ is None else environ)
+    env['COMPOSE_PROFILES'] = NO_PROFILE
+    return env
 
 
 def docker_compose(
@@ -46,7 +65,8 @@ def docker_compose(
             cmd,
             capture_output=capture_output,
             text=True,
-            check=check
+            check=check,
+            env=compose_env(),
         )
         return result
     except subprocess.CalledProcessError as e:
@@ -202,11 +222,14 @@ def docker_compose_down(compose_file: Optional[Path] = None) -> None:
     """
     Stop and remove containers using docker compose down
 
+    プロファイルのサービスも対象にするため ``--profile '*'`` を付ける (PLAN58 決定 4)。
+    付けないと、プロファイル付きのサービスが動いたまま残り、network の削除にも失敗する。
+
     Args:
         compose_file: Compose file path (optional)
     """
     try:
-        docker_compose(['down', '-t0'], compose_file=compose_file, check=True)
+        docker_compose(['--profile', '*', 'down', '-t0'], compose_file=compose_file, check=True)
     except subprocess.CalledProcessError as e:
         # Don't raise exception if down fails (containers might not exist)
         if e.returncode != 0:
@@ -215,7 +238,8 @@ def docker_compose_down(compose_file: Optional[Path] = None) -> None:
 
 def docker_compose_up(
     compose_file: Optional[Path] = None,
-    detach: bool = True
+    detach: bool = True,
+    services: Sequence[str] = (),
 ) -> None:
     """
     Start containers using docker compose up
@@ -223,10 +247,13 @@ def docker_compose_up(
     Args:
         compose_file: Compose file path (optional)
         detach: Run in detached mode
+        services: 起動の対象。``devbase up`` は既定のサービスをすべて渡す (PLAN58 決定 7)。
+            空なら従来どおりサービス名を付けない
     """
     cmd = ['up']
     if detach:
         cmd.append('-d')
+    cmd.extend(services)
 
     docker_compose(cmd, compose_file=compose_file, check=True)
 
