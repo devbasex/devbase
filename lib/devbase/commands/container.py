@@ -1404,9 +1404,10 @@ def _running_services(compose_file: Path) -> Optional[set]:
     """``ps --format json`` で ``State`` が ``running`` のサービス名を返す。失敗なら ``None``。
 
     出力は版により 1 行 1 JSON (新しめ) か JSON 配列 (古め) になる。
+    ``--profile '*'`` は、非アクティブなプロファイルのサービスを ps に出さない版への備え。
     """
     try:
-        result = docker_compose(['ps', '--format', 'json'], compose_file=compose_file,
+        result = docker_compose(['--profile', '*', 'ps', '--format', 'json'], compose_file=compose_file,
                                 check=False, capture_output=True, silent_error=True)
     except OSError:
         return None

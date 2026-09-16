@@ -327,6 +327,19 @@ def test_profile_list_shows_services_and_running_state(project, monkeypatch, cap
     assert 'valkey' in rows['cache'] and '0/1 stopped' in rows['cache']
 
 
+def test_profile_list_asks_ps_for_all_profiles(project, monkeypatch):
+    """非アクティブなプロファイルのサービスを ps に出さない版があるため ``--profile '*'`` を付ける"""
+    write_generated(project)
+    fake = use(monkeypatch, FakeCompose(profiles=TEST_PROFILES, running={'app'}))
+
+    assert container.cmd_profile_list() == 0
+
+    ps_calls = [c['cmd'] for c in fake.compose_calls if 'ps' in c['cmd']]
+    assert len(ps_calls) == 1
+    cmd = ps_calls[0]
+    assert cmd[cmd.index('ps') - 2:cmd.index('ps')] == ['--profile', '*']
+
+
 def test_profile_list_marks_running_unknown_without_daemon(project, monkeypatch, capsys):
     write_generated(project)
     use(monkeypatch, FakeCompose(profiles=TEST_PROFILES, fail={'ps': 1}))
