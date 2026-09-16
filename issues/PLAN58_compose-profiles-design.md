@@ -84,11 +84,11 @@ graph TD
 lib/devbase/
 ├── cli.py                     # profile サブコマンドの登録（変更）
 ├── commands/
-│   └── container.py           # cmd_profile_up / down / list、dispatch（変更）
+│   └── container.py           # cmd_profile_up / down / list、default_services、_compose_run、dispatch（変更）
 ├── project/
 │   └── runtime.py             # hook_env に有効なプロファイルを足す（変更）
 ├── utils/
-│   └── docker.py              # docker_compose が COMPOSE_PROFILES を外す、docker_compose_down を全プロファイル対応へ（変更）
+│   └── docker.py              # docker_compose が env= を組んで COMPOSE_PROFILES を外す、docker_compose_up が対象サービスを受ける、docker_compose_down を全プロファイル対応へ（変更）
 └── volume/
     └── compose.py             # profiles を保つことの確認のみ（変更なし）
 
@@ -155,7 +155,7 @@ tests/
 
 ### プロファイルの決め方
 
-有効なプロファイルは devbase が経路ごとに明示して決める。利用者の環境や `.env` には従わない（決定 7）。
+有効なプロファイルは devbase が経路ごとに明示して決める。利用者の環境や `.env` の値で、起動する対象が変わらないようにする（決定 7）。
 
 | 経路 | `--profile` | 対象の渡し方 | `COMPOSE_PROFILES` |
 | --- | --- | --- | --- |
@@ -278,7 +278,7 @@ sequenceDiagram
 
 `devbase up` の `<既定のサービス...>` は、生成物のうち `profiles` を持たないサービスの全件である（決定 7）。`--profile` を付けないことと合わせて、プロファイルのサービスは対象に入らない。
 
-`up` と `down` の冒頭の停止（F4）は次のように変わる。`COMPOSE_PROFILES` の除去は `docker compose` を呼ぶどの経路にも共通で効く（決定 7）。
+`up` と `down` の冒頭の停止（F4）は次のように変わる。`COMPOSE_PROFILES` の除去は `docker_compose` と `_compose_run` の両方に共通で効く（決定 7）。
 
 ```mermaid
 graph LR
