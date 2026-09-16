@@ -109,6 +109,9 @@ TUI:
 
 - [ ] `./pre-up` と `./deploy` は `DEVBASE_ACTIVE_PROFILES` を受け取る。`devbase up` から呼ばれるときは、どちらも空である
 - [ ] `devbase project profile up X` の後の `./deploy` は `DEVBASE_ACTIVE_PROFILES=X` を受け取る。値はプロファイル名 1 つである
+- [ ] 前提: `devbase up` を scale 2 で通した後、`project.yml` の `scale` を 1 へ書き換える
+      操作: `devbase project profile up X` を実行する
+      結果: 稼働中の dev-1 と dev-2 の両方で `./deploy` が実行される
 - [ ] 同時に 2 つ以上のプロファイルを起動する操作は作らない。よって複数の値が渡る経路は無い。カンマ区切りは将来の拡張のための予約であり、この変更では受け入れ条件にしない
 - [ ] `devbase project profile up X` は `./pre-up` を呼ばない
 - [ ] `devbase project profile up X` は、サービスの起動が終わった後にプロジェクトのフックを呼ぶ。フックが終了コード 0 以外を返したら、コマンドも 0 以外で終わる

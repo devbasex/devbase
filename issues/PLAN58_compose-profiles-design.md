@@ -143,7 +143,16 @@ tests/
 
 この変更では、渡る値は常にプロファイル名 1 つである。`cmd_profile_up` が受ける名前が 1 つだけで、同時に 2 つ以上を起動する操作を作らないためである。カンマ区切りは将来の拡張のための予約であり、現時点でその形になる経路は無い（「未確認のまま残ること」）。
 
-`_run_deploy_script_for_instances` へ渡す `indices` は `range(1, scale + 1)` である。`scale` は `project.yml` の `config.scale` から取る。未指定なら `project_runtime.DEFAULT_SCALE`（現在は 2）を使う。`cmd_up` が使っている解決の式をそのまま再利用する。`.docker-compose.scale.yml` の `dev-*` を数え直すことはしない。
+`_run_deploy_script_for_instances` へ渡す `indices` は、**操作に使う生成物が持つ `dev-*` の番号**である。`.docker-compose.scale.yml` の `services` から `dev-1`..`dev-N` を読み、その番号を渡す。
+
+`project.yml` の `config.scale` は使わない。`up` の後に `project.yml` を書き換えてから `profile up X` を呼ぶと、設定の値と稼働中のインスタンスが食い違う。減らした後なら稼働中の `dev-2` へフックが走らず、増やした後なら作られていない番号へ走る。生成物は `up` が作ったもので、稼働中の構成と一致する。
+
+| 何を数えるか | 減らした後 | 増やした後 |
+| --- | --- | --- |
+| `project.yml` の `config.scale` | 稼働中の `dev-2` を飛ばす | 未作成の番号へ走る |
+| 生成物の `dev-*` | 稼働中の全インスタンスへ走る | 同左 |
+
+`cmd_up` は生成の直後に呼ぶため、どちらの数え方でも同じ値になる。こちらは現在の実装を変えない。
 
 `profile` の subparser は `dest` を親と分ける。親の `project` / `container` は `dest='subcommand'` のままとし、入れ子側は `dest='profile_subcommand'` を使う。`cli.py` の `_dispatch` は `args.subcommand == 'list'` を見て `project list`（プロジェクト一覧）へ振り分けるためである。入れ子で `subcommand` を再利用すると、`devbase project profile list` がそちらへ流れてしまう。`_dispatch_lifecycle` の handlers には `'profile'` を 1 つだけ足す。その中で `profile_subcommand` を見て up / down / list を選ぶ。
 
@@ -362,6 +371,8 @@ graph LR
 | フックが `DEVBASE_ACTIVE_PROFILES` を受け取る | `hook_env` の戻り値と、`subprocess.run` へ渡された `env` を検査する。`cmd_up` 経由は空文字列、`cmd_profile_up` 経由はプロファイル名 1 つになることを見る。複数値はこの範囲では作れないため検査しない |
 | フックの失敗が終了コードへ出る | 失敗する `./deploy` を置き、戻り値が 1 になることを検査する |
 | `profiles` に変数の式が書かれていても名前が一致する | `config --profiles` と `config --services` の出力を差し替え、`profile_services` が展開後の名前で対応を作ることを検査する。実際の展開は Compose が行うため、式を持つ構成での `list` と `profile up test` は手動確認で見る |
+| `container profile` / `ct profile` が非推奨の警告を出す | 両方の入口を呼び、警告が 1 行だけ出ることと、委譲先の引数が `project profile` と同じであることを `caplog` で検査する |
+| Docker へ接続できないとき `profile list` が 1 で止まる | `config --profiles` が失敗する状態を与え、終了コードとメッセージを検査する。コンテナを作る呼び出しが発生しないことも見る |
 | 一覧の操作に 2 項目が並ぶ | プロファイルを持つ構成で `_running_ops` の戻り値を検査する |
 | プロファイルを持たないプロジェクトでは 2 項目が出ない | 同じ関数へプロファイルの無い構成を与え、現在と同じ並びになることを検査する |
 | 一覧から実行しても dev が変わらない | 委譲へ渡る属性が `profile` のサブコマンドと名前であることを検査する。実際の状態は手動確認 |
