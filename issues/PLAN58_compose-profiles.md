@@ -55,6 +55,8 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 
 ## 受け入れ条件
 
+以下で `compose.yml` と書くのは、利用者がプロファイルを宣言する場所のことである。devbase が実際に読むのは、その宣言を引き継いだ生成物 `.docker-compose.scale.yml` である（設計の決定 1）。
+
 起動と停止:
 
 - [ ] `profiles: [X]` を持つサービスは `devbase up` で起動せず、`docker ps` に現れない
@@ -62,8 +64,8 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 - [ ] `devbase container profile down X` を実行すると、プロファイル X のサービスのコンテナが削除される。既定のサービスの Container ID と `StartedAt` は実行の前後で変わらない
 - [ ] `devbase container profile down X` の後も、そのサービスが使う名前付きボリュームは残る
 - [ ] `devbase container profile list` は、`compose.yml` に書かれたプロファイルの名前と、そのサービスが稼働しているかを出す
-- [ ] `.docker-compose.scale.yml` が無い状態で `devbase container profile up X` を実行すると、`devbase up` を促すメッセージを出して終了コード 1 で止まる（コンテナは作らない）
-- [ ] `compose.yml` に無いプロファイル名を渡すと、存在する名前の一覧を出して終了コード 1 で止まる
+- [ ] `.docker-compose.scale.yml` が無い状態では、`devbase container profile up X` / `down X` / `list` のいずれも終了コード 1 で止まる。`devbase up` を促すメッセージを出し、コンテナは作らない
+- [ ] `compose.yml` に無いプロファイル名を `up` / `down` へ渡すと、存在する名前の一覧を出して終了コード 1 で止まる
 - [ ] `devbase project profile up <プロジェクト> X` は、そのプロジェクトのディレクトリで `devbase container profile up X` を実行したのと同じ結果になる（`down` / `list` も同じ）
 
 停止の網羅:
@@ -73,7 +75,9 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 
 フック:
 
-- [ ] `./pre-up` と `./deploy` は `DEVBASE_ACTIVE_PROFILES` を受け取る。`devbase up` では空、`devbase container profile up X` の後に呼ばれるときは `X`（複数あればカンマ区切り）が入る
+- [ ] `./pre-up` と `./deploy` は `DEVBASE_ACTIVE_PROFILES` を受け取る。`devbase up` から呼ばれるときは、どちらも空である
+- [ ] `devbase container profile up X` の後の `./deploy` は `DEVBASE_ACTIVE_PROFILES=X` を受け取る（複数あればカンマ区切り）
+- [ ] `devbase container profile up X` は `./pre-up` を呼ばない
 - [ ] `devbase container profile up X` は、サービスの起動が終わった後にプロジェクトのフックを呼ぶ。フックが終了コード 0 以外を返したら、コマンドも 0 以外で終わる
 
 退行しないこと:
