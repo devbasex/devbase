@@ -40,23 +40,57 @@ _RUNNING_OPS: list[tuple[str, str]] = [
     ("再ビルド (rebuild --no-cache)", "rebuild"),
 ]
 
-# 実行後にサブメニューへ留まらずトップ一覧へ戻る操作。up/down はコンテナの
-# 起動状態が大きく変わるため、最新状態の一覧を見せる方が自然 (それ以外の
+# プロファイルを持つプロジェクトにだけ足す操作 (PLAN58 決定 8)。持たないプロジェクトで
+# 選べると、選んだ後に「プロファイルがありません」と戻ることになるため出し分ける。
+_PROFILE_OPS: list[tuple[str, str]] = [
+    ("テスト用サーバ起動 (profile up)", "profile-up"),
+    ("テスト用サーバ停止 (profile down)", "profile-down"),
+]
+
+# 実行後にサブメニューへ留まらずトップ一覧へ戻る操作。up/down とプロファイルの
+# 起動・停止はコンテナの数が変わるため、最新状態の一覧を見せる方が自然 (それ以外の
 # login/ps/logs/scale/build/rebuild は連続操作できるようサブメニューに留まる)。
-_BACK_TO_TOP_OPS = frozenset({"up", "down"})
+_BACK_TO_TOP_OPS = frozenset({"up", "down", "profile-up", "profile-down"})
 
 # 中止系番兵は flow と同一オブジェクトを再公開する (呼び出し側・テストの契約)。
 _ARG_CANCEL = flow.ARG_CANCEL
 _ABORT = flow.ABORT
 
 
-def _select_action(name: str):
+def _profile_names(devbase_root: Path, name: str) -> list[str]:
+    """プロジェクトのプロファイル名。生成物が無い・解決に失敗したときは空。
+
+    解決は ``docker compose config`` で行い、デーモンへの接続は要らない (PLAN58 決定 1)。
+    失敗を「持たない」として扱うのは、一覧の操作メニューを出すこと自体を止めないため。
+    """
+    from devbase.commands import container
+    from devbase.errors import DevbaseError
+
+    compose_file = Path(devbase_root) / "projects" / name / container._SCALE_COMPOSE_FILE
+    if not compose_file.is_file():
+        return []
+    try:
+        return list(container.profile_services(compose_file))
+    except (DevbaseError, OSError) as e:
+        logger.debug("プロファイルを解決できません (%s): %s", name, e)
+        return []
+
+
+def _running_ops(devbase_root: Path, name: str) -> list[tuple[str, str]]:
+    """running 行で選べる操作。プロファイルを持つときだけ起動・停止の 2 項目を足す。"""
+    ops = list(_RUNNING_OPS)
+    if _profile_names(devbase_root, name):
+        ops += _PROFILE_OPS
+    return ops
+
+
+def _select_action(name: str, ops=None):
     """running 中プロジェクトの操作を選ぶサブメニュー。
 
     戻り値: サブコマンド文字列 / ``MENU_BACK`` (Esc・← → 一覧へ戻る) / ``None`` (Ctrl-C 中止)。
     """
     return menu.select(f"'{name}' は起動中です。操作を選択 {menu.HINT_BACK}:",
-                       list(_RUNNING_OPS), back=True, search=False)
+                       list(_RUNNING_OPS if ops is None else ops), back=True, search=False)
 
 
 def _optional_int(message: str, *, min_value: int = 0):
@@ -123,6 +157,18 @@ def _op_build(devbase_root: Path, name: str):
     return dispatch_lifecycle("build", name, image=image or None)
 
 
+def _op_profile(operation: str):
+    """プロファイルの起動・停止。名前が 1 つだけでも選択として出す (PLAN58)。"""
+    def run(devbase_root: Path, name: str):
+        names = _profile_names(devbase_root, name)
+        profile = flow.need(menu.select(
+            f"'{name}' のプロファイルを選択 {menu.HINT_BACK}:",
+            [(n, n) for n in names], back=True, search=False))
+        return dispatch_lifecycle("profile", name, profile_subcommand=operation,
+                                  profile=profile)
+    return run
+
+
 _OP_HANDLERS = {
     # up/down/ps は引数なしで即実行。up は scale 属性を参照する (常に None。他
     # コマンドは無視する)。down はデータを失わない (volume 保持・up で復旧可能)
@@ -140,6 +186,8 @@ _OP_HANDLERS = {
     "logs": _op_logs,
     "scale": _op_scale,
     "build": _op_build,
+    "profile-up": _op_profile("up"),
+    "profile-down": _op_profile("down"),
 }
 
 
@@ -152,7 +200,7 @@ def _run_operation(devbase_root: Path, name: str, op: str):
     """
     handler = _OP_HANDLERS.get(op)
     if handler is None:
-        # 到達しない (メニュー値は _RUNNING_OPS に限定される)。保守的に no-op。
+        # 到達しない (メニュー値は _running_ops の戻り値に限定される)。保守的に no-op。
         logger.error("未知の操作です: %s", op)
         raise flow.BackOut
     return handler(devbase_root, name)
@@ -168,8 +216,9 @@ def _operation_menu(devbase_root: Path, name: str):
     一覧へ戻り最新状態を再表示する。引数収集を中止 (``_ARG_CANCEL``) した場合も
     同じサブメニューを再表示する。
     """
+    ops = _running_ops(devbase_root, name)
     return flow.menu_loop(
-        lambda: _select_action(name),
+        lambda: _select_action(name, ops),
         lambda op: _run_operation(devbase_root, name, op),
         back_after=lambda op: op in _BACK_TO_TOP_OPS)
 

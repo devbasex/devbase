@@ -54,7 +54,7 @@ def test_handle_row_running_shows_action_menu(monkeypatch, tmp_path, action,
     seen = {}
     _sel = _seq(action, menu.MENU_BACK)
     monkeypatch.setattr(actions_project, "_select_action",
-                        lambda name: seen.update(name=name) or _sel())
+                        lambda name, ops=None: seen.update(name=name) or _sel())
     captured = {}
     monkeypatch.setattr(container_mod, "cmd_project",
                         lambda args: captured.update(
@@ -73,7 +73,7 @@ def test_handle_row_stays_in_submenu_for_non_updown_op(monkeypatch, tmp_path):
     select_calls = []
     sel = _seq("build", menu.MENU_BACK)
     monkeypatch.setattr(actions_project, "_select_action",
-                        lambda name: select_calls.append(1) or sel())
+                        lambda name, ops=None: select_calls.append(1) or sel())
     calls = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: calls.append(1) or 1)
 
@@ -92,7 +92,7 @@ def test_handle_row_up_down_return_to_top(monkeypatch, tmp_path, op):
     # MENU_BACK を後ろに置くが、up/down は 1 回の実行でトップへ戻るため使われない。
     sel = _seq(op, menu.MENU_BACK)
     monkeypatch.setattr(actions_project, "_select_action",
-                        lambda name: select_calls.append(1) or sel())
+                        lambda name, ops=None: select_calls.append(1) or sel())
     calls = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: calls.append(1) or 0)
 
@@ -109,7 +109,7 @@ def test_handle_row_non_running_direct_up(monkeypatch, tmp_path, status):
 
     action_calls = []
     monkeypatch.setattr(actions_project, "_select_action",
-                        lambda name: action_calls.append(name) or "down")
+                        lambda name, ops=None: action_calls.append(name) or "down")
     captured = {}
     monkeypatch.setattr(container_mod, "cmd_project",
                         lambda args: captured.update(
@@ -125,7 +125,7 @@ def test_handle_row_action_menu_back_returns_menu_back(monkeypatch, tmp_path):
     """running 行のサブメニューで Esc/← (MENU_BACK) → 一覧へ戻る (何も起動しない)。"""
     from devbase.commands import container as container_mod
 
-    monkeypatch.setattr(actions_project, "_select_action", lambda name: menu.MENU_BACK)
+    monkeypatch.setattr(actions_project, "_select_action", lambda name, ops=None: menu.MENU_BACK)
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
 
@@ -138,7 +138,7 @@ def test_handle_row_action_menu_ctrl_c_aborts(monkeypatch, tmp_path):
     """running 行のサブメニューで Ctrl-C (None) → 全体中止 (None を返す)。"""
     from devbase.commands import container as container_mod
 
-    monkeypatch.setattr(actions_project, "_select_action", lambda name: None)
+    monkeypatch.setattr(actions_project, "_select_action", lambda name, ops=None: None)
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
 
@@ -425,7 +425,7 @@ def test_operation_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     select = _seq("scale", "build", menu.MENU_BACK)
     select_calls = []
     monkeypatch.setattr(actions_project, "_select_action",
-                        lambda name: select_calls.append(1) or select())
+                        lambda name, ops=None: select_calls.append(1) or select())
 
     run_calls = []
 
@@ -446,7 +446,7 @@ def test_operation_menu_clears_screen_after_execution(monkeypatch, tmp_path):
     引数収集中止 (_ARG_CANCEL) では出力が無いためクリアしない。
     """
     select = _seq("scale", "build", menu.MENU_BACK)
-    monkeypatch.setattr(actions_project, "_select_action", lambda name: select())
+    monkeypatch.setattr(actions_project, "_select_action", lambda name, ops=None: select())
     monkeypatch.setattr(actions_project, "_run_operation",
                         lambda root, name, op:
                         actions_project._ARG_CANCEL if op == "scale" else 0)
