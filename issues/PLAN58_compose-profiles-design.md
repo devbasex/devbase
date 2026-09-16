@@ -112,6 +112,9 @@ tests/
 | `cmd_profile_down(profile, context)` | 新設 | F2。`docker_compose_down` は通さず、`stop` と `rm -f` の 2 段をサービス名付きで組む（決定 5）。終了コードを返す |
 | `cmd_profile_list(context)` | 新設 | F3。終了コードを返す |
 | `docker_compose(command, ...)` | 変更（`utils/docker.py`） | F1 / F2 / F4 の共通の土台。子プロセスの環境を組み立てる箇所で `COMPOSE_PROFILES` を取り除いてから `subprocess.run` を呼ぶ（決定 7）。コマンド列の組み立て方は変えない |
+| `docker_compose(command, ...)` | 変更（`utils/docker.py`） | `env=` を組み立て、`COMPOSE_PROFILES` を除いて子プロセスへ渡す |
+| `docker_compose_up(compose_file, services=(), ...)` | 変更（`utils/docker.py`） | 既定のサービス名を受け取り、そのまま `up -d <サービス...>` へ渡す |
+| `_compose_run(subcommand, ...)` | 変更（`commands/container.py`） | 直接 `subprocess.run` する経路。同じく `COMPOSE_PROFILES` を除く |
 | `docker_compose_down(compose_file, all_profiles=True)` | 変更（`utils/docker.py`） | F4。`--profile '*'` を付けて呼ぶ。`['down', '-t0']` という固定の形は変えない |
 | `hook_env(config, active_profiles=())` | 変更（`project/runtime.py`） | F5。`DEVBASE_ACTIVE_PROFILES` を足す。`_run_pre_up_hook` と `_run_deploy_script_for_instances` の両方に効く |
 | `_run_deploy_script_for_instances(deploy_script, indices, config=None, active_profiles=()) -> bool` | 変更（`commands/container.py`） | 全インスタンスで成功したかを返す。`active_profiles` を受け取り、加工せず `hook_env` へ渡す。`cmd_up` は戻り値を使わず、現在の警告だけの扱いを保つ |
@@ -153,13 +156,15 @@ tests/
 
 有効なプロファイルは devbase が経路ごとに明示して決める。利用者の環境や `.env` には従わない（決定 7）。
 
-| 経路 | `--profile` | `COMPOSE_PROFILES` |
-| --- | --- | --- |
-| `devbase up` の起動 | 付けない | 子プロセスの環境から外す |
-| `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 同上 |
-| `profile up X` / `profile down X` | `--profile X` | 同上 |
+| 経路 | `--profile` | 対象の渡し方 | `COMPOSE_PROFILES` |
+| --- | --- | --- | --- |
+| `devbase up` の起動 | 付けない | 既定のサービスをすべて明示する | 子プロセスの環境から外す |
+| `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 渡さない | 同上 |
+| `profile up X` / `profile down X` | `--profile X` | 対象のサービスをすべて明示する | 同上 |
 
 `COMPOSE_PROFILES` は空文字列にするのではなく、渡さない。空文字列を渡す版の扱いを調べずに済むためである。
+
+**環境変数を外すだけでは足りない。** Compose はプロジェクトの `.env` を自分で読むため、`devbase up` の起動では既定のサービス名も明示する（決定 7）。
 
 ### `profile list` の表
 
@@ -393,13 +398,20 @@ graph LR
 
 `docker_compose` は現在のプロセスの環境をそのまま子へ継承する（`lib/devbase/utils/docker.py`）。`COMPOSE_PROFILES=test` が設定された端末では、`devbase up` の `compose up -d` が test のサービスまで起動する。受け入れ条件「`up` の後は既定のサービスだけが動く」はこれで崩れる。v5.1.4 の最小構成で確認済みである。
 
-そこで `docker_compose` が子プロセスの環境を組み立てる箇所で `COMPOSE_PROFILES` を取り除く。有効なプロファイルは経路ごとに `--profile` で明示する。
+そこで対策を 2 つ重ねる。**環境変数を子へ渡さないことと、起動の対象をサービス名で明示することである。**
 
-| 経路 | プロファイルの指定 | `COMPOSE_PROFILES` |
-| --- | --- | --- |
-| `devbase up` の起動 | 付けない（既定のサービスだけ） | 外す |
-| `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 外す |
-| `profile up X` / `profile down X` | `--profile X` | 外す |
+`docker_compose` は現在 `subprocess.run(cmd, ...)` を `env=` なしで呼び、暗黙に `os.environ` を継承している。ここで `env=` を新たに構築し、`COMPOSE_PROFILES` を除いたうえで渡す。`_compose_run`（`lib/devbase/commands/container.py`）は `docker_compose` を経由せず直接 `subprocess.run` する経路だが、こちらも同じ扱いにする。`ps` / `logs` は起動しない読み取りの操作である。ただし `COMPOSE_PROFILES` が効くと一覧の中身が変わり、`profile list` の稼働状況の判定が狂う。
+
+環境変数を外しても、プロジェクトの `.env` に書かれた `COMPOSE_PROFILES` は Compose が直接読む。そこで `devbase up` の起動は、**生成物から読んだ「`profiles` を持たないサービス」をサービス名としてすべて渡す**。プロファイルが `.env` 経由で有効になっても、対象に入らないサービスは起動しない。
+
+| 経路 | プロファイルの指定 | 対象の渡し方 | `COMPOSE_PROFILES` |
+| --- | --- | --- | --- |
+| `devbase up` の起動 | 付けない | 既定のサービスをすべて明示する | 外す |
+| `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 渡さない（全体が対象） | 外す |
+| `profile up X` | `--profile X` | そのプロファイルのサービスをすべて明示し、`--no-deps` を付ける | 外す |
+| `profile down X` | `--profile X` | 同じ一覧を `stop` と `rm -f` へ渡す | 外す |
+
+**この方式には限界がある。** 対象を明示するため、生成物に無いサービスは `up` で起動しない。`docker compose run` で後から足したコンテナも対象外である。
 
 **空文字列にはしない。** `COMPOSE_PROFILES=` を渡す形は、版によって「空の一覧」と「未設定」のどちらに解釈されるかを調べる必要が出る。キーごと外せばその判断が要らない。
 
@@ -433,7 +445,8 @@ graph LR
 | `project profile up <名前> X` が同じ結果になる | 引数の解釈（`[name] <profile>` の割り当て）を `tests/cli` の既存の書き方で検査する |
 | `devbase down` が全プロファイルを消し、0 で終わる | 引数列に `--profile *` が含まれることを検査する。全体の削除は手動確認 |
 | `devbase up` の後は既定のサービスだけが動く | 冒頭の停止が `--profile *` を通ることと、起動の引数列に `--profile` が入らないことを検査する。実際の状態は手動確認 |
-| `COMPOSE_PROFILES` が設定された環境でも `devbase up` は既定のサービスだけを起動する | `COMPOSE_PROFILES=test` を `monkeypatch.setenv` で置き、`docker_compose` が組み立てた `env` にこのキーが無いことを検査する。`up` の起動・`down`・`profile up` / `down` の各経路で見る。実際の状態は手動確認 |
+| `COMPOSE_PROFILES` が環境変数に設定されていても `devbase up` は既定のサービスだけを起動する | `COMPOSE_PROFILES=test` を `monkeypatch.setenv` で置き、`docker_compose` と `_compose_run` が組み立てた `env` にこのキーが無いことを検査する。`up` の起動・`down`・`profile up` / `down` の各経路で見る。実際の状態は手動確認 |
+| `.env` に `COMPOSE_PROFILES` が書かれていても `devbase up` は既定のサービスだけを起動する | 生成物から読んだ既定のサービス名が `up -d` の引数へ並ぶことを検査する。引数にプロファイルのサービスが入らないことも見る。実際の状態は手動確認 |
 | フックが `DEVBASE_ACTIVE_PROFILES` を受け取る | `hook_env` の戻り値と、`subprocess.run` へ渡された `env` を検査する。`cmd_up` 経由は空文字列、`cmd_profile_up` 経由はプロファイル名 1 つになることを見る。複数値はこの範囲では作れないため検査しない |
 | フックの失敗が終了コードへ出る | 失敗する `./deploy` を置き、戻り値が 1 になることを検査する |
 | プロファイルを持たないプロジェクトの挙動が変わらない | 既存の `tests/commands/test_container_up_order.py` と `tests/cli/test_up_roundtrips.py` が通ること |
