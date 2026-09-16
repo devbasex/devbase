@@ -105,6 +105,12 @@ def test_hook_env_carries_active_profiles(config):
     assert project_hook_env(config, active_profiles=("test",))["DEVBASE_ACTIVE_PROFILES"] == "test"
 
 
+def test_hook_env_joins_multiple_active_profiles_in_order(config):
+    env = project_hook_env(config, active_profiles=("test", "cache", "debug"))
+
+    assert env["DEVBASE_ACTIVE_PROFILES"] == "test,cache,debug"
+
+
 def project_hook_env(config, **kwargs):
     from devbase.project import runtime
     return runtime.hook_env(config, **kwargs)

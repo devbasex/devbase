@@ -323,6 +323,29 @@ def test_profile_list_marks_running_unknown_without_daemon(project, monkeypatch,
     assert 'app,mysql' in rows['test'] and rows['test'].split()[-1] == '不明'
 
 
+@pytest.mark.parametrize('ps_failure', ['invalid_json', 'os_error'])
+def test_profile_list_marks_running_unknown_when_ps_fails(project, monkeypatch, capsys,
+                                                         ps_failure):
+    write_generated(project, extra=('app',))
+    fake = FakeCompose(profiles={'test': ['app']})
+
+    def failing_ps(cmd, **kwargs):
+        if 'ps' in cmd:
+            if ps_failure == 'os_error':
+                raise OSError('cannot execute docker compose ps')
+            return subprocess.CompletedProcess(cmd, 0, '{broken json', '')
+        return fake(cmd, **kwargs)
+
+    monkeypatch.setattr(container.subprocess, 'run', failing_ps)
+
+    assert container.cmd_profile_list() == 0
+
+    rows = {line.split()[0]: line.split()
+            for line in capsys.readouterr().out.splitlines()[1:]}
+    assert rows['test'][1] == 'app'
+    assert rows['test'][-1] == '不明'
+
+
 def test_profile_list_accepts_json_array_from_older_compose(project, monkeypatch, capsys):
     write_generated(project)
     fake = FakeCompose(profiles={'test': ['app']})
