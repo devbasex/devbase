@@ -19,7 +19,7 @@
 | --- | --- |
 | プロファイルの解決 | 生成済みの構成ファイルを `-f` で渡して `docker compose config` を呼び、プロファイル名とサービス名の対応を得る。既定のサービスの一覧も同じ経路で求める。稼働状況は持たない |
 | プロファイルの操作 | 起動・停止・一覧の 3 つの入口。接続先の反映と機密の注入を済ませてから Compose を呼ぶ |
-| Compose の呼び出し | `docker compose` のコマンド列を組み立てて実行する。起動には `--no-deps` を付ける。プロファイルの停止は `stop` と `rm -f` の 2 段で行う。全体の停止には全プロファイルを指定する。有効なプロファイルは devbase が `--profile` で決め、`COMPOSE_PROFILES` には番兵の名前を入れて渡す。`devbase up` の起動は既定のサービスを明示して渡す（決定 7） |
+| Compose の呼び出し | `docker compose` のコマンド列を組み立てて実行する。起動には `--no-deps` を付ける。プロファイルの停止は `stop` と `rm -f` の 2 段で行う。全体の停止には全プロファイルを指定する。有効なプロファイルは devbase が `--profile` で決め、`COMPOSE_PROFILES` には打ち消し用のプロファイル名を入れて渡す。`devbase up` の起動は既定のサービスを明示して渡す（決定 7） |
 | フックの実行 | プロジェクトの `./deploy` を、有効なプロファイルを環境変数へ載せて呼ぶ。同じ環境変数は `./pre-up` にも渡る |
 | 引数の受け口 | `project` / `container` の配下に `profile` のサブコマンドを足す |
 | 一覧の操作メニュー | `devbase list` の起動中の行で、プロファイルの起動・停止を選ばせる。選ばせた後は共有のハンドラへ委譲する（F6） |
@@ -94,7 +94,7 @@ lib/devbase/
 ├── tui/
 │   └── actions_project.py     # 起動中の行の操作へ profile の 2 項目を足す（変更）
 ├── utils/
-│   └── docker.py              # docker_compose が env= を組んで番兵を入れる、docker_compose_up が対象サービスを受ける、docker_compose_down が全プロファイルを対象にする（変更）
+│   └── docker.py              # docker_compose が env= を組んで打ち消し用のプロファイル名を入れる、docker_compose_up が対象サービスを受ける、docker_compose_down が全プロファイルを対象にする（変更）
 └── volume/
     └── compose.py             # profiles を保つことの確認のみ（変更なし）
 
@@ -105,7 +105,7 @@ tests/
 ├── commands/
 │   └── test_container_profile.py   # 新設
 ├── utils/
-│   └── test_docker_profiles.py     # 新設（子プロセスの env の COMPOSE_PROFILES が番兵の名前になることの検査）
+│   └── test_docker_profiles.py     # 新設（子プロセスの env の COMPOSE_PROFILES が打ち消し用のプロファイル名になることの検査）
 └── volume/
     └── test_compose_profiles.py    # 新設
 ```
@@ -117,11 +117,11 @@ tests/
 | 関数 | 変更 | 責務 |
 | --- | --- | --- |
 | `profile_services(compose_file, environ) -> dict[str, list[str]]` | 新設（`commands/container.py`） | `config --profiles` で名前を取り、各プロファイル X について `--profile X config --services` を呼び、`config --services`（既定のサービス）を差し引いて対応を作る（決定 1）。デーモンへの接続は要らない |
-| `default_services(compose_file, environ) -> list[str]` | 新設（`commands/container.py`） | `config --services` を番兵入りの環境で呼び、既定のサービス名を返す。`cmd_up` が起動の対象として渡す（決定 1・決定 7） |
+| `default_services(compose_file, environ) -> list[str]` | 新設（`commands/container.py`） | `config --services` を打ち消し用のプロファイル名を入れた環境で呼び、既定のサービス名を返す。`cmd_up` が起動の対象として渡す（決定 1・決定 7） |
 | `cmd_profile_up(profile, context)` | 新設 | F1。プロファイルのサービスをすべて明示し、`--no-deps` を付けて起動する（決定 2）。終了コードを返す |
 | `cmd_profile_down(profile, context)` | 新設 | F2。`docker_compose_down` は通さず、`stop` と `rm -f` の 2 段をサービス名付きで組む（決定 5）。終了コードを返す |
 | `cmd_profile_list(context)` | 新設 | F3。終了コードを返す |
-| `docker_compose(command, ...)` | 変更（`utils/docker.py`） | F1 / F2 / F4 の共通の土台。現在は `subprocess.run(cmd, ...)` を `env=` なしで呼ぶ。`env=` を新たに構築し、`COMPOSE_PROFILES` へ番兵の名前 `__devbase_none__` を入れて渡す（決定 7）。コマンド列の組み立て方は変えない |
+| `docker_compose(command, ...)` | 変更（`utils/docker.py`） | F1 / F2 / F4 の共通の土台。現在は `subprocess.run(cmd, ...)` を `env=` なしで呼ぶ。`env=` を新たに構築し、`COMPOSE_PROFILES` へ打ち消し用のプロファイル名 `__devbase_none__` を入れて渡す（決定 7）。コマンド列の組み立て方は変えない |
 | `docker_compose_up(compose_file, detach=True, services=())` | 変更（`utils/docker.py`） | 起動の対象を受け取り、`['up', '-d', *services]` を組む。空なら現在と同じ `['up', '-d']` になる |
 | `_compose_run(subcommand, ...)` | 変更（`commands/container.py:269`） | `docker_compose` を経由せず直接 `subprocess.run` する経路（`ps` / `logs`）。同じ `env=` を組み立てて渡す（決定 7） |
 | `_resolve_dev_service` / `_read_compose_services` | 変更（`commands/container.py`） | `config --format json` を直接呼ぶ経路。同じ `env=` を渡し、読むサービスの集合を devbase が決める（決定 7） |
@@ -196,11 +196,11 @@ tests/
 
 | 経路 | `--profile` | 対象の渡し方 | `COMPOSE_PROFILES` |
 | --- | --- | --- | --- |
-| `devbase up` の起動 | 付けない | 既定のサービスをすべて明示する | 番兵の名前 `__devbase_none__` を入れる |
+| `devbase up` の起動 | 付けない | 既定のサービスをすべて明示する | 打ち消し用のプロファイル名 `__devbase_none__` を入れる |
 | `devbase down` と `up` 冒頭の停止 | `--profile '*'` | 渡さない | 同上 |
 | `profile up X` / `profile down X` | `--profile X` | 対象のサービスをすべて明示する | 同上 |
 
-`COMPOSE_PROFILES` は空文字列にしない。どのプロジェクトも定義しない番兵の名前を入れる。空文字列の扱いが版で違う可能性を調べずに済むためである。
+`COMPOSE_PROFILES` は空文字列にしない。どのプロジェクトも定義しない打ち消し用のプロファイル名を入れる。空文字列の扱いが版で違う可能性を調べずに済むためである。
 
 **キーを外すだけでは足りない。** Compose は環境変数が無ければプロジェクトの `.env` を読む。値を入れて上書きし、あわせて `devbase up` の起動では既定のサービス名も明示する（決定 7）。
 
@@ -247,7 +247,7 @@ tests/
 
 ### 検査の手段
 
-`uv run pytest tests/commands/test_container_profile.py -q` が、組み立てたコマンド列と終了コードを検査する。`uv run pytest tests/utils/test_docker_profiles.py -q` が、子プロセスへ渡す環境の `COMPOSE_PROFILES` が番兵の名前になっていることを検査する。同じテストで、`devbase up` の起動が既定のサービス名をすべて渡すことも検査する。
+`uv run pytest tests/commands/test_container_profile.py -q` が、組み立てたコマンド列と終了コードを検査する。`uv run pytest tests/utils/test_docker_profiles.py -q` が、子プロセスへ渡す環境の `COMPOSE_PROFILES` が打ち消し用のプロファイル名になっていることを検査する。同じテストで、`devbase up` の起動が既定のサービス名をすべて渡すことも検査する。
 
 ## 処理の流れ
 
@@ -307,11 +307,11 @@ sequenceDiagram
 
 | 操作 | コマンド列 | 子プロセスの `COMPOSE_PROFILES` |
 | --- | --- | --- |
-| プロファイルの起動 | `['--profile', X, 'up', '-d', '--no-deps', <サービス...>]` | 番兵 |
-| プロファイルの停止（1 段目） | `['--profile', X, 'stop', <サービス...>]` | 番兵 |
-| プロファイルの停止（2 段目） | `['--profile', X, 'rm', '-f', <サービス...>]` | 番兵 |
-| `devbase up` の起動 | `['up', '-d', <既定のサービス...>]`（`--profile` を付けない） | 番兵 |
-| `devbase down` / `up` 冒頭の停止 | `['--profile', '*', 'down', '-t0']` | 番兵 |
+| プロファイルの起動 | `['--profile', X, 'up', '-d', '--no-deps', <サービス...>]` | 打ち消し用の名前 |
+| プロファイルの停止（1 段目） | `['--profile', X, 'stop', <サービス...>]` | 打ち消し用の名前 |
+| プロファイルの停止（2 段目） | `['--profile', X, 'rm', '-f', <サービス...>]` | 打ち消し用の名前 |
+| `devbase up` の起動 | `['up', '-d', <既定のサービス...>]`（`--profile` を付けない） | 打ち消し用の名前 |
+| `devbase down` / `up` 冒頭の停止 | `['--profile', '*', 'down', '-t0']` | 打ち消し用の名前 |
 
 `devbase up` の `<既定のサービス...>` は、`config --services` が返す既定のサービスの全件である（決定 1）。`--profile` を付けないことと合わせて、プロファイルのサービスは対象に入らない。
 
@@ -319,9 +319,9 @@ sequenceDiagram
 
 ```mermaid
 graph LR
-    A[devbase down] --> B["env の COMPOSE_PROFILES へ番兵を入れる → compose --profile '*' down -t0"]
-    C[devbase up] --> D["env の COMPOSE_PROFILES へ番兵を入れる → compose --profile '*' down -t0"]
-    D --> E["env の COMPOSE_PROFILES へ番兵を入れる → compose up -d 既定のサービス一覧、--profile なし"]
+    A[devbase down] --> B["env の COMPOSE_PROFILES へ打ち消し用の名前を入れる → compose --profile '*' down -t0"]
+    C[devbase up] --> D["env の COMPOSE_PROFILES へ打ち消し用の名前を入れる → compose --profile '*' down -t0"]
+    D --> E["env の COMPOSE_PROFILES へ打ち消し用の名前を入れる → compose up -d 既定のサービス一覧、--profile なし"]
     E --> F[既定のサービスだけが動く]
 ```
 
@@ -333,7 +333,7 @@ graph LR
 | --- | --- | --- | --- |
 | 運用・保守性 | プロファイルのサービスを起動・停止した記録が、既存のログと同じ体裁（`logger.info`）で残る | 対象サービス名とプロファイル名を `logger.info` で 1 行ずつ出す。Compose の出力はそのまま標準出力へ流す | `caplog` で起動・停止の各 1 行を検査する |
 | セキュリティ | プロファイルのサービスへ渡す機密は、そのサービスが元々 `env_file` で参照していた由来のキーだけに限る | 生成済みの `.docker-compose.scale.yml` をそのまま使う。機密の列挙はこのファイルが既に持つため、プロファイルの操作は新しい注入経路を作らない。実行前に `_prepare_compose` で既存と同じ注入を通す | 生成物のサービスごとの `environment` が、プロファイルの有無で変わらないことをテストで検査する |
-| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'`、`--no-deps`、サービスを明示した `up` / `stop` / `rm -f` である | 最低対応版を 2.20.0 とする。`--no-deps` は起動にだけ、`--profile '*'` は全体の停止にだけ使う。プロファイルの停止は `stop` と `rm -f` で行い、`down` のサービス指定は使わない（決定 5）。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる想定である（未検証）。あわせて `docker_compose` が `COMPOSE_PROFILES` へ番兵の名前を入れ、`devbase up` の起動では既定のサービスを明示する（決定 7）。サービスを明示した `up` も 2 系全般で使えるため、どちらも版の下限を作らない | v5.1.4 で全サービスが消えることを手動で確かめる。同じ版で、プロファイルを持たないプロジェクトの `up` / `down` が従来どおり動くことも確かめる。`COMPOSE_PROFILES=test` を環境変数と `.env` の両方に置いて `devbase up` を通し、既定のサービスだけが動くことも確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、2.20.0 以上 5.x 未満は未検証のまま「未確認のまま残ること」に載せる |
+| システム環境 | Docker Compose 2.20.0 以上で動く。devbase が使うのは `--profile '*'`、`--no-deps`、サービスを明示した `up` / `stop` / `rm -f` である | 最低対応版を 2.20.0 とする。`--no-deps` は起動にだけ、`--profile '*'` は全体の停止にだけ使う。プロファイルの停止は `stop` と `rm -f` で行い、`down` のサービス指定は使わない（決定 5）。ワイルドカードを解釈しない版では「`*` という名前のプロファイル」として扱われ、対象が現在と同じになる想定である（未検証）。あわせて `docker_compose` が `COMPOSE_PROFILES` へ打ち消し用のプロファイル名を入れ、`devbase up` の起動では既定のサービスを明示する（決定 7）。サービスを明示した `up` も 2 系全般で使えるため、どちらも版の下限を作らない | v5.1.4 で全サービスが消えることを手動で確かめる。同じ版で、プロファイルを持たないプロジェクトの `up` / `down` が従来どおり動くことも確かめる。`COMPOSE_PROFILES=test` を環境変数と `.env` の両方に置いて `devbase up` を通し、既定のサービスだけが動くことも確かめる。`--profile '*'` が使える最古の版は公式ドキュメントに記載が無く、2.20.0 以上 5.x 未満は未検証のまま「未確認のまま残ること」に載せる |
 
 起動で既定のサービスを対象から外すのは `--no-deps` である。停止で対象から外すのは、サービスを明示した `stop` / `rm -f` である。どれも古くからある形で、版の下限を作らない。下限を決めるのは `depends_on.required` だけである。この属性は 2.20.0 からの機能で、受け入れ条件と文書の構成例が使う。そのため 2.20.0 未満では、構成の検証そのものに失敗する。
 
