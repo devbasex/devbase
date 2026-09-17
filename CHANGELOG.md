@@ -4,8 +4,22 @@
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-09-17
+
+`compose.yml` の `profiles` を付けたテスト用のサーバ群を、dev コンテナに触れずに後から起動・停止
+できるようになりました。OpenBao backend では、機密の置き場をアカウントグループごとに分けられます。
+
 ### Added
 
+- **OpenBao backend の機密の置き場を、アカウントグループごとに分けられるようにしました（PLAN56 / #182, #184）。**
+  `secrets/backend.yml` の `version: 2`（`openbao.layout: group`）で、チーム共通は `team/<グループ>/...`、
+  個人単位は `users/<user>/<グループ>/...` に置きます。`version: 1` の設定とファイル backend の挙動は変わりません。
+  - `devbase env backend use openbao --layout group --group-alias default=<グループ>` で切り替えます。
+    `--group-alias` はグループを宣言していないプロジェクト（`default`）の機密をどの置き場で扱うかの読み替えです
+  - `devbase env backend migrate` に `--exclude-project` を、`env list` / `get` / `set` / `delete` / `edit`
+    などに `--group` を追加しました
+  - `devbase up` / `scale` は、ボリュームと機密のアカウントグループが食い違うとコンテナに触れる前に止まります
+  - サーバのポリシーがグループ別のパスを許可している必要があります。詳細は `docs/user/env-backend.md`
 - **Compose の `profiles` を付けた付随サービス群を、dev コンテナに触れずに後から起動・停止できるように
   しました（PLAN58 / #189, #191）。** `devbase up` の既定では dev だけが起動します。
   - `devbase project profile up|down [name] <profile>` / `devbase project profile list [name]` を追加しました
@@ -624,7 +638,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.4.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.5.0...HEAD
+[3.5.0]: https://github.com/devbasex/devbase/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/devbasex/devbase/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/devbasex/devbase/compare/v3.2.2...v3.3.0
 [3.2.2]: https://github.com/devbasex/devbase/compare/v3.2.1...v3.2.2
