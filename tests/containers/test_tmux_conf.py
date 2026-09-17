@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import contextlib
 import os
+import pty
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -73,6 +75,48 @@ def _effective_options(*configs: Path) -> dict[str, list[str]]:
     finally:
         subprocess.run(["tmux", "-S", str(socket), "kill-server"],
                        capture_output=True, text=True, env=env)
+        with contextlib.suppress(FileNotFoundError):
+            socket.unlink()
+
+
+def _client_capabilities(config: Path) -> str:
+    """``config`` を読ませた tmux へ実際に接続し、クライアント端末の能力表を返す。
+
+    ``terminal-features`` の値は ``show-options`` から読めるが、tmux は綴りの違う
+    機能名を黙って受け取る。宣言が能力として効いているかは、クライアントを繋いだ
+    ときの ``show-messages -JT`` でしか確かめられない。接続には端末が要るため
+    ``pty.openpty`` で用意する。
+    """
+    socket = Path(tempfile.gettempdir()) / f"dvb38-{uuid.uuid4().hex[:8]}"
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    env["TERM"] = "xterm-256color"
+    base = ["tmux", "-S", str(socket)]
+
+    started = subprocess.run([*base, "-f", str(config), "new-session", "-d", "-s", "p",
+                              "sleep", "30"], capture_output=True, text=True, env=env)
+    assert started.returncode == 0, f"tmux の起動に失敗した: {started.stderr}"
+
+    controller, terminal = pty.openpty()
+    client = subprocess.Popen([*base, "attach", "-t", "p"],
+                              stdin=terminal, stdout=terminal, stderr=terminal, env=env)
+    os.close(terminal)
+    try:
+        for _ in range(50):
+            time.sleep(0.1)
+            shown = subprocess.run([*base, "show-messages", "-JT"],
+                                   capture_output=True, text=True, env=env)
+            if "Terminal 0:" in shown.stdout:
+                return shown.stdout
+        raise AssertionError("クライアントが接続しなかった")
+    finally:
+        # サーバーを先に落とす。クライアントは接続が切れて自ら終わるので wait が
+        # 即座に返り、待ち切れなかった場合でも残りの後始末を続けられるように
+        # TimeoutExpired は握り潰す (`sleep 30` を残さないため)。
+        subprocess.run([*base, "kill-server"], capture_output=True, text=True, env=env)
+        client.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            client.wait(timeout=5)
+        os.close(controller)
         with contextlib.suppress(FileNotFoundError):
             socket.unlink()
 
@@ -162,3 +206,19 @@ def test_conf_provides_windows_like_copy_bindings():
         "bind-key -T copy-mode C-c send-keys -X copy-selection-and-cancel",
         "bind-key -T copy-mode-vi C-c send-keys -X copy-selection-and-cancel",
     ]
+
+
+@needs_tmux
+def test_hyperlinks_reach_the_outer_terminal():
+    """OSC 8 のハイパーリンクを外側の端末へ書き出す。
+
+    tmux は端末が ``Hls`` 能力を持つときだけ OSC 8 を出力し、持たない端末では文字列
+    だけを描いてリンクを捨てる。tmux が ``xterm*`` へ既定で与える機能は
+    ``clipboard/ccolour/cstyle/focus/title`` で ``hyperlinks`` を含まないため、
+    宣言しないと Claude Code などが出す URL がクリックできなくなる。
+    """
+    capabilities = _client_capabilities(TMUX_CONF)
+
+    hls = [line.strip() for line in capabilities.splitlines() if ": Hls:" in line]
+    assert hls, "クライアントの能力表に Hls が無い"
+    assert "[missing]" not in hls[0], f"Hls が定義されていない: {hls[0]}"
