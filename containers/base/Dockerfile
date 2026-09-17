@@ -155,6 +155,28 @@ RUN set -eux; \
 
 ENV PATH="/root/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
 
+# OpenBao CLI (bao)。devbase の機密のサーバ backend と同じ 2.6 系に固定する (PLAN54)。
+# 起動中のコンテナから自分の機密を読み書きし、管理者は管理スクリプトをここから実行する。
+# .deb は systemd ユニットやシステムユーザーを伴うため使わず、tar.gz から bao だけを置く。
+# 同じリリースの checksums.txt で検証し、一致しなければ展開せずにビルドを止める。
+ARG BAO_VERSION=2.6.2
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+    amd64) bao_arch="amd64" ;; \
+    arm64) bao_arch="arm64" ;; \
+    *) echo "Unsupported architecture for bao: $(dpkg --print-architecture)" && exit 1 ;; \
+    esac; \
+    bao_tar="openbao_${BAO_VERSION}_linux_${bao_arch}.tar.gz"; \
+    bao_base="https://github.com/openbao/openbao/releases/download/v${BAO_VERSION}"; \
+    cd /tmp; \
+    curl -fsSL "${bao_base}/${bao_tar}" -o "${bao_tar}"; \
+    curl -fsSL "${bao_base}/checksums.txt" -o bao-checksums.txt; \
+    bao_sum="$(grep " ${bao_tar}\$" bao-checksums.txt)"; \
+    echo "${bao_sum}" | sha256sum -c -; \
+    tar -xzf "${bao_tar}" -C /usr/local/bin bao; \
+    rm -f "${bao_tar}" bao-checksums.txt; \
+    bao version
+
 # 確認
 RUN gh --version && node --version && npm --version && aws --version && gcloud --version && session-manager-plugin --version
 
@@ -201,6 +223,7 @@ RUN set -eux; \
 
 # AI CLI の起動定義。~/.bashrc へ直接書かずファイルにしているのは、Docker を
 # 起動せずに tests/containers/test_ai_cli_aliases.py で振る舞いを固定するため。
+RUN sudo install -d -m 0755 /etc/devbase
 COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh
 
 RUN set -eux; \

@@ -14,7 +14,7 @@ from devbase.log import get_logger, setup
 try:
     from . import __version__
 except ImportError:
-    __version__ = "3.1.0"
+    __version__ = "3.5.0"
 
 logger = get_logger("devbase.cli")
 
@@ -53,11 +53,13 @@ GROUP_ALIASES = {
 
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
-    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list'],
-    ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild'],
+    ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list',
+                          'profile'],
+    ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild',
+                          'profile'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
-                          'exec', 'encrypt', 'decrypt', 'rekey', 'doctor',
-                          'export', 'import'],
+                          'exec', 'token', 'encrypt', 'decrypt', 'rekey', 'doctor',
+                          'export', 'import', 'backend'],
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
@@ -66,6 +68,9 @@ SUBCMD_MAP = {
 # 優先的に解決させる。例えば `devbase env e` は従来 `edit` のみに解決されていたが、
 # `export` 追加後は ambiguous になるため、既存ショートカットを維持するために維持先を明示する。
 SUBCMD_PREFIX_PREFERENCES = {
+    # `profile` 追加 (PLAN58) の前は `p` が `ps` に一意に解決されていた。
+    ('project',): {'p': 'ps'},
+    ('container', 'ct'): {'p': 'ps'},
     ('env',): {
         'e': 'edit',
         # `import` 追加で `i` が `init` / `import` の両方にマッチして ambiguous に
@@ -110,6 +115,25 @@ def _add_name_arg(parser):
     return parser
 
 
+def _add_context_arg(parser):
+    """lifecycle サブコマンドに `--context NAME` を登録する (PLAN52)。
+
+    docker context を一時的に上書きする。優先順位は CLI > env `DEVBASE_DOCKER_CONTEXT`
+    > `project.local.yml` の `docker.context` > 現在の context。空文字は受け付けない。
+    """
+    parser.add_argument('--context', dest='context', metavar='NAME',
+                        type=_non_empty, default=None,
+                        help='Docker context to use for this command '
+                             '(overrides DEVBASE_DOCKER_CONTEXT and project.local.yml)')
+    return parser
+
+
+def _non_empty(value: str) -> str:
+    if not value.strip():
+        raise argparse.ArgumentTypeError('--context には context 名を指定してください')
+    return value.strip()
+
+
 def _add_open_args(parser):
     """`up` に エディタ自動オープン関連フラグを登録する (PLAN31_3)。
 
@@ -140,6 +164,7 @@ def _add_login_subparser(sub):
     """
     p = sub.add_parser('login', help='Login to container')
     p.add_argument('index', nargs='?', default='1', help='Container index')
+    _add_context_arg(p)
 
 
 def _add_build_subparser(sub):
@@ -151,6 +176,7 @@ def _add_build_subparser(sub):
     """
     p = sub.add_parser('build', help='Build container images')
     p.add_argument('image', nargs='?', default=None, help='Image name')
+    _add_context_arg(p)
     # `--no-cache` と `--expires` は仕様上併用しない (無条件 no-cache か期限判定の
     # いずれか)。併用すると no-cache が優先され --expires が黙殺されるため、
     # add_mutually_exclusive_group で CLI レベルの排他制御を行い usage error で落とす。
@@ -165,30 +191,58 @@ def _add_build_subparser(sub):
                                  'DAYS days (default 7). Base image is judged independently.')
 
 
+def _add_profile_subparser(sub, *, with_name: bool):
+    """`profile {up,down,list}` を登録する (PLAN58 決定 6)。
+
+    入れ子は `dest='profile_subcommand'` を使う。親の `subcommand` を再利用すると
+    `_dispatch` が `project profile list` を `project list` へ流すため。`project` だけが
+    `[name]` を受け、並びは `scale` と同じ `[name] <profile>` にする。
+    """
+    p = sub.add_parser('profile', help='Start / stop compose profile services')
+    profile_sub = p.add_subparsers(dest='profile_subcommand')
+    for op, help_text in (('up', 'Start the services of a profile'),
+                          ('down', 'Stop and remove the services of a profile')):
+        op_parser = profile_sub.add_parser(op, help=help_text)
+        if with_name:
+            _add_name_arg(op_parser)
+        op_parser.add_argument('profile', help='Profile name in compose.yml')
+        _add_context_arg(op_parser)
+    list_parser = profile_sub.add_parser('list', help='List profiles and their state')
+    if with_name:
+        _add_name_arg(list_parser)
+    _add_context_arg(list_parser)
+
+
 def _add_container_parser(subparsers):
     """Container group parser"""
     ct_parser = subparsers.add_parser('container', aliases=['ct'],
                                       help='Manage containers')
     ct_sub = ct_parser.add_subparsers(dest='subcommand')
 
-    _add_open_args(ct_sub.add_parser('up', help='Start containers'))
-    ct_sub.add_parser('down', help='Stop and remove containers')
+    _add_context_arg(_add_open_args(ct_sub.add_parser('up', help='Start containers')))
+    _add_context_arg(ct_sub.add_parser('down', help='Stop and remove containers'))
 
     _add_login_subparser(ct_sub)
 
     ct_ps = ct_sub.add_parser('ps', help='Show container status')
     ct_ps.add_argument('--all', '-a', action='store_true', help='Show all containers')
+    _add_context_arg(ct_ps)
 
     ct_logs = ct_sub.add_parser('logs', help='Show container logs')
     ct_logs.add_argument('--follow', '-f', action='store_true', help='Follow log output')
     ct_logs.add_argument('--tail', type=int, default=None, help='Number of lines')
+    _add_context_arg(ct_logs)
 
     ct_scale = ct_sub.add_parser('scale', help='Scale containers online')
     ct_scale.add_argument('new_scale', type=int, help='New number of containers')
+    _add_context_arg(ct_scale)
 
     _add_build_subparser(ct_sub)
 
-    ct_sub.add_parser('rebuild', help='Rebuild stale images (= build --expires=7)')
+    _add_context_arg(ct_sub.add_parser(
+        'rebuild', help='Rebuild stale images (= build --expires=7)'))
+
+    _add_profile_subparser(ct_sub, with_name=False)
 
 
 def _add_project_parser(subparsers):
@@ -211,25 +265,29 @@ def _add_project_parser(subparsers):
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')
 
-    _add_open_args(_add_name_arg(pj_sub.add_parser('up', help='Start containers')))
-    _add_name_arg(pj_sub.add_parser('down', help='Stop and remove containers'))
+    _add_context_arg(_add_open_args(_add_name_arg(
+        pj_sub.add_parser('up', help='Start containers'))))
+    _add_context_arg(_add_name_arg(pj_sub.add_parser('down', help='Stop and remove containers')))
 
     _add_login_subparser(pj_sub)
 
     pj_ps = pj_sub.add_parser('ps', help='Show container status')
     _add_name_arg(pj_ps)
     pj_ps.add_argument('--all', '-a', action='store_true', help='Show all containers')
+    _add_context_arg(pj_ps)
 
     pj_logs = pj_sub.add_parser('logs', help='Show container logs')
     _add_name_arg(pj_logs)
     pj_logs.add_argument('--follow', '-f', action='store_true', help='Follow log output')
     pj_logs.add_argument('--tail', type=int, default=None, help='Number of lines')
+    _add_context_arg(pj_logs)
 
     # NOTE: `[name]` optional + `new_scale` 必須 int の順。値が 1 個なら new_scale に、
     # 2 個なら (name, new_scale) に割り当てられ曖昧にならない (tests/cli 参照)。
     pj_scale = pj_sub.add_parser('scale', help='Scale containers online')
     _add_name_arg(pj_scale)
     pj_scale.add_argument('new_scale', type=int, help='New number of containers')
+    _add_context_arg(pj_scale)
 
     _add_build_subparser(pj_sub)
 
@@ -237,8 +295,13 @@ def _add_project_parser(subparsers):
     # 省略可能な `[name]` を取り、name 指定時は _dispatch_lifecycle が chdir してから
     # 実行する。wrapper の _PROJECT_NAME_SUBCOMMANDS / _NAME_RESOLVABLE_SHORTCUTS にも
     # 追加すること。
-    _add_name_arg(pj_sub.add_parser(
-        'rebuild', help='Rebuild stale images (= build --expires=7)'))
+    _add_context_arg(_add_name_arg(pj_sub.add_parser(
+        'rebuild', help='Rebuild stale images (= build --expires=7)')))
+
+    # `profile` の `[name]` は Python 側 (_dispatch_lifecycle) で解決する。3 番目の引数は
+    # up / down / list になるため、wrapper の _PROJECT_NAME_SUBCOMMANDS には含めない
+    # (PLAN58 決定 6)。
+    _add_profile_subparser(pj_sub, with_name=True)
 
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
@@ -284,6 +347,10 @@ def _add_env_parser(subparsers):
 
     env_init = env_sub.add_parser('init', help='Initial setup (interactive)')
     env_init.add_argument('--reset', action='store_true', help='Reset existing config')
+    # グループ別の置き場 (PLAN56)。`up` の子プロセスがプロジェクトのグループを渡す (決定 10)
+    env_init.add_argument('--group', metavar='NAME', default=None,
+                          help='Account group whose team secrets to set up '
+                               '(only with the grouped layout of the openbao backend)')
 
     env_sub.add_parser('sync', help='Resync credentials from sources')
 
@@ -314,6 +381,17 @@ def _add_env_parser(subparsers):
     env_edit.add_argument('--project', '-p', action='store_true',
                           help='Edit project .env')
 
+    # 持ち主の軸 (PLAN51 決定 14)。`-p` が適用範囲を、`--user` が持ち主を選び、
+    # 片方の指定がもう片方の軸を動かさない。値を取らない真偽フラグである点も `-p` と
+    # 揃える。init / sync / project / export / import には足さない。
+    for sub in (env_list, env_get, env_set, env_delete, env_edit):
+        sub.add_argument('--user', action='store_true', dest='user',
+                         help="Use this user's personal secrets instead of the team's")
+        # グループ別の置き場 (PLAN56)。省略時は実行時のプロジェクトのグループ
+        sub.add_argument('--group', metavar='NAME', default=None,
+                         help='Account group whose secrets to use '
+                              '(only with the grouped layout of the openbao backend)')
+
     env_sub.add_parser('project', help='Setup project-specific variables')
 
     # 生成先を選ぶオプションは置かない。復号側は $DEVBASE_AGE_KEY_FILE か既定パスしか
@@ -325,9 +403,19 @@ def _add_env_parser(subparsers):
     env_exec = env_sub.add_parser(
         'exec',
         help='Run a command with the decrypted secrets in its environment')
+    # shell の `devbase build --context NAME` がここへ引数で渡す (PLAN52 決定 9)。
+    # 環境変数で渡すと dispatch 前の機密注入が .env の同名キーで上書きするため。
+    _add_context_arg(env_exec)
     env_exec.add_argument('argv', nargs=argparse.REMAINDER,
                           metavar='-- CMD [ARGS...]',
                           help='Command to run (prefix with -- to pass flags)')
+
+    env_token = env_sub.add_parser(
+        'token',
+        help='Refresh the OpenBao token in running dev containers (~/.vault-token)')
+    env_token.add_argument('--print', dest='print_only', action='store_true',
+                           help='Print a token to stdout instead of writing it into containers')
+    _add_context_arg(env_token)
 
     for name, action in (('encrypt', 'Move plaintext settings into the encrypted store'),
                          ('decrypt', 'Move encrypted settings back to plaintext')):
@@ -371,6 +459,62 @@ def _add_env_parser(subparsers):
 
     _add_env_export_parser(env_sub)
     _add_env_import_parser(env_sub)
+    _add_env_backend_parser(env_sub)
+
+
+def _add_env_backend_parser(env_sub):
+    """`env backend` サブコマンド群を登録する (PLAN51)。"""
+    env_backend = env_sub.add_parser(
+        'backend', help='Choose where secrets are stored (age / plaintext / openbao)')
+    backend_sub = env_backend.add_subparsers(dest='backend_action')
+
+    backend_sub.add_parser('status', help='Show the active backend and its locations')
+
+    use = backend_sub.add_parser('use', help='Switch to another backend')
+    use.add_argument('name', help='Backend name (auto / plaintext / age / openbao)')
+    use.add_argument('--url', default=None, help='OpenBao server URL (https)')
+    use.add_argument('--mount', default=None, metavar='NAME',
+                     help='KV v2 mount name (default: devbase)')
+    use.add_argument('--user', default=None, metavar='ID',
+                     help='Identifier for this user\'s personal secrets (entity name)')
+    use.add_argument('--role-id', dest='role_id', default=None,
+                     help='AppRole role_id')
+    # secret_id は argv で受けない (ps から読める位置に置かない)。
+    use.add_argument('--secret-id-stdin', dest='secret_id_stdin',
+                     action='store_true',
+                     help='Read the AppRole secret_id for this machine from stdin')
+    # 指定が無ければ既存の設定を引き継ぐ (None)。一度 --no-cache にした後も CLI だけで
+    # 戻せるよう、対になる --cache を置く
+    cache_group = use.add_mutually_exclusive_group()
+    cache_group.add_argument('--cache', dest='cache', action='store_const', const=True,
+                             default=None,
+                             help='Keep an encrypted local cache of server secrets')
+    cache_group.add_argument('--no-cache', dest='cache', action='store_const', const=False,
+                             help='Do not keep an encrypted local cache of server secrets')
+    # 指定が無ければ既存のレイアウトと読み替えを引き継ぐ (None。PLAN56 決定 1)
+    use.add_argument('--layout', choices=('flat', 'group'), default=None,
+                     help='Path layout on the server: group splits secrets by account group '
+                          '(version 2), flat keeps the ungrouped paths (version 1). '
+                          'Default: keep the current layout (group for a new setting)')
+    use.add_argument('--group-alias', action='append', default=None, metavar='FROM=TO',
+                     dest='group_aliases',
+                     help='Store account group FROM under the name TO (repeatable; '
+                          'replaces the current aliases; only with the group layout)')
+
+    backend_sub.add_parser('test', help='Check the connection to the server backend')
+
+    migrate = backend_sub.add_parser(
+        'migrate', help='Copy team secrets to another backend (age <-> openbao)')
+    migrate.add_argument('--to', required=True, metavar='NAME',
+                         help='Destination backend (age / openbao)')
+    migrate.add_argument('--dry-run', action='store_true',
+                         help='Show what would move (key names only) without writing')
+    migrate.add_argument('--exclude-project', action='append', default=[],
+                         metavar='NAME', dest='exclude_projects',
+                         help='Leave this project out of the migration: its secrets are '
+                              'neither read, written nor moved aside (repeatable)')
+    migrate.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
+                         help='Skip the confirmation prompt')
 
 
 def _add_env_export_parser(env_sub):
@@ -562,19 +706,23 @@ def _add_shortcuts(subparsers):
     ps_sc = subparsers.add_parser('ps', help='Show container status')
     _add_name_arg(ps_sc)
     ps_sc.add_argument('--all', '-a', action='store_true', help='Show all containers')
+    _add_context_arg(ps_sc)
 
-    _add_open_args(_add_name_arg(subparsers.add_parser('up', help='Start containers')))
-    _add_name_arg(subparsers.add_parser('down', help='Stop and remove containers'))
+    _add_context_arg(_add_open_args(_add_name_arg(
+        subparsers.add_parser('up', help='Start containers'))))
+    _add_context_arg(_add_name_arg(
+        subparsers.add_parser('down', help='Stop and remove containers')))
 
     # `[name]` optional + `new_scale` 必須 int の順 (project scale と同じ規則)。
     scale_sc = subparsers.add_parser('scale', help='Scale containers online')
     _add_name_arg(scale_sc)
     scale_sc.add_argument('new_scale', type=int, help='New number of containers')
+    _add_context_arg(scale_sc)
 
     # `rebuild` は project rebuild のトップレベルシノニム (Python 実装のため build と
     # 異なりショートカット可)。up/down と同じく `[name]` を受け付ける。
-    _add_name_arg(subparsers.add_parser(
-        'rebuild', help='Rebuild stale images (= build --expires=7)'))
+    _add_context_arg(_add_name_arg(subparsers.add_parser(
+        'rebuild', help='Rebuild stale images (= build --expires=7)')))
 
     # `list` は `project list` のトップレベルシノニム。lifecycle ではなく一覧表示
     # のため SHORTCUTS (project lifecycle へ写像) ではなく _dispatch で個別に
@@ -693,7 +841,7 @@ def main():
 
     cmd = args.command
 
-    _load_secret_env(cmd, getattr(args, 'subcommand', None))
+    _load_secret_env(cmd, getattr(args, 'subcommand', None), name=getattr(args, 'name', None))
 
     try:
         return _dispatch(cmd, args)
@@ -714,7 +862,35 @@ _NO_SECRET_INJECTION = frozenset({
     ('env', 'keygen'),
     ('env', 'encrypt'),
     ('env', 'decrypt'),
+    # backend の設定を触るコマンド。設定が壊れている・サーバに届かない状態でこそ
+    # 実行されるため、注入で先に落ちないようにする。
+    ('env', 'backend'),
+    # コンテナの bao へ token を届けるだけで、機密の値は要らない。注入するとサーバへの
+    # 往復が増える (PLAN54)。
+    ('env', 'token'),
 })
+
+
+#: 対象の参照を自分で決めて読み書きする ``env`` のサブコマンド (PLAN56)。
+#:
+#: グループ別の置き場では、``--group`` や ``-p`` の検証より前に実行時のディレクトリの
+#: グループで注入すると、拒むはずの操作でも別グループのパスへ要求が出る。値を環境変数から
+#: 使わないので、``layout: group`` のときだけ dispatch 前の注入を行わない。
+_GROUPED_SELF_RESOLVING_ENV = frozenset({
+    'list', 'get', 'set', 'delete', 'edit', 'init', 'sync', 'project', 'export', 'import',
+})
+
+
+def _grouped_layout(root: Path) -> bool:
+    """``backend.yml`` がグループ別の置き場 (``openbao`` かつ ``layout: group``) を選んでいるか"""
+    from devbase.env.secret_store import SecretStore
+
+    try:
+        config = SecretStore(root).config
+    except DevbaseError:
+        return False
+    return (config.backend == 'openbao' and config.openbao is not None
+            and config.openbao.grouped)
 
 
 def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
@@ -722,7 +898,34 @@ def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
             or (cmd, subcommand) in _NO_SECRET_INJECTION)
 
 
-def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
+def _named_lifecycle_project(root: Path, cmd: str, subcommand: Optional[str],
+                             name: Optional[str]) -> Optional[str]:
+    """名前を指定したライフサイクル操作で、dispatch 前の注入に使うプロジェクト名 (PLAN56 決定 11)。
+
+    グループ別の置き場 (``layout: group``) で、``up <name>`` などの ``name`` が
+    ``projects/`` に実在するときだけその名前を返す。実行時のディレクトリのプロジェクトで
+    注入すると、切替元のグループのパスへ要求し、別グループの機密をいったんホストの
+    プロセスへ載せるため。
+
+    ``version: 1`` では ``None`` を返し、今どおり実行時のディレクトリで解決する (PLAN55 の
+    往復の表を変えない)。``name`` を取るのはショートカットと ``project`` のサブコマンド
+    だけで、他のコマンドの ``name`` (``plugin`` など) はプロジェクト名ではない。
+    """
+    if not name:
+        return None
+    if cmd not in SHORTCUTS and GROUP_ALIASES.get(cmd, cmd) != 'project':
+        return None
+    if not (root / 'projects' / name).is_dir():
+        return None
+    from devbase.env import runtime as _runtime
+
+    # 注入と同じ SecretStore で設定を読む (設定を読むだけで、サーバへは要求しない)
+    store = _runtime.store_for(root)
+    return name if store.ref_group(name) is not None else None
+
+
+def _load_secret_env(cmd: str, subcommand: Optional[str] = None,
+                     name: Optional[str] = None) -> None:
     """機密を復号して自プロセスの環境変数へ載せる。
 
     起動ラッパーは共通の機密ファイルを読み込まなくなった (plan35 §4.4)。
@@ -733,16 +936,25 @@ def _load_secret_env(cmd: str, subcommand: Optional[str] = None) -> None:
     復号に失敗しても停止しない。鍵が未整備でも `env keygen` や `--help` は
     使えるべきで、値が本当に要る操作 (コンテナ起動など) は各コマンド側で
     改めて必須として読み込む。
+
+    ``name`` はコマンドの ``name`` 引数。グループ別の置き場では、名前を指定した
+    ライフサイクル操作をその名前のプロジェクトで解決する
+    (:func:`_named_lifecycle_project`)。
     """
     if _skip_secret_injection(cmd, subcommand):
         return
     root = os.environ.get('DEVBASE_ROOT')
     if not root:
         return
+    if (cmd == 'env' and subcommand in _GROUPED_SELF_RESOLVING_ENV
+            and _grouped_layout(Path(root))):
+        return
     try:
         from devbase.env import runtime as _runtime
 
-        _runtime.inject(Path(root), _runtime.current_project_name(Path(root)))
+        project = (_named_lifecycle_project(Path(root), cmd, subcommand, name)
+                   or _runtime.current_project_name(Path(root)))
+        _runtime.inject(Path(root), project)
     except DevbaseError as e:
         logger.debug("機密を読み込めませんでした: %s", e)
     except Exception as e:  # noqa: BLE001 - 通常コマンドを暗号化都合で倒さない

@@ -40,14 +40,37 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 > トレードオフです。**回避策:** 衝突する場合は対象プロジェクトのディレクトリ内で実行するか、
 > 明示的にそのプロジェクトへ切り替えてから（`cd` 済みの状態で）コマンドを実行してください。
 
+## `--context NAME`（共通オプション）
+
+`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` / `profile`（`project` /
+`container` 配下と、トップレベルのショートカット）は `--context NAME` を受け付けます。
+そのコマンドの `docker` / `docker compose` を、指定した docker context の daemon へ向けます。
+
+```bash
+devbase up carmo --context gpu-wsl     # この 1 回だけ gpu-wsl 上に立てる
+devbase build --context gpu-wsl        # イメージをリモート側でビルドする
+```
+
+優先順位は CLI > env `DEVBASE_DOCKER_CONTEXT` > `projects/<name>/project.local.yml` の
+`docker.context` > 現在の context です。設定の書き方は
+[`project.local.yml`](../project-yml.md#projectlocalyml個人機材ごとの設定)、動作の詳細は
+[環境変数ガイドの「リモート Docker」](../environment-variables.md#リモート-docker別ホストの-daemon-にコンテナを立てる)
+を参照してください。
+
 ## `devbase project up`
 
 コンテナを起動します。
 
 ```
-devbase project up [name]
-devbase up [name]
+devbase project up [name] [--context NAME]
+devbase up [name] [--context NAME]
 ```
+
+- 解決した docker context が現在の context と異なる（**リモート扱い**）とき:
+  - `DOCKER_CONTEXT` を全 docker 呼び出しへ渡し、`DOCKER_GID` はリモート側の値にする
+  - `project.local.yml` の `docker.home` で bind mount の `~` を展開する
+  - 自動スナップショットは作らない（控えたいボリュームがリモートにあるため）
+  - `DOCKER_HOST` が設定されていれば警告して外す（docker は `DOCKER_HOST` を `DOCKER_CONTEXT` より優先するため）
 
 - 起動時にスナップショットを自動作成（新世代 or 差分追加）
   - 直近のスナップショット取得から既定 60 分以内のときはスキップします
@@ -159,6 +182,28 @@ devbase project scale adminer 3
 ```
 
 新しい値は `project.yml` の `scale` に書き戻されるため、次回の `devbase up` にも引き継がれます。
+
+## `devbase project profile`
+
+`compose.yml` で `profiles:` を付けたサービス群を、dev コンテナに触れずに後から起動・停止します。
+書き方は [テスト用サーバを後から起動・停止する](../../plugin-dev/compose-profiles.md) を参照してください。
+
+```
+devbase project profile up [name] <profile> [--context NAME]
+devbase project profile down [name] <profile> [--context NAME]
+devbase project profile list [name] [--context NAME]
+```
+
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| `name` | いいえ | 対象プロジェクト名（省略時はカレント）。`container profile` / `ct profile` では受け付けません |
+| `<profile>` | はい（`up` / `down`） | `compose.yml` に書いたプロファイル名 |
+
+- `up`: そのプロファイルのサービスをすべて `--no-deps` 付きで起動し、`deploy` フックを `DEVBASE_ACTIVE_PROFILES=<profile>` で稼働中の全インスタンスについて呼び直す
+- `down`: そのプロファイルのサービスを `stop` → `rm -f` で停止・削除する（ボリュームは残る。フックは呼ばない）
+- `list`: `PROFILE` / `SERVICES` / `RUNNING` の表を出す。Docker のデーモンへ接続できないときは `RUNNING` を `不明` にする
+- どれも `devbase up` の後（`.docker-compose.scale.yml` がある状態）で使う。無ければ終了コード 1
+- `devbase up` の冒頭の停止と `devbase down` は、プロファイルのサービスも止める
 
 ## `devbase project migrate-config`
 

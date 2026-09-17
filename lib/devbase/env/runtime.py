@@ -26,6 +26,42 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# SecretStore の持ち回り (PLAN55)
+# ---------------------------------------------------------------------------
+
+#: 1 回のライフサイクル操作の間、持ち回る :class:`SecretStore` とその ``root``。
+#:
+#: 注入は ``cli._load_secret_env`` (dispatch 前) / ``_dispatch_lifecycle`` (切替後) /
+#: ``_run_deploy_pipeline`` (起動直前) の 3 か所で行われ、それぞれ別の理由で置かれている。
+#: 注入のたびに ``SecretStore`` を作り直すとサーバ backend では認証と取得が繰り返される
+#: ため、インスタンスの寿命を操作 1 回に揃えて 2 度目以降の解決を控え (``_seen``) から
+#: 返す。捨てる契機は呼び出し側 (``_dispatch_lifecycle`` の ``finally`` など) が持つ。
+_store: Optional[SecretStore] = None
+_store_root: Optional[Path] = None
+
+
+def store_for(devbase_root: Path) -> SecretStore:
+    """持ち回っている :class:`SecretStore` を返す。無ければ作り、``root`` が違えば作り直す。"""
+    global _store, _store_root
+    root = Path(devbase_root)
+    if _store is None or _store_root != root:
+        _store = SecretStore(root)
+        _store_root = root
+    return _store
+
+
+def release_store() -> None:
+    """持ち回っている :class:`SecretStore` を捨てる。次の :func:`store_for` は作り直す。
+
+    子プロセス (``env init``) がストアへ書いた後や、TUI の操作の入口で呼ぶ。控えを
+    持ったまま続けると、現物と違う値で起動する。
+    """
+    global _store, _store_root
+    _store = None
+    _store_root = None
+
+
+# ---------------------------------------------------------------------------
 # プロジェクトの特定
 # ---------------------------------------------------------------------------
 
@@ -139,29 +175,55 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
             *, store: Optional[SecretStore] = None) -> SecretEnv:
     """機密を合成して返す。
 
-    重ね順は従来の ``env_file`` の並びを踏襲する:
-    共通の機密 → プロジェクトの非機密設定 → プロジェクトの機密。
+    重ね順は従来の ``env_file`` の並びを踏襲し、持ち主の軸をその内側へ足す
+    (PLAN51 設計 2「重ね順」/ 決定 12):
 
-    コンテナへ列挙するのは共通機密とプロジェクト機密のキーだけで、非機密設定は
-    構成ファイルが ``env_file`` として直接読むため列挙しない。ただし両方に同じ
-    キーがある場合は、列挙した変数の**値**として非機密設定側を採用する。
-    ``environment`` は ``env_file`` より優先されるため、こうしないと
-    「プロジェクト設定が共通設定を上書きする」という従来の関係が反転する。
+    1. チーム共通の機密
+    2. 個人共通の機密 (チーム共通に勝つ)
+    3. プロジェクトの非機密設定 (``projects/<name>/env``。共通の 2 層に勝つ)
+    4. プロジェクトのチーム機密 (非機密設定に勝つ)
+    5. プロジェクトの個人機密 (同じプロジェクトのチーム機密に勝つ)
+
+    規則は 2 つ。**適用範囲が狭いものが勝つ** (プロジェクトが共通に勝つ) と、
+    **同じ適用範囲では個人単位がチーム単位に勝つ**。前者は現行の重ね順そのままで、
+    後者を内側へ足した形になる。
+
+    コンテナへ列挙するのは機密のキーだけで、非機密設定は構成ファイルが ``env_file``
+    として直接読むため列挙しない。ただし両方に同じキーがある場合は、列挙した変数の
+    **値**として非機密設定側を採用する。``environment`` は ``env_file`` より優先される
+    ため、こうしないと「プロジェクト設定が共通設定を上書きする」という従来の関係が
+    反転する。
+
+    個人単位の参照を持たない backend (``age`` / ``plaintext``) では 2 と 5 が空になり、
+    結果は従来と同じになる (前提 3)。
+
+    4 参照はプロジェクトのアカウントグループ (:meth:`SecretStore.ref_group`) を持つ
+    (PLAN56)。グループ別の置き場 (``layout: group``) では、``project`` のグループの
+    置き場だけを読み、他のグループのパスへは要求しない。それ以外の設定ではグループが
+    ``None`` で、参照は今と同じ値になる (決定 5)。
     """
     root = Path(devbase_root)
-    store = store if store is not None else SecretStore(root)
+    store = store if store is not None else store_for(root)
+    # 重ね順だけを見る差し替えの店 (テストなど) は ref_group を持たない。持たなければ
+    # グループの無い参照 = 今と同じ参照で読む
+    ref_group = getattr(store, 'ref_group', None)
+    group = ref_group(project) if callable(ref_group) else None
 
-    global_secrets = store.load(SecretRef.for_global())
-    global_names = list(global_secrets)
+    team_global = store.load(SecretRef.for_global(group=group))
+    user_global = store.load(SecretRef.for_global(owner='user', group=group))
+    global_names = list(dict.fromkeys([*team_global, *user_global]))
     project_names: List[str] = []
 
-    merged: Dict[str, str] = dict(global_secrets)
+    merged: Dict[str, str] = dict(team_global)
+    merged.update(user_global)
 
     if project:
         merged.update(_project_env_overrides(root, project))
-        project_secrets = store.load(SecretRef.for_project(project))
-        merged.update(project_secrets)
-        project_names = list(project_secrets)
+        team_project = store.load(SecretRef.for_project(project, group=group))
+        user_project = store.load(SecretRef.for_project(project, owner='user', group=group))
+        merged.update(team_project)
+        merged.update(user_project)
+        project_names = list(dict.fromkeys([*team_project, *user_project]))
 
     resolved = SecretEnv(global_names=global_names, project_names=project_names)
     resolved.values = {
@@ -196,6 +258,27 @@ def _history_for(target) -> Dict[str, Optional[str]]:
     """対象マッピングに紐づく注入履歴を返す (無ければ作る)"""
     _, originals = _injected_originals.setdefault(id(target), (target, {}))
     return originals
+
+
+def snapshot_injected(environ=None) -> Optional[Dict[str, Optional[str]]]:
+    """対象マッピングの注入履歴の複製を返す。履歴が無ければ None。
+
+    環境変数の**値**を控えて後で戻す呼び出し側 (TUI の
+    ``tui.dispatch._preserve_cwd_env``) が、値と一緒に履歴も戻すために使う。値だけを
+    戻すと、戻った機密を次の :func:`clear_injected` が知らずに残してしまう。
+    """
+    target = environ if environ is not None else os.environ
+    entry = _injected_originals.get(id(target))
+    return None if entry is None else dict(entry[1])
+
+
+def restore_injected(snapshot: Optional[Dict[str, Optional[str]]], environ=None) -> None:
+    """:func:`snapshot_injected` で控えた履歴を書き戻す。None なら履歴を消す。"""
+    target = environ if environ is not None else os.environ
+    if snapshot is None:
+        _injected_originals.pop(id(target), None)
+    else:
+        _injected_originals[id(target)] = (target, dict(snapshot))
 
 
 def clear_injected(environ=None) -> List[str]:

@@ -514,3 +514,18 @@ def test_encoded_plan_has_no_shell_or_compose_hazards():
 
     assert encoded.strip() == encoded
     assert all(c.isalnum() or c in "+/=" for c in encoded)
+
+
+# ---------------------------------------------------------------------------
+# PLAN52: docker 節は project.local.yml へ
+# ---------------------------------------------------------------------------
+
+def test_docker_key_in_project_yml_points_to_local_file():
+    """共有される project.yml に機材依存の docker 節を書いた事故を、移す案内付きで弾く。"""
+    with pytest.raises(ConfigError) as e:
+        parse_project_config({
+            "version": 1,
+            "repos": [{"owner": "volareinc", "repo": "carmo"}],
+            "docker": {"context": "gpu-wsl"},
+        }, source="project.yml")
+    assert "project.local.yml" in str(e.value)

@@ -29,15 +29,31 @@ def dir_hash(directory: Path, filenames: List[str]) -> Optional[str]:
     return h.hexdigest() if found else None
 
 
+#: 同期済みハッシュの控えのファイル名 (グループ別の置き場でない設定)
+SOURCES_FILENAME = '.env.sources.yml'
+
+
+def sources_path(devbase_root: Path, storage_group: Optional[str] = None) -> Path:
+    """控えの位置。グループ別の置き場では置き場のグループごとに分ける (PLAN56 決定 13)。
+
+    ``storage_group`` は読み替えた後の名前 (``SecretStore.storage_group``)。``None`` なら
+    今の ``$DEVBASE_ROOT/.env.sources.yml``、あれば ``$DEVBASE_ROOT/.env.sources.<g>.yml``。
+    グループ A の同期でハッシュを更新しても、グループ B の同期が変更を見落とさない。
+    """
+    name = f'.env.sources.{storage_group}.yml' if storage_group else SOURCES_FILENAME
+    return Path(devbase_root) / name
+
+
 class SourcesManager:
     """
     .env.sources.yml の管理。
     認証情報のソースファイルとハッシュを記録し、変更検出に使う。
+    ``storage_group`` があれば、その置き場のグループの控え (:func:`sources_path`) を扱う。
     """
 
-    def __init__(self, devbase_root: Path):
+    def __init__(self, devbase_root: Path, storage_group: Optional[str] = None):
         self.devbase_root = devbase_root
-        self.sources_path = devbase_root / '.env.sources.yml'
+        self.sources_path = sources_path(devbase_root, storage_group)
         self._data: Dict = {}
         self._loaded = False
 
@@ -89,6 +105,18 @@ class SourcesManager:
             'synced_at': datetime.now().isoformat(),
         }
 
+    def _current_hash(self, source_type: str, files: List[str]) -> Optional[str]:
+        """``source_type`` と ``files`` から現在のハッシュを求める (未対応・空なら ``None``)"""
+        if source_type == 'tar_base64' and files:
+            # ディレクトリ内の複数ファイル
+            first_file = Path(files[0]).expanduser()
+            directory = first_file.parent
+            filenames = [Path(f).expanduser().name for f in files]
+            return dir_hash(directory, filenames)
+        elif source_type == 'file_base64' and files:
+            return file_hash(Path(files[0]).expanduser())
+        return None
+
     def check_changed(self, name: str) -> Optional[bool]:
         """
         ソースファイルが変更されたか確認する。
@@ -103,20 +131,7 @@ class SourcesManager:
         if not old_hash:
             return None
 
-        source_type = source.get('type', '')
-        files = source.get('files', [])
-
-        if source_type == 'tar_base64' and files:
-            # ディレクトリ内の複数ファイル
-            first_file = Path(files[0]).expanduser()
-            directory = first_file.parent
-            filenames = [Path(f).expanduser().name for f in files]
-            current = dir_hash(directory, filenames)
-        elif source_type == 'file_base64' and files:
-            current = file_hash(Path(files[0]).expanduser())
-        else:
-            return None
-
+        current = self._current_hash(source.get('type', ''), source.get('files', []))
         if current is None:
             return None
 

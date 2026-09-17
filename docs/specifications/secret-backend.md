@@ -1,0 +1,1000 @@
+# 機密ストアの保存先の差し替え（backend と OpenBao）
+
+## 概要
+
+devbase は機密の保存先（backend）を `$DEVBASE_ROOT/secrets/backend.yml` で明示的に選ぶ。
+選べるのは `auto` / `plaintext` / `age` / `openbao` の 4 つで、設定が無ければ `auto`（暗号化
+ファイルがあれば age、無ければ平文というファイルの存在による自動判定）として動き、設定を
+持たない端末の挙動は変わらない。サーバ backend として [OpenBao](https://openbao.org/) の
+KV v2 シークレットエンジンに対応し、REST を標準ライブラリで叩く（常時の依存は増えない）。
+サーバへ到達できないときは age で暗号化した手元のキャッシュで起動し、認証を拒まれたときは
+キャッシュを使わずに止まる。
+
+機密の参照には**適用範囲**（共通 / プロジェクト）に加えて**持ち主**（チーム / 個人）の軸が
+あり、`devbase env list` / `get` / `set` / `delete` / `edit` の `--user` で個人単位の置き場を
+相手にする。ファイル backend は個人単位の置き場を持たない。
+
+OpenBao の置き場の並び（レイアウト）は `backend.yml` の版で選ぶ。`version: 1` はパスに
+グループを含まず（`team/global` など）、`version: 2` はチーム単位と個人単位の置き場を
+アカウントグループ（`DEVBASE_ACCOUNT_GROUP`、ボリューム `devbase_home_<group>` と同じ単位）
+ごとに分ける（`team/<g>/global` など）。`version: 2` では、プロジェクトのコンテナへ届く機密は
+そのプロジェクトのグループの置き場のものだけで、1 回の操作が要求するパスも対象のグループの
+ものだけになる。パスの先頭側でグループが分かれるため、サーバはグループ単位に読み書きを
+許せる。ファイル backend はグループで分けない。
+
+backend が `openbao` の端末では、dev コンテナの中の OpenBao CLI（`bao`、base イメージに同梱）が
+接続先 `BAO_ADDR` と `~/.vault-token` を受け取り、再起動せずに自分の機密を読み書きできる。
+コンテナに置く資格情報は 1 時間で切れる token だけで、切れたらホストの `devbase env token` で
+置き換える。
+
+### サーバ backend に OpenBao を採る理由
+
+最初のサーバ backend は Infisical を予定していた。Community 版（ライセンス無し）では
+次の点が設計に合わない（確認したコードの位置は devbasex/devbase#166 にある）。
+
+| 要件 | Infisical Community 版 | OpenBao |
+| --- | --- | --- |
+| パス単位の権限（他人の個人単位のパスをサーバが拒む） | カスタムロールとフォルダ単位のアクセス制御が使えない。組み込みロールは project 全体に効く | テンプレート化したポリシー（`{{identity.entity.name}}`）で 1 つの置き場の中をパス単位に許可・拒否できる |
+| 利用者ごと・端末ごとの資格の失効 | machine identity の client secret 単位 | AppRole の `role_id` を利用者ごと、`secret_id` を端末ごとに分けて失効できる |
+| 監査ログ | 記録されない（保持日数 0） | 標準で持つ。値は HMAC 化される |
+| 同時編集の競合 | 最終書き込み優先 | 版を指定した書き込み（check-and-set）で後から書いた側が止まる |
+
+Infisical で個人単位の機密を守るには利用者ごとに project を分けるしかなく、「持ち主の軸を
+パスで分ける」設計が成り立たない。OpenBao ではその設計がそのまま成り立つ。開発モードの
+サーバに対する確認の結果は #166 にある。
+
+## 用語
+
+| 用語 | 意味 |
+| --- | --- |
+| 参照（`SecretRef`） | 機密の宛先。適用範囲（`global` / `project`）と持ち主（`team` / `user`）の組み合わせで 4 種。`version: 2` ではグループも持つ |
+| アカウントグループ（グループ） | `DEVBASE_ACCOUNT_GROUP` の値。未設定なら `default`。ボリューム `devbase_home_<group>` の単位でもある |
+| レイアウト（`layout`） | 置き場のパスの並び。`flat`（`version: 1`、グループを含まない）と `group`（`version: 2`、グループを含む） |
+| `group_aliases` | グループ名から置き場のグループ名への対応。`backend.yml` の `openbao` 節に置き、ボリューム名を変えずに置き場の上だけ読み替える |
+| 置き場のグループ名 | パスに入れる名前。グループ名を `group_aliases` で読み替えた後の名前（対応が無ければグループ名のまま）。以下 `<g>` と書く |
+| 対象のグループ | 1 回の操作が読み書きするグループ。既定では実行時のディレクトリのプロジェクトのグループ（プロジェクトの外なら `$DEVBASE_ROOT/env` のグループ） |
+| チーム単位の機密 | チームの全員が同じ値を使う機密（サービスアカウントの鍵、連携先の API キーなど） |
+| 個人単位の機密 | 利用者ごとに値が違う機密（各自のクラウドアクセスキー、個人アクセストークンなど） |
+| backend | 参照に対して機密を読み書きする実装。`plaintext` / `age` / `openbao`。`auto` は存在による判定 |
+| パス | KV v2 の中で 1 つの参照を指す相対パス（`team/global` など）。`.env` 1 つがパス 1 つに対応し、キーと値の組をまとめて持つ |
+| 版 | KV v2 がパスごとに持つ書き込みの通し番号。書き込みで 1 ずつ進み、版を指定した書き込み（check-and-set）に使う |
+| ブートストラップ機密 | サーバ backend が接続に使う AppRole の `role_id` / `secret_id`。`secrets/bootstrap.env.age` に age で暗号化して置く |
+| キャッシュ | サーバの内容と一致すると確かめられた機密を、参照ごとに age で暗号化して手元に控えたもの |
+| scope | キャッシュの取得元を表す指紋。接続先 URL・`mount`・パス・`role_id` の SHA-256 |
+| 持ち回る `SecretStore` | 1 回のライフサイクル操作（`up` など）の間、注入と存在判定と token の発行が共有する 1 つのインスタンス。`runtime.store_for()` が返し、`runtime.release_store()` が捨てる |
+| `role_id` / `secret_id` / token | `role_id` は利用者ごとの AppRole の識別子。`secret_id` は端末ごとに発行される長期の資格情報で手元に保存する。token は両者を交換して得る短期の資格情報でプロセス内にだけ持つ |
+
+## 構成要素
+
+| 要素 | 置き場所 | 責務 |
+| --- | --- | --- |
+| backend の設定 | `lib/devbase/env/backend_config.py` | `secrets/backend.yml` の読み書きと検証（版とレイアウト、`group_aliases`）、置き場のグループ名への読み替え（`storage_group`）、参照ごとのパス・キャッシュの位置・`index.json` のキーの組み立て（`path_of` / `cache_relpath` / `cache_key`） |
+| グループの決定 | `lib/devbase/env/groups.py` | 非機密の `env` ファイルだけから `DEVBASE_ACCOUNT_GROUP` を決める（`declare` / `declared_group`）。決めたファイルの表示（`describe_source`） |
+| 登録簿 | `lib/devbase/env/backends.py` | backend 名から実装を作る。未知の名前は一覧を添えて拒む |
+| ストアの窓口 | `lib/devbase/env/secret_store.py` | `SecretRef`（持ち主の軸とグループ）、`PlaintextBackend` / `AgeBackend`、設定を見て backend を選ぶ `SecretStore`（`fetch` は現物を読み、控えへ落ちない。参照に持たせるグループを `ref_group`、同じ置き場かを `same_storage_group` で返す） |
+| 参照のビュー | `lib/devbase/env/secret_view.py` | `SecretEnvFile`。`fresh=True` なら読み出しに `fetch` を使う（`set` / `delete` / `edit` の入口） |
+| OpenBao adapter | `lib/devbase/env/openbao.py` | AppRole 認証、参照ごとの取得、版を指定した丸ごとの書き込み、失敗の種類の判定 |
+| ブートストラップ | `lib/devbase/env/bootstrap.py` | 接続資格情報を登録簿を経由せず age で直接読み書きする |
+| キャッシュ | `lib/devbase/env/cache.py` | 参照ごとの控えの書き込み・読み出し・破棄・全消去 |
+| 機密の合成 | `lib/devbase/env/runtime.py` | 4 層の機密を対象のプロジェクトのグループで重ねてコンテナへ渡す。`SecretStore` をライフサイクル操作 1 回の間持ち回る（`store_for` / `release_store`） |
+| dispatch 前の注入 | `lib/devbase/cli.py` | `_load_secret_env`。注入を行わないコマンドと、`version: 2` で注入に使うプロジェクトを決める。`--group` / `--layout` / `--group-alias` / `--exclude-project` の引数 |
+| 同期済みハッシュの控え | `lib/devbase/env/sources.py` | `SourcesManager` と `sources_path`。`version: 2` では置き場のグループごとに控えを分ける |
+| コンテナへの token の配送 | `lib/devbase/env/container_token.py` | 受け取った token を `docker exec` の stdin で各コンテナの `~/.vault-token` へ書く。token の取得と届け先の解決は持たない |
+| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | `version: 2` でボリュームと機密のグループの食い違いを起動前に検査する（`_check_group_consistency`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に token を書く |
+| base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
+| `env backend` コマンド | `lib/devbase/commands/env_backend.py` | `status` / `use` / `test` / `migrate` |
+| `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token` |
+| `rekey` / `doctor` | `lib/devbase/commands/env_ops.py` | 手元の age 暗号文すべての再暗号化、backend 設定と権限と Git の除外の点検 |
+| `encrypt` / `decrypt` | `lib/devbase/commands/env_migrate.py` | age ストアと平文の間の移動（backend の向きと突き合わせる） |
+| `export` | `lib/devbase/env/bundle.py` | 機密をバンドルへ集める。`version: 2` では対象のグループと同じ置き場のプロジェクトだけを集める |
+| `import` | `lib/devbase/env/io_import.py` | サーバ backend の参照への取り込みと age 暗号化した退避。計画の元にした値（`Plan.before`）を退避と巻き戻しに使う。`version: 2` では別グループのプロジェクトを含むバンドルを拒む |
+
+```mermaid
+flowchart LR
+    CLI[devbase env / up] --> ST[SecretStore]
+    ST --> CFG[backend_config]
+    ST -->|version 2 の ref_group| GR[groups]
+    GR --> ENVF[(projects/name/env と env)]
+    ST --> REG[backends 登録簿]
+    REG --> PT[PlaintextBackend]
+    REG --> AGE[AgeBackend]
+    REG --> OB[OpenBaoBackend]
+    OB --> BS[bootstrap]
+    OB --> CA[cache]
+    BS --> AGEFILE[(secrets/bootstrap.env.age)]
+    CA --> CAFILE[(secrets/cache/)]
+    CLI --> CT[container_token]
+    CT -->|docker exec: ~/.vault-token| DEV[dev コンテナの bao]
+    DEV -->|BAO_ADDR + token| SRV[(OpenBao)]
+    OB --> SRV
+```
+
+## 仕様
+
+### backend の選択
+
+`SecretStore` は生成時に設定を読まず、最初に backend が必要になった時点で `backend.yml` を
+1 度だけ読む（`SecretStore(...)` の生成箇所を変えずに済ませ、設定が壊れていても設定を触らない
+コマンドを止めないため）。`backend_for` / `mode` / `exists` / `path` は選択中の backend へ
+委譲する。
+
+| `backend` | 動作 |
+| --- | --- |
+| `auto`（既定） | 参照ごとに暗号化ファイルがあれば age、無ければ平文。両方あれば「どちらが正か判断できない」として止める |
+| `plaintext` / `age` | 常にその backend。ファイルの存在で判定せず、両方あっても止めない |
+| `openbao` | 常にサーバ。`path()` は `<mount>/<パス>` を `Path` にした表示用の値で、ローカルには存在しない |
+
+`mode(ref)` は選択中の backend 名（存在しなければ `absent`）を返す。`direct_edit(ref)` が真
+なのは平文だけで、それ以外の `env edit` は一時ファイル経由（読み出し → 編集 → 書き戻し）で
+行う。`has_user_refs(ref)` は個人単位の参照を持つかで、`openbao` だけ真。
+
+設定に機密は入らない。値が入るのはブートストラップだけである。
+
+### 参照の持ち主と `--user`
+
+`SecretRef` は `kind`（`global` / `project`）、`name`、`owner`（`team` / `user`、既定 `team`）
+を持つ。生成は `for_global(owner=...)` / `for_project(name, owner=...)` の 2 つで、既存の
+呼び出しはすべてチーム単位を指す。`label()` はチーム単位では従来の文字列（`グローバル` /
+`プロジェクト '<name>'`）を返し、個人単位では `個人の` を前に付ける。
+
+`-p` は適用範囲の軸を、`--user` は持ち主の軸を選び、片方の指定がもう片方を動かさない。
+`-p` は名前を取らない真偽フラグで、対象のプロジェクトは実行時のディレクトリから決まる。
+
+| 指定 | `set` / `delete` / `edit` の宛先 |
+| --- | --- |
+| なし | チーム共通 |
+| `-p` | チームのプロジェクト |
+| `--user` | 個人共通 |
+| `--user -p` | 個人のプロジェクト |
+
+`list` は指定の無い軸を絞らず、チーム共通 → 個人共通 → チームのプロジェクト → 個人の
+プロジェクトの順に出す。チーム共通の節は変数が 0 件でも出し、それ以外は存在する参照だけ出す。
+保存形式の表示は age が `[暗号化]`、平文は無し、それ以外は `[<backend 名>]`。`get` は
+個人共通 → チーム共通 → 個人のプロジェクト → チームのプロジェクトの順に探す（`--user` なら
+個人単位だけ）。
+
+`init` / `sync` / `project` / `export` / `import` は `--user` を受け付けず、扱う参照はチーム
+単位のままである。個人単位の参照を持たない backend での `--user` は、`set` / `delete` /
+`edit` の共通の入口で拒み、チーム単位へ落とさない（ファイル backend の `path()` はチーム
+単位のファイルを指すため、入口で止めないと `edit --user` がチームの `.env` を開く）。
+読む側の `list` / `get` は個人単位の参照が無いだけとして扱う。
+
+### 重ね順（`devbase up`）
+
+`runtime.resolve()` は次の順に重ね、後の層が勝つ。
+
+1. チーム共通の機密
+2. 個人共通の機密
+3. プロジェクトの非機密設定（`projects/<name>/env`）
+4. プロジェクトのチーム機密
+5. プロジェクトの個人機密
+
+規則は「適用範囲が狭いものが勝つ」「同じ適用範囲では個人単位がチーム単位に勝つ」の 2 つ。
+前者は従来の順そのままで、後者を内側へ足した形である。持ち主を外側にすると、個人共通の値が
+プロジェクトのチーム機密に勝ち、プロジェクト専用のサービスアカウントの鍵が各自の共通設定で
+上書きされるため採らない。コンテナへ列挙する変数名は 4 層のキーをこの順で並べ、重複は先に
+現れた位置で 1 件に畳む。個人単位の参照を持たない backend では 2 と 5 が空になり、結果は
+従来と同じである。`version: 2` では 4 つの機密の層はいずれも、起動するプロジェクトの
+グループ（`SecretStore.ref_group(project)`）の参照である。
+
+### アカウントグループごとの置き場（`version: 2`）
+
+`backend.yml` の版はレイアウトと 1 対 1 で、`version: 1` は `flat`、`version: 2` は `group` である。
+`version: 2` では `openbao.layout: group` を必須にする（読み手が版の番号から並びを思い出さずに
+済むため）。パスの対応は「OpenBao との契約」、キャッシュと控えの位置は「データ・設定」にある。
+
+参照がグループを持つのは、backend が `openbao` かつ `layout: group` のときだけである。
+`version: 2` の設定のまま backend を `age` などにしても（`env backend use age` と
+`migrate --to age` は `openbao` 節と版を引き継ぐ）、ファイル backend はグループで分けない。
+
+**版を上げる理由。** 古い devbase は `openbao` 節の未知のキーを黙って無視する。キーを足すだけ
+では、配布が行き渡っていない端末がグループ別の置き場の設定を読んで `team/global` を読み続け、
+別グループの機密をコンテナへ渡す。版を上げれば、`version` が 1 以外なら拒む規則でその端末が
+止まる。パスの設定に `{group}` の差し込みを許す形は、個人単位のパスをコードが組んでいて
+差し込みの位置を表すキーが増えることと、古い devbase が `{group}` を文字どおりのパスとして
+読むことから採らない。
+
+#### グループの決まり方
+
+プロジェクトのグループは、機密を読む前に非機密の `env` ファイルだけから決まる
+（`groups.declare` / `declared_group(root, project)`）。
+
+1. `projects/<project>/env` の `DEVBASE_ACCOUNT_GROUP`（`project` があるとき）
+2. `$DEVBASE_ROOT/env` の `DEVBASE_ACCOUNT_GROUP`
+3. どちらにも無ければ `default`
+
+- 1 つのファイルの中は行の順に読み、`export DEVBASE_ACCOUNT_GROUP=...` の行も同じキーとして
+  扱う。複数あれば最後の行が勝つ（起動ラッパーの `source` と同じ結果）
+- 空の値も宣言として扱い、`default` になる（`source` では空の宣言が共通の宣言を打ち消す）
+- 名前はボリューム名と同じ `volume.manager.resolve_account_group` で検証する（Docker の
+  ボリューム名に使える文字だけ。予約語 `ubuntu` と数字だけの名前は不可）。通らなければ
+  ファイルの位置を添えて拒む
+- 決めたファイルの表示（`describe_source`）は `$DEVBASE_ROOT` からの相対パスで、直下の `env` は
+  `$DEVBASE_ROOT/env` と出す。宣言が無ければ `projects/<project>/env にも $DEVBASE_ROOT/env にも
+  宣言なし`（プロジェクトの外では `$DEVBASE_ROOT/env に宣言なし`）
+
+**グループをファイルだけから決める理由。** 起動ラッパーは実行時のディレクトリの `env` だけを
+読むため、プロジェクトの下位ディレクトリから打つとプロジェクトの `env` がプロセスに載らない。
+ファイルを直接読めば、下位ディレクトリからでも同じグループになる。機密の置き場の値を使うと、
+置き場を決める値をその置き場から読む循環になる（`declared_group` はストアを受け取らない）。
+
+#### 参照のグループ
+
+`SecretRef` は `group`（読み替える前のグループ名、既定 `None`）を持ち、`for_global` /
+`for_project` が `group=` を受けて同じ規則で検証する。グループは参照の等価性に入り、1 つの
+`SecretStore` の中でグループの違う参照の控え（取得した内容と版）を取り違えない。グループを
+`SecretStore` のインスタンスに持たせないのは、ストアがプロジェクトの切替をまたいで持ち回られる
+ためである。`label()` はグループがあれば `（グループ <名前>）` を後ろに付ける。
+
+`SecretStore.ref_group(project)` は、backend が `openbao` かつ `layout: group` のときだけ
+`declared_group(root, project)` を返し、それ以外は `None` を返す。`version: 1` とファイル
+backend では参照のグループが常に空で、参照の値・等価性・キャッシュの位置・往復の回数は
+グループを持たない参照と同じである。グループを常に参照へ入れて `version: 1` のパスの組み立て
+で無視する形は、控えの鍵にグループが入り、グループの違うプロジェクトへ切り替えたときに同じ
+パスを 2 度取りに行くため採らない。
+
+`OpenBaoBackend.path_of` は、`layout: group` でグループの無い参照と、`layout: flat` でグループの
+付いた参照を `SecretStoreError` で拒む。取得・保存・削除とキャッシュの位置はすべてここを通る
+ため、呼び出しの誤りがサーバへの要求や別グループのパスへ落ちない。
+
+#### 読み替え（`group_aliases`）
+
+置き場のグループ名は `OpenBaoSettings.storage_group(group)` が決める。グループ名を検証し、
+`group_aliases` に対応があれば読み替え、読み替えた後の名前が `global` / `projects` なら拒む
+（`team/<g>/…` が `version: 1` の `team/global` / `team/projects/<name>` と重なるため）。
+`global` を読み替え元にする対応は受け付ける。2 つのグループが同じ置き場かは読み替えた後の
+名前で比べる（`SecretStore.same_storage_group`）。文言には読み替えの前と後を `default → nyle`
+の形で出す（`display_group`）。
+
+**`default` の読み替えを置き場の上だけで行う理由。** `DEVBASE_ACCOUNT_GROUP` の既定値を変えると
+ボリューム名 `devbase_home_default` が変わり、既存の認証と会話ログのボリュームを移すことになる。
+公開リポジトリのコードに社名を既定値として持ち込むことにもなる。読み替えを端末の設定に置けば、
+ボリュームに触らず、社名はその端末の設定にだけ入る。
+
+**全グループ共通の置き場とファイル backend の分割を持たない理由。** 全グループで同じ値を使う
+機密は、グループごとの置き場へ同じ値を置く。共通の置き場を持つと、そこへ企業固有の機密が
+再び混ざり、1 回の操作が対象のグループ以外のパスへ要求を出す。ファイル backend の機密は
+1 台の端末の中に閉じており、サーバのポリシーでグループ単位に読み書きを許すという動機が
+当たらない。
+
+#### `env` コマンドの `--group`
+
+`env list` / `get` / `set` / `delete` / `edit` / `init` は `--group NAME` を受ける。省略時は対象の
+グループを使う。`sync` / `project` / `export` / `import` は `--group` を受けず、実行時の
+ディレクトリで決まる。`set` / `delete` / `edit` の `-p` は宛先を、`list` の `-p` はプロジェクトの
+節だけを出すことを指し、`get` は `-p` を取らずにプロジェクトの参照を実行時のディレクトリから
+含める。
+
+| 状況 | 結果 |
+| --- | --- |
+| `--group` なし | 対象のグループの参照 |
+| `--group NAME`、`-p` なし | 共通の参照（個人共通を含む）を `NAME` のグループで読み書きする |
+| `--group NAME` と `-p`、プロジェクトのグループと同じ置き場 | そのプロジェクトの参照を読み書きする |
+| `--group NAME` と `-p`、プロジェクトのグループと違う置き場 | 読み替えの前後のグループ名と決めたファイルを述べて 1。サーバへ要求しない |
+| `-p` なしの `list` / `get` で `--group NAME`、プロジェクトのグループと違う置き場 | 共通の参照だけを出す・探す。プロジェクトの参照を含めなかった旨を標準エラーへ 1 行出す |
+| 使えない名前（`resolve_account_group` の規則、読み替えた後が `global` / `projects`） | 理由を述べて 2。読み書きしない |
+| `version: 1` またはファイル backend で `--group` | グループ別の置き場を選んだ設定でだけ使える旨を述べて 2 |
+
+`-p` でプロジェクトのグループと違う置き場を拒むのは、`team/kkg/projects/web` に書けても `web` の
+グループが `with` なら `up` はそこを読まず、書けたように見えて使われない機密が残るためである。
+文言でプロジェクトの `env` の `DEVBASE_ACCOUNT_GROUP` を直すよう案内する。`list` の見出しは
+`=== グローバル（グループ with） (...) ===` / `=== プロジェクト: web（グループ with） (...) ===`
+の形になる（`version: 1` ではグループが付かない）。
+
+#### dispatch 前の注入
+
+`version: 2` の端末では、`cli._load_secret_env` が注入に使うプロジェクトを次のように決める。
+
+| コマンド | dispatch 前の注入 |
+| --- | --- |
+| 名前を指定したライフサイクル操作（ショートカットと `project` のサブコマンドで、名前が `projects/` に実在する） | 指定したプロジェクトで解決する |
+| `env` の `list` / `get` / `set` / `delete` / `edit` / `init` / `sync` / `project` / `export` / `import` | 行わない |
+| それ以外（`env exec` など） | 実行時のディレクトリのプロジェクトで解決する |
+
+実行時のディレクトリで解決すると、`projects/api` から Python を直接起動した `up web`（TUI など）が
+切替元 `api` のグループのパスへ要求し、別グループの機密をいったんホストのプロセスへ載せる。
+起動ラッパーは Python の前に `projects/<name>` へ移るため、ラッパー経由では最初から指定した
+プロジェクトで解決する。`version: 1` では実行時のディレクトリで解決する（パスがグループで
+分かれず、取得するのは同じチームの置き場である）。`env` の 10 のサブコマンドは対象の参照を
+自分で決め、値を環境変数から使わない。`--group` や `-p` の検証より前に注入すると、拒むはずの
+操作でも別グループのパスへ要求が出る。
+
+#### `up` / `scale` のグループの食い違い
+
+`version: 2` のとき、`up` と `scale` はボリュームのグループと機密のグループを比べ、食い違えば
+両方の値と出所を述べて 1 で終わる（`container._check_group_consistency`）。グループの名前が
+検証を通らないときも起動しない。`version: 1` では検査しない。
+
+| 比べるもの | 決まり方 |
+| --- | --- |
+| ボリュームのグループ | `resolve_account_group()`（プロセスの環境変数 `DEVBASE_ACCOUNT_GROUP`、未設定なら `default`） |
+| 機密のグループ | `groups.declare(root, 実行時のプロジェクト)`（読み替える前の名前で比べる） |
+
+| コマンド | 検査の位置 | 検査より後にある副作用 |
+| --- | --- | --- |
+| `up` | `_run_pre_up_checks` の冒頭（`_ensure_env_files` より前） | 子プロセスの `env init`、`pre-up` フック、自動スナップショット、ボリュームの作成、構成の生成 |
+| `scale` | `cmd_scale` の冒頭（`project.local.yml` の `scale` を書き換える前） | `scale` の書き換え、ボリュームの作成、構成の生成 |
+
+グループを宣言していないプロジェクトで `DEVBASE_ACCOUNT_GROUP=kkg devbase up` と打つと、
+ラッパーが source する `env` に同じキーが無いため環境変数が残り、ボリュームは `kkg`、機密は
+`default` になる（プロジェクトの `env` が宣言していれば、ラッパーの source が環境変数を上書き
+するので食い違わない）。そのまま起動すると、あるグループのボリュームの認証で別のグループの
+機密を使うコンテナができる。途中で止めると別グループの名前のボリュームや書き換えた `scale` が
+残るため、副作用より前で検査する。`scale` は `_run_deploy_pipeline` を通らないため、同じ関数を
+冒頭で呼ぶ。ボリュームの側を `declared_group` へ揃える形は、スナップショット・`status`・
+entrypoint へ渡す値まで経路が変わるため採らない。
+
+`_ensure_env_files` は存在判定の参照に実行時のプロジェクトのグループを持たせ、共通機密が
+未作成なら子プロセスの `env init` へ `--group <プロジェクトのグループ>` を渡す（`version: 2` の
+ときだけ）。子プロセスは `cwd=$DEVBASE_ROOT` で起動して実行時のプロジェクトを持たず、渡さなければ
+`$DEVBASE_ROOT/env` のグループの共通の参照へ書き、親が読み直す参照と揃わない。子プロセスの
+`cwd` をプロジェクトへ変える形は、`env init` の収集器が `cwd` に依存しないことを確かめる範囲が
+広がり、`version: 1` の挙動まで変わりうるため採らない。
+
+#### `init` / `sync` / `project` / `export` / `import`
+
+扱うのはチーム単位の参照で、`version: 2` ではグループが次のように決まる。
+
+| コマンド | グループ |
+| --- | --- |
+| `env init` | 対象のグループ（`--group` で指定できる）のチーム共通 |
+| `env sync` | 対象のグループのチーム共通。同期済みハッシュの控えもそのグループのもの |
+| `env project` | 実行時のプロジェクトのグループのチームのプロジェクト |
+| `env export` | 共通は対象のグループ。プロジェクトは対象のグループと同じ置き場のものだけを集め、外したプロジェクトの名前とグループを標準エラーへ出す（その参照へは要求しない）。メタデータは対象のグループの控えを `env/sources.yml` として入れる |
+| `env import` | 共通は対象のグループ、プロジェクトはそれぞれのグループ。バンドルに対象のグループと違う置き場のプロジェクトがあれば、サーバへ要求する前に名前とグループを挙げ、`--exclude-project` を案内して 1 件も取り込まずに 1（`--dry-run` も同じ）。`env/sources.yml` は対象のグループの控えへ取り込む |
+
+別グループのプロジェクトは、グループ単位のポリシーのサーバで 403 になる。`import` で黙って
+飛ばすと取り込んだつもりの機密が欠けるため、止めて除外を案内する。
+
+`env sync` はソースファイルのハッシュを控えに記録して変更を検出する。`version: 2` では控えを
+置き場のグループごとに `$DEVBASE_ROOT/.env.sources.<g>.yml` へ分け、それ以外は
+`$DEVBASE_ROOT/.env.sources.yml` 1 つである（`sources.sources_path`）。控えが 1 つだと、グループ A の
+同期でハッシュが更新され、グループ B の同期が「変更なし」と判定されて B の置き場に古い
+認証情報が残る。1 つのファイルの中をグループの節に分ける形は、古い devbase が節を知らずに
+全体を書き戻すため採らない。
+
+### `devbase env backend`
+
+| コマンド | 入力 | 成功 | 失敗 |
+| --- | --- | --- | --- |
+| `status` | なし | backend 名、保存先、`mount`、4 参照のパス、個人単位の識別子、接続資格情報の有無と `role_id`、キャッシュの有無と最終取得時刻。0 | 設定が壊れていれば理由を述べて 1 |
+| `use <name>` | `--url` `--mount` `--user ID` `--role-id` `--secret-id-stdin` `--cache` / `--no-cache` `--layout flat\|group` `--group-alias FROM=TO`（繰り返し可） | 検証 → 資格情報の保存 → 設定の保存の順で行い、要約（レイアウトと版、読み替えを含む）を表示（`secret_id` は伏せる）。0 | 未知の名前・必須項目の欠落・レイアウトの指定の誤り（後述）は 2、鍵が無いなどは 1。**いずれも設定を書き換えない** |
+| `test` | なし | 認証と参照ごとの取得（キャッシュへ落ちない）を行い、接続先 URL と読めた参照の件数を表示。0 | 到達できない・認証できない・サーバ backend でない → 1 |
+| `migrate --to <name>` | `--to age\|openbao` `--exclude-project NAME`（繰り返し可） `--dry-run` `--yes` | 後述 | 衝突・`projects/` に無い `--exclude-project` の名前は 2、読み戻しの不一致・書き込み失敗は 1 |
+
+`version: 2` の `status` は、置き場の前にレイアウトの行（`レイアウト: group (version 2)`）と
+対象のグループの行（`グループ:   default → nyle (projects/api/env にも $DEVBASE_ROOT/env にも宣言なし)`
+の形。括弧は決めたファイル）を足し、4 参照のパスを対象のグループで組んで出す。プロジェクトの
+外ではプロジェクトのパスを `<mount>/team/<g>/projects/<name>` の形で出す。グループを決められ
+なければ `グループ:   決められません (<理由>)` と出してパスを省く。`version: 1` とファイル backend
+の出力にこれらの行は無い。
+
+`version: 2` の `test` は、対象のグループの共通の参照と、対象のグループと同じ置き場の
+プロジェクトの参照だけを調べ、外したプロジェクトの名前とグループを表示する（グループ単位の
+ポリシーのサーバでは、別グループのプロジェクトの参照が正しい設定でも 403 になる）。
+`version: 1` では `projects/` の全プロジェクトを調べる。
+
+`use` のレイアウトの決まり方:
+
+| 入力 | 結果 |
+| --- | --- |
+| `--layout` なし、既存の設定に `openbao` 節がある | 既存のレイアウトと読み替えを引き継ぐ |
+| `--layout` なし、`openbao` 節が無い | `group`（`version: 2`）で書く |
+| `--layout group` | `version: 2` で書く。`path_team_global` / `path_team_project_prefix` は捨てる |
+| `--layout flat` | `version: 1` で書く。既存の `group_aliases` は捨て、捨てた旨を表示する |
+| `--group-alias FROM=TO` | `group_aliases` をこの指定で置き換える（無ければ既存を引き継ぐ）。`FROM` と `TO` は `resolve_account_group` の規則と前後の空白の禁止で検証し、`TO` が `global` / `projects` なら拒む。同じ `FROM` を違う `TO` へ向ける指定も拒む |
+| `--group-alias` と、`--layout flat` または（`--layout` なしで）既存の `version: 1` | 組み合わせの誤りとして 2 |
+| `openbao` 以外の backend に `--layout` / `--group-alias` | 2 |
+| `openbao` 以外の backend | 既存の版と `openbao` 節を引き継ぐ |
+| 既存の設定からレイアウトが変わった | 設定を書いた後に `cache/` を消し、消した旨を表示する。消せなければ 1（設定は書き換え済みのまま） |
+
+レイアウトが変わると参照のパスが変わるため、古い控えが `scope` の不一致で使われることはない。
+それでも消すのは、別グループの機密が暗号文のまま残り続けるのを避けるためである。
+
+`secret_id` は引数で受け取らない。`--secret-id-stdin` で標準入力の最初の行を読むか、TTY では
+伏せ字入力で尋ねる。`use` は引数に無い項目を既存の設定から引き継ぎ、資格情報の指定が無ければ
+既存のブートストラップを使う。`use openbao` は `backend.yml` より先にブートストラップを書く
+（資格情報を書けない状態で backend だけが切り替わると、次の実行から機密を読めなくなる）。
+
+`cli.py` は `env backend` を機密の注入を行わないコマンドとして扱う（設定が壊れている・
+サーバに届かない状態でこそ実行されるため）。
+
+### OpenBao との契約
+
+使う経路は 4 つで、認証以外は `X-Vault-Token: <token>` を付ける。`<path>` は後述の対応表の
+パスで、キーと値の組は KV v2 の 1 つのパスにまとめて置く。
+
+| 用途 | 経路 | 送るもの / 受け取るもの |
+| --- | --- | --- |
+| 認証 | `POST /v1/auth/approle/login` | `role_id` / `secret_id` → `auth.client_token` / `auth.lease_duration` |
+| 取得 | `GET /v1/<mount>/data/<path>` | → `data.data`（キーと値の辞書）/ `data.metadata.version` |
+| 保存 | `POST /v1/<mount>/data/<path>` | `{"options": {"cas": <版>}, "data": {<キーと値の辞書>}}` |
+| 削除（参照ごと） | `DELETE /v1/<mount>/metadata/<path>` | 全版を消す |
+
+- 参照ごとに 1 回 `GET` を呼ぶ。`LIST` は使わない（個人単位のパスは利用者ごとに分かれて
+  おり、親から辿ると他人のパスまで要求する。サーバのポリシーも `users/` 直下の一覧を拒む）。
+  `runtime.resolve()` 1 回はプロジェクト指定ありで認証 1 回 + 取得 4 回、指定なしで認証
+  1 回 + 取得 2 回。`devbase up` 1 回も同じ回数に収まる（「`SecretStore` の持ち回り」）
+- 同じ `SecretStore` の中では、取得した参照の内容と版を控えて `exists` → `load` の並びで
+  2 度取りに行かない。この控えの版が、その参照を次に書くときの基準になる
+- token は実行のたびに取り直し、ホストのディスクへ保存しない（コンテナの `~/.vault-token` へ
+  渡すものは「コンテナの中の `bao`」を参照）。`lease_duration` の少し前に取り直す
+  （エディタを長く開いた `env edit` の書き戻しで、期限切れの token を送らないため）。
+  応答の状態による再認証は置かない。認証以外の経路の 403 は権限の不足として確定する
+  （サーバ側で token の期限を実行時間より十分長くする前提で、期限切れは事前の取り直しだけで
+  扱う）
+- `save` / `save_bytes` は参照の内容**全体**を受け取り、**読んだときの版を指定して丸ごと
+  置き換える**。
+  1. 基準の版は、同じ `SecretStore` でその参照を最後に読んだとき（`load` / `load_bytes` /
+     `fetch`）の `data.metadata.version` である。まだ読んでいなければ、書き込みの直前に
+     `GET` して得る。404 でも本文に `data.metadata.version` があればその値を版とし、
+     無ければ 0 とする（最新版が論理削除されたパスは 404 と一緒に現在の版を返す。版 0 は
+     「まだ 1 度も書かれていない」の意味で、論理削除されたパスに 0 を送ると不一致になる）
+  2. 保存対象の辞書全体を `options.cas` にその版を付けて `POST` する。成功の応答は
+     `data.version` に新しい版を返す。その `SecretStore` でのこの参照の基準を、保存した
+     内容とこの版で置き換える（同じ実行で同じ参照をもう一度書くとき、たとえば `import` が
+     後続の参照の失敗で先に書いた参照を巻き戻すときに、自分の保存で進んだ版と食い違わない
+     ため）。応答に `data.version` が無ければ結果が分からない失敗として扱う
+  3. 版が合わず 400 になったら、読んでから書くまでの間に他の誰かが書いた旨を述べて非ゼロで
+     終了し、その参照の控えを消す。同じ操作をやり直せば、読み直した版で書ける
+
+  基準を「読んだときの版」にするのは、書き込みの直前に取り直した版を使うと、読んでから
+  書くまでの間の他人の更新に CAS が通ってしまい、黙って上書きする（lost update）ためで
+  ある。`env set` は読み出しから書き戻しまでが 1 つの `SecretStore` の中で閉じ、`env edit`
+  はエディタを開く前に読んだ版を書き戻しまで持つ。1 つの参照の書き込みは原子的で、一部の
+  キーだけが新しい状態にはならない。差分の計算も、「どこまで反映したか」の報告も要らない
+- `remove(ref)` は取得して存在を確かめてから `DELETE /v1/<mount>/metadata/<path>` で全版を
+  消し、存在しなければ何もせず偽を返す。CLI のコマンドはこの経路を使わない（`env delete` は
+  キーを除いた全体を `save` し、`migrate` はサーバ側を消さない）
+- 応答の `data.data` の値は文字列だけを受け付ける。文字列以外の値（数値・真偽値・null・
+  入れ子）が含まれていれば応答を解釈できないとして扱う（devbase と WebUI は文字列しか書か
+  ない）
+- KV v2 は値の中の `${OTHER_KEY}` を展開しない。参照記法は文字列のまま往復する
+- KV v2 にはコメント・空行の置き場が無く、`load_bytes()` が返すのは `KEY=VALUE` の並び
+  である
+
+パスの対応（`<g>` は参照のグループの置き場のグループ名）:
+
+| 参照 | `version: 1` | `version: 2` |
+| --- | --- | --- |
+| チーム共通 | `<path_team_global>`（既定 `team/global`） | `<path_team_prefix>/<g>/global`（既定 `team/<g>/global`） |
+| チームのプロジェクト | `<path_team_project_prefix>/<name>`（既定 `team/projects/<name>`） | `<path_team_prefix>/<g>/projects/<name>` |
+| 個人共通 | `<path_user_prefix>/<user>/global`（既定 `users/<user>/global`） | `<path_user_prefix>/<user>/<g>/global` |
+| 個人のプロジェクト | `<path_user_prefix>/<user>/projects/<name>` | `<path_user_prefix>/<user>/<g>/projects/<name>` |
+
+`<name>` と `<user>` はパス区切りと `..` を含まない検査を通っており、`<g>` は
+`DEVBASE_ACCOUNT_GROUP` と同じ名前の検査を通っているため、組み立てたパスが設定した親の外へ
+出ることはない。URL へ埋め込む前に各要素を符号化する（`/` は区切りとして
+残す）。`<user>` は社内メールアドレスの `@` より前の部分で、サーバ側の entity 名と同じ値に
+する。サーバのポリシーは entity 名で個人単位のパスを絞るため、設定の `user` が本人と違えば
+`users/<user>/...` の取得が 403 になる。
+
+サーバ側の構成（KV v2 のマウント、ポリシー、AppRole、token の期限）は devbase の範囲外で、
+運用側のリポジトリ（carmo-cdk#312）が持つ。devbase が前提にするのは、上の 4 経路と
+「本人のパスは読み書きでき、チームのパスは読め、他人のパスは拒まれる」ことだけである。
+ポリシーを `version: 2` のグループ単位に絞る変更も運用側のリポジトリの課題（carmo-cdk#363）が
+扱う。devbase は 1 回の操作で対象のグループのパスだけを要求するため、グループ単位に絞った
+サーバでも対象のグループの操作は通る。
+
+### `SecretStore` の持ち回り
+
+`devbase up` は機密を 3 か所で注入する。それぞれ別の理由で置かれている。
+
+| 注入 | 理由 |
+| --- | --- |
+| `cli._load_secret_env` | dispatch の前に現在地の機密を載せる（エディタ起動などが値を使う）。`version: 2` で名前を指定したときは指定したプロジェクトで解決する（「dispatch 前の注入」） |
+| `_dispatch_lifecycle`（名前を指定したとき） | 切替元の機密を落として切替先で載せ直す |
+| `_run_deploy_pipeline` | 起動の直前に必須として読む（鍵が無ければここで止める） |
+
+注入の回数は変えず、`SecretStore` の寿命をライフサイクル操作 1 回に揃える。同じインスタンスなら
+2 度目以降の解決は控え（取得した内容と版）から返り、サーバへは行かない。
+
+- `runtime.resolve` / `inject` / `child_env` は `store` を渡されなければ `store_for(root)` を使う。
+  控えが無ければ作り、`root` が違えば作り直す。明示的に渡された `store`（`migrate` のように
+  設定と違う backend を相手にする処理）は控えに入れない
+- `_ensure_env_files` の存在判定も `store_for(root)` を使う。判定の意味（ファイル backend は
+  ファイルの有無、`openbao` は取得した内容が空でない）は変えない
+- 捨てる契機は 3 つである
+
+  | 契機 | 理由 |
+  | --- | --- |
+  | `_dispatch_lifecycle` の `finally` | 寿命をライフサイクル操作 1 回にする。入口で捨てると、CLI で dispatch 前の注入が作ったものを捨てて認証が 2 回に戻る |
+  | TUI の委譲の入口（`tui/dispatch.py` の `_preserve_cwd_env`） | TUI は 1 プロセスで操作を続ける。起動時や前の操作の控えを持ち越すと、`env edit` で書いた直後の `up` が編集前の値で起動する |
+  | `_ensure_env_files` が子プロセスの `env init` から戻った直後（終了コードによらない） | 書いたのは子プロセスで、親の控えには最初の 404 が空として残る。捨てて読み直し、`env init` が書いた値でその `up` を起動する |
+
+`up` 1 回の往復（サーバ backend、4 参照）:
+
+| 経路 | 認証 | 取得 |
+| --- | ---: | ---: |
+| `devbase up`（プロジェクト `web` の中） | 1 | 4 |
+| `devbase up web`（別のプロジェクト `api` の中、`version: 1`） | 1 | 6（`api` の 4 + 切替後の `web` 固有の 2） |
+| `devbase up web`（別のプロジェクト `api` の中、`version: 2`） | 1 | 4（`web` のグループの 4 だけ。`api` のグループのパスへは要求しない） |
+| `devbase up web`（`projects/` の外） | 1 | 4 |
+| 共通機密が未作成で `env init` を走らせた `up`（`up` のプロセスの分だけ。子プロセスの `env init` の往復は含まない） | 2 | 8 以下 |
+
+### コンテナの中の `bao`
+
+base イメージは OpenBao CLI `bao`（`ARG BAO_VERSION`、サーバと同じ 2.6 系）を含む。amd64 /
+arm64 の tar.gz を同じリリースの `checksums.txt` と突き合わせ、対象の行が無い・値が合わない
+ときはビルドを止める。`.deb` は systemd ユニットやシステムユーザーを伴うため使わない。
+backend によらず全端末のイメージに入れる（管理スクリプトが `bao` に依存し、管理者の端末の
+backend 設定とは関係しない）。
+
+backend が `openbao` のとき、`up` と `scale` は dev コンテナへ次を渡す。
+
+| 名前 | 形 | いつ |
+| --- | --- | --- |
+| `BAO_ADDR` | dev サービスの `environment` にリテラル（`openbao.url`）。機密ではない | 構成の生成時 |
+| `~/.vault-token` | ファイル `0600`、token 1 行（改行なし） | `up` の [5/6] の後（`scale` は増やしたインスタンスだけ）と `env token` |
+
+- コンテナに置く資格情報は 1 時間で切れる token だけで、`secret_id` はホストから出ない。
+  `role_id` / `secret_id` をコンテナへ渡す形は、コンテナの中の CLI や npm パッケージが長期の
+  資格情報を持つことになるため採らない
+- token を環境変数（`BAO_TOKEN`）にしない。`docker inspect` と子プロセスの環境に残るため。
+  `bao` は `BAO_TOKEN` が無ければ `~/.vault-token` を読む
+- token は注入と同じ `SecretStore` の `OpenBaoBackend.issue_token()` から取る（期限内なら
+  ログインし直さない）。書き込みは `docker exec -i <container> sh -c '…'` の stdin で渡し、
+  argv に載せない。コンテナの中では `mktemp "$HOME/.vault-token.XXXXXX"` に書き、
+  `chmod 0600` の後 `mv -f` で置き換える（固定名の一時ファイルは既存の inode へ書いて
+  `umask` が効かない。途中で切れても空の `~/.vault-token` を残さない）
+- 書けなくても `up` / `scale` は失敗にしない（起動は済んでおり、`env token` でやり直せる）。
+  警告を出す
+- コンテナの `bao` で書いた値は、ホストの控え（`secrets/cache/`）へ反映しない。控えは
+  読み取りにだけ使い、ホストの `set` / `delete` / `edit` は現物を読むため、到達できる限り
+  食い違わない
+- 接続先（`DOCKER_CONTEXT`）は呼び出し側が process の環境へ当てる。`up` / `scale` は
+  `_resolve_docker_target` が当てた同じ process の中で書くため、別ホストの Docker（[remote-docker-context.md](remote-docker-context.md)）にも
+  同じ形で届く
+
+### `devbase env token`
+
+```text
+devbase env token [--print] [--context NAME]
+```
+
+起動中の dev コンテナの `~/.vault-token` を新しい token で置き換える。機密の注入を行わない
+コマンドとして扱う（値は要らず、注入するとサーバへの往復が増える）。
+
+処理は次の順で行い、上の行で止まれば下は見ない。ログインを届け先が見つかった後に置くのは、
+使われない token をサーバに発行させないためである。
+
+| 順 | 処理 | 止まるとき（終了コード 1） |
+| --- | --- | --- |
+| 1 | backend の判定 | backend が `openbao` でない |
+| 2 | `--print` なら、ログインして token を 1 行出して 0 で終わる（プロジェクトもコンテナも見ない） | ログインが拒まれた・到達できない |
+| 3 | 実行時のディレクトリからプロジェクトを決める（`-p` と同じく名前は取らない） | `projects/` の下ではない |
+| 4 | プロジェクト直下の `env` を載せてから dev サービス名（`DEV_SERVICE_NAME`、既定 `dev`）を取る。下位ディレクトリから打っても同じ名前になる | — |
+| 5 | プロジェクト直下の `project.local.yml` と `--context` / `DEVBASE_DOCKER_CONTEXT` から接続先を決めて当てる（`env exec` と同じ優先順） | — |
+| 6 | `docker ps --filter label=com.docker.compose.project=<project>` で、サービス名が `<dev>-<n>`（`n` は 1 以上）のコンテナを番号順に集める。DB や snapshot は入らない | `docker ps` が失敗した、起動中の dev コンテナが無い |
+| 7 | ログイン（`issue_token()`）。控えは使わない | ログインが拒まれた・到達できない |
+| 8 | 各コンテナへ書き、書いたコンテナ名を 1 行ずつ出す（token は出さない） | 1 つでも書けなかった |
+
+### 失敗の種類とキャッシュ
+
+サーバとのやり取りの失敗は例外の型で区別し、キャッシュの扱いを決める。
+
+| サーバとのやり取りの結果 | 例外 | 世代を書き直すか | キャッシュを使ってよいか |
+| --- | --- | --- | --- |
+| 取得の成功（200 で `data.data` が辞書。0 件を含む） | — | 取得した内容で置き換える | — |
+| 取得が 404（未作成、または最新版が論理削除されている） | — | 機密 0 件として空の世代で置き換える | — |
+| 書き込みの成功 | — | 書いた内容で置き換える。置き換えられなければ消す | — |
+| 書き込みの版が合わない（400 で `errors` に check-and-set の不一致） | `SecretConflictError` | 消す | — |
+| 書き込みの結果が分からない（送った後の接続断・タイムアウト・本文の途中切れ・5xx・解釈できない応答） | `SecretUnreachableError` | **消す** | — |
+| 書き込みをサーバが拒んだと確定した（403 と版の不一致の 400 を除く 4xx） | `SecretRefusedError` | 残す | — |
+| 取得で通信できない（接続不能・タイムアウト・5xx・本文の途中切れ）・応答を解釈できない（上記以外の 4xx を含む） | `SecretUnreachableError` | 残す | 使う |
+| 認証拒否（ログインの 400 / 403）・権限の不足（取得の 403・書き込みの 403） | `SecretAuthError` | 残す | **使わず、非ゼロで終了する** |
+
+`SecretAuthError` と `SecretConflictError` は `SecretRefusedError`（サーバが拒んだと確定した。
+サーバは変わっていない）の派生で、`import` / `migrate` の巻き戻しはこの型で落ちた参照を対象から
+外す（巻き戻すと読み直した版で控えた値を書き戻し、CAS が守った他の利用者の更新を消す）。
+
+`SecretAuthError` の文言は原因ごとに分ける。
+
+| 応答 | 意味 | 述べること |
+| --- | --- | --- |
+| ログインの 400（`invalid role or secret`） | `secret_id` の失効か書き間違い | 資格を確認できない。`secret_id` が失効していないか |
+| ログインの 403 | 利用者（entity）の無効化 | 同上 |
+| 取得の 403 | ログインは通ったが、そのパスを読む権限が無い | 読む権限が無い。`user` の設定が本人と違う可能性 |
+| 書き込みの 403 | ログインは通ったが、書く権限が無い（チーム単位への書き込みなど） | 書き込み権限が無い。資格の取り消しとは別の文言にする（ログインが成功しているため区別できる） |
+
+ログインの 400 を「応答を解釈できない」側へ分類しない（失効させた `secret_id` でキャッシュへ
+落ちてしまう）。
+
+キャッシュはサーバの内容の写しであって記録ではなく、最後にサーバと一致すると確かめられた
+1 世代だけを持つ。404 も「その参照には機密が 1 件も無い」という取得結果として空の世代で
+置き換える（前の世代を残すと、WebUI で消した機密が次の不達で戻る）。書き込みの成功でも
+置き換えるのは、書き込みの前に読んだ内容で控えが止まると、`env delete` で消したキーが次の
+不達でコンテナへ戻るためである。版の不一致で消すのは、読んだ内容がもう現物と違うと分かって
+いるためである。書き込みの結果が分からない失敗でも消す。サーバが更新を確定した後で応答
+だけが失われる・壊れることがあり、控えを残すと `env delete` で消えた機密が次の不達で
+コンテナへ戻る。解釈できない応答も「拒んだと確定」の側には入れない（確定したのは 4xx の
+状態コードを受け取ったときだけである）。サーバが拒んだと確定した応答（403 と、版の不一致の
+400 を除く 4xx）ではサーバは変わっておらず、読んだときに進んだ世代がそのまま写しとして
+正しい。
+
+**控えから読んだ参照は書き戻さない。** 控えには版が入っておらず、復旧後に取り直した版で
+書くと、不達の間の他人の更新を古い値で上書きする。`load` が控えへ落ちた参照は版を持たず、
+その `SecretStore` での `save` は「到達できないため書き込めない」旨を述べて拒む。書き込みを
+伴うコマンド（`set` / `delete` / `edit` / `import` / `migrate`）の読み出しは `fetch` で行い、
+不達なら控えへ落ちずにその時点で止まる（`edit` はエディタを開く前に止まる）。控えを使うのは
+`up` / `list` / `get` の読み取りだけである。
+
+認証拒否と権限の不足でキャッシュへ落ちないのは、失効させた `secret_id` や外した権限が手元の
+起動を止められなくなるためで、控えは消さない（`secret_id` の書き間違いのような一時的な
+状態で控えを失わない）。
+
+キャッシュを使えるのは、上表で「使う」失敗であることに加えて、復号して得た `backend` と
+`scope` が現在の設定から計算した値と一致する参照だけである。接続先 URL・`mount`・パス・
+`role_id` のいずれかを変えると変更前の控えは使われず、不達なら接続先を示して非ゼロで終了
+する。
+
+`cache.enabled` が偽のときは、控えを作らないだけでなく、backend を解決するすべての実行で
+`cache/` 配下の控えを消す。消せなければ残ったパスを挙げて非ゼロで終了する。
+
+```mermaid
+flowchart TD
+    A[devbase up] --> B[backend.yml を読む]
+    B --> C{backend は}
+    C -->|auto| D[ファイルの存在で判定]
+    C -->|age / plaintext| E[そのファイル backend]
+    C -->|openbao| F[bootstrap.env.age から role_id / secret_id を読む]
+    F --> G[POST /v1/auth/approle/login]
+    G --> H[GET /v1/mount/data/path を参照ごとに 1 回]
+    H --> I{取得できたか}
+    I -->|200 / 404| J[取得した内容でキャッシュを置き換える]
+    I -->|403| Q[読む権限が無い旨と URL を出し非ゼロ終了]
+    G -->|400 / 403| P[資格を確認できない旨と URL を出し非ゼロ終了]
+    I -->|通信失敗・解釈できない応答| K{キャッシュはあるか}
+    K -->|ある| L[キャッシュを復号し、警告と最終取得時刻を出す]
+    K -->|ない| M[到達できない旨と URL を出し非ゼロ終了]
+    D --> N[runtime.resolve が 4 層を合成]
+    E --> N
+    J --> N
+    L --> N
+```
+
+### 移行（`migrate`）
+
+移す対象はチーム単位の参照だけである。移行元と移行先は `backend.yml` の選択とは無関係に
+組み立て、成功したときだけ設定を書き換える。サーバ側の読み取りは `fetch`（キャッシュへ
+落ちない）で行い、取得できなければ書き込み前に止まる。
+
+1. 移行先の同じ参照を読み、同じキーがあれば 1 件も書かずに衝突したキー名を挙げて 2 で終了
+   する（`--dry-run` も同じ検査を行い、キー名だけを表示する。値は出さない）
+2. 移行先に元からあった内容へ移行元を重ねたものを保存する（`save` は参照の全体を受け取る
+   ため、移行元だけを渡すと移行先の既存キーが消える）
+3. 読み戻して、移行元の全キーと移行先に元からあった全キーが期待どおりの値で返ることを
+   確かめる。一致しなければこの実行で作成したキーだけを消し、移行前の設定のまま 1 で終了する。
+   サーバ側では、作成したキーでも値が保存したときと違えば残す（読み直してから消すまでの間に
+   他の利用者がそのキーを更新している）。サーバが拒んだと確定した参照は何も書けていない
+   ので消さない
+4. `backend.yml` を `--to` の値へ書き換える
+5. `--to openbao` では移行元の age / 平文ファイルを `backups/env-backend-migrate/<日時>/` へ
+   移し、退避先を表示する。`--to age` ではサーバ上の機密を消さず、残っている場所（接続先
+   URL と `<mount>/<パス>`）を表示し、`cache/` を消す
+
+`--to openbao` でチーム単位のパスへ書く権限が無ければ、手順 2 で「書き込み権限が無い」旨を
+述べて 1 で終了する（移行はチームの置き場を作る操作で、書ける利用者が行う）。
+
+移行の単位は、ファイル backend 側の参照（グループを持たない）と OpenBao 側の参照（`version: 2`
+ではグループを持つ）の組である。グループは実行時のディレクトリに左右されず、共通の参照は
+`ref_group(None)`（`$DEVBASE_ROOT/env` → `default`）、プロジェクトの参照は `ref_group(<name>)` で
+決まる。
+
+- `--exclude-project NAME` のプロジェクトは、読まない・書かない・退避しない（ファイルは元の
+  位置に残る）。`projects/` に無い名前は、設定を読む前に名前を挙げて 2 で終了する（打ち間違いで
+  移行してしまうのを防ぐ）。`version: 1` でも使える
+- `version: 2` の要約（`--dry-run` を含む）は、参照ごとにサーバ上の `<mount>/<パス>` とキー名を
+  出す。値は出さない
+- `--to openbao` はプロジェクトごとのグループへ書く。書き込みの権限が無いグループのプロジェクトは
+  `--exclude-project` で外す
+- `--to age` で移せる共通の参照は `secrets/global.env.age` 1 つだけなので、`$DEVBASE_ROOT/env` の
+  グループの共通の参照を移す。移すプロジェクトのグループのうち、それと違う置き場のグループの
+  共通の参照には要求を出さず、グループ名とパスを表示してサーバ上に残す（移す機密が無いときも
+  表示する）
+
+設定の書き換えを退避より先に行うのは、設定を書けなかったときに元のファイルだけが移動済みに
+なり、設定が指す先から機密が読めなくなるのを防ぐためである。`bootstrap.env.age` はどちらの
+向きでも残す（再び `openbao` へ戻すときに資格情報を入れ直さずに済む）。サーバ側を消さない
+のは、他の利用者が参照している可能性を devbase が判断できないためである。
+
+### 既存コマンドの扱い
+
+| コマンド | 扱い |
+| --- | --- |
+| `env edit` | `direct_edit` が真（平文）なら保存先をそのままエディタへ渡す。それ以外は一時ファイル（自分専用の `0700` ディレクトリに `0600`）経由で `load_bytes()` → 編集 → `save_bytes()`。サーバ backend では読み出しが控えへ落ちず、不達ならエディタを開く前に止まる。書き戻しの版はエディタを開く前に読んだときのものなので、編集中に他の人が書いていれば版の不一致で止まる |
+| `env init --reset` | ファイル backend では従来どおり `.backup` を複製する。サーバ backend では読み出した値を age で暗号化して `backups/env-init/<日時>/` へ控え、作れなければ 1 件も消さずに非ゼロで終了する |
+| `env encrypt` / `decrypt` | age 専用。backend が `openbao` なら止める。明示的な設定が変換後の保存先と逆（`plaintext` で `encrypt`、`age` で `decrypt`）でも止める（設定が指す先から機密が消える）。`auto` と一致する設定ではファイルの存在で判定する |
+| `env rekey` | backend の選択に関わらず実行でき、手元の age 暗号文すべて（機密の参照、`bootstrap.env.age`、`cache/` 配下）を 1 つのまとまりとして再暗号化する |
+| `env export` | チーム単位の 2 種の参照だけを backend 越しに読む。個人単位のパスへ要求は届かない。バンドルの名前と `manifest.yml` の `version` は変わらない。`version: 2` のグループの扱いは「`init` / `sync` / `project` / `export` / `import`」 |
+| `env import` | チーム単位の参照へ backend 越しに書く。ファイル backend では従来どおり複製と原子的な rename。サーバ backend では現物を `fetch` で読んで merge の元と退避（age 暗号化して `backups/` へ全件）にし、参照ごとに `save_bytes()` する。失敗した参照までを控えた値で巻き戻す（結果が分からない参照は含め、サーバが拒んだと確定した参照は含めない）。サーバへの適用はローカルの計画（ファイル backend の参照、`--merge-metadata` の `sources.yml`）の確定より先に行い、サーバ側が失敗したときにメタデータだけが取り込み済みにならないようにする。受信者鍵が無ければ 1 件も取り込まない。暗号化の判定は「保存先が age か」で行い、`backend: age` で保存先がまだ無い参照も暗号文として保存する |
+| `env doctor` | `backend.yml` の読み込みと登録簿の名前、`backend: openbao` でのブートストラップの 2 キー、`backend.yml` / `bootstrap.env.age` / `cache/` 配下の権限（ファイル `0600`、ディレクトリ `0700`）、`git check-ignore` による除外（`secrets/backend.yml` / `secrets/bootstrap.env.age` / `secrets/cache/team/global.env.age`）を点検する。`version: 2` では対象のグループの `.env.sources.<g>.yml` と `secrets/cache/team/<g>/global.env.age` の除外も点検する |
+
+### 常に成り立つ条件
+
+- 機密の値と `secret_id` は、ログ・例外メッセージ・`status` の出力・`--dry-run` の出力・
+  `index.json` に載らない。token はログ・構成ファイル・`docker exec` の argv・コンテナの
+  環境変数に載らない（`env token --print` の標準出力だけに出る）
+- `secret_id` はホストの `bootstrap.env.age` から出ない。コンテナに置かれる資格情報は
+  `~/.vault-token`（`0600`）の token だけである
+- `backend.yml` に機密は入らない。ブートストラップとキャッシュは age 暗号文としてしか
+  ディスクに置かれない。age の識別鍵が無い端末では平文へ落とさず、鍵の用意を促して非ゼロで
+  終了する
+- `backend` が `auto` のとき、`SecretStore` の全メソッドの結果は backend の仕組みを持たない
+  ときと同じである
+- ファイル backend は個人単位の参照に対して `exists()` が偽・`load()` が空を返し、書き込みと
+  `remove()` は何もしない（拒む）
+- サーバ backend への 1 つの参照の書き込みは、丸ごと反映されるか、何も反映されないかの
+  どちらかである
+- 対応していない設定値は既定へ読み替えず、キー名と受け付ける値を添えて拒む。対象は
+  `version` が 1 / 2 以外、未知の backend 名、ループバック以外への `http`、パスやクエリを含む
+  `url`、パス区切りや `..` を含む `user` / `mount`、`/` で始まる・終わる・`..` を含む
+  `path_*`、版に置けないキー（`version: 1` の `layout` / `path_team_prefix` / `group_aliases`、
+  `version: 2` の `path_team_global` / `path_team_project_prefix`）、`version: 2` で `layout` が
+  無い・`group` 以外、版と食い違う `layout`、`resolve_account_group` の規則を通らない・前後に
+  空白がある・空の `group_aliases` のキーと値、読み替えた後が `global` / `projects` になる対応である
+- `version: 2` の 1 回の操作（`up` / `scale` / `env` のコマンド / `env backend test`）がサーバへ
+  要求するパスは、対象のグループの置き場のものだけである。`version: 1` とファイル backend では
+  参照のグループが常に空で、パス・キャッシュの位置・往復の回数はグループを持たない参照と同じで
+  ある
+- 参照のグループは非機密の `env` ファイルだけから決まり、機密の置き場の値とプロセスの環境変数は
+  使わない。レイアウトと合わないグループの参照は、サーバへ要求する前に拒む
+- `version: 2` の `up` / `scale` は、ボリュームと機密のグループが食い違ったまま副作用を起こさない
+
+## データ・設定
+
+### `$DEVBASE_ROOT/secrets/backend.yml`（`0600`）
+
+```yaml
+version: 1
+backend: openbao
+openbao:
+  url: https://openbao.example.com
+  mount: devbase
+  user: member01
+  path_team_global: team/global
+  path_team_project_prefix: team/projects
+  path_user_prefix: users
+  timeout_seconds: 5
+cache:
+  enabled: true
+```
+
+`version: 2`（グループ別の置き場）の例:
+
+```yaml
+version: 2
+backend: openbao
+openbao:
+  url: https://openbao.example.com
+  mount: devbase
+  user: member01
+  layout: group
+  path_team_prefix: team
+  path_user_prefix: users
+  group_aliases:
+    default: nyle
+  timeout_seconds: 5
+cache:
+  enabled: true
+```
+
+| キー | 意味 | 空・不在のとき |
+| --- | --- | --- |
+| `version` | 形式の版。`1`（レイアウト `flat`）と `2`（レイアウト `group`）を受け付ける | `1` |
+| `backend` | `auto` / `plaintext` / `age` / `openbao` | `auto` |
+| `openbao.url` | 接続先。ホスト（とポート）まで。パス・クエリ・フラグメントは不可。`https` に限り、`http` はホストが `localhost` / `127.0.0.1` / `::1` のときだけ受け付ける | `openbao` のとき必須 |
+| `openbao.mount` | KV v2 シークレットエンジンのマウント名。パス区切りと `..` は不可 | `devbase` |
+| `openbao.user` | 個人単位の置き場に使う識別子（entity 名）。パス区切りと `..` は不可 | `openbao` のとき必須 |
+| `openbao.layout` | `version: 2` だけに置き、`group` だけを受け付ける。`version: 1` には置けない（`flat` として動く） | `version: 2` では必須 |
+| `openbao.path_team_global` / `path_team_project_prefix` | `version: 1` のチーム単位のパスの親。`/` で始めない・終えない。`version: 2` には置けない | 上記の既定 |
+| `openbao.path_team_prefix` | `version: 2` のチーム単位のパスの親。`version: 1` には置けない | `team` |
+| `openbao.path_user_prefix` | 個人単位のパスの親（両方の版） | `users` |
+| `openbao.group_aliases` | グループ名 → 置き場のグループ名の対応（マッピング）。`version: 2` だけに置ける | 空 |
+| `openbao.timeout_seconds` | 1 回の HTTP の待ち時間（正の整数） | `5` |
+| `cache.enabled` | キャッシュを書く・読むか。偽なら既存の控えも消す | `true` |
+
+`version: 2` は backend によらず `openbao.layout: group` を要する（節が無ければ `layout` の欠落として拒む）。
+設定の書き出しは、版に置けるキーだけを書く。
+
+### `$DEVBASE_ROOT/secrets/bootstrap.env.age`（`0600`）
+
+`DEVBASE_OPENBAO_ROLE_ID` と `DEVBASE_OPENBAO_SECRET_ID` の `KEY=VALUE` を、機密の age
+ストアと同じ受信者・同じ鍵で暗号化したもの。登録簿を経由せず `AgeBackend` で直接読み書き
+する（有効な backend を通すと「接続するための値を、接続しないと読めない」循環になる）。
+
+### `$DEVBASE_ROOT/secrets/cache/`（ディレクトリ `0700`、ファイル `0600`）
+
+| パス（`version: 1`） | パス（`version: 2`） | 中身 |
+| --- | --- | --- |
+| `team/global.env.age`、`team/projects/<name>.env.age` | `team/<g>/global.env.age`、`team/<g>/projects/<name>.env.age` | チーム単位の参照の控え |
+| `user/global.env.age`、`user/projects/<name>.env.age` | `user/<g>/global.env.age`、`user/<g>/projects/<name>.env.age` | 個人単位の参照の控え（識別子はパスに入れず、`scope` で区別する） |
+| `index.json` | 同じ | 参照ごとの `fetched_at` / `backend` / `url_host`。`status` の表示だけに使い、可否の判定には使わない。キー名も値も入れない |
+
+`index.json` のキーは、`version: 1` で `team:global` / `team:project:<name>` / `user:global` /
+`user:project:<name>`、`version: 2` で `team:<g>:global` / `team:<g>:project:<name>` /
+`user:<g>:global` / `user:<g>:project:<name>` である。位置とキーは設定の `cache_relpath` /
+`cache_key` が組む。グループごとに控えが分かれるため、グループの違うプロジェクトを順に起動しても
+後の控えが先の控えを上書きせず、不達のときは各グループの控えで起動する。
+
+控えは 1 参照 1 ファイルで、復号すると次の JSON になる。控えた機密と `scope` を同じ暗号文に
+収め、原子的な置き換えで書くため、両者が食い違った組み合わせは残らない。KV v2 の版は
+入れない（控えは読み取りにだけ使い、書き戻しの基準にしない）。
+
+```json
+{"version": 1, "scope": "sha256:...", "backend": "openbao",
+ "fetched_at": "2026-09-08T10:00:00+09:00", "secrets": "KEY=value\n..."}
+```
+
+### `$DEVBASE_ROOT/.env.sources.yml` / `.env.sources.<g>.yml`
+
+`env sync` の同期済みハッシュの控え（認証情報のソースファイルの位置とハッシュ、同期時刻）。
+`version: 2` では置き場のグループ名ごとに `.env.sources.<g>.yml` を持ち、それ以外は
+`.env.sources.yml` 1 つである。機密の値は入らないが、ソースの位置を持つため `.gitignore` の
+`.env.sources*.yml` で追跡から外す。`env export` はこの控えをバンドルの `env/sources.yml` に入れ、
+`env import` は対象のグループの控えへ戻す。
+
+### 退避先
+
+| 操作 | 退避先 | 形 |
+| --- | --- | --- |
+| `migrate --to openbao` | `backups/env-backend-migrate/<日時>/` | 移行元の age / 平文ファイルをそのまま移動 |
+| `env import`（サーバ backend） | `backups/env-import/dbenv-<日時>/<owner>-<kind>[-<name>].env.age` | 取り込み前の値を age 暗号化 |
+| `env init --reset`（サーバ backend） | `backups/env-init/<日時>/<owner>-<kind>[-<name>].env.age` | 同上 |
+
+## セキュリティ
+
+- `secret_id` はコマンド引数で受け取らない（`ps` から読める位置に置かない）。標準入力か
+  TTY の伏せ字入力だけを経路にする
+- `http` はループバック宛てだけ受け付ける。環境変数やテスト専用のオプションで例外を開ける
+  手段は置かない（実サーバを使う端末でも開けられる抜け道になる）
+- `scope` を SHA-256 にするのは、`role_id` とパスを平文で残さないためである
+- 個人単位の機密はパスで分け、他人のパスを読む権限が無ければサーバが 403 を返す。宛先を
+  指すのは設定、渡してよいかを決めるのはサーバ（entity 名で絞るポリシー）という分担である
+- 端末ごとに `secret_id` を分けるため、1 台の失効が他の端末に及ばない。失効前に発行済みの
+  token は期限まで使えるため、期限はサーバ側で短く保つ
+- `secrets/` は Git の除外対象で、`doctor` が実際に除外されることを確かめる
+- コンテナの `~/.vault-token` を読める者は、その token の期限（1 時間）まで本人として読み書き
+  できる。長期の資格情報はコンテナへ置かない
+- base イメージの `bao` は同じリリースの `checksums.txt` で検証する（署名は検証しない。
+  他のツールと同じ扱い）
+- `version: 2` ではパスの先頭側でグループが分かれ、1 回の操作が組むパスは対象のグループのもの
+  だけになる。企業ごとのグループの機密を、別グループのプロジェクトへ届けずに済み、サーバは
+  グループ単位のポリシーで読み書きを絞れる
+- グループを非機密の `env` ファイルから決めるため、機密の置き場に書いた値で読む置き場は
+  変わらない。ボリュームのグループとの食い違いは `up` / `scale` が起動前に止める
+
+## 運用
+
+- 設定が無ければ挙動は変わらない。`backend.yml` を消せば `auto` に戻る
+- OpenBao を使う場合も age の鍵が要る（ブートストラップとキャッシュの暗号化に使う）。
+  受信者の入れ替えは `rekey` が担い、外した受信者は資格情報も控えも復号できなくなる
+- サーバの構築・運用は devbase の範囲外で、devbase は既存のサーバへ接続するだけである。
+  利用者は管理者から接続先 URL・`mount`・自分の識別子・`role_id`・端末ごとの `secret_id` を
+  受け取る
+- 1 台の端末が同時に使う backend は 1 つ、扱う個人単位の機密は 1 人分である
+- 複数人の同時編集は版の不一致として後から書いた側で止まる。黙って上書きせず、読み直して
+  やり直す。不達のときに書き込みを控えへ溜める経路は無い
+- コンテナの `bao` の token は 1 時間で切れる。`permission denied`（403）が出たらホストの
+  プロジェクトのディレクトリで `devbase env token` を打つ。`bao` の版を上げるときは
+  `containers/base/Dockerfile` の `ARG BAO_VERSION` 1 行を変えて base イメージを作り直す
+- 個人単位の機密は `export` / `import` で持ち運ばない。端末を替えても backend の設定と認証で
+  同じ値が読める
+- チーム単位のパスへ書けるのは、サーバ側で書き込みのポリシーを付けた利用者だけである。
+  それ以外の利用者の `env set`（`--user` なし）と `migrate --to openbao` は「書き込み権限が
+  無い」で止まる
+- レイアウトは `devbase env backend use openbao --layout group|flat` で切り替える。devbase は
+  サーバ上のデータをレイアウトの間で移さず、前のレイアウトのパスの機密はサーバに残る。移し直す
+  専用のコマンドは持たない（端末ごとに 1 回きりの作業で、チームのパスは 1 人が移せば済む）。
+  前のレイアウトのパスを `bao kv get` などで読み、`devbase env edit --group NAME`（個人単位は
+  `--user` も）で新しいパスへ書く。古いパスを版の履歴ごと消す操作（`kv metadata delete`）は
+  サーバ側の権限で決まり、devbase のコマンドは持たない
+- グループの読み替え（`default` → 置き場のグループ名）は `backend.yml` の `group_aliases` 1 か所に
+  書き、`env backend status` で確かめる
+- `up` / `scale` がグループの食い違いで止まったら、起動したいグループに合わせて、プロジェクトの
+  `env` に `DEVBASE_ACCOUNT_GROUP` を書くか、シェルの環境変数を外す
+- 機密の置き場に `DEVBASE_ACCOUNT_GROUP` を書くと、注入でプロセスの環境変数へ載ってボリュームの
+  グループを変えうる（プロジェクトの `env` が宣言していれば上書きされる）。`version: 2` ではこの
+  場合も食い違いの検査で止まる。注入の対象から外すかは #185 で扱う。置き場には書かない
+
+## テスト観点
+
+- 設定の読み込み・検証・既定値・パスの組み立て（`tests/env/test_backend_config.py`）
+- 参照の持ち主、登録簿、設定による backend の選択、`auto` の互換（`tests/env/test_secret_store_backend.py`）
+- ブートストラップの往復と鍵が無いときの失敗（`tests/env/test_bootstrap.py`）
+- 偽 OpenBao サーバに対する読んだ版を基準にした丸ごと書き込み・読んでから書くまでの間の
+  他人の更新による版の不一致・保存後の版の引き継ぎ・往復回数・ログインの 400 / 403・
+  取得と書き込みの 403・拒否が確定した 4xx・404 と論理削除後の版・不達・文字列以外の値・
+  パス要素の符号化・token の事前の取り直し・`backend test`（`tests/env/test_openbao.py`）。偽サーバは `tests/conftest.py` の
+  `http.server` で、AppRole のログインと KV v2 の取得・版付き保存・メタデータ削除を持つ。
+  ポリシーの代わりに、`users/<user>/` 以外への書き込みと他人のパスを 403 にする
+- キャッシュの配置・不達時の復帰・認証拒否での不使用・`scope`・書き込みとの同期・版の不一致
+  と結果不明の書き込みでの破棄・控えから読んだ参照の書き戻し拒否・無効化・原子性・本文の
+  途中切れ（`tests/env/test_cache.py`）
+- 4 層の重ね順とファイル backend での不変（`tests/env/test_runtime.py`）
+- `status` / `use`、`--cache` / `--no-cache` の引き継ぎ、argv に `secret_id` を取る経路が
+  無いこと（`tests/commands/test_env_backend.py`）
+- `--user` の宛先、`list` / `get` の順序、ファイル backend での拒否、`edit` / `init --reset`、
+  不達時に `set` / `delete` / `edit` が控えへ落ちずに止まり、`list` / `get` は控えを使うこと
+  （`tests/commands/test_env_user_axis.py`）
+- 移行の衝突・読み戻し・巻き戻し（他の利用者が更新したキーは残す）・設定の切替の順序・
+  両方向・書き込み権限が無いとき（`tests/commands/test_env_backend_migrate.py`）
+- `rekey` の対象、`encrypt` / `decrypt` の向き、`doctor` の点検（`tests/commands/test_env_ops_backend.py`）
+- `export` / `import` がサーバ backend 越しに動き、個人単位を触らないこと、暗号化した退避、
+  保存後の版での巻き戻し、結果不明の参照の巻き戻し、拒まれた参照を巻き戻さないこと、
+  計画の元と現物の間の他人の更新が CAS で止まること、サーバ側が失敗したときに
+  `sources.yml` を確定しないこと、不達で書く前に止まること、`backend: age` への import
+  （`tests/cli/test_env_bundle_backend.py`）
+- `store_for` / `release_store` の規則（同一性・`root` の変更・解放後の作り直し・明示した
+  `store` を控えない）（`tests/env/test_runtime_store.py`）
+- `up` の 3 経路の往復回数、`_ensure_env_files` が取得を足さないこと、`env init` の後に
+  書いた値で起動すること（`tests/cli/test_up_roundtrips.py`）
+- TUI の委譲の入口で控えを捨て、`env edit` → `up` が新しい値で起動すること
+  （`tests/cli/tui/test_dispatch.py`）
+- `issue_token` がログインを増やさないこと・期限前の取り直し・拒否（`tests/env/test_openbao.py`）
+- token の書き込みの形（stdin だけで渡す、`mktemp` → `mv -f`、失敗の扱い）
+  （`tests/env/test_container_token.py`）
+- `up` / `scale` が `BAO_ADDR` を足し token を書くこと、ファイル backend で何も足さないこと、
+  書けなくても `up` が失敗しないこと（`tests/commands/test_container_bao.py`）
+- `env token` の処理の順、dev サービスの絞り込み、下位ディレクトリからの dev サービス名、
+  接続先の適用、`--print`（`tests/commands/test_env_token.py`）
+- base イメージの `bao` の版・両アーキテクチャ・チェックサムの検証の文言
+  （`tests/containers/test_base_dockerfile_bao.py`）
+- 版とレイアウトの読み込み・書き出し、`version: 1` のパスとキャッシュの位置が変わらないこと、
+  `version: 2` のパス・キャッシュの位置・接頭辞、置けないキー・`layout` の欠落と食い違い・
+  `group_aliases` の名前と前後の空白・読み替え後の `global` / `projects` の拒否
+  （`tests/env/test_backend_config.py`）
+- グループの決まり方（プロジェクトの `env` → `$DEVBASE_ROOT/env` → `default`、空の値、`export` 付きと
+  最後の行、プロセスの環境変数と置き場の値を使わないこと、名前の検証、出所の表示）、
+  `SecretRef.group` の等価性と `label()`、`ref_group` / `storage_group` が `version: 1` とファイル
+  backend で `None` になること（`tests/env/test_groups.py`）
+- レイアウトと合わないグループの参照の拒否と、グループのパスの読み書き（`tests/env/test_openbao.py`）
+- グループごとのキャッシュのファイルと `index.json` のキー、不達で各グループの控えを使うこと、
+  `version: 1` の控えをグループの参照に使わないこと（`tests/env/test_cache.py`）
+- `resolve` が 4 参照へプロジェクトのグループを渡し、対象のグループのパスだけを要求すること
+  （`tests/env/test_runtime.py`）
+- 控えのファイルがグループごとに分かれること（`tests/env/test_sources.py`）、`env sync` がグループ
+  ごとに変更を検出し、`env project` がプロジェクトのグループへ書くこと
+  （`tests/commands/test_env_sync_group.py`）
+- `version: 2` の `up` の往復（プロジェクトの中・宣言なしの読み替え・別グループへの切替で認証 1 回・
+  取得 4 回、`env init` の子プロセスへの `--group` と書いた値での起動、`version: 1` では渡さない
+  こと）（`tests/cli/test_up_roundtrips.py`）
+- dispatch 前の注入が名前を指定したライフサイクル操作で切替先を使い、`env` の 10 のサブコマンドで
+  注入せず、`env exec` では注入すること（`tests/cli/test_secret_injection.py`）
+- 下位ディレクトリからの `set` の宛先、`--group` の 5 コマンドの宛先と見出し、`-p` との食い違いの
+  拒否（要求 0 回）と読み替え後の名前での比較、`list` / `get` がプロジェクトの参照を含めないこと、
+  使えない名前と `version: 1`・ファイル backend での 2（`tests/commands/test_env_user_axis.py`）
+- `env init --group` の宛先・読み替え・拒否（`tests/commands/test_env_init_group.py`）
+- `up` / `scale` がグループの食い違いで副作用より前に止まり、`version: 1` では止まらないこと
+  （`tests/commands/test_container_up_order.py`）
+- `status` のレイアウト・グループ・出所・パス、`use` の `--layout` / `--group-alias` の引き継ぎ・
+  置き換え・拒否とキャッシュの削除、`test` を対象のグループへ絞ること
+  （`tests/commands/test_env_backend.py`）
+- `migrate` のプロジェクトごとのグループ、`--exclude-project`（存在しない名前の 2、`version: 1`）、
+  `--dry-run` のパス表示、`--to age` で他のグループの共通の参照へ要求せずに残すこと
+  （`tests/commands/test_env_backend_migrate.py`）
+- `export` が対象のグループのプロジェクトと控えだけを集め、`import` が別グループのプロジェクトを
+  含むバンドルを要求前に拒むこと（`tests/cli/test_env_bundle_backend.py`）、`doctor` がグループの
+  控えとキャッシュの除外を点検すること（`tests/commands/test_env_ops_backend.py`）
+- 実サーバに対する `devbase env backend test` / `devbase up` は手動確認。`version: 2` の
+  パスの読み書きと、プロジェクトのコンテナに別グループの機密が無いことも同じ。コンテナの中の
+  `bao kv get` / `patch`、チーム共通への書き込みの 403、`env token` での取り直しも同じ。ポリシーによる
+  他人のパスと `users/` 直下の一覧の拒否、端末 1 台の `secret_id` の失効も同じ（開発モードの
+  サーバでの確認結果は #166。本番のサーバでは配布後に確かめる）
+
+## 関連リンク
+
+- [機密の保存先を選ぶ](../user/env-backend.md)
+- [環境変数の暗号化](../user/env-encryption.md)
+- [CLI リファレンス: env](../user/cli-reference/03-env.md)
+- 発端の依頼: `issues/security-key.md`
+- 実装 PR: devbasex/devbase#171（Infisical 版 #167 を置き換え）、#177（`up` の往復、#168）、
+  #178（コンテナの `bao`、#169）、#184（アカウントグループごとの置き場、#182。設計は #183）
+- Infisical から OpenBao への切り替えの経緯: devbasex/devbase#166
+- サーバのポリシーをグループ単位に絞る課題: 運用側のリポジトリ（carmo-cdk#363）
+- 範囲外として起票した課題: #185（機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` の注入）
+- [環境変数ガイド: アカウントグループ](../user/environment-variables.md#アカウントグループ-devbase_account_group)
+- [OpenBao: KV v2 API](https://openbao.org/api-docs/secret/kv/kv-v2/)
+- [OpenBao: AppRole auth](https://openbao.org/docs/auth/approle/)
+- [OpenBao: Policies](https://openbao.org/docs/concepts/policies/)
+- [OpenBao: releases](https://github.com/openbao/openbao/releases)

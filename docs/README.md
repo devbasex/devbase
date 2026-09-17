@@ -48,6 +48,7 @@ graph TD
 | [project.yml リファレンス](user/project-yml.md) | プロジェクト設定（複数リポジトリ・scale・エディタ） |
 | [環境変数ガイド](user/environment-variables.md) | 3レベル構造、コレクター、ソース同期 |
 | [環境変数の暗号化](user/env-encryption.md) | 認証情報を暗号化して保存する / 鍵とチーム共有 / 平文へ戻す |
+| [機密の保存先を選ぶ](user/env-backend.md) | OpenBao サーバへ載せ替える / 個人単位の機密 / 不達時のキャッシュ |
 | [コンテナ操作ガイド](user/container-operations.md) | ライフサイクル、並行開発、ボリューム構造 |
 | [スナップショットガイド](user/snapshot-guide.md) | 増分バックアップ、世代管理、復元手順 |
 | [トラブルシューティング](user/troubleshooting.md) | カテゴリ別の問題と解決策 |
@@ -76,6 +77,7 @@ graph LR
 | [plugin.yml リファレンス](plugin-dev/plugin-yml-reference.md) | プラグイン定義ファイルの全フィールド |
 | [compose.yml ガイドライン](plugin-dev/compose-yml-guidelines.md) | Docker Compose 設定のベストプラクティス |
 | [repo 連携プロジェクトと pre-up populate](plugin-dev/repo-backed-projects.md) | 外部リポジトリを共有 work ボリュームへ populate する `pre-up` パターンと冪等スキップ |
+| [テスト用サーバを後から起動・停止する](plugin-dev/compose-profiles.md) | Compose の `profiles` で付随サービス群を `devbase up` から外し、`devbase project profile` で起動・停止する |
 
 ### devbase 開発者（devbase 本体を改善したい方）
 
@@ -105,6 +107,7 @@ docs/
 │   ├── project-yml.md                 ← project.yml リファレンス
 │   ├── environment-variables.md       ← 環境変数ガイド
 │   ├── env-encryption.md              ← 環境変数の暗号化
+│   ├── env-backend.md                 ← 機密の保存先を選ぶ (OpenBao)
 │   ├── container-operations.md        ← コンテナ操作ガイド
 │   ├── snapshot-guide.md              ← スナップショットガイド
 │   └── troubleshooting.md             ← トラブルシューティング
@@ -112,7 +115,8 @@ docs/
 │   ├── quickstart.md                  ← クイックスタート
 │   ├── plugin-yml-reference.md        ← plugin.yml リファレンス
 │   ├── compose-yml-guidelines.md      ← compose.yml ガイドライン
-│   └── repo-backed-projects.md        ← repo 連携 / pre-up populate パターン
+│   ├── repo-backed-projects.md        ← repo 連携 / pre-up populate パターン
+│   └── compose-profiles.md            ← profiles でテスト用サーバを後から起動・停止
 └── developer/                         ← devbase 開発者向け
     ├── architecture.md                ← アーキテクチャ
     ├── contributing.md                ← コントリビューション
@@ -129,6 +133,7 @@ docs/
 | コマンドの使い方を調べる | [CLI リファレンス](user/cli-reference/README.md) |
 | 環境変数を設定する | [環境変数ガイド](user/environment-variables.md#環境変数の操作) |
 | 認証情報を暗号化して保存する | [環境変数の暗号化](user/env-encryption.md) |
+| 機密を OpenBao サーバで管理する | [機密の保存先を選ぶ](user/env-backend.md) |
 | 複数コンテナで並行開発する | [コンテナ操作ガイド](user/container-operations.md#並行開発) |
 | 1 つのコンテナで複数リポジトリを扱う | [project.yml リファレンス](user/project-yml.md#複数リポジトリ) |
 | データをバックアップ・復元する | [スナップショットガイド](user/snapshot-guide.md) |

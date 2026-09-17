@@ -81,6 +81,7 @@ _devbase() {
         'build:Build container images'
         'rebuild:Rebuild images without cache (docker compose build --no-cache)'
         'list:List projects (NAME / PLUGIN / STATUS)'
+        'profile:Start / stop compose profile services'
     )
 
     container_subcommands=(
@@ -92,6 +93,7 @@ _devbase() {
         'scale:Scale containers online'
         'build:Build container images'
         'rebuild:Rebuild images without cache (docker compose build --no-cache)'
+        'profile:Start / stop compose profile services'
     )
 
     env_subcommands=(
@@ -203,6 +205,9 @@ _devbase() {
                         '--interactive[(compat) interactive selection, default]' \
                         '-i[(compat) interactive selection, default]'
                     ;;
+                profile)
+                    _values 'operation' up down list
+                    ;;
                 *)
                     _describe -t project-commands 'project command' project_subcommands
                     ;;
@@ -227,6 +232,9 @@ _devbase() {
                     ;;
                 build)
                     _arguments '1:image:'
+                    ;;
+                profile)
+                    _values 'operation' up down list
                     ;;
                 *)
                     _describe -t container-commands 'container command' container_subcommands

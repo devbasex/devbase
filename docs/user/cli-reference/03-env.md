@@ -4,17 +4,49 @@
 
 環境変数の管理を行うコマンド群です。詳細は [環境変数ガイド](../environment-variables.md) を参照してください。
 
+## グループ別の置き場と `--group`
+
+機密の保存先が OpenBao で、グループ別の置き場（`secrets/backend.yml` の `version: 2`）を選んだ
+端末では、`env` コマンドが読み書きする置き場がアカウントグループごとに分かれます。詳細は
+[機密の保存先を選ぶ](../env-backend.md#アカウントグループごとの置き場version-2)を参照してください。
+
+コマンドが相手にするグループ（対象のグループ）は、既定では実行したディレクトリで決まります。
+
+| 実行した場所 | 対象のグループ |
+|---|---|
+| `projects/<name>` とその下位ディレクトリ | `projects/<name>/env` → `$DEVBASE_ROOT/env` → `default` の順に最初に見つかった `DEVBASE_ACCOUNT_GROUP` |
+| プロジェクトの外 | `$DEVBASE_ROOT/env` → `default` |
+
+`env list` / `get` / `set` / `delete` / `edit` / `init` は `--group NAME` で対象のグループを
+指定できます。`-p` との組み合わせは次のとおりです。
+
+| 指定 | 結果 |
+|---|---|
+| `--group NAME`（`-p` なし） | 共通の参照（`team/<g>/global`、`--user` なら `users/<user>/<g>/global`）を `NAME` のグループで読み書きする |
+| `--group NAME -p`、`NAME` がプロジェクトのグループと同じ置き場 | プロジェクトの参照を読み書きする |
+| `--group NAME -p`、`NAME` がプロジェクトのグループと違う置き場 | 両方のグループ名を述べて終了コード 1。読み書きしない |
+| `list` / `get`（`-p` なし）で、`NAME` がプロジェクトのグループと違う置き場 | 共通の参照だけを出す・探す。プロジェクトの参照を含めなかった旨を標準エラーへ出す |
+| 使えない名前（`ubuntu`、数字だけ、`/` を含むなど。読み替えた後が `global` / `projects` のときも） | 理由を述べて終了コード 2 |
+| `version: 1` の設定やファイル backend | `--group` を無視せず、終了コード 2 |
+
+「同じ置き場」かは `group_aliases` で読み替えた後の名前で比べます（`default: nyle` の読み替えが
+あれば、グループを宣言していないプロジェクトで `--group nyle -p` が通ります）。
+
 ## `devbase env init`
 
 環境変数の対話式初期セットアップを実行します。
 
 ```
-devbase env init [--reset]
+devbase env init [--reset] [--group NAME]
 ```
 
 | オプション | 説明 |
 |-----------|------|
 | `--reset` | 既存の設定をリセットして再設定 |
+| `--group NAME` | 書き込むチーム共通の置き場のグループ（グループ別の置き場だけ。[グループ別の置き場と `--group`](#グループ別の置き場と---group)） |
+
+`devbase up` が機密の未作成を検出して自動で起動する `env init` には、グループ別の置き場では
+起動するプロジェクトのグループが `--group` で渡ります。
 
 ## `devbase env sync`
 
@@ -24,12 +56,16 @@ devbase env init [--reset]
 devbase env sync
 ```
 
+グループ別の置き場では、対象のグループのチーム共通へ書きます。同期済みのハッシュは
+`$DEVBASE_ROOT/.env.sources.<g>.yml` にグループごとに控えるため、あるグループで同期した後でも、
+別のグループの同期が変更を見落としません（それ以外の設定では `$DEVBASE_ROOT/.env.sources.yml`）。
+
 ## `devbase env list`
 
 設定済みの環境変数を一覧表示します。
 
 ```
-devbase env list [-g|-p] [-r] [-k]
+devbase env list [-g|-p] [-r] [-k] [--user] [--group NAME]
 ```
 
 | オプション | 説明 |
@@ -38,6 +74,8 @@ devbase env list [-g|-p] [-r] [-k]
 | `-p` | プロジェクト変数のみ表示 |
 | `-r` | 値も表示（デフォルトではキーのみ） |
 | `-k` | キー名でソート |
+| `--user` | 個人単位の置き場だけを表示（サーバ backend のみ） |
+| `--group NAME` | 対象のグループを指定（グループ別の置き場のみ）。見出しにグループ名が付く（例: `=== グローバル（グループ kkg） ...`） |
 
 ```bash
 # グローバル変数のみ、値付きで表示
@@ -52,12 +90,14 @@ devbase env list -p -k
 環境変数を設定します。
 
 ```
-devbase env set KEY=VALUE [-p]
+devbase env set KEY=VALUE [-p] [--user] [--group NAME]
 ```
 
 | オプション | 説明 |
 |-----------|------|
 | `-p` | プロジェクトレベルに設定（デフォルトはグローバル） |
+| `--user` | 個人単位の置き場に設定（サーバ backend のみ。[機密の保存先を選ぶ](../env-backend.md)） |
+| `--group NAME` | 対象のグループの置き場に設定（グループ別の置き場のみ。`-p` と組み合わせるときはプロジェクトのグループと同じ置き場に限る） |
 
 ```bash
 # グローバルに設定
@@ -65,15 +105,25 @@ devbase env set ANTHROPIC_API_KEY=sk-xxx
 
 # プロジェクトレベルに設定
 devbase env set GCP_ACTIVE_PROFILE=my-project -p
+
+# 自分だけの値として設定 (OpenBao)
+devbase env set AWS_ACCESS_KEY_ID=AKIA... --user
+
+# グループ kkg のチーム共通に設定 (グループ別の置き場)
+devbase env set SOME_KEY=value --group kkg
 ```
 
 ## `devbase env get`
 
-環境変数の値を取得します。
+環境変数の値を取得します。個人共通 → チーム共通 → 個人のプロジェクト → チームのプロジェクト
+の順に探します。
 
 ```
-devbase env get KEY
+devbase env get KEY [--user] [--group NAME]
 ```
+
+`--group NAME` を付けると、そのグループの置き場を探します（グループ別の置き場のみ）。
+`NAME` が実行したプロジェクトのグループと違う置き場なら、共通の参照だけを探します。
 
 ```bash
 devbase env get AWS_PROFILE
@@ -84,12 +134,14 @@ devbase env get AWS_PROFILE
 環境変数を削除します。
 
 ```
-devbase env delete KEY [-p]
+devbase env delete KEY [-p] [--user] [--group NAME]
 ```
 
 | オプション | 説明 |
 |-----------|------|
 | `-p` | プロジェクト設定から削除（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
+| `--user` | 個人単位の置き場から削除（サーバ backend のみ） |
+| `--group NAME` | 対象のグループの置き場から削除（グループ別の置き場のみ） |
 
 ```bash
 # グローバルから削除
@@ -104,12 +156,14 @@ devbase env delete GCP_ACTIVE_PROFILE -p
 デフォルトエディタで設定を開きます。設定が暗号化されている場合は、復号した内容を一時ファイルで編集し、保存時に再暗号化します。
 
 ```
-devbase env edit [-p]
+devbase env edit [-p] [--user] [--group NAME]
 ```
 
 | オプション | 説明 |
 |-----------|------|
 | `-p` | カレントプロジェクトの設定を開く（デフォルトはグローバル）。`projects/<name>` 配下で実行してください |
+| `--user` | 個人単位の置き場を開く（サーバ backend のみ） |
+| `--group NAME` | 対象のグループの置き場を開く（グループ別の置き場のみ） |
 
 ## `devbase env project`
 
@@ -118,6 +172,8 @@ devbase env edit [-p]
 ```
 devbase env project
 ```
+
+グループ別の置き場では、実行したプロジェクトのグループの置き場へ書きます。
 
 ## `devbase env keygen`
 
@@ -209,10 +265,12 @@ devbase env decrypt
 復号した機密を環境変数として渡した状態で、任意のコマンドを実行します。値はその子プロセスの環境変数としてのみ渡り、ファイルには書き出されません。
 
 ```
-devbase env exec -- CMD [ARGS...]
+devbase env exec [--context NAME] -- CMD [ARGS...]
 ```
 
 起動ラッパーは共通の機密ファイルを読み込まないため、ホスト側で機密を必要とする処理（Docker Compose の変数展開など）はこのコマンドを通します。devbase 自身の `devbase build` も内部でこれを使っています。
+
+カレントディレクトリがプロジェクトなら、その `project.local.yml` と env から docker context を解決して子プロセスの `DOCKER_CONTEXT` に載せます。`--context NAME` はそれを上書きします（`devbase build --context NAME` が内部で渡す口です）。
 
 ```bash
 # コンテナに渡る値を確認する
@@ -223,6 +281,25 @@ devbase env exec -- docker compose config
 ```
 
 > `devbase env exec -- printenv` のように値を表示するコマンドは、画面共有や端末ログに認証情報がそのまま残ります。実行する場面に注意してください。
+
+## `devbase env token`
+
+起動中の dev コンテナの `~/.vault-token` を、OpenBao の新しい token で置き換えます（backend が
+`openbao` のときだけ）。コンテナの中の `bao` の token が切れたときに使います。詳しくは
+[機密の保存先を選ぶ](../env-backend.md) の「コンテナの中から `bao` を使う」を参照してください。
+
+```
+devbase env token [--print] [--context NAME]
+```
+
+| オプション | 説明 |
+|---|---|
+| なし | 現在地のプロジェクトの起動中の dev コンテナ（サービス `<dev>-<n>`）すべてへ書き、書いたコンテナ名を表示する |
+| `--print` | コンテナへ書かず、token だけを標準出力へ出す |
+| `--context NAME` | docker context を一時的に上書きする |
+
+プロジェクトの外で実行したとき、起動中の dev コンテナが無いときは、token を発行せずに
+終了コード 1 で止まります。一部のコンテナへ書けなかったときも 1 です。
 
 ## `devbase env rekey`
 
@@ -290,6 +367,11 @@ devbase env export <bundle>
 オプション（age 鍵 / passphrase / S3 入出力など）の詳細は
 [環境変数の export / import ガイド](../env-export-import.md#devbase-env-export-リファレンス)を参照してください。
 
+グループ別の置き場では、共通の機密は対象のグループのものを、プロジェクトは対象のグループと
+同じ置き場のものだけを集めます。外したプロジェクトは名前とグループを標準エラーへ出し、
+その置き場へは要求を出しません。`--no-metadata` を付けなければ、対象のグループの
+`.env.sources.<g>.yml` を含めます。
+
 ## `devbase env import`
 
 `devbase env export` で作成したバンドルを復号し、環境変数を取り込みます。
@@ -300,3 +382,63 @@ devbase env import <bundle>
 
 `--dry-run` での確認や identity 鍵指定などの詳細は
 [環境変数の export / import ガイド](../env-export-import.md#devbase-env-import-リファレンス)を参照してください。
+
+グループ別の置き場では、共通の機密は対象のグループへ、プロジェクトはそれぞれのプロジェクトの
+グループへ取り込みます。バンドルに対象のグループと違う置き場のプロジェクトがあると、
+**1 件も取り込まずに**プロジェクト名とグループを挙げて終了コード 1 で止まります。
+案内される `--exclude-project NAME` を付けて外すか、そのグループのプロジェクトの
+ディレクトリで実行してください。`--merge-metadata` は対象のグループの `.env.sources.<g>.yml` へ
+書きます。
+
+## `devbase env backend`
+
+機密の保存先（平文 / age / OpenBao サーバ）を選び、確かめ、移します。詳細は
+[機密の保存先を選ぶ](../env-backend.md) を参照してください。
+
+```
+devbase env backend status
+devbase env backend use <name> [--url URL] [--mount NAME] [--user ID]
+                               [--role-id ID] [--secret-id-stdin] [--cache|--no-cache]
+                               [--layout flat|group] [--group-alias FROM=TO]...
+devbase env backend test
+devbase env backend migrate --to <age|openbao> [--exclude-project NAME]... [--dry-run] [--yes]
+```
+
+| サブコマンド | 内容 |
+|---|---|
+| `status` | 現在の backend 名、保存先、参照ごとの置き場、キャッシュの状態を表示。グループ別の置き場では、レイアウト、対象のグループ（読み替えがあれば `default → nyle` の形）とそれを決めたファイル、そのグループで組んだ 4 つのパスも出す |
+| `use <name>` | backend を切り替える（`auto` / `plaintext` / `age` / `openbao`）。検証に失敗したときは設定を書き換えない。`secret_id` は `--secret-id-stdin` か伏せ字入力で受け取り、引数では受け取らない |
+| `test` | サーバへ接続し、参照ごとに読めるかを確かめる。グループ別の置き場では対象のグループの置き場だけを調べ、グループの違うプロジェクトは名前を表示して調べない |
+| `migrate --to NAME` | チーム単位の機密を別の backend へ写す。移行先に同じキーがあれば 1 件も書かない。読み戻して一致しなければ作成したキーだけを消す |
+
+`use openbao` のオプション（詳細は [機密の保存先を選ぶ](../env-backend.md#アカウントグループごとの置き場version-2)）:
+
+| オプション | 説明 |
+|---|---|
+| `--layout group` | 置き場をアカウントグループごとに分ける（`version: 2`）。`--layout` を省くと、OpenBao の設定がまだ無ければ `group`、あれば今のレイアウトを引き継ぐ |
+| `--layout flat` | パスにグループを含まない従来の置き場（`version: 1`）で書く。読み替えは捨てる |
+| `--group-alias FROM=TO` | グループ `FROM` の機密を置き場のグループ名 `TO` で扱う（繰り返し可）。指定すると今の読み替えを丸ごと置き換える。`--layout flat` や `version: 1` の設定と組み合わせると終了コード 2 |
+
+`--layout` / `--group-alias` は `openbao` 以外の backend と組み合わせると終了コード 2 です。
+レイアウトが変わると、手元のキャッシュ（`secrets/cache/`）を消します。
+
+```bash
+# グループ別の置き場を選び、グループを宣言していないプロジェクトを nyle の置き場で扱う
+devbase env backend use openbao --layout group --group-alias default=nyle
+
+# 従来の置き場へ戻す
+devbase env backend use openbao --layout flat
+```
+
+`migrate` のオプション:
+
+| オプション | 説明 |
+|---|---|
+| `--exclude-project NAME` | そのプロジェクトの機密を移行から外す（繰り返し可）。読まず、書かず、退避もしない。`projects/` に無い名前は終了コード 2 |
+| `--dry-run` | 移す参照とキー名だけを表示する（値は出さない）。グループ別の置き場では書き先の `<mount>/<パス>` も出す |
+| `--yes` | 確認プロンプトを省略 |
+
+グループ別の置き場への `migrate --to openbao` は、共通の機密を `$DEVBASE_ROOT/env` のグループへ、
+プロジェクトの機密をそれぞれのプロジェクトのグループへ書きます。`--to age` では、共通の機密は
+`$DEVBASE_ROOT/env` のグループのものだけを移し、他のグループのチーム共通は移さずに、グループ名と
+パスを表示してサーバ上に残します。

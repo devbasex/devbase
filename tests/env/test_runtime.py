@@ -304,6 +304,59 @@ def test_child_env_keeps_the_existing_environment(root, store):
     assert env['TOKEN'] == 'sk-1'
 
 
+def test_restore_injected_brings_back_the_history_of_the_snapshot(root, store):
+    """控えた履歴を書き戻すと、その後の解除は控えた時点で載っていた機密を落とす"""
+    (root / 'projects' / 'api').mkdir()
+    store.age.save(WEB, {'WEB_ONLY': 'w'})
+    store.age.save(API, {'API_ONLY': 'a'})
+    environ = {}
+
+    runtime.inject(root, 'web', environ=environ, store=store)
+    snapshot = runtime.snapshot_injected(environ)
+    saved_values = dict(environ)
+
+    # 控えた後の切替で履歴が入れ替わる
+    runtime.clear_injected(environ)
+    runtime.inject(root, 'api', environ=environ, store=store)
+
+    # 値と履歴を揃えて戻す
+    environ.clear()
+    environ.update(saved_values)
+    runtime.restore_injected(snapshot, environ)
+
+    assert runtime.clear_injected(environ) == ['WEB_ONLY']
+    assert environ == {}
+
+
+def test_snapshot_is_not_changed_by_later_injection(root, store):
+    """控えは複製なので、後の注入で書き足された履歴が混ざらない"""
+    store.age.save(WEB, {'WEB_ONLY': 'w'})
+    environ = {}
+
+    runtime.inject(root, 'web', environ=environ, store=store)
+    snapshot = runtime.snapshot_injected(environ)
+    store.age.save(GLOBAL, {'LATER': 'l'})
+    runtime.inject(root, 'web', environ=environ, store=store)
+
+    runtime.restore_injected(snapshot, environ)
+
+    assert runtime.clear_injected(environ) == ['WEB_ONLY']
+
+
+def test_restoring_an_empty_snapshot_drops_the_history(root, store):
+    """履歴が無い時点の控えを書き戻すと、その後に作られた履歴は消える"""
+    store.age.save(GLOBAL, {'TOKEN': 'from-secret'})
+    environ = {}
+
+    snapshot = runtime.snapshot_injected(environ)
+    runtime.inject(root, None, environ=environ, store=store)
+
+    runtime.restore_injected(snapshot, environ)
+
+    assert runtime.clear_injected(environ) == []
+    assert id(environ) not in runtime._injected_originals
+
+
 # ---------------------------------------------------------------------------
 # プロジェクトの特定
 # ---------------------------------------------------------------------------
@@ -329,3 +382,169 @@ def test_current_project_name_follows_a_symlinked_project(root, tmp_path):
     (root / 'projects' / 'linked').symlink_to(target)
 
     assert runtime.current_project_name(root, root / 'projects' / 'linked') == 'linked'
+
+
+# ---------------------------------------------------------------------------
+# 持ち主の軸を足した 4 層の重ね順 (PLAN51 決定 12)
+# ---------------------------------------------------------------------------
+
+class _FourLayerStore:
+    """4 参照を持つ最小の店 (backend を問わず重ね順だけを見る)"""
+
+    def __init__(self, layers):
+        self._layers = layers
+
+    def load(self, ref):
+        return dict(self._layers.get((ref.kind, ref.name, ref.owner), {}))
+
+
+USER_GLOBAL = SecretRef.for_global(owner='user')
+USER_WEB = SecretRef.for_project('web', owner='user')
+
+
+def _layers(**kw):
+    table = {
+        'team_global': ('global', None, 'team'),
+        'user_global': ('global', None, 'user'),
+        'team_web': ('project', 'web', 'team'),
+        'user_web': ('project', 'web', 'user'),
+    }
+    return {table[name]: data for name, data in kw.items()}
+
+
+def test_user_project_wins_over_all_other_layers(root):
+    store = _FourLayerStore(_layers(
+        team_global={'K': 'tg'}, user_global={'K': 'ug'},
+        team_web={'K': 'tw'}, user_web={'K': 'uw'}))
+
+    assert runtime.resolve(root, 'web', store=store).values['K'] == 'uw'
+
+
+def test_layers_fall_back_in_the_documented_order(root):
+    layers = _layers(team_global={'K': 'tg'}, user_global={'K': 'ug'},
+                     team_web={'K': 'tw'}, user_web={'K': 'uw'})
+    order = [('project', 'web', 'user'), ('project', 'web', 'team'),
+             ('global', None, 'user'), ('global', None, 'team')]
+    expected = ['uw', 'tw', 'ug', 'tg']
+
+    for key, value in zip(order, expected):
+        assert runtime.resolve(root, 'web', store=_FourLayerStore(layers)).values['K'] == value
+        del layers[key]
+
+
+def test_project_env_beats_global_layers_and_loses_to_project_layers(root, monkeypatch):
+    (root / 'projects' / 'web' / 'env').write_text('K=from-env\n')
+    monkeypatch.setenv('K', 'from-env')
+
+    store = _FourLayerStore(_layers(team_global={'K': 'tg'}, user_global={'K': 'ug'}))
+    assert runtime.resolve(root, 'web', store=store).values['K'] == 'from-env'
+
+    store = _FourLayerStore(_layers(user_global={'K': 'ug'}, team_web={'K': 'tw'}))
+    assert runtime.resolve(root, 'web', store=store).values['K'] == 'tw'
+
+
+def test_names_are_listed_once_across_the_four_layers(root):
+    store = _FourLayerStore(_layers(
+        team_global={'A': '1', 'K': 'tg'}, user_global={'K': 'ug', 'B': '2'},
+        team_web={'K': 'tw', 'C': '3'}, user_web={'K': 'uw', 'D': '4'}))
+
+    resolved = runtime.resolve(root, 'web', store=store)
+
+    assert resolved.global_names == ['A', 'K', 'B']
+    assert resolved.project_names == ['K', 'C', 'D']
+    assert resolved.names == ['A', 'K', 'B', 'C', 'D']
+
+
+def test_invalid_utf8_project_env_preserves_secret_values_and_origins(root, monkeypatch):
+    """現状固定: 不正 UTF-8 があれば有効な先頭行も含め上書きを無視する。"""
+    (root / 'projects' / 'web' / 'env').write_bytes(b'TOKEN=override\nINVALID=\xff\n')
+    monkeypatch.setenv('TOKEN', 'override')
+    store = _FourLayerStore(_layers(
+        team_global={'TOKEN': 'secret'}, user_global={'USER_GLOBAL': 'ug'},
+        team_web={'PROJECT_ONLY': 'p'}, user_web={'USER_PROJECT': 'up'}))
+
+    resolved = runtime.resolve(root, 'web', store=store)
+
+    assert resolved.values == {
+        'TOKEN': 'secret', 'USER_GLOBAL': 'ug',
+        'PROJECT_ONLY': 'p', 'USER_PROJECT': 'up',
+    }
+    assert set(resolved.global_names) == {'TOKEN', 'USER_GLOBAL'}
+    assert set(resolved.project_names) == {'PROJECT_ONLY', 'USER_PROJECT'}
+    assert set(resolved.names) == {'TOKEN', 'USER_GLOBAL', 'PROJECT_ONLY', 'USER_PROJECT'}
+
+
+def test_file_backends_resolve_exactly_as_before(root, store):
+    """個人単位の参照を持たない backend では、結果が 2 層のときと同じ"""
+    store.age.save(GLOBAL, {'TOKEN': 'global', 'ONLY_GLOBAL': 'g'})
+    store.age.save(WEB, {'TOKEN': 'project'})
+
+    resolved = runtime.resolve(root, 'web', store=store)
+
+    assert resolved.values == {'TOKEN': 'project', 'ONLY_GLOBAL': 'g'}
+    assert resolved.global_names == ['ONLY_GLOBAL', 'TOKEN']   # 保存時に昇順へ正規化される
+    assert resolved.project_names == ['TOKEN']
+
+
+# ---------------------------------------------------------------------------
+# グループ別の置き場 (PLAN56)
+# ---------------------------------------------------------------------------
+
+class _GroupedStore(_FourLayerStore):
+    """``ref_group`` が決めたグループを、読んだ参照ごとに記録する"""
+
+    def __init__(self, layers, group):
+        super().__init__(layers)
+        self._group = group
+        self.asked = []
+        self.loaded = []
+
+    def ref_group(self, project):
+        self.asked.append(project)
+        return self._group
+
+    def load(self, ref):
+        self.loaded.append(ref)
+        return super().load(ref)
+
+
+def test_resolve_passes_the_projects_group_to_the_four_references(root):
+    store = _GroupedStore(_layers(team_global={'K': 'tg'}), 'with')
+
+    runtime.resolve(root, 'web', store=store)
+
+    assert store.asked == ['web']
+    assert store.loaded == [
+        SecretRef.for_global(group='with'), SecretRef.for_global(owner='user', group='with'),
+        SecretRef.for_project('web', group='with'),
+        SecretRef.for_project('web', owner='user', group='with')]
+
+
+def test_resolve_without_a_group_builds_the_same_references_as_before(root):
+    """決定 5: ``ref_group`` が ``None`` なら参照は今と同じ値"""
+    store = _GroupedStore({}, None)
+
+    runtime.resolve(root, None, store=store)
+
+    assert store.asked == [None]
+    assert store.loaded == [GLOBAL, USER_GLOBAL]
+
+
+def test_resolve_with_the_group_layout_requests_only_the_group_paths(openbao_root, openbao):
+    """受け入れ条件 1 (単体): ``with`` のプロジェクトは ``with`` の 4 パスだけを取得する"""
+    from tests.conftest import configure_openbao
+
+    root = openbao_root
+    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    openbao.put('team/with/global', {'A': 'with'})
+    openbao.put('team/global', {'A': 'flat'})
+    openbao.put('team/nyle/global', {'A': 'nyle'})
+
+    resolved = runtime.resolve(root, 'web', store=SecretStore(root))
+
+    assert resolved.values == {'A': 'with'}
+    assert openbao.logins == 1
+    assert sorted(r.kv_path for r in openbao.requests_of('GET')) == sorted([
+        'team/with/global', 'users/member01/with/global',
+        'team/with/projects/web', 'users/member01/with/projects/web'])

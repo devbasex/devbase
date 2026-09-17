@@ -124,10 +124,49 @@ clone は**コンテナ起動のたびに試行される**ので、後から権�
 | `project.yml` | devbase 自身の設定 | リポジトリ、コンテナ数、エディタの自動オープン |
 | `env` | コンテナへ渡す環境変数 | `ENABLE_SSH`、アプリが読む設定値 |
 | `.env` | プロジェクト固有の機密 | API キー、DB 接続情報 |
+| `project.local.yml` | 個人・機材ごとの devbase 設定（git 管理しない） | 別ホストの docker context、リモート側の HOME / gid |
 
 `compose.yml` が `env_file: - env` で参照するため、`env` は**ファイル自体が必須**です。
 渡したい環境変数が無ければ空ファイルで構いませんが、削除すると `devbase up` が
 compose の起動時に失敗します。
+
+## `project.local.yml`（個人・機材ごとの設定）
+
+`projects/<name>/project.local.yml` は、**同じプロジェクトを使う他の人には関係ない**設定を
+置くファイルです。`project.yml` はチームで共有される正ですが、「このプロジェクトのコンテナは
+別ホストの Docker に立てる」は個人の事情で、リモート側の HOME や docker グループの gid は
+機材そのものに依存します。共有ファイルに混ぜると、同じ `project.yml` を使う他の人の
+`devbase up` が壊れるため、別ファイルにします。
+
+devbase-samples / devbase-ext などプロジェクト定義を持つリポジトリでは、`.gitignore` に
+`project.local.yml` を加えてください（devbase 本体は `projects/*` ごと除外済みです）。
+
+```yaml
+# projects/<name>/project.local.yml
+docker:
+  context: gpu-wsl        # docker context ls に出る名前。未指定なら現在の context
+  home: /home/takemi      # リモート側の HOME。bind mount の ~ をこの値で展開する
+  # gid: 999              # リモート側の docker グループ gid。省略時は初回の up で自動取得
+```
+
+| キー | 必須 | 説明 |
+|------|------|------|
+| `docker.context` | いいえ | `docker` / `docker compose` を向ける docker context の名前。接続先の実体（`ssh://user@host` など）は書かず、各マシンの `docker context create` に委ねる |
+| `docker.home` | いいえ | リモート側の HOME（絶対パス）。`compose.yml` の bind mount の `~` をこの値で展開する。未指定のままリモートへ向けると、`~` は手元の HOME に展開されてリモートでは空ディレクトリになるため、`devbase up` が該当する mount を警告する |
+| `docker.gid` | いいえ | リモート側の docker グループの gid（`group_add: ["${DOCKER_GID}"]` に渡る値）。未指定なら初回の `up` で `docker run --rm -v /var/run/docker.sock:/s alpine:3 stat -c %g /s` により取得し、`$DEVBASE_ROOT/.cache/docker-gid/<context>` に控える。rootless Docker や socket が `root:root` の構成では `0` が返るため明示する |
+
+最上位に `docker` 以外のキーは書けません（`scale` / `open_editor` の個人上書きは今後の課題）。
+`project.yml` に `docker:` を書くと、このファイルへ移すよう案内するエラーになります。
+
+context の優先順位は **CLI `--context` > env `DEVBASE_DOCKER_CONTEXT`（グローバル `.env` /
+プロジェクト `env`）> `project.local.yml` の `docker.context` > 現在の docker context** です。
+一時的に別ホストへ向けたいときは `devbase up --context <name>` を使います。CLI / env で
+ファイルと**別の名前**へ向けたときは、ファイルの `home` / `gid` は使いません（別の機材の
+値を持ち込まないため）。
+
+使い方の全体像（WSL / EC2 への context の作り方、VS Code の attach、制約）は
+[環境変数ガイドの「リモート Docker」](environment-variables.md#リモート-docker別ホストの-daemon-にコンテナを立てる)
+を参照してください。
 
 ## 旧 `env` 形式からの移行
 

@@ -62,6 +62,13 @@ class Plan:
     overwritten_keys: List[str] = field(default_factory=list)
     skipped_keys: List[str] = field(default_factory=list)
     op: str = 'merge'  # 'merge' | 'replace' | 'create' | 'sources-merge'
+    #: 保存先がローカルのファイルではなく backend (サーバ) の参照であるとき、その参照。
+    #: ``None`` なら ``target`` は書き込んでよいローカルパス (PLAN51 設計 2)。
+    ref: Optional[object] = None
+    #: backend の参照で、merge の元にした取り込み前の原文 (無ければ ``None``)。退避と
+    #: 巻き戻しはこれを使い、取り直さない (取り直すと CAS の基準の版が進み、計画の元と
+    #: 現物の間に入った他の利用者の更新を上書きする)
+    before: Optional[bytes] = None
 
 
 def target_for(arcname: str, devbase_root: Path) -> Path:
@@ -116,44 +123,6 @@ def filter_members(
     return result
 
 
-def _merge_into_existing_bytes(existing_bytes: bytes,
-                               merged: Dict[str, str]) -> bytes:
-    """既存 ``.env`` のコメント / 空行 / キー順を保持したまま、``merged`` で値を差し替える。
-
-    既存に無いキーは末尾に sorted 順で append。``merged`` から除外されたキーは
-    出力からも除外する (現状の merge ロジック上発生しないが、安全側で対応)。
-
-    値が変更されていないキーは ``raw`` 行をそのまま温存して出力する。これにより
-    例えば ``PATH=$HOME/bin`` のような未クオート値が ``PATH="\\$HOME/bin"`` に
-    勝手にエスケープされて source 時の意味が変わるのを防ぐ (PR #13 codex 指摘)。
-    値が変わったキーと新規キーのみ ``EnvFile._format_kv_line`` でフォーマットする。
-
-    ``EnvFile.dump_bytes`` で再シリアライズするとコメント・空行が失われるため、
-    ``EnvFile.parse_entries`` ベースで再構成している (PR #15 gemini 指摘)。
-    """
-    seen: set[str] = set()
-    out_lines: List[str] = []
-    for e in EnvFile.parse_entries(existing_bytes):
-        if e.kind != 'kv' or e.key is None:
-            out_lines.append(e.raw + '\n')
-            continue
-        if e.key in merged:
-            seen.add(e.key)
-            new_value = merged[e.key]
-            if e.value == new_value:
-                # 値が変わっていないキーは元の raw 行を温存する (escape 形式や
-                # クオート有無を保持して source 時の意味が変わらないように)
-                out_lines.append(e.raw + '\n')
-            else:
-                out_lines.append(
-                    EnvFile._format_kv_line(e.key, new_value)
-                )
-        # merged から除外されているキーは entries からも落とす
-    for key in sorted(k for k in merged if k not in seen):
-        out_lines.append(EnvFile._format_kv_line(key, merged[key]))
-    return ''.join(out_lines).encode('utf-8')
-
-
 def _plan_replace(target: Path, arcname: str, incoming: Dict[str, str],
                   existing: Dict[str, str], incoming_bytes: bytes,
                   target_exists: bool) -> Plan:
@@ -174,35 +143,46 @@ def _plan_replace(target: Path, arcname: str, incoming: Dict[str, str],
     )
 
 
+@dataclass
+class _MergeState:
+    """merge 経路で組み立てる出力 (マージ結果と分類一覧) をまとめた内部状態。
+
+    ``merged`` は書き出す最終的なキー値。``added`` / ``overwritten`` /
+    ``skipped`` は dry-run / ログ表示のための分類一覧。plan_env_merge の呼び出し
+    ごとに 1 つ作り、3 つのマージヘルパーが同じ状態を更新する。
+    """
+    merged: Dict[str, str] = field(default_factory=dict)
+    added: List[str] = field(default_factory=list)
+    overwritten: List[str] = field(default_factory=list)
+    skipped: List[str] = field(default_factory=list)
+
+
 def _plan_keep_existing(incoming: Dict[str, str], existing: Dict[str, str],
-                        merged: Dict[str, str], added: List[str],
-                        skipped: List[str]) -> None:
+                        state: _MergeState) -> None:
     """既存キーは保持。新規キーのみ追加"""
     for key, value in incoming.items():
         if key in existing:
-            skipped.append(key)
+            state.skipped.append(key)
         else:
-            merged[key] = value
-            added.append(key)
+            state.merged[key] = value
+            state.added.append(key)
 
 
 def _plan_prefer_incoming(incoming: Dict[str, str], existing: Dict[str, str],
-                          merged: Dict[str, str], added: List[str],
-                          overwritten: List[str]) -> None:
+                          state: _MergeState) -> None:
     """incoming で既存キーを上書き"""
     for key, value in incoming.items():
         if key in existing:
             if existing[key] != value:
-                overwritten.append(key)
+                state.overwritten.append(key)
         else:
-            added.append(key)
-        merged[key] = value
+            state.added.append(key)
+        state.merged[key] = value
 
 
 def _plan_replace_keys(incoming: Dict[str, str], existing: Dict[str, str],
-                       replace_keys: Sequence[str], merged: Dict[str, str],
-                       added: List[str], overwritten: List[str],
-                       skipped: List[str]) -> None:
+                       replace_keys: Sequence[str],
+                       state: _MergeState) -> None:
     """--replace-keys: 指定キーのみ上書き、残りは keep-existing 相当
 
     keep-existing 相当 = 既存にあれば残す、無ければ新規追加 (skipped は
@@ -212,16 +192,16 @@ def _plan_replace_keys(incoming: Dict[str, str], existing: Dict[str, str],
     for key, value in incoming.items():
         if key in replace_set:
             if key in existing and existing[key] != value:
-                overwritten.append(key)
+                state.overwritten.append(key)
             elif key not in existing:
-                added.append(key)
-            merged[key] = value
+                state.added.append(key)
+            state.merged[key] = value
         elif key in existing:
             if existing[key] != value:
-                skipped.append(key)
+                state.skipped.append(key)
         else:
-            added.append(key)
-            merged[key] = value
+            state.added.append(key)
+            state.merged[key] = value
 
 
 def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
@@ -237,7 +217,7 @@ def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
     parse_bytes 経由でも完全に round-trip できる前提が崩れた瞬間に二重エスケープが
     発生するためである (PR #15 codex 指摘)。
 
-    既存ファイルが存在する merge 経路では :func:`_merge_into_existing_bytes` で
+    既存ファイルが存在する merge 経路では :meth:`EnvFile.render_updated_bytes` で
     既存のコメント / 空行 / キー順を保持したまま値だけ差し替える (PR #15 gemini 指摘)。
     """
     incoming = EnvFile.parse_bytes(incoming_bytes)
@@ -255,29 +235,26 @@ def plan_env_merge(target: Path, incoming_bytes: bytes, arcname: str, *,
                              incoming_bytes, target_exists)
 
     merged: Dict[str, str] = dict(existing)
-    added: List[str] = []
-    overwritten: List[str] = []
-    skipped: List[str] = []
+    state = _MergeState(merged=merged)
 
     if replace_keys:
-        _plan_replace_keys(incoming, existing, replace_keys,
-                           merged, added, overwritten, skipped)
+        _plan_replace_keys(incoming, existing, replace_keys, state)
     elif merge == 'keep-existing':
-        _plan_keep_existing(incoming, existing, merged, added, skipped)
+        _plan_keep_existing(incoming, existing, state)
     elif merge == 'prefer-incoming':
-        _plan_prefer_incoming(incoming, existing, merged, added, overwritten)
+        _plan_prefer_incoming(incoming, existing, state)
     else:
         raise MergeError(f"不明な --merge モード: {merge!r}")
 
-    new_bytes = (_merge_into_existing_bytes(existing_bytes, merged)
+    new_bytes = (EnvFile.render_updated_bytes(existing_bytes, state.merged)
                  if target_exists else incoming_bytes)
     return Plan(
         target=target,
         arcname=arcname,
         new_bytes=new_bytes,
-        added_keys=sorted(added),
-        overwritten_keys=sorted(overwritten),
-        skipped_keys=sorted(skipped),
+        added_keys=sorted(state.added),
+        overwritten_keys=sorted(state.overwritten),
+        skipped_keys=sorted(state.skipped),
         op='merge' if target_exists else 'create',
     )
 

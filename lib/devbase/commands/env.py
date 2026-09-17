@@ -3,10 +3,11 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import yaml
 
+from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.env import keys
 from devbase.env.store import EnvFile, safe_input
@@ -30,12 +31,82 @@ def _secret_store(devbase_root: Path):
     return SecretStore(devbase_root)
 
 
-def _global_env(devbase_root: Path):
-    """共通設定のビューを返す"""
+def _owner(user: bool) -> str:
+    """``--user`` の有無を参照の持ち主へ写す (PLAN51 決定 14)"""
+    return 'user' if user else 'team'
+
+
+def _global_env(devbase_root: Path, user: bool = False, store=None, *, fresh: bool = False,
+                group: Optional[str] = None):
+    """共通設定のビューを返す (``user`` なら個人共通。``fresh`` なら控えへ落ちない)。
+
+    ``group`` はグループ別の置き場 (PLAN56) で参照に持たせるグループ。
+    """
     from devbase.env.secret_store import SecretRef
     from devbase.env.secret_view import SecretEnvFile
 
-    return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_global())
+    store = store if store is not None else _secret_store(devbase_root)
+    return SecretEnvFile(store, SecretRef.for_global(owner=_owner(user), group=group),
+                         fresh=fresh)
+
+
+#: ``--group`` の誤り (使えない名前・グループ別の置き場でない設定) の終了コード
+EXIT_USAGE = 2
+
+
+class GroupOptionError(DevbaseError):
+    """``--group`` を受け付けられないときの誤り。``exit_code`` がコマンドの終了コード"""
+
+    def __init__(self, message: str, exit_code: int = EXIT_USAGE):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[str]:
+    """コマンドが相手にするグループ (PLAN56「対象のグループ」)。
+
+    ``--group`` があれば、グループ別の置き場を選んだ設定でだけ受け付け、名前を
+    ``DEVBASE_ACCOUNT_GROUP`` と同じ規則と読み替え後の予約語で検証する (通らなければ
+    :class:`GroupOptionError`、終了コード 2)。無ければ実行時のプロジェクトのグループ
+    (``SecretStore.ref_group``。プロジェクトの外なら ``$DEVBASE_ROOT/env`` → ``default``、
+    それ以外の設定では ``None``)。
+    """
+    if group is None:
+        return store.ref_group(_current_project_name(devbase_root))
+    config = store.config
+    settings = config.openbao
+    if config.backend != 'openbao' or settings is None or not settings.grouped:
+        raise GroupOptionError(
+            "--group はグループ別の置き場 (backend: openbao、version: 2) を選んだ設定で"
+            "だけ使えます")
+    from devbase.env.backend_config import BackendConfigError
+
+    try:
+        settings.storage_group(group)
+    except BackendConfigError as e:
+        raise GroupOptionError(f"--group に使えない名前です: {e}") from None
+    return group
+
+
+def _project_group_mismatch(devbase_root: Path, store, group: Optional[str],
+                            project: Optional[str]) -> Optional[str]:
+    """``--group`` がプロジェクトのグループと違う置き場なら、その旨の文言を返す。
+
+    比べるのは読み替えた後の名前 (``storage_group``) で、``default: nyle`` の対応があれば
+    宣言の無いプロジェクトに ``--group nyle`` は同じ置き場である (決定 6)。``--group`` が
+    無い・プロジェクトの外なら ``None``。``group`` は :func:`_target_group` で検証済みとする。
+    """
+    if group is None or project is None:
+        return None
+    from devbase.env import groups as _groups
+
+    declared = _groups.declare(devbase_root, project)
+    if store.storage_group(group) == store.storage_group(declared.name):
+        return None
+    settings = store.config.openbao
+    source = _groups.describe_source(devbase_root, declared, project)
+    return (f"--group {settings.display_group(group)} は、プロジェクト {project} のグループ "
+            f"{settings.display_group(declared.name)} ({source}) と違う置き場です")
 
 
 def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Optional[str]:
@@ -48,19 +119,30 @@ def _current_project_name(devbase_root: Path, cwd: Optional[Path] = None) -> Opt
     return _runtime.current_project_name(devbase_root, cwd)
 
 
-def _project_env(devbase_root: Path, cwd: Optional[Path] = None):
-    """CWD のプロジェクト設定のビューを返す (projects/ 配下でなければ ``None``)"""
+def _project_env(devbase_root: Path, cwd: Optional[Path] = None,
+                 user: bool = False, store=None, *, fresh: bool = False,
+                 group: Optional[str] = None):
+    """CWD のプロジェクト設定のビューを返す (projects/ 配下でなければ ``None``)。
+
+    ``group`` はグループ別の置き場 (PLAN56) で参照に持たせるグループ。
+    """
     from devbase.env.secret_store import SecretRef
     from devbase.env.secret_view import SecretEnvFile
 
     name = _current_project_name(devbase_root, cwd)
     if name is None:
         return None
-    return SecretEnvFile(_secret_store(devbase_root), SecretRef.for_project(name))
+    store = store if store is not None else _secret_store(devbase_root)
+    return SecretEnvFile(store, SecretRef.for_project(name, owner=_owner(user), group=group),
+                         fresh=fresh)
 
 
-def _target_env(devbase_root: Path, project: bool):
-    """``--project`` の有無から操作対象の設定ビューを返す (解決できなければ ``None``)。
+def _target_env(devbase_root: Path, project: bool, user: bool = False,
+                group: Optional[str] = None):
+    """``--project`` / ``--user`` から操作対象の設定ビューを返す (解決できなければ ``None``)。
+
+    ``-p`` は適用範囲の軸を、``--user`` は持ち主の軸を選び、片方の指定がもう片方の軸を
+    動かさない (PLAN51 決定 14)。指定の無い軸は既定 (共通 / チーム単位) を採る。
 
     ``projects/<name>`` 配下でない場所での ``--project`` は、どのプロジェクトの
     設定を指しているのか決められない。従来は CWD に ``.env`` を作っていたが、
@@ -68,15 +150,57 @@ def _target_env(devbase_root: Path, project: bool):
 
     set / delete / edit の 3 つが同じ判断とエラー文言を持つ必要があるので、
     ここへ集約して振る舞いがずれないようにする。
-    """
-    if not project:
-        return _global_env(devbase_root)
 
-    env_file = _project_env(devbase_root)
-    if env_file is None:
+    3 つとも書き込みを伴うため、読み出しは控えへ落ちない (``fresh``)。控えから
+    読んだ内容を元に書き戻すと、不達の間の他の利用者の更新を上書きする。
+
+    ``group`` は ``--group`` (PLAN56)。参照は対象のグループ (:func:`_target_group`) で作る。
+    受け付けられなければ読み書きの前に :class:`GroupOptionError` を送る。``-p`` で
+    プロジェクトのグループと違う置き場を指したときは終了コード 1 (決定 6)。
+    """
+    store = _secret_store(devbase_root)
+    target = _target_group(devbase_root, store, group)
+    if not project:
+        env_file = _global_env(devbase_root, user=user, store=store, fresh=True, group=target)
+    else:
+        name = _current_project_name(devbase_root)
+        if name is None:
+            logger.error(
+                "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
+            return None
+        mismatch = _project_group_mismatch(devbase_root, store, group, name)
+        if mismatch is not None:
+            raise GroupOptionError(
+                f"{mismatch}。-p で読み書きできるのはプロジェクトのグループの置き場だけです "
+                f"(グループを変えるなら projects/{name}/env の "
+                f"{keys.DEVBASE_ACCOUNT_GROUP} を直してください)", exit_code=1)
+        env_file = _project_env(devbase_root, user=user, store=store, fresh=True, group=target)
+
+    # ファイル backend は個人単位の参照を持たない。backend の path() はチーム単位の
+    # ファイルを指すため、ここで止めないと `edit --user` がチームの .env を開き、
+    # 個人の資格情報が全員から見える場所へ入る (PLAN51 設計 2)。
+    if user and not env_file.has_user_refs():
         logger.error(
-            "--project は $DEVBASE_ROOT/projects/<name> 配下で実行してください")
+            "%s backend は個人単位の機密を扱えません (--user)。"
+            "個人単位の機密を置くにはサーバ backend を設定してください: "
+            "devbase env backend use openbao ...", env_file.mode_name())
+        return None
     return env_file
+
+
+def _open_target_env(devbase_root: Path, project: bool, user: bool = False,
+                     group: Optional[str] = None):
+    """set / delete / edit の入口。``(設定ビュー, None)`` か ``(None, 終了コード)`` を返す。
+
+    :func:`_target_env` の :class:`GroupOptionError` を文言と終了コードへ写す処理を、
+    3 つのコマンドで同じにするために 1 箇所へ置く。
+    """
+    try:
+        env_file = _target_env(devbase_root, project, user=user, group=group)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return None, e.exit_code
+    return (env_file, None) if env_file is not None else (None, 1)
 
 
 def cmd_env(devbase_root: Path, args) -> int:
@@ -84,25 +208,40 @@ def cmd_env(devbase_root: Path, args) -> int:
     subcmd = getattr(args, 'subcommand', None)
 
     handlers = {
-        'init':    lambda: cmd_env_init(devbase_root, reset=getattr(args, 'reset', False)),
+        'init':    lambda: cmd_env_init(devbase_root, reset=getattr(args, 'reset', False),
+                                        group=getattr(args, 'group', None)),
         'sync':    lambda: cmd_env_sync(devbase_root),
         'list':    lambda: cmd_env_list(devbase_root,
                                         global_only=getattr(args, 'global_only', False),
                                         project_only=getattr(args, 'project_only', False),
                                         reveal=getattr(args, 'reveal', False),
-                                        keys_only=getattr(args, 'keys_only', False)),
+                                        keys_only=getattr(args, 'keys_only', False),
+                                        user=getattr(args, 'user', False),
+                                        group=getattr(args, 'group', None)),
         'set':     lambda: cmd_env_set(devbase_root, getattr(args, 'assignment', ''),
-                                       project=getattr(args, 'project', False)),
-        'get':     lambda: cmd_env_get(devbase_root, getattr(args, 'key', '')),
+                                       project=getattr(args, 'project', False),
+                                       user=getattr(args, 'user', False),
+                                       group=getattr(args, 'group', None)),
+        'get':     lambda: cmd_env_get(devbase_root, getattr(args, 'key', ''),
+                                       user=getattr(args, 'user', False),
+                                       group=getattr(args, 'group', None)),
         'delete':  lambda: cmd_env_delete(devbase_root, getattr(args, 'key', ''),
-                                          project=getattr(args, 'project', False)),
+                                          project=getattr(args, 'project', False),
+                                          user=getattr(args, 'user', False),
+                                          group=getattr(args, 'group', None)),
         'edit':    lambda: cmd_env_edit(devbase_root,
-                                        project=getattr(args, 'project', False)),
+                                        project=getattr(args, 'project', False),
+                                        user=getattr(args, 'user', False),
+                                        group=getattr(args, 'group', None)),
         'project': lambda: cmd_env_project(devbase_root),
         'export':  lambda: cmd_env_export(devbase_root, args),
         'import':  lambda: cmd_env_import(devbase_root, args),
+        'token':   lambda: cmd_env_token(devbase_root,
+                                         print_only=getattr(args, 'print_only', False),
+                                         context=getattr(args, 'context', None)),
         'exec':    lambda: cmd_env_exec(devbase_root,
-                                        list(getattr(args, 'argv', []) or [])),
+                                        list(getattr(args, 'argv', []) or []),
+                                        context=getattr(args, 'context', None)),
         'encrypt': lambda: _migrate(args).cmd_env_encrypt(
             devbase_root,
             dry_run=getattr(args, 'dry_run', False),
@@ -120,6 +259,7 @@ def cmd_env(devbase_root: Path, args) -> int:
             dry_run=getattr(args, 'dry_run', False),
             assume_yes=getattr(args, 'assume_yes', False)),
         'doctor':  lambda: _ops().cmd_env_doctor(devbase_root),
+        'backend': lambda: _backend().cmd_env_backend(devbase_root, args),
         'keygen':  lambda: cmd_env_keygen(devbase_root,
                                           force=getattr(args, 'force', False),
                                           assume_yes=getattr(args, 'assume_yes', False)),
@@ -140,6 +280,13 @@ def _ops():
     return env_ops
 
 
+def _backend():
+    """保存先の選択・移行の実装モジュール (import を遅延させる)"""
+    from devbase.commands import env_backend
+
+    return env_backend
+
+
 def _migrate(_args=None):
     """移行コマンドの実装モジュール (import を遅延させる)"""
     from devbase.commands import env_migrate
@@ -147,15 +294,22 @@ def _migrate(_args=None):
     return env_migrate
 
 
-def cmd_env_exec(devbase_root: Path, argv) -> int:
+def cmd_env_exec(devbase_root: Path, argv, context: Optional[str] = None) -> int:
     """機密を環境変数として渡した状態でコマンドを実行する。
 
     起動ラッパーは共通の機密ファイルを読み込まなくなったため、ホスト側で動く
     処理のうち値を必要とするもの (Docker Compose の変数展開など) は、この
     コマンドを通して実行する (plan35 §4.4)。復号結果は子プロセスの環境変数
     としてのみ渡り、ファイルには書き出さない。
+
+    docker context (PLAN52) もここで子プロセスへ載せる。カレントディレクトリの
+    ``project.local.yml`` と env、引数 ``--context`` から解決し、機密を載せた**後**の
+    辞書へ反映するので、``.env`` の同名キーに負けない。gid・home・リモート判定は
+    行わない (docker を呼ばない)。
     """
     from devbase.env import runtime as _runtime
+    from devbase.project.local_config import load_project_local_config
+    from devbase.utils import docker_context
 
     # argparse.REMAINDER は区切りの `--` も残すため、先頭のものだけ取り除く。
     # 2 つ目以降はコマンド自身への引数なのでそのまま渡す。
@@ -166,8 +320,14 @@ def cmd_env_exec(devbase_root: Path, argv) -> int:
         logger.error("実行するコマンドを指定してください: devbase env exec -- CMD [ARGS...]")
         return 1
 
-    env = _runtime.child_env(devbase_root,
-                             _runtime.current_project_name(devbase_root))
+    project = _runtime.current_project_name(devbase_root)
+    env = _runtime.child_env(devbase_root, project)
+    # project.local.yml は機密と同じくプロジェクト直下から読む。projects/<name>/sub から
+    # 実行しても、機密の対象 (current_project_name) と設定の対象が食い違わない。
+    project_dir = (Path(devbase_root) / 'projects' / project) if project else Path.cwd()
+    settings = load_project_local_config(project_dir).docker
+    docker_context.apply(docker_context.choose_context(settings, cli_context=context,
+                                                       environ=env), env, track=False)
     try:
         return subprocess.run(argv, env=env).returncode
     except FileNotFoundError:
@@ -178,9 +338,151 @@ def cmd_env_exec(devbase_root: Path, argv) -> int:
         return 1
 
 
-def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
-    """全体環境の初期セットアップ（対話式）"""
-    env_file = _global_env(devbase_root)
+def _running_dev_containers(project: str, dev_service_name: str, runner) -> Optional[List[str]]:
+    """起動中の dev コンテナの名前を ``<dev>-<n>`` の番号順に返す。docker を呼べなければ ``None``。
+
+    ``up`` の構成は dev の各インスタンスをサービス ``<dev>-<n>`` として定義する
+    (``volume/compose.py``)。プロジェクトのラベルだけで絞ると DB や snapshot にも届く。
+    """
+    import re
+
+    try:
+        result = runner(
+            ['docker', 'ps', '--filter', f'label=com.docker.compose.project={project}',
+             '--format', '{{.Names}}\t{{.Label "com.docker.compose.service"}}'],
+            capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.error("docker ps を実行できませんでした: %s", e)
+        return None
+    if result.returncode != 0:
+        logger.error("docker ps が失敗しました (exit=%d): %s", result.returncode,
+                     (result.stderr or '').strip())
+        return None
+    pattern = re.compile(rf'^{re.escape(dev_service_name)}-([1-9][0-9]*)$')
+    found = []
+    for line in (result.stdout or '').splitlines():
+        name, _, service = line.partition('\t')
+        match = pattern.match(service.strip())
+        if name and match:
+            found.append((int(match.group(1)), name.strip()))
+    return [name for _index, name in sorted(found)]
+
+
+def _require_openbao_backend(store):
+    """backend が openbao であることを確かめ、対象の backend を返す。満たさなければ ``None``。"""
+    from devbase.env.secret_store import SecretRef, SecretStoreError
+
+    try:
+        backend_name = store.backend_name
+    except SecretStoreError as e:
+        logger.error("%s", e)
+        return None
+    if backend_name != 'openbao':
+        logger.error("backend が openbao ではありません (現在: %s)。コンテナの bao へ渡す "
+                     "token はサーバ backend でだけ発行できます", backend_name)
+        return None
+    return store.backend_for(SecretRef.for_global())
+
+
+def _issue_or_error(backend) -> Optional[str]:
+    """token を発行する。``DevbaseError`` はログへ落として ``None`` を返す。"""
+    from devbase.errors import DevbaseError
+
+    try:
+        return backend.issue_token()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return None
+
+
+def _push_token_to_running(devbase_root: Path, backend, context: Optional[str],
+                           run, runner) -> int:
+    """起動中の dev コンテナへ token を配る。プロジェクト解決から書き込みまでを担う。
+
+    ``run`` は列挙・context 反映で使う (``runner or subprocess.run``)。``runner`` は
+    書き込みへそのまま渡す元の値 (未指定なら ``None``)。
+    """
+    from devbase.commands.container import _load_project_env
+    from devbase.env import container_token
+    from devbase.project.local_config import load_project_local_config
+    from devbase.utils import docker_context
+    from devbase.volume.compose import get_dev_service_name
+
+    project = _current_project_name(devbase_root)
+    if not project:
+        logger.error("プロジェクトのディレクトリ ($DEVBASE_ROOT/projects/<name>) で実行してください")
+        return 1
+    project_dir = Path(devbase_root) / 'projects' / project
+
+    # 起動ラッパーが source するのは実行時のディレクトリの env だけ。下位ディレクトリから
+    # 打っても dev サービス名 (DEV_SERVICE_NAME) を取れるよう、プロジェクト直下の env を載せる
+    _load_project_env(project_dir / 'env')
+    dev_service_name = get_dev_service_name()
+
+    settings = load_project_local_config(project_dir).docker
+    docker_context.apply(docker_context.choose_context(settings, cli_context=context),
+                         track=False)
+
+    names = _running_dev_containers(project, dev_service_name, run)
+    if names is None:
+        return 1
+    if not names:
+        logger.error("起動中の dev コンテナがありません: %s", project)
+        return 1
+
+    token = _issue_or_error(backend)
+    if token is None:
+        return 1
+
+    written = container_token.push(names, token, runner=runner)
+    for name in written:
+        print(name)
+    failed = [name for name in names if name not in written]
+    for name in failed:
+        logger.error("token を書けませんでした: %s", name)
+    return 1 if failed else 0
+
+
+def cmd_env_token(devbase_root: Path, print_only: bool = False,
+                  context: Optional[str] = None, runner=None) -> int:
+    """起動中の dev コンテナの ``~/.vault-token`` を新しい token で置き換える (PLAN54)。
+
+    コンテナの中の ``bao`` が使う token は 1 時間で切れる。コンテナに資格情報は置かず、
+    ホストの資格情報でログインし直して届ける。処理の順は「backend の判定 → プロジェクト
+    → dev サービス名 → 接続先 → 対象のコンテナ → ログイン → 書き込み」で、ログインを
+    対象が見つかった後に置く (届け先が無いのに token を発行させない)。``--print`` は
+    backend の判定の後すぐログインし、token だけを標準出力へ出す。
+    """
+    from devbase.env import runtime as _runtime
+
+    run = runner or subprocess.run
+    backend = _require_openbao_backend(_runtime.store_for(devbase_root))
+    if backend is None:
+        return 1
+
+    if print_only:
+        token = _issue_or_error(backend)
+        if token is None:
+            return 1
+        print(token)
+        return 0
+
+    return _push_token_to_running(devbase_root, backend, context, run, runner)
+
+
+def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] = None) -> int:
+    """全体環境の初期セットアップ（対話式）
+
+    ``group`` を渡すと、そのグループのチーム共通の参照へ書く (PLAN56)。``up`` の子プロセスは
+    ``cwd=$DEVBASE_ROOT`` で起動するため、プロジェクトのグループを明示して受け取る (決定 10)。
+    """
+    store = _secret_store(devbase_root)
+    try:
+        target_group = _target_group(devbase_root, store, group)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
+    env_file = _global_env(devbase_root, store=store, group=target_group)
     env_file.load()
 
     if env_file.count() > 0 and not reset:
@@ -190,7 +492,13 @@ def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
         return 0
 
     if reset and env_file.file_exists():
-        env_file.backup()
+        try:
+            env_file.backup()
+        except DevbaseError as e:
+            # サーバ backend では退避を作れないまま消すことになる。退避が無ければ
+            # 削除へ進まない (PLAN51 設計 2)
+            logger.error("退避を作れないため、既存の設定を消さずに中止します: %s", e)
+            return 1
         logger.info("既存の設定をバックアップしました")
         for key in list(env_file.get_all().keys()):
             env_file.delete(key)
@@ -215,11 +523,17 @@ def cmd_env_init(devbase_root: Path, reset: bool = False) -> int:
 
 
 def cmd_env_sync(devbase_root: Path) -> int:
-    """ソースファイルから認証情報を再同期する"""
-    env_file = _global_env(devbase_root)
+    """ソースファイルから認証情報を再同期する
+
+    宛先は対象のグループのチーム共通の参照で、同期済みのハッシュもそのグループの控えを
+    使う (PLAN56 決定 13)。
+    """
+    store = _secret_store(devbase_root)
+    group = _target_group(devbase_root, store, None)
+    env_file = _global_env(devbase_root, store=store, group=group)
     env_file.load()
 
-    sources = SourcesManager(devbase_root)
+    sources = SourcesManager(devbase_root, store.storage_group(group))
     sources.load()
 
     updated = 0
@@ -344,32 +658,97 @@ def _print_env_vars(vars_dict, keys_only, reveal):
 
 def cmd_env_list(devbase_root: Path, global_only: bool = False,
                  project_only: bool = False, reveal: bool = False,
-                 keys_only: bool = False) -> int:
-    """設定済み変数の一覧表示"""
+                 keys_only: bool = False, user: bool = False,
+                 group: Optional[str] = None) -> int:
+    """設定済み変数の一覧表示
+
+    適用範囲の軸は ``-g`` / ``-p`` で、持ち主の軸は ``--user`` で絞る。指定の無い軸は
+    絞らない。チーム共通の節は変数が 0 件でも出し、それ以外は存在する参照だけ出す
+    (個人単位の参照を持たない backend では、出力は従来と同じになる)。
+
+    ``group`` は ``--group`` (PLAN56)。プロジェクトのグループと違う置き場なら、``-p`` は
+    1 で止め、``-p`` なしはプロジェクトの節を出さない (その旨を標準エラーへ 1 行出す)。
+    """
+    store = _secret_store(devbase_root)
+    owners = (True,) if user else (False, True)
+    try:
+        target = _target_group(devbase_root, store, group)
+        include_project = not global_only and _include_project_refs(
+            devbase_root, store, group, refuse=project_only)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
+
     if not project_only:
-        env_file = _global_env(devbase_root)
-        all_vars = env_file.get_all()
+        for as_user in owners:
+            env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
+            if as_user and not env_file.file_exists():
+                continue
+            all_vars = env_file.get_all()
+            label = env_file.ref.label()
 
-        print(f"\n=== グローバル ({env_file.path}{_mode_suffix(env_file)}) ===")
-        _print_env_vars(all_vars, keys_only, reveal)
-        print(f"\nグローバル: {len(all_vars)}変数")
+            print(f"\n=== {label} ({env_file.path}{_mode_suffix(env_file)}) ===")
+            _print_env_vars(all_vars, keys_only, reveal)
+            print(f"\n{label}: {len(all_vars)}変数")
 
-    if not global_only:
-        proj_env = _project_env(devbase_root)
-        if proj_env is not None and proj_env.file_exists():
-            proj_vars = proj_env.get_all()
+    if include_project:
+        for as_user in owners:
+            proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
+            if proj_env is not None and proj_env.file_exists():
+                proj_vars = proj_env.get_all()
+                label = '個人のプロジェクト' if as_user else 'プロジェクト'
+                suffix = _group_suffix(proj_env.ref)
 
-            print(f"\n=== プロジェクト: {proj_env.ref.name} "
-                  f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
-            _print_env_vars(proj_vars, keys_only, reveal)
-            print(f"\nプロジェクト: {len(proj_vars)}変数")
+                print(f"\n=== {label}: {proj_env.ref.name}{suffix} "
+                      f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
+                _print_env_vars(proj_vars, keys_only, reveal)
+                print(f"\n{label}{suffix}: {len(proj_vars)}変数")
 
     return 0
 
 
+def _group_suffix(ref) -> str:
+    """見出しに付けるグループの表示 (``（グループ with）``)。グループの無い参照では空。
+
+    文言は ``SecretRef.label()`` が持ち、ここでは写さずに差分だけを取り出す。
+    """
+    from dataclasses import replace
+
+    return ref.label()[len(replace(ref, group=None).label()):]
+
+
+def _include_project_refs(devbase_root: Path, store, group: Optional[str], *,
+                          refuse: bool) -> bool:
+    """``list`` / ``get`` がプロジェクトの参照を含めるか。
+
+    ``--group`` がプロジェクトのグループと違う置き場なら含めない。``refuse`` (``list -p``) は
+    :class:`GroupOptionError` (終了コード 1) で止め、それ以外は標準エラーへ 1 行出す。
+    """
+    name = _current_project_name(devbase_root)
+    if name is None:
+        return False
+    mismatch = _project_group_mismatch(devbase_root, store, group, name)
+    if mismatch is None:
+        return True
+    if refuse:
+        raise GroupOptionError(f"{mismatch}。-p では読めません", exit_code=1)
+    logger.warning("%s。プロジェクト %s の参照は含めません", mismatch, name)
+    return False
+
+
 def _mode_suffix(env_file) -> str:
-    """一覧表示で保存形式を示す接尾辞。平文のときは何も足さない。"""
-    return ' [暗号化]' if env_file.is_encrypted() else ''
+    """一覧表示で保存形式を示す接尾辞。平文のときは何も足さない。
+
+    age は従来どおり ``[暗号化]``、サーバ backend は backend 名を示す。
+    """
+    from devbase.env.secret_store import MODE_ABSENT, MODE_AGE, MODE_PLAINTEXT
+
+    mode = env_file.mode()
+    if mode == MODE_AGE:
+        return ' [暗号化]'
+    if mode in (MODE_PLAINTEXT, MODE_ABSENT):
+        return ''
+    return f' [{mode}]'
 
 
 def _format_value(key: str, value: str, reveal: bool) -> str:
@@ -382,7 +761,8 @@ def _format_value(key: str, value: str, reveal: bool) -> str:
     return f"{value[:57]}..." if len(value) > 60 else value
 
 
-def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False) -> int:
+def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
+                user: bool = False, group: Optional[str] = None) -> int:
     """変数を設定する"""
     if '=' not in assignment:
         logger.error("形式: devbase env set KEY=VALUE")
@@ -396,77 +776,118 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False) -> i
         logger.error("キー名が空です")
         return 1
 
-    env_file = _target_env(devbase_root, project)
+    env_file, rc = _open_target_env(devbase_root, project, user=user, group=group)
     if env_file is None:
-        return 1
+        return rc
 
-    env_file.set(key, value)
-    env_file.save()
+    try:
+        env_file.set(key, value)
+        env_file.save()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
 
     logger.info("%s を設定しました (%s)", key, env_file.path)
     return 0
 
 
-def cmd_env_get(devbase_root: Path, key: str) -> int:
-    """変数の値を取得する"""
-    value = _global_env(devbase_root).get(key)
-    if value is not None:
-        print(value)
-        return 0
+def cmd_env_get(devbase_root: Path, key: str, user: bool = False,
+                group: Optional[str] = None) -> int:
+    """変数の値を取得する
 
-    proj_env = _project_env(devbase_root)
-    if proj_env is not None and proj_env.file_exists():
-        value = proj_env.get(key)
+    探索順は 個人共通 → チーム共通 → 個人のプロジェクト → チームのプロジェクト。
+    適用範囲の順は現行のまま共通が先で、同じ適用範囲では個人単位を先に見る
+    (PLAN51 設計 2)。``--user`` を付けると個人単位だけを探す。
+
+    ``group`` は ``--group`` (PLAN56)。プロジェクトのグループと違う置き場なら、共通の参照
+    だけを探す (プロジェクトの参照を含めなかった旨を標準エラーへ 1 行出す)。
+    """
+    store = _secret_store(devbase_root)
+    owners = (True,) if user else (True, False)
+    try:
+        target = _target_group(devbase_root, store, group)
+        include_project = _include_project_refs(devbase_root, store, group, refuse=False)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
+
+    for as_user in owners:
+        env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
+        if as_user and not env_file.file_exists():
+            continue
+        value = env_file.get(key)
         if value is not None:
             print(value)
             return 0
+
+    for as_user in owners if include_project else ():
+        proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
+        if proj_env is not None and proj_env.file_exists():
+            value = proj_env.get(key)
+            if value is not None:
+                print(value)
+                return 0
 
     logger.error("変数 '%s' は設定されていません", key)
     return 1
 
 
-def cmd_env_delete(devbase_root: Path, key: str, project: bool = False) -> int:
+def cmd_env_delete(devbase_root: Path, key: str, project: bool = False,
+                   user: bool = False, group: Optional[str] = None) -> int:
     """変数を削除する
 
     ``--project`` を受けるのは、暗号化された設定は利用者がエディタで直接開いて
     不要なキーを消せないため。CLI からプロジェクト設定を掃除する手段が要る。
     """
-    env_file = _target_env(devbase_root, project)
+    env_file, rc = _open_target_env(devbase_root, project, user=user, group=group)
     if env_file is None:
-        return 1
+        return rc
 
-    if env_file.delete(key):
-        env_file.save()
-        logger.info("%s を削除しました (%s)", key, env_file.path)
-        return 0
+    try:
+        if env_file.delete(key):
+            env_file.save()
+            logger.info("%s を削除しました (%s)", key, env_file.path)
+            return 0
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
 
     logger.error("変数 '%s' は存在しません", key)
     return 1
 
 
-def cmd_env_edit(devbase_root: Path, project: bool = False) -> int:
+def cmd_env_edit(devbase_root: Path, project: bool = False, user: bool = False,
+                 group: Optional[str] = None) -> int:
     """エディタで.envを開く
 
-    ``--project`` を受けるのは delete と同じ理由。暗号化されていれば
-    ``_edit_encrypted`` 経由で復号 → 編集 → 再暗号化する。
+    ``--project`` を受けるのは delete と同じ理由。保存先をファイルとして直接開いて
+    よいのは平文の backend だけで (``direct_edit``)、それ以外は
+    ``_edit_via_tempfile`` 経由で 読み出し → 編集 → 書き戻し する。判定を
+    「暗号化されているか」ではなく「直接編集できるか」にするのは、サーバ backend の
+    ``path()`` が ``<mount>/<パス>`` を ``Path`` にしただけの値で、開いても機密は無いため。
     """
-    env_file = _target_env(devbase_root, project)
+    env_file, rc = _open_target_env(devbase_root, project, user=user, group=group)
     if env_file is None:
-        return 1
+        return rc
 
     editor = os.environ.get('EDITOR', 'vi')
 
-    if not env_file.is_encrypted():
+    try:
+        direct = env_file.direct_edit()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    if direct:
         return subprocess.call([editor, str(env_file.path)])
 
-    return _edit_encrypted(env_file, editor)
+    return _edit_via_tempfile(env_file, editor)
 
 
-def _edit_encrypted(env_file, editor: str) -> int:
-    """暗号化された設定を、平文を残さずにエディタで編集する。
+def _edit_via_tempfile(env_file, editor: str) -> int:
+    """直接開けない保存先 (暗号化・サーバ) を、平文を残さずにエディタで編集する。
 
-    エディタは平文のファイルしか開けないため、復号結果を一時ファイルへ書いて
-    編集させ、保存後に暗号化し直してから消す。一時ファイルは自分専用の
+    エディタは平文のファイルしか開けないため、読み出した内容を一時ファイルへ書いて
+    編集させ、保存後に保存先へ書き戻してから消す。一時ファイルは自分専用の
     ``0700`` ディレクトリに ``0600`` で作り、正常終了でも異常終了でも
     ``finally`` で必ず削除する。
 
@@ -522,9 +943,65 @@ def _edit_encrypted(env_file, editor: str) -> int:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def _collect_from_env_yml(env_file, variables: list) -> bool:
+    """env.yml の変数定義に従って設定値を収集する。必須値未入力なら False を返す。"""
+    for var in variables:
+        name = var.get('name', '')
+        prompt = var.get('prompt', name)
+        default = var.get('default', '')
+        required = var.get('required', False)
+        generate = var.get('generate', '')
+
+        existing = env_file.get(name)
+        if existing:
+            print(f"{name}: 設定済み")
+            continue
+
+        if generate:
+            import secrets
+            length = 64
+            if ':' in generate:
+                _, length_str = generate.split(':', 1)
+                length = int(length_str)
+            value = secrets.token_hex(length // 2)
+            env_file.set(name, value)
+            print(f"{name}: (自動生成)")
+        else:
+            suffix = f" (デフォルト: {default})" if default else ""
+            suffix += " (必須)" if required else " (空でスキップ)"
+            value = safe_input(f"{prompt}{suffix}: ", default)
+            if value:
+                env_file.set(name, value)
+            elif required:
+                logger.error("必須変数 '%s' が設定されていません", name)
+                return False
+    return True
+
+
+def _collect_interactively(env_file) -> None:
+    """env.yml 不在時の手入力ループ"""
+    print("env.yml が見つかりません。手動で変数を追加してください。")
+    print("(Ctrl+Dで終了)")
+    try:
+        while True:
+            line = safe_input("\nKEY=VALUE (空で終了): ")
+            if not line:
+                break
+            if '=' in line:
+                key, _, value = line.partition('=')
+                env_file.set(key.strip(), value.strip())
+            else:
+                print("形式: KEY=VALUE")
+    except EOFError:
+        pass
+
+
 def cmd_env_project(devbase_root: Path) -> int:
-    """プロジェクト固有変数の設定（対話式）"""
-    env_file = _project_env(devbase_root)
+    """プロジェクト固有変数の設定（対話式）。宛先はプロジェクトのグループの参照 (PLAN56)"""
+    store = _secret_store(devbase_root)
+    name = _current_project_name(devbase_root)
+    env_file = None if name is None else _project_env(
+        devbase_root, store=store, group=store.ref_group(name))
     if env_file is None:
         logger.error("projects/ 配下で実行してください")
         return 1
@@ -540,51 +1017,10 @@ def cmd_env_project(devbase_root: Path) -> int:
             config = yaml.safe_load(f) or {}
 
         variables = config.get('variables', [])
-        for var in variables:
-            name = var.get('name', '')
-            prompt = var.get('prompt', name)
-            default = var.get('default', '')
-            required = var.get('required', False)
-            generate = var.get('generate', '')
-
-            existing = env_file.get(name)
-            if existing:
-                print(f"{name}: 設定済み")
-                continue
-
-            if generate:
-                import secrets
-                length = 64
-                if ':' in generate:
-                    _, length_str = generate.split(':', 1)
-                    length = int(length_str)
-                value = secrets.token_hex(length // 2)
-                env_file.set(name, value)
-                print(f"{name}: (自動生成)")
-            else:
-                suffix = f" (デフォルト: {default})" if default else ""
-                suffix += " (必須)" if required else " (空でスキップ)"
-                value = safe_input(f"{prompt}{suffix}: ", default)
-                if value:
-                    env_file.set(name, value)
-                elif required:
-                    logger.error("必須変数 '%s' が設定されていません", name)
-                    return 1
+        if not _collect_from_env_yml(env_file, variables):
+            return 1
     else:
-        print("env.yml が見つかりません。手動で変数を追加してください。")
-        print("(Ctrl+Dで終了)")
-        try:
-            while True:
-                line = safe_input("\nKEY=VALUE (空で終了): ")
-                if not line:
-                    break
-                if '=' in line:
-                    key, _, value = line.partition('=')
-                    env_file.set(key.strip(), value.strip())
-                else:
-                    print("形式: KEY=VALUE")
-        except EOFError:
-            pass
+        _collect_interactively(env_file)
 
     env_file.save()
     logger.info("保存完了: %s (%d変数)", env_file.path, env_file.count())
@@ -758,8 +1194,10 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
 
 
 def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:
-    """ソースメタデータを更新する"""
-    sources = SourcesManager(devbase_root)
+    """ソースメタデータを更新する (``env_file`` の参照のグループの控え。PLAN56 決定 13)"""
+    group = getattr(getattr(env_file, 'ref', None), 'group', None)
+    storage_group = _secret_store(devbase_root).storage_group(group) if group else None
+    sources = SourcesManager(devbase_root, storage_group)
     sources.load()
 
     # AWS

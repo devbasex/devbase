@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from devbase.log import get_logger
+from devbase.utils.docker import compose_env
 
 logger = get_logger(__name__)
 
@@ -400,6 +401,9 @@ def _query_container_name(dev_service_name: str, index: int,
         proc = run(
             cmd,
             capture_output=True, text=True, timeout=10,
+            # ps が解釈するサービスの集合を利用者の COMPOSE_PROFILES に左右させない
+            # (PLAN58 決定 7)
+            env=compose_env(),
         )
     except Exception:  # noqa: BLE001 - docker 不在等は保険なので握り潰す
         return None
@@ -548,12 +552,14 @@ def resolve_editor_ssh_host(environ=None,
         return None
 
 
-def resolve_docker_context(environ=None, runner: Optional[Callable] = None) -> Optional[str]:
-    """ssh 先で使う docker context を解決する。
+def resolve_docker_context(environ=None, runner: Optional[Callable] = None,
+                           default: Optional[str] = None) -> Optional[str]:
+    """attach に使う docker context を解決する。
 
-    ``DEVBASE_EDITOR_DOCKER_CONTEXT`` 明示があればそれ。無ければ devbase up を実行して
-    いるホスト (= コンテナのある Mac) の現在の docker context を ``docker context show``
-    で取得する。docker 不在・非0・例外・空はすべて None (settings.context を付けない)。
+    順序は ``DEVBASE_EDITOR_DOCKER_CONTEXT`` 明示 → ``default`` (devbase が
+    ``project.local.yml`` / ``--context`` から解決した context、PLAN52) → devbase up を
+    実行しているホストの現在の docker context (``docker context show``)。docker 不在・
+    非0・例外・空はすべて None (settings.context を付けない)。
     """
     env = os.environ if environ is None else environ
     explicit = env.get("DEVBASE_EDITOR_DOCKER_CONTEXT")
@@ -561,16 +567,14 @@ def resolve_docker_context(environ=None, runner: Optional[Callable] = None) -> O
         # 空文字 ("") は明示的オプトアウト (settings.context を付けない) として扱い、
         # `docker context show` を呼ばない。
         return explicit.strip() or None
-    run = runner or subprocess.run
-    try:
-        proc = run(["docker", "context", "show"],
-                   capture_output=True, text=True, timeout=10)
-    except Exception:  # noqa: BLE001 - docker 不在等は best-effort
-        return None
-    if getattr(proc, "returncode", 1) != 0:
-        return None
-    out = (proc.stdout or "").strip()
-    return out or None
+    if default:
+        return default
+    # 推測は「docker が実際に使う context」に合わせる (環境変数は外さない)。devbase の
+    # 設定が無く DOCKER_CONTEXT だけで別 daemon へ向けている利用者では、コンテナも
+    # その context にあるので、attach 先も同じ名前でなければならない。リモート判定用の
+    # 問い合わせ (環境変数を外す current_context) とは目的が違うので分ける。
+    from devbase.utils import docker_context as _dc
+    return _dc.effective_context(environ=env, runner=runner)
 
 
 _NO_EDITOR_REASON = (
@@ -622,26 +626,16 @@ def _launch(cmd: list, env: dict) -> None:
     )
 
 
-def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
-                workspace: Optional[str] = None,
-                index: int = 1, compose_file=None,
-                environ=None,
-                isatty: Optional[bool] = None, system: Optional[str] = None,
-                ipc_alive: Optional[bool] = None,
-                launcher: Optional[Callable[[list, dict], None]] = None) -> str:
-    """dev コンテナへ接続した VS Code を開く / コマンド提示 / スキップする。
+def _prepare_ipc_env(env, ctx: EditorContext):
+    """拾い直した IPC ソケットを env へ反映し、必要な警告ログを出す。
 
-    戻り値は実行された action ('launch' | 'print_command' | 'skip')。例外は
-    握り潰して warning にし、``up`` 本体を絶対に失敗させない。``isatty`` /
-    ``system`` / ``ipc_alive`` は :func:`detect_context` への差し替え口 (テスト用)。
-    ``compose_file`` は実コンテナ名問い合わせ時に起動と同じ override compose を
-    ``-f`` で渡すため。``workspace`` は複数リポジトリ構成で開く
-    ``*.code-workspace`` のコンテナ内パス (未指定なら env ``DEVBASE_WORKSPACE``)。
+    tmux のセッション環境から拾い直せた場合は、起動する code にもその値を渡す。
+    変数を差し替えないと code 自身が古いソケットへ繋ぎに行って失敗する。変数だけ
+    残って接続先が死んでいる IPC ソケットは無言の失敗になりやすいので明示する
+    (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
+
+    ``env`` は差し替えが要る場合のみ複製して返す (要らなければそのまま返す)。
     """
-    env = os.environ if environ is None else environ
-    ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
-    # tmux のセッション環境から拾い直せた場合は、起動する code にもその値を渡す。
-    # 変数を差し替えないと code 自身が古いソケットへ繋ぎに行って失敗する。
     stale_ipc = env.get("VSCODE_IPC_HOOK_CLI")
     if ctx.ipc_socket and ctx.ipc_socket != stale_ipc:
         env = dict(env)
@@ -652,8 +646,6 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
             "tmux 設定を参照してください。",
             stale_ipc or "(未設定)", ctx.ipc_socket,
         )
-    # 変数だけ残って接続先が死んでいる IPC ソケットは無言の失敗になりやすいので
-    # 明示する (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
     if stale_ipc and not ctx.in_vscode:
         logger.warning(
             "VSCODE_IPC_HOOK_CLI が指すソケットに接続できません (%s)。VS Code 統合"
@@ -663,6 +655,93 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
             "おらず接続を拒否します。",
             stale_ipc,
         )
+    return env
+
+
+def _build_open_uri(ctx: EditorContext, env, container: str, workdir: str,
+                    workspace: Optional[str], docker_context: Optional[str],
+                    display: list) -> tuple[str, str]:
+    """開く対象の attach URI と URI フラグを組む。
+
+    ssh_host + docker_context + workspace + uri_flag + uri の組み立てを担う。
+    SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。自動推測は
+    VS Code Remote-SSH 統合端末 (in_vscode) の時だけ有効にする — plain SSH
+    (VS Code 外) は既存 ExecServer を前提にできずネスト URI が動かないため、明示
+    設定時のみ採用する。settings.context は「明示 → devbase の解決結果 → (ssh 先の
+    ときだけ) 現在の context の推測」の順 (PLAN52 決定 11)。解決結果があればローカル
+    端末でも付ける。
+
+    ネスト URI (ssh_host + docker_context) のときは、手元 VS Code に同名 context が
+    あれば ssh 先を経由せず直接 attach できるフラット URI を info ログで提示する。
+    あわせて、``DEVBASE_EDITOR_SSH_HOST=`` (空) で恒久的にフラット URI へ切り替えられる
+    ことも示す (案内だけでは毎回手で貼ることになる)。この案内は context が明示か devbase の
+    解決結果から来ているときだけ出す。``docker context show`` の推測だけが元のときは、
+    ssh_host を外すと推測も行われず ``settings.context`` が消えるため出さない。
+
+    戻り値は ``(uri, uri_flag)``。
+    """
+    ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
+                if ctx.is_ssh else None)
+    # 明示 (DEVBASE_EDITOR_DOCKER_CONTEXT) と devbase の解決結果は ssh の有無によらず
+    # 付ける。`docker context show` の推測だけは ssh 先のときに限る (ローカル端末で
+    # 毎回 docker を叩かない)。
+    explicit_context = env.get("DEVBASE_EDITOR_DOCKER_CONTEXT")
+    resolved_context = docker_context
+    if ssh_host or resolved_context or explicit_context is not None:
+        docker_context = resolve_docker_context(env, default=resolved_context)
+    else:
+        docker_context = None
+    # DEVBASE_WORKSPACE があれば *.code-workspace をワークスペースとして開く。VS Code は
+    # `--file-uri` に渡したパスが .code-workspace 拡張子なら multi-root ワークスペースとして
+    # 開くため、フォルダを開く `--folder-uri` と URI ターゲット・フラグの両方を切り替える。
+    open_target = workspace or workdir
+    uri_flag = "--file-uri" if workspace else "--folder-uri"
+    uri = build_attach_uri(container, open_target,
+                           ssh_host=ssh_host, docker_context=docker_context)
+    if ssh_host and docker_context:
+        # Windows VS Code → Remote-SSH(Mac) → 別ホストの docker という一周を避けたい
+        # 場合、手元の VS Code に同名の context があれば直接 attach できる (PLAN52)。
+        flat = build_attach_uri(container, open_target, docker_context=docker_context)
+        logger.info(
+            "手元の VS Code に同名の docker context '%s' があれば、ssh 先を経由せず "
+            "次で直接 attach できます:", docker_context)
+        logger.info("  %s %s '%s'",
+                    " ".join(shlex.quote(c) for c in display), uri_flag, flat)
+        # 空文字の明示はネストのオプトアウト (resolve_editor_ssh_host)。毎回手で貼る
+        # 代わりに恒久化する方法を、その場で示す。ただし context が `docker context
+        # show` の推測だけから来ている場合は、ssh_host を外すと推測も行われず
+        # settings.context が消える (別の daemon へ繋ぎに行く) ため案内しない。
+        if resolved_context or explicit_context is not None:
+            logger.info(
+                "  env に DEVBASE_EDITOR_SSH_HOST= (空) を書くと、次回からこのフラット URI で"
+                "直接開きます")
+    return uri, uri_flag
+
+
+def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
+                workspace: Optional[str] = None,
+                index: int = 1, compose_file=None,
+                environ=None,
+                isatty: Optional[bool] = None, system: Optional[str] = None,
+                ipc_alive: Optional[bool] = None,
+                launcher: Optional[Callable[[list, dict], None]] = None,
+                docker_context: Optional[str] = None) -> str:
+    """dev コンテナへ接続した VS Code を開く / コマンド提示 / スキップする。
+
+    戻り値は実行された action ('launch' | 'print_command' | 'skip')。例外は
+    握り潰して warning にし、``up`` 本体を絶対に失敗させない。``isatty`` /
+    ``system`` / ``ipc_alive`` は :func:`detect_context` への差し替え口 (テスト用)。
+    ``compose_file`` は実コンテナ名問い合わせ時に起動と同じ override compose を
+    ``-f`` で渡すため。``workspace`` は複数リポジトリ構成で開く
+    ``*.code-workspace`` のコンテナ内パス (未指定なら env ``DEVBASE_WORKSPACE``)。
+    ``docker_context`` は devbase が解決した接続先 (PLAN52)。あればローカル端末でも
+    ``settings.context`` を付け、Dev Containers 拡張にその context で attach させる。
+    """
+    env = os.environ if environ is None else environ
+    ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
+    # tmux のセッション環境から拾い直せた場合は env を差し替え、死んだ IPC ソケット
+    # の警告も出す。
+    env = _prepare_ipc_env(env, ctx)
     editor = resolve_editor_cmd(env)        # launch 用 (which 込み・None あり得る)
     display = resolve_editor_display(env)   # print 用 (必ず非 None)
     plan = decide_action(ctx, editor_available=bool(editor))
@@ -675,20 +754,9 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
 
     container = resolve_container_name(
         dev_service_name, project_name, index, compose_file=compose_file)
-    # SSH コンテキストでのみネスト authority (@ssh-remote+host) を組む。自動推測は
-    # VS Code Remote-SSH 統合端末 (in_vscode) の時だけ有効にする — plain SSH (VS Code 外)
-    # は既存 ExecServer を前提にできずネスト URI が動かないため、明示設定時のみ採用する。
-    ssh_host = (resolve_editor_ssh_host(env, auto_detect=ctx.in_vscode)
-                if ctx.is_ssh else None)
-    docker_context = resolve_docker_context(env) if ssh_host else None
-    # DEVBASE_WORKSPACE があれば *.code-workspace をワークスペースとして開く。VS Code は
-    # `--file-uri` に渡したパスが .code-workspace 拡張子なら multi-root ワークスペースとして
-    # 開くため、フォルダを開く `--folder-uri` と URI ターゲット・フラグの両方を切り替える。
     workspace = workspace or resolve_workspace(env)
-    open_target = workspace or workdir
-    uri_flag = "--file-uri" if workspace else "--folder-uri"
-    uri = build_attach_uri(container, open_target,
-                           ssh_host=ssh_host, docker_context=docker_context)
+    uri, uri_flag = _build_open_uri(
+        ctx, env, container, workdir, workspace, docker_context, display)
 
     if plan.action == "print_command":
         # 提示コマンドは手元 (ローカル) で実行する前提。ローカルに code が無くても

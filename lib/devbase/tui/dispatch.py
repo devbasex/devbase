@@ -33,9 +33,21 @@ def _preserve_cwd_env():
     直前プロジェクトの CWD / 環境変数 (PWD 含む) を後続操作 (env get 等) が参照して
     しまう (PR #55 round1 codex/gemini major 指摘)。委譲チョークポイントである本層で
     一括復元し、各 actions_* / 共有ハンドラへ復元処理を散らさない。
+
+    機密の注入履歴 (``runtime.snapshot_injected``) も値と同時に戻す。ハンドラの中で
+    別プロジェクトへ切り替えると履歴は切替先のものになる。値だけを切替元へ戻すと、
+    次の ``clear_injected`` が切替元固有の機密を知らずに残し、次に操作するプロジェクトの
+    Compose 子プロセスへ渡ってしまう (PR #191 round 3 codex major 指摘)。
     """
+    from devbase.env import runtime as _runtime
+
     old_cwd = os.getcwd()
     old_env = os.environ.copy()
+    old_injected = _runtime.snapshot_injected()
+    # 持ち回った SecretStore は操作の入口で捨てる (PLAN55 決定 3)。TUI は 1 プロセスで
+    # 操作を続けるため、起動時や前の操作の控え (``_seen``) を持ち越すと、``env edit`` で
+    # 書いた直後の ``up`` が編集前の値で起動する。lifecycle / group のどちらもここを通る。
+    _runtime.release_store()
     try:
         yield
     finally:
@@ -43,6 +55,7 @@ def _preserve_cwd_env():
             os.chdir(old_cwd)
         os.environ.clear()
         os.environ.update(old_env)
+        _runtime.restore_injected(old_injected)
 
 
 def dispatch_lifecycle(subcommand: str, name: str | None = None, **attrs) -> int:

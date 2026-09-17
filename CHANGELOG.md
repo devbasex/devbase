@@ -17,6 +17,203 @@
   > 書いて `tmux source-file ~/.tmux.conf` した後、**クライアントを繋ぎ直して**ください
   > (端末の能力は接続時に決まるため、実行中のクライアントには反映されません)。
 
+## [3.5.0] - 2026-09-17
+
+`compose.yml` の `profiles` を付けたテスト用のサーバ群を、dev コンテナに触れずに後から起動・停止
+できるようになりました。OpenBao backend では、機密の置き場をアカウントグループごとに分けられます。
+
+### Added
+
+- **OpenBao backend の機密の置き場を、アカウントグループごとに分けられるようにしました（PLAN56 / #182, #184）。**
+  `secrets/backend.yml` の `version: 2`（`openbao.layout: group`）で、チーム共通は `team/<グループ>/...`、
+  個人単位は `users/<user>/<グループ>/...` に置きます。`version: 1` の設定とファイル backend の挙動は変わりません。
+  - `devbase env backend use openbao --layout group --group-alias default=<グループ>` で切り替えます。
+    `--group-alias` はグループを宣言していないプロジェクト（`default`）の機密をどの置き場で扱うかの読み替えです
+  - `devbase env backend migrate` に `--exclude-project` を、`env list` / `get` / `set` / `delete` / `edit`
+    などに `--group` を追加しました
+  - `devbase up` / `scale` は、ボリュームと機密のアカウントグループが食い違うとコンテナに触れる前に止まります
+  - サーバのポリシーがグループ別のパスを許可している必要があります。詳細は `docs/user/env-backend.md`
+- **Compose の `profiles` を付けた付随サービス群を、dev コンテナに触れずに後から起動・停止できるように
+  しました（PLAN58 / #189, #191）。** `devbase up` の既定では dev だけが起動します。
+  - `devbase project profile up|down [name] <profile>` / `devbase project profile list [name]` を追加しました
+    （`container` / `ct` にもあります。`[name]` は受け付けません）。起動は `--no-deps` で対象サービスだけを、
+    停止は `stop` → `rm -f` で行い、名前付きボリュームは残します
+  - `devbase list` の起動中の行の操作メニューに「テスト用サーバ起動 / 停止」を足しました（プロファイルを
+    持つプロジェクトだけ）
+  - `profile up` の後に `deploy` フックを呼び直します。フックは `DEVBASE_ACTIVE_PROFILES` で起動した
+    プロファイル名を受け取ります（`devbase up` からは空）
+  - 利用には Docker Compose 2.20.0 以上が要ります（`depends_on.required` のため）。書き方は
+    `docs/plugin-dev/compose-profiles.md`
+
+### Changed
+
+- `devbase down` と `devbase up` の冒頭の停止は、プロファイルのサービスも止めるようになりました
+  （`--profile '*'`）。`devbase up` の起動は `profiles` を持たないサービスを名前で明示して起動します
+- devbase 経由の `docker compose` には、端末の環境変数やプロジェクトの `.env` の `COMPOSE_PROFILES` が
+  効かなくなりました（devbase が `__devbase_none__` で上書きします）。素の `docker compose` には影響しません
+
+### Fixed
+
+- `devbase list` から別のプロジェクトを続けて操作すると、最初のプロジェクトにだけある機密が次の
+  プロジェクトの `docker compose` へ渡ることがあった問題を直しました（#191）
+
+## [3.4.0] - 2026-09-15
+
+機密の保存先に OpenBao を選べるようになりました。起動中の dev コンテナの中からも `bao` で
+自分の機密を読み書きでき、`devbase up` のサーバへの往復は認証 1 回 + 参照ごとに 1 回です。
+
+### Added
+
+- **機密の保存先を差し替えられるようにしました（PLAN51 / #159, #166, #170）。** `secrets/backend.yml` で
+  `auto` / `plaintext` / `age` / `openbao` を選べます。最初のサーバ backend として
+  [OpenBao](https://openbao.org/)（KV v2 + AppRole）に対応し、REST を標準ライブラリで叩くため
+  常時の依存は増えません。設定していない端末の挙動は変わりません。
+  - `devbase env backend status` / `use` / `test` / `migrate` を追加しました。`secret_id` は
+    `--secret-id-stdin` か伏せ字入力で受け取り、引数では受け取りません
+  - `devbase env list` / `get` / `set` / `delete` / `edit` に `--user` を追加しました。持ち主の軸
+    （チーム / 個人）を選び、個人単位の機密は `users/<user>/...` へ分けて置きます。`-p` の意味と
+    既定の宛先は変わりません
+  - 保存は読んだときの版を指定した丸ごとの置き換え（check-and-set）で、同時に編集しても後から
+    書いた側が止まり、黙って上書きしません
+  - サーバへ到達できないときは、age 暗号化した手元のキャッシュ（`secrets/cache/`）で起動します。
+    認証を拒まれたときはキャッシュを使わずに止まり、`set` / `delete` / `edit` は控えを元に
+    書き戻しません
+  - `devbase env rekey` は `bootstrap.env.age` とキャッシュも再暗号化し、`devbase env doctor` は
+    backend 設定・資格情報・権限・Git の除外設定を点検します
+  - 詳細は `docs/user/env-backend.md`
+- **base イメージに OpenBao の CLI `bao`（2.6.2）を入れ、起動中のコンテナから機密を読み書き
+  できるようにしました（PLAN54 / #169, #178）。** backend が `openbao` の端末では、`devbase up` /
+  `scale` が dev コンテナへ接続先 `BAO_ADDR` と `~/.vault-token`（`0600`）を渡します。コンテナに
+  置くのは 1 時間で切れる token だけで、`secret_id` はホストから出ません
+  - `devbase env token [--print] [--context NAME]` を追加しました。token が切れたら、ホストの
+    プロジェクトのディレクトリで打つと起動中の dev コンテナの token を置き換えます
+  - `bao` は同じリリースの `checksums.txt` で検証して入れます。**利用には base イメージの
+    作り直し（`devbase build`）が要ります**
+  - 詳細は `docs/user/env-backend.md` の「コンテナの中から `bao` を使う」
+
+### Changed
+
+- `devbase env encrypt` / `decrypt` は backend が `openbao` のとき止まります（age ストア専用）
+- `devbase up` は機密の注入と存在判定で `SecretStore` を持ち回り、サーバ backend への往復を
+  認証 1 回 + 参照ごとに 1 回に減らしました（従来は認証 4 回 + 取得 12〜14 回。PLAN55 / #168, #177）。
+  ファイル backend の挙動は変わりません
+- Remote-SSH 統合端末で表示するフラット URI の案内に、`DEVBASE_EDITOR_SSH_HOST=`（空）で
+  恒久化する方法を添えました（#174）
+
+## [3.3.0] - 2026-09-13
+
+別ホストの Docker（Windows/WSL2・別 PC・EC2）に dev コンテナを立てられるようになりました。
+`projects/<name>/project.local.yml` に docker context の名前を書くだけで、compose と機密の
+復号は手元のまま、daemon だけをリモートへ向けます。
+
+### Added
+
+- **別ホストの Docker に dev コンテナを立てられるようにしました（PLAN52 / #162）。**
+  `projects/<name>/project.local.yml`（gitignore 対象の個人・機材ごとの設定）に
+  `docker.context` / `docker.home` / `docker.gid` を書くと、`devbase up/down/ps/logs/login/
+  scale/build/rebuild` がその docker context の daemon を相手に動きます。優先順位は
+  CLI `--context` > env `DEVBASE_DOCKER_CONTEXT` > `project.local.yml` > 現在の context です。
+  - リモート扱い（解決した context が現在の context と異なる）では `DOCKER_GID` をリモート側で
+    取得して `.cache/docker-gid/<context>` に控え、bind mount の `~` を `docker.home` で展開し、
+    自動スナップショットを飛ばします
+  - `devbase up` が開く VS Code の attach URI に `settings.context` を付け、ローカル端末からも
+    リモートのコンテナへ attach できます。Remote-SSH 統合端末では手元で直接 attach する
+    フラット URI も表示します
+  - `devbase env exec --context NAME` を追加し、shell の `devbase build` はそこを通して docker を
+    呼びます
+  - 詳細は `docs/user/environment-variables.md` の「リモート Docker」と
+    `docs/user/project-yml.md` の「`project.local.yml`」
+
+### Changed
+
+- `project.yml` に `docker:` を書くと、`project.local.yml` へ移すよう案内するエラーになります
+- docker context を解決したときは、docker が `DOCKER_CONTEXT` より優先する `DOCKER_HOST` を
+  警告して子プロセスから外します（設定が無いときは従来どおり）
+
+## [3.2.2] - 2026-09-04
+
+base イメージで AI CLI の alias 設定を一般ユーザーが読み込めない問題を修正しました。
+
+**この版を反映するには、ベースイメージの再ビルドとコンテナの再作成が要ります。**
+
+```bash
+devbase build base --no-cache
+devbase up <プロジェクト名>
+```
+
+### Fixed
+
+- **`/etc/devbase/ai-cli-aliases.sh` を一般ユーザーが読み込めるようにしました。**
+  alias ファイルの配置前に親ディレクトリを `0755` で明示作成します。これにより、新規に
+  no-cache ビルドしたイメージでも Bash 起動時に `Permission denied` が発生しません。
+
+## [3.2.1] - 2026-09-04
+
+Kiro CLI のログイン状態をコンテナ再作成後も保持し、tmux の履歴上で選択した文字列を
+`Ctrl+C` でコピーできるようにしました。
+
+**この版を反映するには、ベースイメージの再ビルドとコンテナの再作成が要ります。**
+
+```bash
+devbase build base --no-cache
+devbase up <プロジェクト名>
+```
+
+### Fixed
+
+- **Kiro CLI 2.x の認証状態と実行データをアカウントグループ単位で永続化しました。**
+  `~/.local/share/kiro-cli` は `/persistent/group/.local/share/kiro-cli` へのシンボリックリンクに
+  なります。初回適用時にホーム側へ既存データがある場合は、グループ側の保存先が空のときだけ
+  コピーするため、再ログイン済みの状態を失わず、異なるAWSアカウント間でも混ざりません。
+- **tmux の履歴上でドラッグ選択した文字列を `Ctrl+C` でコピーできるようにしました。**
+  マウスホイールで履歴へ入り、ボタンを離しても選択を保持します。`Ctrl+C` はOSC 52経由で
+  端末のクリップボードへコピーしてcopy-modeを終了します。`Ctrl+Home` はVS CodeやWindows側の
+  操作と競合するため割り当てません。
+
+## [3.2.0] - 2026-09-03
+
+`gemini` が常に Vertex AI 経由になっていたのをやめ、認証方式を環境で選べるようにしました。
+
+**この版を反映するには、ベースイメージの再ビルドとコンテナの再作成が要ります。**
+
+```bash
+devbase build base --no-cache
+devbase up <プロジェクト名>
+```
+
+### Changed
+- **`gemini` の Vertex AI 強制をやめました。** `containers/base/Dockerfile` が `.bashrc` へ
+  書き込む alias が、全コンテナで `GOOGLE_GENAI_USE_VERTEXAI=true` を無条件に前置していました。
+  Vertex AI を使わないプロジェクト（`GOOGLE_CLOUD_PROJECT` を空にしたもの）でも Vertex 経路へ
+  倒れ、gemini が使えなくなります。
+
+  認証方式は環境変数 `GOOGLE_GENAI_USE_VERTEXAI` で選びます。未設定・空なら
+  `~/.gemini/settings.json` の `selectedType`（OAuth など）に従います。
+
+  **`GOOGLE_CLOUD_PROJECT` の有無では判定しません。** これは gcloud や BigQuery でも使う
+  プロジェクト指定であって認証方式の opt-in ではなく、OAuth を使いながら別の目的で設定して
+  いる場合に意図せず Vertex へ倒れるためです。
+
+  > **移行が要ります。** これまで Vertex AI を使っていた環境は、alias が補っていた値を
+  > 環境の側へ移してください。移さないと OAuth 側へ倒れます。
+  >
+  > ```bash
+  > devbase env set GOOGLE_GENAI_USE_VERTEXAI=true
+  > ```
+  >
+  > Vertex AI を使わないプロジェクトは `projects/<name>/env` に
+  > `GOOGLE_GENAI_USE_VERTEXAI=` を書いて共通の値を打ち消します。
+
+- **AI CLI の起動定義を `containers/base/ai-cli-aliases.sh` へ出しました。** `~/.bashrc` へ
+  直接書き出す形をやめ、`COPY` する資産にしています。Docker を起動せずに振る舞いを固定する
+  テストを 37 件追加しました。定義の場所はコンテナ内の `/etc/devbase/ai-cli-aliases.sh` です。
+
+### Fixed
+- **`claudb` が `--dangerously-skip-permissions` を 2 度渡していた**のを直しました。alias の
+  展開で `claude` の alias まで展開されていたためです。`command` を挟んで解消しました。
+- **起動定義の `"$@"` を落としました。** alias の `"$@"` は alias の引数ではなくシェルの
+  位置パラメータへ展開されるため、引数を渡す働きをしていませんでした。引数の渡り方は変わりません。
+
 ## [3.1.0] - 2026-09-02
 
 `devbase up` でコンテナを作り直しても VS Code Server が残るようになり、
@@ -454,7 +651,13 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.5.0...HEAD
+[3.5.0]: https://github.com/devbasex/devbase/compare/v3.4.0...v3.5.0
+[3.4.0]: https://github.com/devbasex/devbase/compare/v3.3.0...v3.4.0
+[3.3.0]: https://github.com/devbasex/devbase/compare/v3.2.2...v3.3.0
+[3.2.2]: https://github.com/devbasex/devbase/compare/v3.2.1...v3.2.2
+[3.2.1]: https://github.com/devbasex/devbase/compare/v3.2.0...v3.2.1
+[3.2.0]: https://github.com/devbasex/devbase/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/devbasex/devbase/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/devbasex/devbase/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/devbasex/devbase/releases/tag/v2.2.0

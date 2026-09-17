@@ -906,3 +906,184 @@ def test_open_editor_launch_failure_is_swallowed(monkeypatch):
         environ={}, isatty=True, launcher=boom,
     )
     assert result == "launch"
+
+
+# ---------------------------------------------------------------------------
+# PLAN52: devbase が解決した docker context を settings.context に載せる
+# ---------------------------------------------------------------------------
+
+def _decode(uri: str) -> dict:
+    hexpart = uri.split("attached-container+")[1].split("@")[0].split("/")[0]
+    return json.loads(bytes.fromhex(hexpart).decode())
+
+
+def test_open_editor_local_terminal_with_docker_context(monkeypatch):
+    """ローカル端末 + 解決した context → settings.context 付きのフラット URI。"""
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    calls = []
+    opener.open_editor(
+        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        environ={}, isatty=True, launcher=lambda cmd, env: calls.append(cmd),
+        docker_context="gpu-wsl",
+    )
+    uri = calls[0][2]
+    assert "@ssh-remote" not in uri
+    assert _decode(uri) == {"containerName": "/carmo-dev-1", "settings": {"context": "gpu-wsl"}}
+
+
+def test_open_editor_local_terminal_without_docker_context_has_no_settings(monkeypatch):
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    calls = []
+    opener.open_editor(
+        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        environ={}, isatty=True, launcher=lambda cmd, env: calls.append(cmd),
+    )
+    assert "settings" not in _decode(calls[0][2])
+
+
+def test_open_editor_remote_ssh_with_docker_context_nested_and_flat_hint(monkeypatch, caplog):
+    """Remote-SSH + 解決した context → ネスト URI に settings.context、フラット URI も提示。"""
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+
+    def boom(*a, **kw):
+        raise AssertionError("docker context show should not run")
+
+    monkeypatch.setattr(opener.subprocess, "run", boom)
+    monkeypatch.setattr(opener, "_query_container_name", lambda *a, **kw: None)
+    calls = []
+    with caplog.at_level(logging.INFO):
+        opener.open_editor(
+            project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+            environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
+                     "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22",
+                     "DEVBASE_EDITOR_SSH_HOST": "mac2"},
+            isatty=True, ipc_alive=True, launcher=lambda cmd, env: calls.append(cmd),
+            docker_context="gpu-wsl",
+        )
+    uri = calls[0][2]
+    assert "@ssh-remote+mac2/work/adminer" in uri
+    assert _decode(uri)["settings"]["context"] == "gpu-wsl"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    flat = uri.replace("@ssh-remote+mac2", "")
+    assert flat in text and "同名" in text
+    # 恒久化の方法 (空文字オプトアウト) もその場で示す。
+    assert "DEVBASE_EDITOR_SSH_HOST=" in text
+
+
+def test_open_editor_remote_ssh_empty_ssh_host_launches_flat_uri_with_context(monkeypatch, caplog):
+    """Remote-SSH + 解決した context でも DEVBASE_EDITOR_SSH_HOST= (空) ならフラット URI で launch。
+
+    手元の VS Code に同名 context がある構成 (Windows → WSL の docker を直接) で、案内の
+    フラット URI を毎回手で貼らずに済ませる経路。settings.context は残す。
+    """
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+
+    def boom(*a, **kw):
+        raise AssertionError("docker context show should not run")
+
+    monkeypatch.setattr(opener.subprocess, "run", boom)
+    monkeypatch.setattr(opener, "_query_container_name", lambda *a, **kw: None)
+    calls = []
+    with caplog.at_level(logging.INFO):
+        opener.open_editor(
+            project_name="investment", dev_service_name="dev", workdir="/work/investment",
+            environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
+                     "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22",
+                     "DEVBASE_EDITOR_SSH_HOST": ""},
+            isatty=True, ipc_alive=True, launcher=lambda cmd, env: calls.append(cmd),
+            docker_context="wsl",
+        )
+    uri = calls[0][2]
+    assert "@ssh-remote+" not in uri and uri.endswith("/work/investment")
+    assert _decode(uri)["settings"]["context"] == "wsl"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "同名" not in text  # ネストしていないので案内は出ない
+
+
+def test_open_editor_remote_ssh_context_from_docker_show_omits_opt_out_hint(monkeypatch, caplog):
+    """context が `docker context show` の推測だけのときは、空文字オプトアウトの案内を出さない。
+
+    ssh_host を外すと推測も行われず settings.context が消える (別の daemon へ繋ぐ) ため、
+    案内どおりにすると提示したフラット URI と違うものが開く。
+    """
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    monkeypatch.setattr(opener, "_query_container_name", lambda *a, **kw: None)
+    monkeypatch.setattr(opener, "resolve_docker_context",
+                        lambda env, default=None, **kw: default or "probed")
+    calls = []
+    with caplog.at_level(logging.INFO):
+        opener.open_editor(
+            project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+            environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
+                     "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22",
+                     "DEVBASE_EDITOR_SSH_HOST": "mac2"},
+            isatty=True, ipc_alive=True, launcher=lambda cmd, env: calls.append(cmd),
+        )
+    uri = calls[0][2]
+    assert "@ssh-remote+mac2" in uri and _decode(uri)["settings"]["context"] == "probed"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "同名" in text and "DEVBASE_EDITOR_SSH_HOST=" not in text
+
+
+def test_open_editor_remote_ssh_explicit_editor_context_survives_opt_out(monkeypatch, caplog):
+    """DEVBASE_EDITOR_DOCKER_CONTEXT の明示は、空文字オプトアウト後も settings.context に残る。"""
+    import logging
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    monkeypatch.setattr(opener, "_query_container_name", lambda *a, **kw: None)
+
+    def boom(*a, **kw):
+        raise AssertionError("docker context show should not run")
+
+    monkeypatch.setattr(opener.subprocess, "run", boom)
+    base = {"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
+            "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22",
+            "DEVBASE_EDITOR_DOCKER_CONTEXT": "wsl"}
+    calls = []
+    with caplog.at_level(logging.INFO):
+        opener.open_editor(
+            project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+            environ={**base, "DEVBASE_EDITOR_SSH_HOST": "mac2"},
+            isatty=True, ipc_alive=True, launcher=lambda cmd, env: calls.append(cmd),
+        )
+    assert "DEVBASE_EDITOR_SSH_HOST=" in "\n".join(r.getMessage() for r in caplog.records)
+    opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ={**base, "DEVBASE_EDITOR_SSH_HOST": ""},
+        isatty=True, ipc_alive=True, launcher=lambda cmd, env: calls.append(cmd),
+    )
+    flat = calls[1][2]
+    assert "@ssh-remote" not in flat and _decode(flat)["settings"]["context"] == "wsl"
+
+
+def test_open_editor_explicit_editor_context_beats_resolved(monkeypatch):
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
+    calls = []
+    opener.open_editor(
+        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        environ={"DEVBASE_EDITOR_DOCKER_CONTEXT": "manual"}, isatty=True,
+        launcher=lambda cmd, env: calls.append(cmd), docker_context="gpu-wsl",
+    )
+    assert _decode(calls[0][2])["settings"]["context"] == "manual"
+
+
+def test_resolve_docker_context_default_beats_docker_show():
+    def boom(cmd, **kw):
+        raise AssertionError("docker context show should not run")
+
+    assert opener.resolve_docker_context({}, runner=boom, default="gpu-wsl") == "gpu-wsl"
+
+
+def test_resolve_docker_context_probe_uses_the_effective_environment():
+    """attach 先の推測は docker が実際に使う context に合わせる (環境変数を外さない)。"""
+    seen = {}
+
+    def runner(cmd, **kw):
+        seen.update(kw.get("env") or {})
+        return _Proc(returncode=0, stdout="existing-remote\n")
+
+    env = {"DOCKER_CONTEXT": "existing-remote", "PATH": "/p"}
+    assert opener.resolve_docker_context(env, runner=runner) == "existing-remote"
+    assert seen["DOCKER_CONTEXT"] == "existing-remote" and seen["PATH"] == "/p"

@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 ALIASES = Path(__file__).resolve().parents[2] / "containers" / "base" / "ai-cli-aliases.sh"
+DOCKERFILE = ALIASES.with_name("Dockerfile")
 
 
 def _statements() -> str:
@@ -33,6 +34,22 @@ def _statements() -> str:
         line for line in ALIASES.read_text().splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
+
+
+def test_dockerfile_creates_readable_alias_directory_before_copy():
+    """親ディレクトリは全ユーザーが探索できる ``0755`` で先に作る。
+
+    BuildKit は未作成の親ディレクトリを ``COPY --chmod`` と同じ mode で作るため、
+    ファイル用の ``0644`` だけを指定すると ``/etc/devbase`` も ``0644`` になり、
+    ubuntu ユーザーが配下を source できない。
+    """
+    dockerfile = DOCKERFILE.read_text()
+    mkdir = "RUN sudo install -d -m 0755 /etc/devbase"
+    copy = "COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh"
+
+    assert mkdir in dockerfile
+    assert copy in dockerfile
+    assert dockerfile.index(mkdir) < dockerfile.index(copy)
 
 #: 定義名 -> (実体, 固定オプション)
 LAUNCHERS = {

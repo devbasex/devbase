@@ -6,11 +6,12 @@ import os
 import shutil
 import stat
 import subprocess
+from types import SimpleNamespace
 
 import pyrage
 import pytest
 
-from devbase.commands import env_ops
+from devbase.commands import env as env_cmd, env_ops
 from devbase.env import agekeys
 from devbase.env.secret_store import SecretRef, SecretStore
 
@@ -254,6 +255,81 @@ def test_rekey_rewrites_every_secret_on_success(root, with_key, colleague):
     assert agekeys.load_recipients(root) == [with_key, public]
 
 
+def test_rekey_ignores_empty_add_specs(root, with_key, capsys):
+    """空の追加指定は無視され、変更がなければファイルは不変"""
+    store = seed_encrypted(root)
+    agekeys.save_recipients(root, [with_key])
+    before_global = store.age.path(GLOBAL).read_bytes()
+    before_web = store.age.path(WEB).read_bytes()
+
+    ret = env_ops.cmd_env_rekey(root, add=['', '   ', '\t'], assume_yes=True)
+
+    assert ret == 0
+    assert '受信者に変更はありません' in capsys.readouterr().out
+    assert agekeys.load_recipients(root) == [with_key]
+    assert store.age.path(GLOBAL).read_bytes() == before_global
+    assert store.age.path(WEB).read_bytes() == before_web
+
+
+def test_rekey_strips_whitespace_in_add_and_remove(root, with_key, colleague):
+    """前後空白付きの追加・削除でも空白を除去して順序通りに処理される"""
+    public, _ = colleague
+    seed_encrypted(root)
+    agekeys.save_recipients(root, [with_key])
+
+    # 前後空白付きの追加 (受信者の順序を確認)
+    ret_add = env_ops.cmd_env_rekey(root, add=[f'  {public}  \n'], assume_yes=True)
+    assert ret_add == 0
+    assert agekeys.load_recipients(root) == [with_key, public]
+
+    # 前後空白付きの削除
+    ret_remove = env_ops.cmd_env_rekey(root, remove=[f'\t{public} '], assume_yes=True)
+    assert ret_remove == 0
+    assert agekeys.load_recipients(root) == [with_key]
+
+
+def test_rekey_simultaneous_add_and_remove_same_recipient(root, with_key, colleague, capsys, caplog):
+    """同一受信者の同時追加・削除の挙動（変更なし、および全員削除の拒否）を固定する"""
+    public, _ = colleague
+    store = seed_encrypted(root)
+    agekeys.save_recipients(root, [with_key])
+    before_global = store.age.path(GLOBAL).read_bytes()
+    before_web = store.age.path(WEB).read_bytes()
+
+    # 新規受信者の同時追加・削除 -> 追加後に削除され変更なし
+    ret = env_ops.cmd_env_rekey(root, add=[public], remove=[public], assume_yes=True)
+    assert ret == 0
+    assert '受信者に変更はありません' in capsys.readouterr().out
+    assert agekeys.load_recipients(root) == [with_key]
+    assert store.age.path(GLOBAL).read_bytes() == before_global
+    assert store.age.path(WEB).read_bytes() == before_web
+
+    # 唯一の既存鍵を同時追加・削除 -> 重複追加されず削除されて全員削除エラー
+    ret_all = env_ops.cmd_env_rekey(root, add=[with_key], remove=[with_key], assume_yes=True)
+    assert ret_all == 1
+    assert '受信者を全員削除すると' in caplog.text
+    assert agekeys.load_recipients(root) == [with_key]
+    assert store.age.path(GLOBAL).read_bytes() == before_global
+    assert store.age.path(WEB).read_bytes() == before_web
+
+
+def test_rekey_rejects_invalid_recipient_when_keys_exist(root, with_key, caplog):
+    """既存鍵がある状態で不正な形式の受信者を指定すると失敗しファイルは不変"""
+    store = seed_encrypted(root)
+    agekeys.save_recipients(root, [with_key])
+    before_global = store.age.path(GLOBAL).read_bytes()
+    before_web = store.age.path(WEB).read_bytes()
+
+    ret = env_ops.cmd_env_rekey(root, add=['invalid-recipient-format'], assume_yes=True)
+
+    assert ret == 1
+    assert 'recipient の形式を判別できません' in caplog.text
+    assert agekeys.load_recipients(root) == [with_key]
+    assert store.age.path(GLOBAL).read_bytes() == before_global
+    assert store.age.path(WEB).read_bytes() == before_web
+
+
+
 # ---------------------------------------------------------------------------
 # doctor
 # ---------------------------------------------------------------------------
@@ -482,3 +558,9 @@ def test_doctor_reports_a_missing_key(root, capsys):
 
     assert env_ops.cmd_env_doctor(root) == 1
     assert '暗号化に使う鍵がありません' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('subcommand', [None, 'unknown'])
+def test_env_dispatch_without_handler_returns_one(root, subcommand):
+    """現状固定: 未指定・未知のサブコマンドは失敗を返す。"""
+    assert env_cmd.cmd_env(root, SimpleNamespace(subcommand=subcommand)) == 1
