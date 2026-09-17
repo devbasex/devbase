@@ -11,7 +11,7 @@ import base64
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Sequence
 
 from devbase.errors import ConfigError
 from devbase.project.config import (
@@ -95,7 +95,18 @@ def container_env(config: ProjectConfig, project_name: str) -> Dict[str, str]:
     return env
 
 
-def hook_env(config: ProjectConfig) -> Dict[str, str]:
+def active_profiles_env(active_profiles: Sequence[str] = ()) -> Dict[str, str]:
+    """フックへ有効なプロファイルを伝える ``DEVBASE_ACTIVE_PROFILES`` を組み立てる (PLAN58 決定 3)。
+
+    名前と区切り (カンマ) を決めるのはここだけである。``devbase up`` からは空、
+    ``devbase project profile up X`` からは ``X`` 1 つが渡る。カンマ区切りは同時に
+    複数を起動する操作を足すときのための予約で、現時点でその形になる経路は無い。
+    呼び出し元の環境に同名の値が残っていても上書きするため、空でもキーは必ず持つ。
+    """
+    return {"DEVBASE_ACTIVE_PROFILES": ",".join(active_profiles)}
+
+
+def hook_env(config: ProjectConfig, active_profiles: Sequence[str] = ()) -> Dict[str, str]:
     """``pre-up`` / ``deploy`` フックへ渡す環境変数を組み立てる。
 
     フックはホスト側で動き、clone 先のパスやリポジトリ URL を必要とすることが
@@ -107,12 +118,14 @@ def hook_env(config: ProjectConfig) -> Dict[str, str]:
     - ``DEVBASE_PRIMARY_URL`` : primary repo の clone URL
     - ``DEVBASE_WORK_DIR``    : コンテナ内の既定の作業ディレクトリ
     - ``DEVBASE_REPO_DIRS``   : 全 repo のディレクトリ名 (空白区切り、宣言順)
+    - ``DEVBASE_ACTIVE_PROFILES`` : 有効なプロファイル (:func:`active_profiles_env`)
     """
     return {
         "DEVBASE_PRIMARY_DIR": config.primary.dir,
         "DEVBASE_PRIMARY_URL": config.primary.url,
         "DEVBASE_WORK_DIR": config.resolved_work_dir(),
         "DEVBASE_REPO_DIRS": " ".join(repo.dir for repo in config.repos),
+        **active_profiles_env(active_profiles),
     }
 
 

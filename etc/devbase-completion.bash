@@ -33,8 +33,8 @@ _devbase_completions() {
 
     local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale list help"
     # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
-    local project_subcommands="up down ps login logs scale build rebuild list"
-    local container_subcommands="up down ps login logs scale build rebuild"
+    local project_subcommands="up down ps login logs scale build rebuild list profile"
+    local container_subcommands="up down ps login logs scale build rebuild profile"
     local env_subcommands="init sync list set get delete edit project export import keygen exec encrypt decrypt rekey doctor"
     local plugin_subcommands="list install uninstall update info sync repo"
     local repo_subcommands="add remove list refresh"
@@ -126,6 +126,9 @@ _devbase_completions() {
                     list)
                         COMPREPLY=($(compgen -W "--no-interactive --plain -P --interactive -i" -- "$cur"))
                         ;;
+                    profile)
+                        COMPREPLY=($(compgen -W "up down list" -- "$cur"))
+                        ;;
                 esac
             fi
             # container subcommand arguments (非推奨: project へ移行してください)
@@ -136,6 +139,9 @@ _devbase_completions() {
                         ;;
                     scale)
                         COMPREPLY=($(compgen -W "1 2 3 4 5" -- "$cur"))
+                        ;;
+                    profile)
+                        COMPREPLY=($(compgen -W "up down list" -- "$cur"))
                         ;;
                     ps)
                         if [[ "$cur" == -* ]]; then

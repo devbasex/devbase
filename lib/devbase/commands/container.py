@@ -20,6 +20,7 @@ from devbase.volume.compose import (
     get_dev_service_name,
 )
 from devbase.utils.docker import (
+    compose_env,
     docker_compose,
     docker_compose_down,
     docker_compose_up,
@@ -274,17 +275,75 @@ def _compose_run(subcommand: str, *extra_args: str,
     cmd = _compose_base_args(compose_file)
     cmd.append(subcommand)
     cmd.extend(extra_args)
-    return subprocess.run(cmd).returncode
+    # 表示するサービスの集合を利用者の COMPOSE_PROFILES に左右させない (PLAN58 決定 7)
+    return subprocess.run(cmd, env=compose_env()).returncode
+
+
+def _compose_lines(compose_file: Path, args: list[str], environ=None) -> list[str]:
+    """``docker compose -f <compose_file> <args>`` の標準出力を行の一覧で返す。
+
+    有効なプロファイルは ``args`` の ``--profile`` だけで決まる (PLAN58 決定 7)。
+    失敗は :class:`DevbaseError` にする。扱い (止める / 項目を出さない) は呼び出し側が決める。
+    """
+    cmd = [*_compose_base_args(compose_file), *args]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False,
+                            env=compose_env(environ))
+    if result.returncode != 0:
+        raise DevbaseError(
+            f"docker compose {' '.join(args)} failed: {(result.stderr or '').strip()}")
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def default_services(compose_file: Path, environ=None) -> list[str]:
+    """``profiles`` を持たない既定のサービス名を返す (PLAN58 決定 1)。
+
+    ``devbase up`` の起動はこの一覧を明示して渡す。プロファイルが何らかの形で有効に
+    なっても、一覧に無いサービスは起動しない (決定 7)。
+    """
+    return _compose_lines(compose_file, ['config', '--services'], environ)
+
+
+def profile_services(compose_file: Path, environ=None) -> dict[str, list[str]]:
+    """プロファイル名 → そのプロファイルに属するサービス名 の対応を返す (PLAN58 決定 1)。
+
+    生成物を自分で読まず Compose に解決させる。``profiles: ["${X:-test}"]`` のような
+    変数の式は Compose が展開する。``config --format json`` は有効でないプロファイルの
+    サービスを含まないため、プロファイルごとに ``--services`` を問い合わせて既定の
+    サービスを差し引く。デーモンへの接続は要らない。
+    """
+    names = _compose_lines(compose_file, ['config', '--profiles'], environ)
+    if not names:
+        return {}
+    defaults = set(default_services(compose_file, environ))
+    return {
+        name: [service for service in _compose_lines(
+            compose_file, ['--profile', name, 'config', '--services'], environ)
+            if service not in defaults]
+        for name in names
+    }
+
+
+def _hook_vars(config=None, active_profiles=()) -> dict:
+    """フックへ渡す環境変数。``config`` が無くても有効なプロファイルは伝える。"""
+    if config is None:
+        return project_runtime.active_profiles_env(active_profiles)
+    return project_runtime.hook_env(config, active_profiles=active_profiles)
 
 
 def _run_deploy_script_for_instances(deploy_script: Path, indices,
-                                     config=None) -> None:
+                                     config=None, active_profiles=()) -> bool:
     """デプロイスクリプトをスケールされた各インスタンスに対して実行する。
 
     ``config`` (``project.yml``) を渡すと、clone 先やリポジトリ URL をフックへ
-    環境変数で伝える (:func:`devbase.project.runtime.hook_env`)。
+    環境変数で伝える (:func:`devbase.project.runtime.hook_env`)。``active_profiles``
+    は加工せずに渡す (PLAN58 決定 3)。
+
+    失敗したインスタンスがあっても残りは実行し、全インスタンスで成功したかを返す。
+    ``cmd_up`` / ``cmd_scale`` は戻り値を使わず警告だけにとどめ、``profile up`` は
+    終了コードへ反映する。
     """
-    hook_vars = project_runtime.hook_env(config) if config is not None else {}
+    hook_vars = _hook_vars(config, active_profiles)
+    ok = True
     for i in indices:
         logger.info("[Bonus] Running deploy script for instance %d...", i)
         env = {**os.environ, **hook_vars, 'DEVBASE_INSTANCE_INDEX': str(i)}
@@ -293,6 +352,8 @@ def _run_deploy_script_for_instances(deploy_script: Path, indices,
             logger.info("Deploy script completed for instance %d", i)
         except subprocess.CalledProcessError as e:
             logger.warning("Deploy script failed for instance %d (exit code %d)", i, e.returncode)
+            ok = False
+    return ok
 
 
 def _run_pre_up_hook(config=None) -> bool:
@@ -315,7 +376,7 @@ def _run_pre_up_hook(config=None) -> bool:
         return True
 
     logger.info("Running pre-up hook: %s", pre_up_script)
-    hook_vars = project_runtime.hook_env(config) if config is not None else {}
+    hook_vars = _hook_vars(config)
     try:
         subprocess.run(['bash', str(pre_up_script)], check=True,
                        env={**os.environ, **hook_vars})
@@ -567,6 +628,49 @@ def _resolve_project_name(project_name: str) -> bool:
     return True
 
 
+def _enter_project(project_name: str) -> bool:
+    """対象プロジェクトへ切り替え、その env と機密を載せる。解決できなければ False。
+
+    CWD と ``os.environ`` を書き換える。元へ戻すのは呼び出し側の責務 (CLI はプロセスの
+    終了で、TUI は ``tui.dispatch._preserve_cwd_env`` で戻す)。
+    """
+    # cli.main() は dispatch の前に**現在地**の機密を注入している。切替先の
+    # env を読む**前**に切替元の機密を落とす (PLAN52)。後に落とすと、
+    # clear_injected が「注入前の値」へ戻す動きで、切替先の env が載せた
+    # 同名キー (DEVBASE_DOCKER_CONTEXT など) まで消してしまう。
+    from devbase.env import runtime as _runtime
+    _runtime.clear_injected()
+    if not _resolve_project_name(project_name):
+        return False
+    # 切替先の機密で作り直してから context を解決する。
+    _inject_secrets(required=False)
+    return True
+
+
+def project_profile_names(project_name: str) -> list[str]:
+    """プロジェクトのプロファイル名。生成物が無い・解決に失敗したときは空 (PLAN58 決定 8)。
+
+    別ディレクトリから開いた一覧 (TUI) から呼ばれるため、CLI と同じく対象プロジェクトへ
+    切り替えて env と機密を載せてから Compose に解決させる。生成物が対象の env にだけある
+    変数を参照していても解決できるようにするため。CWD と ``os.environ`` は戻さないので、
+    呼び出し側が復元の範囲を張る。失敗を「持たない」とするのは、操作メニューを出すこと
+    自体を止めないため。
+    """
+    from devbase.env import runtime as _runtime
+
+    docker_context.reset()
+    try:
+        if not _enter_project(project_name) or not _SCALE_COMPOSE_FILE.is_file():
+            return []
+        return list(profile_services(_SCALE_COMPOSE_FILE))
+    except (DevbaseError, OSError) as e:
+        logger.debug("プロファイルを解決できません (%s): %s", project_name, e)
+        return []
+    finally:
+        docker_context.reset()
+        _runtime.release_store()
+
+
 def _dispatch_lifecycle(args) -> int:
     """`project` / `container` 共有のサブコマンドディスパッチャ。
 
@@ -591,17 +695,8 @@ def _dispatch_lifecycle(args) -> int:
     try:
         # name 指定時はディレクトリを解決して chdir する。解決失敗 (DEVBASE_ROOT 未設定
         # / 存在しない name) は候補提示の上でエラー終了する。
-        if project_name:
-            # cli.main() は dispatch の前に**現在地**の機密を注入している。切替先の
-            # env を読む**前**に切替元の機密を落とす (PLAN52)。後に落とすと、
-            # clear_injected が「注入前の値」へ戻す動きで、切替先の env が載せた
-            # 同名キー (DEVBASE_DOCKER_CONTEXT など) まで消してしまう。
-            from devbase.env import runtime as _runtime
-            _runtime.clear_injected()
-            if not _resolve_project_name(project_name):
-                return 1
-            # 切替先の機密で作り直してから context を解決する。
-            _inject_secrets(required=False)
+        if project_name and not _enter_project(project_name):
+            return 1
 
         # `--context` は指定されたときだけ渡す。各 handler の既定は None なので結果は
         # 同じで、指定が無い経路は従来と同じ呼び出しの形を保つ。
@@ -623,6 +718,7 @@ def _dispatch_lifecycle(args) -> int:
                                        no_cache=getattr(args, 'no_cache', False),
                                        expires=getattr(args, 'expires', None), **ctx),
             'rebuild': lambda: cmd_rebuild(**ctx),
+            'profile': lambda: _dispatch_profile(args, ctx),
         }
 
         handler = handlers.get(subcmd)
@@ -638,6 +734,19 @@ def _dispatch_lifecycle(args) -> int:
         # が作ったものをこの操作の中で使い回すため。
         from devbase.env import runtime as _runtime
         _runtime.release_store()
+
+
+def _dispatch_profile(args, ctx: dict) -> int:
+    """`profile {up,down,list}` を振り分ける (PLAN58 決定 6)。"""
+    operation = getattr(args, 'profile_subcommand', None)
+    if operation == 'up':
+        return cmd_profile_up(args.profile, **ctx)
+    if operation == 'down':
+        return cmd_profile_down(args.profile, **ctx)
+    if operation == 'list':
+        return cmd_profile_list(**ctx)
+    logger.error("profile の操作を指定してください: up, down, list")
+    return 1
 
 
 def cmd_project(args) -> int:
@@ -1066,12 +1175,17 @@ def _run_deploy_pipeline(project_name: str, scale: int, config,
         logger.info("[2/6] Generating scaled compose file...")
         override_file = _build_scaled_override(scale, config, project_name, target)
         logger.info("Generated: %s", override_file)
+        # 起動の対象は既定のサービスに限る。端末や .env の COMPOSE_PROFILES でプロファイルが
+        # 有効になっても、プロファイルのサービスは起動しない (PLAN58 決定 7)。
+        # 構成の解決 (docker compose config) も停止より前に済ませる。補間エラーなどで
+        # 失敗しても、稼働中の環境を落としたままにせず旧構成を書き戻して止まる
+        services = default_services(override_file)
 
         logger.info("[3/6] Stopping existing containers...")
         docker_compose_down(compose_file=down_compose_file)
 
     logger.info("[4/6] Starting containers...")
-    docker_compose_up(compose_file=override_file, detach=True)
+    docker_compose_up(compose_file=override_file, detach=True, services=services)
 
     logger.info("[5/6] Waiting for containers to be ready...")
     wait_for_containers_ready(
@@ -1221,6 +1335,157 @@ def cmd_logs(follow: bool = False, tail: Optional[int] = None,
     if tail is not None:
         extra.extend(['--tail', str(tail)])
     return _compose_run('logs', *extra, context=context)
+
+
+# ---------------------------------------------------------------------------
+# cmd_profile_up / cmd_profile_down / cmd_profile_list  (PLAN58)
+# ---------------------------------------------------------------------------
+
+def _profile_targets(profile: Optional[str], context: Optional[str]):
+    """プロファイルの操作の共通の前段。
+
+    接続先の反映と機密の注入を済ませ、生成物からプロファイルとサービスの対応を得る。
+    ``profile`` を渡すとその名前を検査する。止まるべきときは ``None`` を返す
+    (理由はログへ出す)。
+    """
+    _prepare_compose(context)
+    if not _SCALE_COMPOSE_FILE.exists():
+        logger.error("%s がありません。先に `devbase up` を実行してください。",
+                     _SCALE_COMPOSE_FILE)
+        return None
+    try:
+        profiles = profile_services(_SCALE_COMPOSE_FILE)
+    except DevbaseError as e:
+        logger.error("プロファイルを解決できません: %s", e)
+        return None
+    if profile is not None and profile not in profiles:
+        logger.error("プロファイル '%s' はありません。使えるプロファイル: %s",
+                     profile, ', '.join(profiles) or '(なし)')
+        return None
+    return profiles
+
+
+def _dev_instance_indices(compose_file: Path) -> list[int]:
+    """生成物が持つ開発コンテナ ``<開発サービス名>-<N>`` の番号を昇順で返す。
+
+    ``project.yml`` の ``scale`` は使わない。``up`` の後に書き換えられると稼働中の
+    インスタンスと食い違うため、``up`` が作った生成物から数える (PLAN58 設計「構造」)。
+    """
+    import yaml
+    with open(compose_file, encoding='utf-8') as f:
+        services = (yaml.safe_load(f) or {}).get('services') or {}
+    pattern = re.compile(rf'{re.escape(get_dev_service_name())}-(\d+)')
+    return sorted(int(m.group(1)) for name in services
+                  if (m := pattern.fullmatch(name)))
+
+
+def cmd_profile_up(profile: str, context: Optional[str] = None) -> int:
+    """プロファイルのサービスを起動し、``./deploy`` を呼び直す (PLAN58 F1)。
+
+    サービス名をすべて明示し ``--no-deps`` を付ける。依存先の dev-1..N を操作の対象に
+    入れず、再作成も再起動もしないため (決定 2)。``./pre-up`` は呼ばない (決定 3)。
+    """
+    profiles = _profile_targets(profile, context)
+    if profiles is None:
+        return 1
+    services = profiles[profile]
+    deploy_script = Path('./deploy')
+    config = None
+    if deploy_script.is_file():
+        try:
+            config = project_runtime.current_project_config()
+        except DevbaseError as e:
+            logger.error("Profile up failed: %s", e)
+            return 1
+
+    logger.info("Starting profile '%s': %s", profile, ', '.join(services))
+    result = docker_compose(['--profile', profile, 'up', '-d', '--no-deps', *services],
+                            compose_file=_SCALE_COMPOSE_FILE, check=False)
+    if result.returncode != 0:
+        logger.error("Failed to start profile '%s' (exit code %d)", profile, result.returncode)
+        return result.returncode
+
+    if deploy_script.is_file():
+        ok = _run_deploy_script_for_instances(
+            deploy_script, _dev_instance_indices(_SCALE_COMPOSE_FILE), config,
+            active_profiles=(profile,))
+        if not ok:
+            return 1
+    return 0
+
+
+def cmd_profile_down(profile: str, context: Optional[str] = None) -> int:
+    """プロファイルのサービスを停止してコンテナを削除する (PLAN58 F2)。
+
+    ``down <サービス>`` は依存元 (dev) も対象に含めるため使わず、``stop`` と ``rm -f``
+    の 2 段で行う (決定 5)。猶予は既定、ボリュームは残す。フックは呼ばない。
+    """
+    profiles = _profile_targets(profile, context)
+    if profiles is None:
+        return 1
+    services = profiles[profile]
+
+    logger.info("Stopping profile '%s': %s", profile, ', '.join(services))
+    for step in (['stop'], ['rm', '-f']):
+        result = docker_compose(['--profile', profile, *step, *services],
+                                compose_file=_SCALE_COMPOSE_FILE, check=False)
+        if result.returncode != 0:
+            logger.error("Failed to %s profile '%s' (exit code %d)",
+                         step[0], profile, result.returncode)
+            return result.returncode
+    return 0
+
+
+def _running_services(compose_file: Path) -> Optional[set]:
+    """``ps --format json`` で ``State`` が ``running`` のサービス名を返す。失敗なら ``None``。
+
+    出力は版により 1 行 1 JSON (新しめ) か JSON 配列 (古め) になる。
+    ``--profile '*'`` は、非アクティブなプロファイルのサービスを ps に出さない版への備え。
+    """
+    try:
+        result = docker_compose(['--profile', '*', 'ps', '--format', 'json'], compose_file=compose_file,
+                                check=False, capture_output=True, silent_error=True)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    text = (result.stdout or '').strip()
+    try:
+        parsed = json.loads(text) if text.startswith('[') else [
+            json.loads(line) for line in text.splitlines() if line.strip()]
+    except ValueError:
+        return None
+    return {item.get('Service') for item in parsed
+            if isinstance(item, dict) and item.get('State') == 'running'}
+
+
+def _running_label(services: list[str], running: Optional[set]) -> str:
+    if running is None:
+        return '不明'
+    count = sum(1 for service in services if service in running)
+    state = ('running' if count == len(services)
+             else 'partial' if count else 'stopped')
+    return f'{count}/{len(services)} {state}'
+
+
+def cmd_profile_list(context: Optional[str] = None) -> int:
+    """プロファイルの名前・サービス・稼働状況を表で出す (PLAN58 F3)。
+
+    名前と対応の解決にデーモンは要らない。接続できないときは稼働状況を ``不明`` にして
+    0 で終わる (決定 1)。
+    """
+    profiles = _profile_targets(None, context)
+    if profiles is None:
+        return 1
+    running = _running_services(_SCALE_COMPOSE_FILE) if profiles else set()
+    rows = [('PROFILE', 'SERVICES', 'RUNNING')] + [
+        (name, ','.join(services), _running_label(services, running))
+        for name, services in profiles.items()
+    ]
+    widths = [max(len(row[i]) for row in rows) for i in range(2)]
+    for name, services, label in rows:
+        print(f'{name:<{widths[0]}}  {services:<{widths[1]}}  {label}')
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -1428,7 +1693,7 @@ def _resolve_dev_service() -> Optional[dict]:
     """compose config から dev サービス定義を取得する。失敗時は None。"""
     result = subprocess.run(
         ['docker', 'compose', 'config', '--format', 'json'],
-        capture_output=True, text=True, check=False
+        capture_output=True, text=True, check=False, env=compose_env(),
     )
     if result.returncode != 0:
         return None
@@ -1608,7 +1873,8 @@ def _read_compose_services() -> tuple[int, dict]:
         ['docker', 'compose', 'config', '--format', 'json'],
         capture_output=True,
         text=True,
-        check=False
+        check=False,
+        env=compose_env(),
     )
     if result.returncode != 0:
         return result.returncode, {}
