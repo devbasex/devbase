@@ -128,8 +128,8 @@ tests/utils/test_names.py            # 新設
 | 項目 | 内容 |
 | --- | --- |
 | 名前 | `devbase build -h` / `devbase build --help`。前方一致（`devbase b --help`）も同じ |
-| 入力 | `build` より後ろの引数のどこかにある `-h` または `--help`。`--context --help` の `--help` も使い方として扱う。`--context=--help` は context の値であり、使い方にしない。`-h` も同じ規則で、`--context -h` は使い方、`--context=-h` は値（決定 8） |
-| 出力 | 標準出力に下の使い方。終了コード 0。`cmd_build`・`compose_with_secrets`・`run_python` を呼ばず、cd も `env` の読み込みもしない |
+| 入力 | `build` より後ろの引数のどこかにある `-h` または `--help`。`--context --help` の `--help` も使い方として扱う。`--context=--help` は使い方にしない。`-h` も同じ規則で、`--context -h` は使い方、`--context=-h` は使い方にしない（決定 8） |
+| 出力 | 標準出力に下の使い方。終了コード 0。`cmd_build`・`compose_with_secrets`・`run_python` を呼ばない。cd せず、切り替え先のプロジェクト（`projects/<name>`）の `env` を読まない。起動時の `$DEVBASE_ROOT/env` と実行時のディレクトリの `env` の読み込みは他のコマンドと同じく行う |
 | 互換性 | 今は `build --help` がビルドを始める。これを止める以外の変更はない。`devbase project build --help`（argparse）は変えない |
 
 ```text
@@ -204,7 +204,7 @@ graph TD
 
 「形に合い」の判定はどれも shell の `is_single_segment_name` で行う。
 
-`build` の使い方の判定は name 解決より前に置く。`build carmo --help` で cd と `env` の読み込みを起こさないためである（決定 7）。
+`build` の使い方の判定は name 解決より前に置く。`build carmo --help` で `projects/carmo` への cd とその `env` の読み込みを起こさないためである（決定 7）。起動時の `$DEVBASE_ROOT/env` と実行時のディレクトリの `env` は、コマンド名の解決より前に全コマンド共通で読まれ、この計画では変えない。
 
 ### Python 側
 
@@ -288,13 +288,13 @@ bash の `[[ =~ ]]` は C ライブラリの正規表現を使う。そのため
 
 ### 決定 7: `build` の `-h` / `--help` は name 解決より前に判定し、`bin/devbase` が使い方を出す
 
-トップレベル `build` は shell の `cmd_build` と Python の `project build` に振り分けられる。受け付ける引数も両者で違う（`--project-no-cache` は shell だけにある）。Python の `--help` へ委ねると、shell 経路の引数が載らない。name 解決の後に判定すると、`build carmo --help` で `projects/carmo` への cd と `env` の読み込みが先に起きる。使い方を出すだけの呼び出しに副作用を持たせないため、コマンド名の解決の直後に置く。
+トップレベル `build` は shell の `cmd_build` と Python の `project build` に振り分けられる。受け付ける引数も両者で違う（`--project-no-cache` は shell だけにある）。Python の `--help` へ委ねると、shell 経路の引数が載らない。name 解決の後に判定すると、`build carmo --help` で `projects/carmo` への cd と `env` の読み込みが先に起きる。使い方を出すだけの呼び出しで、切り替え先のプロジェクトへの cd とその `env` の読み込みを起こさないため、コマンド名の解決の直後に置く。起動時の `$DEVBASE_ROOT/env` と実行時のディレクトリの `env` の読み込みはコマンド名の解決より前に全コマンド共通で起きる既存の挙動で、この計画では変えない。#196 の受け入れ条件はビルドを起こさないことであり、この読み込みの前へヘルプ判定を移す変更は採らない。
 
 使い方は標準出力へ出し、終了コード 0 にする。argparse の `--help` と同じ扱いにそろえる。
 
-### 決定 8: `-h` / `--help` は引数のどこにあっても使い方を優先し、`--context=-h` / `--context=--help` だけは値として扱う
+### 決定 8: `-h` / `--help` は引数のどこにあっても使い方を優先し、`--context=-h` / `--context=--help` だけは使い方にしない
 
-`--help` を打った利用者が求めているのは使い方である。位置で区別すると、どの位置なら効くかを覚える必要がある。`--context --help` も使い方にする。argparse も `-` 始まりの語を `--context` の値として取らず、usage エラー（終了コード 2）にする。値にならない点は同じで、エラーにする代わりに使い方を出す。`--context=--help` は `=` で値と結びついた 1 語なので値として扱い、context 名 `--help` として下流へ渡す。`-h` も同じ規則に従う。`--context -h` は使い方、`--context=-h` は context 名 `-h` として下流へ渡す。
+`--help` を打った利用者が求めているのは使い方である。位置で区別すると、どの位置なら効くかを覚える必要がある。`--context --help` も使い方にする。argparse も `-` 始まりの語を `--context` の値として取らず、usage エラー（終了コード 2）にする。値にならない点は同じで、エラーにする代わりに使い方を出す。`--context=--help`（`-h` も同じ）は使い方にしない。下流へ渡り、argparse の usage エラー（終了コード 2）になる。shell は `env exec --context "$_BUILD_CONTEXT" --` の形で渡すため、値 `--help` は argparse から見て値不足になる。`-` 始まりの context 名は受け付けない。`=` の結合を下流まで保つ変更は採らない。`-` 始まりの context 名に実用が無いためである。`--context -h` は使い方になる。
 
 `help` という語（`-` なし）は使い方にしない。イメージ名の形に合う語で、名前として扱う今の動きを変える理由が無い。
 
@@ -353,7 +353,7 @@ bash の `[[ =~ ]]` は C ライブラリの正規表現を使う。そのため
 | --- | --- |
 | 2 | 同期テスト（`test_project_name_resolution.py`）: `bin/devbase` から `_SINGLE_SEGMENT_NAME_RE='...'` を抜き出し、`'^' + SINGLE_SEGMENT_NAME_PATTERN + '$'` と一致する |
 | 4 | `exec_wrapper`: `projects/café` を作った状態で `up café` が cd しない。単体: `is_single_segment_name('café')` が `False` |
-| 8 | `exec_wrapper`: `build --context --help` と `build --context -h` は使い方で終了コード 0。`build --context=--help` と `build --context=-h` は使い方を出さず、`UV:` の引数にそれぞれ `env exec --context --help --`・`env exec --context -h --` を含む |
+| 8 | `exec_wrapper`: `build --context --help` と `build --context -h` は使い方で終了コード 0。`build --context=--help` と `build --context=-h` は使い方を出さず下流へ渡る（`UV:` の引数にそれぞれ `env exec --context --help --`・`env exec --context -h --` を含む）。実際の argparse ではこれが値不足の usage エラー（終了コード 2）になる。`-` 始まりの context 名は受け付けない |
 
 ## 未確認のまま残ること
 
