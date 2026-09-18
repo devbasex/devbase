@@ -24,7 +24,8 @@
 ## 前提
 
 - 前提 1: **注入の対象から外す**（issue の「外すかどうか」への答え）。`version: 1` でも外す。
-  理由: 利用者向け文書（`docs/user/environment-variables.md` / `env-backend.md`）は PLAN56 以降
+  理由: 利用者向け文書（`docs/user/environment-variables.md` の「機密の置き場もグループで分ける（OpenBao）」と
+  `docs/user/env-backend.md` の「グループの決まり方」）は PLAN56 以降
   「置き場に書いた値はグループの決定に使われない」と説明しており、`version: 1` だけ置き場の値が効く今の
   挙動は文書と食い違っている。置き場の値でグループを切り替える使い方は文書に無い
 - 前提 2: 外す場所は機密の合成（`runtime.resolve`）の 1 か所にする。`inject`・`child_env`・コンテナへ

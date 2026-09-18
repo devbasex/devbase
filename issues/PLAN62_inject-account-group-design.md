@@ -108,7 +108,7 @@ graph TD
 | 名前 | `devbase env set KEY=VALUE [-p] [--user] [--group NAME]` |
 | 変わる入力 | `KEY` が前後の空白を除いて `DEVBASE_ACCOUNT_GROUP` と一致するとき |
 | 出力（拒否） | 終了コード 1。error ログ `DEVBASE_ACCOUNT_GROUP は機密の置き場へは書けません（置き場の値はアカウントグループの決定に使われません）。projects/<name>/env か $DEVBASE_ROOT/env に書いてください` |
-| 置き場への作用 | 無し。`_open_target_env` より前に返すため、ファイルを作らず、サーバへ要求しない |
+| 置き場への作用 | 拒否の処理は置き場を開かない。`_open_target_env` より前に返すため、書き込み・ファイルの作成・書き込みのための読み出し（`fresh`）をしない。dispatch 前の注入（`cli._load_secret_env`）による読み取りは、他のコマンドと同じく起きうる（`version: 1` では `env set` も注入の対象。`cli.py` は変えない） |
 | 引数の検査との順序 | `-p` / `--user` / `--group` の検査より前に拒否する。`--group` に使えない名前を渡しても終了コードは 1 |
 | 互換性 | 変わる。これまで書けたキーが書けなくなる。CHANGELOG の「変更」に書く。`env import` / `env edit` / 他のキーの `env set` は変わらない |
 
@@ -212,7 +212,9 @@ TUI は 1 プロセスで操作を続けるため、同じ置き場の警告は 
 
 ### 決定 7: `env set` は置き場を開く前に拒否する
 
-`layout: group` の `--group` の検証や、サーバ backend での現物の読み出し（`fresh`）は、置き場を開く `_open_target_env` の中で行われる。その前に返せば、拒否する操作でサーバへの要求もファイルの作成も起きない。拒否の理由は宛先によらないため、引数の組み合わせの検査より先に置く。
+`layout: group` の `--group` の検証や、サーバ backend での現物の読み出し（`fresh`）は、置き場を開く `_open_target_env` の中で行われる。その前に返せば、拒否する操作で書き込みも、ファイルの作成も、書き込みのための読み出し（`fresh`）も起きない。
+
+dispatch 前の注入による読み取りは残る。`env set` は `cli._NO_SECRET_INJECTION` に無く、`layout: group` のときだけ `_GROUPED_SELF_RESOLVING_ENV` で注入を飛ばす。そのため `version: 1` では、`cmd_env_set` に届く前に `runtime.inject` が置き場を読む。これは他のコマンドと同じ読み取りで、拒否の処理が起こすものではない。`env set` だけを注入の対象から外すと他のキーの `env set` の挙動も変わるため、`cli.py` は変えない。拒否の理由は宛先によらないため、引数の組み合わせの検査より先に置く。
 
 `env import` と `env edit` は拒否しない（要求の前提 4）。どちらも複数のキーをまとめて扱い、1 キーのために全体を止めると他のキーの作業まで止まる。書かれた値は決定 3 の警告で知らせる。
 
