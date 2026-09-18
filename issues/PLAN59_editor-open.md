@@ -80,13 +80,13 @@
 - [ ] 8. `--open-index` を省き env `DEVBASE_OPEN_INDEX=2` があるとき、起動中の経路は `index=2` を使う
 - [ ] 9. `devbase project open <name>` を別ディレクトリから実行すると、`<name>` のプロジェクトを対象にする。
       解決は `devbase project up <name>` と同じ。トップレベル `devbase open <name>` も同じ
-- [ ] 10. `devbase open --context NAME` は、2 か所の両方に `NAME` を使う。起動中の判定の `docker compose ps` と、
+- [ ] 10. `devbase open --context NAME` は、2 か所の両方に `NAME` を使う。起動中の判定の `docker ps` と、
       `opener.open_editor` の `docker_context` である
 - [ ] 11. `open` は `--open` / `--no-open` を受け付けない（argparse の usage エラー、終了コード 2）
 - [ ] 19. 前提: dev が動いており、端末が非 TTY（または `code` が無い）
       操作: `devbase open` を実行する
       結果: `opener.open_editor` が `skip` を返し、終了コード 1。SSH セッションでコマンドを提示した場合（`print_command`）は 0
-- [ ] 20. 前提: `docker compose ps` が 0 以外で終わる（daemon に届かないなど）
+- [ ] 20. 前提: 起動中の判定の `docker ps` が 0 以外で終わる（daemon に届かないなど）
       操作: `devbase open` を実行する
       結果: `cmd_up` を呼ばず、状態を取得できない旨を出して終了コード 1
 
@@ -110,7 +110,7 @@ TUI:
 
 | 大項目 | 条件 |
 | --- | --- |
-| 性能・拡張性 | 起動中の経路で docker を呼ぶのは、起動中の判定の `docker compose ps` 1 回と、`opener.open_editor` 内の既存の呼び出しだけ（`up` のパイプラインを通らない） |
+| 性能・拡張性 | 起動中の経路で docker を呼ぶのは、起動中の判定の `docker ps` 1 回と、`opener.open_editor` 内の既存の呼び出しだけ（`up` のパイプラインを通らない） |
 | 運用・保守性 | 停止中から `up` へ委譲するときは、その旨を info ログに 1 行出す（利用者が「なぜ起動が走ったか」を読める） |
 
 ## 影響
@@ -156,7 +156,7 @@ TUI:
 | 用語 | 意味 |
 | --- | --- |
 | 窓 | dev コンテナへ Dev Containers 拡張で接続した VS Code のウィンドウ |
-| 動いているインスタンス | `docker compose ps`（`-a` なし）に現れる `{dev}-{index}` サービスのコンテナ |
+| 動いているインスタンス | `docker ps`（`-a` なし）に現れ、Compose のプロジェクトのラベルがこのプロジェクトで、サービスのラベルが `{dev}-{index}` のコンテナ |
 | index | 開く dev インスタンスの番号（`dev-1` の `1`）。`--open-index N`、未指定なら env `DEVBASE_OPEN_INDEX`、それも無ければ 1 |
 
 ## 依頼（原文）

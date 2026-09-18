@@ -15,12 +15,13 @@
 
 | 要素 | 変更 | 責務 |
 | --- | --- | --- |
-| `cli.py` の `_add_open_subparser`（新設） | 足す | `open` の引数（`[name]`・`--open-index N`・`--context NAME`）を登録する。`project` / `container` / トップレベルで共有する |
+| `cli.py` の `_add_open_subparser(sub, *, with_name)`（新設） | 足す | `open` の引数を登録する。`--open-index N` と `--context NAME` は常に、`[name]` は `with_name=True` のときだけ登録する。`project` とトップレベルは `True`、`container` は `False` で呼ぶ（`_add_profile_subparser` と同じ形） |
 | `cli.py` の `SHORTCUTS` / `SUBCMD_MAP` / parser の epilog | 変える | `open` をトップレベルのショートカットと、`project` / `container` のサブコマンドへ加える |
 | `bin/devbase` | 変える | `resolve_command` の候補、Python 実装のコマンドの `case`、`_PROJECT_NAME_SUBCOMMANDS`、`_NAME_RESOLVABLE_SHORTCUTS` に `open` を加える |
 | `container.py` の `_dispatch_lifecycle` | 変える | `handlers` に `'open'` を足す |
 | `container.py` の `cmd_open`（新設） | 足す | 起動中の判定・index の検査・開く処理の呼び出し、または `cmd_up` への委譲 |
-| `container.py` の `_running_dev_indices`（新設） | 足す | `docker compose ps --format json` を 1 回呼び、動いている dev インスタンスの index を返す |
+| `utils/docker.py` の `running_dev_instances`（`env.py` の `_running_dev_containers` から移す） | 変える | `docker ps` を 1 回呼び、動いている dev インスタンスの `(index, コンテナ名)` を index 順に返す。呼べなければ `None` |
+| `env.py` の `_running_dev_containers` | 変える | `running_dev_instances` の結果からコンテナ名だけを返す薄い包みにする。`env token` から見た振る舞いは変えない |
 | `container.py` の `_open_editor_at`（`_maybe_open_editor` から切り出し） | 変える | 開く対象（フォルダ / ワークスペース）と接続先を組み、`opener.open_editor` を呼んで action を返す。有効判定と index の解決は持たない |
 | `container.py` の `_maybe_open_editor` | 変える | 有効判定と index の解決だけを残し、開く処理は `_open_editor_at` へ渡す。`up` から見た振る舞いは変えない |
 | `tui/actions_project.py` の `_RUNNING_OPS` / `_OP_HANDLERS` | 変える | 先頭に `("エディタを開く (open)", "open")`、ハンドラに `dispatch_lifecycle("open", name, open_index=None)`。先頭の理由のコメントを書き替える |
@@ -37,7 +38,7 @@ graph TD
     P --> D[_dispatch_lifecycle]
     T[TUI actions_project] --> D
     D --> O[cmd_open]
-    O --> R[_running_dev_indices]
+    O --> R[running_dev_instances]
     O -->|起動中| E[_open_editor_at]
     O -->|停止中| U[cmd_up]
     U --> M[_maybe_open_editor]
@@ -49,12 +50,12 @@ graph TD
 
 ### システムの文脈
 
-devbase はホストで動き、2 つの外部に触る。docker daemon（`--context` の先を含む）と、ホストの VS Code（`code` CLI）である。`open` の起動中の経路が docker daemon に対して行うのは、読み取りの `docker compose ps` だけである。コンテナ・ボリューム・ネットワークは作らない。
+devbase はホストで動き、2 つの外部に触る。docker daemon（`--context` の先を含む）と、ホストの VS Code（`code` CLI）である。`open` の起動中の経路が docker daemon に対して行うのは、読み取りの `docker ps` と、`opener.open_editor` が既存で行う `docker compose ps` だけである。コンテナ・ボリューム・ネットワークは作らない。
 
 ```mermaid
 graph LR
     U[利用者の端末] --> C[devbase CLI / TUI（ホスト）]
-    C -->|compose ps（読み取り）| D[docker daemon]
+    C -->|docker ps（読み取り）| D[docker daemon]
     C -->|code --folder-uri| V[VS Code]
     V -->|Dev Containers で接続| D
 ```
@@ -68,9 +69,11 @@ etc/
 └── _devbase                      # zsh 補完
 lib/devbase/
 ├── cli.py                        # parser とショートカット
-├── commands/container.py         # cmd_open / _running_dev_indices / _open_editor_at
+├── commands/container.py         # cmd_open / _open_editor_at
+├── commands/env.py               # _running_dev_containers（包みにする）
 ├── editor/opener.py              # 変えない
-└── tui/actions_project.py        # 起動中のサブメニュー
+├── tui/actions_project.py        # 起動中のサブメニュー
+└── utils/docker.py               # running_dev_instances（移す先）
 ```
 
 ## 入出力の契約
@@ -90,17 +93,19 @@ lib/devbase/
 | `--open` / `--no-open` を渡した | 2 | argparse の usage エラー |
 | `--open-index` が 0 以下 | 1 | `open index N は 1 以上を指定してください` |
 | 起動中で、index が動いているインスタンスに無い | 1 | `dev-N は起動していません。起動中: 1, 2` |
-| `docker compose ps` が 0 以外で終わった・呼べなかった | 1 | `コンテナの状態を取得できません: <理由>`。`up` へは委譲しない |
+| 起動中の判定の `docker ps` が 0 以外で終わった・呼べなかった | 1 | `docker ps` の失敗の理由（`running_dev_instances` が error で出す）。`up` へは委譲しない |
 | 起動中で、`opener.open_editor` が `skip` を返した（非 TTY・`code` が無い） | 1 | `opener` が出す理由（info）。開けなかったことを終了コードで示す |
 | `name` が解決できない | 1 | 既存の `_enter_project` の候補提示 |
 
-### `_running_dev_indices(dev_service_name, compose_file) -> list[int]`
+### `running_dev_instances(project, dev_service_name, runner=None) -> Optional[list[tuple[int, str]]]`
 
-- `docker compose [-f <compose_file>] ps --format json` を `compose_env()` の環境で 1 回呼ぶ。`-a` を付けないため、止まっているコンテナは出ない
-- 出力は NDJSON と JSON 配列の両方を読む（`opener._parse_compose_ps_name` と同じ 2 形式）
-- `Service` が `{dev}-{数字}` で `State` が `running` の行から数字を集め、昇順で返す
-- 呼び出しの失敗（例外・0 以外の終了コード）は `DevbaseError` にする。0 個と区別するため `None` や空で握り潰さない
-- `compose_file` は `.docker-compose.scale.yml`。無ければ（一度も `up` していない）呼ばずに空を返す
+`env.py` の `_running_dev_containers` の中身を `utils/docker.py` へ移したもの。判定の方法は変えない。
+
+- `docker ps --filter label=com.docker.compose.project=<project> --format '{{.Names}}\t{{.Label "com.docker.compose.service"}}'` を 1 回呼ぶ。`-a` を付けないため、止まっているコンテナは出ない
+- サービスのラベルが `{dev}-{1 以上の数字}` の行から `(数字, コンテナ名)` を集め、数字の昇順で返す。同じプロジェクトの DB などは除かれる
+- 呼び出しの失敗（例外・0 以外の終了コード）は error ログを出して `None` を返す。動いているものが無い `[]` と区別する
+- Compose のファイルを読まないため、`.docker-compose.scale.yml` の有無と構成の補間に左右されない。接続先は環境変数 `DOCKER_CONTEXT` に従う
+- `runner` は差し替え口（既定は `subprocess.run`）。`env.py` の呼び出しは既存どおり渡す
 
 ### TUI
 
@@ -119,7 +124,7 @@ graph TD
     A[index を解決<br/>CLI → DEVBASE_OPEN_INDEX → 1] --> B{0 以下か}
     B -->|はい| X1[終了コード 1]
     B -->|いいえ| C[context を反映し<br/>機密を注入]
-    C --> Q[compose ps で<br/>動いている index を得る]
+    C --> Q[docker ps で<br/>動いている index を得る]
     Q -->|失敗| X2[終了コード 1<br/>up へは進まない]
     Q -->|0 個| U[cmd_up<br/>open_editor=True]
     U --> X3[cmd_up の戻り値]
@@ -136,7 +141,7 @@ graph TD
 
 | 大項目 | 要求の条件 | 実現方式 | 確かめ方 |
 | --- | --- | --- | --- |
-| 性能・拡張性 | 起動中の経路で docker を呼ぶのは、起動中の判定の `docker compose ps` 1 回と、`opener.open_editor` 内の既存の呼び出しだけ | `cmd_open` は `_run_deploy_pipeline`・`_run_pre_up_checks`・`_auto_snapshot` を呼ばない。起動中の判定は `_running_dev_indices` の 1 回に集める | 単体テストで `subprocess.run` と `cmd_up` 系の関数を差し替え、起動中の経路で compose の呼び出しが `ps` 1 回だけであることを見る |
+| 性能・拡張性 | 起動中の経路で docker を呼ぶのは、起動中の判定の `docker ps` 1 回と、`opener.open_editor` 内の既存の呼び出しだけ | `cmd_open` は `_run_deploy_pipeline`・`_run_pre_up_checks`・`_auto_snapshot` を呼ばない。起動中の判定は `running_dev_instances` の 1 回に集める | 単体テストで `running_dev_instances` の `runner` と `cmd_up` 系の関数を差し替え、起動中の経路で docker の呼び出しが `docker ps` 1 回だけであることを見る |
 | 運用・保守性 | 停止中から `up` へ委譲するときは、その旨を info ログに 1 行出す | `cmd_up` を呼ぶ直前に `dev コンテナが起動していないため up を実行します` を info で出す | 単体テストで caplog を見る |
 
 ## 決定の記録
@@ -149,7 +154,7 @@ issue の案は「開く index のコンテナ名が解決できない → 停�
 
 ### 決定 2: 状態を取得できないときは `up` へ委譲せずに止まる
 
-`docker compose ps` が失敗した（daemon に届かない・構成の補間に失敗した）ことは、停止中を意味しない。ここで `up` へ進むと、動いている環境を作り直す可能性がある。`up` の側で同じ原因により失敗するとしても、利用者が「なぜ起動が走ったか」を読み違えないよう、`open` の入口で止める。
+起動中の判定の `docker ps` が失敗した（daemon に届かない）ことは、停止中を意味しない。ここで `up` へ進むと、動いている環境を作り直す可能性がある。`up` の側で同じ原因により失敗するとしても、利用者が「なぜ起動が走ったか」を読み違えないよう、`open` の入口で止める。
 
 ### 決定 3: 開く処理は `_maybe_open_editor` から切り出して共有し、有効判定を持たせない
 
@@ -173,6 +178,12 @@ issue の指定（`open_index=None`）どおり、既定（`DEVBASE_OPEN_INDEX`�
 
 `container` は非推奨だが、`profile`（PLAN58）を含めて `project` と同じサブコマンドの集合を保っている。片方だけにすると、補完と `SUBCMD_MAP` の対応表に例外が 1 つ増える。`container open` は `[name]` を取らない（`container` の他のサブコマンドと同じ）。
 
+### 決定 8: 起動中の判定は `env token` の列挙を共有の場所へ移して使う
+
+`env.py` の `_running_dev_containers` が、動いている dev インスタンスの列挙をすでに持っている。失敗を `None` で返し、0 個の `[]` と区別する契約も、決定 2 が求める形と一致する。`utils/docker.py` へ移して `cmd_open` と `env token` の両方から使う。
+
+`docker compose ps` で数える形は採らない。Compose のファイル（`.docker-compose.scale.yml`）が無いと呼べず、構成の補間の失敗も「状態を取得できない」に混ざるためである。`docker ps` とラベルで数える既存の方法は、どちらにも左右されない。
+
 ## テスト設計
 
 | 受け入れ条件 | 何で確かめるか |
@@ -186,7 +197,7 @@ issue の指定（`open_index=None`）どおり、既定（`DEVBASE_OPEN_INDEX`�
 | 7 | 単体: index 0 と -1 で 1 を返し、docker を呼ばない |
 | 8 | 単体: `DEVBASE_OPEN_INDEX=2`・起動中 `[1, 2]` で `index=2` |
 | 9 | CLI（`tests/cli/`）: `project open <name>` とトップレベル `open <name>` の parse 結果が `name` を持ち、`_dispatch_lifecycle` が `_enter_project` を呼ぶ。`bin/devbase` の 2 つのリストに `open` がある |
-| 10 | 単体: `--context X` で `docker compose ps` の環境の `DOCKER_CONTEXT` が `X`、`opener.open_editor` の `docker_context` が `X` |
+| 10 | 単体: `--context X` で `running_dev_instances` を呼ぶ時点の環境変数 `DOCKER_CONTEXT` が `X`、`opener.open_editor` の `docker_context` が `X` |
 | 11 | CLI: `open --open` / `open --no-open` が `SystemExit(2)` |
 | 12 | TUI（`tests/cli/tui/`）: `_RUNNING_OPS[0][1] == "open"` |
 | 13 | TUI: `_OP_HANDLERS["open"]` が `dispatch_lifecycle("open", name, open_index=None)` を呼ぶ |
@@ -196,11 +207,10 @@ issue の指定（`open_index=None`）どおり、既定（`DEVBASE_OPEN_INDEX`�
 | 17 | 補完（`tests/cli/test_completion.py`）: bash / zsh の候補に `open` がある |
 | 18 | `uv run pytest` |
 | 19 | 単体: `opener.open_editor` が `skip` を返すと 1、`print_command` で 0（決定 5） |
-| 20 | 単体: `_running_dev_indices` が `DevbaseError` を投げると 1 を返し、`cmd_up` を呼ばない（決定 2）。`_running_dev_indices` 自体は NDJSON と配列の両形式を読み、`State` が `running` 以外と `{dev}-{数字}` 以外のサービスを除き、失敗で `DevbaseError` を投げる |
+| 20 | 単体: `running_dev_instances` が `None` を返すと 1 を返し、`cmd_up` を呼ばない（決定 2）。`running_dev_instances` 自体は、`{dev}-{数字}` 以外のサービスを除くこと・index 順に並べること・失敗で `None` を返すことを見る。`env token` の既存テスト（`tests/commands/test_env_token.py`）が変更なしで通る |
 
 ## 未確認のまま残ること
 
 | 項目 | 内容 |
 | --- | --- |
 | 実機での窓の再表示 | VS Code が同じコンテナ・同じフォルダの窓をすでに開いているとき、`code --folder-uri` が既存の窓を前面に出すか新しい窓を開くかは VS Code 側の挙動で、devbase では決めない。リリース後テストで macOS のローカル端末で確かめる |
-| `docker compose ps` の `State` の値 | 古い compose で `State` が `running` 以外の表記（`Up ...`）になる版があるかは未確認。実装時に手元の compose の出力を控え、テストの入力にする |
