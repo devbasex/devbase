@@ -163,8 +163,9 @@ def _add_open_subparser(sub, *, with_name: bool):
     インスタンス) は cmd_open が行う。`allow_abbrev=False` は `--open 2` / `--open=2` が
     前方一致で `--open-index` に吸われるのを防ぐ (受け入れ条件 11)。
     """
-    p = sub.add_parser('open', allow_abbrev=False, help='Open the editor attached to the dev container '
-                                    '(starts the project first if it is stopped)')
+    p = sub.add_parser('open', allow_abbrev=False,
+                       help='Open the editor attached to the dev container '
+                            '(starts the project first if it is stopped)')
     if with_name:
         _add_name_arg(p)
     p.add_argument('--open-index', dest='open_index', type=int, default=None, metavar='N',
