@@ -76,6 +76,21 @@ def test_shortcut_dispatches_to_cmd_open(monkeypatch):
     assert seen['open'] == {'project_name': 'carmo', 'open_index': 2}
 
 
+def test_project_open_dispatches_to_cmd_open(monkeypatch):
+    """現状固定: 推奨の project open も対象名と番号を cmd_open に渡す。"""
+    from devbase.commands import container
+
+    seen = {}
+    monkeypatch.setattr(container, '_enter_project', lambda name: seen.setdefault('entered', name))
+    monkeypatch.setattr(container, 'cmd_open',
+                        lambda **kw: seen.setdefault('open', kw) and 0)
+    ns = _parse('project', 'open', 'carmo', '--open-index', '2')
+
+    assert cli._dispatch('project', ns) == 0
+    assert seen['entered'] == 'carmo'
+    assert seen['open'] == {'project_name': 'carmo', 'open_index': 2}
+
+
 # --- 前方一致 (受け入れ条件 16) -------------------------------------------------
 
 @pytest.mark.parametrize('argv, expected', [

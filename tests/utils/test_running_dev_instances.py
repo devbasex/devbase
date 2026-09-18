@@ -58,3 +58,16 @@ def test_os_error_is_none():
         raise FileNotFoundError('docker')
 
     assert running_dev_instances('web', 'dev', runner=run) is None
+
+
+def test_current_parser_ignores_missing_separator_and_container_name():
+    """現状固定: 不完全な行を混ぜても、有効な行だけを返す。"""
+    run = _ps('dev-1\n\tdev-2\nweb-dev-3\tdev-3\n')
+    assert running_dev_instances('web', 'dev', runner=run) == [(3, 'web-dev-3')]
+
+
+def test_current_parser_matches_literal_service_name_and_positive_index():
+    """現状固定: サービス名のドットは文字通り扱い、先頭ゼロの番号は除く。"""
+    run = _ps('web-dev.app-2\tdev.app-2\nweb-devXapp-1\tdevXapp-1\n'
+              'web-dev.app-01\tdev.app-01\n')
+    assert running_dev_instances('web', 'dev.app', runner=run) == [(2, 'web-dev.app-2')]

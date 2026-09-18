@@ -127,6 +127,37 @@ def test_index_from_env_is_used(harness, monkeypatch):
     assert harness.opened[0]['index'] == 2
 
 
+@pytest.mark.parametrize('env_index, kwargs, expected_index', [
+    pytest.param('3', {'open_index': 1}, 1, id='explicit-overrides-env'),
+    pytest.param('', {}, 1, id='empty-env'),
+    pytest.param('invalid', {}, 1, id='non-integer-env'),
+    pytest.param(None, {'open_index': 3}, 3, id='non-contiguous-running-index'),
+])
+def test_current_index_resolution_with_gaps(harness, monkeypatch, env_index, kwargs,
+                                          expected_index):
+    """現状固定: env のフォールバックと、飛び番号の起動一覧への接続。"""
+    harness.running = [(1, 'proj-dev-1'), (3, 'proj-dev-3')]
+    if env_index is None:
+        monkeypatch.delenv('DEVBASE_OPEN_INDEX', raising=False)
+    else:
+        monkeypatch.setenv('DEVBASE_OPEN_INDEX', env_index)
+
+    assert container.cmd_open(**kwargs) == 0
+    assert [(opened['project_name'], opened['index']) for opened in harness.opened] == [
+        ('proj', expected_index)]
+    assert harness.ups == []
+
+
+def test_current_missing_index_between_running_instances_is_an_error(harness, monkeypatch):
+    """現状固定: 起動中の番号の間でも、存在しない番号は起動せず失敗する。"""
+    harness.running = [(1, 'proj-dev-1'), (3, 'proj-dev-3')]
+    monkeypatch.delenv('DEVBASE_OPEN_INDEX', raising=False)
+
+    assert container.cmd_open(open_index=2) == 1
+    assert harness.opened == []
+    assert harness.ups == []
+
+
 def test_index_not_running_is_an_error(harness, caplog):
     """受け入れ条件 5"""
     with caplog.at_level(logging.ERROR):

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from devbase.tui import actions_project
 
 
@@ -28,3 +30,28 @@ def test_open_dispatches_to_the_shared_handler(monkeypatch, tmp_path):
 def test_open_stays_in_the_submenu():
     """受け入れ条件 14"""
     assert "open" not in actions_project._BACK_TO_TOP_OPS
+
+
+@pytest.mark.parametrize('open_rc', [0, 1], ids=['open-success', 'open-failure'])
+def test_current_open_result_allows_next_operation(monkeypatch, tmp_path, open_rc):
+    """現状固定: open の成否によらず同じプロジェクトの ps を続けて選べる。"""
+    from devbase.commands import container
+
+    calls = []
+    choices = iter(['open', 'ps', actions_project.menu.MENU_BACK])
+
+    def dispatch(sub, name, **attrs):
+        calls.append((sub, name, attrs))
+        return open_rc if sub == 'open' else 0
+
+    monkeypatch.setattr(container, 'project_profile_names', lambda name: [])
+    monkeypatch.setattr(actions_project.menu, 'select', lambda *a, **kw: next(choices))
+    monkeypatch.setattr(actions_project.menu, 'clear_screen', lambda: None)
+    monkeypatch.setattr('builtins.input', lambda prompt: '')
+    monkeypatch.setattr(actions_project, 'dispatch_lifecycle', dispatch)
+
+    result = actions_project.handle_row(tmp_path, {'name': 'carmo', 'status': 'running'})
+
+    assert result is actions_project.menu.MENU_BACK
+    assert calls == [('open', 'carmo', {'open_index': None}),
+                     ('ps', 'carmo', {'all': False})]
