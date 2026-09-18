@@ -259,3 +259,14 @@ def test_up_auto_open_respects_the_switch(project, monkeypatch):
     config = container.project_runtime.current_project_config()
     container._maybe_open_editor('proj', None, None, 1, config)
     assert opened == []
+
+
+@pytest.mark.parametrize('env_index, expected', [('2', 2), ('', 1), ('x', 1), (None, 1)])
+def test_up_reads_the_same_env_index_as_open(monkeypatch, env_index, expected):
+    """up の [6/6] と open は DEVBASE_OPEN_INDEX の読み方を共有する"""
+    if env_index is None:
+        monkeypatch.delenv('DEVBASE_OPEN_INDEX', raising=False)
+    else:
+        monkeypatch.setenv('DEVBASE_OPEN_INDEX', env_index)
+    assert container._resolve_open_index(None, 2) == expected
+    assert container._explicit_open_index(None) == expected

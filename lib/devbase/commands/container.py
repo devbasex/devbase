@@ -838,6 +838,19 @@ def _auto_snapshot(remote: bool = False) -> None:
         logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
 
 
+def _open_index_from_env() -> int:
+    """env ``DEVBASE_OPEN_INDEX`` が指す番号。未設定・空・数でなければ既定の 1。
+
+    ``up`` の [6/6] と ``devbase open`` が CLI 引数を省いたときに共有する。範囲の検査は
+    持たない (呼び出し側で扱いが違うため)。
+    """
+    raw = os.environ.get('DEVBASE_OPEN_INDEX')
+    try:
+        return int(raw) if raw else 1
+    except ValueError:
+        return 1
+
+
 def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     """開く dev インスタンス番号を解決する (CLI 引数 → env ``DEVBASE_OPEN_INDEX`` → 既定 1)。
 
@@ -846,11 +859,7 @@ def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     で env フォールバック・範囲チェックを共有する。
     """
     if open_index is None:
-        raw = os.environ.get('DEVBASE_OPEN_INDEX')
-        try:
-            open_index = int(raw) if raw else 1
-        except ValueError:
-            open_index = 1
+        open_index = _open_index_from_env()
     if not (1 <= open_index <= scale):
         logger.warning(
             "open index %d is out of range (1..%d); falling back to 1",
@@ -1025,15 +1034,9 @@ def _explicit_open_index(open_index: Optional[int]) -> int:
     """``devbase open`` が開く番号 (CLI 引数 → env ``DEVBASE_OPEN_INDEX`` → 既定 1)。
 
     ``up`` の :func:`_resolve_open_index` と違い、範囲の検査は呼び出し側が動いている
-    インスタンスに対して行う。env が数でなければ ``up`` と同じく 1 とする。
+    インスタンスに対して行う。env の読み方は ``up`` と共有する (:func:`_open_index_from_env`)。
     """
-    if open_index is not None:
-        return open_index
-    raw = os.environ.get('DEVBASE_OPEN_INDEX')
-    try:
-        return int(raw) if raw else 1
-    except ValueError:
-        return 1
+    return open_index if open_index is not None else _open_index_from_env()
 
 
 def cmd_open(project_name: Optional[str] = None, open_index: Optional[int] = None,
