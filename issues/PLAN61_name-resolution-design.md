@@ -128,7 +128,7 @@ tests/utils/test_names.py            # 新設
 | 項目 | 内容 |
 | --- | --- |
 | 名前 | `devbase build -h` / `devbase build --help`。前方一致（`devbase b --help`）も同じ |
-| 入力 | `build` より後ろの引数のどこかにある `-h` または `--help`。`--context --help` の `--help` も使い方として扱う。`--context=--help` は context の値であり、使い方にしない（決定 8） |
+| 入力 | `build` より後ろの引数のどこかにある `-h` または `--help`。`--context --help` の `--help` も使い方として扱う。`--context=--help` は context の値であり、使い方にしない。`-h` も同じ規則で、`--context -h` は使い方、`--context=-h` は値（決定 8） |
 | 出力 | 標準出力に下の使い方。終了コード 0。`cmd_build`・`compose_with_secrets`・`run_python` を呼ばず、cd も `env` の読み込みもしない |
 | 互換性 | 今は `build --help` がビルドを始める。これを止める以外の変更はない。`devbase project build --help`（argparse）は変えない |
 
@@ -292,9 +292,9 @@ bash の `[[ =~ ]]` は C ライブラリの正規表現を使う。そのため
 
 使い方は標準出力へ出し、終了コード 0 にする。argparse の `--help` と同じ扱いにそろえる。
 
-### 決定 8: `--help` は引数のどこにあっても使い方を優先し、`--context=--help` だけは値として扱う
+### 決定 8: `-h` / `--help` は引数のどこにあっても使い方を優先し、`--context=-h` / `--context=--help` だけは値として扱う
 
-`--help` を打った利用者が求めているのは使い方である。位置で区別すると、どの位置なら効くかを覚える必要がある。`--context --help` も使い方にする。argparse も `-` 始まりの語を `--context` の値として取らず、usage エラー（終了コード 2）にする。値にならない点は同じで、エラーにする代わりに使い方を出す。`--context=--help` は `=` で値と結びついた 1 語なので値として扱い、context 名 `--help` として下流へ渡す。
+`--help` を打った利用者が求めているのは使い方である。位置で区別すると、どの位置なら効くかを覚える必要がある。`--context --help` も使い方にする。argparse も `-` 始まりの語を `--context` の値として取らず、usage エラー（終了コード 2）にする。値にならない点は同じで、エラーにする代わりに使い方を出す。`--context=--help` は `=` で値と結びついた 1 語なので値として扱い、context 名 `--help` として下流へ渡す。`-h` も同じ規則に従う。`--context -h` は使い方、`--context=-h` は context 名 `-h` として下流へ渡す。
 
 `help` という語（`-` なし）は使い方にしない。イメージ名の形に合う語で、名前として扱う今の動きを変える理由が無い。
 
@@ -339,7 +339,7 @@ bash の `[[ =~ ]]` は C ライブラリの正規表現を使う。そのため
 | 7 | `exec_wrapper`: `projects/carmo` だけの状態で `build carmo` → 標準出力に `=== Building devbase images ===`、`UV:` の `PWD:` が `projects/carmo` |
 | 8 | `exec_wrapper`: `containers/go` だけの状態で `build go` → `UV:` の引数が `project build go` で終わり、stderr に知らせが無い |
 | 9 | `exec_wrapper`: `build --help` と `build -h` が終了コード 0、`=== Building devbase images ===` と `UV:` が出ない（`run_python` も docker も `uv` を通るため、`UV:` が無いことで両方を確かめる） |
-| 10 | 9 と同じ実行で、標準出力に `--no-cache`・`--expires[=DAYS]`・`--context NAME`・`<image>` を含む |
+| 10 | 9 と同じ実行で、標準出力に `--no-cache`・`--project-no-cache`・`--expires[=DAYS]`・`--context NAME`・`<image>` を含む |
 | 11 | `exec_wrapper`: `projects/carmo` がある状態で `build carmo --help` → 9 と同じ結果で、`PWD:` の行が無い（cd も起きない） |
 | 12 | `exec_wrapper`: `projects/carmo` がある状態で `container up carmo` と `ct up carmo`（`down` `ps` `logs` `scale` `rebuild` `open` も）→ `PWD:` が `work`、`UV:` の引数に `carmo` が残る。単体（`test_project_dispatch.py`）: `container` / `ct` の各サブコマンドに `carmo` を渡した parse が `SystemExit(2)` |
 | 13 | `exec_wrapper`: `container up` → `UV:` の引数が `container up`。非推奨の警告は既存の `test_cmd_container_warns_and_delegates` |
@@ -353,7 +353,7 @@ bash の `[[ =~ ]]` は C ライブラリの正規表現を使う。そのため
 | --- | --- |
 | 2 | 同期テスト（`test_project_name_resolution.py`）: `bin/devbase` から `_SINGLE_SEGMENT_NAME_RE='...'` を抜き出し、`'^' + SINGLE_SEGMENT_NAME_PATTERN + '$'` と一致する |
 | 4 | `exec_wrapper`: `projects/café` を作った状態で `up café` が cd しない。単体: `is_single_segment_name('café')` が `False` |
-| 8 | `exec_wrapper`: `build --context --help` は使い方で終了コード 0。`build --context=--help` は使い方を出さず、`UV:` の引数に `env exec --context --help --` を含む |
+| 8 | `exec_wrapper`: `build --context --help` と `build --context -h` は使い方で終了コード 0。`build --context=--help` と `build --context=-h` は使い方を出さず、`UV:` の引数にそれぞれ `env exec --context --help --`・`env exec --context -h --` を含む |
 
 ## 未確認のまま残ること
 

@@ -134,7 +134,8 @@
 - [ ] 9. `devbase build --help` と `devbase build -h` は、終了コード 0 で `build` の使い方を出し、
       `=== Building devbase images ===` を出さない。`cmd_build`・`docker`・Python の `project build` の
       いずれも呼ばれない
-- [ ] 10. 使い方には `--no-cache` / `--expires[=DAYS]` / `--context NAME` / `<image>` の指定が載る
+- [ ] 10. 使い方には `--no-cache` / `--project-no-cache` / `--expires[=DAYS]` / `--context NAME` / `<image>` の指定が載る
+      （`--project-no-cache` は 2026-09-18 のドキュメントレビューで追加）
 - [ ] 11. `devbase build carmo --help`（実在するプロジェクト名の後ろの `--help`）も、ビルドせず使い方を出して
       終了コード 0
 
@@ -157,7 +158,7 @@
 
 | 対象 | 影響 |
 | --- | --- |
-| 公開インタフェース | 変わる: 形に合わない名前は名前として扱われない（#146）。`build <x>` の衝突はイメージが勝つ（#142）。`build --help` が使い方を出す（#196）。`container <sub> <name>` が usage エラーになる（#200）。CHANGELOG に「変更」として書く |
+| 公開インタフェース | 変わる: 形に合わない名前は名前として扱われない（#146）。`build <x>` の衝突はイメージが勝つ（#142）。`build --help` が使い方を出す（#196）。`container <sub> <name>` が usage エラーになる（#200）。CHANGELOG では #146・#142・#200 を Changed、#196 を Fixed に書く |
 | データ | 変わらない |
 | 既存の振る舞い | `bin/devbase` の name 解決と `build)` の分岐、Python 側の 2 つの名前の検証 |
 
