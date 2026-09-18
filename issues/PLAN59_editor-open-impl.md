@@ -88,6 +88,45 @@
 
 ## 完了の定義
 
-- [ ] 受け入れ条件 1〜20 をすべて満たし、条件ごとにテストか手動確認の結果が対応している
-- [ ] `uv run pytest` が exit=0
-- [ ] 手動確認（起動中で窓が開きコンテナが変わらない / 停止中で起動から開く / TUI の先頭が `open`）の結果を Pull Request に書いた
+- [x] 受け入れ条件をすべて満たし、条件ごとにテストか手動確認の結果が対応している（下の表。TTY で窓が開くことはリリース後の確認へ回す）
+- [x] `uv run pytest` が exit=0
+- [x] 手動確認の結果を Pull Request に書いた
+
+## 検証結果
+
+head 3af259b に対して実行した。
+
+| 段階 | コマンド | 対象範囲 | 実行時刻 | 結果 |
+| --- | --- | --- | --- | --- |
+| 限定的な検証 | `uv run pytest -q tests/commands/test_container_open.py tests/cli/test_open_command.py tests/cli/tui/test_open_menu.py tests/utils/test_running_dev_instances.py tests/cli/test_completion.py` | 追加・変更したテスト | 2026-09-18 17:48 | 101 passed / exit=0 |
+| 全体テスト | `uv run pytest -q` | 全体 | 2026-09-18 17:48 | 2682 passed / exit=0 |
+| 静的解析 | `uvx ruff check --select=E9,F63,F7,F82 lib`（CI と同じ条件） | `lib` | 2026-09-18 17:50 | exit=0 |
+| 構文 | `python3 -m compileall -q lib bin` / `bash -n bin/devbase` / `zsh -n etc/_devbase` | 全体 | 2026-09-18 17:50 | いずれも exit=0 |
+| CI | Python syntax check (3.10 / 3.11 / 3.12)・Ruff lint・ShellCheck | 全体 | 2026-09-18 | 5 件 pass |
+| 実機（非 TTY） | nyle-dx（dev-1 が起動中）で `open` / `open --open-index 3` / `open --context no-such-ctx` / `open --open 2` / `project open --open-index 2` | 起動中の経路と失敗の経路 | 2026-09-18 17:50 | exit=1（非 TTY で skip）/ 1 / 1 / 2 / 1。前後で `nyle-dx-dev-1` の ID と `StartedAt` は変わらない |
+
+カバレッジ: `pyproject.toml` に閾値の設定が無いため測っていない。
+
+| 受け入れ条件 | 確かめたもの |
+| --- | --- |
+| 1 | `test_running_opens_the_editor_without_touching_containers`、実機（コンテナ不変） |
+| 2 | `test_open_ignores_the_auto_open_switch` |
+| 3・4 | `test_stopped_delegates_to_up_with_open` / `test_stopped_opens_even_when_auto_open_is_disabled` |
+| 5 | `test_index_not_running_is_an_error`、実機（`--open-index 3`） |
+| 6 | `test_index_beyond_project_yml_scale_is_accepted_when_running` |
+| 7 | `test_index_below_one_is_an_error_before_docker` |
+| 8 | `test_index_from_env_is_used` / `test_up_reads_the_same_env_index_as_open` |
+| 9 | `test_shortcut_dispatches_to_cmd_open` / `test_project_open_dispatches_to_cmd_open` / `test_wrapper_*_open_name_cds_and_strips` |
+| 10 | `test_context_reaches_the_state_query_and_the_editor` |
+| 11 | `test_open_rejects_the_auto_open_flags` / `test_open_rejects_abbreviations_of_open_index`、実機（`--open 2` → exit=2） |
+| 12〜14 | `tests/cli/tui/test_open_menu.py` / `test_select_action_lists_all_ops` |
+| 15 | `test_up_auto_open_*` と既存の `tests/editor` / `tests/cli/test_up_roundtrips.py` |
+| 16 | `test_prefix_resolution` |
+| 17 | `tests/cli/test_completion.py` の `test_bash_open_*` / `test_zsh_completion_mentions_open` |
+| 18 | 全体テスト |
+| 19 | `test_skip_is_a_failure` / `test_print_command_is_a_success`、実機（非 TTY で exit=1） |
+| 20 | `test_state_query_failure_does_not_start_up`、実機（`--context no-such-ctx`） |
+
+- 未検証の項目: TTY の端末から `devbase open` で窓が開くこと、`devbase list` の起動中の行で先頭が `open` であること（利用者のデスクトップに窓を出すため、リリース後の確認で行う）
+- 既存の失敗: なし
+- 範囲外と判断したもの: `container` / `ct` のサブコマンドが wrapper 経由で `[name]` を受け付ける既存の動き（#200）
