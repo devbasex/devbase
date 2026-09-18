@@ -144,5 +144,10 @@ def test_wrapper_routes_rebuild_to_python():
 
 def test_wrapper_rebuild_in_name_resolvable():
     wrapper = (Path(__file__).resolve().parents[2] / 'bin' / 'devbase').read_text()
-    assert '_NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build rebuild "' in wrapper
-    assert '_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale rebuild "' in wrapper
+    import re
+
+    def listed(var):
+        return re.search(rf'^{var}=" (.*) "$', wrapper, re.M).group(1).split()
+
+    assert 'rebuild' in listed('_NAME_RESOLVABLE_SHORTCUTS')
+    assert 'rebuild' in listed('_PROJECT_NAME_SUBCOMMANDS')

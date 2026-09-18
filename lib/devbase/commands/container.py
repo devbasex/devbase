@@ -25,7 +25,8 @@ from devbase.utils.docker import (
     docker_compose_down,
     docker_compose_up,
     wait_for_containers_ready,
-    ensure_network
+    ensure_network,
+    running_dev_instances,
 )
 from devbase.utils.config import get_project_name
 from devbase.utils import docker_context
@@ -719,6 +720,9 @@ def _dispatch_lifecycle(args) -> int:
                                        expires=getattr(args, 'expires', None), **ctx),
             'rebuild': lambda: cmd_rebuild(**ctx),
             'profile': lambda: _dispatch_profile(args, ctx),
+            'open':  lambda: cmd_open(project_name=project_name,
+                                      open_index=getattr(args, 'open_index', None),
+                                      **ctx),
         }
 
         handler = handlers.get(subcmd)
@@ -834,6 +838,19 @@ def _auto_snapshot(remote: bool = False) -> None:
         logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)
 
 
+def _open_index_from_env() -> int:
+    """env ``DEVBASE_OPEN_INDEX`` が指す番号。未設定・空・数でなければ既定の 1。
+
+    ``up`` の [6/6] と ``devbase open`` が CLI 引数を省いたときに共有する。範囲の検査は
+    持たない (呼び出し側で扱いが違うため)。
+    """
+    raw = os.environ.get('DEVBASE_OPEN_INDEX')
+    try:
+        return int(raw) if raw else 1
+    except ValueError:
+        return 1
+
+
 def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     """開く dev インスタンス番号を解決する (CLI 引数 → env ``DEVBASE_OPEN_INDEX`` → 既定 1)。
 
@@ -842,11 +859,7 @@ def _resolve_open_index(open_index: Optional[int], scale: int) -> int:
     で env フォールバック・範囲チェックを共有する。
     """
     if open_index is None:
-        raw = os.environ.get('DEVBASE_OPEN_INDEX')
-        try:
-            open_index = int(raw) if raw else 1
-        except ValueError:
-            open_index = 1
+        open_index = _open_index_from_env()
     if not (1 <= open_index <= scale):
         logger.warning(
             "open index %d is out of range (1..%d); falling back to 1",
@@ -978,30 +991,106 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
 
     open_index = _resolve_open_index(open_index, scale)
 
+    logger.info("[6/6] Opening editor attached to the dev container...")
+    try:
+        _open_editor_at(project_name, open_index, config, compose_file=compose_file,
+                        docker_context_name=docker_context_name)
+    except Exception as e:  # noqa: BLE001 - エディタ起動で up を倒さない
+        logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
+
+
+def _open_editor_at(project_name: str, index: int, config, compose_file=None,
+                    docker_context_name: Optional[str] = None) -> str:
+    """dev インスタンス ``index`` へ接続したエディタを開き、``opener`` の action を返す。
+
+    開く対象は ``config`` (``project.yml``) から決める。repo が 1 件なら primary の
+    フォルダ、2 件以上なら entrypoint が書き出した ``*.code-workspace``。有効判定と
+    index の解決は持たない。``up`` の [6/6] (:func:`_maybe_open_editor`) と
+    ``devbase open`` (:func:`cmd_open`) がそれぞれ済ませてから呼ぶ (PLAN59 決定 3)。
+    """
+    from devbase.editor import opener
+
     # 実コンテナ名問い合わせ用の compose file: 明示指定がなければ override が
     # 存在すればそれを使う (起動時と同じ file を docker compose ps へ渡す)。
     if compose_file is None and _SCALE_COMPOSE_FILE.exists():
         compose_file = _SCALE_COMPOSE_FILE
 
-    dev_service_name = get_dev_service_name()
-    workdir = config.resolved_work_dir()
     # repo が 2 件以上なら multi-root workspace を開く (entrypoint が同じパスへ
     # ファイルを書き出している)。1 件なら従来どおりフォルダを開く。
     workspace = (project_runtime.workspace_path(project_name)
                  if len(config.repos) > 1 else None)
-    logger.info("[6/6] Opening editor attached to the dev container...")
-    try:
-        opener.open_editor(
-            project_name=project_name,
-            dev_service_name=dev_service_name,
-            workdir=workdir,
-            workspace=workspace,
-            index=open_index,
-            compose_file=compose_file,
-            docker_context=docker_context_name,
-        )
-    except Exception as e:  # noqa: BLE001 - エディタ起動で up を倒さない
-        logger.warning("エディタの自動オープンに失敗しましたがデプロイは成功しています: %s", e)
+    return opener.open_editor(
+        project_name=project_name,
+        dev_service_name=get_dev_service_name(),
+        workdir=config.resolved_work_dir(),
+        workspace=workspace,
+        index=index,
+        compose_file=compose_file,
+        docker_context=docker_context_name,
+    )
+
+
+def _explicit_open_index(open_index: Optional[int]) -> int:
+    """``devbase open`` が開く番号 (CLI 引数 → env ``DEVBASE_OPEN_INDEX`` → 既定 1)。
+
+    ``up`` の :func:`_resolve_open_index` と違い、範囲の検査は呼び出し側が動いている
+    インスタンスに対して行う。env の読み方は ``up`` と共有する (:func:`_open_index_from_env`)。
+    """
+    return open_index if open_index is not None else _open_index_from_env()
+
+
+def cmd_open(project_name: Optional[str] = None, open_index: Optional[int] = None,
+             context: Optional[str] = None) -> int:
+    """dev コンテナへ接続したエディタを、コンテナに触らずに開く (PLAN59)。
+
+    dev のインスタンスが 1 つも動いていなければ ``up --open`` へ委譲し、起動から
+    開くところまで通す。明示の操作なので ``DEVBASE_OPEN_EDITOR`` と ``project.yml`` の
+    ``open_editor`` は見ない (決定 3)。
+
+    戻り値: 開いた (``launch``) かコマンドを提示した (``print_command``) なら 0。
+    index が 0 以下・動いていない index・状態を取得できない・開けなかった (``skip``)
+    ときは 1。停止中は ``cmd_up`` の戻り値。
+    """
+    if project_name is None:
+        project_name = get_project_name()
+
+    index = _explicit_open_index(open_index)
+    if index < 1:
+        logger.error("open index %d は 1 以上を指定してください", index)
+        return 1
+
+    config = project_runtime.current_project_config()
+
+    # 接続先の反映は docker を呼ばない。エディタへ渡す context は up の [6/6] と同じく
+    # devbase が決めた値 (未指定なら None)。機密は opener が実コンテナ名を問い合わせる
+    # docker compose ps の補間のために載せる (login と同じ扱い)。
+    choice = _choose_context(context)
+    docker_context.apply(choice)
+    _inject_secrets(required=False)
+
+    dev_service_name = get_dev_service_name()
+    running = running_dev_instances(project_name, dev_service_name)
+    if running is None:
+        # 取得できないことは停止中を意味しない。up へ進むと動いている環境を
+        # 作り直しうるため、ここで止まる (決定 2)。
+        logger.error("dev コンテナの状態を取得できないため、エディタを開けません")
+        return 1
+
+    if not running:
+        logger.info("dev コンテナが起動していないため up を実行します (起動後にエディタを開きます)")
+        return cmd_up(project_name=project_name, open_editor=True,
+                      open_index=open_index, context=context)
+
+    running_indices = [i for i, _name in running]
+    if index not in running_indices:
+        logger.error("%s-%d は起動していません。起動中: %s", dev_service_name, index,
+                     ', '.join(str(i) for i in running_indices))
+        return 1
+
+    logger.info("エディタを開きます: %s-%d", dev_service_name, index)
+    action = _open_editor_at(project_name, index, config,
+                             docker_context_name=choice.context)
+    return 1 if action == 'skip' else 0
 
 
 def _report_missing_repos(config, scale: int, dev_service_name: str,

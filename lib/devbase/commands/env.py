@@ -341,31 +341,14 @@ def cmd_env_exec(devbase_root: Path, argv, context: Optional[str] = None) -> int
 def _running_dev_containers(project: str, dev_service_name: str, runner) -> Optional[List[str]]:
     """起動中の dev コンテナの名前を ``<dev>-<n>`` の番号順に返す。docker を呼べなければ ``None``。
 
-    ``up`` の構成は dev の各インスタンスをサービス ``<dev>-<n>`` として定義する
-    (``volume/compose.py``)。プロジェクトのラベルだけで絞ると DB や snapshot にも届く。
+    列挙そのものは ``devbase open`` の起動中の判定と共有する (PLAN59 決定 8)。
     """
-    import re
+    from devbase.utils.docker import running_dev_instances
 
-    try:
-        result = runner(
-            ['docker', 'ps', '--filter', f'label=com.docker.compose.project={project}',
-             '--format', '{{.Names}}\t{{.Label "com.docker.compose.service"}}'],
-            capture_output=True, text=True, check=False)
-    except (OSError, subprocess.SubprocessError) as e:
-        logger.error("docker ps を実行できませんでした: %s", e)
+    instances = running_dev_instances(project, dev_service_name, runner=runner)
+    if instances is None:
         return None
-    if result.returncode != 0:
-        logger.error("docker ps が失敗しました (exit=%d): %s", result.returncode,
-                     (result.stderr or '').strip())
-        return None
-    pattern = re.compile(rf'^{re.escape(dev_service_name)}-([1-9][0-9]*)$')
-    found = []
-    for line in (result.stdout or '').splitlines():
-        name, _, service = line.partition('\t')
-        match = pattern.match(service.strip())
-        if name and match:
-            found.append((int(match.group(1)), name.strip()))
-    return [name for _index, name in sorted(found)]
+    return [name for _index, name in instances]
 
 
 def _require_openbao_backend(store):

@@ -42,6 +42,8 @@ SHORTCUTS = {
     # 完結するため `build` と異なりトップレベルショートカットに含めてよい
     # (build は shell 実装に委譲するため除外している。上の NOTE 参照)。
     'rebuild': 'rebuild',
+    # `open` はコンテナに触らずエディタだけを開き直す (PLAN59)。up と同じく `[name]` を取る。
+    'open': 'open',
 }
 
 # Group aliases
@@ -54,9 +56,9 @@ GROUP_ALIASES = {
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
     ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list',
-                          'profile'],
+                          'profile', 'open'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild',
-                          'profile'],
+                          'profile', 'open'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
                           'exec', 'token', 'encrypt', 'decrypt', 'rekey', 'doctor',
                           'export', 'import', 'backend'],
@@ -153,6 +155,25 @@ def _add_open_args(parser):
     return parser
 
 
+def _add_open_subparser(sub, *, with_name: bool):
+    """`open` を登録する (PLAN59)。`project` とトップレベルは `[name]` を取り、`container` は取らない。
+
+    `--open` / `--no-open` は登録しない。明示のコマンドは開く意思表示そのもので、`up` の
+    自動オープンの可否とは別に扱う (決定 3)。`--open-index` の検査 (1 以上・動いている
+    インスタンス) は cmd_open が行う。`allow_abbrev=False` は `--open 2` / `--open=2` が
+    前方一致で `--open-index` に吸われるのを防ぐ (受け入れ条件 11)。
+    """
+    p = sub.add_parser('open', allow_abbrev=False,
+                       help='Open the editor attached to the dev container '
+                            '(starts the project first if it is stopped)')
+    if with_name:
+        _add_name_arg(p)
+    p.add_argument('--open-index', dest='open_index', type=int, default=None, metavar='N',
+                   help='Container index to open (default: DEVBASE_OPEN_INDEX or 1)')
+    _add_context_arg(p)
+    return p
+
+
 def _add_login_subparser(sub):
     """`login` サブコマンドを登録する (project / container 共通)。
 
@@ -244,6 +265,8 @@ def _add_container_parser(subparsers):
 
     _add_profile_subparser(ct_sub, with_name=False)
 
+    _add_open_subparser(ct_sub, with_name=False)
+
 
 def _add_project_parser(subparsers):
     """Project group parser (CWD 非依存のプロジェクト操作)。
@@ -258,7 +281,7 @@ def _add_project_parser(subparsers):
     ため name を受け付けない。両者は project / container で定義が完全に一致するので
     `_add_login_subparser` / `_add_build_subparser` に共通化している。
 
-    同期注意: ここで `name` positional を持つサブコマンド集合 (up/down/ps/logs/scale)
+    同期注意: ここで `name` positional を持つサブコマンド集合 (up/down/ps/logs/scale/rebuild/open)
     は bin/devbase の `_PROJECT_NAME_SUBCOMMANDS` と一致させる必要がある。追加/削除時は
     wrapper 側リストの更新漏れに注意すること。
     """
@@ -302,6 +325,9 @@ def _add_project_parser(subparsers):
     # up / down / list になるため、wrapper の _PROJECT_NAME_SUBCOMMANDS には含めない
     # (PLAN58 決定 6)。
     _add_profile_subparser(pj_sub, with_name=True)
+
+    # `open` の `[name]` は up と同じく wrapper の _PROJECT_NAME_SUBCOMMANDS で cd する (PLAN59)。
+    _add_open_subparser(pj_sub, with_name=True)
 
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
@@ -724,6 +750,9 @@ def _add_shortcuts(subparsers):
     _add_context_arg(_add_name_arg(subparsers.add_parser(
         'rebuild', help='Rebuild stale images (= build --expires=7)')))
 
+    # `open` は project open のトップレベルシノニム。up と同じく `[name]` を受け付ける。
+    _add_open_subparser(subparsers, with_name=True)
+
     # `list` は `project list` のトップレベルシノニム。lifecycle ではなく一覧表示
     # のため SHORTCUTS (project lifecycle へ写像) ではなく _dispatch で個別に
     # cmd_project_list へ振り分ける。
@@ -744,6 +773,7 @@ def _create_parser():
             "  ps            project ps\n"
             "  scale         project scale\n"
             "  rebuild       project rebuild (= build --expires=7)\n"
+            "  open          project open (open the editor without restarting)\n"
             "\n"
             "Note: `container` is deprecated; use `project` instead.\n"
         )
@@ -807,7 +837,8 @@ def _expand_argv():
     # bin/devbase が build を shell 実装に委譲するため Python 側には top-level
     # build parser が無い。project build / container build は引き続き利用可能。
     commands = ['init', 'status', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
-                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'list', 'help']
+                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'open', 'list',
+                'help']
     repo_subcmds = ['add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):

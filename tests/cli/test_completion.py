@@ -188,3 +188,32 @@ def test_zsh_completion_mentions_profile():
     text = ZSH_COMPLETION.read_text()
     assert "'profile:" in text
     assert "_values 'operation' up down list" in text
+
+
+# PLAN59: `open` (コンテナに触らずエディタを開き直す)
+def test_bash_open_is_a_top_level_command(fake_root):
+    assert "open" in _bash_complete("devbase ''", 1, fake_root)
+
+
+@pytest.mark.parametrize("group", ["project", "container", "ct"])
+def test_bash_open_is_a_group_subcommand(fake_root, group):
+    assert "open" in _bash_complete(f"devbase {group} ''", 2, fake_root)
+
+
+@pytest.mark.parametrize("words, cword", [("devbase open ''", 2),
+                                          ("devbase project open ''", 3)])
+def test_bash_open_completes_project_names(fake_root, words, cword):
+    assert set(_bash_complete(words, cword, fake_root)) == {"web", "api", "linked"}
+
+
+@pytest.mark.parametrize("words, cword", [("devbase open '-'", 2),
+                                          ("devbase project open '-'", 3),
+                                          ("devbase container open '-'", 3)])
+def test_bash_open_completes_its_flags(fake_root, words, cword):
+    assert set(_bash_complete(words, cword, fake_root)) == {"--open-index", "--context"}
+
+
+def test_zsh_completion_mentions_open():
+    text = ZSH_COMPLETION.read_text()
+    assert text.count("'open:") == 3   # トップレベル / project / container
+    assert "--open-index" in text

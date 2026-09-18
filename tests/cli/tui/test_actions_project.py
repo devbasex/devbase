@@ -162,10 +162,10 @@ def test_select_action_lists_all_ops(monkeypatch):
     assert actions_project._select_action("carmo") == "logs"
     assert captured["back"] is True
     assert captured["search"] is False
-    # up を先頭にしつつ全8操作を提示する (PR2)。
+    # open を先頭にしつつ全9操作を提示する (PR2 / PLAN59)。
     assert captured["values"] == [
-        "up", "down", "login", "ps", "logs", "scale", "build", "rebuild"]
-    assert captured["values"][0] == "up", "Enter 連打で up に到達できる"
+        "open", "up", "down", "login", "ps", "logs", "scale", "build", "rebuild"]
+    assert captured["values"][0] == "open", "Enter 1 回でエディタを開き直せる"
 
 
 # ---------------------------------------------------------------------------
