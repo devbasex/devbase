@@ -160,9 +160,10 @@ def _add_open_subparser(sub, *, with_name: bool):
 
     `--open` / `--no-open` は登録しない。明示のコマンドは開く意思表示そのもので、`up` の
     自動オープンの可否とは別に扱う (決定 3)。`--open-index` の検査 (1 以上・動いている
-    インスタンス) は cmd_open が行う。
+    インスタンス) は cmd_open が行う。`allow_abbrev=False` は `--open 2` / `--open=2` が
+    前方一致で `--open-index` に吸われるのを防ぐ (受け入れ条件 11)。
     """
-    p = sub.add_parser('open', help='Open the editor attached to the dev container '
+    p = sub.add_parser('open', allow_abbrev=False, help='Open the editor attached to the dev container '
                                     '(starts the project first if it is stopped)')
     if with_name:
         _add_name_arg(p)

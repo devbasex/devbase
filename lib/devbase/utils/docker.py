@@ -80,8 +80,9 @@ def running_dev_instances(project: str, dev_service_name: str,
     """動いている dev インスタンスの ``(番号, コンテナ名)`` を番号順に返す。
 
     ``up`` の構成は dev の各インスタンスをサービス ``<dev>-<n>`` として定義する
-    (``volume/compose.py``)。プロジェクトのラベルだけで絞ると DB や snapshot にも届くため、
-    サービスのラベルでも絞る。``-a`` を付けないので止まっているコンテナは出ない。
+    (``volume/compose.py``)。``docker ps`` はプロジェクトのラベルで絞り、それだけでは DB や
+    snapshot にも届くため、サービス名 (``<dev>-<n>``) は正規表現で選別する。``-a`` を付けないので
+    止まっているコンテナは出ない。
 
     docker を呼べない・0 以外で終わったときは error ログを出して ``None`` を返す。
     動いているものが無い ``[]`` と区別するためで、``devbase open`` はこの区別で「停止中」と

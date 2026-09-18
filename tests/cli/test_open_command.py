@@ -52,6 +52,15 @@ def test_open_rejects_the_auto_open_flags(argv, flag, capsys):
     assert e.value.code == 2
 
 
+@pytest.mark.parametrize('args', [('--open', '2'), ('--open=2',), ('--open-i', '2')])
+@pytest.mark.parametrize('argv', [['open'], ['project', 'open'], ['container', 'open']])
+def test_open_rejects_abbreviations_of_open_index(argv, args, capsys):
+    """受け入れ条件 11: 前方一致で --open 2 が --open-index 2 と解釈されない"""
+    with pytest.raises(SystemExit) as e:
+        _parse(*argv, *args)
+    assert e.value.code == 2
+
+
 def test_open_is_a_shortcut_to_project_open():
     assert cli.SHORTCUTS['open'] == 'open'
     assert 'project open' in (cli._create_parser().epilog or '')
