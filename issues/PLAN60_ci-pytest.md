@@ -26,7 +26,7 @@
 - 前提 1: CI の Python は `pyproject.toml` の `requires-python` の下限と、手元で使う版（2026-09-18 時点で uv が選ぶ 3.13）の 2 つで足りる。
   既存の `python-syntax` ジョブの行列（3.10 / 3.11 / 3.12）には合わせない。pytest の実行時間が 3 倍になる
   割に、版の差で落ちる箇所は `compileall` の行列が既に構文で拾っている
-- 前提 2: 依存は `uv.lock` から `uv sync --frozen` で入れる。lock と `pyproject.toml` が食い違えば CI が落ちる
+- 前提 2: 依存は `uv.lock` から `uv sync --locked` で入れる。lock と `pyproject.toml` が食い違えば CI が落ちる
 - 前提 3: 実 docker・実 OpenBao・ネットワークを要るテストは、CI では走らせない。手元で走る
   テストのうち CI で落ちるものは、**テストの側を直して**（環境の隔離・スタブ）CI でも通るようにする。
   `skip` で逃がすのは、実機そのものを確かめるテストに限る
@@ -51,7 +51,7 @@
 ## 受け入れ条件
 
 - [ ] 1. `main` 宛ての Pull Request と `main` への push で、`tests/` 全体の pytest を実行するジョブが走る
-- [ ] 2. そのジョブは `uv.lock` から依存を入れ（`uv sync --frozen` 相当）、lock に無い依存を取りに行かない
+- [ ] 2. そのジョブは `uv.lock` から依存を入れ（`uv sync --locked` 相当）、lock に無い依存を取りに行かない
 - [ ] 3. この Pull Request の CI で、そのジョブが成功する
 - [ ] 4. テストを 1 件わざと失敗させた状態で、そのジョブが失敗する（確かめた後にその変更は戻す）
 - [ ] 5. 手元（`DEVBASE_ROOT` を持つシェル）の `uv run pytest tests/` の結果が、この変更の前後で変わらない
@@ -63,7 +63,7 @@
 | 項目 | 手段 |
 | --- | --- |
 | テスト（手元） | `uv run pytest tests/ -q` |
-| テスト（CI 相当） | `env -u DEVBASE_ROOT uv run --frozen pytest tests/ -q` |
+| テスト（CI 相当） | `env -u DEVBASE_ROOT uv run --locked pytest tests/ -q` |
 | CI | Pull Request の checks（`gh pr checks`） |
 | 静的解析 | 既存の `python-syntax` / `lint` / `shellcheck` のジョブ |
 

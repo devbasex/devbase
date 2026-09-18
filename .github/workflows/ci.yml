@@ -59,7 +59,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies from uv.lock
-        run: uv sync --frozen
+        run: uv sync --locked
       - name: Run pytest
         # CI に DEVBASE_ROOT は無い。テストは自前の tmp を DEVBASE_ROOT に向ける (PLAN60 前提 4)
-        run: uv run --frozen pytest tests/ -q
+        run: uv run --locked pytest tests/ -q
