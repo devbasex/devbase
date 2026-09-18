@@ -340,7 +340,7 @@ bash の `[[ =~ ]]` は C ライブラリの正規表現を使う。そのため
 | 8 | `exec_wrapper`: `containers/go` だけの状態で `build go` → `UV:` の引数が `project build go` で終わり、stderr に知らせが無い |
 | 9 | `exec_wrapper`: `build --help` と `build -h` が終了コード 0、`=== Building devbase images ===` と `UV:` が出ない（`run_python` も docker も `uv` を通るため、`UV:` が無いことで両方を確かめる） |
 | 10 | 9 と同じ実行で、標準出力に `--no-cache`・`--project-no-cache`・`--expires[=DAYS]`・`--context NAME`・`<image>` を含む |
-| 11 | `exec_wrapper`: `projects/carmo` がある状態で `build carmo --help` → 9 と同じ結果で、`PWD:` の行が無い（cd も起きない） |
+| 11 | `exec_wrapper`: `projects/carmo` があり、`projects/carmo/env` に読み込みを検知する行 `echo CARMO_ENV_READ >&2` を置いた状態で `build carmo --help` → 9 と同じ結果で、`PWD:` の行が無く、stderr に `CARMO_ENV_READ` が出ない（cd も env の読み込みも起きない）。`PWD:` は偽の `uv` が出す行なので、無いことは `uv` が呼ばれなかったことしか示さず、名前解決で cd と env の読み込みを済ませてからヘルプで終わる実装でも通る。wrapper は `env` を `source` するため、検知の行は cd と読み込みが起きたときだけ stderr に出る |
 | 12 | `exec_wrapper`: `projects/carmo` がある状態で `container up carmo` と `ct up carmo`（`down` `ps` `logs` `scale` `rebuild` `open` も）→ `PWD:` が `work`、`UV:` の引数に `carmo` が残る。単体（`test_project_dispatch.py`）: `container` / `ct` の各サブコマンドに `carmo` を渡した parse が `SystemExit(2)` |
 | 13 | `exec_wrapper`: `container up` → `UV:` の引数が `container up`。非推奨の警告は既存の `test_cmd_container_warns_and_delegates` |
 | 14 | 既存の `test_project_name_resolution.py`（`test_wrapper_ct_up_name_cds_and_strips` を除く）・`test_build_image_argument.py`・`test_wrapper_build_context.py`・`test_open_command.py`・`test_project_dispatch.py` が変更なしで通る。`test_wrapper_ct_up_name_cds_and_strips` は決定 10 で振る舞いが変わるため、12 のテストへ置き換える |
