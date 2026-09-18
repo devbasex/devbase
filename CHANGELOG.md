@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Added
+- **閉じた VS Code の窓を、コンテナを再起動せずに開き直す `devbase open` を足しました（PLAN59 / #197）。**
+  `devbase open [name]` / `devbase project open [name]` / `devbase container open` で、`devbase up` の
+  最後の段と同じ窓を開きます。dev コンテナが動いていなければ `devbase up --open` と同じく起動してから
+  開きます。`project.yml` の `open_editor` と `DEVBASE_OPEN_EDITOR` は見ません（明示のコマンドのため）。
+  開く番号は `--open-index N` で選び、上限は動いているコンテナで決まります。
+- `devbase list` の起動中のプロジェクトの操作メニューの先頭に「エディタを開く (open)」を置きました。
+
+### Changed
+- `devbase list` の起動中の操作メニューで、Enter 1 回で決まる項目が「再起動 (up)」から
+  「エディタを開く (open)」に変わりました。再起動はその 1 つ下です。
+
 ### Fixed
 - **tmux の中で URL がクリックできなくなっていた**のを直しました。tmux は端末が `Hls`
   能力を持つときだけハイパーリンク (OSC 8) を書き出し、持たない端末ではリンクを捨てて

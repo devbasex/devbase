@@ -31,10 +31,10 @@ _devbase_completions() {
         cword=$COMP_CWORD
     }
 
-    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale list help"
+    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale open list help"
     # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
-    local project_subcommands="up down ps login logs scale build rebuild list profile"
-    local container_subcommands="up down ps login logs scale build rebuild profile"
+    local project_subcommands="up down ps login logs scale build rebuild list profile open"
+    local container_subcommands="up down ps login logs scale build rebuild profile open"
     local env_subcommands="init sync list set get delete edit project export import keygen exec encrypt decrypt rekey doctor"
     local plugin_subcommands="list install uninstall update info sync repo"
     local repo_subcommands="add remove list refresh"
@@ -53,6 +53,14 @@ _devbase_completions() {
                 # プロジェクト名を補完する (login=index / build=image は対象外)。
                 up|down|scale|rebuild)
                     COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                    ;;
+                # open は [name] と --open-index / --context を取る (PLAN59)。
+                open)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "--open-index --context" -- "$cur"))
+                    else
+                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                    fi
                     ;;
                 # ps は [name] と -a フラグの両方を取る (project ps と同じ挙動)。
                 ps)
@@ -129,6 +137,13 @@ _devbase_completions() {
                     profile)
                         COMPREPLY=($(compgen -W "up down list" -- "$cur"))
                         ;;
+                    open)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--open-index --context" -- "$cur"))
+                        else
+                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        fi
+                        ;;
                 esac
             fi
             # container subcommand arguments (非推奨: project へ移行してください)
@@ -142,6 +157,11 @@ _devbase_completions() {
                         ;;
                     profile)
                         COMPREPLY=($(compgen -W "up down list" -- "$cur"))
+                        ;;
+                    open)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--open-index --context" -- "$cur"))
+                        fi
                         ;;
                     ps)
                         if [[ "$cur" == -* ]]; then

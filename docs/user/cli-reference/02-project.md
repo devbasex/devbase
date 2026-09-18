@@ -95,6 +95,34 @@ devbase up [name] [--context NAME]
 > ことがあります。確実に反映するには **`devbase build [name] --no-cache`** で再ビルドしてから
 > `devbase up` してください（`--no-cache` は `build` のオプションで、`rebuild` にはありません）。
 
+## `devbase project open`
+
+閉じた VS Code の窓を、コンテナを再起動せずに開き直します。`devbase up` の最後の段で開くのと同じ窓（dev コンテナへ接続したフォルダ、リポジトリが 2 件以上ならワークスペース）を開きます。
+
+```
+devbase project open [name] [--open-index N] [--context NAME]
+devbase open [name] [--open-index N] [--context NAME]
+devbase container open [--open-index N] [--context NAME]
+```
+
+| パラメータ | 必須 | デフォルト | 説明 |
+|-----------|------|-----------|------|
+| `name` | いいえ | カレント | 対象プロジェクト名。`container open` では受け付けません |
+| `--open-index N` | いいえ | `DEVBASE_OPEN_INDEX`、無ければ `1` | 開く dev コンテナの番号 |
+
+プロジェクトの状態で動きが変わります。
+
+| 状態 | 動き | 終了コード |
+|------|------|-----------|
+| dev コンテナが 1 つ以上動いている | コンテナに触らずに窓を開く | 開いた・SSH で手元のコマンドを提示した: `0` / 開けなかった（非 TTY・`code` が無い）: `1` |
+| dev コンテナが 1 つも動いていない | `devbase up --open` と同じく起動してから窓を開く | `up` の終了コード |
+| 指定した番号のコンテナが動いていない | 動いている番号を示して止まる（起動はしない） | `1` |
+| コンテナの状態を取得できない（Docker のデーモンに届かない） | 起動せずに止まる | `1` |
+
+- 開くかどうかの設定（`project.yml` の `open_editor` / `DEVBASE_OPEN_EDITOR`）は見ません。明示のコマンドなので、自動オープンを無効にした端末でも開きます
+- 番号の上限は `project.yml` の `scale` ではなく、動いているコンテナで決まります（`devbase scale` で増やした分も開けます）
+- `--open` / `--no-open` は受け付けません（`up` の自動オープンのためのオプションです）
+
 ## `devbase project down`
 
 コンテナを停止・削除します。
@@ -336,8 +364,9 @@ devbase list [--no-interactive|--plain|-P]
 | Esc / ← | サブメニューでは 1 つ前の画面へ戻る（トップでは Esc で終了） |
 | Ctrl-C | どの画面でも全体を中止 |
 
-起動中プロジェクトの操作サブメニューでは up / down / login / ps / logs / scale /
-build / rebuild を選べます。最下部のカテゴリメニューから実行できる操作
+起動中プロジェクトの操作サブメニューでは open / up / down / login / ps / logs / scale /
+build / rebuild を選べます。先頭（Enter 1 回で決まる位置）は **エディタを開く (open)** で、
+閉じた VS Code の窓をコンテナに触らずに開き直します。再起動 (up) はその 1 つ下です。最下部のカテゴリメニューから実行できる操作
 （実体は対応する CLI コマンドへの委譲）:
 
 | カテゴリ | 選べる操作 |

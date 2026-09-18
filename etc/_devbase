@@ -67,6 +67,7 @@ _devbase() {
         'rebuild:Rebuild images without cache (shortcut)'
         'ps:Show container status (shortcut)'
         'scale:Scale containers online (shortcut)'
+        'open:Open the editor without restarting (shortcut)'
         'list:List projects (shortcut)'
         'help:Show help'
     )
@@ -82,6 +83,7 @@ _devbase() {
         'rebuild:Rebuild images without cache (docker compose build --no-cache)'
         'list:List projects (NAME / PLUGIN / STATUS)'
         'profile:Start / stop compose profile services'
+        'open:Open the editor attached to the dev container'
     )
 
     container_subcommands=(
@@ -94,6 +96,7 @@ _devbase() {
         'build:Build container images'
         'rebuild:Rebuild images without cache (docker compose build --no-cache)'
         'profile:Start / stop compose profile services'
+        'open:Open the editor attached to the dev container'
     )
 
     env_subcommands=(
@@ -159,6 +162,12 @@ _devbase() {
         scale)
             _devbase_project_names
             ;;
+        open)
+            _arguments \
+                '--open-index[Container index to open]:index:' \
+                '--context[Docker context]:context:' \
+                '1:name:_devbase_project_names'
+            ;;
         list)
             _arguments \
                 '--no-interactive[Just print the table without interactive selection]' \
@@ -208,6 +217,12 @@ _devbase() {
                 profile)
                     _values 'operation' up down list
                     ;;
+                open)
+                    _arguments \
+                        '--open-index[Container index to open]:index:' \
+                        '--context[Docker context]:context:' \
+                        '1:name:_devbase_project_names'
+                    ;;
                 *)
                     _describe -t project-commands 'project command' project_subcommands
                     ;;
@@ -235,6 +250,11 @@ _devbase() {
                     ;;
                 profile)
                     _values 'operation' up down list
+                    ;;
+                open)
+                    _arguments \
+                        '--open-index[Container index to open]:index:' \
+                        '--context[Docker context]:context:'
                     ;;
                 *)
                     _describe -t container-commands 'container command' container_subcommands

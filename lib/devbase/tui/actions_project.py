@@ -6,7 +6,7 @@
 
 PR1 で **一覧選択 → (running なら操作サブメニュー) → それ以外は直接 up** を移送し、
 PR2 で running 操作サブメニューを **up/down/login/ps/logs/scale/build/rebuild の全操作**
-へ拡張した。login/ps/logs/scale は running 中コンテナを対象とするため running 行限定、
+へ拡張し、PLAN59 で先頭にエディタを開き直す open を足した。login/ps/logs/scale は running 中コンテナを対象とするため running 行限定、
 stopped/unknown は従来どおり直接 up (PR1 非回帰)。引数を要する操作は ``tui.menu`` の
 収集ヘルパで CLI と同じ属性値を集める (plan 2.3 契約表)。down はデータを失わない
 (volume 保持) ためメニュー選択を意思表示とみなし、確認プロンプトは出さない。
@@ -27,9 +27,12 @@ from devbase.tui.dispatch import _preserve_cwd_env, dispatch_lifecycle
 logger = get_logger(__name__)
 
 
-# running 行で選べる操作 (表示順 = ハイライト既定順)。up を先頭に置き、PR1 同様
-# Enter 連打で再起動へ到達できるようにする。各 value は cmd_project のサブコマンド名。
+# running 行で選べる操作 (表示順 = ハイライト既定順)。open を先頭に置き、閉じた
+# エディタの窓を Enter 1 回で開き直せるようにする (PLAN59)。コンテナに触らない操作な
+# ので、Enter 連打で届いても環境は変わらない。再起動 (up) はその 1 つ下。
+# 各 value は cmd_project のサブコマンド名。
 _RUNNING_OPS: list[tuple[str, str]] = [
+    ("エディタを開く (open)", "open"),
     ("再起動 (up)", "up"),
     ("停止 (down)", "down"),
     ("ログイン (login)", "login"),
@@ -49,7 +52,7 @@ _PROFILE_OPS: list[tuple[str, str]] = [
 
 # 実行後にサブメニューへ留まらずトップ一覧へ戻る操作。up/down とプロファイルの
 # 起動・停止はコンテナの数が変わるため、最新状態の一覧を見せる方が自然 (それ以外の
-# login/ps/logs/scale/build/rebuild は連続操作できるようサブメニューに留まる)。
+# open/login/ps/logs/scale/build/rebuild は連続操作できるようサブメニューに留まる)。
 _BACK_TO_TOP_OPS = frozenset({"up", "down", "profile-up", "profile-down"})
 
 # 中止系番兵は flow と同一オブジェクトを再公開する (呼び出し側・テストの契約)。
@@ -172,6 +175,9 @@ _OP_HANDLERS = {
     # コマンドは無視する)。down はデータを失わない (volume 保持・up で復旧可能)
     # ためメニュー選択を意思表示とみなし、確認プロンプトを出さない。
     # ps の --all は CLI 既定 (False) に揃える。
+    # open はコンテナに触らずエディタだけを開く。index は尋ねず既定
+    # (DEVBASE_OPEN_INDEX、無ければ 1) を開く (PLAN59 決定 6)。
+    "open": lambda root, name: dispatch_lifecycle("open", name, open_index=None),
     "up": lambda root, name: dispatch_lifecycle("up", name, scale=None),
     # 「再ビルド (rebuild --no-cache)」はラベル通り base/project とも無条件 no-cache
     # で再ビルドする。CLI の `rebuild` は期限判定 (= build --expires=7) でキャッシュ

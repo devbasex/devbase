@@ -75,6 +75,44 @@ def docker_compose(
         raise
 
 
+def running_dev_instances(project: str, dev_service_name: str,
+                          runner=None) -> Optional[List[Tuple[int, str]]]:
+    """動いている dev インスタンスの ``(番号, コンテナ名)`` を番号順に返す。
+
+    ``up`` の構成は dev の各インスタンスをサービス ``<dev>-<n>`` として定義する
+    (``volume/compose.py``)。プロジェクトのラベルだけで絞ると DB や snapshot にも届くため、
+    サービスのラベルでも絞る。``-a`` を付けないので止まっているコンテナは出ない。
+
+    docker を呼べない・0 以外で終わったときは error ログを出して ``None`` を返す。
+    動いているものが無い ``[]`` と区別するためで、``devbase open`` はこの区別で「停止中」と
+    「状態を取得できない」を分ける (PLAN59 決定 2・8)。Compose のファイルを読まないため、
+    生成物の有無と構成の補間に左右されない。接続先は環境変数 ``DOCKER_CONTEXT`` に従う。
+    """
+    import re
+
+    run = runner or subprocess.run
+    try:
+        result = run(
+            ['docker', 'ps', '--filter', f'label=com.docker.compose.project={project}',
+             '--format', '{{.Names}}\t{{.Label "com.docker.compose.service"}}'],
+            capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.error("docker ps を実行できませんでした: %s", e)
+        return None
+    if result.returncode != 0:
+        logger.error("docker ps が失敗しました (exit=%d): %s", result.returncode,
+                     (result.stderr or '').strip())
+        return None
+    pattern = re.compile(rf'^{re.escape(dev_service_name)}-([1-9][0-9]*)$')
+    found = []
+    for line in (result.stdout or '').splitlines():
+        name, _, service = line.partition('\t')
+        match = pattern.match(service.strip())
+        if name and match:
+            found.append((int(match.group(1)), name.strip()))
+    return sorted(found)
+
+
 def get_container_status(
     service_name: str,
     compose_file: Optional[Path] = None

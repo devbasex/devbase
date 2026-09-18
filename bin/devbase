@@ -272,7 +272,7 @@ run_python() {
 # Resolve abbreviated command to full command name via unique prefix matching
 resolve_command() {
     local input="$1"
-    local commands="init status project container ct env plugin pl snapshot ss up down login build rebuild ps scale list help"
+    local commands="init status project container ct env plugin pl snapshot ss up down login build rebuild ps scale open list help"
     local matches=()
     for cmd in $commands; do
         [[ "$cmd" == "$input"* ]] && matches+=("$cmd")
@@ -379,7 +379,7 @@ _DEVBASE_ARGS=("${@:2}")
 # 同期注意 (メンテナンス性): 下記 2 リストは cli.py の parser 定義に対応する。
 #   _PROJECT_NAME_SUBCOMMANDS = `project`/`container` で `name` positional を
 #       受け付けるサブコマンド集合。cli.py の _add_project_parser で
-#       `add_argument('name', ...)` を持つもの (up/down/ps/logs/scale) と一致させる。
+#       `add_argument('name', ...)` を持つもの (up/down/ps/logs/scale/rebuild/open) と一致させる。
 #       login/build は index/image 互換のため意図的に除外 (上のコメント参照)。
 #   _NAME_RESOLVABLE_SHORTCUTS = トップレベルシノニムのうち「実在 project なら cd」
 #       を許すもの。cli.py の SHORTCUTS 経由で project サブコマンドへ写像される
@@ -404,8 +404,8 @@ _DEVBASE_ARGS=("${@:2}")
 # そのプロジェクトへ切り替えてから (cd 済みの状態で) コマンドを実行すること。
 # こうすれば name 解決トークンを与える必要がなくなり、index/image/service を
 # 意図どおり渡せる。
-_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale rebuild "
-_NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build rebuild "
+_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale rebuild open "
+_NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build rebuild open "
 case "$_resolved_cmd" in
     project|container|ct)
         # `ct` は container の alias (cli.py: add_parser('container', aliases=['ct']))。
@@ -428,7 +428,7 @@ case "$_resolved_cmd" in
     # Python-implemented commands
     --version|-V)
         run_python "$@" ;;
-    init|status|project|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale|rebuild|list)
+    init|status|project|container|ct|env|plugin|pl|snapshot|ss|up|down|login|ps|scale|rebuild|open|list)
         run_python "${_resolved_cmd}" "${_DEVBASE_ARGS[@]}" ;;
     # Shell-implemented commands
     #
