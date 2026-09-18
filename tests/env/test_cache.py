@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -371,14 +372,16 @@ def test_undeletable_entries_fail_with_their_paths(openbao_root, openbao, monkey
     bc.save(openbao_root, bc.BackendConfig(backend='openbao', openbao=ob,
                                              cache_enabled=False))
     target = cache.entry_path(openbao_root, GLOBAL)
-    real_unlink = os.unlink
+    real_unlink = Path.unlink
 
     def deny(path, *a, **kw):
         if str(path) == str(target):
             raise PermissionError('denied')
         return real_unlink(path, *a, **kw)
 
-    monkeypatch.setattr(os, 'unlink', deny)
+    # os.unlink ではなく Path.unlink を差し替える。Python 3.10 の pathlib は
+    # os.unlink をクラス定義の時点で束縛するため、os 側の差し替えが届かない (PLAN60)
+    monkeypatch.setattr(Path, 'unlink', deny)
 
     with pytest.raises(SecretStoreError) as exc:
         SecretStore(openbao_root).load(GLOBAL)
