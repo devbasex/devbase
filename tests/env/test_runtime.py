@@ -650,11 +650,20 @@ ACCOUNT_GROUP = keys.DEVBASE_ACCOUNT_GROUP
 
 @pytest.fixture
 def account_group_root(root, monkeypatch):
-    """DEVBASE_ROOT を tmp へ向け、警告の集合を空にし、プロセスのグループを外す"""
+    """DEVBASE_ROOT を tmp へ向け、警告の集合を空にし、プロセスのグループを外す。
+
+    この節のテストは ``environ`` を渡さずに :func:`runtime.inject` を呼ぶため、機密が
+    本物の ``os.environ`` へ載る。載せたままにすると後続のテストとその子プロセスへ
+    漏れるので、ここで注入前の環境へ戻す。``_isolate_injection_state`` が差し替えた
+    注入履歴が ``monkeypatch`` の後始末で戻るより**前**に通す必要がある (戻った後では
+    履歴を引けず、載せた値が残る)。autouse の ``_isolate_injection_state`` が先に組み
+    立てられる分、この fixture の後始末はそれより先に走る。
+    """
     monkeypatch.setenv('DEVBASE_ROOT', str(root))
     monkeypatch.delenv(ACCOUNT_GROUP, raising=False)
     monkeypatch.setattr(runtime, '_warned_account_group_refs', set())
-    return root
+    yield root
+    runtime.clear_injected()
 
 
 def _save(store, backend, ref, data):
