@@ -46,8 +46,9 @@ flowchart TB
 
 | 引数 | 実行する層 | 実体 | 理由 |
 |------|-----------|------|------|
+| `-h` / `--help`（引数のどこにあっても） | Bash | `build_usage()` | shell と Python で受け付ける引数が違う（`--project-no-cache` は shell だけ）ため wrapper が使い方を出す。name 解決より前に判定し、`build carmo --help` で `projects/carmo` への cd と `env` の読み込みを起こさない。`--context=--help` は語が違うので下流へ渡る（PLAN61 決定 7・8） |
 | なし / `--no-cache` / `--project-no-cache` | Bash | `cmd_build()` | compose.yml のパースと `FROM devbase-*` の依存検出、2 段ビルドの制御がシェルで完結する |
-| `<image>` | Python | `container._build_single_image()` | `devbase project build <image>` / `devbase container build <image>` と同じ実装へ届ける。逆向きに Python から `bin/devbase build <image>` を呼ぶと、wrapper 冒頭の name 解決を通ってしまい、`containers/` と `projects/` に同名がある場合に別のものをビルドする |
+| `<image>` | Python | `container._build_single_image()` | `devbase project build <image>` / `devbase container build <image>` と同じ実装へ届ける。`containers/<x>` と `projects/<x>` が両方ある名前は wrapper の name 解決の `build)` 分岐がイメージとして扱い cd しない（stderr に 1 行知らせる。PLAN61 決定 5・6）。逆向きに Python から `bin/devbase build <image>` を呼ぶと wrapper を再び通るため採らない |
 | `--expires[=DAYS]` | Python | `container.cmd_build()` → `_build_resolved()` | イメージ作成日の判定に RFC3339 の日付パースが要り、シェルでは非可搬 |
 
 単体ビルド（`<image>` 指定）は `$DEVBASE_ROOT/containers/<image>` を

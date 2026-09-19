@@ -105,8 +105,9 @@ graph TD
 | `--open` / `--no-open`、およびその値付きの形（`--open 2` / `--open=2`） | 2 | argparse の usage エラー。サブパーサーの `allow_abbrev=False` により、`--open-index` の前方一致として受け付けない |
 | `name` が解決できない | 1 | 既存の `_enter_project` の候補提示 |
 
-`container open` は `[name]` を取らない（`container` の他のサブコマンドと同じ）。前方一致では `devbase o` が
-`open` に、`devbase project o` / `container o` も `open` に解決する。`devbase l` → `login`、`devbase project p`
+`container open` は `[name]` を取らない（`container` の他のサブコマンドと同じ）。`bin/devbase` の name 解決も
+`container` / `ct` を通さないため、`devbase container open <name>` は実在する名前でも usage エラー（終了コード 2）に
+なる（PLAN61 決定 10）。前方一致では `devbase o` が `open` に、`devbase project o` / `container o` も `open` に解決する。`devbase l` → `login`、`devbase project p`
 → `ps` は変わらない。
 
 ### `running_dev_instances`
@@ -142,8 +143,6 @@ graph TD
 
 - 窓を閉じた後はコンテナを止めずに `devbase open` で開き直す
 - 非 TTY（CI・パイプ）では `opener` が開くのを見送り、終了コード 1 になる
-- `container` / `ct` グループのサブコマンドが `bin/devbase` の名前解決を通って `[name]` を受け付けてしまう
-  既存の動きは `open` にも及ぶ（#200 で扱う）
 
 ## テスト観点
 

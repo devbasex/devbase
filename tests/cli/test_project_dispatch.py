@@ -215,6 +215,24 @@ def test_dispatch_project_routes_to_cmd_project(monkeypatch):
     assert calls == ['project']
 
 
+def test_dispatch_project_migrate_config_passes_root_and_args(monkeypatch, tmp_path):
+    """現状固定: migrate-config の委譲先・引数・戻り値を記録する。"""
+    from devbase.commands import project
+    calls = []
+
+    def handler(root, args):
+        calls.append((root, args))
+        return 7
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr(project, 'cmd_project_migrate_config', handler)
+    args = _args(command='project', subcommand='migrate-config')
+
+    assert cli._dispatch('project', args) == 7
+    assert calls == [(tmp_path, args)]
+    assert calls[0][1] is args
+
+
 def test_dispatch_container_routes_to_cmd_container(monkeypatch):
     from devbase.commands import container
     calls = []
@@ -239,6 +257,20 @@ def test_dispatch_shortcut_routes_to_cmd_project_not_container(monkeypatch):
 # parser: 共通サブコマンド (login / build) の project / container 一致
 # (重複定義を _add_login_subparser / _add_build_subparser に共通化した結果の検証)
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('group', ['container', 'ct'])
+@pytest.mark.parametrize('sub', ['up', 'down', 'ps', 'logs', 'scale', 'rebuild', 'open'])
+def test_container_subcommands_reject_name_positional(group, sub):
+    """受け入れ条件 12 (単体): `container <sub> <name>` は parser が `[name]` を持たず SystemExit(2)。
+
+    `scale` は `carmo` が `new_scale` の int 型エラーになり、他は `unrecognized arguments`。
+    どちらも終了コード 2 (PLAN61 決定 10 / #200)。
+    """
+    parser = cli._create_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args([group, sub, 'carmo'])
+    assert exc.value.code == 2
+
 
 @pytest.mark.parametrize('group', ['project', 'container'])
 def test_login_positional_is_index_in_both_groups(group):
@@ -496,3 +528,29 @@ def test_dispatch_unknown_command_returns_one():
     """未知コマンドで spec is None となり return 1 する経路を固定する。"""
     args = _args(command='bogus')
     assert cli._dispatch('bogus', args) == 1
+
+
+# ---------------------------------------------------------------------------
+# _require_devbase_root: DEVBASE_ROOT 未設定→終了、設定済み→Path を返す
+# (list / migrate-config / _ROOT_COMMANDS が共有するヘルパの現状固定)
+# ---------------------------------------------------------------------------
+
+def test_require_devbase_root_exits_when_unset(monkeypatch):
+    """現状固定: DEVBASE_ROOT 未設定なら SystemExit(1) で終了する。"""
+    from pathlib import Path
+
+    monkeypatch.delenv('DEVBASE_ROOT', raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._require_devbase_root()
+
+    assert exc.value.code == 1
+
+
+def test_require_devbase_root_returns_path_when_set(monkeypatch, tmp_path):
+    """現状固定: DEVBASE_ROOT が設定済みなら Path(値) を返す。"""
+    from pathlib import Path
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+
+    assert cli._require_devbase_root() == Path(tmp_path)

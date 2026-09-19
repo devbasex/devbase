@@ -29,6 +29,7 @@ from devbase.utils.docker import (
     running_dev_instances,
 )
 from devbase.utils.config import get_project_name
+from devbase.utils.names import is_single_segment_name
 from devbase.utils import docker_context
 from devbase.project import runtime as project_runtime
 from devbase.project.local_config import load_project_local_config
@@ -584,8 +585,19 @@ def _resolve_project_name(project_name: str) -> bool:
 
     Returns:
         True:  解決成功 (または既に対象ディレクトリにいる)
-        False: DEVBASE_ROOT 未設定 / 対象が存在しない (呼び出し側で return 1)
+        False: DEVBASE_ROOT 未設定 / 名前の形に合わない / 対象が存在しない
+               (呼び出し側で return 1)
     """
+    # `project_name` は projects/ へそのまま連結する。`..` や `/` を通すと projects/ の
+    # 外のディレクトリへ chdir してそこの env を読むため、連結の前に名前の形で弾く
+    # (PLAN61 / #146)。wrapper (bin/devbase の maybe_cd_project) も同じ規則で弾く。
+    if not is_single_segment_name(project_name):
+        logger.error(
+            "プロジェクト名に使えない形です: '%s'"
+            "（英数字で始まり、英数字・'.'・'-'・'_' だけからなる名前）",
+            project_name)
+        return False
+
     projects_dir = _projects_dir()
     if projects_dir is None:
         logger.error("DEVBASE_ROOT が未設定のため project name '%s' を解決できません。",
@@ -1676,11 +1688,6 @@ def cmd_scale(new_scale: int, project_name: str = None,
 # cmd_build
 # ---------------------------------------------------------------------------
 
-# 単体ビルドで受け付けるイメージ名。`containers/` 配下の 1 ディレクトリ名であることを
-# 保証するため、英数字始まりで英数字・ハイフン・アンダースコア・ピリオドのみを許可する。
-_IMAGE_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
-
-
 def _build_single_image(image: str, no_cache: bool = False) -> int:
     """``$DEVBASE_ROOT/containers/<image>`` を単体ビルドする (PLAN49 / #139)。
 
@@ -1698,8 +1705,9 @@ def _build_single_image(image: str, no_cache: bool = False) -> int:
 
     # `image` はパスの一部として連結し、そのままタグにもなる。`/` `\` `..` などを
     # 通すと $DEVBASE_ROOT の外を指せてしまい、Docker タグとして不正な名前も作れるため、
-    # ディレクトリ名 1 つとして妥当な文字だけを許可し、それ以外はここで弾く。
-    if not _IMAGE_NAME_RE.fullmatch(image):
+    # ディレクトリ名 1 つとして妥当な文字だけを許可し、それ以外はここで弾く。規則は
+    # プロジェクト名と同じ (devbase.utils.names / PLAN61 決定 2)。
+    if not is_single_segment_name(image):
         logger.error(
             "Invalid image name: %r (must be a single directory name under "
             "containers/: alphanumeric start, then letters, digits, '.', '-', '_')",

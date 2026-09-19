@@ -120,6 +120,54 @@ def test_resolve_without_devbase_root(tmp_path, monkeypatch, caplog):
     assert any("DEVBASE_ROOT" in r.message for r in caplog.records)
 
 
+INVALID_NAMES = ["../etc", "a/b", ".", ".."]
+
+
+@pytest.mark.parametrize("name", INVALID_NAMES)
+def test_resolve_rejects_malformed_name_without_chdir(fake_root, monkeypatch, caplog, name):
+    """受け入れ条件 2 (単体): 形に合わない名前は chdir せず、env も読まず、候補も出さず False。
+
+    `projects/<name>` へそのまま連結すると `..` で `projects/` の外へ出るため、連結の前に
+    名前の形 (`devbase.utils.names.is_single_segment_name`) で弾く (#146)。
+    """
+    (fake_root / "etc").mkdir()
+    (fake_root / "etc" / "env").write_text("MARKER=leaked\n")
+    monkeypatch.delenv("MARKER", raising=False)
+    called = []
+    monkeypatch.setattr(container.os, "chdir", lambda p: called.append(p))
+
+    with caplog.at_level(logging.ERROR, logger="devbase.commands.container"):
+        assert container._resolve_project_name(name) is False
+
+    assert called == [], "形に合わない名前で chdir を呼んではならない"
+    assert "MARKER" not in os.environ
+    messages = " ".join(r.message for r in caplog.records)
+    assert "プロジェクト名に使えない形" in messages
+    assert name in messages
+    # 候補の一覧は出さない
+    assert "carmo" not in messages and "shop" not in messages
+
+
+def test_cli_project_up_rejects_malformed_name(fake_root, monkeypatch, caplog):
+    """受け入れ条件 3: wrapper を経ない `python -m devbase.cli project up ../etc` は chdir せず 1。"""
+    from devbase import cli
+
+    (fake_root / "etc").mkdir()
+    (fake_root / "etc" / "env").write_text("MARKER=leaked\n")
+    monkeypatch.delenv("MARKER", raising=False)
+    monkeypatch.setattr(container, "cmd_up",
+                        lambda *a, **k: pytest.fail("cmd_up を呼んではならない"))
+    monkeypatch.setattr("sys.argv", ["devbase", "project", "up", "../etc"])
+    before = Path.cwd()
+
+    with caplog.at_level(logging.ERROR, logger="devbase.commands.container"):
+        assert cli.main() == 1
+
+    assert Path.cwd() == before
+    assert "MARKER" not in os.environ
+    assert "プロジェクト名に使えない形" in caplog.text
+
+
 def test_resolve_noop_when_already_in_target(fake_root, monkeypatch):
     """wrapper が既に cd 済みなら chdir を呼ばない (冪等)。"""
     target = fake_root / "projects" / "carmo"
@@ -514,21 +562,6 @@ def test_wrapper_project_build_keeps_image_positional(wrapper_root):
     assert _python_args(r) == "project build carmo", r.stdout
 
 
-def test_wrapper_ct_up_name_cds_and_strips(wrapper_root):
-    """`ct up carmo` は container alias として name 解決される (codex 指摘 #319)。
-
-    `ct` は cli.py で container の alias (add_parser('container', aliases=['ct']))
-    のため、wrapper の name 解決 case でも `container` と同じ strip/chdir 経路を
-    通す。`ct` 自体は strip せず Python へ渡し、name のみ strip する。
-    """
-    r = _run_wrapper(["ct", "up", "carmo"], wrapper_root)
-    assert "unknown command" not in r.stderr.lower(), r.stderr
-    assert "unrecognized arguments" not in r.stderr.lower(), r.stderr
-    assert _pwd(r).endswith("/projects/carmo"), r.stdout
-    # name は strip されるが alias `ct` は保持して Python へ渡す
-    assert _python_args(r) == "ct up", r.stdout
-
-
 def test_wrapper_project_login_keeps_index_positional(wrapper_root):
     """`project login carmo` の carmo は index positional として素通しする。
 
@@ -538,6 +571,114 @@ def test_wrapper_project_login_keeps_index_positional(wrapper_root):
     r = _run_wrapper(["project", "login", "carmo"], wrapper_root)
     assert not _pwd(r).endswith("/projects/carmo"), r.stdout
     assert _python_args(r) == "project login carmo", r.stdout
+
+
+# ===========================================================================
+# wrapper (実プロセス): 名前の形 (PLAN61 / #146)
+#
+# `exec_wrapper` (conftest.py) は bin/devbase を tmp へ複製して起動し、`uv` だけを PATH で
+# 差し替える。maybe_cd_project は本物のまま動く (受け入れ条件 15)。
+# ===========================================================================
+
+from tests.cli.conftest import stdout_field  # noqa: E402
+
+TOP_LEVEL_NAME_COMMANDS = ["up", "down", "ps", "scale", "login", "rebuild", "open"]
+PROJECT_NAME_SUBCOMMANDS = ["up", "down", "ps", "logs", "scale", "rebuild", "open"]
+MALFORMED_NAMES = ["../etc", "a/b", ".", ".."]
+
+
+def _name_commands():
+    for cmd in TOP_LEVEL_NAME_COMMANDS:
+        yield [cmd]
+    for sub in PROJECT_NAME_SUBCOMMANDS:
+        yield ["project", sub]
+
+
+@pytest.mark.parametrize("name", MALFORMED_NAMES)
+@pytest.mark.parametrize("command", list(_name_commands()), ids=" ".join)
+def test_wrapper_malformed_name_stays_put_and_reads_no_outside_env(exec_wrapper, command, name):
+    """受け入れ条件 2: `..` や `/` を含む名前で projects/ の外へ cd せず、外の env を読まない。
+
+    `<tmp>/etc/env` に `MARKER=leaked` を置く。`projects/../etc` へ cd してしまうと wrapper が
+    それを source し、偽の `uv` が `MARKER:leaked` を出す。名前は wrapper が取り除かず、
+    そのまま Python へ渡る (前提 2)。
+    """
+    exec_wrapper.etc_env()
+    exec_wrapper.project("carmo")
+
+    r = exec_wrapper([*command, name])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    assert stdout_field(r, "MARKER:") == "<unset>", r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(f" {' '.join(command)} {name}"), r.stdout
+
+
+@pytest.mark.parametrize("name", ["carmo", "github_work_time", "carmo-ai"])
+def test_wrapper_well_formed_existing_name_cds_and_strips(exec_wrapper, name):
+    """受け入れ条件 5: 形に合う実在の名前は今と同じく cd して取り除かれる。"""
+    exec_wrapper.project(name)
+
+    r = exec_wrapper(["up", name])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.root / "projects" / name), r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli up"), r.stdout
+
+
+def test_wrapper_non_ascii_name_is_not_resolved(exec_wrapper):
+    """決定 4: shell の比較は LC_ALL=C で行い、`café` は名前の形に当たらない。"""
+    exec_wrapper.project("café")
+
+    r = exec_wrapper(["up", "café"])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli up café"), r.stdout
+
+
+CONTAINER_SUBCOMMANDS = ["up", "down", "ps", "logs", "scale", "rebuild", "open"]
+
+
+@pytest.mark.parametrize("group", ["container", "ct"])
+@pytest.mark.parametrize("sub", CONTAINER_SUBCOMMANDS)
+def test_wrapper_container_group_does_not_resolve_names(exec_wrapper, group, sub):
+    """受け入れ条件 12: `container <sub> <name>` / `ct <sub> <name>` は実在する名前でも cd しない。
+
+    `container` の parser は `[name]` を持たない (決定 10 / #200)。wrapper が名前を取り除かず
+    そのまま渡し、argparse の usage エラー (終了コード 2) になる。旧テスト
+    `test_wrapper_ct_up_name_cds_and_strips` の置き換え。
+    """
+    exec_wrapper.project("carmo")
+
+    r = exec_wrapper([group, sub, "carmo"])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(f" devbase.cli {group} {sub} carmo"), r.stdout
+
+
+def test_wrapper_container_up_without_name_uses_cwd(exec_wrapper):
+    """受け入れ条件 13: `container up` (名前なし) は今と同じく現在のディレクトリで動く。
+
+    非推奨の警告は Python 側 (`test_cmd_container_warns_and_delegates`)。
+    """
+    r = exec_wrapper(["container", "up"])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli container up"), r.stdout
+
+
+def test_wrapper_name_regex_is_synced_with_python():
+    """決定 2: bin/devbase の `_SINGLE_SEGMENT_NAME_RE` は Python の定義と同じ正規表現。"""
+    import re
+
+    from devbase.utils.names import SINGLE_SEGMENT_NAME_PATTERN
+
+    found = re.findall(r"^_SINGLE_SEGMENT_NAME_RE='([^']*)'$", WRAPPER.read_text(), re.M)
+    assert found, "bin/devbase から _SINGLE_SEGMENT_NAME_RE を抜き出せない"
+    assert found == ["^" + SINGLE_SEGMENT_NAME_PATTERN + "$"]
 
 
 if __name__ == "__main__":

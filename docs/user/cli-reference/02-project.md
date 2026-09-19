@@ -19,6 +19,10 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 ```
 
 - `<name>` は `$DEVBASE_ROOT/projects/` 配下のプロジェクト名（`devbase project list` で確認可能）
+- 名前として受け付ける形は、英数字で始まり英数字・`.`・`-`・`_` だけからなる文字列です
+  （`carmo`、`github_work_time`、`carmo-ai`、`carmo.takemi`）。`../etc` や `a/b` のように
+  形に合わない値は名前として扱わず、`projects/` の外のディレクトリへ移動することはありません。
+  `[name]` を取るコマンドに渡すと、プロジェクト名に使えない形である旨を出して終了コード 1 になります
 - 存在しない名前を指定するとエラーになり、利用可能なプロジェクト候補が表示されます
 - 名前解決はラッパー (`bin/devbase`) が対象ディレクトリへ `cd` してから実行します。
   これにより `build`（シェル実装）を含む全操作が名前指定で成立します
@@ -30,15 +34,13 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 > ため除外しています。一方、トップレベルシノニム `devbase build <name>` / `devbase login <name>` は
 > ラッパー (`bin/devbase`) の存在性判定（`$DEVBASE_ROOT/projects/<name>` が実在すれば cd）で
 > 名前解決されます（実在しない場合は従来どおり `index` / `image` として下流へ渡されます）。
+> `devbase build <name>` で `containers/<name>` も実在する場合はイメージが優先されます
+> （[`devbase project build`](#devbase-project-build) を参照）。
 
-> **⚠ 衝突注意（footgun）:** トップレベルシノニムの名前解決は「存在性ベース」のため、本来
-> positional 引数として渡したい値が実在プロジェクト名と一致すると、その引数が名前解決の対象と
-> なり project への `cd` が優先されて引数の意味が変わります。例えば `projects/2` が存在する状態の
-> `devbase login 2` は index=2 ではなく project `2` への操作に、`projects/web` が存在する状態の
-> `devbase build web` は image=web ではなく project `web` のビルドに化けます（`scale` の service 引数
-> も同様）。これは「`build carmo` / `login carmo` でそのプロジェクトを操作する」意図的設計の
-> トレードオフです。**回避策:** 衝突する場合は対象プロジェクトのディレクトリ内で実行するか、
-> 明示的にそのプロジェクトへ切り替えてから（`cd` 済みの状態で）コマンドを実行してください。
+> **衝突注意:** トップレベルの `devbase login <index>` / `devbase scale <N>` は、値が実在する
+> プロジェクト名と一致すると名前として解釈されます（`projects/2` が存在する状態の `devbase login 2`
+> は index=2 ではなく project `2` への操作になります）。数字だけのプロジェクト名は通常作られないため
+> 衝突は偶発に限られますが、該当する場合は対象プロジェクトのディレクトリ内で実行してください。
 
 ## `--context NAME`（共通オプション）
 
@@ -268,8 +270,13 @@ devbase project migrate-config
 
 ```
 devbase project build [image]
-devbase build [image] [--no-cache | --expires[=DAYS]]
+devbase build [<project> | <image>] [--no-cache | --project-no-cache | --expires[=DAYS]] [--context NAME]
+devbase build --help
 ```
+
+`devbase build --help` / `-h` は、ビルドを起こさずにトップレベル `build` の使い方（上のオプションと
+`<image>` 指定）を出して終了コード 0 で終わります。`devbase build carmo --help` のようにプロジェクト名
+の後ろに置いても、そのプロジェクトへ移動せずに使い方を出します。
 
 | モード | 子イメージ | 親イメージ（`FROM devbase-*`） |
 |--------|-----------|-------------------------------|
@@ -304,12 +311,12 @@ docker buildx build --load -t devbase-<image>:latest $DEVBASE_ROOT/containers/<i
 ビルドは 1 回だけで、compose イメージは巻き込みません。`containers/<image>` または
 その `Dockerfile` が無い場合は、探したパスを表示して終了コード 1 で終わります。
 
-> **`<image>` が `$DEVBASE_ROOT/projects/` に実在する名前と一致する場合、トップレベルの
-> `devbase build <image>` はそのプロジェクトへの操作として解釈されます。** これは
-> `devbase build <プロジェクト名>` を「そのプロジェクトをビルドする」と読む設計によるもので、
-> イメージ指定は失われます。該当するときは `devbase project build <image>` を使ってください
-> （こちらは常にイメージ名として扱います）。詳細は
-> [#142](https://github.com/devbasex/devbase/issues/142) を参照してください。
+> **`<name>` が `$DEVBASE_ROOT/containers/` と `$DEVBASE_ROOT/projects/` の両方に実在する場合、
+> トップレベルの `devbase build <name>` はイメージ `<name>` の単体ビルドとして扱います。** `build <image>`
+> はイメージを明示した指定で、プロジェクトのビルドは通常そのディレクトリで引数なしに行うためです。
+> このとき、プロジェクトとしても解釈できたことと、プロジェクトをビルドする方法（そのディレクトリで
+> `devbase build`）を stderr に 1 行知らせます。`projects/` にだけある名前は今までどおりそのプロジェクトの
+> ビルドです。詳細は [#142](https://github.com/devbasex/devbase/issues/142) を参照してください。
 
 ## `devbase project rebuild`
 
@@ -411,7 +418,9 @@ carmo.takemi  carmo-fork    stopped
 > **非推奨:** `container` グループは `project` グループへ移行しました。`devbase container
 > <sub>` は当面 `devbase project <sub>` のエイリアスとして動作しますが、実行時に非推奨警告を
 > 表示します（移行期間後のリリースで削除予定）。`[name]` 指定や `list` などの新機能は
-> `project` 側のみで提供されます。
+> `project` 側のみで提供されます。`devbase container up <name>`（`ct` も同じ）は実在する
+> プロジェクト名でも受け付けず、argparse の usage エラー（終了コード 2）になります。名前の指定は
+> `devbase project up <name>` か `devbase up <name>` を使ってください。
 
 ```bash
 # 旧（非推奨・警告が出ます）
