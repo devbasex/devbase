@@ -11,6 +11,7 @@ import pytest
 
 from devbase.env import keys, runtime
 from devbase.env.secret_store import SecretRef, SecretStore
+from devbase.errors import DevbaseError
 from devbase.volume.manager import resolve_account_group
 
 
@@ -156,6 +157,65 @@ def test_inject_puts_values_into_the_given_environ(root, store):
 
     assert environ == {'TOKEN': 'sk-1'}
     assert resolved.names == ['TOKEN']
+
+
+class _GlobalOkProjectFailsStore:
+    """共通機密は取れるが、プロジェクト機密の取得で例外を送出する店。
+
+    重ね順どおり共通 (``global``) を先に読み、プロジェクト (``project``) の読み取りで
+    :class:`DevbaseError` を投げることで「共通の取得後にプロジェクトの取得が失敗する」
+    経路を再現する。``runtime`` の内部関数は置き換えず、``store`` 引数で渡す。
+    """
+
+    def load(self, ref):
+        if ref.kind == 'project':
+            raise DevbaseError('project secrets unavailable')
+        return {'TOKEN': 'new-secret'}
+
+
+class _GlobalOnlyStore:
+    """共通機密だけを持つ正常な店 (事前注入で ``TOKEN=old-secret`` を載せる用)"""
+
+    def load(self, ref):
+        if ref.kind == 'project':
+            return {}
+        return {'TOKEN': 'old-secret'}
+
+
+@pytest.mark.parametrize('preinjected, cleared_after_failure', [
+    (False, []),
+    (True, ['TOKEN']),
+])
+def test_inject_failing_project_leaves_target_and_history_intact(
+        root, preinjected, cleared_after_failure):
+    """現状固定: 共通機密の取得後にプロジェクト機密の取得が失敗する経路。
+
+    現状は例外をそのまま伝播し、対象マッピングも既存の復元履歴も変更しない。
+    - 初回注入では対象は変わらず、``clear_injected`` は空を返す。
+    - 別の正常な店で ``TOKEN=old-secret`` を注入済みの場合は、対象はその失敗前の
+      状態のまま (``TOKEN=old-secret``) で、``clear_injected`` は ``TOKEN`` を注入前の
+      ``TOKEN=shell`` へ戻す。
+    いずれも ``TOKEN=shell`` と無関係なキーが残る (private な履歴には触れない)。
+    """
+    (root / 'projects' / 'api').mkdir()
+    target = {'TOKEN': 'shell', 'UNRELATED': 'keep'}
+
+    if preinjected:
+        runtime.inject(root, 'web', environ=target, store=_GlobalOnlyStore())
+        assert target['TOKEN'] == 'old-secret'
+
+    before = dict(target)
+    with pytest.raises(DevbaseError):
+        runtime.inject(root, 'web', environ=target, store=_GlobalOkProjectFailsStore())
+
+    # 失敗した注入は対象を変えない (共通の値も載せない)
+    assert target == before
+
+    cleared = runtime.clear_injected(target)
+
+    assert cleared == cleared_after_failure
+    # どちらの経路でも注入前の値と無関係なキーが残る
+    assert target == {'TOKEN': 'shell', 'UNRELATED': 'keep'}
 
 
 # ---------------------------------------------------------------------------
