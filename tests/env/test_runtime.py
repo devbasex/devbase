@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 import pyrage
 import pytest
@@ -474,6 +475,34 @@ def test_invalid_utf8_project_env_preserves_secret_values_and_origins(root, monk
     assert set(resolved.global_names) == {'TOKEN', 'USER_GLOBAL'}
     assert set(resolved.project_names) == {'PROJECT_ONLY', 'USER_PROJECT'}
     assert set(resolved.names) == {'TOKEN', 'USER_GLOBAL', 'PROJECT_ONLY', 'USER_PROJECT'}
+
+
+def test_unreadable_project_env_preserves_secret_values_and_origins(
+        root, monkeypatch, caplog):
+    """現状固定: 読み取り不能な設定の上書きを無視し、機密と由来を保持する。"""
+    env_path = root / 'projects' / 'web' / 'env'
+    env_path.write_text('TOKEN=override\n')
+    monkeypatch.setenv('TOKEN', 'override')
+    store = _FourLayerStore(_layers(
+        team_global={'TOKEN': 'secret'}, team_web={'PROJECT_ONLY': 'p'}))
+    read_bytes = Path.read_bytes
+
+    def read_with_permission_error(path):
+        if path == env_path:
+            raise PermissionError('project env is unreadable')
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, 'read_bytes', read_with_permission_error)
+
+    with caplog.at_level(logging.WARNING, logger=runtime.__name__):
+        resolved = runtime.resolve(root, 'web', store=store)
+
+    assert resolved.values == {'TOKEN': 'secret', 'PROJECT_ONLY': 'p'}
+    assert set(resolved.global_names) == {'TOKEN'}
+    assert set(resolved.project_names) == {'PROJECT_ONLY'}
+    assert set(resolved.names) == {'TOKEN', 'PROJECT_ONLY'}
+    assert any(record.levelno == logging.WARNING and str(env_path) in record.getMessage()
+               for record in caplog.records)
 
 
 def test_file_backends_resolve_exactly_as_before(root, store):
