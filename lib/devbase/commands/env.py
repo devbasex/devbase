@@ -746,7 +746,14 @@ def _format_value(key: str, value: str, reveal: bool) -> str:
 
 def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
                 user: bool = False, group: Optional[str] = None) -> int:
-    """変数を設定する"""
+    """変数を設定する
+
+    ``DEVBASE_ACCOUNT_GROUP`` は置き場を開く前に拒否する (PLAN62 決定 7)。置き場の値は
+    アカウントグループの決定に使われない (:func:`devbase.env.runtime.resolve` が合成しない)
+    ため、書いても使われない値を新たに作らない。:func:`_open_target_env` より前に返すので、
+    書き込み・ファイルの作成・書き込みのための読み出し (``fresh``) も、``--group`` の検査も
+    起きない。
+    """
     if '=' not in assignment:
         logger.error("形式: devbase env set KEY=VALUE")
         return 1
@@ -757,6 +764,13 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
 
     if not key:
         logger.error("キー名が空です")
+        return 1
+
+    if key == keys.DEVBASE_ACCOUNT_GROUP:
+        logger.error(
+            "%s は機密の置き場へは書けません（置き場の値はアカウントグループの決定に"
+            "使われません）。projects/<name>/env か $DEVBASE_ROOT/env に書いてください",
+            keys.DEVBASE_ACCOUNT_GROUP)
         return 1
 
     env_file, rc = _open_target_env(devbase_root, project, user=user, group=group)
