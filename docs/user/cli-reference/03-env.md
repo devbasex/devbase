@@ -99,6 +99,9 @@ devbase env set KEY=VALUE [-p] [--user] [--group NAME]
 | `--user` | 個人単位の置き場に設定（サーバ backend のみ。[機密の保存先を選ぶ](../env-backend.md)） |
 | `--group NAME` | 対象のグループの置き場に設定（グループ別の置き場のみ。`-p` と組み合わせるときはプロジェクトのグループと同じ置き場に限る） |
 
+`DEVBASE_ACCOUNT_GROUP` は書けません（どのオプションでも終了コード 1）。アカウントグループは
+`projects/<name>/env` か `$DEVBASE_ROOT/env` に書きます（[環境変数ガイド](../environment-variables.md#機密の置き場には書けない)）。
+
 ```bash
 # グローバルに設定
 devbase env set ANTHROPIC_API_KEY=sk-xxx

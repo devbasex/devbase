@@ -15,6 +15,19 @@
 ### Changed
 - `devbase list` の起動中の操作メニューで、Enter 1 回で決まる項目が「再起動 (up)」から
   「エディタを開く (open)」に変わりました。再起動はその 1 つ下です。
+- **機密の置き場（`.env` / `age` / OpenBao）に書いた `DEVBASE_ACCOUNT_GROUP` を、`version: 1` でも
+  使わなくなりました（PLAN62 / #185）。** 置き場の値は機密の合成から外れ、devbase のプロセスの
+  環境変数にも dev コンテナの `environment` にも載りません。アカウントグループを決めるのは
+  `env` ファイル（`projects/<name>/env` / `$DEVBASE_ROOT/env`）とシェルの環境変数だけになります。
+  置き場に残っていれば、コマンドのたびに置き場ごとに 1 回、消し方（`devbase env delete
+  DEVBASE_ACCOUNT_GROUP` と付ける引数）を添えた警告が出ます（値は出しません）。
+
+  > **Note:** これまで `version: 1` で置き場の値でグループを切り替えていた端末では、ボリューム
+  > のグループが `env` ファイルの宣言（無ければ `default`）へ戻ります。同じグループで使い
+  > 続けるには `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=<group>` を書いてください。
+- `devbase env set DEVBASE_ACCOUNT_GROUP=...`（`-p` / `--user` / `--group` 付きも同じ）は、置き場へ
+  書かずに `env` ファイルへ書くよう案内して終了コード 1 で止まります。`env import` / `env edit` と
+  他のキーの `env set` は変わりません。
 
 ### Fixed
 - **tmux の中で URL がクリックできなくなっていた**のを直しました。tmux は端末が `Hls`

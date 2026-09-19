@@ -52,6 +52,8 @@ def gcp_credentials_key(profile: str) -> str:
 # 使用する Google / AWS アカウントの単位。グループごとに devbase_home_<group> を
 # 作り、コンテナへ /persistent/group としてマウントする。未設定なら `default`。
 # プロジェクト env / グローバル env に手書きする devbase 動作設定。
+# 機密の置き場 (.env / age / OpenBao) にあっても注入しない (PLAN62: env/runtime.py が
+# 合成から外して警告し、`env set` は拒否する)。
 # 詳細: docs/user/environment-variables.md
 DEVBASE_ACCOUNT_GROUP = "DEVBASE_ACCOUNT_GROUP"
 

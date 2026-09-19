@@ -225,9 +225,11 @@ OpenBao の KV v2 にはコメント・空行の置き場がありません。`d
 なります。プロジェクトの外（`$DEVBASE_ROOT` など）では 2 → 3 で決まります。
 
 **機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` はグループの決定に使われません**（置き場を
-決める値をその置き場から読むことになるため）。置き場には書かないでください。書くと
-コンテナを起動するプロセスの環境変数にだけ載り、ボリュームのグループが変わって
-[`up` / `scale` が止まる](#up--scale-がグループの食い違いで止まったとき)ことがあります。
+決める値をその置き場から読むことになるため）。置き場の値は機密の合成から外れ、コンテナを
+起動するプロセスの環境変数にもコンテナにも載りません（`version: 1` でも同じ）。置き場に
+残っていればコマンドのたびに警告が 1 回出るので、そこに書かれた
+`devbase env delete DEVBASE_ACCOUNT_GROUP ...` で消してください。`devbase env set` は
+このキーを置き場へ書かずに終了コード 1 で止まります（[環境変数ガイド](environment-variables.md#機密の置き場には書けない)）。
 
 `default` をボリューム名（`devbase_home_default`）はそのままに、置き場の上だけ別の名前で
 扱うには `group_aliases` を使います。`default: nyle` なら、グループを宣言していない
@@ -407,9 +409,9 @@ Error: ボリュームと機密のアカウントグループが食い違うた�
 | 環境変数で指定したグループ（例: `kkg`） | `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=kkg` を書く。プロジェクトの `env` はラッパーが読み込むため、両方が揃う |
 | `env` ファイルで決まるグループ | シェルの環境変数を外す（`unset DEVBASE_ACCOUNT_GROUP`。シェルの設定ファイルで `export` していればその行も消す） |
 
-どちらでもなく、機密の置き場に `DEVBASE_ACCOUNT_GROUP` を書いていたときは、その行を
-`devbase env delete DEVBASE_ACCOUNT_GROUP`（書いた置き場に合わせて `-p` / `--user` / `--group`）で
-消してください。
+機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` はこの食い違いを起こしません（置き場の値は
+プロセスの環境変数へ載らないため）。置き場に残っていると別の警告が出るので、そこに書かれた
+`devbase env delete DEVBASE_ACCOUNT_GROUP ...` で消してください。
 
 `version: 1` の設定では、この検査は行いません。
 
