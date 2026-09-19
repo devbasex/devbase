@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pyrage
 import pytest
 
-from devbase.env import runtime
+from devbase.env import keys, runtime
 from devbase.env.secret_store import SecretRef, SecretStore
+from devbase.volume.manager import resolve_account_group
 
 
 @pytest.fixture
@@ -548,3 +550,209 @@ def test_resolve_with_the_group_layout_requests_only_the_group_paths(openbao_roo
     assert sorted(r.kv_path for r in openbao.requests_of('GET')) == sorted([
         'team/with/global', 'users/member01/with/global',
         'team/with/projects/web', 'users/member01/with/projects/web'])
+
+
+# ---------------------------------------------------------------------------
+# 機密の置き場の DEVBASE_ACCOUNT_GROUP は合成しない (PLAN62)
+# ---------------------------------------------------------------------------
+
+ACCOUNT_GROUP = keys.DEVBASE_ACCOUNT_GROUP
+
+
+@pytest.fixture
+def account_group_root(root, monkeypatch):
+    """DEVBASE_ROOT を tmp へ向け、警告の集合を空にし、プロセスのグループを外す"""
+    monkeypatch.setenv('DEVBASE_ROOT', str(root))
+    monkeypatch.delenv(ACCOUNT_GROUP, raising=False)
+    monkeypatch.setattr(runtime, '_warned_account_group_refs', set())
+    return root
+
+
+def _save(store, backend, ref, data):
+    getattr(store, backend).save(ref, data)
+
+
+@pytest.mark.parametrize('backend', ['age', 'plaintext'])
+def test_inject_does_not_put_the_stores_account_group_into_the_environment(
+        account_group_root, store, backend):
+    """受け入れ条件 1: 置き場の値はプロセスへ載らず、ボリュームのグループは default"""
+    _save(store, backend, GLOBAL, {ACCOUNT_GROUP: 'kkg', 'TOKEN': 't'})
+
+    runtime.inject(account_group_root, 'web', store=store)
+
+    assert ACCOUNT_GROUP not in os.environ
+    assert os.environ['TOKEN'] == 't'
+    assert resolve_account_group() == 'default'
+
+
+@pytest.mark.parametrize('backend', ['age', 'plaintext'])
+def test_inject_keeps_the_environments_account_group(account_group_root, store, backend,
+                                                     monkeypatch):
+    """受け入れ条件 2: env ファイル由来の値 (プロセスの環境変数) はそのまま"""
+    monkeypatch.setenv(ACCOUNT_GROUP, 'with')
+    _save(store, backend, GLOBAL, {ACCOUNT_GROUP: 'kkg', 'TOKEN': 't'})
+
+    runtime.inject(account_group_root, 'web', store=store)
+
+    assert os.environ[ACCOUNT_GROUP] == 'with'
+    assert resolve_account_group() == 'with'
+
+
+def test_inject_keeps_the_projects_env_declaration(account_group_root, store, monkeypatch):
+    """受け入れ条件 2: projects/web/env の宣言 (重ね順 3 が働く場合) でも同じ"""
+    (account_group_root / 'projects' / 'web' / 'env').write_text(f'{ACCOUNT_GROUP}=with\n')
+    monkeypatch.setenv(ACCOUNT_GROUP, 'with')
+    store.age.save(GLOBAL, {ACCOUNT_GROUP: 'kkg'})
+
+    resolved = runtime.inject(account_group_root, 'web', store=store)
+
+    assert os.environ[ACCOUNT_GROUP] == 'with'
+    assert ACCOUNT_GROUP not in resolved.values
+
+
+@pytest.mark.parametrize('layer', ['team_global', 'user_global', 'team_web', 'user_web'])
+def test_every_store_layer_is_dropped_from_the_environment(account_group_root, layer):
+    """受け入れ条件 3: 4 つの置き場のどれにあっても載らない"""
+    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'kkg', 'K': 'v'}}))
+
+    runtime.inject(account_group_root, 'web', store=store)
+
+    assert ACCOUNT_GROUP not in os.environ
+    assert os.environ['K'] == 'v'
+    assert resolve_account_group() == 'default'
+
+
+@pytest.mark.parametrize('layer', ['team_global', 'user_global', 'team_web', 'user_web'])
+def test_every_store_layer_loses_to_the_environment(account_group_root, layer, monkeypatch):
+    """受け入れ条件 3: プロジェクトの置き場 (重ね順 4・5) にあっても env ファイルの値が残る"""
+    (account_group_root / 'projects' / 'web' / 'env').write_text(f'{ACCOUNT_GROUP}=with\n')
+    monkeypatch.setenv(ACCOUNT_GROUP, 'with')
+    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'kkg'}}))
+
+    runtime.inject(account_group_root, 'web', store=store)
+
+    assert os.environ[ACCOUNT_GROUP] == 'with'
+    assert resolve_account_group() == 'with'
+
+
+def test_resolve_never_lists_the_account_group(account_group_root):
+    """受け入れ条件 5: names / global_names / project_names / values のどれにも無い"""
+    store = _FourLayerStore(_layers(
+        team_global={ACCOUNT_GROUP: 'kkg', 'A': '1'}, user_global={ACCOUNT_GROUP: 'kkg'},
+        team_web={ACCOUNT_GROUP: 'kkg', 'C': '3'}, user_web={ACCOUNT_GROUP: 'kkg'}))
+
+    resolved = runtime.resolve(account_group_root, 'web', store=store)
+
+    assert resolved.values == {'A': '1', 'C': '3'}
+    assert resolved.global_names == ['A']
+    assert resolved.project_names == ['C']
+    assert resolved.names == ['A', 'C']
+
+
+def test_child_env_does_not_carry_the_stores_account_group(account_group_root):
+    store = _FourLayerStore(_layers(team_global={ACCOUNT_GROUP: 'kkg', 'A': '1'}))
+
+    env = runtime.child_env(account_group_root, 'web', base={'PATH': '/bin'}, store=store)
+
+    assert env == {'PATH': '/bin', 'A': '1'}
+
+
+# ---------------------------------------------------------------------------
+# 置き場にあったときの警告 (PLAN62 受け入れ条件 4)
+# ---------------------------------------------------------------------------
+
+def _warnings(caplog):
+    return [r.getMessage() for r in caplog.records
+            if r.levelno == logging.WARNING and ACCOUNT_GROUP in r.getMessage()]
+
+
+DELETE = f'devbase env delete {ACCOUNT_GROUP}'
+
+
+@pytest.mark.parametrize('layer, label, how', [
+    ('team_global', 'グローバル', DELETE),
+    ('user_global', '個人のグローバル', f'{DELETE} --user'),
+    ('team_web', "プロジェクト 'web'", f'{DELETE} -p（projects/web で実行）'),
+    ('user_web', "個人のプロジェクト 'web'", f'{DELETE} -p --user（projects/web で実行）'),
+])
+def test_warns_once_with_the_store_and_how_to_delete(account_group_root, caplog,
+                                                     layer, label, how):
+    """受け入れ条件 4: キー名・置き場の種類・消し方を含み、値は含まない"""
+    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'kkg'}}))
+
+    with caplog.at_level(logging.WARNING):
+        runtime.resolve(account_group_root, 'web', store=store)
+
+    messages = _warnings(caplog)
+    assert len(messages) == 1
+    message = messages[0]
+    assert f'機密の置き場（{label}）' in message
+    assert 'projects/<name>/env' in message and '$DEVBASE_ROOT/env' in message
+    assert message.endswith(how)
+    assert 'kkg' not in message
+
+
+def test_warning_for_a_grouped_reference_names_the_group(account_group_root, caplog):
+    """グループを持つ参照は label にグループが付き、--group を添える"""
+    store = _GroupedStore(_layers(user_web={ACCOUNT_GROUP: 'kkg'}), 'with')
+
+    with caplog.at_level(logging.WARNING):
+        runtime.resolve(account_group_root, 'web', store=store)
+
+    messages = _warnings(caplog)
+    assert len(messages) == 1
+    assert "機密の置き場（個人のプロジェクト 'web'（グループ with））" in messages[0]
+    assert messages[0].endswith(f'{DELETE} -p --user --group with（projects/web で実行）')
+
+
+def test_warning_for_a_grouped_global_reference_still_adds_the_group(account_group_root,
+                                                                     caplog):
+    """決定 5: 共通の参照でも --group を付け、どこで打っても同じ置き場を指す"""
+    store = _GroupedStore(_layers(team_global={ACCOUNT_GROUP: 'kkg'}), 'with')
+
+    with caplog.at_level(logging.WARNING):
+        runtime.resolve(account_group_root, None, store=store)
+
+    messages = _warnings(caplog)
+    assert len(messages) == 1
+    assert '機密の置き場（グローバル（グループ with））' in messages[0]
+    assert messages[0].endswith(f'{DELETE} --group with')
+
+
+def test_warning_is_not_repeated_across_stores_and_release(account_group_root, caplog):
+    """受け入れ条件 4: 同じ参照は release_store と別の store をまたいでも 1 回"""
+    layers = _layers(team_global={ACCOUNT_GROUP: 'kkg'})
+
+    with caplog.at_level(logging.WARNING):
+        runtime.resolve(account_group_root, 'web', store=_FourLayerStore(layers))
+        runtime.resolve(account_group_root, 'web', store=_FourLayerStore(layers))
+        runtime.release_store()
+        runtime.resolve(account_group_root, None, store=_FourLayerStore(layers))
+
+    assert len(_warnings(caplog)) == 1
+
+
+def test_each_reference_warns_separately(account_group_root, caplog):
+    store = _FourLayerStore(_layers(team_global={ACCOUNT_GROUP: 'kkg'},
+                                    user_web={ACCOUNT_GROUP: 'kkg'}))
+
+    with caplog.at_level(logging.WARNING):
+        runtime.resolve(account_group_root, 'web', store=store)
+        runtime.resolve(account_group_root, 'web', store=store)
+
+    messages = _warnings(caplog)
+    assert len(messages) == 2
+    assert '（グローバル）' in messages[0]
+    assert "（個人のプロジェクト 'web'）" in messages[1]
+
+
+def test_empty_value_still_warns_and_no_key_does_not(account_group_root, caplog):
+    with caplog.at_level(logging.WARNING):
+        runtime.resolve(account_group_root, 'web',
+                        store=_FourLayerStore(_layers(team_global={'K': 'v'})))
+    assert _warnings(caplog) == []
+
+    with caplog.at_level(logging.WARNING):
+        runtime.resolve(account_group_root, 'web',
+                        store=_FourLayerStore(_layers(team_global={ACCOUNT_GROUP: ''})))
+    assert len(_warnings(caplog)) == 1
