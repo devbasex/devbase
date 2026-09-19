@@ -228,12 +228,38 @@ graph TD
 ### 常に成り立つ条件
 
 - 名前として `projects/` へ連結される値は、必ず名前の形に合う 1 セグメントである。したがって
-  name 解決と Python 側の検証は `$DEVBASE_ROOT/projects/` の外のディレクトリへ `cd` せず、
-  そこの `env` も読まない
+  位置引数に `..` や `/` を混ぜて `$DEVBASE_ROOT/projects/<name>` の外を指すこと
+  （パストラバーサル）はできず、name 解決と Python 側の検証はそのような値で `cd` も `env` の
+  読み込みもしない。**保証するのはここまでで、`projects/<name>` の実体がどこにあるかは含まない**
+  （下の「リンクの先は対象外」）
 - `containers/` への連結（実在の確認と単体ビルド）も同じ規則を通る
 - ラッパーが名前として解釈した値だけが引数から取り除かれる。解釈しなかった値は 1 つも欠けずに
   下流へ渡る
 - shell と Python の正規表現は同じ文字列である（同期テストが一致を見る）
+
+### リンクの先は対象外
+
+上の保証は**位置引数の形**についてのもので、`$DEVBASE_ROOT/projects/<name>` が指す先までは
+縛らない。`projects/<name>` はプラグインの同期が張るシンボリックリンクであることが多く、実体は
+リポジトリの管理外（`repos/` 配下など、`.gitignore` で除外された場所）にある。
+
+```
+$ ls -l $DEVBASE_ROOT/projects
+lrwxr-xr-x  adminer   -> ../repos/github.com--devbasex--devbase-samples/adminer/projects/adminer
+lrwxr-xr-x  carmo     -> ../repos/github.com--volareinc--devbase-ext/carmo-web/projects/carmo
+```
+
+`maybe_cd_project` の `cd "$target"` も Python 側の `os.chdir` もリンクを辿るため、対象が
+リンクなら実体のディレクトリへ移動し、そこの `env` を `source` する。これは登録済みの
+プロジェクトを扱うための**意図した動き**で、この仕様は変えていない。つまり、
+
+| 事柄 | 保証 |
+| --- | --- |
+| 位置引数に `..` `/` `.` を含めて `projects/<name>` の外を指す | 拒む（名前の形で弾く） |
+| `projects/<name>` が登録済みのシンボリックリンクで、実体が `projects/` の外にある | 拒まない。実体へ `cd` し、そこの `env` を読む |
+
+リンクを張れるのは `$DEVBASE_ROOT/projects/` へ書ける者だけで、その者はもともと
+任意の `env` をそこへ置ける。したがってリンクを辿ることで新たに広がる権限は無い。
 
 ### 残る衝突
 
