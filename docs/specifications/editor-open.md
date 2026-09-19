@@ -177,4 +177,5 @@ graph TD
 - [CLI リファレンス: `devbase project open`](../user/cli-reference/02-project.md#devbase-project-open)
 - [環境変数ガイド: エディタ自動オープン](../user/environment-variables.md)
 - [別ホストの Docker への dev コンテナ起動（docker context）](remote-docker-context.md)
+- [位置引数の解決（プロジェクト名・イメージ名）](cli-argument-resolution.md)
 - 課題: devbasex/devbase#197。設計 PR: #198、実装 PR: #199

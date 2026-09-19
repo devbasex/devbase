@@ -241,7 +241,16 @@ PR には以下の情報を記載する。
 
 ### 現状のテスト方針
 
-devbase は現時点では**手動テスト中心**で運用している。変更時は以下の手順で動作確認を行う。
+`tests/` の pytest と、Docker や実環境が要る範囲の手動テストを併用する。手元では
+`uv run --locked pytest tests/ -q` で全体を回し、実機の挙動は以下の手順で確認する。
+
+### CI が実行するもの
+
+`main` 宛ての Pull Request と `main` への push で `.github/workflows/ci.yml` が走り、
+`compileall`（Python 3.10 / 3.11 / 3.12）・`ruff check --select=E9,F63,F7,F82 lib`・
+`bin/` と `install.sh` の ShellCheck・`uv sync --locked` の後の `pytest tests/`
+（Python 3.10 / 3.13）を実行する。CI に `DEVBASE_ROOT` と Docker は無いため、テストは
+自前の一時ディレクトリを `DEVBASE_ROOT` に向け、実機を要するものは理由を添えて skip する。
 
 ### 手動テストの手順
 
