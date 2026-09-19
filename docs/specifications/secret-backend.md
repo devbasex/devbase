@@ -76,14 +76,14 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | OpenBao adapter | `lib/devbase/env/openbao.py` | AppRole 認証、参照ごとの取得、版を指定した丸ごとの書き込み、失敗の種類の判定 |
 | ブートストラップ | `lib/devbase/env/bootstrap.py` | 接続資格情報を登録簿を経由せず age で直接読み書きする |
 | キャッシュ | `lib/devbase/env/cache.py` | 参照ごとの控えの書き込み・読み出し・破棄・全消去 |
-| 機密の合成 | `lib/devbase/env/runtime.py` | 4 層の機密を対象のプロジェクトのグループで重ねてコンテナへ渡す。`SecretStore` をライフサイクル操作 1 回の間持ち回る（`store_for` / `release_store`） |
+| 機密の合成 | `lib/devbase/env/runtime.py` | 4 層の機密を対象のプロジェクトのグループで重ねてコンテナへ渡す。読み取りの直後に `DEVBASE_ACCOUNT_GROUP` を外して警告する（`_without_account_group` / `_warned_account_group_refs`）。`SecretStore` をライフサイクル操作 1 回の間持ち回る（`store_for` / `release_store`） |
 | dispatch 前の注入 | `lib/devbase/cli.py` | `_load_secret_env`。注入を行わないコマンドと、`version: 2` で注入に使うプロジェクトを決める。`--group` / `--layout` / `--group-alias` / `--exclude-project` の引数 |
 | 同期済みハッシュの控え | `lib/devbase/env/sources.py` | `SourcesManager` と `sources_path`。`version: 2` では置き場のグループごとに控えを分ける |
 | コンテナへの token の配送 | `lib/devbase/env/container_token.py` | 受け取った token を `docker exec` の stdin で各コンテナの `~/.vault-token` へ書く。token の取得と届け先の解決は持たない |
 | `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | `version: 2` でボリュームと機密のグループの食い違いを起動前に検査する（`_check_group_consistency`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に token を書く |
 | base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
 | `env backend` コマンド | `lib/devbase/commands/env_backend.py` | `status` / `use` / `test` / `migrate` |
-| `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token` |
+| `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token`。`env set` は `DEVBASE_ACCOUNT_GROUP` を置き場を開く前に拒む |
 | `rekey` / `doctor` | `lib/devbase/commands/env_ops.py` | 手元の age 暗号文すべての再暗号化、backend 設定と権限と Git の除外の点検 |
 | `encrypt` / `decrypt` | `lib/devbase/commands/env_migrate.py` | age ストアと平文の間の移動（backend の向きと突き合わせる） |
 | `export` | `lib/devbase/env/bundle.py` | 機密をバンドルへ集める。`version: 2` では対象のグループと同じ置き場のプロジェクトだけを集める |
@@ -176,6 +176,64 @@ flowchart LR
 現れた位置で 1 件に畳む。個人単位の参照を持たない backend では 2 と 5 が空になり、結果は
 従来と同じである。`version: 2` では 4 つの機密の層はいずれも、起動するプロジェクトの
 グループ（`SecretStore.ref_group(project)`）の参照である。
+
+4 つの機密の層（1・2・4・5）から `DEVBASE_ACCOUNT_GROUP` は外す。詳細は次の節にある。
+
+### 機密の置き場の `DEVBASE_ACCOUNT_GROUP`
+
+`runtime.resolve()` は、4 つの置き場から読んだ内容を合成に使う前に `DEVBASE_ACCOUNT_GROUP` を
+除く（`_without_account_group`）。backend と版によらず、`version: 1` でも `age` / `plaintext` でも
+同じである。
+
+| 対象 | 結果 |
+| --- | --- |
+| `SecretEnv.values` | `DEVBASE_ACCOUNT_GROUP` を含まない。`projects/<name>/env` が同じキーを宣言していても含まない（重ね順 3 は名前の一覧に無いキーの値を採らないため） |
+| `SecretEnv.global_names` / `project_names` / `names` | 含まない。したがって dev コンテナの `environment` にも列挙されない |
+| `runtime.inject` / `child_env` | どちらも `resolve` の結果だけを載せるため、プロセスの環境変数と子プロセスの `DEVBASE_ACCOUNT_GROUP` を書き換えない。シェルか `env` ファイル由来の値はそのまま残る |
+| 置き場への要求 | 変わらない（4 参照を 1 回ずつ `load`） |
+| 比べ方 | キー名の完全一致。`export DEVBASE_ACCOUNT_GROUP` のような接頭辞付きのキーは別の名前の変数で、グループに効かないため対象外 |
+
+外す場所を読み取りの直後の 1 か所にするのは、`inject`・`child_env`・コンテナへ列挙する変数名が
+どれも `resolve` の結果から作られるためである。ここで外せば、3 つの経路と重ね順の全層に同じ規則が
+当たり、経路を足しても漏れない。置き場の値を載せると、プロセスの環境変数を読む
+`volume.manager.resolve_account_group()` が置き場の値でボリュームのグループを変えてしまう。
+
+置き場に値が残っていた場合は、その置き場（`SecretRef`）について 1 プロセスで 1 回だけ警告を出す。
+
+```text
+機密の置き場（{参照の表示}）にある DEVBASE_ACCOUNT_GROUP は使いません。アカウントグループは env
+ファイル（projects/<name>/env・$DEVBASE_ROOT/env）で決まります。消すには: devbase env delete
+DEVBASE_ACCOUNT_GROUP{付ける引数}{実行場所}
+```
+
+（実際は `logger.warning` の 1 行。上は紙面の都合で折り返している。）
+
+| 置き場 | 参照の表示（`SecretRef.label()`） | 付ける引数 | 実行場所 |
+| --- | --- | --- | --- |
+| チーム共通 | `グローバル` | なし | なし |
+| 個人共通 | `個人のグローバル` | ` --user` | なし |
+| プロジェクトのチーム | `プロジェクト 'web'` | ` -p` | `（projects/web で実行）` |
+| プロジェクトの個人 | `個人のプロジェクト 'web'` | ` -p --user` | `（projects/web で実行）` |
+
+- 参照がグループを持つとき（`version: 2`）は、表示の末尾に `（グループ <名前>）` が付き、引数の
+  末尾に ` --group <読み替える前の名前>` が加わる。省くと `env delete` は実行した場所のグループを
+  宛先にし、警告を出した置き場と違う置き場を指しうる
+- 値そのものは出さない。空の値でもキーがあれば出す
+- 重複を抑える集合はモジュールの変数で、`SecretStore` ではなくプロセスが持つ。ストアは
+  `release_store` で捨てられる（`up` の中の `env init` の後など）ため、ストアに持たせると
+  1 回の `up` で警告が 2 回出る。TUI は 1 プロセスで操作を続けるので、同じ置き場の警告は最初に
+  注入したときの 1 回だけになる
+- 置き場の値は自動では消さない。置き場はチームと共有する場所でもあり、コマンドの副作用で
+  書き換えると書いた本人の知らないうちに他の端末にも及ぶ。消すかどうかは利用者が決める
+
+`devbase env set DEVBASE_ACCOUNT_GROUP=VALUE` は置き場を開く前に拒む。
+
+| 項目 | 内容 |
+| --- | --- |
+| 条件 | `KEY` が前後の空白を除いて `DEVBASE_ACCOUNT_GROUP` と一致する。`-p` / `--user` / `--group` の有無によらない |
+| 出力 | 終了コード 1。error ログ `DEVBASE_ACCOUNT_GROUP は機密の置き場へは書けません（置き場の値はアカウントグループの決定に使われません）。projects/<name>/env か $DEVBASE_ROOT/env に書いてください` |
+| 置き場への作用 | `_open_target_env` より前に返すため、書き込み・ファイルの作成・書き込みのための読み出し（`fresh`）も、`--group` の名前の検証も起きない。dispatch 前の注入による読み取りは他のコマンドと同じく起きうる |
+| 対象外 | `env import` / `env edit` は拒まない（複数のキーをまとめて扱い、1 キーのために全体を止めると他のキーの作業まで止まる）。書かれた値は上の警告で知らせる |
 
 ### アカウントグループごとの置き場（`version: 2`）
 
@@ -739,6 +797,8 @@ flowchart TD
   ある
 - 参照のグループは非機密の `env` ファイルだけから決まり、機密の置き場の値とプロセスの環境変数は
   使わない。レイアウトと合わないグループの参照は、サーバへ要求する前に拒む
+- `DEVBASE_ACCOUNT_GROUP` は、どの backend・どの版でも機密の合成に現れない。devbase のプロセスの
+  環境変数にも、子プロセスにも、dev コンテナの `environment` にも、置き場の値が載ることはない
 - `version: 2` の `up` / `scale` は、ボリュームと機密のグループが食い違ったまま副作用を起こさない
 
 ## データ・設定
@@ -862,7 +922,9 @@ cache:
   だけになる。企業ごとのグループの機密を、別グループのプロジェクトへ届けずに済み、サーバは
   グループ単位のポリシーで読み書きを絞れる
 - グループを非機密の `env` ファイルから決めるため、機密の置き場に書いた値で読む置き場は
-  変わらない。ボリュームのグループとの食い違いは `up` / `scale` が起動前に止める
+  変わらない。ボリュームのグループも同じで、置き場の `DEVBASE_ACCOUNT_GROUP` は合成から外れ、
+  プロセスの環境変数にもコンテナにも載らない。置き場へ書ける者が、それを読む端末の
+  ボリュームの宛先を変えることはできない
 
 ## 運用
 
@@ -893,9 +955,11 @@ cache:
   書き、`env backend status` で確かめる
 - `up` / `scale` がグループの食い違いで止まったら、起動したいグループに合わせて、プロジェクトの
   `env` に `DEVBASE_ACCOUNT_GROUP` を書くか、シェルの環境変数を外す
-- 機密の置き場に `DEVBASE_ACCOUNT_GROUP` を書くと、注入でプロセスの環境変数へ載ってボリュームの
-  グループを変えうる（プロジェクトの `env` が宣言していれば上書きされる）。`version: 2` ではこの
-  場合も食い違いの検査で止まる。注入の対象から外すかは #185 で扱う。置き場には書かない
+- 機密の置き場に `DEVBASE_ACCOUNT_GROUP` を書いても使われない。`devbase env set` は拒み、既に
+  置き場にある値は合成から外れて置き場ごとに 1 回警告が出る。警告が出たら、添えられた
+  `devbase env delete DEVBASE_ACCOUNT_GROUP …` で消し、グループは `projects/<name>/env` か
+  `$DEVBASE_ROOT/env` で宣言する。`version: 1` の端末で置き場の値によってグループを切り替えて
+  いた場合、ボリュームのグループは `env` ファイルの宣言（無ければ `default`）へ戻る
 
 ## テスト観点
 
@@ -912,6 +976,15 @@ cache:
   と結果不明の書き込みでの破棄・控えから読んだ参照の書き戻し拒否・無効化・原子性・本文の
   途中切れ（`tests/env/test_cache.py`）
 - 4 層の重ね順とファイル backend での不変（`tests/env/test_runtime.py`）
+- 4 つの置き場の `DEVBASE_ACCOUNT_GROUP` が `inject` / `child_env` / `resolve` の名前と値のどれにも
+  現れず、プロセスの環境変数（シェル由来・`projects/<name>/env` 由来）を書き換えないこと、置き場
+  ごとに 1 回だけ消し方を添えた警告が出て値を出さないこと、グループを持つ参照では `--group` が
+  付くこと、`release_store` や別のストアをまたいでも警告が増えないこと（`tests/env/test_runtime.py`）
+- 置き場に `DEVBASE_ACCOUNT_GROUP` があっても、注入の後の `up` のグループの食い違いの検査が
+  止まらないこと（`tests/commands/test_container_up_order.py`）
+- `env set DEVBASE_ACCOUNT_GROUP=…` が `-p` / `--user` / `--group` の組み合わせによらず 1 で終わり、
+  サーバへ書き込みの要求を出さず `.env` も作らないこと。前後に空白があっても拒み、他のキーは
+  今までどおり書けること（`tests/commands/test_env_account_group.py`）
 - `status` / `use`、`--cache` / `--no-cache` の引き継ぎ、argv に `secret_id` を取る経路が
   無いこと（`tests/commands/test_env_backend.py`）
 - `--user` の宛先、`list` / `get` の順序、ファイル backend での拒否、`edit` / `init --reset`、
@@ -989,10 +1062,10 @@ cache:
 - [CLI リファレンス: env](../user/cli-reference/03-env.md)
 - 発端の依頼: `issues/security-key.md`
 - 実装 PR: devbasex/devbase#171（Infisical 版 #167 を置き換え）、#177（`up` の往復、#168）、
-  #178（コンテナの `bao`、#169）、#184（アカウントグループごとの置き場、#182。設計は #183）
+  #178（コンテナの `bao`、#169）、#184（アカウントグループごとの置き場、#182。設計は #183）、
+  #206（機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` を注入しない、#185。設計は #205）
 - Infisical から OpenBao への切り替えの経緯: devbasex/devbase#166
 - サーバのポリシーをグループ単位に絞る課題: 運用側のリポジトリ（carmo-cdk#363）
-- 範囲外として起票した課題: #185（機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` の注入）
 - [環境変数ガイド: アカウントグループ](../user/environment-variables.md#アカウントグループ-devbase_account_group)
 - [OpenBao: KV v2 API](https://openbao.org/api-docs/secret/kv/kv-v2/)
 - [OpenBao: AppRole auth](https://openbao.org/docs/auth/approle/)
