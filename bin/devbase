@@ -316,10 +316,30 @@ resolve_command() {
 # 引数はそのまま下流 (Python パーサ) へ渡し、Python 側で index/image/scale
 # あるいは「存在しない name」エラーとして扱わせる。
 
+# プロジェクト名 / イメージ名として受け付ける形 (PLAN61 決定 1)。英数字で始まり、英数字・
+# `.`・`-`・`_` だけからなる。先頭が英数字なので `.` `..` `-x` 空は当たらず、`/` `\` 空白
+# 非 ASCII は含められない。$DEVBASE_ROOT/projects/ や containers/ へ連結する前にこれで弾き、
+# `..` で $DEVBASE_ROOT の外へ出ないようにする。
+#
+# 同期注意: lib/devbase/utils/names.py の SINGLE_SEGMENT_NAME_PATTERN と同じ正規表現。
+# Python を呼んで判定すると name 解決のたびに uv の起動が増えるため、shell 側にも文字列で
+# 持つ。片方を変えたらもう片方も変える (tests/cli/test_project_name_resolution.py の
+# 同期テストが一致を見る)。
+_SINGLE_SEGMENT_NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+
+# $1 が名前の形なら 0。bash 3.2 の `[[ =~ ]]` は引用した右辺を文字列として比べるため、
+# 正規表現は変数で渡す。`[A-Za-z]` の範囲はロケールで変わりうるので、Python の定義
+# (ASCII だけ) と同じ結果になるよう LC_ALL=C で比べる (決定 4)。
+is_single_segment_name() {
+    local LC_ALL=C
+    [[ ${1:-} =~ $_SINGLE_SEGMENT_NAME_RE ]]
+}
+
 # name 候補を受け取り projects/ 配下に実在すれば cd + env 再設定して 0 を返す。
+# 名前の形に合わない値 (フラグ・空・`..` や `/` を含む値) は名前ではない。
 maybe_cd_project() {
     local name="${1:-}"
-    case "$name" in -*|"") return 1 ;; esac   # フラグ・空は name ではない
+    is_single_segment_name "$name" || return 1
     local target="${DEVBASE_ROOT}/projects/${name}"
     [ -d "$target" ] || return 1
     cd "$target" || return 1

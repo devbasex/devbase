@@ -588,5 +588,80 @@ def test_wrapper_project_login_keeps_index_positional(wrapper_root):
     assert _python_args(r) == "project login carmo", r.stdout
 
 
+# ===========================================================================
+# wrapper (実プロセス): 名前の形 (PLAN61 / #146)
+#
+# `exec_wrapper` (conftest.py) は bin/devbase を tmp へ複製して起動し、`uv` だけを PATH で
+# 差し替える。maybe_cd_project は本物のまま動く (受け入れ条件 15)。
+# ===========================================================================
+
+from tests.cli.conftest import stdout_field  # noqa: E402
+
+TOP_LEVEL_NAME_COMMANDS = ["up", "down", "ps", "scale", "login", "rebuild", "open"]
+PROJECT_NAME_SUBCOMMANDS = ["up", "down", "ps", "logs", "scale", "rebuild", "open"]
+MALFORMED_NAMES = ["../etc", "a/b", ".", ".."]
+
+
+def _name_commands():
+    for cmd in TOP_LEVEL_NAME_COMMANDS:
+        yield [cmd]
+    for sub in PROJECT_NAME_SUBCOMMANDS:
+        yield ["project", sub]
+
+
+@pytest.mark.parametrize("name", MALFORMED_NAMES)
+@pytest.mark.parametrize("command", list(_name_commands()), ids=" ".join)
+def test_wrapper_malformed_name_stays_put_and_reads_no_outside_env(exec_wrapper, command, name):
+    """受け入れ条件 2: `..` や `/` を含む名前で projects/ の外へ cd せず、外の env を読まない。
+
+    `<tmp>/etc/env` に `MARKER=leaked` を置く。`projects/../etc` へ cd してしまうと wrapper が
+    それを source し、偽の `uv` が `MARKER:leaked` を出す。名前は wrapper が取り除かず、
+    そのまま Python へ渡る (前提 2)。
+    """
+    exec_wrapper.etc_env()
+    exec_wrapper.project("carmo")
+
+    r = exec_wrapper([*command, name])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    assert stdout_field(r, "MARKER:") == "<unset>", r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(f" {' '.join(command)} {name}"), r.stdout
+
+
+@pytest.mark.parametrize("name", ["carmo", "github_work_time", "carmo-ai"])
+def test_wrapper_well_formed_existing_name_cds_and_strips(exec_wrapper, name):
+    """受け入れ条件 5: 形に合う実在の名前は今と同じく cd して取り除かれる。"""
+    exec_wrapper.project(name)
+
+    r = exec_wrapper(["up", name])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.root / "projects" / name), r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli up"), r.stdout
+
+
+def test_wrapper_non_ascii_name_is_not_resolved(exec_wrapper):
+    """決定 4: shell の比較は LC_ALL=C で行い、`café` は名前の形に当たらない。"""
+    exec_wrapper.project("café")
+
+    r = exec_wrapper(["up", "café"])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli up café"), r.stdout
+
+
+def test_wrapper_name_regex_is_synced_with_python():
+    """決定 2: bin/devbase の `_SINGLE_SEGMENT_NAME_RE` は Python の定義と同じ正規表現。"""
+    import re
+
+    from devbase.utils.names import SINGLE_SEGMENT_NAME_PATTERN
+
+    found = re.findall(r"^_SINGLE_SEGMENT_NAME_RE='([^']*)'$", WRAPPER.read_text(), re.M)
+    assert found, "bin/devbase から _SINGLE_SEGMENT_NAME_RE を抜き出せない"
+    assert found == ["^" + SINGLE_SEGMENT_NAME_PATTERN + "$"]
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
