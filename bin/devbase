@@ -370,12 +370,47 @@ maybe_cd_project() {
     return 0
 }
 
+# トップレベル `build` の使い方 (PLAN61 決定 7・9)。トップレベル build は shell の cmd_build と
+# Python の project build に振り分けられ、受け付ける引数が両者で違う (--project-no-cache は
+# shell にだけある) ため、argparse の --help に委ねず wrapper が出す。
+build_usage() {
+    cat <<'EOF'
+Usage: devbase build [<project> | <image>] [options]
+
+Build devbase images.
+  (no argument)       build the images of the current project (base image first)
+  <project>           build the project in $DEVBASE_ROOT/projects/<project>
+  <image>             build $DEVBASE_ROOT/containers/<image> alone as devbase-<image>:latest
+                      (when both containers/<name> and projects/<name> exist, <name> is an image;
+                       to build the project, run 'devbase build' in its directory)
+
+Options:
+  --no-cache          rebuild the base and project images without cache
+  --project-no-cache  rebuild only the project image without cache (base uses cache)
+  --expires[=DAYS]    rebuild without cache only if the image is older than DAYS days (default 7)
+  --context NAME      run docker against the docker context NAME
+  -h, --help          show this help
+EOF
+}
+
 # Resolve the command (skip flags like --version, -V, -h, --help)
 _resolved_cmd="${1:-}"
 case "$_resolved_cmd" in
     --*|-*|"") ;;  # flags and empty: don't resolve
     *) _resolved_cmd="$(resolve_command "$_resolved_cmd")" ;;
 esac
+
+# `build` の -h / --help は name 解決より前に判定する (PLAN61 決定 7・8 / #196)。後に置くと
+# `build carmo --help` で projects/carmo への cd とその env の読み込みが先に起きる。
+# `--context --help` の `--help` も使い方 (argparse も `-` 始まりを値に取らない)。
+# `--context=--help` は語が違うので使い方にならず、下流の argparse で usage エラーになる。
+if [ "$_resolved_cmd" = "build" ]; then
+    for _ba in "${@:2}"; do
+        case "$_ba" in
+            -h|--help) build_usage; exit 0 ;;
+        esac
+    done
+fi
 
 # name 解決: 実在するプロジェクト名を検出したら cd し、その token を argv から
 # 取り除いた配列 _DEVBASE_ARGS を組み立てる。検出しなければ素通し。

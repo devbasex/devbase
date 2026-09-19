@@ -319,3 +319,68 @@ def test_single_build_accepts_real_container_directory_names(devbase_root, captu
 
     tags = [cmd[cmd.index("-t") + 1] for cmd in captured_run]
     assert tags == [f"devbase-{name}:latest" for name in names]
+
+
+# ===========================================================================
+# wrapper (実プロセス): `build --help` / `-h` (PLAN61 / #196)
+#
+# `exec_wrapper` (conftest.py) は bin/devbase を tmp へ複製して起動し、`uv` だけを PATH で
+# 差し替える。cmd_build は本物のまま動くので `=== Building devbase images ===` が出ないことを
+# 確かめられる。run_python も docker も `uv` を通るため、`UV:` が無いことで両方を確かめる。
+# ===========================================================================
+
+from tests.cli.conftest import stdout_field  # noqa: E402
+
+BUILD_USAGE_TOKENS = ["--no-cache", "--project-no-cache", "--expires[=DAYS]", "--context NAME",
+                      "<image>"]
+
+
+def _assert_build_usage(result):
+    assert result.returncode == 0, result.stderr
+    assert "=== Building devbase images ===" not in result.stdout
+    assert stdout_field(result, "UV:") is None, result.stdout
+    assert "Usage: devbase build" in result.stdout
+    for token in BUILD_USAGE_TOKENS:
+        assert token in result.stdout, f"{token!r} が使い方に無い:\n{result.stdout}"
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_wrapper_build_help_prints_usage_without_building(exec_wrapper, flag):
+    """受け入れ条件 9・10: `build --help` / `-h` は終了コード 0 で使い方を出し、ビルドしない。"""
+    _assert_build_usage(exec_wrapper(["build", flag]))
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_wrapper_build_name_help_does_not_cd_or_read_env(exec_wrapper, flag):
+    """受け入れ条件 11: `build carmo --help` も cd せず、carmo の env を読まずに使い方を出す。
+
+    `projects/carmo/env` に `echo CARMO_ENV_READ >&2` を置く。wrapper は env を source するため、
+    この行は cd と読み込みが起きたときだけ stderr に出る。
+    """
+    exec_wrapper.project("carmo", env="echo CARMO_ENV_READ >&2\n")
+
+    r = exec_wrapper(["build", "carmo", flag])
+
+    _assert_build_usage(r)
+    assert stdout_field(r, "PWD:") is None, r.stdout
+    assert "CARMO_ENV_READ" not in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_wrapper_build_context_followed_by_help_is_usage(exec_wrapper, flag):
+    """決定 8: `--context --help` の `--help` は context の値ではなく使い方。"""
+    _assert_build_usage(exec_wrapper(["build", "--context", flag]))
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_wrapper_build_context_equals_help_is_not_usage(exec_wrapper, flag):
+    """決定 8: `--context=--help` は使い方にせず、値としてそのまま下流へ渡す。
+
+    実際の argparse では値不足の usage エラー (終了コード 2) になる。`-` 始まりの context 名は
+    受け付けない。
+    """
+    r = exec_wrapper(["build", f"--context={flag}"])
+
+    assert "Usage: devbase build" not in r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and f"env exec --context {flag} --" in uv, r.stdout
