@@ -528,3 +528,29 @@ def test_dispatch_unknown_command_returns_one():
     """未知コマンドで spec is None となり return 1 する経路を固定する。"""
     args = _args(command='bogus')
     assert cli._dispatch('bogus', args) == 1
+
+
+# ---------------------------------------------------------------------------
+# _require_devbase_root: DEVBASE_ROOT 未設定→終了、設定済み→Path を返す
+# (list / migrate-config / _ROOT_COMMANDS が共有するヘルパの現状固定)
+# ---------------------------------------------------------------------------
+
+def test_require_devbase_root_exits_when_unset(monkeypatch):
+    """現状固定: DEVBASE_ROOT 未設定なら SystemExit(1) で終了する。"""
+    from pathlib import Path
+
+    monkeypatch.delenv('DEVBASE_ROOT', raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._require_devbase_root()
+
+    assert exc.value.code == 1
+
+
+def test_require_devbase_root_returns_path_when_set(monkeypatch, tmp_path):
+    """現状固定: DEVBASE_ROOT が設定済みなら Path(値) を返す。"""
+    from pathlib import Path
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+
+    assert cli._require_devbase_root() == Path(tmp_path)

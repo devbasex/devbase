@@ -194,6 +194,22 @@ def test_main_passes_the_parsed_name(monkeypatch):
     assert seen == {'cmd': 'project', 'subcommand': 'up', 'name': 'web'}
 
 
+def test_main_passes_the_parsed_name_via_top_level_shortcut(monkeypatch):
+    """現状固定: トップレベルショートカット (`devbase up <name>`) 経由でも、
+    解析されたプロジェクト名が cmd='up' とともに _load_secret_env へ渡る。
+    """
+    seen = {}
+    monkeypatch.setattr(cli, '_load_secret_env',
+                        lambda cmd, subcommand=None, name=None: seen.update(
+                            cmd=cmd, subcommand=subcommand, name=name))
+    monkeypatch.setattr(cli, '_dispatch', lambda cmd, args: 0)
+    monkeypatch.setattr('sys.argv', ['devbase', 'up', 'carmo'])
+
+    assert cli.main() == 0
+    assert seen['cmd'] == 'up'
+    assert seen['name'] == 'carmo'
+
+
 def test_main_preserves_command_result_after_secret_devbase_error(monkeypatch, tmp_path):
     """現状固定: 任意注入の DevbaseError はコマンド結果を置き換えない。"""
     from devbase.commands import container
