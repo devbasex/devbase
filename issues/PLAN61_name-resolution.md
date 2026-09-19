@@ -102,57 +102,79 @@
 
 名前の形（#146）:
 
-- [ ] 1. 前提: `$DEVBASE_ROOT/etc` が実在する
+- [x] 1. 前提: `$DEVBASE_ROOT/etc` が実在する
       操作: `devbase build ../etc` を実行する
       結果: `$DEVBASE_ROOT/etc` へ cd せず、そこの `env` を読まない。ビルドは 1 つも始まらず、終了コードは 0 以外
-- [ ] 2. トップレベルの `up` `down` `ps` `scale` `login` `rebuild` `open` と、`project` の
+      検証: `tests/cli/test_build_image_argument.py::test_wrapper_build_traversal_does_not_cd_or_read_outside_env`（wrapper）、
+      `::test_cli_project_build_rejects_traversal_image`（Python が 1 で終わる）、`::test_single_build_rejects_invalid_image_name[../etc]`
+- [x] 2. トップレベルの `up` `down` `ps` `scale` `login` `rebuild` `open` と、`project` の
       `up` `down` `ps` `logs` `scale` `rebuild` `open` に `..` や `/` を含む名前（`../etc`、`a/b`、`.`、`..`）を渡すと、
       `projects/` の外のディレクトリへ cd せず、`projects/` の外の `env` を読まない
-- [ ] 3. `python -m devbase.cli project up ../etc`（wrapper を経ない直接起動）は、chdir せず、
+      検証: `tests/cli/test_project_name_resolution.py::test_wrapper_malformed_name_stays_put_and_reads_no_outside_env`（14 コマンド × 4 名前）、
+      `::test_resolve_rejects_malformed_name_without_chdir`（単体）
+- [x] 3. `python -m devbase.cli project up ../etc`（wrapper を経ない直接起動）は、chdir せず、
       プロジェクト名に使えない形である旨を出して終了コード 1
-- [ ] 4. 名前を指定したライフサイクル操作の dispatch 前の注入（`_named_lifecycle_project`）は、形に合わない名前で
+      検証: `tests/cli/test_project_name_resolution.py::test_cli_project_up_rejects_malformed_name`
+- [x] 4. 名前を指定したライフサイクル操作の dispatch 前の注入（`_named_lifecycle_project`）は、形に合わない名前で
       `projects/` の外の `env` を読まず、`None` を返す
-- [ ] 5. 形に合う実在のプロジェクト名（`carmo`、`github_work_time`、`carmo-ai` の形）は、今と同じく cd して
+      検証: `tests/cli/test_secret_injection.py::test_malformed_name_is_not_a_project_and_reads_nothing`
+- [x] 5. 形に合う実在のプロジェクト名（`carmo`、`github_work_time`、`carmo-ai` の形）は、今と同じく cd して
       取り除かれる
+      検証: `tests/cli/test_project_name_resolution.py::test_wrapper_well_formed_existing_name_cds_and_strips`、
+      `tests/utils/test_names.py::test_accepts_real_project_names`
 
 イメージとの衝突（#142）:
 
-- [ ] 6. 前提: `containers/bi-tools` と `projects/bi-tools` が実在する
+- [x] 6. 前提: `containers/bi-tools` と `projects/bi-tools` が実在する
       操作: 任意のディレクトリで `devbase build bi-tools --no-cache` を実行する
       結果: `containers/bi-tools` の単体ビルド（Python の `project build bi-tools --no-cache`）へ届き、
       `projects/bi-tools` へ cd しない。プロジェクトとしても解釈できたことと、プロジェクトをビルドする方法を
       stderr に 1 回出す
-- [ ] 7. 前提: `projects/carmo` だけが実在し、`containers/carmo` は無い
+      検証: `tests/cli/test_build_image_argument.py::test_wrapper_build_image_wins_over_same_named_project_and_notes`
+- [x] 7. 前提: `projects/carmo` だけが実在し、`containers/carmo` は無い
       操作: `devbase build carmo` を実行する
       結果: 今と同じく `projects/carmo` へ cd してプロジェクトのビルド（`cmd_build`）へ進む
-- [ ] 8. 前提: `containers/go` だけが実在し、`projects/go` は無い
+      検証: `tests/cli/test_build_image_argument.py::test_wrapper_build_project_only_name_cds_and_builds_project`
+- [x] 8. 前提: `containers/go` だけが実在し、`projects/go` は無い
       操作: `devbase build go` を実行する
       結果: 今と同じく `go` の単体ビルドへ届く。衝突の知らせは出ない
+      検証: `tests/cli/test_build_image_argument.py::test_wrapper_build_container_only_name_has_no_note`
 
 ヘルプ（#196）:
 
-- [ ] 9. `devbase build --help` と `devbase build -h` は、終了コード 0 で `build` の使い方を出し、
+- [x] 9. `devbase build --help` と `devbase build -h` は、終了コード 0 で `build` の使い方を出し、
       `=== Building devbase images ===` を出さない。`cmd_build`・`docker`・Python の `project build` の
       いずれも呼ばれない
-- [ ] 10. 使い方には `--no-cache` / `--project-no-cache` / `--expires[=DAYS]` / `--context NAME` / `<image>` の指定が載る
+      検証: `tests/cli/test_build_image_argument.py::test_wrapper_build_help_prints_usage_without_building[--help|-h]`
+- [x] 10. 使い方には `--no-cache` / `--project-no-cache` / `--expires[=DAYS]` / `--context NAME` / `<image>` の指定が載る
       （`--project-no-cache` は 2026-09-18 のドキュメントレビューで追加）
-- [ ] 11. `devbase build carmo --help`（実在するプロジェクト名の後ろの `--help`）も、ビルドせず使い方を出して
+      検証: 9 と同じテストの `_assert_build_usage`（`BUILD_USAGE_TOKENS` の 5 語）
+- [x] 11. `devbase build carmo --help`（実在するプロジェクト名の後ろの `--help`）も、ビルドせず使い方を出して
       終了コード 0
+      検証: `tests/cli/test_build_image_argument.py::test_wrapper_build_name_help_does_not_cd_or_read_env[--help|-h]`
 
 `container` グループ（#200）:
 
-- [ ] 12. 前提: `projects/carmo` が実在する
+- [x] 12. 前提: `projects/carmo` が実在する
       操作: `devbase container up carmo`（`down` / `ps` / `logs` / `scale` / `rebuild` / `open`、`ct` でも同じ）を実行する
       結果: `projects/carmo` へ cd せず、argparse の usage エラーで終了コード 2
-- [ ] 13. `devbase container up`（名前なし）は今と同じく現在のディレクトリのプロジェクトで動き、非推奨の警告を出す
+      検証: `tests/cli/test_project_name_resolution.py::test_wrapper_container_group_does_not_resolve_names`（container / ct × 7 サブコマンド）、
+      `tests/cli/test_project_dispatch.py::test_container_subcommands_reject_name_positional`（SystemExit(2)）
+- [x] 13. `devbase container up`（名前なし）は今と同じく現在のディレクトリのプロジェクトで動き、非推奨の警告を出す
+      検証: `tests/cli/test_project_name_resolution.py::test_wrapper_container_up_without_name_uses_cwd`、
+      `tests/cli/test_project_dispatch.py::test_cmd_container_warns_and_delegates`（既存）
 
 退行しないこと:
 
-- [ ] 14. `devbase project up <name>` などの名前指定、`devbase project build <image>`、`devbase build <image>`
+- [x] 14. `devbase project up <name>` などの名前指定、`devbase project build <image>`、`devbase build <image>`
       （衝突しない名前）、`devbase build --context NAME` の既存テストが変更なしで通る
-- [ ] 15. name 解決を含む経路のテストが、`bin/devbase` を実プロセスで起動し、`maybe_cd_project` を
+      検証: `tests/cli/test_project_name_resolution.py`（`test_wrapper_ct_up_name_cds_and_strips` を 12 のテストへ置き換えた以外は変更なし）、
+      `tests/cli/test_build_image_argument.py`・`test_wrapper_build_context.py`・`test_open_command.py`・`test_project_dispatch.py` の既存テストは変更なしで通過
+- [x] 15. name 解決を含む経路のテストが、`bin/devbase` を実プロセスで起動し、`maybe_cd_project` を
       スタブせずに通る（dispatch の先だけを差し替える）
-- [ ] 16. 全体テスト（`uv run pytest tests/`）が通る
+      検証: `tests/cli/conftest.py` の `exec_wrapper`（`bin/devbase` を tmp へ複製し `uv` だけを PATH で差し替える）を使う 1・2・5〜13 のテスト
+- [x] 16. 全体テスト（`uv run pytest tests/`）が通る
+      検証: `uv run --locked pytest -q tests/` → `2813 passed`（exit 0、2026-09-19）
 
 ## 影響
 
@@ -200,7 +222,7 @@
 - `docs/user/cli-reference/02-project.md`、`docs/user/cli-reference/README.md`、`docs/developer/architecture.md`、
   `docs/specifications/editor-open.md`、`CHANGELOG.md`
 
-### Task 1: 名前の形の規則（Python）と Python 側 3 入口の検証（F1）
+### Task 1 [x]: 名前の形の規則（Python）と Python 側 3 入口の検証（F1）
 
 - **対象ファイル:** `lib/devbase/utils/names.py`（新設）、`lib/devbase/commands/container.py`、`lib/devbase/cli.py`、
   `tests/utils/test_names.py`（新設）、`tests/cli/test_project_name_resolution.py`、`tests/cli/test_build_image_argument.py`、
@@ -211,7 +233,7 @@
 - **満たす受け入れ条件:** 1（単体）、2（単体）、3、4、5（単体）、決定 4（単体）
 - **進め方:** テスト駆動
 
-### Task 2: wrapper のハーネス `exec_wrapper` と shell 側の名前の形（F1）
+### Task 2 [x]: wrapper のハーネス `exec_wrapper` と shell 側の名前の形（F1）
 
 - **対象ファイル:** `tests/cli/conftest.py`（新設）、`bin/devbase`、`tests/cli/test_project_name_resolution.py`
 - **変更内容:** `bin/devbase` を tmp へ複製し `fakebin/uv` で dispatch の先だけを差し替える fixture。`bin/devbase` に
@@ -220,7 +242,7 @@
 - **満たす受け入れ条件:** 2（wrapper）、5（wrapper）、15、決定 2、決定 4（wrapper）
 - **進め方:** テスト駆動
 
-### Task 3: `build --help` / `-h`（F3）
+### Task 3 [x]: `build --help` / `-h`（F3）
 
 - **対象ファイル:** `bin/devbase`、`tests/cli/test_build_image_argument.py`
 - **変更内容:** `build_usage` を新設し、name 解決の case より前で `build` の引数に `-h` / `--help` があれば使い方を出して 0 で終わる。
@@ -228,7 +250,7 @@
 - **満たす受け入れ条件:** 9、10、11、決定 8
 - **進め方:** テスト駆動
 
-### Task 4: `build <x>` のイメージとプロジェクトの衝突（F2）
+### Task 4 [x]: `build <x>` のイメージとプロジェクトの衝突（F2）
 
 - **対象ファイル:** `bin/devbase`、`tests/cli/test_build_image_argument.py`
 - **変更内容:** name 解決の case に `build` の分岐を足す。`$2` が形に合い `containers/$2` が実在すれば name 解決を通さず、
@@ -236,7 +258,7 @@
 - **満たす受け入れ条件:** 1（wrapper）、6、7、8
 - **進め方:** テスト駆動
 
-### Task 5: `container` / `ct` を name 解決から外す（F4）
+### Task 5 [x]: `container` / `ct` を name 解決から外す（F4）
 
 - **対象ファイル:** `bin/devbase`、`lib/devbase/cli.py`（コメント）、`tests/cli/test_project_name_resolution.py`、
   `tests/cli/test_project_dispatch.py`
@@ -245,7 +267,7 @@
 - **満たす受け入れ条件:** 12、13、14
 - **進め方:** テスト駆動
 
-### Task 6: 文書と CHANGELOG
+### Task 6 [x]: 文書と CHANGELOG
 
 - **対象ファイル:** `docs/user/cli-reference/02-project.md`、`docs/user/cli-reference/README.md`、`docs/developer/architecture.md`、
   `docs/specifications/editor-open.md`、`CHANGELOG.md`
@@ -253,7 +275,7 @@
 - **満たす受け入れ条件:** （文書。受け入れ条件には対応しない）
 - **進め方:** テスト駆動を適用しない（文書のみ）
 
-### Task 7: 全体の検証
+### Task 7 [x]: 全体の検証
 
 - **変更内容:** `uv run --locked pytest -q tests/`、`shellcheck --severity=error bin/devbase`、`ruff check --select=E9,F63,F7,F82 lib`、
   macOS の `/bin/bash`（3.2）で `tests/cli`
@@ -272,5 +294,5 @@
 
 ### 完了の定義
 
-- [ ] 受け入れ条件 16 件に検証手段（テスト名）が対応している
-- [ ] `uv run --locked pytest -q tests/` が exit 0、`shellcheck --severity=error bin/devbase` と `ruff check --select=E9,F63,F7,F82 lib` が exit 0
+- [x] 受け入れ条件 16 件に検証手段（テスト名）が対応している
+- [x] `uv run --locked pytest -q tests/` が exit 0（2813 passed）、`shellcheck --severity=error bin/devbase`（0.11.0、exit 0）と `ruff check --select=E9,F63,F7,F82 lib`（exit 0）が exit 0。macOS の `/bin/bash` 3.2.57 で `tests/cli` 824 passed
