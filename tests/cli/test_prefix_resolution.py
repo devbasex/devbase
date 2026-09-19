@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from devbase import cli
 
 
@@ -76,6 +78,29 @@ def test_expand_argv_env_k_resolves_to_keygen(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["devbase", "env", "k"])
     cli._expand_argv()
     assert sys.argv == ["devbase", "env", "keygen"]
+
+
+@pytest.mark.parametrize('command', ['plugin', 'pl'])
+def test_expand_argv_plugin_repo_ref_resolves_to_refresh(monkeypatch, command):
+    """現状固定: repo の一意な prefix は第 4 引数で展開される。"""
+    monkeypatch.setattr(sys, 'argv', ['devbase', command, 'repo', 'ref'])
+    cli._expand_argv()
+    assert sys.argv == ['devbase', command, 'repo', 'refresh']
+
+
+@pytest.mark.parametrize('prefix', ['r', 're'])
+def test_expand_argv_plugin_repo_ambiguous_prefix_is_unchanged(monkeypatch, prefix):
+    """現状固定: remove / refresh に一致する prefix は選択されない。"""
+    monkeypatch.setattr(sys, 'argv', ['devbase', 'plugin', 'repo', prefix])
+    cli._expand_argv()
+    assert sys.argv == ['devbase', 'plugin', 'repo', prefix]
+
+
+def test_expand_argv_env_leaves_fourth_argument_unchanged(monkeypatch):
+    """現状固定: plugin repo 以外では第 4 引数を展開しない。"""
+    monkeypatch.setattr(sys, 'argv', ['devbase', 'env', 'get', 'ref'])
+    cli._expand_argv()
+    assert sys.argv == ['devbase', 'env', 'get', 'ref']
 
 
 def test_env_subcmd_map_covers_all_registered_subcommands():

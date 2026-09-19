@@ -194,6 +194,56 @@ def test_main_passes_the_parsed_name(monkeypatch):
     assert seen == {'cmd': 'project', 'subcommand': 'up', 'name': 'web'}
 
 
+def test_main_preserves_command_result_after_secret_devbase_error(monkeypatch, tmp_path):
+    """現状固定: 任意注入の DevbaseError はコマンド結果を置き換えない。"""
+    from devbase.commands import container
+    from devbase.env import runtime
+    from devbase.errors import DevbaseError
+
+    def inject(root, project):
+        raise DevbaseError('failed to inject secrets')
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr('sys.argv', ['devbase', 'project', 'ps'])
+    monkeypatch.setattr(runtime, 'inject', inject)
+    monkeypatch.setattr(container, 'cmd_project', lambda args: 7)
+
+    assert cli.main() == 7
+
+
+def test_main_preserves_command_result_after_secret_runtime_error(monkeypatch, tmp_path):
+    """現状固定: 任意注入の一般例外でもコマンドを継続する。"""
+    from devbase.commands import container
+    from devbase.env import runtime
+
+    def inject(root, project):
+        raise RuntimeError('unexpected injection failure')
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr('sys.argv', ['devbase', 'project', 'ps'])
+    monkeypatch.setattr(runtime, 'inject', inject)
+    monkeypatch.setattr(container, 'cmd_project', lambda args: 7)
+
+    assert cli.main() == 7
+
+
+def test_main_returns_one_after_command_devbase_error(monkeypatch, tmp_path):
+    """現状固定: 注入成功後のコマンドの DevbaseError は終了値 1 になる。"""
+    from devbase.commands import container
+    from devbase.env import runtime
+    from devbase.errors import DevbaseError
+
+    def command(args):
+        raise DevbaseError('command failed')
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr('sys.argv', ['devbase', 'project', 'ps'])
+    monkeypatch.setattr(runtime, 'inject', lambda root, project: None)
+    monkeypatch.setattr(container, 'cmd_project', command)
+
+    assert cli.main() == 1
+
+
 @pytest.mark.parametrize('subcommand', ['list', 'get', 'set', 'delete', 'edit', 'init',
                                         'sync', 'project', 'export', 'import'])
 def test_env_subcommands_resolve_their_own_group_with_the_group_layout(calls, tmp_path,

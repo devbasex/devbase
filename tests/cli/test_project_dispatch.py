@@ -215,6 +215,24 @@ def test_dispatch_project_routes_to_cmd_project(monkeypatch):
     assert calls == ['project']
 
 
+def test_dispatch_project_migrate_config_passes_root_and_args(monkeypatch, tmp_path):
+    """現状固定: migrate-config の委譲先・引数・戻り値を記録する。"""
+    from devbase.commands import project
+    calls = []
+
+    def handler(root, args):
+        calls.append((root, args))
+        return 7
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr(project, 'cmd_project_migrate_config', handler)
+    args = _args(command='project', subcommand='migrate-config')
+
+    assert cli._dispatch('project', args) == 7
+    assert calls == [(tmp_path, args)]
+    assert calls[0][1] is args
+
+
 def test_dispatch_container_routes_to_cmd_container(monkeypatch):
     from devbase.commands import container
     calls = []
