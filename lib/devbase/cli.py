@@ -10,6 +10,7 @@ from typing import Optional
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger, setup
+from devbase.utils.names import is_single_segment_name
 
 try:
     from . import __version__
@@ -945,6 +946,11 @@ def _named_lifecycle_project(root: Path, cmd: str, subcommand: Optional[str],
     if not name:
         return None
     if cmd not in SHORTCUTS and GROUP_ALIASES.get(cmd, cmd) != 'project':
+        return None
+    # `name` は projects/ へそのまま連結する。`..` や `/` を通すと projects/ の外の
+    # ディレクトリの実在を見て、そこの env の宣言を読むため、連結の前に名前の形で弾く
+    # (PLAN61 / #146)。規則は container._resolve_project_name と同じ。
+    if not is_single_segment_name(name):
         return None
     if not (root / 'projects' / name).is_dir():
         return None

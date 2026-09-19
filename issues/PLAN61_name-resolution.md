@@ -185,3 +185,92 @@
 | 常に行う | 手元で全体テスト、`shellcheck` |
 | 確認してから行う | 前提 3・4 の挙動の決定（設計 Pull Request の承認で確かめる） |
 | 行わない | `container` グループの削除、新しいフラグの追加、補完の変更 |
+
+## 実装計画
+
+設計は [PLAN61_name-resolution-design.md](PLAN61_name-resolution-design.md)。タスクは設計の「構成要素」と「テスト設計」から導き、
+機能単位（F1〜F4）で分ける。各タスクは失敗するテスト → 通す最小実装 → 整理の順に進める。
+
+### 修正対象
+
+- `lib/devbase/utils/names.py`（新設）、`lib/devbase/commands/container.py`、`lib/devbase/cli.py`
+- `bin/devbase`
+- `tests/cli/conftest.py`（新設）、`tests/utils/test_names.py`（新設）、`tests/cli/test_project_name_resolution.py`、
+  `tests/cli/test_build_image_argument.py`、`tests/cli/test_project_dispatch.py`、`tests/cli/test_secret_injection.py`
+- `docs/user/cli-reference/02-project.md`、`docs/user/cli-reference/README.md`、`docs/developer/architecture.md`、
+  `docs/specifications/editor-open.md`、`CHANGELOG.md`
+
+### Task 1: 名前の形の規則（Python）と Python 側 3 入口の検証（F1）
+
+- **対象ファイル:** `lib/devbase/utils/names.py`（新設）、`lib/devbase/commands/container.py`、`lib/devbase/cli.py`、
+  `tests/utils/test_names.py`（新設）、`tests/cli/test_project_name_resolution.py`、`tests/cli/test_build_image_argument.py`、
+  `tests/cli/test_secret_injection.py`
+- **変更内容:** `SINGLE_SEGMENT_NAME_PATTERN` と `is_single_segment_name` を新設。`_build_single_image` の `_IMAGE_NAME_RE` を
+  これへ寄せる。`_resolve_project_name` の入口で形を見て、合わなければ error ログを出して `False`（chdir・env・候補なし）。
+  `_named_lifecycle_project` は形に合わなければ実在と `store_for` を見ずに `None`
+- **満たす受け入れ条件:** 1（単体）、2（単体）、3、4、5（単体）、決定 4（単体）
+- **進め方:** テスト駆動
+
+### Task 2: wrapper のハーネス `exec_wrapper` と shell 側の名前の形（F1）
+
+- **対象ファイル:** `tests/cli/conftest.py`（新設）、`bin/devbase`、`tests/cli/test_project_name_resolution.py`
+- **変更内容:** `bin/devbase` を tmp へ複製し `fakebin/uv` で dispatch の先だけを差し替える fixture。`bin/devbase` に
+  `_SINGLE_SEGMENT_NAME_RE` と `is_single_segment_name`（`local LC_ALL=C`）を足し、`maybe_cd_project` の入口を置き換える。
+  同期テスト（wrapper の正規表現 = `'^' + SINGLE_SEGMENT_NAME_PATTERN + '$'`）
+- **満たす受け入れ条件:** 2（wrapper）、5（wrapper）、15、決定 2、決定 4（wrapper）
+- **進め方:** テスト駆動
+
+### Task 3: `build --help` / `-h`（F3）
+
+- **対象ファイル:** `bin/devbase`、`tests/cli/test_build_image_argument.py`
+- **変更内容:** `build_usage` を新設し、name 解決の case より前で `build` の引数に `-h` / `--help` があれば使い方を出して 0 で終わる。
+  `--context=--help` / `--context=-h` は使い方にしない
+- **満たす受け入れ条件:** 9、10、11、決定 8
+- **進め方:** テスト駆動
+
+### Task 4: `build <x>` のイメージとプロジェクトの衝突（F2）
+
+- **対象ファイル:** `bin/devbase`、`tests/cli/test_build_image_argument.py`
+- **変更内容:** name 解決の case に `build` の分岐を足す。`$2` が形に合い `containers/$2` が実在すれば name 解決を通さず、
+  `projects/$2` もあれば stderr に 1 行。`build)` 分岐の PLAN49 の注記も合わせる
+- **満たす受け入れ条件:** 1（wrapper）、6、7、8
+- **進め方:** テスト駆動
+
+### Task 5: `container` / `ct` を name 解決から外す（F4）
+
+- **対象ファイル:** `bin/devbase`、`lib/devbase/cli.py`（コメント）、`tests/cli/test_project_name_resolution.py`、
+  `tests/cli/test_project_dispatch.py`
+- **変更内容:** name 解決の case を `project` だけにする。`test_wrapper_ct_up_name_cds_and_strips` を受け入れ条件 12 のテストへ
+  置き換える。name 解決の説明コメントを変更後の規則に書き替え、`cli.py` の同期注意を `project` だけに直す
+- **満たす受け入れ条件:** 12、13、14
+- **進め方:** テスト駆動
+
+### Task 6: 文書と CHANGELOG
+
+- **対象ファイル:** `docs/user/cli-reference/02-project.md`、`docs/user/cli-reference/README.md`、`docs/developer/architecture.md`、
+  `docs/specifications/editor-open.md`、`CHANGELOG.md`
+- **変更内容:** 設計の「文書とテスト」の表のとおり
+- **満たす受け入れ条件:** （文書。受け入れ条件には対応しない）
+- **進め方:** テスト駆動を適用しない（文書のみ）
+
+### Task 7: 全体の検証
+
+- **変更内容:** `uv run --locked pytest -q tests/`、`shellcheck --severity=error bin/devbase`、`ruff check --select=E9,F63,F7,F82 lib`、
+  macOS の `/bin/bash`（3.2）で `tests/cli`
+- **満たす受け入れ条件:** 16
+
+### リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| `bin/devbase` は 1 ファイルの shell で、name 解決と `build)` の分岐を 4 タスクが触る | タスクごとにテストを通す。既存の `sed` ハーネスのテストを退行の検出に使う（受け入れ条件 14） |
+| pytest が実環境の `DEVBASE_ROOT` を継承する | `exec_wrapper` は wrapper の複製から `DEVBASE_ROOT` を tmp に決めさせる（決定 11） |
+
+### 切り戻し手順
+
+- コードの変更のみ（データ移行なし）。ブランチの revert で戻せる
+
+### 完了の定義
+
+- [ ] 受け入れ条件 16 件に検証手段（テスト名）が対応している
+- [ ] `uv run --locked pytest -q tests/` が exit 0、`shellcheck --severity=error bin/devbase` と `ruff check --select=E9,F63,F7,F82 lib` が exit 0

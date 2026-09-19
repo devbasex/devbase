@@ -293,6 +293,18 @@ def test_single_build_rejects_invalid_image_name(
     assert "Invalid image name" in caplog.text
 
 
+def test_cli_project_build_rejects_traversal_image(devbase_root, captured_run, monkeypatch, caplog):
+    """受け入れ条件 1 (単体): `python -m devbase.cli project build ../etc` は docker を起動せず 1。"""
+    from devbase import cli
+
+    monkeypatch.setattr("sys.argv", ["devbase", "project", "build", "../etc"])
+    with caplog.at_level(logging.ERROR):
+        assert cli.main() == 1
+
+    assert captured_run == []
+    assert "Invalid image name" in caplog.text
+
+
 def test_single_build_accepts_real_container_directory_names(devbase_root, captured_run):
     """`containers/` 配下の実在ディレクトリ名は検証を通る。"""
     names = ["base", "bi-tools", "general", "go", "latex",

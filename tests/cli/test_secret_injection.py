@@ -151,6 +151,29 @@ def test_unknown_name_keeps_the_current_project(calls, tmp_path):
     assert calls == [(tmp_path, None)]
 
 
+@pytest.mark.parametrize('name', ['../etc', 'a/b', '.', '..'])
+def test_malformed_name_is_not_a_project_and_reads_nothing(calls, tmp_path, monkeypatch, name):
+    """受け入れ条件 4: 形に合わない名前は projects/ の外の env を読まず、設定も読まずに None (PLAN61)。
+
+    `projects/../etc` が実在すると、名前を連結してから実在を見る形では `etc/env` の宣言まで
+    読みに行く。名前の形を先に見て、`groups.declare` と `runtime.store_for` を呼ばない。
+    """
+    from devbase.env import groups, runtime
+
+    _grouped(tmp_path)
+    (tmp_path / 'etc').mkdir()
+    (tmp_path / 'etc' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=leaked\n', encoding='utf-8')
+    monkeypatch.setattr(groups, 'declare',
+                        lambda root, project: pytest.fail('groups.declare を呼んではならない'))
+    monkeypatch.setattr(runtime, 'store_for',
+                        lambda root: pytest.fail('runtime.store_for を呼んではならない'))
+
+    assert cli._named_lifecycle_project(tmp_path, 'project', 'up', name) is None
+
+    cli._load_secret_env('project', 'up', name=name)
+    assert calls == [(tmp_path, None)]
+
+
 def test_name_of_a_non_lifecycle_command_is_not_a_project(calls, tmp_path):
     _grouped(tmp_path)
 

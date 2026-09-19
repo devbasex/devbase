@@ -120,6 +120,54 @@ def test_resolve_without_devbase_root(tmp_path, monkeypatch, caplog):
     assert any("DEVBASE_ROOT" in r.message for r in caplog.records)
 
 
+INVALID_NAMES = ["../etc", "a/b", ".", ".."]
+
+
+@pytest.mark.parametrize("name", INVALID_NAMES)
+def test_resolve_rejects_malformed_name_without_chdir(fake_root, monkeypatch, caplog, name):
+    """受け入れ条件 2 (単体): 形に合わない名前は chdir せず、env も読まず、候補も出さず False。
+
+    `projects/<name>` へそのまま連結すると `..` で `projects/` の外へ出るため、連結の前に
+    名前の形 (`devbase.utils.names.is_single_segment_name`) で弾く (#146)。
+    """
+    (fake_root / "etc").mkdir()
+    (fake_root / "etc" / "env").write_text("MARKER=leaked\n")
+    monkeypatch.delenv("MARKER", raising=False)
+    called = []
+    monkeypatch.setattr(container.os, "chdir", lambda p: called.append(p))
+
+    with caplog.at_level(logging.ERROR, logger="devbase.commands.container"):
+        assert container._resolve_project_name(name) is False
+
+    assert called == [], "形に合わない名前で chdir を呼んではならない"
+    assert "MARKER" not in os.environ
+    messages = " ".join(r.message for r in caplog.records)
+    assert "プロジェクト名に使えない形" in messages
+    assert name in messages
+    # 候補の一覧は出さない
+    assert "carmo" not in messages and "shop" not in messages
+
+
+def test_cli_project_up_rejects_malformed_name(fake_root, monkeypatch, caplog):
+    """受け入れ条件 3: wrapper を経ない `python -m devbase.cli project up ../etc` は chdir せず 1。"""
+    from devbase import cli
+
+    (fake_root / "etc").mkdir()
+    (fake_root / "etc" / "env").write_text("MARKER=leaked\n")
+    monkeypatch.delenv("MARKER", raising=False)
+    monkeypatch.setattr(container, "cmd_up",
+                        lambda *a, **k: pytest.fail("cmd_up を呼んではならない"))
+    monkeypatch.setattr("sys.argv", ["devbase", "project", "up", "../etc"])
+    before = Path.cwd()
+
+    with caplog.at_level(logging.ERROR, logger="devbase.commands.container"):
+        assert cli.main() == 1
+
+    assert Path.cwd() == before
+    assert "MARKER" not in os.environ
+    assert "プロジェクト名に使えない形" in caplog.text
+
+
 def test_resolve_noop_when_already_in_target(fake_root, monkeypatch):
     """wrapper が既に cd 済みなら chdir を呼ばない (冪等)。"""
     target = fake_root / "projects" / "carmo"
