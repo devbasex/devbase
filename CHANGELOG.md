@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-09-19
+
 ### Added
 - **閉じた VS Code の窓を、コンテナを再起動せずに開き直す `devbase open` を足しました（PLAN59 / #197）。**
   `devbase open [name]` / `devbase project open [name]` / `devbase container open` で、`devbase up` の
@@ -692,7 +694,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.5.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.6.0...HEAD
+[3.6.0]: https://github.com/devbasex/devbase/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/devbasex/devbase/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/devbasex/devbase/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/devbasex/devbase/compare/v3.2.2...v3.3.0
