@@ -152,11 +152,20 @@ def test_default_terminal_is_tmux_256color(options):
 
 
 @needs_tmux
-def test_terminal_overrides_appends_without_dropping_defaults(options):
-    """条件 5: `set -ga` で追記し、tmux 既定の linux*:AX@ を残す。"""
-    overrides = options["terminal-overrides"]
-    assert "xterm-256color:Tc" in overrides
-    assert "linux*:AX@" in overrides
+def test_terminal_overrides_appends_without_dropping_defaults(options, tmp_path):
+    """条件 5: `set -ga` で追記し、tmux 既定の値 (3.x 前半の linux*:AX@ など) を残す。
+
+    既定の値は tmux の版で違う (Ubuntu 24.04 の tmux は既定を持たない。PLAN60)。
+    固定の値ではなく、空の設定を読ませた同じ tmux の既定と比べる。既定を持たない
+    tmux は値の無い ``terminal-overrides`` 行を出し、``_parse_options`` が空文字を
+    積むため、比べる前に空文字を除く (追記後の値には空文字が残らない)。
+    """
+    empty_conf = tmp_path / "empty.tmux.conf"
+    empty_conf.write_text("")
+    defaults = [
+        d for d in _effective_options(empty_conf).get("terminal-overrides", []) if d
+    ]
+    assert options["terminal-overrides"] == [*defaults, "xterm-256color:Tc"]
 
 
 @needs_tmux

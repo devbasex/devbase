@@ -8,6 +8,7 @@ entrypoint は ``set -e`` で動くため、未ログインや gcloud 不在で*
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -16,8 +17,6 @@ import pytest
 ENTRYPOINT = Path(__file__).resolve().parents[2] / "containers" / "base" / "entrypoint.sh"
 
 
-# gcloud を含まない最小の PATH。`/nonexistent` にすると bash 自体も見つからない。
-MINIMAL_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 
 def run(script: str, cwd: Path, path: str | None = None):
@@ -43,6 +42,21 @@ def fake_bin(tmp_path: Path):
         return f"{d}:{os.environ['PATH']}"
 
     return install
+
+
+@pytest.fixture
+def no_gcloud_path(tmp_path: Path) -> str:
+    """``bash`` だけを置いた PATH (gcloud を含まない)。
+
+    システムの ``/usr/bin`` を並べるだけでは足りない。GitHub Actions の Ubuntu の
+    runner は ``/usr/bin/gcloud`` を持つ (PLAN60)。`/nonexistent` にすると bash 自体も
+    見つからないため、bash への symlink だけを持つディレクトリを作る。
+    entrypoint.sh の関数定義より前のトップレベルは外部コマンドを呼ばない。
+    """
+    d = tmp_path / "minimal-bin"
+    d.mkdir()
+    (d / "bash").symlink_to(shutil.which("bash"))
+    return str(d)
 
 
 def test_group_and_account_are_reported(tmp_path, fake_bin):
@@ -77,16 +91,16 @@ def test_empty_account_is_reported_as_unset(tmp_path, fake_bin):
     assert "gcloud account: unset" in result.stdout
 
 
-def test_missing_gcloud_is_reported(tmp_path):
+def test_missing_gcloud_is_reported(tmp_path, no_gcloud_path):
     """gcloud を含まないイメージでも落ちない。"""
-    result = run('devbase_log_account_group "default"', tmp_path, path=MINIMAL_PATH)
+    result = run('devbase_log_account_group "default"', tmp_path, path=no_gcloud_path)
 
     assert result.returncode == 0, result.stderr
     assert "gcloud not installed" in result.stdout
 
 
-def test_group_defaults_when_omitted(tmp_path):
-    result = run('devbase_log_account_group', tmp_path, path=MINIMAL_PATH)
+def test_group_defaults_when_omitted(tmp_path, no_gcloud_path):
+    result = run('devbase_log_account_group', tmp_path, path=no_gcloud_path)
 
     assert result.returncode == 0, result.stderr
     assert "Account group: default" in result.stdout

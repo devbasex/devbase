@@ -43,3 +43,23 @@ jobs:
           severity: error
       - name: Run ShellCheck on install.sh
         run: shellcheck --severity=error install.sh
+
+  pytest:
+    name: Pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python の下限と、手元で使う版 (PLAN60 前提 1)
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies from uv.lock
+        run: uv sync --locked
+      - name: Run pytest
+        # CI に DEVBASE_ROOT は無い。テストは自前の tmp を DEVBASE_ROOT に向ける (PLAN60 前提 4)
+        run: uv run --locked pytest tests/ -q
