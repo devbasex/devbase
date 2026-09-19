@@ -10,6 +10,7 @@ from typing import Optional
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger, setup
+from devbase.utils.names import is_single_segment_name
 
 try:
     from . import __version__
@@ -32,6 +33,8 @@ logger = get_logger("devbase.cli")
 # `name` positional 付きサブコマンドは bin/devbase の _NAME_RESOLVABLE_SHORTCUTS /
 # _PROJECT_NAME_SUBCOMMANDS と対応している。サブコマンドを追加/削除する際は
 # wrapper 側 (bin/devbase の該当リスト) の更新漏れに注意すること。
+# _PROJECT_NAME_SUBCOMMANDS の対象は `project` グループだけで、`container` / `ct` は
+# wrapper の name 解決を通らない (PLAN61 決定 10)。
 SHORTCUTS = {
     'up': 'up',
     'down': 'down',
@@ -283,7 +286,9 @@ def _add_project_parser(subparsers):
 
     同期注意: ここで `name` positional を持つサブコマンド集合 (up/down/ps/logs/scale/rebuild/open)
     は bin/devbase の `_PROJECT_NAME_SUBCOMMANDS` と一致させる必要がある。追加/削除時は
-    wrapper 側リストの更新漏れに注意すること。
+    wrapper 側リストの更新漏れに注意すること。wrapper がこの集合で name を解決するのは
+    `project` グループだけで、`container` / `ct` は `[name]` を持たず解決も通らない
+    (PLAN61 決定 10)。
     """
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')
@@ -945,6 +950,11 @@ def _named_lifecycle_project(root: Path, cmd: str, subcommand: Optional[str],
     if not name:
         return None
     if cmd not in SHORTCUTS and GROUP_ALIASES.get(cmd, cmd) != 'project':
+        return None
+    # `name` は projects/ へそのまま連結する。`..` や `/` を通すと projects/ の外の
+    # ディレクトリの実在を見て、そこの env の宣言を読むため、連結の前に名前の形で弾く
+    # (PLAN61 / #146)。規則は container._resolve_project_name と同じ。
+    if not is_single_segment_name(name):
         return None
     if not (root / 'projects' / name).is_dir():
         return None

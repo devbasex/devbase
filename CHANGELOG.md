@@ -15,6 +15,18 @@
 ### Changed
 - `devbase list` の起動中の操作メニューで、Enter 1 回で決まる項目が「再起動 (up)」から
   「エディタを開く (open)」に変わりました。再起動はその 1 つ下です。
+- **位置引数のプロジェクト名は、英数字で始まり英数字・`.`・`-`・`_` だけからなる形に限りました
+  （PLAN61 / #146）。** `../etc` や `a/b` のように形に合わない値は名前として扱わず、
+  `$DEVBASE_ROOT/projects/` の外のディレクトリへ移動したり、そこの `env` を読んだりしません。
+  `bin/devbase` の名前解決と、Python 側の `project up <name>` などの名前の検証、
+  `build <image>` のイメージ名の検証が同じ規則を使います。
+- **`devbase build <name>` で `containers/<name>` と `projects/<name>` が両方あるときは、イメージ
+  `<name>` をビルドします（PLAN61 / #142）。** これまではプロジェクトへの移動が優先され、
+  イメージ指定が消えていました。プロジェクトとしても読めたことと、プロジェクトをビルドする方法
+  （そのディレクトリで `devbase build`）を stderr に 1 行知らせます。
+- **非推奨の `container` / `ct` グループは名前解決の対象外になりました（PLAN61 / #200）。**
+  `devbase container up <name>` は実在するプロジェクト名でも usage エラー（終了コード 2）です。
+  名前の指定は `devbase project up <name>` か `devbase up <name>` を使ってください。
 - **機密の置き場（`.env` / `age` / OpenBao）に書いた `DEVBASE_ACCOUNT_GROUP` を、`version: 1` でも
   使わなくなりました（PLAN62 / #185）。** 置き場の値は機密の合成から外れ、devbase のプロセスの
   環境変数にも dev コンテナの `environment` にも載りません。アカウントグループを決めるのは
@@ -30,6 +42,10 @@
   他のキーの `env set` は変わりません。
 
 ### Fixed
+- **`devbase build --help` / `-h` がビルドを始めてしまう**のを直しました（PLAN61 / #196）。
+  `build` の使い方（`--no-cache` / `--project-no-cache` / `--expires[=DAYS]` / `--context NAME` /
+  `<image>` 指定）を出して終了コード 0 で終わります。`devbase build carmo --help` のように
+  プロジェクト名の後ろに置いても、そのプロジェクトへ移動せずに使い方を出します。
 - **tmux の中で URL がクリックできなくなっていた**のを直しました。tmux は端末が `Hls`
   能力を持つときだけハイパーリンク (OSC 8) を書き出し、持たない端末ではリンクを捨てて
   文字列だけを描きます。tmux が `xterm*` へ既定で与える機能に `hyperlinks` は含まれない

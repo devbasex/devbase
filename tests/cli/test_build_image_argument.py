@@ -293,6 +293,18 @@ def test_single_build_rejects_invalid_image_name(
     assert "Invalid image name" in caplog.text
 
 
+def test_cli_project_build_rejects_traversal_image(devbase_root, captured_run, monkeypatch, caplog):
+    """受け入れ条件 1 (単体): `python -m devbase.cli project build ../etc` は docker を起動せず 1。"""
+    from devbase import cli
+
+    monkeypatch.setattr("sys.argv", ["devbase", "project", "build", "../etc"])
+    with caplog.at_level(logging.ERROR):
+        assert cli.main() == 1
+
+    assert captured_run == []
+    assert "Invalid image name" in caplog.text
+
+
 def test_single_build_accepts_real_container_directory_names(devbase_root, captured_run):
     """`containers/` 配下の実在ディレクトリ名は検証を通る。"""
     names = ["base", "bi-tools", "general", "go", "latex",
@@ -307,3 +319,127 @@ def test_single_build_accepts_real_container_directory_names(devbase_root, captu
 
     tags = [cmd[cmd.index("-t") + 1] for cmd in captured_run]
     assert tags == [f"devbase-{name}:latest" for name in names]
+
+
+# ===========================================================================
+# wrapper (実プロセス): `build --help` / `-h` (PLAN61 / #196)
+#
+# `exec_wrapper` (conftest.py) は bin/devbase を tmp へ複製して起動し、`uv` だけを PATH で
+# 差し替える。cmd_build は本物のまま動くので `=== Building devbase images ===` が出ないことを
+# 確かめられる。run_python も docker も `uv` を通るため、`UV:` が無いことで両方を確かめる。
+# ===========================================================================
+
+from tests.cli.conftest import stdout_field  # noqa: E402
+
+BUILD_USAGE_TOKENS = ["--no-cache", "--project-no-cache", "--expires[=DAYS]", "--context NAME",
+                      "<image>"]
+
+
+def _assert_build_usage(result):
+    assert result.returncode == 0, result.stderr
+    assert "=== Building devbase images ===" not in result.stdout
+    assert stdout_field(result, "UV:") is None, result.stdout
+    assert "Usage: devbase build" in result.stdout
+    for token in BUILD_USAGE_TOKENS:
+        assert token in result.stdout, f"{token!r} が使い方に無い:\n{result.stdout}"
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_wrapper_build_help_prints_usage_without_building(exec_wrapper, flag):
+    """受け入れ条件 9・10: `build --help` / `-h` は終了コード 0 で使い方を出し、ビルドしない。"""
+    _assert_build_usage(exec_wrapper(["build", flag]))
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_wrapper_build_name_help_does_not_cd_or_read_env(exec_wrapper, flag):
+    """受け入れ条件 11: `build carmo --help` も cd せず、carmo の env を読まずに使い方を出す。
+
+    `projects/carmo/env` に `echo CARMO_ENV_READ >&2` を置く。wrapper は env を source するため、
+    この行は cd と読み込みが起きたときだけ stderr に出る。
+    """
+    exec_wrapper.project("carmo", env="echo CARMO_ENV_READ >&2\n")
+
+    r = exec_wrapper(["build", "carmo", flag])
+
+    _assert_build_usage(r)
+    assert stdout_field(r, "PWD:") is None, r.stdout
+    assert "CARMO_ENV_READ" not in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_wrapper_build_context_followed_by_help_is_usage(exec_wrapper, flag):
+    """決定 8: `--context --help` の `--help` は context の値ではなく使い方。"""
+    _assert_build_usage(exec_wrapper(["build", "--context", flag]))
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_wrapper_build_context_equals_help_is_not_usage(exec_wrapper, flag):
+    """決定 8: `--context=--help` は使い方にせず、値としてそのまま下流へ渡す。
+
+    実際の argparse では値不足の usage エラー (終了コード 2) になる。`-` 始まりの context 名は
+    受け付けない。
+    """
+    r = exec_wrapper(["build", f"--context={flag}"])
+
+    assert "Usage: devbase build" not in r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and f"env exec --context {flag} --" in uv, r.stdout
+
+
+# ===========================================================================
+# wrapper (実プロセス): `build <x>` の名前の形とイメージ / プロジェクトの衝突 (PLAN61 / #146 #142)
+# ===========================================================================
+
+def test_wrapper_build_traversal_does_not_cd_or_read_outside_env(exec_wrapper):
+    """受け入れ条件 1: `build ../etc` は `$DEVBASE_ROOT/etc` へ cd せず、そこの env を読まない。
+
+    形に合わない値は名前として扱わず、そのまま Python の単体ビルドへ渡す。Python 側の
+    `Invalid image name` で終了コード 1 になる (`test_cli_project_build_rejects_traversal_image`)。
+    """
+    exec_wrapper.etc_env()
+
+    r = exec_wrapper(["build", "../etc"])
+
+    assert "=== Building devbase images ===" not in r.stdout
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    assert stdout_field(r, "MARKER:") == "<unset>", r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli project build ../etc"), r.stdout
+
+
+def test_wrapper_build_image_wins_over_same_named_project_and_notes(exec_wrapper):
+    """受け入れ条件 6: containers/ と projects/ の両方にある名前はイメージ。知らせを stderr に 1 行。"""
+    exec_wrapper.container("bi-tools")
+    exec_wrapper.project("bi-tools")
+
+    r = exec_wrapper(["build", "bi-tools", "--no-cache"])
+
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli project build bi-tools --no-cache"), r.stdout
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    notes = [line for line in r.stderr.splitlines() if line.strip()]
+    assert len(notes) == 1, r.stderr
+    assert "projects/bi-tools" in notes[0] and "devbase build" in notes[0], r.stderr
+    assert str(exec_wrapper.root / "projects" / "bi-tools") in notes[0], r.stderr
+
+
+def test_wrapper_build_project_only_name_cds_and_builds_project(exec_wrapper):
+    """受け入れ条件 7: projects/ にだけある名前は今と同じくプロジェクトのビルド (cmd_build)。"""
+    exec_wrapper.project("carmo")
+
+    r = exec_wrapper(["build", "carmo"])
+
+    assert "=== Building devbase images ===" in r.stdout, r.stdout
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.root / "projects" / "carmo"), r.stdout
+    assert r.stderr.strip() == "", r.stderr
+
+
+def test_wrapper_build_container_only_name_has_no_note(exec_wrapper):
+    """受け入れ条件 8: containers/ にだけある名前は今と同じく単体ビルドで、知らせは出ない。"""
+    exec_wrapper.container("go")
+
+    r = exec_wrapper(["build", "go"])
+
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli project build go"), r.stdout
+    assert r.stderr.strip() == "", r.stderr

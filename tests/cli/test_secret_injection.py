@@ -151,6 +151,29 @@ def test_unknown_name_keeps_the_current_project(calls, tmp_path):
     assert calls == [(tmp_path, None)]
 
 
+@pytest.mark.parametrize('name', ['../etc', 'a/b', '.', '..'])
+def test_malformed_name_is_not_a_project_and_reads_nothing(calls, tmp_path, monkeypatch, name):
+    """受け入れ条件 4: 形に合わない名前は projects/ の外の env を読まず、設定も読まずに None (PLAN61)。
+
+    `projects/../etc` が実在すると、名前を連結してから実在を見る形では `etc/env` の宣言まで
+    読みに行く。名前の形を先に見て、`groups.declare` と `runtime.store_for` を呼ばない。
+    """
+    from devbase.env import groups, runtime
+
+    _grouped(tmp_path)
+    (tmp_path / 'etc').mkdir()
+    (tmp_path / 'etc' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=leaked\n', encoding='utf-8')
+    monkeypatch.setattr(groups, 'declare',
+                        lambda root, project: pytest.fail('groups.declare を呼んではならない'))
+    monkeypatch.setattr(runtime, 'store_for',
+                        lambda root: pytest.fail('runtime.store_for を呼んではならない'))
+
+    assert cli._named_lifecycle_project(tmp_path, 'project', 'up', name) is None
+
+    cli._load_secret_env('project', 'up', name=name)
+    assert calls == [(tmp_path, None)]
+
+
 def test_name_of_a_non_lifecycle_command_is_not_a_project(calls, tmp_path):
     _grouped(tmp_path)
 
@@ -169,6 +192,72 @@ def test_main_passes_the_parsed_name(monkeypatch):
 
     assert cli.main() == 0
     assert seen == {'cmd': 'project', 'subcommand': 'up', 'name': 'web'}
+
+
+def test_main_passes_the_parsed_name_via_top_level_shortcut(monkeypatch):
+    """現状固定: トップレベルショートカット (`devbase up <name>`) 経由でも、
+    解析されたプロジェクト名が cmd='up' とともに _load_secret_env へ渡る。
+    """
+    seen = {}
+    monkeypatch.setattr(cli, '_load_secret_env',
+                        lambda cmd, subcommand=None, name=None: seen.update(
+                            cmd=cmd, subcommand=subcommand, name=name))
+    monkeypatch.setattr(cli, '_dispatch', lambda cmd, args: 0)
+    monkeypatch.setattr('sys.argv', ['devbase', 'up', 'carmo'])
+
+    assert cli.main() == 0
+    assert seen['cmd'] == 'up'
+    assert seen['name'] == 'carmo'
+
+
+def test_main_preserves_command_result_after_secret_devbase_error(monkeypatch, tmp_path):
+    """現状固定: 任意注入の DevbaseError はコマンド結果を置き換えない。"""
+    from devbase.commands import container
+    from devbase.env import runtime
+    from devbase.errors import DevbaseError
+
+    def inject(root, project):
+        raise DevbaseError('failed to inject secrets')
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr('sys.argv', ['devbase', 'project', 'ps'])
+    monkeypatch.setattr(runtime, 'inject', inject)
+    monkeypatch.setattr(container, 'cmd_project', lambda args: 7)
+
+    assert cli.main() == 7
+
+
+def test_main_preserves_command_result_after_secret_runtime_error(monkeypatch, tmp_path):
+    """現状固定: 任意注入の一般例外でもコマンドを継続する。"""
+    from devbase.commands import container
+    from devbase.env import runtime
+
+    def inject(root, project):
+        raise RuntimeError('unexpected injection failure')
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr('sys.argv', ['devbase', 'project', 'ps'])
+    monkeypatch.setattr(runtime, 'inject', inject)
+    monkeypatch.setattr(container, 'cmd_project', lambda args: 7)
+
+    assert cli.main() == 7
+
+
+def test_main_returns_one_after_command_devbase_error(monkeypatch, tmp_path):
+    """現状固定: 注入成功後のコマンドの DevbaseError は終了値 1 になる。"""
+    from devbase.commands import container
+    from devbase.env import runtime
+    from devbase.errors import DevbaseError
+
+    def command(args):
+        raise DevbaseError('command failed')
+
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
+    monkeypatch.setattr('sys.argv', ['devbase', 'project', 'ps'])
+    monkeypatch.setattr(runtime, 'inject', lambda root, project: None)
+    monkeypatch.setattr(container, 'cmd_project', command)
+
+    assert cli.main() == 1
 
 
 @pytest.mark.parametrize('subcommand', ['list', 'get', 'set', 'delete', 'edit', 'init',
