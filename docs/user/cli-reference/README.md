@@ -65,11 +65,14 @@ graph TD
 
 > **Note:** `logs` はトップレベルシノニムを持ちません。`devbase project logs` を使用してください。
 >
-> **※ `build` の転送先について:** `devbase build`（既定 / `--no-cache` / `<image>`）は他の
+> **※ `build` の転送先について:** `devbase build`（既定 / `--no-cache` / `--project-no-cache`）は他の
 > ショートカットのように `project` グループ（Python 実装）へ転送されるのではなく、`bin/devbase` の
 > シェル実装 `cmd_build` に直接委譲されます。base イメージの段階ビルド等を CWD で行う必要があるため
-> です（名前指定はラッパーの `cd` で解決）。ただし `devbase build --expires[=DAYS]` のみ、作成日の
-> 判定が必要なため例外的に Python 経路（`project build`）へ委譲されます。挙動上の入出力は同等です。
+> です（プロジェクト名の指定 `devbase build <project>` はラッパーの `cd` で解決）。
+> `devbase build <image>`（`$DEVBASE_ROOT/containers/<image>` の単体ビルド）と
+> `devbase build --expires[=DAYS]`（作成日の判定が必要）は Python 経路（`project build`）へ委譲されます。
+> `containers/` と `projects/` の両方にある名前はイメージとして扱います。`devbase build --help` は
+> ビルドせずに使い方を出します。
 
 ### ユニークプレフィックスマッチング
 
