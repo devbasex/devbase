@@ -11,6 +11,7 @@ codex 指摘 (PR #90) の回帰テスト。機密の復号は鍵の紛失・権�
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -342,3 +343,38 @@ def test_default_services_failure_keeps_containers_running(up_harness, monkeypat
     assert calls == []                          # down も up も呼ばれていない
     assert container._SCALE_COMPOSE_FILE.read_text() == OLD_COMPOSE
     assert not Path(f'{container._SCALE_COMPOSE_FILE}.prev').exists()
+
+
+# ---------------------------------------------------------------------------
+# 機密の置き場の DEVBASE_ACCOUNT_GROUP は up の検査を止めない (PLAN62)
+# ---------------------------------------------------------------------------
+
+def test_store_account_group_does_not_stop_the_group_check(openbao_root, openbao,
+                                                            monkeypatch, caplog):
+    """受け入れ条件 6: dispatch 前の注入 → 食い違いの検査 の順に呼んでも True。
+
+    ``projects/web`` にも ``$DEVBASE_ROOT/env`` にも宣言が無く、共通の機密 (``team/nyle/global``)
+    に ``DEVBASE_ACCOUNT_GROUP=kkg`` がある。注入が置き場の値をプロセスへ載せると、ボリュームは
+    ``kkg``・機密は ``default`` で止まっていた。
+    """
+    from tests.conftest import configure_openbao
+    from devbase.env import runtime
+
+    root = openbao_root
+    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    openbao.put('team/nyle/global', {'DEVBASE_ACCOUNT_GROUP': 'kkg', 'TOKEN': 't'})
+    monkeypatch.setenv('DEVBASE_ROOT', str(root))
+    monkeypatch.setenv('PWD', str(root / 'projects' / 'web'))
+    monkeypatch.delenv('DEVBASE_ACCOUNT_GROUP', raising=False)
+    monkeypatch.delenv('TOKEN', raising=False)
+    monkeypatch.setattr(runtime, '_warned_account_group_refs', set())
+
+    try:
+        runtime.inject(root, 'web')
+
+        assert container._check_group_consistency() is True
+        assert 'DEVBASE_ACCOUNT_GROUP' not in os.environ
+        assert os.environ['TOKEN'] == 't'
+        assert '食い違う' not in caplog.text
+    finally:
+        runtime.clear_injected()

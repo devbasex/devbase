@@ -260,6 +260,21 @@ DEVBASE_ACCOUNT_GROUP=kkg
 [コンテナ運用ガイド](container-operations.md)、Google 認証の手順は
 [Google 認証ガイド](google-auth.md) を参照してください。
 
+### 機密の置き場には書けない
+
+`DEVBASE_ACCOUNT_GROUP` を決めるのは `env` ファイル（`projects/<name>/env` /
+`$DEVBASE_ROOT/env`）とシェルの環境変数だけです。機密の置き場（`.env` / `age` / OpenBao の
+どれでも、`version: 1` でも）に書いた値は使われず、コンテナへも渡りません。置き場に残って
+いれば、devbase のコマンドを打つたびに次の警告が 1 回出ます（値は出しません）。
+
+```text
+Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP は使いません。アカウントグループは env ファイル（projects/<name>/env・$DEVBASE_ROOT/env）で決まります。消すには: devbase env delete DEVBASE_ACCOUNT_GROUP
+```
+
+警告に書かれたとおり `devbase env delete DEVBASE_ACCOUNT_GROUP`（置き場に合わせて `-p` /
+`--user` / `--group` が付きます）で消してください。`devbase env set DEVBASE_ACCOUNT_GROUP=...` は
+置き場へ書かずに終了コード 1 で止まります。`env` ファイルに書いてください。
+
 ### 機密の置き場もグループで分ける（OpenBao）
 
 機密の保存先に OpenBao を使い、グループ別の置き場（`secrets/backend.yml` の `version: 2`）を
@@ -274,7 +289,7 @@ DEVBASE_ACCOUNT_GROUP=kkg
 2. `$DEVBASE_ROOT/env`
 3. どちらにも無ければ `default`
 
-**機密の置き場（`devbase env set` で入れた値）に書いた `DEVBASE_ACCOUNT_GROUP` は使われません。**
+**機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` は使われません**（[機密の置き場には書けない](#機密の置き場には書けない)）。
 グループはここに挙げたファイルに書いてください。シェルの環境変数で渡したグループとファイルで
 決まるグループが食い違うと、`devbase up` / `scale` は起動せずに止まります（直し方は
 [`up` / `scale` がグループの食い違いで止まったとき](env-backend.md#up--scale-がグループの食い違いで止まったとき)）。

@@ -16,13 +16,24 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+from devbase.env import keys
 from devbase.env.secret_store import SecretRef, SecretStore
 from devbase.env.store import EnvFile
 from devbase.log import get_logger
 
 logger = get_logger(__name__)
+
+#: 機密の置き場に :data:`~devbase.env.keys.DEVBASE_ACCOUNT_GROUP` があることを警告した
+#: 参照の集合 (PLAN62 決定 4)。
+#:
+#: 1 回の起動で :func:`resolve` は何度も呼ばれる (dispatch 前の注入・各コマンドの
+#: ``_inject_secrets``・``env exec``)。同じ置き場について警告を 1 回にするため、出した参照を
+#: ここに控える。:class:`SecretStore` に持たせないのは、ストアが :func:`release_store` で
+#: 捨てられる (``up`` の中の ``env init`` の後など) たびに警告が出直すため。プロセスが終わる
+#: まで持つ。
+_warned_account_group_refs: Set[SecretRef] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +182,46 @@ def _project_env_overrides(devbase_root: Path, project: str) -> Dict[str, str]:
     return {key: os.environ[key] for key in keys if key in os.environ}
 
 
+def _account_group_delete_hint(ref: SecretRef) -> str:
+    """置き場 ``ref`` の ``DEVBASE_ACCOUNT_GROUP`` を消す ``env delete`` の引数と実行場所 (PLAN62 決定 5)。
+
+    ``env delete`` の宛先は ``-p`` (適用範囲) / ``--user`` (持ち主) / ``--group`` (グループ) の
+    3 軸で決まり、参照の 3 つのフィールドと 1 対 1 に対応する。グループを持つ参照には共通の
+    参照でも ``--group`` を付ける。省くと ``env delete`` は実行した場所のグループを宛先にし、
+    警告を出した置き場と違う置き場を指すことがある。``-p`` はプロジェクトのディレクトリで
+    しか使えないため、実行場所を添える。
+    """
+    args = ''
+    if ref.kind == 'project':
+        args += ' -p'
+    if ref.is_user:
+        args += ' --user'
+    if ref.group:
+        args += f' --group {ref.group}'
+    where = f'（projects/{ref.name} で実行）' if ref.kind == 'project' else ''
+    return f'{args}{where}'
+
+
+def _without_account_group(ref: SecretRef, data: Dict[str, str]) -> Dict[str, str]:
+    """置き場から読んだ ``data`` から ``DEVBASE_ACCOUNT_GROUP`` を除いた辞書を返す (PLAN62)。
+
+    キーが無ければ ``data`` をそのまま返す。受け取った辞書は変えない。あれば、その置き場
+    (``ref``) についてまだ警告していないときだけ、無視したことと消し方を警告で知らせる
+    (値は出さない。決定 3・4)。
+    """
+    if keys.DEVBASE_ACCOUNT_GROUP not in data:
+        return data
+    if ref not in _warned_account_group_refs:
+        _warned_account_group_refs.add(ref)
+        logger.warning(
+            "機密の置き場（%s）にある %s は使いません。アカウントグループは env ファイル"
+            "（projects/<name>/env・$DEVBASE_ROOT/env）で決まります。"
+            "消すには: devbase env delete %s%s",
+            ref.label(), keys.DEVBASE_ACCOUNT_GROUP, keys.DEVBASE_ACCOUNT_GROUP,
+            _account_group_delete_hint(ref))
+    return {key: value for key, value in data.items() if key != keys.DEVBASE_ACCOUNT_GROUP}
+
+
 def resolve(devbase_root: Path, project: Optional[str] = None,
             *, store: Optional[SecretStore] = None) -> SecretEnv:
     """機密を合成して返す。
@@ -201,6 +252,15 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
     (PLAN56)。グループ別の置き場 (``layout: group``) では、``project`` のグループの
     置き場だけを読み、他のグループのパスへは要求しない。それ以外の設定ではグループが
     ``None`` で、参照は今と同じ値になる (決定 5)。
+
+    4 つの置き場にある ``DEVBASE_ACCOUNT_GROUP`` は合成しない (PLAN62 決定 1・2)。
+    アカウントグループ (ボリューム ``devbase_home_<group>`` と ``layout: group`` の置き場)
+    を決める値は ``env`` ファイルとシェルの環境変数からだけ来るべきで、置き場の値を
+    載せるとプロセスの環境変数を読む :func:`~devbase.volume.manager.resolve_account_group`
+    が置き場の値でグループを変えてしまう。``inject`` / :func:`child_env` / コンテナへ列挙する
+    変数名はどれもこの結果から作られるため、読み取りの直後の 1 か所で外す。重ね順 3
+    (``projects/<name>/env``) は変えない: ``names`` に無いキーは ``values`` に採らないため、
+    ``env`` ファイルの値も ``values`` には現れず、プロセスの環境変数に元からある値が残る。
     """
     root = Path(devbase_root)
     store = store if store is not None else store_for(root)
@@ -209,8 +269,11 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
     ref_group = getattr(store, 'ref_group', None)
     group = ref_group(project) if callable(ref_group) else None
 
-    team_global = store.load(SecretRef.for_global(group=group))
-    user_global = store.load(SecretRef.for_global(owner='user', group=group))
+    def load(ref: SecretRef) -> Dict[str, str]:
+        return _without_account_group(ref, store.load(ref))
+
+    team_global = load(SecretRef.for_global(group=group))
+    user_global = load(SecretRef.for_global(owner='user', group=group))
     global_names = list(dict.fromkeys([*team_global, *user_global]))
     project_names: List[str] = []
 
@@ -219,8 +282,8 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
 
     if project:
         merged.update(_project_env_overrides(root, project))
-        team_project = store.load(SecretRef.for_project(project, group=group))
-        user_project = store.load(SecretRef.for_project(project, owner='user', group=group))
+        team_project = load(SecretRef.for_project(project, group=group))
+        user_project = load(SecretRef.for_project(project, owner='user', group=group))
         merged.update(team_project)
         merged.update(user_project)
         project_names = list(dict.fromkeys([*team_project, *user_project]))
