@@ -299,7 +299,7 @@ resolve_command() {
 }
 
 # ===================================================================
-# Project name resolution (PLAN06 Task 2)
+# Project name resolution (PLAN06 Task 2 / PLAN61)
 # ===================================================================
 # `devbase project <sub> <name>` および同義のトップレベルシノニム
 # `devbase <sub> <name>` の <name> が $DEVBASE_ROOT/projects/<name> に実在する
@@ -310,11 +310,20 @@ resolve_command() {
 # だけが build の name 解決手段になる (PLAN06 方針 A の核心)。Python 側 chdir
 # フォールバックでは build を救えない。
 #
-# <name> 判定は projects/ 配下の実在性で行う。これにより `login <index>` /
-# `build <image>` / `scale <N>` の既存 positional と曖昧にならない: 実在する
-# プロジェクト名のときだけ name として解釈し cd + strip する。実在しなければ
-# 引数はそのまま下流 (Python パーサ) へ渡し、Python 側で index/image/scale
-# あるいは「存在しない name」エラーとして扱わせる。
+# <name> の判定 (PLAN61):
+#   1. 名前の形 (is_single_segment_name) に合わない値は名前ではない。cd も strip も
+#      せず、そのまま下流の Python へ渡す。下流は位置引数の意味に応じて扱う
+#      (`[name]` を取るコマンドは名前の検証で 1、`build <image>` はイメージ名の検証で 1、
+#      `scale <値>` は argparse の型エラーで 2、`login <値>` は index として渡る)。
+#   2. 形に合う値は projects/ 配下の実在性で判定する。実在するときだけ name として
+#      解釈し cd + strip する。実在しなければそのまま下流へ渡す。
+#   3. `build <x>` は containers/<x> が実在すればイメージとして扱い、name 解決を通さない
+#      (下の case の `build)` 分岐)。
+#   4. `container` / `ct` グループは name 解決の対象外。parser が `[name]` を持たず、
+#      実在するプロジェクト名でも usage エラー (終了コード 2) になる。名前の指定は
+#      `project <sub> <name>` が持つ。
+# 残る衝突: `login <index>` / `scale <N>` の値が数字だけのプロジェクト名と一致する
+# 場合は名前として解釈される (数字だけの名前は現在無く、衝突は偶発に限る)。
 
 # プロジェクト名 / イメージ名として受け付ける形 (PLAN61 決定 1)。英数字で始まり、英数字・
 # `.`・`-`・`_` だけからなる。先頭が英数字なので `.` `..` `-x` 空は当たらず、`/` `\` 空白
@@ -415,57 +424,41 @@ fi
 # name 解決: 実在するプロジェクト名を検出したら cd し、その token を argv から
 # 取り除いた配列 _DEVBASE_ARGS を組み立てる。検出しなければ素通し。
 # name 候補の位置:
-#   project|container <sub> <name>  -> $3 (サブコマンドは保持)
+#   project <sub> <name>             -> $3 (サブコマンドは保持)
 #   トップレベルシノニム <sub> <name> -> $2
 #
-# 重要 (PLAN06 codex 指摘対応): `project`/`container` グループでは parser が
-# `name` positional を持つサブコマンド (`up`/`down`/`ps`/`logs`/`scale`) に限定
-# して $3 を name 解決する。`project login` / `project build` は単一 positional が
-# index / image (旧 container 互換) であり parser が name を受け付けない
-# (cli.py の _add_login_subparser / _add_build_subparser 参照)。これらで $3 を
-# name strip すると、`project build web` の image=web や `project login web` の
-# index 引数が実在プロジェクト名と一致した瞬間に消えて別操作へ化けるため除外する。
+# 重要 (PLAN06 codex 指摘対応): `project` グループでは parser が `name` positional を
+# 持つサブコマンド (`up`/`down`/`ps`/`logs`/`scale`/`rebuild`/`open`) に限定して $3 を
+# name 解決する。`project login` / `project build` は単一 positional が index / image
+# (旧 container 互換) であり parser が name を受け付けない (cli.py の
+# _add_login_subparser / _add_build_subparser 参照)。これらで $3 を name strip すると、
+# `project build web` の image=web や `project login web` の index 引数が実在プロジェクト名と
+# 一致した瞬間に消えて別操作へ化けるため除外する。
 #
-# トップレベルシノニム (`build`/`login` を含む) は従来どおり「実在 project なら
-# cd」方針を維持する: トップレベル `build`/`login` は Python parser を経由せず
-# shell cmd_build / wrapper cd だけが name 指定の手段であり、`build carmo` /
+# `container` / `ct` は name 解決を通さない (PLAN61 決定 10 / #200)。parser が `[name]` を
+# 持たないため、wrapper だけが名前を取り除く形では「実在するときだけ受け付ける」動きに
+# なり、受け付けるかどうかが projects/ の中身で変わる。非推奨のグループへ受け付けを
+# 増やさず、`project <sub> <name>` へ誘導する。
+#
+# トップレベルシノニム (`login` を含む) は「実在 project なら cd」方針を維持する:
+# トップレベル `login` は Python parser を経由せず wrapper cd だけが name 指定の手段であり、
 # `login carmo` を「そのプロジェクトを操作」と解釈する設計 (存在性ベース判定)。
+# `build` は containers/ との衝突をイメージ優先で分ける (下の `build)` 分岐)。
 _DEVBASE_ARGS=("${@:2}")
 # 同期注意 (メンテナンス性): 下記 2 リストは cli.py の parser 定義に対応する。
-#   _PROJECT_NAME_SUBCOMMANDS = `project`/`container` で `name` positional を
-#       受け付けるサブコマンド集合。cli.py の _add_project_parser で
-#       `add_argument('name', ...)` を持つもの (up/down/ps/logs/scale/rebuild/open) と一致させる。
-#       login/build は index/image 互換のため意図的に除外 (上のコメント参照)。
+#   _PROJECT_NAME_SUBCOMMANDS = `project` で `name` positional を受け付けるサブコマンド
+#       集合。cli.py の _add_project_parser で `add_argument('name', ...)` を持つもの
+#       (up/down/ps/logs/scale/rebuild/open) と一致させる。login/build は index/image
+#       互換のため意図的に除外 (上のコメント参照)。
 #   _NAME_RESOLVABLE_SHORTCUTS = トップレベルシノニムのうち「実在 project なら cd」
 #       を許すもの。cli.py の SHORTCUTS 経由で project サブコマンドへ写像される
 #       集合 + shell 実装の build を含む。
 # cli.py 側でサブコマンドを追加/削除した際は両リストの更新漏れに注意すること
 # (cli.py の _add_project_parser / SHORTCUTS にも対の注記あり)。
-#
-# ⚠ 衝突注意 (footgun): トップレベルシノニムの name 解決は「存在性ベース」で
-# 行うため、本来 positional 引数として渡したい値が実在プロジェクト名
-# ($DEVBASE_ROOT/projects/<name>) と一致した場合、その引数が name と解釈され
-# project 解決 (cd) が優先されて引数の意味が変わる。具体的には:
-#   - `devbase login <index>` の index が実在プロジェクト名と一致
-#       (例: projects/2 が存在する状態で `devbase login 2`) → index=2 ではなく
-#       project `2` への cd になり、login の対象が変わる。
-#   - `devbase build <image>` の image が実在プロジェクト名と一致
-#       (例: projects/web が存在する状態で `devbase build web`) → image=web では
-#       なく project `web` への cd になり、ビルド対象が変わる。
-#   - `devbase scale <service>` の service 引数も同様に化けうる。
-# これはトップレベル build/login/scale を「そのプロジェクトを操作」と解釈する
-# 意図的設計 (存在性ベース判定) のトレードオフであり、挙動としては仕様である。
-# 回避策: 衝突時は対象プロジェクトのディレクトリ内で実行するか、明示的に
-# そのプロジェクトへ切り替えてから (cd 済みの状態で) コマンドを実行すること。
-# こうすれば name 解決トークンを与える必要がなくなり、index/image/service を
-# 意図どおり渡せる。
 _PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale rebuild open "
 _NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build rebuild open "
 case "$_resolved_cmd" in
-    project|container|ct)
-        # `ct` は container の alias (cli.py: add_parser('container', aliases=['ct']))。
-        # name 解決経路でも container と同じ strip/chdir を通すため分岐に含める。
-        # _resolved_cmd は `ct` のまま python に渡してよい (cli.py 側で alias 解決済み)。
+    project)
         if [[ "$_PROJECT_NAME_SUBCOMMANDS" == *" ${2:-} "* ]] \
            && maybe_cd_project "${3:-}"; then
             _DEVBASE_ARGS=("${2:-}" "${@:4}")

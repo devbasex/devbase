@@ -562,21 +562,6 @@ def test_wrapper_project_build_keeps_image_positional(wrapper_root):
     assert _python_args(r) == "project build carmo", r.stdout
 
 
-def test_wrapper_ct_up_name_cds_and_strips(wrapper_root):
-    """`ct up carmo` は container alias として name 解決される (codex 指摘 #319)。
-
-    `ct` は cli.py で container の alias (add_parser('container', aliases=['ct']))
-    のため、wrapper の name 解決 case でも `container` と同じ strip/chdir 経路を
-    通す。`ct` 自体は strip せず Python へ渡し、name のみ strip する。
-    """
-    r = _run_wrapper(["ct", "up", "carmo"], wrapper_root)
-    assert "unknown command" not in r.stderr.lower(), r.stderr
-    assert "unrecognized arguments" not in r.stderr.lower(), r.stderr
-    assert _pwd(r).endswith("/projects/carmo"), r.stdout
-    # name は strip されるが alias `ct` は保持して Python へ渡す
-    assert _python_args(r) == "ct up", r.stdout
-
-
 def test_wrapper_project_login_keeps_index_positional(wrapper_root):
     """`project login carmo` の carmo は index positional として素通しする。
 
@@ -650,6 +635,39 @@ def test_wrapper_non_ascii_name_is_not_resolved(exec_wrapper):
     assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
     uv = stdout_field(r, "UV:")
     assert uv is not None and uv.endswith(" devbase.cli up café"), r.stdout
+
+
+CONTAINER_SUBCOMMANDS = ["up", "down", "ps", "logs", "scale", "rebuild", "open"]
+
+
+@pytest.mark.parametrize("group", ["container", "ct"])
+@pytest.mark.parametrize("sub", CONTAINER_SUBCOMMANDS)
+def test_wrapper_container_group_does_not_resolve_names(exec_wrapper, group, sub):
+    """受け入れ条件 12: `container <sub> <name>` / `ct <sub> <name>` は実在する名前でも cd しない。
+
+    `container` の parser は `[name]` を持たない (決定 10 / #200)。wrapper が名前を取り除かず
+    そのまま渡し、argparse の usage エラー (終了コード 2) になる。旧テスト
+    `test_wrapper_ct_up_name_cds_and_strips` の置き換え。
+    """
+    exec_wrapper.project("carmo")
+
+    r = exec_wrapper([group, sub, "carmo"])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(f" devbase.cli {group} {sub} carmo"), r.stdout
+
+
+def test_wrapper_container_up_without_name_uses_cwd(exec_wrapper):
+    """受け入れ条件 13: `container up` (名前なし) は今と同じく現在のディレクトリで動く。
+
+    非推奨の警告は Python 側 (`test_cmd_container_warns_and_delegates`)。
+    """
+    r = exec_wrapper(["container", "up"])
+
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli container up"), r.stdout
 
 
 def test_wrapper_name_regex_is_synced_with_python():

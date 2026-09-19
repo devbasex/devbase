@@ -240,6 +240,20 @@ def test_dispatch_shortcut_routes_to_cmd_project_not_container(monkeypatch):
 # (重複定義を _add_login_subparser / _add_build_subparser に共通化した結果の検証)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize('group', ['container', 'ct'])
+@pytest.mark.parametrize('sub', ['up', 'down', 'ps', 'logs', 'scale', 'rebuild', 'open'])
+def test_container_subcommands_reject_name_positional(group, sub):
+    """受け入れ条件 12 (単体): `container <sub> <name>` は parser が `[name]` を持たず SystemExit(2)。
+
+    `scale` は `carmo` が `new_scale` の int 型エラーになり、他は `unrecognized arguments`。
+    どちらも終了コード 2 (PLAN61 決定 10 / #200)。
+    """
+    parser = cli._create_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args([group, sub, 'carmo'])
+    assert exc.value.code == 2
+
+
 @pytest.mark.parametrize('group', ['project', 'container'])
 def test_login_positional_is_index_in_both_groups(group):
     """login は project / container いずれでも単一 positional を index として扱う。"""

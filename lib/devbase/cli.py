@@ -33,6 +33,8 @@ logger = get_logger("devbase.cli")
 # `name` positional 付きサブコマンドは bin/devbase の _NAME_RESOLVABLE_SHORTCUTS /
 # _PROJECT_NAME_SUBCOMMANDS と対応している。サブコマンドを追加/削除する際は
 # wrapper 側 (bin/devbase の該当リスト) の更新漏れに注意すること。
+# _PROJECT_NAME_SUBCOMMANDS の対象は `project` グループだけで、`container` / `ct` は
+# wrapper の name 解決を通らない (PLAN61 決定 10)。
 SHORTCUTS = {
     'up': 'up',
     'down': 'down',
@@ -284,7 +286,9 @@ def _add_project_parser(subparsers):
 
     同期注意: ここで `name` positional を持つサブコマンド集合 (up/down/ps/logs/scale/rebuild/open)
     は bin/devbase の `_PROJECT_NAME_SUBCOMMANDS` と一致させる必要がある。追加/削除時は
-    wrapper 側リストの更新漏れに注意すること。
+    wrapper 側リストの更新漏れに注意すること。wrapper がこの集合で name を解決するのは
+    `project` グループだけで、`container` / `ct` は `[name]` を持たず解決も通らない
+    (PLAN61 決定 10)。
     """
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')
