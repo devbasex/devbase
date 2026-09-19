@@ -384,3 +384,62 @@ def test_wrapper_build_context_equals_help_is_not_usage(exec_wrapper, flag):
     assert "Usage: devbase build" not in r.stdout
     uv = stdout_field(r, "UV:")
     assert uv is not None and f"env exec --context {flag} --" in uv, r.stdout
+
+
+# ===========================================================================
+# wrapper (実プロセス): `build <x>` の名前の形とイメージ / プロジェクトの衝突 (PLAN61 / #146 #142)
+# ===========================================================================
+
+def test_wrapper_build_traversal_does_not_cd_or_read_outside_env(exec_wrapper):
+    """受け入れ条件 1: `build ../etc` は `$DEVBASE_ROOT/etc` へ cd せず、そこの env を読まない。
+
+    形に合わない値は名前として扱わず、そのまま Python の単体ビルドへ渡す。Python 側の
+    `Invalid image name` で終了コード 1 になる (`test_cli_project_build_rejects_traversal_image`)。
+    """
+    exec_wrapper.etc_env()
+
+    r = exec_wrapper(["build", "../etc"])
+
+    assert "=== Building devbase images ===" not in r.stdout
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    assert stdout_field(r, "MARKER:") == "<unset>", r.stdout
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli project build ../etc"), r.stdout
+
+
+def test_wrapper_build_image_wins_over_same_named_project_and_notes(exec_wrapper):
+    """受け入れ条件 6: containers/ と projects/ の両方にある名前はイメージ。知らせを stderr に 1 行。"""
+    exec_wrapper.container("bi-tools")
+    exec_wrapper.project("bi-tools")
+
+    r = exec_wrapper(["build", "bi-tools", "--no-cache"])
+
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli project build bi-tools --no-cache"), r.stdout
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.work), r.stdout
+    notes = [line for line in r.stderr.splitlines() if line.strip()]
+    assert len(notes) == 1, r.stderr
+    assert "projects/bi-tools" in notes[0] and "devbase build" in notes[0], r.stderr
+    assert str(exec_wrapper.root / "projects" / "bi-tools") in notes[0], r.stderr
+
+
+def test_wrapper_build_project_only_name_cds_and_builds_project(exec_wrapper):
+    """受け入れ条件 7: projects/ にだけある名前は今と同じくプロジェクトのビルド (cmd_build)。"""
+    exec_wrapper.project("carmo")
+
+    r = exec_wrapper(["build", "carmo"])
+
+    assert "=== Building devbase images ===" in r.stdout, r.stdout
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.root / "projects" / "carmo"), r.stdout
+    assert r.stderr.strip() == "", r.stderr
+
+
+def test_wrapper_build_container_only_name_has_no_note(exec_wrapper):
+    """受け入れ条件 8: containers/ にだけある名前は今と同じく単体ビルドで、知らせは出ない。"""
+    exec_wrapper.container("go")
+
+    r = exec_wrapper(["build", "go"])
+
+    uv = stdout_field(r, "UV:")
+    assert uv is not None and uv.endswith(" devbase.cli project build go"), r.stdout
+    assert r.stderr.strip() == "", r.stderr

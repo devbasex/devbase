@@ -471,6 +471,21 @@ case "$_resolved_cmd" in
             _DEVBASE_ARGS=("${2:-}" "${@:4}")
         fi
         ;;
+    build)
+        # `build <x>` で containers/<x> が実在すれば <x> はイメージで、name 解決を通さない
+        # (PLAN61 決定 5・6 / #142)。projects/<x> もあれば、プロジェクトとしても読めたことと
+        # プロジェクトをビルドする方法を stderr に 1 行知らせる。判定は maybe_cd_project の
+        # 前に置く (後だと cd と env の読み込みが先に起き、戻す手段が無い)。名前の形を先に
+        # 見るのは、`containers/../x` のような値でディレクトリの実在を確かめないため。
+        if is_single_segment_name "${2:-}" && [ -d "${DEVBASE_ROOT}/containers/$2" ]; then
+            if [ -d "${DEVBASE_ROOT}/projects/$2" ]; then
+                echo "Note: '$2' is also a project (projects/$2); building image containers/$2." \
+                     "To build the project, run 'devbase build' in ${DEVBASE_ROOT}/projects/$2" >&2
+            fi
+        elif maybe_cd_project "${2:-}"; then
+            _DEVBASE_ARGS=("${@:3}")
+        fi
+        ;;
     *)
         if [[ "$_NAME_RESOLVABLE_SHORTCUTS" == *" $_resolved_cmd "* ]] \
            && maybe_cd_project "${2:-}"; then
@@ -491,10 +506,10 @@ case "$_resolved_cmd" in
     # (devbase-base の 2 段ビルド) で処理する。次の 2 つは Python (project build)
     # へ委譲する (PLAN49 / i07):
     #   - <image> 指定の単体ビルド: `devbase project build <image>` /
-    #     `devbase container build <image>` と同じ実装へ届ける。逆向き (Python から
-    #     shell を呼ぶ) にすると、この wrapper 冒頭の name 解決を通ってしまい、
-    #     containers/ と projects/ に同名がある場合 (bi-tools) に別のものを
-    #     ビルドしてしまう。
+    #     `devbase container build <image>` と同じ実装へ届ける。containers/ と
+    #     projects/ に同名がある場合 (bi-tools) は、上の name 解決の `build)` 分岐が
+    #     イメージとして扱い cd しない (PLAN61 決定 5)。逆向き (Python から shell を
+    #     呼ぶ) にすると、この wrapper を再び通ることになるため採らない。
     #   - --expires: イメージ作成日の判定が必要で、shell では RFC3339 日付パースが
     #     非可搬なため (build --expires=N / rebuild / up が共通の期限リゾルバを使う)。
     build)
