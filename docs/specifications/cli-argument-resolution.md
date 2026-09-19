@@ -240,7 +240,18 @@ graph TD
 トップレベルの `devbase login <index>` / `devbase scale <N>` は、値が実在するプロジェクト名と
 一致すると名前として解釈される（`projects/2` がある状態の `devbase login 2` は番号 2 ではなく
 プロジェクト `2` への操作になる）。数字だけのプロジェクト名は通常作られないため衝突は偶発に
-限られる。該当する場合は対象プロジェクトのディレクトリの中で実行する。
+限られる。
+
+名前の解決は現在地を見ない。`maybe_cd_project` が見るのは `$DEVBASE_ROOT/projects/<値>` の実在
+だけなので、対象プロジェクトのディレクトリの中で打っても回避できない。`projects/web` の中で
+`devbase login 2` と打つと `projects/2` へ切り替わり、`2` は引数から取り除かれて index は既定の
+1 になる。`devbase scale 2` も同じく `projects/2` へ切り替わり、`new_scale` が無くなって usage
+error になる。回避するには、名前の解決を通らない形か、名前を明示した形を使う。
+
+| 衝突する形 | 回避する形 | 理由 |
+| --- | --- | --- |
+| `devbase login 2` | `devbase project login 2` | `project login` は `[name]` を取らないため `_PROJECT_NAME_SUBCOMMANDS` に含まれず、`2` は index のまま下流へ渡る（対象はカレントプロジェクト） |
+| `devbase scale 2` | `devbase project scale <name> 2` | `<name>` が名前として取り除かれ、残る `2` が `new_scale` になる。`devbase project scale 2` は依然 `projects/2` へ切り替わるので、名前は省略しない |
 
 ## データ・設定
 

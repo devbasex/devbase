@@ -40,7 +40,17 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 > **衝突注意:** トップレベルの `devbase login <index>` / `devbase scale <N>` は、値が実在する
 > プロジェクト名と一致すると名前として解釈されます（`projects/2` が存在する状態の `devbase login 2`
 > は index=2 ではなく project `2` への操作になります）。数字だけのプロジェクト名は通常作られないため
-> 衝突は偶発に限られますが、該当する場合は対象プロジェクトのディレクトリ内で実行してください。
+> 衝突は偶発に限られます。
+>
+> 名前の解決は現在地を見ません（`$DEVBASE_ROOT/projects/<値>` が実在するかだけを見ます）。
+> そのため対象プロジェクトのディレクトリ内で実行しても回避できません（`projects/web` の中で
+> `devbase login 2` と打つと `projects/2` へ切り替わり、`2` が取り除かれて index は既定の 1 に
+> なります）。該当する場合は次のように打ってください。
+>
+> - `devbase project login 2` — `project login` は `[name]` を取らないため名前解決の対象外で、
+>   `2` は index のままカレントプロジェクトへ渡ります
+> - `devbase project scale <name> 2` — `<name>` が名前として取り除かれ、残る `2` が `new_scale`
+>   になります（`devbase project scale 2` は `projects/2` へ切り替わるため、名前は省略しません）
 
 ## `--context NAME`（共通オプション）
 
