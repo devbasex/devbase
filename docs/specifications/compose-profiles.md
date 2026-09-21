@@ -193,7 +193,7 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
   `cli._dispatch` が `project profile list` を `project list`（プロジェクト一覧）へ流すためである
 - 前方一致の省略は `project p` / `container p` を従来どおり `ps` に解決し（`SUBCMD_PREFIX_PREFERENCES`）、
   `project pr` は `profile` に解決する
-- `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS`（`up down ps logs scale rebuild`）に `profile` は
+- `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS`（`up down ps logs scale rebuild open`）に `profile` は
   入れない。wrapper は 3 番目の引数をプロジェクト名として解決するが、`profile` ではそこに
   `up` / `down` / `list` が来るため、同名のプロジェクトが実在すると誤って移動する。名前の解決は
   Python 側の `_dispatch_lifecycle` が行う

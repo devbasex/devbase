@@ -7,7 +7,7 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | 項目 | 条件 |
 | --- | --- |
 | Docker Compose | **2.20.0 以上**。`depends_on` の `required` を使うため。動作を確かめたのは v5.1.4 |
-| devbase | `devbase project profile` があるバージョン |
+| devbase | **3.5.0 以上**。`devbase project profile` が入った版です（CHANGELOG の `[3.5.0]`）。Plugin として配るなら [`plugin.yml` の `requires.devbase` も上げます](#plugin-として配るなら-requiresdevbase-を-350-以上へ上げる) |
 
 ## 1. `compose.yml` の書き方
 
@@ -42,6 +42,26 @@ services:
 | プロファイルのサービスから dev への `depends_on` | どちらの形（`[dev]` / `required: false` 付き）でも書けます。devbase は `--no-deps` で起動するため dev は対象に入りません |
 
 プロファイル名に `__devbase_none__` は使わないでください。devbase が「どのプロファイルも有効にしない」ために予約している名前です。
+
+### Plugin として配るなら `requires.devbase` を 3.5.0 以上へ上げる
+
+`profiles:` を使うプロジェクトを含む Plugin は、`plugin.yml` の `requires.devbase` を
+`">=3.5.0"` へ上げてください。`compose.yml` を書き換えたのと同じ Pull Request で上げます。
+
+```yaml
+# <plugin>/plugin.yml
+requires:
+  devbase: ">=3.5.0"
+```
+
+3.5.0 未満の devbase では、`profiles:` を付けたサービスが `devbase up` の起動対象から外れたまま、
+後から起動する手段（`devbase project profile up`）もありません。テスト用サーバ群が黙って起動
+しない状態になります。
+
+`requires.devbase` を上げておけば、新規の `devbase plugin install` はその場で拒否され、
+`devbase plugin update` では警告が出ます。仕組みは既にあるため、Plugin 側でやることは版数を
+書くことだけです。書式（必ずクォートする）と検証の詳細は
+[`plugin.yml` リファレンスの `requires`](plugin-yml-reference.md#requires) を参照してください。
 
 ## 2. コマンド
 
