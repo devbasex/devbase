@@ -392,7 +392,7 @@ base の利用者は日本語話者で、扱う文書も日本語が多い。`la
 | 受け入れ条件 | 何で確かめるか |
 | --- | --- |
 | 1・2・3・4 | `test_base_image_font_matching.py` の解決先の表（JP の行）。受け入れ条件 2 は `fc-match` の 1 件だけでなく、**`fc-match -s sans-serif:lang=ja` の 1 件目が `Noto Sans CJK JP` であること**も確かめる（同じ `docker run` の中で `fc-match -s` の出力の先頭を採る）。Docker が無い / イメージが古いときは skip |
-| 5・11 | 同じ表の欧文の行（`Arial` / `Times New Roman` / `Courier New` / `Calibri` / `Cambria`） |
+| 5・11 | 同じ表の欧文の行。5 は変更の前後で変わらない 3 つ（`Arial` / `Times New Roman` / `Courier New`）、11 は変更で直る 2 つ（`Calibri` → Carlito / `Cambria` → Caladea。**現状はどちらも `WenQuanYi Zen Hei`**） |
 | 6 | 同じ表の `lang` を明示した行と、書体を名指しした行の 13 行（総称ファミリ 4 つ × 言語 2 つの 8 行、欧文を名指しした 3 行、実在する書体を名指しした 2 行（`WenQuanYi Zen Hei` / `IPAPGothic`））。**決定 2 の壊れ方を捕まえるのはこの行である** |
 | 7 | `test_base_dockerfile_fonts.py`: `COPY` の宛先が `/etc/fonts/local.conf` であること、`conf.d/` を宛先にする `COPY` が無いこと、`fc-cache -f` が 1 度だけで `COPY` より後にあること |
 | 8 | `test_base_dockerfile_fonts.py`: `fonts-local.conf` の先頭のコメントが `51-local.conf` と `conf.d` と `99` に触れていること。設計文書の側は目視 |

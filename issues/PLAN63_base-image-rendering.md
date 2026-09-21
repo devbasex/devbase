@@ -150,8 +150,11 @@
       （現状: `WenQuanYi Zen Hei` / `WenQuanYi Zen Hei Mono`）
 - [ ] 4. `Noto Sans JP` / `Meiryo` / `Yu Gothic` / `MS PGothic` と、イメージに無い書体名
       （`Zen Kaku Gothic New`）が、いずれも `Noto Sans CJK JP` を返す（現状: すべて `WenQuanYi Zen Hei`）
-- [ ] 5. 欧文が壊れない。`Arial` → `Liberation Sans`、`Times New Roman` → `Liberation Serif`、
-      `Courier New` → `Liberation Mono`、`Calibri` → `Carlito`、`Cambria` → `Caladea`
+- [ ] 5. **欧文が壊れない**（変更の前後で変わらない）。`Arial` → `Liberation Sans`、
+      `Times New Roman` → `Liberation Serif`、`Courier New` → `Liberation Mono`。
+      **`Calibri` と `Cambria` はここに含めない。** この 2 つは変更前に
+      `WenQuanYi Zen Hei`（中国語のフェイス）へ落ちており、「変わらない」ではなく
+      「直る」ものである。受け入れ条件 11 で固定する
 - [ ] 6. **他言語が壊れない。`lang` を明示した指定は、その言語の、しかも同じ様式（sans / serif /
       等幅）のフェイスを返す。**
 
@@ -183,7 +186,9 @@
 
 - [ ] 9. `pdftoppm` / `pdfinfo` / `pdffonts` / `pdftocairo` が `PATH` にある
 - [ ] 10. `python3 -c "import PIL, defusedxml, lxml"` が終了コード 0
-- [ ] 11. `fc-match Calibri` が `Carlito`、`fc-match Cambria` が `Caladea` を返す（受け入れ条件 5 と同じ行）
+- [ ] 11. **欧文の metric 互換が直る。** `fc-match Calibri` が `Carlito`、`fc-match Cambria` が
+       `Caladea` を返す（**現状はどちらも `WenQuanYi Zen Hei`**）。`fonts-crosextra-carlito` と
+       `fonts-crosextra-caladea` を足すことで直る
 - [ ] 12. `soffice` / `libreoffice` / `pip` / `pip3` のいずれも `PATH` に無い（前提 3・8 のまま）。
        `uv` はある
 - [ ] 13. 追加するのは 6 パッケージの指定だけで、依存を含めて新規に入るのは 24 パッケージ、
