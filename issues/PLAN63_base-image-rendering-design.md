@@ -413,5 +413,5 @@ base の利用者は日本語話者で、扱う文書も日本語が多い。`la
 | LibreOffice と Chromium での実際の描画 | どちらも base に無いため実機未検証。確かめたのは `fc-match` の水準まで。LibreOffice は fontconfig とは別の照合も持つため、解決先が `fc-match` と一致しないことがある（#161 の由来になった `volareinc/nyle-dx` PR #5 では `NotoSansCJKsc` が埋め込まれていた）。`containers/docs`（#219）を作るときに、そこで確かめる |
 | amd64 での再現 | 手元は arm64 のみ。amd64 では `google-chrome-stable` が追加で入るため、`--with-deps` が入れるフォントの顔ぶれが違いうる。`fc-match` の表が同じになるかは、amd64 の端末で建てるまで分からない |
 | `containers/lfm` | `FROM nvidia/cuda:...` で base 由来ではなく、`fonts-noto-cjk` を自前で入れている（`containers/lfm/Dockerfile:23`）。同じ問題を抱えるかは未調査。抱えていれば別途起票する |
-| イメージの増分の測り方 | 24 MB は稼働中のコンテナでの `du` の差で、apt のリストとキャッシュを含む。層としての増分は、実装の持ち場で `devbase build base --no-cache` の前後の `docker images` で測り直す |
+| イメージの増分の測り方 | 24 MB は稼働中のコンテナでの `du` の差で、apt のリストとキャッシュを含む。層としての増分は、実装の持ち場で `devbase build base --no-cache` の前後の `docker images` で測り直す。受け入れ条件 13 の合否のラインは、測り方の違いを吸収できるよう +0.5% 未満（40 MB 以下）にしてある。 |
 | 利用者への周知 | 建て直すまで反映されないため、CHANGELOG に `devbase build base --no-cache` が要ることを書く。既に建てた人がいつ建て直すかは devbase の側から決められない |
