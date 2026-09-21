@@ -146,11 +146,15 @@
       | 指定 | 返すもの |
       | --- | --- |
       | `sans-serif:lang=zh-cn` | `Noto Sans CJK SC` |
+      | `sans:lang=zh-cn` | `Noto Sans CJK SC` |
       | `serif:lang=zh-cn` | `Noto Serif CJK SC` |
       | `monospace:lang=zh-cn` | `Noto Sans Mono CJK SC` |
       | `sans-serif:lang=ko` | `Noto Sans CJK KR` |
+      | `sans:lang=ko` | `Noto Sans CJK KR` |
       | `serif:lang=ko` | `Noto Serif CJK KR` |
+      | `monospace:lang=ko` | `Noto Sans Mono CJK KR` |
       | `Arial:lang=zh-cn` | `Liberation Sans`（欧文の指定は言語で変わらない） |
+      | `Arial:lang=ko` | `Liberation Sans`（同上） |
       | `Times New Roman:lang=zh-cn` | `Liberation Serif` |
       | `WenQuanYi Zen Hei`（名指し） | `WenQuanYi Zen Hei`（残る） |
 

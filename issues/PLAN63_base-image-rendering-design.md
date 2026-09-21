@@ -55,11 +55,15 @@ Ubuntu 26.04 / fontconfig 2.17.1 / イメージのサイズ 7.09GB。稼働中�
 | `Calibri` | WenQuanYi Zen Hei | **Carlito**（パッケージの追加による） |
 | `Cambria` | WenQuanYi Zen Hei | **Caladea**（同上） |
 | `sans-serif:lang=zh-cn` | Noto Sans CJK SC | Noto Sans CJK SC |
+| `sans:lang=zh-cn` | Noto Sans CJK SC | Noto Sans CJK SC |
 | `serif:lang=zh-cn` | Noto Serif CJK SC | Noto Serif CJK SC |
 | `monospace:lang=zh-cn` | Noto Sans Mono CJK SC | Noto Sans Mono CJK SC |
 | `sans-serif:lang=ko` | WenQuanYi Zen Hei | **Noto Sans CJK KR** |
-| `serif:lang=ko` | （未測定） | **Noto Serif CJK KR** |
+| `sans:lang=ko` | WenQuanYi Zen Hei | **Noto Sans CJK KR** |
+| `serif:lang=ko` | WenQuanYi Zen Hei | **Noto Serif CJK KR** |
+| `monospace:lang=ko` | WenQuanYi Zen Hei Mono | **Noto Sans Mono CJK KR** |
 | `Arial:lang=zh-cn` | Liberation Sans | Liberation Sans |
+| `Arial:lang=ko` | Liberation Sans | Liberation Sans |
 | `WenQuanYi Zen Hei`（名指し） | WenQuanYi Zen Hei | WenQuanYi Zen Hei |
 | `IPAPGothic`（名指し） | IPAPGothic | IPAPGothic |
 
@@ -97,7 +101,8 @@ Ubuntu 26.04 / fontconfig 2.17.1 / イメージのサイズ 7.09GB。稼働中�
 
 次のものは変えない。
 
-- `fonts-wqy-zenhei` の導入（要求の前提 2）
+- `fonts-wqy-zenhei` を削除しないこと（要求の前提 2）。Dockerfile に導入の行は無く、
+  `npx playwright install --with-deps chromium` が依存として入れる
 - `npx playwright install --with-deps chromium` とその後のクリーンアップ（前提 5、#220）
 - 派生イメージの Dockerfile（すべて `FROM devbase-base:latest`）
 - `containers/lfm`（base 由来ではない）
@@ -326,7 +331,7 @@ Playwright が後から入れるフォントを知らないキャッシュが残
 
 | テスト | Docker | 何を固定するか |
 | --- | --- | --- |
-| `tests/containers/test_base_dockerfile_fonts.py` | 不要 | 6 パッケージが一覧にあること。`COPY` の宛先が `/etc/fonts/local.conf` であり `conf.d/` ではないこと。`fc-cache -f` が `COPY` より後にあること。`fonts-local.conf` が整形式の XML で、4 つの `<alias>` と 8 つの `<match>` を持つこと。先頭のコメントが置き場所の理由（`51-local.conf` / `conf.d` / `99`）に触れていること。`libreoffice` / `soffice` / `pip` を入れていないこと。`fonts-wqy-zenhei` を消していないこと |
+| `tests/containers/test_base_dockerfile_fonts.py` | 不要 | 6 パッケージが一覧にあること。`COPY` の宛先が `/etc/fonts/local.conf` であり `conf.d/` ではないこと。`fc-cache -f` が `COPY` より後にあること。`fonts-local.conf` が整形式の XML で、4 つの `<alias>` と 8 つの `<match>` を持つこと。先頭のコメントが置き場所の理由（`51-local.conf` / `conf.d` / `99`）に触れていること。`libreoffice` / `soffice` / `pip` を入れていないこと。Dockerfile に `fonts-wqy-zenhei` を対象とする `apt-get remove` / `apt-get purge` / `dpkg -r` が無いこと |
 | `tests/containers/test_base_image_font_matching.py` | 要る | 「解決先の表」の各行。1 回の `docker run` で全部の `fc-match` を採り、行ごとに突き合わせる |
 
 **Docker が要るテストは、`tests/snapshot/test_restore_incremental.py` の先例に合わせる。**
@@ -382,7 +387,7 @@ base の利用者は日本語話者で、扱う文書も日本語が多い。`la
 | --- | --- |
 | 1・2・3・4 | `test_base_image_font_matching.py` の解決先の表（JP の行）。Docker が無い / イメージが古いときは skip |
 | 5・11 | 同じ表の欧文の行（`Arial` / `Times New Roman` / `Courier New` / `Calibri` / `Cambria`） |
-| 6 | 同じ表の `lang` を明示した行 8 つ。**決定 2 の壊れ方を捕まえるのはこの行である** |
+| 6 | 同じ表の `lang` を明示した行 12 行（総称ファミリ 4 つ × 言語 2 つの 8 行と、欧文を名指しした 3 行、中国語の書体を名指しした 1 行）。**決定 2 の壊れ方を捕まえるのはこの行である** |
 | 7 | `test_base_dockerfile_fonts.py`: `COPY` の宛先が `/etc/fonts/local.conf` であること、`conf.d/` を宛先にする `COPY` が無いこと、`fc-cache -f` が 1 度だけで `COPY` より後にあること |
 | 8 | `test_base_dockerfile_fonts.py`: `fonts-local.conf` の先頭のコメントが `51-local.conf` と `conf.d` と `99` に触れていること。設計文書の側は目視 |
 | 9・10・12 | `test_base_image_font_matching.py` と同じ `docker run` の中で、`command -v` と `python3 -c "import …"` の結果も採る |
