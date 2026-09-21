@@ -63,6 +63,7 @@ Ubuntu 26.04 / fontconfig 2.17.1 / イメージのサイズ 7.09GB。稼働中�
 | `serif:lang=ko` | WenQuanYi Zen Hei | **Noto Serif CJK KR** |
 | `monospace:lang=ko` | WenQuanYi Zen Hei Mono | **Noto Sans Mono CJK KR** |
 | `Arial:lang=zh-cn` | Liberation Sans | Liberation Sans |
+| `Times New Roman:lang=zh-cn` | Liberation Serif | Liberation Serif |
 | `Arial:lang=ko` | Liberation Sans | Liberation Sans |
 | `WenQuanYi Zen Hei`（名指し） | WenQuanYi Zen Hei | WenQuanYi Zen Hei |
 | `IPAPGothic`（名指し） | IPAPGothic | IPAPGothic |
@@ -269,7 +270,7 @@ graph TD
 
 **規則を 1 つも置かない案も採らない。** `zh-cn` は OS 既定の `65-nonlatin.conf` と
 `70-fonts-noto-cjk.conf` が正しく扱うので規則なしでも合うが、**`ko` は合わない**
-（決定 4 の `sans-serif` の prefer が JP を先頭にするため、韓国語が日本語の字形になる）。
+（決定 8 の `sans-serif` の prefer が JP を先頭にするため、韓国語が日本語の字形になる）。
 `ko` だけ書くと非対称で、なぜ `zh-cn` が無いのかが後から読めない。8 つ並べて対称にする。
 
 ### 決定 3: 未導入の書体の受け皿は、弱い結合の `append` 1 つで足りる
@@ -302,8 +303,13 @@ Dockerfile の 1 つ目の `RUN` は `apt-get install` を 2 回呼ぶ。1 回�
 | `apt-get update` をもう 1 回走らせる | 1 つ目の `RUN` は最後に `rm -rf /var/lib/apt/lists/*` でリストを消す。新しい `RUN` はリストを取り直す必要がある |
 | クリーンアップを書き写す | `apt-get clean` と `rm -rf` を 2 か所に持つことになる |
 
-**この 6 つが後から変わる頻度は低い。** 一方 1 つ目の `RUN` は、NodeSource の設定スクリプトを
-`curl | bash` で毎回取りに行くなど、外からの変化でどのみち無効になりうる。層を増やして
+**キャッシュが無効になる条件は、その `RUN` の命令の文字列が変わるか、親の層が変わるか、
+`--no-cache` を渡すかの 3 つである。** 取得先の中身が変わってもキャッシュは無効にならない
+（`curl | bash` は、キャッシュが効いている間は実行されない）。
+
+**この変更そのものが 1 つ目の `RUN` の文字列を変えるため、層を分けても分けなくても、この
+変更では 1 度建て直される。** 層を分けて守れるのは「次にこの 6 つを足し引きしたとき」だけで、
+その頻度は低い。`devbase build base --no-cache` はどのみち全部を建て直す。層を増やして
 守るほどの利得が無い。
 
 ### 決定 5: `COPY` と `fc-cache -f` は末尾の `COPY` 群へ置く
