@@ -142,7 +142,7 @@
 ### フォントの解決先（#161）
 
 - [ ] 1. 建てた base イメージの中で `fc-match sans-serif` が `Noto Sans CJK JP` を返す
-      （現状: `WenQuanYi Zen Hei`）
+      （現状: `WenQuanYi Zen Hei`）。`fc-match sans` も同じ（現状: `WenQuanYi Zen Hei`）
 - [ ] 2. `fc-match sans-serif:lang=ja` も `Noto Sans CJK JP` を返す（現状: `WenQuanYi Zen Hei`）。
       `fc-match -s sans-serif:lang=ja` の 1 件目も `Noto Sans CJK JP` になる
       （現状: `WenQuanYi Zen Hei` → `IPAPGothic` → `Loma` の順）
@@ -169,6 +169,7 @@
       | `Arial:lang=ko` | `Liberation Sans`（同上） |
       | `Times New Roman:lang=zh-cn` | `Liberation Serif` |
       | `WenQuanYi Zen Hei`（名指し） | `WenQuanYi Zen Hei`（残る） |
+      | `IPAPGothic`（名指し） | `IPAPGothic`（残る。イメージに実在する日本語の書体を奪わない） |
 
 - [ ] 7. 設定は `/etc/fonts/local.conf` に置かれ、`/etc/fonts/conf.d/` には 1 つも置かれない。
       ビルドの中で `fc-cache -f` が 1 度走る
