@@ -168,8 +168,8 @@ Ubuntu 26.04 / fontconfig 2.17.1 / イメージのサイズ 7.09GB。稼働中�
 </fontconfig>
 ```
 
-規則は 4 つの `<alias>`、1 つの受け皿、そして **4 つの総称ファミリ × 2 つの言語 = 8 つ**の
-`<match>` で構成する。
+規則は 4 つの `<alias>` と 9 つの `<match>` で構成する。`<match>` の内訳は、未導入の書体の
+受け皿が 1 つと、**総称ファミリ 4 つ × 言語 2 つ = 8 つ**である。
 
 | 総称ファミリ | `lang=zh-cn` で前置する | `lang=ko` で前置する |
 | --- | --- | --- |
@@ -331,7 +331,7 @@ Playwright が後から入れるフォントを知らないキャッシュが残
 
 | テスト | Docker | 何を固定するか |
 | --- | --- | --- |
-| `tests/containers/test_base_dockerfile_fonts.py` | 不要 | 6 パッケージが一覧にあること。`COPY` の宛先が `/etc/fonts/local.conf` であり `conf.d/` ではないこと。`fc-cache -f` が `COPY` より後にあること。`fonts-local.conf` が整形式の XML で、4 つの `<alias>` と 8 つの `<match>` を持つこと。先頭のコメントが置き場所の理由（`51-local.conf` / `conf.d` / `99`）に触れていること。`libreoffice` / `soffice` / `pip` を入れていないこと。Dockerfile に `fonts-wqy-zenhei` を対象とする `apt-get remove` / `apt-get purge` / `dpkg -r` が無いこと |
+| `tests/containers/test_base_dockerfile_fonts.py` | 不要 | 6 パッケージが一覧にあること。`COPY` の宛先が `/etc/fonts/local.conf` であり `conf.d/` ではないこと。`fc-cache -f` が `COPY` より後にあること。`fonts-local.conf` が整形式の XML で、4 つの `<alias>` と 9 つの `<match>`（受け皿 1 つと、総称ファミリ 4 つ × 言語 2 つの 8 つ）を持つこと。先頭のコメントが置き場所の理由（`51-local.conf` / `conf.d` / `99`）に触れていること。`libreoffice` / `soffice` / `pip` を入れていないこと。Dockerfile に `fonts-wqy-zenhei` を対象とする `apt-get remove` / `apt-get purge` / `dpkg -r` が無いこと |
 | `tests/containers/test_base_image_font_matching.py` | 要る | 「解決先の表」の各行。1 回の `docker run` で全部の `fc-match` を採り、行ごとに突き合わせる |
 
 **Docker が要るテストは、`tests/snapshot/test_restore_incremental.py` の先例に合わせる。**

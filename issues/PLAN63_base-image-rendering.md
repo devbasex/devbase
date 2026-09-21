@@ -29,7 +29,7 @@
 | データ | 変わらない |
 | 既存の振る舞い | **変わる。** base コンテナの中で描かれる文字のフェイスが変わる。イメージを建て直すまでは変わらない。CHANGELOG では #161 を Fixed、#160 を Added に書く |
 | イメージのサイズ | +約 24 MB（7.09GB に対して +0.34%）。`fonts-local.conf` 自体は 0 |
-| 利用者の操作 | **`devbase build base --no-cache` が要る。** `devbase up` では反映されない |
+| 利用者の操作 | **`devbase build base --no-cache` が要る。`devbase up` では反映されない。** 派生イメージ（`containers/general` など）を使っているプロジェクトは、その派生イメージも建て直す。稼働中のコンテナは作り直す（`devbase rebuild`） |
 
 ## 前提
 
@@ -118,8 +118,17 @@
 
 ### 切り戻し手順
 
-- イメージの中身の変更のみ（データ移行なし）。ブランチの revert と `devbase build base --no-cache` で戻せる
-- **建て直すまで戻らない。** 利用者の手元のイメージは、建て直した時点で変わり、建て直さなければ変わらない
+- データの移行は無い。変わるのはイメージの中身だけである
+- 戻すには 4 つが要る。
+  1. ブランチの revert
+  2. `devbase build base --no-cache`
+  3. **base から派生したイメージの建て直し**（`containers/general` / `go` / `php` / `php85` /
+     `bi-tools` / `latex` / `trygroup` のうち使っているもの）。派生イメージは
+     `FROM devbase-base:latest` を自分のビルドの時点で焼き込むため、base のタグを戻しても
+     建て直すまで古い層を持つ
+  4. **稼働中のコンテナの作り直し**（`devbase rebuild`、または `devbase down` → `devbase up`）。
+     既に起動しているコンテナは、イメージを建て直しただけでは入れ替わらない
+- **建て直すまで戻らない。** 同じことが適用の側にも当たる（受け入れ条件 16）
 
 ## 受け入れ条件
 
