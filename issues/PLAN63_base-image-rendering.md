@@ -29,7 +29,7 @@
 | データ | 変わらない |
 | 既存の振る舞い | **変わる。** base コンテナの中で描かれる文字のフェイスが変わる。イメージを建て直すまでは変わらない。CHANGELOG では #161 を Fixed、#160 を Added に書く |
 | イメージのサイズ | +約 24 MB（7.09GB に対して +0.34%）。`fonts-local.conf` 自体は 0 |
-| 利用者の操作 | **`devbase build base --no-cache` が要る。`devbase up` では反映されない。** 派生イメージ（`containers/general` など）を使っているプロジェクトは、その派生イメージも建て直す。稼働中のコンテナは作り直す（`devbase rebuild`） |
+| 利用者の操作 | **`devbase build base --no-cache` が要る。`devbase up` だけでは反映されない。** 派生イメージ（`containers/general` など）を使っているプロジェクトは、その派生イメージも建て直す。稼働中のコンテナは `devbase down` → `devbase up` で作り直す |
 
 ## 前提
 
@@ -126,8 +126,11 @@
      `bi-tools` / `latex` / `trygroup` のうち使っているもの）。派生イメージは
      `FROM devbase-base:latest` を自分のビルドの時点で焼き込むため、base のタグを戻しても
      建て直すまで古い層を持つ
-  4. **稼働中のコンテナの作り直し**（`devbase rebuild`、または `devbase down` → `devbase up`）。
-     既に起動しているコンテナは、イメージを建て直しただけでは入れ替わらない
+  4. **稼働中のコンテナの作り直し**（`devbase down` → `devbase up`）。既に起動している
+     コンテナは、イメージを建て直しただけでは入れ替わらない。**`devbase rebuild` はここでは
+     使えない。** `devbase build --expires=7` のシノニム（`lib/devbase/commands/container.py`
+     の `cmd_rebuild`）で、イメージのビルドしか行わずコンテナを作り直さないうえ、期限内なら
+     ビルドそのものを飛ばす
 - **建て直すまで戻らない。** 同じことが適用の側にも当たる（受け入れ条件 16）
 
 ## 受け入れ条件
