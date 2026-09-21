@@ -253,7 +253,14 @@ graph TD
 
 3 つの変種を同じイメージの中で比べた（2026-09-22、arm64）。
 
-| 指定 | 規則なし | #161 の形（`lang` だけ） | この設計（`family` + `lang`） |
+**3 つの列はどれも `/etc/fonts/local.conf` を置いた状態である。** 違うのは zh-cn / ko の
+`<match>` の書き方だけで、4 つの `<alias>` と受け皿はどの列にもある。**`local.conf` を置く
+前の値（今の base イメージそのまま）は、この表ではなく「解決先の表」の「変更前」の列にある。**
+`local.conf` が無ければ `sans-serif` 自体が `WenQuanYi Zen Hei` なので、`lang=ko` も
+`WenQuanYi Zen Hei` になる。`<alias>` を置いてはじめて、ko の指定が日本語のフェイスへ
+引き寄せられる ── それがこの表の 1 列目である。
+
+| 指定 | zh-cn / ko の規則なし | #161 の形（`lang` だけ） | この設計（`family` + `lang`） |
 | --- | --- | --- | --- |
 | `sans-serif:lang=zh-cn` | Noto Sans CJK SC | Noto Sans CJK SC | Noto Sans CJK SC |
 | `serif:lang=zh-cn` | Noto Serif CJK SC | **Noto Sans CJK SC** ← 様式が崩れる | Noto Serif CJK SC |
@@ -268,9 +275,10 @@ graph TD
 指定を含む ── から、指定した書体を奪う。Chromium は中国語のページで `lang=zh-cn` を
 載せるため、これは絵に描いた話ではない。
 
-**規則を 1 つも置かない案も採らない。** `zh-cn` は OS 既定の `65-nonlatin.conf` と
-`70-fonts-noto-cjk.conf` が正しく扱うので規則なしでも合うが、**`ko` は合わない**
-（決定 8 の `sans-serif` の prefer が JP を先頭にするため、韓国語が日本語の字形になる）。
+**zh-cn / ko の規則を 1 つも置かない案も採らない。** `zh-cn` は OS 既定の
+`65-nonlatin.conf` と `70-fonts-noto-cjk.conf` が正しく扱うので規則なしでも合うが、
+**`ko` は合わない**（決定 8 の `sans-serif` の prefer が JP を先頭にするため、韓国語が
+日本語の字形になる。これは `local.conf` を置いたことで初めて起きる）。
 `ko` だけ書くと非対称で、なぜ `zh-cn` が無いのかが後から読めない。8 つ並べて対称にする。
 
 ### 決定 3: 未導入の書体の受け皿は、弱い結合の `append` 1 つで足りる
