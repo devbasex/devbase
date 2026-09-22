@@ -146,12 +146,12 @@ def probe() -> dict[str, dict[str, str]]:
         patterns="\n".join(EXPECTED_MATCHES),
         commands=" ".join(EXPECTED_COMMANDS),
     )
-    try:
-        out = subprocess.run(
-            ["docker", "run", "--rm", "--entrypoint", "/bin/bash", IMAGE, "-c", script],
-            capture_output=True, text=True, timeout=300)
-    except (subprocess.SubprocessError, OSError) as exc:  # pragma: no cover
-        pytest.skip(f"{IMAGE} を起動できない: {exc}")
+    # ここは包まない。skip してよいのは Docker が使えない・イメージが無い (直前の判定) と
+    # イメージが古い (STALE_IMAGE_EXIT) の 3 つだけで、Docker もイメージもある状態で probe が
+    # タイムアウトした・起動に失敗したのは「壊れている」ため、例外のまま失敗として知らせる
+    out = subprocess.run(
+        ["docker", "run", "--rm", "--entrypoint", "/bin/bash", IMAGE, "-c", script],
+        capture_output=True, text=True, timeout=300)
     if out.returncode == STALE_IMAGE_EXIT:
         pytest.skip(f"{IMAGE} に /etc/fonts/local.conf が無い (この変更より前のイメージ)。{BUILD_HINT}")
     assert out.returncode == 0, f"probe が失敗した (exit={out.returncode}):\n{out.stderr}"
