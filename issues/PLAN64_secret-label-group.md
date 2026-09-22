@@ -62,8 +62,10 @@
   （`lib/devbase/commands/env_ops.py`）。参照を `group=` を渡さずに組んでいるため、`ref.group` が
   常に `None` になり、グループが見出しに出ない（`env_migrate.py:85-94`、`env_ops.py:56-63`。
   2026-09-22 に確認）
-- `bundle.py` / `io_import.py` / `env_backend.py` の「別の置き場のプロジェクト」の列挙
-  （すでに `display_group` を使っており、変えない）
+- すでに `OpenBaoSettings.display_group` を直接呼んでいる文言。読み替えの前後を今も出しており、
+  変えない。`bundle.py` / `io_import.py` / `env_backend.py` の「別の置き場のプロジェクト」の列挙と、
+  `lib/devbase/commands/env.py` の `_project_group_mismatch`（`--group` がプロジェクトのグループと
+  違う置き場である旨の文言）がこれにあたる
 - 一覧の桁幅（`{...:<28}` / `{...:<40}`）の変更（前提 4）
 - `group_aliases` の設定方法・置き場のパスの組み立て・キャッシュの位置
 - `DEVBASE_ACCOUNT_GROUP` の警告文に付く ` --group <読み替える前の名前>` の引数
@@ -106,9 +108,11 @@
       検証: 既存テスト（`tests/env/test_groups.py`・`tests/env/test_runtime.py`）が変更なしで通ること
 - [ ] 6. ファイル backend（`plaintext` / `age`）の `env list` の見出しが今と同じ文字列
       検証: 既存テスト（`tests/commands/test_env_user_axis.py`）が変更なしで通ること
-- [ ] 7. エラー文言・警告・ログに出る参照の表示は、読み替えのあるグループでも読み替える**前**の名前の
-      ままである（例: `-p` でグループの違う置き場を拒む文言、`layout` と合わない参照の拒否）
-      検証: 新規テスト 1 件（読み替えのあるグループで、エラー文言に `→` が出ないこと）
+- [ ] 7. `SecretRef.label()` を通して参照を出すエラー文言・警告・ログは、読み替えのあるグループでも
+      読み替える**前**の名前のままである。例は `layout: flat` でグループ付きの参照を拒む例外
+      （`lib/devbase/env/openbao.py` の `OpenBaoBackend._check_group`）と、置き場の
+      `DEVBASE_ACCOUNT_GROUP` を使わない旨の警告（`lib/devbase/env/runtime.py`）である
+      検証: 新規テスト 1 件（読み替えのあるグループで、この 2 つの文言に `→` が出ないこと）
 - [ ] 8. `env backend status` の `グループ: default → nyle` が今と同じ
       検証: 既存テストが変更なしで通ること
 
@@ -135,7 +139,7 @@
 
 | 対象 | 影響 |
 | --- | --- |
-| 公開インタフェース | 変わる: `group_aliases` のあるグループでのみ、`env backend test` と `env list` の見出しのグループ名が `default` から `default → nyle` になる。CHANGELOG では Fixed に書く |
+| 公開インタフェース | 変わる: `group_aliases` のあるグループでのみ、`env backend test` / `env list` / `env backend migrate`（計画の一覧と `--to age` の完了表示）の見出しのグループ名が `default` から `default → nyle` になる。CHANGELOG では Fixed に書く |
 | データ | 変わらない。置き場のパス・キャッシュの位置・`backend.yml` の内容は同じ |
 | 既存の振る舞い | `SecretRef.label()` の既定の返り値は変えない。エラー文言・警告・ログは今のまま |
 | 確定仕様 | `docs/specifications/secret-backend.md` の 2 か所の記述を書き分け、例を 1 つ足す |

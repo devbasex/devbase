@@ -232,7 +232,7 @@ sequenceDiagram
 
 | 項目 | 条件 | 実現方式 |
 | --- | --- | --- |
-| 堅牢性 | 誤りを伝える文言の組み立てが、新たな例外を起こさない | エラー文言は `label()` を引数なしで呼ぶ。読み替えの解決（`storage_group` / `display_group`。名前の検証と予約語の検査で `BackendConfigError` を送出しうる）は `display_label` の中だけで行う |
+| 堅牢性 | 誤りを伝える文言の組み立てが、新たな例外を起こさない | `label()` を通して参照を出すエラー文言は、引数なしで呼ぶ。読み替えの解決（`storage_group` / `display_group`。名前の検証と予約語の検査で `BackendConfigError` を送出しうる）を新しく背負う文言を増やさない |
 | セキュリティ | 見出しに機密の値が出ない | 変えるのはグループ名だけで、キーも値も触らない。グループ名は `backend.yml` の設定で、機密ではない |
 | 互換性 | `version: 1` とファイル backend の出力が 1 文字も変わらない | `display_label` が `storage_group(ref.group) is None` で `ref.label()` を返す。`ref.group` はこれらの設定では常に `None`（`SecretStore.ref_group` の契約） |
 | 可読性 | 一覧の桁が崩れない | 桁幅を変えない。読み替えの無い状態でも `プロジェクト 'carmo-ai'（グループ default）` は 31 文字で `:<28` を超えており（2026-09-22 に実測）、桁あふれはこの変更で始まるものではない |
@@ -249,6 +249,8 @@ sequenceDiagram
 ### 決定 2: `label()` の既定の返り値は変えない
 
 読み替えの解決は `OpenBaoSettings.storage_group` を通り、グループ名の検証と予約語の検査で `BackendConfigError` を送出しうる。既定を読み替え後にすると、43 か所のエラー文言・警告・ログがこの解決に依存する。**誤りを伝える文言を組み立てる途中で新しい例外が起きる形**になり、元の失敗が利用者へ届かなくなる。この危険は仮想のものではない。`BackendConfigError` そのものの文言（`lib/devbase/env/backend_config.py` の `_group_of`）が `label()` を使っている。
+
+`display_group` を直接呼んでいる文言（`lib/devbase/commands/env.py` の `_project_group_mismatch` など）は、この決定の対象ではない。設定が読める場所で組み立てており、今も読み替えの前後を出している。
 
 既定を読み替え後にする案（52 か所すべてに及ぶ案）は採らない。上の理由に加えて、`SecretRef` が `frozen=True` の値であり、設定を持たないまま読み替えを解決する手段が無いためである。持たせるには全フィールドに設定への参照が要り、参照の等価性とキャッシュの鍵に影響する。
 
@@ -300,7 +302,7 @@ sequenceDiagram
 | 4（読み替えの無いグループ） | 同ファイル。`projects/web` の `env` に `DEVBASE_ACCOUNT_GROUP=kkg` を書き、見出しが `（グループ kkg）` のままで `→` を含まないことを見る |
 | 5（`version: 1`） | 既存の `tests/env/test_runtime.py`・`tests/env/test_groups.py` を変更なしで通す |
 | 6（ファイル backend） | 既存の `tests/commands/test_env_user_axis.py` を変更なしで通す |
-| 7（エラー文言） | `tests/env/test_secret_store_label.py` を新設。読み替えのあるグループの参照で `label()` を引数なしに呼ぶと `（グループ default）` になること、`label(group_display='default → nyle')` で前後が出ること、`group` が `None` の参照では `group_display` を渡しても無視されることを見る。あわせて、`layout` と合わない参照を `OpenBaoSettings.path_of` が拒む例外の文言に `→` が出ないことを見る |
+| 7（エラー文言） | `tests/env/test_secret_store_label.py` を新設。読み替えのあるグループの参照で `label()` を引数なしに呼ぶと `（グループ default）` になること、`label(group_display='default → nyle')` で前後が出ること、`group` が `None` の参照では `group_display` を渡しても無視されることを見る。あわせて、`layout: flat` でグループ付きの参照を拒む例外（`lib/devbase/env/openbao.py` の `OpenBaoBackend._check_group`）の文言に `→` が出ないことを見る |
 | 8（`env backend status`） | 既存の `tests/commands/test_env_backend.py` を変更なしで通す |
 | 9・10・11（文書） | 実装 Pull Request のレビューで読んで確かめる（自動の検査を置かない） |
 | 12（退行） | `uv run pytest tests/ -q` の結果を実装 Pull Request の本文へ載せる |
