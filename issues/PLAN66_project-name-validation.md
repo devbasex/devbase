@@ -133,6 +133,10 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
 - 前提 4: 名前の形に合わない名前を作る経路は 3 つ（プラグインの同期が張る symlink、同期が
   作る別名、`env import` が作る実ディレクトリ）と、手で作った実ディレクトリである。
   手で作ったものは devbase が作っていないが、同期が既に列挙している（`real_projects`）
+- 前提 6: **`env import` が `projects/<name>/` を作るのは、機密の保存先がファイル backend の
+  平文のときだけである。** 書き出し先は `io_import._build_plans` が `store.path(ref)` で
+  決める。age の backend では `secrets/projects/<name>.env.age`、サーバの backend では
+  サーバ側へ書く。知らせの文は保存先ごとに変える
 - 前提 5: 名前の形に合わないプロジェクトが実在しないことは、**この端末で確かめた値である**
   （実測 3）。他の端末に実在しないことは確かめられない
 
@@ -142,8 +146,8 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
 
 - `lib/devbase/plugin/syncer.py`: 同期が `projects/` に載せる名前の形の検査と知らせ。
   対象は `discover_projects` の結果・合成する別名・`projects/` 直下の実ディレクトリの 3 つ
-- `lib/devbase/env/io_import.py` と `lib/devbase/env/_import_merge.py`: import が作る
-  `projects/<name>/` の名前の知らせ
+- `lib/devbase/env/io_import.py` と `lib/devbase/env/_import_merge.py`: import が書き出す
+  名前の知らせ。**保存先ごとに文を変える**（前提 6）
 - `lib/devbase/utils/names.py`: 文言の定数を足す（述語は既にある）
 - `lib/devbase/snapshot/manager.py`: `_VALID_NAME_RE` を `utils/names` の述語へ寄せる
 - `docs/specifications/cli-argument-resolution.md` の「運用」の 2 つの箇条書き
@@ -222,43 +226,49 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
       操作: `devbase env import <書庫>` を実行する。
       結果: 名前の形についての警告が 1 行も出ない。
       検証: 同上。
+- [ ] 9. 前提: 機密の保存先が age の backend で、書庫に `env/projects/_foo/.env` が
+      入っている。
+      操作: `devbase env import <書庫>` を実行する。
+      結果: `projects/_foo/` は作られず、`secrets/projects/_foo.env.age` が書かれる（今と同じ）。
+      警告は 1 回出て、**実際の保存先を名指しし、`projects/` に作るとは書かない**。
+      検証: 同上。
 
 スナップショットの名前の規則:
 
-- [ ] 9. 操作: `SnapshotManager._validate_name` に `abc\n`（末尾に改行）を渡す。
+- [ ] 10. 操作: `SnapshotManager._validate_name` に `abc\n`（末尾に改行）を渡す。
       結果: `SnapshotError` になる（今は通る）。
       検証: `tests/snapshot/test_manager_name.py`（新設）。
-- [ ] 10. 操作: `_validate_name` に `ok-name`・`a.b`・`A_b`・`0abc` を渡す。
-      結果: どれも例外にならない。`_foo`・`.x`・`-x`・空・`..`・`café`・`a/b` は
-      `SnapshotError` になる。文言（`無効なスナップショット名`）は変わらない。
+- [ ] 11. 操作: `_validate_name` に `ok-name`・`a.b`・`A_b`・`0abc` の 4 件を渡す。
+      結果: どれも例外にならない。`_foo`・`.x`・`-x`・空・`..`・`café`・`a/b`・`abc\n` の
+      8 件は `SnapshotError` になる。文言（`無効なスナップショット名`）は変わらない。
       検証: 同上。受理と拒否を固定するテストで、共有した述語を将来広げたときにここで落ちる。
-- [ ] 11. `lib/devbase/snapshot/manager.py` に `_VALID_NAME_RE` が残っていない。
+- [ ] 12. `lib/devbase/snapshot/manager.py` に `_VALID_NAME_RE` が残っていない。
       検証: `grep -n "_VALID_NAME_RE" lib/devbase/snapshot/manager.py` が 0 件。
 
 ## 受け入れ条件（文書と退行しないこと）
 
 確定仕様と文書:
 
-- [ ] 12. `docs/specifications/cli-argument-resolution.md` の「運用」が次の 3 つを書いている。
+- [ ] 13. `docs/specifications/cli-argument-resolution.md` の「運用」が次の 3 つを書いている。
       検証はいずれも実装 Pull Request の差分で見る（設計 Pull Request には載せない）。
       - 名前の形に合わないプロジェクトが載った時点で知らせが出ること
       - 寄せていない規則は `env/bundle.py` と `env/secret_store.py` の 2 つであること
       - スナップショットの名前が `utils/names` の述語を共有すること
-- [ ] 13. `CHANGELOG.md` の `[Unreleased]` に Added（知らせ）と Changed（スナップショットの
+- [ ] 14. `CHANGELOG.md` の `[Unreleased]` に Added（知らせ）と Changed（スナップショットの
       名前が末尾の改行を受け付けなくなる）が載っている。
       検証: 同上。
 
 退行しないこと:
 
-- [ ] 14. 名前の形に合うプロジェクトだけのとき、`sync_projects` が返す数と `projects/` の
+- [ ] 15. 名前の形に合うプロジェクトだけのとき、`sync_projects` が返す数と `projects/` の
       中身が今と同じである。
       検証: `tests/plugin/test_repos_core.py` の既存の `TestSyncProjects`（7 件）が変更なしで
       通る。
-- [ ] 15. 名前の形に合う書庫のとき、`env import` が書き出すファイルと終了コードが今と
+- [ ] 16. 名前の形に合う書庫のとき、`env import` が書き出すファイルと終了コードが今と
       同じである。
       検証: `tests/env/test_io_import.py`・`test_import_merge.py`・`test_store_roundtrip.py` の
       既存のテストが変更なしで通る。
-- [ ] 16. 全体テスト（`uv run --locked pytest -q tests/`）が通る。
+- [ ] 17. 全体テスト（`uv run --locked pytest -q tests/`）が通る。
       検証: 実装 Pull Request で実行し、結果を本文へ載せる。
 
 ## 非機能の条件
