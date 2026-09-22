@@ -668,7 +668,7 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
             if as_user and not env_file.file_exists():
                 continue
             all_vars = env_file.get_all()
-            label = env_file.ref.label()
+            label = store.display_label(env_file.ref)
 
             print(f"\n=== {label} ({env_file.path}{_mode_suffix(env_file)}) ===")
             _print_env_vars(all_vars, keys_only, reveal)
@@ -680,7 +680,7 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
             if proj_env is not None and proj_env.file_exists():
                 proj_vars = proj_env.get_all()
                 label = '個人のプロジェクト' if as_user else 'プロジェクト'
-                suffix = _group_suffix(proj_env.ref)
+                suffix = _group_suffix(store, proj_env.ref)
 
                 print(f"\n=== {label}: {proj_env.ref.name}{suffix} "
                       f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
@@ -690,14 +690,16 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
     return 0
 
 
-def _group_suffix(ref) -> str:
-    """見出しに付けるグループの表示 (``（グループ with）``)。グループの無い参照では空。
+def _group_suffix(store, ref) -> str:
+    """見出しに付けるグループの表示 (``（グループ default → nyle）``)。グループの無い参照では空。
 
-    文言は ``SecretRef.label()`` が持ち、ここでは写さずに差分だけを取り出す。
+    文言は ``SecretRef.label()`` が持ち、ここでは写さずに差分だけを取り出す。読み替えの
+    有無は ``SecretStore.display_label`` が決める (PLAN64 決定 3)。グループを外した参照の
+    表示は読み替えに左右されないため、差分はグループの部分だけになる。
     """
     from dataclasses import replace
 
-    return ref.label()[len(replace(ref, group=None).label()):]
+    return store.display_label(ref)[len(replace(ref, group=None).label()):]
 
 
 def _include_project_refs(devbase_root: Path, store, group: Optional[str], *,

@@ -369,6 +369,9 @@ devbase env set --user --group kkg KEY=value
 `DEVBASE_ACCOUNT_GROUP` を直してください。
 
 `env list` の見出しにはグループが付きます（例: `=== グローバル（グループ kkg） (...) ===`）。
+`group_aliases` で読み替えているグループでは、読み替えの前と後が並びます
+（例: `=== グローバル（グループ default → nyle） (...) ===`）。`env backend test` の一覧も同じ形で、
+見出しのグループ名と隣のパス（`devbase/team/nyle/global`）が同じグループを指します。
 
 ### `init` / `sync` / `project` / `export` / `import`
 
