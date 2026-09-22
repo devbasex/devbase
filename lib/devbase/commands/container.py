@@ -1665,11 +1665,14 @@ def _run_scale_pipeline(project_name: str, new_scale: int, current_scale: int,
 def cmd_scale(new_scale: int, project_name: str = None,
               context: Optional[str] = None) -> int:
     """Scale containers online without restarting existing ones"""
-    # project.yml の scale を書き換える前に、up と同じ食い違いの検査を行う (PLAN56 決定 7)
+    # scale は _run_deploy_pipeline を通らずにコンテナを足す。project.yml の scale を
+    # 書き換える前に、up と同じ食い違いの検査を行う (PLAN56 決定 7)
     if not _check_group_consistency():
         return 1
+
     if project_name is None:
         project_name = get_project_name()
+
     config = project_runtime.current_project_config()
     try:
         target = _resolve_docker_target(context)
@@ -1677,28 +1680,39 @@ def cmd_scale(new_scale: int, project_name: str = None,
         logger.error("Scale failed: %s", e)
         return 1
     dev_service_name = get_dev_service_name()
-    current_scale = config.scale if config.scale is not None else project_runtime.DEFAULT_SCALE
+    current_scale = (config.scale if config.scale is not None
+                     else project_runtime.DEFAULT_SCALE)
+
     logger.info("Scaling project '%s' from %d to %d containers (dev service: %s)",
                 project_name, current_scale, new_scale, dev_service_name)
+
     if not _check_scale_request(new_scale, current_scale):
         return 1
+
     try:
         override_file = _run_scale_pipeline(project_name, new_scale, current_scale,
                                             config, target, dev_service_name)
         if override_file is None:
             return 1
+
         # 増やしたインスタンスにも bao の token を書く (PLAN54。既存のものは up で書いてある)
         _push_bao_token(project_name, new_scale, dev_service_name, compose_file=override_file,
                         start=current_scale + 1)
-        deploy_script = Path('./deploy')  # 増やしたインスタンスにだけ ./deploy を実行する
+
+        # Run project-specific deploy script for newly added instances
+        deploy_script = Path('./deploy')
         if deploy_script.exists() and deploy_script.is_file():
-            _run_deploy_script_for_instances(deploy_script, range(current_scale + 1, new_scale + 1), config)
+            _run_deploy_script_for_instances(
+                deploy_script, range(current_scale + 1, new_scale + 1), config)
+
         logger.info("=== Scale completed successfully ===")
         logger.info("Container scale: %d -> %d", current_scale, new_scale)
         logger.info("You can now login to the new containers:")
         for i in range(current_scale + 1, new_scale + 1):
             logger.info("  devbase login %d", i)
+
         return 0
+
     except DevbaseError as e:
         logger.error("Scale failed: %s", e)
         return 1
