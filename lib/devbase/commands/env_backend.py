@@ -751,19 +751,22 @@ class _MigrationPlan:
                     created.pop(unit, None)
                     raise
                 logger.info("%s を書き込みました", ref.label())
-            for unit, _ in self.moves:
-                ref = self._dest_side(unit)[1]
-                expected = dict(self.existing[unit])
-                expected.update(self.source[unit])
-                actual = self._read_back(unit)
-                if actual != expected:
-                    diff = sorted(k for k in expected if actual.get(k) != expected[k])
-                    raise DevbaseError(
-                        f"{ref.label()}を読み戻した内容が元と一致しません "
-                        f"(一致しないキー: {', '.join(diff) or '(不明)'})")
+            self._verify_read_back()
         except DevbaseError:
             self._rollback(created)
             raise
+
+    def _verify_read_back(self) -> None:
+        for unit, _ in self.moves:
+            ref = self._dest_side(unit)[1]
+            expected = dict(self.existing[unit])
+            expected.update(self.source[unit])
+            actual = self._read_back(unit)
+            if actual != expected:
+                diff = sorted(k for k in expected if actual.get(k) != expected[k])
+                raise DevbaseError(
+                    f"{ref.label()}を読み戻した内容が元と一致しません "
+                    f"(一致しないキー: {', '.join(diff) or '(不明)'})")
 
     def _read_back(self, unit: _MoveUnit) -> dict:
         if self.to == _bc.BACKEND_OPENBAO:

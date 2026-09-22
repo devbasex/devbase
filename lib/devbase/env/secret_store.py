@@ -532,17 +532,8 @@ class SecretStore:
 
     def mode(self, ref: SecretRef) -> str:
         """選択中の backend 名 (``'age'`` / ``'plaintext'`` / ``'openbao'``) か ``'absent'``"""
-        selected = self._selected_backend()
-        if selected is not None:
-            return selected.name if selected.exists(ref) else MODE_ABSENT
-        if self.age.exists(ref):
-            if self.plaintext.exists(ref):
-                # backend_for と同じ理由でここでも停止させる
-                self.backend_for(ref)
-            return MODE_AGE
-        if self.plaintext.exists(ref):
-            return MODE_PLAINTEXT
-        return MODE_ABSENT
+        backend = self.backend_for(ref)
+        return backend.name if backend.exists(ref) else MODE_ABSENT
 
     def is_encrypted(self, ref: SecretRef) -> bool:
         return self.mode(ref) == MODE_AGE
