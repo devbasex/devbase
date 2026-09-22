@@ -12,6 +12,7 @@ import yaml
 
 from devbase.errors import DevbaseError, SnapshotCommandError, SnapshotError
 from devbase.log import get_logger
+from devbase.utils.names import is_single_segment_name
 from devbase.volume.manager import (
     HOME_UBUNTU_VOLUME,
     SHARED_VOLUME_PREFIX,
@@ -35,7 +36,6 @@ SNAPSHOT_IMAGE = 'devbase-snapshot:latest'
 DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
 METADATA_FILE = 'snapshot.yml'
-_VALID_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
 
 # GNU tar の incremental はディレクトリを (dev, ino) で追跡して rename を検出する。
 # ディレクトリが削除され作り直されると **inode 番号が再利用される**ため、tar は無関係な
@@ -146,8 +146,12 @@ class SnapshotManager:
 
     @staticmethod
     def _validate_name(name: str) -> None:
-        """スナップショット名のバリデーション（パストラバーサル防止）"""
-        if not name or not _VALID_NAME_RE.match(name):
+        """スナップショット名のバリデーション（パストラバーサル防止）
+
+        文字の規則は位置引数のプロジェクト名と同じ ``is_single_segment_name`` を共有する
+        (PLAN66 決定 5)。受理と拒否は ``tests/snapshot/test_manager_name.py`` で固定している。
+        """
+        if not is_single_segment_name(name):
             raise SnapshotError(
                 f"無効なスナップショット名: '{name}' "
                 "(英数字・ハイフン・アンダースコア・ドットのみ使用可能、先頭は英数字)"
