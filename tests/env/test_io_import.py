@@ -7,8 +7,25 @@ from pathlib import Path
 import pytest
 
 from devbase.env import bundle
+from devbase.env._import_merge import project_name_of
 from devbase.env.io_import import ImportError as EnvImportError, ImportOptions, import_bundle
 from devbase.env.secret_store import SecretRef, SecretStore
+
+
+@pytest.mark.parametrize(('arcname', 'expected'), [
+    ('env/projects/web/.env', 'web'),
+    ('env/projects/_foo/.env', '_foo'),
+    ('env/global.env', None),
+    ('env/sources.yml', None),
+    ('projects/web/.env', None),
+    ('env/projects/web/nested/.env', None),
+    ('env/projects/web', None),
+    ('env/projects//.env', None),
+    ('env/projects/../.env', None),
+])
+def test_project_name_of_current_member_paths(arcname, expected):
+    """メンバー名からの抽出と、形式外パスを例外なく無視する現状を固定する。"""
+    assert project_name_of(arcname) == expected
 
 
 def test_import_restores_server_and_metadata_when_local_commit_fails(

@@ -799,6 +799,27 @@ class TestSyncProjectsNameForm:
         assert count == 3
         assert _name_form_warnings(caplog) == []
 
+    def test_alias_with_usable_base_and_owner_is_linked_without_warning(
+            self, registry, devbase_root, caplog):
+        """競合時に正常な名前の別名リンクを警告なしで作る現状を固定する。"""
+        _install_repo_plugin(registry, devbase_root, ["carmo"], priority=10)
+        _install_link_plugin(registry, devbase_root, "my-local-repo", ["carmo"])
+
+        with caplog.at_level(logging.WARNING):
+            count = sync_projects(registry, verbose=False)
+
+        assert count == 2
+        winner = devbase_root / "projects" / "carmo"
+        alias = devbase_root / "projects" / "carmo.my-local-repo"
+        assert winner.is_symlink()
+        assert alias.is_symlink()
+        assert winner.resolve() == (
+            devbase_root / "repos" / "github.com--testorg--testrepo"
+            / "p1" / "projects" / "carmo")
+        assert alias.resolve() == devbase_root / "my-local-repo" / "p2" / "projects" / "carmo"
+        assert winner.is_dir() and alias.is_dir()
+        assert _name_form_warnings(caplog) == []
+
     def test_alias_with_unusable_owner_points_at_the_owner(
             self, registry, devbase_root, caplog):
         """3: 別名の <owner> の側が原因なら、プラグイン側の改名を促さない"""
