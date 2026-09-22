@@ -313,3 +313,37 @@ def test_scale_rejects_a_scale_not_above_current(scale_harness, new_scale):
     names = [name for name, _ in scale_harness['calls']]
     assert names == ['group']
     assert (scale_harness['root'] / 'project.yml').read_text() == PROJECT_YML
+
+
+def test_scale_passes_explicit_project_name(scale_harness, monkeypatch):
+    """現状固定: 明示的に指定された project_name が ensure_volumes, _build_scaled_override, _push_bao_token に渡る。"""
+    captured: dict = {}
+
+    orig_volumes = container.ensure_volumes
+
+    def fake_ensure_volumes(scale, project):
+        captured['volumes_project'] = project
+        return orig_volumes(scale, project)
+
+    orig_build = container._build_scaled_override
+
+    def fake_build(scale, config, project_name, target):
+        captured['build_project'] = project_name
+        return orig_build(scale, config, project_name, target)
+
+    orig_push_bao = container._push_bao_token
+
+    def fake_push_bao(project_name, *args, **kwargs):
+        captured['bao_project'] = project_name
+        return orig_push_bao(project_name, *args, **kwargs)
+
+    monkeypatch.setattr(container, 'ensure_volumes', fake_ensure_volumes)
+    monkeypatch.setattr(container, '_build_scaled_override', fake_build)
+    monkeypatch.setattr(container, '_push_bao_token', fake_push_bao)
+
+    assert container.cmd_scale(2, project_name='custom-proj') == 0
+
+    assert captured['volumes_project'] == 'custom-proj'
+    assert captured['build_project'] == 'custom-proj'
+    assert captured['bao_project'] == 'custom-proj'
+
