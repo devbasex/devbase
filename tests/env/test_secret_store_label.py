@@ -108,6 +108,14 @@ def test_display_label_does_not_map_on_a_flat_layout(tmp_path):
     assert store.display_label(SecretRef.for_global()) == 'グローバル'
 
 
+def test_display_label_keeps_a_grouped_reference_on_a_flat_layout(tmp_path):
+    """現状固定: flat の表示は参照に付いたグループをそのまま残す。"""
+    store = _store(tmp_path, backend='openbao', layout=bc.LAYOUT_FLAT)
+
+    assert (store.display_label(SecretRef.for_global(group='default'))
+            == 'グローバル（グループ default）')
+
+
 # ---------------------------------------------------------------------------
 # 受け入れ条件 7: 誤りを伝える文言は読み替えない
 # ---------------------------------------------------------------------------

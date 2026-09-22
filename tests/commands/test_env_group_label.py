@@ -55,6 +55,40 @@ def test_backend_test_headings_show_both_names_next_to_the_path(aliased, openbao
         assert path in row[0]
 
 
+def test_backend_test_only_reads_the_current_group_and_labels_skipped_projects(
+        aliased, openbao, monkeypatch, capsys):
+    """現状固定: with の参照を表示し、別の置き場の api は読み替え名で案内する。"""
+    (aliased / 'projects' / 'api').mkdir()
+    (aliased / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    openbao.put('team/nyle/global', {'A': '1'})
+    openbao.put('team/nyle/projects/api', {'B': '2'})
+    openbao.put('users/member01/nyle/projects/api', {'C': '3'})
+    openbao.put('team/with/global', {'D': '4'})
+    openbao.put('users/member01/with/global', {'E': '5'})
+    openbao.put('team/with/projects/web', {'F': '6'})
+    openbao.put('users/member01/with/projects/web', {'G': '7'})
+    at(monkeypatch, aliased, 'projects/web')
+
+    assert env_backend.cmd_env_backend_test(aliased) == 0
+
+    out = capsys.readouterr().out
+    skipped, read = out.split('読めた参照:', 1)
+    skipped_rows = [line for line in skipped.splitlines() if '調べていません' in line]
+    assert len(skipped_rows) == 1
+    assert 'api' in skipped_rows[0]
+    assert 'nyle' in skipped_rows[0]
+    assert 'api' not in read
+    for label, path in (
+            ('グローバル（グループ with）', 'devbase/team/with/global'),
+            ('個人のグローバル（グループ with）', 'devbase/users/member01/with/global'),
+            ("プロジェクト 'web'（グループ with）", 'devbase/team/with/projects/web'),
+            ("個人のプロジェクト 'web'（グループ with）",
+             'devbase/users/member01/with/projects/web')):
+        rows = [line for line in read.splitlines() if line.startswith(f'  {label} ')]
+        assert len(rows) == 1, label
+        assert path in rows[0]
+
+
 # ---------------------------------------------------------------------------
 # 受け入れ条件 2: env list
 # ---------------------------------------------------------------------------
