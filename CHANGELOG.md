@@ -5,6 +5,15 @@
 ## [Unreleased]
 
 ### Added
+- **base イメージに、Office 文書・PDF を扱う軽量の道具を足しました（PLAN63 / #160）。**
+  `poppler-utils`（`pdftoppm` / `pdfinfo` / `pdffonts` / `pdftocairo`）、`python3-pil`、
+  `python3-defusedxml`、`python3-lxml` で、PDF を画像にする・調べる、OOXML を壊さずに
+  読み書きすることが base だけでできます。あわせて欧文の metric 互換の
+  `fonts-crosextra-carlito` / `fonts-crosextra-caladea` を入れ、`Calibri` / `Cambria` の
+  指定が正しい字幅の書体（Carlito / Caladea）へ解決されるようにしました（これまでは
+  どちらも中国語フォントへ落ちていました）。**LibreOffice と `pip` は入れていません。**
+  Python パッケージが要るときは既にある `uv` / `uvx` を使ってください。
+  **反映には `devbase build base --no-cache` が要ります。**
 - **名前の形に合わないプロジェクト（`_foo` など）が `projects/` に載る時点で、警告を 1 行出すように
   しました（PLAN66 / #203）。** `devbase plugin install` / `update` / `sync` は、プラグインの
   プロジェクト・衝突のときに合成する別名 `<名前>.<owner>`・`projects/` 直下の実ディレクトリの
@@ -19,6 +28,19 @@
   それ以外に受け付ける名前と、エラーの文言は変わりません。
 
 ### Fixed
+- **base コンテナで日本語が中国語のフォントで描画される問題を直しました（PLAN63 / #161）。**
+  総称ファミリ（`sans-serif` / `sans` / `serif` / `monospace`）と、イメージに無い書体名
+  （`Meiryo` / `Yu Gothic` / `MS PGothic` / `Noto Sans JP` など）が、Noto CJK の **JP**
+  フェイスへ解決されるようになります。これまでは `sans-serif` そのものが中国語フォント
+  （WenQuanYi Zen Hei）へ解決され、Chromium / Playwright のスクリーンショット・PDF の生成・
+  画像の生成のすべてが中国語の字形で写っていました。欧文（`Arial` / `Times New Roman` /
+  `Courier New`）は Liberation の metric 互換のままで、`lang=zh-cn` / `lang=ko` を明示した
+  指定は、その言語の、しかも同じ様式（sans / serif / 等幅）のフェイスのままです。
+  **言語を明示しない中国語は日本語の字形で描かれるようになります**（意図した変更です）。
+  設定は `/etc/fonts/local.conf` に置いており、個人の `~/.config/fontconfig/fonts.conf` で
+  上書きできます。**反映には `devbase build base --no-cache` が要ります。** `devbase up`
+  だけでは変わらず、派生イメージ（`general` など）を使っているプロジェクトは、その派生
+  イメージも建て直してください。
 - **`group_aliases` のある置き場で、機密の参照の見出しがグループの読み替えの前と後を出すように
   しました（PLAN64 / #188）。** `devbase env list` の節の見出しと件数の行、`devbase env backend test`
   の参照ごとの行、`devbase env backend migrate` の移行の計画の一覧と `--to age` の完了後の一覧が、

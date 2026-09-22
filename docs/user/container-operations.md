@@ -363,7 +363,7 @@ graph TD
 
 | イメージ | ベース | 主な内容 | 用途 |
 |---------|-------|---------|------|
-| **base** | Ubuntu 26.04 | Docker CLI、Python 3 | 最小限の開発環境 |
+| **base** | Ubuntu 26.04 | Docker CLI、Python 3、日本語フォント、PDF / OOXML の道具 | 最小限の開発環境 |
 | **general** | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | 汎用開発環境 |
 | **php** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **php85** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
@@ -371,6 +371,46 @@ graph TD
 | **lfm** | general | Rust、gfortran、MeCab | 数値計算・自然言語処理 |
 | **go** | base | Go 開発環境 | Go 開発 |
 | **snapshot** | Ubuntu 26.04 | zstd のみ（約 80MB） | スナップショット専用 |
+
+### 文字の描画と、文書を扱う道具（base 以降）
+
+base イメージは、文字を描くときの既定を**日本語**にしています。総称ファミリ（`sans-serif` /
+`sans` / `serif` / `monospace`）と、イメージに無い書体名（`Meiryo` / `Yu Gothic` /
+`MS PGothic` / `Noto Sans JP` など）は、いずれも Noto CJK の **JP** フェイスへ解決されます。
+fontconfig は Chromium / Playwright のスクリーンショット、PDF の生成、画像の生成がすべて
+参照するため、日本語を含むページを撮っても日本語の字形で写ります。
+
+| 指定 | 解決先 |
+|------|--------|
+| `sans-serif` / `sans` | Noto Sans CJK JP |
+| `serif` | Noto Serif CJK JP |
+| `monospace` | Noto Sans Mono CJK JP |
+| `Arial` / `Times New Roman` / `Courier New` | Liberation Sans / Serif / Mono（metric 互換） |
+| `Calibri` / `Cambria` | Carlito / Caladea（metric 互換） |
+| `sans-serif:lang=zh-cn` など、言語を明示した指定 | その言語の、同じ様式のフェイス（SC / KR） |
+
+> **言語を明示しない中国語は、日本語の字形で描かれます。** `lang` を伴わない `sans-serif` は
+> どちらかの言語を選ばざるをえないためで、意図した振る舞いです。中国語・韓国語で描きたい
+> ときは `lang=zh-cn` / `lang=ko` を明示するか、書体を名指ししてください。
+
+設定は `/etc/fonts/local.conf`（`containers/base/fonts-local.conf`）にあります。個人の設定
+`~/.config/fontconfig/fonts.conf` はこれより先に読まれるため、コンテナの中で上書きできます。
+
+文書を扱う道具も base に入っています。
+
+| 道具 | 用途 |
+|------|------|
+| `pdftoppm` / `pdftocairo` | PDF を画像（PNG / JPEG / SVG）にする |
+| `pdfinfo` / `pdffonts` | PDF のページ数・寸法・埋め込みフォントを調べる |
+| `python3 -c "import PIL"` | 画像の読み書き・変換（Pillow） |
+| `python3 -c "import lxml, defusedxml"` | OOXML（.docx / .xlsx / .pptx）を壊さずに読み書きする |
+
+> **LibreOffice と `pip` は入っていません。** LibreOffice は展開 372〜459MB で base の規律に
+> 見合わないため入れていません。Python パッケージが要るときは `uv` / `uvx` を使ってください。
+
+> **これらは `devbase build base --no-cache` で base を建て直すと反映されます。**
+> `devbase up` だけでは反映されません。派生イメージ（`general` など）を使っている
+> プロジェクトは、その派生イメージも建て直してください。
 
 ### AI CLI エイリアス
 
