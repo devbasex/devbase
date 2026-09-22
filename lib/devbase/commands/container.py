@@ -1410,7 +1410,8 @@ def cmd_login(index: str = '1', context: Optional[str] = None) -> int:
     else:
         cmd.extend(['exec', f'--index={index}', dev_service, 'bash'])
 
-    return subprocess.run(cmd).returncode
+    # 経路の表の 1 つとして子プロセスの COMPOSE_PROFILES を打ち消す (PLAN65 決定 2)
+    return subprocess.run(cmd, env=compose_env()).returncode
 
 
 # ---------------------------------------------------------------------------

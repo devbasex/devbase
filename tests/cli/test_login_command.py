@@ -24,7 +24,8 @@ def test_login_command(tmp_path, monkeypatch, scaled, expected):
     monkeypatch.setattr(container, 'get_dev_service_name',
                         lambda: events.append(('service',)) or 'dev')
 
-    def run(cmd):
+    def run(cmd, **kwargs):
+        # 子プロセスの env (compose_env) は tests/utils/test_docker_profiles.py が固定する (PLAN65)
         events.append(('run', cmd))
         return subprocess.CompletedProcess(cmd, 7)
 

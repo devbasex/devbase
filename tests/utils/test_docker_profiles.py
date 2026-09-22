@@ -100,6 +100,12 @@ def test_up_names_the_given_services_without_profile(monkeypatch, fake_run):
 
 # ---------------------------------------------------------------------------
 # docker_compose を通らずに Compose を直接呼ぶ経路 (決定 7 の棚卸しの 4 か所)
+#
+# devbase が Compose を起動する経路は docker_compose とこの 4 つだけである (PLAN65 決定 1・2)。
+# _compose_run (ps / logs)・_compose_lines (config --services / --profiles)・
+# cmd_login (exec)・editor._query_container_name (ps --format json) は subprocess.run を
+# 直接呼ぶため、env=compose_env() を自分で渡す。scale の起動と config --format json の
+# 読み取りは docker_compose を通る (下の節と tests/commands/test_container_scale_order.py)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -122,6 +128,34 @@ def test_ps_and_logs_pass_reserved_profile(container_run):
     assert [c['env']['COMPOSE_PROFILES'] for c in run.calls] == [docker.NO_PROFILE] * 2
 
 
+
+
+def test_compose_lines_pass_reserved_profile(container_run):
+    container, run = container_run
+
+    container._compose_lines(Path('x.yml'), ['config', '--services'])
+
+    assert run.calls[0]['cmd'] == ['docker', 'compose', '-f', 'x.yml', 'config', '--services']
+    assert run.calls[0]['env']['COMPOSE_PROFILES'] == docker.NO_PROFILE
+
+
+@pytest.mark.parametrize('generated, expected_tail', [
+    (True, ['exec', 'dev-2', 'bash']),
+    (False, ['exec', '--index=2', 'dev', 'bash']),
+])
+def test_login_passes_reserved_profile(container_run, monkeypatch, generated, expected_tail):
+    container, run = container_run
+    monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    if generated:
+        container._SCALE_COMPOSE_FILE.write_text('services: {}\n')
+
+    container.cmd_login('2')
+
+    assert run.calls[0]['cmd'][-len(expected_tail):] == expected_tail
+    assert run.calls[0]['env'] is not None
+    assert run.calls[0]['env']['COMPOSE_PROFILES'] == docker.NO_PROFILE
+    import os
+    assert os.environ['COMPOSE_PROFILES'] == 'test'
 
 
 def test_editor_container_name_query_passes_reserved_profile(monkeypatch):
