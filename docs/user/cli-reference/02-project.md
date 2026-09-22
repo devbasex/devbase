@@ -6,7 +6,7 @@
 
 ## プロジェクト名指定（CWD 非依存）
 
-`up` / `down` / `ps` / `logs` / `scale` は省略可能な `[name]` 引数を取ります。`[name]`
+`up` / `down` / `ps` / `logs` / `scale` / `rebuild` / `open` は省略可能な `[name]` 引数を取ります。`[name]`
 を指定すると、**現在のディレクトリに依存せず** `$DEVBASE_ROOT/projects/<name>` を対象に
 操作できます。
 
@@ -17,6 +17,13 @@ devbase project up adminer
 # 省略時は従来どおりカレントディレクトリのプロジェクトを対象にする
 cd $DEVBASE_ROOT/projects/adminer && devbase project up
 ```
+
+> **`profile` も `[name]` を取りますが、解決の経路が違います。** `project profile up` /
+> `profile down` / `profile list` は `[name]` を受け付けますが、`bin/devbase` の
+> `_PROJECT_NAME_SUBCOMMANDS`（`up` / `down` / `ps` / `logs` / `scale` / `rebuild` / `open`）
+> には入っていません。`profile` では 3 番目の引数に `up` / `down` / `list` が来るため、
+> ラッパーでは位置で名前を解決できないからです。名前の解決は Python 側の
+> `_dispatch_lifecycle` が行います。
 
 - `<name>` は `$DEVBASE_ROOT/projects/` 配下のプロジェクト名（`devbase project list` で確認可能）
 - 名前として受け付ける形は、英数字で始まり英数字・`.`・`-`・`_` だけからなる文字列です
@@ -57,7 +64,7 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 
 ## `--context NAME`（共通オプション）
 
-`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` / `profile`（`project` /
+`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` / `open` / `profile`（`project` /
 `container` 配下と、トップレベルのショートカット）は `--context NAME` を受け付けます。
 そのコマンドの `docker` / `docker compose` を、指定した docker context の daemon へ向けます。
 

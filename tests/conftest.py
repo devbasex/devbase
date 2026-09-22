@@ -320,6 +320,29 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_devbase_root(tmp_path_factory, monkeypatch):
+    """継承した ``DEVBASE_ROOT`` を、テストごとの空の tmp の root へ置き換える (#209)
+
+    pytest は実行したシェルの環境をそのまま継承する。``DEVBASE_ROOT`` を持つシェル
+    (ホストの Mac) から走らせると、tmp の root を作るだけで setenv しない fixture
+    (``openbao_root`` や各所の ``root``) を使うテストが、実環境の ``projects/`` と
+    ``secrets/backend.yml`` を読む。dev コンテナの中は持たないため、環境で再現したり
+    しなかったりする。
+
+    fixture 1 つに setenv を足しても同じ穴は他にも残るため、セッション全体をここで塞ぐ。
+    autouse の fixture は同じ scope の明示の fixture より先に立つので、テストの側の
+    ``monkeypatch.setenv('DEVBASE_ROOT', ...)`` は後勝ちでそのまま働く。未設定の分岐を
+    試すテストは、その場で ``monkeypatch.delenv('DEVBASE_ROOT', raising=False)`` と書く。
+
+    値を空にせず tmp のディレクトリを指すのは、設定済みを既定にするためである。未設定を
+    既定にすると、設定済みの分岐を試す側が毎回 setenv を書くことになり、今と変わらない。
+    テストごとに別のディレクトリにするのは、setenv を忘れたテストがここへ書いても隣の
+    テストへ漏らさないためである。
+    """
+    monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path_factory.mktemp('devbase-root')))
+
+
+@pytest.fixture(autouse=True)
 def _release_shared_secret_store():
     """持ち回りの SecretStore (PLAN55) をテストごとに捨て、控えが隣のテストへ漏れないようにする"""
     from devbase.env import runtime

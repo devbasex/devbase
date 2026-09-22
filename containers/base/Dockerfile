@@ -19,7 +19,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     openssh-client \
     curl ca-certificates gnupg lsb-release \
     libnss3 libxrandr2 libxss1 \
-    fonts-noto-cjk fonts-noto-cjk-extra; \
+    fonts-noto-cjk fonts-noto-cjk-extra \
+    # 欧文の metric 互換 (Calibri -> Carlito / Cambria -> Caladea)。
+    # 30-metric-aliases.conf が既に対応を持っており、実体が無いと中国語フォントへ落ちる。
+    fonts-crosextra-carlito fonts-crosextra-caladea \
+    # 文書を扱う軽量の道具 (#160)。PDF を画像にする・調べる、OOXML を壊さずに読み書きする。
+    # LibreOffice (展開 372〜459MB) と pip は入れない。Python パッケージは uv / uvx で賄う。
+    poppler-utils python3-pil python3-defusedxml python3-lxml; \
     # ロケール設定
     locale-gen en_US.UTF-8; \
     update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8; \
@@ -249,6 +255,19 @@ COPY --chmod=0755 tmux-clean /usr/local/bin/tmux-clean
 # zsh などの他シェルや非対話実行 (docker exec など) では使えないため。
 RUN sudo ln -sf tmux-first /usr/local/bin/tmux1 \
  && sudo ln -sf tmux-clean /usr/local/bin/tmuxc
+
+# フォントの既定。素の fontconfig は sans-serif を中国語フェイス (WenQuanYi Zen Hei) へ
+# 向けるため、日本語を描くと中国語の字形で写る (#161)。/etc/fonts/local.conf は
+# conf.d/51-local.conf 経由で読まれ、これを中国語へ向けている 64 / 65 より「先」になる。
+# conf.d/99-*.conf へ置くと <alias><prefer> が効かない。理由と実測は fonts-local.conf の
+# 先頭のコメントにある。利用者は ~/.config/fontconfig/fonts.conf (スロット 50) で上書きできる。
+COPY --chmod=0644 fonts-local.conf /etc/fonts/local.conf
+
+# フォントのキャッシュを作り直す。上の Playwright の RUN が --with-deps で
+# fonts-wqy-zenhei / fonts-ipafont-gothic / fonts-liberation を入れた「後」でなければ、
+# 後から入った書体を知らないキャッシュが残る。直後に ~/.cache を消しているため、
+# ここで /var/cache/fontconfig を作り直してコンテナ初回起動時の生成を避ける。
+RUN sudo fc-cache -f
 
 # entrypoint と dind
 COPY --chmod=755 entrypoint.sh /entrypoint.sh

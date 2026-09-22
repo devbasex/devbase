@@ -4,6 +4,62 @@
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-09-23
+
+### Added
+- **base イメージに、Office 文書・PDF を扱う軽量の道具を足しました（PLAN63 / #160）。**
+  `poppler-utils`（`pdftoppm` / `pdfinfo` / `pdffonts` / `pdftocairo`）、`python3-pil`、
+  `python3-defusedxml`、`python3-lxml` で、PDF を画像にする・調べる、OOXML を壊さずに
+  読み書きすることが base だけでできます。あわせて欧文の metric 互換の
+  `fonts-crosextra-carlito` / `fonts-crosextra-caladea` を入れ、`Calibri` / `Cambria` の
+  指定が正しい字幅の書体（Carlito / Caladea）へ解決されるようにしました（これまでは
+  どちらも中国語フォントへ落ちていました）。**LibreOffice と `pip` は入れていません。**
+  Python パッケージが要るときは既にある `uv` / `uvx` を使ってください。
+  **反映には `devbase build base --no-cache` が要ります。**
+- **名前の形に合わないプロジェクト（`_foo` など）が `projects/` に載る時点で、警告を 1 行出すように
+  しました（PLAN66 / #203）。** `devbase plugin install` / `update` / `sync` は、プラグインの
+  プロジェクト・衝突のときに合成する別名 `<名前>.<owner>`・`projects/` 直下の実ディレクトリの
+  名前を見ます。`devbase env import` は取り込むプロジェクト名を見て、保存先が `projects/` の外
+  （age・サーバ backend）ならそのことも知らせます（`--dry-run` でも出ます）。知らせるだけで弾かず、
+  作られる symlink・ディレクトリと終了コードは変わりません。そうした名前は名前を指定した操作
+  （`devbase up _foo` など）ができず、そのディレクトリの中で名前なしに打てば動きます。
+
+### Changed
+- **`devbase scale` が、端末や `.env` に置いた `COMPOSE_PROFILES` を見なくなりました（PLAN65 / #192）。**
+  `devbase scale` が呼ぶ Compose の子プロセスでも `COMPOSE_PROFILES` を打ち消すようにしたためで、
+  `COMPOSE_PROFILES` を置いている場合、`devbase scale` はプロファイルのサービスを起動しなくなります。
+  確定仕様は以前から「`COMPOSE_PROFILES` を端末や `.env` に置いても devbase 経由の操作には効かない」と
+  定めており、`scale` だけが例外になっていたものを揃えました。プロファイルのサービスを起動するには
+  `devbase project profile up <名前>` を使ってください。プロファイルを持たないプロジェクトでは、
+  `devbase scale` が起動の対象にするサービスの集合は変わりません。`devbase login` の `exec` も同じ
+  環境を通るようになりましたが、観測できる振る舞いは変わりません。
+- **スナップショットの名前が、末尾に改行を持つ値（`abc\n`）を受け付けなくなりました（PLAN66 / #203）。**
+  スナップショットの名前の検証を、位置引数のプロジェクト名と同じ規則（`utils/names`）へ寄せました。
+  それ以外に受け付ける名前と、エラーの文言は変わりません。
+
+### Fixed
+- **base コンテナで日本語が中国語のフォントで描画される問題を直しました（PLAN63 / #161）。**
+  総称ファミリ（`sans-serif` / `sans` / `serif` / `monospace`）と、イメージに無い書体名
+  （`Meiryo` / `Yu Gothic` / `MS PGothic` / `Noto Sans JP` など）が、Noto CJK の **JP**
+  フェイスへ解決されるようになります。これまでは `sans-serif` そのものが中国語フォント
+  （WenQuanYi Zen Hei）へ解決され、Chromium / Playwright のスクリーンショット・PDF の生成・
+  画像の生成のすべてが中国語の字形で写っていました。欧文（`Arial` / `Times New Roman` /
+  `Courier New`）は Liberation の metric 互換のままで、`lang=zh-cn` / `lang=ko` を明示した
+  指定は、その言語の、しかも同じ様式（sans / serif / 等幅）のフェイスのままです。
+  **言語を明示しない中国語は日本語の字形で描かれるようになります**（意図した変更です）。
+  設定は `/etc/fonts/local.conf` に置いており、個人の `~/.config/fontconfig/fonts.conf` で
+  上書きできます。**反映には `devbase build base --no-cache` が要ります。** `devbase up`
+  だけでは変わらず、派生イメージ（`general` など）を使っているプロジェクトは、その派生
+  イメージも建て直してください。
+- **`group_aliases` のある置き場で、機密の参照の見出しがグループの読み替えの前と後を出すように
+  しました（PLAN64 / #188）。** `devbase env list` の節の見出しと件数の行、`devbase env backend test`
+  の参照ごとの行、`devbase env backend migrate` の移行の計画の一覧と `--to age` の完了後の一覧が、
+  `グローバル（グループ default）` から `グローバル（グループ default → nyle）` になります。これまでは
+  読み替える前の名前だけが出て、隣に並ぶパス（`devbase/team/nyle/global`）と食い違って見えていました。
+  読み替えの対応が無いグループ・`version: 1` ・ファイル backend（`plaintext` / `age`）の見出しと、
+  エラー文言・警告・ログ・`devbase env backend status` の表示は変わりません。置き場のパス・サーバへの
+  要求・キャッシュにも影響しません。
+
 ## [3.6.0] - 2026-09-19
 
 ### Added
@@ -694,7 +750,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.6.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.7.0...HEAD
+[3.7.0]: https://github.com/devbasex/devbase/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/devbasex/devbase/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/devbasex/devbase/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/devbasex/devbase/compare/v3.3.0...v3.4.0

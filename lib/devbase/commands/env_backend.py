@@ -469,7 +469,7 @@ def cmd_env_backend_test(devbase_root: Path) -> int:
         print(f"対象のグループと違う置き場のプロジェクトは調べていません: {', '.join(skipped)}")
     print(f"読めた参照: {len(results)} 件")
     for ref, count in results:
-        print(f"  {ref.label():<28} {backend.display_path(ref):<40} {count} 変数")
+        print(f"  {store.display_label(ref):<28} {backend.display_path(ref):<40} {count} 変数")
     return 0
 
 
@@ -591,7 +591,8 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         print("サーバ上の機密はそのまま残っています (devbase は消しません):")
         print(f"  接続先: {server.url}")
         for unit, _ in plan.moves:
-            print(f"  {unit.server_ref.label():<24} {server.display_path(unit.server_ref)}")
+            print(f"  {server_store.display_label(unit.server_ref):<24} "
+                  f"{server.display_path(unit.server_ref)}")
         plan.print_left_on_server()
     return 0
 
@@ -702,7 +703,7 @@ class _MigrationPlan:
 
     def _heading(self, unit: _MoveUnit) -> str:
         """参照の見出し。グループ別の置き場ではサーバ上のパスを添える (値は出さない)"""
-        label = f"{unit.server_ref.label():<24}"
+        label = f"{self.server_store.display_label(unit.server_ref):<24}"
         if self._grouped:
             label += f" {self.server.display_path(unit.server_ref)}"
         return label

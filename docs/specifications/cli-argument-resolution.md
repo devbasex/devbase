@@ -32,7 +32,7 @@
 
 | 要素 | 置き場所 | 責務 |
 | --- | --- | --- |
-| 名前の形の規則 | `lib/devbase/utils/names.py` | `SINGLE_SEGMENT_NAME_PATTERN` と `is_single_segment_name(value)`。`re` だけに依存し副作用を持たない |
+| 名前の形の規則 | `lib/devbase/utils/names.py` | `SINGLE_SEGMENT_NAME_PATTERN` と `is_single_segment_name(value)`、名前の形を利用者へ説明する文 `NAME_FORM_HINT`。`re` だけに依存し副作用を持たない（ログも出さない） |
 | 名前の形の規則（shell） | `bin/devbase` | `_SINGLE_SEGMENT_NAME_RE` と `is_single_segment_name`。Python と同じ正規表現を文字列で持つ |
 | name 解決 | `bin/devbase` | `maybe_cd_project`。形・実在の順に見て、通れば `cd` と `COMPOSE_PROJECT_NAME` / `env` の再読み込み |
 | 解決の対象の一覧 | `bin/devbase` | `_PROJECT_NAME_SUBCOMMANDS`（`project` の対象）と `_NAME_RESOLVABLE_SHORTCUTS`（トップレベルの対象） |
@@ -41,6 +41,10 @@
 | 名前の検証（切替） | `lib/devbase/commands/container.py` | `_resolve_project_name`。ラッパーを経ない直接起動のフォールバック |
 | 名前の検証（注入） | `lib/devbase/cli.py` | `_named_lifecycle_project`。dispatch 前の機密の注入で使うプロジェクト名 |
 | 名前の検証（イメージ） | `lib/devbase/commands/container.py` | `_build_single_image`。`containers/<image>` へ連結する前の検証 |
+| 同期の知らせ | `lib/devbase/plugin/syncer.py` | `_warn_unusable_name(name, source, base=None)`。`sync_projects` が symlink を張る直前と、`projects/` 直下の実ディレクトリの列挙で呼ぶ |
+| `env import` の知らせ | `lib/devbase/env/io_import.py` | `_warn_unusable_project_names(plans, root)`。`import_bundle` が計画を組んだ後、`--dry-run` の判定より前に呼ぶ |
+| 書庫のメンバー名 | `lib/devbase/env/_import_merge.py` | `project_name_of(arcname)`。`env/projects/<name>/.env` からプロジェクト名を取り出す（それ以外は `None`） |
+| スナップショットの名前 | `lib/devbase/snapshot/manager.py` | `SnapshotManager._validate_name`。`utils/names.is_single_segment_name` を共有する |
 | 引数の受け口 | `lib/devbase/cli.py` | `_add_project_parser`（`name` positional を持つサブコマンド）、`SHORTCUTS`、`GROUP_ALIASES` |
 
 型（クラス）は持たない。モジュール関数の並びで構成する。
@@ -93,6 +97,46 @@ shell が Python を呼ばずに同じ正規表現を文字列で持つのは、
 ラッパーは形に合わない値を**名前として扱わない**（`cd` も引数からの除去もしない）。止めずに
 そのまま下流へ渡す。同じ位置引数が名前以外の意味（`login` の番号、`build` のイメージ、`scale` の
 台数）も持つためである。ラッパーは名前かどうかだけを決め、止めるのは意味を知る下流に任せる。
+
+### 名前の形に合わない名前の知らせ
+
+名前の形に合わない名前が `projects/` に載る時点で、警告を 1 行出す。**知らせるだけで弾かない。**
+作られる symlink・ディレクトリと終了コードは変わらない（弾くと、そのディレクトリの中で名前
+なしに打つ使い方まで失うため）。
+
+**名前 1 つにつき 1 行だけ出す。** そのため検査は `_collect_project_candidates`（候補の集約）
+ではなく、`sync_projects` が symlink を張る直前に置く。集約の側に置くと、同じ名前を 2 つの
+プラグインが持つときに 2 行出てしまい、実ディレクトリがあってスキップする名前にも出てしまう。
+
+**`discover_projects` には置かない。** `plugin/updater.py` が表示のための列挙にこの関数を使う
+ため、そこへ置くと同期と関係しない場面でも出る。
+
+案内は出所で 4 通りに分かれる。
+
+| 出所 | 何を直せばよいか |
+| --- | --- |
+| プラグインのプロジェクト | そのプラグイン側の `projects/<名前>` を改名する |
+| 別名 `<名前>.<owner>` で、`<名前>` の側が形に合わない | 同じくプラグイン側の `projects/<名前>` を改名する。同じ実行で `<名前>` 自身の知らせも出る |
+| 別名 `<名前>.<owner>` で、`<名前>` は形に合う | 原因は devbase が付け足す `<owner>` の側にある。`--link` で入れたプラグインなら元パスの末尾のディレクトリ名、`repos/` 由来ならその置き場のディレクトリ名を変える。プラグイン側を改名しても直らない |
+| `projects/` 直下の実ディレクトリ | それ自身を改名する（プラグインとは関係しない） |
+
+`devbase env import` は取り込むプロジェクト名を見て、`_build_plans` が計画を組んだ後・
+`--dry-run` の判定より前に知らせる。したがって **`--dry-run` でも出る**（取り込む前に名前の
+問題を知らせるのが目的で、実際に書くかどうかとは独立しているため）。
+
+文は保存先で分かれる。`projects/<名前>/` を実ディレクトリとして作るのは**ファイル backend の
+平文のときだけ**で、`backend: age` なら `secrets/projects/<名前>.env.age`、サーバ backend なら
+サーバ側へ書く（保存先は `_build_plans` が `store.path(ref)` で決める）。作らない保存先で
+「作る」と書かないよう、`plan.target` と `plan.ref` から文を選び、`projects/` には何も作られない
+ことと保存先を知らせる。
+
+知らせは `verbose` に依存させない。知らせることが唯一の効果であり、黙る経路を作らない。文は
+完了形にしない（`projects/` に載る名前について、これから起きることを知らせるため）。
+
+`.` で始まる名前（`.vscode` など）は今までどおり同期の対象にならず、知らせも出ない。
+
+判定は `utils/names.is_single_segment_name`、名前の形の説明文は `utils/names.NAME_FORM_HINT` の
+1 か所にある。
 
 ### トップレベル `build` の引数の解釈
 
@@ -299,12 +343,22 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 ## 運用
 
 - 名前の形に合わないプロジェクト（`_` で始まる名前など）は、名前の指定（CLI の `[name]` と
-  `devbase list` の一覧）から操作できない。そのディレクトリの中で名前なしに打てば動く
-- 名前の検証はリポジトリの中で 1 つに寄せていない。`env/bundle.py` の `is_valid_project_name`
-  （先頭の `_` を許す。`env` の export / import の書庫の中の名前）、`env/secret_store.py` の
-  `_validate_project_name`（機密の保存先のファイル名）、`snapshot/manager.py` の `_VALID_NAME_RE`
-  （スナップショットの名前）はそれぞれ別の用途と互換性を持つ。寄せると受け付ける名前が変わる
-  範囲が広がるため、位置引数の解決はこの仕様の規則だけを使う
+  `devbase list` の一覧）から操作できない。そのディレクトリの中で名前なしに打てば動く。
+  **そうした名前が `projects/` に載る時点で、警告が 1 行出る。** 出所は 4 つある。プラグインの
+  同期が張る symlink（`plugin install` / `update` / `sync`）、同期が衝突のときに合成する別名
+  `<名前>.<owner>`、`devbase env import`、手で作った実ディレクトリ。知らせるだけで弾かず、
+  作られるものと終了コードは変わらない。詳しくは
+  [名前の形に合わない名前の知らせ](#名前の形に合わない名前の知らせ)
+- 知らせは同期のたびに毎回出る（一度知らせたら黙る、といった抑止は持たない）
+- 名前の検証はリポジトリの中で 1 つに寄せきっていない。寄せていないのは `env/bundle.py` の
+  `is_valid_project_name`（先頭の `_` を許す。`env` の export / import の書庫の中の名前）と
+  `env/secret_store.py` の `_validate_project_name`（機密の保存先のファイル名）の **2 つ**で、
+  それぞれ別の用途と互換性を持つ。寄せると受け付ける名前が変わる範囲が広がるため、位置引数の
+  解決はこの仕様の規則だけを使う。`snapshot/manager.py` のスナップショットの名前
+  （`SnapshotManager._validate_name`）は `utils/names.is_single_segment_name` を共有する
+  （PLAN66）。文字集合が同じで、寄せても受け付ける名前は広がらない（狭まるのは末尾の改行を
+  持つ名前だけ）。例外の型と文言は変えていない。述語を将来広げるとスナップショットの名前も
+  広がるため、受理と拒否を `tests/snapshot/test_manager_name.py` で固定している
 - shell 側は macOS 既定の bash 3.2 で動くこと。`[[ =~ ]]` の右辺は変数で渡す（引用した右辺は
   文字列として比べられる）。連想配列・`${var,,}`・`mapfile` を使わない
 - `cli.py` でサブコマンドを足し引きしたら、`bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` /
@@ -333,6 +387,18 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 - `container` / `ct` の 7 サブコマンドが名前を取り除かず、parser が `SystemExit(2)` になること。
   名前なしの `container up` は実行時のディレクトリで動き非推奨の警告を出すこと
   （`tests/cli/test_project_name_resolution.py`、`tests/cli/test_project_dispatch.py`）
+- 同期が形に合わない名前でも今までどおり symlink を張り、その名前だけを 1 回知らせること。
+  形に合う名前では 1 行も出ないこと。別名では原因の側（`<owner>` か元の名前）に応じて案内が
+  変わること。実ディレクトリは残って知らせは 1 回で、同じ名前のプラグインの分と重ならないこと。
+  `.` 始まりの名前は symlink も知らせも出ないこと
+  （`tests/plugin/test_repos_core.py` の `TestSyncProjectsNameForm`）
+- `env import` がメンバー名からプロジェクト名を取り出し、形に合わない名前でも今までどおり
+  ディレクトリを作って 0 で終わり、その名前だけを 1 回知らせること。`--dry-run` では書かずに
+  知らせだけ出ること。形に合う名前では出ないこと（`tests/env/test_io_import.py`）
+- `env import` の保存先が `projects/` の外（`backend: age`・サーバ backend）のときは、
+  `projects/` を作ると書かずに保存先を知らせること（`tests/cli/test_env_bundle_backend.py`）
+- スナップショットの名前が位置引数と同じ規則を通り、受理と拒否（末尾の改行を含む）が固定
+  されていること（`tests/snapshot/test_manager_name.py`）
 - ラッパーの振る舞いは `tests/cli/conftest.py` の `exec_wrapper` で確かめる。`bin/devbase` を
   一時ディレクトリへ複製して実プロセスで起動し、`maybe_cd_project` や `cmd_build` は差し替えず、
   外へ出る呼び出しが通る `uv` だけを `PATH` の先頭で差し替える（複製した位置から `DEVBASE_ROOT`

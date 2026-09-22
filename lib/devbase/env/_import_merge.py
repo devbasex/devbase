@@ -71,6 +71,15 @@ class Plan:
     before: Optional[bytes] = None
 
 
+def project_name_of(arcname: str) -> Optional[str]:
+    """メンバー名 ``env/projects/<name>/.env`` のプロジェクト名 (それ以外は ``None``)。
+
+    例外を投げない。メンバーの妥当性は :func:`filter_members` が既に見ている。
+    """
+    m = _PROJECT_ENV_RE.match(arcname)
+    return m.group(1) if m else None
+
+
 def target_for(arcname: str, devbase_root: Path) -> Path:
     """バンドル内 arcname を ``devbase_root`` 配下の書き出し先 Path に解決する"""
     if arcname == 'env/global.env':

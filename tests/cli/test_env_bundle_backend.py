@@ -318,6 +318,67 @@ def test_import_into_an_explicit_age_backend_encrypts_new_references(tmp_path, m
     assert not (root / '.env').exists()
 
 
+def test_import_of_unusable_name_into_server_names_the_store_not_projects(
+        openbao_root, openbao, bundle_keys, tmp_path, caplog):
+    """形に合わない名前もサーバへ保存し、保存先を1回知らせる現状を固定する。"""
+    import logging
+
+    pub, key = bundle_keys
+    src = make_bundle(tmp_path, pub, {'env/projects/_foo/.env': b'FOO=plain-foo\n'})
+
+    with caplog.at_level(logging.WARNING):
+        assert import_bundle(openbao_root, ImportOptions(
+            source=str(src), identities=[str(key)], include_global=False,
+            include_metadata=False)) == 0
+
+    assert not (openbao_root / 'projects' / '_foo').exists()
+    assert openbao.get('team/projects/_foo') == {'FOO': 'plain-foo'}
+    warnings = [r.getMessage() for r in caplog.records
+                if r.levelno == logging.WARNING
+                and 'プロジェクト名として使えない形の名前' in r.getMessage()]
+    assert len(warnings) == 1
+    [message] = warnings
+    assert "'_foo'" in message
+    assert "サーバのプロジェクト '_foo'" in message
+    assert 'projects/ には何も作られません' in message
+
+
+def test_import_of_unusable_name_into_age_names_the_store_not_projects(tmp_path, monkeypatch,
+                                                                      bundle_keys, caplog):
+    """PLAN66 受け入れ条件 9: age の保存先では ``projects/`` を作らず、知らせは保存先を名指しする"""
+    import logging
+
+    from devbase.env import agekeys, backend_config as bc
+
+    root = tmp_path / 'root'
+    root.mkdir()
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    agekeys.generate_key_file()
+    bc.save(root, bc.BackendConfig(backend='age'))
+    pub, key = bundle_keys
+    src = make_bundle(tmp_path, pub, {'env/projects/_foo/.env': b'FOO=plain-foo\n'})
+
+    with caplog.at_level(logging.WARNING):
+        assert import_bundle(root, ImportOptions(
+            source=str(src), identities=[str(key)], include_global=False,
+            include_metadata=False)) == 0
+
+    assert not (root / 'projects' / '_foo').exists()
+    stored = root / 'secrets' / 'projects' / '_foo.env.age'
+    assert stored.read_bytes().startswith(b'age-encryption.org/')
+    warnings = [r.getMessage() for r in caplog.records
+                if r.levelno == logging.WARNING
+                and 'プロジェクト名として使えない形の名前' in r.getMessage()]
+    assert len(warnings) == 1
+    [message] = warnings
+    assert "'_foo'" in message
+    assert str(stored) in message
+    assert 'projects/ には何も作られません' in message
+    assert 'を作ります' not in message
+    assert '改名' not in message
+
+
 # ---------------------------------------------------------------------------
 # グループ別の置き場 (PLAN56 受け入れ条件 13・決定 12・13)
 # ---------------------------------------------------------------------------

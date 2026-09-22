@@ -5,7 +5,7 @@ devbase の全コマンドの構文、オプション、使用例をまとめた
 | ファイル | 内容 |
 |---------|------|
 | [トップレベルコマンド](01-toplevel.md) | `init` / `status` / `bin/rc` |
-| [project グループ](02-project.md) | コンテナのライフサイクル管理・一覧（`up` / `down` / `login` / `ps` / `logs` / `scale` / `build` / `rebuild` / `list`）と非推奨の `container` グループ |
+| [project グループ](02-project.md) | コンテナのライフサイクル管理・一覧（`up` / `down` / `login` / `ps` / `logs` / `scale` / `build` / `rebuild` / `open` / `profile` / `list`）と非推奨の `container` グループ |
 | [env グループ](03-env.md) | 環境変数の管理（`init` / `sync` / `list` / `set` / `get` / `delete` / `edit` / `project` / `keygen` / `encrypt` / `decrypt` / `exec` / `token` / `rekey` / `doctor` / `export` / `import`） |
 | [plugin グループ](04-plugin.md) | プラグインの管理（`list` / `install` / `uninstall` / `update` / `info` / `sync` / `migrate` / `repo *`） |
 | [snapshot グループ](05-snapshot.md) | スナップショットの管理（`create` / `list` / `restore` / `copy` / `delete` / `rotate`） |
@@ -22,9 +22,10 @@ graph TD
     A --> E[env]
     A --> F[plugin / pl]
     A --> G[snapshot / ss]
-    D --> D1["up / down / ps / logs / scale [name]"]
+    D --> D1["up / down / ps / logs / scale / open [name]"]
     D --> D3["login [index]"]
     D --> D4["build [image] / rebuild [name]"]
+    D --> D5["profile up / down / list [name]"]
     D --> D2["list [--no-interactive]"]
     E --> E1[init / sync / list / set / get / delete / edit / project]
     E --> E2[keygen / encrypt / decrypt / exec / token / rekey / doctor]
@@ -61,9 +62,15 @@ graph TD
 | `devbase ps [name]` | `devbase project ps [name]` |
 | `devbase scale [name] <num>` | `devbase project scale [name] <num>` |
 | `devbase rebuild [name]` | `devbase project rebuild [name]` |
+| `devbase open [name]` | `devbase project open [name]` |
 | `devbase list` | `devbase project list` |
 
 > **Note:** `logs` はトップレベルシノニムを持ちません。`devbase project logs` を使用してください。
+>
+> **`profile` について:** `devbase project profile up|down|list` もトップレベルシノニムを持ちません。
+> `[name]` は受け付けますが、3 番目の引数に `up` / `down` / `list` が来るためラッパーでは位置で
+> 解決できず、名前の解決は Python 側が行います。詳細は
+> [project グループの「プロジェクト名指定」](02-project.md#プロジェクト名指定cwd-非依存)を参照してください。
 >
 > **※ `build` の転送先について:** `devbase build`（既定 / `--no-cache` / `--project-no-cache`）は他の
 > ショートカットのように `project` グループ（Python 実装）へ転送されるのではなく、`bin/devbase` の

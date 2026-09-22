@@ -368,8 +368,8 @@ DEVBASE_WINDOW_TITLE=0
 
 `devbase up` は既定で **コマンドを実行した環境の Docker** にコンテナを立てます。
 `projects/<name>/project.local.yml` に docker context の名前を書くと、そのプロジェクトの
-`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` を**別ホストの daemon**
-へ向けられます。用途は、CUDA が使える Windows（WSL2）の GPU、負荷分散のための 3 台目の PC、
+`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` / `open` を
+**別ホストの daemon** へ向けられます。用途は、CUDA が使える Windows（WSL2）の GPU、負荷分散のための 3 台目の PC、
 AWS EC2 の計算資源などです。
 
 仕組みは「compose クライアントは手元、daemon はリモート」です。devbase・`projects/`・機密鍵を

@@ -24,6 +24,7 @@ from typing import List, Optional, Tuple
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.utils.names import NAME_FORM_HINT, is_single_segment_name
 
 from devbase.env import _import_atomic as _atomic
 from devbase.env import _import_merge as _merge
@@ -241,6 +242,33 @@ def _build_plans(
     return plans, sources_reference
 
 
+def _warn_unusable_project_names(plans: List[_merge.Plan], root: Path) -> None:
+    """名前の形に合わないプロジェクト名を取り込む計画に、保存先に応じた文で 1 行ずつ知らせる。
+
+    書庫の名前の規則は先頭の ``_`` を許すため import は通す (PLAN66 決定 4)。
+    ``projects/<name>/`` を作るのはファイル backend の平文のときだけで、age とサーバの
+    backend は ``projects/`` に何も作らない。作らない保存先で「作る」と書かないよう、文は
+    ``plan.target`` と ``plan.ref`` から選ぶ。
+    """
+    for plan in plans:
+        name = _merge.project_name_of(plan.arcname)
+        if name is None or is_single_segment_name(name):
+            continue
+        usage = (f"この名前では、名前を指定した操作（devbase up {name} など）が"
+                 f"できません（{NAME_FORM_HINT}）。")
+        if plan.ref is None and plan.target == root / 'projects' / name / '.env':
+            detail = (f"この import が projects/{name}/ を作ります。{usage}"
+                      f"projects/{name} の中で名前なしに打てば動きます。"
+                      f"projects/{name} を改名すれば直ります。")
+        else:
+            where = plan.target if plan.ref is None else f"サーバの{plan.ref.label()}"
+            detail = (f"保存先は {where} で、projects/ には何も作られません。"
+                      f"この名前でプロジェクトを作っても、{usage}")
+        logger.warning(
+            "プロジェクト名として使えない形の名前を取り込みます: '%s'（出所: 書庫）。%s",
+            name, detail)
+
+
 def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
     """import 本体。CLI ハンドラから呼ばれる"""
     _validate_options(opts)
@@ -277,6 +305,8 @@ def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
     _refuse_other_group_projects(store, filtered, group)
     plans, sources_reference = _build_plans(filtered, devbase_root, opts, store=store,
                                             group=group)
+    # --dry-run でも出す。書き込む前に何が起きるかを知らせるため
+    _warn_unusable_project_names(plans, store.root)
 
     _merge.log_plans(plans, opts.dry_run)
     if sources_reference is not None and not opts.merge_metadata:
