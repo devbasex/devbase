@@ -4,7 +4,7 @@
 
 devbase は、プロジェクトごとの個人設定 `projects/<name>/project.local.yml` に docker context の
 名前を書くと、そのプロジェクトの `up` / `down` / `ps` / `logs` / `login` / `scale` / `build` /
-`rebuild` を別ホストの docker daemon へ向ける。compose クライアントと機密の復号は手元で行い、
+`rebuild` / `open` を別ホストの docker daemon へ向ける。compose クライアントと機密の復号は手元で行い、
 daemon だけがリモートにある。リモートに要るのは docker CLI・dockerd・sshd で、devbase・
 `projects/`・機密鍵をリモートへ複製しない。`devbase up` が開く VS Code は、attach URI の
 `settings.context` でそのホストのコンテナへ接続する。
@@ -40,8 +40,9 @@ daemon だけがリモートにある。リモートに要るのは docker CLI�
 この段階では docker を呼ばない。
 
 `--context` は `project` / `container` 配下の `up` / `down` / `ps` / `logs` / `login` / `scale` /
-`build` / `rebuild`、トップレベルのショートカット `up` / `down` / `ps` / `login` / `scale` /
-`build` / `rebuild`、および `env exec` が受け付ける。空文字と空白のみは終了コード 2 で拒む
+`build` / `rebuild` / `open` / `profile up` / `profile down` / `profile list`、トップレベルの
+ショートカット `up` / `down` / `ps` / `login` / `scale` / `build` / `rebuild` / `open`、および
+`env exec` / `env token` が受け付ける。空文字と空白のみは終了コード 2 で拒む
 （Python の parser と `bin/devbase` の両方）。
 
 ### リモート扱いの判定

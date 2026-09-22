@@ -169,8 +169,15 @@ WARNING プラグイン 'carmo-web' は devbase >=4.0.0 を要求しています
 devbase 本体を更新してください (この警告を止める場合は DEVBASE_IGNORE_PLUGIN_REQUIRES=1)。
 ```
 
-> `requires.devbase` を上げるのは、**Plugin が `project.yml` 形式へ移行したタイミング**です。
-> 本体の版数と一緒に自動では上がりません。
+> **`requires.devbase` は本体の版数と一緒に自動では上がりません。** 上げるのは、**Plugin が
+> devbase の新しい機能に依存しはじめたタイミング**です。契機は次のとおりです。
+>
+> | 契機 | 上げる版数 |
+> | --- | --- |
+> | Plugin が `project.yml` 形式へ移行した | その形式を読める版 |
+> | Plugin のプロジェクトが `compose.yml` に `profiles:` を使う | `">=3.5.0"`（[テスト用サーバを後から起動・停止する](compose-profiles.md#plugin-として配るなら-requiresdevbase-を-350-以上へ上げる)） |
+>
+> どちらも、その機能を使い始めた Pull Request で一緒に上げます。
 
 ### `priority`
 

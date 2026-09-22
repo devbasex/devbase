@@ -5,8 +5,10 @@ devbase のコンテナ管理機能について、ライフサイクル、並行
 > **コマンド体系について:** コンテナ操作は `devbase project <sub>` グループ（および
 > トップレベルショートカット `devbase up` 等）で行います。旧 `devbase container <sub>` は
 > 非推奨となり、`project` へのエイリアスとして警告付きで当面動作します。`project` では
-> `up` / `down` / `ps` / `logs` / `scale` に `[name]` を指定することで **任意のディレクトリ
-> から** 対象プロジェクトを操作できます。プロジェクト一覧は `devbase project list` を参照
+> `up` / `down` / `ps` / `logs` / `scale` / `rebuild` / `open` に `[name]` を指定することで
+> **任意のディレクトリから** 対象プロジェクトを操作できます。`profile up` / `profile down` /
+> `profile list` も `[name]` を取りますが、ラッパーでは位置で解決できず Python 側が解決する
+> 点が違います。プロジェクト一覧は `devbase project list` を参照
 > してください。詳細は [CLI リファレンス: project グループ](cli-reference/02-project.md) を参照。
 
 ## コンテナライフサイクル
