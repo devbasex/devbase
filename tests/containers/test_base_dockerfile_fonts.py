@@ -63,17 +63,34 @@ def _statements() -> str:
     )
 
 
-def _first_run_block() -> str:
-    """1 つ目の RUN の 1 命令分 (行継続を含む) を取り出す"""
+def _run_blocks() -> list[str]:
+    """Dockerfile を RUN ブロック単位 (行継続を含む 1 命令分) に分ける
+
+    ``RUN`` の本文は ``\\`` の行継続で複数行にまたがる。``RUN`` で始まる**行**だけを
+    見ると、拾えるのは 1 行目 (``RUN set -eux; \\``) だけでパッケージ名は 1 つも
+    入らない。命令ごとに継続行まで連結してから検査する。
+    """
     lines = _statements().splitlines()
-    start = next((i for i, line in enumerate(lines) if line.startswith("RUN ")), None)
-    assert start is not None, "RUN が 1 つも見つからない"
-    block = []
-    for line in lines[start:]:
+    blocks: list[str] = []
+    block: list[str] | None = None
+    for line in lines:
+        if block is None:
+            if not line.startswith("RUN "):
+                continue
+            block = []
         block.append(line)
         if not line.rstrip().endswith("\\"):
-            break
-    return "\n".join(block)
+            blocks.append("\n".join(block))
+            block = None
+    if block is not None:  # 最終行が \ で終わっていても取りこぼさない
+        blocks.append("\n".join(block))
+    assert blocks, "RUN が 1 つも見つからない"
+    return blocks
+
+
+def _first_run_block() -> str:
+    """1 つ目の RUN の 1 命令分 (行継続を含む) を取り出す"""
+    return _run_blocks()[0]
 
 
 def _first_apt_install(block: str) -> str:
@@ -100,11 +117,11 @@ def test_the_six_packages_are_in_the_first_apt_install(package):
 def test_no_extra_run_is_added_for_the_six_packages():
     """新しい RUN を立てない (決定 4)。層を増やさず、apt-get update をもう 1 回走らせない"""
     text = _statements()
-    runs = [line for line in text.splitlines() if line.startswith("RUN ")]
-    # 6 パッケージを入れるためだけの RUN が増えていないこと
-    for run in runs[1:]:
-        assert "poppler-utils" not in run
-        assert "fonts-crosextra" not in run
+    # 6 パッケージを入れるためだけの RUN が増えていないこと。
+    # 継続行まで連結した本文で見ないと、この 2 つの assert は常に真になる。
+    for block in _run_blocks()[1:]:
+        assert "poppler-utils" not in block
+        assert "fonts-crosextra" not in block
     assert text.count("apt-get update") == 2, "apt-get update の回数が変わっている"
 
 
