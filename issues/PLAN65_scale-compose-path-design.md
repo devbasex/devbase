@@ -44,9 +44,7 @@
 | 図に現れない要素 | 理由 |
 | --- | --- |
 | `_compose_run` | この束では触らず、確定仕様の経路の表に並ぶだけである |
-| `docs/specifications/compose-profiles.md` | 実行時の呼び出しを持たない |
-| `tests/commands/test_container_scale_order.py` | 同じ |
-| `tests/utils/test_docker_profiles.py` | 同じ |
+| 確定仕様 1 本とテスト 2 本 | 実行時の呼び出しを持たない |
 
 `devbase scale` の経路:
 
@@ -133,40 +131,29 @@ docker compose exec --index=<n> <開発サービス名> bash          # 生成�
 
 ```python
 def _check_scale_request(new_scale: int, current_scale: int) -> bool:
-    """``new_scale`` が受け付けられるかを判定し、受け付けないときは案内を出す。
-
-    ``new_scale < 1`` と ``new_scale <= current_scale`` の 2 つで False を返す。
-    ログの文言と出し分け (error / warning + info 2 行) は変更前のまま。
-    """
+    """``new_scale`` を受け付けるかを判定し、受け付けないときは案内を出す。"""
 
 
 def _run_scale_pipeline(project_name: str, new_scale: int, current_scale: int,
                         config, target: docker_context.DockerTarget,
                         dev_service_name: str) -> Optional[Path]:
-    """``[1/5]``〜``[5/5]`` の本体。生成した override compose のパスを返す。
-
-    起動が 0 以外で終わったときだけ ``None`` を返す (error ログ
-    ``Failed to start new containers`` はこの関数が出す)。それ以外の失敗は
-    ``DevbaseError`` / ``DockerError`` のまま呼び出し元へ伝播する。
-    """
+    """``[1/5]``〜``[5/5]`` の本体。生成した override compose のパスを返す。"""
 
 
 def _compose_config_services() -> tuple[int, dict]:
-    """``docker compose config --format json`` の (終了コード, services) を返す。
-
-    非 0 なら ``services`` は空の辞書。JSON として読めなければ
-    ``json.JSONDecodeError`` を伝播する。``_read_compose_services`` の契約と同じで、
-    実行は共通経路 ``docker_compose`` を通る。
-    """
+    """``docker compose config --format json`` の (終了コード, services) を返す。"""
 
 
 def _resolve_dev_service() -> Optional[dict]:
-    """compose config から dev サービス定義を取得する。失敗時は None。
-
-    名前・引数・戻り値の契約は変えない (終了コードが非 0、JSON として読めない、
-    のどちらでも ``None``)。
-    """
+    """compose config から dev サービス定義を取得する。失敗時は None。"""
 ```
+
+| 関数 | 契約 |
+| --- | --- |
+| `_check_scale_request` | `new_scale < 1` と `new_scale <= current_scale` の 2 つで `False` を返す。ログの文言と出し分け（error / warning + info 2 行）は変更前のまま |
+| `_run_scale_pipeline` | 起動が 0 以外で終わったときだけ `None` を返す（`Failed to start new containers` はこの関数が出す）。それ以外の失敗は `DevbaseError` / `DockerError` のまま伝播する |
+| `_compose_config_services` | 非 0 なら `services` は空の辞書。JSON として読めなければ `json.JSONDecodeError` を伝播する。`_read_compose_services` の契約と同じで、実行は `docker_compose` を通る |
+| `_resolve_dev_service` | 名前・引数・戻り値の契約は変えない。終了コードが非 0 でも、JSON として読めなくても `None` を返す |
 
 `_read_compose_services` は削除する。唯一の呼び出し元 `_ensure_images`（`container.py:2019`）は
 `_compose_config_services` を呼ぶ。`_resolve_dev_service` の名前を残すのは、
@@ -222,9 +209,8 @@ graph TD
 | 起動が 0 以外 | `_run_scale_pipeline` が `None` を返す | `Failed to start new containers` を出して 1。変更前のまま |
 
 **既定のサービスの解決を足すと、失敗の経路が 1 つ増える。** `default_services` は
-`_compose_lines` を通り、非 0 の終了を `DevbaseError` にする。`cmd_up` は同じ解決を既に
-行っており、`scale` は `up` の後にしか使えない（生成物を作り直すのも同じ関数である）ため、
-`up` が通るプロジェクトでこの解決だけが失敗する経路は無い。
+`_compose_lines` を通り、非 0 の終了を `DevbaseError` にする。`cmd_up` が同じ解決を既に
+行っているため、`up` が通るプロジェクトでこの解決だけが失敗する経路は無い。
 
 ## 決定の記録
 
@@ -272,17 +258,15 @@ graph TD
 - **決定 1 は「経路の表が devbase の Compose の起動を網羅している」ことを仕様として言い直す
   決定である。** 網羅していない状態のまま表を書き直すと、同じ食い違いを別の行で作る
 - **観測できる振る舞いは変わらない。** `docker compose exec <サービス> bash` は既に動いている
-  コンテナを名指しする。開発サービスは `profiles:` を持たない既定のサービスなので、
-  `COMPOSE_PROFILES` の値で選ばれ方が変わらない。差分は 1 行（`env=compose_env()`）で、
-  `exec` の中で動く `bash` の環境はコンテナ側から来るため影響を受けない
+  コンテナを名指しする。開発サービスは `profiles:` を持たないため、`COMPOSE_PROFILES` の値で
+  選ばれ方が変わらない。`exec` の中で動く `bash` の環境はコンテナ側から来る
 - **棚卸しのコメントが実装と合っていない。** `tests/utils/test_docker_profiles.py:102` は
-  「決定 7 の棚卸しの 4 か所」と書き、`cmd_scale` と `cmd_login` を数えていない。片方だけ直すと
-  コメントを 5 か所へ直すことになり、次に読む人が残りの 1 つを穴と気づけない
+  「決定 7 の棚卸しの 4 か所」と書き、`cmd_scale` と `cmd_login` を数えていない。片方だけ直すと、
+  次に読む人が残りの 1 つを穴と気づけない
 
 採らなかった案: `cmd_login` を別の課題として起票し、この束では触らない。退けたのは、
-経路の表を書き直す作業がこの束にあるためである（表に「`cmd_login` は未対応」と書くか、
-誤った表を残すかのどちらかになる）。ただし**この 1 行は独立して切り出せる**ので、レビューで
-範囲外と判断されたら分ける（決定 10 の Pull Request 1 の中で独立したコミットにする）。
+経路の表を書き直す作業がこの束にあるためである。**この 1 行は独立したコミットにする**ので、
+範囲外と判断されたら切り出せる。
 
 ### 決定 3: `docker_compose_up()` は拡張せず、`docker_compose()` を直接呼ぶ
 
@@ -304,8 +288,8 @@ docker_compose(['up', '-d', '--no-recreate', *services],
   素通りし、traceback で落ちる。`cmd_up` は `except subprocess.CalledProcessError` も持つが、
   `cmd_scale` は持たない。**共通経路へ寄せる実装を素直に書くと、ここを踏む**
 - `docker_compose()` は `env=compose_env()` を渡す唯一の共通経路であり、目的（決定 1）は
-  これを通すことで達する。`profile up` / `profile down` / `profile list` も同じく
-  `docker_compose()` を直接呼んでいる（`container.py:1503` / `1531` / `1547`）
+  これを通すことで達する。`profile up` / `profile down` / `profile list` も
+  `docker_compose()` を直接呼ぶ（`container.py:1503` / `1531` / `1547`）
 
 採らなかった案:
 
@@ -348,25 +332,20 @@ Scale failed: %s
 === Scale completed successfully ===
 ```
 
-理由: 振る舞いの変更を「子プロセスの環境」と「起動の対象」の 2 点だけに絞る。ログを同時に
-変えると、現状固定テストが何を守っているのかが読めなくなる。
+理由: 振る舞いの変更を「子プロセスの環境」と「起動の対象」の 2 点だけに絞る。
 
 ### 決定 6: `_previous_scale_compose()` は使わない
 
 `cmd_up` は生成に失敗したとき旧構成を書き戻すために `_previous_scale_compose()` を使うが、
-`cmd_scale` には入れない。
-
-理由: `scale` は既存のコンテナを止めない。止める段が無いので、旧構成で停止する必要が無い。
-入れると `scale` が失敗したときに生成物だけが巻き戻り、`project.yml` の `scale` の値
-（`[1/5]` で既に書き換わっている）と食い違う。**変更前の振る舞いを保つ**。
+`cmd_scale` には入れない。理由: `scale` は既存のコンテナを止めない。止める段が無いので、旧構成で停止する必要が無い。
+入れると失敗したときに生成物だけが巻き戻り、`project.yml` の `scale` の値（`[1/5]` で既に
+書き換わっている）と食い違う。
 
 ### 決定 7: 段階の番号の文字列は変えない
 
 `[1/5]`〜`[5/5]` と `[2.5/5]` をそのまま持つ。`default_services` の呼び出しには段階の番号を
-付けない（`cmd_up` も `[2/6]` と `[3/6]` の間で番号を持たない）。
-
-理由: 番号を振り直すと、`cmd_scale` の出力を読んでいる人にとっての差分が増える。`[2.5/5]` の
-ような中途の番号は `cmd_up` の `[1.5/6]` と同じ流儀で、この束で整えるものではない。
+付けない（`cmd_up` も `[2/6]` と `[3/6]` の間で番号を持たない）。理由: 番号を振り直すと、出力を読んでいる人にとっての差分が増える。`[2.5/5]` のような中途の
+番号は `cmd_up` の `[1.5/6]` と同じ流儀で、この束で整えるものではない。
 
 ### 決定 8: 抽出は 2 つの関数に分け、`cmd_up` と対称にする
 
@@ -416,23 +395,49 @@ Scale failed: %s
 
 ## 実装の分け方（決定 10）
 
+**分け目は「Compose の呼び出しを共通経路へ寄せる」と「`cmd_scale` の段階を分ける」である。**
+確定仕様が約束する経路の一覧は、1 本目のマージの時点で実装と一致させる。
+
 | # | 名前 | 内容 | 触るファイル | 依存 |
 | --- | --- | --- | --- | --- |
-| 1 | 振る舞いと仕様 | 確定仕様の書き換え（決定 1）・`cmd_scale` の起動を共通経路へ（決定 3・4）・`cmd_login` の 1 行（決定 2）・現状固定テストの新設 | `docs/specifications/compose-profiles.md`、`lib/devbase/commands/container.py`（`cmd_scale` の `[4/5]` と `cmd_login`）、`tests/commands/test_container_scale_order.py`（新設）、`tests/utils/test_docker_profiles.py` | 無し（base は `release/v3.7.0`） |
-| 2 | 構造 | `cmd_scale` の段階の抽出（決定 7・8）・config 読み取りの統合（決定 9）・棚卸しのコメントの更新 | `lib/devbase/commands/container.py`（`cmd_scale` / `_resolve_dev_service` / `_read_compose_services` / `_ensure_images`）、`tests/utils/test_docker_profiles.py` | **Pull Request 1 の `:マージ` が要る** |
+| 1 | Compose の呼び出しを共通経路へ寄せる | 確定仕様の書き換え（決定 1）・`cmd_scale` の起動（決定 3・4）・`cmd_login` の 1 行（決定 2）・config 読み取りの統合（決定 9）・現状固定テストの新設・棚卸しのコメントと一覧の更新 | `docs/specifications/compose-profiles.md`、`lib/devbase/commands/container.py`（`cmd_scale` の `[4/5]` / `cmd_login` / `_resolve_dev_service` / `_read_compose_services` / `_ensure_images`）、`tests/commands/test_container_scale_order.py`（新設）、`tests/utils/test_docker_profiles.py` | 無し（base は `release/v3.7.0`） |
+| 2 | `cmd_scale` の段階を分ける | 段階の抽出（決定 7・8）。振る舞いは変えない | `lib/devbase/commands/container.py`（`cmd_scale` のみ） | **Pull Request 1 の `:マージ` が要る** |
 
-依存の理由: どちらも `lib/devbase/commands/container.py` の `cmd_scale` の同じ区画を触る。
-2 を先に出すと、1 が書き換える `[4/5]` の行が別の関数へ移っており、レビューした差分と入る差分が
-変わる。**`tests/utils/test_docker_profiles.py` も両方が触る**（1 は経路のテストを足し、
-2 は棚卸しのコメントと関数名を直す）。
+依存の理由: 2 は `cmd_scale` の本体を関数へ割る。1 が書き換える `[4/5]` の行も動かすため、
+2 を先に出すとレビューした差分と入る差分が変わる。
+
+**config 読み取りの統合（決定 9）を 1 本目へ入れる理由。** 確定仕様の経路の表は、
+`_resolve_dev_service` と `_read_compose_services` の 2 行を `docker_compose` の用途へ畳む。
+畳んだ表を 1 本目で入れて統合を 2 本目に置くと、**1 本目のマージの時点で仕様と実装が食い違った
+版が残る。** 統合そのものは Compose の起動を共通経路へ寄せる変更で、#192 が指定した順序の
+「共通経路へ寄せる」に入る。2 本目に残すのは「関数を分ける」だけである。
+
+## 受け入れ条件とどちらの Pull Request が対応するか
+
+| 受け入れ条件 | Pull Request 1 | Pull Request 2 |
+| --- | --- | --- |
+| A-1（`compose_env()` を渡さない起動が 0 件。`grep` が 6 → 3） | **満たす** | 変わらない |
+| A-2 / A-3 / A-4（確定仕様と利用者向けの文書） | **満たす** | 変わらない |
+| A-5（棚卸しのコメントと一覧が経路と一致） | **満たす** | 変わらない |
+| B-1〜B-5（`devbase scale` の振る舞い） | **満たす** | 緑のまま通す |
+| C-1 / C-2（正常系の手順の固定） | **満たす** | 緑のまま通す |
+| C-3 / C-4 / E-1〜E-3（退行しないこと） | 満たす | **書き換えずに満たす** |
+| D-1 / D-2（config 読み取りの統合と契約） | **満たす** | 変わらない |
+| D-3 / D-4（`cmd_scale` の本体 40 行以下と段階の対応） | 満たさない | **満たす** |
+
+`grep -rn "'docker', 'compose'" lib/` は現状 6 件である。Pull Request 1 で消えるのは
+`container.py` の 1648（`cmd_scale`）・1792・1970 の 3 件である。残るのは
+`utils/docker.py:56` と `container.py:266` と `opener.py:396` で、Pull Request 2 はこの
+件数を変えない。`cmd_login`（1413）は `_compose_base_args()` の戻り値を使うため、この
+`grep` には現れない。
 
 #192 が指定した順序（仕様 → 共通経路 → 現状固定テスト → 関数を分ける）は、この 2 本の中で
 次のように並ぶ。
 
 | 順序 | どこで | 備考 |
 | --- | --- | --- |
-| 1. 仕様 | Pull Request 1 の 1 つ目のコミット | 決定 1 を確定仕様へ書く |
-| 2. 共通経路へ寄せる | Pull Request 1 の 2 つ目のコミット | 新しいコマンド列と子プロセスの環境を固定するテストを先に書いて落とす（`tdd-cycle`）。**構造を触らないので、この時点では「気づけない」対象が無い** |
+| 1. 仕様 | Pull Request 1 の 1 つ目のコミット | 決定 1 を確定仕様へ書く。経路の表は畳んだ後の 5 行にする |
+| 2. 共通経路へ寄せる | Pull Request 1 の 2 つ目のコミット | `cmd_scale` の起動・`cmd_login` の 1 行・config 読み取りの統合。新しいコマンド列と子プロセスの環境を固定するテストを先に書いて落とす（`tdd-cycle`）。**`cmd_scale` の本体の構造は触らない** |
 | 3. 現状固定テストを足す | Pull Request 1 の 3 つ目のコミット | 正常系の手順（順序・範囲）を固定する。**構造を変える前に緑にする** |
 | 4. 関数を分ける | Pull Request 2 | 3 のテストを書き換えずに緑のまま通す。書き換えが要るなら振る舞いが変わっている |
 
@@ -443,10 +448,11 @@ Scale failed: %s
 
 採らなかった案:
 
-| 案 | 退けた理由 |
+| 採らなかった形 | 退けた理由 |
 | --- | --- |
-| 1 本にまとめる | 振る舞いの変更と構造の変更が同じ差分に混ざる。レビューで「この行はどちらの目的か」が読めない |
+| 1 本にまとめる | `cmd_scale` の本体を関数へ割る差分と、Compose の呼び出しを寄せる差分が同じ差分に混ざる。レビューで「この行はどちらの目的か」が読めない |
 | 3 本に分ける（仕様 / 振る舞い / 構造） | 確定仕様の 1 節と実装の 1 行は同じ約束の裏表で、別々にマージすると仕様と実装が食い違う版が中間に残る |
+| config 読み取りの統合を 2 本目に置く | 1 本目のマージの時点で、畳んだ経路の表と直接 `subprocess.run` を呼ぶ実装が食い違う。受け入れ条件 A-1・A-5・D-1 も 1 本目では満たせない |
 | 現状固定テストだけを先に 1 本出す | 上の「3 を 2 より先に置かない理由」と同じ |
 
 ## テスト設計
