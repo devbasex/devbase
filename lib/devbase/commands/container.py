@@ -1612,17 +1612,64 @@ def _check_scale_request(new_scale: int, current_scale: int) -> bool:
     return True
 
 
+def _run_scale_pipeline(project_name: str, new_scale: int, current_scale: int,
+                        config, target: docker_context.DockerTarget,
+                        dev_service_name: str) -> Optional[Path]:
+    """``[1/5]``〜``[5/5]`` の本体。生成した override compose のパスを返す。
+
+    ``cmd_up`` の :func:`_run_deploy_pipeline` と対称の段 (PLAN65 決定 8)。``scale`` は
+    既存のコンテナを止めず、退避も取らない。起動が 0 以外で終わったときだけ
+    ``Failed to start new containers`` を出して ``None`` を返す。それ以外の失敗は
+    ``DevbaseError`` / ``DockerError`` のまま伝播する。後処理 (bao の token・``./deploy``)
+    は ``cmd_scale`` の本体が行う。
+    """
+    logger.info("[1/5] Updating %s: scale=%d -> %d...",
+                project_runtime.PROJECT_CONFIG_FILENAME, current_scale, new_scale)
+    project_runtime.write_scale(Path.cwd(), new_scale)
+
+    logger.info("[2/5] Ensuring volumes exist for scale=%d...", new_scale)
+    ensure_volumes(new_scale, project_name)
+
+    logger.info("[2.5/5] Ensuring network exists...")
+    ensure_network('devbase_net')
+
+    logger.info("[3/5] Generating scaled compose file...")
+    override_file = _build_scaled_override(new_scale, config, project_name, target)
+    logger.info("Generated: %s", override_file)
+    # up と同じく起動の対象を生成物の既定のサービスで明示する (PLAN65 決定 4)
+    services = default_services(override_file)
+
+    logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
+    logger.info("Using --no-recreate to avoid restarting existing containers...")
+
+    # 共通経路を通し、子プロセスの COMPOSE_PROFILES を打ち消す (PLAN65 決定 1)。
+    # docker_compose_up は check=True 固定で CalledProcessError が except DevbaseError を
+    # 素通りするため、check=False で終了コードを見る (決定 3)
+    result = docker_compose(['up', '-d', '--no-recreate', *services],
+                            compose_file=override_file, check=False)
+
+    if result.returncode != 0:
+        logger.error("Failed to start new containers")
+        return None
+
+    logger.info("[5/5] Waiting for new containers to be ready...")
+    wait_for_containers_ready(
+        container_prefix=dev_service_name,
+        scale=new_scale,
+        compose_file=override_file,
+        timeout=60
+    )
+    return override_file
+
+
 def cmd_scale(new_scale: int, project_name: str = None,
               context: Optional[str] = None) -> int:
     """Scale containers online without restarting existing ones"""
-    # scale は _run_deploy_pipeline を通らずにコンテナを足す。project.yml の scale を
-    # 書き換える前に、up と同じ食い違いの検査を行う (PLAN56 決定 7)
+    # project.yml の scale を書き換える前に、up と同じ食い違いの検査を行う (PLAN56 決定 7)
     if not _check_group_consistency():
         return 1
-
     if project_name is None:
         project_name = get_project_name()
-
     config = project_runtime.current_project_config()
     try:
         target = _resolve_docker_target(context)
@@ -1630,71 +1677,28 @@ def cmd_scale(new_scale: int, project_name: str = None,
         logger.error("Scale failed: %s", e)
         return 1
     dev_service_name = get_dev_service_name()
-    current_scale = (config.scale if config.scale is not None
-                     else project_runtime.DEFAULT_SCALE)
-
+    current_scale = config.scale if config.scale is not None else project_runtime.DEFAULT_SCALE
     logger.info("Scaling project '%s' from %d to %d containers (dev service: %s)",
                 project_name, current_scale, new_scale, dev_service_name)
-
     if not _check_scale_request(new_scale, current_scale):
         return 1
-
     try:
-        logger.info("[1/5] Updating %s: scale=%d -> %d...",
-                    project_runtime.PROJECT_CONFIG_FILENAME, current_scale, new_scale)
-        project_runtime.write_scale(Path.cwd(), new_scale)
-
-        logger.info("[2/5] Ensuring volumes exist for scale=%d...", new_scale)
-        ensure_volumes(new_scale, project_name)
-
-        logger.info("[2.5/5] Ensuring network exists...")
-        ensure_network('devbase_net')
-
-        logger.info("[3/5] Generating scaled compose file...")
-        override_file = _build_scaled_override(new_scale, config, project_name, target)
-        logger.info("Generated: %s", override_file)
-        # up と同じく起動の対象を生成物の既定のサービスで明示する (PLAN65 決定 4)
-        services = default_services(override_file)
-
-        logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
-        logger.info("Using --no-recreate to avoid restarting existing containers...")
-
-        # 共通経路を通し、子プロセスの COMPOSE_PROFILES を打ち消す (PLAN65 決定 1)。
-        # docker_compose_up は check=True 固定で CalledProcessError が except DevbaseError を
-        # 素通りするため、check=False で終了コードを見る (決定 3)
-        result = docker_compose(['up', '-d', '--no-recreate', *services],
-                                compose_file=override_file, check=False)
-
-        if result.returncode != 0:
-            logger.error("Failed to start new containers")
+        override_file = _run_scale_pipeline(project_name, new_scale, current_scale,
+                                            config, target, dev_service_name)
+        if override_file is None:
             return 1
-
-        logger.info("[5/5] Waiting for new containers to be ready...")
-        wait_for_containers_ready(
-            container_prefix=dev_service_name,
-            scale=new_scale,
-            compose_file=override_file,
-            timeout=60
-        )
-
         # 増やしたインスタンスにも bao の token を書く (PLAN54。既存のものは up で書いてある)
         _push_bao_token(project_name, new_scale, dev_service_name, compose_file=override_file,
                         start=current_scale + 1)
-
-        # Run project-specific deploy script for newly added instances
-        deploy_script = Path('./deploy')
+        deploy_script = Path('./deploy')  # 増やしたインスタンスにだけ ./deploy を実行する
         if deploy_script.exists() and deploy_script.is_file():
-            _run_deploy_script_for_instances(
-                deploy_script, range(current_scale + 1, new_scale + 1), config)
-
+            _run_deploy_script_for_instances(deploy_script, range(current_scale + 1, new_scale + 1), config)
         logger.info("=== Scale completed successfully ===")
         logger.info("Container scale: %d -> %d", current_scale, new_scale)
         logger.info("You can now login to the new containers:")
         for i in range(current_scale + 1, new_scale + 1):
             logger.info("  devbase login %d", i)
-
         return 0
-
     except DevbaseError as e:
         logger.error("Scale failed: %s", e)
         return 1

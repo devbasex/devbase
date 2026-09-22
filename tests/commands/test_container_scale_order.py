@@ -384,3 +384,42 @@ def test_check_scale_request_accepts_above_current(caplog):
 
     assert container._check_scale_request(3, 2) is True
     assert _records(caplog) == []
+
+
+def _run_pipeline(new_scale=3, current_scale=1):
+    config = container.project_runtime.current_project_config()
+    target = dc.DockerTarget(context=None, source='none', remote=False, home=None, gid=None)
+    return container._run_scale_pipeline('proj', new_scale, current_scale, config, target, 'dev')
+
+
+def test_run_scale_pipeline_runs_stages_one_to_five_and_returns_the_generated_compose(scale_harness):
+    """[1/5]〜[5/5] を順に通し、生成物のパスを返す。後処理 (bao / ./deploy) は呼ばない。"""
+    (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+
+    assert _run_pipeline() == scale_harness['override']
+
+    names = [name for name, _ in scale_harness['calls'] if name != 'run']
+    assert names == ['write_scale', 'volumes', 'network', 'generate', 'default_services', 'wait']
+    assert len(_up_calls(scale_harness['calls'])) == 1
+
+
+def test_run_scale_pipeline_returns_none_when_the_start_fails(scale_harness, caplog):
+    """起動が 0 以外なら Failed to start new containers を出して None。ready 待ちへ進まない。"""
+    scale_harness['fake'].up_returncode = 1
+    caplog.set_level('INFO', logger=container.logger.name)
+
+    assert _run_pipeline() is None
+
+    assert ('ERROR', 'Failed to start new containers') in _records(caplog)
+    assert 'wait' not in [name for name, _ in scale_harness['calls']]
+
+
+def test_run_scale_pipeline_propagates_generation_failure(scale_harness, monkeypatch):
+    """構成生成の失敗は DevbaseError のまま伝播する (Scale failed: は cmd_scale が出す)。"""
+    def fail(*a, **k):
+        raise DevbaseError('boom')
+
+    monkeypatch.setattr(container, '_build_scaled_override', fail)
+
+    with pytest.raises(DevbaseError, match='boom'):
+        _run_pipeline()
