@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | `lib/devbase/utils/names.py` の `NAME_FORM_HINT`（新設） | 足す | 名前の形を説明する文の定数。`re` だけに依存し副作用を持たない module の契約（確定仕様「構成要素」）を保つため、**ログを出さない**。値は `container.py` の既存の文言と同じ「英数字で始まり、英数字・'.'・'-'・'_' だけからなる名前」 |
 | `lib/devbase/plugin/syncer.py` の `_warn_unusable_name`（新設） | 足す | 1 つの名前が形に合わなければ `logger.warning` を 1 行出す。合えば何もしない。戻り値を持たない（呼び出し側の分岐に使わせない） |
-| `lib/devbase/plugin/syncer.py` の `_link_loser_projects` | 変える | 合成した別名（`f"{proj_name}.{owner}"`）に `_warn_unusable_name` を呼ぶ。symlink を張る条件は変えない |
+| `lib/devbase/plugin/syncer.py` の `_link_loser_projects` | 変える | 合成した別名（`f"{proj_name}.{owner}"`）に `_warn_unusable_name` を呼ぶ。**元のプロジェクト名を `base` として渡す**（案内の分岐に使う）。symlink を張る条件は変えない |
 | `lib/devbase/plugin/syncer.py` の `sync_projects` | 変える | 2 か所で `_warn_unusable_name` を呼ぶ。(1) `real_projects` を採取した直後に、その名前ごと（**`sorted(real_projects)` で走査する**。`real_projects` は `set` で、並べないと警告の順が実行ごとに変わる。既存の `sorted(project_candidates.items())` と同じ扱い）。(2) winner へ symlink を張る直前（`real_projects` のスキップより後）に、その名前 1 回 |
 | `lib/devbase/env/_import_merge.py` の `project_name_of`（新設） | 足す | 1 つのメンバー名から、そのプロジェクト名を返す純粋な関数（当たらなければ `None`）。`_PROJECT_ENV_RE` を使う |
 | `lib/devbase/env/io_import.py` の `import_bundle` | 変える | `_build_plans` が返した `plans` を回し、`plan.arcname` の名前が形に合わなければ 1 行知らせる。**文は `plan.target` と `plan.ref` から保存先を読んで選ぶ**（決定 4）。`--dry-run` の判定より前に置く |
@@ -122,7 +122,7 @@ sequenceDiagram
 | 関数 | シグネチャ | 契約 |
 | --- | --- | --- |
 | `utils/names.NAME_FORM_HINT` | `str`（module の定数） | 名前の形を説明する文。末尾に句点を置かない（呼び出し側が文へ埋める） |
-| `syncer._warn_unusable_name` | `(name: str, source: str) -> None` | `is_single_segment_name(name)` が True なら何もしない。False なら `logger.warning` を 1 行。`source` は名前の出所（プラグイン名・別名・実ディレクトリ）で、**文に埋めるだけでなく、末尾の案内の選択にも使う**（上の「警告の文」の出所の表） |
+| `syncer._warn_unusable_name` | `(name: str, source: str, base: Optional[str] = None) -> None` | `is_single_segment_name(name)` が True なら何もしない。False なら `logger.warning` を 1 行。`source` は名前の出所（プラグイン名・別名・実ディレクトリ）で、**文に埋めるだけでなく、末尾の案内の選択にも使う**。`base` は別名のときだけ渡す元のプロジェクト名で、`is_single_segment_name(base)` の結果が別名の案内を 2 つに分ける（上の「警告の文」の出所の表） |
 | `_import_merge.project_name_of` | `(arcname: str) -> Optional[str]` | 純粋。`_PROJECT_ENV_RE` に当たれば group(1)、当たらなければ `None`。例外を投げない（メンバーの妥当性は `filter_members` が既に見ている） |
 | `snapshot.SnapshotManager._validate_name` | `(name: str) -> None`（変更なし） | `is_single_segment_name(name)` が False なら `SnapshotError`。文言は今と同じ |
 
@@ -140,8 +140,14 @@ projects/_foo の中で名前なしに打てば動きます。<出所ごとの�
 | 出所 | 案内 |
 | --- | --- |
 | プラグインのプロジェクト（出所はプラグイン名） | プラグイン側の `projects/<名前>` を改名する |
-| 別名（devbase が合成した `<名前>.<owner>`） | 名前は devbase が合成している。`--link` なら元パスの basename、`repos/` 由来ならその置き場の名前が `<owner>` になる。**プラグイン側の `projects/` を改名しても直らない**ことを書く |
+| 別名（devbase が合成した `<名前>.<owner>`）で、`<名前>` の側が形に合わない | プラグイン側の `projects/<名前>` を改名する。**同じ実行で `<名前>` 自身の知らせも出る**（winner の symlink の分） |
+| 別名で、`<名前>` は形に合う（= `<owner>` の側が原因） | `<owner>` は devbase が合成する部分である。`--link` なら元パスの basename、`repos/` 由来ならその置き場のディレクトリ名を変える。**プラグイン側の `projects/` を改名しても直らない** |
 | `projects/` 直下の実ディレクトリ | その実ディレクトリ自身を改名する（プラグインは関係しない） |
+
+**別名のどちらが原因かは `is_single_segment_name(<名前>)` で分かれる。** False なら `<名前>` の側、
+True なら `<owner>` の側である（別名が形に合わないのに `<名前>` が合うなら、合わない文字は
+`<owner>` にしかない）。**原因を断定しない文にはしない。** 片方だけを直せば済む利用者に、
+効く手段を否定して伝えることになる。
 
 - **1 件 1 回。** 名前 1 つにつき 1 行だけ出す。**そのために、プラグインのプロジェクトの検査は
   `sync_projects` が symlink を張る直前に置く**（決定 2）。候補の集約
@@ -387,7 +393,8 @@ import する。**足すのは知らせだけである。**
 | --- | --- |
 | 1（同期が張り、警告が 1 回出る） | `tests/plugin/test_repos_core.py` の既存の `TestSyncProjects` へテストを足す。`_make_repo_dir` で `projects: ["_foo", "ok-name"]` のプラグインを作り、`sync_projects(registry, verbose=False)` の戻り値が 2、両方の symlink が存在、`caplog` の WARNING に `_foo` が 1 件・`ok-name` が 0 件 |
 | 2（合う名前では警告が出ない） | 同上。`projects: ["ok-name"]` で `caplog` の WARNING に名前の形の行が 0 件 |
-| 3（別名の警告） | 同上。既存の `test_link_plugin_collision_uses_source_basename` の形を借り、`--link` のプラグインの `source` を `/tmp/my plugin` にして、別名の symlink が張られ、`carmo.my plugin` の警告が 1 件 |
+| 3（別名の警告・`<owner>` の側） | 同上。既存の `test_link_plugin_collision_uses_source_basename` の形を借り、`--link` のプラグインの `source` を `/tmp/my plugin` にして、別名の symlink が張られ、`carmo.my plugin` の警告が 1 件。案内が `<owner>` の側を指すこと |
+| 3-2（別名の警告・`<名前>` の側） | 同上で、衝突する名前を `_foo` にする。警告は 2 件（`_foo` と `_foo.<owner>`）で、別名の案内がプラグイン側の `projects/_foo` を指すこと |
 | 4（実ディレクトリの警告） | 同上。`devbase_root / "projects" / "_foo"` を `mkdir` してから `sync_projects`。ディレクトリが残り、警告が 1 件 |
 | 5（`.` 始まりは変わらない） | 同上。プラグインの `projects/.hidden` を作り、`projects/.hidden` が作られず、警告が 0 件 |
 | 6（import が作り、警告が出る） | 既存の `tests/env/test_io_import.py` へテストを足す。`bundle.pack` で `env/projects/_foo/.env` と `env/projects/ok-name/.env` の書庫を作り、`import_bundle(tmp_path, ImportOptions(source=..., include_global=False, include_metadata=False))` が 0 を返し、両方のディレクトリができ、`caplog` に `_foo` の警告が 1 件 |
