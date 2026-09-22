@@ -18,6 +18,16 @@
   スナップショットの名前の検証を、位置引数のプロジェクト名と同じ規則（`utils/names`）へ寄せました。
   それ以外に受け付ける名前と、エラーの文言は変わりません。
 
+### Fixed
+- **`group_aliases` のある置き場で、機密の参照の見出しがグループの読み替えの前と後を出すように
+  しました（PLAN64 / #188）。** `devbase env list` の節の見出しと件数の行、`devbase env backend test`
+  の参照ごとの行、`devbase env backend migrate` の移行の計画の一覧と `--to age` の完了後の一覧が、
+  `グローバル（グループ default）` から `グローバル（グループ default → nyle）` になります。これまでは
+  読み替える前の名前だけが出て、隣に並ぶパス（`devbase/team/nyle/global`）と食い違って見えていました。
+  読み替えの対応が無いグループ・`version: 1` ・ファイル backend（`plaintext` / `age`）の見出しと、
+  エラー文言・警告・ログ・`devbase env backend status` の表示は変わりません。置き場のパス・サーバへの
+  要求・キャッシュにも影響しません。
+
 ## [3.6.0] - 2026-09-19
 
 ### Added

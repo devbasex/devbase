@@ -282,7 +282,11 @@ DEVBASE_ACCOUNT_GROUP{付ける引数}{実行場所}
 `for_project` が `group=` を受けて同じ規則で検証する。グループは参照の等価性に入り、1 つの
 `SecretStore` の中でグループの違う参照の控え（取得した内容と版）を取り違えない。グループを
 `SecretStore` のインスタンスに持たせないのは、ストアがプロジェクトの切替をまたいで持ち回られる
-ためである。`label()` はグループがあれば `（グループ <名前>）` を後ろに付ける。
+ためである。`label()` はグループがあれば `（グループ <名前>）` を後ろに付ける。**引数なしで呼ぶと
+括弧に入るのは読み替える前の名前**で、`label(group_display=...)` を渡すと括弧の中だけがその文字列に
+差し替わる。既定を読み替える前の名前にしているのは、読み替えの解決（`storage_group`）がグループ名の
+検証と予約語の検査で `BackendConfigError` を送出しうるためである。誤りを伝える文言とログがこの解決を
+背負うと、文言を組み立てる途中で新しい例外が起き、元の失敗が利用者へ届かなくなる。
 
 `SecretStore.ref_group(project)` は、backend が `openbao` かつ `layout: group` のときだけ
 `declared_group(root, project)` を返し、それ以外は `None` を返す。`version: 1` とファイル
@@ -302,7 +306,17 @@ backend では参照のグループが常に空で、参照の値・等価性・
 （`team/<g>/…` が `version: 1` の `team/global` / `team/projects/<name>` と重なるため）。
 `global` を読み替え元にする対応は受け付ける。2 つのグループが同じ置き場かは読み替えた後の
 名前で比べる（`SecretStore.same_storage_group`）。文言には読み替えの前と後を `default → nyle`
-の形で出す（`display_group`）。
+の形で出す（`display_group`）。**除くのは、引数なしの `SecretRef.label()` で参照を表示する
+エラー文言・警告・ログだけ**で、そこには読み替える前の名前が出る（前項）。`display_group` を直接
+呼ぶ文言は、エラーであっても前と後を出す（`--group` がプロジェクトのグループと違う置き場である旨の
+文言など）。
+
+正常系の一覧の見出しは `SecretStore.display_label(ref)` を通す。見出し用の表示を作る口はこれ 1 つで、
+読み替えの要否は `SecretStore.storage_group(ref.group)` が決める（`None` を返せば `label()` をそのまま
+返す）。backend の種類を `config.openbao is None` では判定しない。`backend: age` の設定に `openbao:` 節が
+残っていれば `None` にならないためである。`display_label` を通る見出しは、`env list` の節の見出しと
+件数の行・`env backend test` の参照ごとの行・`env backend migrate` の移行の計画の一覧と `--to age` の
+完了後の一覧の 5 か所である。
 
 **`default` の読み替えを置き場の上だけで行う理由。** `DEVBASE_ACCOUNT_GROUP` の既定値を変えると
 ボリューム名 `devbase_home_default` が変わり、既存の認証と会話ログのボリュームを移すことになる。
@@ -337,7 +351,10 @@ backend では参照のグループが常に空で、参照の値・等価性・
 グループが `with` なら `up` はそこを読まず、書けたように見えて使われない機密が残るためである。
 文言でプロジェクトの `env` の `DEVBASE_ACCOUNT_GROUP` を直すよう案内する。`list` の見出しは
 `=== グローバル（グループ with） (...) ===` / `=== プロジェクト: web（グループ with） (...) ===`
-の形になる（`version: 1` ではグループが付かない）。
+の形になる（`version: 1` ではグループが付かない）。`group_aliases` に対応のあるグループでは、
+読み替えの前と後が並んで `=== グローバル（グループ default → nyle） (...) ===` /
+`=== プロジェクト: web（グループ default → nyle） (...) ===` になり、隣に並ぶパス
+（`devbase/team/nyle/global`）と同じグループを指していると読める。
 
 #### dispatch 前の注入
 

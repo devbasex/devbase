@@ -148,12 +148,23 @@ class SecretRef:
     def is_user(self) -> bool:
         return self.owner == OWNER_USER
 
-    def label(self) -> str:
+    def label(self, *, group_display: Optional[str] = None) -> str:
+        """参照の表示。``group_display`` は括弧の中に入れる名前だけを差し替える。
+
+        既定 (``None``) は ``self.group``、つまり読み替える**前**の名前である
+        (PLAN64 決定 2)。読み替えの解決は ``BackendConfigError`` を送出しうるため、
+        誤りを伝える文言・警告・ログは引数なしで呼び、解決を背負わない。読み替えの
+        前後 (``default → nyle``) を出す見出しは
+        :meth:`SecretStore.display_label` を通る。
+        """
         # チーム単位の文字列は変えない。誤りの伝達や桁揃えに埋め込まれており、
         # 変えると既存の表示とテストが一斉に動く。
         base = 'グローバル' if self.kind == 'global' else f"プロジェクト '{self.name}'"
         text = f'個人の{base}' if self.is_user else base
-        return f'{text}（グループ {self.group}）' if self.group else text
+        if not self.group:
+            return text
+        display = self.group if group_display is None else group_display
+        return f'{text}（グループ {display}）'
 
 
 class SecretBackend(Protocol):
@@ -456,6 +467,23 @@ class SecretStore:
                 or not settings.grouped):
             return None
         return settings.storage_group(group)
+
+    def display_label(self, ref: SecretRef) -> str:
+        """見出しに出す参照の表示。読み替えがあればグループ名を前と後で出す (PLAN64)。
+
+        見出し用の表示を作る唯一の口である (決定 3)。読み替えの要否は
+        :meth:`storage_group` が決める。backend の種類・設定の有無・``layout`` ・
+        グループの有無をまとめて見る判定はこれだけで、``config.openbao`` が ``None`` か
+        どうかでは決まらない (``backend: age`` に ``openbao:`` 節が残っていれば
+        ``None`` にならない)。
+
+        読み替えが無ければ :meth:`SecretRef.label` と同じ文字列を返すため、
+        ``version: 1`` とファイル backend の出力は 1 文字も変わらない。
+        """
+        storage = self.storage_group(ref.group)
+        if storage is None or storage == ref.group:
+            return ref.label()
+        return ref.label(group_display=self.config.openbao.display_group(ref.group))
 
     def same_storage_group(self, a: Optional[str], b: Optional[str]) -> bool:
         """2 つのグループが同じ置き場へ写るか (``storage_group`` 同士の比較)。
