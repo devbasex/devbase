@@ -258,6 +258,8 @@ sequenceDiagram
 
 見出しの側が `storage_group` と `display_group` と `label` を毎回組み合わせると、組み合わせ方の誤りが 5 か所で起こりうる。`config.openbao` が `None` の場合の見落としがこれにあたる。判定を 1 か所に閉じ、見出しの側は `store.display_label(ref)` だけを呼ぶ。
 
+**`config.openbao` が `None` かどうかで backend の種類を判定しない。** `backend: age` に `openbao:` 節が残っていれば `None` にならないため、その判定は `backend: age` の端末をグループ別の置き場として扱いうる。受け入れ条件 6 のテストがこの取り違えをそのまま検査する。
+
 `OpenBaoSettings` に口を置く案は採らない。`config.openbao` が `None` の場合と backend が `openbao` でない場合を、呼ぶ側が毎回確かめることになる。`SecretStore` は `storage_group` / `ref_group` / `same_storage_group` で既に同じ判定を引き受けている。
 
 ### 決定 4: `env backend migrate` の 2 つの一覧も直す
@@ -294,14 +296,16 @@ sequenceDiagram
 | `DEVBASE_ROOT` と作業ディレクトリ | `tests/conftest.py` の `openbao_root` fixture |
 | 手本にする fixture | `tests/commands/test_env_user_axis.py` の `grouped`（すでに同じ読み替えを設定している） |
 
+**「変わらないこと」（受け入れ条件 5・6）は、既存テストだけでは確かめられない。** `env list` の見出しを固定している既存の assert は `'=== グローバル'` の前方一致で、見出しに `（グループ default → nyle）` が付いても通る（`tests/commands/test_env_user_axis.py:229-253`。2026-09-22 に確認）。読み替えの無い設定で`（グループ` が 1 つも出ないことを見る出力テストを新しく置く。
+
 | 受け入れ条件 | 何で確かめるか |
 | --- | --- |
 | 1（`env backend test` の見出し） | `tests/commands/test_env_group_label.py` を新設。`layout='group'`・`group_aliases={'default': 'nyle'}` で `cmd_env_backend_test` を呼び、`capsys` の行に `グローバル（グループ default → nyle）` と `個人のグローバル（グループ default → nyle）` が出ることと、同じ行のパスが `…/team/nyle/global` であることを見る |
 | 2（`env list` の見出し） | 同ファイル。`cmd_env_list` を `projects/web`（グループの宣言なし → `default`）で呼び、`=== グローバル（グループ default → nyle） (` と `=== プロジェクト: web（グループ default → nyle） (`、および件数の行 2 つを見る |
 | 3（`env backend migrate` の一覧） | 同ファイル。`cmd_env_backend_migrate(to='age', dry_run=True)` を呼び、計画の一覧の行に `グローバル（グループ default → nyle）` が出ることを見る |
 | 4（読み替えの無いグループ） | 同ファイル。`projects/web` の `env` に `DEVBASE_ACCOUNT_GROUP=kkg` を書き、見出しが `（グループ kkg）` のままで `→` を含まないことを見る |
-| 5（`version: 1`） | 既存の `tests/env/test_runtime.py`・`tests/env/test_groups.py` を変更なしで通す |
-| 6（ファイル backend） | 既存の `tests/commands/test_env_user_axis.py` を変更なしで通す |
+| 5（`version: 1`） | `tests/commands/test_env_group_label.py` に新規で 1 件。`configure_openbao(layout='flat')`（`version: 1`）で `cmd_env_list` と `cmd_env_backend_test` を呼び、**出力全体に `（グループ` が 1 つも出ない**ことを見る。既存の `tests/env/test_runtime.py`・`tests/env/test_groups.py` も変更なしで通す |
+| 6（ファイル backend） | 同ファイルに新規で 1 件。`backend: age` に `openbao:` 節を残した設定で `cmd_env_list` を呼び、出力全体に `（グループ` が 1 つも出ないことを見る。既存の `tests/commands/test_env_user_axis.py` も変更なしで通す |
 | 7（エラー文言） | `tests/env/test_secret_store_label.py` を新設。読み替えのあるグループの参照で `label()` を引数なしに呼ぶと `（グループ default）` になること、`label(group_display='default → nyle')` で前後が出ること、`group` が `None` の参照では `group_display` を渡しても無視されることを見る。あわせて、`layout: flat` でグループ付きの参照を拒む例外（`lib/devbase/env/openbao.py` の `OpenBaoBackend._check_group`）の文言に `→` が出ないことを見る |
 | 8（`env backend status`） | 既存の `tests/commands/test_env_backend.py` を変更なしで通す |
 | 9・10・11（文書） | 実装 Pull Request のレビューで読んで確かめる（自動の検査を置かない） |

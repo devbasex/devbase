@@ -27,10 +27,11 @@
 - 前提 1: `version: 1` とファイル backend（`plaintext` / `age`）では `SecretRef.group` が常に `None` に
   なる（`SecretStore.ref_group` の契約、確定仕様「参照のグループ」）。見出しにグループが付かない。
   したがって「見出しが変わらない」ことは、グループの有無で分岐する形にすれば構造として保てる
-- 前提 2: `openbao` backend であっても `layout: flat`（`version: 1`）では、`config.openbao` は存在するが
-  参照のグループが `None` である。ファイル backend では `config.openbao` そのものが `None` になる
-  （`lib/devbase/env/backend_config.py:295` の `Optional[OpenBaoSettings] = None`）。表示の側は、
-  「`config.openbao` が `None`」と「`ref.group` が `None`」の両方で今の文字列へ落ちる
+- 前提 2: **`config.openbao` が `None` かどうかで backend の種類を判定してはならない。**
+  `_openbao_from_dict`（`lib/devbase/env/backend_config.py`）は `backend: age` でも `openbao:` 節が
+  残っていれば設定を返す。ファイル backend で `None` になるのは、節が無く `version: 1` のときだけである
+  （2026-09-22 に確認）。表示の分岐は `SecretStore.storage_group(ref.group)` に任せる。この 1 つが
+  backend の種類・設定の有無・`layout`・グループの有無をまとめて見て、当たらなければ `None` を返す
 - 前提 3: `OpenBaoSettings.display_group` は `storage_group` を経由する。名前の検証と予約語の検査で
   `BackendConfigError` を送出しうる。**誤りを伝える文言の組み立ての中では呼ばない。** 見出しは
   対応するパスの解決が成功した後に出る（`path_of` も `storage_group` を通る）。そのため
@@ -105,9 +106,16 @@
 
 - [ ] 5. `version: 1`（`layout: flat`）の `openbao` backend で、`env backend test` と `env list` の見出しに
       グループが付かない（今と同じ文字列）
-      検証: 既存テスト（`tests/env/test_groups.py`・`tests/env/test_runtime.py`）が変更なしで通ること
+      検証: 新規テスト。`env list` の見出しが `=== グローバル (` で始まり、出力全体に `（グループ` が
+      1 つも出ないことを見る。`env backend test` の参照ごとの行も同じ。あわせて既存テスト
+      （`tests/env/test_groups.py`・`tests/env/test_runtime.py`）が変更なしで通ること
+      （2026-09-22 変更。既存テストは `'=== グローバル'` の前方一致で見ており、見出しに
+      `（グループ default → nyle）` が付いても通ってしまうため、これだけでは条件を確かめられない）
 - [ ] 6. ファイル backend（`plaintext` / `age`）の `env list` の見出しが今と同じ文字列
-      検証: 既存テスト（`tests/commands/test_env_user_axis.py`）が変更なしで通ること
+      検証: 新規テスト。`openbao:` 節を残した `backend: age` の設定でも、見出しに `（グループ` が
+      出ないことを見る（前提 2 の取り違えをそのまま検査する）。あわせて既存テスト
+      （`tests/commands/test_env_user_axis.py`）が変更なしで通ること
+      （2026-09-22 変更。理由は条件 5 と同じ）
 - [ ] 7. `SecretRef.label()` を通して参照を出すエラー文言・警告・ログは、読み替えのあるグループでも
       読み替える**前**の名前のままである。例は `layout: flat` でグループ付きの参照を拒む例外
       （`lib/devbase/env/openbao.py` の `OpenBaoBackend._check_group`）と、置き場の
