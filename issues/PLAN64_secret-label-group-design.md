@@ -306,7 +306,7 @@ sequenceDiagram
 | 4（読み替えの無いグループ） | 同ファイル。`projects/web` の `env` に `DEVBASE_ACCOUNT_GROUP=kkg` を書き、見出しが `（グループ kkg）` のままで `→` を含まないことを見る |
 | 5（`version: 1`） | `tests/commands/test_env_group_label.py` に新規で 1 件。`configure_openbao(layout='flat')`（`version: 1`）で `cmd_env_list` と `cmd_env_backend_test` を呼び、**出力全体に `（グループ` が 1 つも出ない**ことを見る。既存の `tests/env/test_runtime.py`・`tests/env/test_groups.py` も変更なしで通す |
 | 6（ファイル backend） | 同ファイルに新規で 1 件。`backend: age` に `openbao:` 節を残した設定で `cmd_env_list` を呼び、出力全体に `（グループ` が 1 つも出ないことを見る。既存の `tests/commands/test_env_user_axis.py` も変更なしで通す |
-| 7（エラー文言） | `tests/env/test_secret_store_label.py` を新設。読み替えのあるグループの参照で `label()` を引数なしに呼ぶと `（グループ default）` になること、`label(group_display='default → nyle')` で前後が出ること、`group` が `None` の参照では `group_display` を渡しても無視されることを見る。あわせて、`layout: flat` でグループ付きの参照を拒む例外（`lib/devbase/env/openbao.py` の `OpenBaoBackend._check_group`）の文言に `→` が出ないことを見る |
+| 7（エラー文言） | `tests/env/test_secret_store_label.py` を新設。読み替えのあるグループの参照で `label()` を引数なしに呼ぶと `（グループ default）` になること、`label(group_display='default → nyle')` で前後が出ること、`group` が `None` の参照では `group_display` を渡しても無視されることを見る。あわせて、要求文書の受け入れ条件 7 が挙げる 2 つの文言に `→` が出ないことを見る。`layout: flat` でグループ付きの参照を拒む例外（`lib/devbase/env/openbao.py` の `OpenBaoBackend._check_group`）と、置き場の `DEVBASE_ACCOUNT_GROUP` を使わない旨の警告（`lib/devbase/env/runtime.py`）である |
 | 8（`env backend status`） | 既存の `tests/commands/test_env_backend.py` を変更なしで通す |
 | 9・10・11（文書） | 実装 Pull Request のレビューで読んで確かめる（自動の検査を置かない） |
 | 12（退行） | `uv run pytest tests/ -q` の結果を実装 Pull Request の本文へ載せる |
