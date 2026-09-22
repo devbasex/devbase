@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-09-23
+
 ### Added
 - **base イメージに、Office 文書・PDF を扱う軽量の道具を足しました（PLAN63 / #160）。**
   `poppler-utils`（`pdftoppm` / `pdfinfo` / `pdffonts` / `pdftocairo`）、`python3-pil`、
@@ -748,7 +750,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.6.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.7.0...HEAD
+[3.7.0]: https://github.com/devbasex/devbase/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/devbasex/devbase/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/devbasex/devbase/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/devbasex/devbase/compare/v3.3.0...v3.4.0
