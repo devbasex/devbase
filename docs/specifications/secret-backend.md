@@ -1066,6 +1066,18 @@ cache:
 - `export` が対象のグループのプロジェクトと控えだけを集め、`import` が別グループのプロジェクトを
   含むバンドルを要求前に拒むこと（`tests/cli/test_env_bundle_backend.py`）、`doctor` がグループの
   控えとキャッシュの除外を点検すること（`tests/commands/test_env_ops_backend.py`）
+- `label()` の 3 分岐（引数なし・`group_display` を渡した共通の参照・プロジェクトの参照）と
+  `display_label` の 3 分岐（読み替えのあるグループ・読み替えの無いグループ・グループを持たない
+  参照）（`tests/env/test_secret_store_label.py`）
+- 読み替えのあるグループで、`backend test` の参照ごとの行、`env list` の節の見出しと件数の行、
+  `backend migrate` の移行の計画の一覧と `--to age` の完了後の一覧が、どれも読み替えの前と後の
+  両方を出すこと（`tests/commands/test_env_group_label.py`）
+- 読み替えの対応が無いグループ（`kkg`）では `（グループ kkg）` のままで `→` が出ないこと（同上）
+- `version: 1` とファイル backend では出力全体に `（グループ` が 1 つも現れないこと。前方一致
+  （`'=== グローバル'`）で見ると見出しが変わっても通ってしまうため、出力全体で見る（同上）
+- 引数なしの `label()` を通るエラーの文言と警告（レイアウトと合わない参照の拒否、置き場に
+  書いた `DEVBASE_ACCOUNT_GROUP` の警告）には `→` が出ず、読み替える前の名前のままであること
+  （`tests/env/test_secret_store_label.py`）
 - 実サーバに対する `devbase env backend test` / `devbase up` は手動確認。`version: 2` の
   パスの読み書きと、プロジェクトのコンテナに別グループの機密が無いことも同じ。コンテナの中の
   `bao kv get` / `patch`、チーム共通への書き込みの 403、`env token` での取り直しも同じ。ポリシーによる

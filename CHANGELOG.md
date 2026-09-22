@@ -23,6 +23,14 @@
   （`devbase up _foo` など）ができず、そのディレクトリの中で名前なしに打てば動きます。
 
 ### Changed
+- **`devbase scale` が、端末や `.env` に置いた `COMPOSE_PROFILES` を見なくなりました（PLAN65 / #192）。**
+  `devbase scale` が呼ぶ Compose の子プロセスでも `COMPOSE_PROFILES` を打ち消すようにしたためで、
+  `COMPOSE_PROFILES` を置いている場合、`devbase scale` はプロファイルのサービスを起動しなくなります。
+  確定仕様は以前から「`COMPOSE_PROFILES` を端末や `.env` に置いても devbase 経由の操作には効かない」と
+  定めており、`scale` だけが例外になっていたものを揃えました。プロファイルのサービスを起動するには
+  `devbase project profile up <名前>` を使ってください。プロファイルを持たないプロジェクトでは、
+  `devbase scale` が起動の対象にするサービスの集合は変わりません。`devbase login` の `exec` も同じ
+  環境を通るようになりましたが、観測できる振る舞いは変わりません。
 - **スナップショットの名前が、末尾に改行を持つ値（`abc\n`）を受け付けなくなりました（PLAN66 / #203）。**
   スナップショットの名前の検証を、位置引数のプロジェクト名と同じ規則（`utils/names`）へ寄せました。
   それ以外に受け付ける名前と、エラーの文言は変わりません。

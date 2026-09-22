@@ -153,6 +153,9 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
 （`docker_compose_up` は `check=True` 固定で、`subprocess.CalledProcessError` が `cmd_scale` の
 `except DevbaseError` を素通りするため使わない）。`config --services` の失敗は `DevbaseError` として
 `Scale failed: ...` で 1 になる。`project.yml` の `scale` はその時点で既に書き換わっている。
+`cmd_up` が使う `_previous_scale_compose`（旧構成の退避と書き戻し）は `cmd_scale` に入れない。
+`scale` には停止の段が無いので旧構成で停止する必要が無く、入れると失敗したときに生成物だけが
+巻き戻り、`[1/5]` で既に書き換わった `project.yml` の `scale` と食い違うためである。
 
 プロファイルを持たないプロジェクトでは、`up` / `down` / `scale` が扱うコンテナの集合と順序は
 変わらない。プロファイルのサービスは scale の対象にせず、複製されるのは開発サービスだけである。

@@ -411,6 +411,12 @@ fontconfig は Chromium / Playwright のスクリーンショット、PDF の生
 > **これらは `devbase build base --no-cache` で base を建て直すと反映されます。**
 > `devbase up` だけでは反映されません。派生イメージ（`general` など）を使っている
 > プロジェクトは、その派生イメージも建て直してください。
+> **`devbase rebuild` では建て直りません。** `devbase build --expires=7` のシノニムのため、
+> 期限内はビルドそのものを飛ばします。
+
+規則の中身と、その置き場所を動かせない理由は
+[base イメージの文字の描画と、文書を扱う道具](../specifications/base-image-rendering.md)
+にあります。
 
 ### AI CLI エイリアス
 
