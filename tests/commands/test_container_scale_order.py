@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from devbase.commands import container
-from devbase.errors import DevbaseError
+from devbase.errors import DevbaseError, DockerError
 from devbase.utils import docker
 from devbase.utils import docker_context as dc
 
@@ -73,6 +73,7 @@ def scale_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
     monkeypatch.setattr(container, '_check_group_consistency',
                         lambda project=None: calls.append(('group', None)) or True)
+    real_resolve_target = container._resolve_docker_target
     monkeypatch.setattr(container, '_resolve_docker_target', lambda context=None: dc.DockerTarget(
         context=None, source='none', remote=False, home=None, gid=None))
 
@@ -114,7 +115,7 @@ def scale_harness(tmp_path, monkeypatch):
     fake = FakeCompose(NO_PROFILE_SERVICES, calls)
     monkeypatch.setattr(subprocess, 'run', fake)
     return {'calls': calls, 'override': override, 'fake': fake, 'root': tmp_path,
-            'real_deploy': real_deploy}
+            'real_deploy': real_deploy, 'real_resolve_target': real_resolve_target}
 
 
 def _runs(calls, *words):
@@ -201,6 +202,52 @@ def test_scale_default_services_failure_is_a_scale_failure(scale_harness, monkey
 
     assert 'Scale failed: config --services failed' in caplog.text
     assert _up_calls(scale_harness['calls']) == []
+
+
+@pytest.mark.parametrize('failure_stage', ['resolve_target', 'wait_ready'])
+def test_scale_error_preserves_current_side_effects(
+        scale_harness, monkeypatch, caplog, failure_stage):
+    """現状固定: 解決失敗は更新前、ready 失敗は更新・起動後に止まり、deploy しない。"""
+    root = scale_harness['root']
+    project = root / 'project.yml'
+    override = scale_harness['override']
+    override.write_text('services:\n  dev-1: {}\n')
+    original_project = project.read_bytes()
+    original_override = override.read_bytes()
+    (root / 'deploy').write_text('#!/bin/sh\n')
+    monkeypatch.setattr(container, '_run_deploy_script_for_instances',
+                        scale_harness['real_deploy'])
+
+    if failure_stage == 'resolve_target':
+        def fail_resolve(choice, settings):
+            raise DevbaseError('target resolution failed')
+
+        monkeypatch.setattr(container, '_resolve_docker_target',
+                            scale_harness['real_resolve_target'])
+        monkeypatch.setattr(dc, 'resolve_target', fail_resolve)
+    else:
+        def fail_wait(**kwargs):
+            raise DockerError('containers not ready')
+
+        monkeypatch.setattr(container, 'wait_for_containers_ready', fail_wait)
+
+    assert container.cmd_scale(2) == 1
+
+    assert 'Scale failed' in caplog.text
+    calls = scale_harness['calls']
+    if failure_stage == 'resolve_target':
+        assert project.read_bytes() == original_project
+        assert override.read_bytes() == original_override
+        assert _up_calls(calls) == []
+    else:
+        assert project.read_bytes() == original_project.replace(b'scale: 1', b'scale: 2')
+        assert override.read_text() == 'services:\n  dev-1: {}\n  dev-2: {}\n'
+        assert override.read_bytes() != original_override
+        assert _up_calls(calls)
+
+    runs = [payload['cmd'] for name, payload in calls if name == 'run']
+    assert ['bash', 'deploy'] not in runs
+    assert all(not {'down', 'stop', 'rm'} & set(cmd) for cmd in runs)
 
 
 # ---------------------------------------------------------------------------
