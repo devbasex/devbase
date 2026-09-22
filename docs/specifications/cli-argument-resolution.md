@@ -299,7 +299,16 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 ## 運用
 
 - 名前の形に合わないプロジェクト（`_` で始まる名前など）は、名前の指定（CLI の `[name]` と
-  `devbase list` の一覧）から操作できない。そのディレクトリの中で名前なしに打てば動く
+  `devbase list` の一覧）から操作できない。そのディレクトリの中で名前なしに打てば動く。
+  **そうした名前が `projects/` に載る時点で、警告が 1 行出る**（PLAN66）。出所は 4 つある。
+  プラグインの同期が張る symlink（`plugin install` / `update` / `sync`）、同期が衝突のときに
+  合成する別名 `<名前>.<owner>`、`devbase env import` が作る実ディレクトリ、手で作った
+  実ディレクトリ（同期のたびに知らせる）。**知らせは出すが弾かない。** 同期と import は
+  今と同じものを作り、終了コードも変えない（弾くと、名前なしに打つ使い方まで失うため）。
+  `env import` の保存先が `projects/` の外（age・サーバ backend）のときは、`projects/` に何も
+  作らないことと保存先を知らせる。判定は `utils/names.is_single_segment_name`、名前の形の
+  説明文は `utils/names.NAME_FORM_HINT` の 1 か所にあり、`.` 始まりの名前は今と同じく
+  同期の対象にならず知らせも出ない
 - 名前の検証はリポジトリの中で 1 つに寄せていない。`env/bundle.py` の `is_valid_project_name`
   （先頭の `_` を許す。`env` の export / import の書庫の中の名前）、`env/secret_store.py` の
   `_validate_project_name`（機密の保存先のファイル名）、`snapshot/manager.py` の `_VALID_NAME_RE`
