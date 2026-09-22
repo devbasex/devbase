@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from devbase.log import get_logger
+from devbase.utils.names import NAME_FORM_HINT, is_single_segment_name
 
 from .registry import PluginRegistry
 from .models import InstalledPlugin, PluginInfo
@@ -100,6 +101,50 @@ def _collect_project_candidates(
     return candidates
 
 
+#: ``_warn_unusable_name`` の ``source`` に渡す、``projects/`` 直下の実ディレクトリの出所
+_SOURCE_REAL_DIRECTORY = "projects/ 直下の実ディレクトリ"
+
+
+def _warn_unusable_name(name: str, source: str, base: Optional[str] = None) -> None:
+    """``projects/`` に載る名前が名前の形に合わなければ、警告を 1 行出す (PLAN66)。
+
+    弾かない (決定 1)。symlink を張るかどうかは呼び出し側が今と同じく決め、この関数の
+    結果で分岐させないため戻り値を持たない。``verbose`` にも依存させない (知らせることが
+    唯一の効果なので、黙る経路を作らない)。
+
+    Args:
+        name: ``projects/`` に載る名前
+        source: 出所。プラグインのプロジェクトと別名ではプラグイン名、実ディレクトリでは
+            ``_SOURCE_REAL_DIRECTORY``。末尾の案内の選択にも使う
+        base: 別名 (``<base>.<owner>``) のときだけ渡す元のプロジェクト名
+    """
+    if is_single_segment_name(name):
+        return
+    if source == _SOURCE_REAL_DIRECTORY:
+        origin = source
+        advice = f"projects/{name} 自身を改名すれば直ります（プラグインとは関係しません）。"
+    elif base is None:
+        origin = f"プラグイン {source}"
+        advice = f"プラグイン {source} の projects/{name} を改名すれば直ります。"
+    elif not is_single_segment_name(base):
+        # 別名の元の名前の側が形に合わない。winner の分として元の名前の知らせも出ている
+        origin = f"プラグイン {source} の別名"
+        advice = f"プラグイン {source} の projects/{base} を改名すれば直ります。"
+    else:
+        # 元の名前は形に合うので、合わない文字は devbase が合成した <owner> の側にある
+        owner = name[len(base) + 1:]
+        origin = f"プラグイン {source} の別名"
+        advice = (
+            f"'{owner}' は devbase が別名に付け足す部分です。--link で入れたプラグインなら"
+            "元パスの末尾のディレクトリ名、repos/ 由来ならその置き場のディレクトリ名を"
+            f"変えてください。プラグイン側の projects/{base} を改名しても直りません。")
+    logger.warning(
+        "プロジェクト名として使えない形の名前が projects/ に載ります: '%s'（出所: %s）。"
+        "この名前では、名前を指定した操作（devbase up %s など）ができません（%s）。"
+        "projects/%s の中で名前なしに打てば動きます。%s",
+        name, origin, name, NAME_FORM_HINT, name, advice)
+
+
 def _link_loser_projects(
     projects_dir: Path,
     proj_name: str,
@@ -126,6 +171,7 @@ def _link_loser_projects(
             if verbose:
                 logger.warning("  Skip: %s (symlink already exists)", suffix_name)
             continue
+        _warn_unusable_name(suffix_name, loser_plugin.name, base=proj_name)
         suffix_link.symlink_to(_make_relative_target(loser_plugin, proj_name))
         created += 1
     return created
@@ -151,6 +197,12 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
         entry.name for entry in projects_dir.iterdir()
         if not entry.is_symlink() and entry.is_dir()
     }
+    # 実ディレクトリは同期が作らないが、ここが唯一それを列挙する場所 (決定 2)。
+    # `.` 始まり (.vscode など) はプロジェクトとして扱わず知らせも出さない (決定 8)。
+    # set のままだと警告の順が実行ごとに変わるため並べる
+    for name in sorted(real_projects):
+        if not name.startswith('.'):
+            _warn_unusable_name(name, _SOURCE_REAL_DIRECTORY)
 
     for entry in projects_dir.iterdir():
         if entry.is_symlink():
@@ -186,6 +238,7 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
                     proj_name, _extract_owner(loser_plugin),
                 )
 
+        _warn_unusable_name(proj_name, winner_plugin.name)
         link_path = projects_dir / proj_name
         link_path.symlink_to(_make_relative_target(winner_plugin, proj_name))
         created += 1

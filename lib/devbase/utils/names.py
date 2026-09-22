@@ -23,6 +23,10 @@ SINGLE_SEGMENT_NAME_PATTERN = r'[A-Za-z0-9][A-Za-z0-9._-]*'
 
 _SINGLE_SEGMENT_NAME_RE = re.compile(SINGLE_SEGMENT_NAME_PATTERN)
 
+#: 名前の形を利用者へ説明する文 (PLAN66 決定 7)。知らせの文に埋め込むため末尾に句点を
+#: 置かない。この module はログを出さない (副作用を持たない契約) ので、出すのは呼び出し側。
+NAME_FORM_HINT = "英数字で始まり、英数字・'.'・'-'・'_' だけからなる名前"
+
 
 def is_single_segment_name(value: str) -> bool:
     """``value`` が親ディレクトリの直下の 1 つの名前の形か (``re.fullmatch``)。
