@@ -7,7 +7,7 @@
 
 | # | 機能 | 誰が使うか |
 | --- | --- | --- |
-| F1 | プラグインの同期が `projects/` に載せる名前（プラグインのプロジェクト・合成する別名・`projects/` 直下の実ディレクトリ）の形を見て、合わないものを 1 行知らせる。symlink は今と同じく張る | `devbase plugin install` / `update` / `sync` を打つ利用者と、プラグインの作者 |
+| F1 | プラグインの同期が、`projects/` に載せる名前（プラグインのプロジェクト・合成する別名）と、そこで見つけた実ディレクトリの名前の形を見て、合わないものを 1 行知らせる。symlink は今と同じく張る | `devbase plugin install` / `update` / `sync` を打つ利用者と、プラグインの作者 |
 | F2 | `devbase env import` が名前の形に合わない名前を取り込むとき、**保存先に応じた内容で** 1 行知らせる（平文は `projects/<name>/`、age は `secrets/projects/<name>.env.age`、サーバ backend はサーバ側）。import は今と同じく通す | `devbase env import` を打つ利用者（端末の移行） |
 | F3 | スナップショットの名前の形を `utils/names` の述語へ寄せ、定数の二重持ちをやめる | devbase を保守する側 |
 
