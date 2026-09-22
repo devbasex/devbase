@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import textwrap
@@ -723,6 +724,150 @@ class TestSyncProjects:
 
         suffix_link = devbase_root / "projects" / "shared.my-local-repo"
         assert suffix_link.is_symlink()
+
+
+# 名前の形の知らせ (PLAN66 受け入れ条件 1〜5)。弾かずに警告に留める (決定 1)。
+_NAME_FORM_WARNING = "プロジェクト名として使えない形の名前"
+
+
+def _name_form_warnings(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records
+            if r.levelno == logging.WARNING and _NAME_FORM_WARNING in r.getMessage()]
+
+
+def _install_repo_plugin(registry, devbase_root, projects, priority=0,
+                         owner_repo="testorg/testrepo", name="p1"):
+    url = f"https://github.com/{owner_repo}.git"
+    _make_repo_dir(devbase_root, owner_repo, [
+        {"name": name, "path": name, "projects": projects, "priority": priority},
+    ])
+    _register_repo(registry, owner_repo, url, [{"name": name, "path": name}])
+    registry.add(InstalledPlugin(
+        name=name, version="1.0.0", source=url,
+        installed_at=registry.now_iso(),
+        path=f"repos/github.com--{owner_repo.replace('/', '--')}/{name}",
+    ))
+
+
+def _install_link_plugin(registry, devbase_root, source_dirname, projects, name="p2"):
+    """``--link`` で入れたプラグイン。別名の <owner> は元パスの basename になる"""
+    local_plugin = devbase_root / source_dirname / name
+    local_plugin.mkdir(parents=True)
+    (local_plugin / "plugin.yml").write_text(f"name: {name}\nversion: 1.0.0\npriority: 0\n")
+    for proj in projects:
+        (local_plugin / "projects" / proj).mkdir(parents=True)
+    plugins_dir = devbase_root / "plugins"
+    plugins_dir.mkdir(exist_ok=True)
+    (plugins_dir / name).symlink_to(local_plugin)
+    registry.add(InstalledPlugin(
+        name=name, version="1.0.0", source=str(devbase_root / source_dirname),
+        installed_at=registry.now_iso(),
+        path=f"plugins/{name}",
+        linked=True,
+    ))
+
+
+class TestSyncProjectsNameForm:
+    def test_unusable_plugin_project_is_linked_and_warned_once(
+            self, registry, devbase_root, caplog):
+        """1: 張る数は今と同じで、形に合わない名前だけが 1 回知らされる"""
+        _install_repo_plugin(registry, devbase_root, ["_foo", "ok-name"])
+
+        with caplog.at_level(logging.WARNING):
+            count = sync_projects(registry, verbose=False)
+
+        assert count == 2
+        assert (devbase_root / "projects" / "_foo").is_symlink()
+        assert (devbase_root / "projects" / "ok-name").is_symlink()
+        warnings = _name_form_warnings(caplog)
+        assert len(warnings) == 1
+        [message] = warnings
+        assert "'_foo'" in message
+        assert "ok-name" not in message
+        assert "名前を指定した操作" in message
+        assert "名前なしに打てば動きます" in message
+        assert "プラグイン p1" in message
+        assert "projects/_foo を改名" in message
+
+    def test_usable_names_are_not_warned(self, registry, devbase_root, caplog):
+        """2: 名前の形に合う名前だけなら、名前の形の警告は 1 行も出ない"""
+        _install_repo_plugin(registry, devbase_root, ["ok-name", "carmo_ai", "a.b"])
+
+        with caplog.at_level(logging.WARNING):
+            count = sync_projects(registry, verbose=False)
+
+        assert count == 3
+        assert _name_form_warnings(caplog) == []
+
+    def test_alias_with_unusable_owner_points_at_the_owner(
+            self, registry, devbase_root, caplog):
+        """3: 別名の <owner> の側が原因なら、プラグイン側の改名を促さない"""
+        _install_repo_plugin(registry, devbase_root, ["carmo"], priority=10)
+        _install_link_plugin(registry, devbase_root, "my plugin", ["carmo"])
+
+        with caplog.at_level(logging.WARNING):
+            count = sync_projects(registry, verbose=False)
+
+        assert count == 2
+        assert (devbase_root / "projects" / "carmo.my plugin").is_symlink()
+        warnings = _name_form_warnings(caplog)
+        assert len(warnings) == 1
+        [message] = warnings
+        assert "'carmo.my plugin'" in message
+        assert "'my plugin'" in message
+        assert "元パス" in message
+        assert "projects/carmo を改名しても直りません" in message
+
+    def test_alias_with_unusable_base_points_at_the_plugin(
+            self, registry, devbase_root, caplog):
+        """3-2: 元の名前の側が原因なら、別名もプラグイン側の改名を案内する"""
+        _install_repo_plugin(registry, devbase_root, ["_foo"], priority=10)
+        _install_link_plugin(registry, devbase_root, "my-local-repo", ["_foo"])
+
+        with caplog.at_level(logging.WARNING):
+            count = sync_projects(registry, verbose=False)
+
+        assert count == 2
+        assert (devbase_root / "projects" / "_foo").is_symlink()
+        assert (devbase_root / "projects" / "_foo.my-local-repo").is_symlink()
+        warnings = _name_form_warnings(caplog)
+        assert len(warnings) == 2
+        winner = [m for m in warnings if "'_foo'" in m]
+        alias = [m for m in warnings if "'_foo.my-local-repo'" in m]
+        assert len(winner) == 1 and len(alias) == 1
+        assert "プラグイン p2 の projects/_foo を改名" in alias[0]
+        assert "元パス" not in alias[0]
+
+    def test_unusable_real_directory_is_kept_and_warned_once(
+            self, registry, devbase_root, caplog):
+        """4: 実ディレクトリは残り、知らせは 1 回。同じ名前のプラグインの分は重ねない"""
+        _install_repo_plugin(registry, devbase_root, ["_foo", "ok-name"])
+        (devbase_root / "projects" / "_foo").mkdir()
+
+        with caplog.at_level(logging.WARNING):
+            count = sync_projects(registry, verbose=False)
+
+        assert count == 1
+        real = devbase_root / "projects" / "_foo"
+        assert real.is_dir() and not real.is_symlink()
+        warnings = _name_form_warnings(caplog)
+        assert len(warnings) == 1
+        [message] = warnings
+        assert "'_foo'" in message
+        assert "実ディレクトリ" in message
+        assert "プラグイン p1" not in message
+
+    def test_dot_directories_stay_excluded_without_warning(
+            self, registry, devbase_root, caplog):
+        """5: `.` 始まりは今と同じく載らず、名前の形の警告も出ない"""
+        _install_repo_plugin(registry, devbase_root, [".hidden", "ok-name"])
+
+        with caplog.at_level(logging.WARNING):
+            count = sync_projects(registry, verbose=False)
+
+        assert count == 1
+        assert not (devbase_root / "projects" / ".hidden").exists()
+        assert _name_form_warnings(caplog) == []
 
 
 class TestExtractOwner:
