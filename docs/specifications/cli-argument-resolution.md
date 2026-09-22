@@ -309,11 +309,15 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
   作らないことと保存先を知らせる。判定は `utils/names.is_single_segment_name`、名前の形の
   説明文は `utils/names.NAME_FORM_HINT` の 1 か所にあり、`.` 始まりの名前は今と同じく
   同期の対象にならず知らせも出ない
-- 名前の検証はリポジトリの中で 1 つに寄せていない。`env/bundle.py` の `is_valid_project_name`
-  （先頭の `_` を許す。`env` の export / import の書庫の中の名前）、`env/secret_store.py` の
-  `_validate_project_name`（機密の保存先のファイル名）、`snapshot/manager.py` の `_VALID_NAME_RE`
-  （スナップショットの名前）はそれぞれ別の用途と互換性を持つ。寄せると受け付ける名前が変わる
-  範囲が広がるため、位置引数の解決はこの仕様の規則だけを使う
+- 名前の検証はリポジトリの中で 1 つに寄せきっていない。寄せていないのは `env/bundle.py` の
+  `is_valid_project_name`（先頭の `_` を許す。`env` の export / import の書庫の中の名前）と
+  `env/secret_store.py` の `_validate_project_name`（機密の保存先のファイル名）の **2 つ**で、
+  それぞれ別の用途と互換性を持つ。寄せると受け付ける名前が変わる範囲が広がるため、位置引数の
+  解決はこの仕様の規則だけを使う。`snapshot/manager.py` のスナップショットの名前
+  （`SnapshotManager._validate_name`）は `utils/names.is_single_segment_name` を共有する
+  （PLAN66）。文字集合が同じで、寄せても受け付ける名前は広がらない（狭まるのは末尾の改行を
+  持つ名前だけ）。例外の型と文言は変えていない。述語を将来広げるとスナップショットの名前も
+  広がるため、受理と拒否を `tests/snapshot/test_manager_name.py` で固定している
 - shell 側は macOS 既定の bash 3.2 で動くこと。`[[ =~ ]]` の右辺は変数で渡す（引用した右辺は
   文字列として比べられる）。連想配列・`${var,,}`・`mapfile` を使わない
 - `cli.py` でサブコマンドを足し引きしたら、`bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` /
