@@ -75,6 +75,16 @@ def test_display_label_shows_both_names_when_the_group_is_aliased(tmp_path):
             == 'グローバル（グループ default → nyle）')
 
 
+def test_display_label_shows_both_names_for_project_references(tmp_path):
+    """現状固定: プロジェクト参照および個人プロジェクト参照でも読み替え後のグループ名を表示する。"""
+    store = _store(tmp_path, backend='openbao', layout=bc.LAYOUT_GROUP, aliases=ALIASES)
+
+    assert (store.display_label(SecretRef.for_project('web', group='default'))
+            == "プロジェクト 'web'（グループ default → nyle）")
+    assert (store.display_label(SecretRef.for_project('web', owner='user', group='default'))
+            == "個人のプロジェクト 'web'（グループ default → nyle）")
+
+
 def test_display_label_keeps_the_name_when_the_group_has_no_alias(tmp_path):
     """受け入れ条件 4: 対応が無いグループでは ``→`` を付けない"""
     store = _store(tmp_path, backend='openbao', layout=bc.LAYOUT_GROUP, aliases=ALIASES)

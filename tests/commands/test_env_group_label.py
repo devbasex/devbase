@@ -130,6 +130,17 @@ def test_migration_plan_listing_shows_both_names(aliased, openbao, capsys):
     assert 'devbase/team/nyle/global' in out
 
 
+def test_migration_plan_listing_shows_both_names_for_project(aliased, openbao, capsys):
+    """現状固定: 移行計画の一覧にプロジェクトの機密の見出しとサーバ上のパスを出す。"""
+    openbao.put('team/nyle/projects/web', {'B': '2'})
+
+    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True) == 0
+
+    out = capsys.readouterr().out
+    assert f"プロジェクト 'web'（グループ {BOTH}）" in out
+    assert 'devbase/team/nyle/projects/web' in out
+
+
 def test_completion_listing_after_migrating_to_age_shows_both_names(aliased, openbao, capsys):
     """``--to age`` の完了後の「サーバ上の機密はそのまま残っています」の一覧"""
     openbao.put('team/nyle/global', {'A': '1'})
