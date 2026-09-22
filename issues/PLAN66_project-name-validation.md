@@ -133,12 +133,12 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
 - 前提 4: 名前の形に合わない名前を作る経路は 3 つ（プラグインの同期が張る symlink、同期が
   作る別名、`env import` が作る実ディレクトリ）と、手で作った実ディレクトリである。
   手で作ったものは devbase が作っていないが、同期が既に列挙している（`real_projects`）
+- 前提 5: 名前の形に合わないプロジェクトが実在しないことは、**この端末で確かめた値である**
+  （実測 3）。他の端末に実在しないことは確かめられない
 - 前提 6: **`env import` が `projects/<name>/` を作るのは、機密の保存先がファイル backend の
   平文のときだけである。** 書き出し先は `io_import._build_plans` が `store.path(ref)` で
   決める。age の backend では `secrets/projects/<name>.env.age`、サーバの backend では
   サーバ側へ書く。知らせの文は保存先ごとに変える
-- 前提 5: 名前の形に合わないプロジェクトが実在しないことは、**この端末で確かめた値である**
-  （実測 3）。他の端末に実在しないことは確かめられない
 
 ## 対象範囲
 
@@ -173,7 +173,7 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
 | 用語 | 意味 |
 | --- | --- |
 | 名前の形 | `[A-Za-z0-9][A-Za-z0-9._-]*` の全体一致（確定仕様の「用語」と同じ） |
-| 名前を作る経路 | `projects/` の直下に名前を出現させる処理。同期の symlink・同期の別名・`env import` の実ディレクトリの 3 つ |
+| 名前を作る経路 | 名前を `projects/` の直下か機密の置き場に出現させる処理。同期の symlink・同期の別名・`env import` の書き出しの 3 つ（import の書き出し先は保存先で変わる。前提 6） |
 | 別名 | 名前の衝突に敗れたプラグインのプロジェクトへ張る `<プロジェクト名>.<owner>` の symlink |
 | 知らせ | `logger.warning` の 1 行。処理は止めない |
 
@@ -226,12 +226,14 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
       操作: `devbase env import <書庫>` を実行する。
       結果: 名前の形についての警告が 1 行も出ない。
       検証: 同上。
-- [ ] 9. 前提: 機密の保存先が age の backend で、書庫に `env/projects/_foo/.env` が
-      入っている。
+- [ ] 9. 前提: `backend_config` に `backend: age` を明示保存した root で、書庫に
+      `env/projects/_foo/.env` が入っている。
       操作: `devbase env import <書庫>` を実行する。
       結果: `projects/_foo/` は作られず、`secrets/projects/_foo.env.age` が書かれる（今と同じ）。
       警告は 1 回出て、**実際の保存先を名指しし、`projects/` に作るとは書かない**。
-      検証: 同上。
+      検証: 既存の `tests/cli/test_env_bundle_backend.py` へテストを足す。
+      backend の明示は `bc.save(root, bc.BackendConfig(backend='age'))` で行う。
+      既存の `test_import_into_an_explicit_age_backend_encrypts_new_references` と同じ形にする。
 
 スナップショットの名前の規則:
 
@@ -302,7 +304,7 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
 | --- | --- |
 | プロジェクト構造 | 名前の形の規則は `lib/devbase/utils/names.py` に 1 つ（確定仕様「構成要素」）。この module は `re` だけに依存し副作用を持たない（ログを足さない）。知らせは呼び出し側の logger が出す |
 | コーディング規約 | 既存の logger（`devbase.plugin.syncer` / `devbase.env.io_import`）を使い、`logger.warning` は 1 件 1 行。文言は日本語 |
-| テスト戦略 | 同期は `tests/plugin/test_repos_core.py` の既存の fixture（`devbase_root` = `tmp_path`、`registry`、`_make_repo_dir`）で単体。import は `tests/env/test_io_import.py` の流儀。**pytest は実環境の `DEVBASE_ROOT` を継承する**（隔離は #217 が入れる）ため、どのテストも `DEVBASE_ROOT` に依存しない引数渡しの経路だけを使う |
+| テスト戦略 | 同期は `tests/plugin/test_repos_core.py` の既存の fixture（`devbase_root` = `tmp_path`、`registry`、`_make_repo_dir`）で単体。import は `tests/env/test_io_import.py` の流儀で、age の保存先は `tests/cli/test_env_bundle_backend.py` の流儀（`backend_config` に `backend: age` を明示保存する）。**pytest は実環境の `DEVBASE_ROOT` を継承する**（隔離は #217 が入れる）ため、どのテストも `DEVBASE_ROOT` に依存しない引数渡しの経路だけを使う |
 
 ## 境界
 

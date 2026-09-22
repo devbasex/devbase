@@ -8,7 +8,7 @@
 | # | 機能 | 誰が使うか |
 | --- | --- | --- |
 | F1 | プラグインの同期が `projects/` に載せる名前（プラグインのプロジェクト・合成する別名・`projects/` 直下の実ディレクトリ）の形を見て、合わないものを 1 行知らせる。symlink は今と同じく張る | `devbase plugin install` / `update` / `sync` を打つ利用者と、プラグインの作者 |
-| F2 | `devbase env import` が `projects/<name>/` を作るとき、名前の形に合わないものを 1 行知らせる。import は今と同じく通す | `devbase env import` を打つ利用者（端末の移行） |
+| F2 | `devbase env import` が名前の形に合わない名前を取り込むとき、**保存先に応じた内容で** 1 行知らせる（平文は `projects/<name>/`、age は `secrets/projects/<name>.env.age`、サーバ backend はサーバ側）。import は今と同じく通す | `devbase env import` を打つ利用者（端末の移行） |
 | F3 | スナップショットの名前の形を `utils/names` の述語へ寄せ、定数の二重持ちをやめる | devbase を保守する側 |
 
 ## 構成要素
@@ -18,7 +18,7 @@
 | `lib/devbase/utils/names.py` の `NAME_FORM_HINT`（新設） | 足す | 名前の形を説明する文の定数。`re` だけに依存し副作用を持たない module の契約（確定仕様「構成要素」）を保つため、**ログを出さない**。値は `container.py` の既存の文言と同じ「英数字で始まり、英数字・'.'・'-'・'_' だけからなる名前」 |
 | `lib/devbase/plugin/syncer.py` の `_warn_unusable_name`（新設） | 足す | 1 つの名前が形に合わなければ `logger.warning` を 1 行出す。合えば何もしない。戻り値を持たない（呼び出し側の分岐に使わせない） |
 | `lib/devbase/plugin/syncer.py` の `_link_loser_projects` | 変える | 合成した別名（`f"{proj_name}.{owner}"`）に `_warn_unusable_name` を呼ぶ。symlink を張る条件は変えない |
-| `lib/devbase/plugin/syncer.py` の `sync_projects` | 変える | 2 か所で `_warn_unusable_name` を呼ぶ。(1) `real_projects` を採取した直後に、その名前ごと。(2) winner へ symlink を張る直前（`real_projects` のスキップより後）に、その名前 1 回 |
+| `lib/devbase/plugin/syncer.py` の `sync_projects` | 変える | 2 か所で `_warn_unusable_name` を呼ぶ。(1) `real_projects` を採取した直後に、その名前ごと（**`sorted(real_projects)` で走査する**。`real_projects` は `set` で、並べないと警告の順が実行ごとに変わる。既存の `sorted(project_candidates.items())` と同じ扱い）。(2) winner へ symlink を張る直前（`real_projects` のスキップより後）に、その名前 1 回 |
 | `lib/devbase/env/_import_merge.py` の `project_name_of`（新設） | 足す | 1 つのメンバー名から、そのプロジェクト名を返す純粋な関数（当たらなければ `None`）。`_PROJECT_ENV_RE` を使う |
 | `lib/devbase/env/io_import.py` の `import_bundle` | 変える | `_build_plans` が返した `plans` を回し、`plan.arcname` の名前が形に合わなければ 1 行知らせる。**文は `plan.target` と `plan.ref` から保存先を読んで選ぶ**（決定 4）。`--dry-run` の判定より前に置く |
 | `lib/devbase/snapshot/manager.py` の `_VALID_NAME_RE` | 消す | 文字の規則を `utils/names` へ寄せる |
@@ -96,7 +96,7 @@ sequenceDiagram
     participant L as _link_loser_projects
     U->>S: devbase plugin sync
     S->>S: real_projects を採取（実ディレクトリ）
-    loop 実ディレクトリの名前ごと
+    loop sorted(real_projects) の名前ごと
         S->>W: 名前の形を見る
         W-->>U: 合わなければ警告 1 行
     end
@@ -117,25 +117,31 @@ sequenceDiagram
 のは、保存先が `plan.target` と `plan.ref` で決まるためである（決定 4）。**`--dry-run` でも
 出る**のは、書き込む前に何が起きるかを知らせるためである。
 
-## 入出力の契約
-
-### 新設・変更する関数
+## 入出力の契約: 新設・変更する関数
 
 | 関数 | シグネチャ | 契約 |
 | --- | --- | --- |
 | `utils/names.NAME_FORM_HINT` | `str`（module の定数） | 名前の形を説明する文。末尾に句点を置かない（呼び出し側が文へ埋める） |
-| `syncer._warn_unusable_name` | `(name: str, source: str) -> None` | `is_single_segment_name(name)` が True なら何もしない。False なら `logger.warning` を 1 行。`source` は名前の出所（プラグイン名・`別名`・`実ディレクトリ`）で、文に埋める |
+| `syncer._warn_unusable_name` | `(name: str, source: str) -> None` | `is_single_segment_name(name)` が True なら何もしない。False なら `logger.warning` を 1 行。`source` は名前の出所（プラグイン名・別名・実ディレクトリ）で、**文に埋めるだけでなく、末尾の案内の選択にも使う**（上の「警告の文」の出所の表） |
 | `_import_merge.project_name_of` | `(arcname: str) -> Optional[str]` | 純粋。`_PROJECT_ENV_RE` に当たれば group(1)、当たらなければ `None`。例外を投げない（メンバーの妥当性は `filter_members` が既に見ている） |
 | `snapshot.SnapshotManager._validate_name` | `(name: str) -> None`（変更なし） | `is_single_segment_name(name)` が False なら `SnapshotError`。文言は今と同じ |
 
-### 警告の文
+## 入出力の契約: 警告の文
 
 ```text
 プロジェクト名として使えない形の名前が projects/ に載ります: '_foo'（出所: プラグイン p1）。
 この名前では、名前を指定した操作（devbase up _foo など）ができません（NAME_FORM_HINT）。
-projects/_foo の中で名前なしに打てば動きます。名前を変えるにはプラグイン側の
-projects/_foo を改名してください。
+projects/_foo の中で名前なしに打てば動きます。<出所ごとの案内>
 ```
+
+**`<出所ごとの案内>` は出所で分かれる。** 名前を作っている場所が違うため、同じ案内が
+当てはまらない。
+
+| 出所 | 案内 |
+| --- | --- |
+| プラグインのプロジェクト（出所はプラグイン名） | プラグイン側の `projects/<名前>` を改名する |
+| 別名（devbase が合成した `<名前>.<owner>`） | 名前は devbase が合成している。`--link` なら元パスの basename、`repos/` 由来ならその置き場の名前が `<owner>` になる。**プラグイン側の `projects/` を改名しても直らない**ことを書く |
+| `projects/` 直下の実ディレクトリ | その実ディレクトリ自身を改名する（プラグインは関係しない） |
 
 - **1 件 1 回。** 名前 1 つにつき 1 行だけ出す。**そのために、プラグインのプロジェクトの検査は
   `sync_projects` が symlink を張る直前に置く**（決定 2）。候補の集約
@@ -372,7 +378,7 @@ import する。**足すのは知らせだけである。**
 
 | # | 名前 | 含むもの | 依存 |
 | --- | --- | --- | --- |
-| 1 | 知らせ（F1・F2） | `utils/names.py`（定数）・`plugin/syncer.py`・`env/_import_merge.py`・`env/io_import.py`・`tests/plugin/test_repos_core.py`・`tests/env/test_io_import.py`・確定仕様の「運用」の 1 つ目・`CHANGELOG.md` | 無し |
+| 1 | 知らせ（F1・F2） | `utils/names.py`（定数）・`plugin/syncer.py`・`env/_import_merge.py`・`env/io_import.py`・`tests/plugin/test_repos_core.py`・`tests/env/test_io_import.py`・`tests/cli/test_env_bundle_backend.py`・確定仕様の「運用」の 1 つ目・`CHANGELOG.md` | 無し |
 | 2 | スナップショットの寄せ（F3） | `snapshot/manager.py`・`tests/snapshot/test_manager_name.py`（新設）・確定仕様の「運用」の 2 つ目・`CHANGELOG.md` | Pull Request 1 の**マージ**（同じファイルの別の箇条書き） |
 
 ## テスト設計
@@ -387,12 +393,12 @@ import する。**足すのは知らせだけである。**
 | 6（import が作り、警告が出る） | 既存の `tests/env/test_io_import.py` へテストを足す。`bundle.pack` で `env/projects/_foo/.env` と `env/projects/ok-name/.env` の書庫を作り、`import_bundle(tmp_path, ImportOptions(source=..., include_global=False, include_metadata=False))` が 0 を返し、両方のディレクトリができ、`caplog` に `_foo` の警告が 1 件 |
 | 7（`--dry-run` でも警告） | 同上。`dry_run=True` で `projects/` に何も作られず、警告が 1 件 |
 | 8（合う名前では警告が出ない） | 同上。`ok-name` だけの書庫で警告が 0 件 |
-| 9（age の保存先では文が変わる） | 同上。age の backend を持つ root（既存の流儀は `tests/env/test_store_roundtrip.py` の fixture）で import し、`projects/_foo/` ができず `secrets/projects/_foo.env.age` が書かれ、警告が 1 件でその文に保存先が入り `projects/` を作るとは書かないこと |
+| 9（age の保存先では文が変わる） | 既存の `tests/cli/test_env_bundle_backend.py` へテストを足す。**`bc.save(root, bc.BackendConfig(backend='age'))` で backend を明示する**（既存の `test_import_into_an_explicit_age_backend_encrypts_new_references` と同じ形）。明示しないと保存先が無い参照は平文へ落ち、`projects/_foo/` ができてこの条件を確かめられない。`projects/_foo/` ができず `secrets/projects/_foo.env.age` が書かれ、警告が 1 件でその文に保存先が入り `projects/` を作るとは書かないこと |
 | 10（末尾の改行を弾く） | `tests/snapshot/test_manager_name.py`（新設）。`SnapshotManager(tmp_path)._validate_name("abc\n")` が `SnapshotError`（`tmp_path` を渡す流儀は `tests/snapshot/test_auto_snapshot.py:74` と同じ） |
 | 11（受理と拒否の固定） | 同上。`pytest.mark.parametrize` で受理 4 件・拒否 8 件（拒否は `abc\n` を含む。受け入れ条件 11 の列挙と同じ集合）。拒否の文言が `無効なスナップショット名` を含む |
 | 12（定数が残っていない） | `grep -n "_VALID_NAME_RE" lib/devbase/snapshot/manager.py` を Pull Request 2 の本文の実測へ載せる |
 | 13・14（確定仕様と CHANGELOG） | 実装 Pull Request の差分（レビューで見る） |
-| 15・16（退行しない） | 既存の `TestSyncProjects`（7 件）・`tests/env/test_io_import.py`・`test_import_merge.py`・`test_store_roundtrip.py` を**変更せずに**通す |
+| 15・16（退行しない） | 既存の `TestSyncProjects`（7 件）・`tests/env/test_io_import.py`・`test_import_merge.py`・`test_store_roundtrip.py`・`tests/cli/test_env_bundle_backend.py` を**変更せずに**通す（足すテストは新しい関数として書く） |
 | 17（全体） | `uv run --locked pytest -q tests/` を手元で実行し、結果を Pull Request 本文へ載せる（`release/v3.7.0` を base にすると CI が動かない。#216） |
 
 テストの流儀:
