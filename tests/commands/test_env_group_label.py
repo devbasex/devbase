@@ -141,6 +141,41 @@ def test_migration_plan_listing_shows_both_names_for_project(aliased, openbao, c
     assert 'devbase/team/nyle/projects/web' in out
 
 
+@pytest.fixture
+def aliased_age(aliased):
+    """``aliased`` と同じ置き場のまま backend を age にし、age 側に機密を置く
+
+    ``tests/commands/test_env_backend_migrate.py`` の ``grouped_age_root`` と同じ構成。
+    """
+    from devbase.env.secret_store import SecretRef, SecretStore
+
+    store = SecretStore(aliased, config=bc.BackendConfig())
+    store.age.save(SecretRef.for_global(), {'A': 'a-value'})
+    store.age.save(SecretRef.for_project('web'), {'W': 'w-value'})
+    bc.save(aliased, bc.BackendConfig(backend='age', openbao=bc.load(aliased).openbao,
+                                      version=2))
+    return aliased
+
+
+def test_migration_plan_listing_to_openbao_shows_both_names_next_to_the_path(
+        aliased_age, openbao, capsys):
+    """現状固定: 逆向き (age → openbao) の一覧も読み替えの前と後と移行先のパスを並べる。"""
+    assert env_backend.cmd_env_backend_migrate(aliased_age, to='openbao', assume_yes=True,
+                                               dry_run=True) == 0
+
+    out = capsys.readouterr().out
+    for label, path in ((f'グローバル（グループ {BOTH}）', 'devbase/team/nyle/global'),
+                        (f"プロジェクト 'web'（グループ {BOTH}）",
+                         'devbase/team/nyle/projects/web')):
+        # 見出しと移行先のパスが同じ行に並ぶ (桁揃えの空白は見ない)
+        rows = [line for line in out.splitlines() if line.startswith(f'  {label}')]
+        assert len(rows) == 1, label
+        assert path in rows[0]
+    # --dry-run なのでサーバへは書かず、機密の値も出さない
+    assert not any(r.kv_path for r in openbao.requests_of('POST'))
+    assert 'a-value' not in out and 'w-value' not in out
+
+
 def test_completion_listing_after_migrating_to_age_shows_both_names(aliased, openbao, capsys):
     """``--to age`` の完了後の「サーバ上の機密はそのまま残っています」の一覧"""
     openbao.put('team/nyle/global', {'A': '1'})
