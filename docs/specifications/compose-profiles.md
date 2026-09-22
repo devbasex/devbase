@@ -36,6 +36,8 @@ dev のほかに app / db などのサービスを持つプロジェクトで、
 | プロファイルの操作 | `lib/devbase/commands/container.py` | 共通の前段 `_profile_targets`、`cmd_profile_up` / `cmd_profile_down` / `cmd_profile_list`、`_dev_instance_indices`、`_running_services` / `_running_label` |
 | 振り分け | `lib/devbase/commands/container.py` | `_dispatch_lifecycle` の handlers の `profile` と `_dispatch_profile`。名前を指定したときの切替 `_enter_project`。`cmd_container` の非推奨の警告 |
 | `devbase up` の起動 | `lib/devbase/commands/container.py` | `_run_deploy_pipeline` が停止より前に `default_services` を求め、`docker_compose_up` へ渡す |
+| `devbase scale` の起動 | `lib/devbase/commands/container.py` | `cmd_scale` が生成物を作った直後に `default_services` を求め、`docker_compose` へ `up -d --no-recreate <既定のサービス...>` を `check=False` で渡す |
+| Compose 設定の読み取り | `lib/devbase/commands/container.py` | `_compose_config_services` が `docker_compose` で `config --format json` を読む唯一の関数。`_resolve_dev_service`（`build --expires` / `rebuild`）と `_ensure_images`（起動前のイメージ確認）がその上に載る |
 | フックの環境変数 | `lib/devbase/project/runtime.py`、`commands/container.py` | `active_profiles_env` / `hook_env(config, active_profiles=())`。`_hook_vars`、`_run_deploy_script_for_instances(..., active_profiles=()) -> bool`、`_run_pre_up_hook` |
 | 引数の受け口 | `lib/devbase/cli.py` | `_add_profile_subparser(sub, with_name=...)`、`SUBCMD_MAP` と `SUBCMD_PREFIX_PREFERENCES` |
 | 一覧の操作メニュー | `lib/devbase/tui/actions_project.py` | `_PROFILE_OPS` / `_profile_names` / `_running_ops` / `_op_profile`、`_BACK_TO_TOP_OPS` |
@@ -73,15 +75,16 @@ devbase 経由の Compose では、有効なプロファイルを devbase が経
 
 | 経路 | 場所 | 用途 |
 | --- | --- | --- |
-| `docker_compose` | `utils/docker.py` | `up` / `down` / `profile up` / `profile down` / `profile list` の `ps` |
+| `docker_compose` | `utils/docker.py` | `up` / `down` / `scale` の `up -d --no-recreate` / `profile up` / `profile down` / `profile list` の `ps`、`_compose_config_services` の `config --format json`（`build --expires` / `rebuild` と起動前のイメージ確認） |
 | `_compose_lines` | `commands/container.py` | `config --profiles` / `config --services`（プロファイルの解決） |
 | `_compose_run` | `commands/container.py` | `devbase ps` / `devbase logs` |
-| `_resolve_dev_service` | `commands/container.py` | `build --expires` / `rebuild` が読む `config --format json` |
-| `_read_compose_services` | `commands/container.py` | 起動前のイメージ確認が読む `config --format json` |
+| `cmd_login` | `commands/container.py` | `devbase login` の `exec <開発サービス名>-<n> bash` |
 | `_query_container_name` | `editor/opener.py` | エディタを開くときの `ps --format json` |
 
-`cmd_scale` が直接呼ぶ `docker compose -f <生成物> up -d --no-recreate` はこの対象に含めない。
-プロファイルの入口ではないためである。
+devbase が Compose を起動する経路はこの表の 5 つだけである。`docker_compose` 以外の 4 つは
+`subprocess.run` を直接呼び、`env=compose_env()` を自分で渡す。打ち消しが要るのはプロファイルの
+入口だからではなく、子プロセスへ利用者の値がそのまま渡るからである。読み取りだけの経路も
+`exec` も同じ扱いにする。
 
 値の決め方には次の理由がある。
 
@@ -107,6 +110,7 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
 | 操作 | コマンド列（`docker compose -f <ファイル>` の後） | 子プロセスの `COMPOSE_PROFILES` |
 | --- | --- | --- |
 | `devbase up` の起動 | `up -d <既定のサービス...>`（`--profile` なし） | `__devbase_none__` |
+| `devbase scale` の起動 | `up -d --no-recreate <既定のサービス...>`（`--profile` なし） | `__devbase_none__` |
 | `devbase down` / `devbase up` 冒頭の停止 | `--profile '*' down -t0` | `__devbase_none__` |
 | `profile up X` | `--profile X up -d --no-deps <サービス...>` | `__devbase_none__` |
 | `profile down X`（1 段目） | `--profile X stop <サービス...>` | `__devbase_none__` |
@@ -115,6 +119,9 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
 | 既定のサービスの解決 | `config --services` | `__devbase_none__` |
 | プロファイル名の解決 | `config --profiles` | `__devbase_none__` |
 | プロファイル X の解決 | `--profile X config --services` | `__devbase_none__` |
+| Compose 設定の読み取り | `config --format json`（`-f` なし） | `__devbase_none__` |
+| `devbase login`（生成物あり） | `exec <開発サービス名>-<n> bash` | `__devbase_none__` |
+| `devbase login`（生成物なし） | `exec --index=<n> <開発サービス名> bash`（`-f` なし） | `__devbase_none__` |
 
 `docker_compose_up(compose_file, detach=True, services=())` は `services` が空なら従来どおり
 サービス名を付けない。`docker_compose_down` は引数を増やさず、常に `--profile '*'` を付ける。
@@ -136,6 +143,16 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
 なっても、一覧に無いサービスを起動しないためである。停止は `--profile '*'` で対象を広げる向きの
 指定のため、`.env` が別のプロファイルを有効にしても対象は狭まらない。`--profile '*'` を付けない
 と、プロファイルのサービスが動いたまま残り、network の削除にも失敗する。
+
+`devbase scale` は既存のコンテナを止めずにインスタンスを足す操作で、停止の段を持たない。
+`cmd_scale` は生成物を作った直後に `default_services(override_file)` を求め、
+`docker_compose(['up', '-d', '--no-recreate', *services], compose_file=override_file, check=False)`
+で起動する。起動の対象を明示する理由は `up` と同じである。プロファイルのサービスは起動の対象に
+入れず、既に動いているプロファイルのサービスは対象の外にあるため止めない。`check=False` で
+終了コードを受け、0 以外なら `Failed to start new containers` を出して 1 を返す
+（`docker_compose_up` は `check=True` 固定で、`subprocess.CalledProcessError` が `cmd_scale` の
+`except DevbaseError` を素通りするため使わない）。`config --services` の失敗は `DevbaseError` として
+`Scale failed: ...` で 1 になる。`project.yml` の `scale` はその時点で既に書き換わっている。
 
 プロファイルを持たないプロジェクトでは、`up` / `down` / `scale` が扱うコンテナの集合と順序は
 変わらない。プロファイルのサービスは scale の対象にせず、複製されるのは開発サービスだけである。
@@ -384,7 +401,7 @@ TUI では、復元境界が機密の注入履歴も戻すため、別プロジ�
 - `devbase up` はプロファイルのサービスも止め、既定のサービスだけを起動する。テスト用サーバを
   使い続けるなら `up` の後に `profile up` をやり直す
 - `devbase down` はプロファイルのサービスも含めて削除する。`devbase scale` はプロファイルの
-  サービスを複製しない
+  サービスを複製せず、起動の対象にも入れない。既に動いているプロファイルのサービスは止めない
 - `COMPOSE_PROFILES` を端末や `.env` に置いても devbase 経由の操作には効かない。素の
   `docker compose` には従来どおり効く
 - プロファイル名に `__devbase_none__` を使わない
@@ -398,13 +415,21 @@ TUI では、復元境界が機密の注入履歴も戻すため、別プロジ�
 検査する。実 docker と実 `DEVBASE_ROOT` には触れない。
 
 - `compose_env` が `COMPOSE_PROFILES` を打ち消し用の名前にし（未設定でも入れる）、プロセスの環境を
-  変えないこと。`docker_compose`・`ps` / `logs`・`config` を読む 2 経路・エディタの `ps` が
-  その環境を渡すこと。`down` が `--profile '*' down -t0` になり、`up` がサービス無しで従来の形、
+  変えないこと。`docker_compose`・`ps` / `logs`・`config --services`・`login` の `exec`
+  （生成物あり・なし）・エディタの `ps` がその環境を渡し、`config --format json` を読む 2 経路が
+  `docker_compose` を通ること。`_compose_config_services` が非 0 で空の `services`、読めない JSON で
+  `json.JSONDecodeError` を返し、`_resolve_dev_service` がどちらでも `None` を返すこと。`down` が `--profile '*' down -t0` になり、`up` がサービス無しで従来の形、
   サービス有りで `--profile` 無しに名前を並べること（`tests/utils/test_docker_profiles.py`）
 - `devbase up` が生成物の既定のサービスを起動へ渡し、`default_services` が失敗したときは
   コンテナを止めないこと（`tests/commands/test_container_up_order.py`）。既存の `up` の harness は
   `default_services` を差し替える（`test_up_roundtrips.py` / `test_container_context.py` /
   `test_container_bao.py` / `tui/test_dispatch.py`）
+- `devbase scale` が `up -d --no-recreate <既定のサービス...>` を打ち消し用の名前で起動し、呼び出し側の
+  `os.environ` を変えないこと。起動の非 0 で `Failed to start new containers` と 1 になり例外を
+  出さないこと。プロファイルのサービスを起動の対象に入れないこと。正常系の順序
+  （グループの検査 → `write_scale` → ボリューム → network → 生成 → `default_services` → 起動 →
+  ready 待ち → bao の token → `./deploy`）、bao と `./deploy` の範囲が `current + 1` から `new` まで
+  であること、停止を呼ばないこと（`tests/commands/test_container_scale_order.py`）
 - `default_services` が打ち消し用の名前で `config --services` を呼ぶこと、`profile_services` が
   既定のサービスを差し引き、Compose が展開した名前を使い、プロファイルが無ければ空、解決の失敗で
   `DevbaseError` になること。生成物が無いときに Compose を呼ばずに 1、未知の名前で起動・停止を呼ばずに
