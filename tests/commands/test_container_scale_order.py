@@ -106,13 +106,15 @@ def scale_harness(tmp_path, monkeypatch):
                         lambda **k: calls.append(('wait', k)))
     monkeypatch.setattr(container, '_push_bao_token',
                         lambda *a, **k: calls.append(('bao', {'args': a, **k})))
+    real_deploy = container._run_deploy_script_for_instances
     monkeypatch.setattr(container, '_run_deploy_script_for_instances',
                         lambda script, indices, config=None, active_profiles=():
                         calls.append(('deploy', list(indices))) or True)
 
     fake = FakeCompose(NO_PROFILE_SERVICES, calls)
     monkeypatch.setattr(subprocess, 'run', fake)
-    return {'calls': calls, 'override': override, 'fake': fake, 'root': tmp_path}
+    return {'calls': calls, 'override': override, 'fake': fake, 'root': tmp_path,
+            'real_deploy': real_deploy}
 
 
 def _runs(calls, *words):
@@ -267,6 +269,28 @@ def test_scale_skips_deploy_without_the_script(scale_harness):
 
     names = [name for name, _ in scale_harness['calls']]
     assert 'bao' in names and 'deploy' not in names
+
+
+def test_scale_continues_after_deploy_failure_and_returns_zero(scale_harness, monkeypatch):
+    """現状固定: deploy の 2 が失敗しても 3 を実行し、scale 自体は 0 を返す。"""
+    (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+    monkeypatch.setattr(container, '_run_deploy_script_for_instances',
+                        scale_harness['real_deploy'])
+    deployed_indices = []
+
+    def run(cmd, **kwargs):
+        if cmd == ['bash', 'deploy']:
+            index = kwargs['env']['DEVBASE_INSTANCE_INDEX']
+            deployed_indices.append(index)
+            if index == '2':
+                raise subprocess.CalledProcessError(1, cmd)
+            return subprocess.CompletedProcess(cmd, 0)
+        return scale_harness['fake'](cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+
+    assert container.cmd_scale(3) == 0
+    assert deployed_indices == ['2', '3']
 
 
 def test_scale_never_stops_containers(scale_harness):
