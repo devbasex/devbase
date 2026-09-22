@@ -182,7 +182,8 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
       結果: 2 つの symlink が**どちらも張られ**、作られた数も今と同じ。`_foo` について警告が
       1 回だけ出る。警告は名前・名前を指定した操作ができないこと・そのディレクトリで名前なしに
       打てば動くことを含む。終了コードは 0。
-      検証: `tests/plugin/test_repos_core.py`（新設。`caplog` で警告を見る）。
+      検証: 既存の `tests/plugin/test_repos_core.py` の `TestSyncProjects` へテストを足す
+      （`caplog` で警告を見る）。
 - [ ] 2. 前提: プラグインの `projects/` の名前がすべて名前の形に合う。
       操作: 同上。
       結果: 名前の形についての警告が 1 行も出ない。
@@ -212,7 +213,7 @@ repos 由来の owner = 'github.com--volareinc--devbase-ext' → 'carmo.github.c
       操作: `devbase env import <書庫>`（`import_bundle`）を実行する。
       結果: 今と同じく 2 つのディレクトリが作られ、終了コードは 0。`_foo` について警告が
       1 回出る。
-      検証: `tests/env/test_io_import.py`（新設）。
+      検証: 既存の `tests/env/test_io_import.py` へテストを足す。
 - [ ] 7. 前提: 6 と同じ書庫。
       操作: `--dry-run` を付けて実行する。
       結果: 書き込みは起きない。`_foo` の警告は出る。

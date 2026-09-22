@@ -17,9 +17,8 @@
 | --- | --- | --- |
 | `lib/devbase/utils/names.py` の `NAME_FORM_HINT`（新設） | 足す | 名前の形を説明する文の定数。`re` だけに依存し副作用を持たない module の契約（確定仕様「構成要素」）を保つため、**ログを出さない**。値は `container.py` の既存の文言と同じ「英数字で始まり、英数字・'.'・'-'・'_' だけからなる名前」 |
 | `lib/devbase/plugin/syncer.py` の `_warn_unusable_name`（新設） | 足す | 1 つの名前が形に合わなければ `logger.warning` を 1 行出す。合えば何もしない。戻り値を持たない（呼び出し側の分岐に使わせない） |
-| `lib/devbase/plugin/syncer.py` の `_collect_project_candidates` | 変える | `discover_projects` が返した名前ごとに `_warn_unusable_name` を呼ぶ。集約の結果は変えない |
 | `lib/devbase/plugin/syncer.py` の `_link_loser_projects` | 変える | 合成した別名（`f"{proj_name}.{owner}"`）に `_warn_unusable_name` を呼ぶ。symlink を張る条件は変えない |
-| `lib/devbase/plugin/syncer.py` の `sync_projects` | 変える | `real_projects` を採取した直後に、その名前ごとに `_warn_unusable_name` を呼ぶ |
+| `lib/devbase/plugin/syncer.py` の `sync_projects` | 変える | 2 か所で `_warn_unusable_name` を呼ぶ。(1) `real_projects` を採取した直後に、その名前ごと。(2) winner へ symlink を張る直前（`real_projects` のスキップより後）に、その名前 1 回 |
 | `lib/devbase/env/_import_merge.py` の `project_names`（新設） | 足す | 絞り込み後のメンバー名から、書き出し先のプロジェクト名を順序を保って重複なく返す純粋な関数。`_PROJECT_ENV_RE` を使い、当たらないメンバーは無視する |
 | `lib/devbase/env/io_import.py` の `import_bundle` | 変える | `filter_members` の直後に `project_names` の結果を見て、形に合わない名前を 1 行知らせる。`--dry-run` の判定より前に置く |
 | `lib/devbase/snapshot/manager.py` の `_VALID_NAME_RE` | 消す | 文字の規則を `utils/names` へ寄せる |
@@ -32,6 +31,7 @@
 | 変えないもの | 補足 |
 | --- | --- |
 | `discover_projects` | `.` 始まりの除外も含めて現状のまま（決定 8） |
+| `_collect_project_candidates` | 候補の集約。ここでは検査しない（決定 2） |
 | `sync_projects` が返す数 | 張った symlink の数（決定 1） |
 | `_extract_owner`・`_make_relative_target` | 別名の合成の規則（#228 で起票した文書の食い違いも含む） |
 | `_PROJECT_ENV_RE` のパターン | 書庫の中の名前の規則（決定 4） |
@@ -52,7 +52,6 @@ graph TD
         SP --> LL[_link_loser_projects]
         SP --> WU[_warn_unusable_name]
         CC --> DP[discover_projects]
-        CC --> WU
         LL --> WU
         LL --> EO[_extract_owner]
         WU --> N
@@ -101,14 +100,12 @@ sequenceDiagram
         S->>W: 名前の形を見る
         W-->>U: 合わなければ警告 1 行
     end
-    S->>C: 候補を集める
-    loop プラグインのプロジェクトごと
-        C->>W: 名前の形を見る
+    S->>C: 候補を集める（検査しない）
+    loop 張る名前ごと（実ディレクトリのスキップより後）
+        S->>W: 名前の形を見る
         W-->>U: 合わなければ警告 1 行
-    end
-    S->>S: winner へ symlink を張る（無条件。今と同じ）
-    S->>L: 敗れた側の別名を張る
-    loop 別名ごと
+        S->>S: winner へ symlink を張る（無条件。今と同じ）
+        S->>L: 敗れた側の別名を張る
         L->>W: 合成した名前の形を見る
         W-->>U: 合わなければ警告 1 行
     end
@@ -133,20 +130,23 @@ sequenceDiagram
 ### 警告の文
 
 ```text
-プロジェクト名として使えない形の名前が projects/ に載りました: '_foo'（出所: プラグイン p1）。
-名前を指定した操作（devbase up _foo など）はできません（NAME_FORM_HINT）。
+プロジェクト名として使えない形の名前が projects/ に載ります: '_foo'（出所: プラグイン p1）。
+この名前では、名前を指定した操作（devbase up _foo など）ができません（NAME_FORM_HINT）。
 projects/_foo の中で名前なしに打てば動きます。名前を変えるにはプラグイン側の
 projects/_foo を改名してください。
 ```
 
-- **1 件 1 回。** 同じ名前で 2 回出さない（`sync_projects` の 1 回の実行で、実ディレクトリと
-  プラグインの候補の両方に同じ名前が現れることはない。実ディレクトリがあれば候補は
-  `Skip:` に回る）
+- **1 件 1 回。** 名前 1 つにつき 1 行だけ出す。**そのために、プラグインのプロジェクトの検査は
+  `sync_projects` が symlink を張る直前に置く**（決定 2）。候補の集約
+  （`_collect_project_candidates`）に置くと、同じ名前を 2 つのプラグインが持つときに
+  プラグインの数だけ出て、実ディレクトリでスキップする名前にも出る
+- **起きていないことを書かない。** 知らせは symlink を張る直前と、書庫を読んだ直後に出す。
+  文は完了形にせず、`--dry-run` や後続の失敗で書き込みが起きなくても矛盾しない形にする
 - **`verbose` に依存させない。** `sync_projects(verbose=False)` は数を数える用途で使われる
   （`tests/plugin/test_repos_core.py` と `updater` の差分計算）。弾かない代わりに知らせるのが
   唯一の効果なので、黙る経路を作らない
-- import の文は「出所: 書庫」「`projects/_foo/` を作りました」に替える。名前を変える手段は
-  「この端末で `projects/_foo` を改名する」と書く（「export し直す」ではない）
+- import の文は出所を「書庫」に替え、対象を「この import が作る `projects/_foo/`」と書く。
+  名前を変える手段は「この端末で `projects/_foo` を改名する」と書く（「export し直す」ではない）
 
 ## 確定仕様の書き換え
 
@@ -196,21 +196,29 @@ projects/_foo を改名してください。
 | 名前を整えて載せる（sanitize） | `_foo` を `foo` などへ直して載せる | devbase が名前を発明することになる。既存の `foo` と衝突し、どちらが `projects/foo` を取るかが同期の順で決まる |
 | 名前の形を広げて `_` を許す | `SINGLE_SEGMENT_NAME_PATTERN` の先頭に `_` を足す | 受け付ける名前を広げる変更で、確定仕様が「寄せると受け付ける名前が変わる範囲が広がる」ことを理由に退けた向きと同じ。#203 も規則の変更を求めていない |
 
-### 決定 2: 検査するのは 3 つの経路で、`discover_projects` の中では検査しない
+### 決定 2: 検査は `projects/` に名前を載せる直前に置き、列挙と集約には置かない
 
-検査を置くのは次の 3 か所である。`discover_projects` の中には置かない。
+検査を置くのは次の 3 か所である。`discover_projects` と `_collect_project_candidates` の
+中には置かない。
 
-| 置く場所 | 見る名前 |
-| --- | --- |
-| `_collect_project_candidates` | プラグインのプロジェクト |
-| `_link_loser_projects` | 合成する別名 |
-| `sync_projects` の `real_projects` | `projects/` 直下の実ディレクトリ |
+| 置く場所 | 見る名前 | いつ |
+| --- | --- | --- |
+| `sync_projects` の winner の分岐 | プラグインのプロジェクト | `real_projects` のスキップより後、symlink を張る直前 |
+| `_link_loser_projects` | 合成する別名 | 別名の symlink を張る直前 |
+| `sync_projects` の `real_projects` | `projects/` 直下の実ディレクトリ | 採取した直後 |
 
 理由:
 
 - **`discover_projects` は「表示のための列挙」にも使われる。** `plugin/updater.py:26,54,121` が
   更新前後の差分を出すために呼ぶ。ここで警告を出すと、`projects/` に何も載せない場面で
   同じ行が何度も出る
+- **候補の集約（`_collect_project_candidates`）も早すぎる。** 集約は
+  プラグイン 1 つにつき 1 回回るため、同じ名前を 2 つのプラグインが持つと**同じ名前で 2 行**
+  出る。さらに集約は `real_projects` のスキップより前にあるため、**`projects/` に載らない
+  名前にも警告が出る**（実ディレクトリが勝つ場合）。`sync_projects` の winner の分岐へ置くと、
+  実際に載る名前 1 つにつき 1 行になる
+- **「載せる直前」は出所も持っている。** winner の分岐は `winner_plugin.name` を持つため、
+  警告の「出所」を落とさずに書ける
 - **別名は devbase 自身が作る名前である。** `_extract_owner` は `--link` のプラグインで
   元パスの basename をそのまま返す。実測では、元パスが `/Users/x/my plugin` のとき
   devbase が `carmo.my plugin` という名前の symlink を張った。プラグイン側の名前が
@@ -308,8 +316,11 @@ import する。**足すのは知らせだけである。**
 
 `NAME_FORM_HINT` を `utils/names.py` の定数として足す。`logger` はこの module へ持ち込まない。
 
+**共通化するのは名前の形の説明（ヒント文）だけである。** 出所と対象の名前を含む文の
+組み立ては、同期と import で別々に行う（文脈が違うため。上の「警告の文」）。
+
 理由: 確定仕様の「構成要素」が `lib/devbase/utils/names.py` を「`re` だけに依存し副作用を
-持たない」と定めている。ログの出力は副作用である。文言を 1 か所に置く要求と、副作用を
+持たない」と定めている。ログの出力は副作用である。説明を 1 か所に置く要求と、副作用を
 持たない要求は、定数だけを置いて呼び出し側が `logger.warning` を出すことで両立する。
 
 採らなかった案:
@@ -317,7 +328,7 @@ import する。**足すのは知らせだけである。**
 | 採らなかった形 | 退けた理由 |
 | --- | --- |
 | `utils/names.py` に `warn_if_unusable(name)` を置く | 上の契約を破る。確定仕様の書き換えが要る |
-| 文言を呼び出し側（`syncer` と `io_import`）に別々に書く | 2 か所が別々に育つ。#229 で起票した既存の重複と同じ形を増やす |
+| 名前の形の説明（ヒント文）まで呼び出し側へ別々に書く | 同じ説明が 2 か所で別々に育つ。#229 で起票した既存の重複と同じ形を増やす |
 
 ### 決定 8: `discover_projects` の `.` 始まりの黙った除外は変えない
 
@@ -350,12 +361,12 @@ import する。**足すのは知らせだけである。**
 
 | 受け入れ条件 | 何で確かめるか |
 | --- | --- |
-| 1（同期が張り、警告が 1 回出る） | `tests/plugin/test_repos_core.py` の `TestSyncProjects` へ新設。`_make_repo_dir` で `projects: ["_foo", "ok-name"]` のプラグインを作り、`sync_projects(registry, verbose=False)` の戻り値が 2、両方の symlink が存在、`caplog` の WARNING に `_foo` が 1 件・`ok-name` が 0 件 |
+| 1（同期が張り、警告が 1 回出る） | `tests/plugin/test_repos_core.py` の既存の `TestSyncProjects` へテストを足す。`_make_repo_dir` で `projects: ["_foo", "ok-name"]` のプラグインを作り、`sync_projects(registry, verbose=False)` の戻り値が 2、両方の symlink が存在、`caplog` の WARNING に `_foo` が 1 件・`ok-name` が 0 件 |
 | 2（合う名前では警告が出ない） | 同上。`projects: ["ok-name"]` で `caplog` の WARNING に名前の形の行が 0 件 |
 | 3（別名の警告） | 同上。既存の `test_link_plugin_collision_uses_source_basename` の形を借り、`--link` のプラグインの `source` を `/tmp/my plugin` にして、別名の symlink が張られ、`carmo.my plugin` の警告が 1 件 |
 | 4（実ディレクトリの警告） | 同上。`devbase_root / "projects" / "_foo"` を `mkdir` してから `sync_projects`。ディレクトリが残り、警告が 1 件 |
 | 5（`.` 始まりは変わらない） | 同上。プラグインの `projects/.hidden` を作り、`projects/.hidden` が作られず、警告が 0 件 |
-| 6（import が作り、警告が出る） | `tests/env/test_io_import.py` へ新設。`bundle.pack` で `env/projects/_foo/.env` と `env/projects/ok-name/.env` の書庫を作り、`import_bundle(tmp_path, ImportOptions(source=..., include_global=False, include_metadata=False))` が 0 を返し、両方のディレクトリができ、`caplog` に `_foo` の警告が 1 件 |
+| 6（import が作り、警告が出る） | 既存の `tests/env/test_io_import.py` へテストを足す。`bundle.pack` で `env/projects/_foo/.env` と `env/projects/ok-name/.env` の書庫を作り、`import_bundle(tmp_path, ImportOptions(source=..., include_global=False, include_metadata=False))` が 0 を返し、両方のディレクトリができ、`caplog` に `_foo` の警告が 1 件 |
 | 7（`--dry-run` でも警告） | 同上。`dry_run=True` で `projects/` に何も作られず、警告が 1 件 |
 | 8（合う名前では警告が出ない） | 同上。`ok-name` だけの書庫で警告が 0 件 |
 | 9（末尾の改行を弾く） | `tests/snapshot/test_manager_name.py`（新設）。`SnapshotManager(tmp_path)._validate_name("abc\n")` が `SnapshotError`（`tmp_path` を渡す流儀は `tests/snapshot/test_auto_snapshot.py:74` と同じ） |
