@@ -890,6 +890,20 @@ class TestSyncProjectsNameForm:
         assert not (devbase_root / "projects" / ".hidden").exists()
         assert _name_form_warnings(caplog) == []
 
+    def test_dot_real_directories_are_not_warned(
+            self, registry, devbase_root, caplog):
+        """5-2: `projects/` 直下の `.` 始まりの実ディレクトリも警告しない (決定 8)"""
+        _install_repo_plugin(registry, devbase_root, ["ok-name"])
+        (devbase_root / "projects" / ".vscode").mkdir(parents=True)
+
+        with caplog.at_level(logging.WARNING):
+            count = sync_projects(registry, verbose=False)
+
+        assert count == 1
+        real = devbase_root / "projects" / ".vscode"
+        assert real.is_dir() and not real.is_symlink()
+        assert _name_form_warnings(caplog) == []
+
 
 class TestExtractOwner:
     def test_repos_based(self):

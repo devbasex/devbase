@@ -198,9 +198,11 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
         if not entry.is_symlink() and entry.is_dir()
     }
     # 実ディレクトリは同期が作らないが、ここが唯一それを列挙する場所 (決定 2)。
+    # `.` 始まり (.vscode など) はプロジェクトとして扱わず知らせも出さない (決定 8)。
     # set のままだと警告の順が実行ごとに変わるため並べる
     for name in sorted(real_projects):
-        _warn_unusable_name(name, _SOURCE_REAL_DIRECTORY)
+        if not name.startswith('.'):
+            _warn_unusable_name(name, _SOURCE_REAL_DIRECTORY)
 
     for entry in projects_dir.iterdir():
         if entry.is_symlink():
