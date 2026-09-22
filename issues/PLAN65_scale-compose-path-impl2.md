@@ -35,7 +35,7 @@
   段階の関数を差し替えた水準）で行う
 - 前提 2: `release/v3.7.0` を base にした Pull Request では CI が動かない（#216）。`uv run --locked pytest tests/ -q` を
   手元で実行し、結果と終了コードを Pull Request 本文の Test plan へ載せる
-- 前提 3: 変更前の全件は 1 本目の検査の時点で `2889 passed`、exit=0。この作業ツリーの起点（`eaa9e5d`）で取り直す
+- 前提 3: 変更前の全件は `2889 passed`、exit=0（この作業ツリーの起点 `eaa9e5d` + 空コミットで取り直した）
 - 前提 4: 行数は `ast` で `cmd_scale` の `def` の行から関数の最後の行までを数える（`end_lineno - lineno + 1`）。
   あわせて設計の検証手段の「`def` から次の `def` まで」も並べて載せる
 
@@ -43,20 +43,20 @@
 
 設計文書の「受け入れ条件とどちらの Pull Request が対応するか」の表から、2 本目で満たすものを写す。
 
-- [ ] D-3: `cmd_scale` の本体が 40 行以下になる（起点で 92 行）。抽出した段階の関数（`_run_scale_pipeline`）が
+- [x] D-3: `cmd_scale` の本体が 40 行以下になる（起点で 92 行）。抽出した段階の関数（`_run_scale_pipeline`）が
   `[1/5]`〜`[5/5]` のログ文字列をそのまま持つ
   - 検証: `ast` で行数を数える / `grep -n "/5\]" lib/devbase/commands/container.py` の 6 行がすべて `_run_scale_pipeline` の範囲にある
-- [ ] D-4: `cmd_scale` と `cmd_up` の段階の対応が設計文書の「段階の対応（変更後）」の表と一致する。段階の番号の
+- [x] D-4: `cmd_scale` と `cmd_up` の段階の対応が設計文書の「段階の対応（変更後）」の表と一致する。段階の番号の
   文字列（`[2.5/5]` を含む）は変えない
   - 検証: 設計の表と `grep -n "/5\]"` の出力を並べる。`_check_scale_request` と `_run_scale_pipeline` の契約（設計の
     「新設・変更する関数の契約」の表）を単体テストで固定する
 
 退行しないこと（1 本目で満たした条件を書き換えずに緑のまま通す）:
 
-- [ ] `tests/commands/test_container_scale_order.py` の既存のテスト（順序・範囲・停止しないこと・`./deploy` の失敗の後も
+- [x] `tests/commands/test_container_scale_order.py` の既存のテスト（順序・範囲・停止しないこと・`./deploy` の失敗の後も
   続けること・`project_name` の明示・`cmd_login` の既定の引数ほか）を**書き換えずに**各コミットで通す — B-1〜B-5 / C-1 / C-2 / E-2 / E-3
-- [ ] 既存の 4 か所の `cmd_scale` のテストを書き換えずに通す — C-3
-- [ ] `uv run --locked pytest tests/ -q` の全件が変更の前後で同じ（足したテストの分だけ増える）— C-4 / E-1
+- [x] 既存の 4 か所の `cmd_scale` のテストを書き換えずに通す — C-3
+- [x] `uv run --locked pytest tests/ -q` の全件が変更の前後で同じ（足したテストの分だけ増える）— C-4 / E-1
 
 ## 代替案と採否
 
@@ -133,6 +133,6 @@
 
 ## 完了の定義
 
-- [ ] D-3・D-4 を満たし、条件ごとに検証手段と結果が Pull Request 本文に対応している
-- [ ] 既存の現状固定テストを書き換えずに、各コミットで緑
-- [ ] `uv run --locked pytest tests/ -q` が exit=0
+- [x] D-3・D-4 を満たし、条件ごとに検証手段と結果が Pull Request 本文に対応している
+- [x] 既存の現状固定テストを書き換えずに、各コミットで緑
+- [x] `uv run --locked pytest tests/ -q` が exit=0
