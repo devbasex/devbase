@@ -1640,14 +1640,17 @@ def cmd_scale(new_scale: int, project_name: str = None,
         logger.info("[3/5] Generating scaled compose file...")
         override_file = _build_scaled_override(new_scale, config, project_name, target)
         logger.info("Generated: %s", override_file)
+        # up と同じく起動の対象を生成物の既定のサービスで明示する (PLAN65 決定 4)
+        services = default_services(override_file)
 
         logger.info("[4/5] Starting new containers (%d..%d)...", current_scale + 1, new_scale)
         logger.info("Using --no-recreate to avoid restarting existing containers...")
 
-        result = subprocess.run(
-            ['docker', 'compose', '-f', str(override_file), 'up', '-d', '--no-recreate'],
-            check=False
-        )
+        # 共通経路を通し、子プロセスの COMPOSE_PROFILES を打ち消す (PLAN65 決定 1)。
+        # docker_compose_up は check=True 固定で CalledProcessError が except DevbaseError を
+        # 素通りするため、check=False で終了コードを見る (決定 3)
+        result = docker_compose(['up', '-d', '--no-recreate', *services],
+                                compose_file=override_file, check=False)
 
         if result.returncode != 0:
             logger.error("Failed to start new containers")
@@ -1788,17 +1791,13 @@ def cmd_build(image: Optional[str] = None, no_cache: bool = False,
 
 def _resolve_dev_service() -> Optional[dict]:
     """compose config から dev サービス定義を取得する。失敗時は None。"""
-    result = subprocess.run(
-        ['docker', 'compose', 'config', '--format', 'json'],
-        capture_output=True, text=True, check=False, env=compose_env(),
-    )
-    if result.returncode != 0:
-        return None
     try:
-        config = json.loads(result.stdout)
+        returncode, services = _compose_config_services()
     except json.JSONDecodeError:
         return None
-    return config.get('services', {}).get(get_dev_service_name(), {})
+    if returncode != 0:
+        return None
+    return services.get(get_dev_service_name(), {})
 
 
 def _build_resolved(expires: Optional[int], no_cache: bool) -> int:
@@ -1964,15 +1963,14 @@ def _image_max_age_days() -> int:
     )
 
 
-def _read_compose_services() -> tuple[int, dict]:
-    """Compose 設定の終了コードと services を取得する。"""
-    result = subprocess.run(
-        ['docker', 'compose', 'config', '--format', 'json'],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=compose_env(),
-    )
+def _compose_config_services() -> tuple[int, dict]:
+    """``docker compose config --format json`` の (終了コード, services) を返す。
+
+    ``config --format json`` を起動する唯一の関数 (PLAN65 決定 9)。非 0 なら services は空。
+    JSON として読めなければ :class:`json.JSONDecodeError` を伝播する。
+    """
+    result = docker_compose(['config', '--format', 'json'],
+                            check=False, capture_output=True)
     if result.returncode != 0:
         return result.returncode, {}
     config = json.loads(result.stdout)
@@ -2016,7 +2014,7 @@ def _ensure_images() -> bool:
     dev_service_name = get_dev_service_name()
 
     try:
-        returncode, services = _read_compose_services()
+        returncode, services = _compose_config_services()
         if returncode != 0:
             logger.info("Unable to check image status")
             logger.info("Running 'devbase container build' to ensure images exist...")
