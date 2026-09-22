@@ -347,3 +347,40 @@ def test_scale_passes_explicit_project_name(scale_harness, monkeypatch):
     assert captured['build_project'] == 'custom-proj'
     assert captured['bao_project'] == 'custom-proj'
 
+
+
+# ---------------------------------------------------------------------------
+# 段階の関数の契約 (D-3 / D-4。設計の決定 8)
+# ---------------------------------------------------------------------------
+
+def _records(caplog):
+    return [(r.levelname, r.getMessage()) for r in caplog.records]
+
+
+def test_check_scale_request_rejects_below_one(caplog):
+    """1 未満は False。error を 1 行だけ出す。"""
+    caplog.set_level('INFO', logger=container.logger.name)
+
+    assert container._check_scale_request(0, 1) is False
+    assert _records(caplog) == [('ERROR', 'Scale must be at least 1')]
+
+
+@pytest.mark.parametrize('new_scale', [1, 2])
+def test_check_scale_request_rejects_not_above_current(caplog, new_scale):
+    """現在以下は False。warning 1 行と案内の info 1 行を出す。"""
+    caplog.set_level('INFO', logger=container.logger.name)
+
+    assert container._check_scale_request(new_scale, 2) is False
+    assert _records(caplog) == [
+        ('WARNING', f'New scale ({new_scale}) is not greater than current scale (2)'),
+        ('INFO', "To scale down, use 'devbase container down' first, "
+                 "then 'devbase container up' with desired scale"),
+    ]
+
+
+def test_check_scale_request_accepts_above_current(caplog):
+    """現在を上回れば True。何も出さない。"""
+    caplog.set_level('INFO', logger=container.logger.name)
+
+    assert container._check_scale_request(3, 2) is True
+    assert _records(caplog) == []

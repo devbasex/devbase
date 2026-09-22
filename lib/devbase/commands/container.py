@@ -1594,6 +1594,24 @@ def cmd_profile_list(context: Optional[str] = None) -> int:
 # cmd_scale
 # ---------------------------------------------------------------------------
 
+def _check_scale_request(new_scale: int, current_scale: int) -> bool:
+    """``new_scale`` を受け付けるかを判定し、受け付けないときは案内を出す。
+
+    ``cmd_scale`` の前提の検査のうち、``_check_group_consistency`` の後に行う 2 つ
+    (1 未満・現在以下)。受け付けないときは ``project.yml`` を書き換える前に止まる。
+    """
+    if new_scale < 1:
+        logger.error("Scale must be at least 1")
+        return False
+
+    if new_scale <= current_scale:
+        logger.warning("New scale (%d) is not greater than current scale (%d)", new_scale, current_scale)
+        logger.info("To scale down, use 'devbase container down' first, then 'devbase container up' with desired scale")
+        return False
+
+    return True
+
+
 def cmd_scale(new_scale: int, project_name: str = None,
               context: Optional[str] = None) -> int:
     """Scale containers online without restarting existing ones"""
@@ -1618,13 +1636,7 @@ def cmd_scale(new_scale: int, project_name: str = None,
     logger.info("Scaling project '%s' from %d to %d containers (dev service: %s)",
                 project_name, current_scale, new_scale, dev_service_name)
 
-    if new_scale < 1:
-        logger.error("Scale must be at least 1")
-        return 1
-
-    if new_scale <= current_scale:
-        logger.warning("New scale (%d) is not greater than current scale (%d)", new_scale, current_scale)
-        logger.info("To scale down, use 'devbase container down' first, then 'devbase container up' with desired scale")
+    if not _check_scale_request(new_scale, current_scale):
         return 1
 
     try:
