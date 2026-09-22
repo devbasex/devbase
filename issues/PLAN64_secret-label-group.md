@@ -91,9 +91,11 @@
       （`グローバル（グループ default → nyle）: N変数` / `プロジェクト（グループ default → nyle）: N変数`）も同じ形になる
       検証: 新規テスト（`capsys` の出力を読む）
 - [ ] 3. 前提: 1 と同じ設定
-      操作: `devbase env backend migrate --to age --dry-run` を実行する
-      結果: 移行の計画の一覧の見出しが `グローバル（グループ default → nyle）` になる
-      検証: 新規テスト
+      操作: `devbase env backend migrate --to age --dry-run` と、`--dry-run` なしの `--to age` を実行する
+      結果: 移行の計画の一覧の見出しと、完了後の「サーバ上の機密はそのまま残っています」の一覧の見出しが、
+      どちらも `グローバル（グループ default → nyle）` になる。この 2 つは別の関数
+      （`_MigrationPlan._heading` と `cmd_env_backend_migrate` の完了表示）が出すため、両方を見る
+      検証: 新規テスト 2 件
       （2026-09-22 追加。issue 本文は `test` と `list` だけを挙げるが、同じ一覧の形で
       `label()` とサーバのパスを並べる箇所が `lib/devbase/commands/env_backend.py` に 2 つあり、
       直さないと同じ食い違いが残るため）

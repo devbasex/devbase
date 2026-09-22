@@ -302,7 +302,7 @@ sequenceDiagram
 | --- | --- |
 | 1（`env backend test` の見出し） | `tests/commands/test_env_group_label.py` を新設。`layout='group'`・`group_aliases={'default': 'nyle'}` で `cmd_env_backend_test` を呼び、`capsys` の行に `グローバル（グループ default → nyle）` と `個人のグローバル（グループ default → nyle）` が出ることと、同じ行のパスが `…/team/nyle/global` であることを見る |
 | 2（`env list` の見出し） | 同ファイル。`cmd_env_list` を `projects/web`（グループの宣言なし → `default`）で呼び、`=== グローバル（グループ default → nyle） (` と `=== プロジェクト: web（グループ default → nyle） (`、および件数の行 2 つを見る |
-| 3（`env backend migrate` の一覧） | 同ファイル。`cmd_env_backend_migrate(to='age', dry_run=True)` を呼び、計画の一覧の行に `グローバル（グループ default → nyle）` が出ることを見る |
+| 3（`env backend migrate` の 2 つの一覧） | 同ファイル。`cmd_env_backend_migrate(to='age', dry_run=True)` で**計画の一覧**の行に `グローバル（グループ default → nyle）` が出ることを見る。あわせて `dry_run=False`（偽サーバ）で `--to age` を通し、完了後の「サーバ上の機密はそのまま残っています」の一覧の行にも同じ見出しが出ることを見る。この 2 つは別の関数（`_MigrationPlan._heading` と `cmd_env_backend_migrate` の完了表示）が出すため、片方だけでは決定 4 を確かめられない |
 | 4（読み替えの無いグループ） | 同ファイル。`projects/web` の `env` に `DEVBASE_ACCOUNT_GROUP=kkg` を書き、見出しが `（グループ kkg）` のままで `→` を含まないことを見る |
 | 5（`version: 1`） | `tests/commands/test_env_group_label.py` に新規で 1 件。`configure_openbao(layout='flat')`（`version: 1`）で `cmd_env_list` と `cmd_env_backend_test` を呼び、**出力全体に `（グループ` が 1 つも出ない**ことを見る。既存の `tests/env/test_runtime.py`・`tests/env/test_groups.py` も変更なしで通す |
 | 6（ファイル backend） | 同ファイルに新規で 1 件。`backend: age` に `openbao:` 節を残した設定で `cmd_env_list` を呼び、出力全体に `（グループ` が 1 つも出ないことを見る。既存の `tests/commands/test_env_user_axis.py` も変更なしで通す |
@@ -321,4 +321,3 @@ sequenceDiagram
 | CI | `release/v3.7.0` を base にした Pull Request では CI が 1 件も動かない（`.github/workflows/ci.yml` の対象が `main` だけ、#216）。手元の `uv run pytest tests/ -q` が唯一の証跡になる |
 | `tests/conftest.py` の `DEVBASE_ROOT` の隔離 | #217（`release/v3.7.0` 未マージ）が入ると、新しいテストの `DEVBASE_ROOT` の扱いを揃え直す余地がある。この設計では既存の流儀のままにする |
 | 桁揃えそのもの | 全角文字の表示幅を数えない桁揃えは、読み替えの有無に関わらず長い参照で崩れる。この変更では扱わない |
-</content>
