@@ -395,6 +395,39 @@ def test_scale_passes_explicit_project_name(scale_harness, monkeypatch):
     assert captured['bao_project'] == 'custom-proj'
 
 
+def test_scale_without_explicit_scale_treats_default_scale_as_current_and_rejects_scale_two(scale_harness):
+    """現状固定: project.yml に scale 指定がない場合、DEFAULT_SCALE (2) が現在台数となり scale 2 は拒否される。"""
+    project_file = scale_harness['root'] / 'project.yml'
+    content_without_scale = "version: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+    project_file.write_text(content_without_scale)
+
+    assert container.cmd_scale(2) == 1
+    assert project_file.read_text() == content_without_scale
+    assert _up_calls(scale_harness['calls']) == []
+
+
+def test_scale_without_explicit_scale_deploys_only_instance_above_default_scale(scale_harness, monkeypatch):
+    """現状固定: project.yml に scale 指定がない場合、scale 3 への増設で deploy は 3 のみ実行される。"""
+    project_file = scale_harness['root'] / 'project.yml'
+    content_without_scale = "version: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+    project_file.write_text(content_without_scale)
+
+    (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+    monkeypatch.setattr(container, '_run_deploy_script_for_instances',
+                        scale_harness['real_deploy'])
+
+    assert container.cmd_scale(3) == 0
+    assert 'scale: 3' in project_file.read_text()
+    assert container.project_runtime.read_scale(scale_harness['root']) == 3
+
+    deploy_indices = [
+        c['env']['DEVBASE_INSTANCE_INDEX']
+        for name, c in scale_harness['calls']
+        if name == 'run' and c['cmd'] == ['bash', 'deploy']
+    ]
+    assert deploy_indices == ['3']
+
+
 
 # ---------------------------------------------------------------------------
 # 段階の関数の契約 (D-3 / D-4。設計の決定 8)
