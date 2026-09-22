@@ -199,3 +199,93 @@ def test_scale_default_services_failure_is_a_scale_failure(scale_harness, monkey
 
     assert 'Scale failed: config --services failed' in caplog.text
     assert _up_calls(scale_harness['calls']) == []
+
+
+# ---------------------------------------------------------------------------
+# 正常系の手順の固定 (C-1 / C-2 / E-3)。cmd_scale の段階を分ける前の安全網
+# ---------------------------------------------------------------------------
+
+def _step(name, payload):
+    if name != 'run':
+        return name
+    cmd = payload['cmd']
+    if 'config' in cmd:
+        return 'config'
+    if 'up' in cmd:
+        return 'up'
+    return 'run:' + ' '.join(cmd[2:])
+
+
+def test_scale_runs_the_steps_in_order(scale_harness):
+    """C-1: グループの検査 → write_scale → ボリューム → network → 生成 → 既定のサービス → 起動
+    → ready 待ち → bao → ./deploy。"""
+    (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+
+    assert container.cmd_scale(3) == 0
+
+    steps = [_step(name, payload) for name, payload in scale_harness['calls']]
+    assert [s for s in steps if s != 'config'] == [
+        'group', 'write_scale', 'volumes', 'network', 'generate', 'default_services',
+        'up', 'wait', 'bao', 'deploy']
+    # 既定のサービスの解決 (config --services) は生成の後、起動の前に行う
+    assert steps.index('generate') < steps.index('config') < steps.index('up')
+    up = _up_calls(scale_harness['calls'])[0]
+    assert up['cmd'][4:7] == ['up', '-d', '--no-recreate']
+
+
+def test_scale_passes_the_generated_compose_and_new_scale(scale_harness):
+    """C-1: 各段に新しい scale と生成物が渡り、project.yml の scale が書き換わる。"""
+    assert container.cmd_scale(3) == 0
+
+    calls = dict((name, payload) for name, payload in scale_harness['calls'] if name != 'run')
+    override = scale_harness['override']
+    assert calls['write_scale'] == 3
+    assert calls['volumes'] == 3
+    assert calls['network'] == 'devbase_net'
+    assert calls['generate'] == 3
+    assert calls['default_services'] == override
+    assert calls['wait'] == {'container_prefix': 'dev', 'scale': 3,
+                             'compose_file': override, 'timeout': 60}
+    assert 'scale: 3' in (scale_harness['root'] / 'project.yml').read_text()
+
+
+def test_scale_hooks_cover_only_the_new_instances(scale_harness):
+    """C-2: bao の token と ./deploy は current + 1 から new まで。既存のインスタンスを含めない。"""
+    (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+
+    assert container.cmd_scale(4) == 0
+
+    calls = dict((name, payload) for name, payload in scale_harness['calls'] if name != 'run')
+    assert calls['bao'] == {'args': ('proj', 4, 'dev'),
+                            'compose_file': scale_harness['override'], 'start': 2}
+    assert calls['deploy'] == [2, 3, 4]
+
+
+def test_scale_skips_deploy_without_the_script(scale_harness):
+    """``./deploy`` が無ければ走らせない。bao の token は書く。"""
+    assert container.cmd_scale(2) == 0
+
+    names = [name for name, _ in scale_harness['calls']]
+    assert 'bao' in names and 'deploy' not in names
+
+
+def test_scale_never_stops_containers(scale_harness):
+    """E-3: scale は停止の段を持たない。down / stop / rm を呼ばない。"""
+    (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+
+    assert container.cmd_scale(3) == 0
+
+    runs = [payload['cmd'] for name, payload in scale_harness['calls'] if name == 'run']
+    assert runs
+    for cmd in runs:
+        assert not {'down', 'stop', 'rm'} & set(cmd)
+
+
+@pytest.mark.parametrize('new_scale', [0, 1])
+def test_scale_rejects_a_scale_not_above_current(scale_harness, new_scale):
+    """現状固定: 1 未満と現在以下は 1 を返し、project.yml を書き換えず、何も起動しない。"""
+    assert container.cmd_scale(new_scale) == 1
+
+    names = [name for name, _ in scale_harness['calls']]
+    assert names == ['group']
+    assert (scale_harness['root'] / 'project.yml').read_text() == PROJECT_YML
