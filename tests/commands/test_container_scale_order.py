@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from devbase.commands import container
-from devbase.errors import DevbaseError
+from devbase.errors import DevbaseError, DockerError
 from devbase.utils import docker
 from devbase.utils import docker_context as dc
 
@@ -73,6 +73,7 @@ def scale_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
     monkeypatch.setattr(container, '_check_group_consistency',
                         lambda project=None: calls.append(('group', None)) or True)
+    real_resolve_target = container._resolve_docker_target
     monkeypatch.setattr(container, '_resolve_docker_target', lambda context=None: dc.DockerTarget(
         context=None, source='none', remote=False, home=None, gid=None))
 
@@ -114,7 +115,7 @@ def scale_harness(tmp_path, monkeypatch):
     fake = FakeCompose(NO_PROFILE_SERVICES, calls)
     monkeypatch.setattr(subprocess, 'run', fake)
     return {'calls': calls, 'override': override, 'fake': fake, 'root': tmp_path,
-            'real_deploy': real_deploy}
+            'real_deploy': real_deploy, 'real_resolve_target': real_resolve_target}
 
 
 def _runs(calls, *words):
@@ -201,6 +202,52 @@ def test_scale_default_services_failure_is_a_scale_failure(scale_harness, monkey
 
     assert 'Scale failed: config --services failed' in caplog.text
     assert _up_calls(scale_harness['calls']) == []
+
+
+@pytest.mark.parametrize('failure_stage', ['resolve_target', 'wait_ready'])
+def test_scale_error_preserves_current_side_effects(
+        scale_harness, monkeypatch, caplog, failure_stage):
+    """現状固定: 解決失敗は更新前、ready 失敗は更新・起動後に止まり、deploy しない。"""
+    root = scale_harness['root']
+    project = root / 'project.yml'
+    override = scale_harness['override']
+    override.write_text('services:\n  dev-1: {}\n')
+    original_project = project.read_bytes()
+    original_override = override.read_bytes()
+    (root / 'deploy').write_text('#!/bin/sh\n')
+    monkeypatch.setattr(container, '_run_deploy_script_for_instances',
+                        scale_harness['real_deploy'])
+
+    if failure_stage == 'resolve_target':
+        def fail_resolve(choice, settings):
+            raise DevbaseError('target resolution failed')
+
+        monkeypatch.setattr(container, '_resolve_docker_target',
+                            scale_harness['real_resolve_target'])
+        monkeypatch.setattr(dc, 'resolve_target', fail_resolve)
+    else:
+        def fail_wait(**kwargs):
+            raise DockerError('containers not ready')
+
+        monkeypatch.setattr(container, 'wait_for_containers_ready', fail_wait)
+
+    assert container.cmd_scale(2) == 1
+
+    assert 'Scale failed' in caplog.text
+    calls = scale_harness['calls']
+    if failure_stage == 'resolve_target':
+        assert project.read_bytes() == original_project
+        assert override.read_bytes() == original_override
+        assert _up_calls(calls) == []
+    else:
+        assert project.read_bytes() == original_project.replace(b'scale: 1', b'scale: 2')
+        assert override.read_text() == 'services:\n  dev-1: {}\n  dev-2: {}\n'
+        assert override.read_bytes() != original_override
+        assert _up_calls(calls)
+
+    runs = [payload['cmd'] for name, payload in calls if name == 'run']
+    assert ['bash', 'deploy'] not in runs
+    assert all(not {'down', 'stop', 'rm'} & set(cmd) for cmd in runs)
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +394,112 @@ def test_scale_passes_explicit_project_name(scale_harness, monkeypatch):
     assert captured['build_project'] == 'custom-proj'
     assert captured['bao_project'] == 'custom-proj'
 
+
+def test_scale_without_explicit_scale_treats_default_scale_as_current_and_rejects_scale_two(scale_harness):
+    """現状固定: project.yml に scale 指定がない場合、DEFAULT_SCALE (2) が現在台数となり scale 2 は拒否される。"""
+    project_file = scale_harness['root'] / 'project.yml'
+    content_without_scale = "version: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+    project_file.write_text(content_without_scale)
+
+    assert container.cmd_scale(2) == 1
+    assert project_file.read_text() == content_without_scale
+    assert _up_calls(scale_harness['calls']) == []
+
+
+def test_scale_without_explicit_scale_deploys_only_instance_above_default_scale(scale_harness, monkeypatch):
+    """現状固定: project.yml に scale 指定がない場合、scale 3 への増設で deploy は 3 のみ実行される。"""
+    project_file = scale_harness['root'] / 'project.yml'
+    content_without_scale = "version: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+    project_file.write_text(content_without_scale)
+
+    (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+    monkeypatch.setattr(container, '_run_deploy_script_for_instances',
+                        scale_harness['real_deploy'])
+
+    assert container.cmd_scale(3) == 0
+    assert 'scale: 3' in project_file.read_text()
+    assert container.project_runtime.read_scale(scale_harness['root']) == 3
+
+    deploy_indices = [
+        c['env']['DEVBASE_INSTANCE_INDEX']
+        for name, c in scale_harness['calls']
+        if name == 'run' and c['cmd'] == ['bash', 'deploy']
+    ]
+    assert deploy_indices == ['3']
+
+
+
+# ---------------------------------------------------------------------------
+# 段階の関数の契約 (D-3 / D-4。設計の決定 8)
+# ---------------------------------------------------------------------------
+
+def _records(caplog):
+    return [(r.levelname, r.getMessage()) for r in caplog.records]
+
+
+def test_check_scale_request_rejects_below_one(caplog):
+    """1 未満は False。error を 1 行だけ出す。"""
+    caplog.set_level('INFO', logger=container.logger.name)
+
+    assert container._check_scale_request(0, 1) is False
+    assert _records(caplog) == [('ERROR', 'Scale must be at least 1')]
+
+
+@pytest.mark.parametrize('new_scale', [1, 2])
+def test_check_scale_request_rejects_not_above_current(caplog, new_scale):
+    """現在以下は False。warning 1 行と案内の info 1 行を出す。"""
+    caplog.set_level('INFO', logger=container.logger.name)
+
+    assert container._check_scale_request(new_scale, 2) is False
+    assert _records(caplog) == [
+        ('WARNING', f'New scale ({new_scale}) is not greater than current scale (2)'),
+        ('INFO', "To scale down, use 'devbase container down' first, "
+                 "then 'devbase container up' with desired scale"),
+    ]
+
+
+def test_check_scale_request_accepts_above_current(caplog):
+    """現在を上回れば True。何も出さない。"""
+    caplog.set_level('INFO', logger=container.logger.name)
+
+    assert container._check_scale_request(3, 2) is True
+    assert _records(caplog) == []
+
+
+def _run_pipeline(new_scale=3, current_scale=1):
+    config = container.project_runtime.current_project_config()
+    target = dc.DockerTarget(context=None, source='none', remote=False, home=None, gid=None)
+    return container._run_scale_pipeline('proj', new_scale, current_scale, config, target, 'dev')
+
+
+def test_run_scale_pipeline_runs_stages_one_to_five_and_returns_the_generated_compose(scale_harness):
+    """[1/5]〜[5/5] を順に通し、生成物のパスを返す。後処理 (bao / ./deploy) は呼ばない。"""
+    (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+
+    assert _run_pipeline() == scale_harness['override']
+
+    names = [name for name, _ in scale_harness['calls'] if name != 'run']
+    assert names == ['write_scale', 'volumes', 'network', 'generate', 'default_services', 'wait']
+    assert len(_up_calls(scale_harness['calls'])) == 1
+
+
+def test_run_scale_pipeline_returns_none_when_the_start_fails(scale_harness, caplog):
+    """起動が 0 以外なら Failed to start new containers を出して None。ready 待ちへ進まない。"""
+    scale_harness['fake'].up_returncode = 1
+    caplog.set_level('INFO', logger=container.logger.name)
+
+    assert _run_pipeline() is None
+
+    assert ('ERROR', 'Failed to start new containers') in _records(caplog)
+    assert 'wait' not in [name for name, _ in scale_harness['calls']]
+
+
+def test_run_scale_pipeline_propagates_generation_failure(scale_harness, monkeypatch):
+    """構成生成の失敗は DevbaseError のまま伝播する (Scale failed: は cmd_scale が出す)。"""
+    def fail(*a, **k):
+        raise DevbaseError('boom')
+
+    monkeypatch.setattr(container, '_build_scaled_override', fail)
+
+    with pytest.raises(DevbaseError, match='boom'):
+        _run_pipeline()
