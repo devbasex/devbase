@@ -41,3 +41,17 @@ def test_create_rejects_invalid_name_before_side_effects(tmp_path):
 
     assert list((tmp_path / 'backups').iterdir()) == []
     assert not (tmp_path / 'evil').exists()
+
+
+def test_delete_rejects_invalid_name_before_side_effects(tmp_path):
+    """公開入口で不正名を拒否し、副作用へ進まない現状を固定する。"""
+    manager = SnapshotManager(tmp_path)
+
+    with patch('devbase.snapshot.manager.shutil.rmtree') as rmtree:
+        with pytest.raises(SnapshotError, match='無効なスナップショット名'):
+            manager.delete(name='_foo')
+
+        rmtree.assert_not_called()
+
+    assert list((tmp_path / 'backups').iterdir()) == []
+
