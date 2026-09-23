@@ -433,6 +433,9 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 
 版は固定しておらず、base を建てた時点の Ubuntu のアーカイブの版が入ります。
 `containers/lfm` と `containers/snapshot` は base を継がないため入っていません。
+置き場所・入れ損ないの止め方・版の扱いの仕様は
+[base イメージの Bash の静的検査（shellcheck）](../specifications/base-image-shellcheck.md)
+にあります。
 
 > **`devbase build base --no-cache` で base を建て直すと反映されます。** `devbase up` だけでは
 > 反映されません。派生イメージ（`general` / `php` など）を使っているプロジェクトは、その
