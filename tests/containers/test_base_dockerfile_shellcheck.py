@@ -117,3 +117,61 @@ def test_first_run_apt_package_sets_match_current_dockerfile():
             "docker-compose-plugin", "gh", "nodejs", "terraform",
         },
     ]
+
+
+# ---------------------------------------------------------------------------
+# AWS CLI + gcloud SDK + uv + npm globals の RUN のアーキテクチャ分岐 (R1-004)
+#
+# session-manager-plugin と gcloud SDK は、ダウンロードするアーキテクチャを ``case`` で
+# 選ぶ。この RUN を分けたりまとめたりしたときに、片方の対応や未対応時の停止が欠けても
+# 検出できるよう、現状の分岐をそのまま固定する。正しさは主張せず現状を記録する。
+# ---------------------------------------------------------------------------
+
+
+def _aws_gcloud_run() -> str:
+    """AWS CLI / session-manager-plugin / gcloud SDK / uv / npm を入れる RUN の 1 命令分"""
+    found = [
+        b for b in _run_blocks()
+        if "ssm_arch=" in b and "gcloud_arch=" in b
+    ]
+    assert len(found) == 1, "ssm_arch と gcloud_arch を持つ RUN がちょうど 1 つではない"
+    return found[0]
+
+
+def _case_branches(block: str, var: str) -> dict[str, str]:
+    """``<pat>) <var>="値" ;;`` 形式の枝を {パターン: 値} に、``*) ... exit N`` の枝を
+    {"*": "exit N"} に写し取る。行継続の ``\\`` と空白は畳んで扱う。
+    """
+    flat = block.replace("\\\n", " ")
+    branches: dict[str, str] = {}
+    for pat, value in re.findall(
+        rf'([\w*]+)\)\s+{re.escape(var)}="([^"]+)"\s*;;', flat
+    ):
+        branches[pat] = value
+    fallback = re.search(r"\*\)[^;]*?(exit\s+\d+)", flat)
+    if fallback:
+        branches["*"] = fallback.group(1)
+    return branches
+
+
+def test_ssm_arch_case_maps_current_architectures():
+    """session-manager-plugin の case。amd64 / arm64 が現状の値へ、それ以外は exit 1"""
+    branches = _case_branches(_aws_gcloud_run(), "ssm_arch")
+    assert branches["amd64"] == "ubuntu_64bit"
+    assert branches["arm64"] == "ubuntu_arm64"
+    assert branches["*"] == "exit 1"
+
+
+def test_gcloud_arch_case_maps_current_architectures():
+    """gcloud SDK の case。x86_64 / aarch64 が現状の値へ、それ以外は exit 1"""
+    branches = _case_branches(_aws_gcloud_run(), "gcloud_arch")
+    assert branches["x86_64"] == "x86_64"
+    assert branches["aarch64"] == "arm"
+    assert branches["*"] == "exit 1"
+
+
+def test_ssm_and_gcloud_arch_values_are_used_in_download_urls():
+    """case で選んだ値がダウンロード URL の ${ssm_arch} / ${gcloud_arch} で参照される"""
+    block = _aws_gcloud_run()
+    assert "session-manager-downloads" in block and "${ssm_arch}" in block
+    assert "google-cloud-cli-linux-${gcloud_arch}" in block
