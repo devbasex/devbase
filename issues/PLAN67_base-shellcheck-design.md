@@ -18,7 +18,8 @@
 | `containers/base/Dockerfile` の 1 つ目の `RUN` の 1 回目の `apt-get install` | 変える | `poppler-utils` の行の後へ、理由のコメントと `shellcheck` を足す |
 | `containers/base/Dockerfile` の版の確認の `RUN` | 変える | `&&` の連なりの末尾へ `shellcheck --version` を足す。入っていなければビルドをここで止める |
 | `tests/containers/test_base_dockerfile_shellcheck.py`（新設） | 足す | Docker を起動せずに、上の 2 か所の**形**を固定する |
-| `docs/user/container-operations.md` | 変える | 「文書を扱う道具も base に入っています」の段の後へ、shellcheck の 1 段を足す。反映の注記（`devbase build base --no-cache` と派生イメージの建て直し）は既存の引用を共有させる |
+| `docs/user/container-operations.md` の「イメージの詳細」の表（366 行目の base の行） | 変える | 「主な内容」の末尾へ shellcheck を足す |
+| `docs/user/container-operations.md` の新しい小節「Bash の静的検査（base 以降）」 | 足す | 「文字の描画と、文書を扱う道具（base 以降）」の節（375〜419 行目）の後、「AI CLI エイリアス」の前に立てる。shellcheck の用途と、反映に `devbase build base --no-cache` と派生イメージの建て直しが要ることを書く。既存の節は末尾で `base-image-rendering.md` を参照しており、shellcheck はその仕様の範囲外のため同居させない |
 | `CHANGELOG.md` | 変える | `[Unreleased]` に `### Added` を立て、shellcheck を足したことと、**反映には `devbase build base --no-cache` が要る**ことを書く |
 
 次のものは変えない。
@@ -159,7 +160,11 @@ PLAN63 の後、この変更の前に建てた base は `local.conf` を持つ�
 ことはビルドが保証しているため、足しても新しく捕まえるものが無い。
 
 補助の関数は `test_base_dockerfile_fonts.py` から import せず、新しいファイルに持つ。
-対象はコメント行を除く `_statements` と、行継続をつなぐ `_run_blocks` の 2 つである。
+対象はコメント行を除く `_statements`、行継続をつなぐ `_run_blocks`、1 つ目の `RUN` の
+1 回目の `apt-get install` の一覧を切り出す `_first_apt_install` の 3 つである。
+1 つ目の `RUN` は `apt-get install` を 2 回呼ぶため、`RUN` の本文全体で探すと 2 回目の一覧に
+あっても通ってしまう。`_first_apt_install` は `test_base_dockerfile_fonts.py` の同名の関数と
+同じく、1 回目と 2 回目の `apt-get install` の出現位置の間を切り出す。
 テストのファイルどうしを依存させない（`test_base_dockerfile_bao.py` も自前の `_statements` を持つ）。
 
 ### 決定 5: `containers/lfm` には入れない
@@ -179,10 +184,10 @@ Bash を書く用途は挙がっていない。入れるなら lfm 自身の `ap
 | 2 | base の後に `devbase-general` と `devbase-php` を建て直し、同じコマンドを走らせる。出力を Pull Request 本文へ貼る |
 | 3 | 建てた base で `printf '#!/bin/bash\necho $foo\n' > /tmp/t.sh; shellcheck /tmp/t.sh; echo exit=$?`。`SC2086` と `exit=1` を見る |
 | 4・5 | `test_base_dockerfile_shellcheck.py`（決定 4 の表） |
-| 6 | 建てた base で `dpkg-query -W -f='${Installed-Size}\n' shellcheck libnuma1` の合計が 30720 以下。あわせて変更前のイメージで `dpkg -l libnuma1` が未導入であることを採り、新しく入るのが 2 つであることを示す |
+| 6 | 変更前のイメージ（shellcheck を持たない `devbase-base`）で `apt-get update` の後に `apt-get install -s --no-install-recommends shellcheck \| grep '^Inst'` を走らせ、行がちょうど `shellcheck` と `libnuma1` の 2 行であることを見る。建てた base で `dpkg-query -W -f='${Installed-Size}\n' shellcheck libnuma1` の合計が 30720 以下 |
 | 7 | `uv run --locked pytest tests/ -q` |
 | 8 | `devbase build base --no-cache`（arm64） |
-| 9 | 差分の目視（`docs/user/container-operations.md` と `CHANGELOG.md`） |
+| 9 | 差分の目視（`docs/user/container-operations.md` の「イメージの詳細」の表と「Bash の静的検査（base 以降）」の小節、`CHANGELOG.md`） |
 
 ## 未確認のまま残ること
 

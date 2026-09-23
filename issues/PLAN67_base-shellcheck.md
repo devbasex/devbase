@@ -87,7 +87,7 @@
 
 - `containers/base/Dockerfile`
 - `tests/containers/test_base_dockerfile_shellcheck.py`（新設）
-- `docs/user/container-operations.md`
+- `docs/user/container-operations.md`（「イメージの詳細」の表の base の行と、新しい小節「Bash の静的検査（base 以降）」）
 - `CHANGELOG.md`
 
 ### 切り戻し手順
@@ -131,16 +131,22 @@ arm64、作成 2026-09-22T23:10:59Z）で採った。導入の結果は、同じ
 ### 退行しないこと
 
 - [ ] 6. 依存を含めて新しく入るのは `shellcheck` と `libnuma1` の 2 パッケージである。
-      建てたイメージの中で次の値の合計が 30720（KB。30 MB）以下である。arm64 の実測は
-      `shellcheck` 単体で 24971
+      変更前のイメージ（shellcheck を持たない `devbase-base`）で `apt-get update` の後に
+      次のコマンドを走らせ、出力がちょうど `shellcheck` と `libnuma1` の 2 行である。
+      名指しした 2 つを調べるのではなく、新しく入る集合そのものを列挙して確かめる
+      `apt-get install -s --no-install-recommends shellcheck | grep '^Inst'`
+      あわせて、建てたイメージの中で次の値の合計が 30720（KB。30 MB）以下である。arm64 の
+      実測は `shellcheck` 単体で 24971
       `dpkg-query -W -f='${Installed-Size}\n' shellcheck libnuma1`
       **合否を `docker images` の前後の差で決めない。** `--no-cache` の建て直しは
       `claude` / `nodejs` などの取得物も新しい版へ入れ替える。差にこの変更以外の増減が混ざる
 - [ ] 7. `uv run --locked pytest tests/ -q` が終了コード 0
 - [ ] 8. `devbase build base --no-cache` が arm64 で成功する
-- [ ] 9. 次の 2 か所に shellcheck があり、どちらも**反映に `devbase build base --no-cache` が
-      要る**ことを書いている
-      - `docs/user/container-operations.md` の base の道具の説明
+- [ ] 9. 次の 3 か所に shellcheck がある。表を除く 2 か所は、**反映に
+      `devbase build base --no-cache` が要る**ことを書いている
+      - `docs/user/container-operations.md` の「イメージの詳細」の表の base の「主な内容」
+      - `docs/user/container-operations.md` の新しい小節「Bash の静的検査（base 以降）」。
+        「文字の描画と、文書を扱う道具（base 以降）」の節には同居させない
       - `CHANGELOG.md` の `[Unreleased]` の `### Added`
 
 ## 検証手段
