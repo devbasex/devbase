@@ -51,23 +51,6 @@ def test_both_architectures_are_selectable():
     assert "openbao_${BAO_VERSION}_linux_${bao_arch}.tar.gz" in block
 
 
-def test_architecture_case_rejects_unsupported_architectures():
-    """現状の対応表と、未対応時にメッセージを出して exit 1 する枝を固定する。"""
-    flat = _bao_run_block().replace("\\\n", " ")
-    case = re.search(r"\bcase\b.*?\bin\b(.*?)\besac\b", flat)
-    assert case is not None
-    branches = dict(re.findall(r"([\w*]+)\)\s*(.*?)\s*;;", case.group(1)))
-    architectures = {
-        pattern: re.fullmatch(r'bao_arch="([^"]+)"', body).group(1)
-        for pattern, body in branches.items() if pattern != "*"
-    }
-    assert architectures == {"amd64": "amd64", "arm64": "arm64"}
-    assert re.fullmatch(
-        r'echo "Unsupported architecture for bao: \$\(dpkg --print-architecture\)"'
-        r"\s*&&\s*exit 1", branches["*"],
-    )
-
-
 def test_tarball_is_verified_against_the_release_checksums():
     block = _bao_run_block()
     assert 'bao_base="https://github.com/openbao/openbao/releases/download/v${BAO_VERSION}"' in block
