@@ -25,7 +25,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     fonts-crosextra-carlito fonts-crosextra-caladea \
     # 文書を扱う軽量の道具 (#160)。PDF を画像にする・調べる、OOXML を壊さずに読み書きする。
     # LibreOffice (展開 372〜459MB) と pip は入れない。Python パッケージは uv / uvx で賄う。
-    poppler-utils python3-pil python3-defusedxml python3-lxml; \
+    poppler-utils python3-pil python3-defusedxml python3-lxml \
+    # Bash の静的検査 (#249)。bash-language-server は診断を shellcheck に任せており、
+    # 無いとエラーも警告も出さずに診断が空になる。
+    shellcheck; \
     # ロケール設定
     locale-gen en_US.UTF-8; \
     update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8; \
@@ -184,7 +187,7 @@ RUN set -eux; \
     bao version
 
 # 確認
-RUN gh --version && node --version && npm --version && aws --version && gcloud --version && session-manager-plugin --version
+RUN gh --version && node --version && npm --version && aws --version && gcloud --version && session-manager-plugin --version && shellcheck --version
 
 USER ${USERNAME}
 WORKDIR /tmp
