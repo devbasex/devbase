@@ -175,3 +175,15 @@ def test_ssm_and_gcloud_arch_values_are_used_in_download_urls():
     block = _aws_gcloud_run()
     assert "session-manager-downloads" in block and "${ssm_arch}" in block
     assert "google-cloud-cli-linux-${gcloud_arch}" in block
+
+
+def test_version_check_run_commands_match_current_dockerfile():
+    """版の確認の RUN の現状のコマンド一式 (R1-005)。順序は仕様ではないので集合で比べる
+
+    shellcheck 以外の 6 つも固定し、RUN を組み替えたときに確認が黙って欠けないようにする。
+    """
+    commands = {c.strip() for c in _version_check_run().removeprefix("RUN ").split("&&")}
+    assert commands == {
+        "gh --version", "node --version", "npm --version", "aws --version",
+        "gcloud --version", "session-manager-plugin --version", "shellcheck --version",
+    }
