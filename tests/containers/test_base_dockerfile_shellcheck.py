@@ -92,3 +92,28 @@ def test_version_check_run_calls_shellcheck():
     """決定 2。入れ損ないを、版の確認の RUN で止める (無ければ終了コード 127)"""
     commands = [c.strip() for c in _version_check_run().removeprefix("RUN ").split("&&")]
     assert "shellcheck --version" in commands
+
+
+def test_first_run_apt_package_sets_match_current_dockerfile():
+    """現行 RUN から抽出して観測した 2 回分の集合。順序・オプションは固定しない。"""
+    calls = re.findall(r"apt-get\s+install\s+([^;]+);", _run_blocks()[0])
+    packages = [
+        {word for word in call.replace("\\\n", " ").split()
+         if word != "\\" and not word.startswith("-")}
+        for call in calls
+    ]
+    assert packages == [
+        {
+            "ca-certificates", "curl", "fonts-crosextra-caladea",
+            "fonts-crosextra-carlito", "fonts-noto-cjk", "fonts-noto-cjk-extra",
+            "git", "gnupg", "jq", "libnss3", "libxrandr2", "libxss1", "locales",
+            "lsb-release", "make", "nano", "openssh-client", "poppler-utils",
+            "python3-defusedxml", "python3-lxml", "python3-pil", "shellcheck",
+            "sudo", "tmux", "unzip", "vim", "wget",
+        },
+        {
+            "$BROWSER_PKG", "chromium-browser", "containerd.io",
+            "docker-buildx-plugin", "docker-ce", "docker-ce-cli",
+            "docker-compose-plugin", "gh", "nodejs", "terraform",
+        },
+    ]
