@@ -56,10 +56,12 @@ def _first_apt_install(block: str) -> str:
 
     1 つ目の RUN は apt-get install を 2 回呼ぶ。RUN の本文全体で探すと、2 回目の一覧
     (後から足したリポジトリの docker-ce / gh / nodejs など) にあっても通ってしまう。
+    範囲は 1 回目の apt-get install から最初の ``;`` まで。2 回目の直前までにすると、
+    間にある locale-gen やリポジトリの設定の語でも通ってしまう。
     """
     calls = [m.start() for m in re.finditer(r"apt-get install", block)]
     assert len(calls) >= 2, "1 つ目の RUN に apt-get install が 2 回無い"
-    return block[calls[0]:calls[1]]
+    return block[calls[0]:block.index(";", calls[0])]
 
 
 def _version_check_run() -> str:
