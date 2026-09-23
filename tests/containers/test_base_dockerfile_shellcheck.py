@@ -15,7 +15,11 @@ Docker を起動せず、``containers/base/Dockerfile`` の文字列だけを固
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 DOCKERFILE = Path(__file__).resolve().parents[2] / "containers" / "base" / "Dockerfile"
 SHELLCHECK = re.compile(r"(?<![\w-])shellcheck(?![\w-])")
@@ -187,3 +191,102 @@ def test_version_check_run_commands_match_current_dockerfile():
         "gh --version", "node --version", "npm --version", "aws --version",
         "gcloud --version", "session-manager-plugin --version", "shellcheck --version",
     }
+
+
+@pytest.mark.parametrize(
+    ("failure", "exit_code"),
+    [
+        ("download", 22), ("installer", 42),
+        # macOS の /bin/sh は実体のない絶対パスの実行で 1、Linux は 127。
+        ("missing_binary", 1 if sys.platform == "darwin" else 127),
+    ],
+)
+def test_agy_failure_stops_user_tools_run(tmp_path, failure, exit_code):
+    """現状固定: agy の各失敗を伝播し、後続ツールの成果を作らない。"""
+    blocks = [b for b in _run_blocks() if "https://antigravity.google/cli/install.sh" in b]
+    assert len(blocks) == 1
+    home = tmp_path / "home"
+    home.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    for name in ("uv", "claude"):
+        (fixtures / name).write_text(f'printf installed > "$ARTIFACTS/{name}"\n')
+    (fixtures / "agy").write_text(
+        'printf started > "$ARTIFACTS/agy-installer"\n'
+        + ("exit 42\n" if failure == "installer" else "exit 0\n")
+    )
+    # PATH にホストのコマンドを含めず、シェルだけ本物で fixture を実行する。
+    for name in ("sh", "bash"):
+        (bin_dir / name).symlink_to(f"/bin/{name}")
+    stub = tmp_path / "command-stub"
+    stub.write_text(
+        f"#!{sys.executable}\n"
+        + '''import os
+import sys
+from pathlib import Path
+
+name = Path(sys.argv[0]).name
+args = sys.argv[1:]
+artifacts = Path(os.environ["ARTIFACTS"])
+if name == "curl":
+    url = next(arg for arg in args if arg.startswith("https://"))
+    sources = {
+        "https://astral.sh/uv/install.sh": "uv",
+        "https://claude.ai/install.sh": "claude",
+        "https://antigravity.google/cli/install.sh": "agy",
+    }
+    if url in sources:
+        source = sources[url]
+        if source == "agy":
+            (artifacts / "agy-download").write_text("attempted")
+            if os.environ["FAILURE"] == "download":
+                sys.exit(22)
+        data = (Path(os.environ["FIXTURES"]) / source).read_text()
+    elif url.startswith("https://desktop-release.q.us-east-1.amazonaws.com/"):
+        (artifacts / "kiro-download").write_text("downloaded")
+        data = "kiro fixture"
+    else:
+        raise AssertionError(url)
+    if "-o" in args:
+        Path(args[args.index("-o") + 1]).write_text(data)
+    else:
+        sys.stdout.write(data)
+elif name == "uname":
+    print("x86_64")
+elif name == "unzip":
+    Path("kirocli").mkdir(exist_ok=True)
+    installer = Path("kirocli/install.sh")
+    installer.write_text("#!/bin/sh\\nexit 0\\n")
+    installer.chmod(0o755)
+elif name == "npx":
+    (artifacts / "playwright-install").write_text("installed")
+elif name in ("rm", "sudo"):
+    pass  # ホストの削除・権限昇格は実行しない。
+else:
+    raise AssertionError(name)
+'''
+    )
+    stub.chmod(0o755)
+    for name in ("curl", "uname", "unzip", "npx", "rm", "sudo"):
+        (bin_dir / name).symlink_to(stub)
+    result = subprocess.run(
+        ["/bin/sh", "-c", blocks[0].removeprefix("RUN ")],
+        cwd=tmp_path,
+        env={
+            "HOME": str(home), "PATH": str(bin_dir),
+            "ARTIFACTS": str(artifacts), "FIXTURES": str(fixtures),
+            "FAILURE": failure,
+        },
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == exit_code, result.stderr
+    assert (artifacts / "uv").read_text() == "installed"
+    assert (artifacts / "claude").read_text() == "installed"
+    assert (artifacts / "agy-download").exists()
+    assert (artifacts / "agy-installer").exists() == (failure != "download")
+    assert not (artifacts / "kiro-download").exists()
+    assert not (artifacts / "playwright-install").exists()
