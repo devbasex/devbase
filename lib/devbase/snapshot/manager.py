@@ -659,7 +659,8 @@ class SnapshotManager:
 
         Returns:
             系列の最新の世代の名前。新しい世代を作るべきなら ``None``
-            (その理由を INFO で 1 行出す)。
+            (その理由を INFO で 1 行出す。最新の世代がシンボリックリンクか
+            不正な名前なら WARNING)。
         """
         label = self.series_label(self.volumes)
         latest = self.series_latest()
@@ -668,9 +669,16 @@ class SnapshotManager:
             return None
 
         name = latest['name']
-        snap_dir = self.backups_dir / name
-        if (is_single_segment_name(name) and not snap_dir.is_symlink()
-                and snap_dir.is_dir()):
+        try:
+            # create と同じ検証を先に通す。通らない世代へ積もうとすると、rotate が
+            # 系列の最新を消さないため、起動のたびに同じ失敗を繰り返す (決定 7)
+            snap_dir = self._safe_snap_dir(name)
+        except SnapshotError as e:
+            logger.warning(
+                "%s の最新の世代 '%s' は扱えないため、新しい世代を作成します: %s",
+                label, name, e)
+            return None
+        if snap_dir.is_dir():
             recorded = self.snapshot_volumes(snap_dir)
             if recorded != self.volumes:
                 logger.info(

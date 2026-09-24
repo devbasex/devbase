@@ -499,3 +499,43 @@ def test_other_operations_refuse_symlink(tmp_path, op):
     assert mgr.calls == []
     assert not (tmp_path / "backups" / "new").exists()
     assert sorted(p.name for p in outside.iterdir()) == ["keep.txt"]
+
+
+def _bad_latest(tmp_path: Path, kind: str) -> tuple:
+    """系列 default の最新がリンクか ``../outside`` の状態を作る。(名前, 外の場所) を返す。"""
+    if kind == "symlink":
+        outside = _link_outside(tmp_path)
+        name = "old"
+    else:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("keep")
+        name = "../outside"
+    write_state(tmp_path, [("D1", "default", 0), (name, "default", 0)])
+    return name, outside
+
+
+@pytest.mark.parametrize("kind", ["symlink", "traversal"])
+def test_bad_latest_starts_a_new_generation(tmp_path, caplog, kind):
+    """決定 7: 系列の最新が扱えない世代なら積まず、理由を WARNING で 1 行出す。"""
+    name, _ = _bad_latest(tmp_path, kind)
+    mgr = RecordingManager(tmp_path, group="default")
+
+    with caplog.at_level(logging.INFO, logger="devbase"):
+        assert mgr.auto_snapshot_target() is None
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and f"'{name}'" in warnings[0].getMessage()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "traversal"])
+def test_bad_latest_is_left_behind_and_rotated_out(tmp_path, kind):
+    """新しい世代を作れば、扱えない世代は最新でなくなり、rotate が一覧から外す。"""
+    name, outside = _bad_latest(tmp_path, kind)
+    mgr = RecordingManager(tmp_path, group="default")
+
+    created = mgr.create(name=mgr.auto_snapshot_target())
+    assert mgr.auto_snapshot_target() == created
+
+    mgr.rotate(keep=1)
+    assert names(tmp_path) == [created]
+    assert sorted(p.name for p in outside.iterdir()) == ["keep.txt"]
