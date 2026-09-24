@@ -462,6 +462,11 @@ def test_help_exits_zero(tm, argv):
     ("tmux-go", "-c", "/dev/pts/1;x", "x"),   # -c の形が外れた
     ("tmux-go", "-c", "", "x"),
     ("tmux-session", "menu", "x"),            # menu に -c が無い
+    ("tmux-go", "-c"),                        # -c の値が無い (末尾)
+    ("tmux-peek", "-n"),                      # -n の値が無い (末尾)
+    ("tmux-kill",),                           # kill にセッションが無い
+    ("tmux-peek", "-c", "/dev/pts/1", "x"),   # peek は -c を受け取らない
+    ("tmux-session", "menu", "-c", "/dev/pts/1", "a", "b"),  # menu にセッションが複数
 ])
 def test_usage_errors_exit_two(tm, argv):
     done = tm.run(*argv)
