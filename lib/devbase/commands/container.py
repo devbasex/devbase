@@ -804,7 +804,7 @@ def _snapshot_min_interval_minutes() -> int:
 
 
 def _auto_snapshot(remote: bool = False) -> None:
-    """デプロイ前の自動スナップショット (差分世代数ベース世代管理)。
+    """デプロイ前の自動スナップショット (系列ごとの差分世代数ベース世代管理。PLAN68)。
 
     失敗してもデプロイは続行する (warning のみ)。DEVBASE_ROOT 未設定なら no-op。
     リモート扱い (PLAN52 決定 12) では作らない。控えたいボリュームがリモートにあり、
@@ -824,8 +824,11 @@ def _auto_snapshot(remote: bool = False) -> None:
 
         from devbase.snapshot.manager import SnapshotManager
         mgr = SnapshotManager(Path(devbase_root))
+        # 最小間隔・積み先はどちらも系列 (起動するグループのボリュームの組) の
+        # 単位で判定する (PLAN68 決定 2・4)
+        label = mgr.series_label(mgr.volumes)
         min_interval = _snapshot_min_interval_minutes()
-        last = mgr.last_snapshot_time()
+        last = mgr.last_snapshot_time(mgr.volumes)
         if min_interval > 0 and last is not None:
             # 経過時間が負 (last が未来) の場合はスキップしない。システム時計の
             # ズレや他環境からのリストアで last が未来になると delta が負になり、
@@ -834,17 +837,17 @@ def _auto_snapshot(remote: bool = False) -> None:
             delta = datetime.now(timezone.utc) - last
             if timedelta(0) <= delta < timedelta(minutes=min_interval):
                 logger.info(
-                    "[0/6] 直近のスナップショット (%s) から%d分以内のためスキップします",
-                    last.astimezone().strftime('%Y-%m-%d %H:%M:%S'), min_interval,
+                    "[0/6] %s の直近のスナップショット (%s) から%d分以内のためスキップします",
+                    label, last.astimezone().strftime('%Y-%m-%d %H:%M:%S'), min_interval,
                 )
                 return
-        if mgr.should_start_new_generation():
-            logger.info("[0/6] 新しいスナップショット世代を作成中...")
+        target = mgr.auto_snapshot_target()
+        if target is None:
+            logger.info("[0/6] 新しいスナップショット世代を作成中 (%s)...", label)
             mgr.create()
         else:
-            latest = mgr.list()[-1]['name']
-            logger.info("[0/6] スナップショットを差分更新中: %s", latest)
-            mgr.create(name=latest, full=False)
+            logger.info("[0/6] スナップショットを差分更新中: %s (%s)", target, label)
+            mgr.create(name=target, full=False)
         mgr.rotate()
     except Exception as e:
         logger.warning("スナップショットの自動作成に失敗しましたがデプロイは続行します: %s", e)

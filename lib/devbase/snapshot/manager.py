@@ -158,10 +158,26 @@ class SnapshotManager:
             )
 
     def _safe_snap_dir(self, name: str) -> Path:
-        """名前からスナップショットディレクトリを安全に解決する"""
+        """名前からスナップショットディレクトリを安全に解決する。
+
+        次の 3 つを ``SnapshotError`` で止める (PLAN68 決定 7)。
+
+        - 名前が不正 (``../outside`` など)
+        - 世代がシンボリックリンク。devbase はリンクの世代を作らず、リンク先が
+          ``backups/`` の外でも中の別の世代でも、消すと実体を失う
+        - 解決後のパスが ``backups/`` の中に無い。文字列の前方一致ではなく
+          パスの要素の単位で比べる (兄弟の ``backups-outside/`` を通さないため)
+
+        ``backups/`` 自体をリンクにした構成は、解決後の ``backups/`` と比べるため使える。
+        """
         self._validate_name(name)
-        snap_dir = (self.backups_dir / name).resolve()
-        if not str(snap_dir).startswith(str(self.backups_dir.resolve())):
+        raw = self.backups_dir / name
+        if raw.is_symlink():
+            raise SnapshotError(
+                f"スナップショット '{name}' はシンボリックリンクのため扱えません: "
+                f"{raw} -> {raw.readlink()}")
+        snap_dir = raw.resolve()
+        if not snap_dir.is_relative_to(self.backups_dir.resolve()):
             raise SnapshotError(f"無効なスナップショットパス: '{name}'")
         return snap_dir
 
@@ -208,8 +224,11 @@ class SnapshotManager:
                 snap['size_bytes'] = 0
         return snapshots
 
-    def last_snapshot_time(self) -> Optional[datetime]:
+    def last_snapshot_time(self, volumes: Optional[dict] = None) -> Optional[datetime]:
         """直近のスナップショット取得 (フル/差分) 日時を返す。
+
+        ``volumes`` を渡すと、その組の系列に属する世代 (``snapshot.yml`` のエントリ)
+        のディレクトリだけを見る (PLAN68 決定 4)。省けば全ディレクトリを見る。
 
         各スナップショットディレクトリ内のアーカイブ実体
         (``full.tar.zst`` / ``incr-*.tar.zst``) の mtime のうち最新のものを採用する。
@@ -226,9 +245,18 @@ class SnapshotManager:
         """
         if not self.backups_dir.exists():
             return None
+        if volumes is None:
+            snap_dirs = list(self.backups_dir.iterdir())
+        else:
+            key = self.series_key(volumes)
+            snap_dirs = [
+                self.backups_dir / s['name'] for s in self._entries()
+                if self.series_key(self._entry_volumes(s)) == key
+                and is_single_segment_name(s['name'])
+            ]
         latest: Optional[float] = None
-        for snap_dir in self.backups_dir.iterdir():
-            if not snap_dir.is_dir():
+        for snap_dir in snap_dirs:
+            if snap_dir.is_symlink() or not snap_dir.is_dir():
                 continue
             for f in snap_dir.iterdir():
                 if not f.is_file():
@@ -448,69 +476,209 @@ class SnapshotManager:
         self._save_metadata(meta)
         logger.info("削除完了: %s", name)
 
-    def rotate(self, keep: int = DEFAULT_MAX_GENERATIONS) -> int:
-        """古い世代を削除する。
+    def rotate(self, keep: int = DEFAULT_MAX_GENERATIONS,
+               max_total: Optional[int] = None) -> int:
+        """古い世代を削除する (PLAN68 決定 1・6・7)。
+
+        系列 (対象ボリュームの組) ごとに ``keep`` 世代を残し、残りの総数が
+        ``max_total`` (省けば ``keep × 3``) を超えたら、系列をまたいで最も古い
+        世代から消す。**各系列の最新の世代は消さない** (次の差分の積み先のため)。
+        消す前に :meth:`_safe_snap_dir` で名前を検証し、拒否されたエントリは
+        ディレクトリを消さずに一覧からだけ外す。
+
+        Args:
+            keep: 系列ごとに残す世代の数
+            max_total: 全体で残す世代の上限。省けば ``keep × 3``
 
         Returns:
             削除された世代数
-        """
-        meta = self._load_metadata()
-        snapshots = meta.get('snapshots', [])
 
-        if len(snapshots) <= keep:
+        Raises:
+            SnapshotError: ``keep`` か ``max_total`` が 1 未満の場合 (何も消さない)
+        """
+        if max_total is None:
+            max_total = keep * 3
+        if keep < 1:
+            raise SnapshotError(f"--keep は 1 以上である必要があります: {keep}")
+        if max_total < 1:
+            raise SnapshotError(f"--max-total は 1 以上である必要があります: {max_total}")
+
+        meta = self._load_metadata()
+        snapshots = meta.get('snapshots', []) or []
+        plan = self._rotation_plan(snapshots, keep, max_total)
+        if not plan:
             return 0
 
-        # 古い順にソート（created_atベース）
-        snapshots.sort(key=lambda s: s.get('created_at', ''))
-        to_delete = snapshots[:-keep]
-
-        deleted = 0
-        for snap in to_delete:
-            snap_dir = self.backups_dir / snap['name']
+        removed_ids = set()
+        deleted_ids = set()
+        for index, reason in plan:
+            snap = snapshots[index]
+            name = snap.get('name', '')
+            removed_ids.add(index)
+            try:
+                snap_dir = self._safe_snap_dir(name)
+            except SnapshotError as e:
+                logger.warning(
+                    "snapshot.yml の世代 '%s' は場所が不正なため、ディレクトリを消さずに"
+                    "一覧からだけ外します: %s", name, e)
+                continue
             if snap_dir.exists():
                 shutil.rmtree(snap_dir)
-            deleted += 1
+            deleted_ids.add(index)
+            if reason is not None:
+                logger.info(
+                    "ローテーション: 全体の上限 %d 世代を超えたため、%s の %s を削除しました",
+                    max_total, self.series_label(self._entry_volumes(snap)), name)
 
-        meta['snapshots'] = snapshots[-keep:]
+        per_series: dict = {}
+        for index, reason in plan:
+            if reason is None and index in deleted_ids:
+                label = self.series_label(self._entry_volumes(snapshots[index]))
+                per_series[label] = per_series.get(label, 0) + 1
+        for label, count in per_series.items():
+            logger.info(
+                "ローテーション: %s の %d 世代を削除しました（グループごとに %d 世代保持）",
+                label, count, keep)
+
+        remaining = [s for i, s in enumerate(snapshots) if i not in removed_ids]
+        order = {id(s): i for i, s in enumerate(snapshots)}
+        remaining.sort(key=lambda s: (s.get('created_at', '') or '', order[id(s)]))
+        meta['snapshots'] = remaining
         meta['max_generations'] = keep
         self._save_metadata(meta)
+        return len(deleted_ids)
 
-        if deleted:
-            logger.info("ローテーション: %d 世代を削除しました（%d 世代保持）", deleted, keep)
-        return deleted
+    def _rotation_plan(self, snapshots: list, keep: int, max_total: int) -> list:
+        """ローテーションで消すエントリを決める (副作用なし)。
+
+        Returns:
+            ``(snapshots の添字, 理由)`` の並び。理由は系列ごとの保持なら ``None``、
+            全体の上限なら ``'total'``。
+        """
+        groups: dict = {}
+        for index, snap in enumerate(snapshots):
+            key = self.series_key(self._entry_volumes(snap))
+            groups.setdefault(key, []).append(index)
+
+        def age(index: int) -> tuple:
+            # created_at が同じなら snapshot.yml で前にあるものを古いとみなす
+            return (snapshots[index].get('created_at', '') or '', index)
+
+        plan: list = []
+        kept: dict = {}
+        for key, indexes in groups.items():
+            indexes.sort(key=age)
+            excess = max(0, len(indexes) - keep)
+            plan.extend((i, None) for i in indexes[:excess])
+            kept[key] = indexes[excess:]
+
+        total = sum(len(v) for v in kept.values())
+        while total > max_total:
+            candidates = [v for v in kept.values() if len(v) >= 2]
+            if not candidates:
+                logger.warning(
+                    "全体の上限 %d 世代を超えていますが、各グループの最新の世代は"
+                    "消さないため %d 世代を残します", max_total, total)
+                break
+            oldest = min(candidates, key=lambda v: age(v[0]))
+            plan.append((oldest.pop(0), 'total'))
+            total -= 1
+        return plan
+
+    # ------------------------------------------------------------------
+    # 系列 (PLAN68)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _entry_volumes(entry: dict) -> dict:
+        """``snapshot.yml`` のエントリの対象ボリュームの組。
+
+        ``volumes`` が無い・空・dict でないエントリは PLAN39 より前の旧レイアウトで、
+        共通ボリューム 1 本の組とみなす。値は検証しない (系列のキーにするだけで、
+        マウントには使わないため)。
+        """
+        volumes = entry.get('volumes') if isinstance(entry, dict) else None
+        if isinstance(volumes, dict) and volumes:
+            return dict(volumes)
+        return {'': HOME_UBUNTU_VOLUME}
+
+    @staticmethod
+    def series_key(volumes: dict) -> tuple:
+        """系列の識別子。対象ボリュームの組を並べ替えたタプル。"""
+        return tuple(sorted((str(k), str(v)) for k, v in volumes.items()))
+
+    @staticmethod
+    def series_label(volumes: dict) -> str:
+        """系列の表示名 (ログ用)。例: ``グループ default``。"""
+        group = volumes.get(GROUP_MOUNT)
+        if isinstance(group, str) and group:
+            if group.startswith(SHARED_VOLUME_PREFIX):
+                group = group[len(SHARED_VOLUME_PREFIX):]
+            return f"グループ {group}"
+        return "旧レイアウト（共通ボリュームのみ）"
+
+    def _entries(self) -> list:
+        return [s for s in (self._load_metadata().get('snapshots') or [])
+                if isinstance(s, dict) and 'name' in s]
+
+    def series_latest(self, volumes: Optional[dict] = None) -> Optional[dict]:
+        """系列の最新の世代のエントリ (``created_at`` が最大)。無ければ ``None``。
+
+        ``created_at`` が同じなら ``snapshot.yml`` で後ろのものを新しいとみなす。
+        """
+        key = self.series_key(self.volumes if volumes is None else volumes)
+        latest = None
+        latest_age = None
+        for index, snap in enumerate(self._entries()):
+            if self.series_key(self._entry_volumes(snap)) != key:
+                continue
+            age = (snap.get('created_at', '') or '', index)
+            if latest_age is None or age > latest_age:
+                latest, latest_age = snap, age
+        return latest
+
+    def auto_snapshot_target(
+        self, max_incrementals: int = DEFAULT_MAX_INCREMENTALS,
+    ) -> Optional[str]:
+        """自動スナップショットの積み先を返す (PLAN68 決定 2)。
+
+        Returns:
+            系列の最新の世代の名前。新しい世代を作るべきなら ``None``
+            (その理由を INFO で 1 行出す)。
+        """
+        label = self.series_label(self.volumes)
+        latest = self.series_latest()
+        if latest is None:
+            logger.info("%s の世代がまだ無いため、新しい世代を作成します", label)
+            return None
+
+        name = latest['name']
+        snap_dir = self.backups_dir / name
+        if (is_single_segment_name(name) and not snap_dir.is_symlink()
+                and snap_dir.is_dir()):
+            recorded = self.snapshot_volumes(snap_dir)
+            if recorded != self.volumes:
+                logger.info(
+                    "世代 %s の meta.yml の対象ボリューム (%s) が %s と一致しないため、"
+                    "新しい世代を作成します", name, ', '.join(recorded.values()), label)
+                return None
+
+        if latest.get('incremental_count', 0) >= max_incrementals:
+            logger.info(
+                "世代 %s（%s）の差分が上限 (%d) に達したため、新しい世代を作成します",
+                name, label, max_incrementals)
+            return None
+        return name
 
     def should_start_new_generation(
         self, max_incrementals: int = DEFAULT_MAX_INCREMENTALS,
     ) -> bool:
-        """最新世代の差分バックアップ数が上限に達しているか判定する。
+        """新しい世代を作るべきか (``auto_snapshot_target(...) is None``)。
 
-        Args:
-            max_incrementals: 1世代あたりの最大差分バックアップ数
-
-        Returns:
-            True: 新世代を作成すべき（スナップショットなし or 差分数が上限以上）
-            False: 既存世代に差分を追加すべき
+        系列 (対象ボリュームの組) の最新の世代に世代が無い、または差分数が上限以上
+        なら True。グループを切り替えただけでは True にならない (PLAN68)。
         """
-        meta = self._load_metadata()
-        snapshots = meta.get('snapshots', [])
-        if not snapshots:
-            return True
-        latest = snapshots[-1]
-
-        # 対象ボリュームの構成が変わったら新世代にする (PLAN39 の移行やグループ
-        # 切替)。旧世代の snar は別のレイアウトを記録しているので、そこへ差分を
-        # 積むと全ファイルが移動したものとして扱われ差分が壊れる。世代を分ければ
-        # 旧世代はそのまま復元できる。
-        snap_dir = self.backups_dir / latest.get('name', '')
-        if snap_dir.is_dir() and self.snapshot_volumes(snap_dir) != self.volumes:
-            logger.info(
-                "対象ボリュームの構成が変わったため新しい世代を作成します "
-                "(旧: %s / 新: %s)",
-                ', '.join(self.snapshot_volumes(snap_dir).values()),
-                ', '.join(self.volumes.values()))
-            return True
-
-        return latest.get('incremental_count', 0) >= max_incrementals
+        return self.auto_snapshot_target(max_incrementals) is None
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -647,7 +815,7 @@ class SnapshotManager:
         """差分バックアップを作成"""
         recorded = self.snapshot_volumes(snap_dir)
         if recorded != self.volumes:
-            # 通常はここへ来ない (should_start_new_generation が新世代へ倒す)。
+            # 通常はここへ来ない (auto_snapshot_target が新世代へ倒す)。
             # 明示的に古い世代を指定されたときだけ到達する。黙って壊れた差分を
             # 積むより、理由を出して止める方がよい。
             raise SnapshotError(

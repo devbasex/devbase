@@ -44,7 +44,7 @@ def _capture_dispatch(monkeypatch):
     def _spy(devbase_root, args):
         captured["devbase_root"] = devbase_root
         captured["subcommand"] = args.subcommand
-        for k in ("name", "full", "point", "new_name", "keep"):
+        for k in ("name", "full", "point", "new_name", "keep", "max_total"):
             if hasattr(args, k):
                 captured[k] = getattr(args, k)
         return 0
@@ -314,14 +314,17 @@ def test_run_operation_rotate_collects_keep(monkeypatch, tmp_path):
     seen = {}
 
     def fake_integer(message, *, default=None, min_value=None, max_value=None):
-        seen.update(default=default, min_value=min_value)
+        seen.update(message=message, default=default, min_value=min_value)
         return 5
 
     monkeypatch.setattr(menu, "integer", fake_integer)
     assert actions_snapshot._run_operation(tmp_path, "rotate") == 0
     assert captured["subcommand"] == "rotate" and captured["keep"] == 5
-    # CLI 既定 (--keep 3) と同じ既定値を提示し、no-op な 0 以下は弾く。
-    assert seen == {"default": 3, "min_value": 1}
+    # 全体の上限は問わない (既定の keep × 3 で動く。PLAN68)。
+    assert "max_total" not in captured
+    # CLI 既定 (--keep 3) と同じ既定値を提示し、0 以下は弾く。問いはグループごと。
+    assert seen == {"message": "グループごとに保持する世代数 (--keep)",
+                    "default": 3, "min_value": 1}
 
 
 @pytest.mark.parametrize("int_ret", ["BACK", None])
