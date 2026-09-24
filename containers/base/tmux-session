@@ -1,0 +1,377 @@
+#!/bin/sh
+# tmux-session - 1 つの tmux セッションを名指しで、移る・調べる・落とす (#234)。
+#
+# tmux-first / tmux-clean は「同じベース名のセッション群」を、操作中の端末と実行中の
+# セッションを守りながら整理する。こちらは 1 つを狙って強制的に効かせる道具で、守りの
+# 既定が逆になるため別のコマンドにしてある。
+#
+#   tmux-session go   [-c 端末] <セッション>      移る。そのセッションの他の端末は外す
+#   tmux-session peek [-n 行数] <セッション>      attach せずに端末・プロセス・画面を見る
+#   tmux-session kill [-n] [-f] [-c 端末] <セッション>...  attach・実行中を問わず落とす
+#   tmux-session menu -c 端末 <セッション>        prefix S の一覧から呼ばれるメニュー
+#
+# tmux-go / tmux-peek / tmux-kill という名前 (symlink) で呼ぶと、そのサブコマンドになる。
+# 短縮名を alias にしないのは、alias が bash の対話シェルにしか効かないため。
+#
+# セッションの指し方: `$数字` は ID、それ以外は名前の完全一致 (devbase-1 は devbase-10 に
+# 当たらない)。`$数字` は名前へ落とさない。メニューは ID を渡すため、確認を待つ間に
+# 対象が終わって ID が消えたとき、同じ文字列の名前の別のセッションを落とさないため。
+# 解決した後の tmux の操作はすべて ID で行う。ID は `$` と数字だけでできており、tmux の
+# コマンドにもシェルにも引用 1 段で安全に渡せる。
+set -eu
+
+PROG=$(basename "$0")
+case "$PROG" in
+tmux-go) SUB="go" ;;
+tmux-peek) SUB="peek" ;;
+tmux-kill) SUB="kill" ;;
+*)
+	PROG=tmux-session
+	SUB=""
+	;;
+esac
+
+usage() {
+	cat <<'USAGE'
+使い方: tmux-session <サブコマンド> [オプション] <セッション>
+
+  tmux-session go   [-c 端末] <セッション>
+      セッションへ移る。そのセッションに繋がっている他の端末は外す。
+      tmux の外では attach する。tmux の中では実行元の端末を切り替える。
+  tmux-session peek [-n 行数] <セッション>
+      attach せずに、繋がっている端末・pane のプロセス・画面の直近 (既定 20 行、
+      -n 0 で出さない) を出す。
+  tmux-session kill [-n] [-f] [-c 端末] <セッション>...
+      attach・実行中を問わず落とす。-n は落とさずに予定を出す。
+      自分の pane があるセッションは -f が無ければ落とさない。
+  tmux-session menu -c 端末 <セッション>
+      移る・中身を見る・落とすのメニューを出す (prefix S の一覧から呼ばれる)。
+
+  短縮名: tmux-go = go / tmux-peek = peek / tmux-kill = kill
+  <セッション>: `$数字` は ID、それ以外は名前の完全一致。
+  -c 端末: この端末の代わりに操作する。知らせは端末の状態行へ出す。
+
+終了コード: 0 成功 / 1 対象が無い・サーバが無い・実行元を特定できない など / 2 使い方の誤り
+USAGE
+}
+
+usage_error() {
+	echo "$PROG: $1" >&2
+	echo "  使い方は $PROG -h" >&2
+	exit 2
+}
+
+if [ -z "$SUB" ]; then
+	[ $# -ge 1 ] || usage_error "サブコマンドがありません"
+	case "$1" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	go | peek | kill | menu) SUB=$1 ;;
+	*) usage_error "不明なサブコマンド: $1" ;;
+	esac
+	shift
+fi
+
+CLIENT=""
+HAVE_CLIENT=0
+LINES_N=20
+DRY=0
+FORCE=0
+while [ $# -gt 0 ]; do
+	case "$SUB:$1" in
+	*:-h | *:--help)
+		usage
+		exit 0
+		;;
+	go:-c | kill:-c | menu:-c)
+		[ $# -ge 2 ] || usage_error "-c に端末の名前が要ります"
+		CLIENT=$2
+		HAVE_CLIENT=1
+		shift 2
+		;;
+	peek:-n)
+		[ $# -ge 2 ] || usage_error "-n に行数が要ります"
+		LINES_N=$2
+		shift 2
+		;;
+	kill:-n | kill:--dry-run)
+		DRY=1
+		shift
+		;;
+	kill:-f | kill:--force)
+		FORCE=1
+		shift
+		;;
+	*:--)
+		shift
+		break
+		;;
+	*:-?*) usage_error "不明なオプション: $1" ;;
+	*) break ;;
+	esac
+done
+
+# -c の値は tmux の端末名 (tty のパス /dev/pts/4 か client-<pid>) の形に限る。この範囲に
+# 収めることで、menu が組む tmux のコマンドへ引用 1 段で埋め込める。
+if [ "$HAVE_CLIENT" = 1 ]; then
+	case "$CLIENT" in
+	'' | *[!A-Za-z0-9/_.-]*) usage_error "-c の値が端末の名前の形ではありません: $CLIENT" ;;
+	esac
+fi
+case "$LINES_N" in
+'' | *[!0-9]*) usage_error "-n は 0 以上の整数で指定してください: $LINES_N" ;;
+esac
+
+case "$SUB" in
+kill) [ $# -ge 1 ] || usage_error "セッションを指定してください" ;;
+*)
+	[ $# -ge 1 ] || usage_error "セッションを指定してください"
+	[ $# -eq 1 ] || usage_error "セッションは 1 つだけ指定してください"
+	;;
+esac
+[ "$SUB" != menu ] || [ "$HAVE_CLIENT" = 1 ] || usage_error "menu には -c が要ります"
+
+# 知らせの出し先。-c のときは端末の状態行へ出し、標準出力には何も出さない
+# (UI から背景の run-shell で呼ばれるため、出力は誰にも見えない)。
+say() {
+	if [ "$HAVE_CLIENT" = 1 ]; then
+		tmux display-message -l -c "$CLIENT" "$PROG: $1" 2>/dev/null || true
+	else
+		echo "$1"
+	fi
+}
+warn() {
+	if [ "$HAVE_CLIENT" = 1 ]; then
+		tmux display-message -l -c "$CLIENT" "$PROG: $1" 2>/dev/null || true
+	fi
+	echo "$PROG: $1" >&2
+}
+fail() {
+	warn "$1"
+	exit 1
+}
+
+command -v tmux >/dev/null 2>&1 || fail "tmux が見つかりません"
+SESSIONS=$(tmux list-sessions -F '#{session_id} #{session_name}' 2>/dev/null) ||
+	fail "tmux サーバが起動していません"
+
+if [ "$HAVE_CLIENT" = 1 ]; then
+	tmux list-clients -F '#{client_name}' | grep -Fqx -- "$CLIENT" ||
+		fail "端末がありません: $CLIENT"
+fi
+
+# セッションを ID へ解決する。list-sessions の最初の空白より後ろ全体を名前として
+# 比べる (tmux-clean と同じ方法。名前にどんな文字が入っても取り違えない)。
+# awk の -v は値の \ を解釈するため、比べる値は環境変数で渡す。
+resolve() {
+	case "$1" in
+	\$*[!0-9]* | \$) BY_ID=0 ;;
+	\$*) BY_ID=1 ;;
+	*) BY_ID=0 ;;
+	esac
+	printf '%s\n' "$SESSIONS" | WANT=$1 BY_ID=$BY_ID awk '
+		{
+			id = $1
+			name = substr($0, length(id) + 2)
+			if (ENVIRON["BY_ID"] == 1 ? id == ENVIRON["WANT"] : name == ENVIRON["WANT"]) {
+				print id
+				exit
+			}
+		}'
+}
+name_of() {
+	printf '%s\n' "$SESSIONS" | WANT=$1 awk '$1 == ENVIRON["WANT"] { print substr($0, length($1) + 2); exit }'
+}
+
+# 自分のセッション: -c の端末が見ているセッション、無ければ自分の pane があるセッション。
+SELF_SID=""
+if [ "$HAVE_CLIENT" = 1 ]; then
+	SELF_SID=$(tmux display-message -c "$CLIENT" -p '#{session_id}' 2>/dev/null || true)
+elif [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; then
+	SELF_SID=$(tmux display-message -p -t "$TMUX_PANE" '#{session_id}' 2>/dev/null || true)
+fi
+
+do_kill() {
+	rc=0
+	LAST=""
+	for want in "$@"; do
+		id=$(resolve "$want")
+		if [ -z "$id" ]; then
+			warn "セッションがありません: $want"
+			rc=1
+			continue
+		fi
+		name=$(name_of "$id")
+		if [ "$id" = "$SELF_SID" ]; then
+			if [ "$FORCE" = 1 ]; then
+				# 自分のシェルに SIGHUP が届き、この処理自身も終わり得るため最後に回す。
+				LAST=$id
+			else
+				warn "自分のセッションなので落としません (落とすには -f): $name"
+				rc=1
+			fi
+			continue
+		fi
+		if [ "$DRY" = 1 ]; then
+			say "KILL $name (dry-run)"
+		elif tmux kill-session -t "$id"; then
+			say "KILL $name"
+		else
+			warn "落とせませんでした: $name"
+			rc=1
+		fi
+	done
+	if [ -n "$LAST" ]; then
+		name=$(name_of "$LAST")
+		if [ "$DRY" = 1 ]; then
+			say "KILL $name (dry-run)"
+		else
+			say "KILL $name"
+			tmux kill-session -t "$LAST" || rc=1
+		fi
+	fi
+	return "$rc"
+}
+
+do_peek() {
+	id=$1
+	name=$(name_of "$id")
+	counts=$(tmux display-message -p -t "$id" '#{session_windows} #{session_attached}')
+	printf 'session  %s (%s)  windows %s  attached %s\n' "$name" "$id" "${counts% *}" "${counts#* }"
+
+	echo "clients"
+	clients=$(tmux list-clients -t "$id" -F '  #{client_name}  最終操作 #{t:client_activity}')
+	if [ -n "$clients" ]; then
+		printf '%s\n' "$clients"
+	else
+		echo "  (なし)"
+	fi
+
+	# 子孫のプロセスは ps を 1 回だけ取り、pane_pid から辿る。pgrep -P は子しか出さず、
+	# uv の下の python3 のような孫が見えない。-A -o pid= -o ppid= -o args= は Linux の
+	# procps と macOS の ps のどちらでも同じ意味になる。
+	echo "panes"
+	{
+		tmux list-panes -s -t "$id" \
+			-F '#{pane_pid} #{window_index}.#{pane_index}  #{pane_current_command}  pid=#{pane_pid}  #{pane_current_path}'
+		echo "--ps--"
+		ps -A -o pid= -o ppid= -o args=
+	} | awk '
+		function tree(pid, depth, i, n, list, pad) {
+			n = split(kids[pid], list, " ")
+			for (i = 1; i <= n; i++) {
+				pad = sprintf("%" (2 + depth * 2) "s", "")
+				printf "%s%s  %s\n", pad, list[i], args[list[i]]
+				tree(list[i], depth + 1)
+			}
+		}
+		$0 == "--ps--" { inps = 1; next }
+		!inps { npane++; ppid_of[npane] = $1; line[npane] = substr($0, length($1) + 2); next }
+		{
+			pid = $1; parent = $2
+			a = $0
+			sub(/^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]*/, "", a)
+			args[pid] = a
+			kids[parent] = kids[parent] (kids[parent] == "" ? "" : " ") pid
+		}
+		END {
+			for (p = 1; p <= npane; p++) {
+				printf "  %s\n", line[p]
+				tree(ppid_of[p], 1)
+			}
+		}'
+
+	# 画面は見えている範囲を取り、末尾の空行を除いてから最後の N 行を出す。
+	# capture-pane -S -N は「履歴 N 行 + 画面全体」を返すため、直近 N 行にならない。
+	if [ "$LINES_N" -gt 0 ]; then
+		where=$(tmux display-message -p -t "$id" '#{window_index}.#{pane_index}')
+		echo "screen ($where の直近 $LINES_N 行)"
+		tmux capture-pane -p -J -t "$id" | awk -v n="$LINES_N" '
+			{ l[NR] = $0; if ($0 !~ /^[ \t]*$/) last = NR }
+			END {
+				start = last - n + 1
+				if (start < 1) start = 1
+				for (i = start; i <= last; i++) print "  " l[i]
+			}'
+	fi
+}
+
+do_go() {
+	id=$1
+	name=$(name_of "$id")
+	if [ "$HAVE_CLIENT" = 0 ] && [ -z "${TMUX:-}" ]; then
+		# -d: そのセッションに繋がっていた端末を外して attach する。
+		exec tmux attach-session -d -t "$id"
+	fi
+
+	# 実行元の端末。-c があればそれ。無ければ tmux-first と同じ規則で特定する
+	# (tmux-first の「自分自身のクライアント」のコメントを参照。規則を変えるときは両方直す)。
+	# pane のシェルは起動元の端末を知らないため、tmux の「現在のクライアント」(最終操作が
+	# 最も新しいクライアント) を使い、最終操作が SELF_FRESH 秒以内のときだけ実行元と認める。
+	# プロンプトから打った場合はそのキー入力で最終操作が更新される。
+	ME=$CLIENT
+	if [ "$HAVE_CLIENT" = 0 ]; then
+		SELF_FRESH=10
+		now=$(date +%s)
+		self=$(tmux display-message -p '#{client_activity}:#{client_name}' 2>/dev/null || true)
+		case "$self" in
+		[0-9]*:?*)
+			if [ "$((now - ${self%%:*}))" -le "$SELF_FRESH" ]; then
+				ME=${self#*:}
+			fi
+			;;
+		esac
+	fi
+	if [ -z "$ME" ]; then
+		warn "実行元の端末を特定できないため、何も外さず切り替えもしません"
+		warn "手で切り替えるには: tmux switch-client -t '$id'   ($name)"
+		exit 1
+	fi
+
+	# 外すのを切り替えより先にする。先に切り替えると実行元も対象の端末の一覧に入る。
+	clients=$(tmux list-clients -t "$id" -F '#{client_name}')
+	while IFS= read -r c; do
+		[ -n "$c" ] || continue
+		[ "$c" = "$ME" ] && continue
+		tmux detach-client -t "$c" || warn "端末を外せませんでした: $c"
+	done <<EOF
+$clients
+EOF
+	cur=$(tmux display-message -c "$ME" -p '#{session_id}')
+	if [ "$cur" != "$id" ]; then
+		tmux switch-client -c "$ME" -t "$id" || fail "切り替えられませんでした: $name"
+	fi
+}
+
+# menu: 項目のコマンドへ埋め込むのは、検査済みの端末名・ID と、安全な文字だけの表示名。
+# 引用は 3 段になる (display-menu の項目 → tmux のコマンド → run-shell のシェル)。
+# tmux の二重引用の中の `$数字` は環境変数として展開されない (変数名は英字か _ で
+# 始まる) ため、ID はそのまま書ける。
+do_menu() {
+	id=$1
+	name=$(name_of "$id")
+	case "$name" in
+	'' | *[!A-Za-z0-9._+@-]*) label=$id ;;
+	*) label=$name ;;
+	esac
+	c=$CLIENT
+	tmux display-menu -c "$c" -t "$id" -T '#[align=centre]#{session_name}' \
+		'移る（他の端末を外す）' a "run-shell -b \"tmux-session go -c '$c' '$id'\"" \
+		'中身を見る' p "display-popup -c '$c' -E -w 90% -h 90% \"tmux-session peek '$id'; echo; echo '[Enter で閉じる]'; read -r _\"" \
+		'落とす' k "confirm-before -t '$c' -p '$label を落としますか? (y/n)' \"run-shell -b \\\"tmux-session kill -f -c '$c' '$id'\\\"\""
+}
+
+if [ "$SUB" = kill ]; then
+	do_kill "$@"
+	exit $?
+fi
+
+ID=$(resolve "$1")
+[ -n "$ID" ] || fail "セッションがありません: $1"
+case "$SUB" in
+go) do_go "$ID" ;;
+peek) do_peek "$ID" ;;
+menu) do_menu "$ID" ;;
+esac

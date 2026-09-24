@@ -11,6 +11,16 @@
   Ubuntu のアーカイブの版（2026-09 時点で 0.11.0）が入ります。入れ損ないはビルドの版の確認で
   止まります。`lfm` / `snapshot` は base を継がないため入りません。
   **反映には `devbase build base --no-cache` と、使っている派生イメージの建て直しが要ります。**
+- **tmux のセッションを名指しで移る・調べる・落とすコマンドを base イメージに入れました
+  （PLAN69 / #234）。** `tmux-go <名前>` はそのセッションへ移って他の端末を外し、
+  `tmux-peek <名前>` は attach せずに端末・プロセス・画面の直近を出し、`tmux-kill <名前>...` は
+  attach 中・実行中を問わず落とします（本体は `tmux-session`、名前は完全一致）。tmux の中では
+  `prefix S` でセッションの一覧から選び、同じ 3 つをメニューから呼べます。`tmux-first` /
+  `tmux-clean` は変わりません。ホストの tmux で使う手順は
+  `docs/user/environment-variables.md` の「セッションを名指しで扱う」にあります。
+  **反映には `devbase build base --no-cache` と、使っている派生イメージの建て直し、
+  コンテナの作り直し（`devbase down` → `devbase up`）が要ります。`devbase up` だけでは
+  反映されません。**
 
 ### Changed
 - **スナップショットの世代を、アカウントグループ（対象ボリュームの組）ごとの系列で持つように

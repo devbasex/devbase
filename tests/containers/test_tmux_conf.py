@@ -204,7 +204,9 @@ def test_conf_provides_windows_like_copy_bindings():
     directives = [line.strip() for line in TMUX_CONF.read_text().splitlines()
                   if line.strip() and not line.strip().startswith("#")]
     assert directives, "設定が 1 行も無い"
-    binding_directives = [line for line in directives if not line.startswith("set ")]
+    # prefix S の割り当て (PLAN69) は別のテストで見る。ここは copy-mode の割り当てだけを比べる。
+    binding_directives = [line for line in directives
+                          if re.search(r"-T copy-mode(-vi)? ", line)]
     assert binding_directives == [
         "unbind-key -T copy-mode MouseDragEnd1Pane",
         "unbind-key -T copy-mode-vi MouseDragEnd1Pane",
@@ -231,3 +233,34 @@ def test_hyperlinks_reach_the_outer_terminal():
     hls = [line.strip() for line in capabilities.splitlines() if ": Hls:" in line]
     assert hls, "クライアントの能力表に Hls が無い"
     assert "[missing]" not in hls[0], f"Hls が定義されていない: {hls[0]}"
+
+
+def _prefix_keys(config: Path) -> list[str]:
+    """``config`` を読ませた tmux の ``list-keys -T prefix`` の行。"""
+    socket = Path(tempfile.gettempdir()) / f"dvb69-{uuid.uuid4().hex[:8]}"
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    base = ["tmux", "-S", str(socket)]
+    started = subprocess.run([*base, "-f", str(config), "new-session", "-d"],
+                             capture_output=True, text=True, env=env)
+    assert started.returncode == 0, f"tmux の起動に失敗した: {started.stderr}"
+    try:
+        shown = subprocess.run([*base, "list-keys", "-T", "prefix"],
+                               capture_output=True, text=True, env=env, check=True)
+        return shown.stdout.splitlines()
+    finally:
+        subprocess.run([*base, "kill-server"], capture_output=True, text=True, env=env)
+        with contextlib.suppress(FileNotFoundError):
+            socket.unlink()
+
+
+@needs_tmux
+def test_prefix_s_opens_session_chooser():
+    """PLAN69 条件 13: prefix S の割り当てがちょうど 1 つあり、choose-tree を呼ぶ。
+
+    既定の tmux には prefix S の割り当てが無い (3.6・3.7b で確認)。
+    """
+    bound = [line for line in _prefix_keys(TMUX_CONF)
+             if re.match(r"bind-key\s+(-r\s+)?-T prefix\s+S\s", line)]
+    assert len(bound) == 1, bound
+    assert "choose-tree" in bound[0]
+    assert "tmux-session menu" in bound[0]
