@@ -363,7 +363,7 @@ graph TD
 
 | イメージ | ベース | 主な内容 | 用途 |
 |---------|-------|---------|------|
-| **base** | Ubuntu 26.04 | Docker CLI、Python 3、日本語フォント、PDF / OOXML の道具 | 最小限の開発環境 |
+| **base** | Ubuntu 26.04 | Docker CLI、Python 3、日本語フォント、PDF / OOXML の道具、shellcheck | 最小限の開発環境 |
 | **general** | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | 汎用開発環境 |
 | **php** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **php85** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
@@ -417,6 +417,30 @@ fontconfig は Chromium / Playwright のスクリーンショット、PDF の生
 規則の中身と、その置き場所を動かせない理由は
 [base イメージの文字の描画と、文書を扱う道具](../specifications/base-image-rendering.md)
 にあります。
+
+### Bash の静的検査（base 以降）
+
+base イメージには [ShellCheck](https://www.shellcheck.net/)（`shellcheck`）が入っています。
+コンテナの中で Bash スクリプトを検査できます。
+
+```bash
+shellcheck path/to/script.sh
+```
+
+指摘は `SC2086` のような番号つきで出て、指摘があれば終了コード 1 で終わります。
+bash-language-server などの言語サーバは Bash の診断を `shellcheck` に任せているため、
+コンテナの中で言語サーバを動かすときもこれが使われます（言語サーバ自体は base に入っていません）。
+
+版は固定しておらず、base を建てた時点の Ubuntu のアーカイブの版が入ります。
+`containers/lfm` と `containers/snapshot` は base を継がないため入っていません。
+置き場所・入れ損ないの止め方・版の扱いの仕様は
+[base イメージの Bash の静的検査（shellcheck）](../specifications/base-image-shellcheck.md)
+にあります。
+
+> **`devbase build base --no-cache` で base を建て直すと反映されます。** `devbase up` だけでは
+> 反映されません。派生イメージ（`general` / `php` など）を使っているプロジェクトは、その
+> 派生イメージも建て直し、稼働中のコンテナは `devbase down` → `devbase up` で作り直して
+> ください。`devbase rebuild` では建て直りません。
 
 ### AI CLI エイリアス
 

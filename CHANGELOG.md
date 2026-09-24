@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added
+- **base イメージに `shellcheck` を入れました（PLAN67 / #249）。** base と、base を継ぐ派生
+  イメージ（`general` / `php` など）のコンテナで、Bash スクリプトの静的検査ができます。
+  bash-language-server などの言語サーバが返す Bash の診断もこれを使います。版は固定せず、
+  Ubuntu のアーカイブの版（2026-09 時点で 0.11.0）が入ります。入れ損ないはビルドの版の確認で
+  止まります。`lfm` / `snapshot` は base を継がないため入りません。
+  **反映には `devbase build base --no-cache` と、使っている派生イメージの建て直しが要ります。**
+
 ## [3.7.0] - 2026-09-23
 
 ### Added
