@@ -73,6 +73,20 @@ def _alias(result: subprocess.CompletedProcess, name: str) -> str:
 # 受け入れ条件 4: 名前の昇順で全部読む
 # ===========================================================================
 
+def test_symlink_to_existing_file_is_read_in_name_order(home, rcdir, tmp_path):
+    """実在するファイルへの symlink はリンク名の順に読む（現状固定）。"""
+    target = tmp_path / "target.sh"
+    target.write_text("echo read-target\n")
+    (rcdir / "20-link.sh").symlink_to(target)
+    (rcdir / "10-a.sh").write_text("echo read-a\n")
+    (rcdir / "30-b.sh").write_text("echo read-b\n")
+
+    result = _run("", home)
+
+    assert result.stdout.splitlines() == ["read-a", "read-target", "read-b"]
+    assert result.stderr == ""
+
+
 def test_files_are_read_in_name_order(home, rcdir):
     (rcdir / "20-b.sh").write_text("alias probe='echo b'\n")
     (rcdir / "10-a.sh").write_text("alias probe='echo a'\nalias only_a='echo a'\n")
