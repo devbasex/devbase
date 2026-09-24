@@ -78,6 +78,9 @@ graph LR
   `devbase snapshot delete <名前>` で削除してください。系列の数が全体の上限を超えているときは、
   上限を超えたまま残し、警告を出します
 
+積み先・最小間隔・ローテーションの規則と世代の場所の検証の仕様は
+[スナップショットの世代の系列](../specifications/snapshot-series.md) にあります。
+
 ### 世代の概念
 
 ```mermaid
