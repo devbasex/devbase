@@ -126,16 +126,21 @@ sequenceDiagram
     L->>L: 使った変数を unset
 ```
 
-読み込み器の中身は次の形にする。**外部コマンドを起動しない**（非機能の条件）。
+読み込み器の中身は次の形にする。**外部コマンドもサブシェルも起動しない**（非機能の条件）。
 
 ```bash
 # 置き場所の *.sh を名前の順に読む。対話シェルの ~/.bashrc から読まれる。
 __devbase_shellrc_dir="${DEVBASE_SHELLRC_DIR:-$HOME/.shellrc.d}"
 if [ -d "$__devbase_shellrc_dir" ]; then
-    __devbase_shellrc_opts="$(shopt -p failglob dotglob)"
+    __devbase_shellrc_opts=
+    shopt -q failglob && __devbase_shellrc_opts="$__devbase_shellrc_opts failglob"
+    shopt -q dotglob && __devbase_shellrc_opts="$__devbase_shellrc_opts dotglob"
     shopt -u failglob dotglob
     __devbase_shellrc_files=("$__devbase_shellrc_dir"/*.sh)
-    eval "$__devbase_shellrc_opts"
+    if [ -n "$__devbase_shellrc_opts" ]; then
+        # 名前ごとに分けて渡すため、引用符で囲まない
+        shopt -s $__devbase_shellrc_opts
+    fi
     for __devbase_shellrc_file in "${__devbase_shellrc_files[@]}"; do
         if [ -f "$__devbase_shellrc_file" ] && [ -r "$__devbase_shellrc_file" ]; then
             . "$__devbase_shellrc_file"
@@ -150,9 +155,10 @@ unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_files __dev
 - グロブの展開の間だけ `failglob` と `dotglob` を切る。`failglob` が有効なまま一致が無いと、
   bash は `no match` を標準エラーへ出して展開した文を実行しない（受け入れ条件 6）。`dotglob` が
   有効だと `*.sh` が `.` で始まる名前にも一致する（受け入れ条件 5）
-- 展開の結果を配列へ移し、**読む前に**控えた `shopt -p` の出力を `eval` して元へ戻す。置き場所の
-  ファイルは利用者の設定のまま読まれ、ファイルの中で変えた設定は読み込みの後も残る
-  （受け入れ条件 6a）
+- 有効だった設定の名前を `shopt -q` で控え、展開の結果を配列へ移し、**読む前に** `shopt -s` で
+  戻す。置き場所のファイルは利用者の設定のまま読まれ、ファイルの中で変えた設定は読み込みの
+  後も残る（受け入れ条件 6a）。控えに `$(shopt -p ...)` と `eval` を使わないのは、サブシェルを
+  作らないためである（非機能の条件）
 - `if` で包むのは、最後のファイルが読めないときに `&&` の連なりが非 0 を残さないためである。
   末尾の `unset` で終了状態は 0 になる（受け入れ条件 6）
 - 変数名を `__devbase_` で始めるのは、利用者の変数（`f` など）を上書きしないためである
@@ -170,14 +176,15 @@ unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_files __dev
 | `.hidden.sh` を `shopt -s dotglob` の下で読む | 読まれなかった。読んだ後も `dotglob` は `on` |
 | `failglob` が切れた状態で、`shopt -s failglob` を実行する `10-set.sh` と、状態を出す `20-show.sh` | `20-show.sh` は `on` を出し、読んだ後も `on` |
 
-同じ 3 行は macOS の bash 3.2 でも同じ結果だった（テストはホストの bash でも走る）。
+表のすべての行は、macOS の bash 3.2（`/bin/bash`）でも同じ結果だった。テストはホストの bash
+でも走る。`PATH` を空にして空の置き場所を読んでも、両方の bash で何も出さず終了状態 0 だった。
 
 ## 非機能の実現方式
 
 | 大項目 | 要求の条件 | 実現方式 | 確かめ方 |
 | --- | --- | --- | --- |
 | セキュリティ | 置き場所に書けるのは、同じアカウントグループのボリュームに書ける者だけである。既に `~/.claude`（hooks を含む）へ書ける者と同じ範囲で、新しい書き手を増やさない。devbase は置き場所へ何も書かない | 実体を `~/.claude` と同じ `/persistent/group` に置き、所有者は既存の `devbase_ensure_entry` と同じく開発ユーザーにする。イメージと entrypoint は置き場所へファイルを書かない | 受け入れ条件 1 の実機で所有者を見る。テストで、entrypoint の後の置き場所が空であることを見る |
-| 性能・拡張性 | 置き場所が空のとき、対話シェルの起動にかかる追加の処理は、ディレクトリの有無の判定と 1 回のグロブで終わる（外部コマンドを起動しない） | 読み込み器をシェルの組み込み（`[`・`for`・`.`・`shopt`・`eval`・`unset`）だけで書く。設定を控える `$(shopt -p failglob dotglob)` はサブシェルを作るが、外部コマンドは起動しない | 読み込み器のテストで、`PATH` を空にして source しても誤りが出ないことを見る |
+| 性能・拡張性 | 置き場所が空のとき、対話シェルの起動にかかる追加の処理は、ディレクトリの有無の判定、グロブの設定 2 つ（`failglob` / `dotglob`）の控えと戻し、1 回のグロブで終わる（外部コマンドもサブシェルも起動しない） | 読み込み器をシェルの組み込み（`[`・`for`・`.`・`shopt`・`unset`）と代入だけで書く。コマンド置換（`$(...)`）とパイプを使わない | 読み込み器のテストで、`PATH` を空にして source しても誤りが出ないことを見る。読み込み器の文字列に `$(`・`` ` ``・`|` が無いことを見る |
 
 ## 決定の記録
 
