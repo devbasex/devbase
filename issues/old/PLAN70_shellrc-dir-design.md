@@ -132,22 +132,22 @@ sequenceDiagram
 # 置き場所の *.sh を名前の順に読む。対話シェルの ~/.bashrc から読まれる。
 __devbase_shellrc_dir="${DEVBASE_SHELLRC_DIR:-$HOME/.shellrc.d}"
 if [ -d "$__devbase_shellrc_dir" ]; then
-    __devbase_shellrc_opts=
-    shopt -q failglob && __devbase_shellrc_opts="$__devbase_shellrc_opts failglob"
-    shopt -q dotglob && __devbase_shellrc_opts="$__devbase_shellrc_opts dotglob"
+    __devbase_shellrc_failglob=
+    __devbase_shellrc_dotglob=
+    shopt -q failglob && __devbase_shellrc_failglob=1
+    shopt -q dotglob && __devbase_shellrc_dotglob=1
     shopt -u failglob dotglob
     __devbase_shellrc_files=("$__devbase_shellrc_dir"/*.sh)
-    if [ -n "$__devbase_shellrc_opts" ]; then
-        # 名前ごとに分けて渡すため、引用符で囲まない
-        shopt -s $__devbase_shellrc_opts
-    fi
+    [ -n "$__devbase_shellrc_failglob" ] && shopt -s failglob
+    [ -n "$__devbase_shellrc_dotglob" ] && shopt -s dotglob
     for __devbase_shellrc_file in "${__devbase_shellrc_files[@]}"; do
         if [ -f "$__devbase_shellrc_file" ] && [ -r "$__devbase_shellrc_file" ]; then
             . "$__devbase_shellrc_file"
         fi
     done
 fi
-unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_files __devbase_shellrc_opts
+unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_files \
+    __devbase_shellrc_failglob __devbase_shellrc_dotglob
 ```
 
 - 一致が無いとき bash のグロブは文字列のまま残る。`-f` の判定で落ちるので、`nullglob` を
@@ -155,8 +155,9 @@ unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_files __dev
 - グロブの展開の間だけ `failglob` と `dotglob` を切る。`failglob` が有効なまま一致が無いと、
   bash は `no match` を標準エラーへ出して展開した文を実行しない（受け入れ条件 6）。`dotglob` が
   有効だと `*.sh` が `.` で始まる名前にも一致する（受け入れ条件 5）
-- 有効だった設定の名前を `shopt -q` で控え、展開の結果を配列へ移し、**読む前に** `shopt -s` で
-  戻す。置き場所のファイルは利用者の設定のまま読まれ、ファイルの中で変えた設定は読み込みの
+- 有効だった設定を `shopt -q` で 1 つずつ別の変数に控え、展開の結果を配列へ移し、**読む前に**
+  `shopt -s` で 1 つずつ戻す。名前を 1 本の文字列にまとめて単語分割で戻すと、利用者の `IFS` に
+  空白が無いとき（`IFS=$'\n\t'` など）に分割されず戻せない。置き場所のファイルは利用者の設定のまま読まれ、ファイルの中で変えた設定は読み込みの
   後も残る（受け入れ条件 6a）。控えに `$(shopt -p ...)` と `eval` を使わないのは、サブシェルを
   作らないためである（非機能の条件）
 - `if` で包むのは、最後のファイルが読めないときに `&&` の連なりが非 0 を残さないためである。
