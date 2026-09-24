@@ -97,6 +97,75 @@ else:
     }
 
 
+@pytest.mark.parametrize("idle_seconds, expected_returncode, expected_clients", [
+    (10, 0, {"/dev/pts/1": "$2", "/dev/pts/3": "$3"}),
+    (11, 1, {"/dev/pts/1": "$1", "/dev/pts/2": "$2", "/dev/pts/3": "$3"}),
+])
+def test_go_infers_client_at_activity_boundary(
+    tmp_path, idle_seconds, expected_returncode, expected_clients,
+):
+    """現状固定: 最終操作から10秒なら移動し、11秒なら全接続を維持する。"""
+    state = tmp_path / "clients.json"
+    state.write_text(json.dumps({
+        "/dev/pts/1": "$1", "/dev/pts/2": "$2", "/dev/pts/3": "$3",
+    }))
+    (tmp_path / "activity").write_text(str(1_000 - idle_seconds))
+    stub = tmp_path / "tmux"
+    stub.write_text(f"#!{sys.executable}\n" + '''
+import json
+import sys
+from pathlib import Path
+
+state = Path(__file__).with_name("clients.json")
+clients = json.loads(state.read_text())
+command, *args = sys.argv[1:]
+
+def option(flag):
+    return args[args.index(flag) + 1]
+
+if command == "list-sessions":
+    print("$1 source\\n$2 target\\n$3 unrelated")
+elif command == "list-clients":
+    for client, session in clients.items():
+        if "-t" not in args or session == option("-t"):
+            print(client)
+elif command == "display-message":
+    if args[-1] == "#{client_activity}:#{client_name}":
+        activity = Path(__file__).with_name("activity").read_text()
+        print(f"{activity}:/dev/pts/1")
+    elif args[-1] == "#{session_id}":
+        print(clients[option("-c")] if "-c" in args else "$1")
+    else:
+        raise SystemExit(f"unsupported tmux format: {args[-1]}")
+elif command == "detach-client":
+    del clients[option("-t")]
+    state.write_text(json.dumps(clients))
+elif command == "switch-client":
+    clients[option("-c")] = option("-t")
+    state.write_text(json.dumps(clients))
+else:
+    raise SystemExit(f"unsupported tmux command: {command}")
+''')
+    stub.chmod(0o755)
+    date = tmp_path / "date"
+    date.write_text('#!/bin/sh\n[ "$1" = "+%s" ] || exit 1\nprintf "1000\\n"\n')
+    date.chmod(0o755)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TMUX", "TMUX_PANE", "ENV", "BASH_ENV")}
+    env.update(PATH=f"{tmp_path}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+               TMUX="/unused/socket,123,0", TMUX_PANE="%1")
+
+    done = subprocess.run(
+        [str(SCRIPT), "go", "target"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+
+    assert done.returncode == expected_returncode, done.stderr
+    assert json.loads(state.read_text()) == expected_clients
+    if idle_seconds == 11:
+        assert "実行元の端末を特定できない" in done.stderr
+
+
 def _wait(predicate, timeout: float = 10.0, interval: float = 0.05):
     """``predicate()`` が真を返すまで待ち、その値を返す。待ち切れなければ失敗にする。"""
     deadline = time.monotonic() + timeout
