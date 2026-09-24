@@ -417,7 +417,9 @@ class TmuxEnv:
                               text=True, env=env or self.env, timeout=30)
 
     def close(self) -> None:
-        self.tmux("kill-server", check=False)
+        # needs_tmux の付かないテストも tm を使う。tmux が無い環境でも後片付けを終える。
+        if shutil.which("tmux", path=self.env["PATH"]) is not None:
+            self.tmux("kill-server", check=False)
         for client in self.clients:
             client.close()
         shutil.rmtree(self.root, ignore_errors=True)
@@ -910,11 +912,28 @@ def test_go_special_names(tm, name):
 # --- tmux の中の UI (受け入れ条件 14・15) ---
 
 
+def _open_tree(tm: TmuxEnv, me: Client, attempts: int = 5) -> None:
+    """``prefix S`` で一覧 (tree-mode) を出す。
+
+    繋いだ直後のクライアントは端末への問い合わせの応答を待っている間の入力を捨てる
+    ことがある (CI で 10 秒待っても一覧が出なかった)。一覧が出なければ送り直す。
+    """
+    def in_tree() -> bool:
+        return tm.tmux("display-message", "-p", "-c", me.tty,
+                       "#{pane_mode}").stdout.strip() == "tree-mode"
+
+    for _ in range(attempts - 1):
+        me.send("\x02S")
+        with contextlib.suppress(AssertionError):
+            _wait(in_tree, timeout=2.0)
+            return
+    me.send("\x02S")
+    _wait(in_tree)
+
+
 def _open_menu(tm: TmuxEnv, me: Client) -> None:
     """``prefix S`` で一覧を出し、1 つ上のセッションを選ぶ。"""
-    me.send("\x02S")
-    _wait(lambda: tm.tmux("display-message", "-p", "-c", me.tty,
-                          "#{pane_mode}").stdout.strip() == "tree-mode")
+    _open_tree(tm, me)
     me.send("\x1b[A")
     time.sleep(0.2)
     me.send("\r")
@@ -1012,9 +1031,7 @@ def test_menu_kill_own_session(ui_tm):
     home = tm.new("zz-home")
     me = tm.attach(home)
 
-    me.send("\x02S")
-    _wait(lambda: tm.tmux("display-message", "-p", "-c", me.tty,
-                          "#{pane_mode}").stdout.strip() == "tree-mode")
+    _open_tree(tm, me)
     me.send("\r")  # カーソルは今のセッション
     _wait(lambda: "落とす" in me.output())
     me.send("k")
