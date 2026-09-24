@@ -164,6 +164,9 @@ default（差分 0、3.9 GB）で、合計は 42 GB である。
       リンク先を消すのは、解決後のパスを使う `delete` である（27）
 - [ ] 27. `backups/old` が 26 と同じリンクのとき、`devbase snapshot delete old` は終了コード 1 で終わり、
       `backups-outside/` の中身は残る。現状は解決後のリンク先を `shutil.rmtree` で消す
+- [ ] 28. `backups/old` が 26 と同じリンクのとき、`restore('old')` / `copy('old', 'new')` / `create(name='old')` は
+      どれも `SnapshotError` で止まる。ボリュームへの書き込み（`_run_docker_tar` の呼び出し）も
+      `backups/new` の作成も起きず、リンク先の中身は変わらない
 
 ## 非機能の条件
 

@@ -454,6 +454,7 @@ A の最新と他の 5 系列の 5 世代が残る。
 | 26 | `tmp_path/backups-outside/` を作り、`backups/old` をそこへのシンボリックリンクにする。`snapshot.yml` の最古の世代を `old` にして `rotate()`。`backups-outside/` の中身が残り、エントリが消え、WARNING が 1 件。あわせて `_safe_snap_dir('old')` が `SnapshotError` |
 | 26（中を指すリンク） | `backups/new` を実ディレクトリ（系列の最新の世代）、`backups/old` を `backups/new` へのリンクにし、`old` を最古にして `rotate()`。`backups/new` の中身が残り、`old` のエントリが消え、WARNING が 1 件 |
 | 27 | 26 と同じリンクを作り、`cmd_snapshot` に `delete` / `old` を渡して終了コード 1。`backups-outside/` の中身が残る |
+| 28 | 26 と同じリンクを作り、`RecordingManager` で `restore('old')` / `copy('old', 'new')` / `create(name='old')` を呼ぶ。どれも `SnapshotError`、`calls` が空、`backups/new` が無く、リンク先の中身が変わらない |
 
 `_auto_snapshot` のテストは `DEVBASE_ROOT` を `tmp_path` に向け、`SnapshotManager._run_docker_tar` を
 `monkeypatch` で差し替える。実データの `backups/` と Docker に触らない。
