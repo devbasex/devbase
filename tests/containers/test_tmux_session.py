@@ -242,6 +242,29 @@ def test_go_detach_failure_warns_but_still_switches(tmp_path):
     }
 
 
+def test_go_detach_failure_continues_to_remaining_client_and_earlier_session(tmp_path):
+    """現状固定: $1 の先頭端末を外せなくても、残りを外して $2 の実行元を移す。"""
+    env = _go_fail_env(tmp_path, "detach-client /dev/pts/2")
+    state = tmp_path / "clients.json"
+    state.write_text(json.dumps({
+        "/dev/pts/2": "$1", "/dev/pts/3": "$1", "/dev/pts/1": "$2",
+    }))
+    (tmp_path / "tmux").write_text(_GO_FAIL_STUB.replace(
+        "$1 source\\n$2 target", "$1 target\\n$2 source",
+    ))
+
+    done = subprocess.run(
+        [str(SCRIPT), "go", "-c", "/dev/pts/1", "target"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert "/dev/pts/2" in done.stderr
+    assert json.loads(state.read_text()) == {
+        "/dev/pts/2": "$1", "/dev/pts/1": "$1",
+    }
+
+
 def test_go_switch_failure_exits_one_after_detaching(tmp_path):
     """現状固定: 切り替えに失敗すると終了値 1。対象の他端末は外した後で、実行元は残る。"""
     env = _go_fail_env(tmp_path, "switch-client")
