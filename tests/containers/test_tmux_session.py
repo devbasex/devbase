@@ -17,11 +17,13 @@ tmux のクライアントが書き込みで止まり、表示を確かめるテ
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import pty
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -39,6 +41,60 @@ needs_tmux = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux が�
 
 # 名前に含まれても取り違えないことを確かめる文字 (受け入れ条件 10・14)
 SPECIAL_NAMES = ["a b", "it's", 'q"x', "d$1", "s;x"]
+
+
+def test_go_from_target_session_detaches_only_other_target_clients(tmp_path):
+    """現状固定: 移動先に既にいる実行元と、無関係なセッションの端末は残る。"""
+    state = tmp_path / "clients.json"
+    state.write_text(json.dumps({
+        "/dev/pts/1": "$1", "/dev/pts/2": "$1", "/dev/pts/3": "$2",
+    }))
+    stub = tmp_path / "tmux"
+    stub.write_text(f"#!{sys.executable}\n" + '''
+import json
+import sys
+from pathlib import Path
+
+state = Path(__file__).with_name("clients.json")
+clients = json.loads(state.read_text())
+command, *args = sys.argv[1:]
+
+def option(flag):
+    return args[args.index(flag) + 1]
+
+if command == "list-sessions":
+    print("$1 target\\n$2 unrelated")
+elif command == "list-clients":
+    for client, session in clients.items():
+        if "-t" not in args or session == option("-t"):
+            print(client)
+elif command == "display-message":
+    if "-p" in args:
+        print(clients[option("-c")])
+elif command == "detach-client":
+    del clients[option("-t")]
+    state.write_text(json.dumps(clients))
+elif command == "switch-client":
+    clients[option("-c")] = option("-t")
+    state.write_text(json.dumps(clients))
+else:
+    raise SystemExit(f"unsupported tmux command: {command}")
+''')
+    stub.chmod(0o755)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TMUX", "TMUX_PANE", "ENV", "BASH_ENV")}
+    env["PATH"] = f"{tmp_path}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+
+    done = subprocess.run(
+        [str(SCRIPT), "go", "-c", "/dev/pts/1", "target"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == ""
+    assert json.loads(state.read_text()) == {
+        "/dev/pts/1": "$1", "/dev/pts/3": "$2",
+    }
 
 
 def _wait(predicate, timeout: float = 10.0, interval: float = 0.05):
