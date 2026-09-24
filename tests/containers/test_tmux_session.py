@@ -166,6 +166,99 @@ else:
         assert "実行元の端末を特定できない" in done.stderr
 
 
+# go で detach-client / switch-client が失敗する経路を固定する。実物の tmux では特定の
+# 操作だけを失敗させられないため、端末と接続先を JSON で持ち、fail に書いた操作だけを
+# 非 0 にする tmux スタブを使う (fail は "detach-client <端末>" か "switch-client")。
+# -c のときの知らせ (display-message -l) は状態行へ出すだけなので何もしない。
+_GO_FAIL_STUB = f"#!{sys.executable}\n" + '''
+import json
+import sys
+from pathlib import Path
+
+state = Path(__file__).with_name("clients.json")
+fail = Path(__file__).with_name("fail").read_text().strip()
+clients = json.loads(state.read_text())  # {端末: セッション ID}
+command, *args = sys.argv[1:]
+
+
+def option(flag):
+    return args[args.index(flag) + 1]
+
+
+if command == "list-sessions":
+    print("$1 source\\n$2 target\\n$3 unrelated")
+elif command == "list-clients":
+    for client, session in clients.items():
+        if "-t" not in args or session == option("-t"):
+            print(client)
+elif command == "display-message":
+    if "-p" in args:
+        print(clients[option("-c")])
+elif command == "detach-client":
+    if fail == f"detach-client {option('-t')}":
+        sys.exit(1)
+    del clients[option("-t")]
+    state.write_text(json.dumps(clients))
+elif command == "switch-client":
+    if fail == "switch-client":
+        sys.exit(1)
+    clients[option("-c")] = option("-t")
+    state.write_text(json.dumps(clients))
+else:
+    raise SystemExit(f"unsupported tmux command: {command}")
+'''
+
+
+def _go_fail_env(tmp_path, fail):
+    """実行元を source、2 台を target、1 台を unrelated に繋ぎ、``fail`` の操作だけ失敗させる。"""
+    (tmp_path / "clients.json").write_text(json.dumps({
+        "/dev/pts/1": "$1", "/dev/pts/2": "$2", "/dev/pts/3": "$2",
+        "/dev/pts/4": "$3",
+    }))
+    (tmp_path / "fail").write_text(fail)
+    stub = tmp_path / "tmux"
+    stub.write_text(_GO_FAIL_STUB)
+    stub.chmod(0o755)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TMUX", "TMUX_PANE", "ENV", "BASH_ENV")}
+    env["PATH"] = f"{tmp_path}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+    return env
+
+
+def test_go_detach_failure_warns_but_still_switches(tmp_path):
+    """現状固定: 対象の他端末を外せなくても警告だけで続け、実行元は移り終了値は 0。"""
+    env = _go_fail_env(tmp_path, "detach-client /dev/pts/2")
+
+    done = subprocess.run(
+        [str(SCRIPT), "go", "-c", "/dev/pts/1", "target"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == ""
+    assert "/dev/pts/2" in done.stderr
+    assert json.loads((tmp_path / "clients.json").read_text()) == {
+        "/dev/pts/1": "$2", "/dev/pts/2": "$2", "/dev/pts/4": "$3",
+    }
+
+
+def test_go_switch_failure_exits_one_after_detaching(tmp_path):
+    """現状固定: 切り替えに失敗すると終了値 1。対象の他端末は外した後で、実行元は残る。"""
+    env = _go_fail_env(tmp_path, "switch-client")
+
+    done = subprocess.run(
+        [str(SCRIPT), "go", "-c", "/dev/pts/1", "target"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+
+    assert done.returncode == 1, done.stderr
+    assert done.stdout == ""
+    assert "target" in done.stderr
+    assert json.loads((tmp_path / "clients.json").read_text()) == {
+        "/dev/pts/1": "$1", "/dev/pts/4": "$3",
+    }
+
+
 def _wait(predicate, timeout: float = 10.0, interval: float = 0.05):
     """``predicate()`` が真を返すまで待ち、その値を返す。待ち切れなければ失敗にする。"""
     deadline = time.monotonic() + timeout
