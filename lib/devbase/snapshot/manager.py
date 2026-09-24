@@ -248,11 +248,9 @@ class SnapshotManager:
         if volumes is None:
             snap_dirs = list(self.backups_dir.iterdir())
         else:
-            key = self.series_key(volumes)
             snap_dirs = [
-                self.backups_dir / s['name'] for s in self._entries()
-                if self.series_key(self._entry_volumes(s)) == key
-                and is_single_segment_name(s['name'])
+                self.backups_dir / s['name'] for _, s in self._series_entries(volumes)
+                if is_single_segment_name(s['name'])
             ]
         latest: Optional[float] = None
         for snap_dir in snap_dirs:
@@ -542,7 +540,7 @@ class SnapshotManager:
 
         remaining = [s for i, s in enumerate(snapshots) if i not in removed_ids]
         order = {id(s): i for i, s in enumerate(snapshots)}
-        remaining.sort(key=lambda s: (s.get('created_at', '') or '', order[id(s)]))
+        remaining.sort(key=lambda s: self._entry_age(s, order[id(s)]))
         meta['snapshots'] = remaining
         meta['max_generations'] = keep
         self._save_metadata(meta)
@@ -561,8 +559,7 @@ class SnapshotManager:
             groups.setdefault(key, []).append(index)
 
         def age(index: int) -> tuple:
-            # created_at が同じなら snapshot.yml で前にあるものを古いとみなす
-            return (snapshots[index].get('created_at', '') or '', index)
+            return self._entry_age(snapshots[index], index)
 
         plan: list = []
         kept: dict = {}
@@ -588,6 +585,11 @@ class SnapshotManager:
     # ------------------------------------------------------------------
     # 系列 (PLAN68)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _entry_age(entry: dict, index: int) -> tuple:
+        # created_at が同じなら snapshot.yml で前にあるものを古いとみなす
+        return (entry.get('created_at', '') or '', index)
 
     @staticmethod
     def _entry_volumes(entry: dict) -> dict:
@@ -621,18 +623,23 @@ class SnapshotManager:
         return [s for s in (self._load_metadata().get('snapshots') or [])
                 if isinstance(s, dict) and 'name' in s]
 
+    def _series_entries(self, volumes: dict) -> "list[tuple[int, dict]]":
+        """対象ボリュームの系列に属するエントリを元の添字とともに返す。"""
+        key = self.series_key(volumes)
+        return [
+            (index, snap) for index, snap in enumerate(self._entries())
+            if self.series_key(self._entry_volumes(snap)) == key
+        ]
+
     def series_latest(self, volumes: Optional[dict] = None) -> Optional[dict]:
         """系列の最新の世代のエントリ (``created_at`` が最大)。無ければ ``None``。
 
         ``created_at`` が同じなら ``snapshot.yml`` で後ろのものを新しいとみなす。
         """
-        key = self.series_key(self.volumes if volumes is None else volumes)
         latest = None
         latest_age = None
-        for index, snap in enumerate(self._entries()):
-            if self.series_key(self._entry_volumes(snap)) != key:
-                continue
-            age = (snap.get('created_at', '') or '', index)
+        for index, snap in self._series_entries(self.volumes if volumes is None else volumes):
+            age = self._entry_age(snap, index)
             if latest_age is None or age > latest_age:
                 latest, latest_age = snap, age
         return latest

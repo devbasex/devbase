@@ -803,6 +803,27 @@ def _snapshot_min_interval_minutes() -> int:
     )
 
 
+def _should_skip_by_interval(
+    label: str, min_interval: int, last: Optional[datetime],
+) -> bool:
+    """系列の直近の取得から最小間隔内なら、理由を記録してスキップする。"""
+    from datetime import datetime, timedelta, timezone
+
+    if min_interval > 0 and last is not None:
+        # 経過時間が負 (last が未来) の場合はスキップしない。システム時計の
+        # ズレや他環境からのリストアで last が未来になると delta が負になり、
+        # 常に閾値未満と判定されて無期限にスキップされてしまうため、
+        # timedelta(0) <= delta の下限ガードを設ける。
+        delta = datetime.now(timezone.utc) - last
+        if timedelta(0) <= delta < timedelta(minutes=min_interval):
+            logger.info(
+                "[0/6] %s の直近のスナップショット (%s) から%d分以内のためスキップします",
+                label, last.astimezone().strftime('%Y-%m-%d %H:%M:%S'), min_interval,
+            )
+            return True
+    return False
+
+
 def _auto_snapshot(remote: bool = False) -> None:
     """デプロイ前の自動スナップショット (系列ごとの差分世代数ベース世代管理。PLAN68)。
 
@@ -820,8 +841,6 @@ def _auto_snapshot(remote: bool = False) -> None:
     if not devbase_root:
         return
     try:
-        from datetime import datetime, timedelta, timezone
-
         from devbase.snapshot.manager import SnapshotManager
         mgr = SnapshotManager(Path(devbase_root))
         # 最小間隔・積み先はどちらも系列 (起動するグループのボリュームの組) の
@@ -829,18 +848,8 @@ def _auto_snapshot(remote: bool = False) -> None:
         label = mgr.series_label(mgr.volumes)
         min_interval = _snapshot_min_interval_minutes()
         last = mgr.last_snapshot_time(mgr.volumes)
-        if min_interval > 0 and last is not None:
-            # 経過時間が負 (last が未来) の場合はスキップしない。システム時計の
-            # ズレや他環境からのリストアで last が未来になると delta が負になり、
-            # 常に閾値未満と判定されて無期限にスキップされてしまうため、
-            # timedelta(0) <= delta の下限ガードを設ける。
-            delta = datetime.now(timezone.utc) - last
-            if timedelta(0) <= delta < timedelta(minutes=min_interval):
-                logger.info(
-                    "[0/6] %s の直近のスナップショット (%s) から%d分以内のためスキップします",
-                    label, last.astimezone().strftime('%Y-%m-%d %H:%M:%S'), min_interval,
-                )
-                return
+        if _should_skip_by_interval(label, min_interval, last):
+            return
         target = mgr.auto_snapshot_target()
         if target is None:
             logger.info("[0/6] 新しいスナップショット世代を作成中 (%s)...", label)

@@ -6,6 +6,7 @@ from pathlib import Path
 from devbase.errors import SnapshotError
 from devbase.log import get_logger
 from devbase.snapshot.manager import SnapshotManager
+from devbase.volume.manager import HOME_UBUNTU_VOLUME
 
 logger = get_logger(__name__)
 
@@ -68,7 +69,7 @@ def _snapshot_list(mgr) -> int:
     print("-" * 90)
     for s in snapshots:
         # 対象ボリュームは PLAN39 以降に記録される。旧世代は共通ボリュームのみ。
-        volumes = ', '.join((s.get('volumes') or {}).values()) or 'devbase_home_ubuntu'
+        volumes = ', '.join((s.get('volumes') or {}).values()) or HOME_UBUNTU_VOLUME
         print(
             f"{s['name']:<24} "
             f"{s.get('created_at', 'N/A')[:19]:<24} "
