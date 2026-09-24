@@ -229,6 +229,24 @@ def test_empty_variable_falls_back_to_home(home, rcdir, env):
     assert result.stdout.splitlines() == ["from-home"]
 
 
+def test_directory_that_is_a_symlink_is_followed(home, tmp_path):
+    """置き場所が別ディレクトリへの symlink でも中の ``*.sh`` を読む。
+
+    実配置では entrypoint.sh が置き場所をアカウントグループのボリュームへの
+    symlink にする (``shellrc-dir.sh`` 冒頭のコメント)。``rcdir`` フィクスチャは
+    実ディレクトリしか作らないため使わず、symlink 先を辿る経路を固定する。
+    """
+    volume = tmp_path / "volume"
+    volume.mkdir()
+    (volume / "a.sh").write_text("echo read-volume\n")
+    (home / ".shellrc.d").symlink_to(volume)
+
+    result = _run('echo "rc=$?"', home)
+
+    assert result.stdout.splitlines() == ["read-volume", "rc=0"]
+    assert result.stderr == ""
+
+
 # ===========================================================================
 # 非機能の性能: 外部コマンドもサブシェルも起動しない
 # ===========================================================================
