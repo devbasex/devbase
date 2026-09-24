@@ -330,8 +330,7 @@ class SnapshotManager:
         self._extract_archive(
             snap_dir, FULL_ARCHIVE,
             self.clear_command(volumes) +
-            f"zstd -d /backup/{FULL_ARCHIVE} -c | "
-            "tar --listed-incremental=/dev/null -xf - -C /target",
+            self._incremental_extract_command(FULL_ARCHIVE),
             volumes, pre_restore_name, skipped_renames,
         )
 
@@ -347,8 +346,7 @@ class SnapshotManager:
             logger.info("差分バックアップを適用中: %s", incr.name)
             self._extract_archive(
                 snap_dir, incr.name,
-                f"zstd -d /backup/{incr.name} -c | "
-                f"tar --listed-incremental=/dev/null -xf - -C /target",
+                self._incremental_extract_command(incr.name),
                 volumes, pre_restore_name, skipped_renames,
             )
 
@@ -776,6 +774,12 @@ class SnapshotManager:
             'find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; '
             'done; '
         )
+
+    @staticmethod
+    def _incremental_extract_command(archive: str) -> str:
+        """``/backup/<archive>`` を ``/target`` へ展開するコマンドを組み立てる。"""
+        return (f"zstd -d /backup/{archive} -c | "
+                "tar --listed-incremental=/dev/null -xf - -C /target")
 
     def _run_docker_tar(self, snap_dir: Path, mode: str, command: str,
                         volumes: Optional[dict] = None
