@@ -713,7 +713,11 @@ def _add_snapshot_parser(subparsers):
     s_delete.add_argument('name', help='Snapshot name')
 
     s_rotate = ss_sub.add_parser('rotate', help='Rotate old snapshots')
-    s_rotate.add_argument('--keep', type=int, default=3, help='Generations to keep')
+    s_rotate.add_argument('--keep', type=int, default=3,
+                          help='Generations to keep per account group')
+    s_rotate.add_argument('--max-total', type=int, default=None, metavar='M',
+                          help='Upper limit of generations across all groups '
+                               '(default: 3 x --keep)')
 
 
 def _add_shortcuts(subparsers):

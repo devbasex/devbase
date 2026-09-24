@@ -9,7 +9,7 @@
 - restore: ``name``, ``point`` (None=全差分適用 / manager は 1 以上のみ受理)
 - copy:    ``name``, ``new_name``
 - delete:  ``name``
-- rotate:  ``keep`` (3)
+- rotate:  ``keep`` (3。グループごと。``max_total`` は渡さず既定の ``keep × 3``)
 
 破壊的な restore / delete は実行前に確認する (plan 3.4)。restore は
 ``cmd_snapshot`` 側にも TTY 時の input() 確認が残るが、TUI の規約として
@@ -143,8 +143,10 @@ def _op_delete(devbase_root: Path):
 
 
 def _op_rotate(devbase_root: Path):
-    # keep=0 は manager 実装上 no-op (空スライス) のため 1 以上を要求する。
-    keep = flow.need(menu.integer("保持する世代数 (--keep)", default=3, min_value=1))
+    # keep=0 は manager が SnapshotError で拒むため 1 以上を要求する。
+    # 全体の上限 (--max-total) は問わず、既定 (keep × 3) で動かす (PLAN68)。
+    keep = flow.need(menu.integer("グループごとに保持する世代数 (--keep)",
+                                  default=3, min_value=1))
     return dispatch_group(cmd_snapshot, devbase_root, "rotate", keep=keep)
 
 

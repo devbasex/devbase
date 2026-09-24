@@ -36,7 +36,9 @@ def cmd_snapshot(devbase_root: Path, args) -> int:
                                           name=getattr(args, 'name', ''),
                                           new_name=getattr(args, 'new_name', '')),
         'delete':  lambda: _snapshot_delete(mgr, name=getattr(args, 'name', '')),
-        'rotate':  lambda: _snapshot_rotate(mgr, keep=getattr(args, 'keep', 3)),
+        # TUI の dispatch_group は keep だけを持つ引数を渡すため getattr で受ける
+        'rotate':  lambda: _snapshot_rotate(mgr, keep=getattr(args, 'keep', 3),
+                                            max_total=getattr(args, 'max_total', None)),
     }
 
     handler = handlers.get(subcmd)
@@ -101,8 +103,8 @@ def _snapshot_delete(mgr, name='') -> int:
     return 0
 
 
-def _snapshot_rotate(mgr, keep=3) -> int:
-    deleted = mgr.rotate(keep=keep)
+def _snapshot_rotate(mgr, keep=3, max_total=None) -> int:
+    deleted = mgr.rotate(keep=keep, max_total=max_total)
     if deleted == 0:
         logger.info("ローテーション不要です")
     return 0

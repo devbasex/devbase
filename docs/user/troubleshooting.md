@@ -358,8 +358,10 @@ devbase snapshot list
 # バックアップディレクトリのサイズ確認
 du -sh ${DEVBASE_ROOT}/backups/
 
-# 不要な世代を削除（2世代のみ保持）
+# 不要な世代を削除（グループごとに 2 世代、全体で 6 世代まで保持。この 1 回だけに効く）
 devbase snapshot rotate --keep 2
+
+# 各グループの最新の世代はローテーションで消えない。使わないグループの世代は個別に削除する
 
 # 個別のスナップショットを削除
 devbase snapshot delete <name>

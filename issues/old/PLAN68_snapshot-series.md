@@ -202,7 +202,28 @@ default（差分 0、3.9 GB）で、合計は 42 GB である。
 ## 実装計画
 
 設計は [PLAN68_snapshot-series-design.md](PLAN68_snapshot-series-design.md)。
-**タスクへの分解は実装の持ち場で `/ndf:implementation-plan` が行う。**
+タスクは受け入れ条件の単位で分け、どれも「失敗するテスト → 通す最小実装 → 整理」で進める。
+
+### タスク分解
+
+| # | タスク | 対象ファイル | 変更内容 | 満たす受け入れ条件 |
+| --- | --- | --- | --- | --- |
+| 1 | 世代の場所の検証 | `snapshot/manager.py`、`tests/snapshot/test_manager_series.py` | `_safe_snap_dir` にシンボリックリンクの拒否と `Path.is_relative_to` の包含判定を入れる（決定 7） | 26（`_safe_snap_dir`）・27・28 |
+| 2 | 系列の解決と積み先 | 同上 | `series_key` / `series_label` / `_entry_volumes` / `series_latest` / `auto_snapshot_target` を足し、`should_start_new_generation` を包むだけにする | 1〜5 |
+| 3 | 系列ごとの最小間隔 | 同上 | `last_snapshot_time(volumes=None)` | 6・7 |
+| 4 | 系列ごとの保持と全体の上限 | 同上 | `rotate(keep, max_total)` を系列ごと + 全体の上限 + 各系列の最新を残す形へ。消す前に `_safe_snap_dir` で検証し、拒否されたエントリは一覧からだけ外す | 8〜14・17・22・25・26 |
+| 5 | `_auto_snapshot` の流れ | `commands/container.py`、`tests/snapshot/test_auto_snapshot_series.py` | 最小間隔を系列で判定し、`auto_snapshot_target` の結果で `create` を呼ぶ。ログに系列の名前を入れる | 1・2・6・7・16 |
+| 6 | CLI と TUI | `cli.py`、`commands/snapshot.py`、`tui/actions_snapshot.py`、`tests/cli/tui/test_actions_snapshot.py`、`tests/snapshot/test_manager_series.py` | `--max-total` の追加、`--keep` の help、振り分けの `getattr(args, 'max_total', None)`、TUI の問いの文言 | 14（CLI）・15・18 |
+| 7 | 文書と CHANGELOG | 文書 4 本、`CHANGELOG.md` | 設計の「文書の変更」の表のとおり | 19〜21 |
+| 8 | 全体の確認 | — | `uv run --locked pytest tests/ -q`、`ruff check --select=E9,F63,F7,F82 lib` | 23・24 |
+
+### リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| `manager.py`（818 行）に規則が集まる | 系列の解決は小さな関数に分け、`rotate` の削除候補の計算を副作用の無い補助に切り出す。構造は保ち、タスクごとにテストを通す |
+| 既存テスト（`test_auto_snapshot.py` の `last_snapshot_time`、`test_manager_volumes.py`）の退行 | 引数の既定値で現行の振る舞いを保ち、タスクごとに `tests/snapshot/` を回す |
+| 実際の tar による、別グループを挟んだ差分の復元が未確認 | この持ち場ではコンテナを起動しない（並行する #253 の検査と重ねない）。検査の持ち場へ回し、Pull Request 本文に書く |
 
 ### 修正対象
 
