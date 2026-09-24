@@ -182,6 +182,30 @@ def test_unreadable_file_is_skipped_and_later_files_continue(home, rcdir):
     assert result.returncode == 0
 
 
+@pytest.mark.parametrize("include_unreadable", [False, True])
+def test_unreadable_and_dangling_files_are_silently_skipped(home, rcdir, include_unreadable):
+    if include_unreadable and os.geteuid() == 0:
+        pytest.skip("root は chmod 000 のファイルも読める")
+
+    (rcdir / "10-a.sh").write_text("echo read-a\n")
+    (rcdir / "17-dangling.sh").symlink_to(rcdir / "missing")
+    (rcdir / "20-b.sh").write_text("echo read-b\n")
+    unreadable = rcdir / "15-unreadable.sh"
+    if include_unreadable:
+        unreadable.write_text("echo read-u\n")
+        unreadable.chmod(0o000)
+
+    try:
+        result = _run('echo "rc=$?"', home)
+
+        assert result.stdout.splitlines() == ["read-a", "read-b", "rc=0"]
+        assert result.stderr == ""
+        assert result.returncode == 0
+    finally:
+        if include_unreadable:
+            unreadable.chmod(0o644)
+
+
 # ===========================================================================
 # 受け入れ条件 8: 起動定義より勝つ
 # ===========================================================================
