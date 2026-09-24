@@ -168,6 +168,20 @@ def test_broken_file_does_not_stop_later_files(home, rcdir):
     assert "15-bad.sh" in result.stderr
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root は chmod 000 のファイルも読める")
+def test_unreadable_file_is_skipped_and_later_files_continue(home, rcdir):
+    (rcdir / "10-a.sh").write_text("echo read-a\n")
+    noperm = rcdir / "20-noperm.sh"
+    noperm.write_text("echo read-noperm\n")
+    noperm.chmod(0o000)
+    (rcdir / "30-b.sh").write_text("echo read-b\n")
+
+    result = _run("", home)
+
+    assert result.stdout.splitlines() == ["read-a", "read-b"]
+    assert result.returncode == 0
+
+
 # ===========================================================================
 # 受け入れ条件 8: 起動定義より勝つ
 # ===========================================================================
