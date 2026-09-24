@@ -37,26 +37,6 @@ DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
 METADATA_FILE = 'snapshot.yml'
 
-# 差分アーカイブの命名規約 (接頭辞・接尾辞・連番書式・グロブ・正規表現) を 1 箇所へ
-# 寄せる。片方だけ書式や桁を変えると作成・列挙・復元の照合が崩れるため、同じ規約に
-# 由来する重複としてここでまとめて持つ。
-INCR_PREFIX = 'incr-'
-ARCHIVE_SUFFIX = '.tar.zst'
-FULL_ARCHIVE = f'full{ARCHIVE_SUFFIX}'
-INCR_GLOB = f'{INCR_PREFIX}*{ARCHIVE_SUFFIX}'
-_INCR_ARCHIVE_RE = re.compile(
-    r'^' + re.escape(INCR_PREFIX) + r'(\d+)' + re.escape(ARCHIVE_SUFFIX) + r'$')
-
-
-def incr_archive_name(n: int) -> str:
-    """差分番号から差分アーカイブのファイル名を組み立てる (``incr-003.tar.zst``)。"""
-    return f'{INCR_PREFIX}{n:03d}{ARCHIVE_SUFFIX}'
-
-
-def is_incr_archive(name: str) -> bool:
-    """名前が差分アーカイブの実体かどうか。"""
-    return bool(_INCR_ARCHIVE_RE.match(name))
-
 # GNU tar の incremental はディレクトリを (dev, ino) で追跡して rename を検出する。
 # ディレクトリが削除され作り直されると **inode 番号が再利用される**ため、tar は無関係な
 # ディレクトリを rename されたものと誤判定し、dumpdir に偽の R/T レコードを書く。
@@ -285,7 +265,9 @@ class SnapshotManager:
                     continue
                 # アーカイブ実体 (full.tar.zst / incr-NNN.tar.zst) のみを対象とし、
                 # meta.yml / snapshot.snar / *.bak 等は除外する。
-                if f.name != FULL_ARCHIVE and not is_incr_archive(f.name):
+                if f.name != 'full.tar.zst' and not (
+                    f.name.startswith('incr-') and f.name.endswith('.tar.zst')
+                ):
                     continue
                 mtime = f.stat().st_mtime
                 if latest is None or mtime > latest:
@@ -308,7 +290,7 @@ class SnapshotManager:
         if not snap_dir.exists():
             raise SnapshotError(f"スナップショット '{name}' が見つかりません")
 
-        full_archive = snap_dir / FULL_ARCHIVE
+        full_archive = snap_dir / 'full.tar.zst'
         if not full_archive.exists():
             raise SnapshotError(f"フルバックアップが見つかりません: {full_archive}")
 
@@ -332,17 +314,19 @@ class SnapshotManager:
         # フルバックアップの復元
         logger.info("フルバックアップを復元中...")
         self._extract_archive(
-            snap_dir, FULL_ARCHIVE,
+            snap_dir, 'full.tar.zst',
             self.clear_command(volumes) +
-            self._incremental_extract_command(FULL_ARCHIVE),
+            "zstd -d /backup/full.tar.zst -c | "
+            "tar --listed-incremental=/dev/null -xf - -C /target",
             volumes, pre_restore_name, skipped_renames,
         )
 
         # 差分バックアップを順番に適用（pointが指定されていればそこまで）
-        incr_files = sorted(snap_dir.glob(INCR_GLOB))
+        incr_re = re.compile(r'^incr-(\d+)\.tar\.zst$')
+        incr_files = sorted(snap_dir.glob('incr-*.tar.zst'))
         for incr in incr_files:
             if point is not None:
-                m = _INCR_ARCHIVE_RE.match(incr.name)
+                m = incr_re.match(incr.name)
                 if not m:
                     continue
                 if int(m.group(1)) > point:
@@ -350,7 +334,8 @@ class SnapshotManager:
             logger.info("差分バックアップを適用中: %s", incr.name)
             self._extract_archive(
                 snap_dir, incr.name,
-                self._incremental_extract_command(incr.name),
+                f"zstd -d /backup/{incr.name} -c | "
+                f"tar --listed-incremental=/dev/null -xf - -C /target",
                 volumes, pre_restore_name, skipped_renames,
             )
 
@@ -740,14 +725,6 @@ class SnapshotManager:
             return SNAPSHOT_IMAGE
 
     @staticmethod
-    def _container_path(root: str, sub: str) -> str:
-        """サブディレクトリ名 ``sub`` をコンテナ内のパスへ写す。
-
-        空文字は旧レイアウトで、``root`` そのものを指す。
-        """
-        return f'{root}/{sub}' if sub else root
-
-    @staticmethod
     def volume_mount_args(volumes: dict, mode: str) -> list:
         """対象ボリュームの ``docker run -v`` 引数を組み立てる。
 
@@ -758,7 +735,7 @@ class SnapshotManager:
         suffix = ':ro' if mode == 'backup' else ''
         args = []
         for sub, name in volumes.items():
-            target = SnapshotManager._container_path(root, sub)
+            target = f'{root}/{sub}' if sub else root
             args.extend(['-v', f'{name}:{target}{suffix}'])
         return args
 
@@ -770,18 +747,12 @@ class SnapshotManager:
         旧レイアウトも同じ形で扱える。
         """
         roots = ' '.join(
-            SnapshotManager._container_path('/target', sub) for sub in volumes)
+            f'/target/{sub}' if sub else '/target' for sub in volumes)
         return (
             'for d in ' + roots + '; do '
             'find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; '
             'done; '
         )
-
-    @staticmethod
-    def _incremental_extract_command(archive: str) -> str:
-        """``/backup/<archive>`` を ``/target`` へ展開するコマンドを組み立てる。"""
-        return (f"zstd -d /backup/{archive} -c | "
-                "tar --listed-incremental=/dev/null -xf - -C /target")
 
     def _run_docker_tar(self, snap_dir: Path, mode: str, command: str,
                         volumes: Optional[dict] = None
@@ -827,7 +798,7 @@ class SnapshotManager:
         self._run_docker_tar(
             snap_dir, 'backup',
             "tar --listed-incremental=/backup/snapshot.snar "
-            f"-cf - -C /source . | zstd -1 -T0 -o /backup/{FULL_ARCHIVE}"
+            "-cf - -C /source . | zstd -1 -T0 -o /backup/full.tar.zst"
         )
 
         # meta.yml を作成
@@ -836,7 +807,7 @@ class SnapshotManager:
             'created_at': datetime.now().isoformat(),
             'type': 'full',
             'volumes': dict(self.volumes),
-            'files': [FULL_ARCHIVE],
+            'files': ['full.tar.zst'],
             'incremental_count': 0,
         }
         self._save_snap_meta(snap_dir, meta)
@@ -863,9 +834,9 @@ class SnapshotManager:
             return
 
         # 差分番号を決定
-        existing = sorted(snap_dir.glob(INCR_GLOB))
+        existing = sorted(snap_dir.glob('incr-*.tar.zst'))
         next_num = len(existing) + 1
-        incr_name = incr_archive_name(next_num)
+        incr_name = f'incr-{next_num:03d}.tar.zst'
 
         logger.info("差分バックアップを作成中: %s/%s", name, incr_name)
 
