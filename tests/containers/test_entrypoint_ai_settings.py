@@ -73,10 +73,21 @@ def test_group_entries_point_at_the_group_volume(roots):
     home, _, grp = roots
     setup(roots, "kkg")
 
-    for entry in (".claude.json", ".claude", ".gemini", ".local/share/kiro-cli"):
+    for entry in (".claude.json", ".claude", ".gemini", ".local/share/kiro-cli",
+                  ".shellrc.d"):
         link = home / entry
         assert link.is_symlink(), f"{entry} が symlink ではない"
         assert link.resolve() == (grp / entry).resolve()
+
+
+def test_shellrc_dir_is_an_empty_group_directory(roots):
+    """PLAN70: 置き場所はグループ側のディレクトリで、devbase は中へ何も書かない。"""
+    home, _, grp = roots
+    setup(roots, "kkg")
+
+    target = grp / ".shellrc.d"
+    assert target.is_dir() and not target.is_symlink()
+    assert list(target.iterdir()) == []
 
 
 def test_kiro_cli_data_points_at_the_group_volume(roots):
@@ -191,6 +202,11 @@ def test_two_groups_share_assets_but_not_credentials(roots, tmp_path):
     # グループ別データは互いに到達できない
     (home_a / ".claude" / ".credentials.json").write_text("default-secret")
     assert not (home_b / ".claude" / ".credentials.json").exists()
+
+    # PLAN70: シェルの設定の置き場所もグループごとに分かれる
+    (home_a / ".shellrc.d" / "plan70.sh").write_text("alias plan70probe='echo kept'\n")
+    assert (group_a / ".shellrc.d" / "plan70.sh").exists()
+    assert not (home_b / ".shellrc.d" / "plan70.sh").exists()
 
 
 # ---------------------------------------------------------------------------

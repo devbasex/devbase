@@ -167,8 +167,63 @@
 
 ## 実装計画
 
-設計は [PLAN70_shellrc-dir-design.md](PLAN70_shellrc-dir-design.md)。
-**タスクへの分解は実装の持ち場で `/ndf:implementation-plan` が行う。**
+設計は [PLAN70_shellrc-dir-design.md](PLAN70_shellrc-dir-design.md)。タスクは機能単位で分け、
+どれもテストを先に書いて失敗を見てから実装する（`/ndf:tdd-cycle`）。
+
+### Task 1: 読み込み器
+
+- **対象ファイル:** `containers/base/shellrc-dir.sh`（新設）、`tests/containers/test_shellrc_dir.py`（新設）
+- **変更内容:** 設計の「処理の流れ」の形で読み込み器を書く。テストは読み込み器を一時ディレクトリで
+  `bash -c` から source し（`shopt -s expand_aliases`）、読む順・対象・無い/空・グロブの設定の
+  控えと戻し・誤りの後も続くこと・変数の後始末・変数と既定を固定する。`PATH=` を空にした source と、
+  読み込み器の文字列に `$(`・`` ` ``・`|` が無いことで性能の条件を見る
+- **満たす受け入れ条件:** 4〜7・6a・9・10（と非機能の性能）
+
+### Task 2: イメージへの配置と環境変数
+
+- **対象ファイル:** `containers/base/Dockerfile`、`tests/containers/test_shellrc_dir.py`
+- **変更内容:** `ENV DEVBASE_SHELLRC_DIR=/home/${USERNAME}/.shellrc.d` と
+  `COPY --chmod=0644 shellrc-dir.sh /etc/devbase/shellrc-dir.sh` を `ai-cli-aliases.sh` の `COPY` の
+  次へ置き、`~/.bashrc` へ `. /etc/devbase/shellrc-dir.sh` を `ai-cli-aliases.sh` の行の次に足す。
+  テストは Dockerfile の文字列で、配置・行の順序・`.zshrc` へ書き込む行が無いことを固定し、
+  `ai-cli-aliases.sh` の後に読み込み器を source して置き場所の `alias claude` が勝つことを見る
+- **満たす受け入れ条件:** 8・11（Dockerfile の部分）・12・14
+
+### Task 3: 置き場所の永続化
+
+- **対象ファイル:** `containers/base/entrypoint.sh`、`tests/containers/test_entrypoint_ai_settings.py`
+- **変更内容:** `DEVBASE_GROUP_SETTINGS` の末尾へ `".shellrc.d"` を足す。テストは分類 B の張り先の
+  一覧へ `.shellrc.d` を足し、グループの分離の検査へ置き場所の分離を足す。entrypoint の後の置き場所が
+  空であることも見る
+- **満たす受け入れ条件:** 1・3（関数の部分）・13
+
+### Task 4: 文書と CHANGELOG
+
+- **対象ファイル:** `docs/user/container-operations.md`、`CHANGELOG.md`
+- **変更内容:** 受け入れ条件 17 の 4 か所。置き場所へ置くファイルの作法（設計の「入出力の契約」）と、
+  変数を既定から変えた先は永続化されないことを書く
+- **満たす受け入れ条件:** 17
+- **進め方:** 文書のみでテスト駆動を適用しない。目視で 4 か所を確かめる
+
+### Task 5: 建て直しと実機の確認
+
+- **変更内容:** `uv run --locked pytest tests/ -q`、`devbase build base --no-cache`（arm64）、
+  建て直したイメージでの `readlink` / `stat` / `printenv` / `~/.zshrc` の比較、実プロジェクトでの
+  `devbase down` → `devbase up` を挟んだ `plan70probe`。出力を Pull Request 本文へ載せる
+- **満たす受け入れ条件:** 1・2・3（実機）・11・14・15・16
+
+### リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| Dockerfile の同じ付近を #234（PLAN69）が後から触る | 触る行は `COPY` と `~/.bashrc` の `RUN` に限る。後からマージする側が載せ直す |
+| テストがホストの bash 3.2 で走る | 読み込み器は bash 3.2 でも同じ結果になる形（設計の実測）。配列の空展開は一致なしでも要素 1 つ（文字列が残る）なので起きない |
+| 触る対象の構造 | 一覧に 1 項目足すだけで関数は変えない。実装の後の構造改善で足りる |
+
+### 切り戻し
+
+コミットを revert し、`devbase build base --no-cache` で建て直す。グループのボリュームに残る
+`.shellrc.d/` は読まれなくなるだけで、消さなくても害はない。
 
 ## 未確認のまま残ること
 

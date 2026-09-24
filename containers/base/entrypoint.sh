@@ -206,6 +206,10 @@ DEVBASE_GROUP_SETTINGS=(
     ".claude"
     ".gemini"
     ".local/share/kiro-cli"
+    # 作り直しても残るシェルの設定の置き場所 (PLAN70)。~/.bashrc が
+    # /etc/devbase/shellrc-dir.sh 経由で中の *.sh を読む。ai-plugins の中継の本体が
+    # ~/.claude にあるので、同じグループの単位にそろえる
+    ".shellrc.d"
 )
 
 # 分類 B のうち、既存コンテナのホームから初回だけ取り込むもの。

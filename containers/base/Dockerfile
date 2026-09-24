@@ -235,9 +235,18 @@ RUN set -eux; \
 RUN sudo install -d -m 0755 /etc/devbase
 COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh
 
+# 作り直しても残るシェルの設定の読み込み器 (PLAN70)。置き場所の実体はアカウント
+# グループのボリュームにあり、entrypoint.sh が ~/.shellrc.d を張る。パスを ENV で
+# 示すのは、docker exec の非対話の処理 (Claude Code の Bash など) からも置き場所を
+# 見つけられるようにするため。~/.bashrc の export では非対話の処理に届かない。
+ENV DEVBASE_SHELLRC_DIR=/home/${USERNAME}/.shellrc.d
+COPY --chmod=0644 shellrc-dir.sh /etc/devbase/shellrc-dir.sh
+
 RUN set -eux; \
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc; \
     echo '. /etc/devbase/ai-cli-aliases.sh' >> ~/.bashrc; \
+    # 起動定義の後に読み、置き場所の定義が devbase の定義より勝つようにする
+    echo '. /etc/devbase/shellrc-dir.sh' >> ~/.bashrc; \
     git config --global credential.helper store; \
     # Configure Claude Code hooks
     mkdir -p ~/.claude; \

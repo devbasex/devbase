@@ -146,7 +146,7 @@ devbase のコンテナは 4 種類のボリュームを使用します。
 | ボリューム名 | マウント先 | 共有範囲 | 用途 |
 |-------------|-----------|---------|------|
 | `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | 契約やテナントに紐づかない共通資産（`~/.claude/plugins` / `skills` / `commands` / `CLAUDE.md` / `settings.json`、`.codex` / `.serena` / `.kiro`、SSH 鍵、共有ファイル置き場 `share`）|
-| `devbase_home_{group}` | `/persistent/group` | 同じアカウントグループのコンテナで共有 | 企業テナントに紐づくもの（Claude Code の認証と会話ログ、`.gemini`、Kiro CLI の `.local/share/kiro-cli`、gcloud / gws の設定ディレクトリ）|
+| `devbase_home_{group}` | `/persistent/group` | 同じアカウントグループのコンテナで共有 | 企業テナントに紐づくもの（Claude Code の認証と会話ログ、`.gemini`、Kiro CLI の `.local/share/kiro-cli`、gcloud / gws の設定ディレクトリ、[作り直しても残るシェルの設定](#作り直しても残るシェルの設定)の置き場所 `.shellrc.d`）|
 | `devbase_work_{index}` | `/work` | 同じ index のコンテナで共有（プロジェクト間も共有） | プロジェクトのソースコード、作業ファイル |
 | `devbase_vscode_{project}_{index}` | `/home/ubuntu/.vscode-server` | 共有しない（コンテナ 1 つに 1 本）| VS Code Server 本体・拡張機能・接続トークン |
 
@@ -273,6 +273,7 @@ AI CLI ツールの設定や認証情報は、コンテナを再生成しても�
 | `.claude` | Claude Code の認証・会話ログ・セッション状態（上表の共通資産を除く**すべて**）|
 | `.gemini` | Gemini CLI と Antigravity CLI の設定（`vertex-ai` は GCP プロジェクトに紐づく。Antigravity CLI は `.gemini/antigravity-cli/` 配下を使う）|
 | `.local/share/kiro-cli` | Kiro CLI 2.x の認証状態・実行データ |
+| `.shellrc.d` | 対話シェルが起動時に読む `*.sh` の置き場所。パスは `DEVBASE_SHELLRC_DIR` が示す。**反映には `devbase build base --no-cache` が要る**（[作り直しても残るシェルの設定](#作り直しても残るシェルの設定)）|
 
 `~/.claude` は `/persistent/group/.claude` への symlink で、**その配下の既定はグループ側**です。
 共通資産だけがその中から `/persistent/ai/.claude/<name>` へ張り直されます。既定をグループ側に
@@ -507,6 +508,40 @@ GOOGLE_CLOUD_PROJECT=
 
 `~/.gemini` はアカウントグループのボリューム（`/persistent/group/.gemini`）にあるため、
 OAuth のログインはコンテナを作り直しても残ります。
+
+## 作り直しても残るシェルの設定
+
+`~/.bashrc` はイメージの中にあるため、書き足した alias や関数はコンテナを作り直すと消えます。
+作り直しても残したい設定は、置き場所 `~/.shellrc.d/` へ `*.sh` のファイルとして置きます。
+
+```bash
+cat > ~/.shellrc.d/my-aliases.sh <<'SH'
+alias ll='ls -alF'
+SH
+```
+
+置いたファイルは、次に開く対話シェル（`devbase login` / tmux の窓 / VS Code の端末）から効きます。
+
+| 項目 | 振る舞い |
+|------|---------|
+| 実体 | `/persistent/group/.shellrc.d/`。**同じアカウントグループのコンテナすべて**で同じ設定が効き、別のグループには効かない |
+| パス | 環境変数 `DEVBASE_SHELLRC_DIR`（`/home/ubuntu/.shellrc.d`）。`docker exec` の非対話の処理からも見える。設定を足すツールはこの変数の指す先へ 1 ファイル置き、`~/.bashrc` を書き換えない |
+| 読まれるもの | 置き場所の直下の、名前が `.sh` で終わるファイル。サブディレクトリの中・`.` で始まる名前・他の拡張子は読まない |
+| 読む順 | ファイル名の昇順。[AI CLI の起動定義](#ai-cli-の起動定義)の**後**に読むので、同じ名前の alias（`claude` など）は置き場所の定義が勝つ |
+| 読まれる時点 | 対話の bash の起動時だけ。スクリプトや `docker exec ... bash -c` などの非対話の処理では読まれない |
+| 誤り | 1 つのファイルの誤りは標準エラーに出て、次のファイルへ進む |
+
+置くファイルの作法:
+
+- 1 つの用途につき 1 ファイルにし、`<名前>.sh` とします。順序を決めたいときは `10-` のような数字を前に付けます
+- 何度読まれても同じ結果になるように書きます。`exit` は書きません（対話シェルが終わります）。標準出力へは何も出しません
+- devbase は置き場所へ何も書きません。置いたものを消すのは置いた側です
+- `DEVBASE_SHELLRC_DIR` を別の場所へ向けると、読み込みもそちらへ移ります。ただし向けた先は永続化されません
+
+**反映には `devbase build base --no-cache` が要ります。** `devbase up` だけでは反映されません
+（読み込みの 1 行と `DEVBASE_SHELLRC_DIR` はイメージの中にあります）。派生イメージを使う
+プロジェクトはその派生イメージも建て直し、稼働中のコンテナは `devbase down` → `devbase up` で
+作り直してください。zsh（base には入っていません）と `lfm` イメージは対象外です。
 
 ## tmux（ターミナル）の既定設定
 
