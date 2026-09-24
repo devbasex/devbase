@@ -116,11 +116,12 @@ sequenceDiagram
     alt dir がディレクトリでない
         L-->>SH: 何もしない
     else ディレクトリである
-        L->>L: failglob の状態を控えて切る
-        loop dir/*.sh を名前の順に
+        L->>L: failglob と dotglob を控えて切る
+        L->>L: dir/*.sh を配列へ展開する
+        L->>L: failglob と dotglob を控えた状態へ戻す
+        loop 配列を名前の順に
             L->>L: 通常ファイルで読めるなら source
         end
-        L->>L: failglob を控えた状態へ戻す
     end
     L->>L: 使った変数を unset
 ```
@@ -131,24 +132,27 @@ sequenceDiagram
 # 置き場所の *.sh を名前の順に読む。対話シェルの ~/.bashrc から読まれる。
 __devbase_shellrc_dir="${DEVBASE_SHELLRC_DIR:-$HOME/.shellrc.d}"
 if [ -d "$__devbase_shellrc_dir" ]; then
-    __devbase_shellrc_glob="$(shopt -p failglob)"
-    shopt -u failglob
-    for __devbase_shellrc_file in "$__devbase_shellrc_dir"/*.sh; do
+    __devbase_shellrc_opts="$(shopt -p failglob dotglob)"
+    shopt -u failglob dotglob
+    __devbase_shellrc_files=("$__devbase_shellrc_dir"/*.sh)
+    eval "$__devbase_shellrc_opts"
+    for __devbase_shellrc_file in "${__devbase_shellrc_files[@]}"; do
         if [ -f "$__devbase_shellrc_file" ] && [ -r "$__devbase_shellrc_file" ]; then
             . "$__devbase_shellrc_file"
         fi
     done
-    eval "$__devbase_shellrc_glob"
 fi
-unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_glob
+unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_files __devbase_shellrc_opts
 ```
 
 - 一致が無いとき bash のグロブは文字列のまま残る。`-f` の判定で落ちるので、`nullglob` を
   切り替えずに済む。`nullglob` が有効なら繰り返しが 0 回になるだけで、結果は同じである
-- `failglob` だけは控えて切る。有効なまま一致が無いと、bash は `no match` を標準エラーへ出して
-  `for` を実行しない（受け入れ条件 6）。控えた `shopt -p` の出力を `eval` して元の状態へ戻すので、
-  利用者のシェルの設定は読み込みの前後で変わらない。置き場所のファイルは `failglob` が切れた
-  状態で読まれる
+- グロブの展開の間だけ `failglob` と `dotglob` を切る。`failglob` が有効なまま一致が無いと、
+  bash は `no match` を標準エラーへ出して展開した文を実行しない（受け入れ条件 6）。`dotglob` が
+  有効だと `*.sh` が `.` で始まる名前にも一致する（受け入れ条件 5）
+- 展開の結果を配列へ移し、**読む前に**控えた `shopt -p` の出力を `eval` して元へ戻す。置き場所の
+  ファイルは利用者の設定のまま読まれ、ファイルの中で変えた設定は読み込みの後も残る
+  （受け入れ条件 6a）
 - `if` で包むのは、最後のファイルが読めないときに `&&` の連なりが非 0 を残さないためである。
   末尾の `unset` で終了状態は 0 になる（受け入れ条件 6）
 - 変数名を `__devbase_` で始めるのは、利用者の変数（`f` など）を上書きしないためである
@@ -163,13 +167,17 @@ unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_glob
 | `x.txt` | 読まれなかった |
 | 置き場所が無い / 空 | 何も出さず、終了状態 0 |
 | 空の置き場所を `shopt -s failglob` の下で読む | 何も出さず終了状態 0。読んだ後も `failglob` は `on`。控えて切る処理が無い形では `no match` を出し終了状態 1 だった |
+| `.hidden.sh` を `shopt -s dotglob` の下で読む | 読まれなかった。読んだ後も `dotglob` は `on` |
+| `failglob` が切れた状態で、`shopt -s failglob` を実行する `10-set.sh` と、状態を出す `20-show.sh` | `20-show.sh` は `on` を出し、読んだ後も `on` |
+
+同じ 3 行は macOS の bash 3.2 でも同じ結果だった（テストはホストの bash でも走る）。
 
 ## 非機能の実現方式
 
 | 大項目 | 要求の条件 | 実現方式 | 確かめ方 |
 | --- | --- | --- | --- |
 | セキュリティ | 置き場所に書けるのは、同じアカウントグループのボリュームに書ける者だけである。既に `~/.claude`（hooks を含む）へ書ける者と同じ範囲で、新しい書き手を増やさない。devbase は置き場所へ何も書かない | 実体を `~/.claude` と同じ `/persistent/group` に置き、所有者は既存の `devbase_ensure_entry` と同じく開発ユーザーにする。イメージと entrypoint は置き場所へファイルを書かない | 受け入れ条件 1 の実機で所有者を見る。テストで、entrypoint の後の置き場所が空であることを見る |
-| 性能・拡張性 | 置き場所が空のとき、対話シェルの起動にかかる追加の処理は、ディレクトリの有無の判定と 1 回のグロブで終わる（外部コマンドを起動しない） | 読み込み器をシェルの組み込み（`[`・`for`・`.`・`shopt`・`eval`・`unset`）だけで書く。`failglob` を控える `$(shopt -p failglob)` はサブシェルを作るが、外部コマンドは起動しない | 読み込み器のテストで、`PATH` を空にして source しても誤りが出ないことを見る |
+| 性能・拡張性 | 置き場所が空のとき、対話シェルの起動にかかる追加の処理は、ディレクトリの有無の判定と 1 回のグロブで終わる（外部コマンドを起動しない） | 読み込み器をシェルの組み込み（`[`・`for`・`.`・`shopt`・`eval`・`unset`）だけで書く。設定を控える `$(shopt -p failglob dotglob)` はサブシェルを作るが、外部コマンドは起動しない | 読み込み器のテストで、`PATH` を空にして source しても誤りが出ないことを見る |
 
 ## 決定の記録
 
@@ -253,8 +261,9 @@ lfm は base を継がず、base から `entrypoint.sh` をコピーするだけ
 | 2. 作り直しで残る | 実機: `devbase down` → `devbase up` → `devbase login` で `plan70probe` |
 | 3. 同じグループの別のコンテナ・別のグループ | 関数: `test_two_groups_share_assets_but_not_credentials` で、片方のグループの置き場所に置いたファイルがもう片方の置き場所から見えない。実機: `--index=2` の対話シェル |
 | 4. 名前の昇順 | 読み込み器: `10-a.sh` と `20-b.sh` が同じ alias を定義し、`20-b.sh` の定義が残る |
-| 5. `*.sh` 以外を読まない | 読み込み器: `x.txt` / `README` / `sub.sh/`（ディレクトリ）/ `.hidden.sh` が読まれない |
-| 6. 無い・空・一致なし | 読み込み器: 3 通りで、標準出力と標準エラーが空、終了状態 0。`shopt -s failglob` の下で空の置き場所を読んでも同じで、読んだ後の `shopt failglob` が `on` |
+| 5. `*.sh` 以外を読まない | 読み込み器: `x.txt` / `README` / `sub.sh/`（ディレクトリ）/ `.hidden.sh` が読まれない。`shopt -s dotglob` の下でも `.hidden.sh` が読まれない |
+| 6. 無い・空・一致なし | 読み込み器: 3 通りで、標準出力と標準エラーが空、終了状態 0。`shopt -s failglob` の下で空の置き場所を読んでも同じ |
+| 6a. 利用者の設定のまま読む | 読み込み器: `failglob` と `dotglob` を有効にして読み、読んだ後も両方 `on`。`failglob` が切れた状態で `shopt -s failglob` を実行するファイルを読み、後ろのファイルと読んだ後の両方で `on` |
 | 7. 誤りの後も続く | 読み込み器: 構文の誤りを持つ `15-bad.sh` の後ろの `20-b.sh` が読まれる |
 | 8. 起動定義より勝つ | 読み込み器: `ai-cli-aliases.sh` を source した後に読み込み器を source し、置き場所の `alias claude` が残る。Dockerfile: `. /etc/devbase/shellrc-dir.sh` の行が `. /etc/devbase/ai-cli-aliases.sh` の行より後 |
 | 9. 変数を残さない | 読み込み器: source の前に `f=keep` を置き、後で `f` が `keep`、`__devbase_` で始まる変数が無い |
