@@ -47,41 +47,36 @@ def _parse_options(text: str) -> dict[str, list[str]]:
     return options
 
 
-@contextlib.contextmanager
-def _tmux_server(*configs: Path, session_args: tuple[str, ...] = (),
-                 term: str | None = "xterm-256color"):
-    """専用の tmux サーバーを起動し、コマンドと環境を返す。
+def _effective_options(*configs: Path) -> dict[str, list[str]]:
+    """``configs`` を順に読ませた tmux の session/server オプションを返す。
 
+    専用ソケットを ``-S`` で明示し、実行中の利用者の tmux サーバーには触れない。
     UNIX ソケットのパス長には OS の上限 (macOS で 104 バイト) があるため、
     pytest の一時ディレクトリではなく ``$TMPDIR`` 直下の短い名前を使う。
     """
     socket = Path(tempfile.gettempdir()) / f"dvb38-{uuid.uuid4().hex[:8]}"
     env = {k: v for k, v in os.environ.items() if k != "TMUX"}
-    if term is not None:
-        env["TERM"] = term
-    base = ["tmux", "-S", str(socket)]
-    config_args = [arg for config in configs for arg in ("-f", str(config))]
+    env["TERM"] = "xterm-256color"
 
-    started = subprocess.run([*base, *config_args, "new-session", "-d", *session_args],
+    base = ["tmux", "-S", str(socket)]
+    for config in configs:
+        base += ["-f", str(config)]
+
+    started = subprocess.run([*base, "new-session", "-d"],
                              capture_output=True, text=True, env=env)
     assert started.returncode == 0, f"tmux の起動に失敗した: {started.stderr}"
     try:
-        yield base, env
-    finally:
-        subprocess.run([*base, "kill-server"], capture_output=True, text=True, env=env)
-        with contextlib.suppress(FileNotFoundError):
-            socket.unlink()
-
-
-def _effective_options(*configs: Path) -> dict[str, list[str]]:
-    """``configs`` を順に読ませた tmux の session/server オプションを返す。"""
-    with _tmux_server(*configs) as (base, env):
         options: dict[str, list[str]] = {}
         for scope in ("-g", "-s"):
-            shown = subprocess.run([*base, "show-options", scope],
+            shown = subprocess.run(["tmux", "-S", str(socket), "show-options", scope],
                                    capture_output=True, text=True, env=env, check=True)
             options.update(_parse_options(shown.stdout))
         return options
+    finally:
+        subprocess.run(["tmux", "-S", str(socket), "kill-server"],
+                       capture_output=True, text=True, env=env)
+        with contextlib.suppress(FileNotFoundError):
+            socket.unlink()
 
 
 def _client_capabilities(config: Path) -> str:
@@ -92,30 +87,38 @@ def _client_capabilities(config: Path) -> str:
     ときの ``show-messages -JT`` でしか確かめられない。接続には端末が要るため
     ``pty.openpty`` で用意する。
     """
-    controller = None
-    client = None
+    socket = Path(tempfile.gettempdir()) / f"dvb38-{uuid.uuid4().hex[:8]}"
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    env["TERM"] = "xterm-256color"
+    base = ["tmux", "-S", str(socket)]
+
+    started = subprocess.run([*base, "-f", str(config), "new-session", "-d", "-s", "p",
+                              "sleep", "30"], capture_output=True, text=True, env=env)
+    assert started.returncode == 0, f"tmux の起動に失敗した: {started.stderr}"
+
+    controller, terminal = pty.openpty()
+    client = subprocess.Popen([*base, "attach", "-t", "p"],
+                              stdin=terminal, stdout=terminal, stderr=terminal, env=env)
+    os.close(terminal)
     try:
-        with _tmux_server(config, session_args=("-s", "p", "sleep", "30")) as (base, env):
-            controller, terminal = pty.openpty()
-            client = subprocess.Popen([*base, "attach", "-t", "p"],
-                                      stdin=terminal, stdout=terminal, stderr=terminal, env=env)
-            os.close(terminal)
-            for _ in range(50):
-                time.sleep(0.1)
-                shown = subprocess.run([*base, "show-messages", "-JT"],
-                                       capture_output=True, text=True, env=env)
-                if "Terminal 0:" in shown.stdout:
-                    return shown.stdout
-            raise AssertionError("クライアントが接続しなかった")
+        for _ in range(50):
+            time.sleep(0.1)
+            shown = subprocess.run([*base, "show-messages", "-JT"],
+                                   capture_output=True, text=True, env=env)
+            if "Terminal 0:" in shown.stdout:
+                return shown.stdout
+        raise AssertionError("クライアントが接続しなかった")
     finally:
-        # サーバーは with を抜けるとき先に落ちる。クライアントは接続が切れて
-        # 自ら終わるので wait が即座に返り、待ち切れなくても後始末を続ける。
-        if client is not None:
-            client.terminate()
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                client.wait(timeout=5)
-        if controller is not None:
-            os.close(controller)
+        # サーバーを先に落とす。クライアントは接続が切れて自ら終わるので wait が
+        # 即座に返り、待ち切れなかった場合でも残りの後始末を続けられるように
+        # TimeoutExpired は握り潰す (`sleep 30` を残さないため)。
+        subprocess.run([*base, "kill-server"], capture_output=True, text=True, env=env)
+        client.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            client.wait(timeout=5)
+        os.close(controller)
+        with contextlib.suppress(FileNotFoundError):
+            socket.unlink()
 
 
 @pytest.fixture(scope="module")
@@ -234,10 +237,20 @@ def test_hyperlinks_reach_the_outer_terminal():
 
 def _prefix_keys(config: Path) -> list[str]:
     """``config`` を読ませた tmux の ``list-keys -T prefix`` の行。"""
-    with _tmux_server(config, term=None) as (base, env):
+    socket = Path(tempfile.gettempdir()) / f"dvb69-{uuid.uuid4().hex[:8]}"
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    base = ["tmux", "-S", str(socket)]
+    started = subprocess.run([*base, "-f", str(config), "new-session", "-d"],
+                             capture_output=True, text=True, env=env)
+    assert started.returncode == 0, f"tmux の起動に失敗した: {started.stderr}"
+    try:
         shown = subprocess.run([*base, "list-keys", "-T", "prefix"],
                                capture_output=True, text=True, env=env, check=True)
         return shown.stdout.splitlines()
+    finally:
+        subprocess.run([*base, "kill-server"], capture_output=True, text=True, env=env)
+        with contextlib.suppress(FileNotFoundError):
+            socket.unlink()
 
 
 @needs_tmux
