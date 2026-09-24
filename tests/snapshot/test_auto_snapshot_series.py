@@ -101,6 +101,16 @@ def test_zero_interval_never_skips(root):
     assert (backups / "D" / "incr-001.tar.zst").exists()
 
 
+def test_future_last_snapshot_is_not_skipped(root, monkeypatch):
+    """現状固定: 直近の取得時刻が未来 (時計のずれ) なら、間隔内でも飛ばさず積む。"""
+    backups = write_state(root, [("D", "default", 0)])
+    monkeypatch.setenv("DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES", "60")
+    _age(backups / "D" / "full.tar.zst", -600)
+
+    container._auto_snapshot()
+    assert (backups / "D" / "incr-001.tar.zst").exists()
+
+
 def test_new_generation_rotates_only_its_own_series(root, monkeypatch):
     """現状固定: 作成の後の rotate() で、新世代を積んだ系列の最古だけが消える。
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import types
 from pathlib import Path
@@ -158,6 +159,59 @@ def test_series_latest_uses_created_at(tmp_path):
     assert mgr.series_latest()["name"] == "D2"
     assert mgr.series_latest(vols("with"))["name"] == "W"
     assert mgr.series_latest(vols("kkg")) is None
+
+
+class ArchiveRecordingManager(RecordingManager):
+    """書き込むアーカイブ名を command から拾う (full / incr-NNN を区別する)。"""
+
+    def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
+        self.calls.append({"mode": mode, "command": command})
+        if mode == "backup":
+            archive = re.search(r"/backup/(full\.tar\.zst|incr-\d+\.tar\.zst)", command)
+            (snap_dir / archive.group(1)).write_text("archive")
+            (snap_dir / "snapshot.snar").write_text("snar")
+
+
+def _entry(root: Path, name: str) -> dict:
+    data = yaml.safe_load((root / "backups" / "snapshot.yml").read_text())
+    return next(s for s in data["snapshots"] if s["name"] == name)
+
+
+def test_create_numbers_incrementals_in_order(tmp_path):
+    """現状固定: 2 本目以降の差分は incr-002 と番号を進め、差分数を両方の台帳へ書く。"""
+    mgr = ArchiveRecordingManager(tmp_path, group="default")
+    mgr.create(name="g")
+    mgr.create(name="g", full=False)
+    mgr.create(name="g", full=False)
+
+    snap_dir = tmp_path / "backups" / "g"
+    assert sorted(p.name for p in snap_dir.glob("*.tar.zst")) == [
+        "full.tar.zst", "incr-001.tar.zst", "incr-002.tar.zst"]
+    meta = yaml.safe_load((snap_dir / "meta.yml").read_text())
+    assert meta["type"] == "incremental"
+    assert meta["incremental_count"] == 2
+    assert meta["files"] == ["full.tar.zst", "incr-001.tar.zst", "incr-002.tar.zst"]
+    assert _entry(tmp_path, "g")["incremental_count"] == 2
+
+
+def test_create_without_snar_falls_back_to_full(tmp_path):
+    """現状固定: 既存世代に snapshot.snar が無ければ差分でなく full を作り直す。"""
+    mgr = ArchiveRecordingManager(tmp_path, group="default")
+    mgr.create(name="h")
+    mgr.create(name="h", full=False)
+    snap_dir = tmp_path / "backups" / "h"
+    (snap_dir / "snapshot.snar").unlink()
+
+    mgr.create(name="h", full=False)
+
+    assert "incr-002.tar.zst" not in [p.name for p in snap_dir.iterdir()]
+    assert "incr-002" not in mgr.calls[-1]["command"]
+    assert "/backup/full.tar.zst" in mgr.calls[-1]["command"]
+    meta = yaml.safe_load((snap_dir / "meta.yml").read_text())
+    assert meta["type"] == "full"
+    assert meta["incremental_count"] == 0
+    assert meta["files"] == ["full.tar.zst"]
+    assert _entry(tmp_path, "h")["incremental_count"] == 0
 
 
 # ---------------------------------------------------------------------------
