@@ -26,6 +26,8 @@ SCRIPTS = {
         "#!/bin/sh\n"
         f"exec tmux choose-tree ${{TMUX_PANE:+-t \"$TMUX_PANE\"}} -Zs -O name '{TEMPLATE}'\n"
     ),
+    # open-list から -t を落としたもの（TMUX_PANE があっても -t に使わない）
+    "open-list-no-t": f"#!/bin/sh\nexec tmux choose-tree -Zs -O name '{TEMPLATE}'\n",
     # 一覧が開くまでの間に別の端末を操作するため、1 秒待ってから開く
     "open-list-slow": "#!/bin/sh\nsleep 1\nexec open-list\n",
 }
@@ -163,6 +165,28 @@ def main():
     time.sleep(1)
     pick(c1)
     state("6b same binding, pick and Enter")
+
+    # 7. 端末の無いプロセスから、a の pane の TMUX / TMUX_PANE を持って呼ぶ
+    #    （テストの tm.run(..., env=tm.inside_env(home)) と同じ形）。先に b の端末へ打って直近を b にする
+    tmux_var = t("display-message", "-p", "-t", "=a:", "#{socket_path},#{pid},0")
+    a_pane = t("display-message", "-p", "-t", "=a:", "#{pane_id}")
+    for label, prog, pane in (
+        ("7a open-list-no-t, TMUX_PANE=a's pane", "open-list-no-t", a_pane),
+        ("7b open-list (-t), TMUX_PANE=a's pane", "open-list", a_pane),
+        ("7c open-list-no-t, no TMUX_PANE", "open-list-no-t", None),
+    ):
+        reset()
+        os.write(c2, b"x")
+        time.sleep(0.5)
+        env = dict(ENV, TMUX=tmux_var)
+        if pane:
+            env["TMUX_PANE"] = pane
+        subprocess.Popen(
+            [prog], env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        time.sleep(1)
+        state(f"7 no tty, b typed last, TMUX_PANE={pane}: {label}")
 
     t("kill-server")
 

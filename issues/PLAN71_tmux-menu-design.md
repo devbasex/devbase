@@ -71,6 +71,13 @@ pane を継がず、全セッションから直近に操作されたセッショ
 `run-shell` は渡された文字列の `#{…}` を先に展開するため、`TMUX_PANE=#{pane_id} tmux-menu` と
 書けば押した pane の ID（`%3` の形。引用の要らない文字だけ）が渡る（実測の 6）。
 
+一覧を出す pane を決めるのは `TMUX_PANE` そのものである。tmux は、端末を持たないクライアントから
+来たコマンドの現在の pane を、そのクライアントの環境の `TMUX_PANE` で決める（tmux の `cmd-find.c`
+の `cmd_find_inside_pane`）。`-t` の無い `choose-tree` でも、`TMUX_PANE` があればその pane に出る
+（実測の 7a）。それでも `tmux-menu` は `TMUX_PANE` を `-t` にも渡す。どの pane に出すかをコマンドの
+行に書いて意図を読めるようにし、tmux が環境から現在の pane を引く規則に頼らないためである。
+`-t` は保険であり、`-t` の有無で振る舞いは変わらない（実測の 7a・7b）。
+
 `tmux-menu` に `-t` のオプションを足して ID を渡す案は採らない。`menu` の受け付ける形が増え、
 tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と同じ入口に揃わない。
 
@@ -80,7 +87,8 @@ tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と
 （`python3 issues/PLAN71_tmux-menu-measure.py`。一時ディレクトリのソケットでサーバを立て、利用者の
 サーバに触れない）。`python3` の `pty` で端末を繋ぎ、`tmux-session` の代わりに引数を書き出すだけの
 偽物を置く。一覧を開くスクリプト `open-list` は `tmux-menu` の代わりで、`TMUX_PANE` があれば
-`-t "$TMUX_PANE"` を付けて次の `<template>` で `choose-tree -Zs -O name` を実行する。セッションは
+`-t "$TMUX_PANE"` を付けて次の `<template>` で `choose-tree -Zs -O name` を実行する。`open-list-no-t`
+は `open-list` から `-t` を落としたもので、`TMUX_PANE` があっても `-t` に使わない。セッションは
 `a`・`it's`（`'` を含む）・`b` の 3 つで、端末 `/dev/ttys024` が `a` に、`/dev/ttys025` が `b` に
 繋がっている（端末の名前は実行ごとに変わる）。一覧では 1 つ上を選んで Enter を押した。
 
@@ -92,6 +100,9 @@ tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と
 | 4 | `bind-key S run-shell open-list` を `a` の端末で押す | `a` | `menu -c /dev/ttys024 $1` → `it's` | 正しい |
 | 5 | 4 の形（1 秒待ってから開く `open-list-slow`）で、押した直後に `b` の端末へ 1 文字打つ | **`b`** | （選んでいない） | **誤り** |
 | 6 | `bind-key S run-shell "TMUX_PANE=#{pane_id} open-list-slow"` で 5 と同じ操作。続けて選んで Enter | `a` | `menu -c /dev/ttys024 $1` → `it's` | 正しい |
+| 7a | `b` の端末へ 1 文字打って直近を `b` にしてから、端末を持たないプロセスで `a` の pane の `TMUX`・`TMUX_PANE` を渡して `-t` を付けない `open-list-no-t` を実行する（テストの `tm.run("tmux-menu", env=tm.inside_env(home))` と同じ形） | `a` | （選んでいない） | 正しい（`-t` が無くても `TMUX_PANE` の pane に出る） |
+| 7b | 7a と同じ操作で、`-t "$TMUX_PANE"` を付ける `open-list` を実行する | `a` | （選んでいない） | 正しい |
+| 7c | 7a と同じ操作で、`TMUX_PANE` を渡さずに `open-list-no-t` を実行する | **`b`** | （選んでいない） | 直近の端末に出る |
 
 スクリプトの出力（抜粋。`panes` は `セッション:pane:モード`）:
 
@@ -107,6 +118,12 @@ tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と
   panes: ['a:%0:tree-mode', 'b:%2:', "it's:%1:"]
 ## 6b same binding, pick and Enter
   menu args: 'menu -c /dev/ttys024 $1' -> "menu -c /dev/ttys024 it's"
+## 7 no tty, b typed last, TMUX_PANE=%0: 7a open-list-no-t, TMUX_PANE=a's pane
+  panes: ['a:%0:tree-mode', 'b:%2:', "it's:%1:"]
+## 7 no tty, b typed last, TMUX_PANE=%0: 7b open-list (-t), TMUX_PANE=a's pane
+  panes: ['a:%0:tree-mode', 'b:%2:', "it's:%1:"]
+## 7 no tty, b typed last, TMUX_PANE=None: 7c open-list-no-t, no TMUX_PANE
+  panes: ['a:%0:', 'b:%2:tree-mode', "it's:%1:"]
 ```
 
 `<template>` は今の `prefix S` の行と同じ次の文字列である。
@@ -121,6 +138,9 @@ run-shell -t "%%%" "tmux-session menu -c #{q:client_name} #{q:session_id}"
 - `run-shell` から起動したシェルでは `TMUX` はあり、`TMUX_PANE` は無い。`-t` の無い
   `choose-tree` は直近に操作されたセッションの pane に出る。4 で正しく見えたのは、押した端末が
   直近だったからにすぎない（5）
+- 端末を持たないクライアントでは、`-t` が無くても環境の `TMUX_PANE` が現在の pane を決める（7a）。
+  `TMUX_PANE` が無いときだけ直近の端末に出る（7c）。`-t "$TMUX_PANE"` を付けても付けなくても
+  結果は同じである（7a・7b）
 - tmux の外からの `attach` は、端末の繋がっていないセッションを優先する（2）
 
 ## 入出力の契約
@@ -252,7 +272,7 @@ Enter の後は PLAN69 の `menu` の流れと同じである。
 
 | 受け入れ条件 | 何で確かめるか |
 | --- | --- |
-| 1 | tmux の中の端末のプロンプトへ `tmux-menu` を打ち、その端末の `#{pane_mode}` が `tree-mode` になることを見る。一覧を出す pane を `TMUX_PANE` で決めることは行 11 の足すテストで縛る |
+| 1 | tmux の中の端末のプロンプトへ `tmux-menu` を打ち、その端末の `#{pane_mode}` が `tree-mode` になることを見る。一覧が `TMUX_PANE` の pane に出る（直近に操作された別の端末には出ない）ことは行 11 の足すテストで縛る |
 | 2 | 1 の後に 1 つ上を選んで Enter を押し、偽の `tmux-session` へ `menu -c <押した端末> <選んだ ID>` が渡ることを見る。`'` を含む名前を含める |
 | 3 | 本物の `tmux-session` で 1 → 選ぶ → `a` を送り、押した端末が選んだセッションへ移り、そこに繋がっていた他の端末が外れることを `list-clients` で見る |
 | 4 | tmux の外の端末で `tmux-menu` を起動し、端末がサーバに繋がり `tree-mode` になることを見る |
@@ -262,7 +282,7 @@ Enter の後は PLAN69 の `menu` の流れと同じである。
 | 8 | `tmux-menu` と `tmux-session menu` で 1・6 を両方の名前で走らせる（parametrize） |
 | 9 | `-c` だけ・余分な引数・知らないオプションで終了コード 2。`tmux-menu -h` が 0 で、`tmux-session -h` の出力に `tmux-menu` が含まれる |
 | 10 | Dockerfile の symlink の `RUN` に `tmux-menu` が含まれることを固定する（`SHORT_NAMES` を足した `test_dockerfile_links_short_names`）。建てたイメージで `command -v tmux-menu` を見る |
-| 11 | **書き換える既存テスト:** `test_prefix_s_opens_session_chooser`（`tests/containers/test_tmux_conf.py`）は割り当てに `choose-tree` と `tmux-session menu` が含まれることを見ており、決定 2 で落ちる。割り当てがちょうど 1 つで、`run-shell` が `TMUX_PANE=#{pane_id} tmux-menu` を呼ぶことを見る形へ改める。**基盤更新で通る既存テスト:** `test_prefix_s_passes_selected_id_and_client` と、`prefix S` から開く `test_menu_*` 4 件（「テスト基盤の更新」の表）。中身は変えない。**足すテスト:** 時間の競合に頼らず、`TMUX_PANE` の pane に一覧が出ることを見る。`home` と `other` の 2 つのセッションを作り、`tm.attach(home)` の後に `tm.attach(other)` で繋いだ端末へ 1 文字送って直近に操作された端末を `other` にする。そのうえで `tm.run("tmux-menu", env=tm.inside_env(home))` を実行し、`home` の pane の `#{pane_mode}` が `tree-mode` になり、`other` の pane はならないことを見る。`-t "$TMUX_PANE"` を実装から落とすと、一覧は直近の `other` に出て落ちる。`prefix S` が `TMUX_PANE=#{pane_id}` を渡すことは、書き換える静的テストが縛る。実測の 5・6 のような、押した直後に別の端末へ打つテストは、本物の `tmux-menu` では `choose-tree` までの間が数十 ms しかなく `-t` の有無を区別できないため採らない。`prefix s` は既定のまま |
+| 11 | **書き換える既存テスト:** `test_prefix_s_opens_session_chooser`（`tests/containers/test_tmux_conf.py`）は割り当てに `choose-tree` と `tmux-session menu` が含まれることを見ており、決定 2 で落ちる。割り当てがちょうど 1 つで、`run-shell` が `TMUX_PANE=#{pane_id} tmux-menu` を呼ぶことを見る形へ改める。**基盤更新で通る既存テスト:** `test_prefix_s_passes_selected_id_and_client` と、`prefix S` から開く `test_menu_*` 4 件（「テスト基盤の更新」の表）。中身は変えない。**足すテスト:** 時間の競合に頼らず、`TMUX_PANE` の pane に一覧が出ることを見る。`home` と `other` の 2 つのセッションを作り、`tm.attach(home)` の後に `tm.attach(other)` で繋いだ端末へ 1 文字送って直近に操作された端末を `other` にする。そのうえで `tm.run("tmux-menu", env=tm.inside_env(home))` を実行し、`home` の pane の `#{pane_mode}` が `tree-mode` になり、`other` の pane はならないことを見る。このテストが縛るのは「一覧が `TMUX_PANE` の pane に出る」という振る舞いであり、`-t "$TMUX_PANE"` の分岐ではない。tmux は `-t` が無くても環境の `TMUX_PANE` で現在の pane を決めるため、`-t` を実装から落としてもこのテストは通る（実測の 7a・7b）。`TMUX_PANE` を渡さない・読み捨てるといった壊し方で落ちる（実測の 7c）。`prefix S` が `TMUX_PANE=#{pane_id}` を渡すことは、書き換える静的テストが縛る。実測の 5・6 のような、押した直後に別の端末へ打つテストは、本物の `tmux-menu` では `choose-tree` までの間が数十 ms しかなく `-t` の有無を区別できないため採らない。`prefix s` は既定のまま |
 | 12 | `git diff --stat main` に `tmux-first` / `tmux-clean` が現れない |
 | 13 | `shellcheck containers/base/tmux-*` と全体の pytest |
 | 14 | 文書の差分をレビューで見る |
