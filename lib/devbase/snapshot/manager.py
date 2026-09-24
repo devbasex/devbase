@@ -750,6 +750,14 @@ class SnapshotManager:
             return SNAPSHOT_IMAGE
 
     @staticmethod
+    def _container_path(root: str, sub: str) -> str:
+        """サブディレクトリ名 ``sub`` をコンテナ内のパスへ写す。
+
+        空文字は旧レイアウトで、``root`` そのものを指す。
+        """
+        return f'{root}/{sub}' if sub else root
+
+    @staticmethod
     def volume_mount_args(volumes: dict, mode: str) -> list:
         """対象ボリュームの ``docker run -v`` 引数を組み立てる。
 
@@ -760,7 +768,7 @@ class SnapshotManager:
         suffix = ':ro' if mode == 'backup' else ''
         args = []
         for sub, name in volumes.items():
-            target = f'{root}/{sub}' if sub else root
+            target = SnapshotManager._container_path(root, sub)
             args.extend(['-v', f'{name}:{target}{suffix}'])
         return args
 
@@ -772,7 +780,7 @@ class SnapshotManager:
         旧レイアウトも同じ形で扱える。
         """
         roots = ' '.join(
-            f'/target/{sub}' if sub else '/target' for sub in volumes)
+            SnapshotManager._container_path('/target', sub) for sub in volumes)
         return (
             'for d in ' + roots + '; do '
             'find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; '
