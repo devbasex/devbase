@@ -36,8 +36,8 @@
 - **前提 1: 対象の tmux は、コンテナの 3.6 とホストの 3.7b（PLAN69 と同じ）。**
 - **前提 2: 名前は `tmux-menu` で確定している**（利用者の指示、2026-09-24）。`tmux-session` の
   どのサブコマンドへ振り分けるか、既存の `menu` と意味をどう分けるかは設計で決める
-- **前提 3: tmux の外から開くときの attach 先は、tmux の `attach` の既定（直近に使った
-  セッション）に従う。** セッション名を引数で取るかは設計で決める
+- **前提 3: tmux の外から開くときの attach 先は、tmux の `attach` の既定（端末の繋がって
+  いないセッションを優先し、その中で直近に使ったもの）に従う。** セッション名を引数で取るかは設計で決める
 - **前提 4: CI はイメージを建てない。** 実イメージでの確認は手元で建てたイメージから採って
   Pull Request 本文へ載せる（PLAN67 / PLAN69 と同じ）
 
@@ -89,7 +89,10 @@
       `tmux-menu` が載る
 - [ ] 10. `containers/base/Dockerfile` が `/usr/local/bin/tmux-menu` を `tmux-session` への
       symlink として作る。建てた base イメージの `PATH` から `tmux-menu` を呼べる
-- [ ] 11. `prefix S` と `prefix s` の割り当ては、変更前と同じ UI を開く（既存のテストが通る）
+- [ ] 11. `prefix S` と `prefix s` の割り当ては、変更前と同じ UI を、キーを押した端末の pane に
+      開く。`prefix S` の割り当ての文字列を見る既存の静的テスト `test_prefix_s_opens_session_chooser`
+      は、新しい割り当て（`run-shell` で `tmux-menu` を呼ぶ）を見る形へ書き換える。それ以外の既存の
+      テストはそのまま通る
 - [ ] 12. `tmux-first` / `tmux-clean` の差分が 0 行
 - [ ] 13. `containers/base/tmux-*` の shellcheck が 0 件、全体の pytest が通る
 - [ ] 14. 利用者向け文書に `tmux-menu` の使い方と、ホストで使うときの symlink の手順
@@ -128,5 +131,5 @@
 | --- | --- |
 | `tmux-menu` を振り分けるサブコマンド | `menu` の短縮名にし、セッションを受け取らない形を「一覧を開く」にする（設計の決定 1） |
 | tmux の外での attach 先を引数で取るか | 取らない。tmux の既定の attach 先に従う（設計の決定 3） |
-| 一覧を開く定義をまとめるか | `tmux-session` だけに持ち、`prefix S` は `run-shell "tmux-menu"` で呼ぶ（設計の決定 2） |
+| 一覧を開く定義をまとめるか | `tmux-session` だけに持ち、`prefix S` は `run-shell "TMUX_PANE=#{pane_id} tmux-menu"` で呼ぶ（設計の決定 2・決定 4） |
 | シェルから開いた `choose-tree` の `#{q:client_name}` | Enter を押した端末の名前に展開される。ホストの tmux 3.7b で実測した（設計の「実測」） |
