@@ -322,7 +322,7 @@ bash の対話シェルにしか効かないためである。
 位置にあって覚えやすい。利用者が `~/.tmux.conf` で `S` を使っていれば、後から読むそちらが勝ち、
 この割り当ては消える。この場合でも名指しのコマンドは残る。
 
-template は `run-shell -t "%%%" "… #{q:session_id} #{q:client_name}"` の形にする。`%%%` と
+template は `run-shell -t "%%%" "tmux-session menu -c #{q:client_name} #{q:session_id}"` の形にする。`%%%` と
 `#{q:…}` の組み合わせだけが、`'` を含む名前も含めて選んだセッションを取り違えなかった
 （「実測」）。`menu` へ渡すのは名前ではなく ID である。以降の tmux のコマンドへ名前を埋め込むのは、確認の文の
 `<表示名>` が安全な文字だけでできているときに限る（「入出力の契約」の `menu`）。
@@ -431,7 +431,7 @@ tmux の操作（サーバの起動・`pty` からの attach・`list-clients` �
 | 15 | 建て直した base のコンテナの tmux で、`prefix S` のメニューから 3 つの操作を手で行う。結果を Pull Request 本文へ書く |
 | 16 | `docker run --rm --entrypoint /bin/bash devbase-base:latest -c 'ls -l /usr/local/bin/tmux-*; tmux-go -h; echo exit=$?'` |
 | 17 | `docker run --rm -v "$PWD/containers/base:/x" --entrypoint /bin/bash devbase-base:latest -c 'shellcheck /x/tmux-session; echo exit=$?'` |
-| 18 | `ci.yml` の差分の目視と、Pull Request の CI の ShellCheck ジョブの結果 |
+| 18 | `ci.yml` の差分の目視と、実装の Pull Request の CI の ShellCheck ジョブが成功したこと。足す step は `install.sh` の step と同じく `run: shellcheck …` で、runner の shellcheck を使う。その版で `tmux-first` / `tmux-clean` に指摘が出たときは、受け入れ条件 19（差分を出さない）とぶつかるため、実装の持ち場は直さずに止めて報告する |
 | 19 | `git diff --stat origin/main -- containers/base/tmux-first containers/base/tmux-clean` が空 |
 | 20 | `uv run --locked pytest tests/ -q` |
 | 21 | 差分の目視（`docs/user/environment-variables.md` の新しい小節と `CHANGELOG.md`） |
@@ -450,4 +450,5 @@ tmux の操作（サーバの起動・`pty` からの attach・`list-clients` �
 | `run-shell -b` の中の `display-message -c` | 背景の `run-shell` から、指定した端末へ知らせが届くかは実装で確かめる。届かなければ知らせの出し先を `run-shell`（前面）の出力へ変える |
 | amd64 での建て直し | 手元は arm64 のみ。足すのはシェルスクリプトだけで、アーキテクチャに依存するものは無い |
 | CI の runner の tmux | ubuntu-latest に tmux が無ければ、tmux を使うテストは CI で skip になる |
+| CI の runner の shellcheck | 指摘 0 件を確かめたのは base の 0.11.0 だけである。runner の版と既定の severity での結果は、実装の Pull Request の CI で初めて分かる（テスト設計の 18） |
 | ホストの `sh` | macOS の `/bin/sh`（bash 3.2 の POSIX モード）で動くことは、ホストで走らせるテストが確かめる。WSL のホストは確かめていない |
