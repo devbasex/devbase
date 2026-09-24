@@ -4,7 +4,7 @@ import re
 import shlex
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -592,8 +592,12 @@ class SnapshotManager:
 
     @staticmethod
     def _entry_age(entry: dict, index: int) -> tuple:
-        # created_at が同じなら snapshot.yml で前にあるものを古いとみなす
-        return (entry.get('created_at', '') or '', index)
+        # created_at が同じなら snapshot.yml で前にあるものを古いとみなす。
+        # 引用符なしの日時は YAML が datetime で返すため、文字列に揃えて比べる
+        created = entry.get('created_at') or ''
+        if isinstance(created, date):  # datetime も date の派生
+            created = created.isoformat()
+        return (str(created), index)
 
     @staticmethod
     def _entry_volumes(entry: dict) -> dict:

@@ -12,6 +12,7 @@ import os
 import re
 import time
 import types
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,32 @@ def test_series_latest_uses_created_at(tmp_path):
     assert mgr.series_latest()["name"] == "D2"
     assert mgr.series_latest(vols("with"))["name"] == "W"
     assert mgr.series_latest(vols("kkg")) is None
+
+
+def _unquote_created_at(backups: Path, *targets: str) -> None:
+    """指定した世代の ``created_at`` を引用符なしの YAML timestamp で書き直す。"""
+    path = backups / "snapshot.yml"
+    data = yaml.safe_load(path.read_text())
+    for snap in data["snapshots"]:
+        if snap["name"] in targets:
+            snap["created_at"] = datetime.fromisoformat(snap["created_at"])
+    path.write_text(yaml.safe_dump(data))
+
+
+def test_series_latest_accepts_yaml_timestamp(tmp_path):
+    """手で書いた snapshot.yml の引用符なしの日時が混ざっても比べられる。"""
+    backups = write_state(tmp_path, [("D1", "default", 0), ("D2", "default", 0)])
+    _unquote_created_at(backups, "D1")
+    assert RecordingManager(tmp_path, group="default").series_latest()["name"] == "D2"
+
+
+def test_rotate_accepts_yaml_timestamp(tmp_path):
+    backups = write_state(tmp_path, [
+        ("D1", "default", 0), ("D2", "default", 0), ("D3", "default", 0),
+        ("D4", "default", 0)])
+    _unquote_created_at(backups, "D2", "D4")
+    assert SnapshotManager(tmp_path).rotate() == 1
+    assert names(tmp_path) == ["D2", "D3", "D4"]
 
 
 class ArchiveRecordingManager(RecordingManager):
