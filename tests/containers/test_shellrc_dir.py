@@ -283,6 +283,19 @@ def test_empty_variable_falls_back_to_home(home, rcdir, env):
     assert result.stdout.splitlines() == ["from-home"]
 
 
+def test_directory_and_file_names_with_spaces_are_read(home, tmp_path):
+    """置き場所・ファイル名に空白があっても単語分割されずに読む（現状固定）。"""
+    spaced = tmp_path / "a dir"
+    spaced.mkdir()
+    (spaced / "10 x.sh").write_text("echo read-space\n")
+    (spaced / "20-b.sh").write_text("echo read-b\n")
+
+    result = _run('echo "rc=$?"', home, env={"DEVBASE_SHELLRC_DIR": str(spaced)})
+
+    assert result.stdout.splitlines() == ["read-space", "read-b", "rc=0"]
+    assert result.stderr == ""
+
+
 def test_directory_that_is_a_symlink_is_followed(home, tmp_path):
     """置き場所が別ディレクトリへの symlink でも中の ``*.sh`` を読む。
 
