@@ -135,6 +135,22 @@ def test_glob_options_are_restored_before_reading(home, rcdir):
     assert result.stdout.splitlines() == ["fg=on", "dg=on", "fg=on", "dg=on"]
 
 
+@pytest.mark.parametrize(
+    ("before", "expected"),
+    [
+        ("shopt -s failglob; shopt -u dotglob", ["fg=on", "dg=off", "fg=on", "dg=off"]),
+        ("shopt -u failglob; shopt -s dotglob", ["fg=off", "dg=on", "fg=off", "dg=on"]),
+    ],
+)
+def test_one_glob_option_on_is_restored_before_reading(home, rcdir, before, expected):
+    (rcdir / "10-show.sh").write_text(f"{SHOW}\n")
+
+    result = _run(SHOW, home, before=before)
+
+    assert result.stdout.splitlines() == expected
+    assert result.stderr == ""
+
+
 def test_option_set_by_a_file_is_kept(home, rcdir):
     (rcdir / "10-set.sh").write_text("shopt -s failglob\n")
     (rcdir / "20-show.sh").write_text("shopt -q failglob && echo fg=on || echo fg=off\n")
