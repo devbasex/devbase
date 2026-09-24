@@ -43,6 +43,10 @@ jobs:
           severity: error
       - name: Run ShellCheck on install.sh
         run: shellcheck --severity=error install.sh
+      # base イメージへ入れる tmux のコマンド (PLAN69)。指摘 0 件の状態なので severity は
+      # 絞らない (既定の style まで)。bin/ の step が error に絞っているのは既存の指摘のため (#247)。
+      - name: Run ShellCheck on containers/base/tmux-*
+        run: shellcheck containers/base/tmux-first containers/base/tmux-clean containers/base/tmux-session
 
   pytest:
     name: Pytest (Python ${{ matrix.python-version }})

@@ -1,0 +1,278 @@
+# PLAN68: スナップショットの世代をボリュームの組ごとの系列で持つ
+
+対象 issue: devbasex/devbase#248
+
+- ワークフローモード: `standard`
+  - 根拠: `devbase up` / `devbase down` が自動で行うバックアップの作成と削除の振る舞いを変える。
+    削除の規則を誤ると利用者のバックアップが黙って消える
+- ベースブランチ: `main`
+
+系列・対象ボリュームの組などの語の定義は、末尾の「用語」にある。
+
+## 目的
+
+- **アカウントグループを行き来しても、同じグループのバックアップの履歴が短くならない。**
+  いまは default → with → default と切り替えるたびに新しい世代ができ、3 世代の保持枠を
+  グループどうしで奪い合う
+- **グループを切り替えただけでは、全体のバックアップ（`full.tar.zst`）を取り直さない。**
+  戻ってきたグループは、そのグループの最新の世代へ差分を積む
+- **起動時の文言から、どのグループの世代を扱っているかが読める。**
+  いまの「対象ボリュームの構成が変わったため…」の 1 行では、関係ないはずのグループ名が
+  出る理由を読み取れない
+
+## 影響
+
+| 対象 | 影響 |
+| --- | --- |
+| 公開インタフェース | **変わる。** `devbase snapshot rotate --keep N` の N は「全体で残す数」から「系列ごとに残す数」になる。`--max-total M` を足す。TUI のローテーションの問いの文言が変わる |
+| データ | 変わらない。`backups/snapshot.yml` と各世代の `meta.yml` の形はそのまま。移行は無い |
+| 既存の振る舞い | **変わる。** `devbase up` の自動スナップショットの積み先・新しい世代を作る条件・最小間隔の判定、`devbase up` / `devbase down` / `devbase snapshot rotate` の削除の規則、ログの文言。シンボリックリンクの世代（リンク先を問わない）と `backups/` の外を指す名前の世代を、`create` / `restore` / `copy` / `delete` が `SnapshotError` で止める。`rotate` は止まらず、そのエントリを一覧から外して警告し、ディレクトリもリンク先も消さない（設計の決定 7） |
+| 利用者の操作 | 無い。次の `devbase up` から新しい規則で動く |
+
+## 前提
+
+- **前提 1: 系列はグループと 1 対 1 に対応する。** 対象ボリュームの組のうち共通ボリュームは
+  `devbase_home_ubuntu` に固定されており（`_validate_volumes`）、組を変えるのはグループの
+  ボリュームだけである。旧レイアウトの系列は例外で、共通ボリューム 1 本からなる
+- **前提 2: 世代を名前で区別しない。** `--name` で作った世代・`copy` の世代・`pre-restore-*` も、
+  対象ボリュームの組で系列に入り、同じ規則で保持と削除の対象になる。これは現行の `rotate` と同じ
+  扱いである。名前付きの世代を保護するかどうかは #256 で決める
+- **前提 3: 自動スナップショットはリモート扱いでは作らない（PLAN52 決定 12）。** この変更は
+  その判定より後ろだけを変える
+
+## 対象範囲
+
+含む:
+
+- `devbase up` の自動スナップショットの積み先を、系列の最新の世代にすること
+- 新しい世代を作る条件を、系列の単位で判定すること
+- 最小間隔（`DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES`）を、系列の単位で判定すること
+- ローテーションを系列ごとに行い、全体の上限を併せて持つこと
+- ローテーションが消す前に世代の場所を検証すること（`delete` / `restore` と同じ `_safe_snap_dir`）と、`_safe_snap_dir` の包含判定をパスの要素の単位にすること
+- `devbase snapshot rotate` の `--keep` の意味の変更と `--max-total` の追加、TUI の問いの文言
+- ログの文言（自動スナップショットとローテーション）
+- 利用者向け文書 4 本と CHANGELOG（「実装計画」の修正対象）
+- 回帰テスト（`tests/snapshot/`）
+
+含まない:
+
+- 名前付きの世代を保護する仕組み（#256）。`snapshot-guide.md` の「名前付きスナップショットは
+  ローテーション対象外」の文は、「手動ローテーション」の節を書き換えるときに実装どおりへ直す。
+  「スナップショットのコピー」「運用のベストプラクティス」の同じ趣旨の文と、`snapshot create` の
+  説明の誤りも #256 で直す
+- 復元前の自動バックアップが控えるボリュームの取り違え（#255）
+- `devbase snapshot list` と `devbase status` の表示の変更。`list` は既に「対象ボリューム」の列で
+  グループのボリュームを出している。`status` の「最新」は最も新しく作られた世代のままで、
+  直前に差分を積んだ世代とは一致しないことがある（設計の構成要素の「変えないもの」）
+- `snapshot.yml` / `meta.yml` の形の変更と、世代を作ったプロジェクトの記録（設計の決定 3・5）
+- 世代の保持をバイト数で制限すること（設計の決定 1）
+- 画面（TUI の問いの文言を除く）・API の追加。そのため画面遷移図・API 仕様を作らない
+
+## 受け入れ条件
+
+**実測の基準**: 以下の「現状」は 2026-09-23 のこの端末の `backups/snapshot.yml` と `du` による
+（#248 の表）。3 世代は古い順に default（差分 9、37 GB）、with（差分 0、1.8 GB）、
+default（差分 0、3.9 GB）で、合計は 42 GB である。
+
+### 差分の積み先（#248 の本体）
+
+- [ ] 1. **グループを行き来しても、戻ったグループの最新の世代へ差分を積む。**
+      前提: default の世代 `A`（差分 0）を作り、次に with の世代 `B` を作った
+      操作: default のまま `devbase up` の自動スナップショットを走らせる
+      結果: `A` に `incr-001.tar.zst` ができ、世代は 2 つのまま（新しい世代を作らない）。
+      現状は 3 つ目の世代を作り、`full.tar.zst` を取り直す
+- [ ] 2. **系列に世代が無いグループは、新しい世代を作る。**
+      前提: default の世代だけがある
+      操作: with で自動スナップショットを走らせる
+      結果: with の新しい世代ができ、`full.tar.zst` を持つ
+- [ ] 3. **差分の上限は系列ごとに数える。** 系列の最新の世代の差分数が
+      `DEFAULT_MAX_INCREMENTALS`（10）以上のときだけ、その系列に新しい世代を作る。
+      他の系列の世代の差分数は判定に使わない
+- [ ] 4. **旧レイアウトの世代（`volumes` を持たないエントリ）へは差分を積まない。**
+      旧レイアウトの世代だけがある状態で自動スナップショットを走らせると、新しい世代を作る
+      （現行の `test_layout_change_starts_a_new_generation` と同じ結果）
+- [ ] 5. 対象ボリュームの組が違う世代を名前で指定して差分を作ろうとすると、現行どおり理由を
+      示して `SnapshotError` で止まる。`test_incremental_on_a_different_layout_is_refused` が通る
+
+### 最小間隔
+
+- [ ] 6. **最小間隔は系列ごとに判定する。** 前提: default の世代のアーカイブが 10 分前に
+      書かれ、with の世代は 2 時間前。with で自動スナップショットを走らせると、飛ばさずに
+      差分を積む。default で走らせると、飛ばす
+- [ ] 7. `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES=0` なら、どの系列でも飛ばさない（現行どおり）
+
+### 保持
+
+- [ ] 8. **保持は系列ごとに数える。** 前提: default の世代 4 つと with の世代 1 つ。
+      `rotate()` を呼ぶと、default の最も古い 1 世代だけを消し、with の世代は残る。戻り値は 1
+- [ ] 9. **切り替えを繰り返しても、系列の世代は枠から押し出されない。** default と with の
+      世代を交互に 4 つずつ作ると、`rotate()` の後に default と with がそれぞれ 3 世代残る
+      （全体の上限 9 に収まる）。現状は全体で 3 世代だけが残り、default は 1〜2 世代になる
+- [ ] 10. **全体の上限を超えたら、系列をまたいで最も古い世代から消す。** 前提: 4 つの系列
+      A〜D が、A1・B1・C1・D1・A2・…・D3 の順に 3 世代ずつ（計 12）。`rotate()`（全体の上限の
+      既定 9）を呼ぶと、A1・B1・C1 を消し、9 世代が残る
+- [ ] 11. **全体の上限で、系列の最新の世代は消さない。** 前提: 系列 A の 3 世代が全体で最も
+      古く、B〜D が 3 世代ずつ続く（計 12）。`rotate()` は A の古い 2 世代と、B の最も古い
+      1 世代を消す。A の最新の世代は残る
+- [ ] 12. **全体の上限を満たせなくても、各系列の最新の世代は消さない。** 前提: 10 の系列が
+      1 世代ずつ。`rotate(keep=3, max_total=9)` は何も消さず、残る数と上限を示す警告を 1 行出す
+- [ ] 13. 旧レイアウトの世代は、それだけで 1 つの系列として数えられ、他の系列の保持に影響しない
+- [ ] 14. `rotate(keep=0)` と `rotate(max_total=0)` は `SnapshotError` で止まり、何も消さない。
+      CLI の `devbase snapshot rotate --keep 0` と `--max-total 0` は終了コード 1 で終わる
+
+### 利用者から見える形
+
+- [ ] 15. `devbase snapshot rotate --keep N --max-total M` が、系列ごとに N 世代・全体で M 世代の
+      規則で消す。`--max-total` を省くと `N × 3` になる
+- [ ] 16. **グループを切り替えて `devbase up` しても、「対象ボリュームの構成が変わったため」の
+      行は出ない。** 自動スナップショットの行は、対象のグループ名を含む。
+      新しい世代を作るときは、その理由（系列に世代が無い / 差分が上限に達した）を 1 行出す
+- [ ] 17. ローテーションで消したとき、消した系列のグループ名と、系列ごとの保持数か全体の上限の
+      どちらで消したかを出す
+- [ ] 18. TUI のスナップショットのローテーションは、「グループごとに保持する世代数」を問う。
+      `--max-total` を問わず、全体の上限は既定（`keep × 3`）で動く
+- [ ] 19. `docs/user/snapshot-guide.md` の「世代管理」「自動実行」「対象ボリュームが変わったとき」
+      「手動ローテーション」が、系列の規則を説明している。「名前付きスナップショットはローテーション
+      対象外」の文が「手動ローテーション」の節から消えている。「世代管理」が、各系列の最新の世代は
+      自動では消えないことと、不要なら `devbase snapshot delete` で消すことを書いている。
+      「運用のベストプラクティス」が `rotate --keep` を長期保持の手段として勧めていない
+- [ ] 20. `docs/user/cli-reference/05-snapshot.md` の `rotate` に `--max-total` があり、`--keep` の説明が
+      系列ごとになっている。`02-project.md` の最小間隔の説明が系列ごとになっている。
+      `container-operations.md` の自動スナップショットの表が系列ごとの保持を書いている。
+      `--keep` と `--max-total` の指定が手動のその 1 回だけに効き、自動のローテーションは既定の数で動くことを、
+      `05-snapshot.md` と `snapshot-guide.md` の「手動ローテーション」に書いている
+- [ ] 21. `CHANGELOG.md` の `[Unreleased]` の `### Changed` に、`--keep` の意味が変わったこと（残る数は減らないが、
+      どの世代が残るかは変わりうること）と、各系列の最新の世代は自動では消えないこと（不要なら
+      `devbase snapshot delete`）を含めて書いている。
+      `### Fixed` に次の 2 つを書いている。ローテーションが、`backups/` の外を指す名前の世代を消さず、
+      シンボリックリンクの世代で止まらなくなったこと。`create` / `restore` / `copy` / `delete` が
+      シンボリックリンクの世代を `SnapshotError` で止め、リンク先を消さなくなったこと
+- [ ] 22. **既存の `snapshot.yml` をそのまま読む。** この端末の 3 エントリ（default 2・with 1）と同じ
+      内容で `rotate()` を呼ぶと、何も消さない。`snapshot.yml` の既存のキーは消えない
+- [ ] 23. `uv run --locked pytest tests/ -q` が終了コード 0
+- [ ] 24. `devbase snapshot restore` の振る舞い（対象・順序・失敗時の案内）は変わらない。
+      `tests/snapshot/test_restore_incremental.py` と `test_manager_volumes.py` の復元のテストが、
+      変更なしで通る
+- [ ] 25. **ローテーションは `backups/` の外を消さない。** `snapshot.yml` に `../outside` という名前の
+      エントリがあり、それが削除の対象になっても、`backups/` の外のディレクトリは残る。エントリは
+      一覧から外れ、警告が 1 行出る。現状は `backups_dir / name` をそのまま `shutil.rmtree` へ渡す
+- [ ] 26. **シンボリックリンクの世代は、リンク先を消さない。** `backups/old` が兄弟の
+      `backups-outside/` を指すリンクで、`old` が削除の対象になっても、`backups-outside/` の中身は残る。
+      `backups/old` が `backups/` の中の別の世代（系列の最新の世代）を指すリンクでも、その世代の中身は残る。
+      どちらもエントリは一覧から外れ、警告が 1 行出る。`_safe_snap_dir('old')` は `SnapshotError` になる。
+      現状の `rotate` はリンクをそのまま `shutil.rmtree` へ渡して例外で止まり、ローテーションが中断する。
+      リンク先を消すのは、解決後のパスを使う `delete` である（27）
+- [ ] 27. `backups/old` が 26 と同じリンクのとき、`devbase snapshot delete old` は終了コード 1 で終わり、
+      `backups-outside/` の中身は残る。現状は解決後のリンク先を `shutil.rmtree` で消す
+- [ ] 28. `backups/old` が 26 と同じリンクのとき、`restore('old')` / `copy('old', 'new')` / `create(name='old')` は
+      どれも `SnapshotError` で止まる。ボリュームへの書き込み（`_run_docker_tar` の呼び出し）も
+      `backups/new` の作成も起きず、リンク先の中身は変わらない
+
+## 非機能の条件
+
+| 大項目 | 条件 |
+| --- | --- |
+| 性能・拡張性 | グループを切り替えた後の `devbase up` は、その系列に世代があれば `full.tar.zst` を作らない（1）。ディスクに載る世代の数は、`max(全体の上限, 系列の数)` を超えない（10・11・12） |
+| 移行性 | 移行作業は無い（22）。変更前の devbase へ戻しても、同じ `snapshot.yml` を読める（形を変えないため） |
+
+## 検証手段
+
+| 項目 | 手段 |
+| --- | --- |
+| テスト | `uv run --locked pytest tests/ -q`。`DEVBASE_ROOT` は `tmp_path` へ差し替え、`_run_docker_tar` を差し替えて Docker を起動しない（`tests/snapshot/test_manager_volumes.py` の `RecordingManager` の流儀） |
+| 静的解析 | `ruff check --select=E9,F63,F7,F82 lib`（CI の lint と同じ） |
+| 手動確認 | 実装の持ち場で、この端末で with のプロジェクト（`with-ai-dev`）、default のプロジェクト（`ai-plugins`）の順に、どちらも `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES=0` を付けて `devbase up` する（既定の 60 分では、変更前の規則が 2 回目を全体の最小間隔で飛ばし、比べられない）。`20260920-212546` と `20260923-081407` にそれぞれ `incr-001` が積まれ、世代が 3 つのままであることを `devbase snapshot list` で見る（1・16・22）。変更前の規則では、この 2 回の起動で full の世代を 2 つ作り、`20260915-231738` と `20260920-212546` を消す。出力を Pull Request 本文へ貼る |
+
+## 前提とする取り決め
+
+| 項目 | 参照先 / 決めたこと |
+| --- | --- |
+| プロジェクト構造 | 世代の規則は `lib/devbase/snapshot/manager.py` に置く。`commands/container.py` は判定の結果に従って作成を呼ぶだけにする |
+| コーディング規約 | 既存の `manager.py` の書き方（日本語の docstring・ログ）に合わせる。`ruff` を通す |
+| テスト戦略 | 規則は `SnapshotManager` の単体テストで固定する。`_auto_snapshot` の流れ（最小間隔・積み先・ログ）は、`DEVBASE_ROOT` を `tmp_path` にした単体テストで固定する |
+
+## 境界
+
+| 区分 | 内容 |
+| --- | --- |
+| 常に行う | 手元で全体テスト。実データの `backups/` に触るテストを書かない |
+| 確認してから行う | 全体の上限の既定値（`keep × 3`）。設計 Pull Request の承認で確かめる |
+| 行わない | #255・#256 の修正、`snapshot.yml` の形の変更、実データの世代の手での削除 |
+
+## 実装計画
+
+設計は [PLAN68_snapshot-series-design.md](PLAN68_snapshot-series-design.md)。
+タスクは受け入れ条件の単位で分け、どれも「失敗するテスト → 通す最小実装 → 整理」で進める。
+
+### タスク分解
+
+| # | タスク | 対象ファイル | 変更内容 | 満たす受け入れ条件 |
+| --- | --- | --- | --- | --- |
+| 1 | 世代の場所の検証 | `snapshot/manager.py`、`tests/snapshot/test_manager_series.py` | `_safe_snap_dir` にシンボリックリンクの拒否と `Path.is_relative_to` の包含判定を入れる（決定 7） | 26（`_safe_snap_dir`）・27・28 |
+| 2 | 系列の解決と積み先 | 同上 | `series_key` / `series_label` / `_entry_volumes` / `series_latest` / `auto_snapshot_target` を足し、`should_start_new_generation` を包むだけにする | 1〜5 |
+| 3 | 系列ごとの最小間隔 | 同上 | `last_snapshot_time(volumes=None)` | 6・7 |
+| 4 | 系列ごとの保持と全体の上限 | 同上 | `rotate(keep, max_total)` を系列ごと + 全体の上限 + 各系列の最新を残す形へ。消す前に `_safe_snap_dir` で検証し、拒否されたエントリは一覧からだけ外す | 8〜14・17・22・25・26 |
+| 5 | `_auto_snapshot` の流れ | `commands/container.py`、`tests/snapshot/test_auto_snapshot_series.py` | 最小間隔を系列で判定し、`auto_snapshot_target` の結果で `create` を呼ぶ。ログに系列の名前を入れる | 1・2・6・7・16 |
+| 6 | CLI と TUI | `cli.py`、`commands/snapshot.py`、`tui/actions_snapshot.py`、`tests/cli/tui/test_actions_snapshot.py`、`tests/snapshot/test_manager_series.py` | `--max-total` の追加、`--keep` の help、振り分けの `getattr(args, 'max_total', None)`、TUI の問いの文言 | 14（CLI）・15・18 |
+| 7 | 文書と CHANGELOG | 文書 4 本、`CHANGELOG.md` | 設計の「文書の変更」の表のとおり | 19〜21 |
+| 8 | 全体の確認 | — | `uv run --locked pytest tests/ -q`、`ruff check --select=E9,F63,F7,F82 lib` | 23・24 |
+
+### リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| `manager.py`（818 行）に規則が集まる | 系列の解決は小さな関数に分け、`rotate` の削除候補の計算を副作用の無い補助に切り出す。構造は保ち、タスクごとにテストを通す |
+| 既存テスト（`test_auto_snapshot.py` の `last_snapshot_time`、`test_manager_volumes.py`）の退行 | 引数の既定値で現行の振る舞いを保ち、タスクごとに `tests/snapshot/` を回す |
+| 実際の tar による、別グループを挟んだ差分の復元が未確認 | この持ち場ではコンテナを起動しない（並行する #253 の検査と重ねない）。検査の持ち場へ回し、Pull Request 本文に書く |
+
+### 修正対象
+
+- `lib/devbase/snapshot/manager.py`
+- `lib/devbase/commands/container.py`（`_auto_snapshot`）
+- `lib/devbase/commands/snapshot.py` / `lib/devbase/cli.py`（`rotate` の引数）
+- `lib/devbase/tui/actions_snapshot.py`（ローテーションの問い）
+- `tests/snapshot/`（新設と既存の手直し）
+- `docs/user/snapshot-guide.md`
+- `docs/user/cli-reference/05-snapshot.md`
+- `docs/user/cli-reference/02-project.md`
+- `docs/user/container-operations.md`
+- `CHANGELOG.md`
+
+### 切り戻し手順
+
+- データの移行が無いため、ブランチを revert すれば戻る
+- 戻した後の最初の `devbase down` で、全体で 3 世代を残す旧規則のローテーションが走り、
+  系列ごとに残っていた世代が消える。**戻す前に残したい世代があれば `snapshot copy` で退避しても
+  守れない**（前提 2）。`backups/` の外へ複製する
+
+## 未確認のまま残ること
+
+| 項目 | 内容 |
+| --- | --- |
+| 間に別グループを挟んだ差分の復元 | 設計の決定 2 の根拠（レイアウトが同じ snar への差分は壊れない）は、実装の持ち場で実際の tar による復元を 1 度通して確かめる |
+| 全体の上限の既定値の妥当性 | この端末のグループは 3 つ（default / with / kkg）。4 つ以上を使う端末では、全体の上限で系列ごとの世代が 3 未満になる |
+
+## 用語
+
+| 用語 | 意味 |
+| --- | --- |
+| 世代 | `backups/<名前>/` の 1 つ。`full.tar.zst` 1 つと、0 個以上の `incr-NNN.tar.zst` からなる |
+| 対象ボリュームの組 | 世代が控えるボリュームの組。`snapshot.yml` の各エントリの `volumes`（マウント名 → ボリューム名）。現行は `{ai: devbase_home_ubuntu, group: devbase_home_<group>}` |
+| 系列 | 対象ボリュームの組が同じ世代の集まり。グループごとに 1 つできる。`volumes` を持たない旧エントリ（PLAN39 より前）は、共通ボリューム 1 本の組として 1 つの系列になる |
+| 系列の最新の世代 | 系列の中で `created_at` が最も新しい世代 |
+| 全体の上限 | 系列をまたいで数えた世代の数の上限 |
+
+
+## 依頼（原文）
+
+#248（抜粋。本文全体は issue を参照）:
+
+> **アカウントグループの違うプロジェクトを行き来すると、起動のたびに新しい世代が作られ、そのたびに全体のバックアップ（`full.tar.zst`）を取り直す。** 保持は 3 世代なので、2 つのグループを交互に使うと、同じグループの履歴が 3 世代の枠から押し出される。
+>
+> **採る手**: 分割（系列の導入）。`should_start_new_generation` は「最新の 1 世代」ではなく「**同じボリュームの組を持つ最新の世代**」と比べ、差分を積めるならそこへ積む。`rotate` は組ごとに `keep` 件を残す。
+>
+> ## 決めること
+>
+> - 保持の数をグループごとに数えるか、全体の上限も併せて持つか（3 グループ × 3 世代 = 最大 9 世代がディスクに載る。この端末では 37 GB の世代があるため、全体の上限も要るかもしれない）
+> - 同じ組の古い世代へ差分を積み直せるか（`snapshot.snar` は世代ごとに持っているので積めるはずだが、間に別のグループの起動を挟んだ場合にボリュームの中身が変わっている可能性をどう扱うか）
+> - 文言に「直前の世代を作ったプロジェクト / グループ」を添えるか（今回の混乱はこれが無いことによる）

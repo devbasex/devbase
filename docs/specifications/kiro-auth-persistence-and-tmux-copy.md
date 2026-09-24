@@ -74,3 +74,4 @@ tmux は `/etc/tmux.conf` の後に `~/.tmux.conf` を読むため、利用者�
 ## 関連リンク
 
 - [コンテナ操作ガイド](../user/container-operations.md)
+- [tmux のセッションを名指しで扱うコマンド（tmux-session）](tmux-named-session.md)（`/etc/tmux.conf` の `prefix S`）

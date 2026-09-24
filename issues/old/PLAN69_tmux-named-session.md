@@ -87,7 +87,46 @@
 ## 実装計画
 
 設計は [PLAN69_tmux-named-session-design.md](PLAN69_tmux-named-session-design.md)。
-**タスクへの分解は実装の持ち場で `/ndf:implementation-plan` が行う。**
+
+### タスク分解
+
+機能（サブコマンド）単位で分け、各タスクは `tests/containers/test_tmux_session.py` の
+失敗するテストから始める（テスト駆動）。テストは `TMUX_TMPDIR` を専用の短いディレクトリへ
+向け、利用者の tmux サーバに触れない。
+
+| # | タスク | 対象ファイル | 満たす受け入れ条件 |
+| --- | --- | --- | --- |
+| 1 | 骨組み: 呼ばれた名前での振り分け・`-h`・使い方の誤り（2）・tmux/サーバが無い（1）・セッションの解決（`$ID` と名前の完全一致） | `containers/base/tmux-session`、テスト | 11, 12 |
+| 2 | `kill`（`-n` / `-f` / 自分のセッション / 無い対象を飛ばして続ける） | 同上 | 6, 7, 8, 9, 10 |
+| 3 | `peek`（4 節・子孫のプロセス・状態を変えない） | 同上 | 4, 5, 10 |
+| 4 | `go`（tmux の外の `attach -d`・中で `-c` / 実行元の特定・特定できないとき何もしない） | 同上 | 1, 2, 3, 10 |
+| 5 | `menu` と `prefix S`（`choose-tree` の template → `menu` へ渡る値。偽の `tmux-session` で確かめる）。`test_tmux_conf.py` の copy-mode の比較を `-T copy-mode*` の行へ絞る | `tmux-session`、`tmux.conf`、`test_tmux_conf.py`、テスト | 13, 14（15 は検査の持ち場で手で確かめる） |
+| 6 | 配布: Dockerfile の `COPY` と symlink、CI の ShellCheck の step | `Dockerfile`、`ci.yml`、テスト | 16 の静的な部分、18（16・17 の実イメージは検査の持ち場） |
+| 7 | 文書: 利用者向け文書の小節と CHANGELOG | `docs/user/environment-variables.md`、`CHANGELOG.md` | 21 |
+
+- 受け入れ条件 19 は各タスクで `tmux-first` / `tmux-clean` を触らないことで守り、最後に
+  `git diff --stat` で確かめる。20 は最後に全体テストで確かめる
+- 設計の「未確認」のうち `run-shell -b` からの `display-message -c` の到達は、タスク 5 で
+  ホストの tmux 3.7b（専用のソケット）で確かめ、届かなければ設計のとおり前面の出力へ変える
+- イメージの建て直しとコンテナでの確認（15・16・17）は、この持ち場では行わず検査の持ち場へ回す
+
+### 実装で確かめたこと（2026-09-24、ホストの tmux 3.7b・専用のソケット）
+
+| 設計の未確認 | 結果 |
+| --- | --- |
+| メニューの引用の入れ子 | `prefix S` → 選択 → `a` / `p` / `k`→`y` を pty から送るテストで、`'`・`"`・`$`・`;` を含む名前でも選んだセッションに効いた。tmux の二重引用の中の `$3` は環境変数として展開されない（変数名は英字か `_` で始まる）ため、ID は `\` なしで埋め込める |
+| 背景の `run-shell -b` からの `display-message -c` | 届いた（`test_menu_notifies_client_on_failure`）。知らせの出し先は設計のまま |
+| runner の shellcheck の版 | 手元の shellcheck 0.11.0（`uvx --from shellcheck-py`）で `tmux-first` / `tmux-clean` / `tmux-session` とも既定の severity で 0 件。runner の版の結果は Pull Request の CI で見る |
+| Ubuntu の `/bin/sh`（dash） | macOS の `/bin/dash` へ shebang を差し替えて `test_tmux_session.py` を走らせ、すべて通った |
+
+### リスクと対処
+
+| リスク | 対処 |
+| --- | --- |
+| `menu` の引用の 3 段の入れ子で、名前の特殊文字が壊れる | 埋め込むのは検査済みの ID・端末名・安全な表示名だけにする（設計の `menu`）。偽の `tmux-session` の引数の書き出しで確かめる |
+| macOS の `/bin/sh`（bash 3.2）と Ubuntu の `dash` の差 | POSIX の範囲で書き、テストはホストの `/bin/sh` で走らせる。shellcheck は `sh` として検査する |
+| CI の runner の shellcheck の版で `tmux-first` / `tmux-clean` に指摘が出る | 直さずに止めて報告する（受け入れ条件 19 とぶつかるため） |
+| 触る範囲は新設 1 ファイルが中心で、既存の構造は変えない | 実装の後の構造改善で足りる |
 
 ### 修正対象
 
