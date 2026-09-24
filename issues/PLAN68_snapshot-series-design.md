@@ -24,7 +24,7 @@
 | `SnapshotManager._safe_snap_dir` | 変える | 包含判定を文字列の前方一致から `Path.is_relative_to` へ変える（決定 7） |
 | `SnapshotManager.rotate` | 変える | 系列ごとに `keep` 世代を残し、全体の上限を超えた分を系列をまたいで古い順に消す。各系列の最新の世代は消さない。消す前に名前を検証する |
 | `commands/container.py` の `_auto_snapshot` | 変える | 最小間隔を系列で判定し、`auto_snapshot_target` の結果で作成を呼ぶ。ログにグループ名を入れる。`list()[-1]` を使わない |
-| `commands/snapshot.py` の `rotate` の振り分けと `cli.py` の `rotate` の引数 | 変える | `--max-total` を受け取り `rotate` へ渡す。`--keep` の help を系列ごとの意味にする |
+| `commands/snapshot.py` の `rotate` の振り分けと `cli.py` の `rotate` の引数 | 変える | `--max-total` を受け取り `rotate` へ渡す。振り分けは `getattr(args, 'max_total', None)` で受ける（TUI の `dispatch_group` は `keep` だけを持つ引数を渡すため）。`--keep` の help を系列ごとの意味にする |
 | `tui/actions_snapshot.py` のローテーションの問い | 変える | 問いの文言を「グループごとに保持する世代数 (--keep)」にする |
 | `tests/snapshot/test_manager_series.py`（新設） | 足す | 系列の解決・積み先・ローテーションの規則を固定する |
 | `tests/snapshot/test_auto_snapshot_series.py`（新設） | 足す | `_auto_snapshot` の最小間隔・積み先・ログを固定する |
@@ -35,7 +35,7 @@
 
 - `snapshot.yml` / `meta.yml` の形（決定 5）
 - `create` / `restore` / `copy` / `delete` / `list`、`_create_incremental` の組の検証
-- `commands/status.py`（全体の最新と総数を出す。系列の概念を持ち込まない）
+- `commands/status.py`（全体の最新と総数を出す。系列の概念を持ち込まない）。「最新」は `snapshot.yml` の最後のエントリ、つまり**最も新しく作られた世代**のままにする。差分を古い世代へ積むと、直前に控えた世代と一致しないことがある。`status` は概要の表示で、世代ごとの更新は `devbase snapshot list` で見るため、この変更では表示を変えない
 - `cmd_down` の `mgr.rotate()` の呼び出し（引数の既定値で新しい規則になる）
 
 ### 構成要素図
@@ -108,11 +108,11 @@ tests/snapshot/
 
 | 文書 | 変えるところ |
 | --- | --- |
-| `docs/user/snapshot-guide.md` | 「世代管理」: 設定パラメータの表に全体の上限を足し、「系列」の小節を立てる。世代の概念の図を系列ごとにする。「自動実行」: `devbase up` の図を「系列の最新の世代」で判定する形にし、`devbase down` の図を系列ごと + 全体の上限にする。「対象ボリュームが変わったとき」: 新しい世代を作るのは系列に世代が無いときだけ、という説明へ書き換える（拒否の例はそのまま）。「手動ローテーション」: `--keep` を系列ごと、`--max-total` を足し、名前付きの世代もローテーションの対象であることを書く。**どちらの指定も手動のその 1 回だけに効き、`devbase up` / `down` の自動ローテーションは既定の数で動く**ことを書く |
+| `docs/user/snapshot-guide.md` | 「世代管理」: 設定パラメータの表に全体の上限を足し、「系列」の小節を立てる。世代の概念の図を系列ごとにする。「自動実行」: `devbase up` の図を「系列の最新の世代」で判定する形にし、`devbase down` の図を系列ごと + 全体の上限にする。「対象ボリュームが変わったとき」: 新しい世代を作るのは系列に世代が無いときだけ、という説明へ書き換える（拒否の例はそのまま）。「手動ローテーション」: `--keep` を系列ごと、`--max-total` を足し、名前付きの世代もローテーションの対象であることを書く。**どちらの指定も手動のその 1 回だけに効き、`devbase up` / `down` の自動ローテーションは既定の数で動く**ことを書く。「世代管理」には、**各系列の最新の世代は自動では消えない**こと（使わなくなったグループや旧レイアウトの系列の最新の世代も残る）と、不要なら `devbase snapshot delete` で消すことを書く。「運用のベストプラクティス」5（長期保持のために `rotate --keep 7` を勧める項目）は、指定が手動の 1 回だけに効くことと矛盾するため、「長期保持したい世代は `backups/` の外へ複製する」へ書き換える |
 | `docs/user/cli-reference/05-snapshot.md` | `rotate` のオプションの表。`--keep` と `--max-total` の指定は手動のその 1 回だけに効き、`devbase up` / `down` の自動ローテーションは既定の数で動くこと |
 | `docs/user/cli-reference/02-project.md` | 最小間隔が系列（グループ）ごとであること |
 | `docs/user/container-operations.md` | 「自動スナップショット」の表の `devbase down` の行 |
-| `CHANGELOG.md` | `[Unreleased]` に `### Fixed` を立て、`backups/` の外を指す世代の名前とシンボリックリンクの世代の扱い（決定 7）を書く。`### Changed` を立て、系列ごとの保持・差分の積み先・最小間隔・`--keep` の意味の変更（残る数は減らないが、どの世代が残るかは変わりうること）と `--max-total` を書く |
+| `CHANGELOG.md` | `[Unreleased]` に `### Fixed` を立て、決定 7 の 2 つを書く。`rotate` はシンボリックリンクの世代で止まらず、リンク先も `backups/` の外も消さない。`delete` などはリンクの世代を `SnapshotError` で止め、リンク先を消さない。`### Changed` を立て、系列ごとの保持・差分の積み先・最小間隔・各系列の最新の世代は自動では消えないこと（不要なら `devbase snapshot delete`）・`--keep` の意味の変更（残る数は減らないが、どの世代が残るかは変わりうること）と `--max-total` を書く |
 
 
 ## 構造
@@ -396,8 +396,10 @@ A の最新と他の 5 系列の 5 世代が残る。
 **`_safe_snap_dir` の判定も直す。** 現行は解決後のパスの文字列の前方一致で判定する。
 `backups/old` が兄弟の `backups-outside/` を指すシンボリックリンクだと、解決後のパスは
 `.../backups-outside` になり、文字列としては `.../backups` で始まるため通る。その結果、
-リンク先の中身を消せる。`backups/` の中の別の世代を指すリンクなら、包含の判定は通り、
-保持すべき世代の実体を消せる。そこで次の 2 つを順に判定する。
+`delete` がリンク先の中身を消せる（`delete` は検証後の解決済みのパスを `shutil.rmtree` へ渡す）。
+`backups/` の中の別の世代を指すリンクなら、包含の判定は通り、保持すべき世代の実体を消せる。
+現行の `rotate` は解決しないリンクをそのまま `shutil.rmtree` へ渡すため、リンク先は消さないが、
+例外でローテーションがその場で止まる。そこで次の 2 つを順に判定する。
 
 1. `(backups_dir / name).is_symlink()` なら `SnapshotError`。世代をリンクで置く使い方は
    devbase が作らず、リンク先がどこでも実体を消しうる
@@ -442,7 +444,7 @@ A の最新と他の 5 系列の 5 世代が残る。
 | 15 | `cmd_snapshot` に `keep=2, max_total=2` を渡し、系列 2 つ × 2 世代から 2 世代が消える（`max_total` が渡らず既定の 6 で動けば 0 件になり、欠落を検出できる）。`max_total` を省いた `rotate(keep=1)` の上限は、4 系列 × 1 世代で呼んだときの WARNING に出る上限の値が 3 であることで見る |
 | 16 | `caplog` で、グループを切り替えた `_auto_snapshot` に「対象ボリュームの構成が変わった」が無く、`グループ default` を含む行がある。新しい世代では理由の行がある |
 | 17 | `caplog` で、系列ごとの削除と全体の上限の削除の行にグループ名がある |
-| 18 | `tests/cli/tui/test_actions_snapshot.py` の `rotate` のテストで、問いの文言を固定する |
+| 18 | `tests/cli/tui/test_actions_snapshot.py` の `rotate` のテストで、問いの文言を固定する。あわせて、TUI と同じ `keep` だけを持つ引数で `cmd_snapshot` の `rotate` を呼び、例外なく全体の上限 `keep × 3` で動くことを確かめる |
 | 19〜21 | 差分の目視（文書 4 本と CHANGELOG） |
 | 22 | この端末の `snapshot.yml` と同じ 3 エントリで `rotate()` が 0 を返し、`snapshot.yml` の中身（バイト列）が変わらない |
 | 23 | `uv run --locked pytest tests/ -q` |
