@@ -543,6 +543,9 @@ SH
 プロジェクトはその派生イメージも建て直し、稼働中のコンテナは `devbase down` → `devbase up` で
 作り直してください。zsh（base には入っていません）と `lfm` イメージは対象外です。
 
+読む先の決め方・読み込みの前後で保つ条件・エラーの扱いの仕様は
+[作り直しても残るシェルの設定（`~/.shellrc.d`）](../specifications/shellrc-dir.md)にあります。
+
 ## tmux（ターミナル）の既定設定
 
 コンテナ内の tmux には、devbase 共通の既定設定 `/etc/tmux.conf` が入っています
