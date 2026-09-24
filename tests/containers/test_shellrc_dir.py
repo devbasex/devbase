@@ -210,6 +210,16 @@ def test_variable_points_at_directory(home, rcdir, tmp_path):
     assert result.stdout.splitlines() == ["from-variable"]
 
 
+def test_missing_variable_directory_does_not_fall_back_to_home(home, rcdir, tmp_path):
+    (rcdir / "a.sh").write_text("echo from-home\n")
+
+    result = _run('echo "rc=$?"', home,
+                  env={"DEVBASE_SHELLRC_DIR": str(tmp_path / "missing")})
+
+    assert result.stdout == "rc=0\n"
+    assert result.stderr == ""
+
+
 @pytest.mark.parametrize("env", [{}, {"DEVBASE_SHELLRC_DIR": ""}])
 def test_empty_variable_falls_back_to_home(home, rcdir, env):
     (rcdir / "a.sh").write_text("echo from-home\n")
