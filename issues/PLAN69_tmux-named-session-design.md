@@ -197,6 +197,10 @@ screen (0.0 の直近 20 行)
 
 `kill` は確認を挟まない。非対話でも使うためで、確認はメニューの側が持つ。
 
+**メニューの「落とす」は `-f` を付けて呼ぶ。** `confirm-before` の同意が、自分のセッションを
+落とすことの確認を兼ねる。付けないと、今いるセッションを選んで同意しても落ちない。自分の
+セッションが落ちた端末は、tmux の `detach-on-destroy` の既定（`on`）に従って外れる。
+
 #### `menu`
 
 `tmux display-menu -c 端末 -t '$ID' -T '#[align=centre]#{session_name}'` を出す。題名は `-t` の
@@ -206,7 +210,7 @@ screen (0.0 の直近 20 行)
 | --- | --- | --- |
 | 移る（他の端末を外す） | `a` | `run-shell -b "tmux-session go -c '端末' '\$ID'"` |
 | 中身を見る | `p` | `display-popup -c '端末' -E -w 90% -h 90% "tmux-session peek '\$ID'; printf '\n[Enter で閉じる]'; read -r _"` |
-| 落とす | `k` | `confirm-before -t '端末' -p '<表示名> を落としますか? (y/n)' "run-shell -b \"tmux-session kill -c '端末' '\$ID'\""` |
+| 落とす | `k` | `confirm-before -t '端末' -p '<表示名> を落としますか? (y/n)' "run-shell -b \"tmux-session kill -f -c '端末' '\$ID'\""` |
 
 上は形の例である。引用の入れ子（`display-menu` の引数 → 項目のコマンド → `run-shell` の
 シェル）は実装で組み、受け入れ条件 14・15 で確かめる。
@@ -369,8 +373,12 @@ PLAN67（`docs/specifications/base-image-shellcheck.md`）は base イメージ�
 
 `tmux-session` は `tmux-first` / `tmux-clean` と同じく POSIX sh の配布物であるため、3 つを
 まとめて CI の ShellCheck ジョブへ足す。既存の 2 つは base の shellcheck 0.11.0 で指摘 0 件で
-あり（「実測」）、足しても赤にならない。severity は絞らない（既定の style まで）。今 0 件の
-ファイルに緩い基準を置く理由が無い。
+あり（「実測」）、足しても赤にならない。
+
+**severity は絞らない（既定の style まで）。** 同じジョブの `bin/` と `install.sh` の step は
+`severity: error` で走るが、これは `bin/devbase` に既存の指摘が 8 件残っているためである（#247）。
+tmux の 3 つは今 0 件で、error に絞ると warning と style の指摘が検査されないまま入る。step を
+分けて足すため、既存の step の基準は変わらない。
 
 `entrypoint.sh` と `ai-cli-aliases.sh` も同じ置き場所にあるが、既存の指摘が 8 件あり、片付けを
 伴うためこの変更の範囲外とした（#259）。
