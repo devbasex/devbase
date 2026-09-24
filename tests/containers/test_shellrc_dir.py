@@ -310,6 +310,26 @@ def test_directory_and_file_names_with_spaces_are_read(home, tmp_path):
     assert result.stderr == ""
 
 
+def test_directory_and_file_names_with_glob_chars_are_read(home, tmp_path):
+    """置き場所・ファイル名にグロブ文字 (``[x]``) と空白があっても、単語分割も
+    再展開もされずに名前の昇順で読む（現状固定）。
+
+    実在するパスへ ``DEVBASE_SHELLRC_DIR`` を向け、両ファイルの作用が名前順で
+    呼び出し元シェルに残り、終了状態 0・標準エラー空になることを確認する。
+    実装テキストや表示メッセージは固定しない。
+    """
+    spaced = tmp_path / "rc dir [x]"
+    spaced.mkdir()
+    (spaced / "10 first [a].sh").write_text("ORDER=first\n")
+    (spaced / "20 second *.sh").write_text('ORDER="$ORDER second"\n')
+
+    result = _run('echo "rc=$?"; echo "ORDER=$ORDER"', home,
+                  env={"DEVBASE_SHELLRC_DIR": str(spaced)})
+
+    assert result.stdout.splitlines() == ["rc=0", "ORDER=first second"]
+    assert result.stderr == ""
+
+
 def test_directory_that_is_a_symlink_is_followed(home, tmp_path):
     """置き場所が別ディレクトリへの symlink でも中の ``*.sh`` を読む。
 
