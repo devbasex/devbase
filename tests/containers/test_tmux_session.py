@@ -460,6 +460,100 @@ def test_kill_force_ends_own_session_last(tm):
     assert set(tm.sessions()) == {"keep"}
 
 
+# ``kill-session`` 自体が失敗する経路を固定する。実物の tmux では特定の削除だけを
+# 失敗させられないため、セッション状態を JSON で持ち、指定した ID の削除だけを非 0 に
+# する tmux スタブを使う。resolve / name_of は起動時に 1 度だけ取る list-sessions の
+# 出力で引くので、スタブは list-sessions・display-message・kill-session を返せばよい。
+_KILL_FAIL_STUB = f"#!{sys.executable}\n" + '''
+import json
+import sys
+from pathlib import Path
+
+state = Path(__file__).with_name("sessions.json")
+fail = Path(__file__).with_name("fail").read_text().strip()
+sessions = json.loads(state.read_text())  # {id: name}
+command, *args = sys.argv[1:]
+
+
+def option(flag):
+    return args[args.index(flag) + 1]
+
+
+if command == "list-sessions":
+    for sid, name in sessions.items():
+        print(f"{sid} {name}")
+elif command == "display-message":
+    # 自分の pane があるセッションの ID (TMUX_PANE から引く)。
+    print(Path(__file__).with_name("self").read_text().strip())
+elif command == "kill-session":
+    target = option("-t")
+    if target == fail:
+        sys.exit(1)
+    sessions.pop(target, None)
+    state.write_text(json.dumps(sessions))
+else:
+    raise SystemExit(f"unsupported tmux command: {command}")
+'''
+
+
+def _kill_fail_env(tmp_path, sessions, fail_id, self_id=""):
+    """``kill-session`` が ``fail_id`` の削除だけ失敗する tmux スタブと環境を作る。"""
+    (tmp_path / "sessions.json").write_text(json.dumps(sessions))
+    (tmp_path / "fail").write_text(fail_id)
+    (tmp_path / "self").write_text(self_id)
+    stub = tmp_path / "tmux"
+    stub.write_text(_KILL_FAIL_STUB)
+    stub.chmod(0o755)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TMUX", "TMUX_PANE", "ENV", "BASH_ENV")}
+    env["PATH"] = f"{tmp_path}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+    return env
+
+
+def _remaining(tmp_path):
+    return set(json.loads((tmp_path / "sessions.json").read_text()).values())
+
+
+def test_kill_keeps_failed_target_but_kills_following_success(tmp_path):
+    """現状固定: 通常対象の削除が失敗しても終了値を失わず、後続の成功対象は落とす。
+
+    kill-session が fail を非 0 で返す do_kill の else 分岐を通す。失敗対象 (fail) は
+    残り、後続の成功対象 (ok) は削除される。終了値は 1 になる。無関係な keep は残る。
+    """
+    env = _kill_fail_env(
+        tmp_path, {"$1": "fail", "$2": "ok", "$3": "keep"}, fail_id="$1")
+
+    done = subprocess.run(
+        [str(SCRIPT), "kill", "fail", "ok"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+
+    assert done.returncode == 1, done.stderr
+    assert "fail" in done.stderr
+    assert _remaining(tmp_path) == {"fail", "keep"}
+
+
+def test_kill_force_self_last_keeps_self_on_failure_but_kills_others(tmp_path):
+    """現状固定: -f で最後に回す自己セッションの削除が失敗しても終了値を失わない。
+
+    TMUX / TMUX_PANE を与えると self ($1) が SELF_SID に解決され、-f なので LAST へ
+    回る。ほかの対象 (other) を先に落とし、最後の自己の kill-session が失敗する。
+    自己は残るが other は削除され、終了値は 1 になる。無関係な keep は残る。
+    """
+    env = _kill_fail_env(
+        tmp_path, {"$1": "self", "$2": "other", "$3": "keep"},
+        fail_id="$1", self_id="$1")
+    env.update(TMUX="/unused/socket,123,0", TMUX_PANE="%1")
+
+    done = subprocess.run(
+        [str(SCRIPT), "kill", "-f", "self", "other"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+
+    assert done.returncode == 1, done.stderr
+    assert _remaining(tmp_path) == {"self", "keep"}
+
+
 @needs_tmux
 def test_kill_dry_run_force_own_session_last_keeps_sessions(tm):
     """現状固定: -n と -f を同時に与えると、自分のセッションも予定だけ出して残す。
