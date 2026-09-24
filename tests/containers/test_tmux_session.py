@@ -508,6 +508,27 @@ def test_peek_screen_lines(tm):
 
 
 @needs_tmux
+def test_peek_without_clients_and_n_beyond_screen(tm):
+    """端末が 0 件なら clients 節は (なし) の 1 行、``-n`` が画面の行数を超えたら先頭から出す。"""
+    sid = tm.new("devbase-2")
+    tm.tmux("send-keys", "-t", sid, "for i in 1 2; do echo line-$i; done", "Enter")
+    _wait(lambda: "line-2" in tm.tmux("capture-pane", "-p", "-t", sid).stdout)
+
+    done = tm.run("tmux-peek", "-n", "50", "devbase-2")
+
+    assert done.returncode == 0, done.stderr
+    out = done.stdout
+    assert re.search(r"^session\s.*attached 0$", out, re.M), out
+    clients = out.split("\nclients\n", 1)[1].split("\npanes\n", 1)[0].splitlines()
+    assert len(clients) == 1, clients
+    assert "/dev/" not in clients[0], clients
+    screen = out.split("\nscreen", 1)[1].splitlines()[1:]
+    assert any("line-1" in l for l in screen), screen
+    assert any("line-2" in l for l in screen), screen
+    assert screen[-1].strip(), screen
+
+
+@needs_tmux
 @pytest.mark.parametrize("name", SPECIAL_NAMES)
 def test_peek_special_names(tm, name):
     """条件 10"""
