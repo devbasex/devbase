@@ -22,8 +22,8 @@
 | `~/.bashrc` への 1 行（同じ Dockerfile の `RUN`） | 変える | `. /etc/devbase/ai-cli-aliases.sh` の行の**次**へ `. /etc/devbase/shellrc-dir.sh` を足す（決定 3） |
 | 環境変数（同じ Dockerfile の `ENV`） | 足す | `ENV DEVBASE_SHELLRC_DIR=/home/${USERNAME}/.shellrc.d` を読み込み器の `COPY` の直前に置く（決定 2） |
 | `tests/containers/test_shellrc_dir.py`（新設） | 足す | 読み込み器を一時ディレクトリで source し、読む順・対象・失敗の扱い・変数の後始末を固定する。Dockerfile の文字列で配置と順序を固定する |
-| `tests/containers/test_entrypoint_ai_settings.py` | 変える | 分類 B の張り先の検査（`test_group_entries_point_at_the_group_volume`）の一覧へ `.shellrc.d` を足す |
-| `docs/user/container-operations.md` | 変える | 「AI 設定の永続化」の分類 B の表へ行を足す。新しい小節「作り直しても残るシェルの設定」を「AI CLI の起動定義」の後に立てる |
+| `tests/containers/test_entrypoint_ai_settings.py` | 変える | 分類 B の張り先の検査（`test_group_entries_point_at_the_group_volume`）の一覧へ `.shellrc.d` を足す。グループの分離の検査（`test_two_groups_share_assets_but_not_credentials`）へ、片方のグループの置き場所に置いたファイルがもう片方から見えないことを足す |
+| `docs/user/container-operations.md` | 変える | 「ボリューム構造」の表の `devbase_home_{group}` の行の用途へ置き場所を足す。「AI 設定の永続化」の分類 B の表へ行を足す。新しい小節「作り直しても残るシェルの設定」を「AI CLI の起動定義」の後に立てる |
 | `CHANGELOG.md` | 変える | `[Unreleased]` の `### Added` に 1 項目足す |
 
 次のものは変えない。
@@ -116,11 +116,13 @@ sequenceDiagram
     alt dir がディレクトリでない
         L-->>SH: 何もしない
     else ディレクトリである
+        L->>L: failglob の状態を控えて切る
         loop dir/*.sh を名前の順に
             L->>L: 通常ファイルで読めるなら source
         end
-        L->>L: 使った変数を unset
+        L->>L: failglob を控えた状態へ戻す
     end
+    L->>L: 使った変数を unset
 ```
 
 読み込み器の中身は次の形にする。**外部コマンドを起動しない**（非機能の条件）。
@@ -129,17 +131,24 @@ sequenceDiagram
 # 置き場所の *.sh を名前の順に読む。対話シェルの ~/.bashrc から読まれる。
 __devbase_shellrc_dir="${DEVBASE_SHELLRC_DIR:-$HOME/.shellrc.d}"
 if [ -d "$__devbase_shellrc_dir" ]; then
+    __devbase_shellrc_glob="$(shopt -p failglob)"
+    shopt -u failglob
     for __devbase_shellrc_file in "$__devbase_shellrc_dir"/*.sh; do
         if [ -f "$__devbase_shellrc_file" ] && [ -r "$__devbase_shellrc_file" ]; then
             . "$__devbase_shellrc_file"
         fi
     done
+    eval "$__devbase_shellrc_glob"
 fi
-unset __devbase_shellrc_dir __devbase_shellrc_file
+unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_glob
 ```
 
 - 一致が無いとき bash のグロブは文字列のまま残る。`-f` の判定で落ちるので、`nullglob` を
-  切り替えずに済む。利用者のシェルの設定を読み込み器が変えない
+  切り替えずに済む。`nullglob` が有効なら繰り返しが 0 回になるだけで、結果は同じである
+- `failglob` だけは控えて切る。有効なまま一致が無いと、bash は `no match` を標準エラーへ出して
+  `for` を実行しない（受け入れ条件 6）。控えた `shopt -p` の出力を `eval` して元の状態へ戻すので、
+  利用者のシェルの設定は読み込みの前後で変わらない。置き場所のファイルは `failglob` が切れた
+  状態で読まれる
 - `if` で包むのは、最後のファイルが読めないときに `&&` の連なりが非 0 を残さないためである。
   末尾の `unset` で終了状態は 0 になる（受け入れ条件 6）
 - 変数名を `__devbase_` で始めるのは、利用者の変数（`f` など）を上書きしないためである
@@ -153,13 +162,14 @@ unset __devbase_shellrc_dir __devbase_shellrc_file
 | 構文の誤りを持つ `15-bad.sh` | 標準エラーに誤りを出し、次のファイルへ進んだ |
 | `x.txt` | 読まれなかった |
 | 置き場所が無い / 空 | 何も出さず、終了状態 0 |
+| 空の置き場所を `shopt -s failglob` の下で読む | 何も出さず終了状態 0。読んだ後も `failglob` は `on`。控えて切る処理が無い形では `no match` を出し終了状態 1 だった |
 
 ## 非機能の実現方式
 
 | 大項目 | 要求の条件 | 実現方式 | 確かめ方 |
 | --- | --- | --- | --- |
 | セキュリティ | 置き場所に書けるのは、同じアカウントグループのボリュームに書ける者だけである。既に `~/.claude`（hooks を含む）へ書ける者と同じ範囲で、新しい書き手を増やさない。devbase は置き場所へ何も書かない | 実体を `~/.claude` と同じ `/persistent/group` に置き、所有者は既存の `devbase_ensure_entry` と同じく開発ユーザーにする。イメージと entrypoint は置き場所へファイルを書かない | 受け入れ条件 1 の実機で所有者を見る。テストで、entrypoint の後の置き場所が空であることを見る |
-| 性能・拡張性 | 置き場所が空のとき、対話シェルの起動にかかる追加の処理は、ディレクトリの有無の判定と 1 回のグロブで終わる（外部コマンドを起動しない） | 読み込み器を組み込みの `[`・`for`・`.`・`unset` だけで書く | 読み込み器のテストで、`PATH` を空にして source しても誤りが出ないことを見る |
+| 性能・拡張性 | 置き場所が空のとき、対話シェルの起動にかかる追加の処理は、ディレクトリの有無の判定と 1 回のグロブで終わる（外部コマンドを起動しない） | 読み込み器をシェルの組み込み（`[`・`for`・`.`・`shopt`・`eval`・`unset`）だけで書く。`failglob` を控える `$(shopt -p failglob)` はサブシェルを作るが、外部コマンドは起動しない | 読み込み器のテストで、`PATH` を空にして source しても誤りが出ないことを見る |
 
 ## 決定の記録
 
@@ -241,10 +251,10 @@ lfm は base を継がず、base から `entrypoint.sh` をコピーするだけ
 | --- | --- |
 | 1. symlink と所有者 | 関数: `test_group_entries_point_at_the_group_volume` の一覧に `.shellrc.d`。実機: 建て直したイメージのコンテナで `readlink ~/.shellrc.d` と `stat -c %U` |
 | 2. 作り直しで残る | 実機: `devbase down` → `devbase up` → `devbase login` で `plan70probe` |
-| 3. 同じグループの別のコンテナ・別のグループ | 関数: グループの根を 2 つ用意し、片方に置いたファイルがもう片方の置き場所から見えない。実機: `--index=2` の対話シェル |
+| 3. 同じグループの別のコンテナ・別のグループ | 関数: `test_two_groups_share_assets_but_not_credentials` で、片方のグループの置き場所に置いたファイルがもう片方の置き場所から見えない。実機: `--index=2` の対話シェル |
 | 4. 名前の昇順 | 読み込み器: `10-a.sh` と `20-b.sh` が同じ alias を定義し、`20-b.sh` の定義が残る |
 | 5. `*.sh` 以外を読まない | 読み込み器: `x.txt` / `README` / `sub.sh/`（ディレクトリ）/ `.hidden.sh` が読まれない |
-| 6. 無い・空・一致なし | 読み込み器: 3 通りで、標準出力と標準エラーが空、終了状態 0 |
+| 6. 無い・空・一致なし | 読み込み器: 3 通りで、標準出力と標準エラーが空、終了状態 0。`shopt -s failglob` の下で空の置き場所を読んでも同じで、読んだ後の `shopt failglob` が `on` |
 | 7. 誤りの後も続く | 読み込み器: 構文の誤りを持つ `15-bad.sh` の後ろの `20-b.sh` が読まれる |
 | 8. 起動定義より勝つ | 読み込み器: `ai-cli-aliases.sh` を source した後に読み込み器を source し、置き場所の `alias claude` が残る。Dockerfile: `. /etc/devbase/shellrc-dir.sh` の行が `. /etc/devbase/ai-cli-aliases.sh` の行より後 |
 | 9. 変数を残さない | 読み込み器: source の前に `f=keep` を置き、後で `f` が `keep`、`__devbase_` で始まる変数が無い |
@@ -255,7 +265,7 @@ lfm は base を継がず、base から `entrypoint.sh` をコピーするだけ
 | 14. `~/.zshrc` が変わらない | Dockerfile: `.zshrc` へ書き込む行が無い。実機: 建て直した前後の `cat ~/.zshrc` |
 | 15. 全体テスト | `uv run --locked pytest tests/ -q` |
 | 16. 建つ | `devbase build base --no-cache`（arm64） |
-| 17. 文書 | 目視（3 か所） |
+| 17. 文書 | 目視（4 か所） |
 
 読み込み器のテストは `bash --norc -i` ではなく `bash -c` で `shopt -s expand_aliases` を
 付けて source する（`test_ai_cli_aliases.py` と同じ方式）。非機能の性能の条件は、`PATH=`

@@ -97,7 +97,8 @@
       alias を定義すると、`20-b.sh` の定義が残る
 - [ ] 5. 名前が `*.sh` でないファイル（`x.txt` / `README`）、`.` で始まる名前のファイル、ディレクトリは読まれない
 - [ ] 6. 置き場所が無い・空・`*.sh` が 1 つも無いとき、対話シェルの起動は何も出力せず、
-      直後の `$?` が 0 である
+      直後の `$?` が 0 である。読み込みの前に `shopt -s failglob` が有効でも同じである。
+      読み込みの後、`failglob` は読み込みの前の状態に戻っている
 - [ ] 7. 1 つのファイルが構文の誤りで失敗しても、名前の順で後ろのファイルは読まれる
       （誤りの行は標準エラーに出てよい）
 - [ ] 8. 置き場所のファイルで `alias claude=...` を定義すると、`/etc/devbase/ai-cli-aliases.sh`
@@ -122,9 +123,11 @@
 - [ ] 14. `~/.zshrc` は変わらない
 - [ ] 15. `uv run --locked pytest tests/ -q` が終了コード 0
 - [ ] 16. `devbase build base --no-cache` が arm64 で成功する
-- [ ] 17. 次の 3 か所に置き場所と `DEVBASE_SHELLRC_DIR` がある。いずれも**反映に
-      `devbase build base --no-cache` が要る**ことを書いている（表の行を除く）
-      - `docs/user/container-operations.md` の「AI 設定の永続化」の分類 B の表の行
+- [ ] 17. 次の 4 か所に置き場所がある。表の 2 か所を除く 2 か所は、`DEVBASE_SHELLRC_DIR` と、
+      **反映に `devbase build base --no-cache` が要る**ことを書いている
+      - `docs/user/container-operations.md` の「ボリューム構造」の表の `devbase_home_{group}` の行
+        （用途の列）
+      - 同じ文書の「AI 設定の永続化」の分類 B の表の行
       - 同じ文書の新しい小節（置き場所の使い方・読む順・対話シェルだけで読まれること）
       - `CHANGELOG.md` の `[Unreleased]` の `### Added`
 
