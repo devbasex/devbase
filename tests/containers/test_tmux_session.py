@@ -392,6 +392,47 @@ def test_kill_force_ends_own_session_last(tm):
 
 
 @needs_tmux
+def test_kill_dry_run_force_own_session_last_keeps_sessions(tm):
+    """現状固定: -n と -f を同時に与えると、自分のセッションも予定だけ出して残す。
+
+    do_kill の LAST ブロックの DRY=1 分岐を通す。FORCE=1 で自分のセッション
+    (devbase-3) は LAST に回り、DRY=1 なので落とさず ``(dry-run)`` を出す。
+    ほかの対象 (other) を先に、自分を後に、どちらも予定表示だけになる。
+    """
+    sid = tm.new("devbase-3")
+    tm.new("other")
+    tm.new("keep")
+    inside = tm.inside_env(sid)
+    before = set(tm.sessions())
+
+    done = tm.run("tmux-kill", "-n", "-f", "devbase-3", "other", env=inside)
+
+    assert done.returncode == 0, done.stderr
+    lines = [line for line in done.stdout.splitlines() if line.startswith("KILL")]
+    assert lines == ["KILL other (dry-run)", "KILL devbase-3 (dry-run)"]
+    assert set(tm.sessions()) == before
+
+
+@needs_tmux
+def test_kill_own_session_with_client_keeps_it_and_kills_others(tm):
+    """現状固定: -c で自分の端末を渡すと、そのセッションは -f 無しでは残す。
+
+    HAVE_CLIENT=1 のため知らせは端末の状態行へ出て標準出力は空になる。SELF_SID は
+    -c の端末が見ている home に解決され、-f が無いので home は残り rc=1。自分でない
+    keep は落ちる。
+    """
+    home = tm.new("home")
+    tm.new("keep")
+    me = tm.attach(home)
+
+    done = tm.run("tmux-kill", "-c", me.tty, "home", "keep")
+
+    assert done.returncode == 1
+    assert done.stdout == ""
+    assert set(tm.sessions()) == {"home"}
+
+
+@needs_tmux
 def test_kill_dry_run_keeps_sessions(tm):
     """条件 9: -n は落とさずに予定を出す。"""
     tm.new("devbase-3")
