@@ -235,20 +235,8 @@ do_kill() {
 	return "$rc"
 }
 
-do_peek() {
+peek_panes() {
 	id=$1
-	name=$(name_of "$id")
-	counts=$(tmux display-message -p -t "$id" '#{session_windows} #{session_attached}')
-	printf 'session  %s (%s)  windows %s  attached %s\n' "$name" "$id" "${counts% *}" "${counts#* }"
-
-	echo "clients"
-	clients=$(tmux list-clients -t "$id" -F '  #{client_name}  最終操作 #{t:client_activity}')
-	if [ -n "$clients" ]; then
-		printf '%s\n' "$clients"
-	else
-		echo "  (なし)"
-	fi
-
 	# 子孫のプロセスは ps を 1 回だけ取り、pane_pid から辿る。pgrep -P は子しか出さず、
 	# uv の下の python3 のような孫が見えない。-A -o pid= -o ppid= -o args= は Linux の
 	# procps と macOS の ps のどちらでも同じ意味になる。
@@ -282,7 +270,10 @@ do_peek() {
 				tree(ppid_of[p], 1)
 			}
 		}'
+}
 
+peek_screen() {
+	id=$1
 	# 画面は見えている範囲を取り、末尾の空行を除いてから最後の N 行を出す。
 	# capture-pane -S -N は「履歴 N 行 + 画面全体」を返すため、直近 N 行にならない。
 	if [ "$LINES_N" -gt 0 ]; then
@@ -296,6 +287,24 @@ do_peek() {
 				for (i = start; i <= last; i++) print "  " l[i]
 			}'
 	fi
+}
+
+do_peek() {
+	id=$1
+	name=$(name_of "$id")
+	counts=$(tmux display-message -p -t "$id" '#{session_windows} #{session_attached}')
+	printf 'session  %s (%s)  windows %s  attached %s\n' "$name" "$id" "${counts% *}" "${counts#* }"
+
+	echo "clients"
+	clients=$(tmux list-clients -t "$id" -F '  #{client_name}  最終操作 #{t:client_activity}')
+	if [ -n "$clients" ]; then
+		printf '%s\n' "$clients"
+	else
+		echo "  (なし)"
+	fi
+
+	peek_panes "$id"
+	peek_screen "$id"
 }
 
 do_go() {
