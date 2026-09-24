@@ -22,7 +22,7 @@
 | `containers/base/Dockerfile` の「tmux セッションの整理コマンド」の節 | 変える | `tmux-session` の `COPY` を 1 行足し、symlink の `RUN` に `tmux-go` / `tmux-peek` / `tmux-kill` の 3 つを足す |
 | `.github/workflows/ci.yml` の `shellcheck` ジョブ | 変える | `containers/base/tmux-first` / `tmux-clean` / `tmux-session` を検査する step を足す（決定 6） |
 | `tests/containers/test_tmux_session.py` | 足す | 専用のソケットの tmux で F1〜F3 と、`prefix S` から `menu` へ渡る値を確かめる。Dockerfile の `COPY` と symlink の形を固定する |
-| `tests/containers/test_tmux_conf.py` | 変える | `prefix S` の割り当てがあることを `list-keys` で確かめる |
+| `tests/containers/test_tmux_conf.py` | 変える | `prefix S` の割り当てがあることを `list-keys` で確かめる。既存の `test_conf_provides_windows_like_copy_bindings` は `set` 以外の行の全体を copy-mode の 8 行と比べているため、比べる対象を `-T copy-mode` / `-T copy-mode-vi` の行へ絞る |
 | `docs/user/environment-variables.md` の「同じプロジェクトのセッションが増え続ける場合」の後 | 変える | 小節「セッションを名指しで扱う」を足す。3 つのコマンド・`prefix S`・ホストで使う手順を書く |
 | `CHANGELOG.md` | 変える | `[Unreleased]` の `### Added` に足す。反映に `devbase build base --no-cache` が要ることを書く |
 
@@ -115,8 +115,12 @@ tmux-kill …  = tmux-session kill …
 
 | 引数の形 | 解決 |
 | --- | --- |
-| `$` + 数字（例 `$3`） | その ID のセッション。無ければ同じ文字列の名前として探す |
+| `$` + 数字（例 `$3`） | その ID のセッションだけ。無ければ対象なしで終了コード 1。同じ文字列の名前へは**落ちない** |
 | それ以外 | 名前の**完全一致**。`devbase-1` は `devbase-10` に当たらない |
+
+**ID の形の引数を名前へ落とさない。** メニューは ID を渡すため、確認を待つ間に対象が終わると
+ID が消える。そこで名前へ落とすと、`$3` という名前の別のセッションを落とす。この代わり、
+`$3` のような名前のセッションはコマンドから名前で指せない。`prefix S` の一覧からは ID で指せる。
 
 `tmux list-sessions -F '#{session_id} #{session_name}'` を読み、最初の空白より後ろ全体を
 名前として比べる（`tmux-clean` と同じ方法。名前にどんな文字が入っても取り違えない）。
@@ -172,7 +176,10 @@ screen (0.0 の直近 20 行)
 | session | `display-message -p -t '$ID'` の `#{session_name}` / `#{session_id}` / `#{session_windows}` / `#{session_attached}` |
 | clients | `list-clients -t '$ID' -F '#{client_name}  最終操作 #{t:client_activity}'`。無ければ `(なし)` |
 | panes | `list-panes -s -t '$ID' -F '#{window_index}.#{pane_index}  #{pane_current_command}  pid=#{pane_pid}  #{pane_current_path}'`。各行の下へ、`pane_pid` の子孫のプロセスを深さで字下げして並べる |
-| screen | 今のウィンドウの今の pane を `capture-pane -p -t '$ID' -S -<行数>` で取る。`-n` の既定は 20。`-n 0` でこの節を出さない |
+| screen | 今のウィンドウの今の pane の見えている画面を `capture-pane -p -J -t '$ID'` で取り、末尾の空行を除いてから最後の `<行数>` 行を出す。`-n` の既定は 20。`-n 0` でこの節を出さない |
+
+`capture-pane` の `-S -<行数>` は使わない。`-S` は履歴側の開始位置で、終わりの既定は見えている
+画面の最終行である。`-S -20` は履歴 20 行に画面全体を足した量を返し、「直近 20 行」にならない。
 
 子孫のプロセスは `ps -A -o pid= -o ppid= -o args=` を 1 回だけ取り、`awk` で `pane_pid` から
 辿る。Linux の procps と macOS の `ps` のどちらでも同じ引数で動く。`pgrep -P` は子しか出さず、
@@ -199,11 +206,22 @@ screen (0.0 の直近 20 行)
 | --- | --- | --- |
 | 移る（他の端末を外す） | `a` | `run-shell -b "tmux-session go -c '端末' '\$ID'"` |
 | 中身を見る | `p` | `display-popup -c '端末' -E -w 90% -h 90% "tmux-session peek '\$ID'; printf '\n[Enter で閉じる]'; read -r _"` |
-| 落とす | `k` | `confirm-before -c '端末' -p '#{session_name} を落としますか? (y/n)' "run-shell -b \"tmux-session kill -c '端末' '\$ID'\""` |
+| 落とす | `k` | `confirm-before -t '端末' -p '<表示名> を落としますか? (y/n)' "run-shell -b \"tmux-session kill -c '端末' '\$ID'\""` |
 
 上は形の例である。引用の入れ子（`display-menu` の引数 → 項目のコマンド → `run-shell` の
-シェル）は実装で組み、受け入れ条件 14・15 で確かめる。埋め込むのは検査済みの ID と端末名だけで、
-名前は埋め込まない。
+シェル）は実装で組み、受け入れ条件 14・15 で確かめる。
+
+`confirm-before` の端末の指定は `-t` である。3.6 の `-c` は確認のキーを指す
+（`confirm-before [-by] [-c confirm-key] [-p prompt] [-t target-client]`）。確認の文の書式は
+押した端末の今のセッションで展開されるため、`#{session_name}` は選んだセッションを指さない。
+そこで `menu` が解決した名前を `<表示名>` として埋め込む。
+
+| 名前の形 | `<表示名>` |
+| --- | --- |
+| `[A-Za-z0-9._+@-]` だけでできている（devbase のセッション名 `<ディレクトリ名>-<数字>` はここに入る） | 名前そのもの |
+| それ以外の文字を含む | ID（例 `$3`）。引用と書式の `#` を扱わずに済む |
+
+埋め込むのは検査済みの ID・端末名と、この表の `<表示名>` だけである。
 
 #### 失敗の形（全サブコマンド共通）
 
@@ -302,7 +320,8 @@ bash の対話シェルにしか効かないためである。
 
 template は `run-shell -t "%%%" "… #{q:session_id} #{q:client_name}"` の形にする。`%%%` と
 `#{q:…}` の組み合わせだけが、`'` を含む名前も含めて選んだセッションを取り違えなかった
-（「実測」）。`menu` へ渡すのは名前ではなく ID で、以降の tmux のコマンドに名前を埋め込まない。
+（「実測」）。`menu` へ渡すのは名前ではなく ID である。以降の tmux のコマンドへ名前を埋め込むのは、確認の文の
+`<表示名>` が安全な文字だけでできているときに限る（「入出力の契約」の `menu`）。
 
 `prefix s`（既定の `choose-tree`）を置き換える案は採らない。tmux を使い慣れた利用者の手の
 動きを変える。`display-menu` だけで一覧を組む案も採らない。`choose-tree` が持つプレビュー・
@@ -378,10 +397,12 @@ popup の高さを超える出力は上が切れる。`peek` の既定の出力�
 
 ## テスト設計
 
-`tests/containers/test_tmux_session.py` は `test_tmux_conf.py` と同じく、専用のソケットで tmux を
-起動する。ソケットは `$TMPDIR` 直下の短い名前にし、利用者の tmux サーバに触れない。`tmux-session` へは
-`TMUX_TMPDIR` を専用の場所へ向け、`TMUX` を消した環境で起動する。attach した端末は `pty` で作る。
-tmux が無い環境では skip する。
+`tests/containers/test_tmux_session.py` は、テストごとに `$TMPDIR` 直下へ短い名前の
+ディレクトリを作り、`TMUX_TMPDIR` をそこへ向けて `TMUX` を消した環境を 1 つ作る。テストの側の
+tmux の操作（サーバの起動・`pty` からの attach・`list-clients` などの観察）も、`tmux-session` の
+実行も、すべてこの環境で行う。`-S` でソケットを指定しない。`tmux-session` は `-S` を受け取らず、
+既定のソケット（`$TMUX_TMPDIR/tmux-<uid>/default`）へ繋ぐため、両者が同じサーバを見るには
+環境をそろえるしかない。利用者の tmux サーバには触れない。tmux が無い環境では skip する。
 
 | 受け入れ条件 | 何で確かめるか |
 | --- | --- |
