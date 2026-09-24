@@ -26,7 +26,7 @@
 | --- | --- |
 | 公開インタフェース | **変わる。** `devbase snapshot rotate --keep N` の N は「全体で残す数」から「系列ごとに残す数」になる。`--max-total M` を足す。TUI のローテーションの問いの文言が変わる |
 | データ | 変わらない。`backups/snapshot.yml` と各世代の `meta.yml` の形はそのまま。移行は無い |
-| 既存の振る舞い | **変わる。** `devbase up` の自動スナップショットの積み先・新しい世代を作る条件・最小間隔の判定、`devbase up` / `devbase down` / `devbase snapshot rotate` の削除の規則、ログの文言。`backups/` の外を指すシンボリックリンクの世代を、`create` / `restore` / `copy` / `delete` / `rotate` が `SnapshotError` で止める（設計の決定 7） |
+| 既存の振る舞い | **変わる。** `devbase up` の自動スナップショットの積み先・新しい世代を作る条件・最小間隔の判定、`devbase up` / `devbase down` / `devbase snapshot rotate` の削除の規則、ログの文言。シンボリックリンクの世代（リンク先を問わない）と `backups/` の外を指す名前の世代を、`create` / `restore` / `copy` / `delete` が `SnapshotError` で止める。`rotate` は止まらず、そのエントリを一覧から外して警告し、ディレクトリもリンク先も消さない（設計の決定 7） |
 | 利用者の操作 | 無い。次の `devbase up` から新しい規則で動く |
 
 ## 前提
@@ -178,7 +178,7 @@ default（差分 0、3.9 GB）で、合計は 42 GB である。
 | --- | --- |
 | テスト | `uv run --locked pytest tests/ -q`。`DEVBASE_ROOT` は `tmp_path` へ差し替え、`_run_docker_tar` を差し替えて Docker を起動しない（`tests/snapshot/test_manager_volumes.py` の `RecordingManager` の流儀） |
 | 静的解析 | `ruff check --select=E9,F63,F7,F82 lib`（CI の lint と同じ） |
-| 手動確認 | 実装の持ち場で、この端末で with のプロジェクト（`with-ai-dev`）、default のプロジェクト（`ai-plugins`）の順に `devbase up` する。`20260920-212546` と `20260923-081407` にそれぞれ `incr-001` が積まれ、世代が 3 つのままであることを `devbase snapshot list` で見る（1・16・22）。変更前の規則では、この 2 回の起動で full の世代を 2 つ作り、`20260915-231738` と `20260920-212546` を消す。出力を Pull Request 本文へ貼る |
+| 手動確認 | 実装の持ち場で、この端末で with のプロジェクト（`with-ai-dev`）、default のプロジェクト（`ai-plugins`）の順に、どちらも `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES=0` を付けて `devbase up` する（既定の 60 分では、変更前の規則が 2 回目を全体の最小間隔で飛ばし、比べられない）。`20260920-212546` と `20260923-081407` にそれぞれ `incr-001` が積まれ、世代が 3 つのままであることを `devbase snapshot list` で見る（1・16・22）。変更前の規則では、この 2 回の起動で full の世代を 2 つ作り、`20260915-231738` と `20260920-212546` を消す。出力を Pull Request 本文へ貼る |
 
 ## 前提とする取り決め
 
