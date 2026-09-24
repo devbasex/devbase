@@ -250,14 +250,21 @@ COPY --chmod=0644 tmux.conf /etc/tmux.conf
 
 # tmux セッションの整理コマンド。tmux-first は居座りクライアントを切断して
 # 一番若い番号のセッションへ切り替え、tmux-clean は置き去りのセッションを削除する。
+# tmux-session は 1 つのセッションを名指しで移る・調べる・落とす (#234)。prefix S の
+# メニュー (tmux.conf) からも呼ばれる。
 # 背景と使い方は各スクリプト冒頭のコメントと docs/user/environment-variables.md を参照。
 COPY --chmod=0755 tmux-first /usr/local/bin/tmux-first
 COPY --chmod=0755 tmux-clean /usr/local/bin/tmux-clean
+COPY --chmod=0755 tmux-session /usr/local/bin/tmux-session
 
 # 短縮名は alias ではなく symlink で用意する。alias は bash の対話シェルにしか効かず、
 # zsh などの他シェルや非対話実行 (docker exec など) では使えないため。
+# tmux-go / tmux-peek / tmux-kill は呼ばれた名前で tmux-session のサブコマンドになる。
 RUN sudo ln -sf tmux-first /usr/local/bin/tmux1 \
- && sudo ln -sf tmux-clean /usr/local/bin/tmuxc
+ && sudo ln -sf tmux-clean /usr/local/bin/tmuxc \
+ && sudo ln -sf tmux-session /usr/local/bin/tmux-go \
+ && sudo ln -sf tmux-session /usr/local/bin/tmux-peek \
+ && sudo ln -sf tmux-session /usr/local/bin/tmux-kill
 
 # フォントの既定。素の fontconfig は sans-serif を中国語フェイス (WenQuanYi Zen Hei) へ
 # 向けるため、日本語を描くと中国語の字形で写る (#161)。/etc/fonts/local.conf は

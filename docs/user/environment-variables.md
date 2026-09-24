@@ -580,6 +580,55 @@ tmux-clean -f     # アタッチ中・実行中のセッションも削除する
 tmuxc             # tmux-clean の短縮コマンド (/usr/local/bin の symlink)
 ```
 
+##### セッションを名指しで扱う
+
+`tmux-first` / `tmux-clean` は同じベース名のセッションをまとめて扱い、使用中の端末と実行中のセッションを守ります。1 つのセッションを狙って操作するときは、dev コンテナに同梱の `tmux-session` を使います。守りの既定は無く、指したセッションに強制的に効きます。
+
+| コマンド | すること |
+| --- | --- |
+| `tmux-go <セッション>` | そのセッションへ移り、そのセッションに繋がっている**他の**端末を外す。tmux の外では attach し、tmux の中では今の端末を切り替える |
+| `tmux-peek <セッション>` | attach せずに調べる。繋がっている端末と最終操作の時刻、pane ごとのコマンド・pid・作業ディレクトリ、pane のシェルの子孫のプロセス（`&` で起動したものも）、画面の直近 20 行を出す。tmux の状態は変えない |
+| `tmux-kill <セッション>...` | attach 中・実行中を問わず落とす。無いセッションは飛ばして残りを続け、終了コード 1 で終わる |
+
+```bash
+tmux-go devbase-3           # devbase-3 へ移る (devbase-30 には当たらない。名前は完全一致)
+tmux-peek devbase-2         # 何が動いているかを見る
+tmux-peek -n 50 devbase-2   # 画面を 50 行出す (-n 0 で出さない)
+tmux-kill devbase-4 devbase-5
+tmux-kill -n devbase-4      # 落とさずに、落とす予定だけを出す
+tmux-kill -f devbase-2      # 今いるセッションも落とす (-f が無ければ落とさない)
+tmux-session go devbase-3   # 短縮名と同じ。tmux-session peek / kill も同様
+```
+
+- **セッションは名前の完全一致か、ID（`$3` の形）で指します。** 名前が `$` と数字だけでできているセッションは、コマンドからは名前で指せません（ID として引くため）。下の `prefix S` の一覧からは選べます
+- tmux の中で `tmux-go` を使うと、プロンプトへ打ち込んだ端末を実行元とみなします（`tmux-first` と同じ規則）。キー入力を伴わずに起動されて実行元を特定できないときは、何も外さず切り替えもせず、手で切り替えるコマンドを出して終了コード 1 で終わります
+
+tmux の中では **`prefix S`**（既定では `Ctrl+b` → `Shift+s`）で、セッションの一覧から選んで同じ 3 つを呼べます。一覧は tmux の `choose-tree` で、`v` でプレビューの切り替え、`f` で絞り込み、`x` で 1 つ落とす、`t` で印を付けて `X` でまとめて落とす、といった tmux の既定の操作も使えます。セッションを選んで `Enter` を押すとメニューが出ます。
+
+| メニュー | キー | すること |
+| --- | --- | --- |
+| 移る（他の端末を外す） | `a` | `tmux-go` と同じ。今の端末をそのセッションへ切り替える |
+| 中身を見る | `p` | `tmux-peek` の出力を浮いた窓に出す。`Enter` で閉じる |
+| 落とす | `k` | 確認（`y/n`）を挟んで落とす。今いるセッションも、同意すれば落とす |
+
+`prefix S` の割り当ては `/etc/tmux.conf` にあります。`~/.tmux.conf` で `S` を別の操作に割り当てていれば、後から読むそちらが勝ちます（コマンドはそのまま使えます）。
+
+**ホストの tmux で使う場合**は、devbase の checkout の中のファイルへ symlink を張り、`~/.tmux.conf` へ 1 行足します（devbase はホストのこれらのファイルへ書き込みません）。複写ではなく symlink にすると、devbase を `git pull` するだけで更新が届きます。`~/.local/bin` が `PATH` に入っている必要があります。
+
+```bash
+DEVBASE_DIR=~/devbase   # devbase を clone した場所
+for n in tmux-session tmux-go tmux-peek tmux-kill; do
+  ln -sf "$DEVBASE_DIR/containers/base/tmux-session" ~/.local/bin/$n
+done
+```
+
+```tmux
+# ~/.tmux.conf に足す (反映は tmux source-file ~/.tmux.conf か tmux kill-server)
+bind-key S choose-tree -Zs -O name "run-shell -t \"%%%\" \"tmux-session menu -c #{q:client_name} #{q:session_id}\""
+```
+
+dev コンテナで使うには、base イメージの建て直し（`devbase build base --no-cache`）と、使っている派生イメージの建て直し、コンテナの作り直し（`devbase down` → `devbase up`）が要ります。
+
 ## ソースファイル変更検出
 
 devbase はソースファイル（`~/.aws/config` 等）のハッシュを `.env.sources.yml` で管理しています。
