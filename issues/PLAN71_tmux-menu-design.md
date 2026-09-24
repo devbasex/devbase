@@ -88,7 +88,8 @@ tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と
 サーバに触れない）。`python3` の `pty` で端末を繋ぎ、`tmux-session` の代わりに引数を書き出すだけの
 偽物を置く。一覧を開くスクリプト `open-list` は `tmux-menu` の代わりで、`TMUX_PANE` があれば
 `-t "$TMUX_PANE"` を付けて次の `<template>` で `choose-tree -Zs -O name` を実行する。`open-list-no-t`
-は `open-list` から `-t` を落としたもので、`TMUX_PANE` があっても `-t` に使わない。セッションは
+は `open-list` から `-t` を落としたもので、`TMUX_PANE` があっても `-t` に使わない。`open-list-unset` は
+`TMUX_PANE` を `unset` してから `-t` を付けずに開き、`open-list-unset-t` は `unset` する前の値を `-t` に使う。セッションは
 `a`・`it's`（`'` を含む）・`b` の 3 つで、端末 `/dev/ttys024` が `a` に、`/dev/ttys025` が `b` に
 繋がっている（端末の名前は実行ごとに変わる）。一覧では 1 つ上を選んで Enter を押した。
 
@@ -103,6 +104,10 @@ tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と
 | 7a | `b` の端末へ 1 文字打って直近を `b` にしてから、端末を持たないプロセスで `a` の pane の `TMUX`・`TMUX_PANE` を渡して `-t` を付けない `open-list-no-t` を実行する（テストの `tm.run("tmux-menu", env=tm.inside_env(home))` と同じ形） | `a` | （選んでいない） | 正しい（`-t` が無くても `TMUX_PANE` の pane に出る） |
 | 7b | 7a と同じ操作で、`-t "$TMUX_PANE"` を付ける `open-list` を実行する | `a` | （選んでいない） | 正しい |
 | 7c | 7a と同じ操作で、`TMUX_PANE` を渡さずに `open-list-no-t` を実行する | **`b`** | （選んでいない） | 直近の端末に出る |
+| 7d | 7a と同じ操作で、`TMUX_PANE` を渡して `open-list-unset` を実行する | **`b`** | （選んでいない） | 直近の端末に出る（7c と同じ） |
+| 7e | 7a と同じ操作で、`TMUX_PANE` を渡して `open-list-unset-t` を実行する | `a` | （選んでいない） | 正しい（消しても `-t` に値があれば出る） |
+| 8a | `a` の pane へ `send-keys -t =a: <open-list の絶対パス> Enter` でコマンド行を打って一覧を開き、`send-keys -t =a: Up` で 1 つ上へ動かす。`b` の端末へ 1 文字打ってから `send-keys -t =a: Enter` | `a` | `menu -c /dev/ttys025 $1` → `it's`（端末は **`b`** のもの） | Enter を `send-keys` で送ると、`#{client_name}` は直近に操作された端末になる |
+| 8b | 8a と同じ操作で、Enter だけを `a` の端末から送る | `a` | `menu -c /dev/ttys024 $1` → `it's` | 正しい（`send-keys` で開いた一覧でも、`send-keys` の `Up` は効く） |
 
 スクリプトの出力（抜粋。`panes` は `セッション:pane:モード`）:
 
@@ -124,6 +129,14 @@ tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と
   panes: ['a:%0:tree-mode', 'b:%2:', "it's:%1:"]
 ## 7 no tty, b typed last, TMUX_PANE=None: 7c open-list-no-t, no TMUX_PANE
   panes: ['a:%0:', 'b:%2:tree-mode', "it's:%1:"]
+## 7 no tty, b typed last, TMUX_PANE=%0: 7d open-list-unset, TMUX_PANE=a's pane
+  panes: ['a:%0:', 'b:%2:tree-mode', "it's:%1:"]
+## 7 no tty, b typed last, TMUX_PANE=%0: 7e open-list-unset-t, TMUX_PANE=a's pane
+  panes: ['a:%0:tree-mode', 'b:%2:', "it's:%1:"]
+## 8a Enter by send-keys (open by send-keys, b typed last)
+  menu args: 'menu -c /dev/ttys025 $1' -> "menu -c /dev/ttys025 it's"
+## 8b Enter by a's terminal (open by send-keys, b typed last)
+  menu args: 'menu -c /dev/ttys024 $1' -> "menu -c /dev/ttys024 it's"
 ```
 
 `<template>` は今の `prefix S` の行と同じ次の文字列である。
@@ -140,7 +153,11 @@ run-shell -t "%%%" "tmux-session menu -c #{q:client_name} #{q:session_id}"
   直近だったからにすぎない（5）
 - 端末を持たないクライアントでは、`-t` が無くても環境の `TMUX_PANE` が現在の pane を決める（7a）。
   `TMUX_PANE` が無いときだけ直近の端末に出る（7c）。`-t "$TMUX_PANE"` を付けても付けなくても
-  結果は同じである（7a・7b）
+  結果は同じである（7a・7b）。実装の中で `TMUX_PANE` を消しても、消す前の値を `-t` に使えば
+  出る pane は変わらない（7d・7e）
+- `send-keys` で pane へ送ったキーは、その pane の一覧を動かす。ただし一覧の Enter で展開される
+  `#{client_name}` は、`send-keys` では pane に繋がった端末ではなく直近に操作された端末になる
+  （8a）。押した端末の名前を確かめるには、Enter をその端末から送る（8b）
 - tmux の外からの `attach` は、端末の繋がっていないセッションを優先する（2）
 
 ## 入出力の契約
@@ -251,8 +268,8 @@ Enter の後は PLAN69 の `menu` の流れと同じである。
 は `SHORT_NAMES` の追加だけで `fake_tm` にもできる。**`fake/` には `tmux-menu` を置かない。** `prefix S`
 の `tmux-menu` は本物で一覧を開き、Enter の後に template が呼ぶ `tmux-session menu -c …` だけを
 `fake/` の偽物が受ける必要がある。`fake/` に偽の `tmux-session` を指す `tmux-menu` を置くと、
-`prefix S` が引数の無い `menu` を書き出すだけで一覧が開かず、`test_prefix_s_passes_selected_id_and_client`
-が落ちる。
+`prefix S` の `tmux-menu` は偽物になり、空の引数を書き出すだけで一覧を開かない。
+`test_prefix_s_passes_selected_id_and_client` は `_open_tree` が `tree-mode` を待ち切れずに落ちる。
 
 `SHORT_NAMES` を足さないままでは `bin` に `tmux-menu` が無く、`prefix S` の `run-shell` がコマンドを
 見つけられない。`prefix S` から一覧を開く既存テストは、中身を変えずに、この基盤更新で通る。
@@ -270,19 +287,51 @@ Enter の後は PLAN69 の `menu` の流れと同じである。
 
 ### 条件ごとの確かめ方
 
+表の行を読む前提として、一覧の開き方・選び方と、端末の置き方を先に決める。
+
+**一覧の開き方（tmux の中）。** pane のプロンプトへコマンド行を打つときは、繋いだ端末（`me.send`）
+ではなく pane へ直接送る。`tm.tmux("send-keys", "-t", home, f"{tm.bin}/tmux-menu", "Enter")`
+（`tmux-session` の側は `f"{tm.bin}/tmux-session menu"`）。`_open_tree` のコメントのとおり、繋いだ
+直後の端末は入力を捨てることがあり、コマンド行の一部が落ちると送り直しても残骸が行に残る。
+`send-keys` は端末を通らずに pane へ届き、pane のシェルは `home` の pane の `TMUX_PANE` を持つ。
+コマンドは名前ではなく `tm.bin` の絶対パスで打つ。pane のシェルはログインシェルで、`PATH` は
+テストの環境の `PATH`（`fake_tm` では `fake/` が先頭）が元になる。名前で打つと、`fake_tm` では
+`tmux-session` が `fake/` の偽物に解決されて一覧が開かず、`/etc/profile` が `PATH` を並べ替える
+環境では解決先がさらに変わりうる。一覧が開いたことは `tm.tmux("display-message", "-p", "-t", home,
+"#{pane_mode}")` が `tree-mode` になるのを `_wait` で待って確かめる。
+
+**一覧の開き方（tmux の外）。** `me = tm.spawn([str(tm.bin / "tmux-menu")])`。attach 先は tmux の
+既定で、端末の繋がっていないセッションを優先し、同じ条件の中では直近に使ったものになる（実測の 2）。
+行 4・5 は `target = tm.new(<名前>)`・`home = tm.new("zz-home")`・`tm.attach(target)` の順に作り、
+`zz-home` を端末の無いただ 1 つのセッションにする。`me` は `zz-home` に繋がり
+（`_wait(lambda: tm.all_clients().get(me.tty) == home)`）、その pane が `tree-mode` になる。
+
+**1 つ上を選ぶ（テストに足す補助 `_pick_above(tm, me, sid)`）。** 一覧は名前順（`-O name`）で、
+カーソルは開いた pane のセッション `zz-home` にある。どのテストでも選ぶセッションの名前は
+`zz-home` より前に並ぶため、1 つ上が選ぶセッションになる。
+
+1. `tm.tmux("send-keys", "-t", sid, "Up")` で 1 つ上へ動かす。`send-keys` のキーは端末を通らずに一覧を
+   動かす（実測の 8b）
+2. Enter は `me.send("\r")` で `me` の端末から送る。一覧の template の `#{client_name}` は Enter を押した
+   端末に展開されるが、`send-keys` で送った Enter では直近に操作された端末になり（実測の 8a）、押した
+   端末を確かめられない
+3. `me` は繋いだ直後で Enter を捨てることがある。`sid` の pane が `tree-mode` のままなら、2 秒待つごとに
+   Enter を送り直す（`_open_tree` と同じ回数）。`tree-mode` を抜けたら送らない。抜けたことは `me` が入力を
+   受け付けている証拠になり、その後に `me` へ送る `a` / `p` / `k` は捨てられない
+
 | 受け入れ条件 | 何で確かめるか |
 | --- | --- |
-| 1 | `ui_tm` で、tmux の中の端末のプロンプトへ `tmux-menu` を打ち、その端末の `#{pane_mode}` が `tree-mode` になることを見る。プロンプトへは名前ではなく `tm.bin` の絶対パスで打つ（`me.send(f"{tm.bin}/tmux-menu\r")`、行 8 の `tmux-session menu` の側は `f"{tm.bin}/tmux-session menu\r"`）。pane のシェルはテストの環境の `PATH` を引き継ぐため、`fake_tm` で名前で打った `tmux-session` は `fake/` の偽物に解決されて一覧が開かない。絶対パスにしておけば、どのフィクスチャで打っても本物が動く。一覧が `TMUX_PANE` の pane に出る（直近に操作された別の端末には出ない）ことは行 11 の足すテストで縛る |
-| 2 | `fake_tm` で 1 と同じく `f"{tm.bin}/tmux-menu\r"` を打って一覧を開き、1 つ上を選んで Enter を押し、偽の `tmux-session` へ `menu -c <押した端末> <選んだ ID>` が渡ることを見る。`'` を含む名前を含める |
-| 3 | `ui_tm`（本物の `tmux-session`）で 1 → 選ぶ → `a` を送り、押した端末が選んだセッションへ移り、そこに繋がっていた他の端末が外れることを `list-clients` で見る |
-| 4 | `ui_tm` で、tmux の外の端末として `tm.spawn([str(tm.bin / "tmux-menu")])` を起動し、端末がサーバに繋がり `tree-mode` になることを見る |
-| 5 | `fake_tm` で 4 と同じく `tm.spawn([str(tm.bin / "tmux-menu")])` で開き、2 と同じく選んで Enter を押し、`menu -c <その端末> <選んだ ID>` が渡ることを見る |
-| 6 | `tm` のサーバの無い環境で `tm.run("tmux-menu")` を実行し（`tm.run` は `bin` の絶対パスで起動する）、終了コード 1・標準エラーの理由・実行後もサーバが無いことを見る |
+| 1 | `ui_tm` で `home = tm.new("zz-home")`・`tm.attach(home)` を作り、上の「tmux の中」の形で `tmux-menu` を打つ。`home` の pane の `#{pane_mode}` が `tree-mode` になることを見る。一覧が `TMUX_PANE` の pane に出る（直近に操作された別の端末には出ない）ことは行 11 の足すテストで縛る |
+| 2 | `fake_tm` で `SPECIAL_NAMES`（`'` を含む）を parametrize し、`target = tm.new(name)`・`home = tm.new("zz-home")`・`me = tm.attach(home)` を作る。1 と同じ形で開き、`_pick_above(tm, me, home)` で選び、`tm.record` が `["menu", "-c", me.tty, target]` になることを見る（`test_prefix_s_passes_selected_id_and_client` と同じ期待値）。打った絶対パスの `tmux-menu` は本物のスクリプトで一覧を開き、Enter の後に `run-shell` がサーバの `PATH`（`fake/` が先頭）から引く `tmux-session` だけが偽物になる |
+| 3 | `ui_tm`（本物の `tmux-session`）で `test_menu_go_detaches_others_and_switches` と同じく `target = tm.new(name)`・`home = tm.new("zz-home")`・`me = tm.attach(home)`・`stale = tm.attach(target)` を作る。1 と同じ形で開き、`_pick_above(tm, me, home)` の後に `_wait(lambda: "移る" in me.output())` を待って `me.send("a")` を送る。`tm.clients_of(target) == {me.tty}` になり、`stale.tty` が `tm.all_clients()` から消えることを見る |
+| 4 | `ui_tm` で上の「tmux の外」の形（`target = tm.new("devbase-3")`・`home = tm.new("zz-home")`・`tm.attach(target)` の後に `me = tm.spawn([str(tm.bin / "tmux-menu")])`）を作る。`me` が `home` に繋がり、`home` の pane の `#{pane_mode}` が `tree-mode` になることを見る |
+| 5 | `fake_tm` で `SPECIAL_NAMES` を parametrize し、4 と同じ組み方で `target = tm.new(name)` として開く。`me` が `home` に繋がり一覧が開くのを待ち、`_pick_above(tm, me, home)` で選ぶ。カーソルは `zz-home` にあるため 1 つ上は `target` で、`tm.record` が `["menu", "-c", me.tty, target]` になることを見る |
+| 6 | `tm` のサーバの無い環境で `tm.run("tmux-menu")` を実行し（`tm.run` は `bin` の絶対パスで起動する）、終了コード 1・標準エラーに「サーバ」を含むこと・実行後も `tm.sessions() == {}` であることを見る |
 | 7 | 既存の `menu` のテスト（`test_menu_*`）が中身を変えずに通る。`prefix S` を通るものは「テスト基盤の更新」の後に通る |
-| 8 | 2 つの形をどちらも両方の名前で走らせる。**一覧を開く形:** `tmux-menu` と `tmux-session menu` で 1・6 を走らせる（parametrize。1 は行 1 のとおり `ui_tm` で `tm.bin` の絶対パスを打ち、6 は `tm.run` で起動する）。**メニューを出す形:** `ui_tm` で `target = tm.new("devbase-3")` と `me = tm.attach(tm.new("zz-home"))` を作り、`cmd` = `f"tmux-menu -c {me.tty} {shlex.quote(target)}"` / `f"tmux-session menu -c {me.tty} {shlex.quote(target)}"` で parametrize し、`test_menu_notifies_client_on_failure` と同じく `tm.tmux("run-shell", "-b", cmd)` で呼ぶ。`tm.new` はセッションの ID を返し、`ui_tm` で最初に作る `devbase-3` の ID は `$0` になる。`run-shell` は文字列を `sh -c` へ渡すため、引用しないと `$0` が `sh` に展開され（実測の 3 と同じ現象）、`tmux-session` は「セッションがありません: sh」で終了コード 1 になる（専用ソケットで `run-shell 'printf "<%s>\n" $0'` が `<sh>`、`'$0'` と引用すると `<$0>` になることを確かめた）。テストのファイルに `import shlex` を足す（`display-menu` が閉じるまで戻らない場合に備え、テストの側で待たない）。どちらの名前でも `me` の端末に同じメニュー（`test_menu_peek_opens_popup` と同じく `中身を見る` の項目）が出ることを見る。`fake_tm` の record では確かめられない。偽物に置き換わるのは `tmux-session` だけで、`bin` の `tmux-menu` は本物のスクリプトへの symlink のまま `display-menu` を出し、`tmux-session` を呼ばないため |
-| 9 | `-c` だけ・余分な引数・知らないオプションで終了コード 2。`tmux-menu -h` が 0 で、`tmux-session -h` の出力に `tmux-menu` が含まれる |
+| 8 | 2 つの形をどちらも両方の名前で走らせる。**一覧を開く形:** `tmux-menu` と `tmux-session menu` で 1・6 を走らせる（parametrize。1 は `send-keys` で `f"{tm.bin}/tmux-menu"` / `f"{tm.bin}/tmux-session menu"` を打ち、6 は `tm.run("tmux-menu")` / `tm.run("tmux-session", "menu")` で起動する）。**メニューを出す形:** `ui_tm` で `target = tm.new("devbase-3")` と `me = tm.attach(tm.new("zz-home"))` を作り、`cmd` = `f"tmux-menu -c {me.tty} {shlex.quote(target)}"` / `f"tmux-session menu -c {me.tty} {shlex.quote(target)}"` で parametrize し、`test_menu_notifies_client_on_failure` と同じく `tm.tmux("run-shell", "-b", cmd)` で呼ぶ。`run-shell` はサーバの環境の `PATH`（`bin` を含む）でコマンドを引く。`tm.new` はセッションの ID を返し、`ui_tm` で最初に作る `devbase-3` の ID は `$0` になる。`run-shell` は文字列を `sh -c` へ渡すため、引用しないと `$0` が `sh` に展開され（実測の 3 と同じ現象）、`tmux-session` は「セッションがありません: sh」で終了コード 1 になる（専用ソケットで `run-shell 'printf "<%s>\n" $0'` が `<sh>`、`'$0'` と引用すると `<$0>` になることを確かめた）。テストのファイルに `import shlex` を足す。`-b` で背景に回すため、`display-menu` が閉じるまでテストは止まらない。どちらの名前でも `me` の端末に同じメニュー（`test_menu_peek_opens_popup` と同じく `中身を見る` の項目）が出ることを `_wait(lambda: "中身を見る" in me.output())` で見る。`fake_tm` の record では確かめられない。偽物に置き換わるのは `tmux-session` だけで、`bin` の `tmux-menu` は本物のスクリプトへの symlink のまま `display-menu` を出し、`tmux-session` を呼ばないため |
+| 9 | `test_usage_errors_exit_two` の parametrize へ `("tmux-menu", "-c", "/dev/pts/1")`（`-c` だけ）・`("tmux-menu", "a")`（`-c` が無い）・`("tmux-menu", "-c", "/dev/pts/1", "a", "b")`（余分な引数）・`("tmux-menu", "-x")`（知らないオプション）を足し、終了コード 2 と標準エラーの理由を見る。`test_help_exits_zero` へ `("tmux-menu", "-h")` を足し、`tm.run("tmux-session", "-h")` の標準出力に `tmux-menu` が含まれることを見る |
 | 10 | Dockerfile の symlink の `RUN` に `tmux-menu` が含まれることを固定する（`SHORT_NAMES` を足した `test_dockerfile_links_short_names`）。建てたイメージで `command -v tmux-menu` を見る |
-| 11 | **書き換える既存テスト:** `test_prefix_s_opens_session_chooser`（`tests/containers/test_tmux_conf.py`）は割り当てに `choose-tree` と `tmux-session menu` が含まれることを見ており、決定 2 で落ちる。割り当てがちょうど 1 つで、`run-shell` が `TMUX_PANE=#{pane_id} tmux-menu` を呼ぶことを見る形へ改める。**基盤更新で通る既存テスト:** `test_prefix_s_passes_selected_id_and_client` と、`prefix S` から開く `test_menu_*` 4 件（「テスト基盤の更新」の表）。中身は変えない。**足すテスト:** 時間の競合に頼らず、`TMUX_PANE` の pane に一覧が出ることを見る。`home` と `other` の 2 つのセッションを作り、`tm.attach(home)` の後に `tm.attach(other)` で繋いだ端末へ 1 文字送って直近に操作された端末を `other` にする。そのうえで `tm.run("tmux-menu", env=tm.inside_env(home))` を実行し、`home` の pane の `#{pane_mode}` が `tree-mode` になり、`other` の pane はならないことを見る。このテストが縛るのは「一覧が `TMUX_PANE` の pane に出る」という振る舞いであり、`-t "$TMUX_PANE"` の分岐ではない。tmux は `-t` が無くても環境の `TMUX_PANE` で現在の pane を決めるため、`-t` を実装から落としてもこのテストは通る（実測の 7a・7b）。`TMUX_PANE` を渡さない・読み捨てるといった壊し方で落ちる（実測の 7c）。`prefix S` が `TMUX_PANE=#{pane_id}` を渡すことは、書き換える静的テストが縛る。実測の 5・6 のような、押した直後に別の端末へ打つテストは、本物の `tmux-menu` では `choose-tree` までの間が数十 ms しかなく `-t` の有無を区別できないため採らない。`prefix s` は既定のまま |
+| 11 | **書き換える既存テスト:** `test_prefix_s_opens_session_chooser`（`tests/containers/test_tmux_conf.py`）は割り当てに `choose-tree` と `tmux-session menu` が含まれることを見ており、決定 2 で落ちる。割り当てがちょうど 1 つで、`run-shell` が `TMUX_PANE=#{pane_id} tmux-menu` を呼ぶことを見る形へ改める。**基盤更新で通る既存テスト:** `test_prefix_s_passes_selected_id_and_client` と、`prefix S` から開く `test_menu_*` 4 件（「テスト基盤の更新」の表）。中身は変えない。**足すテスト:** 時間の競合に頼らず、`TMUX_PANE` の pane に一覧が出ることを見る。`tm` で `home` と `other` の 2 つのセッションを作り、`tm.attach(home)` の後に `tm.attach(other)` で繋ぐ。後に繋いだ `other` の端末が直近に操作された端末になり、端末へ打たなくてもこの順だけで決まる（手元の 3.7b の専用ソケットで、打たずに `TMUX_PANE` を消して開くと `other` に出ることを確かめた）。そのうえで `tm.run("tmux-menu", env=tm.inside_env(home))` を実行し、`home` の pane の `#{pane_mode}` が `tree-mode` になり、`other` の pane はならないことを見る。このテストが縛るのは「一覧が `TMUX_PANE` の pane に出る」という振る舞いであり、`-t "$TMUX_PANE"` の分岐ではない。`inside_env` は `TMUX_PANE` を必ず渡し、tmux は `-t` が無くても環境の `TMUX_PANE` で現在の pane を決めるため、実装が `-t` を落としても、`TMUX_PANE` を読まなくても通る（実測の 7a・7b）。落ちるのは、実装が `TMUX_PANE` を消し（`unset TMUX_PANE` や `env -u TMUX_PANE`）、かつその値を `-t` にも使わずに tmux を呼ぶ壊し方だけである（実測の 7d。消す前の値を `-t` に使えば通る、7e）。`prefix S` が `TMUX_PANE=#{pane_id}` を渡すことは、書き換える静的テストが縛る。実測の 5・6 のような、押した直後に別の端末へ打つテストは採らない。実測では 1 秒待つ `open-list-slow` で押してから `choose-tree` までの間を作ったが、本物の `tmux-menu` にはその待ちが無く、その間に別の端末を操作できる保証が無いため、割り当てが `TMUX_PANE` を渡さなくても通りうる。`prefix s` は既定のまま |
 | 12 | `git diff --stat main` に `tmux-first` / `tmux-clean` が現れない |
 | 13 | `shellcheck containers/base/tmux-*` と全体の pytest |
 | 14 | 文書の差分をレビューで見る |

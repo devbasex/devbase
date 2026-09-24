@@ -28,6 +28,16 @@ SCRIPTS = {
     ),
     # open-list から -t を落としたもの（TMUX_PANE があっても -t に使わない）
     "open-list-no-t": f"#!/bin/sh\nexec tmux choose-tree -Zs -O name '{TEMPLATE}'\n",
+    # TMUX_PANE を消してから -t を付けずに開く（TMUX_PANE を消す壊し方）
+    "open-list-unset": (
+        f"#!/bin/sh\nunset TMUX_PANE\nexec tmux choose-tree -Zs -O name '{TEMPLATE}'\n"
+    ),
+    # TMUX_PANE を消すが、消す前の値を -t に使う
+    "open-list-unset-t": (
+        "#!/bin/sh\n"
+        'pane=$TMUX_PANE\nunset TMUX_PANE\n'
+        f"exec tmux choose-tree -t \"$pane\" -Zs -O name '{TEMPLATE}'\n"
+    ),
     # 一覧が開くまでの間に別の端末を操作するため、1 秒待ってから開く
     "open-list-slow": "#!/bin/sh\nsleep 1\nexec open-list\n",
 }
@@ -174,6 +184,8 @@ def main():
         ("7a open-list-no-t, TMUX_PANE=a's pane", "open-list-no-t", a_pane),
         ("7b open-list (-t), TMUX_PANE=a's pane", "open-list", a_pane),
         ("7c open-list-no-t, no TMUX_PANE", "open-list-no-t", None),
+        ("7d open-list-unset, TMUX_PANE=a's pane", "open-list-unset", a_pane),
+        ("7e open-list-unset-t, TMUX_PANE=a's pane", "open-list-unset-t", a_pane),
     ):
         reset()
         os.write(c2, b"x")
@@ -187,6 +199,25 @@ def main():
         )
         time.sleep(1)
         state(f"7 no tty, b typed last, TMUX_PANE={pane}: {label}")
+
+    # 8. pane へ send-keys でコマンド行を打って一覧を開き、send-keys で 1 つ上へ動かす。
+    #    直近を b の端末にしてから Enter を送り、#{client_name} がどの端末になるかを見る
+    for label, enter_from_client in (
+        ("8a Enter by send-keys", False),
+        ("8b Enter by a's terminal", True),
+    ):
+        reset()
+        t("send-keys", "-t", "=a:", os.path.join(BINDIR, "open-list"), "Enter")
+        time.sleep(1)
+        t("send-keys", "-t", "=a:", "Up")
+        os.write(c2, b"x")
+        time.sleep(0.5)
+        if enter_from_client:
+            os.write(c1, b"\r")
+        else:
+            t("send-keys", "-t", "=a:", "Enter")
+        time.sleep(1)
+        state(f"{label} (open by send-keys, b typed last)")
 
     t("kill-server")
 
