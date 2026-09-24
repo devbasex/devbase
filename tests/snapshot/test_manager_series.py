@@ -110,7 +110,7 @@ def test_returning_group_appends_to_its_latest_generation(tmp_path):
 
     mgr = RecordingManager(tmp_path, group="default")
     assert mgr.auto_snapshot_target() == "A"
-    assert mgr.should_start_new_generation() is False
+    assert (mgr.auto_snapshot_target() is None) is False
 
 
 def test_group_without_generation_starts_a_new_one(tmp_path, caplog):

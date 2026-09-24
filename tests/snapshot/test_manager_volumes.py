@@ -200,7 +200,7 @@ def test_layout_change_starts_a_new_generation(root):
     _write_legacy_snapshot(root)
     mgr = RecordingManager(root)
 
-    assert mgr.should_start_new_generation() is True
+    assert (mgr.auto_snapshot_target() is None) is True
 
 
 def test_group_change_starts_a_new_generation(root, monkeypatch):
@@ -210,14 +210,14 @@ def test_group_change_starts_a_new_generation(root, monkeypatch):
     monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
     other = RecordingManager(root)
 
-    assert other.should_start_new_generation() is True
+    assert (other.auto_snapshot_target() is None) is True
 
 
 def test_same_layout_keeps_appending_increments(root):
     mgr = RecordingManager(root)
     mgr.create(name="snap1")
 
-    assert mgr.should_start_new_generation() is False
+    assert (mgr.auto_snapshot_target() is None) is False
 
 
 def test_incremental_on_a_different_layout_is_refused(root):

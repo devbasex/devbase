@@ -696,16 +696,6 @@ class SnapshotManager:
             return None
         return name
 
-    def should_start_new_generation(
-        self, max_incrementals: int = DEFAULT_MAX_INCREMENTALS,
-    ) -> bool:
-        """新しい世代を作るべきか (``auto_snapshot_target(...) is None``)。
-
-        系列 (対象ボリュームの組) の最新の世代に世代が無い、または差分数が上限以上
-        なら True。グループを切り替えただけでは True にならない (PLAN68)。
-        """
-        return self.auto_snapshot_target(max_incrementals) is None
-
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
