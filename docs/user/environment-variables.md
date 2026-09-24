@@ -629,6 +629,9 @@ bind-key S choose-tree -Zs -O name "run-shell -t \"%%%\" \"tmux-session menu -c 
 
 dev コンテナで使うには、base イメージの建て直し（`devbase build base --no-cache`）と、使っている派生イメージの建て直し、コンテナの作り直し（`devbase down` → `devbase up`）が要ります。
 
+サブコマンドごとの引数・終了コード・`peek` の出力・`prefix S` のメニューの仕様は
+[tmux のセッションを名指しで扱うコマンド（tmux-session）](../specifications/tmux-named-session.md) にあります。
+
 ## ソースファイル変更検出
 
 devbase はソースファイル（`~/.aws/config` 等）のハッシュを `.env.sources.yml` で管理しています。
