@@ -48,7 +48,7 @@
 - 新しい世代を作る条件を、系列の単位で判定すること
 - 最小間隔（`DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES`）を、系列の単位で判定すること
 - ローテーションを系列ごとに行い、全体の上限を併せて持つこと
-- ローテーションが消す前に世代名を検証すること（`delete` / `restore` と同じ `_safe_snap_dir`）
+- ローテーションが消す前に世代の場所を検証すること（`delete` / `restore` と同じ `_safe_snap_dir`）と、`_safe_snap_dir` の包含判定をパスの要素の単位にすること
 - `devbase snapshot rotate` の `--keep` の意味の変更と `--max-total` の追加、TUI の問いの文言
 - ログの文言（自動スナップショットとローテーション）
 - 利用者向け文書 4 本と CHANGELOG（「実装計画」の修正対象）
@@ -134,7 +134,9 @@ default（差分 0、3.9 GB）で、合計は 42 GB である。
       対象外」の文が「手動ローテーション」の節から消えている
 - [ ] 20. `docs/user/cli-reference/05-snapshot.md` の `rotate` に `--max-total` があり、`--keep` の説明が
       系列ごとになっている。`02-project.md` の最小間隔の説明が系列ごとになっている。
-      `container-operations.md` の自動スナップショットの表が系列ごとの保持を書いている
+      `container-operations.md` の自動スナップショットの表が系列ごとの保持を書いている。
+      `--keep` と `--max-total` の指定が手動のその 1 回だけに効き、自動のローテーションは既定の数で動くことを、
+      `05-snapshot.md` と `snapshot-guide.md` の「手動ローテーション」に書いている
 - [ ] 21. `CHANGELOG.md` の `[Unreleased]` の `### Changed` に、`--keep` の意味が変わったことを含めて書いている
 
 ### 退行しないこと
@@ -148,6 +150,10 @@ default（差分 0、3.9 GB）で、合計は 42 GB である。
 - [ ] 25. **ローテーションは `backups/` の外を消さない。** `snapshot.yml` に `../outside` という名前の
       エントリがあり、それが削除の対象になっても、`backups/` の外のディレクトリは残る。エントリは
       一覧から外れ、警告が 1 行出る。現状は `backups_dir / name` をそのまま `shutil.rmtree` へ渡す
+- [ ] 26. **`backups/` の外を指すシンボリックリンクの世代も消さない。** `backups/old` が兄弟の
+      `backups-outside/` を指すリンクで、`old` が削除の対象になっても、`backups-outside/` の中身は残る。
+      エントリは一覧から外れ、警告が 1 行出る。`_safe_snap_dir('old')` は `SnapshotError` になる。
+      現状は解決後のパスを文字列の前方一致で判定するため、`.../backups-outside` が通る
 
 ## 非機能の条件
 
@@ -162,7 +168,7 @@ default（差分 0、3.9 GB）で、合計は 42 GB である。
 | --- | --- |
 | テスト | `uv run --locked pytest tests/ -q`。`DEVBASE_ROOT` は `tmp_path` へ差し替え、`_run_docker_tar` を差し替えて Docker を起動しない（`tests/snapshot/test_manager_volumes.py` の `RecordingManager` の流儀） |
 | 静的解析 | `ruff check --select=E9,F63,F7,F82 lib`（CI の lint と同じ） |
-| 手動確認 | 実装の持ち場で、この端末の default のプロジェクト（`ai-plugins`）を `devbase up` し、`20260923-081407` へ `incr-001` が積まれ、世代が 3 つのままであることを `devbase snapshot list` で見る（1・16・22）。出力を Pull Request 本文へ貼る |
+| 手動確認 | 実装の持ち場で、この端末で with のプロジェクト（`with-ai-dev`）、default のプロジェクト（`ai-plugins`）の順に `devbase up` する。`20260920-212546` と `20260923-081407` にそれぞれ `incr-001` が積まれ、世代が 3 つのままであることを `devbase snapshot list` で見る（1・16・22）。変更前の規則では、この 2 回の起動で full の世代を 2 つ作り、`20260915-231738` と `20260920-212546` を消す。出力を Pull Request 本文へ貼る |
 
 ## 前提とする取り決め
 

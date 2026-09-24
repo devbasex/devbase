@@ -21,6 +21,7 @@
 | `SnapshotManager.auto_snapshot_target` | 足す | 自動スナップショットの積み先の名前か、新しい世代を作るべきこと（`None`）を返す。新しい世代にする理由をログへ出す |
 | `SnapshotManager.should_start_new_generation` | 変える | `auto_snapshot_target(...) is None` を返すだけにする。既存の呼び出しとテストのために残す |
 | `SnapshotManager.last_snapshot_time` | 変える | 引数 `volumes` を足し、渡されたらその系列の世代のアーカイブだけを見る。省けば現行どおり全体を見る |
+| `SnapshotManager._safe_snap_dir` | 変える | 包含判定を文字列の前方一致から `Path.is_relative_to` へ変える（決定 7） |
 | `SnapshotManager.rotate` | 変える | 系列ごとに `keep` 世代を残し、全体の上限を超えた分を系列をまたいで古い順に消す。各系列の最新の世代は消さない。消す前に名前を検証する |
 | `commands/container.py` の `_auto_snapshot` | 変える | 最小間隔を系列で判定し、`auto_snapshot_target` の結果で作成を呼ぶ。ログにグループ名を入れる。`list()[-1]` を使わない |
 | `commands/snapshot.py` の `rotate` の振り分けと `cli.py` の `rotate` の引数 | 変える | `--max-total` を受け取り `rotate` へ渡す。`--keep` の help を系列ごとの意味にする |
@@ -107,7 +108,7 @@ tests/snapshot/
 
 | 文書 | 変えるところ |
 | --- | --- |
-| `docs/user/snapshot-guide.md` | 「世代管理」: 設定パラメータの表に全体の上限を足し、「系列」の小節を立てる。世代の概念の図を系列ごとにする。「自動実行」: `devbase up` の図を「系列の最新の世代」で判定する形にし、`devbase down` の図を系列ごと + 全体の上限にする。「対象ボリュームが変わったとき」: 新しい世代を作るのは系列に世代が無いときだけ、という説明へ書き換える（拒否の例はそのまま）。「手動ローテーション」: `--keep` を系列ごと、`--max-total` を足し、名前付きの世代もローテーションの対象であることを書く |
+| `docs/user/snapshot-guide.md` | 「世代管理」: 設定パラメータの表に全体の上限を足し、「系列」の小節を立てる。世代の概念の図を系列ごとにする。「自動実行」: `devbase up` の図を「系列の最新の世代」で判定する形にし、`devbase down` の図を系列ごと + 全体の上限にする。「対象ボリュームが変わったとき」: 新しい世代を作るのは系列に世代が無いときだけ、という説明へ書き換える（拒否の例はそのまま）。「手動ローテーション」: `--keep` を系列ごと、`--max-total` を足し、名前付きの世代もローテーションの対象であることを書く。**どちらの指定も手動のその 1 回だけに効き、`devbase up` / `down` の自動ローテーションは既定の数で動く**ことを書く |
 | `docs/user/cli-reference/05-snapshot.md` | `rotate` のオプションの表 |
 | `docs/user/cli-reference/02-project.md` | 最小間隔が系列（グループ）ごとであること |
 | `docs/user/container-operations.md` | 「自動スナップショット」の表の `devbase down` の行 |
@@ -201,7 +202,7 @@ full を作る（現行と同じ）。
 | --- | --- |
 | 形 | `devbase snapshot rotate [--keep N] [--max-total M]` |
 | `--keep N` | **系列（グループ）ごとに**残す世代の数。既定 3。help: `Generations to keep per account group` |
-| `--max-total M` | 全体で残す世代の上限。既定は `N × 3`。各グループの最新の世代は上限を超えても残す。help: `Upper limit of generations across all groups (default: 3 x --keep)` |
+| `--max-total M` | 全体で残す世代の上限。既定は `N × 3`。各グループの最新の世代は上限を超えても残す。**指定はその 1 回の実行だけに効く。** 値は保存せず、次の `devbase up` / `devbase down` の自動ローテーションは既定（系列ごと 3・全体 9）で動く（`--keep` も同じ）。help: `Upper limit of generations across all groups (default: 3 x --keep)` |
 | 失敗の形 | `N < 1` / `M < 1` は `SnapshotError` → 既存の `cmd_snapshot` がエラーを出して終了コード 1 |
 | 互換性 | **`--keep` の意味が変わる。** 変更前に `--keep 5` を指定していた利用者は、グループが 1 つなら同じ結果、2 つ以上なら残る世代が増える（最大 `5 × 3`）。減る方向の変化は無い。CHANGELOG の Changed に書く |
 
@@ -215,7 +216,7 @@ full を作る（現行と同じ）。
 | 系列ごとの保持で消した | INFO | `ローテーション: {系列} の {数} 世代を削除しました（グループごとに {keep} 世代保持）` |
 | 全体の上限で消した | INFO | `ローテーション: 全体の上限 {max_total} 世代を超えたため、{系列} の {名前} を削除しました` |
 | 全体の上限を満たせない | WARNING | `全体の上限 {max_total} 世代を超えていますが、各グループの最新の世代は消さないため {残り} 世代を残します` |
-| 名前が不正なエントリ | WARNING | `snapshot.yml の世代名 '{名前}' が不正なため、ディレクトリを消さずに一覧からだけ外します` |
+| 世代の場所が `backups/` の外になるエントリ | WARNING | `snapshot.yml の世代 '{名前}' は backups/ の外を指すため、ディレクトリを消さずに一覧からだけ外します: {理由}` |
 
 `{系列}` は `series_label` の値（例: `グループ default`）。**現行の「対象ボリュームの構成が
 変わったため新しい世代を作成します (旧: … / 新: …)」の行は無くなる。** グループの切替では
@@ -271,15 +272,24 @@ graph TD
 `created_at` が同じエントリは `snapshot.yml` の並び順で前にあるものを古いとみなす。
 `created_at` が無いエントリは空文字として最も古く扱う（現行と同じ）。
 
-### 例: この端末の `snapshot.yml` のまま default で起動する
+### 例: この端末の `snapshot.yml` から with → default の順に起動する
+
+最後の世代（`20260923-081407`）は default のため、default だけを起動しても変更の前後で差は出ない。
+差が出るのは、別のグループを起動してから戻るときである。
 
 | 手順 | 系列 default | 系列 with | 全体 |
 | --- | --- | --- | --- |
-| 変更前の状態 | `20260915-231738`（差分 9）・`20260923-081407`（差分 0） | `20260920-212546`（差分 0） | 3 |
+| 始めの状態 | `20260915-231738`（差分 9）・`20260923-081407`（差分 0） | `20260920-212546`（差分 0） | 3 |
+| `devbase up`（with） | 変わらない | `20260920-212546` へ `incr-001` | 3 |
 | `devbase up`（default） | `20260923-081407` へ `incr-001` | 変わらない | 3 |
-| `rotate()` | 2 ≤ 3 で消さない | 1 ≤ 3 で消さない | 3 ≤ 9 |
+| 各回の `rotate()` | 2 ≤ 3 で消さない | 1 ≤ 3 で消さない | 3 ≤ 9 |
 
-変更前の規則では、同じ起動で 4 つ目の世代（full）を作り、`20260915-231738` を消す。
+変更前の規則では、次のように動く。
+
+| 手順 | 変更前の動き | 残る世代 |
+| --- | --- | --- |
+| `devbase up`（with） | 最後の世代（default）と組が違うため、with の世代を full で作る。`rotate()` が `20260915-231738`（default、差分 9）を消す | default 1・with 2 |
+| `devbase up`（default） | 最後の世代（with）と組が違うため、default の世代を full で作る。`rotate()` が `20260920-212546`（with）を消す | default 2・with 1 |
 
 ## 非機能の実現方式
 
@@ -374,12 +384,27 @@ default を控えた直後に with を起動したとき、with の系列は何�
 消す規則こそが #248 の原因で、それを既定の意味に残すと、手動の `rotate` が系列の世代を
 押し出す。
 
-### 決定 7: ローテーションは、消す前に世代名を `_safe_snap_dir` で検証する
+### 決定 7: ローテーションは、消す前に世代の場所を `_safe_snap_dir` で検証する。`_safe_snap_dir` の包含判定はパスの要素の単位にする
 
 現行の `rotate` は `snapshot.yml` の `name` をそのまま `backups_dir / name` にして
 `shutil.rmtree` へ渡す。`snapshot.yml` は編集でき、`../` を含む名前で `backups/` の外を
-消せる。`rotate` を書き直すこの変更で、`delete` / `restore` と同じ検証を通す。不正な名前の
-エントリはディレクトリを消さず、一覧からだけ外して警告する。
+消せる。`rotate` を書き直すこの変更で、`delete` / `restore` と同じ検証を通す。
+
+**`_safe_snap_dir` の包含判定も直す。** 現行は解決後のパスの文字列の前方一致で判定する。
+`backups/old` が兄弟の `backups-outside/` を指すシンボリックリンクだと、解決後のパスは
+`.../backups-outside` になり、文字列としては `.../backups` で始まるため通る。その結果、
+リンク先の中身を消せる。判定を `Path.is_relative_to(self.backups_dir.resolve())` に変え、
+パスの要素の単位で比べる。
+
+| 世代の場所 | 検証の結果 | `rotate` の扱い |
+| --- | --- | --- |
+| `backups/` の直下の実ディレクトリ | 通る | ディレクトリを消し、エントリを外す |
+| 名前が不正（`../outside` など） | `SnapshotError` | ディレクトリを消さず、エントリだけを外して警告する |
+| `backups/` の外を指すシンボリックリンク（兄弟の `backups-outside/` を含む） | `SnapshotError` | 同上。リンクもリンク先も消さない |
+
+`_safe_snap_dir` は `create` / `restore` / `copy` / `delete` も使う。これらでも、`backups/` の外を
+指すシンボリックリンクの世代は同じ `SnapshotError` で止まる。`backups/` 自体をリンクにした
+構成は、`backups_dir.resolve()` と比べるため変わらず使える。
 
 **不正な名前で `rotate` 全体を止める形は採らない。** `devbase down` のたびに失敗の警告が
 出続け、正しい世代のローテーションも止まる。
@@ -415,6 +440,7 @@ default を控えた直後に with を起動したとき、with の系列は何�
 | 23 | `uv run --locked pytest tests/ -q` |
 | 24 | 既存の `test_restore_incremental.py` と `test_manager_volumes.py` の復元のテストが変更なしで通る |
 | 25 | `tmp_path/backups` の兄弟に `outside/` を作り、`snapshot.yml` に `../outside` を含む 4 世代（同じ系列、`../outside` が最古）を書いて `rotate()`。`outside/` が残り、エントリが消え、WARNING が 1 件 |
+| 26 | `tmp_path/backups-outside/` を作り、`backups/old` をそこへのシンボリックリンクにする。`snapshot.yml` の最古の世代を `old` にして `rotate()`。`backups-outside/` の中身が残り、エントリが消え、WARNING が 1 件。あわせて `_safe_snap_dir('old')` が `SnapshotError` |
 
 `_auto_snapshot` のテストは `DEVBASE_ROOT` を `tmp_path` に向け、`SnapshotManager._run_docker_tar` を
 `monkeypatch` で差し替える。実データの `backups/` と Docker に触らない。
@@ -424,5 +450,5 @@ default を控えた直後に with を起動したとき、with の系列は何�
 | 項目 | 内容 |
 | --- | --- |
 | 間に別グループを挟んだ差分の実際の復元 | 決定 2 は tar の snar の仕組みからの推論である。実装の持ち場で、default → with → default と積んだ世代を実際の `devbase-snapshot` で復元し、最後の差分の時点の共通ボリュームに戻ることを 1 度確かめる |
-| 4 グループ以上の端末 | 全体の上限の既定 9 では、4 グループ目以降が増えるほど各系列の世代が 3 未満になる。利用者が `--max-total` で上げられることを文書に書く。自動のローテーション（`up` / `down`）の上限を変える手段は設けない |
+| 4 グループ以上の端末 | 全体の上限の既定 9 では、4 グループ目以降が増えるほど各系列の世代が 3 未満になる。**自動のローテーション（`up` / `down`）の上限を変える手段は設けない。** `--max-total` は手動の 1 回だけに効き、次の `up` / `down` で 9 まで削られる。この制限を利用者向け文書に書く。上限を保存して自動のローテーションへ効かせるかは、4 グループ以上を使う端末が現れた時点で決める |
 | #255・#256 との順序 | どちらも `rotate` と `restore` の近くを直す。この変更と別の Pull Request で進め、競合は後に入る側が解く |
