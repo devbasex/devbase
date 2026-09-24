@@ -43,83 +43,47 @@ needs_tmux = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux が�
 SPECIAL_NAMES = ["a b", "it's", 'q"x', "d$1", "s;x"]
 
 
-# go の経路を固定する tmux スタブ。実物の tmux では特定の操作だけを失敗させたり最終操作の
-# 時刻を決めたりできないため、端末と接続先を clients.json で持つ。list-sessions は
-# sessions.txt を返し、fail に書いた操作だけを非 0 にする (fail は "detach-client <端末>" か
-# "switch-client")。activity があれば実行元の推定の書式に "<activity>:/dev/pts/1" を返し、
-# 無ければその書式は未対応として落とす。-c のときの知らせ (display-message -l) は状態行へ
-# 出すだけなので何もしない。
-_GO_STUB = f"#!{sys.executable}\n" + """
+def test_go_from_target_session_detaches_only_other_target_clients(tmp_path):
+    """現状固定: 移動先に既にいる実行元と、無関係なセッションの端末は残る。"""
+    state = tmp_path / "clients.json"
+    state.write_text(json.dumps({
+        "/dev/pts/1": "$1", "/dev/pts/2": "$1", "/dev/pts/3": "$2",
+    }))
+    stub = tmp_path / "tmux"
+    stub.write_text(f"#!{sys.executable}\n" + '''
 import json
 import sys
 from pathlib import Path
 
-here = Path(__file__).parent
-state = here / "clients.json"
-fail_file = here / "fail"
-fail = fail_file.read_text().strip() if fail_file.exists() else ""
-activity_file = here / "activity"
-clients = json.loads(state.read_text())  # {端末: セッション ID}
+state = Path(__file__).with_name("clients.json")
+clients = json.loads(state.read_text())
 command, *args = sys.argv[1:]
-
 
 def option(flag):
     return args[args.index(flag) + 1]
 
-
 if command == "list-sessions":
-    print((here / "sessions.txt").read_text())
+    print("$1 target\\n$2 unrelated")
 elif command == "list-clients":
     for client, session in clients.items():
         if "-t" not in args or session == option("-t"):
             print(client)
 elif command == "display-message":
-    if "-p" not in args:
-        pass
-    elif args[-1] == "#{client_activity}:#{client_name}" and activity_file.exists():
-        print(f"{activity_file.read_text()}:/dev/pts/1")
-    elif args[-1] == "#{session_id}":
-        print(clients[option("-c")] if "-c" in args else "$1")
-    else:
-        raise SystemExit(f"unsupported tmux format: {args[-1]}")
+    if "-p" in args:
+        print(clients[option("-c")])
 elif command == "detach-client":
-    if fail == f"detach-client {option('-t')}":
-        sys.exit(1)
     del clients[option("-t")]
     state.write_text(json.dumps(clients))
 elif command == "switch-client":
-    if fail == "switch-client":
-        sys.exit(1)
     clients[option("-c")] = option("-t")
     state.write_text(json.dumps(clients))
 else:
     raise SystemExit(f"unsupported tmux command: {command}")
-"""
-
-
-def _go_env(tmp_path, clients, sessions="$1 source\n$2 target\n$3 unrelated",
-            fail="", activity=None):
-    """``clients`` の端末を繋いだ状態で ``_GO_STUB`` を置き、それを先に見る環境を返す。"""
-    (tmp_path / "clients.json").write_text(json.dumps(clients))
-    (tmp_path / "sessions.txt").write_text(sessions)
-    (tmp_path / "fail").write_text(fail)
-    if activity is not None:
-        (tmp_path / "activity").write_text(activity)
-    stub = tmp_path / "tmux"
-    stub.write_text(_GO_STUB)
+''')
     stub.chmod(0o755)
     env = {k: v for k, v in os.environ.items()
            if k not in ("TMUX", "TMUX_PANE", "ENV", "BASH_ENV")}
     env["PATH"] = f"{tmp_path}:{os.environ.get('PATH', '/usr/bin:/bin')}"
-    return env
-
-
-def test_go_from_target_session_detaches_only_other_target_clients(tmp_path):
-    """現状固定: 移動先に既にいる実行元と、無関係なセッションの端末は残る。"""
-    env = _go_env(tmp_path, {
-        "/dev/pts/1": "$1", "/dev/pts/2": "$1", "/dev/pts/3": "$2",
-    }, sessions="$1 target\n$2 unrelated")
-    state = tmp_path / "clients.json"
 
     done = subprocess.run(
         [str(SCRIPT), "go", "-c", "/dev/pts/1", "target"],
@@ -141,14 +105,55 @@ def test_go_infers_client_at_activity_boundary(
     tmp_path, idle_seconds, expected_returncode, expected_clients,
 ):
     """現状固定: 最終操作から10秒なら移動し、11秒なら全接続を維持する。"""
-    env = _go_env(tmp_path, {
-        "/dev/pts/1": "$1", "/dev/pts/2": "$2", "/dev/pts/3": "$3",
-    }, activity=str(1_000 - idle_seconds))
     state = tmp_path / "clients.json"
+    state.write_text(json.dumps({
+        "/dev/pts/1": "$1", "/dev/pts/2": "$2", "/dev/pts/3": "$3",
+    }))
+    (tmp_path / "activity").write_text(str(1_000 - idle_seconds))
+    stub = tmp_path / "tmux"
+    stub.write_text(f"#!{sys.executable}\n" + '''
+import json
+import sys
+from pathlib import Path
+
+state = Path(__file__).with_name("clients.json")
+clients = json.loads(state.read_text())
+command, *args = sys.argv[1:]
+
+def option(flag):
+    return args[args.index(flag) + 1]
+
+if command == "list-sessions":
+    print("$1 source\\n$2 target\\n$3 unrelated")
+elif command == "list-clients":
+    for client, session in clients.items():
+        if "-t" not in args or session == option("-t"):
+            print(client)
+elif command == "display-message":
+    if args[-1] == "#{client_activity}:#{client_name}":
+        activity = Path(__file__).with_name("activity").read_text()
+        print(f"{activity}:/dev/pts/1")
+    elif args[-1] == "#{session_id}":
+        print(clients[option("-c")] if "-c" in args else "$1")
+    else:
+        raise SystemExit(f"unsupported tmux format: {args[-1]}")
+elif command == "detach-client":
+    del clients[option("-t")]
+    state.write_text(json.dumps(clients))
+elif command == "switch-client":
+    clients[option("-c")] = option("-t")
+    state.write_text(json.dumps(clients))
+else:
+    raise SystemExit(f"unsupported tmux command: {command}")
+''')
+    stub.chmod(0o755)
     date = tmp_path / "date"
     date.write_text('#!/bin/sh\n[ "$1" = "+%s" ] || exit 1\nprintf "1000\\n"\n')
     date.chmod(0o755)
-    env.update(TMUX="/unused/socket,123,0", TMUX_PANE="%1")
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TMUX", "TMUX_PANE", "ENV", "BASH_ENV")}
+    env.update(PATH=f"{tmp_path}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+               TMUX="/unused/socket,123,0", TMUX_PANE="%1")
 
     done = subprocess.run(
         [str(SCRIPT), "go", "target"],
@@ -161,17 +166,68 @@ def test_go_infers_client_at_activity_boundary(
         assert "実行元の端末を特定できない" in done.stderr
 
 
-# go で detach-client / switch-client が失敗する経路の既定の接続。実行元を source、
-# 2 台を target、1 台を unrelated に繋ぐ。
-_GO_FAIL_CLIENTS = {
-    "/dev/pts/1": "$1", "/dev/pts/2": "$2", "/dev/pts/3": "$2",
-    "/dev/pts/4": "$3",
-}
+# go で detach-client / switch-client が失敗する経路を固定する。実物の tmux では特定の
+# 操作だけを失敗させられないため、端末と接続先を JSON で持ち、fail に書いた操作だけを
+# 非 0 にする tmux スタブを使う (fail は "detach-client <端末>" か "switch-client")。
+# -c のときの知らせ (display-message -l) は状態行へ出すだけなので何もしない。
+_GO_FAIL_STUB = f"#!{sys.executable}\n" + '''
+import json
+import sys
+from pathlib import Path
+
+state = Path(__file__).with_name("clients.json")
+fail = Path(__file__).with_name("fail").read_text().strip()
+clients = json.loads(state.read_text())  # {端末: セッション ID}
+command, *args = sys.argv[1:]
+
+
+def option(flag):
+    return args[args.index(flag) + 1]
+
+
+if command == "list-sessions":
+    print("$1 source\\n$2 target\\n$3 unrelated")
+elif command == "list-clients":
+    for client, session in clients.items():
+        if "-t" not in args or session == option("-t"):
+            print(client)
+elif command == "display-message":
+    if "-p" in args:
+        print(clients[option("-c")])
+elif command == "detach-client":
+    if fail == f"detach-client {option('-t')}":
+        sys.exit(1)
+    del clients[option("-t")]
+    state.write_text(json.dumps(clients))
+elif command == "switch-client":
+    if fail == "switch-client":
+        sys.exit(1)
+    clients[option("-c")] = option("-t")
+    state.write_text(json.dumps(clients))
+else:
+    raise SystemExit(f"unsupported tmux command: {command}")
+'''
+
+
+def _go_fail_env(tmp_path, fail):
+    """実行元を source、2 台を target、1 台を unrelated に繋ぎ、``fail`` の操作だけ失敗させる。"""
+    (tmp_path / "clients.json").write_text(json.dumps({
+        "/dev/pts/1": "$1", "/dev/pts/2": "$2", "/dev/pts/3": "$2",
+        "/dev/pts/4": "$3",
+    }))
+    (tmp_path / "fail").write_text(fail)
+    stub = tmp_path / "tmux"
+    stub.write_text(_GO_FAIL_STUB)
+    stub.chmod(0o755)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TMUX", "TMUX_PANE", "ENV", "BASH_ENV")}
+    env["PATH"] = f"{tmp_path}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+    return env
 
 
 def test_go_detach_failure_warns_but_still_switches(tmp_path):
     """現状固定: 対象の他端末を外せなくても警告だけで続け、実行元は移り終了値は 0。"""
-    env = _go_env(tmp_path, _GO_FAIL_CLIENTS, fail="detach-client /dev/pts/2")
+    env = _go_fail_env(tmp_path, "detach-client /dev/pts/2")
 
     done = subprocess.run(
         [str(SCRIPT), "go", "-c", "/dev/pts/1", "target"],
@@ -188,10 +244,14 @@ def test_go_detach_failure_warns_but_still_switches(tmp_path):
 
 def test_go_detach_failure_continues_to_remaining_client_and_earlier_session(tmp_path):
     """現状固定: $1 の先頭端末を外せなくても、残りを外して $2 の実行元を移す。"""
-    env = _go_env(tmp_path, {
-        "/dev/pts/2": "$1", "/dev/pts/3": "$1", "/dev/pts/1": "$2",
-    }, sessions="$1 target\n$2 source\n$3 unrelated", fail="detach-client /dev/pts/2")
+    env = _go_fail_env(tmp_path, "detach-client /dev/pts/2")
     state = tmp_path / "clients.json"
+    state.write_text(json.dumps({
+        "/dev/pts/2": "$1", "/dev/pts/3": "$1", "/dev/pts/1": "$2",
+    }))
+    (tmp_path / "tmux").write_text(_GO_FAIL_STUB.replace(
+        "$1 source\\n$2 target", "$1 target\\n$2 source",
+    ))
 
     done = subprocess.run(
         [str(SCRIPT), "go", "-c", "/dev/pts/1", "target"],
@@ -207,7 +267,7 @@ def test_go_detach_failure_continues_to_remaining_client_and_earlier_session(tmp
 
 def test_go_switch_failure_exits_one_after_detaching(tmp_path):
     """現状固定: 切り替えに失敗すると終了値 1。対象の他端末は外した後で、実行元は残る。"""
-    env = _go_env(tmp_path, _GO_FAIL_CLIENTS, fail="switch-client")
+    env = _go_fail_env(tmp_path, "switch-client")
 
     done = subprocess.run(
         [str(SCRIPT), "go", "-c", "/dev/pts/1", "target"],

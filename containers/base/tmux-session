@@ -298,28 +298,6 @@ do_peek() {
 	fi
 }
 
-# 実行元の端末を標準出力へ出す (特定できなければ空)。-c があればそれ。無ければ
-# tmux-first と同じ規則で特定する (tmux-first の「自分自身のクライアント」のコメントを参照。
-# 規則を変えるときは両方直す)。pane のシェルは起動元の端末を知らないため、tmux の
-# 「現在のクライアント」(最終操作が最も新しいクライアント) を使い、最終操作が SELF_FRESH
-# 秒以内のときだけ実行元と認める。プロンプトから打った場合はそのキー入力で最終操作が更新される。
-infer_client() {
-	me=$CLIENT
-	if [ "$HAVE_CLIENT" = 0 ]; then
-		SELF_FRESH=10
-		now=$(date +%s)
-		self=$(tmux display-message -p '#{client_activity}:#{client_name}' 2>/dev/null || true)
-		case "$self" in
-		[0-9]*:?*)
-			if [ "$((now - ${self%%:*}))" -le "$SELF_FRESH" ]; then
-				me=${self#*:}
-			fi
-			;;
-		esac
-	fi
-	printf '%s\n' "$me"
-}
-
 do_go() {
 	id=$1
 	name=$(name_of "$id")
@@ -328,7 +306,24 @@ do_go() {
 		exec tmux attach-session -d -t "$id"
 	fi
 
-	ME=$(infer_client)
+	# 実行元の端末。-c があればそれ。無ければ tmux-first と同じ規則で特定する
+	# (tmux-first の「自分自身のクライアント」のコメントを参照。規則を変えるときは両方直す)。
+	# pane のシェルは起動元の端末を知らないため、tmux の「現在のクライアント」(最終操作が
+	# 最も新しいクライアント) を使い、最終操作が SELF_FRESH 秒以内のときだけ実行元と認める。
+	# プロンプトから打った場合はそのキー入力で最終操作が更新される。
+	ME=$CLIENT
+	if [ "$HAVE_CLIENT" = 0 ]; then
+		SELF_FRESH=10
+		now=$(date +%s)
+		self=$(tmux display-message -p '#{client_activity}:#{client_name}' 2>/dev/null || true)
+		case "$self" in
+		[0-9]*:?*)
+			if [ "$((now - ${self%%:*}))" -le "$SELF_FRESH" ]; then
+				ME=${self#*:}
+			fi
+			;;
+		esac
+	fi
 	if [ -z "$ME" ]; then
 		warn "実行元の端末を特定できないため、何も外さず切り替えもしません"
 		warn "手で切り替えるには: tmux switch-client -t '$id'   ($name)"
