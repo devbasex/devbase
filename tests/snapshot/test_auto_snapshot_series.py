@@ -101,6 +101,42 @@ def test_zero_interval_never_skips(root):
     assert (backups / "D" / "incr-001.tar.zst").exists()
 
 
+def test_new_generation_rotates_only_its_own_series(root, monkeypatch):
+    """現状固定: 作成の後の rotate() で、新世代を積んだ系列の最古だけが消える。
+
+    ``_auto_snapshot`` は「新世代の作成 → 既定の rotate()」を続けて呼ぶ。既定の
+    rotate() は系列ごとに ``max_generations`` (ここでは 3) 世代を残すため、default
+    系列を 3 世代 (最新の差分数 10 で上限) と with 系列を 1 世代の状態から default
+    で呼ぶと、default は新世代が積まれて 4 世代 → 最古が 1 つ落ちて 3 世代に戻り、
+    with の 1 世代はそのまま残る。作成とローテーションのつなぎ目を固定する。
+    """
+    backups = write_state(root, [
+        ("D1", "default", 0), ("D2", "default", 0), ("D3", "default", 10),
+        ("W1", "with", 0)])
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "default")
+
+    container._auto_snapshot()
+
+    entries = yaml.safe_load((backups / "snapshot.yml").read_text())["snapshots"]
+    # default 系列は 3 世代 (最古の D1 が落ち、新世代が 1 つ増えた)。
+    default_series = [e["name"] for e in entries
+                      if e.get("volumes", {}).get("group") == "devbase_home_default"]
+    with_series = [e["name"] for e in entries
+                   if e.get("volumes", {}).get("group") == "devbase_home_with"]
+    assert len(default_series) == 3
+    assert "D1" not in default_series
+    assert {"D2", "D3"} <= set(default_series)
+    new_names = set(default_series) - {"D2", "D3"}
+    assert len(new_names) == 1  # 新しく積まれた 1 世代
+    assert with_series == ["W1"]  # with の 1 世代はそのまま残る
+
+    # 消えた最古 (D1) のディレクトリは無く、with (W1) のディレクトリは残る。
+    assert not (backups / "D1").exists()
+    assert (backups / "W1" / "full.tar.zst").exists()
+    new_name = next(iter(new_names))
+    assert (backups / new_name / "full.tar.zst").exists()
+
+
 def test_invalid_group_warns_without_creating_metadata(root, monkeypatch, caplog):
     """現状固定: ボリューム解決の失敗は警告に落とし、呼び出し元へ戻る。"""
     monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "invalid/group")
