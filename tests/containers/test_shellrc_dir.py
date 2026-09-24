@@ -165,6 +165,16 @@ def test_one_glob_option_on_is_restored_before_reading(home, rcdir, before, expe
     assert result.stderr == ""
 
 
+def test_glob_options_are_restored_when_ifs_has_no_space(home, rcdir):
+    """利用者の IFS に空白が無くても、控えた failglob / dotglob を戻す。"""
+    (rcdir / "10-show.sh").write_text(f"{SHOW}\n")
+
+    result = _run(SHOW, home, before="IFS=$'\\n\\t'; shopt -s failglob dotglob")
+
+    assert result.stdout.splitlines() == ["fg=on", "dg=on", "fg=on", "dg=on"]
+    assert result.stderr == ""
+
+
 def test_option_set_by_a_file_is_kept(home, rcdir):
     (rcdir / "10-set.sh").write_text("shopt -s failglob\n")
     (rcdir / "20-show.sh").write_text("shopt -q failglob && echo fg=on || echo fg=off\n")

@@ -11,15 +11,16 @@
 # - 変数名を __devbase_ で始め、最後に消す。利用者の変数 (f など) を上書きしない
 __devbase_shellrc_dir="${DEVBASE_SHELLRC_DIR:-$HOME/.shellrc.d}"
 if [ -d "$__devbase_shellrc_dir" ]; then
-    __devbase_shellrc_opts=
-    shopt -q failglob && __devbase_shellrc_opts="$__devbase_shellrc_opts failglob"
-    shopt -q dotglob && __devbase_shellrc_opts="$__devbase_shellrc_opts dotglob"
+    # 1 つずつ別の変数に控える。1 本の文字列にまとめて分割で戻すと、利用者の IFS に
+    # 空白が無いとき (IFS=$'\n\t' など) に分割されず戻せない
+    __devbase_shellrc_failglob=
+    __devbase_shellrc_dotglob=
+    shopt -q failglob && __devbase_shellrc_failglob=1
+    shopt -q dotglob && __devbase_shellrc_dotglob=1
     shopt -u failglob dotglob
     __devbase_shellrc_files=("$__devbase_shellrc_dir"/*.sh)
-    if [ -n "$__devbase_shellrc_opts" ]; then
-        # 名前ごとに分けて渡すため、引用符で囲まない
-        shopt -s $__devbase_shellrc_opts
-    fi
+    [ -n "$__devbase_shellrc_failglob" ] && shopt -s failglob
+    [ -n "$__devbase_shellrc_dotglob" ] && shopt -s dotglob
     # 一致が無いときはグロブが文字列のまま残る。-f の判定で落ちる
     for __devbase_shellrc_file in "${__devbase_shellrc_files[@]}"; do
         if [ -f "$__devbase_shellrc_file" ] && [ -r "$__devbase_shellrc_file" ]; then
@@ -28,4 +29,5 @@ if [ -d "$__devbase_shellrc_dir" ]; then
     done
 fi
 # 終了状態を 0 にする役も兼ねる (最後のファイルが読めなくても非 0 を残さない)
-unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_files __devbase_shellrc_opts
+unset __devbase_shellrc_dir __devbase_shellrc_file __devbase_shellrc_files \
+    __devbase_shellrc_failglob __devbase_shellrc_dotglob
