@@ -1949,46 +1949,73 @@ def _ensure_env_files() -> bool:
     logger.info("Running 'devbase env init' to create them...")
 
     success = True
+
+    if not has_global:
+        if not _initialize_global_env(devbase_root, group):
+            success = False
+
+    if not has_project:
+        if not _create_project_env(project_env):
+            success = False
+
+    return success
+
+
+def _initialize_global_env(devbase_root: Path, group: Optional[str]) -> bool:
+    """子プロセスの ``devbase env init`` で共通の ``.env`` を作る。
+
+    子プロセスは cwd=$DEVBASE_ROOT で起動し、実行時のプロジェクトを持たない。グループを
+    渡さないと $DEVBASE_ROOT/env のグループの共通の参照へ書き、親が読み直す参照と
+    揃わない (PLAN56 決定 10)。layout: group でないときは渡さない。
+
+    終了コードによらず、持ち回っている SecretStore の控えは解放する。書いたのは子プロセス
+    で控えは更新されないため、サーバ backend では最初の 404 が空として残り、そのまま起動
+    すると env init が書いた共通機密が渡らない。以後は現物を読み直す (PLAN55 決定 5)。
+
+    Returns:
+        子プロセスが正常終了 (終了コード 0) したら True。非ゼロ終了・起動時の例外は False。
+    """
+    from devbase.env import runtime as _runtime
+
+    logger.info("Creating devbase root .env...")
     child_env = {**os.environ, 'PYTHONPATH': str(devbase_root / 'lib')}
-    # 子プロセスは cwd=$DEVBASE_ROOT で起動し、実行時のプロジェクトを持たない。グループを
-    # 渡さないと $DEVBASE_ROOT/env のグループの共通の参照へ書き、親が読み直す参照と
-    # 揃わない (PLAN56 決定 10)。layout: group でないときは渡さない
     init_argv = [sys.executable, '-m', 'devbase.cli', 'env', 'init']
     if group is not None:
         init_argv += ['--group', group]
 
-    if not has_global:
-        logger.info("Creating devbase root .env...")
-        try:
-            result = subprocess.run(
-                init_argv,
-                env=child_env,
-                cwd=str(devbase_root),
-                check=False
-            )
-            if result.returncode != 0:
-                success = False
-                logger.error("Failed to create devbase root .env")
-        except Exception as e:
-            logger.error("Running env init for devbase root: %s", e)
+    success = True
+    try:
+        result = subprocess.run(
+            init_argv,
+            env=child_env,
+            cwd=str(devbase_root),
+            check=False
+        )
+        if result.returncode != 0:
             success = False
-        finally:
-            # 書いたのは子プロセスで、持ち回っている SecretStore の控えは更新されない。
-            # サーバ backend では最初の 404 が空として残り、そのまま起動すると env init が
-            # 書いた共通機密が渡らない。終了コードによらず捨て、以後は現物を読み直す
-            # (PLAN55 決定 5)。
-            _runtime.release_store()
-
-    if not has_project:
-        logger.info("Creating project .env...")
-        try:
-            project_env.touch()
-            logger.info("Created empty project .env: %s", project_env)
-        except Exception as e:
-            logger.error("Failed to create project .env: %s", e)
-            success = False
-
+            logger.error("Failed to create devbase root .env")
+    except Exception as e:
+        logger.error("Running env init for devbase root: %s", e)
+        success = False
+    finally:
+        _runtime.release_store()
     return success
+
+
+def _create_project_env(project_env: Path) -> bool:
+    """空のプロジェクト ``.env`` を作る。
+
+    Returns:
+        作成できたら True。作成に失敗したら False。
+    """
+    logger.info("Creating project .env...")
+    try:
+        project_env.touch()
+        logger.info("Created empty project .env: %s", project_env)
+    except Exception as e:
+        logger.error("Failed to create project .env: %s", e)
+        return False
+    return True
 
 
 _IMAGE_MAX_AGE_DAYS_DEFAULT = 7
