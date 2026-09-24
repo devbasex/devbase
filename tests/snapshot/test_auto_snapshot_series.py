@@ -99,3 +99,15 @@ def test_zero_interval_never_skips(root):
 
     container._auto_snapshot()
     assert (backups / "D" / "incr-001.tar.zst").exists()
+
+
+def test_invalid_group_warns_without_creating_metadata(root, monkeypatch, caplog):
+    """現状固定: ボリューム解決の失敗は警告に落とし、呼び出し元へ戻る。"""
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "invalid/group")
+
+    with caplog.at_level(logging.WARNING, logger="devbase"):
+        container._auto_snapshot()
+
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert not (root / "backups" / "snapshot.yml").exists()
