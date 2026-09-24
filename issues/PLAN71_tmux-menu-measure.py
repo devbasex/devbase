@@ -219,6 +219,29 @@ def main():
         time.sleep(1)
         state(f"{label} (open by send-keys, b typed last)")
 
+    # 9. 端末へ打たず、新しいセッション c・d へ c→d の順に attach しただけで直近が決まるか。
+    #    （テストの tm.attach(home) → tm.attach(other) と同じ形。7 と違って b の端末へ打たない）
+    for name in ("c", "d"):
+        t("new-session", "-d", "-s", name, "-x", "80", "-y", "24")
+    spawn("attach", "-t", "=c")
+    spawn("attach", "-t", "=d")
+    tmux_var = t("display-message", "-p", "-t", "=c:", "#{socket_path},#{pid},0")
+    c_pane = t("display-message", "-p", "-t", "=c:", "#{pane_id}")
+    for label, prog, pane in (
+        ("9a open-list-no-t, no TMUX_PANE", "open-list-no-t", None),
+        ("9b open-list (-t), TMUX_PANE=c's pane", "open-list", c_pane),
+    ):
+        reset()
+        env = dict(ENV, TMUX=tmux_var)
+        if pane:
+            env["TMUX_PANE"] = pane
+        subprocess.Popen(
+            [prog], env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        time.sleep(1)
+        state(f"9 no tty, attached c then d (no typing), TMUX_PANE={pane}: {label}")
+
     t("kill-server")
 
 

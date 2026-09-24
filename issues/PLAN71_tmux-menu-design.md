@@ -90,39 +90,42 @@ tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と
 `-t "$TMUX_PANE"` を付けて次の `<template>` で `choose-tree -Zs -O name` を実行する。`open-list-no-t`
 は `open-list` から `-t` を落としたもので、`TMUX_PANE` があっても `-t` に使わない。`open-list-unset` は
 `TMUX_PANE` を `unset` してから `-t` を付けずに開き、`open-list-unset-t` は `unset` する前の値を `-t` に使う。セッションは
-`a`・`it's`（`'` を含む）・`b` の 3 つで、端末 `/dev/ttys024` が `a` に、`/dev/ttys025` が `b` に
-繋がっている（端末の名前は実行ごとに変わる）。一覧では 1 つ上を選んで Enter を押した。
+`a`・`it's`（`'` を含む）・`b` の 3 つで、端末 `/dev/ttys023` が `a` に、`/dev/ttys024` が `b` に
+繋がっている（端末の名前は実行ごとに変わる）。9 だけは最後に `c`・`d` の 2 つを足し、端末を
+`c`→`d` の順に繋ぐ。一覧では 1 つ上を選んで Enter を押した。
 
 | # | 開き方 | 一覧が出た pane | `menu` へ渡った引数（ID → 名前） | 判定 |
 | --- | --- | --- | --- | --- |
-| 1 | `a` の端末のプロンプトで `open-list` を打つ | `a` | `menu -c /dev/ttys024 $1` → `it's` | 正しい |
-| 2 | tmux の外で `tmux attach \; choose-tree -Zs -O name '<template>'` | 新しい端末 `/dev/ttys026` が `it's`（端末の無いセッション）へ繋がる | `menu -c /dev/ttys026 $2` → `b` | 正しい |
-| 3 | `bind-key S run-shell "tmux choose-tree -Zs -O name '<template>'"`（template を `run-shell` の文字列へ直接埋め込む）を `a` の端末で押す | `a` | `menu -c /dev/ttys024 sh`。選ぶ前に押した端末のセッションの ID（`$0`）へ展開され、それをシェルが変数として `sh` に読んだと見られる | **誤り** |
-| 4 | `bind-key S run-shell open-list` を `a` の端末で押す | `a` | `menu -c /dev/ttys024 $1` → `it's` | 正しい |
+| 1 | `a` の端末のプロンプトで `open-list` を打つ | `a` | `menu -c /dev/ttys023 $1` → `it's` | 正しい |
+| 2 | tmux の外で `tmux attach \; choose-tree -Zs -O name '<template>'` | 新しい端末 `/dev/ttys025` が `it's`（端末の無いセッション）へ繋がる | `menu -c /dev/ttys025 $2` → `b` | 正しい |
+| 3 | `bind-key S run-shell "tmux choose-tree -Zs -O name '<template>'"`（template を `run-shell` の文字列へ直接埋め込む）を `a` の端末で押す | `a` | `menu -c /dev/ttys023 sh`。選ぶ前に押した端末のセッションの ID（`$0`）へ展開され、それをシェルが変数として `sh` に読んだと見られる | **誤り** |
+| 4 | `bind-key S run-shell open-list` を `a` の端末で押す | `a` | `menu -c /dev/ttys023 $1` → `it's` | 正しい |
 | 5 | 4 の形（1 秒待ってから開く `open-list-slow`）で、押した直後に `b` の端末へ 1 文字打つ | **`b`** | （選んでいない） | **誤り** |
-| 6 | `bind-key S run-shell "TMUX_PANE=#{pane_id} open-list-slow"` で 5 と同じ操作。続けて選んで Enter | `a` | `menu -c /dev/ttys024 $1` → `it's` | 正しい |
+| 6 | `bind-key S run-shell "TMUX_PANE=#{pane_id} open-list-slow"` で 5 と同じ操作。続けて選んで Enter | `a` | `menu -c /dev/ttys023 $1` → `it's` | 正しい |
 | 7a | `b` の端末へ 1 文字打って直近を `b` にしてから、端末を持たないプロセスで `a` の pane の `TMUX`・`TMUX_PANE` を渡して `-t` を付けない `open-list-no-t` を実行する（テストの `tm.run("tmux-menu", env=tm.inside_env(home))` と同じ形） | `a` | （選んでいない） | 正しい（`-t` が無くても `TMUX_PANE` の pane に出る） |
 | 7b | 7a と同じ操作で、`-t "$TMUX_PANE"` を付ける `open-list` を実行する | `a` | （選んでいない） | 正しい |
 | 7c | 7a と同じ操作で、`TMUX_PANE` を渡さずに `open-list-no-t` を実行する | **`b`** | （選んでいない） | 直近の端末に出る |
 | 7d | 7a と同じ操作で、`TMUX_PANE` を渡して `open-list-unset` を実行する | **`b`** | （選んでいない） | 直近の端末に出る（7c と同じ） |
 | 7e | 7a と同じ操作で、`TMUX_PANE` を渡して `open-list-unset-t` を実行する | `a` | （選んでいない） | 正しい（消しても `-t` に値があれば出る） |
-| 8a | `a` の pane へ `send-keys -t =a: <open-list の絶対パス> Enter` でコマンド行を打って一覧を開き、`send-keys -t =a: Up` で 1 つ上へ動かす。`b` の端末へ 1 文字打ってから `send-keys -t =a: Enter` | `a` | `menu -c /dev/ttys025 $1` → `it's`（端末は **`b`** のもの） | Enter を `send-keys` で送ると、`#{client_name}` は直近に操作された端末になる |
-| 8b | 8a と同じ操作で、Enter だけを `a` の端末から送る | `a` | `menu -c /dev/ttys024 $1` → `it's` | 正しい（`send-keys` で開いた一覧でも、`send-keys` の `Up` は効く） |
+| 8a | `a` の pane へ `send-keys -t =a: <open-list の絶対パス> Enter` でコマンド行を打って一覧を開き、`send-keys -t =a: Up` で 1 つ上へ動かす。`b` の端末へ 1 文字打ってから `send-keys -t =a: Enter` | `a` | `menu -c /dev/ttys024 $1` → `it's`（端末は **`b`** のもの） | Enter を `send-keys` で送ると、`#{client_name}` は直近に操作された端末になる |
+| 8b | 8a と同じ操作で、Enter だけを `a` の端末から送る | `a` | `menu -c /dev/ttys023 $1` → `it's` | 正しい（`send-keys` で開いた一覧でも、`send-keys` の `Up` は効く） |
+| 9a | 新しいセッション `c`・`d` を作り、端末を `c`→`d` の順に attach する。**どの端末へも打たずに**、端末を持たないプロセスで `c` の `TMUX` だけを渡し、`TMUX_PANE` を渡さずに `open-list-no-t` を実行する（テストの `tm.attach(home)` → `tm.attach(other)` と同じ順） | **`d`** | （選んでいない） | 後に attach した端末が直近になる。打たなくても繋いだ順だけで決まる |
+| 9b | 9a に続けて、`c` の pane の `TMUX_PANE` を渡して `open-list` を実行する（行 11 の足すテストと同じ形） | `c` | （選んでいない） | 正しい（直近が `d` でも `TMUX_PANE` の pane に出る） |
 
 スクリプトの出力（抜粋。`panes` は `セッション:pane:モード`）:
 
 ```text
 ## 2 outside: attach ; choose-tree
-  clients: ['/dev/ttys024=a', '/dev/ttys025=b', "/dev/ttys026=it's"]
-  menu args: 'menu -c /dev/ttys026 $2' -> 'menu -c /dev/ttys026 b'
+  clients: ['/dev/ttys023=a', '/dev/ttys024=b', "/dev/ttys025=it's"]
+  menu args: 'menu -c /dev/ttys025 $2' -> 'menu -c /dev/ttys025 b'
 ## 3 bind: run-shell with inline template
-  menu args: 'menu -c /dev/ttys024 sh' -> 'menu -c /dev/ttys024 sh'
+  menu args: 'menu -c /dev/ttys023 sh' -> 'menu -c /dev/ttys023 sh'
 ## 5 bind: run-shell (no -t), other client typed during start
   panes: ['a:%0:', 'b:%2:tree-mode', "it's:%1:"]
 ## 6 bind: run-shell TMUX_PANE=#{pane_id}, other client typed during start
   panes: ['a:%0:tree-mode', 'b:%2:', "it's:%1:"]
 ## 6b same binding, pick and Enter
-  menu args: 'menu -c /dev/ttys024 $1' -> "menu -c /dev/ttys024 it's"
+  menu args: 'menu -c /dev/ttys023 $1' -> "menu -c /dev/ttys023 it's"
 ## 7 no tty, b typed last, TMUX_PANE=%0: 7a open-list-no-t, TMUX_PANE=a's pane
   panes: ['a:%0:tree-mode', 'b:%2:', "it's:%1:"]
 ## 7 no tty, b typed last, TMUX_PANE=%0: 7b open-list (-t), TMUX_PANE=a's pane
@@ -134,9 +137,14 @@ tmux の中でコマンドを打つ形（`TMUX_PANE` がシェルにある）と
 ## 7 no tty, b typed last, TMUX_PANE=%0: 7e open-list-unset-t, TMUX_PANE=a's pane
   panes: ['a:%0:tree-mode', 'b:%2:', "it's:%1:"]
 ## 8a Enter by send-keys (open by send-keys, b typed last)
-  menu args: 'menu -c /dev/ttys025 $1' -> "menu -c /dev/ttys025 it's"
-## 8b Enter by a's terminal (open by send-keys, b typed last)
   menu args: 'menu -c /dev/ttys024 $1' -> "menu -c /dev/ttys024 it's"
+## 8b Enter by a's terminal (open by send-keys, b typed last)
+  menu args: 'menu -c /dev/ttys023 $1' -> "menu -c /dev/ttys023 it's"
+## 9 no tty, attached c then d (no typing), TMUX_PANE=None: 9a open-list-no-t, no TMUX_PANE
+  clients: ['/dev/ttys023=a', '/dev/ttys024=b', '/dev/ttys028=c', '/dev/ttys029=d']
+  panes: ['a:%0:', 'b:%2:', 'c:%3:', 'd:%4:tree-mode', "it's:%1:"]
+## 9 no tty, attached c then d (no typing), TMUX_PANE=%3: 9b open-list (-t), TMUX_PANE=c's pane
+  panes: ['a:%0:', 'b:%2:', 'c:%3:tree-mode', 'd:%4:', "it's:%1:"]
 ```
 
 `<template>` は今の `prefix S` の行と同じ次の文字列である。
@@ -155,6 +163,8 @@ run-shell -t "%%%" "tmux-session menu -c #{q:client_name} #{q:session_id}"
   `TMUX_PANE` が無いときだけ直近の端末に出る（7c）。`-t "$TMUX_PANE"` を付けても付けなくても
   結果は同じである（7a・7b）。実装の中で `TMUX_PANE` を消しても、消す前の値を `-t` に使えば
   出る pane は変わらない（7d・7e）
+- 端末へ打たなくても、後に attach した端末が直近に操作された端末になる（9a）。そのうえで
+  `TMUX_PANE` を渡せば、直近の端末ではなく `TMUX_PANE` の pane に出る（9b）
 - `send-keys` で pane へ送ったキーは、その pane の一覧を動かす。ただし一覧の Enter で展開される
   `#{client_name}` は、`send-keys` では pane に繋がった端末ではなく直近に操作された端末になる
   （8a）。押した端末の名前を確かめるには、Enter をその端末から送る（8b）
@@ -331,7 +341,7 @@ Enter の後は PLAN69 の `menu` の流れと同じである。
 | 8 | 2 つの形をどちらも両方の名前で走らせる。**一覧を開く形:** `tmux-menu` と `tmux-session menu` で 1・6 を走らせる（parametrize。1 は `send-keys` で `f"{tm.bin}/tmux-menu"` / `f"{tm.bin}/tmux-session menu"` を打ち、6 は `tm.run("tmux-menu")` / `tm.run("tmux-session", "menu")` で起動する）。**メニューを出す形:** `ui_tm` で `target = tm.new("devbase-3")` と `me = tm.attach(tm.new("zz-home"))` を作り、`cmd` = `f"tmux-menu -c {me.tty} {shlex.quote(target)}"` / `f"tmux-session menu -c {me.tty} {shlex.quote(target)}"` で parametrize し、`test_menu_notifies_client_on_failure` と同じく `tm.tmux("run-shell", "-b", cmd)` で呼ぶ。`run-shell` はサーバの環境の `PATH`（`bin` を含む）でコマンドを引く。`tm.new` はセッションの ID を返し、`ui_tm` で最初に作る `devbase-3` の ID は `$0` になる。`run-shell` は文字列を `sh -c` へ渡すため、引用しないと `$0` が `sh` に展開され（実測の 3 と同じ現象）、`tmux-session` は「セッションがありません: sh」で終了コード 1 になる（専用ソケットで `run-shell 'printf "<%s>\n" $0'` が `<sh>`、`'$0'` と引用すると `<$0>` になることを確かめた）。テストのファイルに `import shlex` を足す。`-b` で背景に回すため、`display-menu` が閉じるまでテストは止まらない。どちらの名前でも `me` の端末に同じメニュー（`test_menu_peek_opens_popup` と同じく `中身を見る` の項目）が出ることを `_wait(lambda: "中身を見る" in me.output())` で見る。`fake_tm` の record では確かめられない。偽物に置き換わるのは `tmux-session` だけで、`bin` の `tmux-menu` は本物のスクリプトへの symlink のまま `display-menu` を出し、`tmux-session` を呼ばないため |
 | 9 | `test_usage_errors_exit_two` の parametrize へ `("tmux-menu", "-c", "/dev/pts/1")`（`-c` だけ）・`("tmux-menu", "a")`（`-c` が無い）・`("tmux-menu", "-c", "/dev/pts/1", "a", "b")`（余分な引数）・`("tmux-menu", "-x")`（知らないオプション）を足し、終了コード 2 と標準エラーの理由を見る。`test_help_exits_zero` へ `("tmux-menu", "-h")` を足し、`tm.run("tmux-session", "-h")` の標準出力に `tmux-menu` が含まれることを見る |
 | 10 | Dockerfile の symlink の `RUN` に `tmux-menu` が含まれることを固定する（`SHORT_NAMES` を足した `test_dockerfile_links_short_names`）。建てたイメージで `command -v tmux-menu` を見る |
-| 11 | **書き換える既存テスト:** `test_prefix_s_opens_session_chooser`（`tests/containers/test_tmux_conf.py`）は割り当てに `choose-tree` と `tmux-session menu` が含まれることを見ており、決定 2 で落ちる。割り当てがちょうど 1 つで、`run-shell` が `TMUX_PANE=#{pane_id} tmux-menu` を呼ぶことを見る形へ改める。**基盤更新で通る既存テスト:** `test_prefix_s_passes_selected_id_and_client` と、`prefix S` から開く `test_menu_*` 4 件（「テスト基盤の更新」の表）。中身は変えない。**足すテスト:** 時間の競合に頼らず、`TMUX_PANE` の pane に一覧が出ることを見る。`tm` で `home` と `other` の 2 つのセッションを作り、`tm.attach(home)` の後に `tm.attach(other)` で繋ぐ。後に繋いだ `other` の端末が直近に操作された端末になり、端末へ打たなくてもこの順だけで決まる（手元の 3.7b の専用ソケットで、打たずに `TMUX_PANE` を消して開くと `other` に出ることを確かめた）。そのうえで `tm.run("tmux-menu", env=tm.inside_env(home))` を実行し、`home` の pane の `#{pane_mode}` が `tree-mode` になり、`other` の pane はならないことを見る。このテストが縛るのは「一覧が `TMUX_PANE` の pane に出る」という振る舞いであり、`-t "$TMUX_PANE"` の分岐ではない。`inside_env` は `TMUX_PANE` を必ず渡し、tmux は `-t` が無くても環境の `TMUX_PANE` で現在の pane を決めるため、実装が `-t` を落としても、`TMUX_PANE` を読まなくても通る（実測の 7a・7b）。落ちるのは、実装が `TMUX_PANE` を消し（`unset TMUX_PANE` や `env -u TMUX_PANE`）、かつその値を `-t` にも使わずに tmux を呼ぶ壊し方だけである（実測の 7d。消す前の値を `-t` に使えば通る、7e）。`prefix S` が `TMUX_PANE=#{pane_id}` を渡すことは、書き換える静的テストが縛る。実測の 5・6 のような、押した直後に別の端末へ打つテストは採らない。実測では 1 秒待つ `open-list-slow` で押してから `choose-tree` までの間を作ったが、本物の `tmux-menu` にはその待ちが無く、その間に別の端末を操作できる保証が無いため、割り当てが `TMUX_PANE` を渡さなくても通りうる。`prefix s` は既定のまま |
+| 11 | **書き換える既存テスト:** `test_prefix_s_opens_session_chooser`（`tests/containers/test_tmux_conf.py`）は割り当てに `choose-tree` と `tmux-session menu` が含まれることを見ており、決定 2 で落ちる。割り当てがちょうど 1 つで、`run-shell` が `TMUX_PANE=#{pane_id} tmux-menu` を呼ぶことを見る形へ改める。**基盤更新で通る既存テスト:** `test_prefix_s_passes_selected_id_and_client` と、`prefix S` から開く `test_menu_*` 4 件（「テスト基盤の更新」の表）。中身は変えない。**足すテスト:** 時間の競合に頼らず、`TMUX_PANE` の pane に一覧が出ることを見る。`tm` で `home` と `other` の 2 つのセッションを作り、`tm.attach(home)` の後に `tm.attach(other)` で繋ぐ。後に繋いだ `other` の端末が直近に操作された端末になり、端末へ打たなくてもこの順だけで決まる（実測の 9a。`TMUX_PANE` を渡さずに開くと後に繋いだ `d` に出る。9b で `TMUX_PANE` を渡すと先に繋いだ `c` に出る）。そのうえで `tm.run("tmux-menu", env=tm.inside_env(home))` を実行し、`home` の pane の `#{pane_mode}` が `tree-mode` になり、`other` の pane はならないことを見る。このテストが縛るのは「一覧が `TMUX_PANE` の pane に出る」という振る舞いであり、`-t "$TMUX_PANE"` の分岐ではない。`inside_env` は `TMUX_PANE` を必ず渡し、tmux は `-t` が無くても環境の `TMUX_PANE` で現在の pane を決めるため、実装が `-t` を落としても、`TMUX_PANE` を読まなくても通る（実測の 7a・7b）。落ちるのは、実装が `TMUX_PANE` を消し（`unset TMUX_PANE` や `env -u TMUX_PANE`）、かつその値を `-t` にも使わずに tmux を呼ぶ壊し方だけである（実測の 7d。消す前の値を `-t` に使えば通る、7e）。`prefix S` が `TMUX_PANE=#{pane_id}` を渡すことは、書き換える静的テストが縛る。実測の 5・6 のような、押した直後に別の端末へ打つテストは採らない。実測では 1 秒待つ `open-list-slow` で押してから `choose-tree` までの間を作ったが、本物の `tmux-menu` にはその待ちが無く、その間に別の端末を操作できる保証が無いため、割り当てが `TMUX_PANE` を渡さなくても通りうる。`prefix s` は既定のまま |
 | 12 | `git diff --stat main` に `tmux-first` / `tmux-clean` が現れない |
 | 13 | `shellcheck containers/base/tmux-*` と全体の pytest |
 | 14 | 文書の差分をレビューで見る |
