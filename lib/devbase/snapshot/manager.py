@@ -89,6 +89,10 @@ def rename_only_failure(stderr: str) -> Optional[list]:
 # 失敗した rename が大量に出うるので、余裕をもって分割する。
 _CHECK_COMMAND_BUDGET = 60_000
 
+# ローテーションで世代を消す理由。系列ごとの保持数を超えた分か、全体の上限を超えた分か。
+_REASON_PER_SERIES = 'series'
+_REASON_TOTAL = 'total'
+
 
 def chunk_paths(paths: list, budget: int = _CHECK_COMMAND_BUDGET) -> list:
     """引用済みのパスを、1 コマンドの長さが budget を超えないように分ける。
@@ -538,14 +542,14 @@ class SnapshotManager:
             if snap_dir.exists():
                 shutil.rmtree(snap_dir)
             deleted_ids.add(index)
-            if reason is not None:
+            if reason == _REASON_TOTAL:
                 logger.info(
                     "ローテーション: 全体の上限 %d 世代を超えたため、%s の %s を削除しました",
                     max_total, self.series_label(self._entry_volumes(snap)), name)
 
         per_series: dict = {}
         for index, reason in plan:
-            if reason is None and index in deleted_ids:
+            if reason == _REASON_PER_SERIES and index in deleted_ids:
                 label = self.series_label(self._entry_volumes(snapshots[index]))
                 per_series[label] = per_series.get(label, 0) + 1
         for label, count in per_series.items():
@@ -565,8 +569,8 @@ class SnapshotManager:
         """ローテーションで消すエントリを決める (副作用なし)。
 
         Returns:
-            ``(snapshots の添字, 理由)`` の並び。理由は系列ごとの保持なら ``None``、
-            全体の上限なら ``'total'``。
+            ``(snapshots の添字, 理由)`` の並び。理由は系列ごとの保持なら
+            ``_REASON_PER_SERIES``、全体の上限なら ``_REASON_TOTAL``。
         """
         groups: dict = {}
         for index, snap in enumerate(snapshots):
@@ -581,7 +585,7 @@ class SnapshotManager:
         for key, indexes in groups.items():
             indexes.sort(key=age)
             excess = max(0, len(indexes) - keep)
-            plan.extend((i, None) for i in indexes[:excess])
+            plan.extend((i, _REASON_PER_SERIES) for i in indexes[:excess])
             kept[key] = indexes[excess:]
 
         total = sum(len(v) for v in kept.values())
@@ -593,7 +597,7 @@ class SnapshotManager:
                     "消さないため %d 世代を残します", max_total, total)
                 break
             oldest = min(candidates, key=lambda v: age(v[0]))
-            plan.append((oldest.pop(0), 'total'))
+            plan.append((oldest.pop(0), _REASON_TOTAL))
             total -= 1
         return plan
 
