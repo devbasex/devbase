@@ -112,7 +112,7 @@ tests/snapshot/
 | `docs/user/cli-reference/05-snapshot.md` | `rotate` のオプションの表 |
 | `docs/user/cli-reference/02-project.md` | 最小間隔が系列（グループ）ごとであること |
 | `docs/user/container-operations.md` | 「自動スナップショット」の表の `devbase down` の行 |
-| `CHANGELOG.md` | `[Unreleased]` に `### Changed` を立て、系列ごとの保持・差分の積み先・最小間隔・`--keep` の意味の変更と `--max-total` を書く |
+| `CHANGELOG.md` | `[Unreleased]` に `### Fixed` を立て、`backups/` の外を指す世代（名前・シンボリックリンク）の扱い（決定 7）を書く。`### Changed` を立て、系列ごとの保持・差分の積み先・最小間隔・`--keep` の意味の変更と `--max-total` を書く |
 
 
 ## 構造
@@ -441,6 +441,7 @@ default を控えた直後に with を起動したとき、with の系列は何�
 | 24 | 既存の `test_restore_incremental.py` と `test_manager_volumes.py` の復元のテストが変更なしで通る |
 | 25 | `tmp_path/backups` の兄弟に `outside/` を作り、`snapshot.yml` に `../outside` を含む 4 世代（同じ系列、`../outside` が最古）を書いて `rotate()`。`outside/` が残り、エントリが消え、WARNING が 1 件 |
 | 26 | `tmp_path/backups-outside/` を作り、`backups/old` をそこへのシンボリックリンクにする。`snapshot.yml` の最古の世代を `old` にして `rotate()`。`backups-outside/` の中身が残り、エントリが消え、WARNING が 1 件。あわせて `_safe_snap_dir('old')` が `SnapshotError` |
+| 27 | 26 と同じリンクを作り、`cmd_snapshot` に `delete` / `old` を渡して終了コード 1。`backups-outside/` の中身が残る |
 
 `_auto_snapshot` のテストは `DEVBASE_ROOT` を `tmp_path` に向け、`SnapshotManager._run_docker_tar` を
 `monkeypatch` で差し替える。実データの `backups/` と Docker に触らない。

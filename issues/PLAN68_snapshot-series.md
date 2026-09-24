@@ -26,7 +26,7 @@
 | --- | --- |
 | 公開インタフェース | **変わる。** `devbase snapshot rotate --keep N` の N は「全体で残す数」から「系列ごとに残す数」になる。`--max-total M` を足す。TUI のローテーションの問いの文言が変わる |
 | データ | 変わらない。`backups/snapshot.yml` と各世代の `meta.yml` の形はそのまま。移行は無い |
-| 既存の振る舞い | **変わる。** `devbase up` の自動スナップショットの積み先・新しい世代を作る条件・最小間隔の判定、`devbase up` / `devbase down` / `devbase snapshot rotate` の削除の規則、ログの文言 |
+| 既存の振る舞い | **変わる。** `devbase up` の自動スナップショットの積み先・新しい世代を作る条件・最小間隔の判定、`devbase up` / `devbase down` / `devbase snapshot rotate` の削除の規則、ログの文言。`backups/` の外を指すシンボリックリンクの世代を、`create` / `restore` / `copy` / `delete` / `rotate` が `SnapshotError` で止める（設計の決定 7） |
 | 利用者の操作 | 無い。次の `devbase up` から新しい規則で動く |
 
 ## 前提
@@ -137,10 +137,9 @@ default（差分 0、3.9 GB）で、合計は 42 GB である。
       `container-operations.md` の自動スナップショットの表が系列ごとの保持を書いている。
       `--keep` と `--max-total` の指定が手動のその 1 回だけに効き、自動のローテーションは既定の数で動くことを、
       `05-snapshot.md` と `snapshot-guide.md` の「手動ローテーション」に書いている
-- [ ] 21. `CHANGELOG.md` の `[Unreleased]` の `### Changed` に、`--keep` の意味が変わったことを含めて書いている
-
-### 退行しないこと
-
+- [ ] 21. `CHANGELOG.md` の `[Unreleased]` の `### Changed` に、`--keep` の意味が変わったことを含めて書いている。
+      `### Fixed` に、`backups/` の外を指す世代（名前・シンボリックリンク）をローテーションが消さなくなったことと、
+      同じ世代を `create` / `restore` / `copy` / `delete` が `SnapshotError` で止めるようになったことを書いている
 - [ ] 22. **既存の `snapshot.yml` をそのまま読む。** この端末の 3 エントリ（default 2・with 1）と同じ
       内容で `rotate()` を呼ぶと、何も消さない。`snapshot.yml` の既存のキーは消えない
 - [ ] 23. `uv run --locked pytest tests/ -q` が終了コード 0
@@ -154,6 +153,8 @@ default（差分 0、3.9 GB）で、合計は 42 GB である。
       `backups-outside/` を指すリンクで、`old` が削除の対象になっても、`backups-outside/` の中身は残る。
       エントリは一覧から外れ、警告が 1 行出る。`_safe_snap_dir('old')` は `SnapshotError` になる。
       現状は解決後のパスを文字列の前方一致で判定するため、`.../backups-outside` が通る
+- [ ] 27. `backups/old` が 26 と同じリンクのとき、`devbase snapshot delete old` は終了コード 1 で終わり、
+      `backups-outside/` の中身は残る。現状は解決後のリンク先を `shutil.rmtree` で消す
 
 ## 非機能の条件
 
