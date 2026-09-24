@@ -91,8 +91,9 @@
       symlink として作る。建てた base イメージの `PATH` から `tmux-menu` を呼べる
 - [ ] 11. `prefix S` と `prefix s` の割り当ては、変更前と同じ UI を、キーを押した端末の pane に
       開く。`prefix S` の割り当ての文字列を見る既存の静的テスト `test_prefix_s_opens_session_chooser`
-      は、新しい割り当て（`run-shell` で `tmux-menu` を呼ぶ）を見る形へ書き換える。それ以外の既存の
-      テストはそのまま通る
+      は、新しい割り当て（`run-shell` で `tmux-menu` を呼ぶ）を見る形へ書き換える。テスト基盤の
+      `SHORT_NAMES` に `tmux-menu` を足したうえで、それ以外の既存のテスト（`prefix S` から開く
+      `test_prefix_s_passes_selected_id_and_client` と `test_menu_*` を含む）は中身を変えずに通る
 - [ ] 12. `tmux-first` / `tmux-clean` の差分が 0 行
 - [ ] 13. `containers/base/tmux-*` の shellcheck が 0 件、全体の pytest が通る
 - [ ] 14. 利用者向け文書に `tmux-menu` の使い方と、ホストで使うときの symlink の手順

@@ -20,7 +20,7 @@
 | `containers/base/tmux-session` | 変える | 呼ばれた名前 `tmux-menu` を `menu` へ振り分ける。`menu` がセッションを受け取らないときは一覧を開く（決定 1）。一覧を開く `choose-tree` の定義をこのファイルだけに持つ（決定 2） |
 | `containers/base/tmux.conf` | 変える | `prefix S` の行を、キーを押した pane の ID を渡して `run-shell` で `tmux-menu` を呼ぶ形に変える（決定 2・決定 4） |
 | `containers/base/Dockerfile` の「tmux セッションの整理コマンド」の節 | 変える | symlink の `RUN` に `tmux-menu` を 1 つ足す |
-| `tests/containers/test_tmux_session.py` | 変える | F1・F2・F3 と、`menu -c 端末 <セッション>` の形が変わらないことを確かめる。Dockerfile の symlink の形を固定する（`SHORT_NAMES` に `tmux-menu` を足す） |
+| `tests/containers/test_tmux_session.py` | 変える | F1・F2・F3 と、`menu -c 端末 <セッション>` の形が変わらないことを確かめる。`SHORT_NAMES` に `tmux-menu` を足す（下の「テスト基盤の更新」） |
 | `tests/containers/test_tmux_conf.py` | 変える | 既存の `test_prefix_s_opens_session_chooser` を書き換え、`prefix S` の割り当てが `TMUX_PANE=#{pane_id}` を付けて `tmux-menu` を呼ぶことを `list-keys` で確かめる |
 | `docs/user/environment-variables.md` の「セッションを名指しで扱う」 | 変える | `tmux-menu` の使い方を足す。ホストの手順の symlink を 5 つにし、`~/.tmux.conf` の行を新しい割り当てへ差し替える |
 | `docs/specifications/tmux-named-session.md` | 変える（確定仕様化で） | `menu` の 2 つの形と `tmux-menu`、`prefix S` の新しい行 |
@@ -216,19 +216,53 @@ Enter の後は PLAN69 の `menu` の流れと同じである。
 受け入れ条件の番号は [PLAN71_tmux-menu.md](PLAN71_tmux-menu.md) のもの。テストは
 `test_tmux_session.py` の流儀（専用のソケット、`pty` の端末、偽の `tmux-session`）に合わせる。
 
+### テスト基盤の更新
+
+`tests/containers/test_tmux_session.py` の `SHORT_NAMES`（38 行目）へ `tmux-menu` を足す。この
+タプルは 2 つの経路に効く。
+
+| 経路 | どこで使うか | 足した結果 |
+| --- | --- | --- |
+| Dockerfile の検査 | `test_dockerfile_links_short_names` | `ln -sf tmux-session /usr/local/bin/tmux-menu` を要求する（条件 10） |
+| テスト用の `bin` | `TmuxEnv.__init__` の `for name in ("tmux-session", *SHORT_NAMES)`（346 行目） | `bin/tmux-menu` が本物の `tmux-session` を指す symlink になる。`tm.run("tmux-menu", …)` と、`prefix S` の `run-shell` が `PATH` から引く `tmux-menu` はこれを使う |
+
+`fake_tm` フィクスチャ（943 行目）は、`TmuxEnv` の `bin` とは別の `fake/` を `PATH` の先頭に置き、
+そこへ引数を書き出すだけの `tmux-session` を置く。`fake_tm` も `TmuxEnv` を作るため、`bin/tmux-menu`
+は `SHORT_NAMES` の追加だけで `fake_tm` にもできる。**`fake/` には `tmux-menu` を置かない。** `prefix S`
+の `tmux-menu` は本物で一覧を開き、Enter の後に template が呼ぶ `tmux-session menu -c …` だけを
+`fake/` の偽物が受ける必要がある。`fake/` に偽の `tmux-session` を指す `tmux-menu` を置くと、
+`prefix S` が引数の無い `menu` を書き出すだけで一覧が開かず、`test_prefix_s_passes_selected_id_and_client`
+が落ちる。
+
+`SHORT_NAMES` を足さないままでは `bin` に `tmux-menu` が無く、`prefix S` の `run-shell` がコマンドを
+見つけられない。`prefix S` から一覧を開く既存テストは、中身を変えずに、この基盤更新で通る。
+
+| 基盤更新で通る既存テスト（`prefix S` を `_open_tree` / `_open_menu` で送る） | フィクスチャ |
+| --- | --- |
+| `test_prefix_s_passes_selected_id_and_client` | `fake_tm` |
+| `test_menu_go_detaches_others_and_switches` | `ui_tm` |
+| `test_menu_kill_asks_then_kills` | `ui_tm` |
+| `test_menu_kill_own_session` | `ui_tm` |
+| `test_menu_peek_opens_popup` | `ui_tm` |
+
+`test_menu_notifies_client_on_failure` は `prefix S` を通らず `run-shell` から `tmux-go` を呼ぶため、
+この更新に関係なく通る。
+
+### 条件ごとの確かめ方
+
 | 受け入れ条件 | 何で確かめるか |
 | --- | --- |
-| 1 | tmux の中の端末のプロンプトへ `tmux-menu` を打ち、その端末の `#{pane_mode}` が `tree-mode` になることを見る |
+| 1 | tmux の中の端末のプロンプトへ `tmux-menu` を打ち、その端末の `#{pane_mode}` が `tree-mode` になることを見る。一覧を出す pane を `TMUX_PANE` で決めることは行 11 の足すテストで縛る |
 | 2 | 1 の後に 1 つ上を選んで Enter を押し、偽の `tmux-session` へ `menu -c <押した端末> <選んだ ID>` が渡ることを見る。`'` を含む名前を含める |
 | 3 | 本物の `tmux-session` で 1 → 選ぶ → `a` を送り、押した端末が選んだセッションへ移り、そこに繋がっていた他の端末が外れることを `list-clients` で見る |
 | 4 | tmux の外の端末で `tmux-menu` を起動し、端末がサーバに繋がり `tree-mode` になることを見る |
 | 5 | 4 の後に 2 と同じく選んで Enter を押し、`menu -c <その端末> <選んだ ID>` が渡ることを見る |
 | 6 | サーバの無い環境で `tmux-menu` を実行し、終了コード 1・標準エラーの理由・実行後もサーバが無いことを見る |
-| 7 | 既存の `menu` のテスト（`test_menu_*`）がそのまま通る |
+| 7 | 既存の `menu` のテスト（`test_menu_*`）が中身を変えずに通る。`prefix S` を通るものは「テスト基盤の更新」の後に通る |
 | 8 | `tmux-menu` と `tmux-session menu` で 1・6 を両方の名前で走らせる（parametrize） |
 | 9 | `-c` だけ・余分な引数・知らないオプションで終了コード 2。`tmux-menu -h` が 0 で、`tmux-session -h` の出力に `tmux-menu` が含まれる |
-| 10 | Dockerfile の symlink の `RUN` に `tmux-menu` が含まれることを固定する（`test_dockerfile_links_short_names`）。建てたイメージで `command -v tmux-menu` を見る |
-| 11 | **書き換える既存テスト:** `test_prefix_s_opens_session_chooser`（`tests/containers/test_tmux_conf.py`）は割り当てに `choose-tree` と `tmux-session menu` が含まれることを見ており、決定 2 で落ちる。割り当てがちょうど 1 つで、`run-shell` が `TMUX_PANE=#{pane_id} tmux-menu` を呼ぶことを見る形へ改める。**そのまま通る既存テスト:** `test_prefix_s_passes_selected_id_and_client` と `test_menu_*`（`prefix S` から開く）。**足すテスト:** `prefix S` を押した直後に別のセッションの端末へ打っても、一覧が押した端末の pane に出る（実測の 5・6）。`prefix s` は既定のまま |
+| 10 | Dockerfile の symlink の `RUN` に `tmux-menu` が含まれることを固定する（`SHORT_NAMES` を足した `test_dockerfile_links_short_names`）。建てたイメージで `command -v tmux-menu` を見る |
+| 11 | **書き換える既存テスト:** `test_prefix_s_opens_session_chooser`（`tests/containers/test_tmux_conf.py`）は割り当てに `choose-tree` と `tmux-session menu` が含まれることを見ており、決定 2 で落ちる。割り当てがちょうど 1 つで、`run-shell` が `TMUX_PANE=#{pane_id} tmux-menu` を呼ぶことを見る形へ改める。**基盤更新で通る既存テスト:** `test_prefix_s_passes_selected_id_and_client` と、`prefix S` から開く `test_menu_*` 4 件（「テスト基盤の更新」の表）。中身は変えない。**足すテスト:** 時間の競合に頼らず、`TMUX_PANE` の pane に一覧が出ることを見る。`home` と `other` の 2 つのセッションを作り、`tm.attach(home)` の後に `tm.attach(other)` で繋いだ端末へ 1 文字送って直近に操作された端末を `other` にする。そのうえで `tm.run("tmux-menu", env=tm.inside_env(home))` を実行し、`home` の pane の `#{pane_mode}` が `tree-mode` になり、`other` の pane はならないことを見る。`-t "$TMUX_PANE"` を実装から落とすと、一覧は直近の `other` に出て落ちる。`prefix S` が `TMUX_PANE=#{pane_id}` を渡すことは、書き換える静的テストが縛る。実測の 5・6 のような、押した直後に別の端末へ打つテストは、本物の `tmux-menu` では `choose-tree` までの間が数十 ms しかなく `-t` の有無を区別できないため採らない。`prefix s` は既定のまま |
 | 12 | `git diff --stat main` に `tmux-first` / `tmux-clean` が現れない |
 | 13 | `shellcheck containers/base/tmux-*` と全体の pytest |
 | 14 | 文書の差分をレビューで見る |
