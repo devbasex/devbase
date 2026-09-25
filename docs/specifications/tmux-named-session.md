@@ -82,6 +82,11 @@ tmux-menu …  = tmux-session menu …
   セッションも `-c` も無いときに限り一覧を開く形になる。どちらか一方でもあればメニューを出す形として読む
 - `-n 行数` は 0 以上の整数だけを受け付ける。既定は 20
 
+`tmux-menu` を `menu` の短縮名にし、一覧を開く動きを「セッションも `-c` も無い形」に割り当てるのは、
+`tmux-go` = `go` と同じ規則で名前から動きが読め、メニューを出す形（`menu -c 端末 <セッション>`）の
+呼び出し元を何も変えずに済むためである。メニューを出す形は、`/etc/tmux.conf` の一覧の template と、
+利用者がホストの `~/.tmux.conf` へ写した以前の割り当ての行が呼ぶため、形を変えない。
+
 ### セッションの指し方
 
 | 引数の形 | 解決 |
@@ -203,9 +208,15 @@ tmux attach-session \; choose-tree -Zs -O name "$TREE_TEMPLATE"  # tmux の外
 
 - 一覧を出す pane は `TMUX_PANE` で決める。`run-shell` の中には `TMUX_PANE` が無く、`-t` が無いと
   直近に操作された別の端末に出ることがあるため、`prefix S` は押した pane の ID を `TMUX_PANE` で渡す
-- tmux の外での attach 先は tmux の既定（端末の繋がっていないセッションを優先し、その中で直近のもの）
-  に従い、attach した画面に一覧を出す。tmux のサーバが動いていなければ、サーバもセッションも作らずに
-  終了コード 1 で終わる
+  （`run-shell` は `#{pane_id}` を先に展開し、`%3` の形の引用の要らない ID が渡る）
+- tmux は、端末を持たないクライアントから来たコマンドの現在の pane を、その環境の `TMUX_PANE` で
+  決める。そのため `-t` が無くても `TMUX_PANE` の pane に出る。それでも `-t "$TMUX_PANE"` を付けるのは、
+  出す pane をコマンドの行に書いて読めるようにし、tmux が環境から現在の pane を引く規則に頼らない
+  ためである。`-t` の有無で振る舞いは変わらない
+- tmux の外での attach 先は tmux の既定（端末の繋がっていないセッションを優先し、その中で直近のもの。
+  すべてに端末が繋がっていれば全体で直近のもの）に従い、attach した画面に一覧を出す。attach 先を
+  引数で取らないのは、名指しで移るなら `tmux-go` があり、一覧からどのセッションへも移れるためである。
+  tmux のサーバが動いていなければ、サーバもセッションも作らずに終了コード 1 で終わる
 - `choose-tree -Zs -O name` は、名前順のセッションの一覧を全画面で出す。tmux の既定の操作
   （`v` でプレビューの切り替え、`f` で絞り込み、`x` で 1 つ落とす、`t` で印を付けて `X` で
   まとめて落とす）はそのまま使える
@@ -316,8 +327,11 @@ sequenceDiagram
   （コマンドが `PATH` に無ければメニューは動かない）
 - `containers/lfm` と `containers/snapshot` は base を継がないため入らない
 - ホストの tmux で使うときは、利用者が devbase の checkout の `containers/base/tmux-session` を
-  指す symlink を `~/.local/bin` へ 4 つ張り、`~/.tmux.conf` へ上の 1 行を足す。複写ではなく
-  symlink にすると `git pull` で更新が届く
+  指す symlink を `~/.local/bin` へ 5 つ（`tmux-session` と短縮名 4 つ）張り、`~/.tmux.conf` へ上の
+  1 行を足す。複写ではなく symlink にすると `git pull` で更新が届く
+- ホストの `~/.tmux.conf` に以前の割り当て（`bind-key S choose-tree …` で template を直接書く行）を
+  残していても、`prefix S` はメニューを出す形を呼ぶためそのまま動く。`tmux-menu` を使うには symlink の
+  `tmux-menu` を足す
 - 動作を確かめてある tmux は、コンテナの 3.6（Ubuntu 26.04）とホストの 3.7b。使う機能
   （`choose-tree` の template・`display-menu`（3.0 以降）・`display-popup`（3.2 以降）・
   書式の `q:`）は両方にある。`/bin/sh` は Ubuntu の dash と macOS の bash 3.2（POSIX モード）で
@@ -383,6 +397,11 @@ sequenceDiagram
   - Dockerfile に `COPY --chmod=0755 tmux-session /usr/local/bin/tmux-session` が 1 行あり、
     短縮名 4 つの `ln -sf tmux-session /usr/local/bin/<名前>` があること
   - `containers/base/tmux-session` が `#!/bin/sh` で始まり実行権を持つこと
+
+一覧を開いて選ぶテストは、コマンド行とカーソルの移動を `send-keys` で pane へ送り、Enter だけは
+繋いだ端末から送る。`send-keys` で送った Enter では、template の `#{client_name}` が押した端末ではなく
+直近に操作された端末に展開され、渡った端末名を確かめられないためである。後から attach した端末は、
+打たなくても直近に操作された端末になる。
 
 `test_tmux_conf.py` の copy-mode の割り当ての比較は `-T copy-mode` / `-T copy-mode-vi` の行だけを
 対象にし、`prefix S` の行が混ざっても崩れない。
