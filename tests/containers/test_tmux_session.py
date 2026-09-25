@@ -1252,6 +1252,22 @@ def test_list_opens_in_tmux_pane_not_latest_client(tm):
     assert _pane_mode(tm, other) == ""
 
 
+@needs_tmux
+def test_list_inside_without_tmux_pane_opens_tree(tm):
+    """PLAN71: ``TMUX`` があり ``TMUX_PANE`` が空なら、``-t`` なしの一覧へ落ちて開く。
+
+    端末が 1 つだけ繋がっていれば、その端末の pane に一覧が出る。
+    """
+    home = tm.new("home")
+    tm.attach(home)
+    env = {k: v for k, v in tm.inside_env(home).items() if k != "TMUX_PANE"}
+
+    done = tm.run("tmux-menu", env=env)
+
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    _wait(lambda: _pane_mode(tm, home) == "tree-mode")
+
+
 # --- 配布 (受け入れ条件 16 のうちビルドの前に分かる部分) ---
 
 
