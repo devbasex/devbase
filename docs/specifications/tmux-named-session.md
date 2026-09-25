@@ -362,6 +362,23 @@ sequenceDiagram
     Enter を送ると、選んだセッションの ID と押した端末の名前が渡ること。特殊文字の名前でも同じこと
   - 本物の `tmux-session` で、メニューの「移る」「中身を見る」「落とす」（確認の `y`）がそれぞれ
     効き、今いるセッションも同意すれば落ちること。背景の `run-shell` からの知らせが端末へ届くこと
+- `tmux-menu`（一覧を開く形）
+  - tmux の中で `tmux-menu` と `tmux-session menu` のどちらをプロンプトから打っても、その pane に
+    一覧（`tree-mode`）が出ること
+  - `TMUX_PANE` の pane に一覧が出て、後から attach して直近に操作された端末の pane には出ないこと。
+    `TMUX` があり `TMUX_PANE` を消した環境でも、端末が 1 つだけなら、その端末の pane に一覧が出て
+    終了コード 0 であること
+  - tmux の外で打つと、端末の繋がっていないセッションへ attach して一覧を出すこと
+  - 偽の `tmux-session` で、中・外のどちらで開いた一覧でも、選んで Enter を押すと
+    `menu -c <Enter を押した端末> <選んだ ID>` が渡ること。特殊文字の名前でも同じこと
+  - 本物の `tmux-session` で、一覧から出したメニューの「移る」で Enter を押した端末が移り、対象に
+    繋がっていた他の端末が外れること
+  - メニューを出す形（`-c 端末 <ID>`）は、`tmux-menu` と `tmux-session menu` のどちらでもメニューを
+    出すこと
+  - サーバが無いと、`tmux-menu` と `tmux-session menu` のどちらも終了コード 1 で標準エラーへ理由を
+    出し、セッションを作らないこと
+  - `tmux-menu -h` が終了コード 0 で、`tmux-session -h` の使い方に `tmux-menu` が載ること。`-c` だけで
+    セッションが無い・`-c` が無い・余分な引数・知らないオプションは終了コード 2 であること
 - 配布
   - Dockerfile に `COPY --chmod=0755 tmux-session /usr/local/bin/tmux-session` が 1 行あり、
     短縮名 4 つの `ln -sf tmux-session /usr/local/bin/<名前>` があること
@@ -377,6 +394,7 @@ CI はイメージを建てないため、次は建てたイメージで手で�
 - 建てた base の `shellcheck` で `containers/base/tmux-session` を既定の severity で検査すると、
   指摘が 0 件であること
 - 建て直した base のコンテナの tmux で、`prefix S` のメニューの 3 つの操作が効くこと
+- 建て直した base のコンテナで `tmux-menu` を打つと、セッションの一覧が開くこと
 
 CI の ShellCheck ジョブは runner の shellcheck で `tmux-first` / `tmux-clean` / `tmux-session` を
 検査する。
