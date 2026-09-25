@@ -10,8 +10,9 @@ base イメージは、1 つの tmux セッションを名前か ID で指して
 - 落とす（`kill`）: attach 中・実行中を問わずセッションを終わらせる
 
 tmux の中では `prefix S` でセッションの一覧（`choose-tree`）を出し、選んだセッションに同じ
-3 つをメニューから行える。UI は tmux 組み込みの `choose-tree` / `display-menu` /
-`display-popup` だけで組み、パッケージを足さない。
+3 つをメニューから行える。コマンド `tmux-menu`（`tmux-session menu`）からも同じ一覧とメニューを
+開ける。tmux の外で打つと attach して、attach した画面に一覧を出す。UI は tmux 組み込みの
+`choose-tree` / `display-menu` / `display-popup` だけで組み、パッケージを足さない。
 
 `tmux-first` / `tmux-clean` は「同じベース名のセッション群」を、操作中の端末と実行中の
 セッションを守りながら整理する道具である。`tmux-session` は 1 つを狙って強制的に効かせる道具で、
@@ -24,14 +25,15 @@ tmux の中では `prefix S` でセッションの一覧（`choose-tree`）を�
 
 ## 対象範囲
 
-- コマンド `tmux-session` と短縮名 `tmux-go` / `tmux-peek` / `tmux-kill`
+- コマンド `tmux-session` と短縮名 `tmux-go` / `tmux-peek` / `tmux-kill` / `tmux-menu`
 - `/etc/tmux.conf` の `prefix S` の割り当て
 - base と、base を継ぐ派生イメージへの伝播の規則
 - `containers/lfm` と `containers/snapshot` は base を継がないため対象に含まない
 - ホストの `~/.local/bin` と `~/.tmux.conf` へ配る仕組みは持たない。devbase はホストの利用者の
   ファイルへ書かず（`~/.tmux.conf` を書き換えると、消したつもりの行が戻るなどの食い違いを
   生む）、手順を利用者向け文書に書いて利用者が置く
-- tmux の外で一覧から選ぶ UI は持たない。名指しの 3 操作は tmux の外からもコマンドで使える
+- tmux の外で、attach せずに一覧から選ぶ UI は持たない。`tmux-menu` は tmux の外では attach して
+  一覧を出す。名指しの 3 操作は tmux の外からもコマンドで使える
 - 読み取り専用の attach（`tmux attach -r`）の操作は持たない。`choose-tree` のプレビューが
   同じ用途を満たす
 
@@ -40,9 +42,9 @@ tmux の中では `prefix S` でセッションの一覧（`choose-tree`）を�
 | 要素 | 置き場所 | 責務 |
 | --- | --- | --- |
 | 本体 | `containers/base/tmux-session` → `/usr/local/bin/tmux-session` | サブコマンド `go` / `peek` / `kill` / `menu` を持つ POSIX sh（`#!/bin/sh`、`set -eu`）の 1 ファイル |
-| 短縮名 | `/usr/local/bin/tmux-go` / `tmux-peek` / `tmux-kill` | `tmux-session` への symlink。呼ばれた名前でサブコマンドが決まる |
-| 導入 | `containers/base/Dockerfile` の「tmux セッションの整理コマンド」の節 | `COPY --chmod=0755 tmux-session /usr/local/bin/tmux-session` と、`tmux1` / `tmuxc` と同じ `RUN` の `ln -sf` 3 つ |
-| キーの割り当て | `containers/base/tmux.conf` の末尾 → `/etc/tmux.conf` | `bind-key S choose-tree … "tmux-session menu …"` の 1 行 |
+| 短縮名 | `/usr/local/bin/tmux-go` / `tmux-peek` / `tmux-kill` / `tmux-menu` | `tmux-session` への symlink。呼ばれた名前でサブコマンドが決まる |
+| 導入 | `containers/base/Dockerfile` の「tmux セッションの整理コマンド」の節 | `COPY --chmod=0755 tmux-session /usr/local/bin/tmux-session` と、`tmux1` / `tmuxc` と同じ `RUN` の `ln -sf` 4 つ |
+| キーの割り当て | `containers/base/tmux.conf` の末尾 → `/etc/tmux.conf` | `bind-key S run-shell "TMUX_PANE=#{pane_id} tmux-menu"` の 1 行。一覧の定義（`choose-tree` と template）は `tmux-session` が持つ |
 | 静的検査 | `.github/workflows/ci.yml` の `shellcheck` ジョブ | `containers/base/tmux-first` / `tmux-clean` / `tmux-session` を既定の severity（style まで）で検査する |
 | 回帰テスト | `tests/containers/test_tmux_session.py`、`tests/containers/test_tmux_conf.py` | 専用の tmux サーバでの振る舞いと、Dockerfile・tmux.conf の形を固定する |
 
@@ -62,20 +64,28 @@ tmux の中では `prefix S` でセッションの一覧（`choose-tree`）を�
 tmux-session go   [-c 端末] <セッション>
 tmux-session peek [-n 行数] <セッション>
 tmux-session kill [-n] [-f] [-c 端末] <セッション>...
+tmux-session menu
 tmux-session menu -c 端末 <セッション>
 tmux-go   …  = tmux-session go   …
 tmux-peek …  = tmux-session peek …
 tmux-kill …  = tmux-session kill …
+tmux-menu …  = tmux-session menu …
 ```
 
-- `basename "$0"` が `tmux-go` / `tmux-peek` / `tmux-kill` なら第 1 引数をサブコマンドとして
-  読まない。それ以外の名前で呼ばれたときは第 1 引数をサブコマンドとして読む
+- `basename "$0"` が `tmux-go` / `tmux-peek` / `tmux-kill` / `tmux-menu` なら第 1 引数を
+  サブコマンドとして読まない。それ以外の名前で呼ばれたときは第 1 引数をサブコマンドとして読む
 - `-h` / `--help` はどのサブコマンドでも使い方を標準出力へ出して終了コード 0 で終わる
 - `kill` の `-n` は `--dry-run`、`-f` は `--force` とも書ける。`--` でオプションの終わりを示せる
 - オプションはサブコマンドごとに受け付けるものが決まっている。`peek` は `-c` を、`go` は `-n` を
   受け取らない（知らないオプションとして終了コード 2）
-- `go` / `peek` / `menu` はセッションをちょうど 1 つ、`kill` は 1 つ以上取る
+- `go` / `peek` / `menu` はセッションをちょうど 1 つ、`kill` は 1 つ以上取る。ただし `menu` は
+  セッションも `-c` も無いときに限り一覧を開く形になる。どちらか一方でもあればメニューを出す形として読む
 - `-n 行数` は 0 以上の整数だけを受け付ける。既定は 20
+
+`tmux-menu` を `menu` の短縮名にし、一覧を開く動きを「セッションも `-c` も無い形」に割り当てるのは、
+`tmux-go` = `go` と同じ規則で名前から動きが読め、メニューを出す形（`menu -c 端末 <セッション>`）の
+呼び出し元を何も変えずに済むためである。メニューを出す形は、`/etc/tmux.conf` の一覧の template と、
+利用者がホストの `~/.tmux.conf` へ写した以前の割り当ての行が呼ぶため、形を変えない。
 
 ### セッションの指し方
 
@@ -182,9 +192,31 @@ screen (0.0 の直近 20 行)
 `/etc/tmux.conf` の割り当ては次の 1 行である。
 
 ```tmux
-bind-key S choose-tree -Zs -O name "run-shell -t \"%%%\" \"tmux-session menu -c #{q:client_name} #{q:session_id}\""
+bind-key S run-shell "TMUX_PANE=#{pane_id} tmux-menu"
 ```
 
+一覧の定義は `tmux-session` の 1 か所にあり、`prefix S` とコマンド `tmux-menu`（`tmux-session menu`）が
+共有する。`run-shell` は渡した文字列の `#{…}` を先に展開するため、template を割り当てへ直接書かずに
+コマンドを呼ぶ。一覧を開く形の `tmux-session` は次を実行する。
+
+```sh
+TREE_TEMPLATE='run-shell -t "%%%" "tmux-session menu -c #{q:client_name} #{q:session_id}"'
+tmux choose-tree -t "$TMUX_PANE" -Zs -O name "$TREE_TEMPLATE"   # TMUX と TMUX_PANE がある
+tmux choose-tree -Zs -O name "$TREE_TEMPLATE"                   # TMUX があり TMUX_PANE が空
+tmux attach-session \; choose-tree -Zs -O name "$TREE_TEMPLATE"  # tmux の外
+```
+
+- 一覧を出す pane は `TMUX_PANE` で決める。`run-shell` の中には `TMUX_PANE` が無く、`-t` が無いと
+  直近に操作された別の端末に出ることがあるため、`prefix S` は押した pane の ID を `TMUX_PANE` で渡す
+  （`run-shell` は `#{pane_id}` を先に展開し、`%3` の形の引用の要らない ID が渡る）
+- tmux は、端末を持たないクライアントから来たコマンドの現在の pane を、その環境の `TMUX_PANE` で
+  決める。そのため `-t` が無くても `TMUX_PANE` の pane に出る。それでも `-t "$TMUX_PANE"` を付けるのは、
+  出す pane をコマンドの行に書いて読めるようにし、tmux が環境から現在の pane を引く規則に頼らない
+  ためである。`-t` の有無で振る舞いは変わらない
+- tmux の外での attach 先は tmux の既定（端末の繋がっていないセッションを優先し、その中で直近のもの。
+  すべてに端末が繋がっていれば全体で直近のもの）に従い、attach した画面に一覧を出す。attach 先を
+  引数で取らないのは、名指しで移るなら `tmux-go` があり、一覧からどのセッションへも移れるためである。
+  tmux のサーバが動いていなければ、サーバもセッションも作らずに終了コード 1 で終わる
 - `choose-tree -Zs -O name` は、名前順のセッションの一覧を全画面で出す。tmux の既定の操作
   （`v` でプレビューの切り替え、`f` で絞り込み、`x` で 1 つ落とす、`t` で印を付けて `X` で
   まとめて落とす）はそのまま使える
@@ -235,9 +267,12 @@ tmux display-menu -c 端末 -t '$ID' -T '#[align=centre]#{session_name}' …
 sequenceDiagram
     participant U as 利用者の端末
     participant T as tmux サーバ
+    participant L as tmux-menu（一覧）
     participant M as tmux-session menu
     participant G as tmux-session go
     U->>T: prefix S
+    T->>L: run-shell<br/>TMUX_PANE=pane tmux-menu
+    L->>T: choose-tree -t pane
     T->>U: choose-tree（一覧とプレビュー）
     U->>T: セッションを選んで Enter
     T->>M: run-shell -t "%%%"<br/>menu -c 端末 $ID
@@ -260,7 +295,7 @@ sequenceDiagram
 | --- | --- |
 | 0 | 成功。`-h` / `--help` |
 | 1 | tmux が無い・サーバが無い・対象のセッションが無い・`-c` の端末が無い・実行元を特定できない・自分のセッションを `-f` なしで `kill` しようとした・tmux のコマンドが失敗した |
-| 2 | 使い方の誤り（サブコマンドが無い・知らないサブコマンドとオプション・オプションの値が無い・セッションの数が合わない・`-n` が 0 以上の整数でない・`-c` の値の形が外れた・`menu` に `-c` が無い） |
+| 2 | 使い方の誤り（サブコマンドが無い・知らないサブコマンドとオプション・オプションの値が無い・セッションの数が合わない・`-n` が 0 以上の整数でない・`-c` の値の形が外れた・メニューを出す形の `menu` に `-c` が無い） |
 
 誤りは理由を標準エラーへ出す。終了コード 2 のときは `使い方は <呼ばれた名前> -h` を添える。
 
@@ -292,8 +327,11 @@ sequenceDiagram
   （コマンドが `PATH` に無ければメニューは動かない）
 - `containers/lfm` と `containers/snapshot` は base を継がないため入らない
 - ホストの tmux で使うときは、利用者が devbase の checkout の `containers/base/tmux-session` を
-  指す symlink を `~/.local/bin` へ 4 つ張り、`~/.tmux.conf` へ上の 1 行を足す。複写ではなく
-  symlink にすると `git pull` で更新が届く
+  指す symlink を `~/.local/bin` へ 5 つ（`tmux-session` と短縮名 4 つ）張り、`~/.tmux.conf` へ上の
+  1 行を足す。複写ではなく symlink にすると `git pull` で更新が届く
+- ホストの `~/.tmux.conf` に以前の割り当て（`bind-key S choose-tree …` で template を直接書く行）を
+  残していても、`prefix S` はメニューを出す形を呼ぶためそのまま動く。`tmux-menu` を使うには symlink の
+  `tmux-menu` を足す
 - 動作を確かめてある tmux は、コンテナの 3.6（Ubuntu 26.04）とホストの 3.7b。使う機能
   （`choose-tree` の template・`display-menu`（3.0 以降）・`display-popup`（3.2 以降）・
   書式の `q:`）は両方にある。`/bin/sh` は Ubuntu の dash と macOS の bash 3.2（POSIX モード）で
@@ -333,15 +371,37 @@ sequenceDiagram
     あること
 - `prefix S`
   - `containers/base/tmux.conf` を読んだ tmux の `list-keys -T prefix` に `S` の割り当てがちょうど
-    1 つあり、`choose-tree` を呼ぶこと（`test_tmux_conf.py`）
+    1 つあり、`run-shell "TMUX_PANE=#{pane_id} tmux-menu"` であること（`test_tmux_conf.py`）
   - 引数を書き出すだけの偽の `tmux-session` を `PATH` の先頭に置き、`pty` から `C-b S` → 選択 →
     Enter を送ると、選んだセッションの ID と押した端末の名前が渡ること。特殊文字の名前でも同じこと
   - 本物の `tmux-session` で、メニューの「移る」「中身を見る」「落とす」（確認の `y`）がそれぞれ
     効き、今いるセッションも同意すれば落ちること。背景の `run-shell` からの知らせが端末へ届くこと
+- `tmux-menu`（一覧を開く形）
+  - tmux の中で `tmux-menu` と `tmux-session menu` のどちらをプロンプトから打っても、その pane に
+    一覧（`tree-mode`）が出ること
+  - `TMUX_PANE` の pane に一覧が出て、後から attach して直近に操作された端末の pane には出ないこと。
+    `TMUX` があり `TMUX_PANE` を消した環境でも、端末が 1 つだけなら、その端末の pane に一覧が出て
+    終了コード 0 であること
+  - tmux の外で打つと、端末の繋がっていないセッションへ attach して一覧を出すこと
+  - 偽の `tmux-session` で、中・外のどちらで開いた一覧でも、選んで Enter を押すと
+    `menu -c <Enter を押した端末> <選んだ ID>` が渡ること。特殊文字の名前でも同じこと
+  - 本物の `tmux-session` で、一覧から出したメニューの「移る」で Enter を押した端末が移り、対象に
+    繋がっていた他の端末が外れること
+  - メニューを出す形（`-c 端末 <ID>`）は、`tmux-menu` と `tmux-session menu` のどちらでもメニューを
+    出すこと
+  - サーバが無いと、`tmux-menu` と `tmux-session menu` のどちらも終了コード 1 で標準エラーへ理由を
+    出し、セッションを作らないこと
+  - `tmux-menu -h` が終了コード 0 で、`tmux-session -h` の使い方に `tmux-menu` が載ること。`-c` だけで
+    セッションが無い・`-c` が無い・余分な引数・知らないオプションは終了コード 2 であること
 - 配布
   - Dockerfile に `COPY --chmod=0755 tmux-session /usr/local/bin/tmux-session` が 1 行あり、
-    短縮名 3 つの `ln -sf tmux-session /usr/local/bin/<名前>` があること
+    短縮名 4 つの `ln -sf tmux-session /usr/local/bin/<名前>` があること
   - `containers/base/tmux-session` が `#!/bin/sh` で始まり実行権を持つこと
+
+一覧を開いて選ぶテストは、コマンド行とカーソルの移動を `send-keys` で pane へ送り、Enter だけは
+繋いだ端末から送る。`send-keys` で送った Enter では、template の `#{client_name}` が押した端末ではなく
+直近に操作された端末に展開され、渡った端末名を確かめられないためである。後から attach した端末は、
+打たなくても直近に操作された端末になる。
 
 `test_tmux_conf.py` の copy-mode の割り当ての比較は `-T copy-mode` / `-T copy-mode-vi` の行だけを
 対象にし、`prefix S` の行が混ざっても崩れない。
@@ -349,10 +409,11 @@ sequenceDiagram
 CI はイメージを建てないため、次は建てたイメージで手で確かめる。
 
 - `docker run --rm --entrypoint /bin/bash devbase-base:latest -c 'ls -l /usr/local/bin/tmux-*; tmux-go -h; echo exit=$?'`
-  で 4 つのコマンドがあり、`tmux-go -h` が終了コード 0 で終わること
+  で `tmux-session` と短縮名 4 つのコマンドがあり、`tmux-go -h` が終了コード 0 で終わること
 - 建てた base の `shellcheck` で `containers/base/tmux-session` を既定の severity で検査すると、
   指摘が 0 件であること
 - 建て直した base のコンテナの tmux で、`prefix S` のメニューの 3 つの操作が効くこと
+- 建て直した base のコンテナで `tmux-menu` を打つと、セッションの一覧が開くこと
 
 CI の ShellCheck ジョブは runner の shellcheck で `tmux-first` / `tmux-clean` / `tmux-session` を
 検査する。

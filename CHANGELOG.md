@@ -29,6 +29,16 @@
   処理からも見えます。設定を足すツールはこの変数の指す先へ 1 ファイル置けば、`~/.bashrc` を
   書き換えずに済みます。zsh と `lfm` は対象外です。
   **反映には `devbase build base --no-cache` と、使っている派生イメージの建て直しが要ります。**
+- **`prefix S` のセッションの一覧とメニューを、コマンド `tmux-menu` からも開けるようにしました
+  （PLAN71 / #270）。** tmux の中では今の pane に一覧を出し、tmux の外では attach して一覧を出します
+  （attach 先は tmux の既定。サーバが無ければ何も作らず終了コード 1）。本体は `tmux-session menu`
+  で、`tmux-session menu -c 端末 <セッション>` の形は変わりません。`prefix S` の割り当ては
+  `tmux-menu` を呼ぶ形になりました（開く一覧とメニューは同じ）。ホストの tmux で使う手順
+  （symlink の 5 つ目の `tmux-menu` と `~/.tmux.conf` の新しい行）は
+  `docs/user/environment-variables.md` の「セッションを名指しで扱う」にあります。
+  **反映には `devbase build base --no-cache` と、使っている派生イメージの建て直し、
+  コンテナの作り直し（`devbase down` → `devbase up`）が要ります。`devbase up` だけでは
+  反映されません。**
 
 ### Changed
 - **スナップショットの世代を、アカウントグループ（対象ボリュームの組）ごとの系列で持つように

@@ -611,21 +611,33 @@ tmux の中では **`prefix S`**（既定では `Ctrl+b` → `Shift+s`）で、�
 | 中身を見る | `p` | `tmux-peek` の出力を浮いた窓に出す。`Enter` で閉じる |
 | 落とす | `k` | 確認（`y/n`）を挟んで落とす。今いるセッションも、同意すれば落とす |
 
+キーを覚えていなくても、**`tmux-menu`** を打てば `prefix S` と同じ一覧とメニューが開きます（`tmux-session menu` と同じ）。
+
+```bash
+tmux-menu                   # tmux の中: 今の pane に一覧を出す
+                            # tmux の外: attach して、attach した画面に一覧を出す
+```
+
+- tmux の外での attach 先は tmux の既定に従います（端末の繋がっていないセッションを優先し、その中で直近に使ったもの）。一覧からどのセッションへも移れます。名前の決まったセッションへ直接行くなら `tmux-go` を使います
+- tmux のサーバが動いていないときは、サーバもセッションも作らずに理由を出して終了コード 1 で終わります
+
 `prefix S` の割り当ては `/etc/tmux.conf` にあります。`~/.tmux.conf` で `S` を別の操作に割り当てていれば、後から読むそちらが勝ちます（コマンドはそのまま使えます）。
 
 **ホストの tmux で使う場合**は、devbase の checkout の中のファイルへ symlink を張り、`~/.tmux.conf` へ 1 行足します（devbase はホストのこれらのファイルへ書き込みません）。複写ではなく symlink にすると、devbase を `git pull` するだけで更新が届きます。`~/.local/bin` が `PATH` に入っている必要があります。
 
 ```bash
 DEVBASE_DIR=~/devbase   # devbase を clone した場所
-for n in tmux-session tmux-go tmux-peek tmux-kill; do
+for n in tmux-session tmux-go tmux-peek tmux-kill tmux-menu; do
   ln -sf "$DEVBASE_DIR/containers/base/tmux-session" ~/.local/bin/$n
 done
 ```
 
 ```tmux
 # ~/.tmux.conf に足す (反映は tmux source-file ~/.tmux.conf か tmux kill-server)
-bind-key S choose-tree -Zs -O name "run-shell -t \"%%%\" \"tmux-session menu -c #{q:client_name} #{q:session_id}\""
+bind-key S run-shell "TMUX_PANE=#{pane_id} tmux-menu"
 ```
+
+以前の手順で `bind-key S choose-tree …` の行を足した人は、そのままでも `prefix S` は動きます。`tmux-menu` を使うには symlink の 5 つ目（`tmux-menu`）を足します。行は上の新しい形へ差し替えると、一覧の定義が `tmux-session` の 1 か所にそろいます。
 
 dev コンテナで使うには、base イメージの建て直し（`devbase build base --no-cache`）と、使っている派生イメージの建て直し、コンテナの作り直し（`devbase down` → `devbase up`）が要ります。
 
