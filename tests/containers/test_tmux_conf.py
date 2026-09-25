@@ -255,12 +255,14 @@ def _prefix_keys(config: Path) -> list[str]:
 
 @needs_tmux
 def test_prefix_s_opens_session_chooser():
-    """PLAN69 条件 13: prefix S の割り当てがちょうど 1 つあり、choose-tree を呼ぶ。
+    """PLAN69 条件 13 / PLAN71 条件 11: prefix S の割り当てがちょうど 1 つあり、
+    押した pane の ID を ``TMUX_PANE`` で渡して ``run-shell`` で ``tmux-menu`` を呼ぶ。
 
-    既定の tmux には prefix S の割り当てが無い (3.6・3.7b で確認)。
+    既定の tmux には prefix S の割り当てが無い (3.6・3.7b で確認)。一覧の定義は
+    ``tmux-session`` にだけあり、割り当ては template を持たない (PLAN71 決定 2・決定 4)。
     """
     bound = [line for line in _prefix_keys(TMUX_CONF)
              if re.match(r"bind-key\s+(-r\s+)?-T prefix\s+S\s", line)]
     assert len(bound) == 1, bound
-    assert "choose-tree" in bound[0]
-    assert "tmux-session menu" in bound[0]
+    assert re.search(r'\sS\s+run-shell\s+"TMUX_PANE=#\{pane_id\} tmux-menu"\s*$',
+                     bound[0]), bound[0]

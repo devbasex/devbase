@@ -8,9 +8,10 @@
 #   tmux-session go   [-c 端末] <セッション>      移る。そのセッションの他の端末は外す
 #   tmux-session peek [-n 行数] <セッション>      attach せずに端末・プロセス・画面を見る
 #   tmux-session kill [-n] [-f] [-c 端末] <セッション>...  attach・実行中を問わず落とす
+#   tmux-session menu                             セッションの一覧を開く (prefix S と同じ, #270)
 #   tmux-session menu -c 端末 <セッション>        prefix S の一覧から呼ばれるメニュー
 #
-# tmux-go / tmux-peek / tmux-kill という名前 (symlink) で呼ぶと、そのサブコマンドになる。
+# tmux-go / tmux-peek / tmux-kill / tmux-menu という名前 (symlink) で呼ぶと、そのサブコマンドになる。
 # 短縮名を alias にしないのは、alias が bash の対話シェルにしか効かないため。
 #
 # セッションの指し方: `$数字` は ID、それ以外は名前の完全一致 (devbase-1 は devbase-10 に
@@ -25,6 +26,7 @@ case "$PROG" in
 tmux-go) SUB="go" ;;
 tmux-peek) SUB="peek" ;;
 tmux-kill) SUB="kill" ;;
+tmux-menu) SUB="menu" ;;
 *)
 	PROG=tmux-session
 	SUB=""
@@ -44,10 +46,13 @@ usage() {
   tmux-session kill [-n] [-f] [-c 端末] <セッション>...
       attach・実行中を問わず落とす。-n は落とさずに予定を出す。
       自分の pane があるセッションは -f が無ければ落とさない。
+  tmux-session menu
+      セッションの一覧を開く (prefix S と同じ)。選ぶと下のメニューが出る。
+      tmux の外では attach して一覧を出す。
   tmux-session menu -c 端末 <セッション>
       移る・中身を見る・落とすのメニューを出す (prefix S の一覧から呼ばれる)。
 
-  短縮名: tmux-go = go / tmux-peek = peek / tmux-kill = kill
+  短縮名: tmux-go = go / tmux-peek = peek / tmux-kill = kill / tmux-menu = menu
   <セッション>: `$数字` は ID、それ以外は名前の完全一致。
   -c 端末: この端末の代わりに操作する。知らせは端末の状態行へ出す。
 
@@ -124,14 +129,23 @@ case "$LINES_N" in
 '' | *[!0-9]*) usage_error "-n は 0 以上の整数で指定してください: $LINES_N" ;;
 esac
 
+# menu はセッションも -c も受け取らないときに限り一覧を開く (#270)。どちらか一方でも
+# あればメニューを出す形として読む。
+LIST=0
+[ "$SUB" != menu ] || [ $# -ne 0 ] || [ "$HAVE_CLIENT" = 1 ] || LIST=1
+
 case "$SUB" in
 kill) [ $# -ge 1 ] || usage_error "セッションを指定してください" ;;
+menu) [ "$LIST" = 1 ] || {
+	[ $# -ge 1 ] || usage_error "セッションを指定してください"
+	[ $# -eq 1 ] || usage_error "セッションは 1 つだけ指定してください"
+} ;;
 *)
 	[ $# -ge 1 ] || usage_error "セッションを指定してください"
 	[ $# -eq 1 ] || usage_error "セッションは 1 つだけ指定してください"
 	;;
 esac
-[ "$SUB" != menu ] || [ "$HAVE_CLIENT" = 1 ] || usage_error "menu には -c が要ります"
+[ "$SUB" != menu ] || [ "$LIST" = 1 ] || [ "$HAVE_CLIENT" = 1 ] || usage_error "menu には -c が要ります"
 
 # 知らせの出し先。-c のときは端末の状態行へ出し、標準出力には何も出さない
 # (UI から背景の run-shell で呼ばれるため、出力は誰にも見えない)。
@@ -156,6 +170,26 @@ fail() {
 command -v tmux >/dev/null 2>&1 || fail "tmux が見つかりません"
 SESSIONS=$(tmux list-sessions -F '#{session_id} #{session_name}' 2>/dev/null) ||
 	fail "tmux サーバが起動していません"
+
+# 一覧を開く (prefix S と tmux-menu の共通の定義。/etc/tmux.conf の prefix S はここを呼ぶ)。
+# "%%%" は選んだセッションの =名前: に、" \ $ ; ~ を \ で守って置き換わる。'%%' だと ' を
+# 含む名前で壊れる。#{q:...} は選んだセッションの ID と、Enter を押した端末の名前をシェル
+# 向けに引用する。template を run-shell の文字列へ直接書くと #{...} が先に展開されて壊れる
+# ため、定義はこのスクリプトに置く。
+# 出す pane は TMUX_PANE で決める。prefix S は run-shell に TMUX_PANE=#{pane_id} を渡す
+# (run-shell の中には TMUX_PANE が無く、-t が無いと直近に操作された別の端末に出ることがある)。
+if [ "$LIST" = 1 ]; then
+	TREE_TEMPLATE='run-shell -t "%%%" "tmux-session menu -c #{q:client_name} #{q:session_id}"'
+	if [ -n "${TMUX:-}" ]; then
+		if [ -n "${TMUX_PANE:-}" ]; then
+			exec tmux choose-tree -t "$TMUX_PANE" -Zs -O name "$TREE_TEMPLATE"
+		fi
+		exec tmux choose-tree -Zs -O name "$TREE_TEMPLATE"
+	fi
+	# tmux の外: attach 先は tmux の既定 (端末の繋がっていないセッションを優先し、
+	# その中で直近のもの)。attach した画面に一覧を出す。
+	exec tmux attach-session \; choose-tree -Zs -O name "$TREE_TEMPLATE"
+fi
 
 if [ "$HAVE_CLIENT" = 1 ]; then
 	tmux list-clients -F '#{client_name}' | grep -Fqx -- "$CLIENT" ||

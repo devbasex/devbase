@@ -21,6 +21,7 @@ import json
 import os
 import pty
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -35,7 +36,7 @@ BASE_DIR = Path(__file__).resolve().parents[2] / "containers" / "base"
 SCRIPT = BASE_DIR / "tmux-session"
 TMUX_CONF = BASE_DIR / "tmux.conf"
 DOCKERFILE = BASE_DIR / "Dockerfile"
-SHORT_NAMES = ("tmux-go", "tmux-peek", "tmux-kill")
+SHORT_NAMES = ("tmux-go", "tmux-peek", "tmux-kill", "tmux-menu")
 
 needs_tmux = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux が無い環境")
 
@@ -445,11 +446,18 @@ def tm():
 
 @pytest.mark.parametrize("argv", [("tmux-session", "-h"), ("tmux-session", "go", "-h"),
                                   ("tmux-go", "-h"), ("tmux-peek", "--help"),
-                                  ("tmux-kill", "-h")])
+                                  ("tmux-kill", "-h"), ("tmux-menu", "-h")])
 def test_help_exits_zero(tm, argv):
     done = tm.run(*argv)
     assert done.returncode == 0, done.stderr
     assert "tmux-session" in done.stdout
+
+
+def test_help_lists_tmux_menu(tm):
+    """PLAN71 条件 9: ``tmux-session -h`` の使い方に ``tmux-menu`` が載る。"""
+    done = tm.run("tmux-session", "-h")
+    assert done.returncode == 0, done.stderr
+    assert "tmux-menu" in done.stdout
 
 
 @pytest.mark.parametrize("argv", [
@@ -469,6 +477,10 @@ def test_help_exits_zero(tm, argv):
     ("tmux-kill",),                           # kill にセッションが無い
     ("tmux-peek", "-c", "/dev/pts/1", "x"),   # peek は -c を受け取らない
     ("tmux-session", "menu", "-c", "/dev/pts/1", "a", "b"),  # menu にセッションが複数
+    ("tmux-menu", "-c", "/dev/pts/1"),        # PLAN71 条件 9: -c だけでセッションが無い
+    ("tmux-menu", "a"),                       # -c が無い
+    ("tmux-menu", "-c", "/dev/pts/1", "a", "b"),  # 余分な引数
+    ("tmux-menu", "-x"),                      # 知らないオプション
 ])
 def test_usage_errors_exit_two(tm, argv):
     done = tm.run(*argv)
@@ -1070,6 +1082,174 @@ def test_menu_notifies_client_on_failure(ui_tm):
     tm.tmux("run-shell", "-b", f"tmux-go -c {me.tty} no-such-session")
 
     _wait(lambda: "no-such-session" in me.output())
+
+
+# --- tmux-menu: 一覧を開く形 (PLAN71) ---
+#
+# 一覧は名前順 (``-O name``) で、カーソルは開いた pane のセッション ``zz-home`` にある。
+# 選ぶセッションの名前はどれも ``zz-home`` より前に並ぶため、1 つ上が選ぶセッションになる。
+
+# 一覧を開く形を打つコマンド行 (``tm.bin`` からの相対)。条件 8 で両方の名前を走らせる。
+LIST_COMMANDS = ["tmux-menu", "tmux-session menu"]
+
+
+def _pane_mode(tm: TmuxEnv, sid: str) -> str:
+    return tm.tmux("display-message", "-p", "-t", sid, "#{pane_mode}").stdout.strip()
+
+
+def _type_list_command(tm: TmuxEnv, sid: str, command: str) -> None:
+    """``sid`` の pane のプロンプトへ一覧を開くコマンド行を打ち、一覧が出るまで待つ。
+
+    繋いだ端末ではなく pane へ ``send-keys`` で直接送る (繋いだ直後の端末は入力を捨てる
+    ことがある)。コマンドは ``tm.bin`` の絶対パスで打つ (``fake_tm`` では名前の
+    ``tmux-session`` が ``fake/`` の偽物に解決されるため)。
+    """
+    tm.tmux("send-keys", "-t", sid, f"{tm.bin}/{command}", "Enter")
+    _wait(lambda: _pane_mode(tm, sid) == "tree-mode")
+
+
+def _pick_above(tm: TmuxEnv, me: Client, sid: str, attempts: int = 5) -> None:
+    """``sid`` の pane の一覧で 1 つ上を選び、``me`` の端末から Enter を送る。
+
+    Up は ``send-keys`` で送る (端末を通らずに一覧を動かす)。Enter は ``me`` から送る。
+    ``send-keys`` の Enter では template の ``#{client_name}`` が直近に操作された端末に
+    なり、押した端末を確かめられない。繋いだ直後の ``me`` は Enter を捨てることがあるため、
+    一覧が残っていれば 2 秒ごとに送り直す。一覧を抜けたら ``me`` は入力を受け付けている。
+    """
+    tm.tmux("send-keys", "-t", sid, "Up")
+    for _ in range(attempts - 1):
+        me.send("\r")
+        with contextlib.suppress(AssertionError):
+            _wait(lambda: _pane_mode(tm, sid) != "tree-mode", timeout=2.0)
+            return
+    me.send("\r")
+    _wait(lambda: _pane_mode(tm, sid) != "tree-mode")
+
+
+@needs_tmux
+@pytest.mark.parametrize("command", LIST_COMMANDS)
+def test_list_inside_opens_tree_in_pane(ui_tm, command):
+    """PLAN71 条件 1・8: tmux の中で打つと、その pane に一覧が出る。"""
+    tm = ui_tm
+    home = tm.new("zz-home")
+    tm.attach(home)
+
+    _type_list_command(tm, home, command)
+
+
+@needs_tmux
+@pytest.mark.parametrize("name", SPECIAL_NAMES)
+def test_list_inside_passes_selected_id_and_client(fake_tm, name):
+    """PLAN71 条件 2: 一覧で選ぶと、prefix S と同じ引数で menu が呼ばれる。"""
+    tm = fake_tm
+    target = tm.new(name)
+    home = tm.new("zz-home")
+    me = tm.attach(home)
+
+    _type_list_command(tm, home, "tmux-menu")
+    _pick_above(tm, me, home)
+
+    _wait(lambda: tm.record.exists() and tm.record.read_text())
+    assert tm.record.read_text().splitlines() == ["menu", "-c", me.tty, target]
+
+
+@needs_tmux
+@pytest.mark.parametrize("name", ["devbase-3", "it's"])
+def test_list_inside_menu_go_detaches_others_and_switches(ui_tm, name):
+    """PLAN71 条件 3: メニューの ``a`` で Enter を押した端末が移り、他の端末は外れる。"""
+    tm = ui_tm
+    target = tm.new(name)
+    home = tm.new("zz-home")
+    me = tm.attach(home)
+    stale = tm.attach(target)
+
+    _type_list_command(tm, home, "tmux-menu")
+    _pick_above(tm, me, home)
+    _wait(lambda: "移る" in me.output())
+    me.send("a")
+
+    _wait(lambda: tm.clients_of(target) == {me.tty})
+    assert stale.tty not in tm.all_clients()
+
+
+def _spawn_outside(tm: TmuxEnv, home: str) -> Client:
+    """tmux の外で ``tmux-menu`` を起動し、``home`` に繋がって一覧が出るまで待つ。"""
+    me = tm.spawn([str(tm.bin / "tmux-menu")])
+    _wait(lambda: tm.all_clients().get(me.tty) == home)
+    _wait(lambda: _pane_mode(tm, home) == "tree-mode")
+    return me
+
+
+@needs_tmux
+def test_list_outside_attaches_and_opens_tree(ui_tm):
+    """PLAN71 条件 4: tmux の外では、端末の無いセッションへ attach して一覧を出す。"""
+    tm = ui_tm
+    target = tm.new("devbase-3")
+    home = tm.new("zz-home")
+    tm.attach(target)
+
+    _spawn_outside(tm, home)
+
+
+@needs_tmux
+@pytest.mark.parametrize("name", SPECIAL_NAMES)
+def test_list_outside_passes_selected_id_and_client(fake_tm, name):
+    """PLAN71 条件 5: 外から開いた一覧で選ぶと、attach した端末と選んだ ID が渡る。"""
+    tm = fake_tm
+    target = tm.new(name)
+    home = tm.new("zz-home")
+    tm.attach(target)
+
+    me = _spawn_outside(tm, home)
+    _pick_above(tm, me, home)
+
+    _wait(lambda: tm.record.exists() and tm.record.read_text())
+    assert tm.record.read_text().splitlines() == ["menu", "-c", me.tty, target]
+
+
+@needs_tmux
+@pytest.mark.parametrize("argv", [("tmux-menu",), ("tmux-session", "menu")])
+def test_list_no_server_exits_one(tm, argv):
+    """PLAN71 条件 6・8: サーバが無ければ、何も作らず 1 で終わる。"""
+    done = tm.run(*argv)
+    assert done.returncode == 1, (done.stdout, done.stderr)
+    assert "サーバ" in done.stderr
+    assert tm.sessions() == {}
+
+
+@needs_tmux
+@pytest.mark.parametrize("form", ["tmux-menu -c {tty} {sid}",
+                                  "tmux-session menu -c {tty} {sid}"])
+def test_menu_form_same_by_both_names(ui_tm, form):
+    """PLAN71 条件 8: メニューを出す形は、どちらの名前でも同じメニューを出す。
+
+    ``run-shell`` は文字列を ``sh -c`` へ渡すため、ID (``$0``) は引用して渡す。
+    """
+    tm = ui_tm
+    target = tm.new("devbase-3")
+    me = tm.attach(tm.new("zz-home"))
+
+    tm.tmux("run-shell", "-b", form.format(tty=me.tty, sid=shlex.quote(target)))
+
+    _wait(lambda: "中身を見る" in me.output())
+
+
+@needs_tmux
+def test_list_opens_in_tmux_pane_not_latest_client(tm):
+    """PLAN71 条件 11: 一覧は ``TMUX_PANE`` の pane に出て、直近に操作された端末には出ない。
+
+    後に繋いだ ``other`` の端末が直近になる (設計の実測 9a)。
+    """
+    home = tm.new("home")
+    other = tm.new("other")
+    tm.attach(home)
+    tm.attach(other)
+
+    done = tm.run("tmux-menu", env=tm.inside_env(home))
+
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    _wait(lambda: _pane_mode(tm, home) == "tree-mode")
+    assert _pane_mode(tm, other) == ""
 
 
 # --- 配布 (受け入れ条件 16 のうちビルドの前に分かる部分) ---
