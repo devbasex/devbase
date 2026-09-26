@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass  # noqa: F401  (tests monkey-patch devbase.env.io_export.getpass)
 import os
 import re
 from dataclasses import dataclass, field

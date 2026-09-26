@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import getpass  # noqa: F401  (tests monkey-patch devbase.env.io_import.getpass)
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
