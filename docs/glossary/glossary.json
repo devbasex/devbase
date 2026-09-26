@@ -1,0 +1,315 @@
+{
+  "version": 1,
+  "contexts": [
+    {
+      "id": "docker-context",
+      "name": "docker の接続先",
+      "meaning": "devbase がどの docker daemon を操作するか（docs/specifications/remote-docker-context.md）"
+    },
+    {
+      "id": "cli",
+      "name": "コマンドの入口",
+      "meaning": "bin/devbase の位置引数の解決とビルドの入口（docs/specifications/cli-argument-resolution.md）"
+    },
+    {
+      "id": "compose",
+      "name": "Compose の構成",
+      "meaning": "devbase up が作る compose の生成物とプロファイル（docs/specifications/compose-profiles.md）"
+    },
+    {
+      "id": "editor",
+      "name": "エディタで開く",
+      "meaning": "up の後に VS Code で dev コンテナを開く（docs/specifications/editor-open.md）"
+    },
+    {
+      "id": "secret",
+      "name": "機密の置き場",
+      "meaning": "機密の backend・参照・グループ・キャッシュ（docs/specifications/secret-backend.md）"
+    },
+    {
+      "id": "snapshot",
+      "name": "スナップショット",
+      "meaning": "ホームのボリュームの世代と系列（docs/specifications/snapshot-series.md）"
+    },
+    {
+      "id": "base-image",
+      "name": "base イメージの描画",
+      "meaning": "base イメージのフォントの解決（docs/specifications/base-image-rendering.md）"
+    },
+    {
+      "id": "tmux",
+      "name": "base イメージの tmux のコマンド",
+      "meaning": "tmux-first / tmux-clean / tmux-session が扱うセッションとクライアント"
+    },
+    {
+      "id": "ci",
+      "name": "継続的インテグレーション",
+      "meaning": "GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的解析"
+    },
+    {
+      "id": "test",
+      "name": "テストの実行環境",
+      "meaning": "pytest が走るプロセスの環境と、テストが起動する外部のプロセス"
+    }
+  ],
+  "terms": [
+    {
+      "term": "docker context",
+      "context": "docker-context",
+      "meaning": "docker CLI が daemon への接続先を名前で切り替える仕組み（docker context ls の名前）",
+      "source": "docs/specifications/remote-docker-context.md"
+    },
+    {
+      "term": "現在の context",
+      "context": "docker-context",
+      "meaning": "DOCKER_CONTEXT と DOCKER_HOST を外した環境で docker context show が返す名前",
+      "source": "docs/specifications/remote-docker-context.md"
+    },
+    {
+      "term": "解決した context",
+      "context": "docker-context",
+      "meaning": "優先順位に従って devbase が決めた context 名。未指定なら None（従来どおり CLI に委ねる）",
+      "source": "docs/specifications/remote-docker-context.md"
+    },
+    {
+      "term": "リモート扱い",
+      "context": "docker-context",
+      "meaning": "解決した context が None でなく、現在の context と異なる（または現在の context を取得できない）状態",
+      "source": "docs/specifications/remote-docker-context.md"
+    },
+    {
+      "term": "ローカル扱い",
+      "context": "docker-context",
+      "meaning": "リモート扱いでない状態。従来と同じ振る舞い",
+      "source": "docs/specifications/remote-docker-context.md"
+    },
+    {
+      "term": "名前の形",
+      "context": "cli",
+      "meaning": "親ディレクトリの直下の 1 つの名前として受け付ける形。[A-Za-z0-9][A-Za-z0-9._-]* の全体一致",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "name 解決",
+      "context": "cli",
+      "meaning": "位置引数を名前として解釈し、projects/<name> へ cd して引数から取り除く処理",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "ラッパー",
+      "context": "cli",
+      "meaning": "bin/devbase（bash 実装の入口。Python 実装のコマンドへ run_python で振り分ける）",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "ショートカット",
+      "context": "cli",
+      "meaning": "devbase up のように project を省いたトップレベルの同義語",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "単体ビルド",
+      "context": "cli",
+      "meaning": "$DEVBASE_ROOT/containers/<image> を devbase-<image>:latest として 1 つだけ作るビルド",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "プロファイル",
+      "context": "compose",
+      "meaning": "Compose の profiles: に書いた名前。付随サービス群をまとめる単位",
+      "source": "docs/specifications/compose-profiles.md"
+    },
+    {
+      "term": "既定のサービス",
+      "context": "compose",
+      "meaning": "profiles: を持たないサービス。devbase up で起動する",
+      "source": "docs/specifications/compose-profiles.md"
+    },
+    {
+      "term": "プロファイルのサービス",
+      "context": "compose",
+      "meaning": "そのプロファイルに属し、既定のサービスに含まれないサービス",
+      "source": "docs/specifications/compose-profiles.md"
+    },
+    {
+      "term": "打ち消し用のプロファイル名",
+      "context": "compose",
+      "meaning": "__devbase_none__（定数 NO_PROFILE）。devbase が子プロセスの COMPOSE_PROFILES へ入れて利用者の指定を無効にする",
+      "source": "docs/specifications/compose-profiles.md"
+    },
+    {
+      "term": "生成物",
+      "context": "compose",
+      "meaning": "devbase up がプロジェクト直下に作る .docker-compose.scale.yml",
+      "source": "docs/specifications/compose-profiles.md"
+    },
+    {
+      "term": "開発サービス名",
+      "context": "compose",
+      "meaning": "get_dev_service_name() が返す名前（DEV_SERVICE_NAME、既定 dev）。生成物では <開発サービス名>-1..-N へ複製される",
+      "source": "docs/specifications/compose-profiles.md"
+    },
+    {
+      "term": "窓",
+      "context": "editor",
+      "meaning": "dev コンテナへ Dev Containers 拡張で接続した VS Code のウィンドウ",
+      "source": "docs/specifications/editor-open.md"
+    },
+    {
+      "term": "動いているインスタンス",
+      "context": "editor",
+      "meaning": "docker ps に現れ、Compose のプロジェクトのラベルが対象のプロジェクトで、サービスのラベルが <開発サービス名>-<1 以上の数字> のコンテナ",
+      "source": "docs/specifications/editor-open.md"
+    },
+    {
+      "term": "参照",
+      "context": "secret",
+      "meaning": "機密の宛先（SecretRef）。適用範囲（global / project）と持ち主（team / user）の組み合わせで 4 種。version: 2 ではグループも持つ",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "アカウントグループ",
+      "context": "secret",
+      "meaning": "DEVBASE_ACCOUNT_GROUP の値。未設定なら default。ボリューム devbase_home_<group> の単位でもある",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "レイアウト",
+      "context": "secret",
+      "meaning": "置き場のパスの並び（layout）。flat（version: 1）と group（version: 2）",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "置き場のグループ名",
+      "context": "secret",
+      "meaning": "パスに入れる名前。グループ名を group_aliases で読み替えた後の名前",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "対象のグループ",
+      "context": "secret",
+      "meaning": "1 回の操作が読み書きするグループ",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "チーム単位の機密",
+      "context": "secret",
+      "meaning": "チームの全員が同じ値を使う機密",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "個人単位の機密",
+      "context": "secret",
+      "meaning": "利用者ごとに値が違う機密",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "backend",
+      "context": "secret",
+      "meaning": "参照に対して機密を読み書きする実装。plaintext / age / openbao。auto は存在による判定",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "ブートストラップ機密",
+      "context": "secret",
+      "meaning": "サーバ backend が接続に使う AppRole の role_id / secret_id。secrets/bootstrap.env.age に置く",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "キャッシュ",
+      "context": "secret",
+      "meaning": "サーバの内容と一致すると確かめられた機密を、参照ごとに age で暗号化して手元に控えたもの",
+      "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "世代",
+      "context": "snapshot",
+      "meaning": "backups/<名前>/ の 1 つ。full.tar.zst 1 つと、0 個以上の incr-NNN.tar.zst からなる",
+      "source": "docs/specifications/snapshot-series.md"
+    },
+    {
+      "term": "対象ボリュームの組",
+      "context": "snapshot",
+      "meaning": "snapshot.yml のエントリの volumes（マウント名 → ボリューム名）",
+      "source": "docs/specifications/snapshot-series.md"
+    },
+    {
+      "term": "系列",
+      "context": "snapshot",
+      "meaning": "対象ボリュームの組が同じ世代の集まり",
+      "source": "docs/specifications/snapshot-series.md"
+    },
+    {
+      "term": "系列の最新の世代",
+      "context": "snapshot",
+      "meaning": "系列の中で created_at が最も新しい世代",
+      "source": "docs/specifications/snapshot-series.md"
+    },
+    {
+      "term": "全体の上限",
+      "context": "snapshot",
+      "meaning": "系列をまたいで数えた世代の数の上限（max_total）",
+      "source": "docs/specifications/snapshot-series.md"
+    },
+    {
+      "term": "総称ファミリ",
+      "context": "base-image",
+      "meaning": "sans-serif / sans / serif / monospace。具体の書体名ではなく様式を指す指定",
+      "source": "docs/specifications/base-image-rendering.md"
+    },
+    {
+      "term": "metric 互換",
+      "context": "base-image",
+      "meaning": "字幅・行送りが元の書体と一致する代替の書体",
+      "source": "docs/specifications/base-image-rendering.md"
+    },
+    {
+      "term": "受け皿",
+      "context": "base-image",
+      "meaning": "イメージに実在しない書体名を指定されたときに末尾へ足すフェイス",
+      "source": "docs/specifications/base-image-rendering.md"
+    },
+    {
+      "term": "検査ジョブ",
+      "context": "ci",
+      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest）",
+      "pending_source": "issues/issue-216-requirements.md"
+    },
+    {
+      "term": "統合ブランチ",
+      "context": "ci",
+      "meaning": "課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**）",
+      "pending_source": "issues/issue-216-requirements.md"
+    },
+    {
+      "term": "指摘",
+      "context": "ci",
+      "meaning": "shellcheck が出す 1 件（SC の番号・水準・行）",
+      "pending_source": "issues/issue-247-requirements.md"
+    },
+    {
+      "term": "抑止の注記",
+      "context": "ci",
+      "meaning": "指摘を抑える # shellcheck の指示と、抑える理由のコメントの組",
+      "pending_source": "issues/issue-247-requirements.md"
+    },
+    {
+      "term": "環境の隔離",
+      "context": "test",
+      "meaning": "pytest を起動したシェルから継承した環境変数を、テストごとに既定の状態（未設定か固定値）へ戻すこと",
+      "pending_source": "issues/issue-218-requirements.md"
+    },
+    {
+      "term": "隔離した tmux サーバ",
+      "context": "test",
+      "meaning": "TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない",
+      "pending_source": "issues/issue-239-requirements.md"
+    },
+    {
+      "term": "keeper",
+      "context": "tmux",
+      "meaning": "tmux-clean が必ず残すセッション。tmux の中なら今のセッション、外ならベース名に属するうち番号が最小のもの",
+      "pending_source": "issues/issue-239-requirements.md"
+    }
+  ]
+}
