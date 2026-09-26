@@ -513,3 +513,34 @@ def test_set_encrypts_for_every_registered_recipient(devbase_root, with_key):
     other_key.write_text(str(other))
     reader = SecretStore(devbase_root, identities=[str(other_key)])
     assert reader.load(GLOBAL) == {'FOO': 'updated'}
+
+
+def test_edit_project_direct_warns_before_opening_the_editor(devbase_root, monkeypatch,
+                                                             caplog):
+    """#276: 直接編集は save_bytes を通らないので、エディタを開く前に知らせる"""
+    import logging
+
+    project_dir = devbase_root / 'projects' / '_foo'
+    project_dir.mkdir()
+    monkeypatch.setenv('PWD', str(project_dir))
+
+    def _write_warnings():
+        return [r.getMessage() for r in caplog.records
+                if '機密を書き込みます' in r.getMessage()]
+
+    seen_at_editor = []
+
+    def _call(argv):
+        # エディタが開いた時点で、知らせが既に出ているか
+        seen_at_editor.append((argv[-1], list(_write_warnings())))
+        return 0
+
+    monkeypatch.setattr(env_cmd.subprocess, 'call', _call)
+    with caplog.at_level(logging.WARNING):
+        assert env_cmd.cmd_env_edit(devbase_root, project=True) == 0
+
+    [(path, warnings)] = seen_at_editor
+    assert path == str(project_dir / '.env')
+    assert len(warnings) == 1
+    assert "'_foo'" in warnings[0]
+    assert len(_write_warnings()) == 1

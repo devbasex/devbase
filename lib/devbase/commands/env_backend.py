@@ -24,6 +24,7 @@ from devbase.env import bootstrap as _bootstrap
 from devbase.env.secret_store import MODE_ABSENT, SecretRef, SecretStore
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.utils import names
 
 logger = get_logger(__name__)
 
@@ -56,17 +57,14 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
 
 def _project_names(devbase_root: Path) -> List[str]:
     """``projects/`` に実在し、参照の名前に使えるプロジェクト名 (名前順)"""
-    names: List[str] = []
-    projects_dir = Path(devbase_root) / 'projects'
-    if projects_dir.is_dir():
-        for entry in sorted(projects_dir.iterdir()):
-            if entry.is_dir():
-                try:
-                    SecretRef.for_project(entry.name)
-                except DevbaseError:
-                    continue
-                names.append(entry.name)
-    return names
+    project_names: List[str] = []
+    for entry in names.project_dirs(Path(devbase_root) / 'projects'):
+        try:
+            SecretRef.for_project(entry.name)
+        except DevbaseError:
+            continue
+        project_names.append(entry.name)
+    return project_names
 
 
 def cmd_env_backend_status(devbase_root: Path) -> int:
@@ -544,10 +542,10 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
 
     if not plan.moves:
         print("移す機密はありません")
-        plan.print_left_on_server()
+        _print_left_on_server(plan)
         return 0
 
-    plan.print_summary()
+    _print_plan_summary(plan)
     if plan.conflicts:
         print("\n移行先に同じキーがあるため、1 件も書き込まずに中止しました。"
               "移行先で消してから再実行してください")
@@ -593,7 +591,7 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         for unit, _ in plan.moves:
             print(f"  {server_store.display_label(unit.server_ref):<24} "
                   f"{server.display_path(unit.server_ref)}")
-        plan.print_left_on_server()
+        _print_left_on_server(plan)
     return 0
 
 
@@ -701,36 +699,6 @@ class _MigrationPlan:
             if clash:
                 self.conflicts[unit] = clash
 
-    def _heading(self, unit: _MoveUnit) -> str:
-        """参照の見出し。グループ別の置き場ではサーバ上のパスを添える (値は出さない)"""
-        label = f"{self.server_store.display_label(unit.server_ref):<24}"
-        if self._grouped:
-            label += f" {self.server.display_path(unit.server_ref)}"
-        return label
-
-    def print_summary(self) -> None:
-        direction = ('age / 平文 → openbao' if self.to == _bc.BACKEND_OPENBAO
-                     else 'openbao → age')
-        print(f"\n=== 移行する機密 ({direction}) ===")
-        for unit, keys in self.moves:
-            print(f"  {self._heading(unit)} {len(keys)} 件: {', '.join(keys)}")
-        if self.conflicts:
-            print("\n移行先に同じキーがあります:")
-            for unit, keys in self.conflicts.items():
-                print(f"  {self._heading(unit)} {', '.join(keys)}")
-        self.print_left_on_server()
-
-    def print_left_on_server(self) -> None:
-        """``--to age`` で移さない他のグループの共通の参照 (要求を出さずにパスだけを出す)"""
-        if not self.left_on_server:
-            return
-        settings = self.server_store.config.openbao
-        print("\n次のグループの共通の参照は age へ移さず、サーバ上に残します "
-              "(ファイル backend の共通は 1 つだけのため。読み取りの要求も出していません):")
-        for ref in self.left_on_server:
-            print(f"  グループ {settings.display_group(ref.group):<16} "
-                  f"{self.server.display_path(ref)}")
-
     def apply(self) -> None:
         from devbase.env.openbao import SecretRefusedError
 
@@ -821,3 +789,38 @@ class _MigrationPlan:
             except OSError as e:
                 logger.warning("%s を退避できませんでした (%s): %s", ref.label(), source, e)
         return backup_dir
+
+
+# 移行の計画の表示。計画 (_MigrationPlan) の状態は変えない。
+
+def _plan_heading(plan: _MigrationPlan, unit: _MoveUnit) -> str:
+    """参照の見出し。グループ別の置き場ではサーバ上のパスを添える (値は出さない)"""
+    label = f"{plan.server_store.display_label(unit.server_ref):<24}"
+    if plan._grouped:
+        label += f" {plan.server.display_path(unit.server_ref)}"
+    return label
+
+
+def _print_plan_summary(plan: _MigrationPlan) -> None:
+    direction = ('age / 平文 → openbao' if plan.to == _bc.BACKEND_OPENBAO
+                 else 'openbao → age')
+    print(f"\n=== 移行する機密 ({direction}) ===")
+    for unit, keys in plan.moves:
+        print(f"  {_plan_heading(plan, unit)} {len(keys)} 件: {', '.join(keys)}")
+    if plan.conflicts:
+        print("\n移行先に同じキーがあります:")
+        for unit, keys in plan.conflicts.items():
+            print(f"  {_plan_heading(plan, unit)} {', '.join(keys)}")
+    _print_left_on_server(plan)
+
+
+def _print_left_on_server(plan: _MigrationPlan) -> None:
+    """``--to age`` で移さない他のグループの共通の参照 (要求を出さずにパスだけを出す)"""
+    if not plan.left_on_server:
+        return
+    settings = plan.server_store.config.openbao
+    print("\n次のグループの共通の参照は age へ移さず、サーバ上に残します "
+          "(ファイル backend の共通は 1 つだけのため。読み取りの要求も出していません):")
+    for ref in plan.left_on_server:
+        print(f"  グループ {settings.display_group(ref.group):<16} "
+              f"{plan.server.display_path(ref)}")

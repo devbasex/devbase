@@ -318,10 +318,14 @@ def test_is_valid_project_name():
     assert not bundle.is_valid_project_name("foo bar")
     assert not bundle.is_valid_project_name("foo/bar")
     assert not bundle.is_valid_project_name("foo\nbar")
+    # 末尾の改行も弾く (`$` は最後の改行の前でも一致するため)
+    assert not bundle.is_valid_project_name("foo\n")
 
 
 def test_make_entries_from_disk_skips_invalid_project_names(tmp_path, caplog):
-    """空白 / 先頭 `.` 等の project ディレクトリは export 時に skip + warning で除外する。
+    """空白 / 先頭 `-` 等の project ディレクトリは export 時に skip + warning で除外する。
+
+    先頭 `.` はプロジェクトとして数えない (#276) ので、警告を出さずに外す。
 
     import 側 (`_import_merge._PROJECT_ENV_RE`) は同じ name 規則を要求するため、
     そのまま arcname にして export すると round-trip できない bundle が出来てしまう。
@@ -345,12 +349,15 @@ def test_make_entries_from_disk_skips_invalid_project_names(tmp_path, caplog):
     arcnames = {e.arcname for e in entries}
     # 妥当な project だけが残り、`..weird` 等は arcname に出現しない
     assert arcnames == {"env/projects/valid_proj/.env"}
-    # 各 invalid name について warning が出ていること
-    for bad_name in (".hidden", "..weird", "with space", "-leading-dash"):
+    # 書庫に入れられない名前について warning が出ていること
+    for bad_name in ("with space", "-leading-dash"):
         assert any(
             "スキップ" in r.message and bad_name in r.message
             for r in caplog.records
         ), f"warning が出ていない: {bad_name}"
+    # `.` 始まりはプロジェクトとして数えないので、警告せずに外す (#276)
+    for dot_name in (".hidden", "..weird"):
+        assert not any(dot_name in r.message for r in caplog.records), dot_name
 
 
 def test_make_entries_from_disk_invalid_name_explicitly_included_is_still_skipped(
@@ -362,13 +369,13 @@ def test_make_entries_from_disk_invalid_name_explicitly_included_is_still_skippe
     CLI からの明示指定でも validator は適用される。
     """
     root = tmp_path
-    bad = root / "projects" / ".hidden"
+    bad = root / "projects" / "with space"
     bad.mkdir(parents=True)
     (bad / ".env").write_text("X=1\n")
 
     with caplog.at_level("WARNING"):
         entries = bundle.make_entries_from_disk(
-            root, include_projects=[".hidden"], include_global=False,
+            root, include_projects=["with space"], include_global=False,
             include_metadata=False,
         )
 
@@ -406,6 +413,28 @@ def test_make_entries_from_disk_validator_matches_import_side():
         # 重要: 両者が常に一致する (validator 同期)
         assert export_ok == import_ok, (
             f"export/import の project 名 validator が乖離: {name!r}"
+        )
+
+
+def test_import_side_rejects_arcname_with_trailing_newline():
+    """末尾に改行の付いた arcname は正規のメンバーと同じ書き出し先を指すため弾く。
+
+    ``env/projects/foo/.env\\n`` が通ると ``env/projects/foo/.env`` と同じ
+    ``projects/foo/.env`` への計画が 2 つでき、commit の段で失敗する。
+    """
+    from devbase.env import _import_merge
+
+    assert _import_merge.project_name_of("env/projects/foo/.env\n") is None
+    with pytest.raises(_import_merge.MergeError):
+        _import_merge.filter_members(
+            {
+                "env/projects/foo/.env": b"A=1\n",
+                "env/projects/foo/.env\n": b"A=2\n",
+            },
+            include_global=True,
+            include_metadata=True,
+            include_projects=None,
+            exclude_projects=[],
         )
 
 

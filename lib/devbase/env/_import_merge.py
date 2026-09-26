@@ -36,8 +36,10 @@ logger = get_logger(__name__)
 # 名前部分の validator は export 側 (`bundle.is_valid_project_name`) と共有して
 # round-trip 不整合を防ぐ (PR #13 codex round 5 指摘)。ここでは arcname 全体パターン
 # (`env/projects/<name>/.env`) を捕捉するために改めて regex を組む。
+# 末尾は `\Z` で閉じる。`$` だと `env/projects/foo/.env\n` が通り、正規のメンバーと
+# 同じ書き出し先を指す計画が 2 つできる。
 _PROJECT_ENV_RE = re.compile(
-    r'^env/projects/(' + bundle._VALID_PROJECT_NAME_RE.pattern.strip('^$') + r')/\.env$'
+    r'^env/projects/(' + bundle.PROJECT_NAME_PATTERN_BODY + r')/\.env\Z'
 )
 
 # import_bundle が許容する --merge モード一覧。CLI の choices と一致させる。
