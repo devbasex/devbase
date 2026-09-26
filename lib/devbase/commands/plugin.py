@@ -8,7 +8,7 @@ from devbase.plugin.registry import PluginRegistry
 from devbase.plugin.installer import install_plugin, uninstall_plugin
 from devbase.plugin.updater import update_plugin
 from devbase.plugin.info import show_plugin_info, show_available_plugins
-from devbase.plugin.syncer import sync_projects
+from devbase.plugin.syncer import discover_projects, sync_projects
 from devbase.plugin.migrator import migrate
 from devbase.plugin.repo_manager import (
     add_repository,
@@ -67,10 +67,8 @@ def cmd_plugin_list(devbase_root: Path, available: bool = False) -> int:
         print(f"  {'NAME':<20} {'VERSION':<10} {'PROJECTS':<10} {'SOURCE'}")
         print(f"  {'-'*20} {'-'*10} {'-'*10} {'-'*30}")
         for p in installed:
-            p_dir = devbase_root / p.path / 'projects'
-            proj_count = 0
-            if p_dir.is_dir():
-                proj_count = len([d for d in p_dir.iterdir() if d.is_dir()])
+            # plugin info・status と同じ数え方 (#276)
+            proj_count = len(discover_projects(devbase_root / p.path))
             total_projects += proj_count
             source_display = p.source
             if p.linked:

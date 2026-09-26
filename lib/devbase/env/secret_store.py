@@ -193,11 +193,14 @@ def warn_unusable_project_name(ref: SecretRef) -> None:
     """
     if ref.kind != 'project' or names.is_single_segment_name(ref.name or ''):
         return
+    # 改行・ESC などは名前の検証を通るため、そのまま埋め込むと警告が複数行に割れ、
+    # 端末の表示も操作できてしまう。表示できない文字だけをエスケープして見せる。
+    shown = ''.join(c if c.isprintable() else repr(c)[1:-1] for c in ref.name)
     logger.warning(
         "プロジェクト名として使えない形の名前のプロジェクトへ機密を書き込みます: '%s'。"
         "この名前では、名前を指定した操作（devbase up <name> など）ができません（%s）。"
         "projects/%s の中で名前なしに打てば動きます。",
-        ref.name, names.NAME_FORM_HINT, ref.name)
+        shown, names.NAME_FORM_HINT, shown)
 
 
 def _reject_user_ref(backend_name: str, ref: SecretRef) -> None:
