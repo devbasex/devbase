@@ -146,7 +146,7 @@ def test_read_passphrase_uses_getpass_on_tty(monkeypatch):
         calls['stream'] = stream
         return "hunter2"
 
-    monkeypatch.setattr("devbase.env.io_export.getpass.getpass", fake_getpass)
+    monkeypatch.setattr("devbase.env.io_common.getpass.getpass", fake_getpass)
 
     pw = _read_passphrase(ExportOptions(passphrase_stdin=True))
     assert pw == "hunter2"
@@ -163,7 +163,7 @@ def test_read_passphrase_falls_back_to_stdin_on_pipe(monkeypatch, capsys):
     def fail_getpass(*args, **kwargs):
         raise AssertionError("getpass.getpass should not be called for piped stdin")
 
-    monkeypatch.setattr("devbase.env.io_export.getpass.getpass", fail_getpass)
+    monkeypatch.setattr("devbase.env.io_common.getpass.getpass", fail_getpass)
 
     pw = _read_passphrase(ExportOptions(passphrase_stdin=True))
     assert pw == "hunter2"
@@ -192,7 +192,7 @@ def test_read_passphrase_tty_eof_raises_export_error(monkeypatch):
     def raise_eof(*args, **kwargs):
         raise EOFError()
 
-    monkeypatch.setattr("devbase.env.io_export.getpass.getpass", raise_eof)
+    monkeypatch.setattr("devbase.env.io_common.getpass.getpass", raise_eof)
 
     with pytest.raises(ExportError, match="パスフレーズを読み取れません"):
         _read_passphrase(ExportOptions(passphrase_stdin=True))
