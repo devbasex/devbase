@@ -254,7 +254,7 @@
     {
       "term": "同期の書き込み先",
       "context": "secret",
-      "meaning": "env sync がキーごとに選ぶ参照。--user なら個人共通、無ければキーが現にある参照（両方なら個人共通、どちらにも無ければチーム共通）",
+      "meaning": "env sync がキーごとに選ぶ参照。--user なら個人共通、無ければキーが現にある参照（両方なら個人共通、どちらにも無ければ個人共通。個人単位の参照を持たない backend では常にチーム共通）",
       "source": "docs/specifications/secret-backend.md"
     },
     {

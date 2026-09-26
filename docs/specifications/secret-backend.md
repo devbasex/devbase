@@ -197,6 +197,69 @@ TUI の側で検査し、通らなければ `set` を呼ばずに同じ欄へ戻
 確認で「はい」を選んだときだけ行う。保存に失敗したとき（版の食い違いを含む）は上書きせず、一覧を
 読み直す。
 
+一覧は `cmd_env list` の出力を読み取らず、行を返す `collect_key_rows` から作る。`list` の表示の文言を
+画面の契約にしないためで、`KeyRow` が値を持たないので TUI から値を画面へ出す経路が構造として無い。
+一覧はキャッシュでなく現物から読む。キャッシュを見て編集すると、`set` の読み直しとで内容が食い違う。
+全ての行を伏せるのは、`list` の伏せ字がキー名の語で決まり、語を含まない機密が平文で出るためである
+（値を確かめる経路は CLI の `env get` と `list --reveal`）。プロジェクトの範囲でグループを選ばせないのは、
+`-p` がプロジェクトのグループの置き場だけを読み書きし、別のグループを選べると保存で必ず失敗するためである。
+
+```mermaid
+classDiagram
+    class KeyRow {
+        +key: str
+        +ref: SecretRef
+        +owner_label: str
+        +scope_label: str
+        +group_label: Optional~str~
+        +wins: bool
+    }
+    class KeyListing {
+        +rows: list~KeyRow~
+        +refs: list~SecretRef~
+        +has_user_refs: bool
+        +grouped: bool
+        +group: Optional~str~
+        +project: Optional~str~
+        +backend: str
+    }
+    KeyListing "1" --> "*" KeyRow
+    KeyRow ..> SecretRef
+```
+
+`KeyListing.group` は表示用の名前（`display_group`）ではなく `--group` に渡す名前で、`grouped` が偽なら
+`None` である。`collect_key_rows` は `GroupOptionError`（使えないグループ）と `DevbaseError`（接続・403・
+復号）をそのまま送り、画面が 1 行にして戻る。
+
+画面は次のように移る。Esc はどの画面でも 1 つ前へ戻り（キーの一覧の Esc は env メニューへ）、Ctrl-C は
+TUI 全体を終える。保存・削除の後は一時停止して出力を読ませ、同じ範囲の一覧を読み直して出す。
+
+```mermaid
+graph TD
+    ENV[env メニュー] -->|キーの一覧と編集| SC[範囲の選択]
+    SC -->|共通・version 2| GR[グループの選択]
+    SC -->|共通・version 2 以外| LS[キーの一覧]
+    GR --> LS
+    SC -->|プロジェクト| PJ[プロジェクトの選択]
+    PJ --> LS
+    LS -->|キーを追加| AD[キー名 → 持ち主 → 適用範囲 → 値]
+    LS -->|行を選ぶ| RO[値を変更 / 削除]
+    AD --> LS
+    RO --> LS
+    ENV -->|OpenBao の接続設定| OB[OpenBao の接続設定]
+    OB --> ENV
+```
+
+| 画面 | 内容 |
+| --- | --- |
+| env メニュー | 既存の 5 つ（変数一覧・エディタで編集・認証情報の再同期・プロジェクト変数の対話設定・初期セットアップ）の後に「キーの一覧と編集」「OpenBao の接続設定」 |
+| キーの一覧の行 | 印（勝つ行に `★`）・キー・持ち主（`チーム` / `個人`）・適用範囲（`共通` / `プロジェクト <name>`）・グループ（`display_group`。`version: 2` でなければ列ごと出さない）・`******`。見出しに行の数・参照の数・backend の名前 |
+| キーの追加 | 持ち主の選択は個人単位の参照を持つ backend だけ、適用範囲の選択はプロジェクトの範囲で開いたときだけ出す。既にあるキーを入れたら同じ置き場の値の変更になる（`set` と同じ） |
+| 空の一覧 | 「キーを追加」の 1 行だけ |
+| 読めない | 範囲とグループと理由の 1 行を出し、一時停止して env メニューへ戻る |
+| 使えないグループ | 理由の 1 行を出してグループの選択へ戻る |
+| プロジェクトが 0 件 | 範囲の選択に「プロジェクト」を出さない |
+
 ### 重ね順（`devbase up`）
 
 `runtime.resolve()` は次の順に重ね、後の層が勝つ。
@@ -547,6 +610,12 @@ TUI の「OpenBao の接続設定」は同じプロセスの中から `use openb
 | 保存の後 | `test` と同じ確認を自動で行う。失敗しても保存した設定は残し、欄を入れ直せる。`use` が失敗したら `test` を呼ばずに欄へ戻る |
 | token | 入力させず、保存しない（実行のたびにブートストラップ機密で取り直す） |
 
+`secret_id` を属性で渡すのは、入力を TUI の伏せ字の欄 1 度で済ませ、Esc の規約を TUI に揃えるためである。
+`--secret-id-stdin` へ流し込む形は同じプロセスの `sys.stdin` を差し替えることになり、TUI の入力と衝突する。
+接続先の既定値は持たず、案内の URL も `<OpenBao の URL>` のまま出す（devbasex は共通のサーバを運用しない。
+既定の接続先を置くと、知らないサーバへブートストラップ機密を送る経路になる）。token の欄を作らないのは、
+token をホストのディスクへ置かない決まりを守るためである。
+
 `cli.py` は `env backend` を機密の注入を行わないコマンドとして扱う（設定が壊れている・
 サーバに届かない状態でこそ実行されるため）。
 
@@ -893,6 +962,17 @@ flowchart TD
 - `DEVBASE_ACCOUNT_GROUP` は、どの backend・どの版でも機密の合成に現れない。devbase のプロセスの
   環境変数にも、子プロセスにも、dev コンテナの `environment` にも、置き場の値が載ることはない
 - `version: 2` の `up` / `scale` は、ボリュームと機密のグループが食い違ったまま副作用を起こさない
+- TUI のキーの追加・変更・削除は `cmd_env` の `set` / `delete` を選んだ置き場を写した属性で呼び、TUI の
+  モジュールは `SecretStore` へ書かない。接続設定の書き込みは `env backend use` へ委譲する
+- TUI のキーの一覧は現物から読み、キャッシュの内容を出さない。読めなければ一覧を出さずに理由を 1 行出す
+- TUI の削除は確認で「はい」を選んだときだけ行う。Esc と「いいえ」では `delete` を呼ばない
+- TUI が受けた機密の値・`role_id`・`secret_id` は伏せ字の欄だけで受け、画面の出力・ログ・子プロセスの
+  引数に出ない。TUI は子プロセスを起動せず、値を同じプロセスの属性で渡す
+- TUI の接続設定は値を入れた欄だけを変え、空の欄・`mount`・`user`・`layout`・`group_aliases`・
+  キャッシュの設定を保つ。形の不正な `url` では `backend.yml` も `bootstrap.env.age` も書かない
+- `env sync` は 1 つのキーを 1 つの参照（同期の書き込み先）だけへ書き、宛先は `SyncTargets.target_for` の
+  1 か所で決める。個人単位の参照を持たない backend では個人単位の参照を読まず書かず、`sync --user` は 2 で止める
+- `env sync` は控えに登録の無いソースのキーが参照にあるとき、黙って飛ばさず未登録の行を出す
 
 ## データ・設定
 
@@ -1018,6 +1098,12 @@ cache:
   変わらない。ボリュームのグループも同じで、置き場の `DEVBASE_ACCOUNT_GROUP` は合成から外れ、
   プロセスの環境変数にもコンテナにも載らない。置き場へ書ける者が、それを読む端末の
   ボリュームの宛先を変えることはできない
+- TUI のキーの一覧は、キー名によらず全ての値を伏せ字（長さも出さない）にする。一覧は画面に残り、
+  画面共有や録画に写るためである
+- TUI の値・`role_id`・`secret_id` の入力は伏せ字の欄（`menu.secret`）で受け、同じプロセスの属性で渡す。
+  CLI の引数に `secret_id` を足さないため、`argv` や `ps` から値が見える経路は増えない
+- `env sync` はどちらの参照にも無いキーを個人共通へ書く。`~/.aws/credentials` の静的キーなどが、既定で
+  チーム全員の読める置き場へ入らない
 
 ## 運用
 
@@ -1044,6 +1130,11 @@ cache:
   前のレイアウトのパスを `bao kv get` などで読み、`devbase env edit --group NAME`（個人単位は
   `--user` も）で新しいパスへ書く。古いパスを版の履歴ごと消す操作（`kv metadata delete`）は
   サーバ側の権限で決まり、devbase のコマンドは持たない
+- `devbase list` の TUI の env メニューから、キーの一覧と編集（追加・値の変更・削除）と OpenBao の接続設定
+  （接続先・`role_id`・`secret_id`）を行える。backend の切り替えと移行は CLI の `env backend use` / `migrate`
+  で行う。TUI で扱えない値（改行・前後の空白を含む）は `devbase env edit` で編集する
+- `env sync` でチーム共通へ置きたいキーは、先に `devbase env set`（`--user` なし）でチーム共通に作る。以後の
+  `sync` はそこを更新する
 - グループの読み替え（`default` → 置き場のグループ名）は `backend.yml` の `group_aliases` 1 か所に
   書き、`env backend status` で確かめる
 - `up` / `scale` がグループの食い違いで止まったら、起動したいグループに合わせて、プロジェクトの
