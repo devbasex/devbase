@@ -106,10 +106,10 @@ def row_title(row, *, grouped: bool) -> str:
 
 
 def _place(ref) -> str:
-    owner = "個人" if ref.is_user else "チーム"
-    scope = "共通" if ref.kind == "global" else f"プロジェクト {ref.name}"
+    from devbase.commands import env_rows
+
     group = f"・グループ {ref.group}" if ref.group else ""
-    return f"{owner}・{scope}{group}"
+    return f"{env_rows.OWNER_LABELS[ref.owner]}・{env_rows.scope_label(ref)}{group}"
 
 
 # ---------------------------------------------------------------------------
@@ -233,10 +233,12 @@ def _after_write(rc: int) -> None:
 
 
 def _choose_owner(listing) -> str:
+    from devbase.commands.env_rows import OWNER_LABELS
+
     if not listing.has_user_refs:
         return "team"
     return flow.need(menu.select(f"持ち主を選択 {menu.HINT_BACK}:",
-                                 [("チーム", "team"), ("個人", "user")],
+                                 [(OWNER_LABELS[o], o) for o in ("team", "user")],
                                  back=True, search=False))
 
 
