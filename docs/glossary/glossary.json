@@ -294,6 +294,12 @@
       "pending_source": "issues/issue-247-requirements.md"
     },
     {
+      "term": "基準の版",
+      "context": "ci",
+      "meaning": "手元の基準（devbase-base:latest の shellcheck）と CI の ShellCheck の検査ジョブが揃える shellcheck の版。現在は 0.11.0",
+      "pending_source": "issues/issue-247-design.md"
+    },
+    {
       "term": "環境の隔離",
       "context": "test",
       "meaning": "pytest を起動したシェルから継承した環境変数を、テストごとに既定の状態（未設定か固定値）へ戻すこと",

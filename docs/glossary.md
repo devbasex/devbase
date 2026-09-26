@@ -105,6 +105,7 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | 統合ブランチ | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — |
 | 指摘 | shellcheck が出す 1 件（SC の番号・水準・行） | — | — |
 | 抑止の注記 | 指摘を抑える # shellcheck の指示と、抑える理由のコメントの組 | — | — |
+| 基準の版 | 手元の基準（devbase-base:latest の shellcheck）と CI の ShellCheck の検査ジョブが揃える shellcheck の版。現在は 0.11.0 | — | — |
 
 ## テストの実行環境（`test`）
 
