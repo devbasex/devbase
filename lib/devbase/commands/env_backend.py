@@ -289,16 +289,9 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
     root = Path(devbase_root)
     name = getattr(args, 'name', None) or ''
 
-    if name not in _bc.BACKEND_NAMES:
-        logger.error("backend '%s' は登録されていません (利用できる backend: %s)",
-                     name, ', '.join(_bc.BACKEND_NAMES))
-        return EXIT_USAGE
-
-    if name != _bc.BACKEND_OPENBAO and (getattr(args, 'layout', None) is not None
-                                        or getattr(args, 'group_aliases', None)):
-        logger.error("--layout / --group-alias は backend openbao を選ぶときだけ使えます "
-                     "(指定した backend: %s)", name)
-        return EXIT_USAGE
+    rc = _validate_use_args(name, args)
+    if rc is not None:
+        return rc
 
     try:
         current = _bc.load(root)
@@ -328,6 +321,26 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
     print(f"backend を {name} に設定しました: {path}")
     if name != _bc.BACKEND_OPENBAO:
         return 0
+    return _print_use_result(root, current, new_config)
+
+
+def _validate_use_args(name: str, args) -> Optional[int]:
+    """``use`` の backend 名と ``--layout`` / ``--group-alias`` の可否。使えなければ終了コード"""
+    if name not in _bc.BACKEND_NAMES:
+        logger.error("backend '%s' は登録されていません (利用できる backend: %s)",
+                     name, ', '.join(_bc.BACKEND_NAMES))
+        return EXIT_USAGE
+
+    if name != _bc.BACKEND_OPENBAO and (getattr(args, 'layout', None) is not None
+                                        or getattr(args, 'group_aliases', None)):
+        logger.error("--layout / --group-alias は backend openbao を選ぶときだけ使えます "
+                     "(指定した backend: %s)", name)
+        return EXIT_USAGE
+    return None
+
+
+def _print_use_result(root: Path, current, new_config) -> int:
+    """openbao を設定した後の接続先・レイアウト・キャッシュの案内。控えを消せなければ 1"""
     ob = new_config.openbao
     print(f"  接続先:  {ob.url}")
     print(f"  mount:   {ob.mount}")
