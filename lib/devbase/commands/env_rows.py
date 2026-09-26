@@ -42,7 +42,7 @@ class KeyListing:
     backend: str = ''
 
 
-def is_grouped(store: SecretStore) -> bool:
+def _grouped(store: SecretStore) -> bool:
     config = store.config
     return (config.backend == 'openbao' and config.openbao is not None
             and config.openbao.grouped)
@@ -67,7 +67,7 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
     from devbase.commands.env import _target_group
 
     store = SecretStore(devbase_root)
-    grouped = is_grouped(store)
+    grouped = _grouped(store)
     if project is not None:
         target = store.ref_group(project)
         option_group = None
