@@ -273,16 +273,30 @@ def _build_menubar_question(message: str, choices, menu_items, default=None):
     ``default`` は一覧で初期ハイライトする choice の value (一覧へ戻ったときの
     カーソル復元用)。``None`` なら questionary 既定の先頭ハイライト。
     """
-    from prompt_toolkit.filters import Condition
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.keys import Keys
-    from prompt_toolkit.layout import HSplit, Layout, Window
-    from prompt_toolkit.layout.controls import FormattedTextControl
+    from prompt_toolkit.layout import HSplit, Layout
 
     question = _make_select_question(message, choices, search=True, default=default)
 
-    count = len(menu_items)
     focus: dict = {"tab": None}
+    kb = _menubar_bindings(menu_items, focus)
+    bar = _menubar_container(menu_items, focus)
+
+    app = question.application
+    # 既存レイアウト全体の下にバーを常設する (一覧の件数・絞り込みに関わらず
+    # プロンプト描画の最下部に固定される)。フォーカス可能要素は一覧のみなので
+    # Layout の既定フォーカス解決に任せる。
+    app.layout = Layout(HSplit([app.layout.container, bar]))
+    _merge_app_bindings(question, kb)
+    return question, focus
+
+
+def _menubar_bindings(menu_items, focus: dict):
+    """メニューバーのキーバインド (←/→ で巡回、↑/↓ で一覧へ、Enter で確定)"""
+    from prompt_toolkit.filters import Condition
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+
+    count = len(menu_items)
     tab_focused = Condition(lambda: focus["tab"] is not None)
 
     kb = KeyBindings()
@@ -314,6 +328,16 @@ def _build_menubar_question(message: str, choices, menu_items, default=None):
     def _tab_accept(event):
         event.app.exit(result=menu_items[focus["tab"]][1])
 
+    return kb
+
+
+def _menubar_container(menu_items, focus: dict):
+    """区切り線と横並びのメニューバー (フォーカス中の項目を反転表示)"""
+    from prompt_toolkit.layout import HSplit, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+
+    count = len(menu_items)
+
     def _bar_fragments():
         frags = [("", " ")]
         for i, (label, _value) in enumerate(menu_items):
@@ -323,18 +347,11 @@ def _build_menubar_question(message: str, choices, menu_items, default=None):
                 frags.append(("", "  "))
         return frags
 
-    app = question.application
-    bar = HSplit([
+    return HSplit([
         Window(height=1, char="─", style="class:separator"),
         Window(FormattedTextControl(_bar_fragments), height=1,
                dont_extend_height=True),
     ])
-    # 既存レイアウト全体の下にバーを常設する (一覧の件数・絞り込みに関わらず
-    # プロンプト描画の最下部に固定される)。フォーカス可能要素は一覧のみなので
-    # Layout の既定フォーカス解決に任せる。
-    app.layout = Layout(HSplit([app.layout.container, bar]))
-    _merge_app_bindings(question, kb)
-    return question, focus
 
 
 def select_with_menubar(message: str, choices, menu_items, default=None):
