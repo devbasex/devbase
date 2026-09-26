@@ -203,6 +203,8 @@ def _select_project(devbase_root: Path) -> str:
     from devbase.commands.env_rows import count_project_keys
 
     counts = count_project_keys(devbase_root)
+    if not counts:      # 範囲を選んだ後に最後のプロジェクトが消えた
+        raise flow.BackOut
     width = max(len(name) for name, _ in counts)
     choices = [(project_title(name, count, width), name) for name, count in counts]
     return flow.need(menu.select(f"対象プロジェクトを選択 {menu.HINT_SEARCH_LEFT}:", choices,

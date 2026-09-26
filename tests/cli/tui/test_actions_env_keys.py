@@ -408,6 +408,14 @@ def test_the_project_choice_goes_back_with_the_left_key(grouped, monkeypatch):
     assert '←・Esc 戻る' in menu.HINT_SEARCH_LEFT
 
 
+def test_the_project_choice_goes_back_when_no_project_is_left(grouped, monkeypatch):
+    from devbase.commands import env_rows
+
+    monkeypatch.setattr(env_rows, 'count_project_keys', lambda root: [])
+    with pytest.raises(flow.BackOut):
+        keys_ui._select_project(grouped)
+
+
 # ---------------------------------------------------------------------------
 # ファイルの backend
 # ---------------------------------------------------------------------------

@@ -49,16 +49,18 @@ def scope_label(ref: SecretRef) -> str:
     return '共通' if ref.kind == 'global' else f'プロジェクト {ref.name}'
 
 
-def _scope_refs(store: SecretStore, project: Optional[str], group: Optional[str],
-                probe: SecretRef) -> Tuple[List[SecretRef], bool]:
-    """範囲の参照を持ち主ごとに作る。持ち主は ``probe`` で個人の参照があるかで決める"""
-    has_user = store.has_user_refs(probe)
+def _scope_refs(store: SecretStore, project: Optional[str],
+                group: Optional[str]) -> Tuple[List[SecretRef], bool]:
+    """範囲の参照を持ち主ごとに作る (先頭はチーム)。持ち主はその範囲のチームの参照で
+    個人の参照があるかを尋ねて決める"""
+    def ref(owner: str) -> SecretRef:
+        if project is None:
+            return SecretRef.for_global(owner=owner, group=group)
+        return SecretRef.for_project(project, owner=owner, group=group)
+
+    has_user = store.has_user_refs(ref(OWNER_TEAM))
     owners = (OWNER_TEAM, OWNER_USER) if has_user else (OWNER_TEAM,)
-    if project is None:
-        refs = [SecretRef.for_global(owner=o, group=group) for o in owners]
-    else:
-        refs = [SecretRef.for_project(project, owner=o, group=group) for o in owners]
-    return refs, has_user
+    return [ref(o) for o in owners], has_user
 
 
 def _resolve_target(store: SecretStore, devbase_root: Path, project: Optional[str],
@@ -104,14 +106,13 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
     grouped = is_grouped(store)
     target, option_group = _resolve_target(store, devbase_root, project, group, grouped)
 
-    team_global = SecretRef.for_global(group=target)
-    refs, has_user = _scope_refs(store, project, target, team_global)
+    refs, has_user = _scope_refs(store, project, target)
 
     settings = store.config.openbao if grouped else None
     rows = _rows_for_refs(store, refs, settings)
     return KeyListing(rows=rows, refs=refs, has_user_refs=has_user, grouped=grouped,
                       group=option_group, project=project,
-                      backend=store.backend_for(team_global).name)
+                      backend=store.backend_for(refs[0]).name)
 
 
 def project_names(devbase_root: Path) -> List[str]:
@@ -134,9 +135,7 @@ def count_project_keys(devbase_root: Path) -> List[Tuple[str, Optional[int]]]:
     counts: List[Tuple[str, Optional[int]]] = []
     for name in project_names(devbase_root):
         try:
-            group = store.ref_group(name)
-            team = SecretRef.for_project(name, group=group)
-            refs, _ = _scope_refs(store, name, group, team)
+            refs, _ = _scope_refs(store, name, store.ref_group(name))
             count = sum(len(store.fetch(r)) for r in refs)
         except DevbaseError:
             count = None

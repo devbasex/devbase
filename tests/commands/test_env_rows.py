@@ -157,6 +157,30 @@ def test_a_file_backend_has_no_user_rows(file_root):
     assert not listing.has_user_refs
 
 
+def test_a_project_is_judged_by_its_own_ref_not_the_global_one(file_root):
+    # 共通に平文と暗号文が併存しても (auto では止まる)、プロジェクトの一覧は開ける
+    from devbase.env.secret_store import SecretRef, SecretStore
+
+    (file_root / '.env').write_text('A=1\n')
+    age_path = SecretStore(file_root).age.path(SecretRef.for_global())
+    age_path.parent.mkdir(parents=True, exist_ok=True)
+    age_path.write_text('x')
+    (file_root / 'projects' / 'web' / '.env').write_text('A=2\n')
+
+    listing = env_rows.collect_key_rows(file_root, project='web')
+
+    assert shown(listing) == [('A', 'チーム', 'プロジェクト web', None)]
+    assert listing.backend == 'plaintext'
+
+
+def test_project_names_lists_the_projects_directory(file_root):
+    (file_root / 'projects' / 'api').mkdir()
+    (file_root / 'projects' / 'notes.txt').write_text('')
+
+    assert sorted(env_rows.project_names(file_root)) == ['api', 'web']
+    assert env_rows.project_names(file_root / 'missing') == []
+
+
 def test_project_key_counts_add_the_team_and_user_rows(grouped, openbao):
     (grouped / 'projects' / 'api').mkdir()
     openbao.put(TEAM, {'G': 'x'})
