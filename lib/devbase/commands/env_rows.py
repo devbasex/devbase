@@ -48,7 +48,7 @@ def is_grouped(store: SecretStore) -> bool:
             and config.openbao.grouped)
 
 
-def scope_label(ref: SecretRef) -> str:
+def _scope_label(ref: SecretRef) -> str:
     return '共通' if ref.kind == 'global' else f'プロジェクト {ref.name}'
 
 
@@ -90,7 +90,7 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
         data = store.fetch(ref)
         group_label = settings.display_group(ref.group) if settings and ref.group else None
         rows += [KeyRow(key=k, ref=ref, owner_label=OWNER_LABELS[ref.owner],
-                        scope_label=scope_label(ref), group_label=group_label, wins=False)
+                        scope_label=_scope_label(ref), group_label=group_label, wins=False)
                  for k in sorted(data)]
 
     last = {row.key: i for i, row in enumerate(rows) if row.key != keys.DEVBASE_ACCOUNT_GROUP}
