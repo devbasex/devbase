@@ -15,7 +15,7 @@ from devbase.utils.names import is_single_segment_name
 try:
     from . import __version__
 except ImportError:
-    __version__ = "3.7.0"
+    __version__ = "3.8.0"
 
 logger = get_logger("devbase.cli")
 
