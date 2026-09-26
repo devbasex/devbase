@@ -744,10 +744,21 @@ def test_go_inside_without_known_client_does_nothing(tm):
     home = tm.new("home")
     tm.attach(home)
     tm.attach(target)
-    time.sleep(11)
+    # 実時間で 10 秒を待ち越さず、`date +%s` だけを 11 秒先へ進める (#290)
+    later = tm.root / "later"
+    later.mkdir()
+    fake_date = later / "date"
+    fake_date.write_text(
+        '#!/bin/sh\n'
+        f'real={shlex.quote(shutil.which("date"))}\n'
+        'if [ "$*" = "+%s" ]; then echo $(( $("$real" +%s) + 11 )); else exec "$real" "$@"; fi\n'
+    )
+    fake_date.chmod(0o755)
     before = tm.all_clients()
 
-    done = tm.run("tmux-go", "devbase-3", env=tm.inside_env(home))
+    env = tm.inside_env(home)
+    env["PATH"] = f"{later}:{env['PATH']}"
+    done = tm.run("tmux-go", "devbase-3", env=env)
 
     assert done.returncode == 1
     assert "switch-client" in done.stderr

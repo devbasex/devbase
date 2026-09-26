@@ -243,6 +243,9 @@ PR には以下の情報を記載する。
 
 `tests/` の pytest と、Docker や実環境が要る範囲の手動テストを併用する。手元では
 `uv run --locked pytest tests/ -q` で全体を回し、実機の挙動は以下の手順で確認する。
+`pyproject.toml` の `addopts` が `-n auto`（pytest-xdist）を渡すため、テストは CPU の数で並列に走る。
+`pdb` で止めたいときや 1 件だけ流すときは `-n 0` で直列に戻す。テストどうしは一時ディレクトリ・
+tmux のサーバー・環境変数を共有しない前提で書く。
 テストは起動したシェルの環境変数と `HOME` から隔離される（[テストの環境の隔離](../specifications/test-environment-isolation.md)）。
 
 ### CI が実行するもの
