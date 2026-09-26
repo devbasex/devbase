@@ -1158,88 +1158,72 @@ def _report_missing_repos(config, scale: int, dev_service_name: str,
                        project_name)
 
 
-def _grouped_store():
-    """backend が ``openbao`` かつ ``layout: group`` なら持ち回りの ``SecretStore`` を返す。
+def _require_group_declaration(project: Optional[str] = None) -> bool:
+    """プロジェクトのグループの宣言を読み、起動のグループを決める (#315 I1・I2・I4)。
 
-    それ以外 (``version: 1``・ファイル backend・``DEVBASE_ROOT`` 未設定) と、設定を読めない
-    ときは ``None`` (設定の誤りは注入の側がその理由で止める)。
-    """
-    from devbase.env import runtime as _runtime
-    from devbase.env.secret_store import SecretStoreError
+    グループを決める出所は ``projects/<name>/env`` の空でない宣言だけで、backend を問わず
+    検査する。宣言が無い・空・使えない名前・``$DEVBASE_ROOT/env`` に宣言がある・
+    プロジェクトの外、のどれでも止める。
 
-    root = _devbase_root()
-    if root is None:
-        return None
-    store = _runtime.store_for(root)
-    try:
-        config = store.config
-    except SecretStoreError:
-        return None
-    if config.backend != 'openbao' or config.openbao is None or not config.openbao.grouped:
-        return None
-    return store
+    ボリュームはプロセスの環境変数 ``DEVBASE_ACCOUNT_GROUP``、機密は ``env`` ファイルの宣言
+    から決まる経路が 2 つある (PLAN56 決定 7)。環境変数が未設定なら宣言の値を置き (下位
+    ディレクトリから打っても 2 つが揃う)、値があって宣言と違えば止める (#315 決定 5)。
 
-
-def _check_group_consistency(project: Optional[str] = None) -> bool:
-    """ボリュームのグループと機密のグループが揃っているかを確かめる (PLAN56 決定 7)。
-
-    ボリュームは :func:`~devbase.volume.manager.resolve_account_group` (プロセスの環境変数)、
-    機密は :func:`~devbase.env.groups.declared_group` (``env`` ファイル) で決まり、経路が
-    2 つある。宣言の無いプロジェクトでシェルから ``DEVBASE_ACCOUNT_GROUP=kkg devbase up`` と
-    打つと、ボリュームは ``kkg``、機密は ``default`` になる。食い違ったまま起動すると、
-    別グループのボリュームの認証で機密を使うコンテナができるため止める。
-
-    ``layout: group`` のときだけ検査する (``version: 1`` の起動は止めない)。途中で止めると
-    別グループの名前のボリュームや書き換えた ``scale`` が残るため、``up`` と ``scale`` は
-    副作用のある処理より前にここを呼ぶ。
+    途中で止めると ``.env``・``pre-up`` の副作用・ボリューム・書き換えた ``scale`` が残るため、
+    ``up`` と ``scale`` は副作用のある処理より前にここを呼ぶ。
 
     Args:
-        project: 機密のグループを決めるプロジェクト名。省略時は実行時のディレクトリから決める。
+        project: 宣言を読むプロジェクト名。省略時は実行時のディレクトリから決める。
 
     Returns:
-        True: 揃っている、または検査の対象外。False: 食い違った (理由はログへ出した)
+        True: 宣言が読め、環境変数と揃った。False: 止めた (理由はログへ出した)
     """
     from devbase.env import groups as _groups
     from devbase.env import runtime as _runtime
     from devbase.volume.manager import resolve_account_group
 
-    store = _grouped_store()
-    if store is None:
-        return True
-    root = store.root
+    root = _devbase_root()
+    if root is None:
+        logger.error("DEVBASE_ROOT が未設定のため、アカウントグループを決められません")
+        return False
     if project is None:
         project = _runtime.current_project_name(root)
     try:
         declared = _groups.declare(root, project)
-        volume_group = resolve_account_group()
     except DevbaseError as e:
         logger.error("アカウントグループを決められないため起動しません: %s", e)
         return False
+    env_value = (os.environ.get('DEVBASE_ACCOUNT_GROUP') or '').strip()
+    if not env_value:
+        os.environ['DEVBASE_ACCOUNT_GROUP'] = declared.name
+        return True
+    try:
+        volume_group = resolve_account_group(env_value)
+    except DevbaseError as e:
+        logger.error("プロセスの環境変数 DEVBASE_ACCOUNT_GROUP が使えないため起動しません: %s", e)
+        return False
     if volume_group == declared.name:
         return True
-    env_value = os.environ.get('DEVBASE_ACCOUNT_GROUP')
-    volume_source = ('DEVBASE_ACCOUNT_GROUP が未設定' if not env_value
-                     else 'プロセスの環境変数 DEVBASE_ACCOUNT_GROUP')
     logger.error(
-        "ボリュームと機密のアカウントグループが食い違うため起動しません\n"
-        "  ボリューム: %s (%s)\n"
-        "  機密:       %s (%s)\n"
-        "  グループを変えるならプロジェクトの env に DEVBASE_ACCOUNT_GROUP を書いてください",
-        volume_group, volume_source,
-        declared.name, _groups.describe_source(root, declared, project))
+        "プロセスの環境変数と宣言のアカウントグループが食い違うため起動しません\n"
+        "  環境変数: %s (プロセスの環境変数 DEVBASE_ACCOUNT_GROUP)\n"
+        "  宣言:     %s (%s)\n"
+        "  グループを変えるならプロジェクトの env の DEVBASE_ACCOUNT_GROUP を直し、"
+        "環境変数は外してください",
+        volume_group, declared.name, _groups.describe_source(root, declared))
     return False
 
 
 def _run_pre_up_checks(config) -> bool:
     """`up` の起動前チェックを順に実行する。
 
-    順序と早期 return はそのまま: (0) ボリュームと機密のグループの食い違い (PLAN56)、
+    順序と早期 return はそのまま: (0) グループの宣言の検査 (#315)、
     (1) ``.env`` の存在確認、(2) ``./pre-up`` フック、(3) コンテナイメージの存在確認。
     どれかが失敗したら False を返し、``cmd_up`` は起動へ進まない。すべて満たせば True。
     (0) を先頭に置くのは、(1) が子プロセスの ``env init`` で置き場へ書くため。
     """
-    # Pre-check 0: ボリュームと機密のグループが揃っている (layout: group のときだけ)
-    if not _check_group_consistency():
+    # Pre-check 0: グループの宣言がある (backend を問わない。#315)
+    if not _require_group_declaration():
         return False
 
     # Pre-check 1: Ensure .env file exists with content
@@ -1609,7 +1593,7 @@ def cmd_profile_list(context: Optional[str] = None) -> int:
 def _check_scale_request(new_scale: int, current_scale: int) -> bool:
     """``new_scale`` を受け付けるかを判定し、受け付けないときは案内を出す。
 
-    ``cmd_scale`` の前提の検査のうち、``_check_group_consistency`` の後に行う 2 つ
+    ``cmd_scale`` の前提の検査のうち、``_require_group_declaration`` の後に行う 2 つ
     (1 未満・現在以下)。受け付けないときは ``project.yml`` を書き換える前に止まる。
     """
     if new_scale < 1:
@@ -1678,8 +1662,8 @@ def cmd_scale(new_scale: int, project_name: str = None,
               context: Optional[str] = None) -> int:
     """Scale containers online without restarting existing ones"""
     # scale は _run_deploy_pipeline を通らずにコンテナを足す。project.yml の scale を
-    # 書き換える前に、up と同じ食い違いの検査を行う (PLAN56 決定 7)
-    if not _check_group_consistency():
+    # 書き換える前に、up と同じ宣言の検査を行う (#315 I4)
+    if not _require_group_declaration():
         return 1
 
     if project_name is None:

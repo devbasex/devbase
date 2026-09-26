@@ -23,7 +23,7 @@ VSCODE_TARGET = "/home/ubuntu/.vscode-server"
 def in_tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DEV_SERVICE_NAME", raising=False)
-    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
     monkeypatch.setenv("COMPOSE_PROJECT_NAME", "carmo-ai")
     return tmp_path
 

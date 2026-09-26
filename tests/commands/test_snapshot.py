@@ -22,7 +22,7 @@ def test_restore_confirmation(tmp_path, monkeypatch, is_tty, answer, expected_co
     saved = {("daily", 2): "saved at point 2"}
 
     class FakeSnapshotManager:
-        def __init__(self, devbase_root):
+        def __init__(self, devbase_root, group=None):
             pass
 
         def restore(self, name, point=None):

@@ -31,8 +31,9 @@ def in_web(openbao_root, monkeypatch):
 
 @pytest.fixture
 def file_root(tmp_path, monkeypatch):
-    """backend 未設定の DEVBASE_ROOT (age 鍵あり)"""
+    """backend 未設定の DEVBASE_ROOT (age 鍵あり)。``projects/web`` は ``nyle`` を宣言する"""
     (tmp_path / 'projects' / 'web').mkdir(parents=True)
+    (tmp_path / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.setenv('PWD', str(tmp_path))
@@ -417,12 +418,13 @@ SECRET_VALUE = 'do-not-print-this-value'
 
 @pytest.fixture
 def grouped(openbao_root, openbao):
-    """``version: 2`` (``default`` → ``nyle``)。``web`` は ``with``、``api`` は宣言なし"""
+    """``version: 2`` ``web`` は ``with``、``api`` は ``nyle``"""
     from tests.conftest import configure_openbao
 
-    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(openbao_root, openbao, layout='group')
     (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     (openbao_root / 'projects' / 'api').mkdir()
+    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     return openbao_root
 
 
@@ -550,24 +552,31 @@ def test_grouped_list_with_another_group_leaves_out_the_project(grouped, openbao
     assert len([r for r in caplog.records if r.levelno >= logging.WARNING]) == 1
 
 
-@pytest.mark.parametrize('group', ['nyle', 'default'])
-def test_grouped_project_write_compares_the_aliased_names(grouped, openbao, monkeypatch, group):
-    """受け入れ条件 5a: 宣言の無い api で -p --group nyle / default は team/nyle/projects/api"""
+def test_grouped_project_write_compares_the_aliased_names(grouped, openbao, monkeypatch):
+    """受け入れ条件 5a: nyle の api で -p --group nyle は team/nyle/projects/api"""
     at(monkeypatch, grouped, 'projects/api')
 
-    assert run_env(grouped, 'set', '-p', '--group', group, 'FOO=1') == 0
+    assert run_env(grouped, 'set', '-p', '--group', 'nyle', 'FOO=1') == 0
 
     assert openbao.get('team/nyle/projects/api') == {'FOO': '1'}
     assert kv_paths(openbao) == {'team/nyle/projects/api'}
 
 
-def test_grouped_mismatch_message_shows_the_names_before_and_after_the_alias(
-        grouped, openbao, monkeypatch, caplog):
+def test_grouped_project_write_refuses_the_reserved_default(grouped, openbao, monkeypatch):
+    """#315 前提 4: --group default は予約語として 2 で止まる"""
+    at(monkeypatch, grouped, 'projects/api')
+
+    assert run_env(grouped, 'set', '-p', '--group', 'default', 'FOO=1') == 2
+
+    assert openbao.received == []
+
+
+def test_grouped_mismatch_message_shows_the_declaration(grouped, openbao, monkeypatch, caplog):
     at(monkeypatch, grouped, 'projects/api')
 
     assert run_env(grouped, 'set', '-p', '--group', 'with', 'FOO=1') == 1
 
-    assert 'default → nyle' in errors(caplog)
+    assert 'nyle (projects/api/env:1)' in errors(caplog)
     assert openbao.received == []
 
 

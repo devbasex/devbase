@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from devbase.env import groups as _groups
 from devbase.env import keys
 from devbase.env.secret_store import SecretRef, SecretStore
 from devbase.env.store import EnvFile
@@ -250,7 +251,8 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
 
     4 参照はプロジェクトのアカウントグループ (:meth:`SecretStore.ref_group`) を持つ
     (PLAN56)。グループ別の置き場 (``layout: group``) では、``project`` のグループの
-    置き場だけを読み、他のグループのパスへは要求しない。それ以外の設定ではグループが
+    置き場だけを読み、他のグループのパスへは要求しない。グループが決まらない (プロジェクトの
+    外・宣言が無い) ときは、どの置き場も読まずに空の結果を返す (#315 I9)。それ以外の設定ではグループが
     ``None`` で、参照は今と同じ値になる (決定 5)。
 
     4 つの置き場にある ``DEVBASE_ACCOUNT_GROUP`` は合成しない (PLAN62 決定 1・2)。
@@ -267,7 +269,14 @@ def resolve(devbase_root: Path, project: Optional[str] = None,
     # 重ね順だけを見る差し替えの店 (テストなど) は ref_group を持たない。持たなければ
     # グループの無い参照 = 今と同じ参照で読む
     ref_group = getattr(store, 'ref_group', None)
-    group = ref_group(project) if callable(ref_group) else None
+    try:
+        group = ref_group(project) if callable(ref_group) else None
+    except (_groups.GroupRequiredError, _groups.GroupDeclarationError) as e:
+        # グループ別の置き場でグループが決まらない (プロジェクトの外・宣言が無い)。暗黙の
+        # 注入はどのグループの置き場も読まずに空で続ける (#315 I9・決定 4)。止めると
+        # $DEVBASE_ROOT で打つ build などが動かなくなる。明示の機密のコマンドは別に止まる
+        logger.debug("グループが決まらないため機密を読みません: %s", e)
+        return SecretEnv(global_names=[], project_names=[])
 
     def load(ref: SecretRef) -> Dict[str, str]:
         return _without_account_group(ref, store.load(ref))

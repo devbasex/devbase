@@ -63,26 +63,42 @@ class GroupOptionError(DevbaseError):
 
 
 def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[str]:
-    """コマンドが相手にするグループ (PLAN56「対象のグループ」)。
+    """コマンドが相手にするグループ (PLAN56「対象のグループ」・#315)。
 
-    ``--group`` があれば、グループ別の置き場を選んだ設定でだけ受け付け、名前を
-    ``DEVBASE_ACCOUNT_GROUP`` と同じ規則と読み替え後の予約語で検証する (通らなければ
-    :class:`GroupOptionError`、終了コード 2)。無ければ実行時のプロジェクトのグループ
-    (``SecretStore.ref_group``。プロジェクトの外なら ``$DEVBASE_ROOT/env`` → ``default``、
-    それ以外の設定では ``None``)。
+    - プロジェクトの中では、backend を問わずプロジェクトの宣言を検査する (#315 決定 2)。
+      宣言が無い・空・使えない名前なら :class:`GroupOptionError` (終了コード 1)
+    - ``--group`` は、グループ別の置き場を選んだ設定でだけ受け付け、名前を
+      ``DEVBASE_ACCOUNT_GROUP`` と同じ規則と読み替え後の予約語で検証する (通らなければ
+      終了コード 2)
+    - グループ別の置き場で ``--group`` が無ければ、プロジェクトの中なら宣言のグループ、
+      外なら終了コード 2 で止める (既定の値は無い)。それ以外の設定では ``None``
     """
+    from devbase.env import groups as _groups
+
+    project = _current_project_name(devbase_root)
+    declared = None
+    if project is not None:
+        try:
+            declared = _groups.declare(devbase_root, project)
+        except _groups.GroupDeclarationError as e:
+            raise GroupOptionError(str(e), exit_code=1) from None
+    grouped = store.grouped
     if group is None:
-        return store.ref_group(_current_project_name(devbase_root))
-    config = store.config
-    settings = config.openbao
-    if config.backend != 'openbao' or settings is None or not settings.grouped:
+        if not grouped:
+            return None
+        if declared is None:
+            raise GroupOptionError(
+                "プロジェクトの外では対象のグループを決められません。"
+                "--group <名前> を付けてください (例: --group nyle)")
+        return declared.name
+    if not grouped:
         raise GroupOptionError(
             "--group はグループ別の置き場 (backend: openbao、version: 2) を選んだ設定で"
             "だけ使えます")
     from devbase.env.backend_config import BackendConfigError
 
     try:
-        settings.storage_group(group)
+        store.config.openbao.storage_group(group)
     except BackendConfigError as e:
         raise GroupOptionError(f"--group に使えない名前です: {e}") from None
     return group
@@ -92,9 +108,9 @@ def _project_group_mismatch(devbase_root: Path, store, group: Optional[str],
                             project: Optional[str]) -> Optional[str]:
     """``--group`` がプロジェクトのグループと違う置き場なら、その旨の文言を返す。
 
-    比べるのは読み替えた後の名前 (``storage_group``) で、``default: nyle`` の対応があれば
-    宣言の無いプロジェクトに ``--group nyle`` は同じ置き場である (決定 6)。``--group`` が
-    無い・プロジェクトの外なら ``None``。``group`` は :func:`_target_group` で検証済みとする。
+    比べるのは読み替えた後の名前 (``storage_group``) で、読み替えの対応があれば別の名前でも
+    同じ置き場である (決定 6)。``--group`` が無い・プロジェクトの外なら ``None``。
+    ``group`` は :func:`_target_group` で検証済みとする。
     """
     if group is None or project is None:
         return None
@@ -104,7 +120,7 @@ def _project_group_mismatch(devbase_root: Path, store, group: Optional[str],
     if store.storage_group(group) == store.storage_group(declared.name):
         return None
     settings = store.config.openbao
-    source = _groups.describe_source(devbase_root, declared, project)
+    source = _groups.describe_source(devbase_root, declared)
     return (f"--group {settings.display_group(group)} は、プロジェクト {project} のグループ "
             f"{settings.display_group(declared.name)} ({source}) と違う置き場です")
 
@@ -925,7 +941,7 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
 
 
 def _group_suffix(store, ref) -> str:
-    """見出しに付けるグループの表示 (``（グループ default → nyle）``)。グループの無い参照では空。
+    """見出しに付けるグループの表示 (``（グループ acme → nyle）``)。グループの無い参照では空。
 
     文言は ``SecretRef.label()`` が持ち、ここでは写さずに差分だけを取り出す。読み替えの
     有無は ``SecretStore.display_label`` が決める (PLAN64 決定 3)。グループを外した参照の
@@ -1237,8 +1253,14 @@ def cmd_env_project(devbase_root: Path) -> int:
     """プロジェクト固有変数の設定（対話式）。宛先はプロジェクトのグループの参照 (PLAN56)"""
     store = _secret_store(devbase_root)
     name = _current_project_name(devbase_root)
-    env_file = None if name is None else _project_env(
-        devbase_root, store=store, group=store.ref_group(name))
+    env_file = None
+    if name is not None:
+        try:
+            group = _target_group(devbase_root, store, None)
+        except GroupOptionError as e:
+            logger.error("%s", e)
+            return e.exit_code
+        env_file = _project_env(devbase_root, store=store, group=group)
     if env_file is None:
         logger.error("projects/ 配下で実行してください")
         return 1
@@ -1282,6 +1304,12 @@ def cmd_env_export(devbase_root: Path, args) -> int:
             args, 'unsafe_allow_unencrypted_bucket', False
         ),
     )
+    try:
+        opts.group = _target_group(devbase_root, _secret_store(devbase_root),
+                                   getattr(args, 'group', None))
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
     return export(devbase_root, opts)
 
 
@@ -1309,6 +1337,12 @@ def cmd_env_import(devbase_root: Path, args) -> int:
         backup_dir=getattr(args, 'backup_dir', None),
         keep_last=getattr(args, 'keep_last', 10),
     )
+    try:
+        opts.group = _target_group(devbase_root, _secret_store(devbase_root),
+                                   getattr(args, 'group', None))
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
     return import_bundle(devbase_root, opts)
 
 

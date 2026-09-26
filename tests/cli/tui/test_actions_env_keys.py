@@ -59,7 +59,6 @@ def grouped(openbao_root, openbao):
     from tests.conftest import configure_openbao
 
     configure_openbao(openbao_root, openbao, layout='group')
-    (openbao_root / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-a\n')
     (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-a\n')
     return openbao_root
 
@@ -152,7 +151,9 @@ def test_an_unusable_group_name_goes_back_to_the_group_selection(grouped, monkey
 
 
 def test_the_project_scope_is_not_offered_without_projects(openbao_root, openbao, monkeypatch):
-    (openbao_root / 'projects' / 'web').rmdir()
+    import shutil
+
+    shutil.rmtree(openbao_root / 'projects' / 'web')
     script = Script(monkeypatch, select=[menu.MENU_BACK])
 
     run(openbao_root)
@@ -182,14 +183,14 @@ def test_adding_a_user_key_writes_the_user_global_of_the_group(grouped, openbao,
 
 def test_changing_a_value_is_read_back_by_get(grouped, openbao, monkeypatch, capsys):
     openbao.put(TEAM, {'K': 'old'})
-    assert env_cmd.cmd_env_get(grouped, 'K') == 0          # キャッシュに old を控える
+    assert env_cmd.cmd_env_get(grouped, 'K', group='team-a') == 0   # キャッシュに old を控える
     Script(monkeypatch, select=['global', 'team-a', 0, 'change', menu.MENU_BACK],
            secret=['new'])
 
     run(grouped)
 
     capsys.readouterr()
-    assert env_cmd.cmd_env_get(grouped, 'K') == 0
+    assert env_cmd.cmd_env_get(grouped, 'K', group='team-a') == 0
     assert capsys.readouterr().out == 'new\n'
 
 

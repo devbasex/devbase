@@ -18,7 +18,7 @@ from devbase.snapshot.manager import SnapshotManager
 
 @pytest.fixture(autouse=True)
 def _clean_group_env(monkeypatch):
-    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def test_both_volumes_are_targeted(root):
 
     assert mgr.volumes == {
         "ai": "devbase_home_ubuntu",
-        "group": "devbase_home_default",
+        "group": "devbase_home_nyle",
     }
 
 
@@ -81,7 +81,7 @@ def test_backup_mounts_both_volumes_read_only(root):
     mounts = mgr.calls[0]["mounts"]
     assert mounts == [
         "-v", "devbase_home_ubuntu:/source/ai:ro",
-        "-v", "devbase_home_default:/source/group:ro",
+        "-v", "devbase_home_nyle:/source/group:ro",
     ]
 
 
@@ -95,7 +95,7 @@ def test_restore_mounts_both_volumes_writable(root):
     restore_calls = [c for c in mgr.calls if c["mode"] == "restore"]
     assert restore_calls[0]["mounts"] == [
         "-v", "devbase_home_ubuntu:/target/ai",
-        "-v", "devbase_home_default:/target/group",
+        "-v", "devbase_home_nyle:/target/group",
     ]
 
 
@@ -124,7 +124,7 @@ def test_metadata_records_the_target_volumes(root):
     meta = yaml.safe_load((root / "backups" / "snap1" / "meta.yml").read_text())
     assert meta["volumes"] == {
         "ai": "devbase_home_ubuntu",
-        "group": "devbase_home_default",
+        "group": "devbase_home_nyle",
     }
 
 
@@ -134,7 +134,7 @@ def test_global_metadata_records_the_target_volumes(root):
     mgr.create(name="snap1")
 
     meta = yaml.safe_load((root / "backups" / "snapshot.yml").read_text())
-    assert meta["snapshots"][0]["volumes"]["group"] == "devbase_home_default"
+    assert meta["snapshots"][0]["volumes"]["group"] == "devbase_home_nyle"
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +230,7 @@ def test_incremental_on_a_different_layout_is_refused(root):
 
     message = str(excinfo.value)
     assert "devbase_home_ubuntu" in message
-    assert "devbase_home_default" in message
+    assert "devbase_home_nyle" in message
 
 
 def test_invalid_group_does_not_break_read_only_operations(root, monkeypatch):
@@ -376,15 +376,15 @@ def test_shared_mount_only_accepts_the_shared_volume(root, name):
 
 
 @pytest.mark.parametrize("name", [
-    "devbase_home_",           # 空のグループ名 (resolve は default に正規化してしまう)
+    "devbase_home_",           # 空のグループ名
     "devbase_home_  kkg  ",    # 前後空白 (resolve は空白を落としてしまう)
     "devbase_home_ KKG",
 ])
 def test_unnormalised_group_volume_names_are_rejected(root, name):
     """検証を通るかどうかだけでは足りない。
 
-    ``resolve_account_group`` は空文字を ``default`` に、前後空白を落とした名前に
-    **正規化する**ため、通ること自体は不正な名前を許してしまう。実際にマウント
+    検証は前後空白を落とした名前に**正規化する**ため、通ること自体は不正な名前を
+    許してしまう。実際にマウント
     されるのは正規化前の生の名前なので、一致まで確認する。
     """
     from devbase.errors import SnapshotError

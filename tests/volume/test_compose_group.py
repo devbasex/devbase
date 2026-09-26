@@ -21,7 +21,7 @@ from devbase.volume import compose
 def in_tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DEV_SERVICE_NAME", raising=False)
-    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
     return tmp_path
 
 
@@ -70,7 +70,7 @@ def test_group_mount_is_added_when_absent(in_tmp_cwd):
     compose.generate_scaled_compose(scale=1)
     dev = _load_scaled(in_tmp_cwd)["services"]["dev-1"]
 
-    assert _mount_source(dev, "/persistent/group") == "devbase_home_default"
+    assert _mount_source(dev, "/persistent/group") == "devbase_home_nyle"
 
 
 def test_group_mount_follows_account_group(in_tmp_cwd, monkeypatch):
@@ -151,14 +151,26 @@ def test_account_group_is_exposed_to_dev_service(in_tmp_cwd, monkeypatch):
     assert _env_value(dev, "DEVBASE_ACCOUNT_GROUP") == "kkg"
 
 
-def test_default_group_is_exposed_when_unset(in_tmp_cwd):
-    """未設定でも解決結果を明示的に渡す (コンテナ側で再解決させない)。"""
+def test_unset_group_stops_generation(in_tmp_cwd, monkeypatch):
+    """グループが決まらないまま構成を作らない (既定のグループへ落とさない。#315)。"""
+    from devbase.env.groups import GroupDeclarationError
+
+    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
+    _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    with pytest.raises(GroupDeclarationError):
+        compose.generate_scaled_compose(scale=1)
+    assert not (in_tmp_cwd / ".docker-compose.scale.yml").exists()
+
+
+def test_group_is_exposed_to_the_container(in_tmp_cwd):
+    """解決結果を明示的に渡す (コンテナ側で再解決させない)。"""
     _write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
 
     compose.generate_scaled_compose(scale=1)
     dev = _load_scaled(in_tmp_cwd)["services"]["dev-1"]
 
-    assert _env_value(dev, "DEVBASE_ACCOUNT_GROUP") == "default"
+    assert _env_value(dev, "DEVBASE_ACCOUNT_GROUP") == "nyle"
 
 
 def test_account_group_is_added_to_list_form_environment(in_tmp_cwd, monkeypatch):

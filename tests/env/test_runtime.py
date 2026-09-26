@@ -12,6 +12,7 @@ import pytest
 from devbase.env import keys, runtime
 from devbase.env.secret_store import SecretRef, SecretStore
 from devbase.errors import DevbaseError
+from devbase.env.groups import GroupDeclarationError
 from devbase.volume.manager import resolve_account_group
 
 
@@ -626,7 +627,7 @@ def test_resolve_with_the_group_layout_requests_only_the_group_paths(openbao_roo
     from tests.conftest import configure_openbao
 
     root = openbao_root
-    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(root, openbao, layout='group')
     (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     openbao.put('team/with/global', {'A': 'with'})
     openbao.put('team/global', {'A': 'flat'})
@@ -673,14 +674,15 @@ def _save(store, backend, ref, data):
 @pytest.mark.parametrize('backend', ['age', 'plaintext'])
 def test_inject_does_not_put_the_stores_account_group_into_the_environment(
         account_group_root, store, backend):
-    """受け入れ条件 1: 置き場の値はプロセスへ載らず、ボリュームのグループは default"""
+    """受け入れ条件 1: 置き場の値はプロセスへ載らず、ボリュームのグループは決まらないまま"""
     _save(store, backend, GLOBAL, {ACCOUNT_GROUP: 'kkg', 'TOKEN': 't'})
 
     runtime.inject(account_group_root, 'web', store=store)
 
     assert ACCOUNT_GROUP not in os.environ
     assert os.environ['TOKEN'] == 't'
-    assert resolve_account_group() == 'default'
+    with pytest.raises(GroupDeclarationError):
+        resolve_account_group()
 
 
 @pytest.mark.parametrize('backend', ['age', 'plaintext'])
@@ -717,7 +719,8 @@ def test_every_store_layer_is_dropped_from_the_environment(account_group_root, l
 
     assert ACCOUNT_GROUP not in os.environ
     assert os.environ['K'] == 'v'
-    assert resolve_account_group() == 'default'
+    with pytest.raises(GroupDeclarationError):
+        resolve_account_group()
 
 
 @pytest.mark.parametrize('layer', ['team_global', 'user_global', 'team_web', 'user_web'])

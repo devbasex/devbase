@@ -442,13 +442,14 @@ def test_concurrent_generations_do_not_mix(openbao_root, openbao):
 
 @pytest.fixture
 def grouped_root(openbao_root, openbao):
-    """``version: 2`` (``default`` → ``nyle``)。``web`` は ``with``、``api`` は宣言なし"""
+    """``version: 2``。``web`` は ``with``、``api`` は ``nyle``"""
     from tests.conftest import configure_openbao
 
     root = openbao_root
-    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(root, openbao, layout='group')
     (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     (root / 'projects' / 'api').mkdir(parents=True, exist_ok=True)
+    (root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     openbao.put('team/with/global', {'A': 'with-global'})
     openbao.put('team/with/projects/web', {'B': 'with-web'})
     openbao.put('team/nyle/global', {'A': 'nyle-global'})
@@ -498,9 +499,12 @@ def test_flat_cache_is_not_used_for_a_grouped_reference(openbao_root, openbao):
     root = openbao_root
     openbao.put('team/global', {'A': 'flat'})
     runtime.resolve(root, store=SecretStore(root))
-    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(root, openbao, layout='group')
+    web = root / 'projects' / 'web'
+    web.mkdir(parents=True, exist_ok=True)
+    (web / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     openbao.stop()
 
     with pytest.raises(SecretUnreachableError) as exc:
-        runtime.resolve(root, store=SecretStore(root))
+        runtime.resolve(root, 'web', store=SecretStore(root))
     assert 'キャッシュもありません' in str(exc.value)

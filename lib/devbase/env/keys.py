@@ -50,8 +50,9 @@ def gcp_credentials_key(profile: str) -> str:
 
 # --- Account group (PLAN39: 永続化ボリュームのアカウントグループ分離) ---
 # 使用する Google / AWS アカウントの単位。グループごとに devbase_home_<group> を
-# 作り、コンテナへ /persistent/group としてマウントする。未設定なら `default`。
-# プロジェクト env / グローバル env に手書きする devbase 動作設定。
+# 作り、コンテナへ /persistent/group としてマウントする。既定の値は無く、
+# プロジェクトの env (projects/<name>/env) での宣言が必須 (#315)。`default` は予約語。
+# 手書きする devbase 動作設定で、$DEVBASE_ROOT/env には書けない。
 # 機密の置き場 (.env / age / OpenBao) にあっても注入しない (PLAN62: env/runtime.py が
 # 合成から外して警告し、`env set` は拒否する)。
 # 詳細: docs/user/environment-variables.md

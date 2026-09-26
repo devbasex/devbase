@@ -27,7 +27,7 @@ def collect(monkeypatch):
 def grouped_root(openbao_root, openbao):
     from tests.conftest import configure_openbao
 
-    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(openbao_root, openbao, layout='group')
     return openbao_root
 
 
@@ -50,17 +50,42 @@ def test_init_with_a_group_writes_that_groups_team_global(grouped_root, openbao,
 
 
 def test_init_group_before_the_alias_writes_the_aliased_path(grouped_root, openbao, collect):
-    assert _init(grouped_root, '--group', 'default') == 0
+    from tests.conftest import configure_openbao
+
+    configure_openbao(grouped_root, openbao, layout='group', group_aliases={'acme': 'nyle'})
+
+    assert _init(grouped_root, '--group', 'acme') == 0
 
     assert openbao.get('team/nyle/global') == {'INIT_KEY': 'value'}
 
 
-def test_init_without_a_group_uses_the_declared_group(grouped_root, openbao, collect):
-    (grouped_root / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
+def test_init_without_a_group_uses_the_declared_group(grouped_root, openbao, collect,
+                                                      monkeypatch):
+    (grouped_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
+    monkeypatch.setenv('PWD', str(grouped_root / 'projects' / 'web'))
 
     assert _init(grouped_root) == 0
 
     assert openbao.get('team/kkg/global') == {'INIT_KEY': 'value'}
+
+
+def test_init_outside_projects_without_a_group_is_a_usage_error(grouped_root, openbao, collect,
+                                                               caplog):
+    """#315 I5: プロジェクトの外で --group が無ければ置き場を開かずに 2"""
+    (grouped_root / 'env').write_text('FOO=1\n')
+
+    assert _init(grouped_root) == 2
+
+    assert openbao.received == []
+    assert '--group' in caplog.text
+
+
+def test_init_refuses_the_reserved_default(grouped_root, openbao, collect, caplog):
+    """#315 前提 4: --group default は予約語として 2"""
+    assert _init(grouped_root, '--group', 'default') == 2
+
+    assert openbao.received == []
+    assert 'default' in caplog.text
 
 
 @pytest.mark.parametrize('name', ['ubuntu', '1', 'bad name', 'a/b', 'global'])

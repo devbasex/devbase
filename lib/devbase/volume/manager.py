@@ -18,17 +18,22 @@ WORK_VOLUME_PREFIX = "devbase_work_"
 # 全コンテナで共有するホームディレクトリボリューム
 HOME_UBUNTU_VOLUME = "devbase_home_ubuntu"
 
-# --- アカウントグループ (PLAN39) ---------------------------------------------
+# --- アカウントグループ (PLAN39 / #315) --------------------------------------
 # アカウントグループは「使用する Google / AWS アカウントの単位」。グループごとに
 # devbase_home_<group> を作り、/persistent/group としてマウントする。認証情報や
 # 会話履歴のようにテナントへ紐づくデータ (分類 B) の置き場になる。
-DEFAULT_ACCOUNT_GROUP = "default"
+# グループは既定の値を持たない。プロジェクトの env での宣言が必須である (#315)。
+#: #315 より前に宣言の無いプロジェクトが使っていたボリューム (旧既定のボリューム)。
+#: ボリュームの移行の元で、スナップショットの系列にも残る。新しくは作らない
+LEGACY_GROUP_VOLUME = "devbase_home_default"
 # Docker のボリューム名として使える文字種
 _GROUP_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 # 数字のみは devbase_home_<index> (get_volume_for_index) と同じ名前になる
 _NUMERIC_NAME_RE = re.compile(r"^[0-9]+$")
 # 共通ボリューム devbase_home_ubuntu と同じ名前になる
-_RESERVED_ACCOUNT_GROUPS = ("ubuntu",)
+_SHARED_RESERVED_GROUP = "ubuntu"
+#: 旧既定のグループ名。予約語で、グループ名にも置き場の読み替えにも使えない (#315)
+LEGACY_GROUP_NAME = "default"
 
 # --- VS Code Server (PLAN36) -------------------------------------------------
 # ~/.vscode-server はコンテナの書き込みレイヤ上にあり、devbase up の down → up で
@@ -41,43 +46,44 @@ _RESERVED_ACCOUNT_GROUPS = ("ubuntu",)
 VSCODE_VOLUME_PREFIX = "devbase_vscode_"
 # プロジェクト名のうち Docker のボリューム名に使えない文字
 _VOLUME_UNSAFE_RE = re.compile(r"[^a-zA-Z0-9._-]")
+# プロジェクト名が決まらないときの VS Code Server のボリューム名の一部。グループではない
+_FALLBACK_PROJECT_NAME = "default"
 
 
-def resolve_account_group(group: Optional[str] = None) -> str:
-    """アカウントグループ名を解決して検証する。
+def validate_account_group(name: str) -> str:
+    """アカウントグループ名を検証して返す (前後の空白は外す)。グループ名の規則の唯一の置き場。
 
-    解決順は 引数 → ``DEVBASE_ACCOUNT_GROUP`` → ``default``。環境変数には
-    グローバル ``env`` とプロジェクト ``env`` を重ねた結果が入っている
-    (``bin/devbase`` が ``set -a`` で source する) ので、ここで読むだけで
-    3 レベルの解決結果になる。
+    名前はそのままボリューム名 ``devbase_home_<group>`` と置き場のパスの 1 要素になるため、
+    次を弾く。(b)〜(d) は (a) を通過してしまうので、正規表現とは別のチェックとして持つ。
 
-    解決結果はそのままボリューム名 ``devbase_home_<group>`` の一部になるため、
-    **起動前に**次の 3 つを弾く。(b) と (c) は (a) を通過してしまうので、
-    正規表現とは別のチェックとして明示的に持つ。
-
-    (a) Docker のボリューム名にできない文字列
+    (a) 空、または Docker のボリューム名にできない文字列
     (b) 予約語 ``ubuntu`` (共通ボリューム ``devbase_home_ubuntu`` と衝突)
-    (c) 数字のみ (``devbase_home_<index>`` と衝突)
+    (c) 予約語 ``default`` (旧既定のボリューム ``devbase_home_default`` と衝突。#315)
+    (d) 数字のみ (``devbase_home_<index>`` と衝突)
 
     Raises:
         DevbaseError: グループ名が使えない場合
     """
-    raw = group if group is not None else os.environ.get(
-        keys.DEVBASE_ACCOUNT_GROUP, "")
-    name = (raw or "").strip()
+    name = (name or "").strip()
     if not name:
-        return DEFAULT_ACCOUNT_GROUP
-
+        raise DevbaseError(f"{keys.DEVBASE_ACCOUNT_GROUP} が空です")
     if not _GROUP_NAME_RE.match(name):
         raise DevbaseError(
             f"{keys.DEVBASE_ACCOUNT_GROUP} が不正です: '{name}'。"
             "Docker のボリューム名に使える文字 (英数字・ドット・ハイフン・"
             "アンダースコア、先頭は英数字) だけを使ってください"
         )
-    if name in _RESERVED_ACCOUNT_GROUPS:
+    if name == _SHARED_RESERVED_GROUP:
         raise DevbaseError(
             f"{keys.DEVBASE_ACCOUNT_GROUP} に予約語は使えません: '{name}'。"
             f"共通ボリューム {HOME_UBUNTU_VOLUME} と同じ名前になります"
+        )
+    if name == LEGACY_GROUP_NAME:
+        raise DevbaseError(
+            f"{keys.DEVBASE_ACCOUNT_GROUP} に予約語は使えません: '{name}'。"
+            "移し先のグループ名 (nyle / personal など) を書いてください。"
+            f"{LEGACY_GROUP_VOLUME} の中身は "
+            "devbase project migrate-volume --to <グループ> で移せます"
         )
     if _NUMERIC_NAME_RE.match(name):
         raise DevbaseError(
@@ -86,6 +92,29 @@ def resolve_account_group(group: Optional[str] = None) -> str:
             f"{SHARED_VOLUME_PREFIX}<index> と同じ名前になります"
         )
     return name
+
+
+def resolve_account_group(group: Optional[str] = None) -> str:
+    """アカウントグループ名を引数か ``DEVBASE_ACCOUNT_GROUP`` から決めて検証する。
+
+    既定の値は持たない (#315)。``devbase up`` / ``scale`` は起動の先頭でプロジェクトの
+    宣言を読み、未設定なら環境変数へ置く (``commands/container.py``) ため、起動の経路では
+    ここで値が決まる。規則は :func:`validate_account_group` に任せる。
+
+    Raises:
+        GroupDeclarationError: 引数も環境変数も空の場合
+        DevbaseError: グループ名が使えない場合
+    """
+    raw = group if group is not None else os.environ.get(
+        keys.DEVBASE_ACCOUNT_GROUP, "")
+    if not (raw or "").strip():
+        from devbase.env.groups import GroupDeclarationError
+
+        raise GroupDeclarationError(
+            f"アカウントグループが決まっていません。projects/<name>/env に "
+            f"{keys.DEVBASE_ACCOUNT_GROUP}=<グループ> を書いてください"
+        )
+    return validate_account_group(raw)
 
 
 def get_group_volume(group: Optional[str] = None) -> str:
@@ -107,7 +136,7 @@ def resolve_project_name(project_name: Optional[str] = None) -> str:
     解決経路が 2 つあると、作った名前とマウントする名前がずれる。
     """
     name = (project_name or get_project_name() or "").strip()
-    return name or DEFAULT_ACCOUNT_GROUP
+    return name or _FALLBACK_PROJECT_NAME
 
 
 def normalize_volume_component(name: str) -> str:
@@ -121,7 +150,7 @@ def normalize_volume_component(name: str) -> str:
     実際にこの衝突が起きる名前は Docker 側で先に弾かれる。
     """
     normalized = _VOLUME_UNSAFE_RE.sub("_", name)
-    return normalized or DEFAULT_ACCOUNT_GROUP
+    return normalized or _FALLBACK_PROJECT_NAME
 
 
 def get_vscode_volume_for(project_name: Optional[str], index: int) -> str:
@@ -162,8 +191,8 @@ class VolumeManager:
             logger.warning("Failed to check volume %s: %s", volume_name, e)
             return False
 
-    def _create_volume(self, volume_name: str) -> bool:
-        """Create Docker volume"""
+    def create_volume(self, volume_name: str) -> bool:
+        """Docker のボリュームを作る。グループのボリュームを作る唯一の入口 (#315)"""
         try:
             subprocess.run(
                 ['docker', 'volume', 'create', volume_name],
@@ -227,7 +256,7 @@ class VolumeManager:
 
         Args:
             scale: Number of container instances
-            group: Account group name (default: resolved from environment)
+            group: Account group name (省略時は DEVBASE_ACCOUNT_GROUP。既定の値は無い)
         """
         logger.info("Ensuring volumes for %d container(s)", scale)
 
@@ -241,7 +270,7 @@ class VolumeManager:
             logger.info("  %s (shared home, exists)", HOME_UBUNTU_VOLUME)
         else:
             logger.info("  Creating %s (shared home)...", HOME_UBUNTU_VOLUME)
-            if not self._create_volume(HOME_UBUNTU_VOLUME):
+            if not self.create_volume(HOME_UBUNTU_VOLUME):
                 raise DockerError(f"Failed to create volume {HOME_UBUNTU_VOLUME}")
 
         # Ensure account group volume (shared by all containers of the group)
@@ -249,7 +278,7 @@ class VolumeManager:
             logger.info("  %s (account group, exists)", group_volume)
         else:
             logger.info("  Creating %s (account group)...", group_volume)
-            if not self._create_volume(group_volume):
+            if not self.create_volume(group_volume):
                 raise DockerError(f"Failed to create volume {group_volume}")
 
         # Create or verify work volumes for each instance
@@ -261,7 +290,7 @@ class VolumeManager:
                 logger.info("  %s (exists)", work_volume)
             else:
                 logger.info("  Creating %s...", work_volume)
-                if not self._create_volume(work_volume):
+                if not self.create_volume(work_volume):
                     raise DockerError(f"Failed to create volume {work_volume}")
 
             # Ensure VS Code Server volume (PLAN36)
@@ -270,7 +299,7 @@ class VolumeManager:
                 logger.info("  %s (VS Code Server, exists)", vscode_volume)
             else:
                 logger.info("  Creating %s (VS Code Server)...", vscode_volume)
-                if not self._create_volume(vscode_volume):
+                if not self.create_volume(vscode_volume):
                     raise DockerError(
                         f"Failed to create volume {vscode_volume}")
 
@@ -288,7 +317,7 @@ def ensure_volumes(scale: int, project_name: str = None,
     Args:
         scale: Number of container instances
         project_name: Project name (default: resolved from COMPOSE_PROJECT_NAME)
-        group: Account group name (default: resolved from environment)
+        group: Account group name (省略時は DEVBASE_ACCOUNT_GROUP。既定の値は無い)
     """
     manager = VolumeManager(project_name)
     manager.ensure_volumes(scale, group)

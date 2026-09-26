@@ -82,6 +82,8 @@ def up_harness(project, monkeypatch):
 
     monkeypatch.setattr(container, 'get_project_name', lambda: 'proj')
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
+    # 接続先の検査が主題。グループの宣言の検査は test_container_up_order で見る (#315)
+    monkeypatch.setattr(container, '_require_group_declaration', lambda project=None: True)
     monkeypatch.setattr(container, '_ensure_env_files', lambda: True)
     monkeypatch.setattr(container, '_run_pre_up_hook', lambda config=None: True)
     monkeypatch.setattr(container, '_ensure_images', lambda: True)

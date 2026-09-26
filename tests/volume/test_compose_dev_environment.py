@@ -49,7 +49,7 @@ REPO_ENV = {"DEVBASE_REPOS": "cGxhbg==", "DEVBASE_PRIMARY_DIR": "carmo"}
 # 個々のテストの期待値からは除いて比較し、内容そのものは
 # test_devbase_managed_environment_is_always_present で固定する。
 DEVBASE_MANAGED = {
-    "DEVBASE_ACCOUNT_GROUP": "default",
+    "DEVBASE_ACCOUNT_GROUP": "nyle",
     "CLOUDSDK_CONFIG": "/persistent/group/gcloud",
     "GOOGLE_WORKSPACE_CLI_CONFIG_DIR": "/persistent/group/gws",
     "GCP_AUTH_MODE": "adc",
@@ -61,7 +61,9 @@ def project(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # devbase 由来の変数は常に dev へ載る (PLAN39)。外部環境で値が変わらないよう
     # 解決の入力になるキーを落としておく。
-    for name in ("DEVBASE_ACCOUNT_GROUP", "GCP_AUTH_MODE",
+    # グループは up が宣言から置いた後の値 (#315)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")
+    for name in ("GCP_AUTH_MODE",
                  "GOOGLE_APPLICATION_CREDENTIALS_BASE64"):
         monkeypatch.delenv(name, raising=False)
     for name in list(os.environ):

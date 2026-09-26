@@ -20,7 +20,6 @@ def grouped(openbao_root, openbao):
     from tests.conftest import configure_openbao
 
     configure_openbao(openbao_root, openbao, layout='group')
-    (openbao_root / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-a\n')
     (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-a\n')
     return openbao_root
 
@@ -82,11 +81,11 @@ def test_a_project_lists_only_its_own_rows(grouped, openbao):
     assert listing.project == 'web'
 
 
-@pytest.mark.parametrize('project, gets', [(None, 2), ('web', 2)])
-def test_one_login_and_one_get_per_ref(grouped, openbao, project, gets):
+@pytest.mark.parametrize('project, group, gets', [(None, 'team-a', 2), ('web', None, 2)])
+def test_one_login_and_one_get_per_ref(grouped, openbao, project, group, gets):
     openbao.put(TEAM, {'A': '1'})
 
-    env_rows.collect_key_rows(grouped, project=project, group=None)
+    env_rows.collect_key_rows(grouped, project=project, group=group)
 
     assert openbao.logins == 1
     assert len(kv_gets(openbao)) == gets
@@ -183,6 +182,7 @@ def test_project_names_lists_the_projects_directory(file_root):
 
 def test_project_key_counts_add_the_team_and_user_rows(grouped, openbao):
     (grouped / 'projects' / 'api').mkdir()
+    (grouped / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-a\n')
     openbao.put(TEAM, {'G': 'x'})
     openbao.put('team/team-a/projects/web', {'A': '1', 'B': '1'})
     openbao.put('users/member01/team-a/projects/web', {'A': '2'})
@@ -194,9 +194,18 @@ def test_project_key_counts_add_the_team_and_user_rows(grouped, openbao):
 
 def test_an_unreadable_project_count_is_none(grouped, openbao):
     (grouped / 'projects' / 'api').mkdir()
+    (grouped / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-a\n')
     openbao.forbidden_prefixes = ['team/team-a/projects/web']
 
     assert env_rows.count_project_keys(grouped) == [('api', 0), ('web', None)]
+
+
+def test_an_undeclared_project_count_is_none(grouped, openbao):
+    """#315: 宣言の無いプロジェクトはグループが決まらず、置き場へ要求を出さない"""
+    (grouped / 'projects' / 'api').mkdir()
+
+    assert env_rows.count_project_keys(grouped)[0] == ('api', None)
+    assert not any('projects/api' in p for p in kv_gets(openbao))
 
 
 def test_project_key_counts_on_a_file_backend(file_root):
@@ -207,12 +216,22 @@ def test_project_key_counts_on_a_file_backend(file_root):
 
 
 def test_group_choices_dedupe_by_storage_group(grouped, openbao):
+    """候補は宣言だけから作り、置き場のグループ名で重複を除く。宣言の無いプロジェクトは飛ばす"""
     from tests.conftest import configure_openbao
 
-    configure_openbao(grouped, openbao, layout='group', group_aliases={'default': 'team-a'})
+    configure_openbao(grouped, openbao, layout='group', group_aliases={'acme': 'team-a'})
     (grouped / 'projects' / 'api').mkdir()
+    (grouped / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     (grouped / 'projects' / 'ops').mkdir()
     (grouped / 'projects' / 'ops' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-c\n')
-    (grouped / 'env').unlink()
+    (grouped / 'projects' / 'undeclared').mkdir()
 
-    assert env_rows.group_choices(grouped) == ['default', 'team-c']
+    assert env_rows.group_choices(grouped) == ['acme', 'team-c']
+
+
+def test_group_choices_ignore_the_root_env(grouped):
+    """#315 I12: ``$DEVBASE_ROOT/env`` の行は候補にしない (そもそも宣言として認めない)"""
+    (grouped / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-z\n')
+
+    assert 'team-z' not in env_rows.group_choices(grouped)
+    assert 'default' not in env_rows.group_choices(grouped)

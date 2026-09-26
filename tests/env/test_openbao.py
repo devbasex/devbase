@@ -535,11 +535,11 @@ def test_flat_layout_refuses_a_reference_with_a_group(store, openbao):
 def test_group_layout_reads_and_writes_the_group_paths(openbao_root, openbao):
     from tests.conftest import configure_openbao
 
-    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'acme': 'nyle'})
     store = SecretStore(openbao_root)
 
     store.save(SecretRef.for_project('web', group='with'), {'A': '1'})
-    store.save(SecretRef.for_global(owner='user', group='default'), {'B': '2'})
+    store.save(SecretRef.for_global(owner='user', group='acme'), {'B': '2'})
 
     assert openbao.get('team/with/projects/web') == {'A': '1'}
     assert openbao.get('users/member01/nyle/global') == {'B': '2'}

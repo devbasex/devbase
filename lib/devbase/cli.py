@@ -353,6 +353,16 @@ def _add_project_parser(subparsers):
                             help='Directory holding the projects '
                                  '(default: $DEVBASE_ROOT/projects)')
 
+    # `migrate-volume` は旧既定のボリューム devbase_home_default の中身を、指定したグループの
+    # ボリュームへ写す一度きりの変換 (#315 決定 6)。lifecycle ではない
+    pj_migrate_volume = pj_sub.add_parser(
+        'migrate-volume',
+        help='Copy the legacy volume devbase_home_default into devbase_home_<group>')
+    pj_migrate_volume.add_argument('--to', metavar='GROUP', default=None, dest='to',
+                                   help='Account group to copy into (required)')
+    pj_migrate_volume.add_argument('--dry-run', action='store_true',
+                                   help='Run the checks only, without writing')
+
 
 def _add_list_subparser(sub):
     """`list` サブコマンドを登録する (project list / top-level list 共通)。
@@ -533,7 +543,11 @@ def _add_env_backend_parser(env_sub):
                      help='Store account group FROM under the name TO (repeatable; '
                           'replaces the current aliases; only with the group layout)')
 
-    backend_sub.add_parser('test', help='Check the connection to the server backend')
+    backend_test = backend_sub.add_parser(
+        'test', help='Check the connection to the server backend')
+    backend_test.add_argument('--group', metavar='NAME', default=None,
+                              help='Account group whose secrets to use (required outside a project '
+                              'with the grouped layout of the openbao backend)')
 
     migrate = backend_sub.add_parser(
         'migrate', help='Copy team secrets to another backend (age <-> openbao)')
@@ -547,6 +561,9 @@ def _add_env_backend_parser(env_sub):
                               'neither read, written nor moved aside (repeatable)')
     migrate.add_argument('--yes', '-y', action='store_true', dest='assume_yes',
                          help='Skip the confirmation prompt')
+    migrate.add_argument('--group', metavar='NAME', default=None,
+                         help='Account group of the common secrets (required outside a '
+                              'project with the grouped layout of the openbao backend)')
 
 
 def _add_env_export_parser(env_sub):
@@ -567,6 +584,9 @@ def _add_env_export_parser(env_sub):
                             help='Exclude $DEVBASE_ROOT/.env')
     env_export.add_argument('--no-metadata', action='store_true',
                             help='Exclude $DEVBASE_ROOT/.env.sources.yml')
+    env_export.add_argument('--group', metavar='NAME', default=None,
+                            help='Account group whose secrets to use (required outside a project '
+                              'with the grouped layout of the openbao backend)')
     env_export.add_argument('--recipient', action='append', default=[],
                             metavar='KEY', dest='recipients',
                             help=("age / OpenSSH public key (repeatable). "
@@ -595,6 +615,9 @@ def _add_env_import_parser(env_sub):
     )
     env_import.add_argument('source',
                             help="Bundle path or '-' for stdin")
+    env_import.add_argument('--group', metavar='NAME', default=None,
+                            help='Account group whose secrets to use (required outside a project '
+                              'with the grouped layout of the openbao backend)')
     env_import.add_argument('--merge', choices=['keep-existing', 'prefer-incoming'],
                             default='keep-existing',
                             help=("Key-level merge mode. keep-existing (default) keeps "
@@ -698,6 +721,9 @@ def _add_snapshot_parser(subparsers):
     s_create = ss_sub.add_parser('create', help='Create a snapshot')
     s_create.add_argument('--name', default=None, help='Snapshot name')
     s_create.add_argument('--full', action='store_true', help='Force full backup')
+    s_create.add_argument('--group', metavar='NAME', default=None,
+                          help="Account group whose volume to back up "
+                               "(default: the current project's declaration)")
 
     ss_sub.add_parser('list', help='List snapshots')
 
@@ -963,11 +989,9 @@ def _named_lifecycle_project(root: Path, cmd: str, subcommand: Optional[str],
         return None
     if not (root / 'projects' / name).is_dir():
         return None
-    from devbase.env import runtime as _runtime
-
-    # 注入と同じ SecretStore で設定を読む (設定を読むだけで、サーバへは要求しない)
-    store = _runtime.store_for(root)
-    return name if store.ref_group(name) is not None else None
+    # 設定を読むだけで、宣言もサーバも読まない。宣言の無いプロジェクトでも例外を送らず、
+    # 注入の側がグループの決まらないプロジェクトを読まずに続ける (#315 I9)
+    return name if _grouped_layout(root) else None
 
 
 def _load_secret_env(cmd: str, subcommand: Optional[str] = None,
@@ -1043,6 +1067,10 @@ def _dispatch(cmd, args):
             devbase_root = _require_devbase_root()
             from devbase.commands.project import cmd_project_migrate_config
             return cmd_project_migrate_config(devbase_root, args)
+        if getattr(args, 'subcommand', None) == 'migrate-volume':
+            devbase_root = _require_devbase_root()
+            from devbase.commands.project import cmd_project_migrate_volume
+            return cmd_project_migrate_volume(devbase_root, args)
         from devbase.commands.container import cmd_project
         return cmd_project(args)
 

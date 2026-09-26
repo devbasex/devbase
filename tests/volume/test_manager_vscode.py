@@ -20,7 +20,7 @@ from devbase.volume import manager
 def _clean_env(monkeypatch):
     """外部環境の COMPOSE_PROJECT_NAME に左右されないよう既定で未設定にする。"""
     monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
-    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ def _record_docker(monkeypatch) -> list[str]:
     monkeypatch.setattr(
         manager.VolumeManager, "_volume_exists", lambda self, name: False)
     monkeypatch.setattr(
-        manager.VolumeManager, "_create_volume",
+        manager.VolumeManager, "create_volume",
         lambda self, name: created.append(name) or True)
     return created
 
@@ -118,7 +118,7 @@ def test_ensure_volumes_keeps_existing_volumes(monkeypatch):
         manager.VolumeManager, "_volume_exists",
         lambda self, name: name == "devbase_vscode_carmo-ai_1")
     monkeypatch.setattr(
-        manager.VolumeManager, "_create_volume",
+        manager.VolumeManager, "create_volume",
         lambda self, name: created.append(name) or True)
 
     manager.ensure_volumes(1, project_name="carmo-ai")

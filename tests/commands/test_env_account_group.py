@@ -25,6 +25,7 @@ def bao_root(openbao_root, monkeypatch):
 def file_root(tmp_path, monkeypatch):
     """backend 未設定 (平文) の DEVBASE_ROOT (projects/web で実行)"""
     (tmp_path / 'projects' / 'web').mkdir(parents=True)
+    (tmp_path / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
     monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))

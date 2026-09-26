@@ -246,8 +246,8 @@ DEVBASE_FILE_ENTRIES=(
 #
 # 空ファイルを置くと Claude Code が
 # `The configuration file at ~/.claude.json contains invalid JSON.` で起動を
-# 拒否する。実体がシードされる `default` グループでは起こらないが、非 default の
-# グループはシードを飛ばすため必ずプレースホルダになる (issue #136)。
+# 拒否する。グループ側は /persistent/ai から取り込まない (#315) ため、グループの
+# ボリュームへ初めて付けたときは必ずプレースホルダになる (issue #136)。
 #
 # `history.jsonl` は JSON Lines なので**入れない**。`{}` を書くと 1 行目が
 # 履歴の 1 件として読まれる。`CLAUDE.md` も Markdown なので空でよい。
@@ -387,41 +387,6 @@ devbase_seed_entry() {
     echo "  seeded: $dest"
 }
 
-# default グループの初回シード。
-#
-# 現行 /persistent/ai に実体がある分類 B のデータ (.claude.json / 認証 / 履歴 /
-# .gemini) をグループ側へ **コピー** して初期化する。move ではないので切り戻し時に
-# 元データが残る。非 default では走らせない — 走らせるとグループ分離の意味が
-# 失われる。gcloud / gws はシード元が存在しないため対象外 (AC8)。
-devbase_seed_group_settings() {
-    local ai_root="$1" group_root="$2" group="$3"
-    local entry home_seed_entry skip
-
-    if [ "$group" != "default" ]; then
-        return 0
-    fi
-
-    echo "Seeding account group '${group}' from ${ai_root} (first run only)..."
-    for entry in "${DEVBASE_GROUP_SETTINGS[@]}"; do
-        # ホームから取り込むエントリには /persistent/ai 側の旧保存先が無い。
-        # 専用のホームシードへ任せ、存在しないシード元を試行しない。
-        skip=0
-        for home_seed_entry in "${DEVBASE_GROUP_HOME_SEED_SETTINGS[@]}"; do
-            if [ "$entry" = "$home_seed_entry" ]; then
-                skip=1
-                break
-            fi
-        done
-        [ "$skip" = "1" ] && continue
-        if [ "$entry" = ".claude" ]; then
-            devbase_seed_entry "$ai_root/$entry" "$group_root/$entry" \
-                "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"
-        else
-            devbase_seed_entry "$ai_root/$entry" "$group_root/$entry"
-        fi
-    done
-}
-
 # イメージが焼き込んだ ~/.claude の初期設定を共通側へ退避する。
 #
 # Dockerfile は ~/.claude/settings.json に hooks 設定を書き込むが、この直後の
@@ -443,8 +408,12 @@ devbase_seed_image_claude_settings() {
 }
 
 # AI 設定の symlink を 2 系統ぶん張る (初回シードを含む)。
+#
+# 第 4 引数はアカウントグループ名 (呼び出しの形を保つために受け取るが使わない)。
+# グループ側は /persistent/ai から取り込まない (#315 I13)。取り込み元は PLAN39 より前の
+# 置き場で、グループの実名化と合わせて初回シードを無くした。
 devbase_setup_ai_settings() {
-    local home_root="$1" ai_root="$2" group_root="$3" group="${4:-default}"
+    local home_root="$1" ai_root="$2" group_root="$3"
     local owner="${5:-${USERNAME:-ubuntu}}"
     local entry
 
@@ -454,7 +423,6 @@ devbase_setup_ai_settings() {
     # symlink を張る**前**にシードする。張ったあとに走らせると、共通側を指す
     # symlink の中身へコピーしてしまう。
     devbase_seed_image_claude_settings "$home_root" "$ai_root"
-    devbase_seed_group_settings "$ai_root" "$group_root" "$group"
     for entry in "${DEVBASE_GROUP_HOME_SEED_SETTINGS[@]}"; do
         # 既存リンクは以前選択したグループを指す可能性がある。リンク先を辿って
         # 新しいグループへ認証状態をコピーしてはならない。
@@ -573,12 +541,26 @@ devbase_setup_gcp_credentials() {
     export BIGQUERY_KEY_FILE="$bq_path"
 }
 
+# アカウントグループが渡っているかを確かめる (#315 I8)。
+#
+# 渡っていなければ理由を標準エラーへ出して 1 を返す。呼び出し側はリンクを張る前に
+# 止める。既定のグループへ落とすと、別のグループのボリュームの認証で動くコンテナが
+# できるため、既定の名前は持たない。
+devbase_require_account_group() {
+    if [ -n "${DEVBASE_ACCOUNT_GROUP:-}" ]; then
+        return 0
+    fi
+    echo "ERROR: DEVBASE_ACCOUNT_GROUP が渡っていません。devbase up で起動してください" \
+         "(プロジェクトの env に DEVBASE_ACCOUNT_GROUP=<グループ> が要ります)" >&2
+    return 1
+}
+
 # 起動時に「どのグループで、どのアカウントとして動いているか」を 1 行出す。
 #
 # entrypoint は `set -e` で動くため、未ログインで gcloud が非 0 を返しても起動を
 # 落とさないようフォールバックする。gcloud を含まないイメージもあるので存在確認も行う。
 devbase_log_account_group() {
-    local group="${1:-default}"
+    local group="$1"
     local account
 
     if command -v gcloud >/dev/null 2>&1; then
@@ -780,9 +762,10 @@ fi
 # ========================================
 # AI Agent Settings Symlink Setup (PLAN39: 共通 / グループの 2 層)
 # ========================================
-# DEVBASE_ACCOUNT_GROUP はホスト (devbase up) が解決して渡す。ホスト側で
-# 検証済みなので、ここでは未設定時に default へ落とすだけにする。
-DEVBASE_ACCOUNT_GROUP="${DEVBASE_ACCOUNT_GROUP:-default}"
+# DEVBASE_ACCOUNT_GROUP はホスト (devbase up) がプロジェクトの宣言から決めて渡す。
+# ホスト側で検証済みなので、ここでは渡っていないときに止めるだけにする。既定の
+# グループへ落とすと、別のグループのボリュームの認証で動くコンテナができる (#315 I8)。
+devbase_require_account_group || exit 1
 AI_PERSISTENT_DIR="/persistent/ai"
 GROUP_PERSISTENT_DIR="/persistent/group"
 
