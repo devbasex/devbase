@@ -273,13 +273,25 @@
       "term": "検査ジョブ",
       "context": "ci",
       "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest）",
-      "pending_source": "issues/issue-216-requirements.md"
+      "pending_source": "issues/issue-247-design.md"
     },
     {
       "term": "統合ブランチ",
       "context": "ci",
       "meaning": "課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**）",
       "pending_source": "issues/issue-216-requirements.md"
+    },
+    {
+      "term": "トリガー",
+      "context": "ci",
+      "meaning": "ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches）",
+      "pending_source": "issues/issue-216-design.md"
+    },
+    {
+      "term": "積み重ねた Pull Request",
+      "context": "ci",
+      "meaning": "宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request",
+      "pending_source": "issues/issue-216-design.md"
     },
     {
       "term": "指摘",
@@ -290,8 +302,20 @@
     {
       "term": "抑止の注記",
       "context": "ci",
-      "meaning": "指摘を抑える # shellcheck の指示と、抑える理由のコメントの組",
-      "pending_source": "issues/issue-247-requirements.md"
+      "meaning": "指摘を抑える shellcheck の指示（disable= / source=）と、抑える理由のコメントの組",
+      "pending_source": "issues/issue-259-design.md"
+    },
+    {
+      "term": "基準の版",
+      "context": "ci",
+      "meaning": "手元の基準（devbase-base:latest の shellcheck）と CI の ShellCheck の検査ジョブが揃える shellcheck の版。現在は 0.11.0",
+      "pending_source": "issues/issue-247-design.md"
+    },
+    {
+      "term": "ShellCheck の検査ジョブ",
+      "context": "ci",
+      "meaning": "検査ジョブのうち shellcheck ジョブ（bin/*・install.sh・containers/base/tmux-* を検査する）",
+      "pending_source": "issues/issue-247-design.md"
     },
     {
       "term": "環境の隔離",
@@ -334,6 +358,24 @@
       "context": "tmux",
       "meaning": "tmux-clean が必ず残すセッション。tmux の中なら今のセッション、外ならベース名に属するうち番号が最小のもの",
       "pending_source": "issues/issue-239-requirements.md"
+    },
+    {
+      "term": "base のシェルスクリプト",
+      "context": "ci",
+      "meaning": "containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの",
+      "pending_source": "issues/issue-259-design.md"
+    },
+    {
+      "term": "検査の対象",
+      "context": "ci",
+      "meaning": "CI の ShellCheck ジョブで、引数に containers/base/ のパスを持つ shellcheck の行が並べたファイル",
+      "pending_source": "issues/issue-259-design.md"
+    },
+    {
+      "term": "shellcheck の指示",
+      "context": "ci",
+      "meaning": "# shellcheck で始まるコメント（disable= / source= / shell=）。disable= と source= は抑止の注記の指示の側で、shell= は指摘を抑えない",
+      "pending_source": "issues/issue-259-design.md"
     }
   ]
 }

@@ -103,8 +103,15 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | --- | --- | --- | --- |
 | 検査ジョブ | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest） | — | — |
 | 統合ブランチ | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — |
+| トリガー | ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches） | — | — |
+| 積み重ねた Pull Request | 宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request | — | — |
 | 指摘 | shellcheck が出す 1 件（SC の番号・水準・行） | — | — |
-| 抑止の注記 | 指摘を抑える # shellcheck の指示と、抑える理由のコメントの組 | — | — |
+| 抑止の注記 | 指摘を抑える shellcheck の指示（disable= / source=）と、抑える理由のコメントの組 | — | — |
+| 基準の版 | 手元の基準（devbase-base:latest の shellcheck）と CI の ShellCheck の検査ジョブが揃える shellcheck の版。現在は 0.11.0 | — | — |
+| ShellCheck の検査ジョブ | 検査ジョブのうち shellcheck ジョブ（bin/*・install.sh・containers/base/tmux-* を検査する） | — | — |
+| base のシェルスクリプト | containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの | — | — |
+| 検査の対象 | CI の ShellCheck ジョブで、引数に containers/base/ のパスを持つ shellcheck の行が並べたファイル | — | — |
+| shellcheck の指示 | # shellcheck で始まるコメント（disable= / source= / shell=）。disable= と source= は抑止の注記の指示の側で、shell= は指摘を抑えない | — | — |
 
 ## テストの実行環境（`test`）
 
