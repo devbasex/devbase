@@ -192,7 +192,7 @@ tests/utils/
 | # | 場所 | 用途 | 今の名前の条件 | 変更後の名前の条件 | 残すディレクトリの条件 |
 | --- | --- | --- | --- | --- | --- |
 | S1 | `plugin/syncer.py:59-60` `discover_projects` | プラグインの `projects/` の名前を載せる | `startswith('.')` を除外 | 述語 | `is_dir()` |
-| S2 | `plugin/syncer.py:204` `sync_projects` | 実ディレクトリの名前の形の知らせ | `startswith('.')` を除外 | 述語 | 実ディレクトリ（`:197`） |
+| S2 | `plugin/syncer.py:204` `sync_projects` | 実ディレクトリの名前の形の知らせ | `startswith('.')` を除外 | 述語の後に `_warn_unusable_name`（`is_single_segment_name` の検査を残す） | 実ディレクトリ（`:197`） |
 | S3 | `plugin/info.py:36` | `plugin info` の一覧 | 無し | S1 を呼ぶ | S1 と同じ |
 | S4 | `commands/status.py:129` | プラグインごとのプロジェクト数 | 無し | S1 を呼ぶ | S1 と同じ |
 | S5 | `commands/status.py:102` | コンテナの状態 | 無し | 述語 | `is_dir()`・`compose.yml` の有無 |
