@@ -120,11 +120,11 @@ pytest が走るプロセスの環境と、テストが起動する外部のプ�
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| 環境の隔離 | — | pytest を起動したシェルから継承した環境変数を、テストごとに既定の状態（未設定か固定値）へ戻すこと | — | — | — |
-| 隔離の一覧 | — | テストの開始時に未設定へ戻す環境変数の名前と接頭辞。tests/conftest.py の ISOLATED_ENV と ISOLATED_ENV_PREFIXES | — | — | — |
-| 隔離しない一覧 | — | lib/devbase が読むが、隔離の fixture が未設定へ戻さない変数の名前と、その理由。tests/conftest.py の NOT_ISOLATED_ENV | — | — | — |
-| 読み取りの集合 | — | lib/devbase のソースから静的に集めた、環境変数として読む変数名の集合 | — | — | — |
-| 漏れの検査 | — | 読み取りの集合が隔離の一覧と隔離しない一覧に収まっていることを確かめるテスト | — | — | — |
+| 環境の隔離 | — | pytest を起動したシェルから継承した環境変数を、テストごとに既定の状態（未設定か固定値）へ戻すこと | — | — | `docs/specifications/test-environment-isolation.md` |
+| 隔離の一覧 | — | テストの開始時に未設定へ戻す環境変数の名前と接頭辞。tests/conftest.py の ISOLATED_ENV と ISOLATED_ENV_PREFIXES | — | — | `docs/specifications/test-environment-isolation.md` |
+| 隔離しない一覧 | — | lib/devbase が読むが、隔離の fixture が未設定へ戻さない変数の名前と、その理由。tests/conftest.py の NOT_ISOLATED_ENV | — | — | `docs/specifications/test-environment-isolation.md` |
+| 読み取りの集合 | — | lib/devbase のソースから静的に集めた、環境変数として読む変数名の集合 | — | — | `docs/specifications/test-environment-isolation.md` |
+| 漏れの検査 | — | 読み取りの集合が隔離の一覧と隔離しない一覧に収まっていることを確かめるテスト | — | — | `docs/specifications/test-environment-isolation.md` |
 | 隔離した tmux サーバ | — | TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない | — | — | — |
 | 故障の差し込み | — | 実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと | — | — | — |
 | 偽の date | — | PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date | — | — | — |

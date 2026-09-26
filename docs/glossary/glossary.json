@@ -321,31 +321,31 @@
       "term": "環境の隔離",
       "context": "test",
       "meaning": "pytest を起動したシェルから継承した環境変数を、テストごとに既定の状態（未設定か固定値）へ戻すこと",
-      "pending_source": "issues/issue-218-requirements.md"
+      "source": "docs/specifications/test-environment-isolation.md"
     },
     {
       "term": "隔離の一覧",
       "context": "test",
       "meaning": "テストの開始時に未設定へ戻す環境変数の名前と接頭辞。tests/conftest.py の ISOLATED_ENV と ISOLATED_ENV_PREFIXES",
-      "pending_source": "issues/issue-218-design.md"
+      "source": "docs/specifications/test-environment-isolation.md"
     },
     {
       "term": "隔離しない一覧",
       "context": "test",
       "meaning": "lib/devbase が読むが、隔離の fixture が未設定へ戻さない変数の名前と、その理由。tests/conftest.py の NOT_ISOLATED_ENV",
-      "pending_source": "issues/issue-218-design.md"
+      "source": "docs/specifications/test-environment-isolation.md"
     },
     {
       "term": "読み取りの集合",
       "context": "test",
       "meaning": "lib/devbase のソースから静的に集めた、環境変数として読む変数名の集合",
-      "pending_source": "issues/issue-218-design.md"
+      "source": "docs/specifications/test-environment-isolation.md"
     },
     {
       "term": "漏れの検査",
       "context": "test",
       "meaning": "読み取りの集合が隔離の一覧と隔離しない一覧に収まっていることを確かめるテスト",
-      "pending_source": "issues/issue-218-design.md"
+      "source": "docs/specifications/test-environment-isolation.md"
     },
     {
       "term": "隔離した tmux サーバ",
