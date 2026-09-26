@@ -162,21 +162,7 @@ def cmd_env_rekey(devbase_root: Path, *,
 
     targets = _encrypted_paths(root, store)
 
-    print("\n=== 受信者の変更 ===")
-    for spec in updated:
-        mark = '+' if spec not in current else ' '
-        print(f"  {mark} {spec}")
-    for spec in current:
-        if spec not in updated:
-            print(f"  - {spec}")
-
-    print(f"\n再暗号化する機密: {len(targets)} 件")
-    for item in targets:
-        print(f"  {item.label:<24} {item.path}")
-
-    if own is not None and own not in updated:
-        print("\n⚠ 自分の公開鍵が受信者から外れています。"
-              "再暗号化後、この端末では機密を復号できなくなります。")
+    _print_rekey_plan(current, updated, targets, own)
 
     if dry_run:
         print("\n(--dry-run のため変更していません)")
@@ -211,6 +197,26 @@ def cmd_env_rekey(devbase_root: Path, *,
 
     print(f"\n=== 完了 === (受信者 {len(updated)} 名 / 機密 {len(targets)} 件)")
     return 0
+
+
+def _print_rekey_plan(current: Sequence[str], updated: Sequence[str],
+                      targets: Sequence[Ciphertext], own: Optional[str]) -> None:
+    """受信者の差分、再暗号化する機密の一覧、自分の鍵が外れるときの警告を出す"""
+    print("\n=== 受信者の変更 ===")
+    for spec in updated:
+        mark = '+' if spec not in current else ' '
+        print(f"  {mark} {spec}")
+    for spec in current:
+        if spec not in updated:
+            print(f"  - {spec}")
+
+    print(f"\n再暗号化する機密: {len(targets)} 件")
+    for item in targets:
+        print(f"  {item.label:<24} {item.path}")
+
+    if own is not None and own not in updated:
+        print("\n⚠ 自分の公開鍵が受信者から外れています。"
+              "再暗号化後、この端末では機密を復号できなくなります。")
 
 
 def _prepare_reencryption(root: Path, store: SecretStore,
