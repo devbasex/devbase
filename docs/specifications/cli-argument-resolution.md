@@ -28,11 +28,13 @@
 | ショートカット | `devbase up` のように `project` を省いたトップレベルの同義語（`cli.SHORTCUTS` と shell の `_NAME_RESOLVABLE_SHORTCUTS`） |
 | 単体ビルド | `$DEVBASE_ROOT/containers/<image>` を `devbase-<image>:latest` として 1 つだけ作るビルド |
 
+「プロジェクトとして数える名前」「名前の形の説明」「機密の書き込みの知らせ」の定義は[用語集](../glossary.md)にある。
+
 ## 構成要素
 
 | 要素 | 置き場所 | 責務 |
 | --- | --- | --- |
-| 名前の形の規則 | `lib/devbase/utils/names.py` | `SINGLE_SEGMENT_NAME_PATTERN` と `is_single_segment_name(value)`、名前の形を利用者へ説明する文 `NAME_FORM_HINT`、プロジェクトとして数える名前の述語 `counts_as_project(name)`。`re` だけに依存し副作用を持たない（ログも出さない）。消費側は `from devbase.utils import names` と読み込み、module の属性として呼ぶ |
+| 名前の形の規則 | `lib/devbase/utils/names.py` | `SINGLE_SEGMENT_NAME_PATTERN` と `is_single_segment_name(value)`、名前の形を利用者へ説明する文 `NAME_FORM_HINT`、プロジェクトとして数える名前の述語 `counts_as_project(name)`、その述語と `is_dir()` で `projects/` の直下を絞る `project_dirs(projects_dir)`。`re` と `pathlib` だけに依存し副作用を持たない（ログも出さない）。消費側は `from devbase.utils import names` と読み込み、module の属性として呼ぶ |
 | 名前の形の規則（shell） | `bin/devbase` | `_SINGLE_SEGMENT_NAME_RE` と `is_single_segment_name`。Python と同じ正規表現を文字列で持つ |
 | name 解決 | `bin/devbase` | `maybe_cd_project`。形・実在の順に見て、通れば `cd` と `COMPOSE_PROJECT_NAME` / `env` の再読み込み |
 | 解決の対象の一覧 | `bin/devbase` | `_PROJECT_NAME_SUBCOMMANDS`（`project` の対象）と `_NAME_RESOLVABLE_SHORTCUTS`（トップレベルの対象） |
@@ -42,6 +44,7 @@
 | 名前の検証（注入） | `lib/devbase/cli.py` | `_named_lifecycle_project`。dispatch 前の機密の注入で使うプロジェクト名 |
 | 名前の検証（イメージ） | `lib/devbase/commands/container.py` | `_build_single_image`。`containers/<image>` へ連結する前の検証 |
 | 同期の知らせ | `lib/devbase/plugin/syncer.py` | `_warn_unusable_name(name, source, base=None)`。`sync_projects` が symlink を張る直前と、`projects/` 直下の実ディレクトリの列挙で呼ぶ |
+| 機密の書き込みの知らせ | `lib/devbase/env/secret_store.py` | `warn_unusable_project_name(ref)`。ファイルの backend（`PlaintextBackend`・`AgeBackend`）の `save_bytes` と、`commands/env.py` の `cmd_env_edit` の直接編集が呼ぶ |
 | `env import` の知らせ | `lib/devbase/env/io_import.py` | `_warn_unusable_project_names(plans, root)`。`import_bundle` が計画を組んだ後、`--dry-run` の判定より前に呼ぶ |
 | 書庫のメンバー名 | `lib/devbase/env/_import_merge.py` | `project_name_of(arcname)`。`env/projects/<name>/.env` からプロジェクト名を取り出す（それ以外は `None`） |
 | スナップショットの名前 | `lib/devbase/snapshot/manager.py` | `SnapshotManager._validate_name`。`utils/names.is_single_segment_name` を共有する |
@@ -151,8 +154,30 @@ shell が Python を呼ばずに同じ正規表現を文字列で持つのは、
 `env doctor`、`env encrypt` / `env decrypt`、`env backend status` と backend の移行が、`projects/` を
 走査するときの名前の条件としてこの述語を呼ぶ。ディレクトリの条件（`is_dir()`・壊れた symlink を
 拾う `is_symlink()`・`compose.yml` の有無）は走査ごとに持つ。名前の条件はディレクトリの条件より
-先に見る。同期が張った symlink の掃除と、別名の衝突を見るための実ディレクトリの集合は、
-プロジェクトを数えないため述語を通さない。
+先に見る（壊れた symlink を名前だけで外せ、`stat` を打たないため）。同期が張った symlink の掃除と、
+別名の衝突を見るための実ディレクトリの集合は、プロジェクトを数えないため述語を通さない。
+
+| 走査 | 場所 | 名前の条件 | ディレクトリの条件 |
+| --- | --- | --- | --- |
+| プラグインのプロジェクト（`discover_projects`） | `plugin/syncer.py` | `names.project_dirs` | `is_dir()` |
+| 実ディレクトリの知らせ（`sync_projects`） | `plugin/syncer.py` | 述語の後に `_warn_unusable_name`（形に合わなければ知らせて数える） | 実ディレクトリ |
+| `plugin info` の一覧・`status` のプラグインのプロジェクト数 | `plugin/info.py`・`commands/status.py` | `discover_projects` を呼ぶ | 同上 |
+| コンテナの状態 | `commands/status.py` | 述語 | `is_dir()`・`compose.yml` の有無 |
+| `project list` | `commands/project.py` | 述語 | `is_symlink()` または `is_dir()` |
+| 見つからないときの候補 | `commands/container.py` | 述語 | `is_dir()` または `is_symlink()` |
+| `project migrate-config` の対象 | `project/migrate.py` | 述語 | `is_dir()` |
+| `env export` の対象（`_collect_projects`） | `env/bundle.py` | `names.project_dirs` で黙って外し、その後に `is_valid_project_name`（合わなければ警告して外す） | `is_dir()` |
+| `env doctor` の重なりと除外設定の確認 | `commands/env_ops.py` | `names.project_dirs` | `is_dir()` |
+| `env encrypt` / `env decrypt` の対象 | `commands/env_migrate.py` | `names.project_dirs` | `is_dir()` |
+| `env backend status` と backend の移行の対象 | `commands/env_backend.py` | `names.project_dirs` の後に `SecretRef.for_project`（拒まれた名前は黙って外す） | `is_dir()` |
+
+`plugin info` と `status` のプラグインのプロジェクト数は、述語を個別に持たず `discover_projects` を
+通す。同期と同じ関数を呼ぶことで、ディレクトリの条件まで同期と構造的に一致する。
+
+消費側は述語を `names.counts_as_project(...)` と module の属性として呼ぶ（`project_dirs` も module の
+大域名で述語を引く）。`from devbase.utils.names import counts_as_project` と読み込むと、定義元を
+差し替えるテストが届かず、独自の規則を持つ場合と同じく落ちる。名前は `is_project_name` にしない。
+名前の形の述語（`is_single_segment_name`）と読み違えやすいためである。
 
 ### 機密の書き込みの知らせ
 
@@ -162,6 +187,29 @@ shell が Python を呼ばずに同じ正規表現を文字列で持つのは、
 直接編集（エディタを開く前）である。読み取り（`path`・`exists`・`load`）と、形に合う名前・共通の
 機密への書き込みでは出ない。`env import` はファイルの backend では `save_bytes` を通らず、取り込みの
 知らせだけが出る。サーバの backend への書き込みでは出ない。
+
+`save_bytes` の中の順序は次のとおりである。拒否される参照は 2 までに止まり、知らせは出ない。
+
+1. `_reject_user_ref`（個人単位の参照を拒否）
+2. `self.path(ref)`（`_validate_project_name` で空・パス区切り・`.`・`..` を拒否）
+3. `warn_unusable_project_name(ref)`
+4. 暗号化（age だけ）と書き込み
+
+知らせの文は同期の知らせと同じ組み立てである。名前の中の表示できない文字（改行・ESC など）は
+エスケープして埋め込み、知らせが複数行に割れないようにする。
+
+```text
+プロジェクト名として使えない形の名前のプロジェクトへ機密を書き込みます: '<name>'。この名前では、名前を指定した操作（devbase up <name> など）ができません（<NAME_FORM_HINT>）。projects/<name> の中で名前なしに打てば動きます。
+```
+
+知らせを `SecretStore` のメソッドに置かないのは、ストアを通らず backend を直に呼ぶ書き込み
+（`env encrypt`・`env decrypt`・ファイルの backend への移行）があるためである。`path()` に置かないのは、
+読み取りでも呼ばれるためである。サーバの backend で出さないのは、`env import` がサーバへ書く経路で
+取り込みの知らせと 2 回重なるためである。
+
+`devbase up` などが形に合わない名前を拒むときの文は `"プロジェクト名に使えない形です: '%s'（%s）"` に
+名前と `NAME_FORM_HINT` を埋め込む。`NAME_FORM_HINT` は末尾に句点も括弧も持たないので、全角の括弧は
+呼び出し側が持つ。
 
 ### トップレベル `build` の引数の解釈
 
@@ -305,6 +353,12 @@ graph TD
 - ラッパーが名前として解釈した値だけが引数から取り除かれる。解釈しなかった値は 1 つも欠けずに
   下流へ渡る
 - shell と Python の正規表現は同じ文字列である（同期テストが一致を見る）
+- プロジェクトとして数える名前の述語は、名前が空でなく `.` で始まらないことだけを見る。`projects/` を
+  走査してプロジェクトを数える箇所は、どれもこの述語を前段に通す。`plugin info` と `status` の
+  プラグインのプロジェクト数は、同期（`discover_projects`）と同じ名前の集合を見る
+- 名前の形の説明は `NAME_FORM_HINT` 1 つで、`lib/` に同じ文を持つ別の場所は無い
+- 機密の保存先が受け付ける名前は、空・パス区切り・`.`・`..` 以外のすべてである。拒否は
+  `SecretStoreError` で、ファイルを書かない。形に合わない名前への書き込みは拒まず、知らせを 1 回出す
 
 ### リンクの先は対象外
 
@@ -379,7 +433,10 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
   `is_valid_project_name`（先頭の `_` を許す。`env` の export / import の書庫の中の名前で、往復の
   互換を持つ）と `env/secret_store.py` の `_validate_project_name`（機密の保存先のファイル名）の
   **2 つ**である。`env export` は、プロジェクトとして数える名前の述語で `.` 始まりを黙って外した後に
-  `is_valid_project_name` を当て、合わない名前（`a b` など）を警告して外す。
+  `is_valid_project_name` を当て、合わない名前（`a b` など）を警告して外す。書庫の名前の規則
+（`bundle.is_valid_project_name` と `_import_merge._PROJECT_ENV_RE`）は末尾を `\Z` で閉じ、末尾に
+改行を持つ名前（`foo\n`）を通さない。この規則はプロジェクトとして数える名前の述語へ寄せない。
+先頭の `_` を許すかどうかが名前の形と違い、寄せると書庫が受け付ける名前が変わるためである。
   `_validate_project_name` は空・パス区切り・`.`・`..` だけを拒み、機密の保存先がパスを跨がない
   ための最低限の検査として残す。名前の形で狭めると、いま読み書きできている機密が例外になるため、
   形に合わない名前は拒まずに[機密の書き込みの知らせ](#機密の書き込みの知らせ)で伝える。位置引数の
@@ -403,6 +460,12 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 - 機密の書き込みの知らせが、形に合わない名前への書き込みで 1 回だけ出て、読み取り・形に合う名前・
   取り込みの重なりでは出ないこと。パスを跨ぐ名前は知らせより先に拒まれること
   （`tests/env/test_secret_store.py`・`tests/env/test_io_import.py`・`tests/commands/test_env_store_switch.py`）
+- `projects/` に `bar` と `.vscode`（プラグインでは `.foo`）があるとき、`plugin info`・`status`・
+  `project list`・候補の表示・`project migrate-config`・`env` の各コマンドに `.` 始まりが出ず、その中の
+  ファイルを書き換えないこと。`plugin info` と `status` の数が `discover_projects` と一致すること。
+  `projects/a b` は `env export` がこれまでどおり警告して外すこと。形に合わない名前での
+  `_resolve_project_name` のエラーの文字列が変わらないこと（`tests/utils/test_project_name_consumers.py`）
+- 書庫の名前の規則が末尾の改行を持つ名前を export でも import でも通さないこと（`tests/env/test_bundle.py`）
 - shell の `_SINGLE_SEGMENT_NAME_RE` が Python の `SINGLE_SEGMENT_NAME_PATTERN` と一致すること
   （`tests/cli/test_project_name_resolution.py` の同期テスト）
 - 形に合わない名前で、トップレベルの 7 コマンドと `project` の 7 サブコマンドが `projects/` の外へ
@@ -448,3 +511,4 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 - [アーキテクチャ: `build` の振り分け](../developer/architecture.md)
 - [エディタの窓の開き直し（`devbase open`）](editor-open.md)
 - 実装 PR: devbasex/devbase#207（#146・#142・#196・#200）
+- 実装 PR: devbasex/devbase#301（#276・#226・#229・#245・#227）

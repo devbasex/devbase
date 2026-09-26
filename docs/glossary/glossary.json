@@ -117,15 +117,13 @@
       "term": "プロジェクトとして数える名前",
       "context": "cli",
       "meaning": "projects/ の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。空でなく . で始まらない名前（utils/names.py の counts_as_project）",
-      "source": "",
-      "pending_source": "issues/issue-276-design.md"
+      "source": "docs/specifications/cli-argument-resolution.md"
     },
     {
       "term": "名前の形の説明",
       "context": "cli",
       "meaning": "名前の形を利用者へ説明する文（utils/names.py の NAME_FORM_HINT）",
-      "source": "",
-      "pending_source": "issues/issue-276-requirements.md"
+      "source": "docs/specifications/cli-argument-resolution.md"
     },
     {
       "term": "プロファイル",
@@ -239,8 +237,7 @@
       "term": "機密の書き込みの知らせ",
       "context": "secret",
       "meaning": "ファイルの backend へプロジェクトの機密を書くとき、名前が名前の形に合わなければ標準エラーへ出す 1 行",
-      "source": "",
-      "pending_source": "issues/issue-276-design.md"
+      "source": "docs/specifications/cli-argument-resolution.md"
     },
     {
       "term": "世代",

@@ -25,8 +25,8 @@ bin/devbase の位置引数の解決とビルドの入口（docs/specifications/
 | ラッパー | — | bin/devbase（bash 実装の入口。Python 実装のコマンドへ run_python で振り分ける） | — | — | `docs/specifications/cli-argument-resolution.md` |
 | ショートカット | — | devbase up のように project を省いたトップレベルの同義語 | — | — | `docs/specifications/cli-argument-resolution.md` |
 | 単体ビルド | — | $DEVBASE_ROOT/containers/<image> を devbase-<image>:latest として 1 つだけ作るビルド | — | — | `docs/specifications/cli-argument-resolution.md` |
-| プロジェクトとして数える名前 | — | projects/ の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。空でなく . で始まらない名前（utils/names.py の counts_as_project） | — | — | — |
-| 名前の形の説明 | — | 名前の形を利用者へ説明する文（utils/names.py の NAME_FORM_HINT） | — | — | — |
+| プロジェクトとして数える名前 | — | projects/ の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。空でなく . で始まらない名前（utils/names.py の counts_as_project） | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 名前の形の説明 | — | 名前の形を利用者へ説明する文（utils/names.py の NAME_FORM_HINT） | — | — | `docs/specifications/cli-argument-resolution.md` |
 
 ## Compose の構成（`compose`）
 
@@ -66,7 +66,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | backend | — | 参照に対して機密を読み書きする実装。plaintext / age / openbao。auto は存在による判定 | — | — | `docs/specifications/secret-backend.md` |
 | ブートストラップ機密 | — | サーバ backend が接続に使う AppRole の role_id / secret_id。secrets/bootstrap.env.age に置く | — | — | `docs/specifications/secret-backend.md` |
 | キャッシュ | — | サーバの内容と一致すると確かめられた機密を、参照ごとに age で暗号化して手元に控えたもの | — | — | `docs/specifications/secret-backend.md` |
-| 機密の書き込みの知らせ | — | ファイルの backend へプロジェクトの機密を書くとき、名前が名前の形に合わなければ標準エラーへ出す 1 行 | — | — | — |
+| 機密の書き込みの知らせ | — | ファイルの backend へプロジェクトの機密を書くとき、名前が名前の形に合わなければ標準エラーへ出す 1 行 | — | — | `docs/specifications/cli-argument-resolution.md` |
 
 ## スナップショット（`snapshot`）
 
