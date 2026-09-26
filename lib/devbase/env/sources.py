@@ -120,7 +120,8 @@ class SourcesManager:
     def check_changed(self, name: str) -> Optional[bool]:
         """
         ソースファイルが変更されたか確認する。
-        Returns: True=変更あり, False=変更なし, None=ソース未登録
+        Returns: True=変更あり, False=変更なし,
+                 None=ハッシュか元のファイルが無く比べられない (控えに項目が無いときを含む)
         """
         self._ensure_loaded()
         source = self._data['sources'].get(name)

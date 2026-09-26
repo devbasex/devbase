@@ -398,15 +398,16 @@ build / rebuild を選べます。先頭（Enter 1 回で決まる位置）は *
 
 | カテゴリ | 選べる操作 |
 |---------|-----------|
-| 環境変数 | 変数一覧（グローバル）/ edit / sync / project / init |
+| 環境変数 | 変数一覧（グローバル）/ edit / sync / project / init / キーの一覧と編集 / OpenBao の接続設定 |
 | プラグイン | 導入済み一覧 / 利用可能一覧 / install / uninstall / update / info / sync / migrate / repo 管理 |
 | スナップショット | list / create / restore / copy / delete / rotate |
 | ステータス | 環境全体の状態を表示（`devbase status` 相当） |
 
 - 確認プロンプト (y/N) が出るのは破壊的操作（plugin uninstall / plugin repo remove /
-  snapshot restore / snapshot delete）のみで、その他は CLI 既定値で即実行します
+  snapshot restore / snapshot delete / 環境変数のキーの削除）のみで、その他は CLI 既定値で即実行します
 - 操作の出力後は Enter キーで一覧へ戻ります（出力が流れて読めなくなるのを防ぐため）
-- TUI が提供しない細かいオプション（`env get/set/delete/export/import`、
+- 環境変数の「キーの一覧と編集」と「OpenBao の接続設定」は [環境変数の TUI](03-env.md#tui-でのキーの編集と-openbao-の接続設定) を参照してください
+- TUI が提供しない細かいオプション（`env get/export/import`、
   `plugin install --link/--all`、`snapshot create --full`、`logs --follow` 等）は
   CLI を使用してください
 - questionary 未導入時は従来の番号入力（選択 → up）にフォールバックします

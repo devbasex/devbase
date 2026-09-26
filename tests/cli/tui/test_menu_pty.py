@@ -279,3 +279,42 @@ def test_menubar_keys_and_rendering(menubar_session):
         assert label in raw, f"メニューバーに {label} が描画されていない"
     assert "Application.exit() failed" not in raw
     assert "Unhandled exception" not in raw
+
+
+_SECRET_DRIVER = """
+from devbase.tui import menu
+
+v = menu.secret("SECRET1 入力:")
+print(f"@LEN={len(v)}", flush=True)
+
+v = menu.secret("SECRET2 入力:")
+print("@BACK=" + ("BACK" if v is menu.MENU_BACK else "VALUE"), flush=True)
+print("@END", flush=True)
+"""
+
+
+@pytest.fixture
+def secret_session():
+    s = _PtySession(_SECRET_DRIVER)
+    yield s
+    if s.proc.poll() is None:
+        s.proc.kill()
+
+
+def test_secret_input_does_not_echo_and_esc_goes_back(secret_session):
+    """伏せ字の入力欄 (#273): 打った文字が端末へ出ず、Esc は text と同じく MENU_BACK"""
+    s = secret_session
+    s.wait_for("SECRET1")
+    s.send("hunter2-value")
+    s.send("\r")
+    s.wait_for("@LEN=13")
+
+    s.wait_for("SECRET2")
+    s.send("\x1b")
+    s.wait_for("@BACK=BACK")
+    s.wait_for("@END")
+
+    s.finish()
+    raw = bytes(s._buf).decode("utf-8", errors="replace")
+    assert "hunter2" not in raw
+    assert "Application.exit() failed" not in raw

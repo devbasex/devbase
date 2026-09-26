@@ -185,12 +185,16 @@ def _print_cache_status(root: Path, store: SecretStore, config) -> None:
 # use
 # ---------------------------------------------------------------------------
 
-def _read_secret_id(from_stdin: bool) -> Optional[str]:
+def _read_secret_id(from_stdin: bool, value: Optional[str] = None) -> Optional[str]:
     """``secret_id`` を argv 以外の経路で受け取る。
 
-    ``--secret-id-stdin`` なら標準入力の最初の行、TTY なら伏せ字入力。どちらでも
+    ``value`` は同じプロセスの中 (TUI の接続設定の画面) から渡された値で、空でなければ
+    それを返し、標準入力も伏せ字入力も使わない (#273 決定 8)。無ければ
+    ``--secret-id-stdin`` なら標準入力の最初の行、TTY なら伏せ字入力。どれでも
     なければ ``None`` (呼び出し側が不足として扱う)。
     """
+    if value:
+        return value
     if from_stdin:
         line = sys.stdin.readline()
         if not line:
@@ -285,16 +289,9 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
     root = Path(devbase_root)
     name = getattr(args, 'name', None) or ''
 
-    if name not in _bc.BACKEND_NAMES:
-        logger.error("backend '%s' は登録されていません (利用できる backend: %s)",
-                     name, ', '.join(_bc.BACKEND_NAMES))
-        return EXIT_USAGE
-
-    if name != _bc.BACKEND_OPENBAO and (getattr(args, 'layout', None) is not None
-                                        or getattr(args, 'group_aliases', None)):
-        logger.error("--layout / --group-alias は backend openbao を選ぶときだけ使えます "
-                     "(指定した backend: %s)", name)
-        return EXIT_USAGE
+    rc = _validate_use_args(name, args)
+    if rc is not None:
+        return rc
 
     try:
         current = _bc.load(root)
@@ -324,6 +321,26 @@ def cmd_env_backend_use(devbase_root: Path, args) -> int:
     print(f"backend を {name} に設定しました: {path}")
     if name != _bc.BACKEND_OPENBAO:
         return 0
+    return _print_use_result(root, current, new_config)
+
+
+def _validate_use_args(name: str, args) -> Optional[int]:
+    """``use`` の backend 名と ``--layout`` / ``--group-alias`` の可否。使えなければ終了コード"""
+    if name not in _bc.BACKEND_NAMES:
+        logger.error("backend '%s' は登録されていません (利用できる backend: %s)",
+                     name, ', '.join(_bc.BACKEND_NAMES))
+        return EXIT_USAGE
+
+    if name != _bc.BACKEND_OPENBAO and (getattr(args, 'layout', None) is not None
+                                        or getattr(args, 'group_aliases', None)):
+        logger.error("--layout / --group-alias は backend openbao を選ぶときだけ使えます "
+                     "(指定した backend: %s)", name)
+        return EXIT_USAGE
+    return None
+
+
+def _print_use_result(root: Path, current, new_config) -> int:
+    """openbao を設定した後の接続先・レイアウト・キャッシュの案内。控えを消せなければ 1"""
     ob = new_config.openbao
     print(f"  接続先:  {ob.url}")
     print(f"  mount:   {ob.mount}")
@@ -372,6 +389,8 @@ def _store_credentials(root: Path, args) -> int:
     """
     role_id = getattr(args, 'role_id', None)
     from_stdin = getattr(args, 'secret_id_stdin', False)
+    # TUI だけが渡す値。CLI の名前空間には無い (argv に載せない。#273 決定 8)。空は「入力なし」
+    secret_value = getattr(args, 'secret_id', None) or None
 
     try:
         stored = _bootstrap.load(root)
@@ -381,7 +400,7 @@ def _store_credentials(root: Path, args) -> int:
             return 1
         stored = None
 
-    if not role_id and not from_stdin:
+    if not role_id and not from_stdin and secret_value is None:
         if stored is not None:
             return 0
         logger.error("接続資格情報がありません。--role-id ID と "
@@ -395,7 +414,7 @@ def _store_credentials(root: Path, args) -> int:
         role_id = stored.role_id
 
     try:
-        secret_id = _read_secret_id(from_stdin)
+        secret_id = _read_secret_id(from_stdin, secret_value)
     except DevbaseError as e:
         logger.error("%s", e)
         return 1
@@ -581,18 +600,24 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         _cache.purge(root)
         backup_dir = None
 
-    print(f"\n=== 完了 === backend を {to} に切り替えました")
-    if to == _bc.BACKEND_OPENBAO:
+    _print_migration_result(plan, backup_dir)
+    return 0
+
+
+def _print_migration_result(plan: '_MigrationPlan', backup_dir) -> None:
+    """移行の完了の見出しと、移行の方向ごとの案内を出す"""
+    print(f"\n=== 完了 === backend を {plan.to} に切り替えました")
+    if plan.to == _bc.BACKEND_OPENBAO:
         print("元の age / 平文の機密は次の場所へ退避しました。内容を確認したうえで削除してください:")
         print(f"  {backup_dir}")
     else:
+        server = plan.server
         print("サーバ上の機密はそのまま残っています (devbase は消しません):")
         print(f"  接続先: {server.url}")
         for unit, _ in plan.moves:
-            print(f"  {server_store.display_label(unit.server_ref):<24} "
+            print(f"  {plan.server_store.display_label(unit.server_ref):<24} "
                   f"{server.display_path(unit.server_ref)}")
         _print_left_on_server(plan)
-    return 0
 
 
 @dataclass(frozen=True)
@@ -706,8 +731,7 @@ class _MigrationPlan:
         try:
             for unit, keys in self.moves:
                 dest, ref = self._dest_side(unit)
-                merged = dict(self.existing[unit])
-                merged.update(self.source[unit])
+                merged = self._merged_values(unit)
                 # 結果が分からない失敗に備え、書く前から巻き戻しの対象に入れる。
                 # サーバが拒んだと確定した応答 (権限の不足・版の不一致) では何も
                 # 書けていないので、その参照は対象から外す。消すのは「作成したキー」
@@ -721,8 +745,7 @@ class _MigrationPlan:
                 logger.info("%s を書き込みました", ref.label())
             for unit, _ in self.moves:
                 ref = self._dest_side(unit)[1]
-                expected = dict(self.existing[unit])
-                expected.update(self.source[unit])
+                expected = self._merged_values(unit)
                 actual = self._read_back(unit)
                 if actual != expected:
                     diff = sorted(k for k in expected if actual.get(k) != expected[k])
@@ -732,6 +755,12 @@ class _MigrationPlan:
         except DevbaseError:
             self._rollback(created)
             raise
+
+    def _merged_values(self, unit: _MoveUnit) -> dict:
+        """移行先に元からあった内容へ移行元を重ねた内容 (毎回新しい辞書)"""
+        merged = dict(self.existing[unit])
+        merged.update(self.source[unit])
+        return merged
 
     def _read_back(self, unit: _MoveUnit) -> dict:
         if self.to == _bc.BACKEND_OPENBAO:

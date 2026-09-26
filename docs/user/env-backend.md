@@ -88,6 +88,11 @@ devbase env backend status
 `test` は認証と参照ごとの取得を行い、接続先と読めた参照の件数を表示します。到達できない・
 認証できない場合は理由を表示して非ゼロで終了します。
 
+切り替えた後の接続先（`url`）とブートストラップ機密（`role_id` / `secret_id`）は、`devbase list` の
+TUI の「環境変数」→「OpenBao の接続設定」からも変えられます。`role_id` / `secret_id` は伏せ字で入れ、
+空のまま Enter の欄は変えません。保存の後に `test` と同じ確認を行います。OpenBao の token は
+入力も保存もしません（詳細は [CLI リファレンス](cli-reference/03-env.md#openbao-の接続設定)）。
+
 ### 4. 既存の機密を移す
 
 ```bash
@@ -155,6 +160,10 @@ devbase env backend migrate --to openbao --exclude-project csc --dry-run
 
 `list` は指定の無い軸を絞らず、存在する参照をすべて出します。`get` は
 個人共通 → チーム共通 → 個人のプロジェクト → チームのプロジェクト の順に探します。
+
+`devbase list` の TUI の「環境変数」→「キーの一覧と編集」では、キーごとに持ち主・適用範囲・グループを
+見ながら追加・変更・削除できます。書き込みは `set` / `delete` と同じ宛先です
+（[CLI リファレンス](cli-reference/03-env.md#キーの一覧と編集)）。
 
 `devbase up` でコンテナへ載る値は、次の順に重ねて決まります（後の層が勝つ）。
 
@@ -340,7 +349,7 @@ $ cd projects/api && devbase env backend status
 
 ### 別のグループの置き場を操作する（`--group`）
 
-`env list` / `get` / `set` / `delete` / `edit` / `init` は、既定では対象のグループ
+`env list` / `get` / `set` / `delete` / `edit` / `init` / `sync` は、既定では対象のグループ
 （実行したディレクトリのプロジェクトのグループ）の置き場を相手にします。別のグループの
 置き場は `--group NAME` で指定します。
 
@@ -378,7 +387,7 @@ devbase env set --user --group kkg KEY=value
 | コマンド | グループの扱い |
 |---|---|
 | `env init` | 対象のグループのチーム共通へ書く。`--group NAME` で指定できる。`devbase up` が自動で起動する `env init` にはプロジェクトのグループが渡る |
-| `env sync` | 対象のグループのチーム共通へ書く。同期済みのハッシュは `$DEVBASE_ROOT/.env.sources.<g>.yml` にグループごとに控える |
+| `env sync` | 対象のグループの個人共通とチーム共通のうち、キーがある方へ書く（両方にあれば個人共通、どちらにも無ければ個人共通）。`--group NAME` で指定できる。同期済みのハッシュは `$DEVBASE_ROOT/.env.sources.<g>.yml` にグループごとに控える（[`env sync`](cli-reference/03-env.md#devbase-env-sync)） |
 | `env project` | 実行したプロジェクトのグループの参照へ書く |
 | `env export` | 共通は対象のグループのもの。プロジェクトは対象のグループと同じ置き場のものだけを集め、外したプロジェクトの名前とグループを標準エラーへ出す |
 | `env import` | 共通は対象のグループへ、プロジェクトはそれぞれのグループへ取り込む。バンドルに対象のグループと違う置き場のプロジェクトがあれば、1 件も取り込まずに名前とグループを挙げて終了コード 1。`--exclude-project NAME` で外して取り込む |

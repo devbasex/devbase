@@ -2,10 +2,10 @@
 
 test_actions_project.py のパターンを踏襲し、`menu.*` を monkeypatch して選択値を
 注入、`cmd_env` を mock して契約どおりの属性を持つ Namespace で呼ばれることを
-検証する。TUI は参照・対話系 (グローバル一覧 / edit / sync / project / init) のみ
-提供し、プロジェクト単位の一覧と get/set/delete/export/import は CLI 専用
-(メニューに出さない)。project スコープ操作の chdir → 復帰、Esc/←/Ctrl-C の
-遷移も検証する。
+検証する。TUI は参照・対話系 (グローバル一覧 / edit / sync / project / init) に加え、
+キーの一覧と編集・OpenBao の接続設定の画面 (#273) を提供する。キーの一覧と編集は
+set / delete へ委譲し、export/import は CLI 専用 (メニューに出さない)。
+project スコープ操作の chdir → 復帰、Esc/←/Ctrl-C の遷移も検証する。
 """
 
 from __future__ import annotations
@@ -164,11 +164,10 @@ def test_select_action_lists_all_ops(monkeypatch):
     assert actions_env._select_action() == "list-global"
     assert captured["back"] is True
     assert captured["search"] is False
-    # 参照系のグローバル一覧を先頭に、参照・対話系のみを提示する (メニュー再構成)。
-    # プロジェクト単位の一覧と get/set/delete/export/import は CLI 専用で
-    # メニューに出さない。
+    # 参照系のグローバル一覧を先頭に、既存の 5 つを同じ順で残し、#273 の 2 つを末尾に置く。
+    # export/import は CLI 専用でメニューに出さない。
     assert captured["values"] == [
-        "list-global", "edit", "sync", "project", "init"]
+        "list-global", "edit", "sync", "project", "init", "keys", "openbao"]
     assert captured["values"][0] == "list-global", "Enter 連打で安全な一覧表示に到達できる"
 
 
@@ -354,3 +353,32 @@ def test_select_project_empty_cancels(monkeypatch, tmp_path):
     monkeypatch.setattr(menu, "select",
                         lambda *a, **k: pytest.fail("空一覧でメニューを出さない"))
     assert actions_env._select_project(tmp_path) is actions_env._ARG_CANCEL
+
+
+# ---------------------------------------------------------------------------
+# #273: キーの一覧と編集・OpenBao の接続設定
+# ---------------------------------------------------------------------------
+
+def test_existing_op_labels_are_kept():
+    assert actions_env._ENV_OPS[:5] == [
+        ("変数一覧 (グローバル)", "list-global"),
+        ("エディタで編集 (edit)", "edit"),
+        ("認証情報の再同期 (sync)", "sync"),
+        ("プロジェクト変数の対話設定 (project)", "project"),
+        ("初期セットアップ (init)", "init"),
+    ]
+    assert [label for label, _ in actions_env._ENV_OPS[5:]] == [
+        "キーの一覧と編集", "OpenBao の接続設定"]
+
+
+@pytest.mark.parametrize("op, module", [("keys", "actions_env_keys"),
+                                        ("openbao", "actions_env_openbao")])
+def test_new_ops_run_their_screens(monkeypatch, tmp_path, op, module):
+    import importlib
+
+    screen = importlib.import_module(f"devbase.tui.{module}")
+    seen = []
+    monkeypatch.setattr(screen, "run", lambda root: seen.append(root) or 0)
+
+    assert actions_env._run_operation(tmp_path, op) == 0
+    assert seen == [tmp_path]

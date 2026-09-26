@@ -210,7 +210,8 @@ def cmd_env(devbase_root: Path, args) -> int:
     handlers = {
         'init':    lambda: cmd_env_init(devbase_root, reset=getattr(args, 'reset', False),
                                         group=getattr(args, 'group', None)),
-        'sync':    lambda: cmd_env_sync(devbase_root),
+        'sync':    lambda: cmd_env_sync(devbase_root, user=getattr(args, 'user', False),
+                                        group=getattr(args, 'group', None)),
         'list':    lambda: cmd_env_list(devbase_root,
                                         global_only=getattr(args, 'global_only', False),
                                         project_only=getattr(args, 'project_only', False),
@@ -505,28 +506,157 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
     return 0
 
 
-def cmd_env_sync(devbase_root: Path) -> int:
-    """ソースファイルから認証情報を再同期する
+#: 個人共通へ書いた sync の行に付ける接尾辞 (#273)
+_USER_SUFFIX = '（個人共通）'
 
-    宛先は対象のグループのチーム共通の参照で、同期済みのハッシュもそのグループの控えを
-    使う (PLAN56 決定 13)。
+
+class SyncTargets:
+    """``env sync`` の書き込み先 (#273「同期の書き込み先」)。
+
+    対象のグループのチーム共通と個人共通を持ち、キーごとの宛先を :meth:`target_for` の
+    1 か所で決める (I2)。個人単位の参照を持たない backend では ``user`` が ``None`` で、
+    宛先は常にチーム共通になる。
+    """
+
+    def __init__(self, team, user=None, *, forced_user: bool = False):
+        self.team = team
+        self.user = user
+        self.forced_user = forced_user
+        self._dirty: list = []
+
+    @property
+    def files(self) -> list:
+        """重ね順で勝つ側 (個人共通) を先にした参照の並び"""
+        return [f for f in (self.user, self.team) if f is not None]
+
+    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """個人共通を先に見る (重ね順と同じ)"""
+        for env_file in self.files:
+            value = env_file.get(key)
+            if value is not None:
+                return value
+        return default
+
+    def holder(self, key: str):
+        """キーが現にある参照 (個人共通が先)。どこにも無ければ ``None``"""
+        for env_file in self.files:
+            if env_file.exists(key):
+                return env_file
+        return None
+
+    def target_for(self, key: str):
+        """I2: ``--user`` なら個人共通。無ければ、キーがある参照、どちらにも無ければ個人共通"""
+        if self.user is None:
+            return self.team
+        if self.forced_user or self.user.exists(key) or not self.team.exists(key):
+            return self.user
+        return self.team
+
+    def suffix(self, key: str) -> str:
+        """出力の行の接尾辞。個人共通へ書く行だけ ``（個人共通）``"""
+        return _USER_SUFFIX if self.target_for(key) is self.user else ''
+
+    def set(self, key: str, value: str):
+        target = self.target_for(key)
+        target.set(key, value)
+        if not any(target is f for f in self._dirty):
+            self._dirty.append(target)
+        return target
+
+    def save_dirty(self) -> list:
+        """書いた参照を個人共通 → チーム共通の順に保存する (決定 3)。
+
+        先の保存が失敗したら後を保存せず、例外をそのまま送る。保存した参照の一覧を返す。
+        """
+        saved = []
+        for env_file in self.files:
+            if any(env_file is f for f in self._dirty):
+                env_file.save()
+                saved.append(env_file.ref)
+        return saved
+
+
+def _open_sync_targets(devbase_root: Path, user: bool, group: Optional[str]):
+    """``sync`` の書き込み先を開く。``(SyncTargets, store, None)`` か ``(None, None, 終了コード)``。
+
+    2 つの参照は ``fresh`` で読み、控えへ落ちない (書き込みを伴うため)。
     """
     store = _secret_store(devbase_root)
-    group = _target_group(devbase_root, store, None)
-    env_file = _global_env(devbase_root, store=store, group=group)
-    env_file.load()
+    try:
+        target_group = _target_group(devbase_root, store, group)
+        team = _global_env(devbase_root, store=store, fresh=True, group=target_group)
+        has_user = team.has_user_refs()
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return None, None, e.exit_code
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return None, None, 1
+    if user and not has_user:
+        # 決定 11: チーム共通へ落とさない。引数の誤りとして 2
+        logger.error(
+            "%s backend は個人単位の機密を扱えません (--user)。"
+            "個人単位の機密を置くにはサーバ backend を設定してください: "
+            "devbase env backend use openbao ...", team.mode_name())
+        return None, None, EXIT_USAGE
+    user_file = (_global_env(devbase_root, user=True, store=store, fresh=True, group=target_group)
+                 if has_user else None)
+    targets = SyncTargets(team, user_file, forced_user=user)
+    for env_file in targets.files:
+        try:
+            env_file.load()
+        except DevbaseError as e:
+            logger.error("%sを読めないため、同期しません: %s",
+                         store.display_label(env_file.ref), e)
+            return None, None, 1
+    return targets, store, None
 
-    sources = SourcesManager(devbase_root, store.storage_group(group))
+
+def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = None) -> int:
+    """ソースファイルから認証情報を再同期する
+
+    宛先は対象のグループの個人共通とチーム共通のうち、キーが現にある参照 (#273 I2)。
+    同期済みのハッシュは対象のグループの控えを使う (PLAN56 決定 13)。
+    ``user`` (``--user``) は全てのキーの宛先を個人共通にする。``group`` は ``--group``。
+    """
+    targets, store, rc = _open_sync_targets(devbase_root, user, group)
+    if targets is None:
+        return rc
+
+    sources = SourcesManager(devbase_root, store.storage_group(targets.team.ref.group))
     sources.load()
 
-    updated = 0
+    counts = _SyncCounts()
+    _sync_credential_sources(sources, targets, store, counts)
 
+    # GCP（プロファイル管理があるため個別処理）
+    counts.updated += _sync_gcp(sources, targets, store=store, counts=counts)
+
+    # Host 接続情報（ソースファイルを持たないため hash 比較せず欠落キーを補完）
+    counts.updated += _sync_host(targets)
+
+    if counts.updated > 0 or counts.registered:
+        try:
+            targets.save_dirty()
+        except DevbaseError as e:
+            logger.error("同期した値を保存できませんでした: %s", e)
+            return 1
+        _update_source_metadata(devbase_root, *targets.files)
+    _report_sync_result(counts, sources)
+
+    return 0
+
+
+def _sync_credential_sources(sources, targets, store, counts) -> None:
+    """AWS と Git の認証情報をソースから同期する (``counts`` に集計する)"""
     # AWS
     def _encode_aws():
         from devbase.env.collectors.aws import _encode_aws_config_files
         return _encode_aws_config_files()
 
-    updated += _sync_source(sources, env_file, 'aws', 'AWS認証', _encode_aws)
+    _sync_source(sources, targets, 'aws', 'AWS認証', _encode_aws,
+                 env_key=keys.AWS_CONFIG_BASE64, store=store, counts=counts,
+                 same=_same_aws_payload)
 
     # Git
     def _encode_git():
@@ -537,93 +667,197 @@ def cmd_env_sync(devbase_root: Path) -> int:
             return base64.b64encode(content.encode('utf-8')).decode('ascii')
         return None
 
-    updated += _sync_source(sources, env_file, 'git_credentials', 'Git認証', _encode_git)
+    _sync_source(sources, targets, 'git_credentials', 'Git認証', _encode_git,
+                 env_key=keys.GIT_CREDENTIALS_BASE64, store=store, counts=counts)
 
-    # GCP（プロファイル管理があるため個別処理）
-    updated += _sync_gcp(sources, env_file)
 
-    # Host 接続情報（ソースファイルを持たないため hash 比較せず欠落キーを補完）
-    updated += _sync_host(env_file)
-
-    if updated > 0:
-        env_file.save()
-        _update_source_metadata(devbase_root, env_file)
-        logger.info("同期完了 (%d件更新)", updated)
+def _report_sync_result(counts, sources) -> None:
+    """``sync`` の結果を 1 行で知らせる"""
+    if counts.updated > 0:
+        logger.info("同期完了 (%d件更新)", counts.updated)
+    elif (not counts.registered
+          and not any(sources.get_source(n) for n in ('aws', 'git_credentials', 'gcp'))):
+        logger.info("ソース情報がありません。先に devbase env init を実行してください")
     else:
-        if not any(sources.get_source(n) for n in ('aws', 'git_credentials', 'gcp')):
-            logger.info("ソース情報がありません。先に devbase env init を実行してください")
-        else:
-            logger.info("同期完了 (変更なし)")
-
-    return 0
+        logger.info("同期完了 (変更なし)")
 
 
-def _sync_host(env_file):
+class _SyncCounts:
+    """``sync`` の集計 (更新した件数・控えへ新たに登録するソースがあったか)"""
+
+    def __init__(self):
+        self.updated = 0
+        self.registered = False
+
+
+def _sync_host(target):
     """ホスト接続情報の同期。更新件数を返す。
 
     ホスト情報はソースファイルを持たないため hash 比較は使わず、**欠落キーのみ既定値で
     補完**する。既存値 (WSL2 等での手動上書き) は尊重して上書きしない。これにより本機能
     導入前の ``.env`` への後付け backfill として機能する。
+
+    ``target`` は ``get`` / ``set`` を持つもの (:class:`SyncTargets` か ``EnvFile``)。
+    :class:`SyncTargets` なら両方の参照を見て、どちらにも無いときだけ補う (I2)。
     """
     from devbase.env.collectors.host import _default_host_user, DEFAULT_HOST_SSH_HOST
 
+    suffix = getattr(target, 'suffix', lambda _key: '')
     updated = 0
-    if not env_file.get(keys.HOST_SSH_USER):
+    if not target.get(keys.HOST_SSH_USER):
         user = _default_host_user()
         if user:
-            env_file.set(keys.HOST_SSH_USER, user)
-            logger.info("%s: %s を設定", keys.HOST_SSH_USER, user)
+            tail = suffix(keys.HOST_SSH_USER)
+            target.set(keys.HOST_SSH_USER, user)
+            logger.info("%s: %s を設定%s", keys.HOST_SSH_USER, user, tail)
             updated += 1
-    if not env_file.get(keys.HOST_SSH_HOST):
-        env_file.set(keys.HOST_SSH_HOST, DEFAULT_HOST_SSH_HOST)
-        logger.info("%s: %s を設定", keys.HOST_SSH_HOST, DEFAULT_HOST_SSH_HOST)
+    if not target.get(keys.HOST_SSH_HOST):
+        tail = suffix(keys.HOST_SSH_HOST)
+        target.set(keys.HOST_SSH_HOST, DEFAULT_HOST_SSH_HOST)
+        logger.info("%s: %s を設定%s", keys.HOST_SSH_HOST, DEFAULT_HOST_SSH_HOST, tail)
         updated += 1
     return updated
 
 
-def _sync_source(sources, env_file, name, label, encode_fn):
-    """AWS/Gitなどの単一ソース同期の共通処理。更新件数(0 or 1)を返す。"""
+def _aws_payload(value: Optional[str]):
+    """``AWS_CONFIG_BASE64`` の中身 (ファイル名 → バイト列)。読めなければ ``None``"""
+    import base64
+    import io
+    import tarfile
+
+    if not value:
+        return None
+    try:
+        with tarfile.open(fileobj=io.BytesIO(base64.b64decode(value)), mode='r:*') as tar:
+            return {m.name: tar.extractfile(m).read() for m in tar.getmembers() if m.isfile()}
+    except (ValueError, tarfile.TarError, OSError, AttributeError):
+        return None
+
+
+def _same_aws_payload(stored: Optional[str], encoded: str) -> bool:
+    """tar の時刻の違いを無視して、中のファイルが同じかを比べる"""
+    if stored == encoded:
+        return True
+    current = _aws_payload(encoded)
+    return current is not None and current == _aws_payload(stored)
+
+
+def _sync_unregistered(targets, store, counts, key, label, encode_fn, same=None):
+    """控えに項目の無いソースのキーが参照にあるとき (I10・決定 2)。更新件数 (0 or 1) を返す。
+
+    黙って飛ばさず 1 行を出し、今のファイルの値と比べて違えば書く。比べた後は控えに
+    登録する (以後はハッシュで検出する)。
+    """
+    holder = targets.holder(key)
+    if holder is None:
+        return 0
+    head = f"{label}: ソース未登録（{store.display_label(holder.ref)}にキーがあります）。"
+    encoded = encode_fn()
+    if not encoded:
+        logger.info("%s元のファイルがありません", head)
+        return 0
+    counts.registered = True
+    same = same or (lambda a, b: a == b)
+    if same(targets.get(key), encoded):
+        logger.info("%s今のファイルと比べて変更なし", head)
+        return 0
+    tail = targets.suffix(key)
+    targets.set(key, encoded)
+    logger.info("%s今のファイルと比べて更新しました%s", head, tail)
+    return 1
+
+
+def _sync_source(sources, targets, name, label, encode_fn, *, env_key, store, counts,
+                 same=None):
+    """AWS/Gitなどの単一ソース同期の共通処理。``counts`` へ更新件数を足す。"""
     source = sources.get_source(name)
     if not source:
-        return 0
+        counts.updated += _sync_unregistered(targets, store, counts, env_key, label,
+                                             encode_fn, same)
+        return
 
     changed = sources.check_changed(name)
     if changed:
         encoded = encode_fn()
         if encoded:
-            env_file.set(source['env_key'], encoded)
-            logger.info("%s: 更新しました", label)
-            return 1
+            key = source['env_key']
+            tail = targets.suffix(key)
+            targets.set(key, encoded)
+            logger.info("%s: 更新しました%s", label, tail)
+            counts.updated += 1
         else:
             logger.warning("%s: エンコードに失敗", label)
     elif changed is False:
         logger.info("%s: 変更なし", label)
     else:
-        logger.info("%s: ソース未登録", label)
-    return 0
+        logger.info("%s: 控えと比べられません（ハッシュか元のファイルがありません）", label)
 
 
-def _sync_gcp(sources, env_file):
-    """GCPプロファイルの同期処理"""
-    gcp_source = sources.get_source('gcp')
-    if not gcp_source:
-        return 0
+def _gcp_profile_files():
+    """GCP のプロファイル名 → 鍵ファイルを引く関数 (``env init`` の登録と同じ引き方)"""
+    from devbase.env.collectors.google import GCP_CREDENTIALS_DIR, LEGACY_CREDENTIALS_FILE
 
+    file_map = {}
+    if GCP_CREDENTIALS_DIR.is_dir():
+        from devbase.env.collectors.google import _safe_profile_name
+        file_map = {
+            _safe_profile_name(f.stem): f
+            for f in GCP_CREDENTIALS_DIR.iterdir()
+            if f.suffix == '.json' and f.is_file()
+        }
+
+    def resolve(profile_name: str):
+        mapped = file_map.get(profile_name)
+        if mapped and mapped.exists():
+            return mapped
+        if profile_name == 'default' and LEGACY_CREDENTIALS_FILE.exists():
+            return LEGACY_CREDENTIALS_FILE
+        return None
+
+    return resolve
+
+
+def _sync_gcp(sources, targets, *, store, counts):
+    """GCPプロファイルの同期処理。更新件数を返す。
+
+    控えへの登録はプロファイル単位で見る。参照にあって控えに無いプロファイルは、
+    今のファイルと比べてから控えへ登録する (I10)。
+    """
+    import base64
+
+    gcp_source = sources.get_source('gcp') or {}
+    registered = gcp_source.get('profiles', {})
+    prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
+    resolve = _gcp_profile_files()
+    names = sorted({k[len(prefix):] for f in targets.files for k in f.get_all()
+                    if k.startswith(prefix)} - set(registered))
     updated = 0
+    for profile_name in names:
+        def encode(profile_name=profile_name):
+            path = resolve(profile_name)
+            return base64.b64encode(path.read_bytes()).decode('ascii') if path else None
+
+        updated += _sync_unregistered(targets, store, counts,
+                                      keys.gcp_credentials_key(profile_name),
+                                      f"GCP認証 ({profile_name})", encode)
+    if not gcp_source:
+        return updated
+
     gcp_changes = sources.check_gcp_changed()
     for profile_name, changed in gcp_changes.items():
         if changed:
-            profile_info = gcp_source.get('profiles', {}).get(profile_name, {})
+            profile_info = registered.get(profile_name, {})
             file_str = profile_info.get('file', '')
             if not file_str:
                 continue
             file_path = Path(file_str).expanduser()
             if file_path.exists():
-                import base64
                 encoded = base64.b64encode(file_path.read_bytes()).decode('ascii')
-                env_file.set(keys.gcp_credentials_key(profile_name), encoded)
+                key = keys.gcp_credentials_key(profile_name)
+                tail = targets.suffix(key)
+                targets.set(key, encoded)
                 updated += 1
-                logger.info("GCP認証 (%s): 更新しました", profile_name)
+                logger.info("GCP認証 (%s): 更新しました%s", profile_name, tail)
         else:
             logger.info("GCP認証 (%s): 変更なし", profile_name)
 
@@ -1196,25 +1430,37 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
     return 0
 
 
-def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:
-    """ソースメタデータを更新する (``env_file`` の参照のグループの控え。PLAN56 決定 13)"""
+def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFile) -> None:
+    """ソースメタデータを更新する (``env_file`` の参照のグループの控え。PLAN56 決定 13)
+
+    ``more`` を渡すと、どれかの参照にキーがあればソースを登録する (#273 前提 5)。先に
+    渡したものを先に見る (``sync`` は個人共通 → チーム共通の順に渡す)。
+    """
+    files = [env_file, *more]
     group = getattr(getattr(env_file, 'ref', None), 'group', None)
     storage_group = _secret_store(devbase_root).storage_group(group) if group else None
     sources = SourcesManager(devbase_root, storage_group)
     sources.load()
 
+    def _get(key, default=None):
+        for f in files:
+            value = f.get(key)
+            if value is not None:
+                return value
+        return default
+
     # AWS
-    if env_file.get(keys.AWS_CONFIG_BASE64):
+    if _get(keys.AWS_CONFIG_BASE64):
         aws_dir = Path.home() / '.aws'
-        files = ["~/.aws/config", "~/.aws/credentials"]
+        files_ = ["~/.aws/config", "~/.aws/credentials"]
         filenames = ['config', 'credentials']
         h = dir_hash(aws_dir, filenames)
         if h:
-            sources.set_source('aws', 'tar_base64', files,
+            sources.set_source('aws', 'tar_base64', files_,
                               keys.AWS_CONFIG_BASE64, h)
 
     # Git
-    if env_file.get(keys.GIT_CREDENTIALS_BASE64):
+    if _get(keys.GIT_CREDENTIALS_BASE64):
         cred_path = Path.home() / '.git-credentials'
         h = file_hash(cred_path)
         if h:
@@ -1223,27 +1469,11 @@ def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:
                               keys.GIT_CREDENTIALS_BASE64, h)
 
     # GCP (プロファイルごと)
-    from devbase.env.collectors.google import GCP_CREDENTIALS_DIR, LEGACY_CREDENTIALS_FILE
-    all_vars = env_file.get_all()
+    all_vars = {}
+    for f in reversed(files):
+        all_vars.update(f.get_all())
     prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
-
-    # 正規化名→実ファイルの逆引きマップを構築
-    _gcp_file_map = {}
-    if GCP_CREDENTIALS_DIR.is_dir():
-        from devbase.env.collectors.google import _safe_profile_name
-        _gcp_file_map = {
-            _safe_profile_name(f.stem): f
-            for f in GCP_CREDENTIALS_DIR.iterdir()
-            if f.suffix == '.json' and f.is_file()
-        }
-
-    def _resolve_gcp_path(profile_name: str):
-        mapped = _gcp_file_map.get(profile_name)
-        if mapped and mapped.exists():
-            return mapped
-        if profile_name == 'default' and LEGACY_CREDENTIALS_FILE.exists():
-            return LEGACY_CREDENTIALS_FILE
-        return None
+    _resolve_gcp_path = _gcp_profile_files()
 
     gcp_profiles = {
         name: {'file': str(path), 'hash': file_hash(path)}
@@ -1254,7 +1484,7 @@ def _update_source_metadata(devbase_root: Path, env_file: EnvFile) -> None:
     }
 
     if gcp_profiles:
-        active = env_file.get(keys.GCP_ACTIVE_PROFILE, "default")
+        active = _get(keys.GCP_ACTIVE_PROFILE, "default")
         sources.set_gcp_source(gcp_profiles, active)
 
     sources.save()

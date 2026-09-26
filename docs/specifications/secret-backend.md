@@ -63,6 +63,10 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | scope | キャッシュの取得元を表す指紋。接続先 URL・`mount`・パス・`role_id` の SHA-256 |
 | 持ち回る `SecretStore` | 1 回のライフサイクル操作（`up` など）の間、注入と存在判定と token の発行が共有する 1 つのインスタンス。`runtime.store_for()` が返し、`runtime.release_store()` が捨てる |
 | `role_id` / `secret_id` / token | `role_id` は利用者ごとの AppRole の識別子。`secret_id` は端末ごとに発行される長期の資格情報で手元に保存する。token は両者を交換して得る短期の資格情報でプロセス内にだけ持つ |
+| キーの行 | `devbase list` の TUI の一覧の 1 行。キーと、そのキーがある参照（グループ・持ち主・適用範囲）の組。値の平文を持たない（`commands/env_rows.KeyRow`） |
+| 勝つ行 | 同じキーの行のうち、一覧に並べた機密の参照の中で重ね順が最後の行。一覧の中だけの勝ち負けで、`projects/<name>/env` の非機密設定とは比べない |
+| 同期の書き込み先 | `env sync` がキーごとに選ぶ参照（「`init` / `sync` / `project` / `export` / `import`」の規則）。`SyncTargets.target_for` の 1 か所で決める |
+| 同期済みハッシュの控え | `env sync` がソースファイルの位置とハッシュを記録する `.env.sources[.<g>].yml`。キャッシュ（機密の控え）とは別のもの |
 
 ## 構成要素
 
@@ -83,7 +87,9 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | `version: 2` でボリュームと機密のグループの食い違いを起動前に検査する（`_check_group_consistency`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に token を書く |
 | base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
 | `env backend` コマンド | `lib/devbase/commands/env_backend.py` | `status` / `use` / `test` / `migrate` |
-| `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token`。`env set` は `DEVBASE_ACCOUNT_GROUP` を置き場を開く前に拒む |
+| `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token`。`env set` は `DEVBASE_ACCOUNT_GROUP` を置き場を開く前に拒む。`env sync` の同期の書き込み先（`SyncTargets`） |
+| キーの行の取り出し | `lib/devbase/commands/env_rows.py` | `collect_key_rows`。TUI の一覧のために、選んだ範囲の参照を現物から 1 回ずつ読み、キーの行と勝つ行の印を返す。値は返さない |
+| TUI の env の画面 | `lib/devbase/tui/actions_env_keys.py` / `actions_env_openbao.py` | キーの一覧と編集（書き込みは `cmd_env` の `set` / `delete` へ委譲）と OpenBao の接続設定（`env backend use` / `test` へ委譲）。`SecretStore` へ書かない |
 | `rekey` / `doctor` | `lib/devbase/commands/env_ops.py` | 手元の age 暗号文すべての再暗号化、backend 設定と権限と Git の除外の点検 |
 | `encrypt` / `decrypt` | `lib/devbase/commands/env_migrate.py` | age ストアと平文の間の移動（backend の向きと突き合わせる） |
 | `export` | `lib/devbase/env/bundle.py` | 機密をバンドルへ集める。`version: 2` では対象のグループと同じ置き場のプロジェクトだけを集める |
@@ -153,11 +159,106 @@ flowchart LR
 個人共通 → チーム共通 → 個人のプロジェクト → チームのプロジェクトの順に探す（`--user` なら
 個人単位だけ）。
 
-`init` / `sync` / `project` / `export` / `import` は `--user` を受け付けず、扱う参照はチーム
-単位のままである。個人単位の参照を持たない backend での `--user` は、`set` / `delete` /
-`edit` の共通の入口で拒み、チーム単位へ落とさない（ファイル backend の `path()` はチーム
-単位のファイルを指すため、入口で止めないと `edit --user` がチームの `.env` を開く）。
-読む側の `list` / `get` は個人単位の参照が無いだけとして扱う。
+`init` / `project` / `export` / `import` は `--user` を受け付けず、扱う参照はチーム単位のままで
+ある。`sync` の `--user` は同期する全てのキーの宛先を個人共通にする（宛先の規則は
+「`init` / `sync` / `project` / `export` / `import`」）。個人単位の参照を持たない backend での
+`--user` は、`set` / `delete` / `edit` の共通の入口で拒み（終了コード 1）、`sync` は引数の誤りとして
+2 で止める。どちらもチーム単位へ落とさない（ファイル backend の `path()` はチーム単位のファイルを
+指すため、入口で止めないと `edit --user` がチームの `.env` を開く）。読む側の `list` / `get` は
+個人単位の参照が無いだけとして扱う。
+
+#### TUI のキーの一覧と編集
+
+`devbase list` の TUI の env メニューの「キーの一覧と編集」は、範囲（共通 / プロジェクト）と、共通で
+`version: 2` ならグループを選び、`collect_key_rows` の行を並べる。
+
+| 項目 | 内容 |
+| --- | --- |
+| 読む参照 | 共通: チーム共通・個人共通。プロジェクト: 加えてチームのプロジェクト・個人のプロジェクト。個人単位の参照を持たない backend では個人の 2 つを読まない |
+| 読み方 | 1 つの `SecretStore` で参照ごとに `fetch` を 1 回（キャッシュへ落ちない）。`LIST` を使わない。読めなければ範囲とグループと理由を 1 行出して env メニューへ戻る |
+| グループ | 共通は `--group` と同じ検証を通す。候補は `$DEVBASE_ROOT/env` のグループ（既定）と各プロジェクトのグループを置き場のグループ名で重複を除いたもの。プロジェクトはそのプロジェクトのグループに決まる |
+| 行の順 | チーム共通 → 個人共通 → チームのプロジェクト → 個人のプロジェクト、同じ参照の中はキーの昇順 |
+| 勝つ行 | 同じキーの行のうち重ね順で最後の行に `★`。`DEVBASE_ACCOUNT_GROUP` の行は勝ち負けの対象にしない |
+| 値 | 全ての行で `******`（キー名によらない。長さも出さない） |
+
+書き込みは `cmd_env` の `set` / `delete` へ次の属性で委譲する。TUI は `SecretStore` へ書かない。
+
+| 選んだ置き場 | 属性 | 実行時のディレクトリ |
+| --- | --- | --- |
+| チーム・共通・グループ g | `project=False`、`user=False`、`group=g` | 変えない |
+| 個人・共通・グループ g | `project=False`、`user=True`、`group=g` | 変えない |
+| チーム・プロジェクト p | `project=True`、`user=False`、`group=None` | `projects/p` |
+| 個人・プロジェクト p | `project=True`、`user=True`、`group=None` | `projects/p` |
+
+`version: 2` でないときは共通でも `group=None`。`set` は `assignment=KEY=VALUE`、`delete` は `key` を渡す。
+値は伏せ字の欄（`menu.secret`）で受け、同じプロセスの属性で渡す（子プロセスの引数・ログに出さない）。
+キー名（`^[A-Za-z_][A-Za-z0-9_]*$`、`DEVBASE_ACCOUNT_GROUP` 以外）と値（空でない・改行を含まない・前後に空白を含まない。含む値は `env edit` で編集）は
+TUI の側で検査し、通らなければ `set` を呼ばずに同じ欄へ戻る。CLI の `set` の検査は変えない。削除は
+確認で「はい」を選んだときだけ行う。保存に失敗したとき（版の食い違いを含む）は上書きせず、一覧を
+読み直す。
+
+一覧は `cmd_env list` の出力を読み取らず、行を返す `collect_key_rows` から作る。`list` の表示の文言を
+画面の契約にしないためで、`KeyRow` が値を持たないので TUI から値を画面へ出す経路が構造として無い。
+一覧はキャッシュでなく現物から読む。キャッシュを見て編集すると、`set` の読み直しとで内容が食い違う。
+全ての行を伏せるのは、`list` の伏せ字がキー名の語で決まり、語を含まない機密が平文で出るためである
+（値を確かめる経路は CLI の `env get` と `list --reveal`）。プロジェクトの範囲でグループを選ばせないのは、
+`-p` がプロジェクトのグループの置き場だけを読み書きし、別のグループを選べると保存で必ず失敗するためである。
+
+```mermaid
+classDiagram
+    class KeyRow {
+        +key: str
+        +ref: SecretRef
+        +owner_label: str
+        +scope_label: str
+        +group_label: Optional~str~
+        +wins: bool
+    }
+    class KeyListing {
+        +rows: list~KeyRow~
+        +refs: list~SecretRef~
+        +has_user_refs: bool
+        +grouped: bool
+        +group: Optional~str~
+        +project: Optional~str~
+        +backend: str
+    }
+    KeyListing "1" --> "*" KeyRow
+    KeyRow ..> SecretRef
+```
+
+`KeyListing.group` は表示用の名前（`display_group`）ではなく `--group` に渡す名前で、`grouped` が偽なら
+`None` である。`collect_key_rows` は `GroupOptionError`（使えないグループ）と `DevbaseError`（接続・403・
+復号）をそのまま送り、画面が 1 行にして戻る。
+
+画面は次のように移る。Esc はどの画面でも 1 つ前へ戻り（キーの一覧の Esc は env メニューへ）、Ctrl-C は
+TUI 全体を終える。保存・削除の後は一時停止して出力を読ませ、同じ範囲の一覧を読み直して出す。
+
+```mermaid
+graph TD
+    ENV[env メニュー] -->|キーの一覧と編集| SC[範囲の選択]
+    SC -->|共通・version 2| GR[グループの選択]
+    SC -->|共通・version 2 以外| LS[キーの一覧]
+    GR --> LS
+    SC -->|プロジェクト| PJ[プロジェクトの選択]
+    PJ --> LS
+    LS -->|キーを追加| AD[キー名 → 持ち主 → 適用範囲 → 値]
+    LS -->|行を選ぶ| RO[値を変更 / 削除]
+    AD --> LS
+    RO --> LS
+    ENV -->|OpenBao の接続設定| OB[OpenBao の接続設定]
+    OB --> ENV
+```
+
+| 画面 | 内容 |
+| --- | --- |
+| env メニュー | 既存の 5 つ（変数一覧・エディタで編集・認証情報の再同期・プロジェクト変数の対話設定・初期セットアップ）の後に「キーの一覧と編集」「OpenBao の接続設定」 |
+| キーの一覧の行 | 印（勝つ行に `★`）・キー・持ち主（`チーム` / `個人`）・適用範囲（`共通` / `プロジェクト <name>`）・グループ（`display_group`。`version: 2` でなければ列ごと出さない）・`******`。見出しに行の数・参照の数・backend の名前 |
+| キーの追加 | 持ち主の選択は個人単位の参照を持つ backend だけ、適用範囲の選択はプロジェクトの範囲で開いたときだけ出す。既にあるキーを入れたら同じ置き場の値の変更になる（`set` と同じ） |
+| 空の一覧 | 「キーを追加」の 1 行だけ |
+| 読めない | 範囲とグループと理由の 1 行を出し、一時停止して env メニューへ戻る |
+| 使えないグループ | 理由の 1 行を出してグループの選択へ戻る |
+| プロジェクトが 0 件 | 範囲の選択に「プロジェクト」を出さない |
 
 ### 重ね順（`devbase up`）
 
@@ -331,8 +432,8 @@ backend では参照のグループが常に空で、参照の値・等価性・
 
 #### `env` コマンドの `--group`
 
-`env list` / `get` / `set` / `delete` / `edit` / `init` は `--group NAME` を受ける。省略時は対象の
-グループを使う。`sync` / `project` / `export` / `import` は `--group` を受けず、実行時の
+`env list` / `get` / `set` / `delete` / `edit` / `init` / `sync` は `--group NAME` を受ける。省略時は
+対象のグループを使う。`project` / `export` / `import` は `--group` を受けず、実行時の
 ディレクトリで決まる。`set` / `delete` / `edit` の `-p` は宛先を、`list` の `-p` はプロジェクトの
 節だけを出すことを指し、`get` は `-p` を取らずにプロジェクトの参照を実行時のディレクトリから
 含める。
@@ -408,18 +509,43 @@ entrypoint へ渡す値まで経路が変わるため採らない。
 
 #### `init` / `sync` / `project` / `export` / `import`
 
-扱うのはチーム単位の参照で、`version: 2` ではグループが次のように決まる。
+`init` / `project` / `export` / `import` が扱うのはチーム単位の参照で、`sync` はチーム共通と
+個人共通を扱う。`version: 2` ではグループが次のように決まる。
 
 | コマンド | グループ |
 | --- | --- |
 | `env init` | 対象のグループ（`--group` で指定できる）のチーム共通 |
-| `env sync` | 対象のグループのチーム共通。同期済みハッシュの控えもそのグループのもの |
+| `env sync` | 対象のグループ（`--group` で指定できる）の個人共通とチーム共通。同期済みハッシュの控えもそのグループのもの |
 | `env project` | 実行時のプロジェクトのグループのチームのプロジェクト |
 | `env export` | 共通は対象のグループ。プロジェクトは対象のグループと同じ置き場のものだけを集め、外したプロジェクトの名前とグループを標準エラーへ出す（その参照へは要求しない）。メタデータは対象のグループの控えを `env/sources.yml` として入れる |
 | `env import` | 共通は対象のグループ、プロジェクトはそれぞれのグループ。バンドルに対象のグループと違う置き場のプロジェクトがあれば、サーバへ要求する前に名前とグループを挙げ、`--exclude-project` を案内して 1 件も取り込まずに 1（`--dry-run` も同じ）。`env/sources.yml` は対象のグループの控えへ取り込む |
 
 別グループのプロジェクトは、グループ単位のポリシーのサーバで 403 になる。`import` で黙って
 飛ばすと取り込んだつもりの機密が欠けるため、止めて除外を案内する。
+
+`env sync` の同期の書き込み先は、キーごとに次の 1 つである（`SyncTargets.target_for`）。
+
+| 条件 | 書き込み先 |
+| --- | --- |
+| `--user` | 個人共通 |
+| キーが個人共通にある（チーム共通にもあるときを含む） | 個人共通（重ね順で勝つため、チーム共通を書いてもコンテナの値が変わらない） |
+| キーがチーム共通にだけある | チーム共通 |
+| どちらにも無い | 個人共通（`~/.aws/credentials` の静的キーなどがチーム全員の読める置き場へ入らないように） |
+| 個人単位の参照を持たない backend | 常にチーム共通。`--user` は 2 |
+
+2 つの参照は `fresh` で読み（控えへ落ちない）、どちらかを読めなければ何も書かずに 1。ホスト接続情報
+（`HOST_SSH_USER` / `HOST_SSH_HOST`）は両方の参照に無いときだけ補い、宛先は同じ規則で決める。保存は
+書いた参照だけ、個人共通 → チーム共通の順に行い、先の保存が失敗したら後を保存せずに 1。2 つの保存は
+原子的でない。片方だけ保存された状態は、控えのハッシュを保存の後に更新するため、次の `sync` が同じ変更を
+再び検出して書き直す。個人共通へ書いた行には末尾に `（個人共通）` を付ける。
+
+控えに登録するのは、個人共通とチーム共通のどちらかにキーがあるソースである。控えに項目の無いソースの
+キーが参照にあるときは黙って飛ばさず、`<ソース>: ソース未登録（<参照の表示>にキーがあります）。` に続けて
+`今のファイルと比べて更新しました` / `今のファイルと比べて変更なし` / `元のファイルがありません` のどれかを
+出す。今のファイルと値を比べて違えば書き（`AWS_CONFIG_BASE64` は tar の時刻を除いて中のファイルで比べる）、
+比べた後に控えに登録する。控えに項目はあるがハッシュか元のファイルが無いときは
+`<ソース>: 控えと比べられません（ハッシュか元のファイルがありません）` を出す。「ソース未登録」は控えに
+項目が無い状態だけを指す。
 
 `env sync` はソースファイルのハッシュを控えに記録して変更を検出する。`version: 2` では控えを
 置き場のグループごとに `$DEVBASE_ROOT/.env.sources.<g>.yml` へ分け、それ以外は
@@ -470,6 +596,25 @@ entrypoint へ渡す値まで経路が変わるため採らない。
 伏せ字入力で尋ねる。`use` は引数に無い項目を既存の設定から引き継ぎ、資格情報の指定が無ければ
 既存のブートストラップを使う。`use openbao` は `backend.yml` より先にブートストラップを書く
 （資格情報を書けない状態で backend だけが切り替わると、次の実行から機密を読めなくなる）。
+
+TUI の「OpenBao の接続設定」は同じプロセスの中から `use openbao` を呼び、`secret_id` を名前空間の
+属性（`secret_id`）の値で渡す。値があれば `_read_secret_id` は標準入力も伏せ字入力も使わない。CLI の
+引数には足さず、CLI の名前空間にこの属性は無い。`role_id` を変えずに `secret_id` だけを渡したときは
+既存の `role_id` と組にして保存する。画面の振る舞いは次のとおりである。
+
+| 項目 | 内容 |
+| --- | --- |
+| 開ける端末 | backend が `openbao` の端末だけ。それ以外は今の backend の名前と、`devbase env backend use openbao --url <OpenBao の URL> --role-id <role_id> --secret-id-stdin` と `devbase env backend migrate --to openbao` を示すだけで、`backend.yml` と `bootstrap.env.age` を変えない。TUI から backend を切り替え・移行しない |
+| 見出し | 今の `url` と、ブートストラップ機密が `設定済み` / `未設定` か。`role_id` / `secret_id` の値は出さない |
+| 欄 | 接続先（`url`、1 行）、`role_id` と `secret_id`（伏せ字）。空の欄は変えない（`use` の引き継ぎ）。`role_id` を変えるときは `secret_id` も要る。`mount` / `user` / `layout` / `group_aliases` / キャッシュの設定は変えない |
+| 保存の後 | `test` と同じ確認を自動で行う。失敗しても保存した設定は残し、欄を入れ直せる。`use` が失敗したら `test` を呼ばずに欄へ戻る |
+| token | 入力させず、保存しない（実行のたびにブートストラップ機密で取り直す） |
+
+`secret_id` を属性で渡すのは、入力を TUI の伏せ字の欄 1 度で済ませ、Esc の規約を TUI に揃えるためである。
+`--secret-id-stdin` へ流し込む形は同じプロセスの `sys.stdin` を差し替えることになり、TUI の入力と衝突する。
+接続先の既定値は持たず、案内の URL も `<OpenBao の URL>` のまま出す（devbasex は共通のサーバを運用しない。
+既定の接続先を置くと、知らないサーバへブートストラップ機密を送る経路になる）。token の欄を作らないのは、
+token をホストのディスクへ置かない決まりを守るためである。
 
 `cli.py` は `env backend` を機密の注入を行わないコマンドとして扱う（設定が壊れている・
 サーバに届かない状態でこそ実行されるため）。
@@ -817,6 +962,17 @@ flowchart TD
 - `DEVBASE_ACCOUNT_GROUP` は、どの backend・どの版でも機密の合成に現れない。devbase のプロセスの
   環境変数にも、子プロセスにも、dev コンテナの `environment` にも、置き場の値が載ることはない
 - `version: 2` の `up` / `scale` は、ボリュームと機密のグループが食い違ったまま副作用を起こさない
+- TUI のキーの追加・変更・削除は `cmd_env` の `set` / `delete` を選んだ置き場を写した属性で呼び、TUI の
+  モジュールは `SecretStore` へ書かない。接続設定の書き込みは `env backend use` へ委譲する
+- TUI のキーの一覧は現物から読み、キャッシュの内容を出さない。読めなければ一覧を出さずに理由を 1 行出す
+- TUI の削除は確認で「はい」を選んだときだけ行う。Esc と「いいえ」では `delete` を呼ばない
+- TUI が受けた機密の値・`role_id`・`secret_id` は伏せ字の欄だけで受け、画面の出力・ログ・子プロセスの
+  引数に出ない。TUI は子プロセスを起動せず、値を同じプロセスの属性で渡す
+- TUI の接続設定は値を入れた欄だけを変え、空の欄・`mount`・`user`・`layout`・`group_aliases`・
+  キャッシュの設定を保つ。形の不正な `url` では `backend.yml` も `bootstrap.env.age` も書かない
+- `env sync` は 1 つのキーを 1 つの参照（同期の書き込み先）だけへ書き、宛先は `SyncTargets.target_for` の
+  1 か所で決める。個人単位の参照を持たない backend では個人単位の参照を読まず書かず、`sync --user` は 2 で止める
+- `env sync` は控えに登録の無いソースのキーが参照にあるとき、黙って飛ばさず未登録の行を出す
 
 ## データ・設定
 
@@ -942,6 +1098,12 @@ cache:
   変わらない。ボリュームのグループも同じで、置き場の `DEVBASE_ACCOUNT_GROUP` は合成から外れ、
   プロセスの環境変数にもコンテナにも載らない。置き場へ書ける者が、それを読む端末の
   ボリュームの宛先を変えることはできない
+- TUI のキーの一覧は、キー名によらず全ての値を伏せ字（長さも出さない）にする。一覧は画面に残り、
+  画面共有や録画に写るためである
+- TUI の値・`role_id`・`secret_id` の入力は伏せ字の欄（`menu.secret`）で受け、同じプロセスの属性で渡す。
+  CLI の引数に `secret_id` を足さないため、`argv` や `ps` から値が見える経路は増えない
+- `env sync` はどちらの参照にも無いキーを個人共通へ書く。`~/.aws/credentials` の静的キーなどが、既定で
+  チーム全員の読める置き場へ入らない
 
 ## 運用
 
@@ -968,6 +1130,11 @@ cache:
   前のレイアウトのパスを `bao kv get` などで読み、`devbase env edit --group NAME`（個人単位は
   `--user` も）で新しいパスへ書く。古いパスを版の履歴ごと消す操作（`kv metadata delete`）は
   サーバ側の権限で決まり、devbase のコマンドは持たない
+- `devbase list` の TUI の env メニューから、キーの一覧と編集（追加・値の変更・削除）と OpenBao の接続設定
+  （接続先・`role_id`・`secret_id`）を行える。backend の切り替えと移行は CLI の `env backend use` / `migrate`
+  で行う。TUI で扱えない値（改行・前後の空白を含む）は `devbase env edit` で編集する
+- `env sync` でチーム共通へ置きたいキーは、先に `devbase env set`（`--user` なし）でチーム共通に作る。以後の
+  `sync` はそこを更新する
 - グループの読み替え（`default` → 置き場のグループ名）は `backend.yml` の `group_aliases` 1 か所に
   書き、`env backend status` で確かめる
 - `up` / `scale` がグループの食い違いで止まったら、起動したいグループに合わせて、プロジェクトの
@@ -1046,6 +1213,15 @@ cache:
 - 控えのファイルがグループごとに分かれること（`tests/env/test_sources.py`）、`env sync` がグループ
   ごとに変更を検出し、`env project` がプロジェクトのグループへ書くこと
   （`tests/commands/test_env_sync_group.py`）
+- `env sync` の同期の書き込み先（個人共通だけ・チーム共通だけ・両方・どちらにも無い・`--user`）、控えの
+  登録、未登録の行と比べられない行、読めないときの 1、`--group`、ファイル backend での `--user` の 2 と
+  宛先の不変（`tests/commands/test_env_sync_owner.py`）
+- キーの行の持ち主・適用範囲・グループ・勝つ行、値を持たないこと、認証 1 回と取得 2 回 / 4 回、
+  キャッシュへ落ちないこと、ファイル backend の行（`tests/commands/test_env_rows.py`）
+- TUI のキーの一覧と編集の委譲の属性・伏せ字・入力の検査・削除の確認・版の食い違い・`SecretStore` へ
+  書かないこと（`tests/cli/tui/test_actions_env_keys.py`）、OpenBao の接続設定の案内・欄の引き継ぎ・
+  保存の後の確認（`tests/cli/tui/test_actions_env_openbao.py`）、伏せ字の欄が打った文字を出さないこと
+  （`tests/cli/tui/test_menu_pty.py`）
 - `version: 2` の `up` の往復（プロジェクトの中・宣言なしの読み替え・別グループへの切替で認証 1 回・
   取得 4 回、`env init` の子プロセスへの `--group` と書いた値での起動、`version: 1` では渡さない
   こと）（`tests/cli/test_up_roundtrips.py`）
