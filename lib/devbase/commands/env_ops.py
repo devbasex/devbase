@@ -393,11 +393,8 @@ def _check_key(report: Report) -> None:
 def _check_conflicts(root: Path, store: SecretStore, report: Report) -> None:
     """暗号化ファイルと平文が同時に存在していないか"""
     refs = [SecretRef.for_global()]
-    projects_dir = root / 'projects'
-    if projects_dir.is_dir():
-        refs.extend(SecretRef.for_project(p.name)
-                    for p in sorted(projects_dir.iterdir())
-                    if names.counts_as_project(p.name) and p.is_dir())
+    refs.extend(SecretRef.for_project(p.name)
+                for p in names.project_dirs(root / 'projects'))
 
     for ref in refs:
         if store.age.exists(ref) and store.plaintext.exists(ref):
@@ -569,11 +566,7 @@ def _ignore_probe_paths(root: Path, store: Optional[SecretStore] = None) -> List
 
     # プロジェクトごとの平文。実在するものがあればその名前で確かめるほうが、
     # 報告をそのまま直す手がかりにできる。
-    project_names: List[str] = []
-    projects_dir = root / 'projects'
-    if projects_dir.is_dir():
-        project_names = [p.name for p in sorted(projects_dir.iterdir())
-                         if names.counts_as_project(p.name) and p.is_dir()]
+    project_names = [p.name for p in names.project_dirs(root / 'projects')]
     paths.extend(f'projects/{name}/.env'
                  for name in project_names or [_SAMPLE_PROJECT_NAME])
     return paths
