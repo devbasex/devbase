@@ -61,6 +61,8 @@ MENU_BACK = object()
 # search 有効メニューは ← が入力カーソルと衝突するため Esc のみを案内する。
 HINT_BACK = "(↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止)"
 HINT_SEARCH = "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻る / Ctrl-C 中止)"
+# search 有効で ← も戻るに使うメニュー (``select(..., left_back=True)``) の案内。
+HINT_SEARCH_LEFT = "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止)"
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +201,31 @@ def with_escape_back(question, *, bind_left: bool = True):
 # 選択メニュー
 # ---------------------------------------------------------------------------
 
-def select(message: str, choices, *, back: bool = False, search: bool = False):
+def _make_select_question(message: str, choices, *, search: bool, default=None):
+    """``(title, value)`` を ``Choice`` にそろえ、共通の設定で questionary の select を作る"""
+    norm = [
+        c if isinstance(c, questionary.Choice)
+        else questionary.Choice(title=c[0], value=c[1])
+        for c in choices
+    ]
+    # questionary.select の default は choice の value で初期カーソルを指定する。
+    # 一致する value が無いと例外になるため、呼び出し側 (app) で範囲検証済みの
+    # value のみ渡す契約とし、ここでは None のとき引数を省く。
+    select_kwargs = {} if default is None else {"default": default}
+    return questionary.select(
+        message,
+        choices=norm,
+        use_arrow_keys=True,
+        # use_search_filter と use_jk_keys は併用不可。検索有効時のみ filter を使う。
+        use_jk_keys=False,
+        use_search_filter=search,
+        use_shortcuts=False,
+        **select_kwargs,
+    )
+
+
+def select(message: str, choices, *, back: bool = False, search: bool = False,
+           left_back: bool = False):
     """questionary の select を起動し、選択値を返す共通関数。
 
     Parameters
@@ -213,6 +239,8 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
     search:  True なら文字入力での部分一致絞り込み (use_search_filter) を有効化する。
              件数の多い一覧 (プロジェクト選択等) 向け。search 有効時は ← が入力
              カーソル移動と衝突するため、back の ← バインドは無効化し Esc のみで戻る。
+    left_back: True なら search 有効でも ← で戻る。questionary の絞り込みは入力カーソルを
+             持たない (文字の追記と Backspace だけ) ため、← を奪っても絞り込みは損なわれない。
 
     Returns
     -------
@@ -221,23 +249,10 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
 
     テストではこの関数自体を monkeypatch して questionary の実起動を避ける。
     """
-    norm = [
-        c if isinstance(c, questionary.Choice)
-        else questionary.Choice(title=c[0], value=c[1])
-        for c in choices
-    ]
-    question = questionary.select(
-        message,
-        choices=norm,
-        use_arrow_keys=True,
-        # use_search_filter と use_jk_keys は併用不可。検索有効時のみ filter を使う。
-        use_jk_keys=False,
-        use_search_filter=search,
-        use_shortcuts=False,
-    )
+    question = _make_select_question(message, choices, search=search)
     if back:
         # search 有効時は ← を入力カーソル用に空けておく (Esc のみで戻る)。
-        question = with_escape_back(question, bind_left=not search)
+        question = with_escape_back(question, bind_left=left_back or not search)
     else:
         question = with_escape_cancel(question)
     return _ask_erased(question)
@@ -258,33 +273,30 @@ def _build_menubar_question(message: str, choices, menu_items, default=None):
     ``default`` は一覧で初期ハイライトする choice の value (一覧へ戻ったときの
     カーソル復元用)。``None`` なら questionary 既定の先頭ハイライト。
     """
+    from prompt_toolkit.layout import HSplit, Layout
+
+    question = _make_select_question(message, choices, search=True, default=default)
+
+    focus: dict = {"tab": None}
+    kb = _menubar_bindings(menu_items, focus)
+    bar = _menubar_container(menu_items, focus)
+
+    app = question.application
+    # 既存レイアウト全体の下にバーを常設する (一覧の件数・絞り込みに関わらず
+    # プロンプト描画の最下部に固定される)。フォーカス可能要素は一覧のみなので
+    # Layout の既定フォーカス解決に任せる。
+    app.layout = Layout(HSplit([app.layout.container, bar]))
+    _merge_app_bindings(question, kb)
+    return question, focus
+
+
+def _menubar_bindings(menu_items, focus: dict):
+    """メニューバーのキーバインド (←/→ で巡回、↑/↓ で一覧へ、Enter で確定)"""
     from prompt_toolkit.filters import Condition
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.keys import Keys
-    from prompt_toolkit.layout import HSplit, Layout, Window
-    from prompt_toolkit.layout.controls import FormattedTextControl
-
-    norm = [
-        c if isinstance(c, questionary.Choice)
-        else questionary.Choice(title=c[0], value=c[1])
-        for c in choices
-    ]
-    # questionary.select の default は choice の value で初期カーソルを指定する。
-    # 一致する value が無いと例外になるため、呼び出し側 (app) で範囲検証済みの
-    # value のみ渡す契約とし、ここでは None のとき引数を省く。
-    select_kwargs = {} if default is None else {"default": default}
-    question = questionary.select(
-        message,
-        choices=norm,
-        use_arrow_keys=True,
-        use_jk_keys=False,
-        use_search_filter=True,
-        use_shortcuts=False,
-        **select_kwargs,
-    )
 
     count = len(menu_items)
-    focus: dict = {"tab": None}
     tab_focused = Condition(lambda: focus["tab"] is not None)
 
     kb = KeyBindings()
@@ -316,6 +328,16 @@ def _build_menubar_question(message: str, choices, menu_items, default=None):
     def _tab_accept(event):
         event.app.exit(result=menu_items[focus["tab"]][1])
 
+    return kb
+
+
+def _menubar_container(menu_items, focus: dict):
+    """区切り線と横並びのメニューバー (フォーカス中の項目を反転表示)"""
+    from prompt_toolkit.layout import HSplit, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+
+    count = len(menu_items)
+
     def _bar_fragments():
         frags = [("", " ")]
         for i, (label, _value) in enumerate(menu_items):
@@ -325,18 +347,11 @@ def _build_menubar_question(message: str, choices, menu_items, default=None):
                 frags.append(("", "  "))
         return frags
 
-    app = question.application
-    bar = HSplit([
+    return HSplit([
         Window(height=1, char="─", style="class:separator"),
         Window(FormattedTextControl(_bar_fragments), height=1,
                dont_extend_height=True),
     ])
-    # 既存レイアウト全体の下にバーを常設する (一覧の件数・絞り込みに関わらず
-    # プロンプト描画の最下部に固定される)。フォーカス可能要素は一覧のみなので
-    # Layout の既定フォーカス解決に任せる。
-    app.layout = Layout(HSplit([app.layout.container, bar]))
-    _merge_app_bindings(question, kb)
-    return question, focus
 
 
 def select_with_menubar(message: str, choices, menu_items, default=None):

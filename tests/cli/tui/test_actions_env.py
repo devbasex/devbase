@@ -2,16 +2,14 @@
 
 test_actions_project.py のパターンを踏襲し、`menu.*` を monkeypatch して選択値を
 注入、`cmd_env` を mock して契約どおりの属性を持つ Namespace で呼ばれることを
-検証する。TUI は参照・対話系 (グローバル一覧 / edit / sync / project / init) に加え、
-キーの一覧と編集・OpenBao の接続設定の画面 (#273) を提供する。キーの一覧と編集は
-set / delete へ委譲し、export/import は CLI 専用 (メニューに出さない)。
-project スコープ操作の chdir → 復帰、Esc/←/Ctrl-C の遷移も検証する。
+検証する。TUI はキーの一覧と編集・sync・init・OpenBao の接続設定の 4 つを提供する
+(#273 / #312)。一覧・edit・project と export/import は CLI 専用 (メニューに出さない)。
+プロジェクトの置き場への委譲の chdir → 復帰、Esc/←/Ctrl-C の遷移も検証する。
 """
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
@@ -38,18 +36,6 @@ def _seq(*values):
         return values[i]
 
     return _next
-
-
-def _make_plugin_project(root, plugin_path, proj):
-    target = root / plugin_path / "projects" / proj
-    target.mkdir(parents=True, exist_ok=True)
-    return target
-
-
-def _link_project(root, link_name, plugin_path, proj):
-    projects_dir = root / "projects"
-    projects_dir.mkdir(exist_ok=True)
-    (projects_dir / link_name).symlink_to(Path("..") / plugin_path / "projects" / proj)
 
 
 def _capture_dispatch(monkeypatch):
@@ -118,8 +104,8 @@ def test_run_ctrl_c_aborts(monkeypatch, tmp_path):
 
 def test_run_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
     """引数収集を中止 (_ARG_CANCEL) するとサブメニューを再表示し、再選択で実行する。"""
-    # 1 回目: project (→ 引数収集中止) / 2 回目: sync (→ 実行) / 3 回目: MENU_BACK
-    select = _seq("project", "sync", menu.MENU_BACK)
+    # 1 回目: keys (→ 引数収集中止) / 2 回目: sync (→ 実行) / 3 回目: MENU_BACK
+    select = _seq("keys", "sync", menu.MENU_BACK)
     select_calls = []
     monkeypatch.setattr(actions_env, "_select_action",
                         lambda: select_calls.append(1) or select())
@@ -128,12 +114,12 @@ def test_run_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
 
     def fake_run_op(root, op):
         run_calls.append(op)
-        return actions_env._ARG_CANCEL if op == "project" else 0
+        return actions_env._ARG_CANCEL if op == "keys" else 0
 
     monkeypatch.setattr(actions_env, "_run_operation", fake_run_op)
 
     assert actions_env.run(tmp_path) is menu.MENU_BACK
-    assert run_calls == ["project", "sync"]
+    assert run_calls == ["keys", "sync"]
     assert len(select_calls) == 3, "引数中止と実行後にサブメニューが再表示される"
 
 
@@ -141,7 +127,7 @@ def test_run_propagates_ctrl_c_from_operation(monkeypatch, tmp_path):
     """引数収集中の Ctrl-C (None) はサブメニューを再表示せず全体中止を伝搬する。"""
     select_calls = []
     monkeypatch.setattr(actions_env, "_select_action",
-                        lambda: select_calls.append(1) or "project")
+                        lambda: select_calls.append(1) or "keys")
     monkeypatch.setattr(actions_env, "_run_operation", lambda root, op: None)
 
     assert actions_env.run(tmp_path) is None
@@ -158,39 +144,26 @@ def test_select_action_lists_all_ops(monkeypatch):
     def fake_select(message, choices, *, back, search):
         captured.update(back=back, search=search,
                         values=[c[1] for c in choices])
-        return "list-global"
+        return "keys"
 
     monkeypatch.setattr(menu, "select", fake_select)
-    assert actions_env._select_action() == "list-global"
+    assert actions_env._select_action() == "keys"
     assert captured["back"] is True
     assert captured["search"] is False
-    # 参照系のグローバル一覧を先頭に、既存の 5 つを同じ順で残し、#273 の 2 つを末尾に置く。
+    # 一覧・edit・project はキーの一覧と編集と役割が重なるため出さない (#312)。
     # export/import は CLI 専用でメニューに出さない。
-    assert captured["values"] == [
-        "list-global", "edit", "sync", "project", "init", "keys", "openbao"]
-    assert captured["values"][0] == "list-global", "Enter 連打で安全な一覧表示に到達できる"
+    assert captured["values"] == ["keys", "sync", "init", "openbao"]
+    assert captured["values"][0] == "keys", "Enter 連打で書き込みの操作へ到達しない"
 
 
 # ---------------------------------------------------------------------------
-# _run_operation: 引数なし系 (sync / edit / init)
+# _run_operation: 引数なし系 (sync / init)
 # ---------------------------------------------------------------------------
 
 def test_run_operation_sync_no_attrs(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     assert actions_env._run_operation(tmp_path, "sync") == 0
     assert captured["attrs"] == {"subcommand": "sync"}
-
-
-def test_run_operation_edit_is_global_no_project_select(monkeypatch, tmp_path):
-    """edit は $DEVBASE_ROOT/.env を開くグローバル操作。プロジェクト選択も chdir もしない。"""
-    captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(actions_env, "_select_project",
-                        lambda root: pytest.fail("edit でプロジェクト選択してはいけない"))
-
-    before = os.getcwd()
-    assert actions_env._run_operation(tmp_path, "edit") == 0
-    assert captured["attrs"] == {"subcommand": "edit"}
-    assert captured["cwd"] == before, "edit は chdir しない"
 
 
 def test_run_operation_init_runs_without_confirm(monkeypatch, tmp_path):
@@ -207,67 +180,8 @@ def test_run_operation_init_runs_without_confirm(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _run_operation: list-global (中間プロンプトなしの即実行)
+# _run_in_project (プロジェクトの置き場への委譲の chdir + 復帰)
 # ---------------------------------------------------------------------------
-
-def test_run_operation_list_global_no_prompts_no_chdir(monkeypatch, tmp_path):
-    """「変数一覧 (グローバル)」は中間プロンプトなしで --global 相当を即実行する。"""
-    captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(menu, "select",
-                        lambda *a, **k: pytest.fail("グローバル一覧で選択を求めない"))
-    monkeypatch.setattr(actions_env, "_select_project",
-                        lambda root: pytest.fail("グローバル一覧でプロジェクト選択しない"))
-
-    before = os.getcwd()
-    assert actions_env._run_operation(tmp_path, "list-global") == 0
-    assert captured["attrs"] == {
-        "subcommand": "list",
-        "global_only": True, "project_only": False,
-        "reveal": False, "keys_only": False,
-    }
-    assert captured["cwd"] == before, "グローバル一覧は chdir しない"
-
-
-# ---------------------------------------------------------------------------
-# _run_operation: project (chdir + 復帰)
-# ---------------------------------------------------------------------------
-
-def test_run_operation_project_chdirs_and_restores(monkeypatch, tmp_path):
-    """env project は対象プロジェクトへ chdir + PWD 切替後に実行し、復帰する (plan 3.3)。"""
-    captured = _capture_dispatch(monkeypatch)
-    target = tmp_path / "projects" / "carmo"
-    target.mkdir(parents=True)
-    monkeypatch.setattr(actions_env, "_select_project", lambda root: "carmo")
-    monkeypatch.setenv("PWD", str(tmp_path))
-
-    before = os.getcwd()
-    assert actions_env._run_operation(tmp_path, "project") == 0
-    assert captured["attrs"] == {"subcommand": "project"}
-    assert captured["cwd"] == str(target)
-    assert captured["pwd"] == str(target)
-    assert os.getcwd() == before
-    assert os.environ["PWD"] == str(tmp_path)
-
-
-def test_run_operation_project_select_cancel(monkeypatch, tmp_path):
-    from devbase.commands import env as env_mod
-    called = []
-    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    monkeypatch.setattr(actions_env, "_select_project",
-                        lambda root: actions_env._ARG_CANCEL)
-    assert actions_env._run_operation(tmp_path, "project") is actions_env._ARG_CANCEL
-    assert called == []
-
-
-def test_run_operation_project_select_ctrl_c_aborts(monkeypatch, tmp_path):
-    """プロジェクト選択中の Ctrl-C は None を伝搬して全体中止する (codex round2 指摘)。"""
-    from devbase.commands import env as env_mod
-    called = []
-    monkeypatch.setattr(env_mod, "cmd_env", lambda root, args: called.append(1) or 0)
-    monkeypatch.setattr(actions_env, "_select_project", lambda root: None)
-    assert actions_env._run_operation(tmp_path, "project") is None
-    assert called == []
-
 
 def test_run_in_project_restores_cwd_on_exception(monkeypatch, tmp_path):
     """ハンドラが例外を投げても CWD / PWD は復帰する (try/finally)。"""
@@ -312,63 +226,14 @@ def test_run_in_project_missing_dir_cancels(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _select_project
-# ---------------------------------------------------------------------------
-
-def test_select_project_returns_name(monkeypatch, tmp_path):
-    """一覧 (actions_project と同じ取得方法) から選んだ行の name を返す。"""
-    from devbase.commands import status as status_mod
-    _make_plugin_project(tmp_path, "repos/o--r/p", "carmo")
-    _link_project(tmp_path, "carmo", "repos/o--r/p", "carmo")
-    monkeypatch.setattr(status_mod, "_container_status_for",
-                        lambda entry, counts=None: None)
-
-    captured = {}
-
-    def fake_select(message, choices, *, back, search):
-        captured.update(back=back, search=search, n=len(choices))
-        return 0
-
-    monkeypatch.setattr(menu, "select", fake_select)
-    assert actions_env._select_project(tmp_path) == "carmo"
-    assert captured == {"back": True, "search": True, "n": 1}
-
-
-@pytest.mark.parametrize("sel_ret", ["BACK", None])
-def test_select_project_cancel(monkeypatch, tmp_path, sel_ret):
-    """Esc (MENU_BACK) は _ARG_CANCEL、Ctrl-C (None) は None (全体中止) を返す。"""
-    from devbase.commands import status as status_mod
-    _make_plugin_project(tmp_path, "repos/o--r/p", "carmo")
-    _link_project(tmp_path, "carmo", "repos/o--r/p", "carmo")
-    monkeypatch.setattr(status_mod, "_container_status_for",
-                        lambda entry, counts=None: None)
-    ret = menu.MENU_BACK if sel_ret == "BACK" else None
-    monkeypatch.setattr(menu, "select", lambda *a, **k: ret)
-    expected = actions_env._ARG_CANCEL if sel_ret == "BACK" else None
-    assert actions_env._select_project(tmp_path) is expected
-
-
-def test_select_project_empty_cancels(monkeypatch, tmp_path):
-    """プロジェクトが無いときは選択メニューを出さず _ARG_CANCEL。"""
-    monkeypatch.setattr(menu, "select",
-                        lambda *a, **k: pytest.fail("空一覧でメニューを出さない"))
-    assert actions_env._select_project(tmp_path) is actions_env._ARG_CANCEL
-
-
-# ---------------------------------------------------------------------------
 # #273: キーの一覧と編集・OpenBao の接続設定
 # ---------------------------------------------------------------------------
 
-def test_existing_op_labels_are_kept():
-    assert actions_env._ENV_OPS[:5] == [
-        ("変数一覧 (グローバル)", "list-global"),
-        ("エディタで編集 (edit)", "edit"),
-        ("認証情報の再同期 (sync)", "sync"),
-        ("プロジェクト変数の対話設定 (project)", "project"),
-        ("初期セットアップ (init)", "init"),
-    ]
-    assert [label for label, _ in actions_env._ENV_OPS[5:]] == [
-        "キーの一覧と編集", "OpenBao の接続設定"]
+@pytest.mark.parametrize("op", ["list-global", "edit", "project"])
+def test_ops_overlapping_the_key_screen_are_gone(op):
+    """一覧・edit・project はキーの一覧と編集と役割が重なるため TUI から外した (#312)。"""
+    assert op not in dict((v, k) for k, v in actions_env._ENV_OPS)
+    assert op not in actions_env._OP_HANDLERS
 
 
 @pytest.mark.parametrize("op, module", [("keys", "actions_env_keys"),

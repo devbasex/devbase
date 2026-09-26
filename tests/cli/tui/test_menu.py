@@ -328,6 +328,20 @@ def test_select_back_true_search_true_no_left(monkeypatch):
     assert holder["kwargs"]["use_search_filter"] is True
 
 
+def test_select_search_with_left_back_binds_left(monkeypatch):
+    """left_back=True なら search=True でも ← を戻るに割り当てる (#312)。"""
+    pytest.importorskip("questionary")
+    from prompt_toolkit.keys import Keys
+
+    holder = _fake_select(monkeypatch)
+    menu.select("t", [("a", 0)], back=True, search=True, left_back=True)
+
+    kb = holder["question"].application.key_bindings
+    assert [b for b in kb.bindings if Keys.Escape in b.keys]
+    assert [b for b in kb.bindings if Keys.Left in b.keys]
+    assert holder["kwargs"]["use_search_filter"] is True
+
+
 def test_select_converts_tuple_choices(monkeypatch):
     """(title, value) タプルは questionary.Choice に変換されて渡る。"""
     questionary = pytest.importorskip("questionary")

@@ -398,7 +398,7 @@ build / rebuild を選べます。先頭（Enter 1 回で決まる位置）は *
 
 | カテゴリ | 選べる操作 |
 |---------|-----------|
-| 環境変数 | 変数一覧（グローバル）/ edit / sync / project / init / キーの一覧と編集 / OpenBao の接続設定 |
+| 環境変数 | キーの一覧と編集 / sync / init / OpenBao の接続設定 |
 | プラグイン | 導入済み一覧 / 利用可能一覧 / install / uninstall / update / info / sync / migrate / repo 管理 |
 | スナップショット | list / create / restore / copy / delete / rotate |
 | ステータス | 環境全体の状態を表示（`devbase status` 相当） |

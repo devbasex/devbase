@@ -318,3 +318,40 @@ def test_secret_input_does_not_echo_and_esc_goes_back(secret_session):
     raw = bytes(s._buf).decode("utf-8", errors="replace")
     assert "hunter2" not in raw
     assert "Application.exit() failed" not in raw
+
+
+_SEARCH_LEFT_DRIVER = """
+from devbase.tui import menu
+
+OPS = [("web  キー 3 件", "web"), ("api  キー 0 件", "api")]
+
+sel = menu.select("SELECT-LEFT を選択:", OPS, back=True, search=True, left_back=True)
+print("@SEL1=" + ("BACK" if sel is menu.MENU_BACK else repr(sel)), flush=True)
+
+sel = menu.select("SELECT-FILTER を選択:", OPS, back=True, search=True, left_back=True)
+print("@SEL2=" + ("BACK" if sel is menu.MENU_BACK else repr(sel)), flush=True)
+print("@END", flush=True)
+"""
+
+
+@pytest.fixture
+def search_left_session():
+    s = _PtySession(_SEARCH_LEFT_DRIVER)
+    yield s
+    if s.proc.poll() is None:
+        s.proc.kill()
+
+
+def test_left_goes_back_from_a_search_menu_and_filtering_still_works(search_left_session):
+    """left_back=True の絞り込みメニューで ← が戻り、文字の絞り込みも効くこと (#312)。"""
+    s = search_left_session
+    s.wait_for("SELECT-LEFT")
+    s.send("\x1b[D")                 # ← → MENU_BACK
+    s.wait_for("@SEL1=BACK")
+
+    s.wait_for("SELECT-FILTER")
+    s.send("api")                    # 絞り込みで api だけにして Enter
+    s.send("\r")
+    s.wait_for("@SEL2='api'")
+    s.wait_for("@END")
+    s.finish()
