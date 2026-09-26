@@ -88,6 +88,26 @@ def test_build_with_compose_build_but_no_dockerfile_key(exec_wrapper):
     assert any(line.endswith("docker compose build dev") for line in _uv_lines(result)), result.stdout
 
 
+def test_build_stops_when_context_expansion_fails(exec_wrapper, monkeypatch):
+    """context の展開が失敗したら (`${VAR:?}` の未設定)、置換の中でも止まりビルドへ進まない。"""
+    monkeypatch.delenv("BUILD_CONTEXT", raising=False)
+    project = exec_wrapper.work / "myproj"
+    project.mkdir()
+    (project / "compose.yml").write_text(
+        "services:\n"
+        "  dev:\n"
+        "    build:\n"
+        "      context: ${BUILD_CONTEXT:?required}\n"
+    )
+    (project / "Dockerfile").write_text("FROM ubuntu:26.04\n")
+
+    result = exec_wrapper.run(["build"], cwd=project)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "BUILD_CONTEXT" in result.stderr
+    assert not _uv_lines(result), result.stdout
+
+
 # ---- I6a〜I6c: DOCKER_GID と COMPOSE_PROJECT_NAME ----
 
 

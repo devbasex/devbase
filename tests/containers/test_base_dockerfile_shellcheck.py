@@ -6,7 +6,7 @@ Docker を起動せず、``containers/base/Dockerfile`` の文字列だけを固
 
 - ``shellcheck`` が **1 つ目の RUN の 1 回目の** ``apt-get install`` の一覧にある (受け入れ条件 5)
 - ``shellcheck`` を入れる ``RUN`` が他に無く、``apt-get update`` が 2 回のまま (受け入れ条件 5)
-- 版の確認の ``RUN`` に ``shellcheck --version`` がある (受け入れ条件 4)
+- 版の確認の ``RUN`` に ``shellcheck --version`` があり、版が ``ci.yml`` の pin と一致する (受け入れ条件 4・#247)
 
 補助の関数は ``test_base_dockerfile_fonts.py`` から import しない。テストのファイルどうしを
 依存させない (``test_base_dockerfile_bao.py`` も自前の ``_statements`` を持つ)。
@@ -17,7 +17,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-DOCKERFILE = Path(__file__).resolve().parents[2] / "containers" / "base" / "Dockerfile"
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DOCKERFILE = REPO_ROOT / "containers" / "base" / "Dockerfile"
+CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SHELLCHECK = re.compile(r"(?<![\w-])shellcheck(?![\w-])")
 
 
@@ -90,7 +94,20 @@ def test_no_extra_run_installs_shellcheck():
     assert _statements().count("apt-get update") == 2, "apt-get update の回数が変わっている"
 
 
+def _shellcheck_version_command() -> str:
+    commands = [c.strip() for c in _version_check_run().removeprefix("RUN ").split("&&")]
+    found = [c for c in commands if c.startswith("shellcheck --version")]
+    assert len(found) == 1, "版の確認の RUN に shellcheck --version がちょうど 1 つではない"
+    return found[0]
+
+
 def test_version_check_run_calls_shellcheck():
     """決定 2。入れ損ないを、版の確認の RUN で止める (無ければ終了コード 127)"""
-    commands = [c.strip() for c in _version_check_run().removeprefix("RUN ").split("&&")]
-    assert "shellcheck --version" in commands
+    assert _shellcheck_version_command().startswith("shellcheck --version")
+
+
+def test_version_check_matches_ci_pin():
+    """apt が CI の pin と違う版を配ったらビルドで止める。版は ci.yml の SHELLCHECK_VERSION と揃える"""
+    ci = yaml.safe_load(CI_YML.read_text())
+    pinned = ci["jobs"]["shellcheck"]["env"]["SHELLCHECK_VERSION"].removeprefix("v")
+    assert _shellcheck_version_command() == f'shellcheck --version | grep -Fx "version: {pinned}"'

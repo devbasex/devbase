@@ -37,7 +37,7 @@ jobs:
     name: ShellCheck
     runs-on: ubuntu-latest
     env:
-      # 手元の基準 (devbase-base:latest の shellcheck) に揃える。base の版が上がったら手で上げる (#247)
+      # 手元の基準 (devbase-base:latest の shellcheck) に揃える。containers/base/Dockerfile の版の確認と一緒に上げる (#247)
       SHELLCHECK_VERSION: v0.11.0
       SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
     # どの step も水準を絞らない (既定の style まで)。検査の前に使う shellcheck の版をログへ出す。

@@ -186,8 +186,9 @@ RUN set -eux; \
     rm -f "${bao_tar}" bao-checksums.txt; \
     bao version
 
-# 確認
-RUN gh --version && node --version && npm --version && aws --version && gcloud --version && session-manager-plugin --version && shellcheck --version
+# 確認。shellcheck は CI (.github/workflows/ci.yml の SHELLCHECK_VERSION) と同じ版であることも止める (#247)。
+# 一致は tests/containers/test_base_dockerfile_shellcheck.py が固定する
+RUN gh --version && node --version && npm --version && aws --version && gcloud --version && session-manager-plugin --version && shellcheck --version | grep -Fx "version: 0.11.0"
 
 USER ${USERNAME}
 WORKDIR /tmp
