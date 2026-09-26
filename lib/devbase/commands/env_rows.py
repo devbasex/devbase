@@ -61,6 +61,32 @@ def _scope_refs(store: SecretStore, project: Optional[str], group: Optional[str]
     return refs, has_user
 
 
+def _resolve_target(store: SecretStore, devbase_root: Path, project: Optional[str],
+                    group: Optional[str], grouped: bool) -> Tuple[Optional[str], Optional[str]]:
+    """読むグループと ``--group`` に渡す名前の組"""
+    from devbase.commands.env import _target_group
+
+    if project is not None:
+        return store.ref_group(project), None
+    if group is not None:
+        target = _target_group(devbase_root, store, group)
+        return target, target
+    target = store.ref_group(None)
+    return target, (target if grouped else None)
+
+
+def _rows_for_refs(store: SecretStore, refs: List[SecretRef], settings) -> List[KeyRow]:
+    """参照ごとに ``fetch`` を 1 回行い、キーの行を並べる"""
+    rows: List[KeyRow] = []
+    for ref in refs:
+        data = store.fetch(ref)
+        group_label = settings.display_group(ref.group) if settings and ref.group else None
+        rows += [KeyRow(key=k, ref=ref, owner_label=OWNER_LABELS[ref.owner],
+                        scope_label=scope_label(ref), group_label=group_label)
+                 for k in sorted(data)]
+    return rows
+
+
 def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
                      group: Optional[str] = None) -> KeyListing:
     """選んだ範囲の参照を読み、キーの行を返す。
@@ -74,30 +100,15 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
     読み出しは 1 つの ``SecretStore`` で参照ごとに ``fetch`` を 1 回 (キャッシュへ落ちない。I4)。
     接続・403・復号の失敗は ``DevbaseError`` のまま送る。
     """
-    from devbase.commands.env import _target_group
-
     store = SecretStore(devbase_root)
     grouped = is_grouped(store)
-    if project is not None:
-        target = store.ref_group(project)
-        option_group = None
-    elif group is not None:
-        target = option_group = _target_group(devbase_root, store, group)
-    else:
-        target = store.ref_group(None)
-        option_group = target if grouped else None
+    target, option_group = _resolve_target(store, devbase_root, project, group, grouped)
 
     team_global = SecretRef.for_global(group=target)
     refs, has_user = _scope_refs(store, project, target, team_global)
 
     settings = store.config.openbao if grouped else None
-    rows: List[KeyRow] = []
-    for ref in refs:
-        data = store.fetch(ref)
-        group_label = settings.display_group(ref.group) if settings and ref.group else None
-        rows += [KeyRow(key=k, ref=ref, owner_label=OWNER_LABELS[ref.owner],
-                        scope_label=scope_label(ref), group_label=group_label)
-                 for k in sorted(data)]
+    rows = _rows_for_refs(store, refs, settings)
     return KeyListing(rows=rows, refs=refs, has_user_refs=has_user, grouped=grouped,
                       group=option_group, project=project,
                       backend=store.backend_for(team_global).name)
