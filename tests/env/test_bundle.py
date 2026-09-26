@@ -318,6 +318,8 @@ def test_is_valid_project_name():
     assert not bundle.is_valid_project_name("foo bar")
     assert not bundle.is_valid_project_name("foo/bar")
     assert not bundle.is_valid_project_name("foo\nbar")
+    # 末尾の改行も弾く (`$` は最後の改行の前でも一致するため)
+    assert not bundle.is_valid_project_name("foo\n")
 
 
 def test_make_entries_from_disk_skips_invalid_project_names(tmp_path, caplog):
@@ -406,6 +408,28 @@ def test_make_entries_from_disk_validator_matches_import_side():
         # 重要: 両者が常に一致する (validator 同期)
         assert export_ok == import_ok, (
             f"export/import の project 名 validator が乖離: {name!r}"
+        )
+
+
+def test_import_side_rejects_arcname_with_trailing_newline():
+    """末尾に改行の付いた arcname は正規のメンバーと同じ書き出し先を指すため弾く。
+
+    ``env/projects/foo/.env\\n`` が通ると ``env/projects/foo/.env`` と同じ
+    ``projects/foo/.env`` への計画が 2 つでき、commit の段で失敗する。
+    """
+    from devbase.env import _import_merge
+
+    assert _import_merge.project_name_of("env/projects/foo/.env\n") is None
+    with pytest.raises(_import_merge.MergeError):
+        _import_merge.filter_members(
+            {
+                "env/projects/foo/.env": b"A=1\n",
+                "env/projects/foo/.env\n": b"A=2\n",
+            },
+            include_global=True,
+            include_metadata=True,
+            include_projects=None,
+            exclude_projects=[],
         )
 
 
