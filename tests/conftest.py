@@ -411,6 +411,29 @@ NOT_ISOLATED_ENV = {
 }
 
 
+def _saved_host_docker_env() -> Dict[str, str]:
+    """隔離より前 (conftest の読み込み時) の Docker の接続設定を採る
+
+    ``DOCKER_HOST`` / ``DOCKER_CONTEXT`` は隔離で消え、``HOME`` はテストごとの tmp へ替わる
+    ため、``~/.docker`` の context も見失う。``DOCKER_CONFIG`` を元の ``HOME`` の
+    ``.docker`` へ固定して、隔離の後でも同じ daemon を選べるようにする。
+    """
+    saved = {name: os.environ[name] for name in ('DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG')
+             if name in os.environ}
+    if 'DOCKER_CONFIG' not in saved and os.environ.get('HOME'):
+        saved['DOCKER_CONFIG'] = os.path.join(os.environ['HOME'], '.docker')
+    return saved
+
+
+# 実機 Docker のテストへ明示的に渡す接続設定。隔離の fixture より前に評価される
+HOST_DOCKER_ENV = _saved_host_docker_env()
+
+
+def host_docker_env() -> Dict[str, str]:
+    """実機 Docker を呼ぶ subprocess へ渡す env (今の環境 + 隔離前の接続設定)"""
+    return {**os.environ, **HOST_DOCKER_ENV}
+
+
 def _clear_inherited_env(mp: pytest.MonkeyPatch) -> None:
     """隔離の一覧の変数と、接頭辞に合う変数を ``mp`` ですべて未設定へ戻す"""
     for name in ISOLATED_ENV:

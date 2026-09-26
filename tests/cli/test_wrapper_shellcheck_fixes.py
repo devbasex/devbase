@@ -2,6 +2,8 @@
 
 宣言と代入を分けると、置換の中のコマンドの非 0 が `set -e` で wrapper を止めうる。止まりうる
 2 か所 (ベースイメージの判定と `DOCKER_GID`) を、`bin/devbase` を実プロセスで起動して固定する。
+あわせて、compose の `build` からの Dockerfile の解決と、`cmd_build` の分岐 (ベースの要否・
+`--no-cache` の渡し方・サービス名・失敗時) も同じ起動で固定する。
 """
 
 from __future__ import annotations

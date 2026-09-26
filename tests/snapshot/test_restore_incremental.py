@@ -26,6 +26,7 @@ from devbase.errors import SnapshotCommandError, SnapshotError
 from devbase.snapshot.manager import (
     SnapshotManager, chunk_paths, rename_only_failure, rename_targets,
 )
+from tests.conftest import HOST_DOCKER_ENV
 
 @pytest.fixture(autouse=True)
 def _clean_group_env(monkeypatch):
@@ -433,7 +434,11 @@ def _docker(*args: str, **kwargs) -> subprocess.CompletedProcess:
 
 
 @pytest.fixture
-def throwaway_volume():
+def throwaway_volume(monkeypatch):
+    # 隔離前の接続設定へ戻す。SnapshotManager も os.environ のまま docker を呼ぶため、
+    # subprocess ごとではなく環境そのものに積む
+    for name, value in HOST_DOCKER_ENV.items():
+        monkeypatch.setenv(name, value)
     # 収集時ではなくこのテストを実行するときだけ Docker を叩く
     if not _docker_available():
         pytest.skip("Docker と devbase-snapshot:latest イメージが要る")
