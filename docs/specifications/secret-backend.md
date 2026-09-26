@@ -192,7 +192,7 @@ flowchart LR
 
 `version: 2` でないときは共通でも `group=None`。`set` は `assignment=KEY=VALUE`、`delete` は `key` を渡す。
 値は伏せ字の欄（`menu.secret`）で受け、同じプロセスの属性で渡す（子プロセスの引数・ログに出さない）。
-キー名（`^[A-Za-z_][A-Za-z0-9_]*$`、`DEVBASE_ACCOUNT_GROUP` 以外）と値（空でない・改行を含まない）は
+キー名（`^[A-Za-z_][A-Za-z0-9_]*$`、`DEVBASE_ACCOUNT_GROUP` 以外）と値（空でない・改行を含まない・前後に空白を含まない。含む値は `env edit` で編集）は
 TUI の側で検査し、通らなければ `set` を呼ばずに同じ欄へ戻る。CLI の `set` の検査は変えない。削除は
 確認で「はい」を選んだときだけ行う。保存に失敗したとき（版の食い違いを含む）は上書きせず、一覧を
 読み直す。
