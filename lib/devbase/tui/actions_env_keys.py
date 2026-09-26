@@ -251,11 +251,12 @@ def _after_write(rc: int) -> None:
 
 def _choose_owner(listing) -> str:
     from devbase.commands.env_rows import OWNER_LABELS
+    from devbase.env.secret_store import OWNER_TEAM, OWNER_USER
 
     if not listing.has_user_refs:
-        return "team"
+        return OWNER_TEAM
     return flow.need(menu.select(f"持ち主を選択 {menu.HINT_BACK}:",
-                                 [(OWNER_LABELS[o], o) for o in ("team", "user")],
+                                 [(OWNER_LABELS[o], o) for o in (OWNER_TEAM, OWNER_USER)],
                                  back=True, search=False))
 
 

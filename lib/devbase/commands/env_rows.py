@@ -11,9 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from devbase.env.secret_store import SecretRef, SecretStore
+from devbase.env.secret_store import OWNER_TEAM, OWNER_USER, SecretRef, SecretStore
 
-OWNER_LABELS = {'team': 'チーム', 'user': '個人'}
+OWNER_LABELS = {OWNER_TEAM: 'チーム', OWNER_USER: '個人'}
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ def _scope_refs(store: SecretStore, project: Optional[str], group: Optional[str]
                 probe: SecretRef) -> Tuple[List[SecretRef], bool]:
     """範囲の参照を持ち主ごとに作る。持ち主は ``probe`` で個人の参照があるかで決める"""
     has_user = store.has_user_refs(probe)
-    owners = ('team', 'user') if has_user else ('team',)
+    owners = (OWNER_TEAM, OWNER_USER) if has_user else (OWNER_TEAM,)
     if project is None:
         refs = [SecretRef.for_global(owner=o, group=group) for o in owners]
     else:
