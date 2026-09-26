@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # push は main と統合ブランチ（release/** と mission/**）だけで走らせる。
+  # それ以外のブランチは Pull Request の検査で見るため、二重に走らせない。
   push:
-    branches: [main]
+    branches: [main, 'release/**', 'mission/**']
+  # Pull Request は宛先を絞らない（積み重ねた Pull Request も検査する）。
   pull_request:
-    branches: [main]
 
 jobs:
   python-syntax:
