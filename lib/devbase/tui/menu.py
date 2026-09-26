@@ -201,6 +201,29 @@ def with_escape_back(question, *, bind_left: bool = True):
 # 選択メニュー
 # ---------------------------------------------------------------------------
 
+def _make_select_question(message: str, choices, *, search: bool, default=None):
+    """``(title, value)`` を ``Choice`` にそろえ、共通の設定で questionary の select を作る"""
+    norm = [
+        c if isinstance(c, questionary.Choice)
+        else questionary.Choice(title=c[0], value=c[1])
+        for c in choices
+    ]
+    # questionary.select の default は choice の value で初期カーソルを指定する。
+    # 一致する value が無いと例外になるため、呼び出し側 (app) で範囲検証済みの
+    # value のみ渡す契約とし、ここでは None のとき引数を省く。
+    select_kwargs = {} if default is None else {"default": default}
+    return questionary.select(
+        message,
+        choices=norm,
+        use_arrow_keys=True,
+        # use_search_filter と use_jk_keys は併用不可。検索有効時のみ filter を使う。
+        use_jk_keys=False,
+        use_search_filter=search,
+        use_shortcuts=False,
+        **select_kwargs,
+    )
+
+
 def select(message: str, choices, *, back: bool = False, search: bool = False,
            left_back: bool = False):
     """questionary の select を起動し、選択値を返す共通関数。
@@ -226,20 +249,7 @@ def select(message: str, choices, *, back: bool = False, search: bool = False,
 
     テストではこの関数自体を monkeypatch して questionary の実起動を避ける。
     """
-    norm = [
-        c if isinstance(c, questionary.Choice)
-        else questionary.Choice(title=c[0], value=c[1])
-        for c in choices
-    ]
-    question = questionary.select(
-        message,
-        choices=norm,
-        use_arrow_keys=True,
-        # use_search_filter と use_jk_keys は併用不可。検索有効時のみ filter を使う。
-        use_jk_keys=False,
-        use_search_filter=search,
-        use_shortcuts=False,
-    )
+    question = _make_select_question(message, choices, search=search)
     if back:
         # search 有効時は ← を入力カーソル用に空けておく (Esc のみで戻る)。
         question = with_escape_back(question, bind_left=left_back or not search)
@@ -269,24 +279,7 @@ def _build_menubar_question(message: str, choices, menu_items, default=None):
     from prompt_toolkit.layout import HSplit, Layout, Window
     from prompt_toolkit.layout.controls import FormattedTextControl
 
-    norm = [
-        c if isinstance(c, questionary.Choice)
-        else questionary.Choice(title=c[0], value=c[1])
-        for c in choices
-    ]
-    # questionary.select の default は choice の value で初期カーソルを指定する。
-    # 一致する value が無いと例外になるため、呼び出し側 (app) で範囲検証済みの
-    # value のみ渡す契約とし、ここでは None のとき引数を省く。
-    select_kwargs = {} if default is None else {"default": default}
-    question = questionary.select(
-        message,
-        choices=norm,
-        use_arrow_keys=True,
-        use_jk_keys=False,
-        use_search_filter=True,
-        use_shortcuts=False,
-        **select_kwargs,
-    )
+    question = _make_select_question(message, choices, search=True, default=default)
 
     count = len(menu_items)
     focus: dict = {"tab": None}
