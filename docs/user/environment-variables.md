@@ -675,6 +675,9 @@ sequenceDiagram
 3. `.env.sources.yml` に保存された前回のハッシュと比較
 4. 変更が検出されたファイルのみ再エンコードして `.env` を更新
 
+OpenBao の backend では、キーごとに個人共通とチーム共通のうち、そのキーがある方を更新します
+（両方にあれば個人共通、どちらにも無ければ個人共通）。詳細は [`devbase env sync`](cli-reference/03-env.md#devbase-env-sync) を参照してください。
+
 > **Note:** `devbase env init` を実行すると、全コレクターが初回として処理されます。
 
 ## 環境変数の操作
