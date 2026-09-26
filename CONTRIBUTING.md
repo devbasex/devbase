@@ -36,7 +36,7 @@ devbase へのコントリビューションを歓迎します。バグ報告、
 ## コーディング規約
 
 - Python: PEP 8 に準拠。CLI 実装は `lib/devbase/` 配下にあります。
-- Shell: Bash / Zsh の双方で動作することを確認してください。
+- Shell: Bash / Zsh の双方で動作することを確認してください。shellcheck の既定の水準で指摘 0 件を保ってください（CI の ShellCheck ジョブが止めます）。抑える場合は理由のコメントを添えます。
 - ドキュメントは `docs/` 配下に配置し、図表は Mermaid または PlantUML を使用してください（ASCII アートは原則使用しない）。
 
 詳細は [docs/developer/contributing.md](docs/developer/contributing.md) を参照してください。

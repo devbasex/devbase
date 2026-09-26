@@ -1,3 +1,5 @@
+# ~/.bashrc から bash が source する。実行しないため shebang を置かない
+# shellcheck shell=bash
 # 作り直しても残るシェルの設定を読む (PLAN70)。
 #
 # 対話シェルの ~/.bashrc から、/etc/devbase/ai-cli-aliases.sh の**後**に読まれる。
@@ -24,6 +26,8 @@ if [ -d "$__devbase_shellrc_dir" ]; then
     # 一致が無いときはグロブが文字列のまま残る。-f の判定で落ちる
     for __devbase_shellrc_file in "${__devbase_shellrc_files[@]}"; do
         if [ -f "$__devbase_shellrc_file" ] && [ -r "$__devbase_shellrc_file" ]; then
+            # 読むのは利用者が置き場所に置くファイルで、検査の時点では存在しない
+            # shellcheck source=/dev/null
             . "$__devbase_shellrc_file"
         fi
     done

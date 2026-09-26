@@ -13,6 +13,7 @@ PLAN51 の結合テストが使う。実サーバは `carmo-cdk#312` の完了�
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -317,6 +318,154 @@ class _Handler(BaseHTTPRequestHandler):
                                          'metadata': {'version': version, 'deletion_time': '',
                                                       'destroyed': False}}},
                           truncate=state.truncate_get_body)
+
+
+# --- 環境の隔離 (#218) ---
+# 隔離の一覧: テストの開始時に未設定へ戻す環境変数。lib/devbase が環境変数として読む名前
+# (tests/test_env_isolation.py の読み取りの集合) と、その集め方に掛からない名前からなる。
+# lib/devbase は読む変数に未設定のときの既定を持つため、固定値は置かない。
+ISOLATED_ENV = (
+    'ANTHROPIC_API_KEY',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_CONFIG_BASE64',
+    'AWS_DEFAULT_REGION',
+    'AWS_PROFILE',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SSO_URL',
+    'BIGQUERY_DATASETS',
+    'BIGQUERY_KEY_FILE',
+    'BIGQUERY_LOCATION',
+    'BIGQUERY_PROJECT',
+    'COMPOSE_PROFILES',
+    'COMPOSE_PROJECT_NAME',
+    'CONTEXT7_API_KEY',
+    'DEVBASE_ACCOUNT_GROUP',
+    'DEVBASE_AGE_KEY_FILE',
+    'DEVBASE_DOCKER_CONTEXT',
+    'DEVBASE_EDITOR',
+    'DEVBASE_EDITOR_DOCKER_CONTEXT',
+    'DEVBASE_EDITOR_SSH_HOST',
+    'DEVBASE_IGNORE_PLUGIN_REQUIRES',
+    # 名前を引数で受ける _env_non_negative_int の中で読むため、読み取りの集合に掛からない
+    'DEVBASE_IMAGE_MAX_AGE_DAYS',
+    'DEVBASE_OPEN_EDITOR',
+    'DEVBASE_OPEN_INDEX',
+    'DEVBASE_S3_ENDPOINT_URL',
+    'DEVBASE_S3_REGION',
+    'DEVBASE_S3_SSE',
+    'DEVBASE_S3_SSE_KMS_KEY_ID',
+    # DEVBASE_IMAGE_MAX_AGE_DAYS と同じ理由で手で足す
+    'DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES',
+    'DEVBASE_WINDOW_TITLE',
+    'DEVBASE_WORKSPACE',
+    'DEVBASE_WORKSPACE_B64',
+    'DEVBASE_WORKSPACE_FOLDERS',
+    'DEVIN_API_KEY',
+    'DEVIN_API_ORG_WIDE',
+    'DEVIN_ORG_ID',
+    'DEVIN_SERVICE_ADMIN',
+    'DEVIN_SERVICE_USER',
+    'DEV_SERVICE_NAME',
+    'DOCKER_CONTEXT',
+    'DOCKER_GID',
+    'DOCKER_HOST',
+    'EDITOR',
+    'GCP_ACTIVE_PROFILE',
+    'GCP_AUTH_MODE',
+    'GEMINI_API_KEY',
+    'GH_TOKEN',
+    'GITHUB_PERSONAL_ACCESS_TOKEN',
+    'GIT_CREDENTIALS_BASE64',
+    'GIT_CREDENTIAL_HELPER',
+    'GIT_USER_EMAIL',
+    'GIT_USER_NAME',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'GOOGLE_APPLICATION_CREDENTIALS_BASE64',
+    'GOOGLE_CLOUD_LOCATION',
+    'GOOGLE_CLOUD_PROJECT',
+    'HOST_SSH_HOST',
+    'HOST_SSH_USER',
+    'NPM_TOKEN',
+    'OPENAI_API_KEY',
+    # 起動したシェルの現在地。未設定なら lib/devbase は os.getcwd() を使い monkeypatch.chdir と揃う
+    'PWD',
+    'PYPI_API_KEY',
+    'SHELL',
+    'SLACK_BOT_TOKEN',
+    'SLACK_CHANNEL_ID',
+    'SLACK_TEAM_ID',
+    'SLACK_USER_MENTION',
+    'TMUX',
+    'VSCODE_IPC_HOOK_CLI',
+    'WSL_DISTRO_NAME',
+    'WSL_INTEROP',
+    'XDG_CONFIG_HOME',
+)
+
+# 隔離の一覧の接頭辞: この接頭辞で始まる変数をすべて未設定へ戻す
+ISOLATED_ENV_PREFIXES = ('GCP_CREDENTIALS_BASE64__',)
+
+# 隔離しない一覧: lib/devbase が読むが未設定へ戻さない変数と、その理由
+NOT_ISOLATED_ENV = {
+    'DEVBASE_ROOT': '_isolate_devbase_root がテストごとの tmp の root へ固定する (#209)',
+}
+
+
+def _saved_host_docker_env() -> Dict[str, str]:
+    """隔離より前 (conftest の読み込み時) の Docker の接続設定を採る
+
+    ``DOCKER_HOST`` / ``DOCKER_CONTEXT`` は隔離で消え、``HOME`` はテストごとの tmp へ替わる
+    ため、``~/.docker`` の context も見失う。``DOCKER_CONFIG`` を元の ``HOME`` の
+    ``.docker`` へ固定して、隔離の後でも同じ daemon を選べるようにする。
+    """
+    saved = {name: os.environ[name] for name in ('DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG')
+             if name in os.environ}
+    if 'DOCKER_CONFIG' not in saved and os.environ.get('HOME'):
+        saved['DOCKER_CONFIG'] = os.path.join(os.environ['HOME'], '.docker')
+    return saved
+
+
+# 実機 Docker のテストへ明示的に渡す接続設定。隔離の fixture より前に評価される
+HOST_DOCKER_ENV = _saved_host_docker_env()
+
+
+def host_docker_env() -> Dict[str, str]:
+    """実機 Docker を呼ぶ subprocess へ渡す env (今の環境 + 隔離前の接続設定)"""
+    return {**os.environ, **HOST_DOCKER_ENV}
+
+
+def _clear_inherited_env(mp: pytest.MonkeyPatch) -> None:
+    """隔離の一覧の変数と、接頭辞に合う変数を ``mp`` ですべて未設定へ戻す"""
+    for name in ISOLATED_ENV:
+        mp.delenv(name, raising=False)
+    for name in [n for n in os.environ if n.startswith(ISOLATED_ENV_PREFIXES)]:
+        mp.delenv(name, raising=False)
+
+
+@pytest.fixture(scope='session', autouse=True)
+def _isolate_env_session():
+    """session / module scope の fixture より前に、継承した隔離の一覧の変数を未設定へ戻す
+
+    ``HOME`` は触らない。session の段で替えると、docker が ``~/.docker`` の context を
+    見失い、docker を使う session scope の fixture が skip に回る。
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        _clear_inherited_env(mp)
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env(tmp_path_factory, monkeypatch):
+    """テストごとに隔離の一覧の変数を未設定へ戻し、``HOME`` をテストごとの tmp へ置く (#218)
+
+    テストごとにも消すのは、lib/devbase が ``os.environ`` へ直接書いた値を次のテストへ
+    残さないためである。``HOME`` は未設定にすると ``Path.home()`` がパスワードの
+    データベースから利用者のホームを引くため、固定値 (テストごとの tmp) にする。
+    テストの側の ``monkeypatch.setenv`` / ``delenv`` は同じ ``monkeypatch`` に後から積まれ、
+    後勝ちで効く。
+    """
+    _clear_inherited_env(monkeypatch)
+    monkeypatch.setenv('HOME', str(tmp_path_factory.mktemp('home')))
 
 
 @pytest.fixture(autouse=True)

@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # push は main と統合ブランチ（release/** と mission/**）だけで走らせる。
+  # それ以外のブランチは Pull Request の検査で見るため、二重に走らせない。
   push:
-    branches: [main]
+    branches: [main, 'release/**', 'mission/**']
+  # Pull Request は宛先を絞らない（積み重ねた Pull Request も検査する）。
   pull_request:
-    branches: [main]
 
 jobs:
   python-syntax:
@@ -34,19 +36,40 @@ jobs:
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-latest
+    env:
+      # 手元の基準 (devbase-base:latest の shellcheck) に揃える。containers/base/Dockerfile の版の確認と一緒に上げる (#247)
+      SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+    # どの step も水準を絞らない (既定の style まで)。検査の前に使う shellcheck の版をログへ出す。
     steps:
       - uses: actions/checkout@v4
+      - name: Install ShellCheck ${{ env.SHELLCHECK_VERSION }}
+        run: |
+          f="shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/$f"
+          echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}" >> "$GITHUB_PATH"
+      # GITHUB_PATH へ書いた場所は次の step から効くため、版の確認は導入と分ける
+      - name: Check ShellCheck version
+        run: |
+          shellcheck --version | grep -Fx "version: ${SHELLCHECK_VERSION#v}"
       - name: Run ShellCheck on bin/
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: ./bin
-          severity: error
+        run: shellcheck --version | sed -n 2p && shellcheck bin/*
       - name: Run ShellCheck on install.sh
-        run: shellcheck --severity=error install.sh
-      # base イメージへ入れる tmux のコマンド (PLAN69)。指摘 0 件の状態なので severity は
-      # 絞らない (既定の style まで)。bin/ の step が error に絞っているのは既存の指摘のため (#247)。
-      - name: Run ShellCheck on containers/base/tmux-*
-        run: shellcheck containers/base/tmux-first containers/base/tmux-clean containers/base/tmux-session
+        run: shellcheck --version | sed -n 2p && shellcheck install.sh
+      # containers/base のシェルスクリプト (#259)。シェルスクリプトを足したらここへも足す。
+      # 漏れは tests/containers/test_base_shellcheck_ci.py が落とす
+      - name: Run ShellCheck on containers/base/
+        run: |
+          shellcheck --version | sed -n 2p && shellcheck \
+            containers/base/ai-cli-aliases.sh \
+            containers/base/dind \
+            containers/base/entrypoint.sh \
+            containers/base/shellrc-dir.sh \
+            containers/base/tmux-clean \
+            containers/base/tmux-first \
+            containers/base/tmux-session
 
   pytest:
     name: Pytest (Python ${{ matrix.python-version }})

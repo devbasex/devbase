@@ -20,6 +20,8 @@ import subprocess
 
 import pytest
 
+from tests.conftest import host_docker_env
+
 IMAGE = "devbase-base:latest"
 BUILD_HINT = f"`devbase build base --no-cache` で {IMAGE} を建て直すと、この検査が効く"
 
@@ -122,12 +124,13 @@ def _docker_unavailable() -> str | None:
     if shutil.which("docker") is None:
         return "docker が PATH に無い"
     try:
-        subprocess.run(["docker", "info"], capture_output=True, timeout=30, check=True)
+        subprocess.run(["docker", "info"], capture_output=True, timeout=30, check=True,
+                       env=host_docker_env())
     except (subprocess.SubprocessError, OSError):
         return "docker daemon へ繋がらない"
     try:
         out = subprocess.run(["docker", "image", "inspect", IMAGE],
-                             capture_output=True, timeout=30)
+                             capture_output=True, timeout=30, env=host_docker_env())
     except (subprocess.SubprocessError, OSError):
         return f"{IMAGE} を調べられない"
     if out.returncode != 0:
@@ -151,7 +154,7 @@ def probe() -> dict[str, dict[str, str]]:
     # タイムアウトした・起動に失敗したのは「壊れている」ため、例外のまま失敗として知らせる
     out = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "/bin/bash", IMAGE, "-c", script],
-        capture_output=True, text=True, timeout=300)
+        capture_output=True, text=True, timeout=300, env=host_docker_env())
     if out.returncode == STALE_IMAGE_EXIT:
         pytest.skip(f"{IMAGE} に /etc/fonts/local.conf が無い (この変更より前のイメージ)。{BUILD_HINT}")
     assert out.returncode == 0, f"probe が失敗した (exit={out.returncode}):\n{out.stderr}"

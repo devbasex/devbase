@@ -415,8 +415,8 @@ CI はイメージを建てないため、次は建てたイメージで手で�
 - 建て直した base のコンテナの tmux で、`prefix S` のメニューの 3 つの操作が効くこと
 - 建て直した base のコンテナで `tmux-menu` を打つと、セッションの一覧が開くこと
 
-CI の ShellCheck ジョブは runner の shellcheck で `tmux-first` / `tmux-clean` / `tmux-session` を
-検査する。
+CI の ShellCheck ジョブは基準の版（base と同じ版）の shellcheck を入れ、`tmux-first` / `tmux-clean` /
+`tmux-session` を既定の severity で検査する。
 
 ## 関連リンク
 

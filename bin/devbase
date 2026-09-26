@@ -34,8 +34,14 @@ env_var_keys() {
 }
 
 # Environment setup
-export DOCKER_GID=$( [ "$(uname)" = "Darwin" ] && echo "0" || grep docker /etc/group | cut -d: -f3 )
-export COMPOSE_PROJECT_NAME=$(basename "$PWD")
+if [ "$(uname)" = "Darwin" ]; then
+    DOCKER_GID=0
+else
+    DOCKER_GID=$(grep docker /etc/group | cut -d: -f3)
+fi
+export DOCKER_GID
+COMPOSE_PROJECT_NAME=$(basename "$PWD")
+export COMPOSE_PROJECT_NAME
 # devbase root の非機密設定 (env) を読み込む。
 #
 # 機密 (認証情報) はここでは読まない。暗号化された機密は Python 本体が必要に
@@ -47,6 +53,7 @@ export COMPOSE_PROJECT_NAME=$(basename "$PWD")
 # source すると、CRLF 改行や `|` / `&` 等の特殊文字を含む値で syntax error に
 # なる。compose は同階層の .env を自動で読むため wrapper 側で project .env を
 # source する必要は無い。
+# shellcheck disable=SC1091  # env は利用者が devbase root に置くファイルで、場所は実行時の DEVBASE_ROOT で決まる
 [ -f "${DEVBASE_ROOT}/env" ] && set -a && source "${DEVBASE_ROOT}/env" && set +a
 
 # 呼び出し元 (初期 CWD) の env で定義された変数キーを記録しておく。
@@ -58,6 +65,7 @@ export COMPOSE_PROJECT_NAME=$(basename "$PWD")
 # env パース仕様は env_var_keys() のコメント参照。
 _CALLER_ENV_KEYS=""
 [ -f "env" ] && _CALLER_ENV_KEYS="$(env_var_keys ./env)"
+# shellcheck disable=SC1091  # 呼び出し元の env は利用者が置くファイルで、場所は実行時のカレントディレクトリで決まる
 [ -f "env" ] && set -a && source ./env && set +a
 
 # Export for Python modules
@@ -140,27 +148,44 @@ cmd_build() {
         fi
     }
 
-    # Detect Dockerfile path from compose.yml
-    local dockerfile_path="Dockerfile"
-    if [ -f "compose.yml" ]; then
-        # Try to extract dockerfile path from compose.yml (simple grep approach)
-        local dockerfile_line=$(grep -A 3 "build:" compose.yml | grep "dockerfile:" | head -1 | awk '{print $2}')
-        if [ -n "$dockerfile_line" ]; then
-            dockerfile_path="$dockerfile_line"
-        fi
+    # compose.yml の build: 直後 3 行から <key>: の値を取る (無ければ空文字。パイプの最後の awk が 0 を返す)
+    compose_build_field() {
+        grep -A 3 "build:" compose.yml | grep "$1:" | head -1 | awk '{print $2}'
+    }
 
-        # If dockerfile is relative, combine with context path
-        local context_line=$(grep -A 3 "build:" compose.yml | grep "context:" | head -1 | awk '{print $2}')
-        if [ -n "$context_line" ]; then
-            # Expand environment variables in context path
-            context_line=$(eval echo "$context_line")
-            if [[ "$dockerfile_path" != /* ]]; then
-                dockerfile_path="${context_line}/${dockerfile_path}"
+    # compose.yml の build: の dockerfile/context からプロジェクトの Dockerfile のパスを出す (既定は Dockerfile)
+    resolve_project_dockerfile() {
+        local dockerfile_path="Dockerfile"
+        if [ -f "compose.yml" ]; then
+            # Try to extract dockerfile path from compose.yml (simple grep approach)
+            local dockerfile_line
+            dockerfile_line=$(compose_build_field dockerfile)
+            if [ -n "$dockerfile_line" ]; then
+                dockerfile_path="$dockerfile_line"
+            fi
+
+            # If dockerfile is relative, combine with context path
+            local context_line
+            context_line=$(compose_build_field context)
+            if [ -n "$context_line" ]; then
+                # Expand environment variables in context path
+                # コマンド置換の中では set -e が効かないため、展開の失敗 (${VAR:?} など) は明示的に返す
+                context_line=$(eval echo "$context_line") || return
+                if [[ "$dockerfile_path" != /* ]]; then
+                    dockerfile_path="${context_line}/${dockerfile_path}"
+                fi
             fi
         fi
-    fi
+        printf '%s\n' "$dockerfile_path"
+    }
 
-    local base_image_name=$(check_base_image_dependency "$dockerfile_path")
+    # Detect Dockerfile path from compose.yml
+    local dockerfile_path
+    dockerfile_path=$(resolve_project_dockerfile) || return
+
+    # check_base_image_dependency の非 0 は「devbase-* を使わない」の判定で、失敗ではない (#247)
+    local base_image_name
+    base_image_name=$(check_base_image_dependency "$dockerfile_path") || true
     local base_image_to_build="${base_image_name:-devbase-base}"
 
     if [ "$project_no_cache" = "1" ]; then
@@ -375,6 +400,7 @@ maybe_cd_project() {
     for _k in $_CALLER_ENV_KEYS; do
         unset "$_k"
     done
+    # shellcheck disable=SC1091  # 切り替え先のプロジェクトの env は利用者が置くファイルで、場所は実行時に決まる
     [ -f "env" ] && set -a && source ./env && set +a
     return 0
 }

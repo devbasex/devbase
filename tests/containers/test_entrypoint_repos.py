@@ -353,6 +353,47 @@ def test_a_broken_folder_record_does_not_fail_startup(tmp_path, work):
     assert "Warning" in result.stdout + result.stderr
 
 
+# macOS の base64 -d は "not-base64!!" を終了コード 0 で通す。"%%%%" はどの実装でも失敗する。
+UNDECODABLE = "%%%%"
+
+
+def test_workspace_falls_back_when_the_folders_cannot_be_decoded(tmp_path, work):
+    """FOLDERS の復号そのものが失敗したら、完成品 (B64) へ切り替える。"""
+    document = {"folders": [{"name": "app", "path": "/work/app"}]}
+    encoded = base64.b64encode(json.dumps(document).encode()).decode()
+
+    result, dest = write_workspace(
+        work, {"DEVBASE_WORKSPACE_FOLDERS": UNDECODABLE, "DEVBASE_WORKSPACE_B64": encoded},
+        tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "Warning: Failed to decode DEVBASE_WORKSPACE_FOLDERS" in result.stdout
+    assert json.loads(dest.read_text()) == document
+
+
+@pytest.mark.parametrize("folders", [None, UNDECODABLE], ids=["no-folders", "broken-folders"])
+def test_a_broken_prebuilt_document_keeps_the_old_workspace(tmp_path, work, folders):
+    """完成品も壊れていたら警告だけ出し、.tmp を残さず、既にある workspace を上書きしない。"""
+    dest = work / "sample.code-workspace"
+    dest.write_text("old")
+    env = {"DEVBASE_WORKSPACE_B64": UNDECODABLE}
+    if folders is not None:
+        env["DEVBASE_WORKSPACE_FOLDERS"] = folders
+
+    result, dest = write_workspace(work, env, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    write_warning = f"Warning: Failed to write workspace file: {dest}"
+    assert write_warning in result.stdout
+    decode_warning = "Warning: Failed to decode DEVBASE_WORKSPACE_FOLDERS"
+    if folders is None:
+        assert decode_warning not in result.stdout
+    else:
+        assert result.stdout.index(decode_warning) < result.stdout.index(write_warning)
+    assert not Path(f"{dest}.tmp").exists()
+    assert dest.read_text() == "old"
+
+
 # ---------------------------------------------------------------------------
 # primary への cd
 # ---------------------------------------------------------------------------
