@@ -188,7 +188,7 @@
     {
       "term": "グループの宣言",
       "context": "secret",
-      "meaning": "projects/<name>/env に書いた空でない DEVBASE_ACCOUNT_GROUP の行。グループを決める唯一の出所",
+      "meaning": "projects/<name>/env に書いた空でない DEVBASE_ACCOUNT_GROUP の行。プロジェクトの所属グループを決める唯一の出所（操作の対象は --group・TUI の選択でも明示できる）",
       "source": "",
       "pending_source": "issues/issue-315-design.md"
     },

@@ -30,25 +30,35 @@
 | --- | --- | --- | --- | --- |
 | グループの宣言 | 各 plugin repo（`projects/<name>/env`）。devbase は読むだけ | プロジェクトの `env` の `DEVBASE_ACCOUNT_GROUP` の行 | — | グループ名・出所（ファイルと行番号） |
 | 接続設定 | `cmd_env_backend_use`。`default` の読み替えを外すのは利用者の手（決定 9） | `backend.yml` の `openbao` 節 | — | `layout`・`group_aliases` |
-| グループのボリューム | 作るのは `VolumeManager.ensure_volumes`、移し先へ中身を書くのはボリュームの移行（`VolumeMigration`） | `devbase_home_<group>` | — | ボリューム名 |
+| グループのボリューム | `VolumeManager`（ボリュームの名前の決定と作成）。中身を書く経路は下の表に限る | `devbase_home_<group>` | — | ボリューム名 |
 | スナップショットの系列 | `SnapshotManager` | `backups/snapshot.yml` の系列 | 世代 | ボリュームの組 |
 
-- 1 回の操作が書き換える集約は 1 つである。ボリュームの移行は移し先のボリュームだけを書き、宣言・接続設定・
-  元のボリュームを書かない（I7）
+グループのボリュームを書く経路は次の 3 つで、ボリュームを作るのはどれも `VolumeManager` を通す。
+
+| 経路 | 書くもの | 入口 | 前提 |
+| --- | --- | --- | --- |
+| 作成 | 無ければ空のボリュームを作る | `VolumeManager.ensure_volumes`（`up` / `scale`） | 宣言の検査を通った後（I4） |
+| 移行 | 先を作り、空の先へ元の中身を写す | `VolumeMigration`。先は `VolumeManager.create_volume` で作り、ヘルパーのコンテナで写す | 元と先を使うコンテナが止まっていて、先が空（I7） |
+| 復元 | メタに書かれたボリュームの中身を世代で置き換える | `SnapshotManager.restore`（今のまま） | 旧既定の系列は元のボリュームへだけ戻す（I10・決定 8） |
+
+- ボリュームの移行など、ドメインの個別の操作が書き換える集約は 1 つである。ボリュームの移行は移し先の
+  ボリュームだけを書き、宣言・接続設定・元のボリュームを書かない（I7）。`up` / `scale` はこの規則の対象に
+  しない。ボリュームの作成と自動スナップショットの 2 つを書く今の起動の動作を残す（「データ構造」の表の F10）
 - 宣言の持ち主は devbase の外にある。devbase の PR は宣言を書かない（前提 13）
 
 ### 不変条件
 
 | # | 集約 | 条件 | 破れたときの扱い |
 | --- | --- | --- | --- |
-| I1 | グループの宣言 | グループを決める出所は `projects/<name>/env` の空でない宣言だけである。`$DEVBASE_ROOT/env`・既定の値からは決めない | 宣言が無い・空・`$DEVBASE_ROOT/env` に行がある → `GroupDeclarationError`。止めた文でファイルと行を名指しする |
+| I1 | グループの宣言 | プロジェクトの所属グループを決める出所は `projects/<name>/env` の空でない宣言だけである。`$DEVBASE_ROOT/env`・既定の値からは決めない。操作の対象のグループ（E2）は、別に `--group` と TUI の選択で明示できる | 宣言が無い・空・`$DEVBASE_ROOT/env` に行がある → `GroupDeclarationError`。止めた文でファイルと行を名指しする |
 | I2 | グループの宣言 | プロセスの環境変数の `DEVBASE_ACCOUNT_GROUP` は、値があれば宣言と同じでなければならない | `up` / `scale` は副作用の前に止まり、2 つの値と出所を出す |
 | I3 | グループの宣言 | `default` はグループ名として受け付けない。宣言・`--group`・`group_aliases` のキーと値のどれでも同じ | 検証 1 か所（`validate_account_group`）で弾き、移し先を書くよう示す |
 | I4 | グループの宣言 | `up` / `scale` は、宣言の検査を副作用のある処理（`.env` の作成・`pre-up`・自動スナップショット・ボリューム・生成物・コンテナ）より前に行う | 検査を各コマンドの先頭に置く。1 つでも作られたら壊れている |
 | I5 | 接続設定 | グループ別の置き場では、プロジェクトの外で `--group` の無い機密のコマンドは置き場を開かない | 終了コード 2 で止め、`--group <名前>` を示す |
 | I6 | 接続設定 | グループ別の置き場でない設定では、プロジェクトの外の機密のコマンドの振る舞いを変えない | `--group` は今どおり断る。宣言の要否はプロジェクトの中の検査（I1）だけが持つ |
-| I7 | グループのボリューム | ボリュームの移行は元のボリュームを書き換えず、消さない | 元を読み取り専用でマウントする。先が空でない・元が無い・元を使うコンテナが動いている → 何も書かずに止まる |
-| I8 | グループのボリューム | コンテナは `DEVBASE_ACCOUNT_GROUP` 無しで起動しない。`/persistent/ai` からグループ側へ取り込まない | entrypoint がリンクを張る前に 0 でない終了コードで終わる |
+| I7 | グループのボリューム | ボリュームの移行は元のボリュームを書き換えず、消さない | 元を読み取り専用でマウントする。先が空でない・元が無い・元か先を使うコンテナが動いている → 何も書かずに止まる |
+| I8 | グループのボリューム | コンテナは `DEVBASE_ACCOUNT_GROUP` 無しで起動しない | entrypoint がリンクを張る前に 0 でない終了コードで終わる |
+| I13 | グループのボリューム | entrypoint は `/persistent/ai` からグループ側へ取り込まない（前提 8） | 取り込みの処理を entrypoint から消す。取り込みが起きたら壊れている |
 | I9 | グループのボリューム | 暗黙に機密を読む経路（dispatch 前の注入・`env exec`）は、グループが決まらないときにどのグループの置き場も読まない | 空の結果で続ける。明示の機密のコマンドだけが止まる（決定 4） |
 | I10 | スナップショットの系列 | 旧既定のボリュームの系列は一覧・コピー・削除・ローテーション・元のボリュームへの復元ができる。新しい世代は作らない | 作成は宣言か `--group` で決めたグループだけを対象にするため、`default` の世代は構造上作られない |
 | I11 | 接続設定 | 全プロジェクトを回すコマンドは、グループ別の置き場が関わるとき、対象のプロジェクトに宣言の無いものが 1 つでもあれば書き込みの前に止まる | 名前を挙げて止め、`--exclude-project` で外せることを示す |
@@ -73,8 +83,8 @@
 | 用語 | 意味 | 用語集への反映 |
 | --- | --- | --- |
 | アカウントグループ | `DEVBASE_ACCOUNT_GROUP` の値。プロジェクトの `env` での宣言が必須で、既定の値を持たない。`default` は予約語。ボリューム `devbase_home_<group>` の単位でもある | 意味の変更（`secret`） |
-| グループの宣言 | `projects/<name>/env` に書いた空でない `DEVBASE_ACCOUNT_GROUP` の行。グループを決める唯一の出所 | 変更なし（`secret`。出所をこの設計へ） |
-| グループのボリューム | アカウントグループごとの `devbase_home_<group>`。コンテナの `/persistent/group` にマウントされる | 変更なし（`secret`。出所をこの設計へ） |
+| グループの宣言 | `projects/<name>/env` に書いた空でない `DEVBASE_ACCOUNT_GROUP` の行。プロジェクトの所属グループを決める唯一の出所（操作の対象は `--group`・TUI の選択でも明示できる） | 追加（`secret`） |
+| グループのボリューム | アカウントグループごとの `devbase_home_<group>`。コンテナの `/persistent/group` にマウントされる | 追加（`secret`） |
 | グループを決めるコマンド | 宣言か `--group` からグループを決めないと先へ進めないコマンド。`up` / `scale` / 機密のコマンド / `snapshot create`（決定 3） | 追加（`secret`） |
 | ボリュームの移行 | 旧既定のボリュームの中身を、利用者が指定したグループのボリュームへ写す操作。元を残す | 追加（`secret`） |
 | 旧既定のボリューム | この変更より前に、宣言の無いプロジェクトが使っていた `devbase_home_default`。移行の元で、スナップショットの系列にも残る | 追加（`secret`） |
@@ -112,7 +122,8 @@ F10 は devbase のコードを足さない。グループ名の規則を満た�
 | 全プロジェクトを回すコマンド（`env/bundle.py`・`env/io_import.py`・`commands/env_backend.py` の `_MigrationPlan` と `_probe_refs`） | グループ別の置き場が関わるとき、書き込みの前に `undeclared_projects` で止める（I11）。共通の参照のグループは `--group` か実行時のプロジェクトの宣言から決める |
 | CLI の引数（`lib/devbase/cli.py`） | `--group` を `env export` / `env import` / `env backend migrate` / `env backend test` / `snapshot create` に足す。`project migrate-volume` を足す。`_named_lifecycle_project` の判定を `ref_group` から `_grouped_layout` に変える（宣言の無いプロジェクトで例外を送らない） |
 | 接続設定の検証（`env/backend_config.py`） | `group_aliases` のキーか値が `default` なら、その対応を消すよう示す `BackendConfigError`（決定 9）。`_validate_group_name` の `default` の説明を消す |
-| ボリュームの移行（新設 `lib/devbase/volume/migrate.py`） | `VolumeMigration`：前提の検査（先の名前・元の有無・元を使う稼働中のコンテナ・先が空か）→ ヘルパーのコンテナで `cp -a` → 件数の照合。元は読み取り専用 |
+| ボリュームの移行（新設 `lib/devbase/volume/migrate.py`） | `VolumeMigration`：前提の検査（先の名前・元の有無・元か先を使う稼働中のコンテナ・先が空か）→ `VolumeManager.create_volume` で先を作る（無ければ）→ ヘルパーのコンテナで `cp -a` → 件数の照合。元は読み取り専用 |
+| ボリュームの作成（`volume/manager.py` の `VolumeManager`） | `_create_volume` を `create_volume` として公開し、`ensure_volumes` と移行の両方がこれで作る |
 | 移行の入口（`commands/project.py` の `cmd_project_migrate_volume`） | `devbase project migrate-volume --to <group> [--dry-run]` の引数の検証と結果の表示 |
 | スナップショット（`snapshot/manager.py`・`commands/snapshot.py`） | メタの検証で旧既定のボリュームを明示して許す（I10）。`create` は宣言か `--group` のグループを対象にし、どちらも無ければ終了コード 2。ヘルパーのイメージの用意を移行と共有する |
 | 状態の表示（`commands/status.py`） | `_get_account_group` を宣言から組む。外なら「なし（プロジェクトの外）」、宣言の無いプロジェクトなら「宣言なし」と出所 |
@@ -258,6 +269,7 @@ classDiagram
     groups ..> GroupRequiredError : 送る
     groups ..> manager : 名前の検証
     VolumeMigration ..> manager : 名前の検証
+    VolumeMigration ..> VolumeManager : 先の作成（create_volume）
     SecretStore ..> groups : ref_group
     OpenBaoSettings ..> manager : 名前の検証
 ```
@@ -269,7 +281,8 @@ classDiagram
 | `GroupRequiredError(DevbaseError)` | 新設 | グループ別の置き場でプロジェクトの外なのにグループが渡らない。`commands/env` は `GroupOptionError`（終了コード 2）へ写す |
 | `validate_account_group` | 新設 | 名前の規則の唯一の置き場。今の `resolve_account_group` の検証の本体を移し、`default` を予約語へ足す |
 | `resolve_account_group` | 変更 | 引数か環境変数を `validate_account_group` へ渡す。空は `GroupDeclarationError`（既定へ落ちない） |
-| `VolumeMigration` | 新設 | 移行の前提の検査と実行。元と先はボリューム名で持ち、グループ名は検証を通した後の値 |
+| `VolumeMigration` | 新設 | 移行の前提の検査と実行。元と先はボリューム名で持ち、グループ名は検証を通した後の値。先は `VolumeManager.create_volume` で作る |
+| `VolumeManager.create_volume` | 変更 | 今の `_create_volume` を公開する。グループのボリュームを作る唯一の入口（集約の持ち主） |
 | `SecretStore.ref_group` | 変更 | 上の「参照のグループ」 |
 | `OpenBaoSettings.validate` | 変更 | `group_aliases` の `default` を専用の文で拒む |
 
@@ -454,14 +467,14 @@ sequenceDiagram
     U->>M: migrate-volume --to nyle
     M->>M: 名前の検証
     M->>D: 元の有無（volume inspect）
-    M->>D: 元をマウントした稼働中のコンテナ（ps --filter volume）
+    M->>D: 元か先をマウントした稼働中のコンテナ（ps --filter volume）
     M->>D: 先の有無と中身（ヘルパーで最上位を数える）
     alt どれかが満たさない
         M-->>U: 終了コード 1（先へ書かない）
     else dry-run
         M-->>U: 件数と先の状態・終了コード 0
     else 満たす
-        M->>D: 先を作る（無ければ）
+        M->>D: 先を作る（無ければ。VolumeManager.create_volume）
         M->>D: ヘルパーで cp -a（元は読み取り専用）
         M->>D: 元と先の件数を数える
         M-->>U: 件数と次の手順・終了コード 0
@@ -469,7 +482,7 @@ sequenceDiagram
 ```
 
 ヘルパーのイメージはスナップショットと同じ `devbase-snapshot:latest` を使う（用意の処理を共有する）。検査から
-コピーまでの間に元を使うコンテナが起動される競合は防がない。コピーの直前に稼働中のコンテナを数え直し、
+コピーまでの間に元か先を使うコンテナが起動される競合は防がない。コピーの直前に稼働中のコンテナを数え直し、
 件数の照合で写し損ねを拾う（決定 6）。
 
 ### この端末の移行の状態
@@ -548,7 +561,8 @@ dispatch 前の注入と `env exec` は、利用者が機密を求めて打っ�
 ### 決定 6: ボリュームの移行はコマンドにし、元を `devbase_home_default` に固定する
 
 受け入れ条件は、先が空でない・元が無い・元を使うコンテナが動いている、のどれでも何も書かずに止まることを
-求める。文書の手順（`docker run … cp -a`）では、この 3 つの検査を利用者が毎回正しく行う前提になり、
+求める。加えて先を使うコンテナが動いているときも止まる（仕様の E6 の前提。空の先を稼働中のコンテナが
+マウントしていると、空の検査の後にログインの設定などが書き込まれ、コピーと競合する）。文書の手順（`docker run … cp -a`）では、この 3 つの検査を利用者が毎回正しく行う前提になり、
 テストで縛れない。コマンドにすれば検査をテストで縛れ、ほかの利用者の端末でも同じ手順で移せる（前提 6）。
 
 元を指定させない。この変更で使えなくなる名前は `default` だけで、ほかの名前からの移行は要求に無い。
@@ -559,7 +573,7 @@ dispatch 前の注入と `env exec` は、利用者が機密を求めて打っ�
 
 | 順 | 手順 | この順にする理由 |
 | --- | --- | --- |
-| 1 | 旧版のまま、宣言の無いプロジェクトのコンテナを `devbase down` で止める | 元を使うコンテナが動いていると移行が止まる |
+| 1 | 旧版のまま、宣言の無いプロジェクトと移し先のグループを宣言したプロジェクトのコンテナを `devbase down` で止める | 元か先を使うコンテナが動いていると移行が止まる |
 | 2 | devbase を新版へ更新する | 移行のコマンドは新版にある |
 | 3 | `devbase project migrate-volume --to nyle` | 宣言を届ける前に写す。新版で先に `up` すると先が空でなくなり、移行が止まる |
 | 4 | `secrets/backend.yml` の `group_aliases` から `default: nyle` を消す | 残すと機密のコマンドが止まる |
@@ -626,7 +640,8 @@ plugin repo の手元の `env` を書き換える。adminer の割り当て（�
 | `default` の宣言と `--group default` が拒まれる（I3） | どちらもエラーで、移し先を書く・渡すよう示す。スナップショットの作成・`migrate-volume --to default` も拒む | 入口のどれかで `validate_account_group` を通さない |
 | `group_aliases` の `default` で止まる（決定 9） | キーでも値でも、機密のコマンドが設定の読み込みで止まり、`backend.yml` と消す行を示す | 読み替えを黙って無視する・自動で消す |
 | `lib/devbase` と `containers/` に `default` の既定が残らない | 構成要素の「検査の手段」の `grep` が 0 件（CI の検査か単体テストで打つ） | 既定の値を 1 か所でも戻す |
-| entrypoint がグループ無しで止まる（I8） | `DEVBASE_ACCOUNT_GROUP` が空でリンクを張る前に 0 以外で終わり、グループが渡っていない旨を出す。`/persistent/ai` からグループ側へ取り込まない | 空を既定へ落とす・取り込みを残す |
+| entrypoint がグループ無しで止まる（I8） | `DEVBASE_ACCOUNT_GROUP` が空でリンクを張る前に 0 以外で終わり、グループが渡っていない旨を出す | 空を既定へ落とす |
+| entrypoint が `/persistent/ai` から取り込まない（I13） | グループが渡ったコンテナで、`/persistent/ai` に中身があってもグループ側へ写らない | 取り込みを残す |
 | `status` のグループの欄（F6） | 外では宣言が無いことが出て `default` が出ない。宣言済みの中ではその名前とボリュームが出る | 環境変数から既定へ落とす |
 | 文書に `default` をグループの既定とする文が残らない | 実装の最後に `docs/user`・`docs/specifications/secret-backend.md`・用語集を `grep` して、既定として説明する文が 0 件（手で読む） | 文書の更新を漏らす |
 | 移行で中身が写り元が残る（I7） | 元のファイル・ディレクトリ・持ち主・権限・シンボリックリンクが先に同じ形で現れ、元が残る。コピーの命令で元が読み取り専用で付く | 元を読み書きで付ける・リンクを辿る・コピー後に元を消す |

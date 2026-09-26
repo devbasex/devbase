@@ -58,7 +58,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | --- | --- | --- | --- | --- | --- |
 | 参照 | — | 機密の宛先（SecretRef）。適用範囲（global / project）と持ち主（team / user）の組み合わせで 4 種。version: 2 ではグループも持つ | — | — | `docs/specifications/secret-backend.md` |
 | アカウントグループ | — | DEVBASE_ACCOUNT_GROUP の値。プロジェクトの env での宣言が必須で、既定の値を持たない。default は予約語。ボリューム devbase_home_<group> の単位でもある | — | — | `docs/specifications/secret-backend.md` |
-| グループの宣言 | — | projects/<name>/env に書いた空でない DEVBASE_ACCOUNT_GROUP の行。グループを決める唯一の出所 | — | — | — |
+| グループの宣言 | — | projects/<name>/env に書いた空でない DEVBASE_ACCOUNT_GROUP の行。プロジェクトの所属グループを決める唯一の出所（操作の対象は --group・TUI の選択でも明示できる） | — | — | — |
 | グループのボリューム | — | アカウントグループごとの devbase_home_<group>。コンテナの /persistent/group にマウントされる | — | — | — |
 | グループを決めるコマンド | — | 宣言か --group からグループを決めないと先へ進めないコマンド。up / scale / 機密のコマンド / snapshot create | — | — | — |
 | ボリュームの移行 | — | 旧既定のボリュームの中身を、利用者が指定したグループのボリュームへ写す操作。元を残す | — | — | — |
