@@ -351,13 +351,13 @@
       "term": "隔離した tmux サーバ",
       "context": "test",
       "meaning": "TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない",
-      "pending_source": "issues/issue-239-requirements.md"
+      "source": "docs/specifications/base-shell-tests.md"
     },
     {
       "term": "keeper",
       "context": "tmux",
       "meaning": "tmux-clean が必ず残すセッション。tmux の中なら今のセッション、外ならベース名に属するうち番号が最小のもの",
-      "pending_source": "issues/issue-239-requirements.md"
+      "source": "docs/specifications/base-shell-tests.md"
     },
     {
       "term": "base のシェルスクリプト",
@@ -381,19 +381,19 @@
       "term": "実行元のクライアント",
       "context": "tmux",
       "meaning": "tmux-first を起動した端末として扱うクライアント。tmux の「現在のクライアント」のうち、最終操作が 10 秒以内のものだけを認める",
-      "pending_source": "issues/issue-239-design.md"
+      "source": "docs/specifications/base-shell-tests.md"
     },
     {
       "term": "故障の差し込み",
       "context": "test",
       "meaning": "実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと",
-      "pending_source": "issues/issue-239-design.md"
+      "source": "docs/specifications/base-shell-tests.md"
     },
     {
       "term": "偽の date",
       "context": "test",
       "meaning": "PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date",
-      "pending_source": "issues/issue-239-design.md"
+      "source": "docs/specifications/base-shell-tests.md"
     }
   ]
 }

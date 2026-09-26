@@ -93,8 +93,8 @@ tmux-first / tmux-clean / tmux-session が扱うセッションとクライア�
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| keeper | — | tmux-clean が必ず残すセッション。tmux の中なら今のセッション、外ならベース名に属するうち番号が最小のもの | — | — | — |
-| 実行元のクライアント | — | tmux-first を起動した端末として扱うクライアント。tmux の「現在のクライアント」のうち、最終操作が 10 秒以内のものだけを認める | — | — | — |
+| keeper | — | tmux-clean が必ず残すセッション。tmux の中なら今のセッション、外ならベース名に属するうち番号が最小のもの | — | — | `docs/specifications/base-shell-tests.md` |
+| 実行元のクライアント | — | tmux-first を起動した端末として扱うクライアント。tmux の「現在のクライアント」のうち、最終操作が 10 秒以内のものだけを認める | — | — | `docs/specifications/base-shell-tests.md` |
 
 ## 継続的インテグレーション（`ci`）
 
@@ -125,6 +125,6 @@ pytest が走るプロセスの環境と、テストが起動する外部のプ�
 | 隔離しない一覧 | — | lib/devbase が読むが、隔離の fixture が未設定へ戻さない変数の名前と、その理由。tests/conftest.py の NOT_ISOLATED_ENV | — | — | `docs/specifications/test-environment-isolation.md` |
 | 読み取りの集合 | — | lib/devbase のソースから静的に集めた、環境変数として読む変数名の集合 | — | — | `docs/specifications/test-environment-isolation.md` |
 | 漏れの検査 | — | 読み取りの集合が隔離の一覧と隔離しない一覧に収まっていることを確かめるテスト | — | — | `docs/specifications/test-environment-isolation.md` |
-| 隔離した tmux サーバ | — | TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない | — | — | — |
-| 故障の差し込み | — | 実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと | — | — | — |
-| 偽の date | — | PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date | — | — | — |
+| 隔離した tmux サーバ | — | TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない | — | — | `docs/specifications/base-shell-tests.md` |
+| 故障の差し込み | — | 実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと | — | — | `docs/specifications/base-shell-tests.md` |
+| 偽の date | — | PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date | — | — | `docs/specifications/base-shell-tests.md` |
