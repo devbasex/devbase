@@ -405,6 +405,28 @@ def text(message: str, *, default: str | None = None,
     return _input_text(message, default=default, allow_empty=allow_empty)
 
 
+def secret(message: str, *, allow_empty: bool = True):
+    """伏せ字の 1 行入力 (#273)。打った文字を画面に出さない。
+
+    戻り値: 入力文字列 (前後の空白は落とさない) / ``MENU_BACK`` (Esc → 1 つ前のメニューへ
+    戻る) / ``None`` (Ctrl-C → 全体中止)。Esc・Ctrl-C の規約は :func:`text` と同じ。
+    ``allow_empty=False`` のとき空文字は受け付けず再入力を促す。questionary 不在時は
+    ``getpass`` で代替する (Esc は検出できないため EOF / Ctrl-C のどちらも ``None``)。
+    値はログへ出さない。
+    """
+    while True:
+        if HAVE_QUESTIONARY:
+            ans = _ask_with_escape(questionary.password(message))
+        else:
+            ans = _input_secret(message)
+        if ans is None or ans is MENU_BACK:
+            return ans
+        if not ans and not allow_empty:
+            logger.error("値を入力してください。")
+            continue
+        return ans
+
+
 def confirm(message: str, *, default: bool = False):
     """y/n 確認を取る。
 
@@ -481,6 +503,17 @@ def _input_text(message: str, *, default: str | None,
             logger.error("値を入力してください。")
             continue
         return raw
+
+
+def _input_secret(message: str) -> str | None:
+    """``getpass`` ベースの伏せ字入力。EOF / Ctrl-C は中止 (``None``)。"""
+    import getpass
+
+    try:
+        return getpass.getpass(f"{message} ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
 
 
 def _input_confirm(message: str, *, default: bool) -> bool | None:
