@@ -65,7 +65,7 @@ E3 は受け入れ条件に含めない。要求の前提 5 のとおり、手�
 
 | # | 機能 | 誰が使うか |
 | --- | --- | --- |
-| F1 | `bin/` と `install.sh` へ入った新しい指摘を、水準によらず CI で止める | 開発者とレビュアー |
+| F1 | `bin/` と `install.sh` へ入った指摘を、warning や info の水準でも CI で止める | 開発者とレビュアー |
 | F2 | 手元で基準の版の shellcheck を `bin/devbase bin/rc install.sh` へ打つと 0 件で終わる | 開発者 |
 | F3 | ラッパーの起動時の環境と `devbase build` の shell の経路が、直す前と同じに動く | devbase の利用者 |
 
@@ -127,7 +127,7 @@ base_image_name=$(check_base_image_dependency "$dockerfile_path") || true
 | shellcheck の導入の手順（`ci.yml`、新設） | 基準の版の配布物を取得し、SHA-256 を照合して展開し、`PATH` の先頭へ置く。版が基準の版でなければ失敗する |
 | `bin/` の検査の手順（`ci.yml`） | `ludeeus/action-shellcheck` をやめ、`shellcheck bin/*` を既定の水準で打つ。先に版を出す |
 | `install.sh` の検査の手順（`ci.yml`） | `--severity=error` を外す。先に版を出す |
-| `containers/base/tmux-*` の検査の手順（`ci.yml`） | 先に版を出す。bin/ の水準に触れたコメント（#247）を今の形へ直す |
+| `containers/base/tmux-*` の検査の手順（`ci.yml`） | 先に版を出す。`bin/` の手順が水準を絞る理由を書いたコメントを、全手順が既定の水準で走る形の説明へ直す |
 | ラッパーの振る舞いのテスト（`tests/cli/test_wrapper_shellcheck_fixes.py`、新設） | I5・I6 を、`bin/devbase` を実プロセスで起動して固定する |
 | 抑止の注記の検査（`tests/ci/test_shellcheck_job.py`、新設） | I2 を、`bin/*` と `install.sh` の本文を読んで固定する |
 | 検査ジョブの形の検査（`tests/ci/test_shellcheck_job.py`、同上） | I3・I4 の形を、`ci.yml` を読んで固定する |
@@ -302,7 +302,7 @@ graph TD
 
 ### 決定 3: 163 行は分けた代入を `|| true` で受ける
 
-`check_base_image_dependency` の 1 は「devbase-* を使わない」という判定の結果で、失敗ではない。
+`check_base_image_dependency` の 1 は「devbase-* を使わない」という判定の結果を表す。
 出力は空のままで、次の行の `${base_image_name:-devbase-base}` が既定のベースイメージを選ぶ。
 `|| true` は、非 0 を承知で受けていることを行の上に書き出す。
 
@@ -350,7 +350,7 @@ I2〜I4 は、shellcheck の実行では確かめられない。I2 は指示の�
 ### 決定 8: `bin/rc` の理由の無い既存の指示には、理由のコメントだけを足す
 
 I2 は `bin/*` の全体に掛けるため、`bin/rc` 33 行の `# shellcheck source=/dev/null` も対象になる。
-この行は指摘ではなく、既に抑えている行である。直前へ理由のコメントを 1 行足せば I2 を満たし、
+この行は 9 件に含まれない、抑える指示の行である。直前へ理由のコメントを 1 行足せば I2 を満たし、
 処理は変わらない。
 
 I2 の検査を `bin/devbase` だけに絞る案は採らない。受け入れ条件 2 は抑止の注記を置いた行すべてを
@@ -381,5 +381,5 @@ I2 の検査を `bin/devbase` だけに絞る案は採らない。受け入れ�
 | --- | --- |
 | CI のログの形 | 手順ごとに `version: 0.11.0` が出ることは、実装の Pull Request の ShellCheck の検査ジョブで確かめる。手元では GitHub Actions を走らせない |
 | SHA-256 の出所 | 上の値は 2026-09-26 に配布物を取得して手元で計算したもので、配布元が公開する値との突き合わせはしていない。実装で配布元の Release の資産から計算し直し、一致を確かめてから書く |
-| runner の既存の shellcheck | ubuntu-latest に入っている shellcheck の版は確かめていない。`GITHUB_PATH` の先頭へ置けば版によらず基準の版が先に見つかり、版の確認の手順が食い違いを止める |
+| runner に入っている shellcheck | ubuntu-latest に入っている shellcheck の版は確かめていない。`GITHUB_PATH` の先頭へ置けば、runner の版が何であっても基準の版が先に見つかり、版の確認の手順が食い違いを止める |
 | 偽の `grep` の効き方 | ラッパーが `grep` を `PATH` から探すことを前提にする（絶対パスで呼んでいないことは `main` の本文で確かめた）。偽の `grep` が他の `grep` の呼び出しを本物へ渡すことは、実装のテストで確かめる |
