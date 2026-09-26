@@ -104,7 +104,7 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | 検査ジョブ | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest） | — | — |
 | 統合ブランチ | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — |
 | 指摘 | shellcheck が出す 1 件（SC の番号・水準・行） | — | — |
-| 抑止の注記 | 指摘を抑える # shellcheck の指示と、抑える理由のコメントの組 | — | — |
+| 抑止の注記 | 指摘を抑える shellcheck の指示（disable= / source=）と、抑える理由のコメントの組 | — | — |
 | base のシェルスクリプト | containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの | — | — |
 | 検査の対象 | CI の ShellCheck ジョブで、引数に containers/base/ のパスを持つ shellcheck の行が並べたファイル | — | — |
 | shellcheck の指示 | # shellcheck で始まるコメント（disable= / source= / shell=）。disable= と source= は抑止の注記の指示の側で、shell= は指摘を抑えない | — | — |

@@ -20,8 +20,9 @@
 | 集約 | 持ち主（書き換えてよいもの） | 根 | エンティティ | 値オブジェクト |
 | --- | --- | --- | --- | --- |
 | 検査の対象 | `.github/workflows/ci.yml` の `shellcheck` ジョブの、`containers/base/` を検査する 1 つの step | その step の `shellcheck` の呼び出し | — | 検査するファイルのパス |
-| base のシェルスクリプト | `containers/base/` の直下の各ファイル | 1 本のファイル | — | 指摘・shellcheck の指示（抑止の注記の指示と `shell=`）・理由のコメント |
+| base のシェルスクリプト | `containers/base/` の直下の各ファイル | 1 本のファイル | — | shellcheck の指示（抑止の注記の指示と `shell=`）・理由のコメント |
 
+指摘はファイルに書くものではなく、検査の対象がファイルを検査した結果として出るため、どちらの集約の値オブジェクトにも置かない。
 検査の対象は base のシェルスクリプトをパスでだけ参照する。2 つの集約を揃えるのは開発者で、
 揃っていないことを pytest が見つける（I1）。
 
@@ -32,7 +33,7 @@
 | I1 | 検査の対象 | base のシェルスクリプトはすべて、検査の対象の呼び出しの引数にある | pytest が失敗し、載っていないファイル名を出す |
 | I2 | base のシェルスクリプト | shellcheck 0.11.0 の既定の水準で指摘が 0 件 | 0.11.0 の指摘は、手元の base イメージでの検査（テスト設計の条件 1）で見つかる。CI の ShellCheck ジョブが失敗するのは、runner の `PATH` にある版が指摘を出したときだけで、#247 が版を 0.11.0 に揃えるまでは 0.11.0 だけが出す指摘で CI は落ちない（決定 9） |
 | I3 | base のシェルスクリプト | shellcheck の指示の行は 1 行ずつ、同じ行か直前の行に理由を持つ。直前の行が別の指示の行なら理由とみなさない | pytest が失敗し、ファイル名と行番号を出す |
-| I4 | base のシェルスクリプト | コメントと変数名の変更の前後で、ファイルの振る舞いが変わらない | source する経路の前（`DEVBASE_ENTRYPOINT_LIB_ONLY` の `return` より前と、`ai-cli-aliases.sh`・`shellrc-dir.sh` の全体）は、既存の source するテストが失敗する。`return` より後の変更（決定 5 の変数名だけ）はテストで通らず、実装 Pull Request のレビューが場合分けで確かめる |
+| I4 | base のシェルスクリプト | コメントと変数名の変更の前後で、ファイルの振る舞いが変わらない | source する経路の前（`DEVBASE_ENTRYPOINT_LIB_ONLY` の `return` より前と、`ai-cli-aliases.sh`・`shellrc-dir.sh` の全体）は、既存の source するテストが失敗する。`return` より後の、コメントでない変更（決定 5 の変数名だけ）はテストで通らず、実装 Pull Request のレビューが場合分けで確かめる |
 
 ### ドメインイベント
 
@@ -49,8 +50,9 @@
 | base のシェルスクリプト | `containers/base/` の直下の通常のファイルのうち、先頭行が `sh` か `bash` を指す shebang か、名前が `.sh` で終わるもの | 追加（`ci`） |
 | 検査の対象 | CI の ShellCheck ジョブで、引数に `containers/base/` のパスを持つ `shellcheck` の行が並べたファイル | 追加（`ci`） |
 | shellcheck の指示 | `# shellcheck` で始まるコメント（`disable=` / `source=` / `shell=`）。`disable=` と `source=` は抑止の注記の指示の側で、`shell=` は指摘を抑えない | 追加（`ci`） |
+| 抑止の注記 | 指摘を抑える shellcheck の指示（`disable=` / `source=`）と、抑える理由のコメントの組 | 改定（`ci`。shellcheck の指示を足したため、`shell=` を含まないことを書き足す） |
 
-「指摘」と「抑止の注記」は用語集にある意味のまま使う。
+「指摘」は用語集にある意味のまま使う。
 
 ## 機能一覧
 
@@ -166,10 +168,19 @@ fi
 ```
 
 試しに 10 件を書き換えた写しを一時ディレクトリで検査し、shellcheck 0.11.0（base イメージ）と
-0.9.0（公式の配布物、GitHub の `ubuntu-24.04` の runner が apt で持つ版）の両方で exit 0 になることを確かめた（2026-09-26）。
+0.9.0（公式の配布物。Ubuntu 24.04 の apt が持つ版で、CI の `runs-on: ubuntu-latest` が 24.04 を指す間は runner の版もこれになる。`ubuntu-latest` の実体は未確認の節に残す）の両方で exit 0 になることを確かめた（2026-09-26）。
 このときは 2〜5 を引用の追加で直していた。2〜5 を注記に改めた後、`sudo install` の 2 つの行の直前へ
 `# shellcheck disable=SC2046` を置いた写しでも、両方の版で SC2046 が 0 件になることを確かめた（2026-09-26）。
 書き換える前は、0.9.0 も 0.11.0 と同じ 10 件を出す。
+
+最終形（表の 10 件すべて。1〜5・7・10 は注記、6 は `for _`、8・9 は `shell=`）を当てた 7 本の写しを
+一時ディレクトリに置き、次の 2 つがどちらも exit 0（出力なし）になることを確かめた（2026-09-26）。
+
+```bash
+F="entrypoint.sh dind tmux-clean tmux-first tmux-session ai-cli-aliases.sh shellrc-dir.sh"
+docker run --rm -v "$PWD":/w -w /w --entrypoint shellcheck devbase-base:latest $F   # 0.11.0
+docker run --rm -v "$PWD":/w -w /w koalaman/shellcheck:v0.9.0 $F                  # 0.9.0
+```
 
 ## 処理の流れ
 
@@ -344,8 +355,9 @@ PyYAML は `pyproject.toml` の実行時の依存にあり、テストが新し�
 
 前提 4 のとおり版の揃え方は #247 が決める。この変更の step は、ジョブの中で `PATH` の先にある
 `shellcheck` を呼ぶだけにし、#247 が版を揃えればそのまま同じ版で検査される。書き換えた後の 7 本は
-0.9.0 と 0.11.0 の両方で 0 件のため、どちらが先に `main` へ入っても ShellCheck ジョブは成功する
-（「並行する変更との重なり」）。
+0.9.0 と 0.11.0 の両方で 0 件のため、runner の版が 0.9.0 か 0.11.0 なら、どちらが先に `main` へ入っても
+ShellCheck ジョブは成功する（「並行する変更との重なり」）。`ubuntu-latest` の実際の版が別の指摘を出すかは、
+実装 Pull Request で確かめる（I2・「未確認のまま残ること」）。
 
 この変更で 0.11.0 を入れる step を足す形は採らない。#247 の対象範囲の「CI の ShellCheck ジョブの
 shellcheck の版を 0.11.0 に揃えること」と重なり、同じ仕組みが 2 つできる。

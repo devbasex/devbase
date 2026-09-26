@@ -290,8 +290,8 @@
     {
       "term": "抑止の注記",
       "context": "ci",
-      "meaning": "指摘を抑える # shellcheck の指示と、抑える理由のコメントの組",
-      "pending_source": "issues/issue-247-requirements.md"
+      "meaning": "指摘を抑える shellcheck の指示（disable= / source=）と、抑える理由のコメントの組",
+      "pending_source": "issues/issue-259-design.md"
     },
     {
       "term": "環境の隔離",
