@@ -21,7 +21,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -29,7 +28,8 @@ from pathlib import Path
 
 import pytest
 
-from .tmux_harness import (BASE_DIR, SCRIPT, SHORT_NAMES, Client, TmuxEnv, needs_tmux)
+from .tmux_harness import (BASE_DIR, SCRIPT, SHORT_NAMES, Client, TmuxEnv, needs_tmux,
+                           write_fake_date)
 from .tmux_harness import short_root as _short_root
 from .tmux_harness import wait as _wait
 
@@ -747,17 +747,12 @@ def test_go_inside_without_known_client_does_nothing(tm):
     # 実時間で 10 秒を待ち越さず、`date +%s` だけを 11 秒先へ進める (#290)
     later = tm.root / "later"
     later.mkdir()
-    fake_date = later / "date"
-    fake_date.write_text(
-        '#!/bin/sh\n'
-        f'real={shlex.quote(shutil.which("date"))}\n'
-        'if [ "$*" = "+%s" ]; then echo $(( $("$real" +%s) + 11 )); else exec "$real" "$@"; fi\n'
-    )
-    fake_date.chmod(0o755)
+    write_fake_date(later)
     before = tm.all_clients()
 
     env = tm.inside_env(home)
     env["PATH"] = f"{later}:{env['PATH']}"
+    env["FAKE_DATE_OFFSET"] = "11"
     done = tm.run("tmux-go", "devbase-3", env=env)
 
     assert done.returncode == 1

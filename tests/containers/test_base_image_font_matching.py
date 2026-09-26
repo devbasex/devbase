@@ -10,7 +10,8 @@ Dockerfile の文字列検査 (``test_base_dockerfile_fonts.py``) では足り�
 古いイメージを「失敗」として知らせると、赤の意味が「壊れている」と「イメージが古い」で混ざる。
 
 **``docker run`` はセッションで 1 回に抑える。** ``fc-match`` を 28 回別々に走らせると、
-コンテナの起動だけで数十秒かかる。
+コンテナの起動だけで数十秒かかる。並列 (pytest-xdist) では session scope がワーカーごとに
+なるため、このモジュールのケースは ``xdist_group`` で 1 つのワーカーへ寄せる。
 """
 
 from __future__ import annotations
@@ -27,6 +28,9 @@ BUILD_HINT = f"`devbase build base --no-cache` で {IMAGE} を建て直すと、
 
 # イメージの中に /etc/fonts/local.conf が無い (= この変更より前のイメージ) ときの終了コード
 STALE_IMAGE_EXIT = 90
+
+# 並列でも probe (docker run) を 1 回で済ませるため、全ケースを同じワーカーへ割り当てる
+pytestmark = pytest.mark.xdist_group("base_image_font_probe")
 
 # 設計「解決先の表」の「変更後」の列。26 行のうち Meiryo / Yu Gothic / MS PGothic の行を
 # 3 つへ開いてある

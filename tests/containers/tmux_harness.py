@@ -224,6 +224,14 @@ exec "$real" "$@"
 """
 
 
+def write_fake_date(directory: Path) -> Path:
+    """``directory/date`` に偽の ``date`` を置く。進める秒は環境変数 ``FAKE_DATE_OFFSET`` で渡す。"""
+    path = directory / "date"
+    path.write_text(_FAKE_DATE.format(real=shlex.quote(shutil.which("date") or "/bin/date")))
+    path.chmod(0o755)
+    return path
+
+
 class ScriptTmuxEnv(TmuxEnv):
     """``fake/`` に故障を差し込む ``tmux`` と偽の ``date`` を置いた隔離環境。
 
@@ -236,13 +244,11 @@ class ScriptTmuxEnv(TmuxEnv):
         fake.mkdir()
         self.faults = root / "faults"
         real_tmux = shutil.which("tmux") or "/nonexistent/tmux"
-        real_date = shutil.which("date") or "/bin/date"
-        for name, template, real in (("tmux", _FAULT_WRAPPER, real_tmux),
-                                     ("date", _FAKE_DATE, real_date)):
-            path = fake / name
-            path.write_text(template.format(real=shlex.quote(real),
-                                            faults=shlex.quote(str(self.faults))))
-            path.chmod(0o755)
+        wrapper = fake / "tmux"
+        wrapper.write_text(_FAULT_WRAPPER.format(real=shlex.quote(real_tmux),
+                                                 faults=shlex.quote(str(self.faults))))
+        wrapper.chmod(0o755)
+        write_fake_date(fake)
         super().__init__(root, fake=fake)
 
     def _add_rule(self, action: str, prefix: str) -> None:

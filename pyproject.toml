@@ -23,7 +23,8 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # 全体テストを CPU の数で並列に流す (#290)。直列に戻すときは -n 0
-addopts = "-n auto"
+# loadgroup: xdist_group の印を付けたケースを同じワーカーへ寄せる (印の無いケースは load と同じ)
+addopts = "-n auto --dist loadgroup"
 pythonpath = ["lib"]
 
 [tool.uv.sources]
