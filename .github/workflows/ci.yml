@@ -58,9 +58,18 @@ jobs:
         run: shellcheck --version | sed -n 2p && shellcheck bin/*
       - name: Run ShellCheck on install.sh
         run: shellcheck --version | sed -n 2p && shellcheck install.sh
-      # base イメージへ入れる tmux のコマンド (PLAN69)
-      - name: Run ShellCheck on containers/base/tmux-*
-        run: shellcheck --version | sed -n 2p && shellcheck containers/base/tmux-first containers/base/tmux-clean containers/base/tmux-session
+      # containers/base のシェルスクリプト (#259)。シェルスクリプトを足したらここへも足す。
+      # 漏れは tests/containers/test_base_shellcheck_ci.py が落とす
+      - name: Run ShellCheck on containers/base/
+        run: |
+          shellcheck --version | sed -n 2p && shellcheck \
+            containers/base/ai-cli-aliases.sh \
+            containers/base/dind \
+            containers/base/entrypoint.sh \
+            containers/base/shellrc-dir.sh \
+            containers/base/tmux-clean \
+            containers/base/tmux-first \
+            containers/base/tmux-session
 
   pytest:
     name: Pytest (Python ${{ matrix.python-version }})

@@ -593,6 +593,8 @@ devbase_log_account_group() {
 
 # テストは関数定義だけを使う (source 時のみ有効な return で以降を読み飛ばす)。
 if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
+    # 実行したときは return が失敗して exit へ進む。shellcheck は source を想定せず exit を届かないと読む
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || exit 0
 fi
 
@@ -628,6 +630,8 @@ if [ -n "$GIT_CREDENTIALS_BASE64" ]; then
     echo "$GIT_CREDENTIALS_BASE64" | base64 -d > "$TMP_CRED"
     # Ensure ~/.git-credentials directory is writable
     mkdir -p ~/.config
+    # id が失敗して空を出したとき、引用があると uutils の install が空の持ち主を「変えない」と読み root の持ち主で書くため引用しない
+    # shellcheck disable=SC2046
     sudo install -m 600 -o $(id -u) -g $(id -g) "$TMP_CRED" ~/.git-credentials 2>/dev/null || \
         (cat "$TMP_CRED" > ~/.git-credentials && chmod 600 ~/.git-credentials)
     rm -f "$TMP_CRED"
@@ -649,6 +653,8 @@ if [ -z "$GIT_CREDENTIALS_BASE64" ] && [ -n "$GITHUB_PERSONAL_ACCESS_TOKEN" ]; t
     # Create .git-credentials file with username:token format
     TMP_CRED=$(mktemp)
     echo "https://x-access-token:$GITHUB_PERSONAL_ACCESS_TOKEN@github.com" > "$TMP_CRED"
+    # id が失敗して空を出したとき、引用があると uutils の install が空の持ち主を「変えない」と読み root の持ち主で書くため引用しない
+    # shellcheck disable=SC2046
     sudo install -m 600 -o $(id -u) -g $(id -g) "$TMP_CRED" ~/.git-credentials 2>/dev/null || \
         (cat "$TMP_CRED" > ~/.git-credentials && chmod 600 ~/.git-credentials)
     rm -f "$TMP_CRED"
@@ -746,7 +752,7 @@ if [ "$ENABLE_DIND" = "true" ] || [ "$ENABLE_DIND" = "1" ]; then
 
         # 起動確認（最大30秒待機）
         echo "Waiting for Docker daemon to be ready..."
-        for i in {1..30}; do
+        for _ in {1..30}; do
             if docker info > /dev/null 2>&1; then
                 echo "Docker daemon is ready"
                 break
@@ -758,6 +764,8 @@ if [ "$ENABLE_DIND" = "true" ] || [ "$ENABLE_DIND" = "1" ]; then
         if ! docker info > /dev/null 2>&1; then
             echo "ERROR: Docker daemon failed to start within 30 seconds"
             echo "Dockerd process:"
+            # 診断として利用者と起動の引数を含む全列を出したい。pgrep は PID (-a でも別の列) だけを出す
+            # shellcheck disable=SC2009
             ps aux | grep dockerd || echo "  No dockerd process found"
             echo "Docker socket:"
             ls -la /var/run/docker.sock 2>/dev/null || echo "  Docker socket not found"

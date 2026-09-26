@@ -249,17 +249,23 @@ PR には以下の情報を記載する。
 宛先を問わずすべての Pull Request と、`main`・`release/**`・`mission/**` への push で
 `.github/workflows/ci.yml` が走り、
 `compileall`（Python 3.10 / 3.11 / 3.12）・`ruff check --select=E9,F63,F7,F82 lib`・
-`bin/*`・`install.sh`・`containers/base/tmux-*` の ShellCheck・`uv sync --locked` の後の `pytest tests/`
+`bin/*`・`install.sh`・`containers/base/` のシェルスクリプトの ShellCheck・`uv sync --locked` の後の `pytest tests/`
 （Python 3.10 / 3.13）を実行する。CI に `DEVBASE_ROOT` と Docker は無いため、テストは
 自前の一時ディレクトリを `DEVBASE_ROOT` に向け、実機を要するものは理由を添えて skip する。
 
 ShellCheck は基準の版（`devbase-base:latest` の shellcheck と同じ版、現在は 0.11.0）の公式の配布物を
 SHA-256 で照合して入れ、既定の水準（style まで）で走らせる。指摘が 1 件でもあればジョブが失敗する。
 抑えるしかない指摘は `# shellcheck disable=SCxxxx` と抑える理由を同じ行か直前の行に書く
-（`tests/ci/test_shellcheck_job.py` が理由の無い指示を止める）。手元では次で CI と同じ版の検査を打てる。
+（`tests/ci/test_shellcheck_job.py` と `tests/containers/test_base_shellcheck_ci.py` が理由の無い指示を止める）。
+`containers/base/` の直下にシェルスクリプト（`sh` か `bash` の shebang を持つか、拡張子が `.sh` のもの）を足したら、
+`ci.yml` の `Run ShellCheck on containers/base/` の一覧へも足す。足し忘れは `tests/containers/test_base_shellcheck_ci.py` が落とす。
+手元では次で CI と同じ版の検査を打てる。
 
 ```bash
 docker run --rm -v "$PWD":/w -w /w --entrypoint shellcheck devbase-base:latest bin/devbase bin/rc install.sh
+docker run --rm -v "$PWD":/w -w /w --entrypoint shellcheck devbase-base:latest containers/base/ai-cli-aliases.sh \
+  containers/base/dind containers/base/entrypoint.sh containers/base/shellrc-dir.sh \
+  containers/base/tmux-clean containers/base/tmux-first containers/base/tmux-session
 ```
 
 ### 手動テストの手順
