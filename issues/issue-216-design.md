@@ -21,6 +21,8 @@
 | --- | --- | --- | --- | --- |
 | CI のワークフロー | `.github/workflows/ci.yml`。この変更で書き換えるのは `on:` の節だけ | ワークフロー（`name: CI`） | 検査ジョブ（`name` で識別する） | トリガー（イベントと、宛先・行き先のブランチの絞り込み） |
 
+構成要素の `tests/ci/` と `docs/developer/contributing.md` は集約に属さない。集約の状態を読んで固定する回帰テストと、それを説明する文書であり、どちらもワークフローの状態を書き換えない。
+
 ### 不変条件
 
 | # | 集約 | 条件 | 破れたときの扱い |
@@ -29,13 +31,15 @@
 | I2 | CI のワークフロー | `push` のトリガーの `branches` は、`main`・`release/**`・`mission/**` の 3 つとちょうど一致する | 回帰テストが落ちる |
 | I3 | CI のワークフロー | 検査ジョブが作るチェックの名前は次の 7 件である: `Python syntax check (3.10)` / `(3.11)` / `(3.12)`・`Ruff lint`・`ShellCheck`・`Pytest (Python 3.10)`・`Pytest (Python 3.13)` | 回帰テストが落ちる。`main` 宛ての Pull Request で必須チェックが「待ち」のまま残る |
 
+I3 の 7 件のうち、`main` の保護の必須チェックは `Python syntax check` の 3 版・`Ruff lint`・`ShellCheck` の 5 件である（要求の前提 3）。`Pytest` の 2 件は必須ではない（必須に足すかは #277）。E2 と処理の流れの「必須チェック 5 件」はこの 5 件を指す。
+
 ### ドメインイベント
 
 | # | イベント | 発生元 | 受け手 |
 | --- | --- | --- | --- |
 | E1 | Pull Request を開いた（または push で更新した） | 開発者・エージェント（GitHub が `pull_request` を発行する） | `pull_request` のトリガー |
 | E2 | 検査ジョブが起動した | `pull_request` / `push` のトリガー | Pull Request の画面のチェック一覧と、`main` の保護設定の照合 |
-| E3 | 統合ブランチへ Pull Request を取り込んだ（push が起きた） | マージ（GitHub が `push` を発行する） | `push` のトリガー |
+| E3 | ブランチへ push が起きた（`main`・統合ブランチへの Pull Request の取り込みを含む） | 開発者・エージェントの push とマージ（GitHub が `push` を発行する） | `push` のトリガー |
 
 ### 用語
 
@@ -187,8 +191,8 @@ devbase の利用者の操作と配布物は変わらない（要求の「影響
 | I1 | `test_pull_request_is_not_filtered_by_branch` |
 | I2 | `test_push_branches_are_main_and_integration` |
 | I3 | `test_check_names_match_required_checks` |
-| 受け入れ条件 1 | I1 のテストに加え、実機で確かめる。実装の Pull Request（宛先 `mission/**`）で `gh pr checks` が 7 件を返す。捨てのブランチ `release/v9.9.9` と `tmp/ci-probe-216` を切り、それぞれを宛先にした下書きの Pull Request で `gh pr checks` が 7 件を返すことを見る。見たら閉じて、2 つのブランチを消す。`main` 宛ては、統合ブランチから `main` への Pull Request で見る |
-| 受け入れ条件 2 | I2 のテストに加え、実装の Pull Request を取り込んだ後の `gh run list --branch <mission ブランチ> --event push` が 1 件の run（7 件のジョブ）を返すことを見る。`tmp/ci-probe-216` への push では、`gh run list --branch tmp/ci-probe-216 --event push` が 0 件を返すことを見る |
+| 受け入れ条件 1 | I1 のテストに加え、実機で確かめる。先に宛先の `mission/**` ブランチを `main` から切って push し、それを宛先に実装の Pull Request を出す（統合ブランチはまだ無い。要求の前提 1）。実装の Pull Request で `gh pr checks` が 7 件を返す。捨てのブランチ `release/v9.9.9` と `tmp/ci-probe-216` を `main` から切り、それぞれを宛先にし、head を実装のブランチ（新しい `ci.yml` を持つ）にした下書きの Pull Request で `gh pr checks` が 7 件を返すことを見る。見たら閉じる。`main` 宛ては、統合ブランチから `main` への Pull Request で見る |
+| 受け入れ条件 2 | I2 のテストに加え、実装の Pull Request を取り込んだ後の `gh run list --branch <mission ブランチ> --event push` が 1 件の run（7 件のジョブ）を返すことを見る。`tmp/ci-probe-216` への push は、新しい `ci.yml` を持つ commit で確かめる（`main` の commit は古い `ci.yml` の `branches: [main]` で判定され、変更の有無に関係なく 0 件になる）。受け入れ条件 1 の下書きを閉じた後、`git push origin <実装のブランチ>:tmp/ci-probe-216` で実装の commit を push し、`gh run list --branch tmp/ci-probe-216 --event push` が 0 件を返すことを見る。見たら `release/v9.9.9` と `tmp/ci-probe-216` を消す |
 | 受け入れ条件 3 | I3 のテストに加え、`main` 宛ての Pull Request で `gh pr checks --required` が 5 件とも pass になり、「待ち」が残らないことを見る |
 | 受け入れ条件 4 | `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest .github/workflows/ci.yml` が 0 件を返す。Docker が使えなければ、実装の Pull Request で検査ジョブが起動したこと（受け入れ条件 1 の実機の確認）で代える |
 | 受け入れ条件 5 | `git diff -U0 <宛先> -- .github/workflows/ci.yml` の hunk がすべて、`jobs:` の行より前にある |
