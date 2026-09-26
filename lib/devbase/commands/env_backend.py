@@ -58,12 +58,15 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
 def _project_names(devbase_root: Path) -> List[str]:
     """``projects/`` に実在し、参照の名前に使えるプロジェクト名 (名前順)"""
     project_names: List[str] = []
-    for entry in names.project_dirs(Path(devbase_root) / 'projects'):
-        try:
-            SecretRef.for_project(entry.name)
-        except DevbaseError:
-            continue
-        project_names.append(entry.name)
+    projects_dir = Path(devbase_root) / 'projects'
+    if projects_dir.is_dir():
+        for entry in sorted(projects_dir.iterdir()):
+            if names.counts_as_project(entry.name) and entry.is_dir():
+                try:
+                    SecretRef.for_project(entry.name)
+                except DevbaseError:
+                    continue
+                project_names.append(entry.name)
     return project_names
 
 
