@@ -26,6 +26,7 @@ from devbase.env.secret_store import (
 from devbase.env.store import safe_input
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.utils import names
 
 logger = get_logger(__name__)
 
@@ -395,7 +396,8 @@ def _check_conflicts(root: Path, store: SecretStore, report: Report) -> None:
     projects_dir = root / 'projects'
     if projects_dir.is_dir():
         refs.extend(SecretRef.for_project(p.name)
-                    for p in sorted(projects_dir.iterdir()) if p.is_dir())
+                    for p in sorted(projects_dir.iterdir())
+                    if names.counts_as_project(p.name) and p.is_dir())
 
     for ref in refs:
         if store.age.exists(ref) and store.plaintext.exists(ref):
@@ -567,11 +569,13 @@ def _ignore_probe_paths(root: Path, store: Optional[SecretStore] = None) -> List
 
     # プロジェクトごとの平文。実在するものがあればその名前で確かめるほうが、
     # 報告をそのまま直す手がかりにできる。
-    names: List[str] = []
+    project_names: List[str] = []
     projects_dir = root / 'projects'
     if projects_dir.is_dir():
-        names = [p.name for p in sorted(projects_dir.iterdir()) if p.is_dir()]
-    paths.extend(f'projects/{name}/.env' for name in names or [_SAMPLE_PROJECT_NAME])
+        project_names = [p.name for p in sorted(projects_dir.iterdir())
+                         if names.counts_as_project(p.name) and p.is_dir()]
+    paths.extend(f'projects/{name}/.env'
+                 for name in project_names or [_SAMPLE_PROJECT_NAME])
     return paths
 
 

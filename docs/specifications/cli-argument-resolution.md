@@ -32,7 +32,7 @@
 
 | 要素 | 置き場所 | 責務 |
 | --- | --- | --- |
-| 名前の形の規則 | `lib/devbase/utils/names.py` | `SINGLE_SEGMENT_NAME_PATTERN` と `is_single_segment_name(value)`、名前の形を利用者へ説明する文 `NAME_FORM_HINT`。`re` だけに依存し副作用を持たない（ログも出さない） |
+| 名前の形の規則 | `lib/devbase/utils/names.py` | `SINGLE_SEGMENT_NAME_PATTERN` と `is_single_segment_name(value)`、名前の形を利用者へ説明する文 `NAME_FORM_HINT`、プロジェクトとして数える名前の述語 `counts_as_project(name)`。`re` だけに依存し副作用を持たない（ログも出さない）。消費側は `from devbase.utils import names` と読み込み、module の属性として呼ぶ |
 | 名前の形の規則（shell） | `bin/devbase` | `_SINGLE_SEGMENT_NAME_RE` と `is_single_segment_name`。Python と同じ正規表現を文字列で持つ |
 | name 解決 | `bin/devbase` | `maybe_cd_project`。形・実在の順に見て、通れば `cd` と `COMPOSE_PROJECT_NAME` / `env` の再読み込み |
 | 解決の対象の一覧 | `bin/devbase` | `_PROJECT_NAME_SUBCOMMANDS`（`project` の対象）と `_NAME_RESOLVABLE_SHORTCUTS`（トップレベルの対象） |
@@ -133,10 +133,35 @@ shell が Python を呼ばずに同じ正規表現を文字列で持つのは、
 知らせは `verbose` に依存させない。知らせることが唯一の効果であり、黙る経路を作らない。文は
 完了形にしない（`projects/` に載る名前について、これから起きることを知らせるため）。
 
-`.` で始まる名前（`.vscode` など）は今までどおり同期の対象にならず、知らせも出ない。
+`.` で始まる名前（`.vscode` など）はプロジェクトとして数えず、同期の対象にならず、知らせも出ない。
 
 判定は `utils/names.is_single_segment_name`、名前の形の説明文は `utils/names.NAME_FORM_HINT` の
-1 か所にある。
+1 か所にある。`devbase up` などが形に合わない名前を拒むときの文（`commands/container.py`）も
+`NAME_FORM_HINT` を埋め込む。
+
+### プロジェクトとして数える名前
+
+`projects/` の直下のどの名前をプロジェクトとして数えるかは、`utils/names.counts_as_project` の
+1 か所で決める。空と `.` で始まる名前だけを数えず、名前の形は見ない（`_foo`・`-x`・`a b` も数え、
+形に合わない名前は上の知らせで伝える）。
+
+プラグインの同期（`discover_projects`・実ディレクトリの知らせ）、`plugin info` と `status` の
+プラグインのプロジェクト数（どちらも `discover_projects` を通す）、`status` のコンテナの状態、
+`project list`、見つからない名前での `up` の候補、`project migrate-config`、`env export`、
+`env doctor`、`env encrypt` / `env decrypt`、`env backend status` と backend の移行が、`projects/` を
+走査するときの名前の条件としてこの述語を呼ぶ。ディレクトリの条件（`is_dir()`・壊れた symlink を
+拾う `is_symlink()`・`compose.yml` の有無）は走査ごとに持つ。名前の条件はディレクトリの条件より
+先に見る。同期が張った symlink の掃除と、別名の衝突を見るための実ディレクトリの集合は、
+プロジェクトを数えないため述語を通さない。
+
+### 機密の書き込みの知らせ
+
+名前の形に合わないプロジェクト（`_foo` など）へ機密を書き込むとき、名前と `NAME_FORM_HINT` を
+含む警告が標準エラーへ 1 行出る。書き込みは止めない。出すのはファイルの backend（平文・age）の
+`save_bytes`（`env/secret_store.warn_unusable_project_name`）と、`env edit --project` の平文の
+直接編集（エディタを開く前）である。読み取り（`path`・`exists`・`load`）と、形に合う名前・共通の
+機密への書き込みでは出ない。`env import` はファイルの backend では `save_bytes` を通らず、取り込みの
+知らせだけが出る。サーバの backend への書き込みでは出ない。
 
 ### トップレベル `build` の引数の解釈
 
@@ -351,9 +376,13 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
   [名前の形に合わない名前の知らせ](#名前の形に合わない名前の知らせ)
 - 知らせは同期のたびに毎回出る（一度知らせたら黙る、といった抑止は持たない）
 - 名前の検証はリポジトリの中で 1 つに寄せきっていない。寄せていないのは `env/bundle.py` の
-  `is_valid_project_name`（先頭の `_` を許す。`env` の export / import の書庫の中の名前）と
-  `env/secret_store.py` の `_validate_project_name`（機密の保存先のファイル名）の **2 つ**で、
-  それぞれ別の用途と互換性を持つ。寄せると受け付ける名前が変わる範囲が広がるため、位置引数の
+  `is_valid_project_name`（先頭の `_` を許す。`env` の export / import の書庫の中の名前で、往復の
+  互換を持つ）と `env/secret_store.py` の `_validate_project_name`（機密の保存先のファイル名）の
+  **2 つ**である。`env export` は、プロジェクトとして数える名前の述語で `.` 始まりを黙って外した後に
+  `is_valid_project_name` を当て、合わない名前（`a b` など）を警告して外す。
+  `_validate_project_name` は空・パス区切り・`.`・`..` だけを拒み、機密の保存先がパスを跨がない
+  ための最低限の検査として残す。名前の形で狭めると、いま読み書きできている機密が例外になるため、
+  形に合わない名前は拒まずに[機密の書き込みの知らせ](#機密の書き込みの知らせ)で伝える。位置引数の
   解決はこの仕様の規則だけを使う。`snapshot/manager.py` のスナップショットの名前
   （`SnapshotManager._validate_name`）は `utils/names.is_single_segment_name` を共有する
   （PLAN66）。文字集合が同じで、寄せても受け付ける名前は広がらない（狭まるのは末尾の改行を
@@ -368,6 +397,12 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 
 - 名前の形が実在のプロジェクト名（`carmo`・`github_work_time`・`carmo-ai`）を通し、`../etc`・
   `a/b`・`.`・`..`・空・`-x`・`café` を弾くこと（`tests/utils/test_names.py`）
+- プロジェクトとして数える名前の述語が `.` 始まりと空だけを外すこと（`tests/utils/test_names.py`）。
+  述語を差し替えると `projects/` の走査がすべてそれに従うこと、`.` 始まりの判定と名前の形の説明文が
+  `utils/names.py` の外に無いこと（`tests/utils/test_project_name_consumers.py`）
+- 機密の書き込みの知らせが、形に合わない名前への書き込みで 1 回だけ出て、読み取り・形に合う名前・
+  取り込みの重なりでは出ないこと。パスを跨ぐ名前は知らせより先に拒まれること
+  （`tests/env/test_secret_store.py`・`tests/env/test_io_import.py`・`tests/commands/test_env_store_switch.py`）
 - shell の `_SINGLE_SEGMENT_NAME_RE` が Python の `SINGLE_SEGMENT_NAME_PATTERN` と一致すること
   （`tests/cli/test_project_name_resolution.py` の同期テスト）
 - 形に合わない名前で、トップレベルの 7 コマンドと `project` の 7 サブコマンドが `projects/` の外へ

@@ -52,6 +52,7 @@ from devbase.env import io_common as _io_common
 from devbase.env.store import EnvFile
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.utils import names
 
 logger = get_logger(__name__)
 
@@ -183,6 +184,22 @@ class SecretBackend(Protocol):
     def remove(self, ref: SecretRef) -> bool: ...
 
 
+def warn_unusable_project_name(ref: SecretRef) -> None:
+    """名前の形に合わないプロジェクトへ機密を書き込むとき、知らせを 1 行出す (#245)。
+
+    弾かない (受け付ける名前は ``_validate_project_name`` が決め、それは変えない)。呼び出し側は
+    この関数の結果で分岐しないため戻り値を持たない。ファイルの backend の ``save_bytes`` が
+    ``path(ref)`` の検査の後で呼ぶ。読み取りの経路 (``path``・``exists``・``load``) では呼ばない。
+    """
+    if ref.kind != 'project' or names.is_single_segment_name(ref.name or ''):
+        return
+    logger.warning(
+        "プロジェクト名として使えない形の名前のプロジェクトへ機密を書き込みます: '%s'。"
+        "この名前では、名前を指定した操作（devbase up <name> など）ができません（%s）。"
+        "projects/%s の中で名前なしに打てば動きます。",
+        ref.name, names.NAME_FORM_HINT, ref.name)
+
+
 def _reject_user_ref(backend_name: str, ref: SecretRef) -> None:
     """ファイル backend への個人単位の書き込みを拒む。
 
@@ -226,6 +243,7 @@ class PlaintextBackend:
         """バイト列を **加工せずそのまま** ``.env`` へ書き出す"""
         _reject_user_ref(self.name, ref)
         path = self.path(ref)
+        warn_unusable_project_name(ref)
         try:
             # 平文とはいえ機密の入れ物なので、暗号化側と同じく atomic に差し替える。
             # 直接 O_TRUNC すると書き込み途中の失敗で旧値も新値も失った空ファイルが
@@ -351,6 +369,7 @@ class AgeBackend:
         """バイト列を **加工せずそのまま** 暗号化して保存する"""
         _reject_user_ref(self.name, ref)
         path = self.path(ref)
+        warn_unusable_project_name(ref)
         blob = self.encrypt_bytes(data)
         try:
             # 暗号文は失うと復旧不能なので、既存ファイルを直接 O_TRUNC せず

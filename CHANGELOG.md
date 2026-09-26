@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### Added
+- **名前の形に合わないプロジェクトへ機密を書き込むとき、警告を 1 行出すようにしました（#276 / #245）。**
+  `_foo` のように名前を指定した操作に使えない名前のプロジェクトへ、平文・age の保存先で
+  `env set --project` / `env edit --project` / `env encrypt` / `env decrypt` などが書き込むと、
+  名前と名前の形の説明を標準エラーへ出します。書き込みは止めず、受け付ける名前も変わりません。
+
+### Changed
+- **`projects/` の直下で `.` から始まるディレクトリ（`.vscode` など）を、どのコマンドもプロジェクトとして
+  数えなくなりました（#276 / #226）。** `plugin info` の一覧と数、`status`、`project list`、見つからない
+  名前での `up` の候補、`project migrate-config`、`env export`、`env doctor`、`env encrypt` /
+  `env decrypt`、`env backend status` と backend の移行から外れます。プラグインの同期は元から
+  外していたため、同期と各コマンドの数が揃います。`env export` は `.` 始まりについての警告を出さなく
+  なりました。**`projects/.<名前>/.env` に機密を置いている場合、`env encrypt` / `env decrypt` /
+  `env backend` の移行の対象になりません。移すときは `.` で始まらない名前へ変えてから実行してください。**
 ## [3.8.0] - 2026-09-26
 
 ### Added

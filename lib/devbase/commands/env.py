@@ -877,6 +877,10 @@ def cmd_env_edit(devbase_root: Path, project: bool = False, user: bool = False,
         logger.error("%s", e)
         return 1
     if direct:
+        # 直接編集は devbase が書かず save_bytes を通らないので、エディタを開く前に
+        # 機密の書き込みの知らせをここで出す (#245)
+        from devbase.env.secret_store import warn_unusable_project_name
+        warn_unusable_project_name(env_file.ref)
         return subprocess.call([editor, str(env_file.path)])
 
     return _edit_via_tempfile(env_file, editor)

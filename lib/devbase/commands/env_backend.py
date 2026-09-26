@@ -24,6 +24,7 @@ from devbase.env import bootstrap as _bootstrap
 from devbase.env.secret_store import MODE_ABSENT, SecretRef, SecretStore
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.utils import names
 
 logger = get_logger(__name__)
 
@@ -56,17 +57,17 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
 
 def _project_names(devbase_root: Path) -> List[str]:
     """``projects/`` に実在し、参照の名前に使えるプロジェクト名 (名前順)"""
-    names: List[str] = []
+    project_names: List[str] = []
     projects_dir = Path(devbase_root) / 'projects'
     if projects_dir.is_dir():
         for entry in sorted(projects_dir.iterdir()):
-            if entry.is_dir():
+            if names.counts_as_project(entry.name) and entry.is_dir():
                 try:
                     SecretRef.for_project(entry.name)
                 except DevbaseError:
                     continue
-                names.append(entry.name)
-    return names
+                project_names.append(entry.name)
+    return project_names
 
 
 def cmd_env_backend_status(devbase_root: Path) -> int:

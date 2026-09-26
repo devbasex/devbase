@@ -7,6 +7,8 @@ from pathlib import Path
 
 from devbase.log import get_logger
 from devbase.plugin.registry import PluginRegistry
+from devbase.plugin.syncer import discover_projects
+from devbase.utils import names
 
 try:
     from devbase import __version__
@@ -100,7 +102,7 @@ def _get_container_status(projects_dir: Path) -> list[dict]:
     counts = _running_counts_by_project()
 
     for entry in sorted(projects_dir.iterdir()):
-        if not entry.is_dir():
+        if not names.counts_as_project(entry.name) or not entry.is_dir():
             continue
         status = _container_status_for(entry, counts)
         if status is not None:
@@ -123,13 +125,8 @@ def _get_plugin_info(registry: PluginRegistry) -> list[dict]:
         if not plugin.path:
             results.append({"name": plugin.name, "project_count": 0})
             continue
-        plugin_projects_dir = registry.devbase_root / plugin.path / "projects"
-        if plugin_projects_dir.is_dir():
-            project_count = sum(
-                1 for p in plugin_projects_dir.iterdir() if p.is_dir()
-            )
-        else:
-            project_count = 0
+        # 同期と同じ関数で数え、同期が載せないもの (`.` 始まり) を数えない (#276)
+        project_count = len(discover_projects(registry.devbase_root / plugin.path))
 
         results.append({
             "name": plugin.name,

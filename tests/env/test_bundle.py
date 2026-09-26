@@ -323,7 +323,9 @@ def test_is_valid_project_name():
 
 
 def test_make_entries_from_disk_skips_invalid_project_names(tmp_path, caplog):
-    """空白 / 先頭 `.` 等の project ディレクトリは export 時に skip + warning で除外する。
+    """空白 / 先頭 `-` 等の project ディレクトリは export 時に skip + warning で除外する。
+
+    先頭 `.` はプロジェクトとして数えない (#276) ので、警告を出さずに外す。
 
     import 側 (`_import_merge._PROJECT_ENV_RE`) は同じ name 規則を要求するため、
     そのまま arcname にして export すると round-trip できない bundle が出来てしまう。
@@ -347,12 +349,15 @@ def test_make_entries_from_disk_skips_invalid_project_names(tmp_path, caplog):
     arcnames = {e.arcname for e in entries}
     # 妥当な project だけが残り、`..weird` 等は arcname に出現しない
     assert arcnames == {"env/projects/valid_proj/.env"}
-    # 各 invalid name について warning が出ていること
-    for bad_name in (".hidden", "..weird", "with space", "-leading-dash"):
+    # 書庫に入れられない名前について warning が出ていること
+    for bad_name in ("with space", "-leading-dash"):
         assert any(
             "スキップ" in r.message and bad_name in r.message
             for r in caplog.records
         ), f"warning が出ていない: {bad_name}"
+    # `.` 始まりはプロジェクトとして数えないので、警告せずに外す (#276)
+    for dot_name in (".hidden", "..weird"):
+        assert not any(dot_name in r.message for r in caplog.records), dot_name
 
 
 def test_make_entries_from_disk_invalid_name_explicitly_included_is_still_skipped(
@@ -364,13 +369,13 @@ def test_make_entries_from_disk_invalid_name_explicitly_included_is_still_skippe
     CLI からの明示指定でも validator は適用される。
     """
     root = tmp_path
-    bad = root / "projects" / ".hidden"
+    bad = root / "projects" / "with space"
     bad.mkdir(parents=True)
     (bad / ".env").write_text("X=1\n")
 
     with caplog.at_level("WARNING"):
         entries = bundle.make_entries_from_disk(
-            root, include_projects=[".hidden"], include_global=False,
+            root, include_projects=["with space"], include_global=False,
             include_metadata=False,
         )
 
