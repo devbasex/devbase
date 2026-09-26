@@ -95,11 +95,6 @@ compose_with_secrets() {
         uv run --project "$DEVBASE_ROOT" python -m devbase.cli env exec --${_BUILD_CONTEXT:+context "$_BUILD_CONTEXT" --} "$@"
 }
 
-# compose.yml の build: 直後 3 行から <key>: の値を取る (無ければ空文字。パイプの最後の awk が 0 を返す)
-compose_build_field() {
-    grep -A 3 "build:" compose.yml | grep "$1:" | head -1 | awk '{print $2}'
-}
-
 cmd_build() {
     echo "=== Building devbase images ==="
 
@@ -158,14 +153,14 @@ cmd_build() {
     if [ -f "compose.yml" ]; then
         # Try to extract dockerfile path from compose.yml (simple grep approach)
         local dockerfile_line
-        dockerfile_line=$(compose_build_field dockerfile)
+        dockerfile_line=$(grep -A 3 "build:" compose.yml | grep "dockerfile:" | head -1 | awk '{print $2}')
         if [ -n "$dockerfile_line" ]; then
             dockerfile_path="$dockerfile_line"
         fi
 
         # If dockerfile is relative, combine with context path
         local context_line
-        context_line=$(compose_build_field context)
+        context_line=$(grep -A 3 "build:" compose.yml | grep "context:" | head -1 | awk '{print $2}')
         if [ -n "$context_line" ]; then
             # Expand environment variables in context path
             context_line=$(eval echo "$context_line")
