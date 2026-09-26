@@ -182,8 +182,43 @@
     {
       "term": "アカウントグループ",
       "context": "secret",
-      "meaning": "DEVBASE_ACCOUNT_GROUP の値。未設定なら default。ボリューム devbase_home_<group> の単位でもある",
+      "meaning": "DEVBASE_ACCOUNT_GROUP の値。プロジェクトの env での宣言が必須で、既定の値を持たない。default は予約語。ボリューム devbase_home_<group> の単位でもある",
       "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "グループの宣言",
+      "context": "secret",
+      "meaning": "projects/<name>/env に書いた空でない DEVBASE_ACCOUNT_GROUP の行。プロジェクトの所属グループを決める唯一の出所（操作の対象は --group・TUI の選択でも明示できる）",
+      "source": "",
+      "pending_source": "issues/issue-315-design.md"
+    },
+    {
+      "term": "グループのボリューム",
+      "context": "secret",
+      "meaning": "アカウントグループごとの devbase_home_<group>。コンテナの /persistent/group にマウントされる",
+      "source": "",
+      "pending_source": "issues/issue-315-design.md"
+    },
+    {
+      "term": "グループを決めるコマンド",
+      "context": "secret",
+      "meaning": "宣言か --group からグループを決めないと先へ進めないコマンド。up / scale / 機密のコマンド / snapshot create",
+      "source": "",
+      "pending_source": "issues/issue-315-design.md"
+    },
+    {
+      "term": "ボリュームの移行",
+      "context": "secret",
+      "meaning": "旧既定のボリュームの中身を、利用者が指定したグループのボリュームへ写す操作。元を残す",
+      "source": "",
+      "pending_source": "issues/issue-315-design.md"
+    },
+    {
+      "term": "旧既定のボリューム",
+      "context": "secret",
+      "meaning": "この変更より前に、宣言の無いプロジェクトが使っていた devbase_home_default。移行の元で、スナップショットの系列にも残る",
+      "source": "",
+      "pending_source": "issues/issue-315-design.md"
     },
     {
       "term": "レイアウト",
