@@ -591,17 +591,6 @@ devbase_log_account_group() {
     echo "Account group: ${group} (gcloud account: ${account}, CLOUDSDK_CONFIG: ${CLOUDSDK_CONFIG:-unset})"
 }
 
-# 一時ファイルの中身を ~/.git-credentials へ権限 600 で置き、一時ファイルを消す。
-# sudo install が使えないときは cat + chmod で書く。
-devbase_install_git_credentials() {
-    local tmp_cred="$1"
-    # id が失敗して空を出したとき、引用があると uutils の install が空の持ち主を「変えない」と読み root の持ち主で書くため引用しない
-    # shellcheck disable=SC2046
-    sudo install -m 600 -o $(id -u) -g $(id -g) "$tmp_cred" ~/.git-credentials 2>/dev/null || \
-        (cat "$tmp_cred" > ~/.git-credentials && chmod 600 ~/.git-credentials)
-    rm -f "$tmp_cred"
-}
-
 # テストは関数定義だけを使う (source 時のみ有効な return で以降を読み飛ばす)。
 if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
     # 実行したときは return が失敗して exit へ進む。shellcheck は source を想定せず exit を届かないと読む
@@ -641,7 +630,11 @@ if [ -n "$GIT_CREDENTIALS_BASE64" ]; then
     echo "$GIT_CREDENTIALS_BASE64" | base64 -d > "$TMP_CRED"
     # Ensure ~/.git-credentials directory is writable
     mkdir -p ~/.config
-    devbase_install_git_credentials "$TMP_CRED"
+    # id が失敗して空を出したとき、引用があると uutils の install が空の持ち主を「変えない」と読み root の持ち主で書くため引用しない
+    # shellcheck disable=SC2046
+    sudo install -m 600 -o $(id -u) -g $(id -g) "$TMP_CRED" ~/.git-credentials 2>/dev/null || \
+        (cat "$TMP_CRED" > ~/.git-credentials && chmod 600 ~/.git-credentials)
+    rm -f "$TMP_CRED"
     echo "Git credentials restored successfully"
 fi
 
@@ -660,7 +653,11 @@ if [ -z "$GIT_CREDENTIALS_BASE64" ] && [ -n "$GITHUB_PERSONAL_ACCESS_TOKEN" ]; t
     # Create .git-credentials file with username:token format
     TMP_CRED=$(mktemp)
     echo "https://x-access-token:$GITHUB_PERSONAL_ACCESS_TOKEN@github.com" > "$TMP_CRED"
-    devbase_install_git_credentials "$TMP_CRED"
+    # id が失敗して空を出したとき、引用があると uutils の install が空の持ち主を「変えない」と読み root の持ち主で書くため引用しない
+    # shellcheck disable=SC2046
+    sudo install -m 600 -o $(id -u) -g $(id -g) "$TMP_CRED" ~/.git-credentials 2>/dev/null || \
+        (cat "$TMP_CRED" > ~/.git-credentials && chmod 600 ~/.git-credentials)
+    rm -f "$TMP_CRED"
     # Configure git to use credential helper
     git config --global credential.helper store 2>/dev/null || true
 fi
