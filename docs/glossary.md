@@ -104,8 +104,15 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | --- | --- | --- | --- |
 | 検査ジョブ | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest） | — | — |
 | 統合ブランチ | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — |
+| トリガー | ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches） | — | — |
+| 積み重ねた Pull Request | 宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request | — | — |
 | 指摘 | shellcheck が出す 1 件（SC の番号・水準・行） | — | — |
-| 抑止の注記 | 指摘を抑える # shellcheck の指示と、抑える理由のコメントの組 | — | — |
+| 抑止の注記 | 指摘を抑える shellcheck の指示（disable= / source=）と、抑える理由のコメントの組 | — | — |
+| 基準の版 | 手元の基準（devbase-base:latest の shellcheck）と CI の ShellCheck の検査ジョブが揃える shellcheck の版。現在は 0.11.0 | — | — |
+| ShellCheck の検査ジョブ | 検査ジョブのうち shellcheck ジョブ（bin/*・install.sh・containers/base/tmux-* を検査する） | — | — |
+| base のシェルスクリプト | containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの | — | — |
+| 検査の対象 | CI の ShellCheck ジョブで、引数に containers/base/ のパスを持つ shellcheck の行が並べたファイル | — | — |
+| shellcheck の指示 | # shellcheck で始まるコメント（disable= / source= / shell=）。disable= と source= は抑止の注記の指示の側で、shell= は指摘を抑えない | — | — |
 
 ## テストの実行環境（`test`）
 
@@ -114,6 +121,10 @@ pytest が走るプロセスの環境と、テストが起動する外部のプ�
 | 語 | 意味 | 廃止した語 | 正本 |
 | --- | --- | --- | --- |
 | 環境の隔離 | pytest を起動したシェルから継承した環境変数を、テストごとに既定の状態（未設定か固定値）へ戻すこと | — | — |
+| 隔離の一覧 | テストの開始時に未設定へ戻す環境変数の名前と接頭辞。tests/conftest.py の ISOLATED_ENV と ISOLATED_ENV_PREFIXES | — | — |
+| 隔離しない一覧 | lib/devbase が読むが、隔離の fixture が未設定へ戻さない変数の名前と、その理由。tests/conftest.py の NOT_ISOLATED_ENV | — | — |
+| 読み取りの集合 | lib/devbase のソースから静的に集めた、環境変数として読む変数名の集合 | — | — |
+| 漏れの検査 | 読み取りの集合が隔離の一覧と隔離しない一覧に収まっていることを確かめるテスト | — | — |
 | 隔離した tmux サーバ | TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない | — | — |
 | 故障の差し込み | 実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと | — | — |
 | 偽の date | PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date | — | — |
