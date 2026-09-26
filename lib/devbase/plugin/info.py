@@ -31,8 +31,7 @@ def show_plugin_info(registry: PluginRegistry, name: str) -> None:
         print(f"  Priority:      {info.priority}")
 
     # List projects
-    projects_dir = plugin_dir / 'projects' if plugin_dir.is_dir() else None
-    if projects_dir and projects_dir.is_dir():
+    if (plugin_dir / 'projects').is_dir():
         # 同期と同じ関数で数え、同期が載せないもの (`.` 始まり) を一覧に出さない (#276)
         projects = discover_projects(plugin_dir)
         print(f"  Projects ({len(projects)}):")
