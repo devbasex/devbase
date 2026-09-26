@@ -99,20 +99,6 @@ def choose_context(settings: DockerSettings, cli_context: Optional[str] = None,
 # 2. 確定
 # ---------------------------------------------------------------------------
 
-def _show_context(env: MutableMapping[str, str], runner: Optional[Runner]) -> Optional[str]:
-    """``env`` のまま ``docker context show`` を実行し、context 名を返す。取れなければ ``None``"""
-    run = runner or subprocess.run
-    try:
-        proc = run(["docker", "context", "show"], capture_output=True, text=True,
-                   timeout=10, env=env)
-    except Exception as e:  # noqa: BLE001 - docker 不在等は None (呼び出し側の扱いへ倒す)
-        logger.debug("docker context show を実行できません: %s", e)
-        return None
-    if getattr(proc, "returncode", 1) != 0:
-        return None
-    return (proc.stdout or "").strip() or None
-
-
 def current_context(environ: Optional[MutableMapping[str, str]] = None,
                     runner: Optional[Runner] = None) -> Optional[str]:
     """``docker context show`` で現在の context を取る。取れなければ ``None``。
@@ -122,7 +108,16 @@ def current_context(environ: Optional[MutableMapping[str, str]] = None,
     env = dict(os.environ if environ is None else environ)
     env.pop(DOCKER_CONTEXT, None)
     env.pop(DOCKER_HOST, None)
-    return _show_context(env, runner)
+    run = runner or subprocess.run
+    try:
+        proc = run(["docker", "context", "show"], capture_output=True, text=True,
+                   timeout=10, env=env)
+    except Exception as e:  # noqa: BLE001 - docker 不在等はリモート扱いへ倒す
+        logger.debug("docker context show を実行できません: %s", e)
+        return None
+    if getattr(proc, "returncode", 1) != 0:
+        return None
+    return (proc.stdout or "").strip() or None
 
 
 def effective_context(environ: Optional[MutableMapping[str, str]] = None,
@@ -133,7 +128,17 @@ def effective_context(environ: Optional[MutableMapping[str, str]] = None,
     いればその名前が、``DOCKER_HOST`` があれば ``default`` が返る。エディタの attach 先の
     推測など「docker と同じ答え」が要る場面に使う。取れなければ ``None``。
     """
-    return _show_context(dict(os.environ if environ is None else environ), runner)
+    run = runner or subprocess.run
+    env = dict(os.environ if environ is None else environ)
+    try:
+        proc = run(["docker", "context", "show"], capture_output=True, text=True,
+                   timeout=10, env=env)
+    except Exception as e:  # noqa: BLE001 - docker 不在等は best-effort
+        logger.debug("docker context show を実行できません: %s", e)
+        return None
+    if getattr(proc, "returncode", 1) != 0:
+        return None
+    return (proc.stdout or "").strip() or None
 
 
 def resolve_target(choice: ContextChoice, settings: DockerSettings,
