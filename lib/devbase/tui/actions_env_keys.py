@@ -156,9 +156,9 @@ def _delete(devbase_root: Path, ref, key: str) -> int:
 
 def _has_projects(devbase_root: Path) -> bool:
     # list_projects は稼働状況を docker に尋ねるため、有無だけを見るここでは使わない
-    from devbase.utils import names
+    from devbase.commands import env_rows
 
-    return bool(names.project_dirs(Path(devbase_root) / "projects"))
+    return bool(env_rows.project_names(devbase_root))
 
 
 def _select_scope(devbase_root: Path):

@@ -114,6 +114,13 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
                       backend=store.backend_for(team_global).name)
 
 
+def project_names(devbase_root: Path) -> List[str]:
+    """``$DEVBASE_ROOT/projects`` のプロジェクトの名前の一覧"""
+    from devbase.utils import names
+
+    return [p.name for p in names.project_dirs(Path(devbase_root) / 'projects')]
+
+
 def count_project_keys(devbase_root: Path) -> List[Tuple[str, Optional[int]]]:
     """プロジェクトごとのキーの数 (TUI の対象プロジェクトの選択に添える)。
 
@@ -122,19 +129,18 @@ def count_project_keys(devbase_root: Path) -> List[Tuple[str, Optional[int]]]:
     読めないプロジェクト (名前が使えない・接続・403・復号の失敗) は ``None`` にして続ける。
     """
     from devbase.errors import DevbaseError
-    from devbase.utils import names
 
     store = SecretStore(devbase_root)
     counts: List[Tuple[str, Optional[int]]] = []
-    for path in names.project_dirs(Path(devbase_root) / 'projects'):
+    for name in project_names(devbase_root):
         try:
-            group = store.ref_group(path.name)
-            team = SecretRef.for_project(path.name, group=group)
-            refs, _ = _scope_refs(store, path.name, group, team)
+            group = store.ref_group(name)
+            team = SecretRef.for_project(name, group=group)
+            refs, _ = _scope_refs(store, name, group, team)
             count = sum(len(store.fetch(r)) for r in refs)
         except DevbaseError:
             count = None
-        counts.append((path.name, count))
+        counts.append((name, count))
     return counts
 
 
@@ -145,12 +151,11 @@ def group_choices(devbase_root: Path) -> List[str]:
     重複を除いて並べる。名前の使えないプロジェクトは飛ばす。
     """
     from devbase.errors import DevbaseError
-    from devbase.utils import names
 
     store = SecretStore(devbase_root)
     choices: List[str] = []
     seen = set()
-    candidates = [None] + [p.name for p in names.project_dirs(Path(devbase_root) / 'projects')]
+    candidates = [None] + project_names(devbase_root)
     for project in candidates:
         try:
             name = store.ref_group(project)
