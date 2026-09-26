@@ -3,7 +3,7 @@
 from devbase.errors import PluginError
 
 from .registry import PluginRegistry
-from .syncer import load_plugin_info
+from .syncer import discover_projects, load_plugin_info
 
 
 def show_plugin_info(registry: PluginRegistry, name: str) -> None:
@@ -33,7 +33,8 @@ def show_plugin_info(registry: PluginRegistry, name: str) -> None:
     # List projects
     projects_dir = plugin_dir / 'projects' if plugin_dir.is_dir() else None
     if projects_dir and projects_dir.is_dir():
-        projects = sorted([d.name for d in projects_dir.iterdir() if d.is_dir()])
+        # 同期と同じ関数で数え、同期が載せないもの (`.` 始まり) を一覧に出さない (#276)
+        projects = discover_projects(plugin_dir)
         print(f"  Projects ({len(projects)}):")
         for proj in projects:
             print(f"    - {proj}")

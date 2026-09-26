@@ -29,7 +29,8 @@ from devbase.utils.docker import (
     running_dev_instances,
 )
 from devbase.utils.config import get_project_name
-from devbase.utils.names import is_single_segment_name
+from devbase.utils import names
+from devbase.utils.names import NAME_FORM_HINT, is_single_segment_name
 from devbase.utils import docker_context
 from devbase.project import runtime as project_runtime
 from devbase.project.local_config import load_project_local_config
@@ -416,7 +417,8 @@ def _report_unknown_project(name: str, projects_dir: Path) -> None:
     try:
         candidates = sorted(
             p.name for p in projects_dir.iterdir()
-            if p.is_dir() or p.is_symlink()
+            if names.counts_as_project(p.name)
+            and (p.is_dir() or p.is_symlink())
         )
     except OSError:
         candidates = []
@@ -593,9 +595,8 @@ def _resolve_project_name(project_name: str) -> bool:
     # (PLAN61 / #146)。wrapper (bin/devbase の maybe_cd_project) も同じ規則で弾く。
     if not is_single_segment_name(project_name):
         logger.error(
-            "プロジェクト名に使えない形です: '%s'"
-            "（英数字で始まり、英数字・'.'・'-'・'_' だけからなる名前）",
-            project_name)
+            "プロジェクト名に使えない形です: '%s'（%s）",
+            project_name, NAME_FORM_HINT)
         return False
 
     projects_dir = _projects_dir()

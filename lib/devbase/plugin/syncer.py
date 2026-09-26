@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from devbase.log import get_logger
+from devbase.utils import names
 from devbase.utils.names import NAME_FORM_HINT, is_single_segment_name
 
 from .registry import PluginRegistry
@@ -57,7 +58,7 @@ def discover_projects(plugin_dir: Path) -> list[str]:
         return []
     return [
         d.name for d in sorted(projects_dir.iterdir())
-        if d.is_dir() and not d.name.startswith('.')
+        if names.counts_as_project(d.name) and d.is_dir()
     ]
 
 
@@ -201,7 +202,7 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
     # `.` 始まり (.vscode など) はプロジェクトとして扱わず知らせも出さない (決定 8)。
     # set のままだと警告の順が実行ごとに変わるため並べる
     for name in sorted(real_projects):
-        if not name.startswith('.'):
+        if names.counts_as_project(name):
             _warn_unusable_name(name, _SOURCE_REAL_DIRECTORY)
 
     for entry in projects_dir.iterdir():
