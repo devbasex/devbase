@@ -25,6 +25,7 @@ module の属性として呼ぶ。規則の差し替えのテスト (``tests/uti
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 #: 英数字で始まり、英数字・``.``・``-``・``_`` だけからなる。先頭が英数字なので ``.`` と
 #: ``..`` と ``-x`` と空は当たらない。``/`` ``\`` 空白 非 ASCII は含められない。
@@ -52,3 +53,15 @@ def counts_as_project(name: str) -> bool:
     (``_foo``・``-x``・``a b`` も真)。例外を出さず、ログも出さない。
     """
     return bool(name) and not name.startswith('.')
+
+
+def project_dirs(projects_dir: Path) -> list[Path]:
+    """``projects_dir`` の直下で、プロジェクトとして数える dir (パス順)。
+
+    ``projects_dir`` が dir でなければ空。述語は module の大域名で引くので、
+    :func:`counts_as_project` の差し替えがここにも届く。
+    """
+    if not projects_dir.is_dir():
+        return []
+    return [p for p in sorted(projects_dir.iterdir())
+            if counts_as_project(p.name) and p.is_dir()]

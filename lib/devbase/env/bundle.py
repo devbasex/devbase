@@ -309,9 +309,7 @@ def _collect_projects(store, devbase_root,
     other_groups: List[str] = []
     # `.` 始まりはプロジェクトとして数えないので、書庫の名前の検査 (_should_skip_project) より
     # 前に黙って外す (#276)。書庫の名前の規則 (is_valid_project_name) はその後に効く
-    candidates = sorted(
-        p for p in projects_dir.iterdir()
-        if names.counts_as_project(p.name) and p.is_dir())
+    candidates = names.project_dirs(projects_dir)
     for proj_dir in candidates:
         name = proj_dir.name
         if _should_skip_project(name, proj_dir, included, excluded):

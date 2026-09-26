@@ -65,11 +65,7 @@ def _timestamp() -> str:
 
 
 def _project_names(devbase_root: Path) -> List[str]:
-    projects_dir = Path(devbase_root) / 'projects'
-    if not projects_dir.is_dir():
-        return []
-    return sorted(p.name for p in projects_dir.iterdir()
-                  if names.counts_as_project(p.name) and p.is_dir())
+    return [p.name for p in names.project_dirs(Path(devbase_root) / 'projects')]
 
 
 def _select_refs(devbase_root: Path, store: SecretStore, wanted_mode: str,

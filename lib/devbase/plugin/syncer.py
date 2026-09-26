@@ -53,13 +53,7 @@ def _requires_devbase(data: dict) -> Optional[str]:
 
 def discover_projects(plugin_dir: Path) -> list[str]:
     """Discover project directories within a plugin"""
-    projects_dir = plugin_dir / 'projects'
-    if not projects_dir.is_dir():
-        return []
-    return [
-        d.name for d in sorted(projects_dir.iterdir())
-        if names.counts_as_project(d.name) and d.is_dir()
-    ]
+    return [d.name for d in names.project_dirs(plugin_dir / 'projects')]
 
 
 def _extract_owner(plugin: InstalledPlugin) -> str:
