@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-09-26
+
 ### Added
 - **名前の形に合わないプロジェクトへ機密を書き込むとき、警告を 1 行出すようにしました（#276 / #245）。**
   `_foo` のように名前を指定した操作に使えない名前のプロジェクトへ、平文・age の保存先で
@@ -18,6 +20,12 @@
   外していたため、同期と各コマンドの数が揃います。`env export` は `.` 始まりについての警告を出さなく
   なりました。**`projects/.<名前>/.env` に機密を置いている場合、`env encrypt` / `env decrypt` /
   `env backend` の移行の対象になりません。移すときは `.` で始まらない名前へ変えてから実行してください。**
+- **`plugin list` の `PROJECTS` と `Total` を、`plugin info`・`status` と同じ数え方にしました（#276）。**
+  `.` 始まりのディレクトリを数えなくなり、コマンドごとに数が食い違わなくなります。
+
+### Fixed
+- **env の書庫で扱う名前が、末尾に改行を含んでも通っていたのを直しました（#227）。** 末尾に改行を
+  含む名前は不正な名前として弾きます。
 
 ## [3.8.0] - 2026-09-26
 
@@ -832,7 +840,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.8.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.9.0...HEAD
+[3.9.0]: https://github.com/devbasex/devbase/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/devbasex/devbase/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/devbasex/devbase/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/devbasex/devbase/compare/v3.5.0...v3.6.0
