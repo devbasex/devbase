@@ -24,6 +24,7 @@ from tests.conftest import (
 )
 
 LIB = Path(__file__).resolve().parent.parent / 'lib' / 'devbase'
+KEYS_FILE = LIB / 'env' / 'keys.py'
 
 _ENV_NAME = re.compile(r'^[A-Z][A-Z0-9_]*$')
 _RECEIVER_NAMES = ('env', 'environ')
