@@ -246,12 +246,6 @@
       "source": "docs/specifications/secret-backend.md"
     },
     {
-      "term": "勝つ行",
-      "context": "secret",
-      "meaning": "同じキーの行のうち、一覧に並べた機密の参照の中で重ね順が最後の行。一覧の中だけの勝ち負けで、コンテナに渡る最終の値の行であることは保証しない",
-      "source": "docs/specifications/secret-backend.md"
-    },
-    {
       "term": "同期の書き込み先",
       "context": "secret",
       "meaning": "env sync がキーごとに選ぶ参照。--user なら個人共通、無ければキーが現にある参照（両方なら個人共通、どちらにも無ければ個人共通。個人単位の参照を持たない backend では常にチーム共通）",

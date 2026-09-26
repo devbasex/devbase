@@ -99,10 +99,9 @@ def _pad(text: str, width: int) -> str:
 
 
 def row_title(row, *, grouped: bool) -> str:
-    """一覧の 1 行 (印・キー・持ち主・適用範囲・グループ・伏せ字の値)"""
-    mark = "★" if row.wins else "  "
+    """一覧の 1 行 (キー・持ち主・適用範囲・グループ・伏せ字の値)"""
     key = row.key if len(row.key) >= KEY_WIDTH else row.key.ljust(KEY_WIDTH)
-    parts = [mark, key, _pad(row.owner_label, 6), _pad(row.scope_label, 18)]
+    parts = [key, _pad(row.owner_label, 6), _pad(row.scope_label, 18)]
     if grouped:
         parts.append(_pad(row.group_label or "", 10))
     parts.append(MASK)
@@ -190,10 +189,24 @@ def _select_group(devbase_root: Path) -> str:
     return picked
 
 
-def _select_project(devbase_root: Path) -> str:
-    from devbase.tui import actions_env
+def project_title(name: str, count, width: int) -> str:
+    """対象プロジェクトの選択の 1 行 (名前・キーの数。読めなければ ``?``)"""
+    return f"{name.ljust(width)}  キー {'?' if count is None else count} 件"
 
-    return flow.need(actions_env._select_project(devbase_root))
+
+def _select_project(devbase_root: Path) -> str:
+    """対象プロジェクトを選ぶ。各行にキーの数を添え、稼働状況は出さない。
+
+    ← と Esc で範囲の選択へ戻る (``flow.BackOut``)。プロジェクトは ``_select_scope`` が
+    1 つ以上あるときだけ選ばせる。
+    """
+    from devbase.commands.env_rows import count_project_keys
+
+    counts = count_project_keys(devbase_root)
+    width = max(len(name) for name, _ in counts)
+    choices = [(project_title(name, count, width), name) for name, count in counts]
+    return flow.need(menu.select(f"対象プロジェクトを選択 {menu.HINT_SEARCH_LEFT}:", choices,
+                                 back=True, search=True, left_back=True))
 
 
 # ---------------------------------------------------------------------------
@@ -246,27 +259,18 @@ def _choose_owner(listing) -> str:
                                  back=True, search=False))
 
 
-def _choose_scope_for_add(listing) -> str:
-    if listing.project is None:
-        return SCOPE_GLOBAL
-    return flow.need(menu.select(f"適用範囲を選択 {menu.HINT_BACK}:",
-                                 [("共通", SCOPE_GLOBAL),
-                                  (f"プロジェクト {listing.project}", SCOPE_PROJECT)],
-                                 back=True, search=False))
-
-
-def _ref_for_add(listing, owner: str, scope: str):
+def _ref_for_add(listing, owner: str):
+    # 一覧の参照は選んだ範囲 (共通かそのプロジェクト) だけなので、持ち主で 1 つに決まる
     for ref in listing.refs:
-        if ref.owner == owner and (ref.kind == "global") == (scope == SCOPE_GLOBAL):
+        if ref.owner == owner:
             return ref
-    raise flow.BackOut      # 到達しない (選べる組は listing.refs の中だけ)
+    raise flow.BackOut      # 到達しない (選べる持ち主は listing.refs の中だけ)
 
 
 def _add(devbase_root: Path, listing) -> int:
     key = _ask_key()
     owner = _choose_owner(listing)
-    scope = _choose_scope_for_add(listing)
-    ref = _ref_for_add(listing, owner, scope)
+    ref = _ref_for_add(listing, owner)
     value = _ask_value(key)
     return _set(devbase_root, ref, key, value)
 

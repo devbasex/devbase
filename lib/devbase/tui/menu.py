@@ -61,6 +61,8 @@ MENU_BACK = object()
 # search 有効メニューは ← が入力カーソルと衝突するため Esc のみを案内する。
 HINT_BACK = "(↑↓ 移動 / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止)"
 HINT_SEARCH = "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / Esc 戻る / Ctrl-C 中止)"
+# search 有効で ← も戻るに使うメニュー (``select(..., left_back=True)``) の案内。
+HINT_SEARCH_LEFT = "(↑↓ 移動 / 名前で絞り込み / Enter 決定 / ←・Esc 戻る / Ctrl-C 中止)"
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +201,8 @@ def with_escape_back(question, *, bind_left: bool = True):
 # 選択メニュー
 # ---------------------------------------------------------------------------
 
-def select(message: str, choices, *, back: bool = False, search: bool = False):
+def select(message: str, choices, *, back: bool = False, search: bool = False,
+           left_back: bool = False):
     """questionary の select を起動し、選択値を返す共通関数。
 
     Parameters
@@ -213,6 +216,8 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
     search:  True なら文字入力での部分一致絞り込み (use_search_filter) を有効化する。
              件数の多い一覧 (プロジェクト選択等) 向け。search 有効時は ← が入力
              カーソル移動と衝突するため、back の ← バインドは無効化し Esc のみで戻る。
+    left_back: True なら search 有効でも ← で戻る。questionary の絞り込みは入力カーソルを
+             持たない (文字の追記と Backspace だけ) ため、← を奪っても絞り込みは損なわれない。
 
     Returns
     -------
@@ -237,7 +242,7 @@ def select(message: str, choices, *, back: bool = False, search: bool = False):
     )
     if back:
         # search 有効時は ← を入力カーソル用に空けておく (Esc のみで戻る)。
-        question = with_escape_back(question, bind_left=not search)
+        question = with_escape_back(question, bind_left=left_back or not search)
     else:
         question = with_escape_cancel(question)
     return _ask_erased(question)

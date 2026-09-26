@@ -26,7 +26,7 @@ def grouped(openbao_root, openbao):
 
 
 def shown(listing):
-    return [(r.key, r.owner_label, r.scope_label, r.group_label, r.wins) for r in listing.rows]
+    return [(r.key, r.owner_label, r.scope_label, r.group_label) for r in listing.rows]
 
 
 def kv_gets(openbao):
@@ -39,8 +39,8 @@ def test_rows_show_the_owner_scope_and_group(grouped, openbao):
 
     listing = env_rows.collect_key_rows(grouped, group='team-a')
 
-    assert shown(listing) == [('A', 'チーム', '共通', 'team-a', True),
-                              ('B', '個人', '共通', 'team-a', True)]
+    assert shown(listing) == [('A', 'チーム', '共通', 'team-a'),
+                              ('B', '個人', '共通', 'team-a')]
     assert listing.grouped and listing.has_user_refs
     assert listing.group == 'team-a' and listing.project is None
 
@@ -52,20 +52,20 @@ def test_rows_do_not_hold_values(grouped, openbao):
 
     assert 'secret-a' not in repr(listing)
     assert {f.name for f in dataclasses.fields(env_rows.KeyRow)} == {
-        'key', 'ref', 'owner_label', 'scope_label', 'group_label', 'wins'}
+        'key', 'ref', 'owner_label', 'scope_label', 'group_label'}
 
 
-def test_the_user_row_wins_over_the_team_row(grouped, openbao):
+def test_a_key_in_both_owners_shows_both_rows(grouped, openbao):
     openbao.put(TEAM, {'K': 't'})
     openbao.put(USER, {'K': 'u'})
 
     listing = env_rows.collect_key_rows(grouped, group='team-a')
 
-    assert shown(listing) == [('K', 'チーム', '共通', 'team-a', False),
-                              ('K', '個人', '共通', 'team-a', True)]
+    assert shown(listing) == [('K', 'チーム', '共通', 'team-a'),
+                              ('K', '個人', '共通', 'team-a')]
 
 
-def test_project_rows_follow_the_stacking_order(grouped, openbao):
+def test_a_project_lists_only_its_own_rows(grouped, openbao):
     openbao.put(TEAM, {'K': '1', 'Z': '1'})
     openbao.put(USER, {'K': '2'})
     openbao.put('team/team-a/projects/web', {'K': '3', 'A': '3'})
@@ -74,25 +74,15 @@ def test_project_rows_follow_the_stacking_order(grouped, openbao):
     listing = env_rows.collect_key_rows(grouped, project='web')
 
     assert shown(listing) == [
-        ('K', 'チーム', '共通', 'team-a', False),
-        ('Z', 'チーム', '共通', 'team-a', True),
-        ('K', '個人', '共通', 'team-a', False),
-        ('A', 'チーム', 'プロジェクト web', 'team-a', True),
-        ('K', 'チーム', 'プロジェクト web', 'team-a', False),
-        ('K', '個人', 'プロジェクト web', 'team-a', True),
+        ('A', 'チーム', 'プロジェクト web', 'team-a'),
+        ('K', 'チーム', 'プロジェクト web', 'team-a'),
+        ('K', '個人', 'プロジェクト web', 'team-a'),
     ]
+    assert [r.kind for r in listing.refs] == ['project', 'project']
     assert listing.project == 'web'
 
 
-def test_the_account_group_key_never_wins(grouped, openbao):
-    openbao.put(TEAM, {'DEVBASE_ACCOUNT_GROUP': 'x'})
-
-    listing = env_rows.collect_key_rows(grouped, group='team-a')
-
-    assert shown(listing) == [('DEVBASE_ACCOUNT_GROUP', 'チーム', '共通', 'team-a', False)]
-
-
-@pytest.mark.parametrize('project, gets', [(None, 2), ('web', 4)])
+@pytest.mark.parametrize('project, gets', [(None, 2), ('web', 2)])
 def test_one_login_and_one_get_per_ref(grouped, openbao, project, gets):
     openbao.put(TEAM, {'A': '1'})
 
@@ -144,7 +134,7 @@ def test_version_one_has_no_group_column(openbao_root, openbao):
 
     listing = env_rows.collect_key_rows(openbao_root)
 
-    assert shown(listing) == [('A', 'チーム', '共通', None, True)]
+    assert shown(listing) == [('A', 'チーム', '共通', None)]
     assert not listing.grouped and listing.group is None
 
 
@@ -163,9 +153,33 @@ def test_a_file_backend_has_no_user_rows(file_root):
 
     listing = env_rows.collect_key_rows(file_root, project='web')
 
-    assert shown(listing) == [('A', 'チーム', '共通', None, False),
-                              ('A', 'チーム', 'プロジェクト web', None, True)]
+    assert shown(listing) == [('A', 'チーム', 'プロジェクト web', None)]
     assert not listing.has_user_refs
+
+
+def test_project_key_counts_add_the_team_and_user_rows(grouped, openbao):
+    (grouped / 'projects' / 'api').mkdir()
+    openbao.put(TEAM, {'G': 'x'})
+    openbao.put('team/team-a/projects/web', {'A': '1', 'B': '1'})
+    openbao.put('users/member01/team-a/projects/web', {'A': '2'})
+
+    assert env_rows.count_project_keys(grouped) == [('api', 0), ('web', 3)]
+    assert openbao.logins == 1
+    assert openbao.requests_of('LIST') == []
+
+
+def test_an_unreadable_project_count_is_none(grouped, openbao):
+    (grouped / 'projects' / 'api').mkdir()
+    openbao.forbidden_prefixes = ['team/team-a/projects/web']
+
+    assert env_rows.count_project_keys(grouped) == [('api', 0), ('web', None)]
+
+
+def test_project_key_counts_on_a_file_backend(file_root):
+    (file_root / '.env').write_text('A=1\n')
+    (file_root / 'projects' / 'web' / '.env').write_text('A=2\nB=2\n')
+
+    assert env_rows.count_project_keys(file_root) == [('web', 2)]
 
 
 def test_group_choices_dedupe_by_storage_group(grouped, openbao):

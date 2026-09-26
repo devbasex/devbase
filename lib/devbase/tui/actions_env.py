@@ -1,26 +1,24 @@
 """env カテゴリの TUI 操作フロー (PLAN31_2 PR3 → メニュー再構成)。
 
-TUI では参照・対話系の操作を中心にし、メニュー階層を浅くする:
+TUI では次の 4 つだけを扱い、メニュー階層を浅くする:
 
-- 変数一覧はスコープ選択の中間プロンプトを挟まず、グローバル一覧のみを
-  即実行する。プロジェクト単位の一覧は TUI から除外する (CLI で実行)。
-- キー単位の追加・変更・削除は「キーの一覧と編集」の画面 (``actions_env_keys``、#273) で
-  行い、``set`` / ``delete`` へ委譲する。OpenBao の接続先とブートストラップ機密は
-  「OpenBao の接続設定」の画面 (``actions_env_openbao``) で変える。
+- 「キーの一覧と編集」(``actions_env_keys``、#273): キーの一覧と、キー単位の追加・変更・削除。
+  ``set`` / ``delete`` へ委譲する。一覧・エディタでの編集・プロジェクト変数の対話設定は
+  この画面と役割が重なるため TUI から外した (#312。CLI の ``env list`` / ``edit`` /
+  ``project`` で実行する)
+- 「認証情報の再同期 (sync)」「初期セットアップ (init)」: 引数なしで即実行する
+- 「OpenBao の接続設定」(``actions_env_openbao``): 接続先とブートストラップ機密を変える
 - export/import は TUI から除外する (CLI で実行)。
 
 引数収集は ``tui.menu`` のヘルパで CLI parser (cli.py ``_add_env_parser``) と
 同じ属性値を集め、``tui.dispatch.dispatch_group`` 経由で既存ハンドラ
 ``cmd_env`` へ委譲する (ロジック二重実装なし)。
 
-project スコープ依存の扱い (plan 3.3):
-- ``project`` (対話設定) は CWD (環境変数 ``PWD``) のプロジェクトディレクトリで
-  動くため、先にプロジェクト選択メニューで対象を選ばせて chdir + ``PWD``
-  差し替えしてからハンドラを呼び、実行後は必ず元へ復帰する
-  (``_run_in_project``)。``cmd_env_*`` は ``os.environ.get('PWD', os.getcwd())``
-  で現在地を判定するため、``os.chdir`` だけでなく ``PWD`` も併せて切り替える。
-- ``edit`` は常に ``$DEVBASE_ROOT/.env`` を開くグローバル操作のため、
-  プロジェクト選択は行わない。
+プロジェクトの置き場への書き込みは、CWD (環境変数 ``PWD``) のプロジェクトディレクトリで
+動く ``set -p`` / ``delete -p`` へ委譲するため、chdir + ``PWD`` 差し替えしてからハンドラを
+呼び、実行後は必ず元へ復帰する (``_run_in_project``)。``cmd_env_*`` は
+``os.environ.get('PWD', os.getcwd())`` で現在地を判定するため、``os.chdir`` だけでなく
+``PWD`` も併せて切り替える。
 
 中止系の伝搬 (Ctrl-C / Esc / ``_ARG_CANCEL``) は ``tui.flow`` のナビ規約に従う。
 """
@@ -30,28 +28,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from devbase.commands.project import (
-    _STATUS_COLOR,
-    _build_menu_entries,
-    list_projects,
-)
 from devbase.log import get_logger
 from devbase.tui import flow, menu
 from devbase.tui.dispatch import dispatch_group
 
 logger = get_logger(__name__)
 
-# env カテゴリで選べる操作 (表示順 = ハイライト既定順)。参照系のグローバル一覧を
-# 先頭に置き、Enter 連打で安全な一覧表示へ到達できるようにする (中間プロンプト
-# なしで即実行)。プロジェクト単位の一覧と export/import は TUI から除外 (CLI で実行)。
-# #273 の 2 つの画面は既存の 5 つの後に置く (既存の名前と順は変えない)。
+# env カテゴリで選べる操作 (表示順 = ハイライト既定順)。書き込む前に選び直せる
+# 「キーの一覧と編集」を先頭に置き、Enter 連打で書き込みの操作へ到達しないようにする。
 _ENV_OPS: list[tuple[str, str]] = [
-    ("変数一覧 (グローバル)", "list-global"),
-    ("エディタで編集 (edit)", "edit"),
-    ("認証情報の再同期 (sync)", "sync"),
-    ("プロジェクト変数の対話設定 (project)", "project"),
-    ("初期セットアップ (init)", "init"),
     ("キーの一覧と編集", "keys"),
+    ("認証情報の再同期 (sync)", "sync"),
+    ("初期セットアップ (init)", "init"),
     ("OpenBao の接続設定", "openbao"),
 ]
 
@@ -78,28 +66,6 @@ def _select_action():
     """
     return menu.select(f"環境変数の操作を選択 {menu.HINT_BACK}:",
                        list(_ENV_OPS), back=True, search=False)
-
-
-def _select_project(devbase_root: Path):
-    """project スコープ操作の対象プロジェクトを選ぶ。
-
-    actions_project と同じ一覧取得 (``list_projects`` + ``_build_menu_entries``) を
-    流用する。戻り値: プロジェクト名 (``str``) / ``None`` (Ctrl-C → 全体中止を呼び
-    出し元へ伝搬) / ``_ARG_CANCEL`` (Esc → サブメニューへ戻る、またはプロジェクト無し)。
-    """
-    projects_dir = Path(devbase_root) / "projects"
-    rows = list_projects(projects_dir)
-    if not rows:
-        logger.info("プロジェクトがありません (%s)。", projects_dir)
-        return _ARG_CANCEL
-
-    entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
-    choices = [(entry, i) for i, entry in enumerate(entries)]
-    idx = menu.select(f"対象プロジェクトを選択 {menu.HINT_SEARCH}:",
-                      choices, back=True, search=True)
-    if isinstance(idx, int):
-        return rows[idx]["name"]
-    return flow.back_as_cancel(idx)    # None=Ctrl-C / MENU_BACK=Esc → 再表示
 
 
 def _run_in_project(devbase_root: Path, project_name: str, fn):
@@ -137,29 +103,12 @@ def _run_in_project(devbase_root: Path, project_name: str, fn):
 # 各操作の引数収集 + dispatch (plan 2.3 契約)
 # ---------------------------------------------------------------------------
 
-def _op_project(devbase_root: Path):
-    # プロジェクト固有変数の対話設定。projects/ 配下で動く CWD スコープ操作の
-    # ため、対象を選ばせて chdir してから実行する (plan 3.3)。
-    name = flow.need(_select_project(devbase_root))
-    return _run_in_project(devbase_root, name,
-                           lambda: _dispatch(devbase_root, "project"))
-
-
 _OP_HANDLERS = {
-    # グローバル一覧は引数収集なしで即実行 (chdir 不要)。--reveal/--keys は
-    # CLI 既定の False (伏せ字・通常表示)。
     # sync は引数なしで即実行 (ソースファイルから認証情報を再同期する)。
-    # edit も引数なし。$DEVBASE_ROOT/.env を $EDITOR で開くグローバル操作のため
-    # chdir しない (plan 3.3 は CWD スコープとするが実装を正とする)。
     # init は --reset なし (CLI 既定) で即実行。セットアップ済みなら
     # cmd_env_init が案内を出して安全に終了し、やり直しは CLI --reset を使う。
-    "list-global": lambda root: _dispatch(root, "list", global_only=True,
-                                          project_only=False,
-                                          reveal=False, keys_only=False),
     "sync": lambda root: _dispatch(root, "sync"),
-    "edit": lambda root: _dispatch(root, "edit"),
     "init": lambda root: _dispatch(root, "init", reset=False),
-    "project": _op_project,
     # 2 つの画面は自分の中で引数を集め、cmd_env へ委譲する (#273)。関数内で import するのは
     # 画面のモジュールが本モジュールの _dispatch / _run_in_project を使うため (循環を避ける)。
     "keys": lambda root: _screen("actions_env_keys").run(root),

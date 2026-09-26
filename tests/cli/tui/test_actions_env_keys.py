@@ -86,8 +86,8 @@ def test_rows_show_the_place_and_mask_the_values(grouped, openbao, monkeypatch):
     [choices] = script.choices_of('キーの一覧')
     titles = [t for t, _ in choices]
     assert titles[0] == '＋ キーを追加'
-    row_a = next(t for t in titles if ' A ' in t)
-    row_b = next(t for t in titles if ' B ' in t)
+    row_a = next(t for t in titles if t.startswith('A '))
+    row_b = next(t for t in titles if t.startswith('B '))
     assert 'チーム' in row_a and '個人' in row_b
     for row in (row_a, row_b):
         assert '共通' in row and 'team-a' in row and '******' in row
@@ -95,7 +95,7 @@ def test_rows_show_the_place_and_mask_the_values(grouped, openbao, monkeypatch):
     assert 'キーの一覧 2 件' in script.messages()[-1]
 
 
-def test_the_user_row_carries_the_winning_mark(grouped, openbao, monkeypatch):
+def test_rows_carry_no_winning_mark(grouped, openbao, monkeypatch):
     openbao.put(TEAM, {'K': 't'})
     openbao.put(USER, {'K': 'u'})
     script = Script(monkeypatch, select=['global', 'team-a', menu.MENU_BACK])
@@ -103,9 +103,9 @@ def test_the_user_row_carries_the_winning_mark(grouped, openbao, monkeypatch):
     run(grouped)
 
     [choices] = script.choices_of('キーの一覧')
-    team_row, user_row = [t for t, v in choices if v != keys_ui.ADD]
-    assert '個人' in user_row and user_row.startswith('★')
-    assert 'チーム' in team_row and not team_row.startswith('★')
+    rows = [t for t, v in choices if v != keys_ui.ADD]
+    assert len(rows) == 2 and all(t.startswith('K ') for t in rows)
+    assert not any('★' in t for t in rows)
 
 
 def test_version_one_does_not_ask_for_a_group(openbao_root, openbao, monkeypatch):
@@ -194,7 +194,7 @@ def test_changing_a_value_is_read_back_by_get(grouped, openbao, monkeypatch, cap
 
 
 def ref_listing(ref, *, project=None):
-    row = KeyRow(key='K', ref=ref, owner_label='x', scope_label='x', group_label=None, wins=True)
+    row = KeyRow(key='K', ref=ref, owner_label='x', scope_label='x', group_label=None)
     return KeyListing(rows=[row], refs=[ref], has_user_refs=True, grouped=True,
                       group=ref.group if ref.kind == 'global' else None, project=project,
                       backend='openbao')
@@ -328,19 +328,84 @@ def test_the_tui_never_writes_the_store_itself(grouped, openbao, monkeypatch):
     assert openbao.get(TEAM) == {'K': 'v'}
 
 
-def test_adding_in_a_project_scope_offers_both_scopes(grouped, openbao, monkeypatch):
-    from devbase.tui import actions_env
+# ---------------------------------------------------------------------------
+# プロジェクトの範囲 (#312)
+# ---------------------------------------------------------------------------
 
-    monkeypatch.setattr(actions_env, '_select_project', lambda root: 'web')
-    script = Script(monkeypatch, select=['project', keys_ui.ADD, 'user', 'project',
-                                         menu.MENU_BACK],
+def test_the_project_list_shows_only_the_project_rows(grouped, openbao, monkeypatch):
+    openbao.put(TEAM, {'G': 'x'})
+    openbao.put(USER, {'U': 'x'})
+    openbao.put('team/team-a/projects/web', {'P': 'x'})
+    openbao.put('users/member01/team-a/projects/web', {'Q': 'x'})
+    script = Script(monkeypatch, select=['project', 'web', menu.MENU_BACK])
+
+    run(grouped)
+
+    [choices] = script.choices_of('キーの一覧')
+    rows = [t for t, v in choices if v != keys_ui.ADD]
+    assert [t.split()[0] for t in rows] == ['P', 'Q']
+    assert all('プロジェクト web' in t for t in rows)
+    assert 'キーの一覧 2 件（参照 2 件' in script.messages()[-1]
+
+
+def test_adding_in_a_project_scope_writes_the_project_without_asking_the_scope(
+        grouped, openbao, monkeypatch):
+    script = Script(monkeypatch, select=['project', 'web', keys_ui.ADD, 'user', menu.MENU_BACK],
                     text=['K'], secret=['v'])
 
     run(grouped)
 
     assert openbao.get('users/member01/team-a/projects/web') == {'K': 'v'}
-    [scopes] = script.choices_of('適用範囲')
-    assert [v for _, v in scopes] == ['global', 'project']
+    assert openbao.get(USER) == {}
+    assert not any(m.startswith('適用範囲') for m in script.messages())
+
+
+def test_the_project_choices_show_key_counts_and_no_status(grouped, openbao, monkeypatch):
+    (grouped / 'projects' / 'api').mkdir()
+    (grouped / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-a\n')
+    openbao.put('team/team-a/projects/web', {'P': 'x', 'R': 'x'})
+    openbao.put('users/member01/team-a/projects/web', {'Q': 'x'})
+    script = Script(monkeypatch, select=['project', menu.MENU_BACK, menu.MENU_BACK])
+
+    run(grouped)
+
+    [choices] = script.choices_of('対象プロジェクト')
+    assert choices == [('api  キー 0 件', 'api'), ('web  キー 3 件', 'web')]
+    assert not any(s in t for t, _ in choices for s in ('running', 'stopped'))
+
+
+def test_an_unreadable_project_shows_a_question_mark(grouped, openbao, monkeypatch):
+    openbao.forbidden_prefixes = ['users/member01/team-a/projects/']
+    script = Script(monkeypatch, select=['project', menu.MENU_BACK, menu.MENU_BACK])
+
+    run(grouped)
+
+    [choices] = script.choices_of('対象プロジェクト')
+    assert choices == [('web  キー ? 件', 'web')]
+
+
+def test_back_from_the_project_choice_returns_to_the_scope(grouped, monkeypatch):
+    script = Script(monkeypatch, select=['project', menu.MENU_BACK, menu.MENU_BACK])
+
+    rc, _ = run(grouped)
+
+    assert rc is flow.ARG_CANCEL
+    assert [m.split()[0] for m in script.messages()] == ['キーの範囲を選択', '対象プロジェクトを選択',
+                                                         'キーの範囲を選択']
+
+
+def test_the_project_choice_goes_back_with_the_left_key(grouped, monkeypatch):
+    seen = {}
+
+    def fake_select(message, choices, **kwargs):
+        seen.update(kwargs)
+        return menu.MENU_BACK
+
+    monkeypatch.setattr(menu, 'select', fake_select)
+    with pytest.raises(flow.BackOut):
+        keys_ui._select_project(grouped)
+    assert seen == {'back': True, 'search': True, 'left_back': True}
+    assert '←・Esc 戻る' in menu.HINT_SEARCH_LEFT
 
 
 # ---------------------------------------------------------------------------

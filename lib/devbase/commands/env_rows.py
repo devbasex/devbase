@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from devbase.env import keys
 from devbase.env.secret_store import SecretRef, SecretStore
 
 OWNER_LABELS = {'team': 'チーム', 'user': '個人'}
@@ -26,8 +25,6 @@ class KeyRow:
     scope_label: str
     #: ``version: 2`` のときだけ。読み替えがあれば ``default → nyle`` の形
     group_label: Optional[str]
-    #: 並べた参照の中で重ね順が最後の行 (勝つ行)
-    wins: bool
 
 
 @dataclass
@@ -56,7 +53,8 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
                      group: Optional[str] = None) -> KeyListing:
     """選んだ範囲の参照を読み、キーの行を返す。
 
-    ``project`` が ``None`` なら共通 (チーム共通・個人共通)、あればプロジェクトの 2 つも読む。
+    ``project`` が ``None`` なら共通 (チーム共通・個人共通)、あればそのプロジェクトの 2 つ
+    (チーム・個人) だけを読む。
     ``group`` は ``--group`` と同じ検証を通す (:class:`GroupOptionError`)。``project`` があれば
     無視し、そのプロジェクトのグループを使う (決定 6)。``group`` が無ければ
     ``$DEVBASE_ROOT/env`` のグループ。
@@ -80,9 +78,10 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
     team_global = SecretRef.for_global(group=target)
     has_user = store.has_user_refs(team_global)
     owners = ('team', 'user') if has_user else ('team',)
-    refs = [SecretRef.for_global(owner=o, group=target) for o in owners]
-    if project is not None:
-        refs += [SecretRef.for_project(project, owner=o, group=target) for o in owners]
+    if project is None:
+        refs = [SecretRef.for_global(owner=o, group=target) for o in owners]
+    else:
+        refs = [SecretRef.for_project(project, owner=o, group=target) for o in owners]
 
     settings = store.config.openbao if grouped else None
     rows: List[KeyRow] = []
@@ -90,20 +89,36 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
         data = store.fetch(ref)
         group_label = settings.display_group(ref.group) if settings and ref.group else None
         rows += [KeyRow(key=k, ref=ref, owner_label=OWNER_LABELS[ref.owner],
-                        scope_label=scope_label(ref), group_label=group_label, wins=False)
+                        scope_label=scope_label(ref), group_label=group_label)
                  for k in sorted(data)]
-
-    last = {row.key: i for i, row in enumerate(rows) if row.key != keys.DEVBASE_ACCOUNT_GROUP}
-    rows = [row if last.get(row.key) != i else _won(row) for i, row in enumerate(rows)]
     return KeyListing(rows=rows, refs=refs, has_user_refs=has_user, grouped=grouped,
                       group=option_group, project=project,
                       backend=store.backend_for(team_global).name)
 
 
-def _won(row: KeyRow) -> KeyRow:
-    from dataclasses import replace
+def count_project_keys(devbase_root: Path) -> List[Tuple[str, Optional[int]]]:
+    """プロジェクトごとのキーの数 (TUI の対象プロジェクトの選択に添える)。
 
-    return replace(row, wins=True)
+    数はそのプロジェクトの参照 (チーム・個人) の行の数で、:func:`collect_key_rows` の
+    一覧の件数と同じになる。1 つの ``SecretStore`` で参照ごとに ``fetch`` を 1 回行う。
+    読めないプロジェクト (名前が使えない・接続・403・復号の失敗) は ``None`` にして続ける。
+    """
+    from devbase.errors import DevbaseError
+    from devbase.utils import names
+
+    store = SecretStore(devbase_root)
+    counts: List[Tuple[str, Optional[int]]] = []
+    for path in names.project_dirs(Path(devbase_root) / 'projects'):
+        try:
+            group = store.ref_group(path.name)
+            team = SecretRef.for_project(path.name, group=group)
+            owners = ('team', 'user') if store.has_user_refs(team) else ('team',)
+            count = sum(len(store.fetch(SecretRef.for_project(path.name, owner=o, group=group)))
+                        for o in owners)
+        except DevbaseError:
+            count = None
+        counts.append((path.name, count))
+    return counts
 
 
 def group_choices(devbase_root: Path) -> List[str]:
