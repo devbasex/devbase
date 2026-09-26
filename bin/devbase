@@ -100,6 +100,31 @@ compose_build_field() {
     grep -A 3 "build:" compose.yml | grep "$1:" | head -1 | awk '{print $2}'
 }
 
+# compose.yml の build: の dockerfile/context からプロジェクトの Dockerfile のパスを出す (既定は Dockerfile)
+resolve_project_dockerfile() {
+    local dockerfile_path="Dockerfile"
+    if [ -f "compose.yml" ]; then
+        # Try to extract dockerfile path from compose.yml (simple grep approach)
+        local dockerfile_line
+        dockerfile_line=$(compose_build_field dockerfile)
+        if [ -n "$dockerfile_line" ]; then
+            dockerfile_path="$dockerfile_line"
+        fi
+
+        # If dockerfile is relative, combine with context path
+        local context_line
+        context_line=$(compose_build_field context)
+        if [ -n "$context_line" ]; then
+            # Expand environment variables in context path
+            context_line=$(eval echo "$context_line")
+            if [[ "$dockerfile_path" != /* ]]; then
+                dockerfile_path="${context_line}/${dockerfile_path}"
+            fi
+        fi
+    fi
+    printf '%s\n' "$dockerfile_path"
+}
+
 cmd_build() {
     echo "=== Building devbase images ==="
 
@@ -154,26 +179,8 @@ cmd_build() {
     }
 
     # Detect Dockerfile path from compose.yml
-    local dockerfile_path="Dockerfile"
-    if [ -f "compose.yml" ]; then
-        # Try to extract dockerfile path from compose.yml (simple grep approach)
-        local dockerfile_line
-        dockerfile_line=$(compose_build_field dockerfile)
-        if [ -n "$dockerfile_line" ]; then
-            dockerfile_path="$dockerfile_line"
-        fi
-
-        # If dockerfile is relative, combine with context path
-        local context_line
-        context_line=$(compose_build_field context)
-        if [ -n "$context_line" ]; then
-            # Expand environment variables in context path
-            context_line=$(eval echo "$context_line")
-            if [[ "$dockerfile_path" != /* ]]; then
-                dockerfile_path="${context_line}/${dockerfile_path}"
-            fi
-        fi
-    fi
+    local dockerfile_path
+    dockerfile_path=$(resolve_project_dockerfile)
 
     # check_base_image_dependency の非 0 は「devbase-* を使わない」の判定で、失敗ではない (#247)
     local base_image_name
