@@ -22,25 +22,38 @@ workspace の書き出しは用語を新しく持たないため、コンテキ�
 ### 集約
 
 この変更が書き換えるのは試験のための状態だけである。スクリプトの状態（セッション・クライアント・
-workspace の定義）は観察の対象で、テストは書き換える側に回らない。
+workspace の定義）は、スクリプトの実行中は観察の対象で、テストは書き換える側に回らない。テストが
+スクリプトの状態に手を入れるのは、実行の前の準備（セッションを作る・書き出し先に既存の内容を置く）
+だけである。持ち主の欄は、準備と実行のそれぞれで誰が書き換えてよいかを書く。
 
 | 集約 | 持ち主（書き換えてよいもの） | 根 | エンティティ | 値オブジェクト |
 | --- | --- | --- | --- | --- |
 | 隔離した tmux サーバ | 共通の harness の `TmuxEnv` | `TmuxEnv`（1 テストに 1 つ） | セッション・クライアント（端末） | ソケットのディレクトリ（`TMUX_TMPDIR`）・環境 |
 | 故障の差し込み | 共通の harness の `ScriptTmuxEnv` | 故障の表（1 テストに 1 つのファイル） | — | 規則（動作と引数の前方一致） |
-| workspace の書き出し先 | テストの一時ディレクトリ（`tmp_path`） | 書き出し先のファイル | — | 完成品の文書（`DEVBASE_WORKSPACE_B64`） |
+| workspace の書き出し先 | 準備ではテスト（既存の内容を置く）、実行中は `devbase_write_workspace`（`<書き出し先>.tmp` を経て置き換える）。置き場所はテストの一時ディレクトリ（`tmp_path`）の下 | 書き出し先のファイル | — | 完成品の文書（`DEVBASE_WORKSPACE_B64`） |
 
 ### 不変条件
 
 | # | 集約 | 条件 | 破れたときの扱い |
 | --- | --- | --- | --- |
-| I1 | 隔離した tmux サーバ | harness が起動する tmux とスクリプトの環境には、pytest が継承した `TMUX` / `TMUX_PANE` が無い。`TMUX` を持たせるのは `inside_env` が隔離したサーバの pane を指す値として与えたときだけ | テストが落ちる（harness の環境を検査するテスト） |
+| I1a | 隔離した tmux サーバ | harness が起動する tmux とスクリプトの環境には、pytest が継承した `TMUX` / `TMUX_PANE` が無い | テストが落ちる（harness の環境を検査するテスト） |
+| I1b | 隔離した tmux サーバ | 環境に `TMUX` があるのは `inside_env` が与えたときだけで、その値は隔離したサーバの pane を指す | テストが落ちる（harness の環境を検査するテスト） |
 | I2 | 隔離した tmux サーバ | 利用者の tmux サーバのセッション一覧とクライアント一覧は、テストの前後で変わらない | 手で比べて見つける（テスト設計の「手の確認」） |
 | I3 | 故障の差し込み | 故障の表に当たらない tmux の呼び出しは、実物の tmux へ引数と環境をそのまま渡す | ラッパーを通したセッション操作のテストが落ちる |
-| I4 | workspace の書き出し先 | 書き出しが失敗しても、`<書き出し先>.tmp` が残らず、既にある書き出し先が上書きされない | テストが落ちる |
+| I4 | workspace の書き出し先 | `DEVBASE_WORKSPACE_B64` の復号に失敗しても、`<書き出し先>.tmp` が残らず、既にある書き出し先が上書きされない | テストが落ちる |
 | I5 | 隔離した tmux サーバ | `tmux-clean` は keeper を、どの分岐・どのオプションでも消さない | テストが落ちる |
-| I6 | 隔離した tmux サーバ | `tmux-first` は実行元のクライアントを特定できないとき、`-f` の有無によらず、どの端末も切断も切り替えもしない | テストが落ちる |
-| I7 | — | 新しいテストは時刻を待つための `sleep` を使わない。時刻は偽の date で進める | テスト全体の時間の合計を見て見つける（テスト設計） |
+| I6 | 隔離した tmux サーバ | `tmux-first` は tmux の中で実行していて実行元のクライアントを特定できないとき、`-f` の有無によらず、どの端末も切断も切り替えもしない | テストが落ちる |
+
+tmux の外で実行したとき（`TMUX` が無い）は実行元の判定を通らず、`-f` による他の端末の切断へ
+進む。I6 はこの経路を対象にしない。
+
+### 集約に属さない制約
+
+どの集約にも属さない、テスト設計の制約を不変条件の表から分けて置く。
+
+| # | 条件 | 破れたときの扱い |
+| --- | --- | --- |
+| C1 | 新しいテストは時刻を待つための `sleep` を使わない。時刻は偽の date で進める | テスト全体の時間の合計を見て見つける（テスト設計） |
 
 ### ドメインイベント
 
@@ -97,7 +110,7 @@ graph LR
 ```
 
 利用者の tmux サーバは、テストが変えられない外部の系である。テストはここへの経路を持たない
-（I1）。CI（ubuntu-latest）の手順と `.github/workflows/ci.yml` は変えない。新しいファイルは
+（I1a・I1b）。CI（ubuntu-latest）の手順と `.github/workflows/ci.yml` は変えない。新しいファイルは
 既存の `uv run --locked pytest tests/ -q` が拾う。
 
 ### 構成要素図
@@ -220,7 +233,8 @@ classDiagram
 | `Client` | 移す（中身は変えない） | pty に繋いだ tmux のクライアント |
 | `TmuxEnv` | 移す（中身は変えない） | 隔離した tmux サーバと、それを指す環境 |
 | `ScriptTmuxEnv` | 新設 | `TmuxEnv` を継承し、`fake/` へラッパーと偽の date を書いてから `super().__init__(root, fake=root / "fake")` を呼ぶ |
-| `wait` / `short_root` / `needs_tmux` | 移す（名前から先頭の `_` を外す） | 待ちの関数・短い一時ディレクトリ・tmux が無いときの skip |
+| `wait` / `short_root` | 移す（名前から先頭の `_` を外す。元は `_wait` / `_short_root`） | 待ちの関数・短い一時ディレクトリ |
+| `needs_tmux` | そのまま移す（今も先頭に `_` の無い名前） | tmux が無いときの skip |
 | `BASE_DIR` / `SCRIPT` / `SHORT_NAMES` | 移す | `TmuxEnv` が `bin/` に張る symlink の元。`test_tmux_session.py` も読み込んで使う |
 
 `test_tmux_session.py` は `from .tmux_harness import wait as _wait, short_root as _short_root, ...`
@@ -387,17 +401,17 @@ fixture は名前で読み込めないため、型の置き場に向かない。
 | # | テスト | 置き場所 | 何を確かめるか |
 | --- | --- | --- | --- |
 | T1 | `test_workspace_falls_back_when_the_folders_cannot_be_decoded` | `test_entrypoint_repos.py` | `DEVBASE_WORKSPACE_FOLDERS=%%%%`・B64 が正しい。標準出力に `Warning: Failed to decode DEVBASE_WORKSPACE_FOLDERS`、書き出し先が B64 の復号結果と一致、終了コード 0 |
-| T2 | `test_a_broken_prebuilt_document_keeps_the_old_workspace`（`parametrize`: FOLDERS なし / `%%%%`） | `test_entrypoint_repos.py` | B64=`%%%%`、書き出し先に `old` を置く。`Warning: Failed to write workspace file: <書き出し先>`、`<書き出し先>.tmp` が無い、書き出し先が `old` のまま、終了コード 0 |
+| T2 | `test_a_broken_prebuilt_document_keeps_the_old_workspace`（`parametrize`: FOLDERS なし / `%%%%`） | `test_entrypoint_repos.py` | B64=`%%%%`、書き出し先に `old` を置く。`Warning: Failed to write workspace file: <書き出し先>`、`<書き出し先>.tmp` が無い、書き出し先が `old` のまま、終了コード 0。FOLDERS が `%%%%` の分は、その警告より先に `Warning: Failed to decode DEVBASE_WORKSPACE_FOLDERS` も出る（FOLDERS なしの分には出ない） |
 | T3 | `test_outside_keeps_the_lowest_number` | `test_tmux_clean.py` | tmux の外、`devbase-2`・`devbase-10`、ベース名を指定。`keeper=devbase-2`（数の昇順）、`devbase-10` だけが消える |
 | T4 | `test_inside_keeps_the_current_session` | `test_tmux_clean.py` | `inside_env(devbase-2)`、引数なし。ベース名を推定し、`devbase-1`・`devbase-3` が消えて `devbase-2` が残る |
-| T5 | `test_attached_and_running_sessions_are_kept` | `test_tmux_clean.py` | `devbase-2` に端末を繋ぎ、`devbase-3` で `sleep 600` を動かす。`-f` なしで `(アタッチ中: クライアント 1 個)`・`(実行中: sleep)` と出て残り、`devbase-4` だけ消える |
-| T6 | `test_force_removes_attached_and_running_but_not_the_keeper` | `test_tmux_clean.py` | T5 と同じ準備に `-f`。keeper の `devbase-1` だけが残る |
-| T7 | `test_dry_run_removes_nothing`（`parametrize`: `-n` / `-n -f`） | `test_tmux_clean.py` | セッション一覧が前後で同じ、`  KILL  devbase-4  (dry-run)` が出る、終了コード 0 |
+| T5 | `test_attached_and_running_sessions_are_kept` | `test_tmux_clean.py` | tmux の外で、ベース名 `devbase` を指定して走らせる。セッションは keeper の `devbase-1`・`devbase-2`・`devbase-3`・`devbase-4` を作り、`devbase-2` に端末を繋ぎ、`devbase-3` で `sleep 600` を動かす。`-f` なしで `(アタッチ中: クライアント 1 個)`・`(実行中: sleep)` と出て残り、`devbase-4` だけ消える |
+| T6 | `test_force_removes_attached_and_running_but_not_the_keeper` | `test_tmux_clean.py` | T5 と同じ準備（keeper の `devbase-1`・tmux の外・ベース名 `devbase`）に `-f`。keeper の `devbase-1` だけが残る |
+| T7 | `test_dry_run_removes_nothing`（`parametrize`: `-n` / `-n -f`） | `test_tmux_clean.py` | T5 と同じ準備（keeper の `devbase-1`・tmux の外・ベース名 `devbase`）。セッション一覧が前後で同じ、`  KILL  devbase-4  (dry-run)` が出る、終了コード 0 |
 | T8 | `test_unreadable_state_is_kept_without_force`（`parametrize`: pane を読めない / アタッチ数を読めない、`-f` なし / あり） | `test_tmux_clean.py` | `-f` なし: `devbase-2` が残り、標準エラーに `セッションの状態を取得できないため削除しません: devbase-2`、終了コード 0。`-f` あり: `devbase-2` が消える。アタッチ数の一覧は全セッションに効くため、セッションは `devbase-1`・`devbase-2` の 2 つにする |
 | T9 | `test_a_session_that_vanished_is_skipped`（`parametrize`: pane を読む前 / 削除の直前） | `test_tmux_clean.py` | `  skip  devbase-2  (既に終了していました)`、件数の行が `削除 1 件`（`devbase-3` の分だけ）、`失敗 0 件`、終了コード 0 |
 | T10 | `test_a_failed_kill_is_reported_and_the_rest_continue` | `test_tmux_clean.py` | 標準エラーに `セッションを削除できませんでした: devbase-2`、`devbase-2` が残り `devbase-3` が消える、`失敗 1 件`、終了コード 1 |
-| T11 | `test_unknown_caller_touches_no_client`（`parametrize`: `-f` なし / あり） | `test_tmux_first.py` | 実行元の端末を `home`、他の端末を `proj-1` に繋ぎ、`clock=11` で `inside_env(home)` から実行。`all_clients()` が前後で同じ、標準エラーに `実行元のクライアントを特定できないため` が出る、終了コード 0 |
-| T12 | `test_known_caller_detaches_others_and_switches` | `test_tmux_first.py` | T11 と同じ準備に `clock=0`・`-f`。`proj-1` の他の端末が外れ、`clients_of(proj-1) == {実行元}` |
+| T11 | `test_unknown_caller_touches_no_client`（`parametrize`: `-f` なし / あり） | `test_tmux_first.py` | 実行元の端末を `home`、他の端末を `proj-1` に繋ぎ、`clock=11` で `inside_env(home)` から、ベース名 `proj` を引数で渡して実行する（`sh tmux-first proj` / `sh tmux-first -f proj`）。`all_clients()` が前後で同じ、標準エラーに `実行元のクライアントを特定できないため` が出る、終了コード 0 |
+| T12 | `test_known_caller_detaches_others_and_switches` | `test_tmux_first.py` | T11 と同じ準備に `clock=0`・`-f`。ベース名 `proj` を引数で渡す（`sh tmux-first -f proj`）。`proj-1` の他の端末が外れ、`clients_of(proj-1) == {実行元}` |
 | T13 | `test_harness_env_has_no_inherited_tmux` | `test_tmux_first.py` | `monkeypatch.setenv` で pytest のプロセスに `TMUX` / `TMUX_PANE` を仕込んでから `ScriptTmuxEnv` を作り、`env` に両方が無い。`inside_env` の `TMUX` のソケットが `TMUX_TMPDIR` の下にある |
 
 ### 受け入れ条件との対応
@@ -418,13 +432,15 @@ fixture は名前で読み込めないため、型の置き場に向かない。
 
 | 不変条件 | 何で確かめるか |
 | --- | --- |
-| I1 | T13 |
+| I1a | T13（`env` に `TMUX` / `TMUX_PANE` が無い） |
+| I1b | T13（`inside_env` の `TMUX` のソケットが `TMUX_TMPDIR` の下にある） |
 | I2 | 手の確認（上の表の 6 行目） |
 | I3 | T3〜T7（ラッパーを置いたまま、故障の表なしで tmux の操作とスクリプトが本物どおりに動く） |
 | I4 | T2 |
 | I5 | T3・T4・T6・T7（`-n -f`）・T8（`-f` あり）で keeper が残ることを毎回確かめる |
 | I6 | T11 |
-| I7 | 受け入れ条件との対応の「時刻の待ち」の行 |
+
+集約に属さない制約 C1 は、受け入れ条件との対応の「時刻の待ち」の行で確かめる。
 
 ### 壊して確かめる手の確認
 
@@ -436,10 +452,14 @@ fixture は名前で読み込めないため、型の置き場に向かない。
 | `entrypoint.sh` の `devbase_write_workspace` で、復号の失敗の分岐から `devbase_write_workspace_verbatim` の呼び出しを消す | T1 |
 | `entrypoint.sh` の `devbase_write_workspace_verbatim` の `rm -f "$dest.tmp"` を消す | T2 |
 | `tmux-clean` の `[ "$s" = "$KEEP" ]` の分岐を消す | T3・T4 |
+| `tmux-clean` の `[ "$FORCE" = 0 ] && [ "${ATT:-0}" != 0 ]` の keep を消す | T5 |
+| `tmux-clean` の `[ "$FORCE" = 0 ] && [ -n "$BUSY" ]` の keep を消す | T5 |
+| `tmux-clean` の `[ "$DRY" = 1 ]` の dry-run の分岐を消す | T7 |
 | `tmux-clean` の `STATE_OK=0` の後の `FORCE = 0` の keep を消す | T8 |
 | `tmux-clean` の `has-session` による `skip` の分岐（2 か所）を消す | T9 |
 | `tmux-clean` の最後の `[ "$FAILED" = 0 ] \|\| exit 1` を消す | T10 |
 | `tmux-first` の `[ "$ME_VERIFIED" = 1 ] \|\| ME=""` を消す | T11 |
+| `tmux-first` の `tmux switch-client -c "$ME" -t "=$TARGET"` を消す | T12 |
 
 ## 未確認のまま残ること
 
