@@ -587,24 +587,18 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         _cache.purge(root)
         backup_dir = None
 
-    _print_migration_result(plan, backup_dir)
-    return 0
-
-
-def _print_migration_result(plan: '_MigrationPlan', backup_dir) -> None:
-    """移行の完了の見出しと、移行の方向ごとの案内を出す"""
-    print(f"\n=== 完了 === backend を {plan.to} に切り替えました")
-    if plan.to == _bc.BACKEND_OPENBAO:
+    print(f"\n=== 完了 === backend を {to} に切り替えました")
+    if to == _bc.BACKEND_OPENBAO:
         print("元の age / 平文の機密は次の場所へ退避しました。内容を確認したうえで削除してください:")
         print(f"  {backup_dir}")
     else:
-        server = plan.server
         print("サーバ上の機密はそのまま残っています (devbase は消しません):")
         print(f"  接続先: {server.url}")
         for unit, _ in plan.moves:
-            print(f"  {plan.server_store.display_label(unit.server_ref):<24} "
+            print(f"  {server_store.display_label(unit.server_ref):<24} "
                   f"{server.display_path(unit.server_ref)}")
         _print_left_on_server(plan)
+    return 0
 
 
 @dataclass(frozen=True)
