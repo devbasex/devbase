@@ -30,7 +30,8 @@ TUI は新しいコンテキストを作らない。画面の語（キーの行�
 
 - 参照の内容を書き換える責務は `SecretStore.save` の 1 か所にある。`cmd_env` の各コマンドはその呼び出し元で、
   どの参照へ書くか（宛先）だけを決める。この設計が宛先の決め方を変えるのは `sync` だけである
-- TUI はどの集約の持ち主でもない。書き込みはすべて上の持ち主へ委譲する（I1）
+- TUI はどの集約の持ち主でもない。参照の内容の書き込みは持ち主の呼び出し元である `cmd_env` の `set` / `delete` へ
+  委譲し、`SecretStore.save` を直接呼ばない（I1）。接続設定の書き込みは `cmd_env_backend_use` へ委譲する
 - `env sync` は 1 回の実行で最大 2 つの参照（チーム共通・個人共通）を書く。1 つのキーは必ず 1 つの参照だけへ
   書く（I2）。2 つの参照の保存は同じトランザクションにならない（決定 3）
 
@@ -101,6 +102,8 @@ TUI は新しいコンテキストを作らない。画面の語（キーの行�
 | `env sync`（`commands/env.py` の `cmd_env_sync`） | `--user` / `--group` を受け、個人共通とチーム共通を読み、キーごとに同期の書き込み先を選んで保存する | 変更 |
 | 同期の書き込み先（`commands/env.py` の `SyncTargets`） | 読んだ 2 つの参照を持ち、I2 の規則でキーの宛先を返す。書いた参照を覚えて保存する。2 つの参照は `set` / `delete` の `_target_env` と同じく `fresh=True`（`store.fetch`）で読み、キャッシュへ落ちない（今の `sync` の `_global_env(...)` は `fresh=False` で、接続断でも控えから読めてしまう） | 新設 |
 | 控えの更新（`commands/env.py` の `_update_source_metadata`） | 複数の参照のどれかにキーがあればソースを登録する（前提 5） | 変更 |
+| ソースごとの同期（`commands/env.py` の `_sync_source`） | 控えと比べられないとき（`check_changed` が `None`）の 1 行を「ソース未登録」から入出力の契約の「比べられない行」の文言に変え、控えに項目が無いときは「未登録の行」を出す | 変更 |
+| 変更の判定（`env/sources.py` の `SourcesManager.check_changed`） | docstring の `None=ソース未登録` を「`None`=ハッシュか元のファイルが無く比べられない（控えに項目が無いときを含む）」に直す。判定の中身は変えない | 変更 |
 | `env backend use`（`commands/env_backend.py`） | 同じプロセスの中から渡された `secret_id` の値を受ける（`_read_secret_id` / `_store_credentials`） | 変更 |
 | env の引数（`cli.py` の `_add_env_parser`） | `sync` に `--user` / `--group` を足す。持ち主の軸を持つ引数の組の注記（「init / sync / … には足さない」）から `sync` を外す | 変更 |
 | env メニューの既存のテスト（`tests/cli/tui/test_actions_env.py`） | 操作の値の並びの等値を 7 つに直す。「get/set/delete は CLI 専用」の注記を直す。`sync` を属性なしで委譲するテストは変えない | 変更 |
