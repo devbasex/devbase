@@ -55,7 +55,8 @@ def at(monkeypatch, root, rel=''):
 
 
 def kv_paths(openbao):
-    return {r.kv_path for r in openbao.received if r.kv_path}
+    """チーム単位の参照のパス (sync は個人共通も読み、欠けたホスト接続情報を個人共通へ書く。#273)"""
+    return {r.kv_path for r in openbao.received if r.kv_path and r.kv_path.startswith('team/')}
 
 
 def test_sync_keeps_the_synced_hashes_per_storage_group(grouped, openbao, monkeypatch,

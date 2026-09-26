@@ -383,7 +383,7 @@ def _add_env_parser(subparsers):
                           help='Account group whose team secrets to set up '
                                '(only with the grouped layout of the openbao backend)')
 
-    env_sub.add_parser('sync', help='Resync credentials from sources')
+    env_sync = env_sub.add_parser('sync', help='Resync credentials from sources')
 
     env_list = env_sub.add_parser('list', help='List variables')
     env_list.add_argument('--global', '-g', action='store_true', dest='global_only',
@@ -414,8 +414,9 @@ def _add_env_parser(subparsers):
 
     # 持ち主の軸 (PLAN51 決定 14)。`-p` が適用範囲を、`--user` が持ち主を選び、
     # 片方の指定がもう片方の軸を動かさない。値を取らない真偽フラグである点も `-p` と
-    # 揃える。init / sync / project / export / import には足さない。
-    for sub in (env_list, env_get, env_set, env_delete, env_edit):
+    # 揃える。init / project / export / import には足さない。sync の --user は全てのキーの
+    # 宛先を個人共通にする (#273)。
+    for sub in (env_list, env_get, env_set, env_delete, env_edit, env_sync):
         sub.add_argument('--user', action='store_true', dest='user',
                          help="Use this user's personal secrets instead of the team's")
         # グループ別の置き場 (PLAN56)。省略時は実行時のプロジェクトのグループ

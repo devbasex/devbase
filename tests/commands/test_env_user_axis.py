@@ -359,7 +359,7 @@ def test_init_reset_on_the_server_refuses_when_no_backup_can_be_made(openbao_roo
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('argv', [
-    ['env', 'init', '--user'], ['env', 'sync', '--user'], ['env', 'project', '--user'],
+    ['env', 'init', '--user'], ['env', 'project', '--user'],
     ['env', 'export', '--user'], ['env', 'import', 'x.dbenv', '--user'],
 ])
 def test_commands_without_the_owner_axis_reject_user(argv):
@@ -375,7 +375,7 @@ def test_commands_without_the_owner_axis_reject_user(argv):
 
 @pytest.mark.parametrize('argv', [
     ['env', 'list', '--user'], ['env', 'get', 'K', '--user'], ['env', 'set', 'K=1', '--user', '-p'],
-    ['env', 'delete', 'K', '--user'], ['env', 'edit', '--user'],
+    ['env', 'delete', 'K', '--user'], ['env', 'edit', '--user'], ['env', 'sync', '--user'],
 ])
 def test_commands_with_the_owner_axis_accept_user(argv):
     import argparse
