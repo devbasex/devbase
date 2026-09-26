@@ -185,6 +185,8 @@ def _build_plans(
     ``group`` はグループ別の置き場 (PLAN56) の対象のグループ。参照のグループと
     ``--merge-metadata`` の控えの位置 (``.env.sources.<g>.yml``) に使う。
     """
+    from dataclasses import replace as _dc_replace
+
     from devbase.env.secret_store import SecretStore, SecretStoreError
     from devbase.env.sources import sources_path
 
@@ -207,7 +209,13 @@ def _build_plans(
             if ref is None:
                 raise _merge.MergeError(f"未対応のバンドルエントリ: {arcname}")
 
-            existing, exists = _read_existing(store, ref)
+            if _is_file_backend(store, ref):
+                exists = store.exists(ref)
+                existing = store.load_bytes(ref) if exists else b''
+            else:
+                # サーバの現物を merge の元にする (控えへ落ちない)
+                existing = store.fetch_bytes(ref)
+                exists = bool(existing)
             plan = _merge.plan_env_merge(
                 store.path(ref), data, arcname,
                 merge=opts.merge,
@@ -216,40 +224,21 @@ def _build_plans(
                 existing_bytes=existing,
                 target_exists=exists,
             )
-            plans.append(_adapt_to_store(store, ref, plan, existing))
+            if not _is_file_backend(store, ref):
+                plan = _dc_replace(plan, ref=ref, before=existing or None)
+            elif store.backend_for(ref) is store.age:
+                # merge の結果は平文のバイト列なので、暗号化されている保存先へ
+                # 書く前にここで暗号文へ変換する。以降の原子的書き込み・
+                # ロールバックはバイト列とパスだけを扱うため、そのまま通せる。
+                # 判定は「暗号化ファイルが存在するか」ではなく「保存先が age か」で
+                # 行う。`backend: age` で保存先がまだ無い参照は前者だと平文のまま
+                # `.age` へ書かれてしまう。
+                plan = _dc_replace(
+                    plan, new_bytes=store.age.encrypt_bytes(plan.new_bytes))
+            plans.append(plan)
     except (_merge.MergeError, SecretStoreError) as e:
         raise ImportError(str(e)) from e
     return plans, sources_reference
-
-
-def _read_existing(store, ref) -> Tuple[bytes, bool]:
-    """``ref`` の既存内容 (バイト列) と、既存とみなすかを返す"""
-    if _is_file_backend(store, ref):
-        exists = store.exists(ref)
-        existing = store.load_bytes(ref) if exists else b''
-    else:
-        # サーバの現物を merge の元にする (控えへ落ちない)
-        existing = store.fetch_bytes(ref)
-        exists = bool(existing)
-    return existing, exists
-
-
-def _adapt_to_store(store, ref, plan: _merge.Plan, existing: bytes) -> _merge.Plan:
-    """merge の計画を ``ref`` の保存形式に合わせる。``existing`` はサーバの巻き戻し用"""
-    from dataclasses import replace as _dc_replace
-
-    if not _is_file_backend(store, ref):
-        return _dc_replace(plan, ref=ref, before=existing or None)
-    if store.backend_for(ref) is store.age:
-        # merge の結果は平文のバイト列なので、暗号化されている保存先へ
-        # 書く前にここで暗号文へ変換する。以降の原子的書き込み・
-        # ロールバックはバイト列とパスだけを扱うため、そのまま通せる。
-        # 判定は「暗号化ファイルが存在するか」ではなく「保存先が age か」で
-        # 行う。`backend: age` で保存先がまだ無い参照は前者だと平文のまま
-        # `.age` へ書かれてしまう。
-        return _dc_replace(
-            plan, new_bytes=store.age.encrypt_bytes(plan.new_bytes))
-    return plan
 
 
 def _warn_unusable_project_names(plans: List[_merge.Plan], root: Path) -> None:
