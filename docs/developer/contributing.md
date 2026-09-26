@@ -246,7 +246,8 @@ PR には以下の情報を記載する。
 
 ### CI が実行するもの
 
-`main` 宛ての Pull Request と `main` への push で `.github/workflows/ci.yml` が走り、
+宛先を問わずすべての Pull Request と、`main`・`release/**`・`mission/**` への push で
+`.github/workflows/ci.yml` が走り、
 `compileall`（Python 3.10 / 3.11 / 3.12）・`ruff check --select=E9,F63,F7,F82 lib`・
 `bin/` と `install.sh` の ShellCheck・`uv sync --locked` の後の `pytest tests/`
 （Python 3.10 / 3.13）を実行する。CI に `DEVBASE_ROOT` と Docker は無いため、テストは
