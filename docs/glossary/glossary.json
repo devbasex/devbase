@@ -273,7 +273,7 @@
       "term": "検査ジョブ",
       "context": "ci",
       "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest）",
-      "pending_source": "issues/issue-216-requirements.md"
+      "pending_source": "issues/issue-247-design.md"
     },
     {
       "term": "統合ブランチ",
@@ -304,6 +304,18 @@
       "context": "ci",
       "meaning": "指摘を抑える # shellcheck の指示と、抑える理由のコメントの組",
       "pending_source": "issues/issue-247-requirements.md"
+    },
+    {
+      "term": "基準の版",
+      "context": "ci",
+      "meaning": "手元の基準（devbase-base:latest の shellcheck）と CI の ShellCheck の検査ジョブが揃える shellcheck の版。現在は 0.11.0",
+      "pending_source": "issues/issue-247-design.md"
+    },
+    {
+      "term": "ShellCheck の検査ジョブ",
+      "context": "ci",
+      "meaning": "検査ジョブのうち shellcheck ジョブ（bin/*・install.sh・containers/base/tmux-* を検査する）",
+      "pending_source": "issues/issue-247-design.md"
     },
     {
       "term": "環境の隔離",
