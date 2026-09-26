@@ -28,7 +28,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 | 要素 | 置き場所 | 責務 |
 | --- | --- | --- |
 | 導入 | `containers/base/Dockerfile` の 1 つ目の `RUN` の 1 回目の `apt-get install` | `poppler-utils` などの行の後に、理由のコメントとともに `shellcheck` を置く |
-| 入れ損ないの検出 | `containers/base/Dockerfile` の版の確認の `RUN` | `gh --version && ... && session-manager-plugin --version && shellcheck --version`。無ければ `shellcheck: command not found`（終了コード 127）でビルドが止まる |
+| 入れ損ないの検出 | `containers/base/Dockerfile` の版の確認の `RUN` | `gh --version && ... && session-manager-plugin --version && shellcheck --version \| grep -Fx "version: 0.11.0"`。無ければ `shellcheck: command not found`（終了コード 127）、版が違えば `grep` の非 0 でビルドが止まる |
 | 形の検査 | `tests/containers/test_base_dockerfile_shellcheck.py` | Docker を起動せずに、上の 2 か所の形を固定する |
 
 型（クラス）は持たない。Dockerfile の命令だけで構成する。
@@ -57,14 +57,16 @@ Dockerfile の `apt-get update` は 2 回である。
 
 ### 版
 
-版は固定せず、base を建てた時点で Ubuntu のアーカイブが配る版を入れる（2026-09 時点で
-`0.11.0-2`、`shellcheck --version` は `version: 0.11.0`）。`gh` / `terraform` / `nodejs` と同じ
-扱いである。`bao` のように `ARG` とチェックサムで固定しないのは、サーバの版と揃える制約が
-無いためである。`shellcheck=<版>` と書かないのは、アーカイブが版を上げるとその版が消えて
-ビルドが止まるためである。
+パッケージの版は `shellcheck=<版>` と書かず、base を建てた時点で Ubuntu のアーカイブが配る版を入れる
+（2026-09 時点で `0.11.0-2`、`shellcheck --version` は `version: 0.11.0`）。`shellcheck=<版>` と書かないのは、
+アーカイブが版を上げるとその版が消えて `apt-get install` が止まるためである。
 
-CI の ShellCheck ジョブはこの版を基準の版として `ci.yml` の `SHELLCHECK_VERSION` と
-`SHELLCHECK_SHA256` に書き、手元と CI で指摘の数を揃える。base の版が上がったら、この 2 つを手で上げる。
+**入った版はビルドで確かめる。** 版の確認の `RUN` は `shellcheck --version | grep -Fx "version: 0.11.0"` で、
+アーカイブが別の版を配るとそこで base のビルドが止まる。この版は CI の ShellCheck ジョブの基準の版
+（`ci.yml` の `SHELLCHECK_VERSION`）と同じであり、手元の base と CI で指摘の数を揃える。
+2 つの一致は `tests/containers/test_base_dockerfile_shellcheck.py` の `test_version_check_matches_ci_pin` が固定する。
+版を上げるときは、Dockerfile の版の確認と `ci.yml` の `SHELLCHECK_VERSION`・`SHELLCHECK_SHA256` を一緒に上げる
+（[CI の検査](ci-checks.md)）。
 
 ## データ・設定
 
@@ -103,6 +105,7 @@ CI の ShellCheck ジョブはこの版を基準の版として `ci.yml` の `SH
 - 2 つ目以降の `RUN` に `shellcheck` を入れる `apt-get install` が無く、`apt-get update` が
   2 回のままであること
 - 版の確認の `RUN` を `&&` で分けた命令に `shellcheck --version` があること
+- その命令が `ci.yml` の `SHELLCHECK_VERSION` と同じ版を `grep -Fx` で求めること（`test_version_check_matches_ci_pin`）
 
 補助の関数（コメント行を除く本文・`RUN` ブロックへの分割・1 回目の一覧の切り出し）は
 このファイルに持ち、`test_base_dockerfile_fonts.py` から import しない。テストのファイル
@@ -130,4 +133,5 @@ CI はイメージを建てるジョブを持たないため、イメージの�
 
 - [コンテナ操作ガイド: Bash の静的検査](../user/container-operations.md#bash-の静的検査base-以降)
 - [base イメージの文字の描画と、文書を扱う道具](base-image-rendering.md)
+- [CI の検査（トリガーと ShellCheck）](ci-checks.md)（CI の ShellCheck の検査ジョブ）
 - [ShellCheck](https://www.shellcheck.net/)

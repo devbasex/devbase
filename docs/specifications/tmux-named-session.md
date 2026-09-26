@@ -342,7 +342,9 @@ sequenceDiagram
 
 `tests/containers/test_tmux_session.py`。テストごとに短い一時ディレクトリへ `TMUX_TMPDIR` を向け、
 `TMUX` を消した環境で tmux サーバを起動し、端末は `pty` から attach する。利用者の tmux サーバには
-触れない。tmux が無い環境では tmux を使うテストを skip する。
+触れない。tmux が無い環境では tmux を使うテストを skip する。この harness は
+`tests/containers/tmux_harness.py` にあり、`tmux-first` / `tmux-clean` のテストと共有する
+（[base イメージのシェルの異常系と分岐を固定するテスト](base-shell-tests.md)）。
 
 - 移る
   - tmux の外で `tmux-go devbase-1` を実行すると `devbase-1` に attach し、それまで繋がっていた

@@ -314,7 +314,7 @@
     {
       "term": "ShellCheck の検査ジョブ",
       "context": "ci",
-      "meaning": "検査ジョブのうち shellcheck ジョブ（bin/*・install.sh・containers/base/tmux-* を検査する）",
+      "meaning": "検査ジョブのうち shellcheck ジョブ（bin/*・install.sh・containers/base のシェルスクリプトを検査する）",
       "pending_source": "issues/issue-247-design.md"
     },
     {
