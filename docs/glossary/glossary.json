@@ -310,6 +310,24 @@
       "context": "tmux",
       "meaning": "tmux-clean が必ず残すセッション。tmux の中なら今のセッション、外ならベース名に属するうち番号が最小のもの",
       "pending_source": "issues/issue-239-requirements.md"
+    },
+    {
+      "term": "base のシェルスクリプト",
+      "context": "ci",
+      "meaning": "containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの",
+      "pending_source": "issues/issue-259-design.md"
+    },
+    {
+      "term": "検査の対象",
+      "context": "ci",
+      "meaning": "CI の ShellCheck ジョブが shellcheck の引数に並べたファイル",
+      "pending_source": "issues/issue-259-design.md"
+    },
+    {
+      "term": "shellcheck の指示",
+      "context": "ci",
+      "meaning": "# shellcheck で始まるコメント（disable= / source= / shell=）。抑止の注記の指示の側",
+      "pending_source": "issues/issue-259-design.md"
     }
   ]
 }

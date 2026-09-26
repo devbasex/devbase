@@ -105,6 +105,9 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | 統合ブランチ | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — |
 | 指摘 | shellcheck が出す 1 件（SC の番号・水準・行） | — | — |
 | 抑止の注記 | 指摘を抑える # shellcheck の指示と、抑える理由のコメントの組 | — | — |
+| base のシェルスクリプト | containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの | — | — |
+| 検査の対象 | CI の ShellCheck ジョブが shellcheck の引数に並べたファイル | — | — |
+| shellcheck の指示 | # shellcheck で始まるコメント（disable= / source= / shell=）。抑止の注記の指示の側 | — | — |
 
 ## テストの実行環境（`test`）
 
