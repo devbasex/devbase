@@ -38,7 +38,7 @@
 | I1 | 検査の対象 | 基準の版・既定の水準で、`bin/*` と `install.sh` の指摘が 0 件 | ShellCheck の検査ジョブが失敗し、Pull Request のチェックが赤になる |
 | I2 | 検査の対象 | `# shellcheck` の指示の行は、同じ行か直前の行に抑える理由のコメントを持つ | pytest が失敗する |
 | I3 | ShellCheck の検査ジョブ | どの検査の手順も水準（`severity` / `--severity` / `-S`）を指定しない | pytest が失敗する |
-| I4a | ShellCheck の検査ジョブ | すべての検査の手順が、SHA-256 を照合して入れた基準の版の shellcheck を使う | 照合か版の確認が合わなければ、導入の手順でジョブが失敗する。導入より前に shellcheck を打つ形や照合を外した形になれば pytest が失敗する |
+| I4a | ShellCheck の検査ジョブ | すべての検査の手順が、SHA-256 を照合して入れた基準の版の shellcheck を使う | 照合が合わなければ導入の手順で、版が合わなければ版の確認の手順でジョブが失敗する。導入より前に shellcheck を打つ形や照合を外した形になれば pytest が失敗する |
 | I4b | ShellCheck の検査ジョブ | どの検査の手順も、検査の前に使う shellcheck の版をログへ出す | `shellcheck --version` を打たない手順があれば pytest が失敗する。ログの中身は実装の Pull Request で目で見る |
 | I5 | ラッパーの振る舞い | Dockerfile が `devbase-*` を使わないとき、`cmd_build` はベースイメージの判定の非 0 で止まらず、`devbase-base` を前提にプロジェクトのビルドへ進む | pytest が失敗する |
 | I6a | ラッパーの振る舞い | `DOCKER_GID` は Darwin で `0`、それ以外で `/etc/group` の docker の行の gid、docker の行が無ければ空 | pytest が値の食い違いで失敗する |
@@ -138,7 +138,7 @@ base_image_name=$(check_base_image_dependency "$dockerfile_path") || true
 | 検査ジョブの形の検査（`tests/ci/test_shellcheck_job.py`、同上） | I3・I4a・I4b の形を、`ci.yml` を読んで固定する |
 | 仕様の記述（`docs/specifications/base-image-shellcheck.md`・`tmux-named-session.md`） | 「CI は runner の shellcheck を使う」を「基準の版を入れて使う」へ直す |
 | 開発者向けの記述（`docs/developer/contributing.md` の「CI が実行するもの」・`CONTRIBUTING.md` の「コーディング規約」） | ShellCheck を基準の版の既定の水準で走らせること、シェルは指摘 0 件を保つことを書く |
-| 用語集（`docs/glossary/glossary.json` と `docs/glossary.md`） | 「基準の版」を足す |
+| 用語集（`docs/glossary/glossary.json` と `docs/glossary.md`） | 「基準の版」と「ShellCheck の検査ジョブ」を足す |
 
 **書き換えないもの。** 指摘の無い行、`containers/base/` のシェル（#259）、ShellCheck 以外の検査ジョブ。
 
@@ -166,7 +166,7 @@ graph TD
     BIN -->|指摘を探す| ENV & LOAD & BUILD & RC
     TW -->|起動して確かめる| ENV & BUILD
     TJ -->|本文を読む| LOAD & RC
-    TJ -->|手順を読む| INST
+    TJ -->|手順を読む| INST & BIN & INS & TMUX
 ```
 
 図に含めないもの: 仕様・開発者向けの記述・用語集（処理の順序にも検査にも関わらない）。
@@ -203,13 +203,14 @@ docs/
 ├── specifications/base-image-shellcheck.md  （変える: 対象範囲）
 ├── specifications/tmux-named-session.md     （変える: CI の記述）
 ├── developer/contributing.md                （変える: CI が実行するもの）
-└── glossary/glossary.json → glossary.md     （変える: 基準の版）
+└── glossary/glossary.json → glossary.md     （変える: 基準の版・ShellCheck の検査ジョブ）
 CONTRIBUTING.md                              （変える: コーディング規約）
 ```
 
 ## 処理の流れ
 
-順序と分岐が変わるのは、ShellCheck の検査ジョブとラッパーのベースイメージの判定の 2 つである。
+順序と分岐が変わるのは、ShellCheck の検査ジョブだけである。ラッパーのベースイメージの判定は分岐を変えないが、
+`|| true` が無いと止まる経路を示すために図にする。
 起動時の環境の用意・env の読み込み・シェルの補完の読み込みは形だけを変え、順序は変えないため図にしない。
 
 ### ShellCheck の検査ジョブ
@@ -252,7 +253,8 @@ graph TD
           tar -xJf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}" >> "$GITHUB_PATH"
       - name: Check ShellCheck version
-        run: shellcheck --version | grep -Fx "version: ${SHELLCHECK_VERSION#v}"
+        run: |
+          shellcheck --version | grep -Fx "version: ${SHELLCHECK_VERSION#v}"
       - name: Run ShellCheck on bin/
         run: shellcheck --version | sed -n 2p && shellcheck bin/*
       - name: Run ShellCheck on install.sh
