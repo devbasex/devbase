@@ -818,31 +818,35 @@ def _gcp_profile_files():
 
 
 def _sync_gcp(sources, targets, *, store, counts):
-    """GCPプロファイルの同期処理"""
+    """GCPプロファイルの同期処理。更新件数を返す。
+
+    控えへの登録はプロファイル単位で見る。参照にあって控えに無いプロファイルは、
+    今のファイルと比べてから控えへ登録する (I10)。
+    """
     import base64
 
-    gcp_source = sources.get_source('gcp')
-    if not gcp_source:
-        prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
-        resolve = _gcp_profile_files()
-        names = sorted({k[len(prefix):] for f in targets.files for k in f.get_all()
-                        if k.startswith(prefix)})
-        updated = 0
-        for profile_name in names:
-            def encode(profile_name=profile_name):
-                path = resolve(profile_name)
-                return base64.b64encode(path.read_bytes()).decode('ascii') if path else None
+    gcp_source = sources.get_source('gcp') or {}
+    registered = gcp_source.get('profiles', {})
+    prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
+    resolve = _gcp_profile_files()
+    names = sorted({k[len(prefix):] for f in targets.files for k in f.get_all()
+                    if k.startswith(prefix)} - set(registered))
+    updated = 0
+    for profile_name in names:
+        def encode(profile_name=profile_name):
+            path = resolve(profile_name)
+            return base64.b64encode(path.read_bytes()).decode('ascii') if path else None
 
-            updated += _sync_unregistered(targets, store, counts,
-                                          keys.gcp_credentials_key(profile_name),
-                                          f"GCP認証 ({profile_name})", encode)
+        updated += _sync_unregistered(targets, store, counts,
+                                      keys.gcp_credentials_key(profile_name),
+                                      f"GCP認証 ({profile_name})", encode)
+    if not gcp_source:
         return updated
 
-    updated = 0
     gcp_changes = sources.check_gcp_changed()
     for profile_name, changed in gcp_changes.items():
         if changed:
-            profile_info = gcp_source.get('profiles', {}).get(profile_name, {})
+            profile_info = registered.get(profile_name, {})
             file_str = profile_info.get('file', '')
             if not file_str:
                 continue

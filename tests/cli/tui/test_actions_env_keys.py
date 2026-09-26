@@ -265,16 +265,16 @@ def test_bad_keys_and_values_are_asked_again_without_writing(grouped, openbao, m
     script = Script(monkeypatch,
                     select=['global', 'team-a', keys_ui.ADD, 'team', menu.MENU_BACK],
                     text=['1BAD', 'DEVBASE_ACCOUNT_GROUP', 'GOOD'],
-                    secret=['', 'a\nb', 'v'])
+                    secret=['', 'a\nb', ' v ', 'v'])
 
     run(grouped)
 
     assert calls == ['GOOD=v']
     text = logs(caplog)
     for message in (keys_ui.MSG_BAD_KEY, keys_ui.MSG_ACCOUNT_GROUP, keys_ui.MSG_EMPTY_VALUE,
-                    keys_ui.MSG_MULTILINE):
+                    keys_ui.MSG_MULTILINE, keys_ui.MSG_SURROUNDING_SPACE):
         assert message in text
-    assert len(script.messages('text')) == 3 and len(script.messages('secret')) == 3
+    assert len(script.messages('text')) == 3 and len(script.messages('secret')) == 4
 
 
 @pytest.mark.parametrize('answer, deleted', [(True, True), (False, False),

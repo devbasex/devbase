@@ -40,6 +40,8 @@ MSG_ACCOUNT_GROUP = (f"{keys.DEVBASE_ACCOUNT_GROUP} は機密の置き場へは�
                      "（projects/<name>/env か $DEVBASE_ROOT/env に書いてください）")
 MSG_EMPTY_VALUE = "値を入力してください"
 MSG_MULTILINE = "改行を含む値は TUI では扱えません。devbase env edit で編集してください"
+MSG_SURROUNDING_SPACE = ("前後に空白を含む値は TUI では扱えません（空白は取り除かれて保存されます）。"
+                         "devbase env edit で編集してください")
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +63,8 @@ def value_error(value: str):
         return MSG_MULTILINE
     if not value.strip():
         return MSG_EMPTY_VALUE
+    if value != value.strip():
+        return MSG_SURROUNDING_SPACE
     return None
 
 

@@ -200,6 +200,35 @@ def test_an_unregistered_source_with_a_key_is_compared_and_updated(grouped, open
     assert SourcesManager(grouped, 'team-a').check_changed('git_credentials') is False
 
 
+def test_an_unregistered_gcp_profile_is_synced_even_if_another_is_registered(
+        grouped, openbao, home, host_keys, caplog, monkeypatch):
+    """控えの登録はプロファイル単位。登録済みのプロファイルがあっても、未登録の側を比べる"""
+    from devbase.env.collectors import google
+
+    creds = home / 'gcp-credentials'
+    creds.mkdir()
+    monkeypatch.setattr(google, 'GCP_CREDENTIALS_DIR', creds)
+    monkeypatch.setattr(google, 'LEGACY_CREDENTIALS_FILE', home / 'none.json')
+    (creds / 'team.json').write_text('t1')
+    (creds / 'mine.json').write_text('m2')
+    sources = SourcesManager(grouped, 'team-a')
+    sources.load()
+    sources.set_gcp_source({'team': {'file': str(creds / 'team.json'),
+                                     'hash': file_hash(creds / 'team.json')}}, 'team')
+    sources.save()
+    openbao.put(TEAM, {keys.gcp_credentials_key('team'): b64('t1'), **host_keys})
+    openbao.put(USER, {keys.gcp_credentials_key('mine'): b64('m1'), **host_keys})
+    caplog.set_level(logging.INFO)
+
+    assert env_cmd.cmd_env_sync(grouped) == 0
+
+    assert openbao.get(USER)[keys.gcp_credentials_key('mine')] == b64('m2')
+    assert (f'GCP認証 (mine): ソース未登録（{USER_LABEL}にキーがあります）。'
+            '今のファイルと比べて更新しました（個人共通）') in infos(caplog)
+    assert 'GCP認証 (team): 変更なし' in infos(caplog)
+    assert set(SourcesManager(grouped, 'team-a').check_gcp_changed()) == {'team', 'mine'}
+
+
 def test_an_unregistered_source_with_the_same_value_reports_no_change(grouped, openbao, home,
                                                                        host_keys, caplog):
     cred = home / '.git-credentials'
