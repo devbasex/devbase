@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-09-27
+
+### Added
+- **`devbase list` の TUI の「環境変数」に「キーの一覧と編集」を足しました（#273）。** キーごとに
+  持ち主（チーム / 個人）・適用範囲（共通 / プロジェクト）・グループを並べて見ながら、キーを追加・変更・
+  削除できます。値は常に伏せ字で表示し、入力も伏せ字の欄で行います。同じキーが複数の参照にあるときは、
+  重ね順で勝つ行に `★` が付きます。書き込みは `devbase env set` / `delete` と同じ宛先です。空の値・改行や
+  前後の空白を含む値は受け付けないため、`devbase env edit` で編集してください。
+- **`devbase list` の TUI の「環境変数」に「OpenBao の接続設定」を足しました（#273）。** backend が
+  `openbao` の端末では、接続先（`url`）とブートストラップ機密（`role_id` / `secret_id`）を伏せ字で
+  入れ直せます。保存した後に `devbase env backend test` と同じ確認を行います。OpenBao の token は入力も
+  保存もしません。ファイルの backend の端末では、切り替えのコマンドを示すだけです。
+- **`devbase env sync` に `--user` と `--group NAME` を足しました（#273）。** `--user` は同期する全ての
+  キーを個人共通へ書きます。`--group` は対象のグループを指定します（グループ別の置き場だけ）。
+
+### Changed
+- **OpenBao の backend で `devbase env sync` が、キーごとに個人共通とチーム共通のうちそのキーがある方を
+  更新するようにしました（#273 / #268）。** 両方にあるときと、どちらにも無いときは個人共通に書きます。
+  これまでは常にチーム共通に書いていたため、個人共通にある `AWS_CONFIG_BASE64` などが更新されず、
+  コンテナでは古い値が使われていました。ファイルの backend（平文・age）では今までどおりチーム共通に書きます。
+  **どちらにも無いキーは個人共通に作られます。チーム共通に置きたいキーは、先に `devbase env set` で
+  チーム共通に作ってください。**
+- **`devbase env sync` が、控えに登録の無いソースのキーが参照にあると「ソース未登録」の 1 行を出すように
+  しました（#268）。** そのときは今のファイルと値を比べて書き、控えに登録します。
+
 ## [3.9.0] - 2026-09-26
 
 ### Added
@@ -840,7 +865,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.9.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.10.0...HEAD
+[3.10.0]: https://github.com/devbasex/devbase/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/devbasex/devbase/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/devbasex/devbase/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/devbasex/devbase/compare/v3.6.0...v3.7.0
