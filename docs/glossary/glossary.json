@@ -320,13 +320,13 @@
     {
       "term": "検査の対象",
       "context": "ci",
-      "meaning": "CI の ShellCheck ジョブが shellcheck の引数に並べたファイル",
+      "meaning": "CI の ShellCheck ジョブで、引数に containers/base/ のパスを持つ shellcheck の行が並べたファイル",
       "pending_source": "issues/issue-259-design.md"
     },
     {
       "term": "shellcheck の指示",
       "context": "ci",
-      "meaning": "# shellcheck で始まるコメント（disable= / source= / shell=）。抑止の注記の指示の側",
+      "meaning": "# shellcheck で始まるコメント（disable= / source= / shell=）。disable= と source= は抑止の注記の指示の側で、shell= は指摘を抑えない",
       "pending_source": "issues/issue-259-design.md"
     }
   ]
