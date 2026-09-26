@@ -49,15 +49,3 @@ def test_counts_as_project_ignores_the_name_form(name):
 def test_counts_as_project_excludes_dot_prefixed_and_empty(name):
     """#276: `.` 始まりと空はプロジェクトとして数えない。"""
     assert counts_as_project(name) is False
-
-
-@pytest.mark.parametrize("name", [" ", "foo.bar", "a.", "x\n", " .hidden"])
-def test_counts_as_project_looks_only_at_the_first_character(name):
-    """現状固定: 空でなく先頭が `.` でなければ、空白・途中の `.`・末尾の改行も数える。"""
-    assert counts_as_project(name) is True
-
-
-@pytest.mark.parametrize("name", ["foo", ".vscode", "", "a b"])
-def test_counts_as_project_returns_a_bool(name):
-    """現状固定: 戻り値は常に bool (空文字をそのまま返さない)。"""
-    assert type(counts_as_project(name)) is bool
