@@ -114,7 +114,7 @@ def test_every_shellcheck_step_follows_install_and_prints_version_first(job):
     steps = job["steps"]
     install = _install_index(steps)
     checks = [(i, s) for i, s in enumerate(steps) if _invokes_shellcheck(s)]
-    # 版の確認・bin/・install.sh・tmux の 4 手順
+    # 版の確認・bin/・install.sh・containers/base/ の 4 手順
     assert len(checks) >= 4
     targets = " ".join(_run(s) for _, s in checks)
     assert "shellcheck bin/*" in targets
