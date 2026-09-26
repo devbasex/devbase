@@ -30,6 +30,7 @@ if [ -n "${ZSH_VERSION:-}" ]; then
     autoload -Uz compinit && compinit
 elif [ -n "${BASH_VERSION:-}" ]; then
     if [ -f "$DEVBASE_ROOT/etc/devbase-completion.bash" ]; then
+        # 補完の定義は DEVBASE_ROOT の下にあり、場所は実行時にしか決まらないため辿らない
         # shellcheck source=/dev/null
         . "$DEVBASE_ROOT/etc/devbase-completion.bash"
     fi
