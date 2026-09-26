@@ -6,6 +6,7 @@ from typing import Optional
 
 from devbase.log import get_logger
 from devbase.utils import names
+from devbase.utils.names import NAME_FORM_HINT, is_single_segment_name
 
 from .registry import PluginRegistry
 from .models import InstalledPlugin, PluginInfo
@@ -112,7 +113,7 @@ def _warn_unusable_name(name: str, source: str, base: Optional[str] = None) -> N
             ``_SOURCE_REAL_DIRECTORY``。末尾の案内の選択にも使う
         base: 別名 (``<base>.<owner>``) のときだけ渡す元のプロジェクト名
     """
-    if names.is_single_segment_name(name):
+    if is_single_segment_name(name):
         return
     if source == _SOURCE_REAL_DIRECTORY:
         origin = source
@@ -120,7 +121,7 @@ def _warn_unusable_name(name: str, source: str, base: Optional[str] = None) -> N
     elif base is None:
         origin = f"プラグイン {source}"
         advice = f"プラグイン {source} の projects/{name} を改名すれば直ります。"
-    elif not names.is_single_segment_name(base):
+    elif not is_single_segment_name(base):
         # 別名の元の名前の側が形に合わない。winner の分として元の名前の知らせも出ている
         origin = f"プラグイン {source} の別名"
         advice = f"プラグイン {source} の projects/{base} を改名すれば直ります。"
@@ -136,7 +137,7 @@ def _warn_unusable_name(name: str, source: str, base: Optional[str] = None) -> N
         "プロジェクト名として使えない形の名前が projects/ に載ります: '%s'（出所: %s）。"
         "この名前では、名前を指定した操作（devbase up %s など）ができません（%s）。"
         "projects/%s の中で名前なしに打てば動きます。%s",
-        name, origin, name, names.NAME_FORM_HINT, name, advice)
+        name, origin, name, NAME_FORM_HINT, name, advice)
 
 
 def _link_loser_projects(
