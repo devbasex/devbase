@@ -26,6 +26,7 @@ from devbase.env.secret_store import (
 from devbase.env.store import safe_input
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.utils import names
 
 logger = get_logger(__name__)
 
@@ -161,21 +162,7 @@ def cmd_env_rekey(devbase_root: Path, *,
 
     targets = _encrypted_paths(root, store)
 
-    print("\n=== 受信者の変更 ===")
-    for spec in updated:
-        mark = '+' if spec not in current else ' '
-        print(f"  {mark} {spec}")
-    for spec in current:
-        if spec not in updated:
-            print(f"  - {spec}")
-
-    print(f"\n再暗号化する機密: {len(targets)} 件")
-    for item in targets:
-        print(f"  {item.label:<24} {item.path}")
-
-    if own is not None and own not in updated:
-        print("\n⚠ 自分の公開鍵が受信者から外れています。"
-              "再暗号化後、この端末では機密を復号できなくなります。")
+    _print_rekey_plan(current, updated, targets, own)
 
     if dry_run:
         print("\n(--dry-run のため変更していません)")
@@ -210,6 +197,26 @@ def cmd_env_rekey(devbase_root: Path, *,
 
     print(f"\n=== 完了 === (受信者 {len(updated)} 名 / 機密 {len(targets)} 件)")
     return 0
+
+
+def _print_rekey_plan(current: Sequence[str], updated: Sequence[str],
+                      targets: Sequence[Ciphertext], own: Optional[str]) -> None:
+    """受信者の差分、再暗号化する機密の一覧、自分の鍵が外れるときの警告を出す"""
+    print("\n=== 受信者の変更 ===")
+    for spec in updated:
+        mark = '+' if spec not in current else ' '
+        print(f"  {mark} {spec}")
+    for spec in current:
+        if spec not in updated:
+            print(f"  - {spec}")
+
+    print(f"\n再暗号化する機密: {len(targets)} 件")
+    for item in targets:
+        print(f"  {item.label:<24} {item.path}")
+
+    if own is not None and own not in updated:
+        print("\n⚠ 自分の公開鍵が受信者から外れています。"
+              "再暗号化後、この端末では機密を復号できなくなります。")
 
 
 def _prepare_reencryption(root: Path, store: SecretStore,
@@ -392,10 +399,8 @@ def _check_key(report: Report) -> None:
 def _check_conflicts(root: Path, store: SecretStore, report: Report) -> None:
     """暗号化ファイルと平文が同時に存在していないか"""
     refs = [SecretRef.for_global()]
-    projects_dir = root / 'projects'
-    if projects_dir.is_dir():
-        refs.extend(SecretRef.for_project(p.name)
-                    for p in sorted(projects_dir.iterdir()) if p.is_dir())
+    refs.extend(SecretRef.for_project(p.name)
+                for p in names.project_dirs(root / 'projects'))
 
     for ref in refs:
         if store.age.exists(ref) and store.plaintext.exists(ref):
@@ -567,11 +572,9 @@ def _ignore_probe_paths(root: Path, store: Optional[SecretStore] = None) -> List
 
     # プロジェクトごとの平文。実在するものがあればその名前で確かめるほうが、
     # 報告をそのまま直す手がかりにできる。
-    names: List[str] = []
-    projects_dir = root / 'projects'
-    if projects_dir.is_dir():
-        names = [p.name for p in sorted(projects_dir.iterdir()) if p.is_dir()]
-    paths.extend(f'projects/{name}/.env' for name in names or [_SAMPLE_PROJECT_NAME])
+    project_names = [p.name for p in names.project_dirs(root / 'projects')]
+    paths.extend(f'projects/{name}/.env'
+                 for name in project_names or [_SAMPLE_PROJECT_NAME])
     return paths
 
 

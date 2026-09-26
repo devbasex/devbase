@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import stat
 
 import pyrage
@@ -355,3 +356,96 @@ def test_age_save_is_atomic_across_updates(store):
     assert sorted(p.name for p in path.parent.iterdir()) == [path.name]
     assert store.age.load(GLOBAL)['NEW'] == '1'
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+# ---------------------------------------------------------------------------
+# 機密の書き込みの知らせ (#276 / #245)
+# ---------------------------------------------------------------------------
+
+_WRITE_WARNING = '機密を書き込みます'
+
+
+def _write_warnings(caplog):
+    return [r.getMessage() for r in caplog.records
+            if r.levelno == logging.WARNING and _WRITE_WARNING in r.getMessage()]
+
+
+def _backend(store, kind):
+    return store.plaintext if kind == 'plaintext' else store.age
+
+
+@pytest.mark.parametrize('kind', ['plaintext', 'age'])
+def test_write_to_unusable_project_name_succeeds_and_warns_once(store, kind, caplog):
+    from devbase.utils.names import NAME_FORM_HINT
+
+    ref = SecretRef.for_project('_foo')
+    with caplog.at_level(logging.WARNING):
+        path = _backend(store, kind).save(ref, SAMPLE)
+
+    assert path.is_file()
+    assert _backend(store, kind).load(ref) == SAMPLE
+    [message] = _write_warnings(caplog)
+    assert "'_foo'" in message
+    assert NAME_FORM_HINT in message
+
+
+@pytest.mark.parametrize('kind', ['plaintext', 'age'])
+def test_store_save_warns_once_through_the_backend(store, kind, caplog):
+    """ストアの save も backend の save_bytes を通り、知らせは 1 回だけ"""
+    ref = SecretRef.for_project('_foo')
+    if kind == 'age':
+        # 既存の保存形式を保つので、先に暗号化で置いておくと store.save も age へ書く
+        store.age.save(ref, SAMPLE)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        store.save(ref, SAMPLE)
+    assert store.mode(ref) == (MODE_AGE if kind == 'age' else MODE_PLAINTEXT)
+    assert len(_write_warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize('kind', ['plaintext', 'age'])
+def test_usable_name_global_and_reads_do_not_warn(store, kind, caplog):
+    backend = _backend(store, kind)
+    backend.save(SecretRef.for_project('_foo'), SAMPLE)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        backend.save(SecretRef.for_project('bar'), SAMPLE)
+        backend.save(GLOBAL, SAMPLE)
+        for name in ('_foo', 'bar'):
+            ref = SecretRef.for_project(name)
+            backend.path(ref)
+            backend.exists(ref)
+            backend.load(ref)
+            store.load(ref)
+    assert _write_warnings(caplog) == []
+
+
+@pytest.mark.parametrize('kind', ['plaintext', 'age'])
+@pytest.mark.parametrize('bad', ['', 'a/b', '.', '..'])
+def test_write_rejects_path_crossing_names_without_writing(store, tmp_path, kind, bad, caplog):
+    before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob('*'))
+    ref = SecretRef(kind='project', name=bad)
+    with caplog.at_level(logging.WARNING), pytest.raises(SecretStoreError):
+        _backend(store, kind).save(ref, SAMPLE)
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob('*')) == before
+    assert _write_warnings(caplog) == []
+
+
+@pytest.mark.parametrize('kind', ['plaintext', 'age'])
+def test_write_warning_follows_the_name_form_predicate(store, kind, monkeypatch, caplog):
+    """名前の形の述語を差し替えると、知らせの有無がそれに従う"""
+    from devbase.utils import names
+
+    backend = _backend(store, kind)
+    original = names.is_single_segment_name
+    monkeypatch.setattr(names, 'is_single_segment_name',
+                        lambda value: original(value) and value != 'bar')
+    with caplog.at_level(logging.WARNING):
+        backend.save(SecretRef.for_project('bar'), SAMPLE)
+    assert len(_write_warnings(caplog)) == 1
+
+    caplog.clear()
+    monkeypatch.setattr(names, 'is_single_segment_name', lambda value: True)
+    with caplog.at_level(logging.WARNING):
+        backend.save(SecretRef.for_project('_foo'), SAMPLE)
+    assert _write_warnings(caplog) == []

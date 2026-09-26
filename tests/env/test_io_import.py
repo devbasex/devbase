@@ -143,3 +143,17 @@ def test_import_of_usable_names_does_not_warn(tmp_path, caplog):
 
     assert (root / 'projects' / 'ok-name' / '.env').is_file()
     assert _name_form_warnings(caplog) == []
+
+
+def test_import_to_file_backend_does_not_add_the_write_warning(tmp_path, caplog):
+    """#276: 取り込みは save_bytes を通らないので、機密の書き込みの知らせは足されない"""
+    root = tmp_path / 'root'
+    root.mkdir()
+    src = _write_project_bundle(tmp_path, ['_foo'])
+
+    with caplog.at_level(logging.WARNING):
+        assert import_bundle(root, _project_options(src)) == 0
+
+    about_foo = [r.getMessage() for r in caplog.records if "'_foo'" in r.getMessage()]
+    assert len(about_foo) == 1
+    assert '機密を書き込みます' not in about_foo[0]

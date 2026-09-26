@@ -43,6 +43,7 @@ from devbase.env.secret_store import (
 from devbase.env.store import safe_input
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.utils import names
 
 logger = get_logger(__name__)
 
@@ -58,20 +59,13 @@ class Target:
     ref: SecretRef
     values: Dict[str, str] = field(default_factory=dict)
 
-    @property
-    def label(self) -> str:
-        return self.ref.label()
-
 
 def _timestamp() -> str:
     return datetime.now().strftime('%Y%m%d%H%M%S')
 
 
 def _project_names(devbase_root: Path) -> List[str]:
-    projects_dir = Path(devbase_root) / 'projects'
-    if not projects_dir.is_dir():
-        return []
-    return sorted(p.name for p in projects_dir.iterdir() if p.is_dir())
+    return [p.name for p in names.project_dirs(Path(devbase_root) / 'projects')]
 
 
 def _select_refs(devbase_root: Path, store: SecretStore, wanted_mode: str,
@@ -86,8 +80,8 @@ def _select_refs(devbase_root: Path, store: SecretStore, wanted_mode: str,
     if not projects and store.mode(SecretRef.for_global()) == wanted_mode:
         refs.append(SecretRef.for_global())
 
-    names = list(projects) if projects else _project_names(devbase_root)
-    for name in names:
+    project_names = list(projects) if projects else _project_names(devbase_root)
+    for name in project_names:
         ref = SecretRef.for_project(name)
         if store.mode(ref) == wanted_mode:
             refs.append(ref)

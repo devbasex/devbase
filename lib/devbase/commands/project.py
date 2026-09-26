@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from devbase.log import get_logger
+from devbase.utils import names
 
 logger = get_logger(__name__)
 
@@ -84,7 +85,8 @@ def list_projects(projects_dir: Path) -> list[dict]:
     entries = [
         # broken symlink は is_dir() が False になるため symlink 自体も拾う。
         entry for entry in sorted(projects_dir.iterdir())
-        if entry.is_symlink() or entry.is_dir()
+        if names.counts_as_project(entry.name)
+        and (entry.is_symlink() or entry.is_dir())
     ]
     if not entries:
         return []

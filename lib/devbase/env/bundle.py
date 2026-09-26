@@ -15,6 +15,7 @@ import yaml
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.utils import names
 
 try:
     from devbase import __version__ as _DEVBASE_VERSION
@@ -34,7 +35,9 @@ SUPPORTED_MANIFEST_VERSION = 1
 # import 側 (`_import_merge.filter_members`) で `MergeError` にする一方、
 # export 側 (`make_entries_from_disk`) でも同じ validator を使い、
 # round-trip できない bundle を export しないようにする (PR #13 codex round 5 指摘)。
-_VALID_PROJECT_NAME_RE = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.\-]*$')
+# 末尾は `\Z` で閉じる (`$` は最後の改行の前でも一致し、`foo\n` を通すため)。
+PROJECT_NAME_PATTERN_BODY = r'[A-Za-z0-9_][A-Za-z0-9_.\-]*'
+_VALID_PROJECT_NAME_RE = re.compile(r'^' + PROJECT_NAME_PATTERN_BODY + r'\Z')
 
 
 def is_valid_project_name(name: str) -> bool:
@@ -304,7 +307,9 @@ def _collect_projects(store, devbase_root,
 
     entries: List[BundleEntry] = []
     other_groups: List[str] = []
-    candidates = sorted(p for p in projects_dir.iterdir() if p.is_dir())
+    # `.` 始まりはプロジェクトとして数えないので、書庫の名前の検査 (_should_skip_project) より
+    # 前に黙って外す (#276)。書庫の名前の規則 (is_valid_project_name) はその後に効く
+    candidates = names.project_dirs(projects_dir)
     for proj_dir in candidates:
         name = proj_dir.name
         if _should_skip_project(name, proj_dir, included, excluded):

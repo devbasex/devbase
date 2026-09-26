@@ -29,6 +29,7 @@ from devbase.project.config import (
     load_project_config,
     parse_project_config,
 )
+from devbase.utils import names
 
 logger = get_logger(__name__)
 
@@ -162,7 +163,8 @@ def migrate_projects(projects_dir: Path, dry_run: bool = False) -> List[Migratio
     """
     projects_dir = Path(projects_dir)
     entries = sorted(
-        (entry for entry in projects_dir.iterdir() if entry.is_dir()),
+        (entry for entry in projects_dir.iterdir()
+         if names.counts_as_project(entry.name) and entry.is_dir()),
         key=lambda entry: entry.name)
     return [migrate_project(entry, dry_run=dry_run) for entry in entries]
 
