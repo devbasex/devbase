@@ -731,8 +731,7 @@ class _MigrationPlan:
         try:
             for unit, keys in self.moves:
                 dest, ref = self._dest_side(unit)
-                merged = dict(self.existing[unit])
-                merged.update(self.source[unit])
+                merged = self._merged_values(unit)
                 # 結果が分からない失敗に備え、書く前から巻き戻しの対象に入れる。
                 # サーバが拒んだと確定した応答 (権限の不足・版の不一致) では何も
                 # 書けていないので、その参照は対象から外す。消すのは「作成したキー」
@@ -746,8 +745,7 @@ class _MigrationPlan:
                 logger.info("%s を書き込みました", ref.label())
             for unit, _ in self.moves:
                 ref = self._dest_side(unit)[1]
-                expected = dict(self.existing[unit])
-                expected.update(self.source[unit])
+                expected = self._merged_values(unit)
                 actual = self._read_back(unit)
                 if actual != expected:
                     diff = sorted(k for k in expected if actual.get(k) != expected[k])
@@ -757,6 +755,12 @@ class _MigrationPlan:
         except DevbaseError:
             self._rollback(created)
             raise
+
+    def _merged_values(self, unit: _MoveUnit) -> dict:
+        """移行先に元からあった内容へ移行元を重ねた内容 (毎回新しい辞書)"""
+        merged = dict(self.existing[unit])
+        merged.update(self.source[unit])
+        return merged
 
     def _read_back(self, unit: _MoveUnit) -> dict:
         if self.to == _bc.BACKEND_OPENBAO:
