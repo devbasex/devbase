@@ -58,6 +58,8 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | --- | --- | --- | --- | --- | --- |
 | 参照 | — | 機密の宛先（SecretRef）。適用範囲（global / project）と持ち主（team / user）の組み合わせで 4 種。version: 2 ではグループも持つ | — | — | `docs/specifications/secret-backend.md` |
 | アカウントグループ | — | DEVBASE_ACCOUNT_GROUP の値。未設定なら default。ボリューム devbase_home_<group> の単位でもある | — | — | `docs/specifications/secret-backend.md` |
+| グループの宣言 | — | projects/<name>/env に書いた空でない DEVBASE_ACCOUNT_GROUP の行。グループを決める唯一の出所 | — | — | — |
+| グループのボリューム | — | アカウントグループごとの devbase_home_<group>。コンテナの /persistent/group にマウントされる | — | — | — |
 | レイアウト | — | 置き場のパスの並び（layout）。flat（version: 1）と group（version: 2） | — | — | `docs/specifications/secret-backend.md` |
 | 置き場のグループ名 | — | パスに入れる名前。グループ名を group_aliases で読み替えた後の名前 | — | — | `docs/specifications/secret-backend.md` |
 | 対象のグループ | — | 1 回の操作が読み書きするグループ | — | — | `docs/specifications/secret-backend.md` |

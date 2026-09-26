@@ -186,6 +186,20 @@
       "source": "docs/specifications/secret-backend.md"
     },
     {
+      "term": "グループの宣言",
+      "context": "secret",
+      "meaning": "projects/<name>/env に書いた空でない DEVBASE_ACCOUNT_GROUP の行。グループを決める唯一の出所",
+      "source": "",
+      "pending_source": "issues/issue-315-requirements.md"
+    },
+    {
+      "term": "グループのボリューム",
+      "context": "secret",
+      "meaning": "アカウントグループごとの devbase_home_<group>。コンテナの /persistent/group にマウントされる",
+      "source": "",
+      "pending_source": "issues/issue-315-requirements.md"
+    },
+    {
       "term": "レイアウト",
       "context": "secret",
       "meaning": "置き場のパスの並び（layout）。flat（version: 1）と group（version: 2）",
