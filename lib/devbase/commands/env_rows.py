@@ -49,6 +49,18 @@ def scope_label(ref: SecretRef) -> str:
     return '共通' if ref.kind == 'global' else f'プロジェクト {ref.name}'
 
 
+def _scope_refs(store: SecretStore, project: Optional[str], group: Optional[str],
+                probe: SecretRef) -> Tuple[List[SecretRef], bool]:
+    """範囲の参照を持ち主ごとに作る。持ち主は ``probe`` で個人の参照があるかで決める"""
+    has_user = store.has_user_refs(probe)
+    owners = ('team', 'user') if has_user else ('team',)
+    if project is None:
+        refs = [SecretRef.for_global(owner=o, group=group) for o in owners]
+    else:
+        refs = [SecretRef.for_project(project, owner=o, group=group) for o in owners]
+    return refs, has_user
+
+
 def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
                      group: Optional[str] = None) -> KeyListing:
     """選んだ範囲の参照を読み、キーの行を返す。
@@ -76,12 +88,7 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
         option_group = target if grouped else None
 
     team_global = SecretRef.for_global(group=target)
-    has_user = store.has_user_refs(team_global)
-    owners = ('team', 'user') if has_user else ('team',)
-    if project is None:
-        refs = [SecretRef.for_global(owner=o, group=target) for o in owners]
-    else:
-        refs = [SecretRef.for_project(project, owner=o, group=target) for o in owners]
+    refs, has_user = _scope_refs(store, project, target, team_global)
 
     settings = store.config.openbao if grouped else None
     rows: List[KeyRow] = []
@@ -112,9 +119,8 @@ def count_project_keys(devbase_root: Path) -> List[Tuple[str, Optional[int]]]:
         try:
             group = store.ref_group(path.name)
             team = SecretRef.for_project(path.name, group=group)
-            owners = ('team', 'user') if store.has_user_refs(team) else ('team',)
-            count = sum(len(store.fetch(SecretRef.for_project(path.name, owner=o, group=group)))
-                        for o in owners)
+            refs, _ = _scope_refs(store, path.name, group, team)
+            count = sum(len(store.fetch(r)) for r in refs)
         except DevbaseError:
             count = None
         counts.append((path.name, count))
