@@ -103,6 +103,8 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | --- | --- | --- | --- |
 | 検査ジョブ | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest） | — | — |
 | 統合ブランチ | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — |
+| トリガー | ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches） | — | — |
+| 積み重ねた Pull Request | 宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request | — | — |
 | 指摘 | shellcheck が出す 1 件（SC の番号・水準・行） | — | — |
 | 抑止の注記 | 指摘を抑える # shellcheck の指示と、抑える理由のコメントの組 | — | — |
 
