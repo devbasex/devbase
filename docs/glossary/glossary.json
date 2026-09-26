@@ -282,6 +282,18 @@
       "pending_source": "issues/issue-216-requirements.md"
     },
     {
+      "term": "トリガー",
+      "context": "ci",
+      "meaning": "ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches）",
+      "pending_source": "issues/issue-216-design.md"
+    },
+    {
+      "term": "積み重ねた Pull Request",
+      "context": "ci",
+      "meaning": "宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request",
+      "pending_source": "issues/issue-216-design.md"
+    },
+    {
       "term": "指摘",
       "context": "ci",
       "meaning": "shellcheck が出す 1 件（SC の番号・水準・行）",
