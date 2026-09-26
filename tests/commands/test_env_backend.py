@@ -586,3 +586,66 @@ def test_backend_test_without_openbao_returns_one(root, capsys):
     out = capsys.readouterr().out
     assert '読めた参照:' not in out
     assert '接続先:' not in out
+
+
+# ---------------------------------------------------------------------------
+# 同じプロセスの中から値で渡す secret_id (#273 決定 8)
+# ---------------------------------------------------------------------------
+
+class _NoStdin(io.StringIO):
+    """読まれたら落とす標準入力 (TUI から呼ぶとき標準入力・伏せ字入力を使わない)"""
+
+    def readline(self, *a):
+        raise AssertionError('stdin を読んではいけない')
+
+    def isatty(self):
+        return True
+
+
+def test_a_secret_id_value_replaces_only_the_secret_id(root, with_key, monkeypatch):
+    assert use_openbao(root, monkeypatch) == 0
+    before = bc.load(root)
+    monkeypatch.setattr('sys.stdin', _NoStdin())
+    monkeypatch.setattr(env_backend.getpass, 'getpass',
+                        lambda *a, **k: pytest.fail('伏せ字入力を出してはいけない'))
+
+    args = use_args('openbao', secret_id='n3w')
+    assert env_backend.cmd_env_backend_use(root, args) == 0
+
+    assert bootstrap.load(root) == bootstrap.Credentials('rid', 'n3w')
+    assert bc.load(root) == before
+
+
+def test_a_secret_id_value_pairs_with_a_new_role_id(root, with_key, monkeypatch):
+    assert use_openbao(root, monkeypatch) == 0
+    monkeypatch.setattr('sys.stdin', _NoStdin())
+
+    args = use_args('openbao', role_id='rid2', secret_id='n3w')
+    assert env_backend.cmd_env_backend_use(root, args) == 0
+
+    assert bootstrap.load(root) == bootstrap.Credentials('rid2', 'n3w')
+
+
+def test_an_empty_secret_id_value_keeps_the_stored_credentials(root, with_key, monkeypatch):
+    assert use_openbao(root, monkeypatch) == 0
+    monkeypatch.setattr('sys.stdin', _NoStdin())
+    monkeypatch.setattr(env_backend.getpass, 'getpass',
+                        lambda *a, **k: pytest.fail('伏せ字入力を出してはいけない'))
+
+    args = use_args('openbao', url='https://other.example.com', secret_id='')
+    assert env_backend.cmd_env_backend_use(root, args) == 0
+
+    assert bootstrap.load(root) == bootstrap.Credentials('rid', 's3cret')
+    assert bc.load(root).openbao.url == 'https://other.example.com'
+
+
+def test_a_secret_id_value_is_not_printed(root, with_key, monkeypatch, capsys, caplog):
+    assert use_openbao(root, monkeypatch) == 0
+    capsys.readouterr()
+
+    args = use_args('openbao', role_id='rid-private', secret_id='sid-private')
+    assert env_backend.cmd_env_backend_use(root, args) == 0
+
+    out = capsys.readouterr()
+    for text in (out.out, out.err, caplog.text):
+        assert 'sid-private' not in text and 'rid-private' not in text
