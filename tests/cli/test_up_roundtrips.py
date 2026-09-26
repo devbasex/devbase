@@ -418,18 +418,6 @@ def _pop_global_and_project(openbao):
         openbao.versions.pop(path, None)
 
 
-def _enter_web_without_project_env(root, openbao, monkeypatch) -> Path:
-    """機密を落として `projects/web` へ入り、project .env を消す。消した .env のパスを返す。"""
-    _pop_global_and_project(openbao)
-    project_dir = root / 'projects' / 'web'
-    monkeypatch.chdir(project_dir)
-    monkeypatch.setenv('PWD', str(project_dir))
-    project_env = project_dir / '.env'
-    if project_env.exists():
-        project_env.unlink()
-    return project_env
-
-
 def test_ensure_env_files_nonzero_exit_returns_false_but_creates_project_env(
         up_root, openbao, monkeypatch):
     """現状固定: env init が非ゼロ終了しても project .env は作られ、戻り値は False。
@@ -438,7 +426,13 @@ def test_ensure_env_files_nonzero_exit_returns_false_but_creates_project_env(
     サーバから読み直す。
     """
     root = up_root['root']
-    project_env = _enter_web_without_project_env(root, openbao, monkeypatch)
+    _pop_global_and_project(openbao)
+    project_dir = root / 'projects' / 'web'
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setenv('PWD', str(project_dir))
+    project_env = project_dir / '.env'
+    if project_env.exists():
+        project_env.unlink()
 
     def fake_run(argv, **kwargs):
         return subprocess.CompletedProcess(argv, 1)
@@ -460,7 +454,13 @@ def test_ensure_env_files_env_init_launch_exception_returns_false(
         up_root, openbao, monkeypatch):
     """現状固定: env init の起動そのものが例外でも、握りつぶして False を返す。"""
     root = up_root['root']
-    project_env = _enter_web_without_project_env(root, openbao, monkeypatch)
+    _pop_global_and_project(openbao)
+    project_dir = root / 'projects' / 'web'
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setenv('PWD', str(project_dir))
+    project_env = project_dir / '.env'
+    if project_env.exists():
+        project_env.unlink()
 
     def boom(argv, **kwargs):
         raise OSError('cannot launch')
@@ -476,7 +476,13 @@ def test_ensure_env_files_project_env_touch_failure_returns_false(
         up_root, openbao, monkeypatch):
     """現状固定: project .env の作成 (touch) が失敗すると False を返す。"""
     root = up_root['root']
-    project_env = _enter_web_without_project_env(root, openbao, monkeypatch)
+    _pop_global_and_project(openbao)
+    project_dir = root / 'projects' / 'web'
+    monkeypatch.chdir(project_dir)
+    monkeypatch.setenv('PWD', str(project_dir))
+    project_env = project_dir / '.env'
+    if project_env.exists():
+        project_env.unlink()
 
     def ok_run(argv, **kwargs):
         return subprocess.CompletedProcess(argv, 0)
