@@ -1,11 +1,13 @@
 """env カテゴリの TUI 操作フロー (PLAN31_2 PR3 → メニュー再構成)。
 
-TUI では参照・対話系の操作のみに絞り、メニュー階層を浅くする:
+TUI では参照・対話系の操作を中心にし、メニュー階層を浅くする:
 
 - 変数一覧はスコープ選択の中間プロンプトを挟まず、グローバル一覧のみを
   即実行する。プロジェクト単位の一覧は TUI から除外する (CLI で実行)。
-- キー単位の get/set/delete と export/import も TUI から除外する (CLI で実行。
-  値の変更は ``edit`` ($EDITOR) と ``project`` (対話設定) で代替できる)。
+- キー単位の追加・変更・削除は「キーの一覧と編集」の画面 (``actions_env_keys``、#273) で
+  行い、``set`` / ``delete`` へ委譲する。OpenBao の接続先とブートストラップ機密は
+  「OpenBao の接続設定」の画面 (``actions_env_openbao``) で変える。
+- export/import は TUI から除外する (CLI で実行)。
 
 引数収集は ``tui.menu`` のヘルパで CLI parser (cli.py ``_add_env_parser``) と
 同じ属性値を集め、``tui.dispatch.dispatch_group`` 経由で既存ハンドラ
@@ -41,14 +43,16 @@ logger = get_logger(__name__)
 
 # env カテゴリで選べる操作 (表示順 = ハイライト既定順)。参照系のグローバル一覧を
 # 先頭に置き、Enter 連打で安全な一覧表示へ到達できるようにする (中間プロンプト
-# なしで即実行)。プロジェクト単位の一覧と get/set/delete/export/import は
-# TUI から除外 (CLI で実行)。
+# なしで即実行)。プロジェクト単位の一覧と export/import は TUI から除外 (CLI で実行)。
+# #273 の 2 つの画面は既存の 5 つの後に置く (既存の名前と順は変えない)。
 _ENV_OPS: list[tuple[str, str]] = [
     ("変数一覧 (グローバル)", "list-global"),
     ("エディタで編集 (edit)", "edit"),
     ("認証情報の再同期 (sync)", "sync"),
     ("プロジェクト変数の対話設定 (project)", "project"),
     ("初期セットアップ (init)", "init"),
+    ("キーの一覧と編集", "keys"),
+    ("OpenBao の接続設定", "openbao"),
 ]
 
 # 中止系番兵は flow と同一オブジェクトを再公開する (呼び出し側・テストの契約)。
@@ -156,7 +160,17 @@ _OP_HANDLERS = {
     "edit": lambda root: _dispatch(root, "edit"),
     "init": lambda root: _dispatch(root, "init", reset=False),
     "project": _op_project,
+    # 2 つの画面は自分の中で引数を集め、cmd_env へ委譲する (#273)。関数内で import するのは
+    # 画面のモジュールが本モジュールの _dispatch / _run_in_project を使うため (循環を避ける)。
+    "keys": lambda root: _screen("actions_env_keys").run(root),
+    "openbao": lambda root: _screen("actions_env_openbao").run(root),
 }
+
+
+def _screen(name: str):
+    import importlib
+
+    return importlib.import_module(f"devbase.tui.{name}")
 
 
 @flow.collect_args
