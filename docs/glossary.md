@@ -25,6 +25,8 @@ bin/devbase の位置引数の解決とビルドの入口（docs/specifications/
 | ラッパー | — | bin/devbase（bash 実装の入口。Python 実装のコマンドへ run_python で振り分ける） | — | — | `docs/specifications/cli-argument-resolution.md` |
 | ショートカット | — | devbase up のように project を省いたトップレベルの同義語 | — | — | `docs/specifications/cli-argument-resolution.md` |
 | 単体ビルド | — | $DEVBASE_ROOT/containers/<image> を devbase-<image>:latest として 1 つだけ作るビルド | — | — | `docs/specifications/cli-argument-resolution.md` |
+| プロジェクトとして数える名前 | — | projects/ の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。. で始まらない名前 | — | — | — |
+| 名前の形の説明 | — | 名前の形を利用者へ説明する文（utils/names.py の NAME_FORM_HINT） | — | — | — |
 
 ## Compose の構成（`compose`）
 
