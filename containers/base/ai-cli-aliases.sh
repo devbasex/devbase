@@ -1,3 +1,5 @@
+# ~/.bashrc から bash が source する。実行しないため shebang を置かない
+# shellcheck shell=bash
 # AI CLI の起動定義。対話シェルの ~/.bashrc から読み込まれる。
 #
 # ここに置くのは alias と補完の登録だけで、副作用を持つ処理は書かない。
