@@ -19,26 +19,22 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import pty
 import re
 import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
-import threading
 import time
 from pathlib import Path
 
 import pytest
 
-BASE_DIR = Path(__file__).resolve().parents[2] / "containers" / "base"
-SCRIPT = BASE_DIR / "tmux-session"
+from .tmux_harness import (BASE_DIR, SCRIPT, SHORT_NAMES, Client, TmuxEnv, needs_tmux)
+from .tmux_harness import short_root as _short_root
+from .tmux_harness import wait as _wait
+
 TMUX_CONF = BASE_DIR / "tmux.conf"
 DOCKERFILE = BASE_DIR / "Dockerfile"
-SHORT_NAMES = ("tmux-go", "tmux-peek", "tmux-kill", "tmux-menu")
-
-needs_tmux = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux が無い環境")
 
 # 名前に含まれても取り違えないことを確かめる文字 (受け入れ条件 10・14)
 SPECIAL_NAMES = ["a b", "it's", 'q"x', "d$1", "s;x"]
@@ -281,155 +277,6 @@ def test_go_switch_failure_exits_one_after_detaching(tmp_path):
     assert json.loads((tmp_path / "clients.json").read_text()) == {
         "/dev/pts/1": "$1", "/dev/pts/4": "$3",
     }
-
-
-def _wait(predicate, timeout: float = 10.0, interval: float = 0.05):
-    """``predicate()`` が真を返すまで待ち、その値を返す。待ち切れなければ失敗にする。"""
-    deadline = time.monotonic() + timeout
-    while True:
-        value = predicate()
-        if value:
-            return value
-        if time.monotonic() > deadline:
-            raise AssertionError(f"待ち切れなかった: {predicate}")
-        time.sleep(interval)
-
-
-class Client:
-    """pty に繋いだ 1 つのプロセス (tmux のクライアント)。出力を読み続ける。"""
-
-    def __init__(self, argv: list[str], env: dict[str, str]):
-        self.controller, terminal = pty.openpty()
-        self.tty = os.ttyname(terminal)
-        self.proc = subprocess.Popen(argv, stdin=terminal, stdout=terminal,
-                                     stderr=terminal, env=env)
-        os.close(terminal)
-        self._buf = bytearray()
-        self._lock = threading.Lock()
-        self._reader = threading.Thread(target=self._read, daemon=True)
-        self._reader.start()
-
-    def _read(self) -> None:
-        while True:
-            try:
-                data = os.read(self.controller, 65536)
-            except OSError:
-                return
-            if not data:
-                return
-            with self._lock:
-                self._buf += data
-
-    def output(self) -> str:
-        with self._lock:
-            return self._buf.decode("utf-8", "replace")
-
-    def send(self, data: str) -> None:
-        os.write(self.controller, data.encode())
-
-    def close(self) -> None:
-        if self.proc.poll() is None:
-            self.proc.terminate()
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                self.proc.wait(timeout=5)
-        with contextlib.suppress(OSError):
-            os.close(self.controller)
-
-
-class TmuxEnv:
-    """テスト専用の tmux サーバーと、それを指す環境。"""
-
-    def __init__(self, root: Path, conf: Path | None = None, fake: Path | None = None):
-        self.root = root
-        self.conf = conf or Path("/dev/null")
-        self.bin = root / "bin"
-        self.bin.mkdir()
-        for name in ("tmux-session", *SHORT_NAMES):
-            (self.bin / name).symlink_to(SCRIPT)
-        path = f"{self.bin}:{os.environ.get('PATH', '/usr/bin:/bin')}"
-        if fake is not None:
-            path = f"{fake}:{path}"
-        self.env = {k: v for k, v in os.environ.items()
-                    if k not in ("TMUX", "TMUX_PANE", "ENV", "BASH_ENV")}
-        self.env.update(TMUX_TMPDIR=str(root), TERM="xterm-256color",
-                        SHELL="/bin/sh", PATH=path, PS1="$ ", LANG="C.UTF-8")
-        self.clients: list[Client] = []
-
-    # --- tmux の操作 ---
-
-    def tmux(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-        done = subprocess.run(["tmux", *args], capture_output=True, text=True,
-                              env=self.env)
-        if check:
-            assert done.returncode == 0, f"tmux {args} が失敗した: {done.stderr}"
-        return done
-
-    def new(self, name: str, *cmd: str) -> str:
-        """セッションを作り、その ID を返す。最初の 1 つがサーバーを起動する。"""
-        self.tmux("-f", str(self.conf), "new-session", "-d", "-s", name,
-                  "-x", "120", "-y", "40", *cmd)
-        return self.sid(name)
-
-    def sessions(self) -> dict[str, str]:
-        """``{名前: ID}``。サーバーが無ければ空。"""
-        done = self.tmux("list-sessions", "-F", "#{session_id} #{session_name}",
-                         check=False)
-        result = {}
-        for line in done.stdout.splitlines():
-            sid, _, name = line.partition(" ")
-            result[name] = sid
-        return result
-
-    def sid(self, name: str) -> str:
-        return self.sessions()[name]
-
-    def clients_of(self, sid: str) -> set[str]:
-        done = self.tmux("list-clients", "-t", sid, "-F", "#{client_name}", check=False)
-        return set(done.stdout.split())
-
-    def all_clients(self) -> dict[str, str]:
-        """``{端末名: セッション ID}``"""
-        done = self.tmux("list-clients", "-F", "#{client_name} #{session_id}", check=False)
-        return dict(line.split(" ", 1) for line in done.stdout.splitlines())
-
-    def spawn(self, argv: list[str], env: dict[str, str] | None = None) -> Client:
-        client = Client(argv, env or self.env)
-        self.clients.append(client)
-        return client
-
-    def attach(self, sid: str) -> Client:
-        """端末を 1 つ ``sid`` へ繋ぎ、繋がるまで待つ。"""
-        client = self.spawn(["tmux", "attach-session", "-t", sid])
-        _wait(lambda: self.all_clients().get(client.tty) == sid)
-        return client
-
-    def inside_env(self, sid: str) -> dict[str, str]:
-        """``sid`` の pane の中のシェルと同じ ``TMUX`` / ``TMUX_PANE`` を持つ環境。"""
-        shown = self.tmux("display-message", "-p", "-t", sid,
-                          "#{socket_path},#{pid},0 #{pane_id}").stdout.strip()
-        tmux_var, pane = shown.split(" ")
-        return {**self.env, "TMUX": tmux_var, "TMUX_PANE": pane}
-
-    # --- tmux-session の実行 ---
-
-    def run(self, *argv: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-        prog, *args = argv
-        return subprocess.run([str(self.bin / prog), *args], capture_output=True,
-                              text=True, env=env or self.env, timeout=30)
-
-    def close(self) -> None:
-        # needs_tmux の付かないテストも tm を使う。tmux が無い環境でも後片付けを終える。
-        if shutil.which("tmux", path=self.env["PATH"]) is not None:
-            self.tmux("kill-server", check=False)
-        for client in self.clients:
-            client.close()
-        shutil.rmtree(self.root, ignore_errors=True)
-
-
-def _short_root() -> Path:
-    # UNIX ソケットのパス長には OS の上限 (macOS で 104 バイト) があるため、pytest の
-    # 一時ディレクトリではなく $TMPDIR 直下の短い名前を使う。
-    return Path(tempfile.mkdtemp(prefix="dvb69-", dir=tempfile.gettempdir()))
 
 
 @pytest.fixture
