@@ -36,8 +36,8 @@ SUPPORTED_MANIFEST_VERSION = 1
 # export 側 (`make_entries_from_disk`) でも同じ validator を使い、
 # round-trip できない bundle を export しないようにする (PR #13 codex round 5 指摘)。
 # 末尾は `\Z` で閉じる (`$` は最後の改行の前でも一致し、`foo\n` を通すため)。
-_PROJECT_NAME_BODY = r'[A-Za-z0-9_][A-Za-z0-9_.\-]*'
-_VALID_PROJECT_NAME_RE = re.compile(r'^' + _PROJECT_NAME_BODY + r'\Z')
+PROJECT_NAME_PATTERN_BODY = r'[A-Za-z0-9_][A-Za-z0-9_.\-]*'
+_VALID_PROJECT_NAME_RE = re.compile(r'^' + PROJECT_NAME_PATTERN_BODY + r'\Z')
 
 
 def is_valid_project_name(name: str) -> bool:
