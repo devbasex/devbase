@@ -17,6 +17,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
@@ -425,7 +426,9 @@ def _docker_available() -> bool:
 
 # group 側だけを対象にする。共通側 (ai) は devbase_home_ubuntu しか許されず、
 # 実データのボリュームを消してしまうため実機テストでは使わない。
-TEST_VOLUME = 'devbase_home_plan40test'
+# 名前は実行ごとに変える。別の worktree で同時に走る pytest と同じ Docker の
+# ボリュームを取り合わないため (#290)
+TEST_VOLUME_PREFIX = 'devbase_home_plan40test'
 
 
 def _docker(*args: str, **kwargs) -> subprocess.CompletedProcess:
@@ -442,20 +445,21 @@ def throwaway_volume(monkeypatch):
     # 収集時ではなくこのテストを実行するときだけ Docker を叩く
     if not _docker_available():
         pytest.skip("Docker と devbase-snapshot:latest イメージが要る")
-    _docker('volume', 'rm', '-f', TEST_VOLUME)
-    _docker('volume', 'create', TEST_VOLUME)
-    yield TEST_VOLUME
-    _docker('volume', 'rm', '-f', TEST_VOLUME)
+    volume = f'{TEST_VOLUME_PREFIX}_{uuid.uuid4().hex[:12]}'
+    _docker('volume', 'create', volume)
+    yield volume
+    _docker('volume', 'rm', '-f', volume)
 
 
-def _in_volume(script: str) -> subprocess.CompletedProcess:
-    return _docker('run', '--rm', '-v', f'{TEST_VOLUME}:/work',
+def _in_volume(volume: str, script: str) -> subprocess.CompletedProcess:
+    return _docker('run', '--rm', '-v', f'{volume}:/work',
                    'devbase-snapshot:latest', 'bash', '-c', script)
 
 
-def _swap_directories(generation: str) -> None:
+def _swap_directories(volume: str, generation: str) -> None:
     """ディレクトリを総入れ替えして inode を再利用させる。"""
     _in_volume(
+        volume,
         'rm -rf /work/.claude/plugins/cache; '
         'mkdir -p /work/.claude/plugins/cache; '
         f'for i in $(seq 1 40); do '
@@ -465,8 +469,8 @@ def _swap_directories(generation: str) -> None:
         f'echo {generation} > /work/marker.txt')
 
 
-def _listing() -> str:
-    return _in_volume('cd /work && find . | sort').stdout
+def _listing(volume: str) -> str:
+    return _in_volume(volume, 'cd /work && find . | sort').stdout
 
 
 def test_a_generation_with_swapped_directories_restores_completely(
@@ -475,21 +479,21 @@ def test_a_generation_with_swapped_directories_restores_completely(
     mgr = SnapshotManager(tmp_path)
     # 作成側の対象を使い捨てボリュームへ差し替える。こうしないと復元前の自動バックアップが
     # 実データのボリューム (devbase_home_ubuntu) を対象にしてしまう。
-    mgr._volumes = {'group': TEST_VOLUME}
+    mgr._volumes = {'group': throwaway_volume}
 
-    _swap_directories('A')
+    _swap_directories(throwaway_volume, 'A')
     mgr.create(name='plan40gen', full=True)
     for generation in ('B', 'C', 'D'):
-        _swap_directories(generation)
+        _swap_directories(throwaway_volume, generation)
         mgr.create(name='plan40gen')
 
     snap_dir = tmp_path / 'backups' / 'plan40gen'
     assert sorted(p.name for p in snap_dir.glob('incr-*.tar.zst')) == [
         'incr-001.tar.zst', 'incr-002.tar.zst', 'incr-003.tar.zst']
 
-    expected = _listing()
+    expected = _listing(throwaway_volume)
     assert './marker.txt' in expected
 
     mgr.restore('plan40gen')
 
-    assert _listing() == expected
+    assert _listing(throwaway_volume) == expected
