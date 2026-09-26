@@ -243,6 +243,7 @@ PR には以下の情報を記載する。
 
 `tests/` の pytest と、Docker や実環境が要る範囲の手動テストを併用する。手元では
 `uv run --locked pytest tests/ -q` で全体を回し、実機の挙動は以下の手順で確認する。
+テストは起動したシェルの環境変数と `HOME` から隔離される（[テストの環境の隔離](../specifications/test-environment-isolation.md)）。
 
 ### CI が実行するもの
 
@@ -259,6 +260,7 @@ SHA-256 で照合して入れ、既定の水準（style まで）で走らせる
 （`tests/ci/test_shellcheck_job.py` と `tests/containers/test_base_shellcheck_ci.py` が理由の無い指示を止める）。
 `containers/base/` の直下にシェルスクリプト（`sh` か `bash` の shebang を持つか、拡張子が `.sh` のもの）を足したら、
 `ci.yml` の `Run ShellCheck on containers/base/` の一覧へも足す。足し忘れは `tests/containers/test_base_shellcheck_ci.py` が落とす。
+トリガー・検査の対象・抑止の注記の規則は [CI の検査（トリガーと ShellCheck）](../specifications/ci-checks.md) にある。
 手元では次で CI と同じ版の検査を打てる。
 
 ```bash
