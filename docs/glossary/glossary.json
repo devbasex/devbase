@@ -243,25 +243,25 @@
       "term": "キーの行",
       "context": "secret",
       "meaning": "TUI の env の一覧の 1 行。キーと、そのキーがある参照（グループ・持ち主・適用範囲）の組。値の平文を持たない",
-      "source": "issues/issue-273-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "勝つ行",
       "context": "secret",
-      "meaning": "同じキーの行のうち、重ね順でコンテナに渡る値を持つ行。一覧に並べた参照の中だけで決める",
-      "source": "issues/issue-273-design.md"
+      "meaning": "同じキーの行のうち、一覧に並べた機密の参照の中で重ね順が最後の行。一覧の中だけの勝ち負けで、コンテナに渡る最終の値の行であることは保証しない",
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "同期の書き込み先",
       "context": "secret",
       "meaning": "env sync がキーごとに選ぶ参照。--user なら個人共通、無ければキーが現にある参照（両方なら個人共通、どちらにも無ければチーム共通）",
-      "source": "issues/issue-273-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "同期済みハッシュの控え",
       "context": "secret",
       "meaning": "env sync がソースファイルの位置とハッシュを記録する .env.sources[.<g>].yml。キャッシュ（機密の控え）とは別のもの",
-      "source": "issues/issue-273-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "世代",

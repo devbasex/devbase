@@ -67,10 +67,10 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | ブートストラップ機密 | — | サーバ backend が接続に使う AppRole の role_id / secret_id。secrets/bootstrap.env.age に置く | — | — | `docs/specifications/secret-backend.md` |
 | キャッシュ | — | サーバの内容と一致すると確かめられた機密を、参照ごとに age で暗号化して手元に控えたもの | — | — | `docs/specifications/secret-backend.md` |
 | 機密の書き込みの知らせ | — | ファイルの backend へプロジェクトの機密を書くとき、名前が名前の形に合わなければ標準エラーへ出す 1 行 | — | — | `docs/specifications/cli-argument-resolution.md` |
-| キーの行 | — | TUI の env の一覧の 1 行。キーと、そのキーがある参照（グループ・持ち主・適用範囲）の組。値の平文を持たない | — | — | `issues/issue-273-design.md` |
-| 勝つ行 | — | 同じキーの行のうち、重ね順でコンテナに渡る値を持つ行。一覧に並べた参照の中だけで決める | — | — | `issues/issue-273-design.md` |
-| 同期の書き込み先 | — | env sync がキーごとに選ぶ参照。--user なら個人共通、無ければキーが現にある参照（両方なら個人共通、どちらにも無ければチーム共通） | — | — | `issues/issue-273-design.md` |
-| 同期済みハッシュの控え | — | env sync がソースファイルの位置とハッシュを記録する .env.sources[.<g>].yml。キャッシュ（機密の控え）とは別のもの | — | — | `issues/issue-273-design.md` |
+| キーの行 | — | TUI の env の一覧の 1 行。キーと、そのキーがある参照（グループ・持ち主・適用範囲）の組。値の平文を持たない | — | — | `docs/specifications/secret-backend.md` |
+| 勝つ行 | — | 同じキーの行のうち、一覧に並べた機密の参照の中で重ね順が最後の行。一覧の中だけの勝ち負けで、コンテナに渡る最終の値の行であることは保証しない | — | — | `docs/specifications/secret-backend.md` |
+| 同期の書き込み先 | — | env sync がキーごとに選ぶ参照。--user なら個人共通、無ければキーが現にある参照（両方なら個人共通、どちらにも無ければチーム共通） | — | — | `docs/specifications/secret-backend.md` |
+| 同期済みハッシュの控え | — | env sync がソースファイルの位置とハッシュを記録する .env.sources[.<g>].yml。キャッシュ（機密の控え）とは別のもの | — | — | `docs/specifications/secret-backend.md` |
 
 ## スナップショット（`snapshot`）
 

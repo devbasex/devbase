@@ -24,10 +24,12 @@ TUI は新しいコンテキストを作らない。画面の語（キーの行�
 
 | 集約 | 持ち主（書き換えてよいもの） | 根 | エンティティ | 値オブジェクト |
 | --- | --- | --- | --- | --- |
-| 参照の内容 | `cmd_env_set` / `cmd_env_delete` / `cmd_env_edit` / `cmd_env_sync` / `cmd_env_init`（いずれも `SecretStore.save` を通す） | 参照（`SecretRef`） | — | キーと値の組・版（CAS の基準） |
+| 参照の内容 | `SecretStore.save`（呼び出し元は `cmd_env` の `set` / `delete` / `edit` / `sync` / `init` / `project` などの書き込むコマンド） | 参照（`SecretRef`） | — | キーと値の組・版（CAS の基準） |
 | 接続設定 | `cmd_env_backend_use` | `backend.yml` の `openbao` 節 | ブートストラップ機密 | `url`・`mount`・`user`・`layout`・`group_aliases` |
 | 同期済みハッシュの控え | `_update_source_metadata`（`sync` / `init` から呼ぶ） | 置き場のグループごとの控え | ソース（aws・git_credentials・gcp） | ファイルの位置・ハッシュ・キー名 |
 
+- 参照の内容を書き換える責務は `SecretStore.save` の 1 か所にある。`cmd_env` の各コマンドはその呼び出し元で、
+  どの参照へ書くか（宛先）だけを決める。この設計が宛先の決め方を変えるのは `sync` だけである
 - TUI はどの集約の持ち主でもない。書き込みはすべて上の持ち主へ委譲する（I1）
 - `env sync` は 1 回の実行で最大 2 つの参照（チーム共通・個人共通）を書く。1 つのキーは必ず 1 つの参照だけへ
   書く（I2）。2 つの参照の保存は同じトランザクションにならない（決定 3）
@@ -45,7 +47,7 @@ TUI は新しいコンテキストを作らない。画面の語（キーの行�
 | I7 | 接続設定 | 形の不正な `url` では、`backend.yml` も `bootstrap.env.age` も書かない | `use` が検証を書き込みより先に行う（今の順を保つ） |
 | I8 | 接続設定 | token をホストのディスクへ書かない | token を入力させない（前提 1）。`bootstrap.env.age` には `role_id` / `secret_id` だけを書く |
 | I9 | 全体 | 機密の値・`role_id`・`secret_id` を画面の出力・ログ・子プロセスの引数に出さない | 入力は伏せ字の欄だけで受ける。値は同じプロセスの中の属性で渡し、`argv` を組まない |
-| I10 | 同期済みハッシュの控え | 控えに登録の無いソースのキーが参照にあるとき、黙って飛ばさない | 「ソース未登録」を含む 1 行を出し、今のファイルと値を比べて更新してから控えに登録する（決定 2） |
+| I10 | 同期済みハッシュの控え | 控えに登録の無いソースのキーが参照にあるとき、黙って飛ばさない | 「ソース未登録」を含む 1 行（入出力の契約の「未登録の行」）を出し、今のファイルと値を比べて更新してから控えに登録する（決定 2） |
 | I11 | 参照の内容 | TUI の削除は、確認で「はい」を選んだときだけ行う | Esc・「いいえ」は `delete` を呼ばずに一覧へ戻る |
 
 ### ドメインイベント
@@ -69,7 +71,7 @@ TUI は新しいコンテキストを作らない。画面の語（キーの行�
 | 用語 | 意味 | 用語集への反映 |
 | --- | --- | --- |
 | キーの行 | TUI の一覧の 1 行。キーと、そのキーがある参照（グループ・持ち主・適用範囲）の組。値の平文を持たない | 追加（`secret`） |
-| 勝つ行 | 同じキーの行のうち、重ね順でコンテナに渡る値を持つ行。一覧に並べた参照の中だけで決める | 追加（`secret`） |
+| 勝つ行 | 同じキーの行のうち、一覧に並べた機密の参照の中で重ね順が最後の行。一覧の中だけの勝ち負けで、コンテナに渡る最終の値の行であることは保証しない（`projects/<name>/env` の非機密設定は比べない） | 追加（`secret`） |
 | 同期の書き込み先 | `env sync` がキーごとに選ぶ参照。I2 の規則で決まる | 追加（`secret`） |
 | 同期済みハッシュの控え | `env sync` がソースファイルの位置とハッシュを記録する `.env.sources[.<g>].yml`。キャッシュ（機密の控え）とは別のもの | 追加（`secret`） |
 
@@ -97,14 +99,14 @@ TUI は新しいコンテキストを作らない。画面の語（キーの行�
 | 伏せ字の入力欄（`tui/menu.py` の `secret`） | 入力した文字を画面に出さない 1 行入力。Esc・Ctrl-C の規約は `text` と同じ | 変更 |
 | キーの行の取り出し（`commands/env_rows.py` の `collect_key_rows`） | 選んだ範囲の参照を現物から 1 回ずつ読み、キーの行と勝つ行の印を返す。値の平文を返さない | 新設 |
 | `env sync`（`commands/env.py` の `cmd_env_sync`） | `--user` / `--group` を受け、個人共通とチーム共通を読み、キーごとに同期の書き込み先を選んで保存する | 変更 |
-| 同期の書き込み先（`commands/env.py` の `SyncTargets`） | 読んだ 2 つの参照を持ち、I2 の規則でキーの宛先を返す。書いた参照を覚えて保存する | 新設 |
+| 同期の書き込み先（`commands/env.py` の `SyncTargets`） | 読んだ 2 つの参照を持ち、I2 の規則でキーの宛先を返す。書いた参照を覚えて保存する。2 つの参照は `set` / `delete` の `_target_env` と同じく `fresh=True`（`store.fetch`）で読み、キャッシュへ落ちない（今の `sync` の `_global_env(...)` は `fresh=False` で、接続断でも控えから読めてしまう） | 新設 |
 | 控えの更新（`commands/env.py` の `_update_source_metadata`） | 複数の参照のどれかにキーがあればソースを登録する（前提 5） | 変更 |
 | `env backend use`（`commands/env_backend.py`） | 同じプロセスの中から渡された `secret_id` の値を受ける（`_read_secret_id` / `_store_credentials`） | 変更 |
 | env の引数（`cli.py` の `_add_env_parser`） | `sync` に `--user` / `--group` を足す。持ち主の軸を持つ引数の組の注記（「init / sync / … には足さない」）から `sync` を外す | 変更 |
 | env メニューの既存のテスト（`tests/cli/tui/test_actions_env.py`） | 操作の値の並びの等値を 7 つに直す。「get/set/delete は CLI 専用」の注記を直す。`sync` を属性なしで委譲するテストは変えない | 変更 |
 | 持ち主の軸の引数のテスト（`tests/commands/test_env_user_axis.py`） | `['env', 'sync', '--user']` を拒む組から受け付ける組へ移す | 変更 |
 | 利用者向けの文書 | `docs/user/cli-reference/02-project.md`（TUI の画面と「TUI が提供しない細かいオプション」から `env set/delete` を外す）・`03-env.md`（`sync` の `--user` / `--group` と宛先）・`env-backend.md`（「`init` / `sync` / `project` / `export` / `import`」の節から `sync` を分け、TUI の接続設定を足す） | 変更 |
-| 確定仕様（`docs/specifications/secret-backend.md`） | 「参照の持ち主と `--user`」の「`init` / `sync` / … は `--user` を受け付けず」を `sync` を除く形に、「`init` / `sync` / `project` / `export` / `import`」の表の `env sync` の行を I2 と控えの登録（前提 5・決定 2）に書き換える | 変更 |
+| 確定仕様（`docs/specifications/secret-backend.md`） | 「参照の持ち主と `--user`」の「`init` / `sync` / … は `--user` を受け付けず」を `sync` を除く形に、「`init` / `sync` / `project` / `export` / `import`」の表の `env sync` の行を I2 と控えの登録（前提 5・決定 2）に書き換える。「`env` コマンドの `--group`」の節の「`sync` / `project` / `export` / `import` は `--group` を受けず」から `sync` を外し、`--group NAME` を受ける側へ移す。用語の 4 語（キーの行・勝つ行・同期の書き込み先・同期済みハッシュの控え）の定義を書き、用語集の正本にする | 変更 |
 
 変えないもの: `SecretStore` / `OpenBaoBackend` / `bootstrap` / `backend_config` の読み書きと形、`set` / `delete` /
 `edit` / `list` / `get` の宛先と出力、`init` / `project` / `export` / `import` の持ち主の軸、既存の env メニュー 5 つの名前と順。
@@ -262,14 +264,15 @@ classDiagram
 | 宛先 | キーごとに I2 |
 | 同期済みハッシュの控え | 対象のグループの `.env.sources.<g>.yml`（`version: 2`）、それ以外は `.env.sources.yml`（今と同じ） |
 | 出力 | 今の行（`AWS認証: 更新しました` など）。個人共通へ書いた行だけ末尾に `（個人共通）` を付ける。チーム共通へ書いた行は今と同じ文言 |
-| 未登録の行 | `<ソース名>: ソース未登録（<参照の表示>にキーがあります）。今のファイルと比べて更新しました` / `…比べて変更なし` / `…元のファイルがありません` のどれか 1 行 |
+| 未登録の行 | 控えに項目が無く、キーが参照にあるとき: `<ソース名>: ソース未登録（<参照の表示>にキーがあります）。今のファイルと比べて更新しました` / `…比べて変更なし` / `…元のファイルがありません` のどれか 1 行 |
+| 比べられない行 | 控えに項目はあるがハッシュか元のファイルが無いとき（`check_changed` が `None`）: 今の `<ソース名>: ソース未登録` を `<ソース名>: 控えと比べられません（ハッシュか元のファイルがありません）` に変える。「ソース未登録」は控えに項目が無い状態だけを指す語にする |
 | 終了コード | 0: 成功（変更なしを含む）。1: 参照を読めない・保存に失敗（どの参照かを 1 行で示す）。2: 引数の誤り |
 
 `--user` を足すため、`test_commands_without_the_owner_axis_reject_user` の `sync` の行を
 `test_commands_with_the_owner_axis_accept_user` へ移す。`init` / `project` / `export` / `import` は今と同じく拒む。
 
 互換性: ファイルの backend で `--user` 無しの `sync` は、宛先・出力とも変わらない（個人の参照が無いため
-I2 は常にチーム共通を返す）。openbao で個人共通にキーがある端末だけ、宛先が個人共通に変わる（#268 の直し）。
+I2 は常にチーム共通を返す）。例外は比べられない行の文言と、新しく出る未登録の行の 2 つである。openbao で個人共通にキーがある端末だけ、宛先が個人共通に変わる（#268 の直し）。
 
 ### `devbase env backend use` の内部の入力
 
@@ -431,7 +434,7 @@ sequenceDiagram
     participant M as 同期済みハッシュの控え
     C->>C: _target_group（--group の検証）
     C->>C: --user かつ個人単位の参照なし → 2
-    C->>S: チーム共通・個人共通を読む
+    C->>S: チーム共通・個人共通を fetch（fresh=True）
     alt 読めない
         S-->>C: DevbaseError → 1（何も書かない）
     end
