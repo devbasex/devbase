@@ -307,6 +307,29 @@ def _list_loop(devbase_root: Path, project, group):
         _after_write(rc)
 
 
+def _choose_target(devbase_root: Path, scope, grouped: bool):
+    """範囲に応じてプロジェクトとグループを選ぶ。Esc は ``flow.BackOut`` のまま送る"""
+    project = _select_project(devbase_root) if scope == SCOPE_PROJECT else None
+    group = _select_group(devbase_root) if scope == SCOPE_GLOBAL and grouped else None
+    return project, group
+
+
+def _list_until_done(devbase_root: Path, project, group):
+    """一覧を出し、使えないグループならグループを選び直す。
+
+    戻り値は :func:`_list_loop` と同じ。グループの選び直しの Esc は ``_RESELECT``
+    (範囲の選択へ戻る)。
+    """
+    while True:
+        rc = _list_loop(devbase_root, project, group)
+        if rc is not _RESELECT:
+            return rc
+        try:
+            group = _select_group(devbase_root)
+        except flow.BackOut:
+            return _RESELECT
+
+
 @flow.collect_args
 def run(devbase_root: Path):
     """env メニューの「キーの一覧と編集」。
@@ -322,15 +345,9 @@ def run(devbase_root: Path):
     while True:
         scope = flow.need(_select_scope(devbase_root))
         try:
-            project = _select_project(devbase_root) if scope == SCOPE_PROJECT else None
-            group = _select_group(devbase_root) if scope == SCOPE_GLOBAL and grouped else None
+            project, group = _choose_target(devbase_root, scope, grouped)
         except flow.BackOut:
             continue                     # 範囲の選択へ戻る
-        while True:
-            rc = _list_loop(devbase_root, project, group)
-            if rc is not _RESELECT:
-                return rc
-            try:
-                group = _select_group(devbase_root)
-            except flow.BackOut:
-                break                    # 範囲の選択へ戻る
+        rc = _list_until_done(devbase_root, project, group)
+        if rc is not _RESELECT:
+            return rc                    # _RESELECT なら範囲の選択へ戻る
