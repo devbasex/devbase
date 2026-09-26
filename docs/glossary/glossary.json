@@ -116,9 +116,9 @@
     {
       "term": "プロジェクトとして数える名前",
       "context": "cli",
-      "meaning": "projects/ の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。. で始まらない名前",
+      "meaning": "projects/ の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。空でなく . で始まらない名前（utils/names.py の counts_as_project）",
       "source": "",
-      "pending_source": "issues/issue-276-requirements.md"
+      "pending_source": "issues/issue-276-design.md"
     },
     {
       "term": "名前の形の説明",
@@ -234,6 +234,13 @@
       "context": "secret",
       "meaning": "サーバの内容と一致すると確かめられた機密を、参照ごとに age で暗号化して手元に控えたもの",
       "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "機密の書き込みの知らせ",
+      "context": "secret",
+      "meaning": "ファイルの backend へプロジェクトの機密を書くとき、名前が名前の形に合わなければ標準エラーへ出す 1 行",
+      "source": "",
+      "pending_source": "issues/issue-276-design.md"
     },
     {
       "term": "世代",
