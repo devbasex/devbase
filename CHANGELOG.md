@@ -4,12 +4,14 @@
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-09-26
+
 ### Added
 - **base イメージに `shellcheck` を入れました（PLAN67 / #249）。** base と、base を継ぐ派生
   イメージ（`general` / `php` など）のコンテナで、Bash スクリプトの静的検査ができます。
-  bash-language-server などの言語サーバが返す Bash の診断もこれを使います。版は固定せず、
-  Ubuntu のアーカイブの版（2026-09 時点で 0.11.0）が入ります。入れ損ないはビルドの版の確認で
-  止まります。`lfm` / `snapshot` は base を継がないため入りません。
+  bash-language-server などの言語サーバが返す Bash の診断もこれを使います。Ubuntu のアーカイブの
+  版（2026-09 時点で 0.11.0）が入り、入れ損ないと、CI の ShellCheck と違う版はビルドの版の確認で
+  止まります（#247）。`lfm` / `snapshot` は base を継がないため入りません。
   **反映には `devbase build base --no-cache` と、使っている派生イメージの建て直しが要ります。**
 - **tmux のセッションを名指しで移る・調べる・落とすコマンドを base イメージに入れました
   （PLAN69 / #234）。** `tmux-go <名前>` はそのセッションへ移って他の端末を外し、
@@ -41,6 +43,10 @@
   反映されません。**
 
 ### Changed
+- **base イメージのビルドは、shellcheck が 0.11.0 でないと版の確認で止まるようになりました（#247）。**
+  CI の ShellCheck と同じ版を使い、手元と CI で指摘の数を揃えるためです。Ubuntu のアーカイブが
+  別の版を配った場合は、`containers/base/Dockerfile` の版の確認と `.github/workflows/ci.yml` の
+  `SHELLCHECK_VERSION`・`SHELLCHECK_SHA256` を一緒に上げます。
 - **スナップショットの世代を、アカウントグループ（対象ボリュームの組）ごとの系列で持つように
   しました（PLAN68 / #248）。** グループの違うプロジェクトを行き来しても、`devbase up` は
   起動したグループの系列の最新の世代へ差分を積み、フルバックアップを取り直しません。
@@ -811,7 +817,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.7.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v3.8.0...HEAD
+[3.8.0]: https://github.com/devbasex/devbase/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/devbasex/devbase/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/devbasex/devbase/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/devbasex/devbase/compare/v3.4.0...v3.5.0
