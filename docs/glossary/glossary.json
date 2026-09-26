@@ -300,6 +300,12 @@
       "pending_source": "issues/issue-247-design.md"
     },
     {
+      "term": "ShellCheck の検査ジョブ",
+      "context": "ci",
+      "meaning": "検査ジョブのうち shellcheck ジョブ（bin/*・install.sh・containers/base/tmux-* を検査する）",
+      "pending_source": "issues/issue-247-design.md"
+    },
+    {
       "term": "環境の隔離",
       "context": "test",
       "meaning": "pytest を起動したシェルから継承した環境変数を、テストごとに既定の状態（未設定か固定値）へ戻すこと",
