@@ -21,7 +21,7 @@ from pathlib import Path
 from devbase.env import keys
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
-from devbase.tui import flow, menu
+from devbase.tui import env_dispatch, flow, menu
 
 logger = get_logger(__name__)
 
@@ -129,13 +129,11 @@ def delegate_attrs(ref) -> dict:
 
 
 def _dispatch(devbase_root: Path, subcommand: str, ref, **attrs):
-    from devbase.tui import actions_env
-
     attrs.update(delegate_attrs(ref))
-    call = lambda: actions_env._dispatch(devbase_root, subcommand, **attrs)  # noqa: E731
+    call = lambda: env_dispatch.dispatch(devbase_root, subcommand, **attrs)  # noqa: E731
     if ref.kind == "global":
         return call()
-    rc = actions_env._run_in_project(devbase_root, ref.name, call)
+    rc = env_dispatch.run_in_project(devbase_root, ref.name, call)
     return 1 if rc is flow.ARG_CANCEL else rc
 
 
@@ -187,9 +185,7 @@ def _select_group(devbase_root: Path) -> str:
 
 
 def _select_project(devbase_root: Path) -> str:
-    from devbase.tui import actions_env
-
-    return flow.need(actions_env._select_project(devbase_root))
+    return flow.need(env_dispatch.select_project(devbase_root))
 
 
 # ---------------------------------------------------------------------------

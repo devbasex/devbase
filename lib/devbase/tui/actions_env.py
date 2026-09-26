@@ -27,17 +27,13 @@ project スコープ依存の扱い (plan 3.3):
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from devbase.commands.project import (
-    _STATUS_COLOR,
-    _build_menu_entries,
-    list_projects,
-)
 from devbase.log import get_logger
-from devbase.tui import flow, menu
-from devbase.tui.dispatch import dispatch_group
+from devbase.tui import actions_env_keys, actions_env_openbao, flow, menu
+from devbase.tui.env_dispatch import dispatch as _dispatch
+from devbase.tui.env_dispatch import run_in_project as _run_in_project
+from devbase.tui.env_dispatch import select_project as _select_project
 
 logger = get_logger(__name__)
 
@@ -59,17 +55,6 @@ _ENV_OPS: list[tuple[str, str]] = [
 _ARG_CANCEL = flow.ARG_CANCEL
 
 
-def _dispatch(devbase_root: Path, subcommand: str, **attrs):
-    """``cmd_env`` への委譲 (dispatch_group の薄いラッパ)。
-
-    import を関数内で行うのは actions_project (dispatch_lifecycle) と同様、
-    テストで ``devbase.commands.env.cmd_env`` を monkeypatch できるようにするため。
-    """
-    from devbase.commands import env as env_mod
-
-    return dispatch_group(env_mod.cmd_env, devbase_root, subcommand, **attrs)
-
-
 def _select_action():
     """env 操作を選ぶサブメニュー。
 
@@ -78,59 +63,6 @@ def _select_action():
     """
     return menu.select(f"環境変数の操作を選択 {menu.HINT_BACK}:",
                        list(_ENV_OPS), back=True, search=False)
-
-
-def _select_project(devbase_root: Path):
-    """project スコープ操作の対象プロジェクトを選ぶ。
-
-    actions_project と同じ一覧取得 (``list_projects`` + ``_build_menu_entries``) を
-    流用する。戻り値: プロジェクト名 (``str``) / ``None`` (Ctrl-C → 全体中止を呼び
-    出し元へ伝搬) / ``_ARG_CANCEL`` (Esc → サブメニューへ戻る、またはプロジェクト無し)。
-    """
-    projects_dir = Path(devbase_root) / "projects"
-    rows = list_projects(projects_dir)
-    if not rows:
-        logger.info("プロジェクトがありません (%s)。", projects_dir)
-        return _ARG_CANCEL
-
-    entries = _build_menu_entries(rows, colorize=_STATUS_COLOR)
-    choices = [(entry, i) for i, entry in enumerate(entries)]
-    idx = menu.select(f"対象プロジェクトを選択 {menu.HINT_SEARCH}:",
-                      choices, back=True, search=True)
-    if isinstance(idx, int):
-        return rows[idx]["name"]
-    return flow.back_as_cancel(idx)    # None=Ctrl-C / MENU_BACK=Esc → 再表示
-
-
-def _run_in_project(devbase_root: Path, project_name: str, fn):
-    """``projects/<name>`` へ chdir + ``PWD`` を切り替えて fn を実行し、必ず復帰する。
-
-    ``cmd_env_set --project`` / ``cmd_env_project`` は
-    ``os.environ.get('PWD', os.getcwd())`` で現在地を判定する (wrapper の cd を
-    前提とした PLAN06 機構) ため、``os.chdir`` だけでは不十分で ``PWD`` も
-    プロジェクトパスへ差し替える。``PWD`` は symlink を解決しない
-    ``projects/<name>`` を指す (projects/ 配下判定を成立させるため)。
-
-    戻り値: fn の rc / ``_ARG_CANCEL`` (対象ディレクトリへ移動できない場合)。
-    """
-    target = Path(devbase_root) / "projects" / project_name
-    old_cwd = Path.cwd()
-    old_pwd = os.environ.get("PWD")
-    try:
-        os.chdir(target)
-    except OSError as exc:
-        logger.error("プロジェクトディレクトリへ移動できません: %s (%s)", target, exc)
-        return _ARG_CANCEL
-    os.environ["PWD"] = str(target)
-    try:
-        return fn()
-    finally:
-        # 実行結果に関わらず必ず元の CWD / PWD へ復帰する (plan 3.3)。
-        os.chdir(old_cwd)
-        if old_pwd is None:
-            os.environ.pop("PWD", None)
-        else:
-            os.environ["PWD"] = old_pwd
 
 
 # ---------------------------------------------------------------------------
@@ -160,17 +92,10 @@ _OP_HANDLERS = {
     "edit": lambda root: _dispatch(root, "edit"),
     "init": lambda root: _dispatch(root, "init", reset=False),
     "project": _op_project,
-    # 2 つの画面は自分の中で引数を集め、cmd_env へ委譲する (#273)。関数内で import するのは
-    # 画面のモジュールが本モジュールの _dispatch / _run_in_project を使うため (循環を避ける)。
-    "keys": lambda root: _screen("actions_env_keys").run(root),
-    "openbao": lambda root: _screen("actions_env_openbao").run(root),
+    # 2 つの画面は自分の中で引数を集め、cmd_env へ委譲する (#273)
+    "keys": lambda root: actions_env_keys.run(root),
+    "openbao": lambda root: actions_env_openbao.run(root),
 }
-
-
-def _screen(name: str):
-    import importlib
-
-    return importlib.import_module(f"devbase.tui.{name}")
 
 
 @flow.collect_args

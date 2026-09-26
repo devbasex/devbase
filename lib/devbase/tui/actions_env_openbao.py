@@ -15,7 +15,7 @@ from pathlib import Path
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
-from devbase.tui import flow, menu
+from devbase.tui import env_dispatch, flow, menu
 
 logger = get_logger(__name__)
 
@@ -26,9 +26,7 @@ MSG_ROLE_NEEDS_SECRET = "role_id を変えるときは secret_id も入れてく
 
 
 def _dispatch_backend(devbase_root: Path, action: str, **attrs) -> int:
-    from devbase.tui import actions_env
-
-    return actions_env._dispatch(devbase_root, "backend", backend_action=action, **attrs)
+    return env_dispatch.dispatch(devbase_root, "backend", backend_action=action, **attrs)
 
 
 def _backend_name(store) -> str:

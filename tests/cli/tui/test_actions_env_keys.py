@@ -329,9 +329,9 @@ def test_the_tui_never_writes_the_store_itself(grouped, openbao, monkeypatch):
 
 
 def test_adding_in_a_project_scope_offers_both_scopes(grouped, openbao, monkeypatch):
-    from devbase.tui import actions_env
+    from devbase.tui import env_dispatch
 
-    monkeypatch.setattr(actions_env, '_select_project', lambda root: 'web')
+    monkeypatch.setattr(env_dispatch, 'select_project', lambda root: 'web')
     script = Script(monkeypatch, select=['project', keys_ui.ADD, 'user', 'project',
                                          menu.MENU_BACK],
                     text=['K'], secret=['v'])
