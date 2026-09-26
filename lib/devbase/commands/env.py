@@ -627,28 +627,7 @@ def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = 
     sources.load()
 
     counts = _SyncCounts()
-    _sync_credential_sources(sources, targets, store, counts)
 
-    # GCP（プロファイル管理があるため個別処理）
-    counts.updated += _sync_gcp(sources, targets, store=store, counts=counts)
-
-    # Host 接続情報（ソースファイルを持たないため hash 比較せず欠落キーを補完）
-    counts.updated += _sync_host(targets)
-
-    if counts.updated > 0 or counts.registered:
-        try:
-            targets.save_dirty()
-        except DevbaseError as e:
-            logger.error("同期した値を保存できませんでした: %s", e)
-            return 1
-        _update_source_metadata(devbase_root, *targets.files)
-    _report_sync_result(counts, sources)
-
-    return 0
-
-
-def _sync_credential_sources(sources, targets, store, counts) -> None:
-    """AWS と Git の認証情報をソースから同期する (``counts`` に集計する)"""
     # AWS
     def _encode_aws():
         from devbase.env.collectors.aws import _encode_aws_config_files
@@ -670,9 +649,19 @@ def _sync_credential_sources(sources, targets, store, counts) -> None:
     _sync_source(sources, targets, 'git_credentials', 'Git認証', _encode_git,
                  env_key=keys.GIT_CREDENTIALS_BASE64, store=store, counts=counts)
 
+    # GCP（プロファイル管理があるため個別処理）
+    counts.updated += _sync_gcp(sources, targets, store=store, counts=counts)
 
-def _report_sync_result(counts, sources) -> None:
-    """``sync`` の結果を 1 行で知らせる"""
+    # Host 接続情報（ソースファイルを持たないため hash 比較せず欠落キーを補完）
+    counts.updated += _sync_host(targets)
+
+    if counts.updated > 0 or counts.registered:
+        try:
+            targets.save_dirty()
+        except DevbaseError as e:
+            logger.error("同期した値を保存できませんでした: %s", e)
+            return 1
+        _update_source_metadata(devbase_root, *targets.files)
     if counts.updated > 0:
         logger.info("同期完了 (%d件更新)", counts.updated)
     elif (not counts.registered
@@ -680,6 +669,8 @@ def _report_sync_result(counts, sources) -> None:
         logger.info("ソース情報がありません。先に devbase env init を実行してください")
     else:
         logger.info("同期完了 (変更なし)")
+
+    return 0
 
 
 class _SyncCounts:
