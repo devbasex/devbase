@@ -58,10 +58,6 @@ class Target:
     ref: SecretRef
     values: Dict[str, str] = field(default_factory=dict)
 
-    @property
-    def label(self) -> str:
-        return self.ref.label()
-
 
 def _timestamp() -> str:
     return datetime.now().strftime('%Y%m%d%H%M%S')
