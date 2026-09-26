@@ -136,3 +136,91 @@ def test_docker_gid_is_empty_without_docker_group(env_wrapper):
     assert result.returncode == 0, result.stdout + result.stderr
     assert stdout_field(result, "DOCKER_GID:") == ""
     assert stdout_field(result, "COMPOSE_PROJECT_NAME:") == "myproj"
+
+
+# ---- cmd_build の分岐 (現状固定) ----
+
+_FAIL_UV = """\
+#!/bin/bash
+echo "UV:$*"
+case "$*" in
+  *"$UV_FAIL_ON"*) exit 1 ;;
+esac
+exit 0
+"""
+
+
+def _plain_project(exec_wrapper, fail_on=None):
+    project = exec_wrapper.work / "myproj"
+    project.mkdir()
+    (project / "Dockerfile").write_text("FROM ubuntu:26.04\n")
+    if fail_on is not None:
+        _write_exe(exec_wrapper.root / "fakebin" / "uv", _FAIL_UV.replace("$UV_FAIL_ON", fail_on))
+    return project
+
+
+def test_build_skips_base_when_devbase_base_exists(exec_wrapper):
+    project = _plain_project(exec_wrapper)
+    result = exec_wrapper.run(["build"], cwd=project)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[1/2] devbase-base already exists (use --no-cache to rebuild)" in result.stdout
+    assert not any("buildx build" in line for line in _uv_lines(result))
+    assert "✓ All images built successfully" in result.stdout
+
+
+def test_build_builds_devbase_base_when_missing(exec_wrapper):
+    exec_wrapper.container("base")
+    project = _plain_project(exec_wrapper, fail_on="image inspect")
+    result = exec_wrapper.run(["build"], cwd=project)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[1/2] Building devbase-base..." in result.stdout
+    assert "✓ devbase-base built successfully" in result.stdout
+    assert any("buildx build --load -t devbase-base:latest" in line for line in _uv_lines(result))
+
+
+def test_build_no_cache_passes_flag_to_base_and_project(exec_wrapper):
+    exec_wrapper.container("base")
+    project = _plain_project(exec_wrapper)
+    result = exec_wrapper.run(["build", "--no-cache"], cwd=project)
+    assert result.returncode == 0, result.stdout + result.stderr
+    uv = _uv_lines(result)
+    assert "[1/2] Building devbase-base..." in result.stdout
+    assert any("-t devbase-base:latest" in line and line.endswith("--no-cache") for line in uv)
+    assert any(line.endswith("docker compose build dev --no-cache") for line in uv)
+
+
+def test_build_project_no_cache_keeps_base_cache(exec_wrapper):
+    exec_wrapper.container("base")
+    project = _plain_project(exec_wrapper)
+    result = exec_wrapper.run(["build", "--project-no-cache", "--no-cache"], cwd=project)
+    assert result.returncode == 0, result.stdout + result.stderr
+    uv = _uv_lines(result)
+    assert "[1/2] Building devbase-base (using cache)..." in result.stdout
+    assert "[2/2] Building project image without cache..." in result.stdout
+    base = [line for line in uv if "-t devbase-base:latest" in line]
+    assert base and not any("--no-cache" in line for line in base)
+    assert any(line.endswith("docker compose build dev --no-cache --no-cache") for line in uv)
+
+
+def test_build_uses_dev_service_name(exec_wrapper, monkeypatch):
+    monkeypatch.setenv("DEV_SERVICE_NAME", "app")
+    project = _plain_project(exec_wrapper)
+    result = exec_wrapper.run(["build"], cwd=project)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert any(line.endswith("docker compose build app") for line in _uv_lines(result))
+
+
+def test_build_fails_when_project_build_fails(exec_wrapper):
+    project = _plain_project(exec_wrapper, fail_on="compose build")
+    result = exec_wrapper.run(["build"], cwd=project)
+    assert result.returncode == 1
+    assert "✗ Failed to build project image" in result.stdout
+    assert "✓ All images built successfully" not in result.stdout
+
+
+def test_build_fails_when_base_container_dir_missing(exec_wrapper):
+    project = _plain_project(exec_wrapper)
+    result = exec_wrapper.run(["build", "--no-cache"], cwd=project)
+    assert result.returncode == 1
+    assert "✗ Container directory not found:" in result.stdout
+    assert not any("compose build" in line for line in _uv_lines(result))
