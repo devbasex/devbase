@@ -30,6 +30,7 @@ from devbase.utils.docker import (
 )
 from devbase.utils.config import get_project_name
 from devbase.utils import names
+from devbase.utils.names import NAME_FORM_HINT, is_single_segment_name
 from devbase.utils import docker_context
 from devbase.project import runtime as project_runtime
 from devbase.project.local_config import load_project_local_config
@@ -592,10 +593,10 @@ def _resolve_project_name(project_name: str) -> bool:
     # `project_name` は projects/ へそのまま連結する。`..` や `/` を通すと projects/ の
     # 外のディレクトリへ chdir してそこの env を読むため、連結の前に名前の形で弾く
     # (PLAN61 / #146)。wrapper (bin/devbase の maybe_cd_project) も同じ規則で弾く。
-    if not names.is_single_segment_name(project_name):
+    if not is_single_segment_name(project_name):
         logger.error(
             "プロジェクト名に使えない形です: '%s'（%s）",
-            project_name, names.NAME_FORM_HINT)
+            project_name, NAME_FORM_HINT)
         return False
 
     projects_dir = _projects_dir()
@@ -1753,7 +1754,7 @@ def _build_single_image(image: str, no_cache: bool = False) -> int:
     # 通すと $DEVBASE_ROOT の外を指せてしまい、Docker タグとして不正な名前も作れるため、
     # ディレクトリ名 1 つとして妥当な文字だけを許可し、それ以外はここで弾く。規則は
     # プロジェクト名と同じ (devbase.utils.names / PLAN61 決定 2)。
-    if not names.is_single_segment_name(image):
+    if not is_single_segment_name(image):
         logger.error(
             "Invalid image name: %r (must be a single directory name under "
             "containers/: alphanumeric start, then letters, digits, '.', '-', '_')",
