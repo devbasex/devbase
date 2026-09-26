@@ -1,6 +1,6 @@
 # #276: プロジェクトとして数える名前の述語と説明の文言を utils/names.py に 1 つ置く の設計
 
-要求と受け入れ条件は #276 の本文にある（写しは [issue-276-requirements.md](issue-276-requirements.md)）。
+要求と受け入れ条件は #276 の本文にある（コピーは [issue-276-requirements.md](issue-276-requirements.md)）。
 この文書は「どう作るか」だけを扱う。対象は子 issue #226（走査）・#229（文言）・#245（機密の保存先）の
 消費側のすべてである。同じミッションの #227（書庫の名前の `fullmatch` 化）は、この変更の述語との関係だけを
 決定 7 に書く。
@@ -16,7 +16,7 @@
 
 2 つのコンテキストは **共有カーネル** の関係に置く。共有するのは `lib/devbase/utils/names.py` の
 3 つ（名前の形の述語・プロジェクトとして数える名前の述語・名前の形の説明）だけである。同じ開発者が両方を持ち、
-共有部分は `re` だけに依存する 1 ファイルに収まる。`secret` はこの 3 つを呼ぶだけで、自前の写しを持たない。
+共有部分は `re` だけに依存する 1 ファイルに収まる。`secret` はこの 3 つを呼ぶだけで、自前のコピーを持たない。
 
 プラグインの同期（`plugin/`）とプロジェクトの一覧・状態（`commands/project.py`・`commands/status.py`）は
 用語集にコンテキストを持たない。この文書では `cli` のコンテキストに含めて扱う。
@@ -60,8 +60,8 @@
 | プロジェクトとして数える名前 | `projects/` の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。空でなく `.` で始まらない名前。判定は `utils/names.counts_as_project` | 意味の変更（`cli`。要求の工程で足した意味に「空でない」と判定の関数名を書き足す） |
 | 機密の書き込みの知らせ | ファイルの backend へプロジェクトの機密を書くとき、名前が名前の形に合わなければ標準エラーへ出す 1 行 | 追加（`secret`） |
 
-「名前の形」「名前の形の説明」「参照」「backend」は用語集にある意味のまま使う。2 つの語の正本は、
-`plan-to-spec` が `docs/specifications/cli-argument-resolution.md` へ移すときに決める（今は `pending_source`）。
+「名前の形」「名前の形の説明」「参照」「backend」は用語集にある意味のまま使う。表の 2 つの語の正本は、今は
+`pending_source` のままにする。`plan-to-spec` が `docs/specifications/cli-argument-resolution.md` へ移すときに決める。
 
 ## 機能一覧
 
@@ -83,7 +83,7 @@
 | プラグインの情報（`lib/devbase/plugin/info.py`） | 変える | プロジェクトの一覧を `discover_projects` から取る（決定 3）。一覧を出す条件（`projects/` があるとき）は変えない |
 | 状態（`lib/devbase/commands/status.py`） | 変える | `:102` の走査に述語を足す。`:129` のプラグインのプロジェクト数を `discover_projects` の件数にする（決定 3） |
 | 一覧（`lib/devbase/commands/project.py`） | 変える | `:86` の走査に述語を足す |
-| 起動の入口（`lib/devbase/commands/container.py`） | 変える | `:418` の候補の走査に述語を足す。`:594-598` のインラインの文を `NAME_FORM_HINT` の埋め込みに替える（決定 6） |
+| 起動のコマンド（`lib/devbase/commands/container.py`） | 変える | `:418` の候補の走査に述語を足す。`:594-598` のインラインの文を `NAME_FORM_HINT` の埋め込みに替える（決定 6） |
 | 設定の移行（`lib/devbase/project/migrate.py`） | 変える | `:165` の走査に述語を足す |
 | 書庫の書き出し（`lib/devbase/env/bundle.py`） | 変える | `_collect_projects`（`:307`）で、`_should_skip_project` より前に述語で外す。`is_valid_project_name` は変えない（決定 7） |
 | 機密の点検（`lib/devbase/commands/env_ops.py`） | 変える | `:398`・`:573` の走査に述語を足す |
@@ -99,7 +99,7 @@
 次のものは変えない。
 
 - `SINGLE_SEGMENT_NAME_PATTERN` と `bin/devbase` の `_SINGLE_SEGMENT_NAME_RE`（I7）
-- `_validate_project_name` が受け付ける名前（I5。#245 の本文の案 A）
+- `_validate_project_name` が受け付ける名前（I5。#245 の本文が挙げる直し方のうち、弾かずに知らせる方）
 - `env/bundle.py` の `is_valid_project_name` と `env/_import_merge.py` の `_PROJECT_ENV_RE`（決定 7、#227 の範囲）
 - `env/io_import.py` の取り込みの知らせ（`_warn_unusable_project_names`）。取り込みはファイルの backend の
   `save_bytes` を通らず（`_import_atomic` が書く）、この知らせだけが出る（決定 5）
@@ -124,51 +124,35 @@ graph LR
 
 ```mermaid
 graph TD
-    subgraph names.py
-        C[counts_as_project]
-        F[is_single_segment_name]
-        H[NAME_FORM_HINT]
-    end
-    subgraph 走査
-        SY[syncer<br/>discover_projects と :204]
-        IN[info]
-        ST[status :102 :129]
-        PR[project :86]
-        CO[container :418]
-        MI[migrate :165]
-        BU[bundle :307]
-        EO[env_ops :398 :573]
-        EM[env_migrate :74]
-        EB[env_backend :62]
-    end
-    subgraph 機密の保存先
-        W[warn_unusable_project_name]
-        PB[PlaintextBackend.save_bytes]
-        AB[AgeBackend.save_bytes]
-    end
-    ED[env.py の直接編集]
-    CR[container の名前の拒否]
+    SY[プラグインの同期<br/>S1 discover_projects・S2]
+    PL[プラグインの表示<br/>S3 info・S4 status]
+    RT[一覧と状態の走査<br/>S5〜S8]
+    SE[機密の走査<br/>S9〜S13]
+    C[names.counts_as_project]
+    PL -->|discover_projects| SY
     SY --> C
-    ST --> C
-    PR --> C
-    CO --> C
-    MI --> C
-    BU --> C
-    EO --> C
-    EM --> C
-    EB --> C
-    IN -->|discover_projects| SY
-    ST -->|discover_projects| SY
+    RT --> C
+    SE --> C
+```
+
+```mermaid
+graph TD
+    PB[PlaintextBackend.save_bytes]
+    AB[AgeBackend.save_bytes]
+    ED[env.py の直接編集]
+    W[warn_unusable_project_name]
+    N[names.is_single_segment_name<br/>と NAME_FORM_HINT]
     PB --> W
     AB --> W
     ED --> W
-    W --> F
-    W --> H
-    CR --> H
+    W --> N
 ```
 
-`syncer` の知らせ（`_warn_unusable_name`）と `io_import` の取り込みの知らせは、既に `is_single_segment_name` と
-`NAME_FORM_HINT` を呼んでおり変えないため、図に描かない。
+走査の番号（S1〜S13）とファイルの対応は [走査ごとの書き換え](#走査ごとの書き換え) の表にある。
+`container.py` の名前の拒否も `NAME_FORM_HINT` を読む（決定 6）。横幅に収めるため 2 つ目の図から外した。
+
+`syncer` の知らせ（`_warn_unusable_name`）と `io_import` の取り込みの知らせは、図に描かない。どちらも既に
+`is_single_segment_name` と `NAME_FORM_HINT` を呼んでおり、この変更で変えない。
 
 ### 置き場所
 
@@ -199,7 +183,7 @@ tests/utils/
 
 ## 走査ごとの書き換え
 
-要求の前提 2 は「14 か所」と数えているが、これは `grep -rn "iterdir()" lib/ | grep project` の当たりから
+要求の前提 2 は「14 か所」と数えている。これは `grep -rn "iterdir()" lib/ | grep project` の当たりから
 `tui/actions_project.py:111` を除いた行数である。当たりの行には `syncer.py:197`・`:207` が含まれ、
 実ディレクトリの知らせの判定がある `:204` は含まれない。**名前の条件を持つ走査は次の 13 か所である**
 （#226 の表の 11 か所と `syncer.py` の 2 か所）。`:197` と `:207` を外す理由は決定 4 にある。
@@ -336,7 +320,6 @@ sequenceDiagram
     participant C as env set / encrypt など
     participant B as ファイルの backend
     participant W as warn_unusable_project_name
-    participant N as names
     participant F as 保存先のファイル
     C->>B: save_bytes(ref, data)
     B->>B: _reject_user_ref / path(ref)
@@ -344,7 +327,7 @@ sequenceDiagram
         B-->>C: SecretStoreError（書かない）
     end
     B->>W: ref
-    W->>N: is_single_segment_name(ref.name)
+    W->>W: names.is_single_segment_name(ref.name)
     alt 形に合わない
         W-->>C: 標準エラーへ知らせ（E3）
     end
@@ -384,8 +367,8 @@ sequenceDiagram
 食い違いのテストは定義元の `devbase.utils.names.counts_as_project` を 1 か所差し替え、それが 13 か所
 すべてに届くことを見る。`from devbase.utils.names import counts_as_project` と書いた消費側には差し替えが
 届かず、テストが落ちる。**独自の規則を持つ場合と同じく検出される。** 機密の書き込みの知らせも、
-`names.is_single_segment_name` を同じ形で呼ぶ（受け入れ条件「`is_single_segment_name` を差し替えると
-知らせの有無が従う」）。既存の `from ... import is_single_segment_name` の消費側（`cli.py` など）は、
+`names.is_single_segment_name` を同じ形で呼ぶ。受け入れ条件の「`is_single_segment_name` を差し替えると
+知らせの有無が従う」を、同じ差し替えで確かめるためである。既存の `from ... import is_single_segment_name` の消費側（`cli.py` など）は、
 この変更の範囲外のため書き換えない。
 
 消費側の module ごとに差し替える組み方は採らない。消費側の一覧をテストが持つことになり、一覧に無い
@@ -406,16 +389,16 @@ sequenceDiagram
 
 ### 決定 5: 機密の書き込みの知らせは、ファイルの backend の `save_bytes` で出す
 
-`SecretStore.save` / `save_bytes`（ストアの入口）には置かない。`env encrypt`・`env decrypt`（`env_migrate.py:253`・
-`:466`）とファイルの backend への移行（`env_backend.py:749`）は、ストアを通らず backend を直に呼ぶため、
-入口に置くとこれらの書き込みで知らせが漏れる。`path()` には置かない。`exists`・`load` の読み取りでも
-呼ばれ、読み取りで知らせを出さない条件（I6）を破る。`save` は `save_bytes` を通るので、2 つの `save_bytes`
+`SecretStore.save` / `save_bytes`（ストアのメソッド）には置かない。ストアを通らず backend を直に呼ぶ書き込みが
+3 つあり、ストアのメソッドに置くとそこで知らせが漏れる。`env encrypt`（`env_migrate.py:253`）・`env decrypt`（`:466`）・
+ファイルの backend への移行（`env_backend.py:749`）である。`path()` にも置かない。`path()` は `exists`・`load` の
+読み取りでも呼ばれ、読み取りで知らせを出さない条件（I6）を破る。`save` は `save_bytes` を通るので、2 つの `save_bytes`
 で書き込みのすべてを押さえられる。
 
 直接編集（`env edit --project` の平文）は devbase が書かないため、`cmd_env_edit` が同じ関数を呼ぶ。
 
-サーバの backend（`openbao.py`）では出さない。受け入れ条件の範囲は平文と age で、サーバの backend に
-足すと、取り込みがサーバへ書く経路（`io_import._apply_via_backend`）で既存の取り込みの知らせと 2 回出る。
+サーバの backend（`openbao.py`）では出さない。受け入れ条件の範囲は平文と age である。サーバの backend に
+足すと、取り込みがサーバへ書く経路（`io_import._apply_via_backend`）で、既存の取り込みの知らせと合わせて 2 回出る。
 知らせは弾かずに伝えるだけで、`_validate_project_name` の検査は backend によらず効く。
 
 要求の未決「知らせを出す位置」はこの決定で閉じる。
@@ -428,10 +411,10 @@ sequenceDiagram
 
 ### 決定 7: #227 の書庫の名前の規則は、この述語へ寄せず別に保つ
 
-`bundle.is_valid_project_name` と `_import_merge._PROJECT_ENV_RE` は、書庫の中の名前（先頭の `_` を許し、
-`.` 始まりを弾く）の規則で、export と import の往復の互換を持つ（要求の前提 5）。プロジェクトとして
-数える名前は `projects/` の直下のどれを扱うかの規則で、書庫の側には `projects/` の走査が無い（import は
-書庫のメンバー名だけを見る）。2 つは別の集合を決めるので、`names.py` へ寄せない。#227 の `fullmatch` 化は
+`bundle.is_valid_project_name` と `_import_merge._PROJECT_ENV_RE` は、書庫の中の名前の規則である。先頭の `_` を
+許し、`.` 始まりを弾く。この規則は export と import の往復の互換を持つ（要求の前提 5）。プロジェクトとして
+数える名前は、`projects/` の直下のどれを扱うかの規則である。書庫の側には `projects/` の走査が無く、import は
+書庫のメンバー名だけを見る。2 つは別の集合を決めるので、`names.py` へ寄せない。#227 の `fullmatch` 化は
 書庫の規則の中で閉じ、`names.py` を変えない。
 
 2 つが同じ場所で出会うのは S9（`_collect_projects`）だけである。この変更は S9 に「述語で外す」を前段として
@@ -471,8 +454,8 @@ sequenceDiagram
 | 退行 | `uv run --locked pytest tests/ -q` と `uv run ruff check lib tests` がすべて通る | — |
 
 テストは実環境の `DEVBASE_ROOT` を継承しない（`tests/conftest.py` の `_isolate_devbase_root`）。
-`status`・`project list` はコンテナの状態を `docker ps` で取るため、docker を呼ばずに走査の結果だけを見る
-組み方は実装（`tdd-cycle`）で決める。
+`status`・`project list` はコンテナの状態を `docker ps` で取る。docker を呼ばずに走査の結果だけを見る
+組み方は、実装（`tdd-cycle`）で決める。
 
 ## 未確認のまま残ること
 
