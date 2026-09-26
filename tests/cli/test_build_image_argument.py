@@ -443,3 +443,12 @@ def test_wrapper_build_container_only_name_has_no_note(exec_wrapper):
     uv = stdout_field(r, "UV:")
     assert uv is not None and uv.endswith(" devbase.cli project build go"), r.stdout
     assert r.stderr.strip() == "", r.stderr
+
+
+def test_wrapper_routes_no_cache_before_image_to_python(wrapper_root):
+    """現状固定: フラグが image の前に来ても Python 経路で、引数の順序が保たれる。"""
+    result = _run_wrapper(["build", "--no-cache", "base"], wrapper_root)
+    assert result.returncode == 0
+    assert _line(result, "PYTHON:") == "project build --no-cache base"
+    assert _line(result, "BUILD:") is None
+    assert _line(result, "COMPOSE:") is None
