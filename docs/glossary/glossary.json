@@ -273,7 +273,7 @@
       "term": "検査ジョブ",
       "context": "ci",
       "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest）",
-      "pending_source": "issues/issue-216-requirements.md"
+      "pending_source": "issues/issue-247-design.md"
     },
     {
       "term": "統合ブランチ",
