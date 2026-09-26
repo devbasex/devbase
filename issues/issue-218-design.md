@@ -20,10 +20,12 @@
 | --- | --- | --- | --- | --- |
 | 隔離の規則 | `tests/conftest.py` | 隔離の一覧（`ISOLATED_ENV`） | — | 変数名・変数名の接頭辞・隔離しない理由 |
 | 読み取りの集合 | `lib/devbase` の各ファイル（この変更では書き換えない） | — | — | 変数名と、読む場所（ファイル:行） |
+| 漏れの検査 | `tests/test_env_isolation.py` | 集める処理（`_collect_env_reads`） | — | 拾う形（文字列・同じファイルの定数・`keys` の定数） |
 
 読み取りの集合は `lib/devbase` のソースから導く値で、持ち主はソースを書く開発者である。
 隔離の規則はそれを名前でだけ参照する。2 つを揃えるのは開発者で、揃っていないことを
-漏れの検査（I1）が見つける。
+漏れの検査（I1）が見つける。ソースから読み取りの集合を集める処理は漏れの検査の側にあり、
+拾い方の正しさ（I6）はその持ち主が負う。
 
 ### 不変条件
 
@@ -31,17 +33,18 @@
 | --- | --- | --- | --- |
 | I1 | 隔離の規則 | 読み取りの集合の変数名はすべて、隔離の一覧か隔離しない一覧のどちらかにある | 漏れの検査が失敗し、載っていない変数名と読む場所を出す |
 | I2 | 隔離の規則 | 隔離の一覧と隔離しない一覧は、同じ変数名を持たない | 漏れの検査が失敗し、重なった変数名を出す |
-| I3 | 隔離の規則 | テストの本体が始まる時点で、隔離の一覧の変数と接頭辞に合う変数はすべて未設定で、`HOME` はそのテストだけの tmp のディレクトリを指す | 隔離のテストが失敗する。受け入れ条件 2 の起動で継承した値を読んだテストが落ちる |
-| I4 | 隔離の規則 | session scope と module scope の fixture が立つ時点で、隔離の一覧の変数と接頭辞に合う変数はすべて未設定である（`HOME` は利用者のまま） | 受け入れ条件 2 の起動で、docker を使うテストが skip に回る |
+| I3 | 隔離の規則 | function scope の隔離の fixture の設定が終わった直後（テストの側の fixture が立つ前）に、隔離の一覧の変数と接頭辞に合う変数はすべて未設定である | 隔離のテスト（`test_clear_inherited_env_unsets_listed`）が失敗する |
+| I4 | 隔離の規則 | session scope の隔離の fixture の設定が終わった時点で、起動元から継承した隔離の一覧の変数と接頭辞に合う変数はすべて未設定である（`HOME` は利用者のまま） | 受け入れ条件 2 の起動で、docker を使うテストが skip に回る |
 | I5 | 隔離の規則 | テストの側が `monkeypatch.setenv` / `delenv` で書いた値は、隔離の fixture より後に効く | 既存のテストが落ちる |
-| I6 | 読み取りの集合 | 読み取りの集合を集める処理は、既知の読み取りを 3 つの形（文字列・同じファイルの定数・`keys` の定数）のそれぞれで拾う | 漏れの検査の自己点検が失敗する。拾えないまま I1 が空振りで通ることを防ぐ |
+| I6 | 漏れの検査 | 読み取りの集合を集める処理は、既知の読み取りを 3 つの形（文字列・同じファイルの定数・`keys` の定数）のそれぞれで拾う | 漏れの検査の自己点検（`test_collector_finds_known_reads`）が失敗する |
+| I7 | 隔離の規則 | function scope の隔離の fixture の設定が終わった直後に、`HOME` はそのテストだけの tmp のディレクトリを指す | `test_home_is_per_test_tmp` が失敗する（受け入れ条件 3） |
 
 ### ドメインイベント
 
 | # | イベント | 発生元 | 受け手 |
 | --- | --- | --- | --- |
 | E1 | 開発者が変数を export した端末で pytest を起動した | 開発者 | session scope の隔離の fixture |
-| E2 | autouse fixture が変数と `HOME` を既定の状態へ戻した | 隔離の fixture（session で 1 回、テストごとに 1 回） | 以降に立つ fixture とテストの本体 |
+| E2 | autouse fixture が変数と `HOME` を既定の状態へ戻した | `HOME` を置き換える function scope の隔離の fixture（テストごとに 1 回） | 以降に立つ fixture とテストの本体 |
 | E3 | テストが自分で変数を設定した | テストの fixture と本体 | `lib/devbase` の読み取り |
 | E4 | `lib/devbase` に、環境変数を読むコードが足された | 開発者 | 漏れの検査（I1） |
 
@@ -327,11 +330,11 @@ context の設定（手元では `desktop-linux`）で daemon を探すため、
 | --- | --- |
 | 受け入れ条件 1（`DEV_SERVICE_NAME=bogusdev` で全件通る） | `DEV_SERVICE_NAME=bogusdev uv run --locked pytest tests/ -q -p no:randomly` の passed と skipped の件数が変数なしの起動と同じで、failed が 0 |
 | 受け入れ条件 2（16 個を偽の値にして全件通る） | 16 個を実在しない値（`SHELL` は `/bin/zsh`、`DOCKER_HOST` は `tcp://127.0.0.1:1`）にした同じ起動の passed と skipped の件数が変数なしの起動と同じで、failed が 0 |
-| 受け入れ条件 3（`HOME` がテストごとの tmp） | `test_home_is_per_test_tmp`: `os.environ['HOME']` が `pwd.getpwuid(os.getuid()).pw_dir` と異なり、`tmp_path_factory.getbasetemp()` の下にある |
+| 受け入れ条件 3・I7（`HOME` がテストごとの tmp） | `test_home_is_per_test_tmp`: `os.environ['HOME']` が `pwd.getpwuid(os.getuid()).pw_dir` と異なり、`tmp_path_factory.getbasetemp()` の下にある |
 | 受け入れ条件 4・I1（漏れがあれば落ちて名前が出る） | `test_every_env_read_is_listed`: 読み取りの集合が 2 つの一覧に収まる。失敗の文言は処理の流れの「漏れの検査」の形 |
 | I2（2 つの一覧が重ならない） | `test_isolated_and_not_isolated_are_disjoint` |
 | I6（集める処理が空振りしない） | `test_collector_finds_known_reads`: 読み取りの集合に `DEV_SERVICE_NAME`（文字列、`volume/compose.py`）・`DEVBASE_AGE_KEY_FILE`（同じファイルの定数、`env/agekeys.py`）・`GCP_AUTH_MODE`（`keys` の定数、`env/gcp_auth.py`）が、その読む場所つきで入る |
-| I3（本体の開始時に未設定） | `test_clear_inherited_env_unsets_listed`: 新しい `MonkeyPatch` で隔離の一覧の全部と `GCP_CREDENTIALS_BASE64__x` を設定してから `_clear_inherited_env` を呼ぶと、どれも `os.environ` に無い。`MonkeyPatch.undo()` で戻す |
+| I3（function scope の隔離の後で未設定） | `test_clear_inherited_env_unsets_listed`: 新しい `MonkeyPatch` で隔離の一覧の全部と `GCP_CREDENTIALS_BASE64__x` を設定してから `_clear_inherited_env` を呼ぶと、どれも `os.environ` に無い。`MonkeyPatch.undo()` で戻す |
 | I4（session の段で未設定） | 受け入れ条件 2 の起動で、`test_base_image_font_matching.py` が skip に回らない（docker が使える端末での起動に限る） |
 | 受け入れ条件 5・I5（テストの側が後勝ち） | `test_test_side_setenv_wins`: `monkeypatch.setenv('DEV_SERVICE_NAME', 'x')` の後に `get_dev_service_name()` が `'x'` を返す。既存の setenv するテスト（`test_compose_gcp_auth.py` ほか）が変更なしで通ることも同じ条件を示す |
 | 受け入れ条件 6（件数が減らない） | 変数なしの `uv run --locked pytest tests/ -q` が、変更前の 3233 件に足したテストの数を足した件数で、すべて通る |
@@ -345,6 +348,7 @@ context の設定（手元では `desktop-linux`）で daemon を探すため、
 | 項目 | 内容 |
 | --- | --- |
 | session / module scope の fixture が読む `HOME` | 決定 2 のとおり利用者の `HOME` のままで、受け入れ条件 3 の対象（テストの実行中）の外にある。いまある 2 つ（`probe`・`options`）は docker と tmux の設定を読むだけで、利用者のファイルへ書かない。広い scope の fixture が増えたときの扱いは決めていない |
+| 後から初めて立つ広い scope の fixture が見る変数 | I4 が保証するのは session の隔離が終わった時点までで、その後に別のテストが `os.environ` へ直接書いた値は、後から初めて立つ session / module scope の fixture に残り得る |
 | 名前を引数で受けて読む補助関数 | `_env_non_negative_int` の 2 個は手で足した。同じ形の補助関数が増えると、読み取りの集合に掛からず、漏れの検査が見逃す |
 | 外部のコマンドが読む変数 | `git`・`docker`・`tmux` が自分で読む変数（`GIT_CONFIG_GLOBAL`・`DOCKER_CONFIG`・`SSH_AUTH_SOCK` など）は、要求の前提 3 の範囲の外で隔離しない。`HOME` の置き換えで既定の置き場は tmp へ移るが、変数で置き場を指している端末では利用者の設定を読む |
 | 受け入れ条件 2 の skip 0 | docker が使えない端末では、`test_base_image_font_matching.py` は変数に関係なく skip に回る。そのときは変数なしの起動も同じ数だけ skip し、件数の比較は同じになる |
