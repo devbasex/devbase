@@ -185,12 +185,16 @@ def _print_cache_status(root: Path, store: SecretStore, config) -> None:
 # use
 # ---------------------------------------------------------------------------
 
-def _read_secret_id(from_stdin: bool) -> Optional[str]:
+def _read_secret_id(from_stdin: bool, value: Optional[str] = None) -> Optional[str]:
     """``secret_id`` を argv 以外の経路で受け取る。
 
-    ``--secret-id-stdin`` なら標準入力の最初の行、TTY なら伏せ字入力。どちらでも
+    ``value`` は同じプロセスの中 (TUI の接続設定の画面) から渡された値で、空でなければ
+    それを返し、標準入力も伏せ字入力も使わない (#273 決定 8)。無ければ
+    ``--secret-id-stdin`` なら標準入力の最初の行、TTY なら伏せ字入力。どれでも
     なければ ``None`` (呼び出し側が不足として扱う)。
     """
+    if value:
+        return value
     if from_stdin:
         line = sys.stdin.readline()
         if not line:
@@ -372,6 +376,8 @@ def _store_credentials(root: Path, args) -> int:
     """
     role_id = getattr(args, 'role_id', None)
     from_stdin = getattr(args, 'secret_id_stdin', False)
+    # TUI だけが渡す値。CLI の名前空間には無い (argv に載せない。#273 決定 8)。空は「入力なし」
+    secret_value = getattr(args, 'secret_id', None) or None
 
     try:
         stored = _bootstrap.load(root)
@@ -381,7 +387,7 @@ def _store_credentials(root: Path, args) -> int:
             return 1
         stored = None
 
-    if not role_id and not from_stdin:
+    if not role_id and not from_stdin and secret_value is None:
         if stored is not None:
             return 0
         logger.error("接続資格情報がありません。--role-id ID と "
@@ -395,7 +401,7 @@ def _store_credentials(root: Path, args) -> int:
         role_id = stored.role_id
 
     try:
-        secret_id = _read_secret_id(from_stdin)
+        secret_id = _read_secret_id(from_stdin, secret_value)
     except DevbaseError as e:
         logger.error("%s", e)
         return 1
