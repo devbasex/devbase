@@ -20,7 +20,8 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
   `trygroup`）への伝播の規則
 - `containers/lfm` と `containers/snapshot` は base を継がないため対象に含まない
 - bash-language-server 自体は同梱しない
-- CI の ShellCheck ジョブは runner の shellcheck を使い、この仕様の対象ではない
+- CI の ShellCheck ジョブは base の shellcheck を使わず、base と同じ版（基準の版）の公式の配布物を
+  入れて使う。入れ方は `.github/workflows/ci.yml` の `shellcheck` ジョブが持ち、この仕様の対象ではない
 
 ## 構成要素
 
@@ -61,6 +62,9 @@ Dockerfile の `apt-get update` は 2 回である。
 扱いである。`bao` のように `ARG` とチェックサムで固定しないのは、サーバの版と揃える制約が
 無いためである。`shellcheck=<版>` と書かないのは、アーカイブが版を上げるとその版が消えて
 ビルドが止まるためである。
+
+CI の ShellCheck ジョブはこの版を基準の版として `ci.yml` の `SHELLCHECK_VERSION` と
+`SHELLCHECK_SHA256` に書き、手元と CI で指摘の数を揃える。base の版が上がったら、この 2 つを手で上げる。
 
 ## データ・設定
 

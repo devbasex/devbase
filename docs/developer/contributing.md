@@ -248,9 +248,18 @@ PR には以下の情報を記載する。
 
 `main` 宛ての Pull Request と `main` への push で `.github/workflows/ci.yml` が走り、
 `compileall`（Python 3.10 / 3.11 / 3.12）・`ruff check --select=E9,F63,F7,F82 lib`・
-`bin/` と `install.sh` の ShellCheck・`uv sync --locked` の後の `pytest tests/`
+`bin/*`・`install.sh`・`containers/base/tmux-*` の ShellCheck・`uv sync --locked` の後の `pytest tests/`
 （Python 3.10 / 3.13）を実行する。CI に `DEVBASE_ROOT` と Docker は無いため、テストは
 自前の一時ディレクトリを `DEVBASE_ROOT` に向け、実機を要するものは理由を添えて skip する。
+
+ShellCheck は基準の版（`devbase-base:latest` の shellcheck と同じ版、現在は 0.11.0）の公式の配布物を
+SHA-256 で照合して入れ、既定の水準（style まで）で走らせる。指摘が 1 件でもあればジョブが失敗する。
+抑えるしかない指摘は `# shellcheck disable=SCxxxx` と抑える理由を同じ行か直前の行に書く
+（`tests/ci/test_shellcheck_job.py` が理由の無い指示を止める）。手元では次で CI と同じ版の検査を打てる。
+
+```bash
+docker run --rm -v "$PWD":/w -w /w --entrypoint shellcheck devbase-base:latest bin/devbase bin/rc install.sh
+```
 
 ### 手動テストの手順
 
