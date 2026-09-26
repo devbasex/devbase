@@ -247,3 +247,56 @@ def test_new_ops_run_their_screens(monkeypatch, tmp_path, op, module):
 
     assert actions_env._run_operation(tmp_path, op) == 0
     assert seen == [tmp_path]
+
+
+# ---------------------------------------------------------------------------
+# sync / init の前のグループの選択 (#315 決定 11)
+# ---------------------------------------------------------------------------
+
+def _grouped_root(root, openbao_url='https://x.example.com'):
+    (root / 'secrets').mkdir(parents=True, exist_ok=True)
+    (root / 'secrets' / 'backend.yml').write_text(
+        'version: 2\nbackend: openbao\nopenbao:\n'
+        f'  url: {openbao_url}\n  user: me\n  layout: group\n')
+    for name, group in (('web', 'with'), ('api', 'nyle')):
+        (root / 'projects' / name).mkdir(parents=True, exist_ok=True)
+        (root / 'projects' / name / 'env').write_text(f'DEVBASE_ACCOUNT_GROUP={group}\n')
+    (root / 'projects' / 'undeclared').mkdir(parents=True, exist_ok=True)
+    (root / 'env').write_text('FOO=1\n')
+
+
+@pytest.mark.parametrize('op, extra', [('sync', {}), ('init', {'reset': False})])
+def test_grouped_sync_and_init_ask_for_the_group_first(monkeypatch, tmp_path, op, extra):
+    """グループ別の置き場では、置き場を読む前にグループを選ばせ、--group として渡す。
+    候補は宣言だけから作り、default は出ない"""
+    _grouped_root(tmp_path)
+    captured = _capture_dispatch(monkeypatch)
+    seen = []
+
+    def select(message, choices, **kwargs):
+        seen.append([v for _, v in choices])
+        return 'nyle'
+
+    monkeypatch.setattr(menu, 'select', select)
+
+    assert actions_env._run_operation(tmp_path, op) == 0
+
+    assert captured['attrs'] == {'subcommand': op, **extra, 'group': 'nyle'}
+    values = seen[0]
+    assert values[:2] == ['nyle', 'with']
+    assert 'default' not in values
+
+
+def test_grouped_sync_reasks_for_an_unusable_typed_name(monkeypatch, tmp_path, caplog):
+    from devbase.tui import actions_env_keys
+
+    _grouped_root(tmp_path)
+    captured = _capture_dispatch(monkeypatch)
+    picks = iter([actions_env_keys.TYPE_GROUP, 'personal'])
+    monkeypatch.setattr(menu, 'select', lambda *a, **k: next(picks))
+    monkeypatch.setattr(menu, 'text', lambda *a, **k: 'default')
+
+    assert actions_env._run_operation(tmp_path, 'sync') == 0
+
+    assert captured['attrs'] == {'subcommand': 'sync', 'group': 'personal'}
+    assert 'default' in caplog.text

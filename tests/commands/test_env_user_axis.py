@@ -623,3 +623,70 @@ def test_group_is_refused_with_a_file_backend(file_root, monkeypatch, caplog, ar
     assert calls == []
     assert SecretStore(file_root).load(GLOBAL) == {'KEY': 'x'}
     assert 'グループ別の置き場' in errors(caplog)
+
+
+# ---------------------------------------------------------------------------
+# プロジェクトの外の --group の必須化 (#315 I5・I6)
+# ---------------------------------------------------------------------------
+
+COMMANDS_OUTSIDE = COMMANDS_WITH_GROUP + [['init'], ['sync']]
+
+
+@pytest.mark.parametrize('argv', COMMANDS_OUTSIDE)
+def test_grouped_commands_outside_projects_need_the_group(grouped, openbao, monkeypatch,
+                                                          caplog, argv):
+    """I5: グループ別の置き場でプロジェクトの外なら、--group の無い 7 コマンドは置き場を開かずに 2"""
+    fake_editor(monkeypatch)
+    at(monkeypatch, grouped)
+
+    assert run_env(grouped, *argv) == 2
+
+    assert openbao.received == []
+    assert '--group <名前>' in errors(caplog)
+
+
+def test_grouped_commands_outside_projects_use_the_group_option(grouped, openbao, monkeypatch,
+                                                                capsys):
+    """外で --group nyle は team/nyle/… を読み書きする"""
+    at(monkeypatch, grouped)
+    openbao.put('team/nyle/global', {'KEY': 'nyle-value'})
+
+    assert run_env(grouped, 'get', 'KEY', '--group', 'nyle') == 0
+    assert capsys.readouterr().out == 'nyle-value\n'
+    assert run_env(grouped, 'set', 'NEW=1', '--group', 'nyle') == 0
+    assert openbao.get('team/nyle/global') == {'KEY': 'nyle-value', 'NEW': '1'}
+    assert all('/nyle/' in p for p in kv_paths(openbao))
+
+
+def test_grouped_commands_inside_a_project_use_its_declaration(grouped, openbao, monkeypatch,
+                                                               capsys):
+    """中で --group を省くと宣言のグループ (web は with)"""
+    at(monkeypatch, grouped, 'projects/web')
+    openbao.put('team/with/global', {'KEY': 'with-value'})
+
+    assert run_env(grouped, 'get', 'KEY') == 0
+    assert capsys.readouterr().out == 'with-value\n'
+    assert all('/with/' in p for p in kv_paths(openbao))
+
+
+@pytest.mark.parametrize('argv', [['get', 'KEY'], ['list'], ['set', 'KEY=1']])
+def test_commands_in_an_undeclared_project_stop_before_the_store(file_root, monkeypatch, caplog,
+                                                                  argv):
+    """決定 2: 宣言の無いプロジェクトの中では backend を問わず 1 で止め、書き方を示す"""
+    (file_root / 'projects' / 'web' / 'env').write_text('FOO=1\n')
+    SecretStore(file_root).age.save(GLOBAL, {'KEY': 'x'})
+    at(monkeypatch, file_root, 'projects/web')
+
+    assert run_env(file_root, *argv) == 1
+
+    assert 'projects/web/env' in errors(caplog)
+    assert SecretStore(file_root).load(GLOBAL) == {'KEY': 'x'}
+
+
+def test_file_backend_outside_projects_is_unchanged(file_root, monkeypatch, capsys):
+    """I6: グループ別の置き場でなければ、外で --group の無いコマンドは今どおり"""
+    SecretStore(file_root).age.save(GLOBAL, {'KEY': 'x'})
+    at(monkeypatch, file_root)
+
+    assert run_env(file_root, 'get', 'KEY') == 0
+    assert capsys.readouterr().out == 'x\n'

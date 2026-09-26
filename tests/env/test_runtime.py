@@ -857,3 +857,23 @@ def test_empty_value_still_warns_and_no_key_does_not(account_group_root, caplog)
         runtime.resolve(account_group_root, 'web',
                         store=_FourLayerStore(_layers(team_global={ACCOUNT_GROUP: ''})))
     assert len(_warnings(caplog)) == 1
+
+
+# ---------------------------------------------------------------------------
+# グループが決まらない暗黙の注入は置き場を読まない (#315 I9)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('project', [None, 'api'])
+def test_grouped_resolve_without_a_group_reads_nothing(openbao_root, openbao, project):
+    """外・宣言の無いプロジェクトでは、どのグループの置き場にも要求を出さず空で続ける"""
+    from tests.conftest import configure_openbao
+
+    root = openbao_root
+    configure_openbao(root, openbao, layout='group')
+    (root / 'projects' / 'api').mkdir()
+    openbao.put('team/nyle/global', {'A': 'nyle'})
+
+    resolved = runtime.resolve(root, project, store=SecretStore(root))
+
+    assert resolved.values == {}
+    assert openbao.received == []

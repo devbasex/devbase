@@ -181,3 +181,32 @@ def test_ensure_volumes_rejects_bad_group_before_touching_docker(monkeypatch):
         manager.VolumeManager().ensure_volumes(1, group="ubuntu")
 
     assert created == []
+
+
+# ---------------------------------------------------------------------------
+# グループの既定の値が残らない (#315)
+# ---------------------------------------------------------------------------
+
+def test_no_default_group_fallback_is_left_in_the_code():
+    """lib/devbase と containers/ に、グループの既定として default を返す・渡すコードが無い。
+
+    ``${GCP_ACTIVE_PROFILE:-default}`` は gcloud のプロファイル名でグループではないため除く。
+    """
+    import re
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    pattern = re.compile(r'DEFAULT_ACCOUNT_GROUP|ACCOUNT_GROUP:-default|:-default\}')
+    hits = []
+    for base in (repo / 'lib' / 'devbase', repo / 'containers'):
+        for path in base.rglob('*'):
+            if not path.is_file() or path.suffix == '.pyc':
+                continue
+            try:
+                text = path.read_text(encoding='utf-8')
+            except UnicodeDecodeError:
+                continue
+            for number, line in enumerate(text.splitlines(), start=1):
+                if pattern.search(line) and 'GCP_ACTIVE_PROFILE' not in line:
+                    hits.append(f'{path.relative_to(repo)}:{number}: {line.strip()}')
+    assert hits == []

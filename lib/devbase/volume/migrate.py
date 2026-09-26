@@ -66,7 +66,7 @@ class VolumeMigration:
     """``devbase_home_default`` → ``devbase_home_<group>`` の検査と実行"""
 
     def __init__(self, devbase_root: Path, group: str, *,
-                 runner: Runner = subprocess.run,
+                 runner: Optional[Runner] = None,
                  image_provider: Optional[Callable[[Path], str]] = None):
         #: 検証を通したグループ名。``default`` などの予約語はここで弾く (I3)
         self.group = validate_account_group(group)
@@ -80,8 +80,10 @@ class VolumeMigration:
     # -- docker の呼び出し -------------------------------------------------
 
     def _docker(self, *args: str) -> subprocess.CompletedProcess:
+        # 既定の runner は呼ぶときに引く (定義時に束ねると差し替えが効かない)
+        run = self._run if self._run is not None else subprocess.run
         try:
-            return self._run(['docker', *args], capture_output=True, text=True, check=False)
+            return run(['docker', *args], capture_output=True, text=True, check=False)
         except FileNotFoundError as e:
             raise VolumeMigrationError(f"docker コマンドが見つかりません: {e}") from e
 
