@@ -12,11 +12,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+from tests.shellcheck_rules import _DIRECTIVE, CI_YML, REPO_ROOT, directives_without_reason
+
 BASE_VERSION = "v0.11.0"
 
-_DIRECTIVE = re.compile(r"^\s*#\s*shellcheck\s")
 # 行頭か区切りの後に来る `shellcheck` のコマンド (URL やファイル名の `shellcheck-` は含めない)
 _INVOKE = re.compile(r"(?:^|[\s;&|(])shellcheck(?=\s|$)")
 _SEVERITY = re.compile(r"(?:^|\s)(?:--severity|-S)")
@@ -26,38 +25,18 @@ def _checked_scripts() -> list[Path]:
     return sorted(p for p in (REPO_ROOT / "bin").iterdir() if p.is_file()) + [REPO_ROOT / "install.sh"]
 
 
-def _directive_lines() -> list[tuple[Path, int, str, str]]:
-    found = []
-    for path in _checked_scripts():
-        lines = path.read_text().splitlines()
-        for i, line in enumerate(lines):
-            if _DIRECTIVE.match(line):
-                prev = lines[i - 1] if i > 0 else ""
-                found.append((path, i + 1, line, prev))
-    return found
-
-
-def _has_reason(line: str, prev: str) -> bool:
-    # 同じ行: 指示の後ろに `# 理由` が続く
-    body = line.split("shellcheck", 1)[1]
-    if re.search(r"\s#\s*\S", body):
-        return True
-    # 直前の行: 指示でないコメント
-    return prev.lstrip().startswith("#") and not _DIRECTIVE.match(prev) and prev.strip() != "#"
-
-
 def test_directives_exist():
     """対象が空で検査が素通りしていないこと (bin/devbase の 3 行と bin/rc の 2 行)。"""
-    assert len(_directive_lines()) >= 5
+    count = sum(
+        1 for path in _checked_scripts() for line in path.read_text().splitlines() if _DIRECTIVE.match(line)
+    )
+    assert count >= 5
 
 
-@pytest.mark.parametrize(
-    "path,lineno,line,prev",
-    _directive_lines(),
-    ids=lambda v: v.name if isinstance(v, Path) else str(v) if isinstance(v, int) else "",
-)
-def test_directive_has_reason(path, lineno, line, prev):
-    assert _has_reason(line, prev), f"{path.relative_to(REPO_ROOT)}:{lineno}: 抑える理由が無い: {line.strip()}"
+@pytest.mark.parametrize("path", _checked_scripts(), ids=lambda p: p.name)
+def test_directive_has_reason(path):
+    bad = directives_without_reason(path.read_text().splitlines())
+    assert not bad, "抑える理由が無い指示: " + ", ".join(f"{path.relative_to(REPO_ROOT)}:{n}" for n in bad)
 
 
 @pytest.fixture(scope="module")

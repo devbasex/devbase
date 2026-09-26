@@ -15,13 +15,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from tests.shellcheck_rules import CI_YML, REPO_ROOT, directives_without_reason
+
 BASE_DIR = REPO_ROOT / "containers" / "base"
-CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 PREFIX = "containers/base/"
 
 _SHEBANG = re.compile(r"^#!\s*(\S*/)?(env\s+)?(sh|bash)(\s|$)")
-_DIRECTIVE = re.compile(r"^\s*#\s*shellcheck\s+\w+=")
 _OPERATORS = {"|", "||", "&&", ";", "&"}
 
 
@@ -89,30 +88,6 @@ def assert_all_checked(scripts: list[str], targets: set[str]) -> None:
         + ", ".join(missing)
         + " (.github/workflows/ci.yml の Run ShellCheck on containers/base/ へ足す)"
     )
-
-
-# --- 指示の理由を確かめる規則 ---
-
-
-def _is_reason(prev: str) -> bool:
-    s = prev.strip()
-    if not s.startswith("#") or s.startswith("#!") or _DIRECTIVE.match(prev):
-        return False
-    return bool(s.lstrip("#").strip())
-
-
-def directives_without_reason(lines: list[str]) -> list[int]:
-    found = []
-    for i, line in enumerate(lines):
-        if not _DIRECTIVE.match(line):
-            continue
-        body = line.split("shellcheck", 1)[1]
-        if re.search(r"\s#\s*\S", body):
-            continue
-        if i > 0 and _is_reason(lines[i - 1]):
-            continue
-        found.append(i + 1)
-    return found
 
 
 # --- 実物の検査 ---
