@@ -21,7 +21,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 - `containers/lfm` と `containers/snapshot` は base を継がないため対象に含まない
 - bash-language-server 自体は同梱しない
 - CI の ShellCheck ジョブは base の shellcheck を使わず、base と同じ版（基準の版）の公式の配布物を
-  入れて使う。入れ方は `.github/workflows/ci.yml` の `shellcheck` ジョブが持ち、この仕様の対象ではない
+  入れて使う。入れ方は `.github/workflows/ci.yml` の `shellcheck` ジョブが持つ
 
 ## 構成要素
 
