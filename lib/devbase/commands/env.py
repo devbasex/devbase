@@ -783,13 +783,18 @@ def _sync_host(target):
 
 
 def _aws_payload(value: Optional[str]):
-    """``AWS_CONFIG_BASE64`` の中身 (ファイル名 → バイト列)。読めなければ ``None``
+    """``AWS_CONFIG_BASE64`` の中身 (ファイル名 → バイト列)。読めなければ ``None``"""
+    import base64
+    import io
+    import tarfile
 
-    読み取りは ``aws_profiles.read_value`` に委ねる (値の形の知識を 1 か所に置く)。
-    """
-    from devbase.env import aws_profiles
-
-    return aws_profiles.read_value(value)
+    if not value:
+        return None
+    try:
+        with tarfile.open(fileobj=io.BytesIO(base64.b64decode(value)), mode='r:*') as tar:
+            return {m.name: tar.extractfile(m).read() for m in tar.getmembers() if m.isfile()}
+    except (ValueError, tarfile.TarError, OSError, AttributeError):
+        return None
 
 
 def _same_aws_payload(stored: Optional[str], encoded: str) -> bool:
