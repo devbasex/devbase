@@ -50,6 +50,11 @@
       "id": "test",
       "name": "テストの実行環境",
       "meaning": "pytest が走るプロセスの環境と、テストが起動する外部のプロセス"
+    },
+    {
+      "id": "image-lineage",
+      "name": "イメージの継承",
+      "meaning": "base の設定が派生イメージと lfm へ届く道筋（containers/*/Dockerfile）"
     }
   ],
   "terms": [
@@ -467,6 +472,36 @@
       "context": "test",
       "meaning": "PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date",
       "source": "docs/specifications/base-shell-tests.md"
+    },
+    {
+      "term": "base の設定",
+      "context": "image-lineage",
+      "meaning": "base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定",
+      "pending_source": "issues/issue-275-requirements.md"
+    },
+    {
+      "term": "届く経路",
+      "context": "image-lineage",
+      "meaning": "base の設定が lfm のイメージへ入る道筋。lfm の Dockerfile の取り込みと、取り込めない ENV を同じ値で宣言すること",
+      "pending_source": "issues/issue-275-design.md"
+    },
+    {
+      "term": "取り込み",
+      "context": "image-lineage",
+      "meaning": "lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと",
+      "pending_source": "issues/issue-275-design.md"
+    },
+    {
+      "term": "到達の検査",
+      "context": "image-lineage",
+      "meaning": "base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py）",
+      "pending_source": "issues/issue-275-design.md"
+    },
+    {
+      "term": "除外表",
+      "context": "image-lineage",
+      "meaning": "到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧",
+      "pending_source": "issues/issue-275-design.md"
     }
   ]
 }
