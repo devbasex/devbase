@@ -95,6 +95,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | 系列 | — | 対象ボリュームの組が同じ世代の集まり | — | — | `docs/specifications/snapshot-series.md` |
 | 系列の最新の世代 | — | 系列の中で created_at が最も新しい世代 | — | — | `docs/specifications/snapshot-series.md` |
 | 全体の上限 | — | 系列をまたいで数えた世代の数の上限（max_total） | — | — | `docs/specifications/snapshot-series.md` |
+| 復元前バックアップ | — | restore が書き戻す前に自動で作るフルの世代 pre-restore-<時刻>。復元する世代の対象ボリュームの組を控える | — | — | — |
 
 ## base イメージの描画（`base-image`）
 
@@ -147,3 +148,15 @@ pytest が走るプロセスの環境と、テストが起動する外部のプ�
 | 隔離した tmux サーバ | — | TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない | — | — | `docs/specifications/base-shell-tests.md` |
 | 故障の差し込み | — | 実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと | — | — | `docs/specifications/base-shell-tests.md` |
 | 偽の date | — | PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date | — | — | `docs/specifications/base-shell-tests.md` |
+
+## イメージの継承（`image-lineage`）
+
+base の設定が派生イメージと lfm へ届く道筋（containers/*/Dockerfile）
+
+| 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
+| --- | --- | --- | --- | --- | --- |
+| base の設定 | — | base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定 | — | — | — |
+| 届く経路 | — | base の設定が lfm のイメージへ入る道筋。lfm の Dockerfile の取り込みと、取り込めない ENV を同じ値で宣言すること | — | — | — |
+| 取り込み | — | lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと | — | — | — |
+| 到達の検査 | — | base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py） | — | — | — |
+| 除外表 | — | 到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧 | — | — | — |
