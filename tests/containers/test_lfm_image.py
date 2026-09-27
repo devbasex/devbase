@@ -47,9 +47,9 @@ TOOLS = {
 # 変更前の lfm (#275 の前の Dockerfile で建てたもの) で測った sha256。lfm の固有の設定は変えない
 UNCHANGED_SHA256 = {
     "/etc/nvidia-container-runtime/config.toml":
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        "4505186b8a5a46f5295fbc7c0592a03550d89dae8832705130abf9ed7e7ae670",
     "/etc/docker/daemon.json":
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        "e45c7bbdbf4a9778c5b7b89ab77d9659c6c59f144c1075656c14254d703bd7c1",
 }
 
 _COMMON = r"""
