@@ -294,6 +294,21 @@ def test_env_subcommands_skip_injection_in_an_undeclared_project_with_any_backen
     assert calls == []
 
 
+def test_env_subcommands_skip_injection_when_the_declaration_is_unreadable(
+        calls, tmp_path, monkeypatch):
+    """宣言を読めない (UTF-8 でない) ときも送らずに注入を止め、_target_group に理由を任せる"""
+    from devbase.env import runtime
+
+    project = tmp_path / 'projects' / 'web'
+    project.mkdir(parents=True)
+    (project / 'env').write_bytes(b'DEVBASE_ACCOUNT_GROUP=\xff\xfe\n')
+    monkeypatch.setattr(runtime, 'current_project_name', lambda root: 'web')
+
+    cli._load_secret_env('env', 'list')
+
+    assert calls == []
+
+
 def test_env_subcommands_inject_in_a_declared_project_with_the_flat_layout(
         calls, tmp_path, monkeypatch):
     from devbase.env import runtime

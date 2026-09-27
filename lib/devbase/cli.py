@@ -974,7 +974,10 @@ def _undeclared_current_project(root: Path) -> bool:
         return False
     try:
         _groups.declare(root, project)
-    except _groups.GroupDeclarationError:
+    except DevbaseError:
+        # 宣言が無い・壊れている (GroupDeclarationError) だけでなく、env を読めない
+        # (権限・UTF-8) ときの素の DevbaseError もここで受ける。ここは main の try より
+        # 前に走るため、送るとトレースバックで落ちる。止めて理由を出すのは _target_group
         return True
     return False
 
