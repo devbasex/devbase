@@ -117,20 +117,18 @@ def _select_group(devbase_root: Path) -> str:
     使えなければ ``--group`` と同じ検証の文を出して選択へ戻る。
     """
     from devbase.env.groups import declared_groups
-    from devbase.errors import DevbaseError
-    from devbase.volume.manager import validate_account_group
 
     choices = [(name, name) for name in declared_groups(devbase_root)]
     choices.append(("名前を入力", _TYPE_GROUP))
-    while True:
+
+    def pick() -> str:
         picked = flow.need(menu.select(f"対象のグループを選択 {menu.HINT_BACK}:", choices,
                                        back=True, search=False))
         if picked is _TYPE_GROUP:
             picked = flow.need(menu.text(f"グループ名 {menu.HINT_BACK}:", allow_empty=False))
-        try:
-            return validate_account_group(picked)
-        except DevbaseError as e:
-            logger.error("--group に使えない名前です: %s", e)
+        return picked
+
+    return flow.select_account_group(pick)
 
 
 def _op_create(devbase_root: Path):
