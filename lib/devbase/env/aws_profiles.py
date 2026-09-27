@@ -223,14 +223,21 @@ def build_from_home(selected: Sequence[str], home: Optional[Path] = None) -> Aws
     return build(config_text, credentials_text, selected)
 
 
-def profiles_in_value(value: Optional[str]) -> Optional[List[str]]:
-    """``AWS_CONFIG_BASE64`` の値に入っているプロファイルの名前。値が読めなければ ``None``"""
+def read_value(value: Optional[str]) -> Optional[Dict[str, bytes]]:
+    """``AWS_CONFIG_BASE64`` の中身 (ファイル名 → バイト列)。読めなければ ``None``"""
     if not value:
         return None
     try:
         with tarfile.open(fileobj=io.BytesIO(base64.b64decode(value)), mode='r:*') as tar:
-            files = {m.name: tar.extractfile(m).read() for m in tar.getmembers() if m.isfile()}
+            return {m.name: tar.extractfile(m).read() for m in tar.getmembers() if m.isfile()}
     except (ValueError, tarfile.TarError, OSError, AttributeError, EOFError):
+        return None
+
+
+def profiles_in_value(value: Optional[str]) -> Optional[List[str]]:
+    """``AWS_CONFIG_BASE64`` の値に入っているプロファイルの名前。値が読めなければ ``None``"""
+    files = read_value(value)
+    if files is None:
         return None
     try:
         config = files['config'].decode('utf-8') if 'config' in files else None
