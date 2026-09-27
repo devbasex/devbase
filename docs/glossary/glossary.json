@@ -323,6 +323,13 @@
       "source": "docs/specifications/snapshot-series.md"
     },
     {
+      "term": "復元前バックアップ",
+      "context": "snapshot",
+      "meaning": "restore が書き戻す前に自動で作るフルの世代 pre-restore-<時刻>。復元する世代の対象ボリュームの組を控える",
+      "source": "",
+      "pending_source": "issues/issue-255-requirements.md"
+    },
+    {
       "term": "総称ファミリ",
       "context": "base-image",
       "meaning": "sans-serif / sans / serif / monospace。具体の書体名ではなく様式を指す指定",
