@@ -87,6 +87,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | 系列 | — | 対象ボリュームの組が同じ世代の集まり | — | — | `docs/specifications/snapshot-series.md` |
 | 系列の最新の世代 | — | 系列の中で created_at が最も新しい世代 | — | — | `docs/specifications/snapshot-series.md` |
 | 全体の上限 | — | 系列をまたいで数えた世代の数の上限（max_total） | — | — | `docs/specifications/snapshot-series.md` |
+| 復元前バックアップ | — | restore が書き戻す前に自動で作るフルの世代 pre-restore-<時刻>。復元する世代の対象ボリュームの組を控える | — | — | — |
 
 ## base イメージの描画（`base-image`）
 
