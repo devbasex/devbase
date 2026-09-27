@@ -498,12 +498,9 @@ class SecretStore:
         グループの無い参照 (``version: 1`` とファイル backend) では ``None``。2 つの参照が
         同じ置き場かは、この結果で比べる (PLAN56 決定 6)。
         """
-        config = self.config
-        settings = config.openbao
-        if (group is None or config.backend != 'openbao' or settings is None
-                or not settings.grouped):
+        if not self.grouped or group is None:
             return None
-        return settings.storage_group(group)
+        return self.config.openbao.storage_group(group)
 
     def display_label(self, ref: SecretRef) -> str:
         """見出しに出す参照の表示。読み替えがあればグループ名を前と後で出す (PLAN64)。
