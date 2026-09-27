@@ -194,7 +194,7 @@ devbase snapshot create --group nyle
 devbase snapshot create
 ```
 
-現在の世代に差分バックアップを追加します。世代が存在しない場合はフルバックアップを作成します。
+タイムスタンプの名前で新しいフルバックアップを作成します。差分を積むのは `devbase up` の自動スナップショットだけです。
 
 #### 名前付きスナップショット
 
@@ -373,7 +373,7 @@ rename 以外の理由で失敗した場合、復元はその場で止まりま�
 devbase snapshot copy 20260220-103000 important-milestone
 ```
 
-既存のスナップショットを別名でコピーします。ローテーションから保護したい重要なスナップショットに使用します。
+既存のスナップショットを別名でコピーします。コピーした世代もローテーションで削除の対象になります。長く残す方法はベストプラクティス 5 を参照してください。
 
 ### スナップショットの削除
 
@@ -414,7 +414,7 @@ devbase snapshot rotate --keep 5 --max-total 10
    devbase snapshot create --name before-db-migration --full
    ```
 
-2. **名前付きスナップショットはローテーションから保護される** -- 自動削除されないため、不要になったら手動で削除する
+2. **名前付きスナップショットもローテーションで削除される** -- 重要な世代は `backups/` の外へ複製する
 
 3. **復元は `--point N` で段階的に確認する** -- 全差分適用の前に特定時点を確認
 
@@ -422,7 +422,7 @@ devbase snapshot rotate --keep 5 --max-total 10
 
    ```bash
    devbase snapshot list
-   du -sh projects/<project>/backups/
+   du -sh ${DEVBASE_ROOT}/backups/
    ```
 
 5. **長期保持したい世代は `backups/` の外へ複製する**
