@@ -75,7 +75,7 @@ def _scope_refs(store: SecretStore, project: Optional[str],
 
 
 def _resolve_target(store: SecretStore, devbase_root: Path, project: Optional[str],
-                    group: Optional[str], grouped: bool) -> Tuple[Optional[str], Optional[str]]:
+                    group: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     """読むグループと ``--group`` に渡す名前の組"""
     from devbase.commands.env import _target_group
 
@@ -117,7 +117,7 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
     """
     store = SecretStore(devbase_root)
     grouped = is_grouped(store)
-    target, option_group = _resolve_target(store, devbase_root, project, group, grouped)
+    target, option_group = _resolve_target(store, devbase_root, project, group)
 
     refs, has_user = _scope_refs(store, project, target)
 
