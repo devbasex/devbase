@@ -130,15 +130,17 @@ def candidate_names(config_text: Optional[str], credentials_text: Optional[str])
     return credential_names(credentials_text)
 
 
-def _values(text: str, header: str) -> Dict[str, str]:
+def _values(section_text: str) -> Dict[str, str]:
+    """1 つの節の原文からキーと値を読む (見出しの空白の揺れに左右されない)"""
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     try:
-        parser.read_string(text)
+        parser.read_string(section_text)
     except configparser.Error:
         return {}
-    if header not in parser:
+    names = parser.sections()
+    if not names:
         return {}
-    return {k: v.strip() for k, v in parser[header].items()}
+    return {k: v.strip() for k, v in parser[names[0]].items()}
 
 
 def build(config_text: Optional[str], credentials_text: Optional[str],
@@ -178,7 +180,7 @@ def build(config_text: Optional[str], credentials_text: Optional[str],
         name, header = queue.pop(0)
         if header is None:
             continue
-        values = _values(config_sections[header], header)
+        values = _values(config_sections[header])
         label = 'default' if header in ('default', 'profile default') else f'profile {name}'
         session = values.get('sso_session')
         if session and session not in seen_sessions:
