@@ -37,12 +37,13 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
     handlers = {
         'status': lambda: cmd_env_backend_status(devbase_root),
         'use': lambda: cmd_env_backend_use(devbase_root, args),
-        'test': lambda: cmd_env_backend_test(devbase_root),
+        'test': lambda: cmd_env_backend_test(devbase_root, group=getattr(args, 'group', None)),
         'migrate': lambda: cmd_env_backend_migrate(
             devbase_root, to=getattr(args, 'to', None),
             dry_run=getattr(args, 'dry_run', False),
             assume_yes=getattr(args, 'assume_yes', False),
-            exclude_projects=getattr(args, 'exclude_projects', None) or ()),
+            exclude_projects=getattr(args, 'exclude_projects', None) or (),
+            group=getattr(args, 'group', None)),
     }
     handler = handlers.get(action)
     if handler is None:
@@ -133,8 +134,9 @@ def _print_openbao_status(root: Path, store: SecretStore, config) -> None:
 def _print_grouped_locations(root: Path, config) -> None:
     """``version: 2`` のレイアウト・対象のグループと出所・そのグループで組んだ 4 パス (受け入れ条件 11)。
 
-    対象のグループは実行時のプロジェクトのもの (プロジェクトの外なら ``$DEVBASE_ROOT/env``)。
-    プロジェクトの外ではプロジェクト名が決まらないため、プロジェクトのパスは ``<name>`` のまま出す。
+    対象のグループは実行時のプロジェクトの宣言のもの。プロジェクトの外ではグループが決まらない
+    ため (#315)、「なし（プロジェクトの外）」と出し、パスのグループとプロジェクト名は
+    ``<g>`` / ``<name>`` のまま出す。
     """
     from devbase.env import groups as _groups
     from devbase.env import runtime as _runtime
@@ -142,28 +144,44 @@ def _print_grouped_locations(root: Path, config) -> None:
     ob = config.openbao
     project = _runtime.current_project_name(root)
     print(f"  レイアウト: {ob.layout} (version {config.version})")
+    if project is None:
+        try:
+            _groups.check_root_env(root)
+        except DevbaseError as e:
+            print(f"  グループ:   決められません ({e})")
+            return
+        print("  グループ:   なし（プロジェクトの外）")
+        team = f"{ob.mount}/{ob.path_team_prefix}/<g>"
+        user = f"{ob.mount}/{ob.path_user_prefix}/{ob.user}/<g>"
+        _print_locations(f"{team}/global", f"{team}/projects/<name>",
+                         f"{user}/global", f"{user}/projects/<name>")
+        return
     try:
         declared = _groups.declare(root, project)
         shown = ob.display_group(declared.name)
     except DevbaseError as e:
         print(f"  グループ:   決められません ({e})")
         return
-    print(f"  グループ:   {shown} ({_groups.describe_source(root, declared, project)})")
+    print(f"  グループ:   {shown} ({_groups.describe_source(root, declared)})")
 
-    def project_path(owner: str) -> str:
-        if project is not None:
-            return ob.display_path(SecretRef.for_project(project, owner=owner, group=declared.name))
-        # <name> はプロジェクト名の検査を通らないため、共通のパスの隣として出す
-        common = ob.display_path(SecretRef.for_global(owner=owner, group=declared.name))
-        return f"{common.rsplit('/', 1)[0]}/projects/<name>"
+    def path(owner: str, in_project: bool) -> str:
+        if in_project:
+            ref = SecretRef.for_project(project, owner=owner, group=declared.name)
+        else:
+            ref = SecretRef.for_global(owner=owner, group=declared.name)
+        return ob.display_path(ref)
 
-    team_global = ob.display_path(SecretRef.for_global(group=declared.name))
-    user_global = ob.display_path(SecretRef.for_global(owner='user', group=declared.name))
+    _print_locations(path('team', False), path('team', True),
+                     path('user', False), path('user', True))
+
+
+def _print_locations(team_global: str, team_project: str,
+                     user_global: str, user_project: str) -> None:
     print("\n  置き場 (<mount>/<path>):")
     print(f"    チーム共通:           {team_global}")
-    print(f"    チームのプロジェクト: {project_path('team')}")
+    print(f"    チームのプロジェクト: {team_project}")
     print(f"    個人共通:             {user_global}")
-    print(f"    個人のプロジェクト:   {project_path('user')}")
+    print(f"    個人のプロジェクト:   {user_project}")
 
 
 def _print_cache_status(root: Path, store: SecretStore, config) -> None:
@@ -437,22 +455,26 @@ def _store_credentials(root: Path, args) -> int:
 # test / migrate (後続タスクで実装)
 # ---------------------------------------------------------------------------
 
-def _probe_refs(root: Path, store: SecretStore):
+def _probe_refs(root: Path, store: SecretStore, group: Optional[str]):
     """``test`` が読む参照 (チーム単位と個人単位の組) と、対象外にしたプロジェクトの表示。
 
-    グループ別の置き場では、対象のグループ (実行時のプロジェクト、プロジェクトの外なら
-    ``$DEVBASE_ROOT/env``) と同じ置き場のプロジェクトだけを調べる。グループ単位のポリシーの
-    サーバでは、別グループのプロジェクトの参照が正しい設定でも 403 になるため (PLAN56 決定 8)。
-    それ以外の設定ではグループが ``None`` で、全プロジェクトを今どおり調べる。
+    ``group`` は対象のグループ (``_target_group`` で決めた ``--group`` か実行時のプロジェクトの
+    宣言)。グループ別の置き場では、対象のグループと同じ置き場のプロジェクトだけを調べる。
+    グループ単位のポリシーのサーバでは、別グループのプロジェクトの参照が正しい設定でも 403 に
+    なるため (PLAN56 決定 8)。宣言の無いプロジェクトも対象外にする (#315)。それ以外の設定では
+    グループが ``None`` で、全プロジェクトを今どおり調べる。
     """
-    from devbase.env import runtime as _runtime
+    from devbase.env import groups as _groups
 
-    group = store.ref_group(_runtime.current_project_name(root))
     refs: List[SecretRef] = [SecretRef.for_global(group=group),
                              SecretRef.for_global(owner='user', group=group)]
     skipped: List[str] = []
     for name in _project_names(root):
-        project_group = store.ref_group(name)
+        try:
+            project_group = store.ref_group(name)
+        except _groups.GroupDeclarationError:
+            skipped.append(f"{name} (宣言なし)")
+            continue
         if not store.same_storage_group(project_group, group):
             skipped.append(f"{name} ({store.config.openbao.display_group(project_group)})")
             continue
@@ -461,8 +483,12 @@ def _probe_refs(root: Path, store: SecretStore):
     return refs, skipped
 
 
-def cmd_env_backend_test(devbase_root: Path) -> int:
-    """サーバへ接続し、参照ごとに読めるかを確かめる (キャッシュへは落ちない)"""
+def cmd_env_backend_test(devbase_root: Path, group: Optional[str] = None) -> int:
+    """サーバへ接続し、参照ごとに読めるかを確かめる (キャッシュへは落ちない)。
+
+    ``group`` は ``--group``。グループ別の置き場でプロジェクトの外なら必須 (#315)。
+    """
+    from devbase.commands.env import GroupOptionError, _target_group
     from devbase.env.openbao import OpenBaoBackend
 
     root = Path(devbase_root)
@@ -473,9 +499,14 @@ def cmd_env_backend_test(devbase_root: Path) -> int:
                          "`devbase env backend use openbao ...` で設定してください",
                          store.backend_name)
             return 1
+        try:
+            target = _target_group(root, store, group)
+        except GroupOptionError as e:
+            logger.error("%s", e)
+            return e.exit_code
         backend = store.backend_for(SecretRef.for_global())
         assert isinstance(backend, OpenBaoBackend)
-        refs, skipped = _probe_refs(root, store)
+        refs, skipped = _probe_refs(root, store, target)
         results = backend.probe(refs)
     except DevbaseError as e:
         logger.error("%s", e)
@@ -499,7 +530,8 @@ MIGRATE_TARGETS = ('age', _bc.BACKEND_OPENBAO)
 
 def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
                             dry_run: bool = False, assume_yes: bool = False,
-                            exclude_projects: Sequence[str] = ()) -> int:
+                            exclude_projects: Sequence[str] = (),
+                            group: Optional[str] = None) -> int:
     """チーム単位の機密を別の backend へ写す (PLAN51 決定 7)。
 
     手順は両方向とも同じ: 移行先の同じ参照を読んで衝突を確かめる → 移行先の内容へ
@@ -509,8 +541,13 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
 
     ``exclude_projects`` のプロジェクトの参照は、読まない・書かない・退避しない。
     ``projects/`` に無い名前は打ち間違いとして 2 で止める (PLAN56)。
+
+    ``group`` は ``--group`` で、共通の参照のグループ。グループ別の置き場では、プロジェクトの外なら
+    必須で、宣言の無いプロジェクトが 1 つでもあれば書き込みの前に止める (#315 I11)。
     """
+    from devbase.commands.env import GroupOptionError, _target_group
     from devbase.env import cache as _cache
+    from devbase.env import groups as _groups
     from devbase.env.openbao import OpenBaoBackend
 
     root = Path(devbase_root)
@@ -551,8 +588,21 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         return 1
     assert isinstance(server, OpenBaoBackend)
 
+    try:
+        common_group = _target_group(root, server_store, group)
+    except GroupOptionError as e:
+        logger.error("%s", e)
+        return e.exit_code
+    if server_store.grouped:
+        try:
+            _groups.require_declared(
+                root, [n for n in _project_names(root) if n not in exclude_projects])
+        except DevbaseError as e:
+            logger.error("%s", e)
+            return 1
+
     plan = _MigrationPlan(root, file_store, server_store, server, to,
-                          exclude_projects=exclude_projects)
+                          exclude_projects=exclude_projects, common_group=common_group)
     try:
         plan.prepare()
     except DevbaseError as e:
@@ -638,8 +688,11 @@ class _MigrationPlan:
     """1 回の移行の計画と実行"""
 
     def __init__(self, root: Path, file_store: SecretStore, server_store: SecretStore,
-                 server, to: str, *, exclude_projects: Sequence[str] = ()):
+                 server, to: str, *, exclude_projects: Sequence[str] = (),
+                 common_group: Optional[str] = None):
         self.root = root
+        #: 共通の参照のグループ (``--group`` か実行時のプロジェクトの宣言。グループ別でなければ None)
+        self.common_group = common_group
         self.file_store = file_store
         self.server_store = server_store
         self.server = server
@@ -663,13 +716,13 @@ class _MigrationPlan:
     def _units(self) -> List[_MoveUnit]:
         """移す単位を組み、``--to age`` で移さない他のグループの共通の参照を控える。
 
-        共通の参照のグループは ``$DEVBASE_ROOT/env``、プロジェクトの参照はそのプロジェクトの
-        ``env`` から決める (``SecretStore.ref_group``。実行時のディレクトリに左右されない)。
-        age へ移せる共通の参照は 1 つだけなので、``$DEVBASE_ROOT/env`` のグループのものを移し、
+        共通の参照のグループは ``common_group`` (``--group`` か実行時のプロジェクトの宣言)、
+        プロジェクトの参照はそのプロジェクトの宣言から決める (``SecretStore.ref_group``)。
+        age へ移せる共通の参照は 1 つだけなので、``common_group`` のものを移し、
         移すプロジェクトの置き場のうちそれと違うグループの共通の参照には要求を出さない。
         """
         store = self.server_store
-        common_group = store.ref_group(None)
+        common_group = self.common_group
         units = [_MoveUnit(SecretRef.for_global(), SecretRef.for_global(group=common_group))]
         others: dict = {}
         for name in _project_names(self.root):

@@ -9,7 +9,7 @@
 - 分類 A (共通) は ``/persistent/ai``、分類 B (グループ) は ``/persistent/group`` を指す
 - ``~/.claude`` の既定はグループ側で、共通資産だけがその配下から共通側へ張られる
 - 入れ子パスでも symlink が壊れない (親ディレクトリの作成 / ファイルとディレクトリの判別)
-- 初回シードは ``default`` グループだけで、共通資産はコピーせず、2 回目は何もしない
+- ``/persistent/ai`` からグループ側へは取り込まない (#315。グループの既定の名前も持たない)
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def roots(tmp_path: Path):
     return home, ai, group
 
 
-def setup(roots, group_name: str = "default", cwd: Path | None = None):
+def setup(roots, group_name: str = "nyle", cwd: Path | None = None):
     home, ai, grp = roots
     result = run_entrypoint_fn(
         f'devbase_setup_ai_settings "{home}" "{ai}" "{grp}" "{group_name}"',
@@ -131,9 +131,9 @@ def test_kiro_cli_data_is_separate_between_groups(roots, tmp_path):
     group_b = tmp_path / "persistent" / "kkg"
     home_b.mkdir()
 
-    setup((home_a, ai, group_a), "default")
+    setup((home_a, ai, group_a), "nyle")
     setup((home_b, ai, group_b), "kkg")
-    (home_a / ".local" / "share" / "kiro-cli" / "identity").write_text("default")
+    (home_a / ".local" / "share" / "kiro-cli" / "identity").write_text("nyle")
 
     assert not (home_b / ".local" / "share" / "kiro-cli" / "identity").exists()
 
@@ -143,8 +143,8 @@ def test_switching_groups_in_the_same_home_does_not_copy_kiro_data(roots, tmp_pa
     home, ai, group_a = roots
     group_b = tmp_path / "persistent" / "kkg"
 
-    setup((home, ai, group_a), "default")
-    (home / ".local" / "share" / "kiro-cli" / "identity").write_text("default")
+    setup((home, ai, group_a), "nyle")
+    (home / ".local" / "share" / "kiro-cli" / "identity").write_text("nyle")
 
     setup((home, ai, group_b), "kkg")
 
@@ -156,7 +156,7 @@ def test_switching_groups_in_the_same_home_does_not_copy_kiro_data(roots, tmp_pa
 def test_kiro_home_seed_is_not_attempted_from_shared_volume(roots):
     """Kiro 2.x のデータはホーム由来なので /persistent/ai を探索しない。"""
     _, ai, _ = roots
-    result = setup(roots, "default")
+    result = setup(roots, "nyle")
 
     assert f"skip (シード元なし): {ai}/.local/share/kiro-cli" not in result.stdout
 
@@ -192,7 +192,7 @@ def test_two_groups_share_assets_but_not_credentials(roots, tmp_path):
     home_b.mkdir()
     group_b = tmp_path / "persistent" / "kkg"
 
-    setup((home_a, ai, group_a), "default")
+    setup((home_a, ai, group_a), "nyle")
     setup((home_b, ai, group_b), "kkg")
 
     # 共通資産は同一実体
@@ -200,7 +200,7 @@ def test_two_groups_share_assets_but_not_credentials(roots, tmp_path):
         (home_b / ".claude" / "plugins").resolve()
 
     # グループ別データは互いに到達できない
-    (home_a / ".claude" / ".credentials.json").write_text("default-secret")
+    (home_a / ".claude" / ".credentials.json").write_text("nyle-secret")
     assert not (home_b / ".claude" / ".credentials.json").exists()
 
     # PLAN70: シェルの設定の置き場所もグループごとに分かれる
@@ -317,11 +317,11 @@ def test_setup_is_idempotent(roots):
 
 
 # ---------------------------------------------------------------------------
-# 初回シード (AC8)
+# /persistent/ai からグループ側へ取り込まない (#315 I13)
 # ---------------------------------------------------------------------------
 
 def _seed_source(ai: Path) -> None:
-    """現行 ``/persistent/ai`` に実体がある分類 B のデータを用意する。"""
+    """PLAN39 より前の置き場 (``/persistent/ai``) に実体がある分類 B のデータを用意する。"""
     (ai / ".claude").mkdir(parents=True)
     (ai / ".claude" / ".credentials.json").write_text("token")
     (ai / ".claude" / "history.jsonl").write_text('{"line": 1}\n')
@@ -334,96 +334,39 @@ def _seed_source(ai: Path) -> None:
     (ai / ".gemini" / "settings.json").write_text('{"auth": "vertex-ai"}')
 
 
-def test_default_group_is_seeded_from_the_shared_volume(roots):
-    """AC8: ``default`` は再ログインなしで移行できる。"""
+@pytest.mark.parametrize("group_name", ["nyle", "kkg", "default"])
+def test_no_group_is_seeded_from_the_shared_volume(roots, group_name):
+    """#315 I13: どのグループ名でも ``/persistent/ai`` の分類 B をグループ側へ写さない"""
     home, ai, grp = roots
     _seed_source(ai)
 
-    setup(roots, "default")
+    setup(roots, group_name)
 
-    assert (grp / ".claude" / ".credentials.json").read_text() == "token"
-    assert (grp / ".claude" / "history.jsonl").read_text() == '{"line": 1}\n'
-    assert (grp / ".claude" / "projects" / "a.jsonl").read_text() == "session"
-    assert (grp / ".claude.json").read_text() == '{"oauthAccount": {}}'
-    assert (grp / ".gemini" / "settings.json").read_text() == '{"auth": "vertex-ai"}'
+    assert not (grp / ".claude" / ".credentials.json").exists()
+    assert not (grp / ".claude" / "projects").exists()
+    assert not (grp / ".gemini" / "settings.json").exists()
+    # プレースホルダは作られるが、元の中身は入らない (issue #136 で {} にした)
+    assert (grp / ".claude.json").read_text() == "{}"
+    # 元は残る (読むだけで動かさない)
+    assert (ai / ".claude" / ".credentials.json").read_text() == "token"
 
 
-def test_seed_does_not_copy_shared_assets(roots):
+def test_shared_assets_stay_on_the_shared_volume(roots):
     """共通資産はグループ数だけ重複させない (238MB の plugins をコピーしない)。"""
     home, ai, grp = roots
     _seed_source(ai)
 
-    setup(roots, "default")
+    setup(roots)
 
     assert (grp / ".claude" / "plugins").is_symlink()
     assert (grp / ".claude" / "plugins").resolve() == (ai / ".claude" / "plugins").resolve()
 
 
-def test_seed_is_a_copy_not_a_move(roots):
-    """切り戻しの余地を残すため move ではなく copy にする。"""
-    home, ai, grp = roots
-    _seed_source(ai)
-
-    setup(roots, "default")
-
-    assert (ai / ".claude" / ".credentials.json").read_text() == "token"
-    assert (ai / ".claude.json").exists()
-
-
-def test_non_default_groups_are_not_seeded(roots):
-    """AC3: 分離の意味が失われるため非 default ではシードしない。"""
-    home, ai, grp = roots
-    _seed_source(ai)
-
-    setup(roots, "kkg")
-
-    assert not (grp / ".claude" / ".credentials.json").exists()
-    assert not (grp / ".claude" / "projects").exists()
-    assert not (grp / ".gemini" / "settings.json").exists()
-    # プレースホルダは作られるが、シード元の中身は入らない。
-    # 期待値を "" から "{}" へ変えたのは issue #136 の修正による。空ファイルは
-    # 不正な JSON で Claude Code が起動できないため、プレースホルダを {} にした。
-    # 「シードされていない」ことの確認という本来の意図は変わらない。
-    assert (grp / ".claude.json").read_text() == "{}"
-
-
-def test_seed_runs_only_once(roots):
-    """2 回目は何もしない (稼働後のデータをシード時点へ巻き戻さない)。"""
-    home, ai, grp = roots
-    _seed_source(ai)
-
-    setup(roots, "default")
-    (grp / ".claude" / ".credentials.json").write_text("refreshed")
-    (ai / ".claude" / ".credentials.json").write_text("stale")
-
-    setup(roots, "default")
-
-    assert (grp / ".claude" / ".credentials.json").read_text() == "refreshed"
-
-
-def test_seed_skips_entries_without_a_source(roots):
-    """シード元が無いエントリ (gcloud / gws) があっても止まらない (AC8)。"""
-    home, ai, grp = roots
-    (ai / ".claude").mkdir(parents=True)
-    (ai / ".claude" / "history.jsonl").write_text("only-this\n")
-
-    setup(roots, "default")
-
-    assert (grp / ".claude" / "history.jsonl").read_text() == "only-this\n"
-    # .claude.json / .gemini はシード元が無いので空のプレースホルダのまま
-    assert (grp / ".claude.json").is_file()
-    assert (grp / ".gemini").is_dir()
-
-
-def test_seed_copies_dotfiles(roots):
-    """``.credentials.json`` のような隠しファイルを取りこぼさない。"""
-    home, ai, grp = roots
-    (ai / ".claude").mkdir(parents=True)
-    (ai / ".claude" / ".last-cleanup").write_text("ts")
-
-    setup(roots, "default")
-
-    assert (grp / ".claude" / ".last-cleanup").read_text() == "ts"
+def test_seed_function_is_gone():
+    """初回シードの関数と、グループの既定 (``:-default``) は entrypoint に残さない"""
+    text = ENTRYPOINT.read_text()
+    assert "devbase_seed_group_settings" not in text
+    assert "ACCOUNT_GROUP:-default" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -482,12 +425,11 @@ def test_second_run_does_not_seed_through_the_symlink(roots):
 # ---------------------------------------------------------------------------
 
 def test_new_group_gets_a_parsable_claude_json(roots):
-    """非 default グループの初回起動で ``.claude.json`` が妥当な JSON になる。
+    """グループの初回起動で ``.claude.json`` が妥当な JSON になる。
 
     空ファイルは JSON として不正で、Claude Code が
     ``The configuration file at ~/.claude.json contains invalid JSON.``
-    で起動を拒否する。``default`` はシードで実体が入るため踏まないが、
-    非 default はシードを飛ばすので必ずプレースホルダになる。
+    で起動を拒否する。グループ側は取り込みを行わないため、必ずプレースホルダになる。
     """
     home, _, grp = roots
     setup(roots, group_name="with")

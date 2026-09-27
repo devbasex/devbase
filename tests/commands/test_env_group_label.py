@@ -1,7 +1,7 @@
 """読み替えのあるグループでの見出しの表示 (PLAN64 / #188)
 
 `group_aliases` のある置き場では、見出しのグループ名が読み替えの前と後
-(`default → nyle`) になり、隣に並ぶパスと同じグループを指していると読める。
+(`acme → nyle`) になり、隣に並ぶパスと同じグループを指していると読める。
 読み替えの対応が無いグループ・`version: 1` ・ファイル backend の出力は変わらない。
 """
 
@@ -14,8 +14,8 @@ from devbase.commands import env_backend
 from devbase.env import backend_config as bc
 
 
-ALIASES = {'default': 'nyle'}
-BOTH = 'default → nyle'
+ALIASES = {'acme': 'nyle'}
+BOTH = 'acme → nyle'
 
 
 def at(monkeypatch, root, rel=''):
@@ -24,10 +24,11 @@ def at(monkeypatch, root, rel=''):
 
 @pytest.fixture
 def aliased(openbao_root, openbao):
-    """``version: 2`` で ``default`` を ``nyle`` へ読み替える置き場 (``web`` は宣言なし)"""
+    """``version: 2`` で ``acme`` を ``nyle`` へ読み替える置き場 (``web`` は ``acme``)"""
     from tests.conftest import configure_openbao
 
     configure_openbao(openbao_root, openbao, layout=bc.LAYOUT_GROUP, group_aliases=ALIASES)
+    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     return openbao_root
 
 
@@ -59,6 +60,7 @@ def test_backend_test_only_reads_the_current_group_and_labels_skipped_projects(
         aliased, openbao, monkeypatch, capsys):
     """現状固定: with の参照を表示し、別の置き場の api は読み替え名で案内する。"""
     (aliased / 'projects' / 'api').mkdir()
+    (aliased / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     (aliased / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     openbao.put('team/nyle/global', {'A': '1'})
     openbao.put('team/nyle/projects/api', {'B': '2'})
@@ -123,7 +125,7 @@ def test_migration_plan_listing_shows_both_names(aliased, openbao, capsys):
     """移行の計画の一覧 (``_MigrationPlan._heading``)"""
     openbao.put('team/nyle/global', {'A': '1'})
 
-    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True) == 0
+    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True, group='acme') == 0
 
     out = capsys.readouterr().out
     assert f'グローバル（グループ {BOTH}）' in out
@@ -134,7 +136,7 @@ def test_migration_plan_listing_shows_both_names_for_project(aliased, openbao, c
     """現状固定: 移行計画の一覧にプロジェクトの機密の見出しとサーバ上のパスを出す。"""
     openbao.put('team/nyle/projects/web', {'B': '2'})
 
-    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True) == 0
+    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True, group='acme') == 0
 
     out = capsys.readouterr().out
     assert f"プロジェクト 'web'（グループ {BOTH}）" in out
@@ -160,7 +162,7 @@ def aliased_age(aliased):
 def test_migration_plan_listing_to_openbao_shows_both_names_next_to_the_path(
         aliased_age, openbao, capsys):
     """現状固定: 逆向き (age → openbao) の一覧も読み替えの前と後と移行先のパスを並べる。"""
-    assert env_backend.cmd_env_backend_migrate(aliased_age, to='openbao', assume_yes=True,
+    assert env_backend.cmd_env_backend_migrate(aliased_age, to='openbao', assume_yes=True, group='acme',
                                                dry_run=True) == 0
 
     out = capsys.readouterr().out
@@ -180,7 +182,7 @@ def test_completion_listing_after_migrating_to_age_shows_both_names(aliased, ope
     """``--to age`` の完了後の「サーバ上の機密はそのまま残っています」の一覧"""
     openbao.put('team/nyle/global', {'A': '1'})
 
-    assert env_backend.cmd_env_backend_migrate(aliased, to='age', assume_yes=True) == 0
+    assert env_backend.cmd_env_backend_migrate(aliased, to='age', assume_yes=True, group='acme') == 0
 
     out = capsys.readouterr().out
     tail = out[out.index('サーバ上の機密はそのまま残っています'):]

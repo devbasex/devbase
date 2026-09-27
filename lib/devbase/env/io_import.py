@@ -61,6 +61,8 @@ class ImportOptions:
     merge_metadata: bool = False
     backup_dir: Optional[str] = None
     keep_last: int = 10
+    #: 対象のグループ (``--group``。検証済みの値。グループ別の置き場でなければ ``None``)
+    group: Optional[str] = None
 
 
 def _read_passphrase(opts: ImportOptions) -> Optional[str]:
@@ -312,7 +314,15 @@ def import_bundle(devbase_root: Path, opts: ImportOptions) -> int:
 
     store = SecretStore(devbase_root)
     # 対象のグループ (PLAN56)。グループ別の置き場でなければ None で、参照は今と同じ
-    group = store.ref_group(_runtime.current_project_name(devbase_root))
+    group = opts.group
+    if group is None:
+        group = store.ref_group(_runtime.current_project_name(devbase_root))
+    if store.grouped:
+        # 宣言の無いプロジェクトが 1 つでもあれば、一部だけを取り込まずに止める (#315 I11)
+        from devbase.env import groups as _groups
+
+        _groups.require_declared(devbase_root, sorted(
+            m.group(1) for m in map(_merge._PROJECT_ENV_RE.match, filtered) if m))
     _refuse_other_group_projects(store, filtered, group)
     plans, sources_reference = _build_plans(filtered, devbase_root, opts, store=store,
                                             group=group)

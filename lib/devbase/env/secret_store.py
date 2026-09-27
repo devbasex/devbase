@@ -102,14 +102,14 @@ def _validate_group(group: Optional[str]) -> Optional[str]:
     """参照のグループ名を ``DEVBASE_ACCOUNT_GROUP`` と同じ規則で検証する (空は ``None``)。
 
     グループ名はパスの 1 要素になるため、区切り文字や予約語を参照の時点で弾く。
-    規則は :func:`devbase.volume.manager.resolve_account_group` を使い、写さない。
+    規則は :func:`devbase.volume.manager.validate_account_group` を使い、写さない。
     """
     if group is None or not str(group).strip():
         return None
-    from devbase.volume.manager import resolve_account_group
+    from devbase.volume.manager import validate_account_group
 
     try:
-        return resolve_account_group(str(group))
+        return validate_account_group(str(group))
     except DevbaseError as e:
         raise SecretStoreError(str(e)) from None
 
@@ -155,7 +155,7 @@ class SecretRef:
         既定 (``None``) は ``self.group``、つまり読み替える**前**の名前である
         (PLAN64 決定 2)。読み替えの解決は ``BackendConfigError`` を送出しうるため、
         誤りを伝える文言・警告・ログは引数なしで呼び、解決を背負わない。読み替えの
-        前後 (``default → nyle``) を出す見出しは
+        前後 (``acme → nyle``) を出す見出しは
         :meth:`SecretStore.display_label` を通る。
         """
         # チーム単位の文字列は変えない。誤りの伝達や桁揃えに埋め込まれており、
@@ -465,17 +465,32 @@ class SecretStore:
     def ref_group(self, project: Optional[str]) -> Optional[str]:
         """参照に持たせるグループ。``openbao`` かつ ``layout: group`` のときだけ値を返す。
 
-        グループは非機密の ``env`` ファイルから決める
-        (:func:`devbase.env.groups.declared_group`。機密の置き場は読まない)。それ以外の
-        設定では ``None`` を返し、参照は今と同じ値になる (PLAN56 決定 5)。
+        グループはプロジェクトの宣言 (:func:`devbase.env.groups.declare`。機密の置き場は
+        読まない) から決める。プロジェクトが無ければグループは決まらず
+        :class:`~devbase.env.groups.GroupRequiredError` を送る (既定の値は無い。#315)。
+        それ以外の設定では ``None`` を返し、参照は今と同じ値になる (PLAN56 決定 5)。
+
+        Raises:
+            GroupDeclarationError: プロジェクトの宣言が無い・空・使えない名前
+            GroupRequiredError: グループ別の置き場で、プロジェクトが無い
         """
+        if not self.grouped:
+            return None
+        from devbase.env import groups as _groups
+
+        if not project:
+            raise _groups.GroupRequiredError(
+                "グループ別の置き場では、プロジェクトの外の操作にグループが要ります。"
+                "--group <名前> を付けてください")
+        return _groups.declare(self.root, project).name
+
+    @property
+    def grouped(self) -> bool:
+        """グループ別の置き場 (``openbao`` かつ ``layout: group``) を選んだ設定か"""
         config = self.config
         settings = config.openbao
-        if config.backend != 'openbao' or settings is None or not settings.grouped:
-            return None
-        from devbase.env.groups import declared_group
-
-        return declared_group(self.root, project)
+        return (config.backend == 'openbao' and settings is not None
+                and settings.grouped)
 
     def storage_group(self, group: Optional[str]) -> Optional[str]:
         """参照のグループを置き場のグループ名へ写す (``group_aliases`` の読み替え)。

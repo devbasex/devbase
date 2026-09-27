@@ -75,7 +75,7 @@ def test_unauthenticated_gcloud_does_not_stop_startup(tmp_path, fake_bin):
     """未ログインだと gcloud は非 0 を返す。set -e で起動を落とさない。"""
     path = fake_bin('echo "ERROR: unset" >&2; exit 1')
 
-    result = run('devbase_log_account_group "default"', tmp_path, path)
+    result = run('devbase_log_account_group "nyle"', tmp_path, path)
 
     assert result.returncode == 0, result.stderr
     assert "gcloud account: unset" in result.stdout
@@ -85,7 +85,7 @@ def test_empty_account_is_reported_as_unset(tmp_path, fake_bin):
     """`gcloud config get account` は未設定でも終了コード 0 で空を返すことがある。"""
     path = fake_bin('exit 0')
 
-    result = run('devbase_log_account_group "default"', tmp_path, path)
+    result = run('devbase_log_account_group "nyle"', tmp_path, path)
 
     assert result.returncode == 0, result.stderr
     assert "gcloud account: unset" in result.stdout
@@ -93,15 +93,23 @@ def test_empty_account_is_reported_as_unset(tmp_path, fake_bin):
 
 def test_missing_gcloud_is_reported(tmp_path, no_gcloud_path):
     """gcloud を含まないイメージでも落ちない。"""
-    result = run('devbase_log_account_group "default"', tmp_path, path=no_gcloud_path)
+    result = run('devbase_log_account_group "nyle"', tmp_path, path=no_gcloud_path)
 
     assert result.returncode == 0, result.stderr
     assert "gcloud not installed" in result.stdout
 
 
-def test_group_defaults_when_omitted(tmp_path, no_gcloud_path):
-    result = run('devbase_log_account_group', tmp_path, path=no_gcloud_path)
+def test_missing_account_group_stops_the_startup(tmp_path, no_gcloud_path):
+    """#315 I8: グループが渡っていなければ既定へ落とさず 0 でない終了コードで止める"""
+    result = run('devbase_require_account_group || exit 7', tmp_path, path=no_gcloud_path)
+
+    assert result.returncode == 7
+    assert "DEVBASE_ACCOUNT_GROUP が渡っていません" in result.stderr
+
+
+def test_passed_account_group_lets_the_startup_continue(tmp_path, no_gcloud_path):
+    result = run('DEVBASE_ACCOUNT_GROUP=nyle devbase_require_account_group && echo ok', tmp_path,
+                 path=no_gcloud_path)
 
     assert result.returncode == 0, result.stderr
-    assert "Account group: default" in result.stdout
-    assert "CLOUDSDK_CONFIG: unset" in result.stdout
+    assert "ok" in result.stdout

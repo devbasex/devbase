@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from devbase.errors import SnapshotError
+from devbase.errors import DevbaseError, SnapshotError
 from devbase.log import get_logger
 from devbase.snapshot.manager import SnapshotManager
 
@@ -19,10 +19,48 @@ def _format_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f}TB"
 
 
+#: 引数の誤り (``--group`` が無い・使えない名前) の終了コード
+EXIT_USAGE = 2
+
+
+def _create_group(devbase_root: Path, group):
+    """``snapshot create`` の対象のグループ。``(グループ, None)`` か ``(None, 終了コード)``。
+
+    ``--group`` があればその名前、無ければ実行時のプロジェクトの宣言 (#315 決定 3)。
+    プロジェクトの外で ``--group`` が無ければ 2、宣言が読めなければ 1。既定の値は無いため、
+    旧既定のボリュームの系列は作られない (I10)。
+    """
+    from devbase.env import groups as _groups
+    from devbase.env import runtime as _runtime
+    from devbase.volume.manager import validate_account_group
+
+    if group is not None:
+        try:
+            return validate_account_group(group), None
+        except DevbaseError as e:
+            logger.error("--group に使えない名前です: %s", e)
+            return None, EXIT_USAGE
+    project = _runtime.current_project_name(devbase_root)
+    if project is None:
+        logger.error("プロジェクトの外では対象のグループを決められません。"
+                     "--group <名前> を付けてください (例: --group nyle)")
+        return None, EXIT_USAGE
+    try:
+        return _groups.declare(devbase_root, project).name, None
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return None, 1
+
+
 def cmd_snapshot(devbase_root: Path, args) -> int:
     """snapshotサブコマンドの振り分け"""
-    mgr = SnapshotManager(devbase_root)
     subcmd = getattr(args, 'subcommand', None)
+    group = None
+    if subcmd == 'create':
+        group, rc = _create_group(devbase_root, getattr(args, 'group', None))
+        if group is None:
+            return rc
+    mgr = SnapshotManager(devbase_root, group=group)
 
     handlers = {
         'create':  lambda: _snapshot_create(mgr,

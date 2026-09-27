@@ -37,7 +37,7 @@ KEY_WIDTH = 32
 _KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MSG_BAD_KEY = "キー名は英字か _ で始まり、英数字と _ だけにしてください"
 MSG_ACCOUNT_GROUP = (f"{keys.DEVBASE_ACCOUNT_GROUP} は機密の置き場へは書けません"
-                     "（projects/<name>/env か $DEVBASE_ROOT/env に書いてください）")
+                     "（projects/<name>/env に書いてください）")
 MSG_EMPTY_VALUE = "値を入力してください"
 MSG_MULTILINE = "改行を含む値は TUI では扱えません。devbase env edit で編集してください"
 MSG_SURROUNDING_SPACE = ("前後に空白を含む値は TUI では扱えません（空白は取り除かれて保存されます）。"

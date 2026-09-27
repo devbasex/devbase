@@ -16,6 +16,7 @@ def project_setup(tmp_path, monkeypatch):
     """一時ディレクトリの実 SecretStore を使い、projects/web 配下に移動する"""
     project_dir = tmp_path / 'projects' / 'web'
     project_dir.mkdir(parents=True)
+    (project_dir / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     monkeypatch.setenv('PWD', str(project_dir))
     monkeypatch.chdir(project_dir)
     return tmp_path, project_dir
@@ -149,3 +150,13 @@ def test_env_project_without_env_yml_eof_termination(project_setup, monkeypatch,
     assert (project_dir / '.env').exists()
     assert "保存完了:" in caplog.text
     assert "(0変数)" in caplog.text
+
+
+def test_env_project_stops_without_a_group_declaration(project_setup, caplog):
+    """#315 決定 2: 宣言の無いプロジェクトの中では backend を問わず止まり、書き方を示す"""
+    tmp_path, project_dir = project_setup
+    (project_dir / 'env').write_text('FOO=1\n')
+
+    assert env_cmd.cmd_env_project(tmp_path) == 1
+    assert 'projects/web/env' in caplog.text
+    assert not (project_dir / '.env').exists()

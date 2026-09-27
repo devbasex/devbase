@@ -12,6 +12,7 @@ import pytest
 from devbase.env import keys, runtime
 from devbase.env.secret_store import SecretRef, SecretStore
 from devbase.errors import DevbaseError
+from devbase.env.groups import GroupDeclarationError
 from devbase.volume.manager import resolve_account_group
 
 
@@ -626,7 +627,7 @@ def test_resolve_with_the_group_layout_requests_only_the_group_paths(openbao_roo
     from tests.conftest import configure_openbao
 
     root = openbao_root
-    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(root, openbao, layout='group')
     (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     openbao.put('team/with/global', {'A': 'with'})
     openbao.put('team/global', {'A': 'flat'})
@@ -673,14 +674,15 @@ def _save(store, backend, ref, data):
 @pytest.mark.parametrize('backend', ['age', 'plaintext'])
 def test_inject_does_not_put_the_stores_account_group_into_the_environment(
         account_group_root, store, backend):
-    """受け入れ条件 1: 置き場の値はプロセスへ載らず、ボリュームのグループは default"""
+    """受け入れ条件 1: 置き場の値はプロセスへ載らず、ボリュームのグループは決まらないまま"""
     _save(store, backend, GLOBAL, {ACCOUNT_GROUP: 'kkg', 'TOKEN': 't'})
 
     runtime.inject(account_group_root, 'web', store=store)
 
     assert ACCOUNT_GROUP not in os.environ
     assert os.environ['TOKEN'] == 't'
-    assert resolve_account_group() == 'default'
+    with pytest.raises(GroupDeclarationError):
+        resolve_account_group()
 
 
 @pytest.mark.parametrize('backend', ['age', 'plaintext'])
@@ -717,7 +719,8 @@ def test_every_store_layer_is_dropped_from_the_environment(account_group_root, l
 
     assert ACCOUNT_GROUP not in os.environ
     assert os.environ['K'] == 'v'
-    assert resolve_account_group() == 'default'
+    with pytest.raises(GroupDeclarationError):
+        resolve_account_group()
 
 
 @pytest.mark.parametrize('layer', ['team_global', 'user_global', 'team_web', 'user_web'])
@@ -785,7 +788,7 @@ def test_warns_once_with_the_store_and_how_to_delete(account_group_root, caplog,
     assert len(messages) == 1
     message = messages[0]
     assert f'機密の置き場（{label}）' in message
-    assert 'projects/<name>/env' in message and '$DEVBASE_ROOT/env' in message
+    assert 'projects/<name>/env' in message and '$DEVBASE_ROOT/env' not in message
     assert message.endswith(how)
     assert 'kkg' not in message
 
@@ -854,3 +857,23 @@ def test_empty_value_still_warns_and_no_key_does_not(account_group_root, caplog)
         runtime.resolve(account_group_root, 'web',
                         store=_FourLayerStore(_layers(team_global={ACCOUNT_GROUP: ''})))
     assert len(_warnings(caplog)) == 1
+
+
+# ---------------------------------------------------------------------------
+# グループが決まらない暗黙の注入は置き場を読まない (#315 I9)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('project', [None, 'api'])
+def test_grouped_resolve_without_a_group_reads_nothing(openbao_root, openbao, project):
+    """外・宣言の無いプロジェクトでは、どのグループの置き場にも要求を出さず空で続ける"""
+    from tests.conftest import configure_openbao
+
+    root = openbao_root
+    configure_openbao(root, openbao, layout='group')
+    (root / 'projects' / 'api').mkdir()
+    openbao.put('team/nyle/global', {'A': 'nyle'})
+
+    resolved = runtime.resolve(root, project, store=SecretStore(root))
+
+    assert resolved.values == {}
+    assert openbao.received == []

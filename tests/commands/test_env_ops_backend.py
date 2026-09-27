@@ -241,7 +241,7 @@ def test_doctor_probes_the_grouped_sources_file_and_cache_for_git_ignore(git_roo
     """PLAN56 決定 13: layout: group では .env.sources.<g>.yml の除外も確かめる"""
     from tests.conftest import configure_openbao
 
-    configure_openbao(git_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(git_root, openbao, layout='group')
     (git_root / '.gitignore').write_text(
         '.env\n.env.bak*\nsecrets/*.age\nsecrets/projects/\nsecrets/backend.yml\n'
         'secrets/leftover.env\nprojects/*/.env\n.env.sources.yml\n')

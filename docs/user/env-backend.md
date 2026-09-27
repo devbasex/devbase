@@ -58,19 +58,16 @@ printf '%s\n' "$SECRET_ID" | devbase env backend use openbao \
   --user member01 \
   --role-id <role-id> \
   --secret-id-stdin \
-  --layout group \
-  --group-alias default=nyle
+  --layout group
 ```
 
 TTY で実行する場合は `--secret-id-stdin` を省くと伏せ字入力を求められます。マウント名が
 `devbase` 以外なら `--mount NAME` を足します。
 
-`--layout group` は置き場をアカウントグループごとに分ける設定（`version: 2`）で、
-`--group-alias default=nyle` はグループを宣言していないプロジェクト（`default`）の機密を
-`nyle` の置き場で扱う読み替えです。**`--layout` を付けずに新しく `use openbao` しても
-`version: 2` になります。** 読み替えを付けないと、グループを宣言していないプロジェクトは
-`team/default/…` を読みます。チームで `default` の機密を置くグループ名が決まっていれば、
-`--group-alias default=<そのグループ名>` を付けてください。
+`--layout group` は置き場をアカウントグループごとに分ける設定（`version: 2`）です。
+**`--layout` を付けずに新しく `use openbao` しても `version: 2` になります。** 各プロジェクトは
+`projects/<name>/env` の `DEVBASE_ACCOUNT_GROUP` の宣言のグループの置き場を読みます（宣言が無い
+プロジェクトは機密のコマンドも `up` も止まります）。
 すでに OpenBao の設定がある端末で `--layout` を省くと、今のレイアウトを引き継ぎます。
 詳しくは [アカウントグループごとの置き場](#アカウントグループごとの置き場version-2)を
 参照してください。
@@ -81,7 +78,7 @@ TTY で実行する場合は `--secret-id-stdin` を省くと伏せ字入力を�
 ### 3. 接続を確かめる
 
 ```bash
-devbase env backend test
+devbase env backend test --group nyle     # プロジェクトの外ではグループを名指しする
 devbase env backend status
 ```
 
@@ -96,8 +93,8 @@ TUI の「環境変数」→「OpenBao の接続設定」からも変えられ�
 ### 4. 既存の機密を移す
 
 ```bash
-devbase env backend migrate --to openbao --dry-run   # 移すキー名だけを確認（値は出ない）
-devbase env backend migrate --to openbao
+devbase env backend migrate --to openbao --group nyle --dry-run   # 移すキー名だけを確認（値は出ない）
+devbase env backend migrate --to openbao --group nyle
 ```
 
 移行は次の順で進み、途中で失敗すると設定は移行前のまま残ります。
@@ -111,12 +108,14 @@ devbase env backend migrate --to openbao
 削除されません。内容を確認してから消してください。
 
 `version: 2`（グループ別の置き場）へ移すときは、参照ごとにグループを決めて書きます。
-実行したディレクトリには左右されません。
 
 | 移すもの | 書き先のグループ |
 |---|---|
-| 共通の機密（`.env` / `secrets/global.env.age`） | `$DEVBASE_ROOT/env` の `DEVBASE_ACCOUNT_GROUP`（無ければ `default`） |
-| プロジェクトの機密 | そのプロジェクトの `projects/<name>/env` → `$DEVBASE_ROOT/env` → `default` |
+| 共通の機密（`.env` / `secrets/global.env.age`） | `--group` のグループ（プロジェクトの中で省けばそのプロジェクトの宣言。外では `--group` が必須） |
+| プロジェクトの機密 | そのプロジェクトの `projects/<name>/env` の宣言（実行したディレクトリに左右されない） |
+
+移す対象に宣言の無いプロジェクトが 1 つでもあれば、1 件も書かずに名前を挙げて止まります。
+宣言を書くか、`--exclude-project` で外してください。
 
 `--dry-run` は参照ごとに書き先の `<mount>/<パス>` とキー名を表示します（値は出ません）。
 
@@ -126,7 +125,7 @@ devbase env backend migrate --to openbao
 打ち間違いとして何もせずに終了コード 2 で止まります。
 
 ```bash
-devbase env backend migrate --to openbao --exclude-project csc --dry-run
+devbase env backend migrate --to openbao --group nyle --exclude-project csc --dry-run
 ```
 
 移すのはチーム単位の機密（共通とプロジェクト）だけです。個人単位の機密は
@@ -224,14 +223,15 @@ OpenBao の KV v2 にはコメント・空行の置き場がありません。`d
 
 ### グループの決まり方
 
-プロジェクトのグループは、機密を読む前に**非機密の `env` ファイルだけ**から決まります。
-
-1. `projects/<name>/env` の `DEVBASE_ACCOUNT_GROUP`
-2. `$DEVBASE_ROOT/env` の `DEVBASE_ACCOUNT_GROUP`
-3. どちらにも無ければ `default`
+プロジェクトのグループは、機密を読む前に**非機密の `projects/<name>/env` の
+`DEVBASE_ACCOUNT_GROUP` の宣言だけ**から決まります。既定の値はありません。宣言が無い・空・
+`default`（予約語）・`$DEVBASE_ROOT/env` に宣言がある、のどれでも、機密のコマンドも
+`devbase up` も置き場を開かずに止まり、直すファイルと行を示します
+（[宣言が無いときは止まる](environment-variables.md#宣言が無いときは止まる)）。
 
 プロジェクトの下位ディレクトリで打っても、`projects/<name>/env` を直接読むため同じグループに
-なります。プロジェクトの外（`$DEVBASE_ROOT` など）では 2 → 3 で決まります。
+なります。プロジェクトの外（`$DEVBASE_ROOT` など）ではグループが決まらないため、機密の
+コマンドには `--group NAME` が要ります（[別のグループの置き場を操作する](#別のグループの置き場を操作する--group)）。
 
 **機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` はグループの決定に使われません**（置き場を
 決める値をその置き場から読むことになるため）。置き場の値は機密の合成から外れ、コンテナを
@@ -240,9 +240,11 @@ OpenBao の KV v2 にはコメント・空行の置き場がありません。`d
 `devbase env delete DEVBASE_ACCOUNT_GROUP ...` で消してください。`devbase env set` は
 このキーを置き場へ書かずに終了コード 1 で止まります（[環境変数ガイド](environment-variables.md#機密の置き場には書けない)）。
 
-`default` をボリューム名（`devbase_home_default`）はそのままに、置き場の上だけ別の名前で
-扱うには `group_aliases` を使います。`default: nyle` なら、グループを宣言していない
-プロジェクトは `team/nyle/…` を読み書きします。
+ボリューム名（`devbase_home_<group>`）はそのままに、置き場の上だけ別の名前で扱うには
+`group_aliases` を使います。`acme: nyle` なら、`acme` を宣言したプロジェクトは
+`team/nyle/…` を読み書きします。`default` はキーにも値にも使えません。`default` を置いた
+設定は読み込みで止まり、`secrets/backend.yml` の `openbao.group_aliases` から消す行を示します
+（移行の手順は [`default` からの移行](environment-variables.md#default-からの移行)）。
 
 ### `secrets/backend.yml` の例
 
@@ -257,7 +259,7 @@ openbao:
   path_team_prefix: team        # チーム単位の親 (既定 team)
   path_user_prefix: users
   group_aliases:                # グループ名 → 置き場のグループ名 (既定は空)
-    default: nyle
+    acme: nyle
   timeout_seconds: 5
 cache:
   enabled: true
@@ -270,11 +272,11 @@ cache:
 ### 切り替える・戻す
 
 ```bash
-# グループ別の置き場へ切り替える (default を nyle の置き場で扱う)
-devbase env backend use openbao --layout group --group-alias default=nyle
+# グループ別の置き場へ切り替える
+devbase env backend use openbao --layout group
 
 # レイアウトはそのままで読み替えを指定し直す (今の読み替えは丸ごと置き換わる)
-devbase env backend use openbao --group-alias default=nyle
+devbase env backend use openbao --group-alias acme=nyle
 
 # 従来の置き場 (version: 1) へ戻す
 devbase env backend use openbao --layout flat
@@ -290,8 +292,11 @@ devbase env backend use openbao --layout flat
 | `--group-alias` と `--layout flat`（または `version: 1` の設定のまま） | 終了コード 2。設定を書き換えない |
 | `--layout` / `--group-alias` と `openbao` 以外の backend | 終了コード 2。設定を書き換えない |
 
-`FROM` と `TO` には `DEVBASE_ACCOUNT_GROUP` と同じ規則が当たり、`TO` に `global` /
-`projects` は使えません。通らなければ終了コード 2 で、設定は書き換えません。
+`FROM` と `TO` には `DEVBASE_ACCOUNT_GROUP` と同じ規則が当たり（`default` も使えない）、`TO` に
+`global` / `projects` は使えません。通らなければ終了コード 2 で、設定は書き換えません。
+今の `backend.yml` に `default` の読み替えが残っていると、`use` は既存の設定を読めずに引数だけで
+組み立て直します（接続設定・レイアウト・ほかの読み替えを引き継がない）。先に
+`secrets/backend.yml` のその行を手で消してください。
 
 `--layout flat` で戻したときに捨てた読み替えは、もう一度 `--layout group` にしても戻りません。
 `--group-alias` を付け直してください。
@@ -305,7 +310,7 @@ backend を openbao に設定しました: .../secrets/backend.yml
   mount:   devbase
   個人単位の識別子: member01
   レイアウト: flat (version 1)
-  group_aliases (default → nyle) を捨てました (version: 1 は読み替えを持ちません)
+  group_aliases (acme → nyle) を捨てました (version: 1 は読み替えを持ちません)
   キャッシュ: 有効
   キャッシュ (.../secrets/cache) を消しました (レイアウトが group から flat へ変わったため)
   接続を確かめる: devbase env backend test
@@ -318,8 +323,8 @@ devbase はサーバ上のデータを移しません。レイアウトを変え
 
 ### 対象のグループを確かめる（`status`）
 
-`devbase env backend status` は、実行したディレクトリの対象のグループと、どのファイルで
-決まったか、そのグループで組んだ 4 つのパスを表示します。
+`devbase env backend status` は、実行したディレクトリのプロジェクトのグループと、宣言の
+ファイルと行、そのグループで組んだ 4 つのパスを表示します。
 
 ```text
 $ cd projects/api && devbase env backend status
@@ -330,7 +335,7 @@ $ cd projects/api && devbase env backend status
   mount:   devbase
   個人単位の識別子: member01
   レイアウト: group (version 2)
-  グループ:   default → nyle (projects/api/env にも $DEVBASE_ROOT/env にも宣言なし)
+  グループ:   acme → nyle (projects/api/env:1)
 
   置き場 (<mount>/<path>):
     チーム共通:           devbase/team/nyle/global
@@ -340,18 +345,19 @@ $ cd projects/api && devbase env backend status
 ```
 
 `projects/web/env` に `DEVBASE_ACCOUNT_GROUP=with` があれば、`projects/web` では
-`グループ:   with (projects/web/env)` と `devbase/team/with/…` が出ます。プロジェクトの外では
-プロジェクトのパスが `<name>` のまま出ます。
+`グループ:   with (projects/web/env:1)` と `devbase/team/with/…` が出ます。プロジェクトの外では
+`グループ:   なし（プロジェクトの外）` と出て、パスのグループとプロジェクト名が `<g>` /
+`<name>` のまま出ます。
 
 `devbase env backend test` も対象のグループの置き場だけを調べます。グループの違う
-プロジェクトは調べず、その名前を「対象のグループと違う置き場のプロジェクトは調べていません」
-として表示します。
+プロジェクトと宣言の無いプロジェクトは調べず、その名前を「対象のグループと違う置き場の
+プロジェクトは調べていません」として表示します。プロジェクトの外では `--group NAME` が要ります。
 
 ### 別のグループの置き場を操作する（`--group`）
 
-`env list` / `get` / `set` / `delete` / `edit` / `init` / `sync` は、既定では対象のグループ
-（実行したディレクトリのプロジェクトのグループ）の置き場を相手にします。別のグループの
-置き場は `--group NAME` で指定します。
+`env list` / `get` / `set` / `delete` / `edit` / `init` / `sync` は、プロジェクトの中では
+そのプロジェクトのグループの置き場を相手にします。別のグループの置き場は `--group NAME` で
+指定します。**プロジェクトの外では `--group NAME` が必須です。**
 
 ```bash
 cd "$DEVBASE_ROOT"
@@ -362,16 +368,21 @@ devbase env set --user --group kkg KEY=value
 
 | 状況 | 結果 |
 |---|---|
-| `--group` なし | 対象のグループの置き場 |
+| プロジェクトの中、`--group` なし | そのプロジェクトのグループの置き場 |
+| プロジェクトの外、`--group` なし | 置き場を開かずに `--group <名前>` を付けるよう示して終了コード 2 |
+| 宣言の無いプロジェクトの中 | 置き場を開かずに宣言の書き方を示して終了コード 1（backend を問わない） |
 | `--group NAME`、`-p` なし | 共通の参照だけが `NAME` のグループになる |
 | `--group NAME` と `-p`、プロジェクトと同じ置き場 | そのプロジェクトの参照を読み書きする |
 | `--group NAME` と `-p`、プロジェクトと違う置き場 | 両方のグループ名を述べて終了コード 1。読み書きしない |
 | `-p` なしの `list` / `get` で、`--group` がプロジェクトと違う置き場 | 共通の参照だけを出す・探す。プロジェクトの参照を含めなかった旨を標準エラーへ出す |
-| 使えないグループ名（`ubuntu`、数字だけ、`a/b` など、読み替え後が `global` / `projects`） | 理由を述べて終了コード 2 |
+| 使えないグループ名（`ubuntu`、`default`、数字だけ、`a/b` など、読み替え後が `global` / `projects`） | 理由を述べて終了コード 2 |
 | `version: 1` の設定やファイル backend で `--group` | 「グループ別の置き場を選んだ設定でだけ使える」旨を述べて終了コード 2 |
 
-「同じ置き場」かは読み替えた後の名前で比べます。`default: nyle` の読み替えがあれば、
-グループを宣言していないプロジェクトで `-p --group nyle` も `-p --group default` も通ります。
+`version: 1` の設定やファイル backend では、プロジェクトの外で `--group` を付けずに打った
+コマンドの振る舞いは変わりません。
+
+「同じ置き場」かは読み替えた後の名前で比べます。`acme: nyle` の読み替えがあれば、`acme` を
+宣言したプロジェクトで `-p --group nyle` も `-p --group acme` も通ります。
 
 `-p` で別のグループのプロジェクトの参照へ書けないのは、書いても `devbase up` がそこを
 読まないためです。プロジェクトのグループを変えるときは `projects/<name>/env` の
@@ -379,53 +390,47 @@ devbase env set --user --group kkg KEY=value
 
 `env list` の見出しにはグループが付きます（例: `=== グローバル（グループ kkg） (...) ===`）。
 `group_aliases` で読み替えているグループでは、読み替えの前と後が並びます
-（例: `=== グローバル（グループ default → nyle） (...) ===`）。`env backend test` の一覧も同じ形で、
+（例: `=== グローバル（グループ acme → nyle） (...) ===`）。`env backend test` の一覧も同じ形で、
 見出しのグループ名と隣のパス（`devbase/team/nyle/global`）が同じグループを指します。
 
 ### `init` / `sync` / `project` / `export` / `import`
 
 | コマンド | グループの扱い |
 |---|---|
-| `env init` | 対象のグループのチーム共通へ書く。`--group NAME` で指定できる。`devbase up` が自動で起動する `env init` にはプロジェクトのグループが渡る |
-| `env sync` | 対象のグループの個人共通とチーム共通のうち、キーがある方へ書く（両方にあれば個人共通、どちらにも無ければ個人共通）。`--group NAME` で指定できる。同期済みのハッシュは `$DEVBASE_ROOT/.env.sources.<g>.yml` にグループごとに控える（[`env sync`](cli-reference/03-env.md#devbase-env-sync)） |
+| `env init` | 対象のグループのチーム共通へ書く。`--group NAME` で指定できる（プロジェクトの外では必須）。`devbase up` が自動で起動する `env init` にはプロジェクトのグループが渡る |
+| `env sync` | 対象のグループの個人共通とチーム共通のうち、キーがある方へ書く（両方にあれば個人共通、どちらにも無ければ個人共通）。`--group NAME` で指定できる（プロジェクトの外では必須）。同期済みのハッシュは `$DEVBASE_ROOT/.env.sources.<g>.yml` にグループごとに控える（[`env sync`](cli-reference/03-env.md#devbase-env-sync)） |
 | `env project` | 実行したプロジェクトのグループの参照へ書く |
-| `env export` | 共通は対象のグループのもの。プロジェクトは対象のグループと同じ置き場のものだけを集め、外したプロジェクトの名前とグループを標準エラーへ出す |
-| `env import` | 共通は対象のグループへ、プロジェクトはそれぞれのグループへ取り込む。バンドルに対象のグループと違う置き場のプロジェクトがあれば、1 件も取り込まずに名前とグループを挙げて終了コード 1。`--exclude-project NAME` で外して取り込む |
+| `env export` | 共通は対象のグループのもの。プロジェクトは対象のグループと同じ置き場のものだけを集め、外したプロジェクトの名前とグループを標準エラーへ出す。集める対象に宣言の無いプロジェクトがあれば、書き出さずに名前を挙げて止まる |
+| `env import` | 共通は対象のグループへ、プロジェクトはそれぞれのグループへ取り込む。バンドルに対象のグループと違う置き場のプロジェクトか宣言の無いプロジェクトがあれば、1 件も取り込まずに名前を挙げて終了コード 1。`--exclude-project NAME` で外して取り込む |
 
-対象のグループは実行したディレクトリで決まります（プロジェクトの中ならそのプロジェクトの
-グループ、外なら `$DEVBASE_ROOT/env` のグループ）。別のグループの機密を export / import する
-ときは、そのグループのプロジェクトのディレクトリで実行します。
+対象のグループは、`--group NAME` があればそのグループ、無ければ実行したプロジェクトの宣言の
+グループです。プロジェクトの外では `--group NAME` が必須です。
 
 ### `up` / `scale` がグループの食い違いで止まったとき
 
-`version: 2` では、コンテナのボリュームのグループと機密のグループが食い違うと、`devbase up` と
-`devbase scale` は何も作らずに終了コード 1 で止まります。スナップショット・ボリューム・
-`project.local.yml` の `scale` の書き換え・`env init` の起動より前に確かめます。
-
-ボリュームのグループはプロセスの環境変数 `DEVBASE_ACCOUNT_GROUP`、機密のグループは `env`
-ファイルで決まるため、次のように打つと食い違います。
+コンテナのボリュームのグループはプロセスの環境変数 `DEVBASE_ACCOUNT_GROUP`、機密のグループは
+プロジェクトの宣言で決まります。環境変数が未設定なら devbase が宣言の値を使いますが、値が
+あって宣言と違うと、`devbase up` と `devbase scale` は何も作らずに終了コード 1 で止まります
+（backend を問わない）。スナップショット・ボリューム・`project.local.yml` の `scale` の
+書き換え・`env init` の起動より前に確かめます。
 
 ```text
-$ cd projects/api                     # env にも $DEVBASE_ROOT/env にも宣言なし
+$ cd projects/api                     # env に DEVBASE_ACCOUNT_GROUP=nyle
 $ DEVBASE_ACCOUNT_GROUP=kkg devbase up
-Error: ボリュームと機密のアカウントグループが食い違うため起動しません
-  ボリューム: kkg (プロセスの環境変数 DEVBASE_ACCOUNT_GROUP)
-  機密:       default (projects/api/env にも $DEVBASE_ROOT/env にも宣言なし)
-  グループを変えるならプロジェクトの env に DEVBASE_ACCOUNT_GROUP を書いてください
+Error: プロセスの環境変数と宣言のアカウントグループが食い違うため起動しません
+  環境変数: kkg (プロセスの環境変数 DEVBASE_ACCOUNT_GROUP)
+  宣言:     nyle (projects/api/env:1)
+  グループを変えるならプロジェクトの env の DEVBASE_ACCOUNT_GROUP を直し、環境変数は外してください
 ```
-
-直し方は、どちらのグループで起動したいかで決まります。
 
 | 起動したいグループ | 直し方 |
 |---|---|
-| 環境変数で指定したグループ（例: `kkg`） | `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=kkg` を書く。プロジェクトの `env` はラッパーが読み込むため、両方が揃う |
-| `env` ファイルで決まるグループ | シェルの環境変数を外す（`unset DEVBASE_ACCOUNT_GROUP`。シェルの設定ファイルで `export` していればその行も消す） |
+| 環境変数で指定したグループ（例: `kkg`） | `projects/<name>/env` の宣言を `DEVBASE_ACCOUNT_GROUP=kkg` に直し、環境変数を外す |
+| 宣言のグループ | シェルの環境変数を外す（`unset DEVBASE_ACCOUNT_GROUP`。シェルの設定ファイルで `export` していればその行も消す） |
 
 機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` はこの食い違いを起こしません（置き場の値は
 プロセスの環境変数へ載らないため）。置き場に残っていると別の警告が出るので、そこに書かれた
 `devbase env delete DEVBASE_ACCOUNT_GROUP ...` で消してください。
-
-`version: 1` の設定では、この検査は行いません。
 
 ## コンテナの中から `bao` を使う
 
@@ -538,7 +543,7 @@ devbase env backend use openbao --cache      # 元に戻す
 ## 元へ戻す
 
 ```bash
-devbase env backend migrate --to age
+devbase env backend migrate --to age --group nyle
 ```
 
 サーバ上の機密は**消しません**（他の利用者が参照している可能性があるため）。残っている
@@ -549,8 +554,8 @@ devbase env backend migrate --to age
 
 | 移すもの | 移し元 |
 |---|---|
-| 共通の機密 | `$DEVBASE_ROOT/env` のグループのチーム共通（`team/<g>/global`） |
-| プロジェクトの機密 | それぞれのプロジェクトのグループのチームのプロジェクト |
+| 共通の機密 | `--group` のグループのチーム共通（`team/<g>/global`。プロジェクトの外では `--group` が必須） |
+| プロジェクトの機密 | それぞれのプロジェクトの宣言のグループのチームのプロジェクト |
 | 他のグループのチーム共通 | **移さない。** 読み取りの要求も出さず、グループ名とパスを表示してサーバ上に残す |
 
 `--exclude-project NAME` で外したプロジェクトは、`--to age` でも移しません。手元の

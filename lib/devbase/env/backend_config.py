@@ -18,8 +18,8 @@
 配布の行き渡っていない端末が読んでも、従来のパスを黙って読まずに止まる。
 
 ``openbao.group_aliases`` はグループ名を置き場の上だけ別の名前へ読み替える (決定 4)。
-``DEVBASE_ACCOUNT_GROUP`` の既定値とボリューム名 ``devbase_home_<group>`` は変えず、
-``default`` を ``nyle`` の置き場へ向けるような対応を端末の設定にだけ書く。
+``DEVBASE_ACCOUNT_GROUP`` とボリューム名 ``devbase_home_<group>`` は変えず、置き場の
+名前だけを端末の設定で別の名前へ向ける。旧既定の ``default`` はキーにも値にも使えない (#315)。
 """
 
 from __future__ import annotations
@@ -106,11 +106,10 @@ def _validate_relative_path(value: str, key: str) -> str:
 def _validate_group_name(value: Any, what: str) -> str:
     """グループ名を ``DEVBASE_ACCOUNT_GROUP`` と同じ規則で検証する。
 
-    規則はボリューム名の検証 (:func:`devbase.volume.manager.resolve_account_group`) を
-    そのまま使い、ここへ写さない。空は ``default`` へ読み替えずに拒む
-    (``resolve_account_group`` は空を既定へ解決するが、置き場の名前では誤りである)。
+    規則はボリューム名の検証 (:func:`devbase.volume.manager.validate_account_group`) を
+    そのまま使い、ここへ写さない。
     """
-    from devbase.volume.manager import resolve_account_group
+    from devbase.volume.manager import validate_account_group
 
     if not isinstance(value, str) or not value.strip():
         raise BackendConfigError(f"{what} が空です: {value!r}")
@@ -118,9 +117,10 @@ def _validate_group_name(value: Any, what: str) -> str:
         # 検証が前後の空白を落とした名前を返しても、呼び出し側が元の値を使うとパスに空白が入る
         raise BackendConfigError(f"{what} に前後の空白は使えません: {value!r}")
     try:
-        return resolve_account_group(value)
+        return validate_account_group(value)
     except DevbaseError as e:
         raise BackendConfigError(f"{what}: {e}") from None
+
 
 
 def _validate_url(url: str) -> str:
@@ -187,7 +187,16 @@ class OpenBaoSettings:
                     "置けます (現在: version 1)")
         for key in keys:
             _validate_relative_path(getattr(self, key), key)
+        from devbase.volume.manager import LEGACY_GROUP_NAME
+
         for source, target in self.group_aliases.items():
+            if LEGACY_GROUP_NAME in (source, target):
+                # 旧既定の読み替え (default: nyle など) は、宣言の無いプロジェクトを黙って
+                # あるグループへ落とす経路だった。devbase は backend.yml を書き換えない (#315 決定 9)
+                raise BackendConfigError(
+                    f"openbao.group_aliases の '{source}: {target}' は使えません。"
+                    f"{LEGACY_GROUP_NAME} はグループ名として廃止されました。"
+                    f"secrets/backend.yml の openbao.group_aliases からこの行を消してください")
             _validate_group_name(source, f"openbao.group_aliases のキー {source!r}")
             _validate_group_name(target, f"openbao.group_aliases.{source} の値")
             self._check_reserved(target, f"openbao.group_aliases.{source} の値")
@@ -215,7 +224,7 @@ class OpenBaoSettings:
         return mapped
 
     def display_group(self, group: str) -> str:
-        """文言に出すグループ名。読み替えがあれば前と後の両方 (``default → nyle``)"""
+        """文言に出すグループ名。読み替えがあれば前と後の両方 (``acme → nyle``)"""
         mapped = self.storage_group(group)
         return group if mapped == group else f'{group} → {mapped}'
 

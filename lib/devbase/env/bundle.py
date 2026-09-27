@@ -309,11 +309,15 @@ def _collect_projects(store, devbase_root,
     other_groups: List[str] = []
     # `.` 始まりはプロジェクトとして数えないので、書庫の名前の検査 (_should_skip_project) より
     # 前に黙って外す (#276)。書庫の名前の規則 (is_valid_project_name) はその後に効く
-    candidates = names.project_dirs(projects_dir)
+    candidates = [p for p in names.project_dirs(projects_dir)
+                  if not _should_skip_project(p.name, p, included, excluded)]
+    if store.grouped:
+        # 宣言の無いプロジェクトが 1 つでもあれば、一部だけを書き出さずに止める (#315 I11)
+        from devbase.env import groups as _groups
+
+        _groups.require_declared(devbase_root, [p.name for p in candidates])
     for proj_dir in candidates:
         name = proj_dir.name
-        if _should_skip_project(name, proj_dir, included, excluded):
-            continue
         project_group = store.ref_group(name)
         if not store.same_storage_group(project_group, group):
             other_groups.append(f"{name} ({store.config.openbao.display_group(project_group)})")
@@ -335,7 +339,8 @@ def make_entries_from_disk(devbase_root,
                            include_global: bool = True,
                            include_metadata: bool = True,
                            include_projects: Optional[Sequence[str]] = None,
-                           exclude_projects: Sequence[str] = ()) -> List[BundleEntry]:
+                           exclude_projects: Sequence[str] = (),
+                           group: Optional[str] = None) -> List[BundleEntry]:
     """DEVBASE_ROOT 配下から export 対象を収集して BundleEntry のリストを返す
 
     Args:
@@ -344,6 +349,8 @@ def make_entries_from_disk(devbase_root,
         include_metadata: True なら $DEVBASE_ROOT/.env.sources.yml を含める
         include_projects: 指定があればこのプロジェクト名のみを対象
         exclude_projects: 除外するプロジェクト名
+        group: 対象のグループ (``--group``)。グループ別の置き場で省けば実行時のプロジェクトの
+            宣言で、プロジェクトの外なら ``GroupRequiredError`` (#315)
     """
     from pathlib import Path
 
@@ -357,7 +364,8 @@ def make_entries_from_disk(devbase_root,
     # 暗号化されるので、ここで平文に戻しても保存時の平文は生まれない。
     store = SecretStore(devbase_root)
     # 対象のグループ (PLAN56)。グループ別の置き場でなければ None で、参照は今と同じ
-    group = store.ref_group(_runtime.current_project_name(devbase_root))
+    if group is None:
+        group = store.ref_group(_runtime.current_project_name(devbase_root))
 
     entries: List[BundleEntry] = []
     if include_global:

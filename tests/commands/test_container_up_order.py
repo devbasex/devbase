@@ -77,7 +77,7 @@ def up_harness(tmp_path, monkeypatch):
     monkeypatch.setattr(container, '_bao_environment', lambda: {})
     monkeypatch.setattr(container, '_push_bao_token', lambda *a, **k: None)
     # PLAN56: グループの食い違いの検査も実行シェルの DEVBASE_ROOT の backend を読む
-    monkeypatch.setattr(container, '_check_group_consistency', lambda project=None: True)
+    monkeypatch.setattr(container, '_require_group_declaration', lambda project=None: True)
 
     def fake_down(compose_file=None):
         # 停止時点で渡された compose の中身も記録する (旧構成であること)
@@ -191,8 +191,8 @@ PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: car
 
 
 @pytest.fixture
-def mismatch(tmp_path, monkeypatch):
-    """``projects/api`` (宣言なし) で ``DEVBASE_ACCOUNT_GROUP=kkg``。副作用の呼び出しを記録する。
+def up_env(tmp_path, monkeypatch):
+    """``projects/api`` (宣言なし・環境変数なし) で起動する。副作用の呼び出しを記録する。
 
     ``DEVBASE_ROOT`` は tmp へ向け、実行シェルの backend を読まない。
     """
@@ -207,7 +207,7 @@ def mismatch(tmp_path, monkeypatch):
     monkeypatch.setenv('DEVBASE_ROOT', str(root))
     monkeypatch.setenv('PWD', str(project))
     monkeypatch.chdir(project)
-    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'kkg')
+    monkeypatch.delenv('DEVBASE_ACCOUNT_GROUP', raising=False)
     for name in ('DOCKER_CONTEXT', 'DOCKER_HOST', 'DEVBASE_DOCKER_CONTEXT'):
         monkeypatch.delenv(name, raising=False)
     dc.reset()
@@ -230,57 +230,122 @@ def mismatch(tmp_path, monkeypatch):
                         lambda *, required: calls.append(('inject',)))
     yield {'root': root, 'project': project, 'calls': calls}
     runtime.release_store()
+    # _require_group_declaration が os.environ へ直接置いた値を次のテストへ残さない
+    os.environ.pop('DEVBASE_ACCOUNT_GROUP', None)
 
 
 def _config(root, text):
     (root / 'secrets' / 'backend.yml').write_text(text)
 
 
-def test_up_stops_on_a_group_mismatch_before_any_side_effect(mismatch, caplog):
-    """受け入れ条件 16: 両方のグループ名と出所を述べて 1。env init・フック・スナップショットを起動しない"""
-    _config(mismatch['root'], GROUPED_CONFIG)
+def _declare(up_env, text):
+    (up_env['project'] / 'env').write_text(text)
+
+
+@pytest.mark.parametrize('config', [GROUPED_CONFIG, FLAT_CONFIG])
+def test_up_stops_without_a_declaration_before_any_side_effect(up_env, caplog, config):
+    """#315: 宣言が無ければ backend を問わず止まり、書き方を示す。副作用は 1 つも起きない"""
+    _config(up_env['root'], config)
 
     assert container.cmd_up() == 1
 
-    assert mismatch['calls'] == []
-    assert not (mismatch['project'] / '.env').exists()
-    text = caplog.text
-    assert 'kkg' in text and 'default' in text
-    assert 'DEVBASE_ACCOUNT_GROUP' in text
-    assert 'projects/api/env にも $DEVBASE_ROOT/env にも宣言なし' in text
+    assert up_env['calls'] == []
+    assert not (up_env['project'] / '.env').exists()
+    assert not (up_env['project'] / '.docker-compose.scale.yml').exists()
+    assert 'projects/api/env' in caplog.text
+    assert 'DEVBASE_ACCOUNT_GROUP=<グループ>' in caplog.text
 
 
-def test_scale_stops_on_a_group_mismatch_without_rewriting_the_scale(mismatch, caplog):
-    """受け入れ条件 16: ``scale`` は ``project.yml`` の ``scale`` を書き換えない"""
-    _config(mismatch['root'], GROUPED_CONFIG)
+def test_up_stops_on_an_empty_declaration(up_env, caplog):
+    _config(up_env['root'], FLAT_CONFIG)
+    _declare(up_env, 'FOO=1\nDEVBASE_ACCOUNT_GROUP=\n')
+
+    assert container.cmd_up() == 1
+
+    assert up_env['calls'] == []
+    assert 'projects/api/env:2' in caplog.text
+
+
+def test_up_stops_on_a_root_env_declaration(up_env, caplog):
+    """#315 前提 2: $DEVBASE_ROOT/env の宣言は、プロジェクトが宣言済みでも止める"""
+    _config(up_env['root'], FLAT_CONFIG)
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+    (up_env['root'] / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+
+    assert container.cmd_up() == 1
+
+    assert up_env['calls'] == []
+    assert '$DEVBASE_ROOT/env:1' in caplog.text
+
+
+def test_up_stops_on_the_reserved_default(up_env, caplog):
+    _config(up_env['root'], FLAT_CONFIG)
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=default\n')
+
+    assert container.cmd_up() == 1
+
+    assert up_env['calls'] == []
+    assert 'migrate-volume' in caplog.text
+
+
+def test_scale_stops_without_a_declaration_without_rewriting_the_scale(up_env, caplog):
+    """#315 I4: ``scale`` は ``project.yml`` の ``scale`` を書き換えない"""
+    _config(up_env['root'], GROUPED_CONFIG)
 
     assert container.cmd_scale(2) == 1
 
-    assert mismatch['calls'] == []
-    assert (mismatch['project'] / 'project.yml').read_text() == PROJECT_YML
-    assert 'kkg' in caplog.text and 'default' in caplog.text
+    assert up_env['calls'] == []
+    assert (up_env['project'] / 'project.yml').read_text() == PROJECT_YML
+    assert 'projects/api/env' in caplog.text
 
 
-def test_matching_groups_pass_the_check(mismatch):
-    _config(mismatch['root'], GROUPED_CONFIG)
-    (mismatch['project'] / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
-
-    assert container._check_group_consistency() is True
-
-
-def test_flat_layout_does_not_stop_the_same_up(mismatch, monkeypatch):
-    """受け入れ条件 16: 今の形の ``backend.yml`` では同じ操作で止めない"""
-    _config(mismatch['root'], FLAT_CONFIG)
-    monkeypatch.setattr(container, '_ensure_env_files',
-                        lambda: mismatch['calls'].append(('env-files',)) or False)
+@pytest.mark.parametrize('config', [GROUPED_CONFIG, FLAT_CONFIG])
+def test_up_stops_on_a_group_mismatch_before_any_side_effect(up_env, caplog, monkeypatch,
+                                                             config):
+    """I2: 環境変数と宣言が違えば backend を問わず止まり、2 つの値と出所を出す"""
+    _config(up_env['root'], config)
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'kkg')
 
     assert container.cmd_up() == 1
 
-    assert mismatch['calls'] == [('env-files',)]
+    assert up_env['calls'] == []
+    text = caplog.text
+    assert 'kkg' in text and 'nyle' in text
+    assert 'projects/api/env:1' in text
 
 
-def test_flat_layout_does_not_stop_the_same_scale(mismatch, monkeypatch):
-    _config(mismatch['root'], FLAT_CONFIG)
+def test_matching_groups_pass_the_check(up_env, monkeypatch):
+    _config(up_env['root'], GROUPED_CONFIG)
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=kkg\n')
+    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'kkg')
+
+    assert container._require_group_declaration() is True
+
+
+def test_unset_environment_is_filled_from_the_declaration(up_env):
+    """決定 5: 環境変数が未設定なら宣言の値を置く (ボリュームと機密が同じ値になる)"""
+    _config(up_env['root'], FLAT_CONFIG)
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=with\n')
+
+    assert container._require_group_declaration() is True
+    assert os.environ['DEVBASE_ACCOUNT_GROUP'] == 'with'
+
+
+def test_declared_up_proceeds_to_the_next_check(up_env, monkeypatch):
+    _config(up_env['root'], FLAT_CONFIG)
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+    monkeypatch.setattr(container, '_ensure_env_files',
+                        lambda: up_env['calls'].append(('env-files',)) or False)
+
+    assert container.cmd_up() == 1
+
+    assert up_env['calls'] == [('env-files',)]
+
+
+def test_declared_scale_proceeds(up_env, monkeypatch):
+    _config(up_env['root'], FLAT_CONFIG)
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=nyle\n')
 
     def stop_here(*args, **kwargs):
         raise DevbaseError('ここで止める')
@@ -289,8 +354,8 @@ def test_flat_layout_does_not_stop_the_same_scale(mismatch, monkeypatch):
 
     assert container.cmd_scale(2) == 1
 
-    assert 'scale: 2' in (mismatch['project'] / 'project.yml').read_text()
-    assert ('volumes',) in mismatch['calls']
+    assert 'scale: 2' in (up_env['project'] / 'project.yml').read_text()
+    assert ('volumes',) in up_env['calls']
 
 
 def test_up_names_default_services_from_generated_compose(up_harness, monkeypatch):
@@ -353,15 +418,16 @@ def test_store_account_group_does_not_stop_the_group_check(openbao_root, openbao
                                                             monkeypatch, caplog):
     """受け入れ条件 6: dispatch 前の注入 → 食い違いの検査 の順に呼んでも True。
 
-    ``projects/web`` にも ``$DEVBASE_ROOT/env`` にも宣言が無く、共通の機密 (``team/nyle/global``)
-    に ``DEVBASE_ACCOUNT_GROUP=kkg`` がある。注入が置き場の値をプロセスへ載せると、ボリュームは
-    ``kkg``・機密は ``default`` で止まっていた。
+    ``projects/web`` は ``nyle`` を宣言し、共通の機密 (``team/nyle/global``) に
+    ``DEVBASE_ACCOUNT_GROUP=kkg`` がある。注入が置き場の値をプロセスへ載せると、環境変数は
+    ``kkg``・宣言は ``nyle`` で止まる。
     """
     from tests.conftest import configure_openbao
     from devbase.env import runtime
 
     root = openbao_root
-    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(root, openbao, layout='group')
+    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     openbao.put('team/nyle/global', {'DEVBASE_ACCOUNT_GROUP': 'kkg', 'TOKEN': 't'})
     monkeypatch.setenv('DEVBASE_ROOT', str(root))
     monkeypatch.setenv('PWD', str(root / 'projects' / 'web'))
@@ -372,8 +438,9 @@ def test_store_account_group_does_not_stop_the_group_check(openbao_root, openbao
     try:
         runtime.inject(root, 'web')
 
-        assert container._check_group_consistency() is True
         assert 'DEVBASE_ACCOUNT_GROUP' not in os.environ
+        assert container._require_group_declaration() is True
+        assert os.environ['DEVBASE_ACCOUNT_GROUP'] == 'nyle'
         assert os.environ['TOKEN'] == 't'
         assert '食い違う' not in caplog.text
     finally:

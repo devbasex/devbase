@@ -10,9 +10,11 @@ devbase のスナップショット機能は、永続化ボリュームを増分
 | `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナ共通の AI 資産・共有ファイル |
 | `devbase_home_{group}` | `/persistent/group` | アカウントグループ単位の認証・会話ログ・gcloud / gws の設定 |
 
-`{group}` は実行時の `DEVBASE_ACCOUNT_GROUP` の解決結果です（未設定なら `default`）。
-プロジェクトディレクトリで実行すればそのプロジェクトのグループが、devbase ルートで実行すれば
-グローバル `env` の値（無ければ `default`）が対象になります。詳細は
+`{group}` は対象のアカウントグループです。`devbase up` の自動スナップショットと、プロジェクトの
+ディレクトリで打つ `devbase snapshot create` ではそのプロジェクトの宣言（`projects/<name>/env` の
+`DEVBASE_ACCOUNT_GROUP`）のグループが、それ以外の場所では `--group NAME` で指定したグループが
+対象になります。既定のグループはありません。詳細は
+[環境変数ガイド](environment-variables.md#アカウントグループ-devbase_account_group) と
 [コンテナ運用ガイド](container-operations.md) の「アカウントグループ」を参照してください。
 
 ## 仕組み
@@ -85,7 +87,7 @@ graph LR
 
 ```mermaid
 graph TD
-    subgraph 系列 default
+    subgraph 系列 nyle
         subgraph 世代 1（最古）
             A1[full.tar.zst]
             A2[incr-001.tar.zst]
@@ -133,7 +135,7 @@ flowchart TD
 ```
 
 直近のスナップショットから `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES`（既定 60 分）以内なら
-スナップショットを飛ばします。この間隔も系列ごとに判定するため、default のプロジェクトを
+スナップショットを飛ばします。この間隔も系列ごとに判定するため、nyle のプロジェクトを
 起動した直後に with のプロジェクトを起動しても、with の系列は控えます。
 
 ### `devbase down` 時の動作
@@ -178,6 +180,14 @@ backups/
 
 ### スナップショットの作成
 
+プロジェクトの外（devbase ルートなど）では対象のグループが決まらないため、`--group NAME` が
+要ります。付けないと終了コード 2 で止まります。宣言の無いプロジェクトの中では、宣言の書き方を
+示して終了コード 1 で止まります。TUI の「作成」は、名前の前に対象のグループを選ばせます。
+
+```bash
+devbase snapshot create --group nyle
+```
+
 #### 自動命名（タイムスタンプ）
 
 ```bash
@@ -219,12 +229,19 @@ devbase snapshot list
 名前                     作成日時                    差分数        サイズ  対象ボリューム
 ------------------------------------------------------------------------------------------
 20260218-080000          2026-02-18 08:00:00           3       1.2GB  devbase_home_ubuntu
-20260220-103000          2026-02-20 10:30:00           2     850.0MB  devbase_home_ubuntu, devbase_home_default
+20260220-103000          2026-02-20 10:30:00           2     850.0MB  devbase_home_ubuntu, devbase_home_nyle
 before-upgrade           2026-02-21 14:00:00           1       2.1GB  devbase_home_ubuntu, devbase_home_kkg
 ```
 
 「対象ボリューム」が `devbase_home_ubuntu` だけの世代は、アカウントグループ分離より**前**に
 作られた世代です。そのまま共通ボリュームへ復元できます。
+
+`devbase_home_default`（旧既定のボリューム）を含む系列は、グループの宣言が必須になる前に
+宣言の無いプロジェクトが作った世代です。一覧・コピー・削除・ローテーションができ、復元すると
+**元の `devbase_home_default` へ**戻ります（移し先の `devbase_home_<group>` へは戻しません）。
+新しい世代は作られません。移し先へ入れたいときは、元へ復元してから、移し先のボリュームを消して
+`devbase project migrate-volume --to <group>` をやり直します
+（[`default` からの移行](environment-variables.md#default-からの移行)）。
 
 ### 対象ボリュームが変わったとき
 
@@ -241,7 +258,7 @@ before-upgrade           2026-02-21 14:00:00           1       2.1GB  devbase_ho
 $ devbase snapshot create --name 20260218-080000
 スナップショット操作に失敗: スナップショット '20260218-080000' は別のボリューム構成
 (devbase_home_ubuntu) で作られています。現在の対象は devbase_home_ubuntu,
-devbase_home_default です。新しい世代を作成してください (devbase snapshot create)
+devbase_home_nyle です。新しい世代を作成してください (devbase snapshot create)
 ```
 
 ### スナップショットからの復元

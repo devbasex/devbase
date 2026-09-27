@@ -29,11 +29,10 @@ def b64(text: str) -> str:
 
 @pytest.fixture
 def grouped(openbao_root, openbao):
-    """``version: 2``。``$DEVBASE_ROOT/env`` のグループは ``team-a``"""
+    """``version: 2``。プロジェクトの外なので、対象のグループ ``team-a`` は ``--group`` で渡す"""
     from tests.conftest import configure_openbao
 
     configure_openbao(openbao_root, openbao, layout='group')
-    (openbao_root / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-a\n')
     return openbao_root
 
 
@@ -86,7 +85,7 @@ def test_a_key_only_in_the_user_global_updates_the_user_global(grouped, openbao,
     (home / '.aws' / 'config').write_text('[default]\nregion = b\n')
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert openbao.get(USER)[keys.AWS_CONFIG_BASE64] not in ('old', None)
     assert keys.AWS_CONFIG_BASE64 not in openbao.get(TEAM)
@@ -103,7 +102,7 @@ def test_a_key_only_in_the_team_global_updates_the_team_global(grouped, openbao,
     cred.write_text('v2')
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert openbao.get(TEAM)[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
     assert keys.GIT_CREDENTIALS_BASE64 not in openbao.get(USER)
@@ -119,7 +118,7 @@ def test_a_key_in_both_updates_only_the_user_global(grouped, openbao, home, host
     team_version = openbao.version_of(TEAM)
     cred.write_text('v2')
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert openbao.get(USER)[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
     assert openbao.get(TEAM)[keys.GIT_CREDENTIALS_BASE64] == b64('team')
@@ -136,14 +135,14 @@ def test_a_key_in_neither_goes_to_the_user_global(grouped, openbao, home, host_k
     openbao.put(USER, dict(host_keys))
     cred.write_text('v2')
 
-    assert env_cmd.cmd_env_sync(grouped, user=user) == 0
+    assert env_cmd.cmd_env_sync(grouped, user=user, group='team-a') == 0
 
     assert openbao.get(USER)[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
     assert keys.GIT_CREDENTIALS_BASE64 not in openbao.get(TEAM)
 
 
 def test_host_keys_missing_everywhere_go_to_the_user_global(grouped, openbao):
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert keys.HOST_SSH_HOST in openbao.get(USER)
     assert openbao.get(TEAM) == {}
@@ -158,7 +157,7 @@ def test_user_writes_a_team_only_key_to_the_user_global(grouped, openbao, home, 
     team_version = openbao.version_of(TEAM)
     cred.write_text('v2')
 
-    assert env_cmd.cmd_env_sync(grouped, user=True) == 0
+    assert env_cmd.cmd_env_sync(grouped, user=True, group='team-a') == 0
 
     assert openbao.get(USER)[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
     assert openbao.get(TEAM)[keys.GIT_CREDENTIALS_BASE64] == b64('v1')
@@ -176,7 +175,7 @@ def test_the_aws_source_is_registered_when_the_key_is_only_in_the_user_global(
     openbao.put(USER, {keys.AWS_CONFIG_BASE64: 'old', **host_keys})
     openbao.put(TEAM, dict(host_keys))
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     sources = SourcesManager(grouped, 'team-a')
     assert sources.get_source('aws')['env_key'] == keys.AWS_CONFIG_BASE64
@@ -192,7 +191,7 @@ def test_an_unregistered_source_with_a_key_is_compared_and_updated(grouped, open
     openbao.put(TEAM, dict(host_keys))
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert openbao.get(USER)[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
     assert (f'Git認証: ソース未登録（{USER_LABEL}にキーがあります）。'
@@ -220,7 +219,7 @@ def test_an_unregistered_gcp_profile_is_synced_even_if_another_is_registered(
     openbao.put(USER, {keys.gcp_credentials_key('mine'): b64('m1'), **host_keys})
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert openbao.get(USER)[keys.gcp_credentials_key('mine')] == b64('m2')
     assert (f'GCP認証 (mine): ソース未登録（{USER_LABEL}にキーがあります）。'
@@ -238,7 +237,7 @@ def test_an_unregistered_source_with_the_same_value_reports_no_change(grouped, o
     team_version = openbao.version_of(TEAM)
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert openbao.version_of(TEAM) == team_version
     assert (f'Git認証: ソース未登録（{TEAM_LABEL}にキーがあります）。'
@@ -258,7 +257,7 @@ def test_an_unregistered_aws_source_with_the_same_files_reports_no_change(
     user_version = openbao.version_of(USER)
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert openbao.version_of(USER) == user_version
     assert (f'AWS認証: ソース未登録（{USER_LABEL}にキーがあります）。'
@@ -270,7 +269,7 @@ def test_an_unregistered_source_without_the_file_says_so(grouped, openbao, host_
     openbao.put(TEAM, dict(host_keys))
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     assert openbao.get(USER)[keys.GIT_CREDENTIALS_BASE64] == b64('v1')
     assert (f'Git認証: ソース未登録（{USER_LABEL}にキーがあります）。'
@@ -286,7 +285,7 @@ def test_a_registered_source_without_a_hash_cannot_be_compared(grouped, openbao,
     openbao.put(USER, dict(host_keys))
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
 
     lines = infos(caplog)
     assert 'Git認証: 控えと比べられません（ハッシュか元のファイルがありません）' in lines
@@ -304,11 +303,11 @@ def test_an_unreachable_server_writes_nothing(grouped, openbao, home, host_keys)
     openbao.put(TEAM, dict(host_keys))
     openbao.put(USER, dict(host_keys))
     # 控えを作っておく (fresh で読むため、控えには落ちない)
-    assert env_cmd.cmd_env_list(grouped) == 0
+    assert env_cmd.cmd_env_list(grouped, group='team-a') == 0
     cred.write_text('v2')
     openbao.stop()
 
-    assert env_cmd.cmd_env_sync(grouped) == 1
+    assert env_cmd.cmd_env_sync(grouped, group='team-a') == 1
 
     assert openbao.writes == 0
     assert SourcesManager(grouped, 'team-a').check_changed('git_credentials') is True

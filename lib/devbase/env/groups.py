@@ -1,21 +1,22 @@
-"""機密の置き場のアカウントグループを決める (PLAN56)
+"""プロジェクトのアカウントグループの宣言を読む (PLAN56 / #315)
 
-``backend.yml`` が ``version: 2`` (``openbao.layout: group``) のとき、機密の置き場は
-アカウントグループ (``DEVBASE_ACCOUNT_GROUP``) ごとに分かれる。どのグループの置き場を
-読むかを、**機密を読む前に非機密の ``env`` ファイルだけから**決めるのがこのモジュールである。
+アカウントグループ (``DEVBASE_ACCOUNT_GROUP``) は、ホームのボリューム
+``devbase_home_<group>`` と、``backend.yml`` が ``version: 2`` (``openbao.layout: group``) の
+ときの機密の置き場を分ける単位である。どのグループかを、**機密を読む前に非機密の
+``env`` ファイルだけから**決めるのがこのモジュールである。
 
-決める順は ``projects/<name>/env`` → ``$DEVBASE_ROOT/env`` → ``default`` で、起動ラッパーが
-``set -a`` で ``source`` する順に重なった結果と同じになる。
+グループを決める出所は ``projects/<name>/env`` の空でない宣言だけである (#315)。既定の
+値は持たず、``$DEVBASE_ROOT/env`` に宣言があれば (名前を変えた既定になるため) 止める。
 
-見ないものが 2 つある (決定 3):
+見ないものが 2 つある (PLAN56 決定 3):
 
 - **プロセスの環境変数。** ラッパーは実行時のディレクトリの ``env`` だけを読むため、
   プロジェクトの下位ディレクトリから打つとプロジェクトの ``env`` がプロセスに載らない。
   ファイルを直接読めば、下位ディレクトリからでも同じグループになる
 - **機密の置き場。** 置き場を決める値をその置き場から読むと循環する。このため
-  :func:`declared_group` はストアを受け取らない
+  :func:`declare` はストアを受け取らない
 
-名前の検証はボリューム名と同じ :func:`devbase.volume.manager.resolve_account_group` に
+名前の検証はボリューム名と同じ :func:`devbase.volume.manager.validate_account_group` に
 任せ、同じ規則を別の場所へ写さない。
 """
 
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, List, Optional, Tuple
 
 from devbase.env import keys
 from devbase.env.store import EnvFile
@@ -36,20 +37,32 @@ logger = get_logger(__name__)
 ENV_FILENAME = 'env'
 
 
+class GroupDeclarationError(DevbaseError):
+    """グループの宣言が無い・空・使えない名前・``$DEVBASE_ROOT/env`` に行がある。
+
+    文は直すファイルと行を名指しする。
+    """
+
+
+class GroupRequiredError(DevbaseError):
+    """グループ別の置き場で、プロジェクトの外なのにグループが渡らない"""
+
+
 @dataclass(frozen=True)
 class DeclaredGroup:
-    """宣言されたグループと、それを決めたファイル"""
+    """宣言されたグループと、それを書いたファイルと行"""
 
     name: str
-    #: 決めたファイル。どこにも宣言が無く ``default`` になったときは ``None``
-    source: Optional[Path]
+    #: 宣言を書いたファイル (常に ``projects/<name>/env``)
+    source: Path
+    #: 宣言の行番号 (1 始まり)
+    line: int
 
 
-def _read_declaration(path: Path) -> Optional[str]:
-    """``path`` の ``DEVBASE_ACCOUNT_GROUP`` の値。ファイルかキーが無ければ ``None``。
+def _read_declaration(path: Path) -> Optional[Tuple[str, int]]:
+    """``path`` の ``DEVBASE_ACCOUNT_GROUP`` の値と行番号。ファイルかキーが無ければ ``None``。
 
-    空の値は ``''`` を返す。ラッパーの ``source`` では空の宣言も共通の宣言を打ち消し、
-    ボリュームのグループが ``default`` になるため、ここでも「宣言あり」として扱う。
+    空の値は ``''`` を返す (呼び出し元が「空の宣言」として止める)。
     """
     if not path.is_file():
         return None
@@ -59,57 +72,131 @@ def _read_declaration(path: Path) -> Optional[str]:
         raise DevbaseError(f"{path} を読めませんでした: {e}") from e
     # ラッパーの ``source`` と ``_load_project_env`` は ``export KEY=...`` も読み、後に書いた行が
     # 勝つ。パーサは ``export KEY`` をキーにし、辞書にすると同じキーの位置が最初の行のまま
-    # 残るため、行の順に走査して接頭辞を外して比べる
+    # 残るため、行の順に走査して接頭辞を外して比べる。パーサは 1 行を 1 項目にするため、
+    # 項目の位置がそのまま行番号になる
     found = None
-    for entry in entries:
+    for line_no, entry in enumerate(entries, start=1):
         if entry.kind != 'kv' or entry.key is None:
             continue
         key = entry.key
         name = key[len('export '):].strip() if key.startswith('export ') else key
         if name == keys.DEVBASE_ACCOUNT_GROUP:
-            found = entry.value or ''
+            found = (entry.value or '', line_no)
     return found
 
 
+def _root_env_line(root: Path) -> Optional[int]:
+    """``$DEVBASE_ROOT/env`` の宣言の行番号。無ければ ``None``"""
+    found = _read_declaration(Path(root) / ENV_FILENAME)
+    return None if found is None else found[1]
+
+
+def check_root_env(root: Path) -> None:
+    """``$DEVBASE_ROOT/env`` にグループの宣言があれば止める (名前を変えた既定になるため)"""
+    line = _root_env_line(root)
+    if line is not None:
+        raise GroupDeclarationError(
+            f"$DEVBASE_ROOT/env:{line} の {keys.DEVBASE_ACCOUNT_GROUP} は使えません。"
+            f"この行を消し、各プロジェクトの projects/<name>/env に "
+            f"{keys.DEVBASE_ACCOUNT_GROUP}=<グループ> を書いてください"
+        )
+
+
 def declare(root: Path, project: Optional[str]) -> DeclaredGroup:
-    """グループとその出所を返す。名前が使えなければ出所を添えて ``DevbaseError``。"""
-    from devbase.volume.manager import DEFAULT_ACCOUNT_GROUP, resolve_account_group
+    """プロジェクトのグループの宣言を読む。
+
+    Raises:
+        GroupDeclarationError: プロジェクトが無い・宣言が無い・空・名前が使えない・
+            ``$DEVBASE_ROOT/env`` に宣言がある
+    """
+    from devbase.volume.manager import validate_account_group
 
     root = Path(root)
-    candidates = []
-    if project:
-        candidates.append(root / 'projects' / project / ENV_FILENAME)
-    candidates.append(root / ENV_FILENAME)
+    check_root_env(root)
+    if not project:
+        raise GroupDeclarationError(
+            "プロジェクトの外ではアカウントグループを決められません。"
+            "projects/<name>/ の下で打ってください"
+        )
+    path = root / 'projects' / project / ENV_FILENAME
+    relative = f"projects/{project}/{ENV_FILENAME}"
+    hint = f"{keys.DEVBASE_ACCOUNT_GROUP}=<グループ> (nyle / personal など)"
+    found = _read_declaration(path)
+    if found is None:
+        raise GroupDeclarationError(
+            f"プロジェクト {project} はアカウントグループを宣言していません。"
+            f"{relative} に {hint} を書いてください"
+        )
+    value, line = found
+    if not value.strip():
+        raise GroupDeclarationError(
+            f"{relative}:{line} の {keys.DEVBASE_ACCOUNT_GROUP} が空です。"
+            f"{hint} を書いてください"
+        )
+    try:
+        name = validate_account_group(value)
+    except DevbaseError as e:
+        raise GroupDeclarationError(f"{e} ({relative}:{line})") from None
+    return DeclaredGroup(name=name, source=path, line=line)
 
-    for path in candidates:
-        value = _read_declaration(path)
-        if value is None:
-            continue
+
+def _project_names(root: Path) -> List[str]:
+    from devbase.utils import names
+
+    return [p.name for p in names.project_dirs(Path(root) / 'projects')]
+
+
+def declared_groups(root: Path) -> List[str]:
+    """宣言済みのプロジェクトのグループ名 (重複を除き名前順)。宣言の読めないものは飛ばす"""
+    names = set()
+    try:
+        check_root_env(root)
+    except GroupDeclarationError:
+        return []
+    for project in _project_names(root):
         try:
-            # 空文字は resolve_account_group が default へ解決する。None を渡すと
-            # プロセスの環境変数を読むため、必ず文字列で渡す
-            name = resolve_account_group(value)
+            names.add(declare(root, project).name)
         except DevbaseError as e:
-            raise DevbaseError(f"{e} ({path})") from None
-        return DeclaredGroup(name=name, source=path)
-    return DeclaredGroup(name=DEFAULT_ACCOUNT_GROUP, source=None)
+            logger.debug("グループの候補から外します (%s): %s", project, e)
+    return sorted(names)
 
 
-def declared_group(root: Path, project: Optional[str]) -> str:
-    """機密の置き場のグループ名 (``projects/<project>/env`` → ``$DEVBASE_ROOT/env`` → ``default``)"""
-    return declare(root, project).name
+def undeclared_projects(root: Path, names: Iterable[str]) -> List[str]:
+    """``names`` のうち、宣言の読めないプロジェクトの名前 (与えた順)。
 
-
-def describe_source(root: Path, declared: DeclaredGroup, project: Optional[str]) -> str:
-    """出所の表示 (``projects/web/env`` / ``projects/api/env にも $DEVBASE_ROOT/env にも宣言なし``)"""
-    root = Path(root)
-    if declared.source is not None:
+    ``$DEVBASE_ROOT/env`` に宣言があれば、どのプロジェクトも決まらないため
+    :class:`GroupDeclarationError` を送る。
+    """
+    check_root_env(root)
+    missing = []
+    for name in names:
         try:
-            relative = declared.source.relative_to(root)
-        except ValueError:
-            return str(declared.source)
-        # 直下の ``env`` を相対名のまま出すと、プロジェクトの ``env`` と見分けが付かない
-        return '$DEVBASE_ROOT/env' if relative == Path('env') else str(relative)
-    if project:
-        return f"projects/{project}/env にも $DEVBASE_ROOT/env にも宣言なし"
-    return "$DEVBASE_ROOT/env に宣言なし"
+            declare(root, name)
+        except GroupDeclarationError:
+            missing.append(name)
+    return missing
+
+
+def require_declared(root: Path, names: Iterable[str]) -> None:
+    """全プロジェクトを回すコマンドの書き込みの前の検査 (#315 I11)。
+
+    宣言の無いプロジェクトが 1 つでもあれば、名前を挙げて :class:`GroupDeclarationError`。
+    """
+    missing = undeclared_projects(root, names)
+    if missing:
+        raise GroupDeclarationError(
+            "アカウントグループを宣言していないプロジェクトがあります: "
+            f"{', '.join(missing)}。各 projects/<name>/env に "
+            f"{keys.DEVBASE_ACCOUNT_GROUP}=<グループ> を書くか、"
+            "--exclude-project で外してください"
+        )
+
+
+def describe_source(root: Path, declared: DeclaredGroup) -> str:
+    """出所の表示 (``projects/web/env:3``)"""
+    root = Path(root)
+    try:
+        relative = declared.source.relative_to(root)
+    except ValueError:
+        relative = declared.source
+    return f"{relative}:{declared.line}"

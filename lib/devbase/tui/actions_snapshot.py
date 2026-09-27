@@ -4,7 +4,8 @@
 既存ハンドラへ委譲する。属性契約は plan 2.3 の表 (cli.py ``_add_snapshot_parser``
 と同期済みを確認):
 
-- create:  ``name`` (None=タイムスタンプ自動命名), ``full`` (False)
+- create:  ``name`` (None=タイムスタンプ自動命名), ``full`` (False), ``group`` (対象の
+  アカウントグループ。TUI はプロジェクトの外から呼ぶため、backend を問わず先に選ばせる。#315)
 - list:    追加属性なし
 - restore: ``name``, ``point`` (None=全差分適用 / manager は 1 以上のみ受理)
 - copy:    ``name``, ``new_name``
@@ -105,14 +106,42 @@ def _optional_point(message: str):
 # 各操作の引数収集 + dispatch (plan 2.3 契約)
 # ---------------------------------------------------------------------------
 
+#: グループの選択で「名前を入力」を選んだ印
+_TYPE_GROUP = object()
+
+
+def _select_group(devbase_root: Path) -> str:
+    """作成の対象のグループを選ばせる (#315 決定 11)。
+
+    候補は宣言済みのプロジェクトのグループだけから作る (``default`` は出ない)。入れた名前が
+    使えなければ ``--group`` と同じ検証の文を出して選択へ戻る。
+    """
+    from devbase.env.groups import declared_groups
+    from devbase.errors import DevbaseError
+    from devbase.volume.manager import validate_account_group
+
+    choices = [(name, name) for name in declared_groups(devbase_root)]
+    choices.append(("名前を入力", _TYPE_GROUP))
+    while True:
+        picked = flow.need(menu.select(f"対象のグループを選択 {menu.HINT_BACK}:", choices,
+                                       back=True, search=False))
+        if picked is _TYPE_GROUP:
+            picked = flow.need(menu.text(f"グループ名 {menu.HINT_BACK}:", allow_empty=False))
+        try:
+            return validate_account_group(picked)
+        except DevbaseError as e:
+            logger.error("--group に使えない名前です: %s", e)
+
+
 def _op_create(devbase_root: Path):
     # --full は CLI 既定 (False = 増分) で実行する (非破壊操作の確認プロンプト
     # 廃止)。フルバックアップ強制は CLI (`snapshot create --full`) を使う想定。
+    group = _select_group(devbase_root)
     name = flow.need(menu.text("スナップショット名 (空でタイムスタンプ自動命名)",
                                allow_empty=True))
     # 空入力は CLI の --name 省略と同じ None (自動命名) に正規化する。
     return dispatch_group(cmd_snapshot, devbase_root, "create",
-                          name=name or None, full=False)
+                          name=name or None, full=False, group=group)
 
 
 def _op_restore(devbase_root: Path):

@@ -1,6 +1,5 @@
 """devbase status - 環境ステータスの一覧表示"""
 
-import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -158,30 +157,36 @@ def _get_env_info(devbase_root: Path) -> dict | None:
         return None
 
 
-def _get_account_group() -> dict | None:
-    """解決されたアカウントグループとボリューム名を返す (PLAN39)。
+def _get_account_group(devbase_root: Path) -> dict | None:
+    """実行時のプロジェクトのグループの宣言とボリューム名を返す (PLAN39・#315)。
 
-    ``devbase status`` は devbase ルートで実行されることが多く、その場合
-    ``DEVBASE_ACCOUNT_GROUP`` はグローバル ``env`` 由来の値 (無ければ ``default``)
-    になる。プロジェクトディレクトリで実行すればそのプロジェクトの解決結果になる。
-    どちらの値を見ているのかが分かるよう、判定の出どころも返す。
-
-    グループ名が不正な場合はここで例外にせず ``None`` を返す。``status`` は
+    グループは宣言 (``projects/<name>/env``) だけから決める。プロジェクトの外では
+    グループが決まらず ``group`` が ``None`` で、``note`` にその旨が入る。宣言が読めない
+    (無い・空・使えない名前) ときも例外にせず ``error`` に理由を入れて返す。``status`` は
     状態を見るためのコマンドで、設定の誤りで一覧全体を出せなくする必要はない。
     """
+    from devbase.env import groups as _groups
+    from devbase.env import runtime as _runtime
     from devbase.errors import DevbaseError
-    from devbase.volume.manager import get_group_volume, resolve_account_group
+    from devbase.volume.manager import get_group_volume
 
-    declared = os.environ.get("DEVBASE_ACCOUNT_GROUP")
+    project = _runtime.current_project_name(devbase_root)
+    if project is None:
+        try:
+            _groups.check_root_env(devbase_root)
+        except DevbaseError as e:
+            return {"group": None, "volume": None, "error": str(e)}
+        return {"group": None, "volume": None, "error": None,
+                "note": "なし（プロジェクトの外）"}
     try:
-        group = resolve_account_group()
-        volume = get_group_volume(group)
+        declared = _groups.declare(devbase_root, project)
+        volume = get_group_volume(declared.name)
     except DevbaseError as e:
-        return {"group": None, "volume": None, "error": str(e)}
+        return {"group": None, "volume": None, "error": f"宣言なし: {e}"}
     return {
-        "group": group,
+        "group": declared.name,
         "volume": volume,
-        "source": "env" if (declared or "").strip() else "既定",
+        "source": _groups.describe_source(devbase_root, declared),
         "error": None,
     }
 
@@ -239,7 +244,7 @@ def cmd_status(devbase_root: Path) -> int:
     # --- 環境セクション ---
     try:
         env_info = _get_env_info(devbase_root)
-        group_info = _get_account_group()
+        group_info = _get_account_group(devbase_root)
         if env_info or group_info:
             print()
             print("[環境]")
@@ -252,6 +257,8 @@ def cmd_status(devbase_root: Path) -> int:
         if group_info:
             if group_info["error"]:
                 print(f"  {'アカウントグループ':<20}(設定エラー) {group_info['error']}")
+            elif group_info["group"] is None:
+                print(f"  {'アカウントグループ':<20}{group_info['note']}")
             else:
                 print(
                     f"  {'アカウントグループ':<20}"

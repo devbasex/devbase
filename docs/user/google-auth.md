@@ -11,9 +11,9 @@ devbase のコンテナで Google Cloud（gcloud）と Google Workspace（gws）
 
 ### アカウントグループとは
 
-**使用する Google / AWS アカウントの単位**です。`DEVBASE_ACCOUNT_GROUP` で宣言し、
-未設定なら `default` になります。グループごとに専用のボリュームが作られ、
-認証情報はその中にだけ入ります。
+**使用する Google / AWS アカウントの単位**です。各プロジェクトの `projects/<name>/env` に
+`DEVBASE_ACCOUNT_GROUP` を宣言します（必須。既定の値はありません）。グループごとに専用の
+ボリュームが作られ、認証情報はその中にだけ入ります。
 
 | マウント先 | ボリューム | 共有範囲 | 入るもの |
 |---|---|---|---|
@@ -246,7 +246,7 @@ nyle-carmo-analysis Credentials
 認証情報が入っていることが分かります。
 
 ```console
-$ docker run --rm -v devbase_home_default:/g alpine ls /g/gcloud/legacy_credentials
+$ docker run --rm -v devbase_home_nyle:/g alpine ls /g/gcloud/legacy_credentials
 takemi_ohama@nyle.co.jp
 
 $ docker run --rm -v devbase_home_kkg:/g alpine ls /g/gcloud/legacy_credentials
@@ -256,7 +256,7 @@ takemi_ohama@kk-generation.com
 コンテナ内から見ると、自分のグループのアカウントしか見えません。
 
 ```console
-# default グループのコンテナ
+# nyle グループのコンテナ
 $ gcloud config get account
 takemi_ohama@nyle.co.jp
 
