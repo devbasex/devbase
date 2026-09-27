@@ -33,8 +33,10 @@ logger = get_logger(__name__)
 
 #: 先が空でないときに挙げる最上位のエントリの数
 _LISTED_ENTRIES = 5
-#: エントリの数え方 (元と先で同じ式を使う。最上位の自分自身は数えない)
-_COUNT_SCRIPT = 'find "$1" -mindepth 1 | wc -l'
+#: エントリの数え方 (元と先で同じ式を使う。最上位の自分自身は数えない)。
+#: パイプにすると終了コードが ``wc`` のものになり、``find`` が途中で失敗しても部分の数を
+#: 正常値として返すため、一時ファイルを挟んで ``find`` の失敗を伝える
+_COUNT_SCRIPT = 'find "$1" -mindepth 1 > /tmp/entries && wc -l < /tmp/entries'
 
 
 class VolumeMigrationError(DevbaseError):
@@ -118,7 +120,8 @@ class VolumeMigration:
         if result.returncode != 0:
             raise VolumeMigrationError(
                 f"{name} の中身を確かめられません: {(result.stderr or '').strip()}")
-        return [line for line in (result.stdout or '').splitlines() if line.strip()]
+        # 名前の中身で捨てない (空白だけの名前も 1 件)。何かあれば出力は空でない
+        return (result.stdout or '').splitlines()
 
     def _count(self, name: str) -> int:
         result = self._helper([f'{name}:/vol:ro'], 'sh', '-c', _COUNT_SCRIPT, 'sh', '/vol')

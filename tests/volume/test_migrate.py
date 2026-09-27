@@ -15,6 +15,9 @@ from devbase.errors import DevbaseError
 from devbase.volume import manager
 from devbase.volume.migrate import VolumeMigration, VolumeMigrationError
 
+#: 自前の fixture が subprocess.run を差し替える前に取っておく (数える式を実機の sh で確かめる)
+_REAL_RUN = subprocess.run
+
 SOURCE = 'devbase_home_default'
 TARGET = 'devbase_home_nyle'
 
@@ -158,6 +161,32 @@ def test_a_non_empty_target_stops_without_writing(tmp_path, created):
     assert f'docker volume rm {TARGET}' in message
     assert created == []
     assert not any('cp' in c for c in docker.runs())
+
+
+def test_a_target_with_only_a_blank_named_entry_is_not_empty(tmp_path, created):
+    """名前の中身に依らず、エントリが 1 つでもあれば止める"""
+    docker = FakeDocker(volumes={SOURCE, TARGET}, entries={TARGET: [' ']})
+
+    with pytest.raises(VolumeMigrationError, match='空ではありません'):
+        migration(tmp_path, docker).run()
+    assert not any('cp' in c for c in docker.runs())
+
+
+def test_the_count_script_reports_a_find_failure(tmp_path):
+    """パイプの終了コードが wc のものにならず、find の失敗で 0 以外になる"""
+    from devbase.volume.migrate import _COUNT_SCRIPT
+
+    (tmp_path / 'vol').mkdir()
+    (tmp_path / 'vol' / 'a').write_text('')
+    script = _COUNT_SCRIPT.replace('/tmp/entries', str(tmp_path / 'entries'))
+
+    def run(path):
+        return _REAL_RUN(['sh', '-c', script, 'sh', str(path)],
+                         capture_output=True, text=True, check=False)
+
+    ok = run(tmp_path / 'vol')
+    assert ok.returncode == 0 and ok.stdout.strip() == '1'
+    assert run(tmp_path / 'missing').returncode != 0
 
 
 def test_a_missing_source_stops(tmp_path, created):

@@ -960,6 +960,25 @@ def _grouped_layout(root: Path) -> bool:
             and config.openbao.grouped)
 
 
+def _undeclared_current_project(root: Path) -> bool:
+    """実行時のディレクトリのプロジェクトがグループの宣言を読めないか (#315 決定 2)。
+
+    ``env`` の対象を自分で決めるサブコマンドは、この状態なら backend を問わず
+    ``_target_group`` で終了コード 1 に止まる。止まる前に注入で置き場を読まないために使う。
+    """
+    from devbase.env import groups as _groups
+    from devbase.env import runtime as _runtime
+
+    project = _runtime.current_project_name(root)
+    if project is None:
+        return False
+    try:
+        _groups.declare(root, project)
+    except _groups.GroupDeclarationError:
+        return True
+    return False
+
+
 def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
     return ((cmd, None) in _NO_SECRET_INJECTION
             or (cmd, subcommand) in _NO_SECRET_INJECTION)
@@ -1017,7 +1036,7 @@ def _load_secret_env(cmd: str, subcommand: Optional[str] = None,
     if not root:
         return
     if (cmd == 'env' and subcommand in _GROUPED_SELF_RESOLVING_ENV
-            and _grouped_layout(Path(root))):
+            and (_grouped_layout(Path(root)) or _undeclared_current_project(Path(root)))):
         return
     try:
         from devbase.env import runtime as _runtime

@@ -140,6 +140,7 @@ def test_version_one_has_no_group_column(openbao_root, openbao):
 @pytest.fixture
 def file_root(tmp_path, monkeypatch):
     (tmp_path / 'projects' / 'web').mkdir(parents=True)
+    (tmp_path / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=personal\n')
     monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
     monkeypatch.setenv('PWD', str(tmp_path))
     monkeypatch.chdir(tmp_path)
@@ -206,6 +207,18 @@ def test_an_undeclared_project_count_is_none(grouped, openbao):
 
     assert env_rows.count_project_keys(grouped)[0] == ('api', None)
     assert not any('projects/api' in p for p in kv_gets(openbao))
+
+
+def test_an_undeclared_project_is_refused_on_a_file_backend(file_root):
+    """#315 決定 2: 宣言の検査は backend を問わず、読む前に行う"""
+    from devbase.env.groups import GroupDeclarationError
+
+    (file_root / 'projects' / 'api').mkdir()
+    (file_root / 'projects' / 'api' / '.env').write_text('SECRET=1\n')
+
+    with pytest.raises(GroupDeclarationError):
+        env_rows.collect_key_rows(file_root, project='api')
+    assert env_rows.count_project_keys(file_root) == [('api', None), ('web', 0)]
 
 
 def test_project_key_counts_on_a_file_backend(file_root):

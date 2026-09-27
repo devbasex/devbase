@@ -43,6 +43,19 @@ def is_grouped(store: SecretStore) -> bool:
     return store.grouped
 
 
+def _project_group(store: SecretStore, devbase_root: Path, project: str) -> Optional[str]:
+    """プロジェクトの参照に持たせるグループ。読む前に backend を問わず宣言を検査する
+    (#315 決定 2。CLI の ``_target_group`` と同じ)。
+
+    Raises:
+        GroupDeclarationError: プロジェクトの宣言が無い・空・使えない名前
+    """
+    from devbase.env import groups as _groups
+
+    declared = _groups.declare(devbase_root, project)
+    return declared.name if store.grouped else None
+
+
 def scope_label(ref: SecretRef) -> str:
     return '共通' if ref.kind == 'global' else f'プロジェクト {ref.name}'
 
@@ -67,7 +80,7 @@ def _resolve_target(store: SecretStore, devbase_root: Path, project: Optional[st
     from devbase.commands.env import _target_group
 
     if project is not None:
-        return store.ref_group(project), None
+        return _project_group(store, devbase_root, project), None
     if group is not None:
         target = _target_group(devbase_root, store, group)
         return target, target
@@ -135,7 +148,7 @@ def count_project_keys(devbase_root: Path) -> List[Tuple[str, Optional[int]]]:
     counts: List[Tuple[str, Optional[int]]] = []
     for name in project_names(devbase_root):
         try:
-            refs, _ = _scope_refs(store, name, store.ref_group(name))
+            refs, _ = _scope_refs(store, name, _project_group(store, devbase_root, name))
             count = sum(len(store.fetch(r)) for r in refs)
         except DevbaseError:
             count = None
