@@ -88,6 +88,11 @@ devbase project up [name] [--context NAME]
 devbase up [name] [--context NAME]
 ```
 
+- 最初にプロジェクトのアカウントグループの宣言（`projects/<name>/env` の `DEVBASE_ACCOUNT_GROUP`）を
+  読みます。宣言が無い・空・`default`・`$DEVBASE_ROOT/env` に宣言がある・プロジェクトの外、のどれかなら、
+  `.env`・`pre-up`・スナップショット・ボリューム・生成物・コンテナのどれも作らずに終了コード 1 で止まり、
+  直すファイルと行を示します。シェルの環境変数 `DEVBASE_ACCOUNT_GROUP` が宣言と違うときも止まります
+  （[環境変数ガイド](../environment-variables.md#宣言が無いときは止まる)）
 - 解決した docker context が現在の context と異なる（**リモート扱い**）とき:
   - `DOCKER_CONTEXT` を全 docker 呼び出しへ渡し、`DOCKER_GID` はリモート側の値にする
   - `project.local.yml` の `docker.home` で bind mount の `~` を展開する
@@ -232,6 +237,8 @@ devbase project scale adminer 3
 ```
 
 新しい値は `project.yml` の `scale` に書き戻されるため、次回の `devbase up` にも引き継がれます。
+`up` と同じく最初にアカウントグループの宣言を確かめ、読めなければ `project.yml` を書き換える前に
+止まります。
 
 ## `devbase project profile`
 
@@ -283,6 +290,35 @@ devbase project migrate-config
   `env` に残った旧キーの掃除だけを行うため、何度実行しても同じ状態になります
 - `projects/<name>` はプラグインリポジトリへのシンボリックリンクです。書き換わるのはリンク先の
   実体（＝定義の正）で、出力には実際に触れたパスが表示されます
+
+## `devbase project migrate-volume`
+
+グループの宣言が必須になる前に、宣言の無いプロジェクトが使っていたボリューム
+`devbase_home_default`（旧既定のボリューム）の中身を、指定したグループのボリューム
+`devbase_home_<group>` へ写します。元は残します。手順の全体は
+[`default` からの移行](../environment-variables.md#default-からの移行)を参照してください。
+
+```
+devbase project migrate-volume --to <group> [--dry-run]
+```
+
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| `--to` | はい | 移し先のグループ名（`DEVBASE_ACCOUNT_GROUP` と同じ規則。`default` は使えない） |
+| `--dry-run` | いいえ | 前提の検査だけを行い、写す件数と移し先の状態を表示する（書かない） |
+
+```bash
+devbase project migrate-volume --to nyle --dry-run
+devbase project migrate-volume --to nyle
+```
+
+- 元は読み取り専用で付け、`cp -a` でファイル・ディレクトリ・持ち主・権限・シンボリックリンク
+  （リンクのまま）を写します。元を書き換えず、消しません
+- 元が無い・移し先が存在して空でない・元か移し先をマウントした稼働中のコンテナがある・Docker に
+  届かない、のどれかなら、移し先を作らず何も書かずに終了コード 1 で止まり、理由と直し方を示します
+- 写した後に元と移し先のエントリの数を照らし、合わなければ移し先を消して打ち直すよう示します
+- `--to` が無い・使えない名前なら終了コード 2
+- ヘルパーのコンテナには `devbase-snapshot:latest` を使います（無ければ作ります）
 
 ## `devbase project build`
 

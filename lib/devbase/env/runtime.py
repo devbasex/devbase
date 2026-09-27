@@ -216,7 +216,7 @@ def _without_account_group(ref: SecretRef, data: Dict[str, str]) -> Dict[str, st
         _warned_account_group_refs.add(ref)
         logger.warning(
             "機密の置き場（%s）にある %s は使いません。アカウントグループは env ファイル"
-            "（projects/<name>/env・$DEVBASE_ROOT/env）で決まります。"
+            "（projects/<name>/env）で決まります。"
             "消すには: devbase env delete %s%s",
             ref.label(), keys.DEVBASE_ACCOUNT_GROUP, keys.DEVBASE_ACCOUNT_GROUP,
             _account_group_delete_hint(ref))

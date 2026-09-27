@@ -1021,7 +1021,7 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
     if key == keys.DEVBASE_ACCOUNT_GROUP:
         logger.error(
             "%s は機密の置き場へは書けません（置き場の値はアカウントグループの決定に"
-            "使われません）。projects/<name>/env か $DEVBASE_ROOT/env に書いてください",
+            "使われません）。projects/<name>/env に書いてください",
             keys.DEVBASE_ACCOUNT_GROUP)
         return 1
 

@@ -60,7 +60,7 @@ def test_set_refuses_the_account_group_without_opening_the_store(bao_root, openb
     assert openbao.received == []
     text = errors(caplog)
     assert ACCOUNT_GROUP in text
-    assert 'projects/<name>/env' in text and '$DEVBASE_ROOT/env' in text
+    assert 'projects/<name>/env' in text and '$DEVBASE_ROOT/env' not in text
 
 
 @pytest.mark.parametrize('kwargs', [dict(), dict(project=True)],

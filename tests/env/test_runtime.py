@@ -788,7 +788,7 @@ def test_warns_once_with_the_store_and_how_to_delete(account_group_root, caplog,
     assert len(messages) == 1
     message = messages[0]
     assert f'機密の置き場（{label}）' in message
-    assert 'projects/<name>/env' in message and '$DEVBASE_ROOT/env' in message
+    assert 'projects/<name>/env' in message and '$DEVBASE_ROOT/env' not in message
     assert message.endswith(how)
     assert 'kkg' not in message
 
