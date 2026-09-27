@@ -23,7 +23,7 @@ devbase snapshot create [--name NAME] [--full] [--group NAME]
 作りません。一覧・復元・コピー・削除・ローテーションはできます）。
 
 ```bash
-# 自動命名で差分スナップショット
+# 自動命名でフルスナップショット（差分を積むのは devbase up の自動スナップショット）
 devbase snapshot create
 
 # 名前付きフルバックアップ
