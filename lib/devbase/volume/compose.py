@@ -736,7 +736,17 @@ def generate_scaled_compose(
         secret_env_names, global_env_names, project_env_names,
         dev_excluded=dev_excluded)
 
-    vscode_volumes = _vscode_volumes(dev_service, scale)
+    # VS Code Server は再作成をまたいで保つためコンテナ 1 つに 1 本の named
+    # volume を宛てる (PLAN36)。プロジェクトが自分で ~/.vscode-server を
+    # マウントしている場合は、その指定を奪わないよう devbase 側は何もしない。
+    if _declares_target(dev_service, VSCODE_SERVER_TARGET):
+        vscode_volumes: List[str] = []
+    else:
+        project_name = resolve_project_name()
+        vscode_volumes = [
+            get_vscode_volume_for(project_name, i)
+            for i in range(1, scale + 1)
+        ]
 
     scaled_services = _build_scaled_services(
         services, dev_service, dev_service_name, scale, group_volume,
@@ -760,7 +770,10 @@ def generate_scaled_compose(
     # 取り除くのは **dev インスタンスだけ**。`GCP_AUTH_MODE` は dev コンテナの
     # 認証方式の宣言であり、独自に鍵をマウントしている非 dev サービス (batch 等) の
     # 明示設定まで消すと、そのサービスを壊してしまう。
-    _drop_dev_excluded(scaled_services, dev_service_name, scale, dev_excluded)
+    for index in range(1, scale + 1):
+        service = scaled_services.get(f'{dev_service_name}-{index}')
+        if isinstance(service, dict):
+            _drop_env_names(service, dev_excluded)
 
     _prepare_remote_mounts(scaled_services, docker_home, remote)
 
@@ -771,36 +784,6 @@ def generate_scaled_compose(
         'networks': _build_networks_section(config),
     }
 
-    _write_compose(scaled_config, override_file)
-    return override_file
-
-
-def _vscode_volumes(dev_service: dict, scale: int) -> List[str]:
-    """dev インスタンスごとの VS Code Server ボリューム名 (PLAN36)。
-
-    VS Code Server は再作成をまたいで保つためコンテナ 1 つに 1 本の named
-    volume を宛てる。プロジェクトが自分で ~/.vscode-server を
-    マウントしている場合は、その指定を奪わないよう devbase 側は何もしない。
-    """
-    if _declares_target(dev_service, VSCODE_SERVER_TARGET):
-        return []
-    project_name = resolve_project_name()
-    return [
-        get_vscode_volume_for(project_name, i)
-        for i in range(1, scale + 1)
-    ]
-
-
-def _drop_dev_excluded(scaled_services: dict, dev_service_name: str, scale: int,
-                       dev_excluded) -> None:
-    """dev インスタンスだけから除外集合の変数を取り除く (非 dev サービスは触らない)"""
-    for index in range(1, scale + 1):
-        service = scaled_services.get(f'{dev_service_name}-{index}')
-        if isinstance(service, dict):
-            _drop_env_names(service, dev_excluded)
-
-
-def _write_compose(scaled_config: dict, override_file: Path) -> None:
     try:
         with open(override_file, 'w') as f:
             yaml.dump(
@@ -812,3 +795,5 @@ def _write_compose(scaled_config: dict, override_file: Path) -> None:
             )
     except IOError as e:
         raise DockerError(f"Failed to write {override_file}: {e}")
+
+    return override_file
