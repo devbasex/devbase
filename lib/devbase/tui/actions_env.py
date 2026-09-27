@@ -6,7 +6,9 @@ TUI では次の 4 つだけを扱い、メニュー階層を浅くする:
   ``set`` / ``delete`` へ委譲する。一覧・エディタでの編集・プロジェクト変数の対話設定は
   この画面と役割が重なるため TUI から外した (#312。CLI の ``env list`` / ``edit`` /
   ``project`` で実行する)
-- 「認証情報の再同期 (sync)」「初期セットアップ (init)」: 引数なしで即実行する
+- 「認証情報の再同期 (sync)」「初期セットアップ (init)」: 引数なしで即実行する。グループ別の
+  置き場では、TUI はプロジェクトの外から呼ぶため、先に対象のグループを選ばせて ``--group``
+  として渡す (#315 決定 11)
 - 「OpenBao の接続設定」(``actions_env_openbao``): 接続先とブートストラップ機密を変える
 - export/import は TUI から除外する (CLI で実行)。
 
@@ -103,12 +105,38 @@ def _run_in_project(devbase_root: Path, project_name: str, fn):
 # 各操作の引数収集 + dispatch (plan 2.3 契約)
 # ---------------------------------------------------------------------------
 
+def _group_attrs(devbase_root: Path) -> dict:
+    """グループ別の置き場なら対象のグループを選ばせ、``{"group": 名前}`` を返す。
+
+    それ以外の設定では ``{}`` (グループの選択を出さずに今どおり実行する)。設定が読めない
+    ときも ``{}`` で委譲し、委譲先のコマンドが誤りを出す。使えない名前を入れたら、
+    ``--group`` と同じ検証の文を出して選択へ戻る。
+    """
+    from devbase.errors import DevbaseError
+    from devbase.volume.manager import validate_account_group
+
+    keys_screen = _screen("actions_env_keys")
+    try:
+        grouped = keys_screen._grouped(devbase_root)
+    except DevbaseError:
+        return {}
+    if not grouped:
+        return {}
+    while True:
+        name = keys_screen._select_group(devbase_root)
+        try:
+            return {"group": validate_account_group(name)}
+        except DevbaseError as e:
+            logger.error("--group に使えない名前です: %s", e)
+
+
 _OP_HANDLERS = {
     # sync は引数なしで即実行 (ソースファイルから認証情報を再同期する)。
     # init は --reset なし (CLI 既定) で即実行。セットアップ済みなら
     # cmd_env_init が案内を出して安全に終了し、やり直しは CLI --reset を使う。
-    "sync": lambda root: _dispatch(root, "sync"),
-    "init": lambda root: _dispatch(root, "init", reset=False),
+    # どちらもグループ別の置き場では先にグループを選ぶ (_group_attrs)。
+    "sync": lambda root: _dispatch(root, "sync", **_group_attrs(root)),
+    "init": lambda root: _dispatch(root, "init", reset=False, **_group_attrs(root)),
     # 2 つの画面は自分の中で引数を集め、cmd_env へ委譲する (#273)。関数内で import するのは
     # 画面のモジュールが本モジュールの _dispatch / _run_in_project を使うため (循環を避ける)。
     "keys": lambda root: _screen("actions_env_keys").run(root),

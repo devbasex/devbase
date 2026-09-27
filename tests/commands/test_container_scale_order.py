@@ -71,7 +71,7 @@ def scale_harness(tmp_path, monkeypatch):
 
     monkeypatch.setattr(container, 'get_project_name', lambda: 'proj')
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
-    monkeypatch.setattr(container, '_check_group_consistency',
+    monkeypatch.setattr(container, '_require_group_declaration',
                         lambda project=None: calls.append(('group', None)) or True)
     real_resolve_target = container._resolve_docker_target
     monkeypatch.setattr(container, '_resolve_docker_target', lambda context=None: dc.DockerTarget(

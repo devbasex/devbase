@@ -546,24 +546,33 @@ def _probe_location(root: Path, rel: str) -> Optional[Tuple[Path, str]]:
 def _grouped_probe_paths(root: Path, store: Optional[SecretStore]) -> List[str]:
     """グループ別の置き場で足す代表パス (対象のグループの控えとキャッシュ。PLAN56 決定 13)。
 
+    対象のグループは実行時のプロジェクトの宣言。プロジェクトの外では既定のグループが無い
+    ため (#315)、宣言済みのプロジェクトのグループそれぞれで組む。
     ``version: 1`` とファイル backend では足さない (点検の結果を変えない)。設定を読めない
     ときは ``_check_backend`` が報告するため、ここでは足さずに進む。
     """
     from devbase.env import cache as _cache
+    from devbase.env import groups as _groups
     from devbase.env import runtime as _runtime
     from devbase.env.sources import sources_path
 
     if store is None:
         return []
     try:
-        group = store.ref_group(_runtime.current_project_name(root))
+        if not store.grouped:
+            return []
+        project = _runtime.current_project_name(root)
+        targets = ([store.ref_group(project)] if project is not None
+                   else _groups.declared_groups(root))
     except DevbaseError:
         return []
-    if group is None:
-        return []
-    cache_entry = _cache.entry_path(root, SecretRef.for_global(group=group), store.config.openbao)
-    return [sources_path(root, store.storage_group(group)).name,
-            cache_entry.relative_to(root).as_posix()]
+    paths: List[str] = []
+    for group in targets:
+        cache_entry = _cache.entry_path(root, SecretRef.for_global(group=group),
+                                        store.config.openbao)
+        paths += [sources_path(root, store.storage_group(group)).name,
+                  cache_entry.relative_to(root).as_posix()]
+    return list(dict.fromkeys(paths))
 
 
 def _ignore_probe_paths(root: Path, store: Optional[SecretStore] = None) -> List[str]:

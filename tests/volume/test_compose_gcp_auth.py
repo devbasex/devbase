@@ -36,7 +36,7 @@ SECRET_NAMES = [
 def project(tmp_path, monkeypatch):
     (tmp_path / "compose.yml").write_text(COMPOSE)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
     monkeypatch.delenv("GCP_AUTH_MODE", raising=False)
     monkeypatch.delenv("GCP_ACTIVE_PROFILE", raising=False)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", raising=False)

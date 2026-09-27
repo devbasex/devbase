@@ -278,3 +278,58 @@ def test_env_exec_still_injects_with_the_group_layout(calls, tmp_path):
     cli._load_secret_env('env', 'exec')
 
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize('subcommand', ['list', 'get', 'set', 'export'])
+def test_env_subcommands_skip_injection_in_an_undeclared_project_with_any_backend(
+        calls, tmp_path, monkeypatch, subcommand):
+    """#315 決定 2: 宣言の無いプロジェクトでは、止まる前に注入で置き場を読まない (file backend でも)"""
+    from devbase.env import runtime
+
+    (tmp_path / 'projects' / 'web').mkdir(parents=True)
+    monkeypatch.setattr(runtime, 'current_project_name', lambda root: 'web')
+
+    cli._load_secret_env('env', subcommand)
+
+    assert calls == []
+
+
+def test_env_subcommands_skip_injection_when_the_declaration_is_unreadable(
+        calls, tmp_path, monkeypatch):
+    """宣言を読めない (UTF-8 でない) ときも送らずに注入を止め、_target_group に理由を任せる"""
+    from devbase.env import runtime
+
+    project = tmp_path / 'projects' / 'web'
+    project.mkdir(parents=True)
+    (project / 'env').write_bytes(b'DEVBASE_ACCOUNT_GROUP=\xff\xfe\n')
+    monkeypatch.setattr(runtime, 'current_project_name', lambda root: 'web')
+
+    cli._load_secret_env('env', 'list')
+
+    assert calls == []
+
+
+def test_env_subcommands_inject_in_a_declared_project_with_the_flat_layout(
+        calls, tmp_path, monkeypatch):
+    from devbase.env import runtime
+
+    project = tmp_path / 'projects' / 'web'
+    project.mkdir(parents=True)
+    (project / 'env').write_text('DEVBASE_ACCOUNT_GROUP=personal\n', encoding='utf-8')
+    monkeypatch.setattr(runtime, 'current_project_name', lambda root: 'web')
+
+    cli._load_secret_env('env', 'get')
+
+    assert calls == [(tmp_path, 'web')]
+
+
+def test_env_exec_still_injects_in_an_undeclared_project(calls, tmp_path, monkeypatch):
+    """暗黙に読む経路は止めない (決定 4)。読まないかどうかは runtime.resolve が決める"""
+    from devbase.env import runtime
+
+    (tmp_path / 'projects' / 'web').mkdir(parents=True)
+    monkeypatch.setattr(runtime, 'current_project_name', lambda root: 'web')
+
+    cli._load_secret_env('env', 'exec')
+
+    assert len(calls) == 1

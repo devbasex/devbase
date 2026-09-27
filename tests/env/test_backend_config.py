@@ -275,7 +275,7 @@ openbao:
   user: member01
   layout: group
   group_aliases:
-    default: nyle
+    acme: nyle
 """
 
 
@@ -311,7 +311,7 @@ def test_version_2_is_loaded_with_the_group_layout(root):
     assert ob.layout == 'group'
     assert ob.path_team_prefix == 'team'
     assert ob.path_user_prefix == 'users'
-    assert ob.group_aliases == {'default': 'nyle'}
+    assert ob.group_aliases == {'acme': 'nyle'}
 
 
 def test_version_2_paths_and_cache_positions_follow_the_table(root):
@@ -321,11 +321,11 @@ def test_version_2_paths_and_cache_positions_follow_the_table(root):
     assert [ob.path_of(ref) for ref in _refs('with')] == [
         'team/with/global', 'team/with/projects/web',
         'users/member01/with/global', 'users/member01/with/projects/web']
-    # 読み替えはパスの上だけ (default → nyle)
-    assert [ob.path_of(ref) for ref in _refs('default')] == [
+    # 読み替えはパスの上だけ (acme → nyle)
+    assert [ob.path_of(ref) for ref in _refs('acme')] == [
         'team/nyle/global', 'team/nyle/projects/web',
         'users/member01/nyle/global', 'users/member01/nyle/projects/web']
-    assert [ob.cache_relpath(ref) for ref in _refs('default')] == [
+    assert [ob.cache_relpath(ref) for ref in _refs('acme')] == [
         'team/nyle/global.env.age', 'team/nyle/projects/web.env.age',
         'user/nyle/global.env.age', 'user/nyle/projects/web.env.age']
     assert ob.display_path(_refs('with')[0]) == 'devbase/team/with/global'
@@ -354,7 +354,7 @@ def test_storage_group_applies_the_alias(root):
     write_yaml(root, OPENBAO_V2)
     ob = bc.load(root).openbao
 
-    assert ob.storage_group('default') == 'nyle'
+    assert ob.storage_group('acme') == 'nyle'
     assert ob.storage_group('with') == 'with'
 
 
@@ -408,7 +408,7 @@ def test_version_2_rejects_the_flat_path_keys(root, key):
 
 @pytest.mark.parametrize('line', ['  layout: group\n', '  layout: flat\n',
                                   '  path_team_prefix: team\n',
-                                  '  group_aliases:\n    default: nyle\n'])
+                                  '  group_aliases:\n    acme: nyle\n'])
 def test_version_1_rejects_the_group_keys(root, line):
     write_yaml(root, OPENBAO_MINIMAL + line)
 
@@ -419,9 +419,9 @@ def test_version_1_rejects_the_group_keys(root, line):
 
 
 @pytest.mark.parametrize('pair', ['ubuntu: nyle', '"1": nyle', '"bad name": nyle',
-                                  'default: ubuntu', 'default: "1"', 'default: "a/b"'])
+                                  'acme: ubuntu', 'acme: "1"', 'acme: "a/b"'])
 def test_aliases_must_be_valid_group_names(root, pair):
-    write_yaml(root, OPENBAO_V2.replace('default: nyle', pair))
+    write_yaml(root, OPENBAO_V2.replace('acme: nyle', pair))
 
     with pytest.raises(bc.BackendConfigError) as exc:
         bc.load(root)
@@ -429,10 +429,23 @@ def test_aliases_must_be_valid_group_names(root, pair):
     assert 'DEVBASE_ACCOUNT_GROUP' in str(exc.value)
 
 
+@pytest.mark.parametrize('pair', ['default: nyle', 'acme: default'])
+def test_default_alias_is_refused_with_the_line_to_remove(root, pair):
+    """#315 決定 9: 旧既定の読み替えは読み込みで止め、backend.yml の消す行を示す"""
+    write_yaml(root, OPENBAO_V2.replace('acme: nyle', pair))
+
+    with pytest.raises(bc.BackendConfigError) as exc:
+        bc.load(root)
+    message = str(exc.value)
+    assert 'secrets/backend.yml' in message
+    assert 'openbao.group_aliases' in message
+    assert pair.replace(' ', '') in message.replace(' ', '')
+
+
 @pytest.mark.parametrize('target', ['global', 'projects'])
 def test_alias_target_cannot_be_a_reserved_storage_name(root, target):
     """決定 1: ``team/projects/global`` などの ``version: 1`` のパスと重なる名前は拒む"""
-    write_yaml(root, OPENBAO_V2.replace('default: nyle', f'default: {target}'))
+    write_yaml(root, OPENBAO_V2.replace('acme: nyle', f'acme: {target}'))
 
     with pytest.raises(bc.BackendConfigError) as exc:
         bc.load(root)
@@ -451,7 +464,7 @@ def test_reserved_storage_name_without_an_alias_is_rejected(root, group):
 
 def test_alias_from_a_reserved_storage_name_is_accepted(root):
     """``global`` という名前のグループを別の置き場へ向ける対応は成り立つ"""
-    write_yaml(root, OPENBAO_V2.replace('default: nyle', 'global: nyle'))
+    write_yaml(root, OPENBAO_V2.replace('acme: nyle', 'global: nyle'))
 
     assert bc.load(root).openbao.storage_group('global') == 'nyle'
 
@@ -475,10 +488,10 @@ def test_config_with_mismatched_version_and_layout_is_not_saved(root):
     assert not (root / 'secrets' / 'backend.yml').exists()
 
 
-@pytest.mark.parametrize('alias', ["default: ' with '", "' default ': with", "default: 'global '"])
+@pytest.mark.parametrize('alias', ["acme: ' with '", "' acme ': with", "acme: 'global '"])
 def test_alias_with_surrounding_spaces_is_rejected(root, alias):
     """前後の空白を黙って落とすと、パスに空白が入るか読み替えが効かない"""
-    write_yaml(root, OPENBAO_V2.replace('default: nyle', alias))
+    write_yaml(root, OPENBAO_V2.replace('acme: nyle', alias))
 
     with pytest.raises(bc.BackendConfigError) as exc:
         bc.load(root)

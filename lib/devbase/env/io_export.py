@@ -43,6 +43,8 @@ class ExportOptions:
     # S3 backend 専用: バケット既定暗号化が未設定でも export を許可するか
     # (オブジェクト単位の SSE はこのフラグに関係なく常に付与される)
     unsafe_allow_unencrypted_bucket: bool = False
+    #: 対象のグループ (``--group``。検証済みの値。グループ別の置き場でなければ ``None``)
+    group: Optional[str] = None
 
 
 def _generate_default_filename(force_unencrypted: bool) -> str:
@@ -170,6 +172,7 @@ def export(devbase_root: Path, opts: ExportOptions) -> int:
         include_metadata=opts.include_metadata,
         include_projects=opts.include_projects,
         exclude_projects=opts.exclude_projects,
+        group=opts.group,
     )
     if not entries:
         raise ExportError(

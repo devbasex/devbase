@@ -48,11 +48,11 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | 用語 | 意味 |
 | --- | --- |
 | 参照（`SecretRef`） | 機密の宛先。適用範囲（`global` / `project`）と持ち主（`team` / `user`）の組み合わせで 4 種。`version: 2` ではグループも持つ |
-| アカウントグループ（グループ） | `DEVBASE_ACCOUNT_GROUP` の値。未設定なら `default`。ボリューム `devbase_home_<group>` の単位でもある |
+| アカウントグループ（グループ） | `DEVBASE_ACCOUNT_GROUP` の値。プロジェクトごとに `projects/<name>/env` で宣言する（必須。既定の値は無い）。ボリューム `devbase_home_<group>` の単位でもある |
 | レイアウト（`layout`） | 置き場のパスの並び。`flat`（`version: 1`、グループを含まない）と `group`（`version: 2`、グループを含む） |
 | `group_aliases` | グループ名から置き場のグループ名への対応。`backend.yml` の `openbao` 節に置き、ボリューム名を変えずに置き場の上だけ読み替える |
 | 置き場のグループ名 | パスに入れる名前。グループ名を `group_aliases` で読み替えた後の名前（対応が無ければグループ名のまま）。以下 `<g>` と書く |
-| 対象のグループ | 1 回の操作が読み書きするグループ。既定では実行時のディレクトリのプロジェクトのグループ（プロジェクトの外なら `$DEVBASE_ROOT/env` のグループ） |
+| 対象のグループ | 1 回の操作が読み書きするグループ。既定では実行時のディレクトリのプロジェクトの宣言のグループ。プロジェクトの外では決まらず、グループ別の置き場では `--group` が要る |
 | チーム単位の機密 | チームの全員が同じ値を使う機密（サービスアカウントの鍵、連携先の API キーなど） |
 | 個人単位の機密 | 利用者ごとに値が違う機密（各自のクラウドアクセスキー、個人アクセストークンなど） |
 | backend | 参照に対して機密を読み書きする実装。`plaintext` / `age` / `openbao`。`auto` は存在による判定 |
@@ -72,7 +72,8 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | 要素 | 置き場所 | 責務 |
 | --- | --- | --- |
 | backend の設定 | `lib/devbase/env/backend_config.py` | `secrets/backend.yml` の読み書きと検証（版とレイアウト、`group_aliases`）、置き場のグループ名への読み替え（`storage_group`）、参照ごとのパス・キャッシュの位置・`index.json` のキーの組み立て（`path_of` / `cache_relpath` / `cache_key`） |
-| グループの決定 | `lib/devbase/env/groups.py` | 非機密の `env` ファイルだけから `DEVBASE_ACCOUNT_GROUP` を決める（`declare` / `declared_group`）。決めたファイルの表示（`describe_source`） |
+| グループの決定 | `lib/devbase/env/groups.py` | プロジェクトの `env` の宣言だけから `DEVBASE_ACCOUNT_GROUP` を決める（`declare`。`$DEVBASE_ROOT/env` の行の検査は `check_root_env`）。宣言済みのグループの一覧（`declared_groups`）、全プロジェクトを回すコマンドの書き込み前の検査（`undeclared_projects` / `require_declared`）、決めたファイルの表示（`describe_source`）。`GroupDeclarationError`（宣言の不備）と `GroupRequiredError`（グループ別の置き場でプロジェクトの外なのにグループが渡らない）を持つ |
+| グループ名の検証 | `lib/devbase/volume/manager.py` | `validate_account_group` がグループ名の唯一の規則（空・文字種・予約語 `ubuntu` / `default`・数字だけ）。`resolve_account_group` は引数かプロセスの環境変数を検証し、空なら止める（既定の値は無い）。`get_group_volume` がボリューム名 `devbase_home_<group>` を組む。旧既定のボリューム名 `LEGACY_GROUP_VOLUME`（`devbase_home_default`） |
 | 登録簿 | `lib/devbase/env/backends.py` | backend 名から実装を作る。未知の名前は一覧を添えて拒む |
 | ストアの窓口 | `lib/devbase/env/secret_store.py` | `SecretRef`（持ち主の軸とグループ）、`PlaintextBackend` / `AgeBackend`、設定を見て backend を選ぶ `SecretStore`（`fetch` は現物を読み、控えへ落ちない。参照に持たせるグループを `ref_group`、同じ置き場かを `same_storage_group` で返す） |
 | 参照のビュー | `lib/devbase/env/secret_view.py` | `SecretEnvFile`。`fresh=True` なら読み出しに `fetch` を使う（`set` / `delete` / `edit` の入口） |
@@ -83,7 +84,7 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | dispatch 前の注入 | `lib/devbase/cli.py` | `_load_secret_env`。注入を行わないコマンドと、`version: 2` で注入に使うプロジェクトを決める。`--group` / `--layout` / `--group-alias` / `--exclude-project` の引数 |
 | 同期済みハッシュの控え | `lib/devbase/env/sources.py` | `SourcesManager` と `sources_path`。`version: 2` では置き場のグループごとに控えを分ける |
 | コンテナへの token の配送 | `lib/devbase/env/container_token.py` | 受け取った token を `docker exec` の stdin で各コンテナの `~/.vault-token` へ書く。token の取得と届け先の解決は持たない |
-| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | `version: 2` でボリュームと機密のグループの食い違いを起動前に検査する（`_check_group_consistency`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に token を書く |
+| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | backend を問わず、起動の先頭でグループの宣言を読み、ボリュームのグループ（プロセスの環境変数）と揃える（`_require_group_declaration`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に token を書く |
 | base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
 | `env backend` コマンド | `lib/devbase/commands/env_backend.py` | `status` / `use` / `test` / `migrate` |
 | `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token`。`env set` は `DEVBASE_ACCOUNT_GROUP` を置き場を開く前に拒む。`env sync` の同期の書き込み先（`SyncTargets`） |
@@ -93,6 +94,9 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | `encrypt` / `decrypt` | `lib/devbase/commands/env_migrate.py` | age ストアと平文の間の移動（backend の向きと突き合わせる） |
 | `export` | `lib/devbase/env/bundle.py` | 機密をバンドルへ集める。`version: 2` では対象のグループと同じ置き場のプロジェクトだけを集める |
 | `import` | `lib/devbase/env/io_import.py` | サーバ backend の参照への取り込みと age 暗号化した退避。計画の元にした値（`Plan.before`）を退避と巻き戻しに使う。`version: 2` では別グループのプロジェクトを含むバンドルを拒む |
+| ボリュームの移行 | `lib/devbase/volume/migrate.py` / `lib/devbase/commands/project.py` | `VolumeMigration`（旧既定のボリュームの中身をグループのボリュームへ写す前提の検査と実行）と、その入口 `devbase project migrate-volume`（`cmd_project_migrate_volume`） |
+| 状態の表示 | `lib/devbase/commands/status.py` | `devbase status` のアカウントグループの欄を実行時のプロジェクトの宣言から出す（`_get_account_group`） |
+| entrypoint | `containers/base/entrypoint.sh` | `DEVBASE_ACCOUNT_GROUP` が渡らなければリンクを張る前に止まる（`devbase_require_account_group`）。グループのボリュームを `/persistent/group` として設定のリンクを張る |
 
 ```mermaid
 flowchart LR
@@ -175,7 +179,7 @@ flowchart LR
 | --- | --- |
 | 読む参照 | 共通: チーム共通・個人共通。プロジェクト: チームのプロジェクト・個人のプロジェクトだけ（共通の参照は読まない）。個人単位の参照を持たない backend では個人の参照を読まない |
 | 読み方 | 1 つの `SecretStore` で参照ごとに `fetch` を 1 回（キャッシュへ落ちない）。`LIST` を使わない。読めなければ範囲とグループと理由を 1 行出して env メニューへ戻る |
-| グループ | 共通は `--group` と同じ検証を通す。候補は `$DEVBASE_ROOT/env` のグループ（既定）と各プロジェクトのグループを置き場のグループ名で重複を除いたもの。プロジェクトはそのプロジェクトのグループに決まる |
+| グループ | 共通は `--group` と同じ検証を通す。候補は宣言済みの各プロジェクトのグループを置き場のグループ名で重複を除いたもの（`$DEVBASE_ROOT/env` と既定の値は候補にしない）。プロジェクトはそのプロジェクトの宣言のグループに決まり、宣言が無ければ backend を問わず読む前に止める |
 | 行の順 | チーム → 個人、同じ参照の中はキーの昇順。同じキーが両方にあれば 2 行とも出し、どちらが勝つかの印は付けない |
 | 対象プロジェクトの選択 | 各行はプロジェクト名とキーの数（そのプロジェクトのチーム・個人の参照の行の数。一覧の件数と同じ）。稼働状況は出さない。読めないプロジェクトは数を `?` にして選べるまま残す。数を出すため、選択を開くたびにプロジェクトごとに参照を `fetch` する。← と Esc で範囲の選択へ戻る |
 | 値 | 全ての行で `******`（キー名によらない。長さも出さない） |
@@ -250,7 +254,7 @@ graph TD
 
 | 画面 | 内容 |
 | --- | --- |
-| env メニュー | 「キーの一覧と編集」「認証情報の再同期 (sync)」「初期セットアップ (init)」「OpenBao の接続設定」の順。変数一覧・エディタで編集・プロジェクト変数の対話設定は、キーの一覧と編集と役割が重なるため出さない（CLI の `env list` / `edit` / `project` で行う） |
+| env メニュー | 「キーの一覧と編集」「認証情報の再同期 (sync)」「初期セットアップ (init)」「OpenBao の接続設定」の順。変数一覧・エディタで編集・プロジェクト変数の対話設定は、キーの一覧と編集と役割が重なるため出さない（CLI の `env list` / `edit` / `project` で行う）。グループ別の置き場では、sync と init の前に対象のグループを選ばせ（候補と入力の検査はキーの一覧のグループの選択と同じ）、`--group` として渡す。TUI はプロジェクトの外から `cmd_env` を呼ぶため、渡さなければ `--group` の不足で止まる。それ以外の設定では選ばせずに今どおり実行する |
 | キーの一覧の行 | キー・持ち主（`チーム` / `個人`）・適用範囲（`共通` / `プロジェクト <name>`）・グループ（`display_group`。`version: 2` でなければ列ごと出さない）・`******`。見出しに行の数・参照の数・backend の名前 |
 | キーの追加 | 持ち主の選択は個人単位の参照を持つ backend だけ出す。適用範囲は開いた範囲に決まる（プロジェクトの範囲ならそのプロジェクト）。既にあるキーを入れたら同じ置き場の値の変更になる（`set` と同じ） |
 | 空の一覧 | 「キーを追加」の 1 行だけ |
@@ -301,7 +305,7 @@ graph TD
 
 ```text
 機密の置き場（{参照の表示}）にある DEVBASE_ACCOUNT_GROUP は使いません。アカウントグループは env
-ファイル（projects/<name>/env・$DEVBASE_ROOT/env）で決まります。消すには: devbase env delete
+ファイル（projects/<name>/env）で決まります。消すには: devbase env delete
 DEVBASE_ACCOUNT_GROUP{付ける引数}{実行場所}
 ```
 
@@ -330,9 +334,101 @@ DEVBASE_ACCOUNT_GROUP{付ける引数}{実行場所}
 | 項目 | 内容 |
 | --- | --- |
 | 条件 | `KEY` が前後の空白を除いて `DEVBASE_ACCOUNT_GROUP` と一致する。`-p` / `--user` / `--group` の有無によらない |
-| 出力 | 終了コード 1。error ログ `DEVBASE_ACCOUNT_GROUP は機密の置き場へは書けません（置き場の値はアカウントグループの決定に使われません）。projects/<name>/env か $DEVBASE_ROOT/env に書いてください` |
+| 出力 | 終了コード 1。error ログ `DEVBASE_ACCOUNT_GROUP は機密の置き場へは書けません（置き場の値はアカウントグループの決定に使われません）。projects/<name>/env に書いてください` |
 | 置き場への作用 | `_open_target_env` より前に返すため、書き込み・ファイルの作成・書き込みのための読み出し（`fresh`）も、`--group` の名前の検証も起きない。dispatch 前の注入による読み取りは他のコマンドと同じく起きうる |
 | 対象外 | `env import` / `env edit` は拒まない（複数のキーをまとめて扱い、1 キーのために全体を止めると他のキーの作業まで止まる）。書かれた値は上の警告で知らせる |
+
+### アカウントグループの宣言
+
+どのプロジェクトも `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=<グループ>` を宣言する。
+アカウントグループはホームのボリューム `devbase_home_<group>` と、グループ別の置き場（`version: 2`）の
+機密を分ける単位で、既定の値を持たない。宣言を書き忘れたプロジェクトが、別の会社のグループの機密と
+ボリュームを黙って共有しないためである。宣言の必須は backend と版を問わない（ボリュームのグループは
+どの backend でも使う）。宣言の読み方は「グループの決まり方」にある。
+
+グループの宣言・グループのボリューム・グループを決めるコマンド・旧既定のボリューム・ボリュームの移行の
+定義は [用語集](../glossary.md) にある。
+
+#### グループを決めるコマンド
+
+| コマンド | グループの出所 | 決まらないとき |
+| --- | --- | --- |
+| `up` / `scale` | 実行時のプロジェクトの宣言 | 理由を述べて 1。副作用（`.env` の作成・`pre-up`・自動スナップショット・ボリューム・生成物・コンテナ）より前に止まる（「`up` / `scale` のグループの宣言と食い違い」） |
+| 機密のコマンド（`env init` / `sync` / `list` / `set` / `get` / `delete` / `edit` / `project` / `export` / `import`、`env backend test` / `migrate`） | プロジェクトの中は宣言（backend を問わず検査する）。グループ別の置き場ではプロジェクトの外で `--group` | 中で宣言が読めなければ 1。グループ別の置き場で外・`--group` 無しなら 2。どちらも置き場を開く前に止まる（「`env` コマンドの `--group`」） |
+| `snapshot create` | `--group`、無ければ実行時のプロジェクトの宣言（backend を問わない） | プロジェクトの外で `--group` 無しは 2、宣言が読めなければ 1 |
+
+`login` / `ps` / `logs` / `down` / `profile *` / `build` / `rebuild` はグループを決めず、宣言の無い
+プロジェクトでも止まらない。既に作られたコンテナを相手にするか、イメージを作るだけでボリュームを
+付けないためで、止めると宣言を書く前に起動したコンテナを止められなくなる。暗黙に機密を読む経路
+（dispatch 前の注入・`env exec`）もグループが決まらなければ何も読まずに続ける（「dispatch 前の注入」）。
+
+#### 予約語 `default`
+
+`default` はグループ名として受け付けない。規則は `validate_account_group` の 1 か所にあり、宣言・
+`--group`・TUI の名前の入力・`group_aliases` のキーと値・`project migrate-volume --to` のどれにも同じく
+当たる（入口ごとに弾くと、入口が増えたときに弾き忘れる）。宣言と `--group` の `default` は移し先の
+グループを書くよう示し、`devbase project migrate-volume --to <グループ>` を案内する。`group_aliases` の
+`default` は設定の読み込みで止まる（「読み替え（`group_aliases`）」）。同じ規則は、全グループ共通の
+ボリューム `devbase_home_ubuntu` と重なる `ubuntu` と、インスタンス番号のボリューム `devbase_home_<index>` と
+重なる数字だけの名前も拒む。
+
+#### グループのボリュームとコンテナ
+
+`up` / `scale` は宣言したグループのボリューム `devbase_home_<group>` を dev コンテナの `/persistent/group` へ
+付け、無ければ空で作る（`VolumeManager.ensure_volumes` → `create_volume`）。規則を満たす名前はどれも
+同じ経路で動き、devbase はグループ名ごとの分岐を持たない（`personal` などの新しいグループは、宣言と
+サーバのポリシーだけで使える。新しいグループのボリュームは空で作られ、ログインを取り直す）。
+グループの機密の置き場のポリシーは運用側のリポジトリが持ち、無ければ取得が 403 の今の形で止まる。
+
+base イメージの entrypoint は、`DEVBASE_ACCOUNT_GROUP` が空なら設定のリンクを張る前に
+`ERROR: DEVBASE_ACCOUNT_GROUP が渡っていません。…` を標準エラーへ出して 1 で終わり、コンテナは
+起動しない（`devbase_require_account_group`）。既定のグループへ落とすと、別のグループのボリュームの認証で
+動くコンテナができるためである。グループ側の設定は `/persistent/ai` から取り込まない（初回シードは
+持たない）。entrypoint の変更は base イメージを作り直すまで反映されない（`devbase build --no-cache`）。
+
+#### `devbase status` のアカウントグループ
+
+`devbase status` の「アカウントグループ」の欄は、実行時のプロジェクトの宣言から出す
+（`status._get_account_group`）。設定の誤りは欄に出して一覧を続ける。
+
+| 状況 | 表示 |
+| --- | --- |
+| 宣言済みのプロジェクトの中 | `<グループ> (devbase_home_<グループ> / projects/<name>/env:<行>)` |
+| プロジェクトの外 | `なし（プロジェクトの外）` |
+| 宣言の読めないプロジェクトの中 | `(設定エラー) 宣言なし: <理由>` |
+| `$DEVBASE_ROOT/env` に宣言がある | `(設定エラー) <理由>`（行番号を含む） |
+
+#### ボリュームの移行（`devbase project migrate-volume`）
+
+```text
+devbase project migrate-volume --to <group> [--dry-run]
+```
+
+旧既定のボリューム `devbase_home_default` の中身を `devbase_home_<group>` へ写す。元は
+`devbase_home_default` に固定して指定させない（使えなくなった名前は `default` だけである）。移し先は
+利用者が指定し、devbase は決め打ちしない（端末によって `default` の中身がどのグループのものかが違う）。
+機密の設定を読まないため、`group_aliases` の `default` で機密のコマンドが止まる状態でも打てる。
+
+| 項目 | 内容 |
+| --- | --- |
+| 入力 | `--to`（必須）: `validate_account_group` を通る移し先のグループ名。`--dry-run`: 検査だけを行い書かない |
+| 前提の検査（`VolumeMigration.check`） | Docker に届く・元がある・元か先をマウントした稼働中のコンテナが無い（`docker ps --filter volume=`）・先が無いか空。先の有無は `docker volume inspect` で確かめ、無い先はヘルパーでマウントしない（マウントすると docker が先を暗黙に作る） |
+| 写し方 | 先が無ければ `VolumeManager.create_volume` で作り、コピーの直前に稼働中のコンテナを数え直す。スナップショットと同じヘルパーのイメージ（`devbase-snapshot:latest`）のコンテナで、元を読み取り専用に、先を読み書きでマウントし `cp -a /src/. /dst/`（持ち主・権限・シンボリックリンクをリンクのまま）。写した後に元と先のエントリの数（`find -mindepth 1`）を照らす |
+| 成功 | 0。`devbase_home_default → devbase_home_<group> へ N 件を写しました。元の devbase_home_default は残してあります` と次の手順（`group_aliases` の `default` の行を消す・宣言を書く・`build --no-cache` の後に `up` して確かめる）。`--dry-run` は写せる件数と先の状態を出して 0 |
+| 引数の誤り | `--to` が無い・使えない名前（`default` を含む）は 2 |
+| 前提を満たさない | 1。先を作らず何も書かない。稼働中のコンテナは名前を挙げて `devbase down` を、空でない先は最上位のエントリを最大 5 件挙げて中身を確かめてから `docker volume rm` するよう示す |
+| 写し損ね | コピーの失敗・写した後の件数の不一致は 1。元は変わっていない旨と、`docker volume rm devbase_home_<group>` で先を消して打ち直すよう示す |
+
+元は書き換えず消さない。消すのはロールバックの期間が過ぎたと判断した利用者の手である。検査から
+コピーまでの間にコンテナが起動される競合は防がず、コピーの直前の数え直しと件数の照合で拾う。
+移行をコマンドにしているのは、前提の検査をテストで縛れ、ほかの利用者の端末でも同じ手順で移せるため
+である。中身のハッシュの照合はしない（`cp -a` の終了コードと件数で写し損ねを拾える）。
+
+旧既定のボリュームのスナップショットの系列は、メタの検証で `LEGACY_GROUP_VOLUME` を名指しで許し、
+一覧・元のボリュームへの復元・コピー・削除・ローテーションができる（ロールバックの経路）。新しい
+世代は作られない（`snapshot create` のグループは宣言か `--group` だけから決まる）。移し先の
+ボリュームへ復元する経路は持たない。メタを書き換えると、どの時点の中身がどのボリュームのものかの
+記録が失われるためで、移し先へ入れたいときは元へ復元してから移行をやり直す（先を消してから）。
 
 ### アカウントグループごとの置き場（`version: 2`）
 
@@ -354,26 +450,28 @@ DEVBASE_ACCOUNT_GROUP{付ける引数}{実行場所}
 #### グループの決まり方
 
 プロジェクトのグループは、機密を読む前に非機密の `env` ファイルだけから決まる
-（`groups.declare` / `declared_group(root, project)`）。
+（`groups.declare(root, project)`）。出所は `projects/<project>/env` の `DEVBASE_ACCOUNT_GROUP` の
+空でない宣言だけで、フォールバックも既定の値も無い（#315）。
 
-1. `projects/<project>/env` の `DEVBASE_ACCOUNT_GROUP`（`project` があるとき）
-2. `$DEVBASE_ROOT/env` の `DEVBASE_ACCOUNT_GROUP`
-3. どちらにも無ければ `default`
+- プロジェクトの外・宣言が無い・値が空・名前が使えない、のどれかなら `GroupDeclarationError` で
+  止まり、`projects/<name>/env に DEVBASE_ACCOUNT_GROUP=<グループ> を書く` よう案内する
+- `$DEVBASE_ROOT/env` に `DEVBASE_ACCOUNT_GROUP` の行があれば、どのプロジェクトのグループも決めず、
+  行番号を添えて止まる（`check_root_env`）。ルートの宣言は全プロジェクトを黙って 1 つのグループへ
+  落とすため読まない
 
 - 1 つのファイルの中は行の順に読み、`export DEVBASE_ACCOUNT_GROUP=...` の行も同じキーとして
   扱う。複数あれば最後の行が勝つ（起動ラッパーの `source` と同じ結果）
-- 空の値も宣言として扱い、`default` になる（`source` では空の宣言が共通の宣言を打ち消す）
-- 名前はボリューム名と同じ `volume.manager.resolve_account_group` で検証する（Docker の
-  ボリューム名に使える文字だけ。予約語 `ubuntu` と数字だけの名前は不可）。通らなければ
+- 空の値は宣言の無いものと同じく止まる
+- 名前はボリューム名と同じ `volume.manager.validate_account_group` で検証する（Docker の
+  ボリューム名に使える文字だけ。予約語 `ubuntu` / `default` と数字だけの名前は不可）。通らなければ
   ファイルの位置を添えて拒む
-- 決めたファイルの表示（`describe_source`）は `$DEVBASE_ROOT` からの相対パスで、直下の `env` は
-  `$DEVBASE_ROOT/env` と出す。宣言が無ければ `projects/<project>/env にも $DEVBASE_ROOT/env にも
-  宣言なし`（プロジェクトの外では `$DEVBASE_ROOT/env に宣言なし`）
+- 決めたファイルの表示（`describe_source`）は `$DEVBASE_ROOT` からの相対パスと行番号
+  （`projects/web/env:3`）
 
 **グループをファイルだけから決める理由。** 起動ラッパーは実行時のディレクトリの `env` だけを
 読むため、プロジェクトの下位ディレクトリから打つとプロジェクトの `env` がプロセスに載らない。
 ファイルを直接読めば、下位ディレクトリからでも同じグループになる。機密の置き場の値を使うと、
-置き場を決める値をその置き場から読む循環になる（`declared_group` はストアを受け取らない）。
+置き場を決める値をその置き場から読む循環になる（`groups.declare` はストアを受け取らない）。
 
 #### 参照のグループ
 
@@ -388,7 +486,8 @@ DEVBASE_ACCOUNT_GROUP{付ける引数}{実行場所}
 背負うと、文言を組み立てる途中で新しい例外が起き、元の失敗が利用者へ届かなくなる。
 
 `SecretStore.ref_group(project)` は、backend が `openbao` かつ `layout: group` のときだけ
-`declared_group(root, project)` を返し、それ以外は `None` を返す。`version: 1` とファイル
+`groups.declare(root, project)` の名前を返し（プロジェクトが無ければ `GroupRequiredError`、宣言が
+読めなければ `GroupDeclarationError`）、それ以外は `None` を返す。`version: 1` とファイル
 backend では参照のグループが常に空で、参照の値・等価性・キャッシュの位置・往復の回数は
 グループを持たない参照と同じである。グループを常に参照へ入れて `version: 1` のパスの組み立て
 で無視する形は、控えの鍵にグループが入り、グループの違うプロジェクトへ切り替えたときに同じ
@@ -404,7 +503,7 @@ backend では参照のグループが常に空で、参照の値・等価性・
 `group_aliases` に対応があれば読み替え、読み替えた後の名前が `global` / `projects` なら拒む
 （`team/<g>/…` が `version: 1` の `team/global` / `team/projects/<name>` と重なるため）。
 `global` を読み替え元にする対応は受け付ける。2 つのグループが同じ置き場かは読み替えた後の
-名前で比べる（`SecretStore.same_storage_group`）。文言には読み替えの前と後を `default → nyle`
+名前で比べる（`SecretStore.same_storage_group`）。文言には読み替えの前と後を `acme → nyle`
 の形で出す（`display_group`）。**除くのは、引数なしの `SecretRef.label()` で参照を表示する
 エラー文言・警告・ログだけ**で、そこには読み替える前の名前が出る（前項）。`display_group` を直接
 呼ぶ文言は、エラーであっても前と後を出す（`--group` がプロジェクトのグループと違う置き場である旨の
@@ -417,10 +516,12 @@ backend では参照のグループが常に空で、参照の値・等価性・
 件数の行・`env backend test` の参照ごとの行・`env backend migrate` の移行の計画の一覧と `--to age` の
 完了後の一覧の 5 か所である。
 
-**`default` の読み替えを置き場の上だけで行う理由。** `DEVBASE_ACCOUNT_GROUP` の既定値を変えると
-ボリューム名 `devbase_home_default` が変わり、既存の認証と会話ログのボリュームを移すことになる。
-公開リポジトリのコードに社名を既定値として持ち込むことにもなる。読み替えを端末の設定に置けば、
-ボリュームに触らず、社名はその端末の設定にだけ入る。
+**読み替えを置き場の上だけで行う理由。** グループ名を変えるとボリューム名 `devbase_home_<group>` が
+変わり、既存の認証と会話ログのボリュームを移すことになる。読み替えを端末の設定に置けば、ボリュームに
+触らず、置き場のグループ名はその端末の設定にだけ入る。旧既定の `default` は予約語で、`group_aliases` の
+キーにも値にも使えない（`BackendConfigError`。#315）。`default: nyle` のような読み替えは、宣言の無い
+プロジェクトを黙ってあるグループへ落とす経路だったためである。devbase は `backend.yml` を書き換えず、
+利用者がその行を消す。
 
 **全グループ共通の置き場とファイル backend の分割を持たない理由。** 全グループで同じ値を使う
 機密は、グループごとの置き場へ同じ値を置く。共通の置き場を持つと、そこへ企業固有の機密が
@@ -430,20 +531,21 @@ backend では参照のグループが常に空で、参照の値・等価性・
 
 #### `env` コマンドの `--group`
 
-`env list` / `get` / `set` / `delete` / `edit` / `init` / `sync` は `--group NAME` を受ける。省略時は
-対象のグループを使う。`project` / `export` / `import` は `--group` を受けず、実行時の
-ディレクトリで決まる。`set` / `delete` / `edit` の `-p` は宛先を、`list` の `-p` はプロジェクトの
+`env list` / `get` / `set` / `delete` / `edit` / `init` / `sync` / `export` / `import` と
+`env backend test` / `migrate` は `--group NAME` を受ける。省略時は対象のグループを使う。`project` は
+`--group` を受けず、実行時のディレクトリで決まる。`set` / `delete` / `edit` の `-p` は宛先を、`list` の `-p` はプロジェクトの
 節だけを出すことを指し、`get` は `-p` を取らずにプロジェクトの参照を実行時のディレクトリから
 含める。
 
 | 状況 | 結果 |
 | --- | --- |
-| `--group` なし | 対象のグループの参照 |
+| `--group` なし、プロジェクトの中 | 宣言のグループの参照。宣言が無ければ backend を問わず書き方を述べて 1。置き場へ要求しない |
+| `--group` なし、プロジェクトの外、グループ別の置き場 | `--group` が要る旨を述べて 2。置き場へ要求しない（既定の値は無い） |
 | `--group NAME`、`-p` なし | 共通の参照（個人共通を含む）を `NAME` のグループで読み書きする |
 | `--group NAME` と `-p`、プロジェクトのグループと同じ置き場 | そのプロジェクトの参照を読み書きする |
 | `--group NAME` と `-p`、プロジェクトのグループと違う置き場 | 読み替えの前後のグループ名と決めたファイルを述べて 1。サーバへ要求しない |
 | `-p` なしの `list` / `get` で `--group NAME`、プロジェクトのグループと違う置き場 | 共通の参照だけを出す・探す。プロジェクトの参照を含めなかった旨を標準エラーへ 1 行出す |
-| 使えない名前（`resolve_account_group` の規則、読み替えた後が `global` / `projects`） | 理由を述べて 2。読み書きしない |
+| 使えない名前（`validate_account_group` の規則、読み替えた後が `global` / `projects`） | 理由を述べて 2。読み書きしない |
 | `version: 1` またはファイル backend で `--group` | グループ別の置き場を選んだ設定でだけ使える旨を述べて 2 |
 
 `-p` でプロジェクトのグループと違う置き場を拒むのは、`team/kkg/projects/web` に書けても `web` の
@@ -451,8 +553,8 @@ backend では参照のグループが常に空で、参照の値・等価性・
 文言でプロジェクトの `env` の `DEVBASE_ACCOUNT_GROUP` を直すよう案内する。`list` の見出しは
 `=== グローバル（グループ with） (...) ===` / `=== プロジェクト: web（グループ with） (...) ===`
 の形になる（`version: 1` ではグループが付かない）。`group_aliases` に対応のあるグループでは、
-読み替えの前と後が並んで `=== グローバル（グループ default → nyle） (...) ===` /
-`=== プロジェクト: web（グループ default → nyle） (...) ===` になり、隣に並ぶパス
+読み替えの前と後が並んで `=== グローバル（グループ acme → nyle） (...) ===` /
+`=== プロジェクト: web（グループ acme → nyle） (...) ===` になり、隣に並ぶパス
 （`devbase/team/nyle/global`）と同じグループを指していると読める。
 
 #### dispatch 前の注入
@@ -473,35 +575,41 @@ backend では参照のグループが常に空で、参照の値・等価性・
 自分で決め、値を環境変数から使わない。`--group` や `-p` の検証より前に注入すると、拒むはずの
 操作でも別グループのパスへ要求が出る。
 
-#### `up` / `scale` のグループの食い違い
+backend と版を問わず、実行時のディレクトリのプロジェクトがグループを宣言していなければ、`env` の
+10 のサブコマンドは dispatch 前の注入を行わない（`cli._undeclared_current_project`。#315 決定 2）。
+これらは宣言の検査で 1 に止まるため、止まる前に共通・プロジェクトの機密を読んでプロセスへ載せない。
+`env exec` などの暗黙に読む経路は止めず、グループ別の置き場ではグループが決まらなければ何も読まずに
+空で続ける（#315 決定 4・I9）。
 
-`version: 2` のとき、`up` と `scale` はボリュームのグループと機密のグループを比べ、食い違えば
-両方の値と出所を述べて 1 で終わる（`container._check_group_consistency`）。グループの名前が
-検証を通らないときも起動しない。`version: 1` では検査しない。
+#### `up` / `scale` のグループの宣言と食い違い
+
+`up` と `scale` は、backend と版を問わず、起動の先頭でプロジェクトのグループの宣言を読む
+（`container._require_group_declaration`。#315 I1・I2・I4）。宣言が無い・空・使えない名前・
+`$DEVBASE_ROOT/env` に宣言がある・プロジェクトの外、のどれでも理由を述べて 1 で終わる。
+宣言が読めれば、ボリュームのグループと比べる。
 
 | 比べるもの | 決まり方 |
 | --- | --- |
-| ボリュームのグループ | `resolve_account_group()`（プロセスの環境変数 `DEVBASE_ACCOUNT_GROUP`、未設定なら `default`） |
+| ボリュームのグループ | プロセスの環境変数 `DEVBASE_ACCOUNT_GROUP`（`resolve_account_group()`）。未設定なら宣言の値を環境変数へ置く（既定の値は無い） |
 | 機密のグループ | `groups.declare(root, 実行時のプロジェクト)`（読み替える前の名前で比べる） |
+
+環境変数があって宣言と違えば、両方の値と出所を述べて 1 で終わる。
 
 | コマンド | 検査の位置 | 検査より後にある副作用 |
 | --- | --- | --- |
 | `up` | `_run_pre_up_checks` の冒頭（`_ensure_env_files` より前） | 子プロセスの `env init`、`pre-up` フック、自動スナップショット、ボリュームの作成、構成の生成 |
 | `scale` | `cmd_scale` の冒頭（`project.local.yml` の `scale` を書き換える前） | `scale` の書き換え、ボリュームの作成、構成の生成 |
 
-グループを宣言していないプロジェクトで `DEVBASE_ACCOUNT_GROUP=kkg devbase up` と打つと、
-ラッパーが source する `env` に同じキーが無いため環境変数が残り、ボリュームは `kkg`、機密は
-`default` になる（プロジェクトの `env` が宣言していれば、ラッパーの source が環境変数を上書き
-するので食い違わない）。そのまま起動すると、あるグループのボリュームの認証で別のグループの
-機密を使うコンテナができる。途中で止めると別グループの名前のボリュームや書き換えた `scale` が
-残るため、副作用より前で検査する。`scale` は `_run_deploy_pipeline` を通らないため、同じ関数を
-冒頭で呼ぶ。ボリュームの側を `declared_group` へ揃える形は、スナップショット・`status`・
-entrypoint へ渡す値まで経路が変わるため採らない。
+宣言の無いプロジェクトで起動すると、ボリュームのグループが決まらず、あるグループのボリュームの認証で
+別のグループの機密を使うコンテナができうる。途中で止めると別グループの名前のボリュームや書き換えた
+`scale` が残るため、副作用より前で検査する。`scale` は `_run_deploy_pipeline` を通らないため、同じ関数を
+冒頭で呼ぶ。環境変数が未設定のとき宣言の値を置くのは、下位ディレクトリから打って起動ラッパーが
+プロジェクトの `env` を読まなくても、ボリュームと機密のグループが揃うようにするためである（#315 決定 5）。
 
 `_ensure_env_files` は存在判定の参照に実行時のプロジェクトのグループを持たせ、共通機密が
 未作成なら子プロセスの `env init` へ `--group <プロジェクトのグループ>` を渡す（`version: 2` の
 ときだけ）。子プロセスは `cwd=$DEVBASE_ROOT` で起動して実行時のプロジェクトを持たず、渡さなければ
-`$DEVBASE_ROOT/env` のグループの共通の参照へ書き、親が読み直す参照と揃わない。子プロセスの
+プロジェクトの外として `--group` の不足で止まり、共通の機密を作れない。子プロセスの
 `cwd` をプロジェクトへ変える形は、`env init` の収集器が `cwd` に依存しないことを確かめる範囲が
 広がり、`version: 1` の挙動まで変わりうるため採らない。
 
@@ -515,11 +623,17 @@ entrypoint へ渡す値まで経路が変わるため採らない。
 | `env init` | 対象のグループ（`--group` で指定できる）のチーム共通 |
 | `env sync` | 対象のグループ（`--group` で指定できる）の個人共通とチーム共通。同期済みハッシュの控えもそのグループのもの |
 | `env project` | 実行時のプロジェクトのグループのチームのプロジェクト |
-| `env export` | 共通は対象のグループ。プロジェクトは対象のグループと同じ置き場のものだけを集め、外したプロジェクトの名前とグループを標準エラーへ出す（その参照へは要求しない）。メタデータは対象のグループの控えを `env/sources.yml` として入れる |
-| `env import` | 共通は対象のグループ、プロジェクトはそれぞれのグループ。バンドルに対象のグループと違う置き場のプロジェクトがあれば、サーバへ要求する前に名前とグループを挙げ、`--exclude-project` を案内して 1 件も取り込まずに 1（`--dry-run` も同じ）。`env/sources.yml` は対象のグループの控えへ取り込む |
+| `env export` | 共通は対象のグループ（`--group` で指定できる）。プロジェクトは対象のグループと同じ置き場のものだけを集め、外したプロジェクトの名前とグループを標準エラーへ出す（その参照へは要求しない）。メタデータは対象のグループの控えを `env/sources.yml` として入れる |
+| `env import` | 共通は対象のグループ（`--group` で指定できる）、プロジェクトはそれぞれのグループ。バンドルに対象のグループと違う置き場のプロジェクトがあれば、サーバへ要求する前に名前とグループを挙げ、`--exclude-project` を案内して 1 件も取り込まずに 1（`--dry-run` も同じ）。`env/sources.yml` は対象のグループの控えへ取り込む |
 
 別グループのプロジェクトは、グループ単位のポリシーのサーバで 403 になる。`import` で黙って
 飛ばすと取り込んだつもりの機密が欠けるため、止めて除外を案内する。
+
+グループ別の置き場では、`export` / `import` はプロジェクトの外で `--group` が無ければ 2 で止まり、
+対象のプロジェクト（`--exclude-project` で外したものを除く）に宣言の無いものが 1 つでもあれば、
+書き込みの前に名前を挙げて `--exclude-project` を案内して止まる（`groups.require_declared`）。一部の
+プロジェクトだけを移すと、移したつもりの機密が欠けるためである。グループ別の置き場でなければこの
+検査はしない。
 
 `env sync` の同期の書き込み先は、キーごとに次の 1 つである（`SyncTargets.target_for`）。
 
@@ -558,13 +672,13 @@ entrypoint へ渡す値まで経路が変わるため採らない。
 | --- | --- | --- | --- |
 | `status` | なし | backend 名、保存先、`mount`、4 参照のパス、個人単位の識別子、接続資格情報の有無と `role_id`、キャッシュの有無と最終取得時刻。0 | 設定が壊れていれば理由を述べて 1 |
 | `use <name>` | `--url` `--mount` `--user ID` `--role-id` `--secret-id-stdin` `--cache` / `--no-cache` `--layout flat\|group` `--group-alias FROM=TO`（繰り返し可） | 検証 → 資格情報の保存 → 設定の保存の順で行い、要約（レイアウトと版、読み替えを含む）を表示（`secret_id` は伏せる）。0 | 未知の名前・必須項目の欠落・レイアウトの指定の誤り（後述）は 2、鍵が無いなどは 1。**いずれも設定を書き換えない** |
-| `test` | なし | 認証と参照ごとの取得（キャッシュへ落ちない）を行い、接続先 URL と読めた参照の件数を表示。0 | 到達できない・認証できない・サーバ backend でない → 1 |
-| `migrate --to <name>` | `--to age\|openbao` `--exclude-project NAME`（繰り返し可） `--dry-run` `--yes` | 後述 | 衝突・`projects/` に無い `--exclude-project` の名前は 2、読み戻しの不一致・書き込み失敗は 1 |
+| `test` | `--group NAME` | 認証と参照ごとの取得（キャッシュへ落ちない）を行い、接続先 URL と読めた参照の件数を表示。0 | 到達できない・認証できない・サーバ backend でない → 1。グループ別の置き場でプロジェクトの外・`--group` 無し → 2 |
+| `migrate --to <name>` | `--to age\|openbao` `--exclude-project NAME`（繰り返し可） `--dry-run` `--yes` `--group NAME` | 後述 | 衝突・`projects/` に無い `--exclude-project` の名前は 2、読み戻しの不一致・書き込み失敗は 1 |
 
 `version: 2` の `status` は、置き場の前にレイアウトの行（`レイアウト: group (version 2)`）と
-対象のグループの行（`グループ:   default → nyle (projects/api/env にも $DEVBASE_ROOT/env にも宣言なし)`
-の形。括弧は決めたファイル）を足し、4 参照のパスを対象のグループで組んで出す。プロジェクトの
-外ではプロジェクトのパスを `<mount>/team/<g>/projects/<name>` の形で出す。グループを決められ
+対象のグループの行（`グループ:   acme → nyle (projects/api/env:3)`
+の形。括弧は決めたファイルと行）を足し、4 参照のパスを対象のグループで組んで出す。プロジェクトの
+外では `グループ:   なし（プロジェクトの外）` と出し、パスを `<mount>/team/<g>/…` の形で出す。グループを決められ
 なければ `グループ:   決められません (<理由>)` と出してパスを省く。`version: 1` とファイル backend
 の出力にこれらの行は無い。
 
@@ -581,7 +695,7 @@ entrypoint へ渡す値まで経路が変わるため採らない。
 | `--layout` なし、`openbao` 節が無い | `group`（`version: 2`）で書く |
 | `--layout group` | `version: 2` で書く。`path_team_global` / `path_team_project_prefix` は捨てる |
 | `--layout flat` | `version: 1` で書く。既存の `group_aliases` は捨て、捨てた旨を表示する |
-| `--group-alias FROM=TO` | `group_aliases` をこの指定で置き換える（無ければ既存を引き継ぐ）。`FROM` と `TO` は `resolve_account_group` の規則と前後の空白の禁止で検証し、`TO` が `global` / `projects` なら拒む。同じ `FROM` を違う `TO` へ向ける指定も拒む |
+| `--group-alias FROM=TO` | `group_aliases` をこの指定で置き換える（無ければ既存を引き継ぐ）。`FROM` と `TO` は `validate_account_group` の規則（`default` の拒否を含む）と前後の空白の禁止で検証し、`TO` が `global` / `projects` なら拒む。同じ `FROM` を違う `TO` へ向ける指定も拒む |
 | `--group-alias` と、`--layout flat` または（`--layout` なしで）既存の `version: 1` | 組み合わせの誤りとして 2 |
 | `openbao` 以外の backend に `--layout` / `--group-alias` | 2 |
 | `openbao` 以外の backend | 既存の版と `openbao` 節を引き継ぐ |
@@ -895,9 +1009,10 @@ flowchart TD
 述べて 1 で終了する（移行はチームの置き場を作る操作で、書ける利用者が行う）。
 
 移行の単位は、ファイル backend 側の参照（グループを持たない）と OpenBao 側の参照（`version: 2`
-ではグループを持つ）の組である。グループは実行時のディレクトリに左右されず、共通の参照は
-`ref_group(None)`（`$DEVBASE_ROOT/env` → `default`）、プロジェクトの参照は `ref_group(<name>)` で
-決まる。
+ではグループを持つ）の組である。共通の参照のグループは `--group`（無ければ実行時のプロジェクトの
+宣言）、プロジェクトの参照は `ref_group(<name>)` で決まる。グループ別の置き場では、プロジェクトの外で
+`--group` が無ければ 2 で、宣言の無いプロジェクトが 1 つでもあれば書き込みの前に名前を挙げて止まる
+（`--exclude-project` で外せる。#315 I11）。
 
 - `--exclude-project NAME` のプロジェクトは、読まない・書かない・退避しない（ファイルは元の
   位置に残る）。`projects/` に無い名前は、設定を読む前に名前を挙げて 2 で終了する（打ち間違いで
@@ -906,8 +1021,8 @@ flowchart TD
   出す。値は出さない
 - `--to openbao` はプロジェクトごとのグループへ書く。書き込みの権限が無いグループのプロジェクトは
   `--exclude-project` で外す
-- `--to age` で移せる共通の参照は `secrets/global.env.age` 1 つだけなので、`$DEVBASE_ROOT/env` の
-  グループの共通の参照を移す。移すプロジェクトのグループのうち、それと違う置き場のグループの
+- `--to age` で移せる共通の参照は `secrets/global.env.age` 1 つだけなので、共通の参照のグループ
+  （前項）の共通の参照を移す。移すプロジェクトのグループのうち、それと違う置き場のグループの
   共通の参照には要求を出さず、グループ名とパスを表示してサーバ上に残す（移す機密が無いときも
   表示する）
 
@@ -949,8 +1064,8 @@ flowchart TD
   `url`、パス区切りや `..` を含む `user` / `mount`、`/` で始まる・終わる・`..` を含む
   `path_*`、版に置けないキー（`version: 1` の `layout` / `path_team_prefix` / `group_aliases`、
   `version: 2` の `path_team_global` / `path_team_project_prefix`）、`version: 2` で `layout` が
-  無い・`group` 以外、版と食い違う `layout`、`resolve_account_group` の規則を通らない・前後に
-  空白がある・空の `group_aliases` のキーと値、読み替えた後が `global` / `projects` になる対応である
+  無い・`group` 以外、版と食い違う `layout`、`validate_account_group` の規則を通らない（`default` を
+  含む）・前後に空白がある・空の `group_aliases` のキーと値、読み替えた後が `global` / `projects` になる対応である
 - `version: 2` の 1 回の操作（`up` / `scale` / `env` のコマンド / `env backend test`）がサーバへ
   要求するパスは、対象のグループの置き場のものだけである。`version: 1` とファイル backend では
   参照のグループが常に空で、パス・キャッシュの位置・往復の回数はグループを持たない参照と同じで
@@ -959,7 +1074,15 @@ flowchart TD
   使わない。レイアウトと合わないグループの参照は、サーバへ要求する前に拒む
 - `DEVBASE_ACCOUNT_GROUP` は、どの backend・どの版でも機密の合成に現れない。devbase のプロセスの
   環境変数にも、子プロセスにも、dev コンテナの `environment` にも、置き場の値が載ることはない
-- `version: 2` の `up` / `scale` は、ボリュームと機密のグループが食い違ったまま副作用を起こさない
+- `up` / `scale` は、backend と版を問わず、グループの宣言が読めないまま、またはボリュームと機密の
+  グループが食い違ったまま副作用を起こさない
+- どのコマンドも、宣言も `--group` も無いまま特定のグループの機密の置き場やボリュームへ触れない。
+  グループの既定の値は無く、`default` はグループ名として使われない
+- グループ別の置き場では、プロジェクトの外で `--group` の無い明示の機密のコマンドは置き場を開かない。
+  暗黙に読む経路（dispatch 前の注入・`env exec`）は、グループが決まらなければどの置き場も読まない
+- dev コンテナは `DEVBASE_ACCOUNT_GROUP` 無しで起動しない
+- ボリュームの移行は元のボリューム `devbase_home_default` を書き換えず、消さない。前提を満たさなければ
+  先を作らず何も書かない
 - TUI のキーの追加・変更・削除は `cmd_env` の `set` / `delete` を選んだ置き場を写した属性で呼び、TUI の
   モジュールは `SecretStore` へ書かない。接続設定の書き込みは `env backend use` へ委譲する
 - TUI のキーの一覧は現物から読み、キャッシュの内容を出さない。読めなければ一覧を出さずに理由を 1 行出す
@@ -1004,7 +1127,7 @@ openbao:
   path_team_prefix: team
   path_user_prefix: users
   group_aliases:
-    default: nyle
+    acme: nyle
   timeout_seconds: 5
 cache:
   enabled: true
@@ -1133,15 +1256,36 @@ cache:
   で行う。TUI で扱えない値（改行・前後の空白を含む）は `devbase env edit` で編集する
 - `env sync` でチーム共通へ置きたいキーは、先に `devbase env set`（`--user` なし）でチーム共通に作る。以後の
   `sync` はそこを更新する
-- グループの読み替え（`default` → 置き場のグループ名）は `backend.yml` の `group_aliases` 1 か所に
-  書き、`env backend status` で確かめる
-- `up` / `scale` がグループの食い違いで止まったら、起動したいグループに合わせて、プロジェクトの
-  `env` に `DEVBASE_ACCOUNT_GROUP` を書くか、シェルの環境変数を外す
+- グループの読み替え（グループ名 → 置き場のグループ名）は `backend.yml` の `group_aliases` 1 か所に
+  書き、`env backend status` で確かめる。`default` は読み替えのキーにも値にも使えない。旧版の
+  `default: nyle` が残っていれば設定の読み込みで止まるので、その行を消す
+- 各プロジェクトの `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=<グループ>` を書く（必須）。
+  `projects/*` は plugin repo の持ち物で、宣言は各 plugin repo に書く。`$DEVBASE_ROOT/env` の行は消す。
+  `up` / `scale` がグループの食い違いで止まったら、起動したいグループに合わせて、プロジェクトの
+  `env` の宣言を直すか、シェルの環境変数を外す
+- 宣言の無いプロジェクトが残っていると、グループ別の置き場の `env export` / `import` /
+  `env backend migrate` は止まる。当面動かさないプロジェクトは `--exclude-project` で外す
+- 旧既定の `default` から移すときは、次の順で行う。手順の詳細は
+  [環境変数ガイド](../user/environment-variables.md#default-からの移行) にある
+
+  | 順 | 手順 | この順にする理由 |
+  | --- | --- | --- |
+  | 1 | 旧版のまま、宣言の無いプロジェクトと移し先のグループのプロジェクトのコンテナを `devbase down` で止める | 元か先を使うコンテナが動いていると移行が止まる |
+  | 2 | devbase を更新する | 移行のコマンドは新しい版にある |
+  | 3 | `devbase project migrate-volume --to <グループ>` | 先に新しい版で `up` すると先が空でなくなり、移行が止まる |
+  | 4 | `secrets/backend.yml` の `openbao.group_aliases` から `default: <グループ>` を消す | 残すと機密のコマンドが設定の読み込みで止まる |
+  | 5 | plugin repo の宣言を `devbase plugin` で手元へ届ける | 旧版のまま宣言を届けると、旧版の `up` が空の移し先を作って使う |
+  | 6 | `devbase build --no-cache` の後にプロジェクトを `up` し、ログインと MCP のトークンを確かめる | entrypoint の変更はイメージの作り直しで反映される |
+
+- ロールバックは、devbase を旧版へ戻し、`backend.yml` へ `default: <グループ>` を戻し、宣言の行を外す。
+  元の `devbase_home_default` が残っているため移行の前の状態へ戻る。宣言を残したまま旧版へ戻しても、
+  そのグループのプロジェクトは写した `devbase_home_<グループ>` を使って動く。`devbase_home_default` を
+  消すのは、ロールバックが要らないと判断した後に利用者が手で行う
 - 機密の置き場に `DEVBASE_ACCOUNT_GROUP` を書いても使われない。`devbase env set` は拒み、既に
   置き場にある値は合成から外れて置き場ごとに 1 回警告が出る。警告が出たら、添えられた
-  `devbase env delete DEVBASE_ACCOUNT_GROUP …` で消し、グループは `projects/<name>/env` か
-  `$DEVBASE_ROOT/env` で宣言する。`version: 1` の端末で置き場の値によってグループを切り替えて
-  いた場合、ボリュームのグループは `env` ファイルの宣言（無ければ `default`）へ戻る
+  `devbase env delete DEVBASE_ACCOUNT_GROUP …` で消し、グループは `projects/<name>/env` で
+  宣言する。`version: 1` の端末で置き場の値によってグループを切り替えていた場合、ボリュームの
+  グループは `env` ファイルの宣言へ戻る
 
 ## テスト観点
 
@@ -1199,7 +1343,7 @@ cache:
   `version: 2` のパス・キャッシュの位置・接頭辞、置けないキー・`layout` の欠落と食い違い・
   `group_aliases` の名前と前後の空白・読み替え後の `global` / `projects` の拒否
   （`tests/env/test_backend_config.py`）
-- グループの決まり方（プロジェクトの `env` → `$DEVBASE_ROOT/env` → `default`、空の値、`export` 付きと
+- グループの決まり方（プロジェクトの `env` の宣言だけ・宣言が無い・空の値・`$DEVBASE_ROOT/env` の行で止まること、`export` 付きと
   最後の行、プロセスの環境変数と置き場の値を使わないこと、名前の検証、出所の表示）、
   `SecretRef.group` の等価性と `label()`、`ref_group` / `storage_group` が `version: 1` とファイル
   backend で `None` になること（`tests/env/test_groups.py`）
@@ -1220,17 +1364,41 @@ cache:
   書かないこと（`tests/cli/tui/test_actions_env_keys.py`）、OpenBao の接続設定の案内・欄の引き継ぎ・
   保存の後の確認（`tests/cli/tui/test_actions_env_openbao.py`）、伏せ字の欄が打った文字を出さないこと
   （`tests/cli/tui/test_menu_pty.py`）
-- `version: 2` の `up` の往復（プロジェクトの中・宣言なしの読み替え・別グループへの切替で認証 1 回・
+- `version: 2` の `up` の往復（プロジェクトの中・別グループへの切替で認証 1 回・
   取得 4 回、`env init` の子プロセスへの `--group` と書いた値での起動、`version: 1` では渡さない
-  こと）（`tests/cli/test_up_roundtrips.py`）
+  こと）、宣言の無いプロジェクトの `up` が置き場を読む前に止まること（`tests/cli/test_up_roundtrips.py`）
 - dispatch 前の注入が名前を指定したライフサイクル操作で切替先を使い、`env` の 10 のサブコマンドで
   注入せず、`env exec` では注入すること（`tests/cli/test_secret_injection.py`）
 - 下位ディレクトリからの `set` の宛先、`--group` の 5 コマンドの宛先と見出し、`-p` との食い違いの
   拒否（要求 0 回）と読み替え後の名前での比較、`list` / `get` がプロジェクトの参照を含めないこと、
   使えない名前と `version: 1`・ファイル backend での 2（`tests/commands/test_env_user_axis.py`）
 - `env init --group` の宛先・読み替え・拒否（`tests/commands/test_env_init_group.py`）
-- `up` / `scale` がグループの食い違いで副作用より前に止まり、`version: 1` では止まらないこと
-  （`tests/commands/test_container_up_order.py`）
+- `up` / `scale` が、宣言が無い・空・`$DEVBASE_ROOT/env` に宣言がある・`default` を宣言した・環境変数と
+  食い違う、のどれでも副作用より前に止まり（`scale` は `scale` を書き換えない）、宣言済みなら次の検査へ
+  進み、環境変数が未設定なら宣言の値で揃うこと（`tests/commands/test_container_up_order.py`）
+- グループ名の検証（未設定・空の拒否と宣言の書き方、`default` の予約語、既定のグループの定数が無いこと）
+  （`tests/volume/test_manager_group.py`）、`group_aliases` の `default` のキーと値の拒否
+  （`tests/env/test_backend_config.py`）
+- グループ別の置き場で、プロジェクトの外の `--group` 無しの機密のコマンドが置き場へ要求を出さずに 2 で
+  止まり、宣言の無いプロジェクトの中では backend を問わず 1 で止まること
+  （`tests/commands/test_env_user_axis.py`・`tests/commands/test_env_init_group.py`・
+  `tests/commands/test_env_sync_group.py`・`tests/commands/test_env_project.py`）、暗黙の注入がグループの
+  決まらないときに何も読まないこと（`tests/env/test_runtime.py`・`tests/cli/test_secret_injection.py`）
+- グループ別の置き場の `export` / `backend migrate` が、プロジェクトの外で `--group` が無ければ止まり、
+  宣言の漏れで書き込みの前に止まること（`tests/cli/test_env_bundle_backend.py`・`tests/commands/test_env_backend_migrate.py`）
+- `devbase status` のアカウントグループの欄（外で `default` を出さない・宣言と出所・宣言なし・
+  設定の誤り）（`tests/commands/test_status_account_group.py`）
+- `snapshot create` の `--group` と宣言、外で `--group` 無しの 2、`default` の拒否
+  （`tests/commands/test_snapshot.py`）、旧既定のボリュームを持つメタを受け付けること
+  （`tests/snapshot/test_manager_volumes.py`）
+- TUI の sync・init とスナップショットの作成の前のグループの選択、候補が宣言だけから作られること、使えない
+  名前で選択へ戻ること（`tests/cli/tui/test_actions_env.py`・`tests/cli/tui/test_actions_snapshot.py`）
+- entrypoint がグループ無しで止まり、どのグループも `/persistent/ai` から取り込まず、初回シードの関数と
+  `:-default` の既定が残らないこと（`tests/containers/test_entrypoint_ai_settings.py`・
+  `tests/containers/test_entrypoint_startup_log.py`）
+- ボリュームの移行（無い先へ写して元を残す・検査で先を作らない・空の先・空でない先・元が無い・
+  元か先を使う稼働中のコンテナ・Docker に届かない・件数の不一致・コピーの失敗・使えない `--to`・
+  `--dry-run`・次の手順の表示）（`tests/volume/test_migrate.py`）
 - `status` のレイアウト・グループ・出所・パス、`use` の `--layout` / `--group-alias` の引き継ぎ・
   置き換え・拒否とキャッシュの削除、`test` を対象のグループへ絞ること
   （`tests/commands/test_env_backend.py`）
@@ -1252,6 +1420,9 @@ cache:
 - 引数なしの `label()` を通るエラーの文言と警告（レイアウトと合わない参照の拒否、置き場に
   書いた `DEVBASE_ACCOUNT_GROUP` の警告）には `→` が出ず、読み替える前の名前のままであること
   （`tests/env/test_secret_store_label.py`）
+- ボリュームの移行の後に、移し先のグループのプロジェクトで `claude` のログイン・`gh auth status`・
+  `gcloud config get account`・MCP のトークンが移行前と同じ結果を返すこと、ロールバックの手順で移行前と
+  同じ状態へ戻ること、`personal` のプロジェクトのコンテナに他のグループの機密が無いことは手動確認
 - 実サーバに対する `devbase env backend test` / `devbase up` は手動確認。`version: 2` の
   パスの読み書きと、プロジェクトのコンテナに別グループの機密が無いことも同じ。コンテナの中の
   `bao kv get` / `patch`、チーム共通への書き込みの 403、`env token` での取り直しも同じ。ポリシーによる
@@ -1266,7 +1437,8 @@ cache:
 - 発端の依頼: `issues/security-key.md`
 - 実装 PR: devbasex/devbase#171（Infisical 版 #167 を置き換え）、#177（`up` の往復、#168）、
   #178（コンテナの `bao`、#169）、#184（アカウントグループごとの置き場、#182。設計は #183）、
-  #206（機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` を注入しない、#185。設計は #205）
+  #206（機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` を注入しない、#185。設計は #205）、
+  #317 / #318（アカウントグループの宣言の必須化と `default` の廃止、#315。設計は #316）
 - Infisical から OpenBao への切り替えの経緯: devbasex/devbase#166
 - サーバのポリシーをグループ単位に絞る課題: 運用側のリポジトリ（carmo-cdk#363）
 - [環境変数ガイド: アカウントグループ](../user/environment-variables.md#アカウントグループ-devbase_account_group)

@@ -23,7 +23,7 @@ class KeyRow:
     ref: SecretRef
     owner_label: str
     scope_label: str
-    #: ``version: 2`` のときだけ。読み替えがあれば ``default → nyle`` の形
+    #: ``version: 2`` のときだけ。読み替えがあれば ``acme → nyle`` の形
     group_label: Optional[str]
 
 
@@ -40,9 +40,20 @@ class KeyListing:
 
 
 def is_grouped(store: SecretStore) -> bool:
-    config = store.config
-    return (config.backend == 'openbao' and config.openbao is not None
-            and config.openbao.grouped)
+    return store.grouped
+
+
+def _project_group(store: SecretStore, devbase_root: Path, project: str) -> Optional[str]:
+    """プロジェクトの参照に持たせるグループ。読む前に backend を問わず宣言を検査する
+    (#315 決定 2。CLI の ``_target_group`` と同じ)。
+
+    Raises:
+        GroupDeclarationError: プロジェクトの宣言が無い・空・使えない名前
+    """
+    from devbase.env import groups as _groups
+
+    declared = _groups.declare(devbase_root, project)
+    return declared.name if store.grouped else None
 
 
 def scope_label(ref: SecretRef) -> str:
@@ -64,17 +75,19 @@ def _scope_refs(store: SecretStore, project: Optional[str],
 
 
 def _resolve_target(store: SecretStore, devbase_root: Path, project: Optional[str],
-                    group: Optional[str], grouped: bool) -> Tuple[Optional[str], Optional[str]]:
+                    group: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     """読むグループと ``--group`` に渡す名前の組"""
     from devbase.commands.env import _target_group
 
     if project is not None:
-        return store.ref_group(project), None
+        return _project_group(store, devbase_root, project), None
     if group is not None:
         target = _target_group(devbase_root, store, group)
         return target, target
+    # グループ別の置き場ではプロジェクトの外のグループが決まらず GroupRequiredError (#315)。
+    # TUI は先にグループを選ばせて渡す
     target = store.ref_group(None)
-    return target, (target if grouped else None)
+    return target, None
 
 
 def _rows_for_refs(store: SecretStore, refs: List[SecretRef], settings) -> List[KeyRow]:
@@ -96,15 +109,15 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
     ``project`` が ``None`` なら共通 (チーム共通・個人共通)、あればそのプロジェクトの 2 つ
     (チーム・個人) だけを読む。
     ``group`` は ``--group`` と同じ検証を通す (:class:`GroupOptionError`)。``project`` があれば
-    無視し、そのプロジェクトのグループを使う (決定 6)。``group`` が無ければ
-    ``$DEVBASE_ROOT/env`` のグループ。
+    無視し、そのプロジェクトのグループを使う (決定 6)。グループ別の置き場で共通を読むときは
+    ``group`` が要る (無ければ :class:`~devbase.env.groups.GroupRequiredError`。#315)。
 
     読み出しは 1 つの ``SecretStore`` で参照ごとに ``fetch`` を 1 回 (キャッシュへ落ちない。I4)。
     接続・403・復号の失敗は ``DevbaseError`` のまま送る。
     """
     store = SecretStore(devbase_root)
     grouped = is_grouped(store)
-    target, option_group = _resolve_target(store, devbase_root, project, group, grouped)
+    target, option_group = _resolve_target(store, devbase_root, project, group)
 
     refs, has_user = _scope_refs(store, project, target)
 
@@ -135,7 +148,7 @@ def count_project_keys(devbase_root: Path) -> List[Tuple[str, Optional[int]]]:
     counts: List[Tuple[str, Optional[int]]] = []
     for name in project_names(devbase_root):
         try:
-            refs, _ = _scope_refs(store, name, store.ref_group(name))
+            refs, _ = _scope_refs(store, name, _project_group(store, devbase_root, name))
             count = sum(len(store.fetch(r)) for r in refs)
         except DevbaseError:
             count = None
@@ -144,24 +157,25 @@ def count_project_keys(devbase_root: Path) -> List[Tuple[str, Optional[int]]]:
 
 
 def group_choices(devbase_root: Path) -> List[str]:
-    """共通のグループの候補 (決定 6)。サーバへ尋ねない。
+    """共通のグループの候補 (決定 6・#315 I12)。サーバへ尋ねない。
 
-    ``$DEVBASE_ROOT/env`` のグループを先頭に、各プロジェクトのグループを置き場のグループ名で
-    重複を除いて並べる。名前の使えないプロジェクトは飛ばす。
+    宣言済みのプロジェクトのグループ (:func:`devbase.env.groups.declared_groups`) を、置き場の
+    グループ名で重複を除いて並べる。``$DEVBASE_ROOT/env`` と既定の値は候補にしない。
     """
+    from devbase.env.groups import declared_groups
     from devbase.errors import DevbaseError
 
     store = SecretStore(devbase_root)
+    if not store.grouped:
+        return []
     choices: List[str] = []
     seen = set()
-    candidates = [None] + project_names(devbase_root)
-    for project in candidates:
+    for name in declared_groups(devbase_root):
         try:
-            name = store.ref_group(project)
             storage = store.storage_group(name)
         except DevbaseError:
             continue
-        if name is None or storage in seen:
+        if storage in seen:
             continue
         seen.add(storage)
         choices.append(name)

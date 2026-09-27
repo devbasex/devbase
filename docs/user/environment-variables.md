@@ -233,11 +233,12 @@ devbase project up <name>
 ## アカウントグループ (`DEVBASE_ACCOUNT_GROUP`)
 
 **使用する Google / AWS アカウントの単位**を宣言します。`devbase env init` の収集対象では
-なく、`$DEVBASE_ROOT/env` かプロジェクトの `env` に手書きする devbase 動作設定です。
+なく、プロジェクトの `env`（`projects/<name>/env`）に手書きする devbase 動作設定です。
+**どのプロジェクトも宣言が必須で、既定の値はありません。**
 
 | キー | 説明 |
 |------|------|
-| `DEVBASE_ACCOUNT_GROUP` | アカウントグループ名。未設定なら `default`。グループごとに `devbase_home_<group>` ボリュームが作られ、コンテナへ `/persistent/group` としてマウントされる |
+| `DEVBASE_ACCOUNT_GROUP` | アカウントグループ名（例: `nyle` / `personal` / `with` / `kkg`）。グループごとに `devbase_home_<group>` ボリュームが作られ、コンテナへ `/persistent/group` としてマウントされる |
 
 ```bash
 # projects/<name>/env
@@ -247,52 +248,114 @@ DEVBASE_ACCOUNT_GROUP=kkg
 同じグループのコンテナは Claude Code / gcloud / gws の認証と会話ログを共有し、
 違うグループのコンテナは互いの認証に到達できません。`~/.claude/plugins` のような
 共通資産は別ボリューム (`/persistent/ai`) に残るため、グループを増やしても重複しません。
+会社の機密を使わない個人・OSS のプロジェクトには `personal` を宣言します。
 
-グループ名には次の 3 つが使えません（`devbase up` の前にエラーになります）。
+### 宣言が無いときは止まる
+
+グループを決めるのはプロジェクトの `env` の空でない宣言だけです。次のどれかに当たると、
+`devbase up` / `scale` / 機密のコマンド（`env get` など）/ `snapshot create` は、ボリューム・
+生成物・コンテナ・`pre-up` のどれも作らずに終了コード 1 で止まり、直すファイルと行を示します。
+
+| 状況 | 直し方 |
+|---|---|
+| `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP` が無い | `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=<グループ>` を書く |
+| `DEVBASE_ACCOUNT_GROUP=`（空） | 示された行にグループ名を書く |
+| `$DEVBASE_ROOT/env` に `DEVBASE_ACCOUNT_GROUP` がある | その行を消し、各プロジェクトの `env` に書く（全体の既定は置けない） |
+| `DEVBASE_ACCOUNT_GROUP=default` | 移し先のグループ名を書く（`default` は予約語。[`default` からの移行](#default-からの移行)） |
+| `projects/` の外で `devbase up` を打った | `projects/<name>/` の下で打つか、`devbase up <name>` で名前を渡す |
+
+`login` / `ps` / `logs` / `down` / `profile` / `build` / `rebuild` はグループを決めないため、
+宣言の無いプロジェクトでも止まりません。宣言は `devbase status` の `[環境]` セクションで
+確かめられます（プロジェクトの外では「なし（プロジェクトの外）」と出ます）。
+
+グループ名には次のものが使えません（`devbase up` の前にエラーになります）。
 
 | 使えない名前 | 理由 |
 |---|---|
 | `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` に合わないもの | Docker のボリューム名にできない |
 | `ubuntu` | 共通ボリューム `devbase_home_ubuntu` と同名になる |
+| `default` | 旧既定のボリューム `devbase_home_default` と同名になる（予約語） |
 | 数字だけの名前（`1` / `042`）| インスタンス番号のボリューム `devbase_home_<index>` と同名になる |
 
-解決結果は `devbase status` の `[環境]` セクションに出ます。ボリューム構造の全体は
-[コンテナ運用ガイド](container-operations.md)、Google 認証の手順は
+シェルの環境変数 `DEVBASE_ACCOUNT_GROUP` で渡した値が宣言と違うと、`devbase up` / `scale` は
+2 つの値と出所を示して止まります。環境変数が未設定なら、devbase が宣言の値を使います。
+
+ボリューム構造の全体は [コンテナ運用ガイド](container-operations.md)、Google 認証の手順は
 [Google 認証ガイド](google-auth.md) を参照してください。
 
 ### 機密の置き場には書けない
 
-`DEVBASE_ACCOUNT_GROUP` を決めるのは `env` ファイル（`projects/<name>/env` /
-`$DEVBASE_ROOT/env`）とシェルの環境変数だけです。機密の置き場（`.env` / `age` / OpenBao の
-どれでも、`version: 1` でも）に書いた値は使われず、コンテナへも渡りません。置き場に残って
-いれば、devbase のコマンドを打つたびに次の警告が 1 回出ます（値は出しません）。
+`DEVBASE_ACCOUNT_GROUP` を決めるのはプロジェクトの `env` ファイル（`projects/<name>/env`）
+だけです。機密の置き場（`.env` / `age` / OpenBao のどれでも、`version: 1` でも）に書いた値は
+使われず、コンテナへも渡りません。置き場に残っていれば、devbase のコマンドを打つたびに次の
+警告が 1 回出ます（値は出しません）。
 
 ```text
-Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP は使いません。アカウントグループは env ファイル（projects/<name>/env・$DEVBASE_ROOT/env）で決まります。消すには: devbase env delete DEVBASE_ACCOUNT_GROUP
+Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP は使いません。アカウントグループは env ファイル（projects/<name>/env）で決まります。消すには: devbase env delete DEVBASE_ACCOUNT_GROUP
 ```
 
 警告に書かれたとおり `devbase env delete DEVBASE_ACCOUNT_GROUP`（置き場に合わせて `-p` /
 `--user` / `--group` が付きます）で消してください。`devbase env set DEVBASE_ACCOUNT_GROUP=...` は
-置き場へ書かずに終了コード 1 で止まります。`env` ファイルに書いてください。
+置き場へ書かずに終了コード 1 で止まります。`projects/<name>/env` に書いてください。
 
 ### 機密の置き場もグループで分ける（OpenBao）
 
 機密の保存先に OpenBao を使い、グループ別の置き場（`secrets/backend.yml` の `version: 2`）を
 選んだ端末では、**機密の置き場もこのグループで分かれます**。プロジェクトのコンテナへ届くのは、
 そのプロジェクトのグループの置き場（`team/<group>/…`・`users/<user>/<group>/…`）の機密だけです。
-設定・パスの対応・`default` を別の名前の置き場で扱う読み替えは
+設定・パスの対応・グループ名を別の名前の置き場で扱う読み替えは
 [機密の保存先を選ぶ](env-backend.md#アカウントグループごとの置き場version-2)を参照してください。
 
-機密の置き場のグループは、機密を読む前に次のファイルだけから決まります。
+- プロジェクトの中では、機密のコマンドはプロジェクトの宣言のグループの置き場を相手にします
+- **プロジェクトの外（`$DEVBASE_ROOT` など）では `--group <名前>` が必須です**
+  （`env init` / `sync` / `list` / `set` / `get` / `delete` / `edit` / `export` / `import` /
+  `backend test` / `backend migrate`）。付けないと置き場を開かずに終了コード 2 で止まります
+- `devbase list` の TUI は、共通の範囲を扱う前（キーの一覧・sync・init）とスナップショットの
+  作成の前にグループを選ばせます。候補は宣言済みのプロジェクトのグループです
+- `$DEVBASE_ROOT` で打つ `devbase build` や `devbase plugin` には、共通の機密が載りません
+  （どのグループの置き場も読みません）
 
-1. プロジェクトの `env`（`projects/<name>/env`）
-2. `$DEVBASE_ROOT/env`
-3. どちらにも無ければ `default`
+### `default` からの移行
 
-**機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` は使われません**（[機密の置き場には書けない](#機密の置き場には書けない)）。
-グループはここに挙げたファイルに書いてください。シェルの環境変数で渡したグループとファイルで
-決まるグループが食い違うと、`devbase up` / `scale` は起動せずに止まります（直し方は
-[`up` / `scale` がグループの食い違いで止まったとき](env-backend.md#up--scale-がグループの食い違いで止まったとき)）。
+グループを宣言していなかったプロジェクトは、ボリューム `devbase_home_default`（旧既定の
+ボリューム）を使い、グループ別の置き場では `group_aliases` の `default: <グループ>` で
+機密を読んでいました。`default` は予約語になったため、次の順に移します。例は移し先を
+`nyle` とした場合です（移し先は端末ごとに違います。`devbase_home_default` の中身の持ち主の
+グループを選んでください）。
+
+| 順 | 手順 |
+|---|---|
+| 1 | **更新する前に**、宣言の無いプロジェクトと、移し先のグループを宣言したプロジェクトのコンテナを `devbase down` で止める |
+| 2 | devbase を新しい版へ更新する |
+| 3 | `devbase project migrate-volume --to nyle` で `devbase_home_default` の中身を `devbase_home_nyle` へ写す（`--dry-run` で先に確かめられる） |
+| 4 | `secrets/backend.yml` の `openbao.group_aliases` から `default: nyle` の行を消す |
+| 5 | 各プロジェクトの `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=nyle` などを書く（plugin repo のプロジェクトは plugin repo の更新を `devbase plugin` で取り込む） |
+| 6 | `devbase build --no-cache` でイメージを作り直してから、プロジェクトを `devbase up` し、`claude` のログイン・`gh auth status`・`gcloud config get account`・MCP のトークンが移行前と同じか確かめる |
+
+`migrate-volume` は次のどれかに当たると、先へ何も書かずに止まります。
+
+| 止まる理由 | 直し方 |
+|---|---|
+| `devbase_home_default` が無い | 移すものはありません |
+| 移し先が既にあって空でない | 挙げられたエントリを確かめ、要らなければ `docker volume rm devbase_home_<group>` で消して打ち直す |
+| 元か先をマウントしたコンテナが動いている | 挙げられたコンテナのプロジェクトを `devbase down` で止めて打ち直す |
+| Docker に届かない | Docker を起動して打ち直す |
+
+写すのはファイル・ディレクトリ・持ち主・権限・シンボリックリンク（リンクのまま）で、
+元の `devbase_home_default` は読み取り専用で付けて**書き換えず、消しません**。写した後に
+元と先のエントリの数を照らし、合わなければ先を消して打ち直すよう示します。
+
+新しい `personal` のグループは移行の対象ではありません。最初の `devbase up` で空の
+`devbase_home_personal` が作られるため、claude・gh・gcloud などのログインを取り直し、
+機密は `devbase env init --group personal` などで入れます。
+
+**ロールバック。** devbase を前の版へ戻し、`secrets/backend.yml` の `openbao.group_aliases` へ
+`default: nyle` を戻し、手順 5 で書いた宣言の行を外します。元の `devbase_home_default` が
+残っているため、移行の前と同じ状態で起動します（宣言を残したまま前の版へ戻しても、宣言した
+プロジェクトは写した `devbase_home_nyle` を使って動きます）。`devbase_home_default` は、
+ロールバックが要らないと判断した後に手で `docker volume rm devbase_home_default` で消します。
+`devbase_home_default` のスナップショットの系列は残り、元のボリュームへだけ復元できます
+（[スナップショットガイド](snapshot-guide.md)）。
 
 ## `devbase up` 後のエディタ自動オープン
 

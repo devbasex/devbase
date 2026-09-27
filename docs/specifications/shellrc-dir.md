@@ -166,9 +166,9 @@ entrypoint（開発ユーザーで走る）が既存の `devbase_ensure_entry` �
 | 読み込み器 | `/etc/devbase/shellrc-dir.sh`（root 所有、`0644`。`/etc/devbase` は既存の `install -d -m 0755` が先に作る） |
 | `~/.bashrc` | 末尾に `. /etc/devbase/ai-cli-aliases.sh` → `. /etc/devbase/shellrc-dir.sh` の順 |
 
-`default` グループでは、初回シード（`devbase_seed_group_settings`）が `/persistent/ai/.shellrc.d`
-からのコピーを試み、シード元が無いので `skip (シード元なし)` の 1 行を出す。グループ側に
-`.shellrc.d` がまだ無い最初の起動の 1 回だけで、除外の一覧は持たない。
+グループ側の `.shellrc.d` は `/persistent/ai` から取り込まない。entrypoint はどのグループでも
+`/persistent/ai` からグループ側へ写さず（[secret-backend.md](secret-backend.md) の「グループのボリュームと
+コンテナ」）、`.shellrc.d` がまだ無い最初の起動では空のディレクトリを作る。
 
 ## 運用
 
@@ -222,7 +222,7 @@ entrypoint（開発ユーザーで走る）が既存の `devbase_ensure_entry` �
 - `~/.shellrc.d` がグループの根の下の `.shellrc.d` への symlink であること
 - entrypoint の後、グループ側の `.shellrc.d` が空のディレクトリであること（devbase は何も書かない）
 - 片方のグループの置き場所に置いたファイルが、もう片方のグループの置き場所から見えないこと
-- 既存の分類 A・B のエントリの張り先と、`default` グループの初回シードの結果が変わらないこと
+- 既存の分類 A・B のエントリの張り先が変わらず、どのグループでも `/persistent/ai` から取り込まないこと
 
 既存の `tests/containers/test_ai_cli_aliases.py` が通り、起動定義と起動オプションが変わらない
 ことも確かめる。

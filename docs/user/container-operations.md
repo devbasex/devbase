@@ -155,7 +155,8 @@ devbase のコンテナは 4 種類のボリュームを使用します。
 ### アカウントグループ
 
 `devbase_home_{group}` の `{group}` は `DEVBASE_ACCOUNT_GROUP` で宣言します。
-**使用する Google / AWS アカウントの単位**で、未設定なら `default` です。
+**使用する Google / AWS アカウントの単位**で、どのプロジェクトも `projects/<name>/env` での
+宣言が必須です（既定の値はありません。宣言が無いと `devbase up` が止まります）。
 
 ```bash
 # projects/<name>/env
@@ -167,22 +168,25 @@ DEVBASE_ACCOUNT_GROUP=kkg
 互いの認証に到達できません。一方で `~/.claude/plugins`（238MB）のような共通資産は
 `/persistent/ai` に置かれるため、グループを増やしても重複しません。
 
-いま自分がどのグループにいるかは `devbase status` の `[環境]` セクションで確認できます。
+いま自分がどのグループにいるかは、プロジェクトのディレクトリで打つ `devbase status` の
+`[環境]` セクションで確認できます。
 
 ```
 [環境]
   devbase/.env            42変数 (最終更新: 2026-08-29)
-  アカウントグループ          kkg (devbase_home_kkg / env)
+  アカウントグループ          kkg (devbase_home_kkg / projects/web/env:1)
 ```
 
-末尾の `env` / `既定` は、値が `env` 由来か未設定によるフォールバックかを示します。
+末尾は宣言のファイルと行です。プロジェクトの外では「なし（プロジェクトの外）」、宣言の
+無いプロジェクトでは `(設定エラー)` と宣言の書き方が出ます。
 
-グループ名には次の 3 つが使えません。`devbase up` の前にエラーになります。
+グループ名には次のものが使えません。`devbase up` の前にエラーになります。
 
 | 使えない名前 | 理由 |
 |---|---|
 | `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` に合わないもの | Docker のボリューム名にできない |
 | `ubuntu` | 共通ボリューム `devbase_home_ubuntu` と同名になる |
+| `default` | 旧既定のボリューム `devbase_home_default` と同名になる（予約語） |
 | 数字だけの名前（`1` / `042`） | インスタンス番号のボリューム `devbase_home_<index>` と同名になる |
 
 Google 認証の具体的な手順は [Google 認証ガイド](google-auth.md) を参照してください。
@@ -291,17 +295,19 @@ $ readlink -f ~/.claude/plugins      # 共通側（どのグループから見�
 - `/persistent/group` は `devbase_home_{group}` で、**同じアカウントグループのコンテナだけ**が同じ実体を参照します。
 - symlink **対象外**のホーム配下ファイル（シェル履歴など）はコンテナ層に置かれ、再生成で失われます。永続化したいものは `/persistent/ai` / `/persistent/group` 配下（= 上記 symlink 先）か `/work` に置いてください。
 
-### 既存環境からの移行（初回シード）
+### グループのボリュームの初期状態
 
-`default` グループでは、初回起動時に `/persistent/ai` にある分類 B のデータ
-（`.claude.json` / 認証 / 会話ログ / `.gemini`）が `/persistent/group` へ**コピー**されます。
-そのため既存環境で Claude Code の再ログインは発生しません。
+グループのボリュームへ初めて付けたコンテナでは、`/persistent/group` の分類 B の設定
+（`.claude.json` / 認証 / 会話ログ / `.gemini` / gcloud / gws）は空のプレースホルダです。
+`/persistent/ai` からの取り込みは行わないため、新しいグループ（例: `personal`）では
+claude・gh・gcloud などのログインを取り直します。グループの宣言が必須になる前に使っていた
+`devbase_home_default` の中身は、`devbase project migrate-volume --to <group>` で移します
+（[`default` からの移行](environment-variables.md#default-からの移行)）。
 
-- コピーであって移動ではないので、切り戻すときは元データがそのまま残っています
-- 実行されるのは**グループ側にまだ実体が無いときだけ**です（2 回目以降は何もしません）
-- 実測で 1.3GB 程度あるため**初回だけ起動が伸びます**
-- 非 `default` グループではシードしません（分離の意味が失われるため）
-- `gcloud` / `gws` はシード元が存在しないため、`default` を含む**全グループで初回 1 回の認証**が必要です
+コンテナは `DEVBASE_ACCOUNT_GROUP` が渡らないと起動しません（entrypoint がリンクを張る前に
+0 でない終了コードで止まります）。`devbase up` はプロジェクトの宣言の値を必ず渡します。
+entrypoint の変更はイメージを作り直すまで効かないため、devbase を更新したら
+`devbase build --no-cache` を打ってください。
 
 起動ログの 1 行で、どのグループとしてどのアカウントで動いているかを確認できます。
 

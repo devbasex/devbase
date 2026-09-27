@@ -13,7 +13,7 @@ from devbase.volume.compose import generate_scaled_compose
 # devbase 自身が dev サービスへ常に載せる変数 (PLAN39)。機密ではないので、
 # 「機密の渡し方」を見るこのファイルの期待値からは除いて比較する。
 DEVBASE_MANAGED = {
-    "DEVBASE_ACCOUNT_GROUP": "default",
+    "DEVBASE_ACCOUNT_GROUP": "nyle",
     "CLOUDSDK_CONFIG": "/persistent/group/gcloud",
     "GOOGLE_WORKSPACE_CLI_CONFIG_DIR": "/persistent/group/gws",
     "GCP_AUTH_MODE": "adc",
@@ -75,7 +75,9 @@ volumes:
 
 def _clear_devbase_env(monkeypatch):
     """devbase 由来の変数の解決が外部環境に左右されないようにする"""
-    for name in ('DEVBASE_ACCOUNT_GROUP', 'GCP_AUTH_MODE',
+    # グループは up が宣言から置いた後の値 (#315)
+    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'nyle')
+    for name in ('GCP_AUTH_MODE',
                  'GOOGLE_APPLICATION_CREDENTIALS_BASE64'):
         monkeypatch.delenv(name, raising=False)
     for name in list(os.environ):

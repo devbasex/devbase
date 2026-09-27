@@ -15,9 +15,9 @@ from devbase.log import get_logger
 from devbase.utils.names import is_single_segment_name
 from devbase.volume.manager import (
     HOME_UBUNTU_VOLUME,
+    LEGACY_GROUP_VOLUME,
     SHARED_VOLUME_PREFIX,
     get_group_volume,
-    resolve_account_group,
 )
 
 logger = get_logger(__name__)
@@ -110,6 +110,49 @@ def rename_targets(lines: list) -> list:
     return targets
 
 
+def ensure_snapshot_image(devbase_root: Path) -> str:
+    """スナップショット専用イメージを確保する（なければ自動ビルド）。
+
+    ボリュームの移行 (``devbase.volume.migrate``) もヘルパーのコンテナに同じイメージを使う (#315)。
+    """
+    try:
+        subprocess.run(
+            ['docker', 'image', 'inspect', SNAPSHOT_IMAGE],
+            capture_output=True, check=True
+        )
+        return SNAPSHOT_IMAGE
+    except subprocess.CalledProcessError:
+        dockerfile_dir = devbase_root / 'containers' / 'snapshot'
+        if not dockerfile_dir.exists():
+            raise SnapshotError(
+                f"スナップショット用Dockerfileが見つかりません: {dockerfile_dir}"
+            )
+        logger.info("devbase-snapshotイメージをビルド中...")
+        build_cmds = [
+            ['docker', 'buildx', 'build', '--load',
+             '-t', SNAPSHOT_IMAGE, str(dockerfile_dir)],
+            ['docker', 'build',
+             '-t', SNAPSHOT_IMAGE, str(dockerfile_dir)],
+        ]
+        last_err = None
+        for cmd in build_cmds:
+            try:
+                subprocess.run(
+                    cmd, check=True, capture_output=True, text=True
+                )
+                last_err = None
+                break
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                last_err = e
+        if last_err is not None:
+            stderr = getattr(last_err, 'stderr', str(last_err))
+            raise SnapshotError(
+                f"devbase-snapshotのビルドに失敗: {stderr}"
+            ) from last_err
+        logger.info("devbase-snapshotイメージのビルド完了")
+        return SNAPSHOT_IMAGE
+
+
 class SnapshotManager:
     """Docker volumeのスナップショット管理"""
 
@@ -117,7 +160,7 @@ class SnapshotManager:
         """
         Args:
             devbase_root: devbase のルート
-            group: 対象のアカウントグループ (省略時は環境から解決)
+            group: 対象のアカウントグループ (省略時は ``DEVBASE_ACCOUNT_GROUP``。既定の値は無い)
         """
         self.devbase_root = devbase_root
         self.backups_dir = devbase_root / 'backups'
@@ -619,7 +662,7 @@ class SnapshotManager:
 
     @staticmethod
     def series_label(volumes: dict) -> str:
-        """系列の表示名 (ログ用)。例: ``グループ default``。"""
+        """系列の表示名 (ログ用)。例: ``グループ nyle``。"""
         group = volumes.get(GROUP_MOUNT)
         if isinstance(group, str) and group:
             if group.startswith(SHARED_VOLUME_PREFIX):
@@ -699,42 +742,7 @@ class SnapshotManager:
 
     def _ensure_snapshot_image(self) -> str:
         """スナップショット専用イメージを確保する（なければ自動ビルド）"""
-        try:
-            subprocess.run(
-                ['docker', 'image', 'inspect', SNAPSHOT_IMAGE],
-                capture_output=True, check=True
-            )
-            return SNAPSHOT_IMAGE
-        except subprocess.CalledProcessError:
-            dockerfile_dir = self.devbase_root / 'containers' / 'snapshot'
-            if not dockerfile_dir.exists():
-                raise SnapshotError(
-                    f"スナップショット用Dockerfileが見つかりません: {dockerfile_dir}"
-                )
-            logger.info("devbase-snapshotイメージをビルド中...")
-            build_cmds = [
-                ['docker', 'buildx', 'build', '--load',
-                 '-t', SNAPSHOT_IMAGE, str(dockerfile_dir)],
-                ['docker', 'build',
-                 '-t', SNAPSHOT_IMAGE, str(dockerfile_dir)],
-            ]
-            last_err = None
-            for cmd in build_cmds:
-                try:
-                    subprocess.run(
-                        cmd, check=True, capture_output=True, text=True
-                    )
-                    last_err = None
-                    break
-                except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                    last_err = e
-            if last_err is not None:
-                stderr = getattr(last_err, 'stderr', str(last_err))
-                raise SnapshotError(
-                    f"devbase-snapshotのビルドに失敗: {stderr}"
-                ) from last_err
-            logger.info("devbase-snapshotイメージのビルド完了")
-            return SNAPSHOT_IMAGE
+        return ensure_snapshot_image(self.devbase_root)
 
     @staticmethod
     def volume_mount_args(volumes: dict, mode: str) -> list:
@@ -969,12 +977,16 @@ class SnapshotManager:
             if not name.startswith(SHARED_VOLUME_PREFIX):
                 reject(f"グループボリュームは {SHARED_VOLUME_PREFIX}<group> の形で"
                        f"なければなりません (指定: {name!r})")
+            if name == LEGACY_GROUP_VOLUME:
+                # 旧既定のボリュームの系列 (#315 決定 8)。ロールバックの経路として一覧・
+                # 復元 (元のボリュームへだけ)・コピー・削除・ローテーションを許す。
+                # default は予約語で検証を通らないため、名前を明示して許す
+                continue
             group = name[len(SHARED_VOLUME_PREFIX):]
             try:
                 # 正規化した結果が元の名前と**一致**することまで見る。
-                # resolve_account_group は空文字を 'default' に、前後空白を
-                # 落とした名前に正規化するので、通るかどうかだけでは
-                # `devbase_home_` や `devbase_home_  kkg  ` を弾けない。
+                # 検証は前後空白を落とした名前に正規化するので、通るかどうかだけでは
+                # `devbase_home_  kkg  ` を弾けない。
                 # 実際にマウントされるのは正規化前の生の名前である。
                 if get_group_volume(group) != name:
                     reject(f"グループボリューム {name!r} は正規化された名前では"

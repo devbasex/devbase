@@ -44,7 +44,7 @@ def _capture_dispatch(monkeypatch):
     def _spy(devbase_root, args):
         captured["devbase_root"] = devbase_root
         captured["subcommand"] = args.subcommand
-        for k in ("name", "full", "point", "new_name", "keep", "max_total"):
+        for k in ("name", "full", "group", "point", "new_name", "keep", "max_total"):
             if hasattr(args, k):
                 captured[k] = getattr(args, k)
         return 0
@@ -145,20 +145,23 @@ def test_run_operation_list_no_extra_attrs(monkeypatch, tmp_path):
     assert captured == {"devbase_root": tmp_path, "subcommand": "list"}
 
 
-def test_run_operation_create_collects_name_only(monkeypatch, tmp_path):
-    """create は name のみ収集し、--full は CLI 既定 (False = 増分) で実行する。"""
+def test_run_operation_create_collects_group_and_name(monkeypatch, tmp_path):
+    """create はグループと name を収集し、--full は CLI 既定 (False = 増分) で実行する (#315)。"""
     captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "nyle")
     monkeypatch.setattr(menu, "text", lambda *a, **k: "snap1")
     monkeypatch.setattr(menu, "confirm",
                         lambda *a, **k: pytest.fail("create で確認を求めない"))
     assert actions_snapshot._run_operation(tmp_path, "create") == 0
     assert captured["subcommand"] == "create"
     assert captured["name"] == "snap1" and captured["full"] is False
+    assert captured["group"] == "nyle"
 
 
 def test_run_operation_create_empty_name_is_none(monkeypatch, tmp_path):
     """空入力の name は CLI の --name 省略と同じ None (自動命名) に正規化する。"""
     captured = _capture_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "nyle")
     monkeypatch.setattr(menu, "text", lambda *a, **k: "")
     assert actions_snapshot._run_operation(tmp_path, "create") == 0
     assert captured["name"] is None and captured["full"] is False
@@ -169,10 +172,37 @@ def test_run_operation_create_name_cancel(monkeypatch, tmp_path, text_ret):
     """name 入力で Esc は再表示 (_ARG_CANCEL)、Ctrl-C は全体中止 (None)。"""
     called = _no_dispatch(monkeypatch)
     ret = menu.MENU_BACK if text_ret == "BACK" else None
+    monkeypatch.setattr(menu, "select", lambda *a, **k: "nyle")
     monkeypatch.setattr(menu, "text", lambda *a, **k: ret)
     expected = actions_snapshot._ARG_CANCEL if text_ret == "BACK" else None
     assert actions_snapshot._run_operation(tmp_path, "create") is expected
     assert called == []
+
+
+def test_create_group_choices_come_from_declarations_only(monkeypatch, tmp_path):
+    """#315 決定 11・I12: 候補は宣言だけから作り、default は出ない。使えない名前は選び直す"""
+    for name, group in (("web", "with"), ("api", "nyle")):
+        (tmp_path / "projects" / name).mkdir(parents=True)
+        (tmp_path / "projects" / name / "env").write_text(f"DEVBASE_ACCOUNT_GROUP={group}\n")
+    (tmp_path / "projects" / "undeclared").mkdir()
+    (tmp_path / "env").write_text("FOO=1\n")
+    captured = _capture_dispatch(monkeypatch)
+    seen = []
+    picks = iter([actions_snapshot._TYPE_GROUP, "personal"])
+
+    def select(message, choices, **k):
+        seen.append([v for _, v in choices])
+        return next(picks)
+
+    monkeypatch.setattr(menu, "select", select)
+    texts = iter(["default", ""])
+    monkeypatch.setattr(menu, "text", lambda *a, **k: next(texts))
+
+    assert actions_snapshot._run_operation(tmp_path, "create") == 0
+
+    assert seen[0] == ["nyle", "with", actions_snapshot._TYPE_GROUP]
+    assert len(seen) == 2                       # default を入れたので選択へ戻った
+    assert captured["group"] == "personal"
 
 
 def test_run_operation_restore_confirmed(monkeypatch, tmp_path):

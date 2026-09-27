@@ -41,7 +41,7 @@ def _write_project(root: Path, name: str) -> Path:
     project.mkdir(parents=True, exist_ok=True)
     (project / 'project.yml').write_text(
         "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
-    (project / 'env').write_text(f"PROJECT_MARK={name}\n")
+    (project / 'env').write_text(f"PROJECT_MARK={name}\nDEVBASE_ACCOUNT_GROUP=nyle\n")
     return project
 
 
@@ -240,7 +240,7 @@ G_NYLE_API = ['team/nyle/global', 'users/member01/nyle/global',
 
 @pytest.fixture
 def grouped(up_root, openbao, monkeypatch):
-    """``version: 2`` (``default`` → ``nyle``)。``web`` は ``with``、``api`` は宣言なし。
+    """``version: 2`` ``web`` は ``with``、``api`` は ``nyle``。
 
     ``up_root`` の従来のパスの機密 (``team/global`` など) は置いたままにし、要求が 0 回で
     あることを確かめる。``_resolve_project_name`` が載せる変数は、元が未設定でも復元
@@ -250,7 +250,7 @@ def grouped(up_root, openbao, monkeypatch):
     from tests.conftest import configure_openbao
 
     root = up_root['root']
-    configure_openbao(root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(root, openbao, layout='group')
     with (root / 'projects' / 'web' / 'env').open('a') as f:
         f.write('DEVBASE_ACCOUNT_GROUP=with\n')
     openbao.put('team/with/global', {'SHARED': 'with-team'})
@@ -307,8 +307,8 @@ def test_grouped_up_in_project_reads_only_its_group(grouped, openbao, monkeypatc
     assert grouped['environ']['MINE'] == 'with-me'
 
 
-def test_grouped_up_without_a_declaration_reads_the_aliased_group(grouped, openbao, monkeypatch):
-    """受け入れ条件 2: 宣言なしは ``team/nyle/…``。ボリュームは ``devbase_home_default`` のまま"""
+def test_grouped_up_of_a_nyle_project_reads_the_nyle_group(grouped, openbao, monkeypatch):
+    """受け入れ条件 2・#315: ``nyle`` の宣言は ``team/nyle/…`` と ``devbase_home_nyle``"""
     _enter(grouped['root'], 'api', monkeypatch)
 
     assert _run_named_up() == 0
@@ -316,8 +316,21 @@ def test_grouped_up_without_a_declaration_reads_the_aliased_group(grouped, openb
     assert openbao.logins == 1
     assert _gets(openbao) == sorted(G_NYLE_API)
     assert _all_kv_paths(openbao) == set(G_NYLE_API)
-    assert grouped['group_volume'] == 'devbase_home_default'
+    assert grouped['group_volume'] == 'devbase_home_nyle'
     assert grouped['secrets'].values['NYLE_ONLY'] == 'n'
+
+
+def test_grouped_up_without_a_declaration_stops_before_reading(grouped, openbao, monkeypatch,
+                                                               caplog):
+    """#315 I1・I9: 宣言の無いプロジェクトは注入でも起動でも置き場を読まずに止まる"""
+    (grouped['root'] / 'projects' / 'api' / 'env').write_text('PROJECT_MARK=api\n')
+    _enter(grouped['root'], 'api', monkeypatch)
+
+    assert _run_named_up() == 1
+
+    assert _all_kv_paths(openbao) == set()
+    assert 'projects/api/env' in caplog.text
+    assert 'group_volume' not in grouped
 
 
 def test_grouped_up_other_project_does_not_touch_the_callers_group(grouped, openbao,

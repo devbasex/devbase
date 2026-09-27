@@ -21,19 +21,46 @@ def _clean_group_env(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# フォールバック (AC5)
+# 既定の値を持たない (#315)
 # ---------------------------------------------------------------------------
 
-def test_unset_falls_back_to_default():
-    """未設定なら default。既存プロジェクトは何も書かずに起動できる。"""
-    assert manager.resolve_account_group() == "default"
+def test_unset_is_rejected_with_how_to_declare():
+    """未設定なら既定のグループへ落ちずに止まり、宣言の書き方を示す。"""
+    from devbase.env.groups import GroupDeclarationError
+
+    with pytest.raises(GroupDeclarationError) as excinfo:
+        manager.resolve_account_group()
+    assert "DEVBASE_ACCOUNT_GROUP=" in str(excinfo.value)
 
 
-def test_empty_and_whitespace_fall_back_to_default(monkeypatch):
-    """空文字・空白のみも「未設定」として扱う (env に `KEY=` と書いた場合)。"""
+def test_empty_and_whitespace_are_rejected(monkeypatch):
+    """空文字・空白のみも未設定と同じく止まる (env に `KEY=` と書いた場合)。"""
+    from devbase.env.groups import GroupDeclarationError
+
     for value in ("", "   ", "\t"):
         monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", value)
-        assert manager.resolve_account_group() == "default"
+        with pytest.raises(GroupDeclarationError):
+            manager.resolve_account_group()
+
+
+def test_no_default_group_constant():
+    """グループの既定の値を返す定数を持たない。旧既定のボリュームの名前だけを残す。"""
+    assert not hasattr(manager, "DEFAULT_ACCOUNT_GROUP")
+    assert manager.LEGACY_GROUP_VOLUME == "devbase_home_default"
+
+
+def test_default_is_reserved():
+    """`default` は予約語。移し先を書くよう示す。"""
+    with pytest.raises(DevbaseError) as excinfo:
+        manager.validate_account_group("default")
+    message = str(excinfo.value)
+    assert "default" in message
+    assert "migrate-volume" in message
+
+
+def test_validate_rejects_empty():
+    with pytest.raises(DevbaseError):
+        manager.validate_account_group("  ")
 
 
 def test_explicit_none_reads_environment(monkeypatch):
@@ -58,7 +85,7 @@ def test_surrounding_whitespace_is_stripped(monkeypatch):
 # 正常系
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("group", ["default", "kkg", "with", "a", "a-b_c.d", "g1", "1g"])
+@pytest.mark.parametrize("group", ["nyle", "personal", "kkg", "with", "a", "a-b_c.d", "g1", "1g"])
 def test_valid_group_names_are_accepted(group):
     assert manager.resolve_account_group(group) == group
 
@@ -67,8 +94,9 @@ def test_group_volume_name():
     assert manager.get_group_volume("kkg") == "devbase_home_kkg"
 
 
-def test_group_volume_falls_back_to_default():
-    assert manager.get_group_volume() == "devbase_home_default"
+def test_group_volume_reads_environment(monkeypatch):
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "personal")
+    assert manager.get_group_volume() == "devbase_home_personal"
 
 
 def test_group_volume_validates_its_argument():
@@ -146,10 +174,39 @@ def test_ensure_volumes_rejects_bad_group_before_touching_docker(monkeypatch):
         manager.VolumeManager, "_volume_exists",
         lambda self, name: False)
     monkeypatch.setattr(
-        manager.VolumeManager, "_create_volume",
+        manager.VolumeManager, "create_volume",
         lambda self, name: created.append(name) or True)
 
     with pytest.raises(DevbaseError):
         manager.VolumeManager().ensure_volumes(1, group="ubuntu")
 
     assert created == []
+
+
+# ---------------------------------------------------------------------------
+# グループの既定の値が残らない (#315)
+# ---------------------------------------------------------------------------
+
+def test_no_default_group_fallback_is_left_in_the_code():
+    """lib/devbase と containers/ に、グループの既定として default を返す・渡すコードが無い。
+
+    ``${GCP_ACTIVE_PROFILE:-default}`` は gcloud のプロファイル名でグループではないため除く。
+    """
+    import re
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    pattern = re.compile(r'DEFAULT_ACCOUNT_GROUP|ACCOUNT_GROUP:-default|:-default\}')
+    hits = []
+    for base in (repo / 'lib' / 'devbase', repo / 'containers'):
+        for path in base.rglob('*'):
+            if not path.is_file() or path.suffix == '.pyc':
+                continue
+            try:
+                text = path.read_text(encoding='utf-8')
+            except UnicodeDecodeError:
+                continue
+            for number, line in enumerate(text.splitlines(), start=1):
+                if pattern.search(line) and 'GCP_ACTIVE_PROFILE' not in line:
+                    hits.append(f'{path.relative_to(repo)}:{number}: {line.strip()}')
+    assert hits == []

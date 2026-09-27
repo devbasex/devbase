@@ -310,15 +310,15 @@ def kv_paths(openbao):
 def _grouped_settings(root, openbao):
     from tests.conftest import configure_openbao
 
-    return configure_openbao(root, openbao, layout='group',
-                             group_aliases={'default': 'nyle'}).openbao
+    return configure_openbao(root, openbao, layout='group').openbao
 
 
 @pytest.fixture
 def grouped_age_root(openbao_root, openbao):
-    """age に共通・web (with)・csc の機密を持ち、version 2 の OpenBao 設定で backend は age"""
+    """age に共通・web (with)・csc (nyle) の機密を持ち、version 2 の OpenBao 設定で backend は age"""
     (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     (openbao_root / 'projects' / 'csc').mkdir()
+    (openbao_root / 'projects' / 'csc' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     store = SecretStore(openbao_root, config=bc.BackendConfig())
     store.age.save(GLOBAL, {'A': 'a-value'})
     store.age.save(WEB, {'W': 'w-value'})
@@ -330,11 +330,11 @@ def grouped_age_root(openbao_root, openbao):
 
 def test_grouped_migration_writes_each_projects_group_and_skips_excluded(
         grouped_age_root, openbao, capsys, monkeypatch):
-    """受け入れ条件 12: 共通は team/nyle/global、web は team/with/projects/web、csc は触らない"""
-    # 実行時のディレクトリ (web) にグループが左右されない
+    """受け入れ条件 12: 共通は --group の team/nyle/global、web は team/with/projects/web、csc は触らない"""
+    # プロジェクトの参照のグループは実行時のディレクトリ (web) に左右されない
     monkeypatch.setenv('PWD', str(grouped_age_root / 'projects' / 'web'))
 
-    assert migrate(grouped_age_root, 'openbao', exclude_projects=['csc']) == 0
+    assert migrate(grouped_age_root, 'openbao', exclude_projects=['csc'], group='nyle') == 0
 
     assert openbao.get('team/nyle/global') == {'A': 'a-value'}
     assert openbao.get('team/with/projects/web') == {'W': 'w-value'}
@@ -356,7 +356,8 @@ def test_grouped_dry_run_shows_the_paths_and_conflicting_key_names_only(
     """受け入れ条件 12・14: --dry-run は <mount>/<パス> と衝突したキー名だけ"""
     openbao.put('team/with/projects/web', {'W': 'on-server-value'})
 
-    rc = migrate(grouped_age_root, 'openbao', dry_run=True, exclude_projects=['csc'])
+    rc = migrate(grouped_age_root, 'openbao', dry_run=True, exclude_projects=['csc'],
+                 group='nyle')
 
     assert rc == 2                               # 衝突は --dry-run でも今どおり 2
     out = capsys.readouterr().out
@@ -371,11 +372,36 @@ def test_grouped_dry_run_shows_the_paths_and_conflicting_key_names_only(
 
 
 def test_grouped_dry_run_without_conflicts_writes_nothing(grouped_age_root, openbao, capsys):
-    assert migrate(grouped_age_root, 'openbao', dry_run=True) == 0
+    assert migrate(grouped_age_root, 'openbao', dry_run=True, group='nyle') == 0
 
     out = capsys.readouterr().out
     assert 'devbase/team/nyle/projects/csc' in out
     assert not any(r.kv_path for r in openbao.requests_of('POST'))
+
+
+def test_grouped_migration_outside_projects_needs_the_group(grouped_age_root, openbao, caplog):
+    """#315 I5: プロジェクトの外で --group が無ければ 2。サーバへ要求しない"""
+    before = (grouped_age_root / 'secrets' / 'backend.yml').read_bytes()
+
+    assert migrate(grouped_age_root, 'openbao') == 2
+
+    assert '--group' in errors(caplog)
+    assert openbao.received == []
+    assert (grouped_age_root / 'secrets' / 'backend.yml').read_bytes() == before
+
+
+def test_grouped_migration_stops_on_an_undeclared_project(grouped_age_root, openbao, caplog):
+    """#315 I11: 宣言の無いプロジェクトがあれば書き込みの前に名前を挙げて止まる"""
+    (grouped_age_root / 'projects' / 'undeclared').mkdir()
+
+    assert migrate(grouped_age_root, 'openbao', group='nyle') == 1
+
+    assert 'undeclared' in errors(caplog) and '--exclude-project' in errors(caplog)
+    assert not any(r.kv_path for r in openbao.requests_of('POST'))
+    assert bc.load(grouped_age_root).backend == 'age'
+
+    assert migrate(grouped_age_root, 'openbao', group='nyle', dry_run=True,
+                   exclude_projects=['undeclared']) == 0
 
 
 @pytest.mark.parametrize('to', ['openbao', 'age'])
@@ -402,10 +428,11 @@ def test_flat_migration_also_honours_exclude_project(age_root, openbao):
 
 @pytest.fixture
 def grouped_openbao_root(openbao_root, openbao):
-    """version 2 の OpenBao。web は with、api は宣言なし (default → nyle)"""
+    """version 2 の OpenBao。web は with、api は nyle"""
     _grouped_settings(openbao_root, openbao)
     (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     (openbao_root / 'projects' / 'api').mkdir()
+    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     openbao.put('team/nyle/global', {'A': 'a-value'})
     openbao.put('team/with/global', {'WITH_ONLY': 'with-value'})
     openbao.put('team/with/projects/web', {'W': 'w-value'})
@@ -415,11 +442,11 @@ def grouped_openbao_root(openbao_root, openbao):
 
 def test_grouped_migration_back_to_age_leaves_other_groups_common_on_the_server(
         grouped_openbao_root, openbao, capsys, monkeypatch):
-    """受け入れ条件 12 (逆向き): root のグループの共通と各プロジェクトのグループの参照を移し、
+    """受け入れ条件 12 (逆向き): --group のグループの共通と各プロジェクトのグループの参照を移し、
     他のグループの共通は要求せずにパスを表示する"""
     monkeypatch.setenv('PWD', str(grouped_openbao_root / 'projects' / 'web'))
 
-    assert migrate(grouped_openbao_root, 'age') == 0
+    assert migrate(grouped_openbao_root, 'age', group='nyle') == 0
 
     local = SecretStore(grouped_openbao_root, config=bc.BackendConfig())
     assert local.age.load(GLOBAL) == {'A': 'a-value'}
@@ -438,7 +465,7 @@ def test_grouped_migration_back_to_age_leaves_other_groups_common_on_the_server(
 
 def test_grouped_migration_back_to_age_dry_run_names_the_other_groups(
         grouped_openbao_root, openbao, capsys):
-    assert migrate(grouped_openbao_root, 'age', dry_run=True) == 0
+    assert migrate(grouped_openbao_root, 'age', dry_run=True, group='nyle') == 0
 
     out = capsys.readouterr().out
     assert 'devbase/team/with/global' in out
@@ -449,7 +476,7 @@ def test_grouped_migration_back_to_age_dry_run_names_the_other_groups(
 
 def test_grouped_migration_back_to_age_excluding_the_other_group(grouped_openbao_root, openbao,
                                                                  capsys):
-    assert migrate(grouped_openbao_root, 'age', exclude_projects=['web']) == 0
+    assert migrate(grouped_openbao_root, 'age', exclude_projects=['web'], group='nyle') == 0
 
     assert not [p for p in kv_paths(openbao) if p.startswith('team/with/')]
     local = SecretStore(grouped_openbao_root, config=bc.BackendConfig())

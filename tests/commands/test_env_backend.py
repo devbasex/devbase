@@ -263,14 +263,15 @@ SECRET_VALUE = 'do-not-print-this-value'
 
 @pytest.fixture
 def grouped(openbao_root, openbao):
-    """``version: 2`` (``default`` → ``nyle``)。``web`` と ``mobile`` は ``with``、``api`` は宣言なし"""
+    """``version: 2`` (``acme`` → ``nyle``)。``web`` と ``mobile`` は ``with``、``api`` は ``acme``"""
     from tests.conftest import configure_openbao
 
-    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'acme': 'nyle'})
     (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     (openbao_root / 'projects' / 'mobile').mkdir()
     (openbao_root / 'projects' / 'mobile' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     (openbao_root / 'projects' / 'api').mkdir()
+    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     return openbao_root
 
 
@@ -288,16 +289,16 @@ def config_bytes(root):
 
 # -- status ------------------------------------------------------------------
 
-def test_grouped_status_in_an_undeclared_project_shows_the_alias_and_its_paths(
+def test_grouped_status_in_an_aliased_project_shows_the_alias_and_its_paths(
         grouped, openbao, monkeypatch, capsys):
-    """受け入れ条件 11: projects/api (宣言なし) で default → nyle と 4 パス"""
+    """受け入れ条件 11: projects/api (acme) で acme → nyle と宣言の行と 4 パス"""
     at(monkeypatch, grouped, 'projects/api')
 
     assert env_backend.cmd_env_backend_status(grouped) == 0
 
     out = capsys.readouterr().out
     assert 'レイアウト: group (version 2)' in out
-    assert 'default → nyle (projects/api/env にも $DEVBASE_ROOT/env にも宣言なし)' in out
+    assert 'acme → nyle (projects/api/env:1)' in out
     assert 'devbase/team/nyle/global' in out
     assert 'devbase/team/nyle/projects/api' in out
     assert 'devbase/users/member01/nyle/global' in out
@@ -314,7 +315,7 @@ def test_grouped_status_in_a_declaring_project_shows_its_file(grouped, monkeypat
     assert env_backend.cmd_env_backend_status(grouped) == 0
 
     out = capsys.readouterr().out
-    assert 'with (projects/web/env)' in out
+    assert 'with (projects/web/env:1)' in out
     assert 'devbase/team/with/global' in out
     assert 'devbase/team/with/projects/web' in out
     assert 'devbase/users/member01/with/global' in out
@@ -322,19 +323,29 @@ def test_grouped_status_in_a_declaring_project_shows_its_file(grouped, monkeypat
     assert 'nyle' not in out.split('置き場')[1].split('キャッシュ')[0]
 
 
-def test_grouped_status_outside_projects_uses_the_root_env(grouped, monkeypatch, capsys):
-    """受け入れ条件 11: $DEVBASE_ROOT では $DEVBASE_ROOT/env のグループ"""
+def test_grouped_status_outside_projects_has_no_group(grouped, monkeypatch, capsys):
+    """#315: $DEVBASE_ROOT ではグループが決まらず、パスのグループは <g> のまま出す"""
+    at(monkeypatch, grouped)
+
+    assert env_backend.cmd_env_backend_status(grouped) == 0
+
+    out = capsys.readouterr().out
+    assert 'グループ:   なし（プロジェクトの外）' in out
+    assert 'devbase/team/<g>/global' in out
+    assert 'devbase/team/<g>/projects/<name>' in out
+    assert 'devbase/users/member01/<g>/global' in out
+    assert 'devbase/users/member01/<g>/projects/<name>' in out
+    assert 'default' not in out
+
+
+def test_grouped_status_refuses_the_root_env_declaration(grouped, monkeypatch, capsys):
     (grouped / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
     at(monkeypatch, grouped)
 
     assert env_backend.cmd_env_backend_status(grouped) == 0
 
     out = capsys.readouterr().out
-    assert 'kkg ($DEVBASE_ROOT/env)' in out
-    assert 'devbase/team/kkg/global' in out
-    assert 'devbase/team/kkg/projects/<name>' in out
-    assert 'devbase/users/member01/kkg/global' in out
-    assert 'devbase/users/member01/kkg/projects/<name>' in out
+    assert '決められません' in out and '$DEVBASE_ROOT/env:1' in out
 
 
 def test_flat_status_has_no_layout_or_group_lines(openbao_root, capsys):
@@ -367,7 +378,7 @@ def test_use_without_layout_inherits_version_2_and_its_aliases(grouped, monkeypa
     config = bc.load(grouped)
     assert config.version == 2 and config.openbao.layout == 'group'
     assert config.openbao.user == 'member02'
-    assert config.openbao.group_aliases == {'default': 'nyle'}
+    assert config.openbao.group_aliases == {'acme': 'nyle'}
 
 
 def test_use_without_layout_inherits_version_1(openbao_root):
@@ -385,7 +396,7 @@ def test_use_age_keeps_the_version_2_openbao_settings(grouped):
     config = bc.load(grouped)
     assert config.backend == 'age'
     assert config.version == 2
-    assert config.openbao.group_aliases == {'default': 'nyle'}
+    assert config.openbao.group_aliases == {'acme': 'nyle'}
 
 
 def test_use_layout_group_drops_the_flat_paths(openbao_root, openbao, capsys):
@@ -398,7 +409,7 @@ def test_use_layout_group_drops_the_flat_paths(openbao_root, openbao, capsys):
         backend='openbao', version=1,
         openbao=replace_settings(config.openbao, path_team_global='kv/common')))
 
-    args = use_args('openbao', layout='group', group_aliases=['default=nyle'])
+    args = use_args('openbao', layout='group', group_aliases=['acme=nyle'])
     assert env_backend.cmd_env_backend_use(openbao_root, args) == 0
 
     raw = yaml.safe_load(config_bytes(openbao_root))
@@ -406,9 +417,9 @@ def test_use_layout_group_drops_the_flat_paths(openbao_root, openbao, capsys):
     assert raw['openbao']['layout'] == 'group'
     assert 'path_team_global' not in raw['openbao']
     assert 'path_team_project_prefix' not in raw['openbao']
-    assert raw['openbao']['group_aliases'] == {'default': 'nyle'}
+    assert raw['openbao']['group_aliases'] == {'acme': 'nyle'}
     loaded = bc.load(openbao_root)
-    assert loaded.openbao.display_path(SecretRef.for_global(group='default')) == \
+    assert loaded.openbao.display_path(SecretRef.for_global(group='acme')) == \
         'devbase/team/nyle/global'
 
 
@@ -425,7 +436,7 @@ def test_use_layout_flat_writes_version_1_and_reports_dropped_aliases(grouped, c
     assert config.version == 1 and config.openbao.layout == 'flat'
     assert config.openbao.group_aliases == {}
     out = capsys.readouterr().out
-    assert 'group_aliases' in out and 'default → nyle' in out
+    assert 'group_aliases' in out and 'acme → nyle' in out
 
 
 def test_use_group_alias_replaces_the_existing_aliases(grouped):
@@ -472,7 +483,7 @@ def test_use_rejects_conflicting_aliases_for_the_same_group(grouped, caplog):
 def test_use_rejects_group_alias_with_the_flat_layout(grouped, openbao_root, caplog):
     before = config_bytes(grouped)
 
-    args = use_args('openbao', layout='flat', group_aliases=['default=nyle'])
+    args = use_args('openbao', layout='flat', group_aliases=['acme=nyle'])
     assert env_backend.cmd_env_backend_use(grouped, args) == 2
 
     assert config_bytes(grouped) == before
@@ -482,7 +493,7 @@ def test_use_rejects_group_alias_with_the_flat_layout(grouped, openbao_root, cap
 def test_use_rejects_group_alias_when_the_existing_config_is_version_1(openbao_root, caplog):
     before = config_bytes(openbao_root)
 
-    args = use_args('openbao', group_aliases=['default=nyle'])
+    args = use_args('openbao', group_aliases=['acme=nyle'])
     assert env_backend.cmd_env_backend_use(openbao_root, args) == 2
 
     assert config_bytes(openbao_root) == before
@@ -567,17 +578,28 @@ def test_grouped_backend_test_only_probes_the_projects_group(grouped, openbao, m
     assert 'api' in out and SECRET_VALUE not in out and 's3cret' not in out
 
 
-def test_grouped_backend_test_outside_projects_uses_the_root_group(grouped, openbao,
-                                                                  monkeypatch):
-    """受け入れ条件 17: $DEVBASE_ROOT (宣言なし → default → nyle) では api だけ"""
+def test_grouped_backend_test_outside_projects_uses_the_group_option(grouped, openbao,
+                                                                    monkeypatch):
+    """受け入れ条件 17・#315: $DEVBASE_ROOT では --group nyle の置き場 (acme → nyle の api) だけ"""
     at(monkeypatch, grouped)
 
-    assert env_backend.cmd_env_backend_test(grouped) == 0
+    assert env_backend.cmd_env_backend_test(grouped, group='nyle') == 0
 
     assert kv_paths(openbao) == {
         'team/nyle/global', 'users/member01/nyle/global',
         'team/nyle/projects/api', 'users/member01/nyle/projects/api',
     }
+
+
+def test_grouped_backend_test_outside_projects_needs_the_group(grouped, openbao, monkeypatch,
+                                                              caplog):
+    """#315 I5: プロジェクトの外で --group が無ければ置き場を開かずに 2"""
+    at(monkeypatch, grouped)
+
+    assert env_backend.cmd_env_backend_test(grouped) == 2
+
+    assert openbao.received == []
+    assert '--group' in caplog.text
 
 
 def test_backend_test_without_openbao_returns_one(root, capsys):

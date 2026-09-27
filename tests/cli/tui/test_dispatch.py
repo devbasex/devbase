@@ -162,7 +162,7 @@ def test_lifecycle_after_env_edit_reads_written_values(openbao_root, openbao, mo
     web = root / 'projects' / 'web'
     (web / 'project.yml').write_text(
         "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
-    (web / 'env').write_text("")
+    (web / 'env').write_text("DEVBASE_ACCOUNT_GROUP=nyle\n")
     openbao.put('team/global', {'REVIEW_KEY': 'old'})
     openbao.put('team/projects/web', {'WEB_ONLY': 'w'})
     monkeypatch.setenv('DEVBASE_ROOT', str(root))

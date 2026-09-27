@@ -31,8 +31,8 @@ from tests.conftest import HOST_DOCKER_ENV
 
 @pytest.fixture(autouse=True)
 def _clean_group_env(monkeypatch):
-    """復元前の自動バックアップがグループを解決するので、環境で揺らさない。"""
-    monkeypatch.delenv("DEVBASE_ACCOUNT_GROUP", raising=False)
+    """復元前の自動バックアップがグループを解決するので、環境で揺らさない (宣言済みの nyle)。"""
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")
 
 
 # Task 1 で実際に採取した stderr

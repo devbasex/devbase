@@ -15,6 +15,13 @@
 
 系列はどこにも保存しない。`snapshot.yml` のエントリの `volumes` からその場で導く。
 
+新しい世代を積む系列のグループは、`up` の自動スナップショットでは起動するプロジェクトの宣言、
+`snapshot create` では `--group` か実行時のプロジェクトの宣言から決まり、既定の値は無い（TUI の作成は
+先にグループを選ばせる）。グループ名の規則は `volume.manager.validate_account_group` のもので、
+予約語 `default` の系列は新しく作られない。旧既定のボリューム `devbase_home_default` の系列は、メタの
+検証で名指しで許し、一覧・元のボリュームへの復元・コピー・削除・ローテーションができる
+（[secret-backend.md](secret-backend.md) の「ボリュームの移行（`devbase project migrate-volume`）」）。
+
 利用者向けの読み方は [スナップショットガイド: 系列](../user/snapshot-guide.md#系列) と
 [CLI リファレンス: `devbase snapshot rotate`](../user/cli-reference/05-snapshot.md#devbase-snapshot-rotate)
 にある。
@@ -151,7 +158,7 @@ classDiagram
 - `間隔 > 0` かつ `0 ≤ 経過 < 間隔` なら飛ばす。経過が負（mtime が未来）なら飛ばさない。
   `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES=0` はどの系列でも飛ばさない
 
-**系列ごとにする理由**: 全体で判定すると、default を控えた直後に with を起動したとき、with の
+**系列ごとにする理由**: 全体で判定すると、nyle を控えた直後に with を起動したとき、with の
 系列は何時間も控えていなくても飛ばされる。系列ごとにして控える回数が増えても、2 回目以降は差分になる。
 
 ### 保持
@@ -251,7 +258,7 @@ classDiagram
 | 全体の上限を満たせない | WARNING | `全体の上限 {max_total} 世代を超えていますが、各グループの最新の世代は消さないため {残り} 世代を残します` |
 | 場所が不正なエントリ | WARNING | `snapshot.yml の世代 '{名前}' は場所が不正なため、ディレクトリを消さずに一覧からだけ外します: {理由}` |
 
-`{系列}` は `series_label` の値（例: `グループ default`）。グループの切替は新しい世代を作る理由では
+`{系列}` は `series_label` の値（例: `グループ nyle`）。グループの切替は新しい世代を作る理由では
 ないため、切替を理由とする行は無い。文言に直前の世代を作ったプロジェクトは添えない。世代は
 プロジェクトではなくボリュームの組に属し、同じグループの複数のプロジェクトが 1 つの世代へ積む。
 
@@ -284,7 +291,7 @@ Docker を起動しない。`snapshot.yml` を直接書くテストは、世代�
 
 積み先（`tests/snapshot/test_manager_series.py`、`tests/snapshot/test_manager_volumes.py`）:
 
-- default の世代の後に with の世代を作っても、default の積み先は default の最新の世代であること
+- nyle の世代の後に with の世代を作っても、nyle の積み先は nyle の最新の世代であること
 - 系列に世代が無いグループは `None` と理由の行。差分の上限は系列ごとに数え、他の系列の差分数を
   使わないこと
 - 旧レイアウトの世代だけなら `None`。組の違う世代を名前で指定した差分は `SnapshotError`
@@ -295,7 +302,7 @@ Docker を起動しない。`snapshot.yml` を直接書くテストは、世代�
 最小間隔と `_auto_snapshot` の流れ（`tests/snapshot/test_auto_snapshot_series.py`）:
 
 - グループを行き来した後の起動で `create(name=..., full=False)` が呼ばれ、世代の数が変わらないこと。
-  出力に切替を理由とする行が無く、`グループ default` を含むこと
+  出力に切替を理由とする行が無く、`グループ nyle` を含むこと
 - 10 分前の系列は飛ばし、2 時間前の系列は積むこと。間隔 0 なら飛ばさないこと。mtime が未来なら
   飛ばさないこと
 - 新しい世代の作成の後の `rotate()` が、その系列の最古だけを消し、他の系列を残すこと
@@ -303,14 +310,14 @@ Docker を起動しない。`snapshot.yml` を直接書くテストは、世代�
 
 保持（`tests/snapshot/test_manager_series.py`）:
 
-- default 4・with 1 で default の最古 1 世代だけが消え、戻り値が 1
-- default と with を交互に 4 つずつで、各 3 世代が残ること
+- nyle 4・with 1 で nyle の最古 1 世代だけが消え、戻り値が 1
+- nyle と with を交互に 4 つずつで、各 3 世代が残ること
 - 4 系列 × 3 世代（A1〜D3 の順）で A1・B1・C1 が消えること。A の 3 世代が最古のときは A の古い 2 と
   B の最古が消え、A の最新が残ること
 - 10 系列 × 1 世代で `rotate(keep=3, max_total=9)` が何も消さず、WARNING が 1 件
-- 旧レイアウト 3 世代と default 3 世代で何も消さないこと
+- 旧レイアウト 3 世代と nyle 3 世代で何も消さないこと
 - `keep=0` / `max_total=0` が `SnapshotError` で何も消さないこと
-- 既存と同じ 3 エントリ（default 2・with 1）の `snapshot.yml` で 0 を返し、ファイルのバイト列が
+- 既存と同じ 3 エントリ（nyle 2・with 1）の `snapshot.yml` で 0 を返し、ファイルのバイト列が
   変わらないこと
 - 系列ごとの削除と全体の上限の削除のログにグループ名があること
 

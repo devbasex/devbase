@@ -225,3 +225,54 @@ def cmd_project_migrate_config(devbase_root: Path, args) -> int:
 
 def _indent(text: str, prefix: str = '    ') -> str:
     return ''.join(prefix + line + '\n' for line in text.splitlines())
+
+
+def cmd_project_migrate_volume(devbase_root: Path, args) -> int:
+    """``devbase project migrate-volume --to <group> [--dry-run]`` (#315 決定 6)。
+
+    旧既定のボリューム ``devbase_home_default`` の中身を ``devbase_home_<group>`` へ写す。
+    元は残す。引数の誤りは 2、前提を満たさない・写し損ねは 1。
+    """
+    from devbase.errors import DevbaseError
+    from devbase.volume.migrate import VolumeMigration, VolumeMigrationError
+
+    group = getattr(args, 'to', None)
+    if not group:
+        logger.error("--to <グループ> で移し先のグループを指定してください (例: --to nyle)")
+        return 2
+    try:
+        migration = VolumeMigration(devbase_root, group)
+    except DevbaseError as e:
+        logger.error("--to に使えない名前です: %s", e)
+        return 2
+
+    try:
+        if getattr(args, 'dry_run', False):
+            checked = migration.check()
+            if not checked.ok:
+                for problem in checked.problems:
+                    logger.error("%s", problem)
+                return 1
+            state = '空のボリュームがあります' if checked.target_exists else 'まだありません (作ります)'
+            print(f"{migration.source} → {migration.target} へ {checked.source_count} 件を写せます")
+            print(f"  移し先: {state}")
+            print("(--dry-run のため書いていません)")
+            return 0
+        count = migration.run()
+    except VolumeMigrationError as e:
+        for line in str(e).splitlines():
+            logger.error("%s", line)
+        return 1
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    print(f"{migration.source} → {migration.target} へ {count} 件を写しました。"
+          f"元の {migration.source} は残してあります")
+    print("次の手順:")
+    print(f"  1. secrets/backend.yml の openbao.group_aliases に default: {migration.group} があれば"
+          "その行を消す")
+    print(f"  2. {migration.group} のプロジェクトの projects/<name>/env に "
+          f"DEVBASE_ACCOUNT_GROUP={migration.group} を書く (plugin repo の更新を取り込む)")
+    print("  3. devbase build --no-cache の後にプロジェクトを up し、ログインと MCP のトークンを確かめる")
+    return 0

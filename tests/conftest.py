@@ -539,10 +539,12 @@ def configure_openbao(root, server: FakeOpenBao, *, user: str = 'member01',
 
 @pytest.fixture
 def openbao_root(tmp_path, monkeypatch, openbao):
-    """age 鍵を持ち、偽サーバを backend にした DEVBASE_ROOT"""
+    """age 鍵を持ち、偽サーバを backend にした DEVBASE_ROOT。``projects/web`` は ``nyle`` を宣言する"""
     from devbase.env import agekeys
 
     (tmp_path / 'projects' / 'web').mkdir(parents=True)
+    # どのプロジェクトもグループを宣言する (#315)。flat の置き場ではパスに影響しない
+    (tmp_path / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.setenv('PWD', str(tmp_path))

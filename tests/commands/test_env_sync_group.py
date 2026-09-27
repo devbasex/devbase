@@ -20,12 +20,13 @@ def b64(text: str) -> str:
 
 @pytest.fixture
 def grouped(openbao_root, openbao):
-    """``version: 2`` (``default`` → ``nyle``)。``web`` は ``with``、``api`` は宣言なし"""
+    """``version: 2`` ``web`` は ``with``、``api`` は ``nyle``"""
     from tests.conftest import configure_openbao
 
-    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'default': 'nyle'})
+    configure_openbao(openbao_root, openbao, layout='group')
     (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
     (openbao_root / 'projects' / 'api').mkdir()
+    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
     return openbao_root
 
 
@@ -81,13 +82,19 @@ def test_sync_keeps_the_synced_hashes_per_storage_group(grouped, openbao, monkey
     assert kv_paths(openbao) == {'team/nyle/global', 'team/with/global'}
 
 
-def test_sync_outside_projects_uses_the_root_group(grouped, openbao, monkeypatch,
-                                                   git_credentials):
-    (grouped / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
+def test_sync_outside_projects_needs_the_group(grouped, openbao, git_credentials, caplog):
+    """#315 I5: プロジェクトの外で --group が無ければ置き場を開かずに 2"""
+    assert env_cmd.cmd_env_sync(grouped) == 2
 
-    assert env_cmd.cmd_env_init(grouped) == 0
+    assert openbao.received == []
+    assert '--group' in caplog.text
+
+
+def test_sync_outside_projects_uses_the_group_option(grouped, openbao, monkeypatch,
+                                                     git_credentials):
+    assert env_cmd.cmd_env_init(grouped, group='kkg') == 0
     git_credentials.write_text('v2')
-    assert env_cmd.cmd_env_sync(grouped) == 0
+    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
 
     assert openbao.get('team/kkg/global')[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
     assert (grouped / '.env.sources.kkg.yml').is_file()

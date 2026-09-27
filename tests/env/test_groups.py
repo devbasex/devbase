@@ -1,4 +1,4 @@
-"""groups.py: 機密の置き場のグループを非機密の env ファイルから決める (PLAN56 決定 3)"""
+"""groups.py: プロジェクトのグループの宣言を非機密の env ファイルから読む (PLAN56 決定 3・#315)"""
 
 from __future__ import annotations
 
@@ -27,60 +27,91 @@ def write_env(path, text: str):
 
 
 # ---------------------------------------------------------------------------
-# 決める順
+# 宣言の読み取り (#315 I1)
 # ---------------------------------------------------------------------------
 
-def test_project_env_is_read_first(root):
-    write_env(root / 'env', 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+def test_project_declaration_is_read_with_its_line(root):
     write_env(root / 'projects' / 'web' / 'env', 'FOO=1\nDEVBASE_ACCOUNT_GROUP=with\n')
 
-    assert groups.declared_group(root, 'web') == 'with'
     declared = groups.declare(root, 'web')
     assert declared.name == 'with'
     assert declared.source == root / 'projects' / 'web' / 'env'
+    assert declared.line == 2
+    assert groups.describe_source(root, declared) == 'projects/web/env:2'
 
 
-def test_root_env_is_the_fallback(root):
-    write_env(root / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+def test_missing_declaration_stops_with_how_to_write_it(root):
+    """宣言が無ければ既定のグループへ落ちずに止まり、書くファイルと行を示す"""
     write_env(root / 'projects' / 'api' / 'env', 'FOO=1\n')
 
-    assert groups.declared_group(root, 'api') == 'with'
-    assert groups.declare(root, 'api').source == root / 'env'
+    with pytest.raises(groups.GroupDeclarationError) as exc:
+        groups.declare(root, 'api')
+    assert 'projects/api/env' in str(exc.value)
+    assert 'DEVBASE_ACCOUNT_GROUP=<グループ>' in str(exc.value)
 
 
-def test_default_when_nothing_declares(root):
-    """受け入れ条件 2 の前提: どちらにも宣言が無ければ ``default``"""
-    declared = groups.declare(root, 'api')
-
-    assert declared.name == 'default'
-    assert declared.source is None
+def test_missing_env_file_stops_too(root):
+    with pytest.raises(groups.GroupDeclarationError) as exc:
+        groups.declare(root, 'api')
+    assert 'projects/api/env' in str(exc.value)
 
 
-def test_without_a_project_only_the_root_env_is_read(root):
-    write_env(root / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=kkg\n')
+def test_empty_declaration_stops_with_its_line(root):
+    """空の宣言は宣言が無いものとして止まる (前提 1)。行番号を名指しする"""
+    write_env(root / 'projects' / 'web' / 'env', 'FOO=1\nBAR=2\nDEVBASE_ACCOUNT_GROUP=\n')
 
-    assert groups.declared_group(root, None) == 'with'
+    with pytest.raises(groups.GroupDeclarationError) as exc:
+        groups.declare(root, 'web')
+    assert 'projects/web/env:3' in str(exc.value)
+    assert 'DEVBASE_ACCOUNT_GROUP=<グループ>' in str(exc.value)
 
 
-def test_empty_value_in_the_project_env_means_default(root):
-    """ラッパーの ``source`` と同じく、空の宣言は共通の宣言を打ち消して ``default`` になる"""
-    write_env(root / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=\n')
+def test_root_env_declaration_is_refused_even_when_the_project_declares(root):
+    """``$DEVBASE_ROOT/env`` の宣言は名前を変えた既定になるため止める (前提 2)"""
+    write_env(root / 'env', 'FOO=1\nDEVBASE_ACCOUNT_GROUP=nyle\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
 
-    declared = groups.declare(root, 'web')
-    assert declared.name == 'default'
-    assert declared.source == root / 'projects' / 'web' / 'env'
+    with pytest.raises(groups.GroupDeclarationError) as exc:
+        groups.declare(root, 'web')
+    assert '$DEVBASE_ROOT/env:2' in str(exc.value)
+    assert '消し' in str(exc.value)
+
+
+def test_empty_root_env_declaration_is_refused_too(root):
+    write_env(root / 'env', 'DEVBASE_ACCOUNT_GROUP=\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+
+    with pytest.raises(groups.GroupDeclarationError):
+        groups.declare(root, 'web')
+
+
+def test_outside_a_project_the_group_is_not_decided(root):
+    with pytest.raises(groups.GroupDeclarationError):
+        groups.declare(root, None)
+
+
+def test_default_declaration_is_refused_with_the_migration_hint(root):
+    """前提 4: ``default`` は予約語。移し先のグループと移行のコマンドを示す"""
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=default\n')
+
+    with pytest.raises(groups.GroupDeclarationError) as exc:
+        groups.declare(root, 'web')
+    message = str(exc.value)
+    assert 'projects/web/env:1' in message
+    assert 'migrate-volume --to' in message
 
 
 def test_process_environment_is_not_read(root):
-    """決定 3: ``DEVBASE_ACCOUNT_GROUP=kkg`` がプロセスにあっても、ファイルの値で決まる"""
-    assert groups.declared_group(root, 'web') == 'default'
+    """決定 3: ``DEVBASE_ACCOUNT_GROUP=kkg`` がプロセスにあっても、ファイルの宣言で決まる"""
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    assert groups.declare(root, 'web').name == 'with'
+    with pytest.raises(groups.GroupDeclarationError):
+        groups.declare(root, 'api')
 
 
 def test_does_not_take_a_store():
     """受け入れ条件 4: 機密の置き場を受け取らない (シグネチャで固定)"""
-    assert list(inspect.signature(groups.declared_group).parameters) == ['root', 'project']
+    assert list(inspect.signature(groups.declare).parameters) == ['root', 'project']
 
 
 def test_value_in_the_store_does_not_change_the_group(openbao_root, openbao, monkeypatch):
@@ -90,21 +121,47 @@ def test_value_in_the_store_does_not_change_the_group(openbao_root, openbao, mon
     openbao.put('team/with/global', {'DEVBASE_ACCOUNT_GROUP': 'nyle'})
     openbao.put('team/global', {'DEVBASE_ACCOUNT_GROUP': 'nyle'})
 
-    assert groups.declared_group(root, 'web') == 'with'
+    assert groups.declare(root, 'web').name == 'with'
 
 
-@pytest.mark.parametrize('name', ['ubuntu', '1', 'bad name', 'a/b'])
+@pytest.mark.parametrize('name', ['ubuntu', 'default', '1', 'bad name', 'a/b'])
 def test_invalid_names_are_rejected_with_the_volume_reason(root, name):
     write_env(root / 'projects' / 'web' / 'env', f'DEVBASE_ACCOUNT_GROUP="{name}"\n')
 
-    with pytest.raises(DevbaseError) as exc:
-        groups.declared_group(root, 'web')
+    with pytest.raises(groups.GroupDeclarationError) as exc:
+        groups.declare(root, 'web')
 
-    from devbase.volume.manager import resolve_account_group
+    from devbase.volume.manager import validate_account_group
     with pytest.raises(DevbaseError) as expected:
-        resolve_account_group(name)
+        validate_account_group(name)
     assert str(expected.value) in str(exc.value)
-    assert 'projects/web/env' in str(exc.value)
+    assert 'projects/web/env:1' in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 候補の一覧と全プロジェクトの検査 (#315 I11・I12)
+# ---------------------------------------------------------------------------
+
+def test_declared_groups_lists_only_declarations(root):
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'api' / 'env', 'FOO=1\n')
+    (root / 'projects' / 'cli').mkdir()
+    write_env(root / 'projects' / 'cli' / 'env', 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+    (root / 'projects' / 'dup').mkdir()
+    write_env(root / 'projects' / 'dup' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+
+    assert groups.declared_groups(root) == ['nyle', 'with']
+
+
+def test_undeclared_projects_are_listed_in_order(root):
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+
+    assert groups.undeclared_projects(root, ['api', 'web']) == ['api']
+    with pytest.raises(groups.GroupDeclarationError) as exc:
+        groups.require_declared(root, ['web', 'api'])
+    assert 'api' in str(exc.value)
+    assert '--exclude-project' in str(exc.value)
+    groups.require_declared(root, ['web'])
 
 
 # ---------------------------------------------------------------------------
@@ -171,28 +228,23 @@ def test_ref_group_reads_the_declaration_for_the_group_layout(root):
     write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
     _write_config(root, 'version: 2\nbackend: openbao\nopenbao:\n'
                         '  url: https://x.example.com\n  user: me\n  layout: group\n'
-                        '  group_aliases:\n    default: nyle\n')
+                        '  group_aliases:\n    with: nyle\n')
 
     store = SecretStore(root)
-    assert store.ref_group('web') == 'with'
     # 読み替えは参照ではなくパスの組み立てで行う (参照は宣言どおりの名前を持つ)
-    assert store.ref_group('api') == 'default'
-    assert store.ref_group(None) == 'default'
-
-
-def test_describe_source_names_root_env_explicitly(tmp_path):
-    """``$DEVBASE_ROOT/env`` で決まったときは、プロジェクトの ``env`` と見分けられる名前で出す"""
-    (tmp_path / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
-    declared = groups.declare(tmp_path, None)
-    assert groups.describe_source(tmp_path, declared, None) == '$DEVBASE_ROOT/env'
+    assert store.ref_group('web') == 'with'
+    # 宣言が無い・プロジェクトの外ではグループが決まらない (既定の値は無い。#315)
+    with pytest.raises(groups.GroupDeclarationError):
+        store.ref_group('api')
+    with pytest.raises(groups.GroupRequiredError):
+        store.ref_group(None)
 
 
 def test_export_prefixed_declaration_is_read(root):
     """ラッパーの ``source`` と同じく ``export DEVBASE_ACCOUNT_GROUP=...`` も宣言として読む"""
-    write_env(root / 'env', 'DEVBASE_ACCOUNT_GROUP=nyle\n')
     write_env(root / 'projects' / 'web' / 'env', 'export DEVBASE_ACCOUNT_GROUP=with\n')
 
-    assert groups.declared_group(root, 'web') == 'with'
+    assert groups.declare(root, 'web').name == 'with'
 
 
 def test_last_declaration_wins_across_export_and_plain_lines(root):
@@ -201,4 +253,6 @@ def test_last_declaration_wins_across_export_and_plain_lines(root):
               'DEVBASE_ACCOUNT_GROUP=nyle\nexport DEVBASE_ACCOUNT_GROUP=kkg\n'
               'DEVBASE_ACCOUNT_GROUP=with\n')
 
-    assert groups.declared_group(root, 'web') == 'with'
+    declared = groups.declare(root, 'web')
+    assert declared.name == 'with'
+    assert declared.line == 3

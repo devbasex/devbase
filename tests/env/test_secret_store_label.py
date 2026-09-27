@@ -1,7 +1,7 @@
 """参照の表示の契約と、見出し用の表示の口 (PLAN64)
 
 `SecretRef.label()` の既定は読み替える**前**のグループ名のままで、読み替えの前後
-(`default → nyle`) を出すのは `SecretStore.display_label` を通った見出しだけである
+(`acme → nyle`) を出すのは `SecretStore.display_label` を通った見出しだけである
 (設計の決定 1・2・3)。
 """
 
@@ -15,7 +15,7 @@ from devbase.env import backend_config as bc
 from devbase.env.secret_store import SecretRef, SecretStore, SecretStoreError
 
 
-ALIASES = {'default': 'nyle'}
+ALIASES = {'acme': 'nyle'}
 
 
 def _settings(*, layout: str, aliases=None) -> bc.OpenBaoSettings:
@@ -37,21 +37,21 @@ def _store(tmp_path, *, backend: str, layout: str, aliases=None) -> SecretStore:
 
 def test_label_without_arguments_keeps_the_group_before_the_alias():
     """決定 2: 引数なしの既定は読み替える前の名前"""
-    assert SecretRef.for_global(group='default').label() == 'グローバル（グループ default）'
+    assert SecretRef.for_global(group='acme').label() == 'グローバル（グループ acme）'
 
 
 @pytest.mark.parametrize('ref, expected', [
-    (SecretRef.for_global(group='default'), 'グローバル（グループ default → nyle）'),
-    (SecretRef.for_global(owner='user', group='default'),
-     '個人のグローバル（グループ default → nyle）'),
-    (SecretRef.for_project('web', group='default'),
-     "プロジェクト 'web'（グループ default → nyle）"),
-    (SecretRef.for_project('web', owner='user', group='default'),
-     "個人のプロジェクト 'web'（グループ default → nyle）"),
+    (SecretRef.for_global(group='acme'), 'グローバル（グループ acme → nyle）'),
+    (SecretRef.for_global(owner='user', group='acme'),
+     '個人のグローバル（グループ acme → nyle）'),
+    (SecretRef.for_project('web', group='acme'),
+     "プロジェクト 'web'（グループ acme → nyle）"),
+    (SecretRef.for_project('web', owner='user', group='acme'),
+     "個人のプロジェクト 'web'（グループ acme → nyle）"),
 ])
 def test_label_puts_group_display_inside_the_parentheses(ref, expected):
     """決定 1: 括弧の中に入れる名前だけを外から受け、文言は label が持つ"""
-    assert ref.label(group_display='default → nyle') == expected
+    assert ref.label(group_display='acme → nyle') == expected
 
 
 @pytest.mark.parametrize('ref', [
@@ -60,8 +60,8 @@ def test_label_puts_group_display_inside_the_parentheses(ref, expected):
     SecretRef.for_project('web'),
 ])
 def test_label_ignores_group_display_when_the_reference_has_no_group(ref):
-    assert ref.label(group_display='default → nyle') == ref.label()
-    assert '（グループ' not in ref.label(group_display='default → nyle')
+    assert ref.label(group_display='acme → nyle') == ref.label()
+    assert '（グループ' not in ref.label(group_display='acme → nyle')
 
 
 # ---------------------------------------------------------------------------
@@ -71,18 +71,18 @@ def test_label_ignores_group_display_when_the_reference_has_no_group(ref):
 def test_display_label_shows_both_names_when_the_group_is_aliased(tmp_path):
     store = _store(tmp_path, backend='openbao', layout=bc.LAYOUT_GROUP, aliases=ALIASES)
 
-    assert (store.display_label(SecretRef.for_global(group='default'))
-            == 'グローバル（グループ default → nyle）')
+    assert (store.display_label(SecretRef.for_global(group='acme'))
+            == 'グローバル（グループ acme → nyle）')
 
 
 def test_display_label_shows_both_names_for_project_references(tmp_path):
     """現状固定: プロジェクト参照および個人プロジェクト参照でも読み替え後のグループ名を表示する。"""
     store = _store(tmp_path, backend='openbao', layout=bc.LAYOUT_GROUP, aliases=ALIASES)
 
-    assert (store.display_label(SecretRef.for_project('web', group='default'))
-            == "プロジェクト 'web'（グループ default → nyle）")
-    assert (store.display_label(SecretRef.for_project('web', owner='user', group='default'))
-            == "個人のプロジェクト 'web'（グループ default → nyle）")
+    assert (store.display_label(SecretRef.for_project('web', group='acme'))
+            == "プロジェクト 'web'（グループ acme → nyle）")
+    assert (store.display_label(SecretRef.for_project('web', owner='user', group='acme'))
+            == "個人のプロジェクト 'web'（グループ acme → nyle）")
 
 
 def test_display_label_keeps_the_name_when_the_group_has_no_alias(tmp_path):
@@ -108,8 +108,8 @@ def test_display_label_ignores_a_leftover_openbao_section_on_a_file_backend(tmp_
     """
     store = _store(tmp_path, backend='age', layout=bc.LAYOUT_GROUP, aliases=ALIASES)
 
-    assert store.display_label(SecretRef.for_global(group='default')) \
-        == 'グローバル（グループ default）'
+    assert store.display_label(SecretRef.for_global(group='acme')) \
+        == 'グローバル（グループ acme）'
 
 
 def test_display_label_does_not_map_on_a_flat_layout(tmp_path):
@@ -122,8 +122,8 @@ def test_display_label_keeps_a_grouped_reference_on_a_flat_layout(tmp_path):
     """現状固定: flat の表示は参照に付いたグループをそのまま残す。"""
     store = _store(tmp_path, backend='openbao', layout=bc.LAYOUT_FLAT)
 
-    assert (store.display_label(SecretRef.for_global(group='default'))
-            == 'グローバル（グループ default）')
+    assert (store.display_label(SecretRef.for_global(group='acme'))
+            == 'グローバル（グループ acme）')
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ def test_the_flat_layout_refusal_names_the_group_before_the_alias(tmp_path):
 
     ``layout: flat`` に ``group_aliases`` を置いた設定は ``validate()`` が拒むが、ここで
     見るのは文言が読み替えの解決を背負わないことである (決定 2)。``label()`` の既定を
-    読み替え後にすると、この文言が ``default → nyle`` になる。
+    読み替え後にすると、この文言が ``acme → nyle`` になる。
     """
     from devbase.env.openbao import OpenBaoBackend
 
@@ -143,9 +143,9 @@ def test_the_flat_layout_refusal_names_the_group_before_the_alias(tmp_path):
     backend = OpenBaoBackend(store)
 
     with pytest.raises(SecretStoreError) as excinfo:
-        backend.path_of(SecretRef.for_global(group='default'))
+        backend.path_of(SecretRef.for_global(group='acme'))
 
-    assert '（グループ default）' in str(excinfo.value)
+    assert '（グループ acme）' in str(excinfo.value)
     assert '→' not in str(excinfo.value)
 
 
@@ -157,12 +157,15 @@ def test_the_account_group_warning_names_the_group_before_the_alias(openbao_root
 
     configure_openbao(openbao_root, openbao, layout=bc.LAYOUT_GROUP, group_aliases=ALIASES)
     openbao.put('team/nyle/global', {keys.DEVBASE_ACCOUNT_GROUP: 'kkg', 'A': '1'})
+    web = openbao_root / 'projects' / 'web'
+    web.mkdir(parents=True, exist_ok=True)
+    (web / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
 
     with caplog.at_level(logging.WARNING):
-        runtime.resolve(openbao_root, None)
+        runtime.resolve(openbao_root, 'web')
 
     messages = [r.getMessage() for r in caplog.records
                 if r.levelno == logging.WARNING and keys.DEVBASE_ACCOUNT_GROUP in r.getMessage()]
     assert len(messages) == 1
-    assert '機密の置き場（グローバル（グループ default））' in messages[0]
+    assert '機密の置き場（グローバル（グループ acme））' in messages[0]
     assert '→' not in messages[0]
