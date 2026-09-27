@@ -70,8 +70,8 @@ E2 を E3 の前へ移す。今は E3 の後で読むため、不正な世代で
 | `tests/snapshot/test_pre_restore_backup.py`（新設） | 足す | 受け入れ条件と I1〜I5 を固定する。`DEVBASE_ACCOUNT_GROUP` を置かない形・別グループの値を置く形・旧レイアウト・旧既定のボリューム・控えの失敗・展開の失敗・不正な組・ログ（「テスト設計」） |
 | `docs/specifications/snapshot-series.md` | 変える | 「含まない」の `#255` の記述を消し、「世代を名前で区別すること」の項へ、`pre-restore-*` は復元する世代の組で作られ、その系列に入ることを書く。用語の表へ「復元前バックアップ」を足す |
 | `docs/specifications/secret-backend.md` | 変える | 旧既定のボリュームの系列の段落の「新しい世代は作られない」へ、例外として復元前バックアップを書き足す（決定 4） |
-| `docs/user/snapshot-guide.md`（「復元の安全性」） | 変える | 「現在の対象ボリュームの状態」を「復元する世代の対象ボリュームの、復元前の状態」に直す。控えに失敗しても復元は続き、そのときは失敗の案内が別の世代を示すことを 1 文足す |
-| `docs/user/cli-reference/05-snapshot.md`（`restore` の Warning） | 変える | 同じ読み方に直す |
+| `docs/user/snapshot-guide.md`（「復元の安全性」） | 変える | 「現在の対象ボリュームの状態」を「復元する世代の対象ボリュームの、復元前の状態」に直す。控えに失敗しても復元は続き、そのときは失敗の案内が別の世代を示すことを 1 文足す。Note の「この自動バックアップから再度復元できます」へ、元に戻せるのは次の `devbase up` より前に限ること（次の自動スナップショットが控えへ差分を積むため）を足す（決定 6） |
+| `docs/user/cli-reference/05-snapshot.md`（`restore` の Warning） | 変える | 同じ読み方に直す。控えから元に戻せるのは次の `devbase up` より前に限ることを 1 文足す（決定 6） |
 | `docs/glossary/glossary.json` と `docs/glossary.md` | 変える | 「復元前バックアップ」の `source` を `docs/specifications/snapshot-series.md` にして `pending_source` を外し、`glossary.py render` で作り直す |
 | `CHANGELOG.md` | 変える | `[Unreleased]` の `### Fixed` に 1 項目足す |
 
@@ -199,7 +199,7 @@ CHANGELOG は描かない。
 **控えは復元する世代と同じ系列に入る。** 系列の規則は変えないため、次の 2 つが従う。どちらも
 `pre-restore-*` を名前で区別しない今の規則（snapshot-series.md の「含まない」）の結果で、#256 の範囲である。
 
-- その系列の最新の世代になるので、同じグループの次の自動スナップショットは控えへ差分を積む
+- その系列の最新の世代になるので、同じグループの次の自動スナップショットは控えへ差分を積む。積まれた後に控えを `restore` すると差分まで当たり、復元前の状態には戻らない（`--point` は 1 以上で、フルだけは取り出せない）。この変更では積み先の規則を変えず、控えから元に戻せるのは次の `devbase up` より前に限ると利用者文書に書く（決定 6）
 - その系列の保持数を超えれば、ほかの世代と同じ順で消える
 
 ## 非機能の実現方式
@@ -255,6 +255,18 @@ CHANGELOG は描かない。
 あり、利用者が設計 PR のレビューで判断する。止めると決まったら別の課題にする。この設計は、止める
 ときに `_backup_before_restore` の戻り値の `None` を見て `restore` が止めれば足りる形にしてある。
 
+### 決定 6: 控えへ差分が積まれる点は、積み先の規則を変えずに利用者文書で扱う
+
+控えは系列の最新の世代になるため、次の `devbase up` の自動スナップショット（`auto_snapshot_target`）が控えへ
+差分を積む。その後に控えを `restore` すると差分まで当たり、「元に戻す」経路が成り立たない。この変更では
+`auto_snapshot_target` の積み先の規則を変えず、`snapshot-guide.md` の「復元の安全性」と `05-snapshot.md` の
+`restore` の Warning に「控えから元に戻せるのは次の `devbase up` より前に限る」と書く。
+
+`auto_snapshot_target` が `pre-restore-*` を積み先に選ばず新しい世代へ倒す案は採らない。積み先の規則は
+PLAN68 決定 2 の範囲で、`pre-restore-*` を名前で区別しない今の規則（snapshot-series.md の「含まない」）を
+変えることになり、本件の受け入れ条件 12（自動スナップショットの積み先を変えない）から外れる。
+積み先を変えるなら別の課題にする。
+
 ## テスト設計
 
 `_run_docker_tar` を差し替えて、マウントの組・コマンド・失敗を記録する（`test_manager_volumes.py` の
@@ -274,7 +286,7 @@ CHANGELOG は描かない。
 | 受け入れ条件 9・I4 | `volumes` が検証を通らない世代で `restore` すると `SnapshotError` になり、`docker run` が 1 回も行われず、`pre-restore-*` が作られない | 組を読む手順を控えの後へ戻すと、控えの `docker run` とディレクトリができて落ちる |
 | 受け入れ条件 10 | 控えの `docker run` より前に、控える対象のボリューム名を並べた info の行が 1 行出る | ログを消すか、ボリューム名を並べないと落ちる |
 | 受け入れ条件 11・12・I6 | 既存の `tests/snapshot/` がすべて通る（`--group` あり・宣言ありの `create` の対象と `volumes`、自動スナップショットの積み先） | `create` や `_create_full` の既定を `self.volumes` 以外にすると、既存の試験が落ちる |
-| 受け入れ条件 13〜15 | 仕様 2 本と利用者文書 2 本の差分をレビューで読む | 自動の試験は置かない（文書の文言のため） |
+| 受け入れ条件 13〜15・決定 6 | 仕様 2 本と利用者文書 2 本の差分をレビューで読む。利用者文書 2 本に、控えから元に戻せるのは次の `devbase up` より前に限ることが書かれているかも見る | 自動の試験は置かない（文書の文言のため） |
 
 既存の `test_restore_incremental.py` と `test_manager_volumes.py` の `restore` の試験は、`DEVBASE_ACCOUNT_GROUP`
 を置いたまま残す。控えの組が世代から決まるようになっても、通ることが I6 と退行しないことの確かめになる。
