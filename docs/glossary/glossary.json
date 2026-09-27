@@ -326,8 +326,7 @@
       "term": "復元前バックアップ",
       "context": "snapshot",
       "meaning": "restore が書き戻す前に自動で作るフルの世代 pre-restore-<時刻>。復元する世代の対象ボリュームの組を控える",
-      "source": "",
-      "pending_source": "issues/issue-255-requirements.md"
+      "source": "docs/specifications/snapshot-series.md"
     },
     {
       "term": "総称ファミリ",

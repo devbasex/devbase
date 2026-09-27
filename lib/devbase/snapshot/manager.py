@@ -337,18 +337,14 @@ class SnapshotManager:
         if not full_archive.exists():
             raise SnapshotError(f"フルバックアップが見つかりません: {full_archive}")
 
-        # 復元前に現在の状態を自動バックアップ
-        pre_restore_name = f"pre-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        logger.info("復元前に現在の状態をバックアップします: %s", pre_restore_name)
-        try:
-            self.create(name=pre_restore_name, full=True)
-        except Exception as e:
-            logger.warning("復元前バックアップに失敗しましたが続行します: %s", e)
-            # 失敗時の案内で「戻せる」と書けなくなるので、無いことを覚えておく
-            pre_restore_name = None
-
+        # 控える組を決めるため、組は控えより先に読む。検証を通らない世代では
+        # 控えも復元も行わない。
         volumes = self.snapshot_volumes(snap_dir)
         logger.info("復元先のボリューム: %s", ', '.join(volumes.values()))
+
+        # 復元前に、書き戻す組の今の状態を自動バックアップする。
+        # 失敗時は None になり、案内で「戻せる」と書かない。
+        pre_restore_name = self._backup_before_restore(volumes)
 
         # 偽 rename として飲み込んだ宛先。全アーカイブ適用後にまとめて検証する
         # (後続の差分が中身を埋める場合があるので、途中では判断できない)。
@@ -388,6 +384,40 @@ class SnapshotManager:
             logger.info("復元完了: %s (incr-%03d まで)", name, point)
         else:
             logger.info("復元完了: %s", name)
+
+    def _backup_before_restore(self, volumes: dict) -> Optional[str]:
+        """復元前バックアップ ``pre-restore-<時刻>`` を、渡された組で作る。
+
+        組は復元する世代の検証済みの組 (``snapshot_volumes`` の戻り値) で、実行時の
+        グループ (``self.volumes``) は読まない。失敗しても例外を外へ出さず、警告を
+        出してこの呼び出しで作ったディレクトリを消し、``None`` を返す。
+
+        Returns:
+            作った世代の名前。失敗したら None
+        """
+        name = f"pre-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        snap_dir: Optional[Path] = None
+        created = False
+        logger.info("復元前に復元先のボリュームの状態をバックアップします: %s (%s)",
+                    name, ', '.join(volumes.values()))
+        try:
+            snap_dir = self._safe_snap_dir(name)
+            if not snap_dir.exists():
+                snap_dir.mkdir(parents=True)
+                created = True
+            self._create_full(name, snap_dir, volumes)
+            self._update_global_metadata(name, snap_dir)
+        except Exception as e:
+            logger.warning("復元前バックアップに失敗しましたが続行します: %s", e)
+            # 既にあった同名のディレクトリは前の控えなので消さない
+            if created and snap_dir is not None:
+                try:
+                    shutil.rmtree(snap_dir)
+                except OSError as rm_error:
+                    logger.warning("復元前バックアップの作りかけ %s を消せませんでした: %s",
+                                   snap_dir, rm_error)
+            return None
+        return name
 
     def _extract_archive(self, snap_dir: Path, archive: str, command: str,
                          volumes: dict, pre_restore_name: Optional[str],
@@ -812,13 +842,21 @@ class SnapshotManager:
                 stderr=e.stderr or '',
             ) from e
 
-    def _create_full(self, name: str, snap_dir: Path) -> None:
-        """フルバックアップを作成"""
+    def _create_full(self, name: str, snap_dir: Path,
+                     volumes: Optional[dict] = None) -> None:
+        """フルバックアップを作成する。
+
+        Args:
+            volumes: 控える組。省けば作成時の対象 (``self.volumes``)
+        """
+        if volumes is None:
+            volumes = self.volumes
         logger.info("フルバックアップを作成中: %s", name)
         self._run_docker_tar(
             snap_dir, 'backup',
             "tar --listed-incremental=/backup/snapshot.snar "
-            "-cf - -C /source . | zstd -1 -T0 -o /backup/full.tar.zst"
+            "-cf - -C /source . | zstd -1 -T0 -o /backup/full.tar.zst",
+            volumes,
         )
 
         # meta.yml を作成
@@ -826,7 +864,7 @@ class SnapshotManager:
             'name': name,
             'created_at': datetime.now().isoformat(),
             'type': 'full',
-            'volumes': dict(self.volumes),
+            'volumes': dict(volumes),
             'files': ['full.tar.zst'],
             'incremental_count': 0,
         }

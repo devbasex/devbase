@@ -51,7 +51,7 @@ devbase snapshot restore <name> [--point N]
 | `<name>` | はい | 復元するスナップショット名 |
 | `--point N` | いいえ | N 番目の差分まで復元（省略時は最新まで全適用） |
 
-> **Warning:** 復元前に現在の状態が `pre-restore-<timestamp>` として自動バックアップされます。
+> **Warning:** 復元前に、復元する世代の対象ボリュームの状態が `pre-restore-<timestamp>` として自動バックアップされます。この自動バックアップから元に戻せるのは、次の `devbase up` より前に限ります（次の自動スナップショットがそこへ差分を積むため）。
 
 ## `devbase snapshot copy`
 
