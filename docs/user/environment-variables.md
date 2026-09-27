@@ -55,13 +55,17 @@ devbase 自身の設定（どのリポジトリを clone するか、コンテ�
 
 devbase はホストマシンの認証情報を自動収集し、コンテナ内で利用可能にする「コレクター」機能を備えています。
 
+aws・google・git のコレクターはホストの資格情報ファイルを読みますが、見つけた値をそのまま書かず、
+既定では候補を示して尋ね、選んだものだけを書きます。尋ねずに取り込むグループ・取り込まないグループは
+`$DEVBASE_ROOT/secrets/host-import.yml` で名指しします（[`devbase env init`](cli-reference/03-env.md#ホストの資格情報の取り込み)）。
+
 ### コレクター一覧
 
 #### aws -- AWS 認証
 
 | キー | 説明 |
 |------|------|
-| `AWS_CONFIG_BASE64` | `~/.aws/config` と `~/.aws/credentials` を tar + Base64 エンコード |
+| `AWS_CONFIG_BASE64` | `~/.aws/config` と `~/.aws/credentials` のうち、選んだプロファイルとその連なり（`sso_session`・`source_profile`）の節を tar + Base64 エンコード（`all` か `import` のグループでは丸ごと） |
 | `AWS_PROFILE` | 使用する AWS プロファイル |
 | `AWS_ACCESS_KEY_ID` | アクセスキー ID |
 | `AWS_SECRET_ACCESS_KEY` | シークレットアクセスキー |
@@ -69,13 +73,13 @@ devbase はホストマシンの認証情報を自動収集し、コンテナ内
 | `AWS_SSO_URL` | SSO の開始 URL |
 
 ソースファイル: `~/.aws/config`, `~/.aws/credentials`
-ソースタイプ: `tar_base64`
+ソースタイプ: `tar_base64`（丸ごと）/ `aws_profiles`（選んだプロファイル）
 
 #### google -- GCP 認証
 
 | キー | 説明 |
 |------|------|
-| `GCP_CREDENTIALS_BASE64__*` | `~/gcp-credentials/` 配下の各プロファイル（Base64 エンコード） |
+| `GCP_CREDENTIALS_BASE64__*` | `~/gcp-credentials/` 配下の、選んだプロファイル（Base64 エンコード） |
 | `GCP_ACTIVE_PROFILE` | アクティブなプロファイル名 |
 | `GOOGLE_CLOUD_PROJECT` | GCP プロジェクト ID |
 | `GOOGLE_CLOUD_LOCATION` | GCP リージョン |

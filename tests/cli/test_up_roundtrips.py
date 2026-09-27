@@ -367,7 +367,7 @@ def test_grouped_up_after_env_init_reads_the_value_written_to_its_group(grouped,
             pass
 
     monkeypatch.setattr(env_cmd, 'CollectorRegistry', _Registry)
-    monkeypatch.setattr(env_cmd, '_update_source_metadata', lambda root, env_file: None)
+    monkeypatch.setattr(env_cmd, '_update_source_metadata', lambda root, env_file, **kw: None)
     child: dict = {}
     real_run = subprocess.run
 

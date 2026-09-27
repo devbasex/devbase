@@ -105,8 +105,17 @@ class SourcesManager:
             'synced_at': datetime.now().isoformat(),
         }
 
-    def _current_hash(self, source_type: str, files: List[str]) -> Optional[str]:
+    def _current_hash(self, source_type: str, files: List[str],
+                      source: Optional[Dict] = None) -> Optional[str]:
         """``source_type`` と ``files`` から現在のハッシュを求める (未対応・空なら ``None``)"""
+        if source_type == 'aws_profiles':
+            # 選んだ取り込み (#314 I7): 選んだ節とその連なりだけを切り出した中身のハッシュ。
+            # 選んだプロファイルがファイルから消えていれば比べられない
+            from devbase.env import aws_profiles
+            payload = aws_profiles.build_from_home((source or {}).get('profiles') or [])
+            if payload.unknown or not (source or {}).get('profiles'):
+                return None
+            return payload.digest()
         if source_type == 'tar_base64' and files:
             # ディレクトリ内の複数ファイル
             first_file = Path(files[0]).expanduser()
@@ -132,7 +141,7 @@ class SourcesManager:
         if not old_hash:
             return None
 
-        current = self._current_hash(source.get('type', ''), source.get('files', []))
+        current = self._current_hash(source.get('type', ''), source.get('files', []), source)
         if current is None:
             return None
 

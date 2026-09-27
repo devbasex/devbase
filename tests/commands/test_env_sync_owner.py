@@ -126,19 +126,23 @@ def test_a_key_in_both_updates_only_the_user_global(grouped, openbao, home, host
 
 
 @pytest.mark.parametrize('user', [False, True])
-def test_a_key_in_neither_goes_to_the_user_global(grouped, openbao, home, host_keys, user):
-    """決定 12: どちらにも無いキーは --user の有無によらず個人共通へ書く"""
+def test_a_registered_key_in_neither_is_not_written(grouped, openbao, home, host_keys, user,
+                                                     caplog):
+    """#314 I5: 控えにソースがあっても、どちらの参照にも無いキーは書かずに 1 行知らせる"""
     cred = home / '.git-credentials'
     cred.write_text('v1')
     register_git(grouped, 'team-a', cred)
     openbao.put(TEAM, dict(host_keys))
     openbao.put(USER, dict(host_keys))
     cred.write_text('v2')
+    caplog.set_level(logging.INFO)
 
     assert env_cmd.cmd_env_sync(grouped, user=user, group='team-a') == 0
 
-    assert openbao.get(USER)[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
+    assert keys.GIT_CREDENTIALS_BASE64 not in openbao.get(USER)
     assert keys.GIT_CREDENTIALS_BASE64 not in openbao.get(TEAM)
+    assert ('Git認証: 参照にキーが無いため書きません。取り込むなら devbase env init --reset、'
+            '手で入れるなら devbase env set') in infos(caplog)
 
 
 def test_host_keys_missing_everywhere_go_to_the_user_global(grouped, openbao):
@@ -170,9 +174,13 @@ def test_user_writes_a_team_only_key_to_the_user_global(grouped, openbao, home, 
 
 def test_the_aws_source_is_registered_when_the_key_is_only_in_the_user_global(
         grouped, openbao, home, host_keys):
+    from devbase.env.collectors.aws import _encode_aws_config_files
+
     (home / '.aws').mkdir()
+    (home / '.aws' / 'config').write_text('[default]\nregion = old\n')
+    old = _encode_aws_config_files()
     (home / '.aws' / 'config').write_text('[default]\n')
-    openbao.put(USER, {keys.AWS_CONFIG_BASE64: 'old', **host_keys})
+    openbao.put(USER, {keys.AWS_CONFIG_BASE64: old, **host_keys})
     openbao.put(TEAM, dict(host_keys))
 
     assert env_cmd.cmd_env_sync(grouped, group='team-a') == 0
