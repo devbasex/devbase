@@ -54,7 +54,7 @@ UNCHANGED_SHA256 = {
 
 _COMMON = r"""
 set -u
-emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
+emit() {{ printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }}
 for f in {same_files}; do
   emit sha "$f" "$(sha256sum "$f" 2>/dev/null | cut -d' ' -f1)"
 done
