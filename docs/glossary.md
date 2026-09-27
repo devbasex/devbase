@@ -139,3 +139,12 @@ pytest が走るプロセスの環境と、テストが起動する外部のプ�
 | 隔離した tmux サーバ | — | TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない | — | — | `docs/specifications/base-shell-tests.md` |
 | 故障の差し込み | — | 実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと | — | — | `docs/specifications/base-shell-tests.md` |
 | 偽の date | — | PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date | — | — | `docs/specifications/base-shell-tests.md` |
+
+## イメージの継承（`image-lineage`）
+
+base の設定が派生イメージと lfm へ届く道筋（containers/*/Dockerfile）
+
+| 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
+| --- | --- | --- | --- | --- | --- |
+| base の設定 | — | base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定 | — | — | — |
+| 届く経路 | — | base の設定が lfm のイメージへ入る道筋。COPY --from=devbase-base による取り込みか、FROM による継承 | — | — | — |

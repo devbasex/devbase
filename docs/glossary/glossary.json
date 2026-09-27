@@ -50,6 +50,11 @@
       "id": "test",
       "name": "テストの実行環境",
       "meaning": "pytest が走るプロセスの環境と、テストが起動する外部のプロセス"
+    },
+    {
+      "id": "image-lineage",
+      "name": "イメージの継承",
+      "meaning": "base の設定が派生イメージと lfm へ届く道筋（containers/*/Dockerfile）"
     }
   ],
   "terms": [
@@ -460,6 +465,18 @@
       "context": "test",
       "meaning": "PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date",
       "source": "docs/specifications/base-shell-tests.md"
+    },
+    {
+      "term": "base の設定",
+      "context": "image-lineage",
+      "meaning": "base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定",
+      "pending_source": "issues/issue-275-requirements.md"
+    },
+    {
+      "term": "届く経路",
+      "context": "image-lineage",
+      "meaning": "base の設定が lfm のイメージへ入る道筋。COPY --from=devbase-base による取り込みか、FROM による継承",
+      "pending_source": "issues/issue-275-requirements.md"
     }
   ]
 }
