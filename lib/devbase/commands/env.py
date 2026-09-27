@@ -1589,37 +1589,56 @@ def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFil
                 return value
         return default
 
-    # AWS
     if _get(keys.AWS_CONFIG_BASE64):
-        from devbase.env import aws_profiles
-
-        selection = aws_selection
-        if selection is _KEEP_SELECTION:
-            existing = sources.get_source('aws') or {}
-            selection = (existing.get('profiles') if existing.get('type') == 'aws_profiles'
-                         else None)
-        if isinstance(selection, (list, tuple)):
-            payload = aws_profiles.build_from_home(selection)
-            h = payload.digest() if selection and not payload.unknown else None
-            if h:
-                sources.set_source('aws', 'aws_profiles', list(aws_profiles.SOURCE_FILES),
-                                   keys.AWS_CONFIG_BASE64, h, profiles=list(selection))
-        else:
-            h = dir_hash(Path.home() / '.aws', ['config', 'credentials'])
-            if h:
-                sources.set_source('aws', 'tar_base64', list(aws_profiles.SOURCE_FILES),
-                                   keys.AWS_CONFIG_BASE64, h)
-
-    # Git
+        _register_aws_source(sources, aws_selection)
     if _get(keys.GIT_CREDENTIALS_BASE64):
-        cred_path = Path.home() / '.git-credentials'
-        h = file_hash(cred_path)
-        if h:
-            sources.set_source('git_credentials', 'file_base64',
-                              ["~/.git-credentials"],
-                              keys.GIT_CREDENTIALS_BASE64, h)
+        _register_git_source(sources)
+    _register_gcp_source(sources, files, _get)
 
-    # GCP (プロファイルごと)
+    sources.save()
+
+
+def _register_aws_source(sources: SourcesManager, aws_selection) -> None:
+    """AWS の項目を登録する (選択の形で ``aws_profiles`` か ``tar_base64`` を選ぶ)
+
+    ``aws_selection`` が ``_KEEP_SELECTION`` なら、今の控えの項目からプロファイルの並びを
+    復元する (項目が無ければ丸ごと)。
+    """
+    from devbase.env import aws_profiles
+
+    selection = aws_selection
+    if selection is _KEEP_SELECTION:
+        existing = sources.get_source('aws') or {}
+        selection = (existing.get('profiles') if existing.get('type') == 'aws_profiles'
+                     else None)
+    if isinstance(selection, (list, tuple)):
+        payload = aws_profiles.build_from_home(selection)
+        h = payload.digest() if selection and not payload.unknown else None
+        if h:
+            sources.set_source('aws', 'aws_profiles', list(aws_profiles.SOURCE_FILES),
+                               keys.AWS_CONFIG_BASE64, h, profiles=list(selection))
+    else:
+        h = dir_hash(Path.home() / '.aws', ['config', 'credentials'])
+        if h:
+            sources.set_source('aws', 'tar_base64', list(aws_profiles.SOURCE_FILES),
+                               keys.AWS_CONFIG_BASE64, h)
+
+
+def _register_git_source(sources: SourcesManager) -> None:
+    """Git 認証情報の項目を登録する"""
+    cred_path = Path.home() / '.git-credentials'
+    h = file_hash(cred_path)
+    if h:
+        sources.set_source('git_credentials', 'file_base64',
+                          ["~/.git-credentials"],
+                          keys.GIT_CREDENTIALS_BASE64, h)
+
+
+def _register_gcp_source(sources: SourcesManager, files, get) -> None:
+    """GCP のプロファイル表を組み立てて登録する (プロファイルごと)
+
+    ``get`` は参照の並びからキーの値を引く関数 (``_update_source_metadata`` の ``_get``)。
+    """
     all_vars = {}
     for f in reversed(files):
         all_vars.update(f.get_all())
@@ -1635,7 +1654,5 @@ def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFil
     }
 
     if gcp_profiles:
-        active = _get(keys.GCP_ACTIVE_PROFILE, "default")
+        active = get(keys.GCP_ACTIVE_PROFILE, "default")
         sources.set_gcp_source(gcp_profiles, active)
-
-    sources.save()
