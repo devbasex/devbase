@@ -666,11 +666,8 @@ class SnapshotManager:
     @staticmethod
     def _entry_age(entry: dict, index: int) -> tuple:
         # created_at が同じなら snapshot.yml で前にあるものを古いとみなす。
-        # 引用符なしの日時は YAML が datetime で返すため、文字列に揃えて比べる
-        created = entry.get('created_at') or ''
-        if isinstance(created, date):  # datetime も date の派生
-            created = created.isoformat()
-        return (str(created), index)
+        # created_at は _load_metadata が文字列にそろえている
+        return (entry.get('created_at') or '', index)
 
     @staticmethod
     def _entry_volumes(entry: dict) -> dict:
@@ -946,8 +943,28 @@ class SnapshotManager:
         """グローバルメタデータを読み込む"""
         if self._metadata_path.exists():
             with open(self._metadata_path) as f:
-                return yaml.safe_load(f) or {}
+                meta = yaml.safe_load(f) or {}
+            for snap in meta.get('snapshots') or []:
+                if isinstance(snap, dict):
+                    self._normalize_created_at(snap)
+            return meta
         return {'max_generations': DEFAULT_MAX_GENERATIONS, 'snapshots': []}
+
+    @staticmethod
+    def _normalize_created_at(entry: dict) -> None:
+        """エントリの ``created_at`` を文字列にそろえる。
+
+        手で書いた ``snapshot.yml`` の引用符なしの日時は YAML が ``datetime`` /
+        ``date`` で返すため ISO 形式の文字列にし、ほかの文字列でない値は ``str()``
+        にする。無い・``null`` のときはそのまま残す。
+        """
+        created = entry.get('created_at')
+        if created is None or isinstance(created, str):
+            return
+        if isinstance(created, date):  # datetime も date の派生
+            entry['created_at'] = created.isoformat()
+        else:
+            entry['created_at'] = str(created)
 
     def _save_metadata(self, meta: dict) -> None:
         """グローバルメタデータを保存する"""

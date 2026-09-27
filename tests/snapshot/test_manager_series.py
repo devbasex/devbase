@@ -188,6 +188,26 @@ def test_rotate_accepts_yaml_timestamp(tmp_path):
     assert names(tmp_path) == ["D2", "D3", "D4"]
 
 
+def test_load_metadata_returns_created_at_as_str(tmp_path):
+    """読み取りの境界で ``created_at`` を ISO 形式の文字列にそろえる。"""
+    backups = write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    _unquote_created_at(backups, "D1")
+    snaps = SnapshotManager(tmp_path)._load_metadata()["snapshots"]
+    assert [s["created_at"] for s in snaps] == [
+        "2026-09-01T00:00:00", "2026-09-01T00:01:00"]
+
+
+def test_snapshot_list_accepts_yaml_timestamp(tmp_path, capsys):
+    """引用符なしの日時が混ざっても ``devbase snapshot list`` が一覧を出す。"""
+    backups = write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    _unquote_created_at(backups, "D1")
+    ns = types.SimpleNamespace(subcommand="list")
+    assert cmd_snapshot(tmp_path, ns) == 0
+    out = capsys.readouterr().out
+    assert "2026-09-01T00:00:00" in out
+    assert "2026-09-01T00:01:00" in out
+
+
 class ArchiveRecordingManager(RecordingManager):
     """書き込むアーカイブ名を command から拾う (full / incr-NNN を区別する)。"""
 
