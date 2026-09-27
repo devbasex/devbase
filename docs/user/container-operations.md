@@ -547,7 +547,8 @@ SH
 **反映には `devbase build base --no-cache` が要ります。** `devbase up` だけでは反映されません
 （読み込みの 1 行と `DEVBASE_SHELLRC_DIR` はイメージの中にあります）。派生イメージを使う
 プロジェクトはその派生イメージも建て直し、稼働中のコンテナは `devbase down` → `devbase up` で
-作り直してください。zsh（base には入っていません）と `lfm` イメージは対象外です。
+作り直してください。`lfm` イメージは読み込みの 1 行と `DEVBASE_SHELLRC_DIR` を base と同じに持つので、
+base の後に lfm も建て直してください。zsh（base には入っていません）は対象外です。
 
 読む先の決め方・読み込みの前後で保つ条件・エラーの扱いの仕様は
 [作り直しても残るシェルの設定（`~/.shellrc.d`）](../specifications/shellrc-dir.md)にあります。
