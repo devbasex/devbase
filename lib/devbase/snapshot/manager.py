@@ -329,31 +329,23 @@ class SnapshotManager:
                 self.backups_dir / s['name'] for _, s in self._series_entries(volumes)
                 if is_single_segment_name(s['name'])
             ]
-        mtimes = [
-            m for m in map(self._latest_archive_mtime, snap_dirs) if m is not None
-        ]
-        if not mtimes:
-            return None
-        return datetime.fromtimestamp(max(mtimes), tz=timezone.utc)
-
-    @staticmethod
-    def _latest_archive_mtime(snap_dir: Path) -> Optional[float]:
-        """1 世代のディレクトリにあるアーカイブ実体の最新 mtime。無ければ None。
-
-        アーカイブ実体 (full.tar.zst / incr-NNN.tar.zst) のみを対象とし、
-        meta.yml / snapshot.snar / *.bak 等は除外する。symlink や非ディレクトリは
-        世代として扱わない。
-        """
-        if snap_dir.is_symlink() or not snap_dir.is_dir():
-            return None
         latest: Optional[float] = None
-        for f in snap_dir.iterdir():
-            if not f.is_file() or not is_archive_file(f.name):
+        for snap_dir in snap_dirs:
+            if snap_dir.is_symlink() or not snap_dir.is_dir():
                 continue
-            mtime = f.stat().st_mtime
-            if latest is None or mtime > latest:
-                latest = mtime
-        return latest
+            for f in snap_dir.iterdir():
+                if not f.is_file():
+                    continue
+                # アーカイブ実体 (full.tar.zst / incr-NNN.tar.zst) のみを対象とし、
+                # meta.yml / snapshot.snar / *.bak 等は除外する。
+                if not is_archive_file(f.name):
+                    continue
+                mtime = f.stat().st_mtime
+                if latest is None or mtime > latest:
+                    latest = mtime
+        if latest is None:
+            return None
+        return datetime.fromtimestamp(latest, tz=timezone.utc)
 
     def restore(self, name: str, point: int | None = None) -> None:
         """スナップショットから復元する。
