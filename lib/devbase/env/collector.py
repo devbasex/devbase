@@ -18,6 +18,16 @@ class Collector:
     collect_fn: Callable
     source_files: List[str] = field(default_factory=list)
     source_type: str = ""  # "tar_base64", "file_base64", "named_profiles", ""
+    #: ホストの資格情報ファイルを読むか (#314 I11)。真なら ``collect_fn(env_file, *, host)`` で
+    #: 呼ばれ、``host`` (:class:`devbase.env.host_import.HostImport`) の方針に従って書く
+    host_import: bool = False
+
+    def __post_init__(self):
+        if self.source_files and not self.host_import:
+            raise ValueError(
+                f"コレクター '{self.name}' はホストのファイル ({', '.join(self.source_files)}) を"
+                "読むのに host_import を宣言していません。取り込みの方針を受け取らなければ"
+                "登録できません")
 
 
 class CollectorRegistry:

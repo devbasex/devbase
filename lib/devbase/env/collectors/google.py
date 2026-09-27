@@ -10,8 +10,13 @@ from devbase.log import get_logger
 from devbase.env import keys
 from devbase.env.store import EnvFile, safe_input, collect_key
 from devbase.env.collector import Collector
+from devbase.env.host_import import HostImport
 
 logger = get_logger(__name__)
+
+STEP = "GCP認証"
+#: アクティブプロファイルの質問で「設定しない」を選ぶ語
+NONE_ANSWER = "none"
 
 # GCPクレデンシャルのデフォルトディレクトリ
 GCP_CREDENTIALS_DIR = Path.home() / 'gcp-credentials'
@@ -67,8 +72,12 @@ def _discover_credential_files() -> dict:
     return {}
 
 
-def collect_google_credentials(env_file: EnvFile) -> None:
-    """Google Cloud認証情報を対話的に収集する（複数プロファイル対応）"""
+def collect_google_credentials(env_file: EnvFile, *, host: HostImport) -> None:
+    """Google Cloud認証情報を対話的に収集する（複数プロファイル対応）
+
+    ``host`` は取り込みの方針 (#314)。``~/gcp-credentials/`` の鍵は、方針が「取り込む」なら
+    全部を、「尋ねる」なら選んだものだけを登録する。候補が無いときの手入力は方針によらない (前提 6)。
+    """
     print("\n=== Google Cloud認証情報 ===")
 
     profiles = _discover_credential_files()
@@ -90,19 +99,34 @@ def collect_google_credentials(env_file: EnvFile) -> None:
         _collect_common_settings(env_file, has_key=has_key)
         return
 
-    print(f"\n検出されたcredential ({len(profiles)}件):")
-    print('\n'.join(f"  - {name} (project: {info.get('project_id', 'N/A')})"
-                    for name, info in profiles.items()))
+    names = list(profiles.keys())
+    if host.importing:
+        print(f"\n検出されたcredential ({len(profiles)}件):")
+        print('\n'.join(f"  - {name} (project: {info.get('project_id', 'N/A')})"
+                        for name, info in profiles.items()))
+        chosen = names
+    else:
+        labels = [f"{name} (project: {info.get('project_id') or 'N/A'})"
+                  for name, info in profiles.items()]
+        selection = host.choose(STEP, f"ホストで見つけた GCP の鍵 ({len(names)}件):", labels,
+                                "例: 1,2 / all で全部 / 空で取り込まない")
+        chosen = [names[i] for i in selection.indexes]
+    if not chosen:
+        # 前提 5: 鍵を 1 つも取り込まなければ、共通設定も書かない
+        host.declined(STEP)
+        host.record('gcp', [])
+        return
 
-    for name, info in profiles.items():
-        _register_profile(env_file, name, Path(info['file']))
+    default_active = 'default' if 'default' in chosen else chosen[0]
+    active = _ask_active_profile(chosen, default_active)
+    if active is None:
+        logger.info("GCP認証: アクティブプロファイルを設定しないため、GCP の鍵と設定を書きません")
+        host.record('gcp', [])
+        return
 
-    profile_names = list(profiles.keys())
-    default_active = 'default' if 'default' in profile_names else profile_names[0]
-    active = safe_input(f"\nアクティブプロファイル (デフォルト: {default_active}): ", default_active)
-    if active not in profile_names:
-        logger.warning("'%s' は存在しません。'%s' を使用します", active, default_active)
-        active = default_active
+    for name in chosen:
+        _register_profile(env_file, name, Path(profiles[name]['file']))
+
     env_file.set(keys.GCP_ACTIVE_PROFILE, active)
     logger.info("%s: %s", keys.GCP_ACTIVE_PROFILE, active)
 
@@ -114,6 +138,22 @@ def collect_google_credentials(env_file: EnvFile) -> None:
         logger.info("%s: %s", keys.GOOGLE_CLOUD_PROJECT, project_id)
 
     _collect_common_settings(env_file, has_key=True)
+    host.record('gcp', chosen)
+
+
+def _ask_active_profile(names: list, default_active: str) -> Optional[str]:
+    """アクティブプロファイルを尋ねる。``none`` は「設定しない」(``None``)。
+
+    選んだ鍵に無い名前は尋ね直す (決定 5)。EOF は既定の値で終わる。
+    """
+    prompt = f"\nアクティブプロファイル (名前 / none で設定しない、デフォルト: {default_active}): "
+    while True:
+        active = safe_input(prompt, default_active)
+        if active == NONE_ANSWER:
+            return None
+        if active in names:
+            return active
+        print(f"'{active}' は選んだ鍵にありません")
 
 
 def _register_profile(env_file: EnvFile, name: str, file_path: Path) -> None:
@@ -167,4 +207,5 @@ COLLECTOR = Collector(
     collect_fn=collect_google_credentials,
     source_files=["~/gcp-credentials/"],
     source_type="named_profiles",
+    host_import=True,
 )
