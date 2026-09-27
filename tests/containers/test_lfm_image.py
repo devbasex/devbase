@@ -108,7 +108,7 @@ def _unavailable() -> str | None:
         return "docker daemon へ繋がらない"
     for image in (BASE, LFM):
         out = subprocess.run(["docker", "image", "inspect", image], capture_output=True,
-                             timeout=30, env=host_docker_env())
+                             timeout=30, env=host_docker_env(), check=False)
         if out.returncode != 0:
             return f"{image} が無い。{BUILD_HINT}"
     return None
@@ -118,7 +118,7 @@ def _run(image: str, script: str) -> dict[str, dict[str, str]]:
     # skip してよいのは Docker・イメージが無いときと、lfm が古いときだけ。起動の失敗は失敗として知らせる
     out = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "/bin/bash", image, "-c", script],
-        capture_output=True, text=True, timeout=600, env=host_docker_env())
+        capture_output=True, text=True, timeout=600, env=host_docker_env(), check=False)
     if out.returncode == STALE_IMAGE_EXIT:
         pytest.skip(f"{image} に /etc/devbase/shellrc-dir.sh が無い (この変更より前のイメージ)。"
                     f"{BUILD_HINT}")
@@ -139,7 +139,7 @@ def probes() -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
         pytest.skip(reason)
     common = _COMMON.format(same_files=" ".join(SAME_FILES), aliases=" ".join(ALIASES))
     tools = "\n".join(f'{cmd} >/dev/null 2>&1; emit tool {name} "$?"' for name, cmd in TOOLS.items())
-    lfm_script = ("test -f /etc/devbase/shellrc-dir.sh || exit %d\n" % STALE_IMAGE_EXIT) + common \
+    lfm_script = f"test -f /etc/devbase/shellrc-dir.sh || exit {STALE_IMAGE_EXIT}\n" + common \
         + _LFM_ONLY.format(fonts=" ".join(FONT_PATTERNS), tools=tools,
                            unchanged=" ".join(UNCHANGED_SHA256))
     lfm = _run(LFM, lfm_script)

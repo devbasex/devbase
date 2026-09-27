@@ -159,7 +159,7 @@ def summarize(text: str) -> Summary:
                 path = HOME + "/" + target.split("/", 1)[1]
                 if path not in summary.written_files:
                     summary.written_files.append(path)
-            for chunk in re.findall(r"apt-get install\s+(.*?)(?:;|&&|$)", ins.args, re.S):
+            for chunk in re.findall(r"apt-get install\s+(.*?)(?:;|&&|$)", ins.args, re.DOTALL):
                 summary.apt.update(t for t in chunk.split() if not t.startswith("-") and "$" not in t)
     return summary
 
@@ -261,10 +261,10 @@ def test_a_user_file_written_by_run_is_named(base_text, lfm_text):
     ("COPY --from=devbase-base:latest /etc/tmux.conf /etc/tmux.conf\n", "/etc/tmux.conf"),
     ("COPY --from=devbase-base:latest /etc/fonts/local.conf /etc/fonts/local.conf\n",
      "/etc/fonts/local.conf"),
-    ("COPY --from=devbase-base:latest --chown=ubuntu:ubuntu /home/ubuntu/.bashrc "
-     "/home/ubuntu/.bashrc\n", f"{HOME}/.bashrc"),
-    ("COPY --from=devbase-base:latest --chown=ubuntu:ubuntu /home/ubuntu/.claude/settings.json "
-     "/home/ubuntu/.claude/settings.json\n", f"{HOME}/.claude/settings.json"),
+    (("COPY --from=devbase-base:latest --chown=ubuntu:ubuntu /home/ubuntu/.bashrc "
+      "/home/ubuntu/.bashrc\n"), f"{HOME}/.bashrc"),
+    (("COPY --from=devbase-base:latest --chown=ubuntu:ubuntu /home/ubuntu/.claude/settings.json "
+      "/home/ubuntu/.claude/settings.json\n"), f"{HOME}/.claude/settings.json"),
     ("ENV DEVBASE_SHELLRC_DIR=/home/ubuntu/.shellrc.d\n", "ENV DEVBASE_SHELLRC_DIR"),
     (" tmux \\\n", "apt tmux"),
 ])
