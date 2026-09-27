@@ -147,4 +147,7 @@ base の設定が派生イメージと lfm へ届く道筋（containers/*/Docker
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
 | base の設定 | — | base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定 | — | — | — |
-| 届く経路 | — | base の設定が lfm のイメージへ入る道筋。COPY --from=devbase-base による取り込みか、FROM による継承 | — | — | — |
+| 届く経路 | — | base の設定が lfm のイメージへ入る道筋。lfm の Dockerfile の取り込みと、取り込めない ENV を同じ値で宣言すること | — | — | — |
+| 取り込み | — | lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと | — | — | — |
+| 到達の検査 | — | base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py） | — | — | — |
+| 除外表 | — | 到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧 | — | — | — |

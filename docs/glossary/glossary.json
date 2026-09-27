@@ -475,8 +475,26 @@
     {
       "term": "届く経路",
       "context": "image-lineage",
-      "meaning": "base の設定が lfm のイメージへ入る道筋。COPY --from=devbase-base による取り込みか、FROM による継承",
-      "pending_source": "issues/issue-275-requirements.md"
+      "meaning": "base の設定が lfm のイメージへ入る道筋。lfm の Dockerfile の取り込みと、取り込めない ENV を同じ値で宣言すること",
+      "pending_source": "issues/issue-275-design.md"
+    },
+    {
+      "term": "取り込み",
+      "context": "image-lineage",
+      "meaning": "lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと",
+      "pending_source": "issues/issue-275-design.md"
+    },
+    {
+      "term": "到達の検査",
+      "context": "image-lineage",
+      "meaning": "base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py）",
+      "pending_source": "issues/issue-275-design.md"
+    },
+    {
+      "term": "除外表",
+      "context": "image-lineage",
+      "meaning": "到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧",
+      "pending_source": "issues/issue-275-design.md"
     }
   ]
 }
