@@ -460,6 +460,41 @@
       "context": "test",
       "meaning": "PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date",
       "source": "docs/specifications/base-shell-tests.md"
+    },
+    {
+      "term": "取り込み",
+      "context": "secret",
+      "meaning": "ホストの資格情報ファイルから読んだ値を、対象のグループの参照へ書くこと。利用者がキーボードで入れた値を書くことは含まない",
+      "source": "",
+      "pending_source": "issues/issue-314-requirements.md"
+    },
+    {
+      "term": "取り込みの候補",
+      "context": "secret",
+      "meaning": "collector がホストで見つけた、取り込める値のまとまり。GCP は鍵ファイル 1 つ、AWS はプロファイル 1 つ、Git はホストの Git の設定の全体が 1 件",
+      "source": "",
+      "pending_source": "issues/issue-314-requirements.md"
+    },
+    {
+      "term": "取り込みの方針",
+      "context": "secret",
+      "meaning": "対象のグループについて、取り込みの候補を「尋ねる」「取り込まない」「取り込む」のどれで扱うか。呼び出し側が決めて collector へ渡す",
+      "source": "",
+      "pending_source": "issues/issue-314-requirements.md"
+    },
+    {
+      "term": "取り込みを許すグループの設定",
+      "context": "secret",
+      "meaning": "取り込みの方針をグループごとに名指しする端末の設定。名指しの無いグループは「尋ねる」",
+      "source": "",
+      "pending_source": "issues/issue-314-requirements.md"
+    },
+    {
+      "term": "AWS のプロファイル",
+      "context": "secret",
+      "meaning": "~/.aws/config の [default] または [profile <名前>] の節。compose のプロファイルとは別のもの",
+      "source": "",
+      "pending_source": "issues/issue-314-requirements.md"
     }
   ]
 }
