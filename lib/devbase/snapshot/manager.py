@@ -37,6 +37,36 @@ DEFAULT_MAX_GENERATIONS = 3
 DEFAULT_MAX_INCREMENTALS = 10
 METADATA_FILE = 'snapshot.yml'
 
+# 世代ディレクトリ内のファイル名。アーカイブ実体は full 1 本と incr-NNN の列で、
+# snapshot.snar は GNU tar の listed-incremental 状態ファイル。作成・復元・
+# 直近日時の判定はすべてここを参照し、名前の組み立てを 1 か所に留める。
+FULL_ARCHIVE = 'full.tar.zst'
+SNAR_FILE = 'snapshot.snar'
+INCR_ARCHIVE_GLOB = 'incr-*.tar.zst'
+_INCR_ARCHIVE_RE = re.compile(r'^incr-(\d+)\.tar\.zst$')
+
+# コンテナ内のマウント先。作成時は対象ボリュームを /source の下へ読み取り専用で、
+# 復元時は /target の下へ書き込み可で並べる。世代ディレクトリは /backup。
+BACKUP_ROOT = '/source'
+RESTORE_ROOT = '/target'
+ARCHIVE_MOUNT = '/backup'
+
+
+def incr_archive_name(num: int) -> str:
+    """``num`` 本目の差分アーカイブ名 (``incr-001.tar.zst`` の形) を返す。"""
+    return f'incr-{num:03d}.tar.zst'
+
+
+def incr_archive_number(name: str) -> Optional[int]:
+    """差分アーカイブ名から番号を取り出す。差分の形でなければ None。"""
+    m = _INCR_ARCHIVE_RE.match(name)
+    return int(m.group(1)) if m else None
+
+
+def is_archive_file(name: str) -> bool:
+    """アーカイブ実体 (full / incr-NNN) の名前か。meta.yml・snar・.bak は含めない。"""
+    return name == FULL_ARCHIVE or incr_archive_number(name) is not None
+
 # GNU tar の incremental はディレクトリを (dev, ino) で追跡して rename を検出する。
 # ディレクトリが削除され作り直されると **inode 番号が再利用される**ため、tar は無関係な
 # ディレクトリを rename されたものと誤判定し、dumpdir に偽の R/T レコードを書く。
@@ -308,9 +338,7 @@ class SnapshotManager:
                     continue
                 # アーカイブ実体 (full.tar.zst / incr-NNN.tar.zst) のみを対象とし、
                 # meta.yml / snapshot.snar / *.bak 等は除外する。
-                if f.name != 'full.tar.zst' and not (
-                    f.name.startswith('incr-') and f.name.endswith('.tar.zst')
-                ):
+                if not is_archive_file(f.name):
                     continue
                 mtime = f.stat().st_mtime
                 if latest is None or mtime > latest:
@@ -333,7 +361,7 @@ class SnapshotManager:
         if not snap_dir.exists():
             raise SnapshotError(f"スナップショット '{name}' が見つかりません")
 
-        full_archive = snap_dir / 'full.tar.zst'
+        full_archive = snap_dir / FULL_ARCHIVE
         if not full_archive.exists():
             raise SnapshotError(f"フルバックアップが見つかりません: {full_archive}")
 
@@ -353,28 +381,23 @@ class SnapshotManager:
         # フルバックアップの復元
         logger.info("フルバックアップを復元中...")
         self._extract_archive(
-            snap_dir, 'full.tar.zst',
-            self.clear_command(volumes) +
-            "zstd -d /backup/full.tar.zst -c | "
-            "tar --listed-incremental=/dev/null -xf - -C /target",
+            snap_dir, FULL_ARCHIVE,
+            self.clear_command(volumes) + self.restore_command(FULL_ARCHIVE),
             volumes, pre_restore_name, skipped_renames,
         )
 
         # 差分バックアップを順番に適用（pointが指定されていればそこまで）
-        incr_re = re.compile(r'^incr-(\d+)\.tar\.zst$')
-        incr_files = sorted(snap_dir.glob('incr-*.tar.zst'))
+        incr_files = sorted(snap_dir.glob(INCR_ARCHIVE_GLOB))
         for incr in incr_files:
             if point is not None:
-                m = incr_re.match(incr.name)
-                if not m:
+                num = incr_archive_number(incr.name)
+                if num is None:
                     continue
-                if int(m.group(1)) > point:
+                if num > point:
                     break
             logger.info("差分バックアップを適用中: %s", incr.name)
             self._extract_archive(
-                snap_dir, incr.name,
-                f"zstd -d /backup/{incr.name} -c | "
-                f"tar --listed-incremental=/dev/null -xf - -C /target",
+                snap_dir, incr.name, self.restore_command(incr.name),
                 volumes, pre_restore_name, skipped_renames,
             )
 
@@ -466,7 +489,7 @@ class SnapshotManager:
                 result = self._run_docker_tar(
                     snap_dir, 'restore',
                     'for p in ' + ' '.join(chunk) + '; do '
-                    'full="/target/${p#./}"; '
+                    f'full="{RESTORE_ROOT}/${{p#./}}"; '
                     'if [ -d "$full" ] && [ -z "$(ls -A "$full" 2>/dev/null)" ]; then '
                     'echo "$p"; fi; '
                     'done',
@@ -772,29 +795,61 @@ class SnapshotManager:
         return ensure_snapshot_image(self.devbase_root)
 
     @staticmethod
-    def volume_mount_args(volumes: dict, mode: str) -> list:
+    def backup_command(archive: str) -> str:
+        """対象を 1 本のアーカイブへ書き出すコマンドを組み立てる。
+
+        full も差分も同じ形で、``snapshot.snar`` に前回の状態を積み上げる。
+        差分は ``archive`` に ``incr-NNN.tar.zst`` を渡す。
+        """
+        return (
+            f"tar --listed-incremental={ARCHIVE_MOUNT}/{SNAR_FILE} "
+            f"-cf - -C {BACKUP_ROOT} . | zstd -1 -T0 -o {ARCHIVE_MOUNT}/{archive}"
+        )
+
+    @staticmethod
+    def restore_command(archive: str) -> str:
+        """アーカイブ 1 本を復元先へ展開するコマンドを組み立てる。
+
+        full と差分で同じ形。``--listed-incremental=/dev/null`` で差分の
+        削除・rename の記録を適用しつつ、状態ファイルは更新しない。
+        """
+        return (
+            f"zstd -d {ARCHIVE_MOUNT}/{archive} -c | "
+            f"tar --listed-incremental=/dev/null -xf - -C {RESTORE_ROOT}"
+        )
+
+    @staticmethod
+    def mount_points(volumes: dict, mode: str) -> list:
+        """対象ボリュームのコンテナ内マウント先を、``volumes`` の順で返す。
+
+        作成時は ``/source/<sub>``、復元時は ``/target/<sub>``。サブディレクトリ名が
+        空文字のエントリは、旧レイアウト (共通ボリューム 1 本をルートへ直接マウント)
+        を表し、ルートそのものを返す。
+        """
+        root = BACKUP_ROOT if mode == 'backup' else RESTORE_ROOT
+        return [f'{root}/{sub}' if sub else root for sub in volumes]
+
+    @classmethod
+    def volume_mount_args(cls, volumes: dict, mode: str) -> list:
         """対象ボリュームの ``docker run -v`` 引数を組み立てる。
 
-        サブディレクトリ名が空文字のエントリは、旧レイアウト (共通ボリューム 1 本を
-        ルートへ直接マウント) を表す。旧スナップショットを復元するために残している。
+        マウント先は ``mount_points`` に従う。旧レイアウトのスナップショットを
+        復元するため、空文字のサブディレクトリ名もそのまま受け入れる。
         """
-        root = '/source' if mode == 'backup' else '/target'
         suffix = ':ro' if mode == 'backup' else ''
         args = []
-        for sub, name in volumes.items():
-            target = f'{root}/{sub}' if sub else root
+        for name, target in zip(volumes.values(), cls.mount_points(volumes, mode)):
             args.extend(['-v', f'{name}:{target}{suffix}'])
         return args
 
-    @staticmethod
-    def clear_command(volumes: dict) -> str:
+    @classmethod
+    def clear_command(cls, volumes: dict) -> str:
         """復元前に対象ボリュームの中身を空にするコマンドを組み立てる。
 
         マウントポイント自身は消せない (busy) ので、**各マウントの直下**を消す。
-        旧レイアウトも同じ形で扱える。
+        消す場所は ``volume_mount_args`` と同じ ``mount_points`` から取る。
         """
-        roots = ' '.join(
-            f'/target/{sub}' if sub else '/target' for sub in volumes)
+        roots = ' '.join(cls.mount_points(volumes, 'restore'))
         return (
             'for d in ' + roots + '; do '
             'find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; '
@@ -818,7 +873,9 @@ class SnapshotManager:
         image = self._ensure_snapshot_image()
 
         abs_snap_dir = snap_dir.resolve()
-        backup_mount = f'{abs_snap_dir}:/backup:ro' if mode == 'restore' else f'{abs_snap_dir}:/backup'
+        backup_mount = f'{abs_snap_dir}:{ARCHIVE_MOUNT}'
+        if mode == 'restore':
+            backup_mount += ':ro'
 
         cmd = [
             'docker', 'run', '--rm',
@@ -850,10 +907,7 @@ class SnapshotManager:
             volumes = self.volumes
         logger.info("フルバックアップを作成中: %s", name)
         self._run_docker_tar(
-            snap_dir, 'backup',
-            "tar --listed-incremental=/backup/snapshot.snar "
-            "-cf - -C /source . | zstd -1 -T0 -o /backup/full.tar.zst",
-            volumes,
+            snap_dir, 'backup', self.backup_command(FULL_ARCHIVE), volumes,
         )
 
         # meta.yml を作成
@@ -862,7 +916,7 @@ class SnapshotManager:
             'created_at': datetime.now().isoformat(),
             'type': 'full',
             'volumes': dict(volumes),
-            'files': ['full.tar.zst'],
+            'files': [FULL_ARCHIVE],
             'incremental_count': 0,
         }
         self._save_snap_meta(snap_dir, meta)
@@ -881,7 +935,7 @@ class SnapshotManager:
                 "新しい世代を作成してください (devbase snapshot create)"
             )
 
-        snar_file = snap_dir / 'snapshot.snar'
+        snar_file = snap_dir / SNAR_FILE
         if not snar_file.exists():
             # snarファイルがなければフルバックアップにフォールバック
             logger.info("snarファイルが見つかりません、フルバックアップに切り替えます")
@@ -889,17 +943,17 @@ class SnapshotManager:
             return
 
         # 差分番号を決定
-        existing = sorted(snap_dir.glob('incr-*.tar.zst'))
+        existing = sorted(snap_dir.glob(INCR_ARCHIVE_GLOB))
         next_num = len(existing) + 1
-        incr_name = f'incr-{next_num:03d}.tar.zst'
+        incr_name = incr_archive_name(next_num)
 
         logger.info("差分バックアップを作成中: %s/%s", name, incr_name)
 
+        # 差分の作成が途中で失敗しても snar を戻せるよう、先に控えを取る。
         self._run_docker_tar(
             snap_dir, 'backup',
-            f"cp /backup/snapshot.snar /backup/snapshot.snar.bak && "
-            f"tar --listed-incremental=/backup/snapshot.snar "
-            f"-cf - -C /source . | zstd -1 -T0 -o /backup/{incr_name}"
+            f"cp {ARCHIVE_MOUNT}/{SNAR_FILE} {ARCHIVE_MOUNT}/{SNAR_FILE}.bak && "
+            + self.backup_command(incr_name)
         )
 
         # meta.yml を更新
