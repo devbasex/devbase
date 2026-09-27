@@ -212,6 +212,12 @@ lfm も `source $HOME/.cargo/env` を足す。取り込みを後に置くと、�
 上書きされて消える。C1〜C5 はユーザー設定（`groupadd` / `usermod`）の後にまとめて置き、root の
 区間の中で所有者を決めて置く。
 
+**C5 の前に `install -d -o ubuntu -g ubuntu /home/ubuntu/.claude` を root の区間で置く**。lfm には
+`~/.claude` が無く、ファイル 1 つの `COPY --from` は足りない親ディレクトリを root:root で作る。
+親が root の持ち物だと、entrypoint（USER ubuntu・`set -e`）の `devbase_link_setting` が
+`~/.claude` をグループのボリュームへのリンクに差し替える `rm -rf` が Permission denied で止まり、
+`devbase up` のコンテナが起動しない。C5 自体にも `--chown=ubuntu:ubuntu` を付ける。
+
 **D3 を Playwright の後に置く**（I8）。`--with-deps` が `fonts-wqy-zenhei` などを入れた後でなければ、
 後から入った書体を知らないキャッシュが残る。base の決定（`base-image-rendering.md` の決定 5）と
 同じ理由である。
@@ -398,6 +404,7 @@ Playwright の導入は lfm がブラウザを `~/.cache` に残す唯一の場�
 | AC8 | 隔離した tmux サーバで `tmux-session` の一覧が 0 で終わり、`list-keys` に prefix S の割り当てがある | C2 を消すと落ちる |
 | AC9 | `fc-match` の 3 つの指定と `-s sans-serif:lang=ja` の 1 件目が `Noto Sans CJK JP` | C3 か D3 を消すと落ちる |
 | AC10 | lfm の `~/.claude/settings.json` の SessionStart フックが base と同じ | C5 を消すと落ちる |
+| AC10 | `stat -c %U ~/.claude` と `stat -c %U ~/.claude/settings.json` が `ubuntu` | C5 の前の `install -d` を消すと落ちる |
 | AC13 | 10 個の道具の版の表示が 0 で終わる | lfm の固有の `RUN` を消すと落ちる |
 | AC14 | `/etc/nvidia-container-runtime/config.toml` と `/etc/docker/daemon.json` のハッシュが、変更前に測った値と一致する | 取り込みで `/etc/docker` を上書きすると落ちる |
 | AC15 | ubuntu が `sudo` なしで `npm i -g` できる（`npm` グループの GID が base と同じ） | `groupadd -g "$NPM_GID"` を消すと落ちる |
@@ -418,6 +425,6 @@ Playwright の導入は lfm がブラウザを `~/.cache` に残す唯一の場�
 | --- | --- |
 | 変更前の lfm のイメージ | 手元に `devbase-lfm` が無く、変更前の `fc-match`・AC14 のハッシュ・大きさは未測定である。実装の最初のタスクで建てて測る（AC20） |
 | amd64 での `fc-match` | amd64 の lfm は `google-chrome-stable` を入れるため、`--with-deps` が入れる書体の顔ぶれが違いうる。hammer05 で建てるまで分からない |
-| `COPY --from` の所有者 | 取り込みは所有者の数値を保つ前提で既存の取り込みが組まれている。C4・C5 が ubuntu の所有になるかは建てて確かめる。ならなければ `--chown` を付ける |
+| `COPY --from` の所有者 | 取り込みは所有者の数値を保つ前提で既存の取り込みが組まれている。C4 が ubuntu の所有になるかは建てて確かめる。ならなければ `--chown` を付ける。C5 は親の `~/.claude` ごと先に決めて置く（命令の並び）ため、ここに残らない |
 | rustup の `~/.bashrc` への追記 | rustup が `~/.bashrc` へ追記するかは導入時の判定に依る。I7 はどちらでも lfm の追記を守る |
 | GPU の実行（AC18） | hammer05 を使える時期に依る |
