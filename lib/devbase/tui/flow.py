@@ -133,22 +133,6 @@ def optional_int(message: str, *, min_value: int = 0):
         return value
 
 
-def select_account_group(pick) -> str:
-    """``pick()`` で得た名前を ``--group`` と同じ規則で検証して返す (#315 決定 11)。
-
-    使えない名前なら検証の文を出して ``pick()`` をやり直す。
-    """
-    from devbase.errors import DevbaseError
-    from devbase.volume.manager import validate_account_group
-
-    while True:
-        name = pick()
-        try:
-            return validate_account_group(name)
-        except DevbaseError as e:
-            logger.error("--group に使えない名前です: %s", e)
-
-
 def pause_for_review() -> bool:
     """操作出力を読めるよう、メニュー再表示の前に Enter を待つ。
 

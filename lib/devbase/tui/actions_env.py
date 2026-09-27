@@ -113,6 +113,7 @@ def _group_attrs(devbase_root: Path) -> dict:
     ``--group`` と同じ検証の文を出して選択へ戻る。
     """
     from devbase.errors import DevbaseError
+    from devbase.volume.manager import validate_account_group
 
     keys_screen = _screen("actions_env_keys")
     try:
@@ -121,7 +122,12 @@ def _group_attrs(devbase_root: Path) -> dict:
         return {}
     if not grouped:
         return {}
-    return {"group": flow.select_account_group(lambda: keys_screen._select_group(devbase_root))}
+    while True:
+        name = keys_screen._select_group(devbase_root)
+        try:
+            return {"group": validate_account_group(name)}
+        except DevbaseError as e:
+            logger.error("--group に使えない名前です: %s", e)
 
 
 _OP_HANDLERS = {
