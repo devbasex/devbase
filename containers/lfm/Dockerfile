@@ -2,6 +2,11 @@
 # devbase-lfm: 言語・機械学習モデル開発環境
 # NVIDIA CUDA + devbase-base の共通ツール + Rust + gfortran + MeCab + DinD
 # ==================================
+# lfm は base を FROM で継がず、base のイメージから COPY --from で取り込む (#275)。
+# base の設定 (/etc/devbase・/etc/tmux.conf・/etc/fonts/local.conf・~/.bashrc・
+# ~/.claude/settings.json) は下の「base の設定の取り込み」で同じパスへ持ち込み、
+# 中身を lfm で書かない。ENV は取り込めないため同じ値で宣言する。取り込みに覆われない
+# 設定を base に足すと tests/containers/test_lfm_base_settings.py が名前を挙げて落ちる。
 
 # ==================================
 # Stage: CUDA ベース + 追加パッケージ
@@ -16,7 +21,7 @@ RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
     set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-    locales git wget vim sudo nano jq make gfortran \
+    locales git wget vim sudo nano jq make gfortran tmux \
     curl ca-certificates gnupg lsb-release \
     libnss3 libxrandr2 libxss1 build-essential \
     mecab libmecab-dev mecab-ipadic-utf8 \
@@ -99,6 +104,9 @@ RUN ln -sf /usr/lib/node_modules/npm/bin/npm-cli.js /usr/bin/npm && \
 # base と同じ GID で作り直して整合させる）。
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH="/usr/local/share/npm-global/bin:/home/ubuntu/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
+# シェルの設定の読み込み先。base の ENV と同じ値にする (ENV は COPY --from で運べない)。
+# docker exec の非対話の処理 (Claude Code の Bash など) が置き場所を見つけるのに使う
+ENV DEVBASE_SHELLRC_DIR=/home/ubuntu/.shellrc.d
 
 # 確認
 RUN gh --version && node --version && npm --version && aws --version && gcloud --version
@@ -117,7 +125,22 @@ RUN set -eux; \
     usermod -aG users,docker,npm $USERNAME; \
     echo '%users ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/users; \
     echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USERNAME; \
-    chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME
+    chmod 0440 /etc/sudoers.d/users /etc/sudoers.d/$USERNAME; \
+    # 下の settings.json の取り込みより先に ubuntu の持ち物で作る。COPY --from は
+    # 足りない親を root:root で作り、entrypoint が ~/.claude をボリュームへのリンクに
+    # 差し替える rm -rf が Permission denied で止まるため
+    install -d -o "$USERNAME" -g "$USERNAME" /home/$USERNAME/.claude
+
+# base の設定の取り込み (#275)。base が正本で、lfm は中身を書かない。
+# - /etc/devbase はディレクトリごと取り込み、base がその下へ足した物は lfm を変えずに届く
+# - /etc をまるごとは取り込まない。CUDA のイメージの apt の設定や ld.so.conf.d が消える
+# - ~/.bashrc は下の rustup の追記より「前」に取り込む。後にすると lfm の追記が消える
+#   (起動定義の後に読み込み器を読む base の行の順序も、そのまま届く)
+COPY --from=devbase-base:latest /etc/devbase /etc/devbase
+COPY --from=devbase-base:latest /etc/tmux.conf /etc/tmux.conf
+COPY --from=devbase-base:latest /etc/fonts/local.conf /etc/fonts/local.conf
+COPY --from=devbase-base:latest --chown=ubuntu:ubuntu /home/ubuntu/.bashrc /home/ubuntu/.bashrc
+COPY --from=devbase-base:latest --chown=ubuntu:ubuntu /home/ubuntu/.claude/settings.json /home/ubuntu/.claude/settings.json
 
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}/work
@@ -130,22 +153,16 @@ ENV PATH="/home/ubuntu/.cargo/bin:${PATH}"
 # Playwright インストール（ブラウザはdevbase-baseからコピーされないため個別にインストール）
 RUN npx playwright install --with-deps chromium
 
-# AI CLI aliases (auto-approve/yolo mode)
-# - claude: --dangerously-skip-permissions
-# - claudb: Bedrock version with --dangerously-skip-permissions
-# - gemini: --yolo (auto-approve all actions)
-# - codex: --dangerously-bypass-approvals-and-sandbox
-# - kiro: --trust-all-tools (trust all tools without confirmation)
-RUN echo 'alias claude='\''claude --dangerously-skip-permissions'\''' >> ~/.bashrc && \
-    echo 'alias claudb='\''CLAUDE_CODE_USE_BEDROCK=1 AWS_REGION=us-west-2 ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0 ANTHROPIC_SMALL_FAST_MODEL=us.anthropic.claude-haiku-4-5-20251001-v1:0 claude --dangerously-skip-permissions'\''' >> ~/.bashrc && \
-    echo 'alias gemini='\''gemini --yolo'\''' >> ~/.bashrc && \
-    echo 'alias codex='\''codex --dangerously-bypass-approvals-and-sandbox'\''' >> ~/.bashrc && \
-    echo 'alias kiro='\''kiro-cli chat --trust-all-tools'\''' >> ~/.bashrc
+# フォントのキャッシュを作り直す。上の Playwright が --with-deps で fonts-wqy-zenhei などを
+# 入れた「後」でなければ、後から入った書体を知らないキャッシュが残る (base と同じ理由。#243)。
+# AI CLI の起動定義は ~/.bashrc の取り込みで /etc/devbase/ai-cli-aliases.sh から届くため、
+# lfm では書かない (#261)
+RUN sudo fc-cache -f
 
 # Git credential helper
 RUN git config --global credential.helper store
 
-# Copy entrypoint and dind from base (lfm doesn't inherit from devbase-base)
+# entrypoint と dind も base から取り込む (lfm は base を FROM で継がない)
 USER root
 COPY --from=devbase-base:latest /entrypoint.sh /entrypoint.sh
 COPY --from=devbase-base:latest /usr/local/bin/dind /usr/local/bin/dind
