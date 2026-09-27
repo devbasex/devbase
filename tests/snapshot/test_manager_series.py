@@ -485,6 +485,50 @@ def test_rotate_does_not_follow_symlink_inside(tmp_path, caplog):
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
 
 
+def test_cli_rotate_reports_removed_only_entries(tmp_path, caplog):
+    """#269: 一覧から外しただけのとき「ローテーション不要です」を出さず、外した数を伝える。"""
+    outside = _link_outside(tmp_path)
+    write_state(tmp_path, [("old", "nyle", 0), ("D1", "nyle", 0),
+                           ("D2", "nyle", 0), ("D3", "nyle", 0)])
+    ns = types.SimpleNamespace(subcommand="rotate", keep=3)
+
+    with caplog.at_level(logging.INFO, logger="devbase"):
+        assert cmd_snapshot(tmp_path, ns) == 0
+    assert (outside / "keep.txt").read_text() == "keep"
+    assert names(tmp_path) == ["D1", "D2", "D3"]
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("ローテーション不要です" in m for m in messages)
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("1 世代を一覧から外しました" in m and "削除した世代はありません" in m
+               for m in infos)
+
+
+def test_cli_rotate_reports_nothing_to_do(tmp_path, caplog):
+    """#269: 候補が無く一覧も変わらないときだけ「ローテーション不要です」を出す。"""
+    write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    ns = types.SimpleNamespace(subcommand="rotate", keep=3)
+
+    with caplog.at_level(logging.INFO, logger="devbase"):
+        assert cmd_snapshot(tmp_path, ns) == 0
+    assert names(tmp_path) == ["D1", "D2"]
+    assert sum("ローテーション不要です" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_cli_rotate_deleted_and_removed_prints_no_idle_message(tmp_path, caplog):
+    """#269: 消した世代と外しただけの世代が混じるとき「不要です」も「ありません」も出ない。"""
+    _link_outside(tmp_path)
+    write_state(tmp_path, [("old", "nyle", 0), ("D1", "nyle", 0),
+                           ("D2", "nyle", 0), ("D3", "nyle", 0)])
+    ns = types.SimpleNamespace(subcommand="rotate", keep=2)
+
+    with caplog.at_level(logging.INFO, logger="devbase"):
+        assert cmd_snapshot(tmp_path, ns) == 0
+    assert names(tmp_path) == ["D2", "D3"]
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("ローテーション不要です" in m for m in messages)
+    assert not any("削除した世代はありません" in m for m in messages)
+
+
 def test_safe_snap_dir_uses_path_components(tmp_path):
     """決定 7: 兄弟の backups-outside/ は文字列の前方一致でも通さない。"""
     _link_outside(tmp_path)
