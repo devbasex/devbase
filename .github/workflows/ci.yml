@@ -91,6 +91,23 @@ jobs:
         # CI に DEVBASE_ROOT は無い。テストは自前の tmp を DEVBASE_ROOT に向ける (PLAN60 前提 4)
         run: uv run --locked pytest tests/ -q
 
+  # pytest の matrix の全版を 1 つのチェックにまとめる (#277)。main の必須チェックはこの名前で照合する。
+  # matrix の版を変えても名前は変わらないため、保護設定を直さずに済む。
+  # always() で pytest の結論に関わらず走らせる。skipped は必須チェックで合格と扱われるため出さない。
+  pytest-all:
+    name: Pytest
+    needs: pytest
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check all pytest versions passed
+        env:
+          RESULT: ${{ needs.pytest.result }}
+        run: |
+          echo "pytest の matrix の結果: ${RESULT}"
+          test "${RESULT}" = success
+
   # CHANGELOG の検査 (#335)。main 宛ての Pull Request だけで走り、見張るパスを変えて CHANGELOG.md を
   # 変えていなければ未記入の警告を出す。警告ではジョブを失敗にしない。見張るパスは
   # .github/scripts/changelog_check.py の WATCHED_PATHS にだけ置く

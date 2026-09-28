@@ -272,6 +272,12 @@ tmux のサーバー・環境変数を共有しない前提で書く。
 `main` 宛ての Pull Request では、あわせて CHANGELOG の検査（`CHANGELOG check`）が走る
 （[CHANGELOG の更新](#changelog-の更新)）。
 
+pytest の全版の結果は、まとめたチェック `Pytest`（ジョブ `pytest-all`）に 1 つにまとまる。pytest が 1 版でも
+失敗・取り消し・時間切れなら `Pytest` は `failure` になる。`main` の保護の必須チェックは
+`Python syntax check (3.10)` / `(3.11)` / `(3.12)`・`Ruff lint`・`ShellCheck`・`Pytest` の 6 件で、pytest が
+落ちた Pull Request は `main` へマージできない。pytest の matrix の版を変えても保護設定は直さなくてよく、
+`tests/ci/test_ci_workflow.py` の期待値だけを直す。トリガーと検査ジョブの名前もこのテストが固定する。
+
 ShellCheck は基準の版（`devbase-base:latest` の shellcheck と同じ版、現在は 0.11.0）の公式の配布物を
 SHA-256 で照合して入れ、既定の水準（style まで）で走らせる。指摘が 1 件でもあればジョブが失敗する。
 抑えるしかない指摘は `# shellcheck disable=SCxxxx` と抑える理由を同じ行か直前の行に書く
