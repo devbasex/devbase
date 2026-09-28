@@ -1,6 +1,6 @@
 """`bin/devbase` を実プロセスで起動するハーネス (PLAN61 決定 11)。
 
-既存の `sed` ハーネス (`test_build_image_argument.py` など) は wrapper の本文を削って `eval`
+既存の `sed` ハーネス (`test_wrapper_dispatch.py` など) は wrapper の本文を削って `eval`
 する。その形では `DEVBASE_ROOT=` の行を削って環境変数の値を使わせるため、pytest が継承した
 実環境の `DEVBASE_ROOT` を渡し忘れると実環境の `projects/` を見る。また `run_python` と
 `cmd_build` を関数ごと置き換えるため、`=== Building devbase images ===` が出ないことを
