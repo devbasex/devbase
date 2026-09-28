@@ -558,6 +558,9 @@ def _import_policy_group(devbase_root: Path, target_group: Optional[str]) -> Opt
 #: 控えの更新で、AWS の取り込みの選択を今の控えの形のまま保つ印
 _KEEP_SELECTION = object()
 
+#: 控えの更新で、AWS の項目に触れない印 (sync が AWS の書き込みを見送ったとき)
+_SKIP_SELECTION = object()
+
 #: sync で参照にキーが無いときの案内 (#314 I5)
 _NO_KEY_HINT = ("参照にキーが無いため書きません。取り込むなら devbase env init --reset、"
                 "手で入れるなら devbase env set")
@@ -713,7 +716,10 @@ def _sync_credential_sources(sources, targets, store, counts) -> None:
     """AWS と Git の認証情報をソースから同期する (``counts`` に集計する)"""
     # AWS: 取り込みの選択の範囲だけで入れ直す (#314 I7)
     plan = _aws_sync_plan(sources, targets, store)
-    if plan is not None:
+    if plan is None:
+        # 書き込みを見送ったら控えの登録も見送る (丸ごとで登録すると次の変更で選択外まで送るため)
+        counts.aws_selection = _SKIP_SELECTION
+    else:
         encode_aws, counts.aws_selection = plan
         _sync_source(sources, targets, 'aws', 'AWS認証', encode_aws,
                      env_key=keys.AWS_CONFIG_BASE64, store=store, counts=counts,
@@ -841,8 +847,10 @@ def _aws_sync_plan(sources, targets, store):
                     label, store.display_label(holder.ref))
         return None
     config_text, credentials_text = aws_profiles.read_home()
-    current = aws_profiles.candidate_names(config_text, credentials_text)
-    if set(current) <= set(in_value):
+    # 丸ごとの判定は credentials にだけあるプロファイルも含める (値の側の名前と同じ数え方)
+    current = (set(aws_profiles.profile_names(config_text))
+               | set(aws_profiles.credential_names(credentials_text)))
+    if current <= set(in_value):
         return _encode_aws_config_files, ALL
     payload = aws_profiles.build(config_text, credentials_text, in_value)
     if payload.unknown:
@@ -1574,7 +1582,8 @@ def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFil
 
     ``aws_selection`` は AWS の取り込みの選択 (#314 決定 6)。プロファイルの名前の並びなら
     ``aws_profiles`` の項目、``host_import.ALL`` なら丸ごと (``tar_base64``) で書く。
-    渡さなければ今の控えの項目の形を保つ (項目が無ければ丸ごと)。
+    渡さなければ今の控えの項目の形を保つ (項目が無ければ丸ごと)。``_SKIP_SELECTION`` なら
+    AWS の項目に触れない。
     """
     files = [env_file, *more]
     group = getattr(getattr(env_file, 'ref', None), 'group', None)
@@ -1589,8 +1598,8 @@ def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFil
                 return value
         return default
 
-    # AWS
-    if _get(keys.AWS_CONFIG_BASE64):
+    # AWS (``_SKIP_SELECTION`` なら書き込みを見送ったので控えにも触れない)
+    if aws_selection is not _SKIP_SELECTION and _get(keys.AWS_CONFIG_BASE64):
         from devbase.env import aws_profiles
 
         selection = aws_selection
