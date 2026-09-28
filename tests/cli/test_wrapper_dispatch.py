@@ -5,17 +5,17 @@
 含まれており、`devbase project ...` が Python 実装へルーティングされることを
 検証する (含まれていないと `*)` 節で `unknown command` で終了してしまう)。
 
-実際の `uv run` を起動すると環境依存になるため、`bin/devbase` の複製を偽の `uv` と
-一緒に起動する exec_wrapper (tests/cli/conftest.py) で、`devbase.cli` へ渡る引数を確かめる。
+実際の `uv run` を起動すると環境依存になるため、run_python / ensure_uv を
+差し替えた薄いハーネス経由で wrapper の dispatch ロジックだけを実行する。
 """
 
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-from tests.cli.conftest import stdout_field
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = REPO_ROOT / "bin" / "devbase"
@@ -36,12 +36,32 @@ def _parse_wrapper_top_prefix_preferences() -> dict[str, str]:
     return prefs
 
 
-def _cli_args(result) -> str | None:
-    """偽の uv が受けた呼び出しのうち、`devbase.cli` へ渡った引数を返す。届いていなければ None。"""
-    uv = stdout_field(result, "UV:")
-    if uv is None or " -m devbase.cli" not in uv:
-        return None
-    return uv.split(" -m devbase.cli", 1)[1].strip()
+def _run_wrapper(*args):
+    """run_python を no-op に差し替えて wrapper の dispatch だけを実行する。
+
+    wrapper を関数定義のみ読み込む形にできないため、`run_python` /
+    `ensure_uv` を export -f で先に定義し、wrapper 末尾の dispatch を
+    別プロセスで評価する。wrapper は自身の run_python を再定義するので、
+    `sed` で wrapper の run_python / ensure_uv 定義を取り除いてから評価する。
+    """
+    harness = (
+        'run_python() { echo "PYTHON:$*"; exit 0; }\n'
+        'ensure_uv() { :; }\n'
+        # wrapper から関数再定義を除いた本体を読み込む
+        'eval "$(sed -e \'/^run_python()/,/^}/d\' '
+        '-e \'/^ensure_uv()/,/^}/d\' "$WRAPPER_PATH")"\n'
+    )
+    env = {
+        **os.environ,
+        "DEVBASE_ROOT": str(REPO_ROOT),
+        "WRAPPER_PATH": str(WRAPPER),
+    }
+    return subprocess.run(
+        ["bash", "-c", harness, "devbase", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
 
 
 class TestWrapperStaticContent:
@@ -81,57 +101,57 @@ class TestWrapperStaticContent:
 
 
 class TestWrapperDispatch:
-    def test_project_reaches_python(self, exec_wrapper):
-        result = exec_wrapper.run(["project", "--help"])
+    def test_project_reaches_python(self):
+        result = _run_wrapper("project", "--help")
         assert "unknown command" not in result.stderr.lower(), result.stderr
-        assert _cli_args(result) == "project --help", result.stdout
+        assert "PYTHON:project --help" in result.stdout, result.stdout
 
-    def test_project_subcommand_reaches_python(self, exec_wrapper):
-        result = exec_wrapper.run(["project", "up"])
+    def test_project_subcommand_reaches_python(self):
+        result = _run_wrapper("project", "up")
         assert "unknown command" not in result.stderr.lower(), result.stderr
-        assert _cli_args(result) == "project up", result.stdout
+        assert "PYTHON:project up" in result.stdout, result.stdout
 
-    def test_project_prefix_resolves_to_project(self, exec_wrapper):
+    def test_project_prefix_resolves_to_project(self):
         # `proj` は project に一意に解決される。
-        result = exec_wrapper.run(["proj", "up"])
+        result = _run_wrapper("proj", "up")
         assert "unknown command" not in result.stderr.lower(), result.stderr
-        assert _cli_args(result) == "project up", result.stdout
+        assert "PYTHON:project up" in result.stdout, result.stdout
 
-    def test_unknown_command_still_errors(self, exec_wrapper):
-        result = exec_wrapper.run(["bogus"])
+    def test_unknown_command_still_errors(self):
+        result = _run_wrapper("bogus")
         assert "unknown command" in result.stderr.lower()
         assert result.returncode != 0
 
-    def test_top_level_list_reaches_python(self, exec_wrapper):
+    def test_top_level_list_reaches_python(self):
         """PLAN06 Task 3: `devbase list` シノニムが Python へルーティングされる。"""
-        result = exec_wrapper.run(["list"])
+        result = _run_wrapper("list")
         assert "unknown command" not in result.stderr.lower(), result.stderr
-        assert _cli_args(result) == "list", result.stdout
+        assert "PYTHON:list" in result.stdout, result.stdout
 
-    def test_top_level_list_interactive_flag_passthrough(self, exec_wrapper):
-        result = exec_wrapper.run(["list", "--interactive"])
-        assert _cli_args(result) == "list --interactive", result.stdout
+    def test_top_level_list_interactive_flag_passthrough(self):
+        result = _run_wrapper("list", "--interactive")
+        assert "PYTHON:list --interactive" in result.stdout, result.stdout
 
-    def test_project_list_reaches_python(self, exec_wrapper):
-        result = exec_wrapper.run(["project", "list"])
+    def test_project_list_reaches_python(self):
+        result = _run_wrapper("project", "list")
         assert "unknown command" not in result.stderr.lower(), result.stderr
-        assert _cli_args(result) == "project list", result.stdout
+        assert "PYTHON:project list" in result.stdout, result.stdout
 
-    def test_list_prefix_resolves(self, exec_wrapper):
+    def test_list_prefix_resolves(self):
         # `li` は list に一意解決される (login は lo)。
-        result = exec_wrapper.run(["li"])
-        assert _cli_args(result) == "list", result.stdout
+        result = _run_wrapper("li")
+        assert "PYTHON:list" in result.stdout, result.stdout
 
-    def test_l_prefix_resolves_to_login(self, exec_wrapper):
+    def test_l_prefix_resolves_to_login(self):
         # 後方互換: `list` 追加で ambiguous になった `devbase l` を login に維持する
         # (互換性指摘 #36)。preference 無しだと unknown command 'l' になる。
-        result = exec_wrapper.run(["l"])
+        result = _run_wrapper("l")
         assert "unknown command" not in result.stderr.lower(), result.stderr
-        assert _cli_args(result) == "login", result.stdout
+        assert "PYTHON:login" in result.stdout, result.stdout
 
-    def test_lo_prefix_resolves_to_login(self, exec_wrapper):
-        result = exec_wrapper.run(["lo"])
-        assert _cli_args(result) == "login", result.stdout
+    def test_lo_prefix_resolves_to_login(self):
+        result = _run_wrapper("lo")
+        assert "PYTHON:login" in result.stdout, result.stdout
 
 
 if __name__ == "__main__":
