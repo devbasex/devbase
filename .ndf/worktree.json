@@ -1,4 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/devbasex/ai-plugins/main/plugins/ndf/skills/worktree/schemas/worktree.schema.json",
-  "version": 1
+  "version": 1,
+  "base_branch": "main",
+  "production_branch": "main"
 }
