@@ -38,22 +38,22 @@ def warning_message(files: list[str]) -> str:
     )
 
 
+def _git(args: list[str], failure: str) -> str:
+    """git を実行して標準出力を返す。失敗したら failure と stderr を添えて RuntimeError。"""
+    proc = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"{failure}: {proc.stderr.strip()}")
+    return proc.stdout
+
+
 def changed_paths(base_ref: str, head_sha: str) -> list[str]:
     """宛先ブランチとの merge base から head までに変えたパス。得られなければ RuntimeError。"""
-    fetch = subprocess.run(
-        ["git", "fetch", "--no-tags", "origin", f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}"],
-        capture_output=True,
-        text=True,
-        check=False,
+    _git(
+        ["fetch", "--no-tags", "origin", f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}"],
+        f"宛先ブランチ {base_ref} を取れない",
     )
-    if fetch.returncode != 0:
-        raise RuntimeError(f"宛先ブランチ {base_ref} を取れない: {fetch.stderr.strip()}")
-    diff = subprocess.run(
-        ["git", "diff", "--name-only", f"origin/{base_ref}...{head_sha}"], capture_output=True, text=True, check=False
-    )
-    if diff.returncode != 0:
-        raise RuntimeError(f"origin/{base_ref}...{head_sha} の差分を取れない: {diff.stderr.strip()}")
-    return [line for line in diff.stdout.splitlines() if line]
+    diff = _git(["diff", "--name-only", f"origin/{base_ref}...{head_sha}"], f"origin/{base_ref}...{head_sha} の差分を取れない")
+    return [line for line in diff.splitlines() if line]
 
 
 def _summary(text: str) -> None:
