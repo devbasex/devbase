@@ -365,6 +365,12 @@
       "pending_source": "issues/issue-277-requirements.md"
     },
     {
+      "term": "まとめたチェック",
+      "context": "ci",
+      "meaning": "pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する",
+      "pending_source": "issues/issue-277-design.md"
+    },
+    {
       "term": "トリガー",
       "context": "ci",
       "meaning": "ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches）",
