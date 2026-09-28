@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### Changed
+- **`devbase env init` / `sync` が、ホストの資格情報（`~/gcp-credentials/` の鍵・`~/.aws`・Git の設定）を
+  確認なしにグループへ取り込まないようにしました（#314）。** 既定では候補の一覧を示して尋ね、何も選ばなければ
+  取り込みません。端末でない実行（`devbase up` の子プロセスなど）では取り込みません。尋ねずに取り込む・取り込まない
+  グループは `$DEVBASE_ROOT/secrets/host-import.yml` の `groups` で名指しします（`import` / `skip` / `ask`）。
+  AWS はプロファイル単位で選べ、選んだプロファイルとその連なり（`sso_session`・`source_profile`）だけを入れます。
+  GCP のアクティブプロファイルでは `none`（設定しない）を選べます。`env sync` は参照に無いキーを後から足しません。
+  **これまでどおり尋ねずに取り込みたいグループは、`host-import.yml` に `import` と書いてください。**
+- **`containers/lfm` が base の `/etc` 配下の設定・`ENV`・`~/.bashrc`・`~/.claude/settings.json` を取り込むように
+  しました（#275 / #243）。** `tmux` を入れ、フォントの優先順位（`/etc/fonts/local.conf`）も base と同じになります。
+
+### Fixed
+- **`devbase snapshot restore` の復元前の自動バックアップが、復元する世代のボリュームを控えていなかったのを直しました（#255）。**
+  `pre-restore-<時刻>` は、実行時のアカウントグループではなく、復元する世代の対象ボリュームを控えます。
+  CLI・TUI からの復元で控えが作られず警告だけが出ていたのと、別のグループの世代を復元するときに別の
+  ボリュームを控えていたのが直ります。控えに失敗したときは、中身の無い `pre-restore-*` のディレクトリを
+  残しません。
+- **`devbase snapshot list` が、`snapshot.yml` の `created_at` が引用符なしの日時だと止まっていたのを直しました（#267）。**
+- **`devbase snapshot rotate` が、場所が不正な世代を一覧から外しただけのときに「ローテーション不要です」と
+  出していたのを直しました（#269）。** 外した数を伝えます。
+
 ## [3.10.0] - 2026-09-27
 
 ### Added

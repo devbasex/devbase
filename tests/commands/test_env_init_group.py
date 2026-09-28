@@ -20,7 +20,7 @@ def collect(monkeypatch):
             pass
 
     monkeypatch.setattr(env_cmd, 'CollectorRegistry', _Registry)
-    monkeypatch.setattr(env_cmd, '_update_source_metadata', lambda root, env_file: None)
+    monkeypatch.setattr(env_cmd, '_update_source_metadata', lambda root, env_file, **kw: None)
 
 
 @pytest.fixture

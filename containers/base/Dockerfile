@@ -79,7 +79,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # 丸ごと複製されるのを避けられる。
 ARG USERNAME="ubuntu"
 # npm グループの GID は派生イメージ (containers/lfm) と揃える必要があるため固定する。
-# lfm は base から /usr/local を COPY するだけで base のグループ定義を引き継がないため、
+# lfm は base を FROM で継がず COPY --from で取り込むだけで、base のグループ定義を引き継がないため、
 # GID が動的だと COPY されたファイルの GID が派生側で未定義になる。
 # 2000 は Ubuntu の system group (<1000) とも既定ユーザー ubuntu (1000) とも衝突しない。
 ARG NPM_GID="2000"
@@ -233,6 +233,9 @@ RUN set -eux; \
 
 # AI CLI の起動定義。~/.bashrc へ直接書かずファイルにしているのは、Docker を
 # 起動せずに tests/containers/test_ai_cli_aliases.py で振る舞いを固定するため。
+# /etc/devbase は lfm がディレクトリごと取り込むため、この下へ足した設定は lfm へも届く。
+# ここより外 (/etc の別の場所・~ の別のファイル) へ置く設定と ENV は、lfm の Dockerfile に
+# 取り込みか同じ値の宣言を足すまで tests/containers/test_lfm_base_settings.py が落ちる (#275)。
 RUN sudo install -d -m 0755 /etc/devbase
 COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh
 
@@ -240,6 +243,7 @@ COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh
 # グループのボリュームにあり、entrypoint.sh が ~/.shellrc.d を張る。パスを ENV で
 # 示すのは、docker exec の非対話の処理 (Claude Code の Bash など) からも置き場所を
 # 見つけられるようにするため。~/.bashrc の export では非対話の処理に届かない。
+# ENV は COPY --from で運べないため、lfm も同じ値で宣言している。
 ENV DEVBASE_SHELLRC_DIR=/home/${USERNAME}/.shellrc.d
 COPY --chmod=0644 shellrc-dir.sh /etc/devbase/shellrc-dir.sh
 

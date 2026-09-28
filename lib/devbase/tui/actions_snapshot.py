@@ -85,7 +85,7 @@ def _select_snapshot_name(devbase_root: Path, message: str):
     # 文字入力での絞り込み (search=True) を有効化。search 有効時の戻る操作は
     # Esc のみ (menu.select が ← バインドを外す)。
     choices = [
-        (f"{s.get('name', '?')}  ({str(s.get('created_at') or 'N/A')[:19]})",
+        (f"{s.get('name', '?')}  ({(s.get('created_at') or 'N/A')[:19]})",
          s.get("name"))
         for s in snapshots
     ]

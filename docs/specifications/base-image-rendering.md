@@ -24,7 +24,8 @@ fontconfig は Chromium / Playwright のスクリーンショット、PDF の生
 - base イメージに同梱する、文書を扱う道具のパッケージ
 - base から派生するイメージ（`general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
   `trygroup`）への伝播の規則
-- `containers/lfm` は base 由来ではないため対象に含まない
+- `containers/lfm` は base を `FROM` で継がないが、`/etc/fonts/local.conf` を base から取り込むため
+  対象に含む（「運用」）
 - `ENV LANG` は設定しない。LibreOffice と `pip` は同梱しない
 
 ## 用語
@@ -247,8 +248,11 @@ metric 互換の 2 つは、`30-metric-aliases.conf` が既に持っている対
   コンテナを作り直さないうえ、期限内ならビルドそのものを飛ばす
 - 既定を戻したい利用者は、コンテナの中の `~/.config/fontconfig/fonts.conf`（スロット 50）で
   上書きできる。イメージを触る必要は無い
-- `containers/lfm` はこの仕様の対象外である。`FROM nvidia/cuda:...` で base 由来ではなく、
-  `fonts-noto-cjk` を自前で入れている（`containers/lfm/Dockerfile`）
+- `containers/lfm` は `FROM nvidia/cuda:...` で base を継がず、`/etc/fonts/local.conf` を
+  `COPY --from=devbase-base:latest` で取り込む。書体（`fonts-noto-cjk`）は lfm が自前で入れ、
+  Playwright の `--with-deps` の後に `fc-cache -f` を 1 度走らせる（`containers/lfm/Dockerfile`）。
+  base の設定を変えたときは base を建て直した後に lfm も建て直す。取り込みが保たれていることは
+  `tests/containers/test_lfm_base_settings.py` が固定する
 - 確かめてあるのは `fc-match` の水準までで、LibreOffice と Chromium での実際の描画は未検証
   である。どちらも base に無く、LibreOffice は fontconfig とは別の照合も持つ
 - 解決先の表は arm64 で採ったものである。amd64 では `google-chrome-stable` が追加で入るため

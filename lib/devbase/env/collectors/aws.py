@@ -11,8 +11,12 @@ from devbase.log import get_logger
 from devbase.env import keys
 from devbase.env.store import EnvFile, safe_input
 from devbase.env.collector import Collector
+from devbase.env import aws_profiles
+from devbase.env.host_import import ALL, HostImport
 
 logger = get_logger(__name__)
+
+STEP = "AWS認証"
 
 
 class AWSConfigParser:
@@ -96,8 +100,12 @@ def _get_aws_config_info() -> List[str]:
             if (aws_dir / name).exists()]
 
 
-def collect_aws_credentials(env_file: EnvFile) -> None:
-    """AWS認証情報を対話的に収集する"""
+def collect_aws_credentials(env_file: EnvFile, *, host: HostImport) -> None:
+    """AWS認証情報を対話的に収集する
+
+    ``host`` は取り込みの方針 (#314)。「取り込む」なら今までどおり (既定は Config Files で
+    ``~/.aws`` を丸ごと)、それ以外は既定がスキップで、Config Files はプロファイルを選んで取り込む。
+    """
     print("\n=== AWS認証情報 ===")
 
     existing_config_base64 = env_file.get(keys.AWS_CONFIG_BASE64)
@@ -129,32 +137,97 @@ def collect_aws_credentials(env_file: EnvFile) -> None:
             env_file.delete(key)
         logger.info("既存のAWS認証情報をクリアしました")
 
+    default_method = "1" if host.importing else "4"
     print("\nAWS認証方法を選択してください:")
-    print("  1) AWS Config Files (~/.aws全体をbase64化、全profile対応、推奨)")
+    if host.importing:
+        print("  1) AWS Config Files (~/.aws全体をbase64化、全profile対応、推奨)")
+    else:
+        print("  1) AWS Config Files (~/.aws/config のプロファイルを選んで取り込む)")
     print("  2) AWS SSO Profile (AWS_PROFILE + オプションでAWS_SSO_URL)")
     print("  3) Access Key (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)")
     print("  4) スキップ")
 
-    auth_method = safe_input("選択 [1/2/3/4] (デフォルト: 1): ", "1")
+    auth_method = safe_input(f"選択 [1/2/3/4] (デフォルト: {default_method}): ", default_method)
 
     auth_handlers = {
-        "1": lambda: _collect_config_base64(env_file),
+        "1": lambda: _collect_config_base64(env_file, host),
         "2": lambda: _collect_sso_profile(env_file),
-        "3": lambda: _collect_access_keys(env_file),
+        "3": lambda: _collect_access_keys(env_file, host),
         "4": lambda: logger.info("AWS認証設定をスキップしました"),
     }
 
-    handler = auth_handlers.get(auth_method, auth_handlers["1"])
+    handler = auth_handlers.get(auth_method, auth_handlers[default_method])
     handler()
 
 
-def _collect_config_base64(env_file: EnvFile) -> None:
+def _collect_config_base64(env_file: EnvFile, host: HostImport) -> None:
     aws_dir = Path.home() / '.aws'
     if not (aws_dir / 'config').exists() and not (aws_dir / 'credentials').exists():
         print("\nエラー: ~/.aws/config または ~/.aws/credentials が存在しません")
         print("AWS CLIで `aws configure` または `aws configure sso` を実行してください")
         return
+    if host.importing:
+        _collect_whole_config(env_file)
+        host.record('aws', ALL)
+        return
+    _collect_selected_profiles(env_file, host)
 
+
+def _collect_selected_profiles(env_file: EnvFile, host: HostImport) -> None:
+    """``~/.aws/config`` のプロファイルを選んで、その節だけを取り込む (#314 前提 8)"""
+    config_text, credentials_text = aws_profiles.read_home()
+    names = aws_profiles.candidate_names(config_text, credentials_text)
+    if not names:
+        logger.info("%s: ~/.aws にプロファイルがありません", STEP)
+        return
+    source = "~/.aws/config" if config_text is not None else "~/.aws/credentials"
+    selection = host.choose(STEP, f"{source} のプロファイル ({len(names)}件):", names,
+                            "例: 3 / all で ~/.aws を丸ごと / 空で取り込まない")
+    if not selection:
+        host.declined(STEP)
+        return
+    if selection.all:
+        _collect_whole_config(env_file)
+        host.record('aws', ALL)
+        return
+
+    chosen = [names[i] for i in selection.indexes]
+    payload = aws_profiles.build(config_text, credentials_text, chosen)
+    for inclusion in payload.included:
+        print(f"含めます: [{inclusion.section}] ({inclusion.reason})")
+    for name in payload.missing:
+        print(f"含めません: [{name}] が ~/.aws にありません")
+    if payload.conflicts:
+        for name in payload.conflicts:
+            logger.error("[%s] と空白だけが違う見出しの節が ~/.aws にあるため、取り込みを中止します", name)
+        return
+    encoded = payload.encode()
+    if not encoded:
+        logger.error("AWS設定ファイルのエンコードに失敗しました")
+        return
+    env_file.set(keys.AWS_CONFIG_BASE64, encoded)
+    logger.info("%s: エンコード完了 (%d 文字)", keys.AWS_CONFIG_BASE64, len(encoded))
+    host.record('aws', chosen)
+    _collect_profile_and_region(env_file, AWSConfigParser(), chosen[0])
+
+
+def _collect_profile_and_region(env_file: EnvFile, parser: "AWSConfigParser",
+                                default_profile: str) -> None:
+    profile_name = safe_input(f"\n使用するAWS_PROFILE (デフォルト: {default_profile}): ", default_profile)
+    env_file.set(keys.AWS_PROFILE, profile_name)
+    logger.info("%s: %s に設定", keys.AWS_PROFILE, profile_name)
+
+    region = parser.get_profile_region(profile_name)
+    if region:
+        env_file.set(keys.AWS_DEFAULT_REGION, region)
+        logger.info("%s: 自動取得完了 (%s)", keys.AWS_DEFAULT_REGION, region)
+    else:
+        region = safe_input(f"{keys.AWS_DEFAULT_REGION} (デフォルト: ap-northeast-1): ", "ap-northeast-1")
+        env_file.set(keys.AWS_DEFAULT_REGION, region)
+
+
+def _collect_whole_config(env_file: EnvFile) -> None:
+    """``~/.aws`` を丸ごと取り込む (この変更の前の Config Files と同じ)"""
     info = _get_aws_config_info()
     if info:
         print("\n検出されたファイル:")
@@ -173,17 +246,7 @@ def _collect_config_base64(env_file: EnvFile) -> None:
 
         if profiles:
             default_profile = "default" if "default" in profiles else profiles[0]
-            profile_name = safe_input(f"\n使用するAWS_PROFILE (デフォルト: {default_profile}): ", default_profile)
-            env_file.set(keys.AWS_PROFILE, profile_name)
-            logger.info("%s: %s に設定", keys.AWS_PROFILE, profile_name)
-
-            region = parser.get_profile_region(profile_name)
-            if region:
-                env_file.set(keys.AWS_DEFAULT_REGION, region)
-                logger.info("%s: 自動取得完了 (%s)", keys.AWS_DEFAULT_REGION, region)
-            else:
-                region = safe_input(f"{keys.AWS_DEFAULT_REGION} (デフォルト: ap-northeast-1): ", "ap-northeast-1")
-                env_file.set(keys.AWS_DEFAULT_REGION, region)
+            _collect_profile_and_region(env_file, parser, default_profile)
     else:
         logger.error("AWS設定ファイルのエンコードに失敗しました")
 
@@ -214,9 +277,16 @@ def _collect_sso_profile(env_file: EnvFile) -> None:
         env_file.set(keys.AWS_SSO_URL, sso_url)
 
 
-def _collect_access_keys(env_file: EnvFile) -> None:
+def _collect_access_keys(env_file: EnvFile, host: HostImport) -> None:
     parser = AWSConfigParser()
     access_key, secret_key = parser.get_default_credentials()
+    if (access_key or secret_key) and not host.importing:
+        if host.asking:
+            print(f"~/.aws/credentials の [default] に {keys.AWS_ACCESS_KEY_ID} / "
+                  f"{keys.AWS_SECRET_ACCESS_KEY} があります")
+        if not host.confirm(STEP, "取り込みますか?"):
+            host.declined(STEP)
+            access_key = secret_key = None
 
     for key_name, auto_value in {keys.AWS_ACCESS_KEY_ID: access_key,
                                   keys.AWS_SECRET_ACCESS_KEY: secret_key}.items():
@@ -247,4 +317,5 @@ COLLECTOR = Collector(
     collect_fn=collect_aws_credentials,
     source_files=["~/.aws/config", "~/.aws/credentials"],
     source_type="tar_base64",
+    host_import=True,
 )

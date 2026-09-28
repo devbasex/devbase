@@ -476,12 +476,20 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
     ``group`` を渡すと、そのグループのチーム共通の参照へ書く (PLAN56)。``up`` の子プロセスは
     ``cwd=$DEVBASE_ROOT`` で起動するため、プロジェクトのグループを明示して受け取る (決定 10)。
     """
+    from devbase.env import host_import
+
     store = _secret_store(devbase_root)
     try:
         target_group = _target_group(devbase_root, store, group)
     except GroupOptionError as e:
         logger.error("%s", e)
         return e.exit_code
+    try:
+        # I4: 取り込みを許すグループの設定の誤りは、参照を開く前に止める (#314)
+        policies = host_import.load(devbase_root)
+    except host_import.HostImportConfigError as e:
+        logger.error("%s", e)
+        return 1
     env_file = _global_env(devbase_root, store=store, group=target_group)
     env_file.load()
 
@@ -507,19 +515,55 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
     print("devbase 環境セットアップ")
     print("=" * 42)
 
+    host = host_import.resolve(policies, _import_policy_group(devbase_root, target_group))
+
     registry = CollectorRegistry()
     registry.discover()
 
     for i, collector in enumerate(registry.collectors, 1):
         print(f"\n[{i}/{len(registry.collectors)}] {collector.display_name}")
-        collector.collect_fn(env_file)
+        if getattr(collector, 'host_import', False):
+            collector.collect_fn(env_file, host=host)
+        else:
+            collector.collect_fn(env_file)
 
     env_file.save()
 
-    _update_source_metadata(devbase_root, env_file)
+    _update_source_metadata(devbase_root, env_file,
+                            aws_selection=host.selections.get('aws', _KEEP_SELECTION))
 
     logger.info("セットアップ完了: %s (%d変数)", env_file.path, env_file.count())
     return 0
+
+
+def _import_policy_group(devbase_root: Path, target_group: Optional[str]) -> Optional[str]:
+    """取り込みの方針を引くグループ (#314 前提 4)。
+
+    対象のグループがあればそれ。``layout: flat`` などで対象のグループが無くても、プロジェクトの
+    中なら宣言のグループ、外なら ``None`` (方針は「尋ねる」)。読み替える前の名前で引く (決定 11)。
+    """
+    if target_group is not None:
+        return target_group
+    project = _current_project_name(devbase_root)
+    if project is None:
+        return None
+    from devbase.env import groups as _groups
+
+    try:
+        return _groups.declare(devbase_root, project).name
+    except _groups.GroupDeclarationError:
+        return None
+
+
+#: 控えの更新で、AWS の取り込みの選択を今の控えの形のまま保つ印
+_KEEP_SELECTION = object()
+
+#: 控えの更新で、AWS の項目に触れない印 (sync が AWS の書き込みを見送ったとき)
+_SKIP_SELECTION = object()
+
+#: sync で参照にキーが無いときの案内 (#314 I5)
+_NO_KEY_HINT = ("参照にキーが無いため書きません。取り込むなら devbase env init --reset、"
+                "手で入れるなら devbase env set")
 
 
 #: 個人共通へ書いた sync の行に付ける接尾辞 (#273)
@@ -597,9 +641,13 @@ def _open_sync_targets(devbase_root: Path, user: bool, group: Optional[str]):
 
     2 つの参照は ``fresh`` で読み、控えへ落ちない (書き込みを伴うため)。
     """
+    from devbase.env import host_import
+
     store = _secret_store(devbase_root)
     try:
         target_group = _target_group(devbase_root, store, group)
+        # I4: sync は方針で分岐しないが、設定の誤りは参照を開く前に止める (#314 決定 9)
+        host_import.load(devbase_root)
         team = _global_env(devbase_root, store=store, fresh=True, group=target_group)
         has_user = team.has_user_refs()
     except GroupOptionError as e:
@@ -657,7 +705,8 @@ def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = 
         except DevbaseError as e:
             logger.error("同期した値を保存できませんでした: %s", e)
             return 1
-        _update_source_metadata(devbase_root, *targets.files)
+        _update_source_metadata(devbase_root, *targets.files,
+                                aws_selection=counts.aws_selection)
     _report_sync_result(counts, sources)
 
     return 0
@@ -665,14 +714,16 @@ def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = 
 
 def _sync_credential_sources(sources, targets, store, counts) -> None:
     """AWS と Git の認証情報をソースから同期する (``counts`` に集計する)"""
-    # AWS
-    def _encode_aws():
-        from devbase.env.collectors.aws import _encode_aws_config_files
-        return _encode_aws_config_files()
-
-    _sync_source(sources, targets, 'aws', 'AWS認証', _encode_aws,
-                 env_key=keys.AWS_CONFIG_BASE64, store=store, counts=counts,
-                 same=_same_aws_payload)
+    # AWS: 取り込みの選択の範囲だけで入れ直す (#314 I7)
+    plan = _aws_sync_plan(sources, targets, store)
+    if plan is None:
+        # 書き込みを見送ったら控えの登録も見送る (丸ごとで登録すると次の変更で選択外まで送るため)
+        counts.aws_selection = _SKIP_SELECTION
+    else:
+        encode_aws, counts.aws_selection = plan
+        _sync_source(sources, targets, 'aws', 'AWS認証', encode_aws,
+                     env_key=keys.AWS_CONFIG_BASE64, store=store, counts=counts,
+                     same=_same_aws_payload)
 
     # Git
     def _encode_git():
@@ -704,6 +755,8 @@ class _SyncCounts:
     def __init__(self):
         self.updated = 0
         self.registered = False
+        #: AWS の取り込みの選択 (控えの更新へ渡す。#314)
+        self.aws_selection = _KEEP_SELECTION
 
 
 def _sync_host(target):
@@ -758,6 +811,94 @@ def _same_aws_payload(stored: Optional[str], encoded: str) -> bool:
     return current is not None and current == _aws_payload(stored)
 
 
+def _aws_sync_plan(sources, targets, store):
+    """AWS の入れ直しの作り方と取り込みの選択 ``(encode_fn, selection)``。書かないなら ``None``。
+
+    - 控えの項目が ``aws_profiles`` なら、控えの ``profiles`` とその連なりだけを切り出す (I7)
+    - 控えの項目が ``tar_base64`` (選択を持たない既存の項目を含む) なら丸ごと (I8)
+    - 控えに項目が無く参照にキーがあれば、値に入っているプロファイルを選択とみなす。今のファイルの
+      プロファイルの集合が値のプロファイルの集合と一致すれば丸ごと。値が読めない、または値にあって
+      今のファイルに無いプロファイルがあれば書かない (決定 10)
+    """
+    from devbase.env import aws_profiles
+    from devbase.env.collectors.aws import _encode_aws_config_files
+    from devbase.env.host_import import ALL
+
+    key = keys.AWS_CONFIG_BASE64
+    label = 'AWS認証'
+
+    def report_unknown(payload) -> None:
+        for name in payload.unknown:
+            logger.info("%s: 選んだプロファイル %s が ~/.aws/config にありません", label, name)
+
+    def report_conflicts(payload) -> bool:
+        for name in payload.conflicts:
+            logger.warning("%s: [%s] と空白だけが違う見出しの節が ~/.aws にあるため書きません",
+                           label, name)
+        return bool(payload.conflicts)
+
+    source = sources.get_source('aws')
+    if source and source.get('type') == 'aws_profiles':
+        profiles = list(source.get('profiles') or [])
+        if targets.holder(key) is None:
+            return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+        payload = aws_profiles.build_from_home(profiles)
+        report_unknown(payload)
+        if report_conflicts(payload):
+            return None
+        # 選んだプロファイルが消えていれば控えと比べられず書かない (_sync_source が知らせる)
+        if not payload.unknown and not _aws_selection_covers(targets, key, payload):
+            dest = targets.target_for(key)
+            logger.info("%s: %sの値に選択外のプロファイルがあるため書きません"
+                        "（選択はグループの控えのもの。入れ直すなら devbase env init --reset）",
+                        label, store.display_label(dest.ref))
+            return None
+        return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+    if source:
+        return _encode_aws_config_files, ALL
+    holder = targets.holder(key)
+    if holder is None:
+        return _encode_aws_config_files, _KEEP_SELECTION
+    in_value = aws_profiles.profiles_in_value(targets.get(key))
+    if in_value is None:
+        logger.info("%s: ソース未登録（%sにキーがあります）。値を読めないため書きません",
+                    label, store.display_label(holder.ref))
+        return None
+    config_text, credentials_text = aws_profiles.read_home()
+    # 丸ごとの判定は credentials にだけあるプロファイルも含める (値の側の名前と同じ数え方)。
+    # 値にあって今のファイルに無いプロファイルがあるときに丸ごとにすると、共通の値から消えるため
+    # 集合が一致するときだけ丸ごとにする (それ以外は build の unknown で書かずに止まる)
+    current = (set(aws_profiles.profile_names(config_text))
+               | set(aws_profiles.credential_names(credentials_text)))
+    if current == set(in_value):
+        return _encode_aws_config_files, ALL
+    payload = aws_profiles.build(config_text, credentials_text, in_value)
+    if payload.unknown:
+        report_unknown(payload)
+        return None
+    if report_conflicts(payload):
+        return None
+    # 控えに残すのは選んだプロファイルだけで、連なりで入った節は含めない (sync の時点で求め直す)
+    return payload.encode, aws_profiles.chosen_in_value(targets.get(key)) or in_value
+
+
+def _aws_selection_covers(targets, key, payload) -> bool:
+    """控えの選択で書き直しても、書く先の値のプロファイルが消えないか。
+
+    選択の控えはグループに 1 つで、どの参照へ書いたときの選択かを持たない。個人共通の値は
+    チーム共通の選択とは別に作られ得るため、書く先の値に選択 (と連なり) の外のプロファイルが
+    あれば、書き直すとそれが消える (#314 I7)。書く先に値が無ければ消えるものは無い。
+    """
+    from devbase.env import aws_profiles
+
+    dest = targets.target_for(key)
+    in_dest = aws_profiles.profiles_in_value(dest.get(key))
+    if in_dest is None:
+        return dest.get(key) is None
+    in_payload = aws_profiles.profiles_in_value(payload.encode())
+    return set(in_dest) <= set(in_payload or [])
+
+
 def _sync_unregistered(targets, store, counts, key, label, encode_fn, same=None):
     """控えに項目の無いソースのキーが参照にあるとき (I10・決定 2)。更新件数 (0 or 1) を返す。
 
@@ -790,6 +931,10 @@ def _sync_source(sources, targets, name, label, encode_fn, *, env_key, store, co
     if not source:
         counts.updated += _sync_unregistered(targets, store, counts, env_key, label,
                                              encode_fn, same)
+        return
+    if targets.holder(source.get('env_key') or env_key) is None:
+        # I5: 控えに項目があっても、参照に無いキーは書かない (取り込むかは init が決める)
+        logger.info("%s: %s", label, _NO_KEY_HINT)
         return
 
     changed = sources.check_changed(name)
@@ -861,6 +1006,10 @@ def _sync_gcp(sources, targets, *, store, counts):
 
     gcp_changes = sources.check_gcp_changed()
     for profile_name, changed in gcp_changes.items():
+        if targets.holder(keys.gcp_credentials_key(profile_name)) is None:
+            # I5: 参照から消したプロファイルの鍵は書き戻さない
+            logger.info("GCP認証 (%s): %s", profile_name, _NO_KEY_HINT)
+            continue
         if changed:
             profile_info = registered.get(profile_name, {})
             file_str = profile_info.get('file', '')
@@ -1464,11 +1613,17 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
     return 0
 
 
-def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFile) -> None:
+def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFile,
+                            aws_selection=_KEEP_SELECTION) -> None:
     """ソースメタデータを更新する (``env_file`` の参照のグループの控え。PLAN56 決定 13)
 
     ``more`` を渡すと、どれかの参照にキーがあればソースを登録する (#273 前提 5)。先に
     渡したものを先に見る (``sync`` は個人共通 → チーム共通の順に渡す)。
+
+    ``aws_selection`` は AWS の取り込みの選択 (#314 決定 6)。プロファイルの名前の並びなら
+    ``aws_profiles`` の項目、``host_import.ALL`` なら丸ごと (``tar_base64``) で書く。
+    渡さなければ今の控えの項目の形を保つ (項目が無ければ丸ごと)。``_SKIP_SELECTION`` なら
+    AWS の項目に触れない。
     """
     files = [env_file, *more]
     group = getattr(getattr(env_file, 'ref', None), 'group', None)
@@ -1483,15 +1638,26 @@ def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFil
                 return value
         return default
 
-    # AWS
-    if _get(keys.AWS_CONFIG_BASE64):
-        aws_dir = Path.home() / '.aws'
-        files_ = ["~/.aws/config", "~/.aws/credentials"]
-        filenames = ['config', 'credentials']
-        h = dir_hash(aws_dir, filenames)
-        if h:
-            sources.set_source('aws', 'tar_base64', files_,
-                              keys.AWS_CONFIG_BASE64, h)
+    # AWS (``_SKIP_SELECTION`` なら書き込みを見送ったので控えにも触れない)
+    if aws_selection is not _SKIP_SELECTION and _get(keys.AWS_CONFIG_BASE64):
+        from devbase.env import aws_profiles
+
+        selection = aws_selection
+        if selection is _KEEP_SELECTION:
+            existing = sources.get_source('aws') or {}
+            selection = (existing.get('profiles') if existing.get('type') == 'aws_profiles'
+                         else None)
+        if isinstance(selection, (list, tuple)):
+            payload = aws_profiles.build_from_home(selection)
+            h = payload.digest() if selection and not payload.unknown else None
+            if h:
+                sources.set_source('aws', 'aws_profiles', list(aws_profiles.SOURCE_FILES),
+                                   keys.AWS_CONFIG_BASE64, h, profiles=list(selection))
+        else:
+            h = dir_hash(Path.home() / '.aws', ['config', 'credentials'])
+            if h:
+                sources.set_source('aws', 'tar_base64', list(aws_profiles.SOURCE_FILES),
+                                   keys.AWS_CONFIG_BASE64, h)
 
     # Git
     if _get(keys.GIT_CREDENTIALS_BASE64):
