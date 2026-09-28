@@ -11,10 +11,13 @@ import itertools
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
+import yaml
 
-from tests.ci._workflow import CI_YML, load_workflow, triggers
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 AGGREGATE_JOB = "pytest-all"
 AGGREGATE_NAME = "Pytest"
@@ -33,6 +36,16 @@ EXPECTED_CHECK_NAMES = {
 }
 
 _MATRIX_EXPR = re.compile(r"\$\{\{\s*matrix\.([\w-]+)\s*\}\}")
+
+
+def _workflow() -> dict:
+    return yaml.safe_load(CI_YML.read_text())
+
+
+def _triggers() -> dict:
+    wf = _workflow()
+    # PyYAML は YAML 1.1 のため、キーの `on` を True として読む
+    return wf[True] if True in wf else wf["on"]
 
 
 def _check_names(job: dict) -> list[str]:
@@ -55,7 +68,7 @@ def _check_names(job: dict) -> list[str]:
 
 
 def _aggregate_job() -> dict:
-    return load_workflow()["jobs"][AGGREGATE_JOB]
+    return _workflow()["jobs"][AGGREGATE_JOB]
 
 
 def _aggregate_step() -> dict:
@@ -66,19 +79,19 @@ def _aggregate_step() -> dict:
 
 def test_triggers_are_push_and_pull_request_only():
     """トリガーは push と pull_request だけで、pull_request_target を使わない。"""
-    assert set(triggers(load_workflow())) == {"push", "pull_request"}
+    assert set(_triggers()) == {"push", "pull_request"}
     assert "pull_request_target" not in CI_YML.read_text()
 
 
 def test_pull_request_does_not_filter_branches():
     """I1: Pull Request は宛先を絞らない（積み重ねた Pull Request も検査する）。"""
-    pr = triggers(load_workflow())["pull_request"]
+    pr = _triggers()["pull_request"]
     assert pr is None or ("branches" not in pr and "branches-ignore" not in pr)
 
 
 def test_push_branches_are_main_and_integration_branches():
     """I2: push は main と統合ブランチだけで走る。"""
-    push = triggers(load_workflow())["push"]
+    push = _triggers()["push"]
     assert "branches-ignore" not in push
     assert set(push["branches"]) == EXPECTED_PUSH_BRANCHES
     assert len(push["branches"]) == len(EXPECTED_PUSH_BRANCHES)
@@ -86,7 +99,7 @@ def test_push_branches_are_main_and_integration_branches():
 
 def test_check_names_are_fixed():
     """I3: 検査ジョブのチェックの名前は、既存の 7 件・まとめたチェック・CHANGELOG の検査の 9 件とちょうど一致する。"""
-    names = [n for job in load_workflow()["jobs"].values() for n in _check_names(job)]
+    names = [n for job in _workflow()["jobs"].values() for n in _check_names(job)]
     assert sorted(names) == sorted(EXPECTED_CHECK_NAMES)
 
 
