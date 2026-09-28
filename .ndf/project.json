@@ -1,0 +1,132 @@
+{
+  "$schema": "https://raw.githubusercontent.com/devbasex/ai-plugins/main/plugins/ndf/skills/development-workflow/schemas/project.schema.json",
+  "version": 1,
+  "languages": [
+    {
+      "name": "python",
+      "frameworks": [],
+      "files": 257,
+      "version": "3.10"
+    },
+    {
+      "name": "shell",
+      "frameworks": [],
+      "files": 4
+    }
+  ],
+  "test": {
+    "strategy": "local-full",
+    "suites": [
+      {
+        "name": "pytest",
+        "runner": "pytest",
+        "command": "env -u DEVBASE_ROOT uv run --locked pytest tests/ -q -o junit_family=xunit1 --junitxml=build/ndf/junit.xml",
+        "scope_command": "env -u DEVBASE_ROOT uv run --locked pytest -q -o junit_family=xunit1 --junitxml=build/ndf/junit.xml {paths}",
+        "junit": "build/ndf/junit.xml",
+        "needs": [],
+        "paths": [
+          "tests"
+        ]
+      }
+    ]
+  },
+  "test_duration": {
+    "measured": [
+      {
+        "seconds": 140.2,
+        "source": "ndf-record",
+        "detail": "NDF の実行の記録の直近 6 件の中央値"
+      },
+      {
+        "seconds": 103.0,
+        "source": "ci-steps",
+        "detail": "run 36288619761（.github/workflows/ci.yml）のテストの step 2 個の合計"
+      }
+    ]
+  },
+  "ci": {
+    "provider": "github-actions",
+    "workflows": [
+      {
+        "path": ".github/workflows/ci.yml",
+        "jobs": 7,
+        "wall_seconds": 78.0
+      },
+      {
+        "path": ".github/workflows/pages.yml",
+        "jobs": 1
+      }
+    ],
+    "required_checks": []
+  },
+  "services": {
+    "container": false,
+    "compose_files": [],
+    "databases": []
+  },
+  "delivery": [
+    {
+      "target": "main ブランチ（install.sh が取得）",
+      "kind": "auto",
+      "trigger": "main へのマージ",
+      "branch": "main",
+      "versioned": true
+    },
+    {
+      "target": "GitHub Pages のインストーラ",
+      "kind": "auto",
+      "trigger": "pages.yml",
+      "branch": "main",
+      "versioned": false
+    }
+  ],
+  "issues": {
+    "primary": "github",
+    "others": [
+      "markdown"
+    ]
+  },
+  "checks": {
+    "tools": []
+  },
+  "ndf_policies": {
+    "doc_lint": false,
+    "reject_md_wording_tests": false
+  },
+  "instructions": {
+    "files": [],
+    "imports": [],
+    "notes": [
+      "指示書（AGENTS.md・CLAUDE.md など）が無い。NDF と各ランタイムが読む指示書を置くとよい"
+    ]
+  },
+  "analysis": {
+    "analyzer": 1,
+    "at": "2026-09-27T20:49:06+00:00",
+    "inputs": {
+      ".github/workflows/ci.yml": "e9d0bf656f315eb4c993716be538e01f4a1a054e",
+      ".github/workflows/pages.yml": "6ce8d59753f498aa64adfcc6f1f55a7e6306188e",
+      "pyproject.toml": "ca221332e83b2d27a6ccd3d04aff20431e8b5450"
+    },
+    "branches": {
+      "head": "main",
+      "present": [
+        "main"
+      ]
+    },
+    "written": {
+      "languages": "5c4692008ae515e42badcc47c36db93c12707a4cedaa83ef1f91853c9e54c2a6",
+      "test": "05ee1f8e85945b4f46b2a79698c8aba4fcadea0d6ae83f3aa1b84a5d3760d2f9",
+      "test_duration": "7023343f5bbe53672a65063992078bbc736f7df585d34e88a25007bdd2119d47",
+      "ci": "7dfd7b341c93bf79e82ecc6508d4e384a674c60881343dbbc8226449759aa5d5",
+      "services": "53f4e4c15a04bde773f9d0d89be06cd65f1a9248c0603b06b78bfa8a5f8a0771",
+      "delivery": "5dbcd4bca9a6ebb23f6d4964d0714cb977119f9d7f0465cb77335e42b3a0c8c0",
+      "issues": "c851aa29d3c11745f1307194db49eba6a488771771ea86c21c7237e400e336b8",
+      "checks": "fe2f3b4ef49492d81cb350fb689bf9f9dff6cfd1817d72d6ff9fe3350e3d5e6a",
+      "ndf_policies": "81c1c2e31df60254dfd66878f3c3b3190c87a2a0b78a2275e13cde3a199e9fa1",
+      "instructions": "d67dfdc765964077eebae7c9f86172e5dd32b67c641d837fcd513f38f733d649",
+      "worktree.json#base_branch": "e4a9e4d8baa71a9d8ebf56ec8ae3ea1e82be9f96ae6fe89e36d701d4a5337f30",
+      "worktree.json#production_branch": "e4a9e4d8baa71a9d8ebf56ec8ae3ea1e82be9f96ae6fe89e36d701d4a5337f30"
+    }
+  }
+}
