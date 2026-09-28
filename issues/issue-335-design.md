@@ -19,8 +19,9 @@
 隣り合う外部の系との関係:
 
 - **GitHub Actions（外部の系）には順応者として接する。** `pull_request` のイベントの値
-  （`github.base_ref`・`github.event.pull_request.base.sha` / `head.sha`）と、ワークフローのコマンド
-  （`::warning`・`::error`）と `$GITHUB_STEP_SUMMARY` の形をそのまま受け入れる
+  （`github.base_ref`）と、`actions/checkout` が `pull_request` で取り出す merge commit
+  （`refs/pull/<番号>/merge`）の形と、ワークフローのコマンド（`::warning`・`::error`）と
+  `$GITHUB_STEP_SUMMARY` の形をそのまま受け入れる
 - **main の保護設定には触れない。** CHANGELOG の検査は必須チェックに加えない（前提 6）
 
 ### 集約
@@ -150,7 +151,7 @@ graph LR
         C[checkout 履歴ごと]
         S[判定のスクリプト python3]
     end
-    E -->|base.sha と head.sha| C
+    E -->|merge commit| C
     C --> S
     S -->|"::warning と要約"| P
 ```
@@ -212,7 +213,7 @@ classDiagram
 | 項目 | 内容 |
 | --- | --- |
 | 名前 | `python3 .github/scripts/changelog_check.py <base> <head>` |
-| 入力 | `<base>`: 宛先ブランチの commit（`github.event.pull_request.base.sha`）。`<head>`: Pull Request の head の commit（`head.sha`）。どちらも必須。空文字は受けない。カレントディレクトリはリポジトリの根。環境変数 `GITHUB_STEP_SUMMARY` は任意 |
+| 入力 | `<base>`: 宛先ブランチの先端の commit（checkout した merge commit の 1 つ目の親 `HEAD^1`）。`<head>`: Pull Request の head の commit（2 つ目の親 `HEAD^2`）。どちらも必須。空文字は受けない。カレントディレクトリはリポジトリの根。環境変数 `GITHUB_STEP_SUMMARY` は任意 |
 | 出力（警告なし） | 標準出力に判定の理由を 1 行（`CHANGELOG.md を変えている` か `見張るパスを変えていない`）。要約のファイルがあれば同じ理由を追記する。終了コード 0 |
 | 出力（未記入の警告） | 標準出力に `::warning title=CHANGELOG の未記入::` で始まる行をちょうど 1 行。本文は `CHANGELOG.md の [Unreleased] を更新してください。見張るパスの変更: <パス>, <パス>, ...`。パスは入力の順に 20 件まで並べ、超えた分は `ほか N 件` とする。要約のファイルがあれば見出しと、変えた見張るパスの全件の箇条書きを追記する。終了コード 0 |
 | 失敗の形 | 引数が 2 つでない・どちらかが空 → 標準出力に `::error title=CHANGELOG の検査::` と理由、終了コード 2。`git diff` が非 0（commit が無い・merge base が無い） → `::error title=CHANGELOG の検査::差分を得られない: <git の標準エラーの最初の行>`、終了コード 1 |
@@ -227,7 +228,7 @@ classDiagram
 | `if` | `github.event_name == 'pull_request' && github.base_ref == 'main'` |
 | `permissions` | `contents: read`（ジョブの単位。ワークフローの単位には置かない） |
 | `timeout-minutes` | 5 |
-| 手順 | `actions/checkout@v4`（`fetch-depth: 0`） → 判定のスクリプト（2 つの commit は `env` で渡し、`run` の中へ式を直に埋めない） |
+| 手順 | `actions/checkout@v4`（`fetch-depth: 0`。`ref` を指定せず、`pull_request` の既定の merge commit を取り出す） → 判定のスクリプト（引数は `HEAD^1` と `HEAD^2`。イベントの値を `run` の中へ式で埋めない） |
 | 持たないもの | `continue-on-error`・`paths` / `paths-ignore`・`setup-python`・Docker |
 
 ## 処理の流れ
@@ -242,7 +243,7 @@ sequenceDiagram
     作成者->>GH: main 宛てに開く・push
     GH->>J: pull_request（if が真のとき）
     J->>J: checkout（履歴ごと）
-    J->>S: base.sha, head.sha
+    J->>S: HEAD^1, HEAD^2（merge commit の 2 つの親）
     S->>S: git diff base...head
     alt 差分を得られない
         S-->>J: ::error と終了コード 1
@@ -297,16 +298,23 @@ import するため構文の誤りは Pytest のジョブで落ちる。
 トリガーで絞ると既存の 4 ジョブも main 宛てだけになり、AC12 を破る。ワークフローを別ファイルに分ける形は、
 CI の定義が 2 本になり、`ci-checks.md` の「CI は 1 本」の前提を崩すため採らない。
 
-### 決定 4: 差分は git の三点の `diff` で、宛先の commit と head の commit から取る
+### 決定 4: 差分は git の三点の `diff` で、checkout した merge commit の 2 つの親から取る
 
-前提 4 は merge base から head までの差分を求める。`git diff <base.sha>...<head.sha>` はちょうどその範囲で、
-Pull Request の途中で main を取り込んでも、取り込んだ main の変更は数えない。`--no-renames` を付け、
+前提 4 は merge base から head までの差分を求める。`pull_request` のイベントで `actions/checkout` が取り出す
+merge commit（`refs/pull/<番号>/merge`）は、1 つ目の親が宛先ブランチの先端、2 つ目の親が Pull Request の
+head である。`git diff HEAD^1...HEAD^2` は今の宛先の先端と head の merge base から head までの差分で、
+Pull Request の途中で main を取り込んでも、取り込んだ main の変更は数えない（取り込んだ main の commit は
+宛先の先端から辿れるため、merge base がそこまで進む）。`--no-renames` を付け、
 見張るパスの外へ移したファイルの元のパスも一覧に入れる。履歴ごと取る（`fetch-depth: 0`）のは、
 merge base がどれだけ前でも届くためで、リポジトリは小さく（pack 約 7 MiB）費用は小さい。
 
 GitHub の API（`pulls/{n}/files`）は `pull-requests: read` の権限と頁の送りが要り、3,000 件で打ち切られるため
-採らない。checkout した merge commit の親との差分（`HEAD^1..HEAD`）は、merge base ではなく今の main の先端との
-差分になり、前提 4 と範囲がずれるため採らない。
+採らない。イベントの `github.event.pull_request.base.sha` を三点の左に置く形は、`synchronize` のたびに
+`base.sha` が宛先の先端へ更新されるという実測の無い前提に依る。`base.sha` が main の取り込みより前のまま
+だと merge base が `base.sha` そのものになり、ほかの人が main に入れた変更まで数えて誤った警告を出すため
+採らない。merge commit と 1 つ目の親との二点の差分（`HEAD^1..HEAD`）は、宛先の先端と head を合わせた
+結果との差分で、宛先の先端にだけある変更の打ち消しも混ざり得るため、前提 4 の範囲をそのまま表す三点の
+形を採る。
 
 ### 決定 5: runner の `python3` をそのまま使う
 
@@ -346,7 +354,7 @@ GitHub の API（`pulls/{n}/files`）は `pull-requests: read` の権限と頁�
 
 | 項目 | 内容 |
 | --- | --- |
-| `base.sha` が checkout の後に届くか | `fetch-depth: 0` はすべてのブランチの履歴を取るため届く見込み。届かなければ判定は終了コード 1 で止まる（I4）。実装の Pull Request の上の実行で確かめる |
+| checkout した HEAD が merge commit であるか | `pull_request` のイベントで `ref` を指定しない `actions/checkout` は `refs/pull/<番号>/merge` を取り出す見込み。merge commit でなければ `HEAD^2` が無く、判定は終了コード 1 で止まる（I4）。実装の Pull Request の上の実行で `git rev-list --parents -n 1 HEAD` が親を 2 つ持つことを確かめる |
 | skipped のチェックの見え方 | main 以外を宛先にした Pull Request で `CHANGELOG check` が skipped として並ぶこと、`mergeStateStatus` を塞がないこと。統合ブランチ宛ての Pull Request が次に出たときに見る |
 | runner の `python3` の版 | `ubuntu-latest` の既定の版（3.12 以上の見込み）。3.10 の書き方に留めるため、版が上がっても動く |
 | 警告の注記の出る場所 | `file=` を付けないため、注記は Files changed の行ではなくチェックの画面と実行の要約に出る。実装の Pull Request で見る。警告の経路は判定のテストで担保する |
