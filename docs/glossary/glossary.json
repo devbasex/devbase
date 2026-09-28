@@ -349,7 +349,7 @@
     {
       "term": "検査ジョブ",
       "context": "ci",
-      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest・CHANGELOG check）",
+      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all・CHANGELOG check）",
       "source": "docs/specifications/ci-checks.md"
     },
     {
@@ -357,6 +357,18 @@
       "context": "ci",
       "meaning": "課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**）",
       "source": "docs/specifications/ci-checks.md"
+    },
+    {
+      "term": "必須チェック",
+      "context": "ci",
+      "meaning": "main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない",
+      "pending_source": "issues/issue-277-requirements.md"
+    },
+    {
+      "term": "まとめたチェック",
+      "context": "ci",
+      "meaning": "pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する",
+      "pending_source": "issues/issue-277-design.md"
     },
     {
       "term": "トリガー",
@@ -471,6 +483,30 @@
       "context": "test",
       "meaning": "PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date",
       "source": "docs/specifications/base-shell-tests.md"
+    },
+    {
+      "term": "ラッパーの複製",
+      "context": "test",
+      "meaning": "exec_wrapper が一時ディレクトリの bin/devbase へ写した本物のラッパー。複製した位置から DEVBASE_ROOT が決まり、継承した値を見ない",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "偽の uv",
+      "context": "test",
+      "meaning": "PATH の先頭に置き、受け取った引数を UV: 行で出して 0 で終わる試験用の uv。ラッパーの外へ出る呼び出しはすべてこれを通る",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "経路の印",
+      "context": "test",
+      "meaning": "build の振り分け先を見分ける出力の行。Python の経路は「 devbase.cli project build <引数>」で終わる UV: 行、shell の経路は === Building devbase images === の行",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "差し替え先",
+      "context": "test",
+      "meaning": "テストが monkeypatch で置き換える属性を持つモジュール。置き換える関数を実際に呼ぶモジュールにする",
+      "source": "docs/specifications/cli-argument-resolution.md"
     },
     {
       "term": "取り込み",

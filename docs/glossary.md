@@ -122,8 +122,10 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest・CHANGELOG check） | — | — | `docs/specifications/ci-checks.md` |
+| 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all・CHANGELOG check） | — | — | `docs/specifications/ci-checks.md` |
 | 統合ブランチ | — | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — | `docs/specifications/ci-checks.md` |
+| 必須チェック | — | main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない | — | — | — |
+| まとめたチェック | — | pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する | — | — | — |
 | トリガー | — | ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches） | — | — | `docs/specifications/ci-checks.md` |
 | 積み重ねた Pull Request | — | 宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request | — | — | `docs/specifications/ci-checks.md` |
 | 指摘 | — | shellcheck が出す 1 件（SC の番号・水準・行） | — | — | `docs/specifications/ci-checks.md` |
@@ -152,6 +154,10 @@ pytest が走るプロセスの環境と、テストが起動する外部のプ�
 | 隔離した tmux サーバ | — | TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない | — | — | `docs/specifications/base-shell-tests.md` |
 | 故障の差し込み | — | 実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと | — | — | `docs/specifications/base-shell-tests.md` |
 | 偽の date | — | PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date | — | — | `docs/specifications/base-shell-tests.md` |
+| ラッパーの複製 | — | exec_wrapper が一時ディレクトリの bin/devbase へ写した本物のラッパー。複製した位置から DEVBASE_ROOT が決まり、継承した値を見ない | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 偽の uv | — | PATH の先頭に置き、受け取った引数を UV: 行で出して 0 で終わる試験用の uv。ラッパーの外へ出る呼び出しはすべてこれを通る | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 経路の印 | — | build の振り分け先を見分ける出力の行。Python の経路は「 devbase.cli project build <引数>」で終わる UV: 行、shell の経路は === Building devbase images === の行 | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 差し替え先 | — | テストが monkeypatch で置き換える属性を持つモジュール。置き換える関数を実際に呼ぶモジュールにする | — | — | `docs/specifications/cli-argument-resolution.md` |
 
 ## イメージの継承（`image-lineage`）
 
