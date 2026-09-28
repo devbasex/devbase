@@ -65,7 +65,7 @@ I3 の 8 件のうち、E5 の後に必須になるのは I7 の 6 件である�
 | --- | --- | --- |
 | まとめたチェック | pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 `Pytest` で出るチェック。全版が成功したときだけ成功する | 追加（`ci`） |
 | 必須チェック | `main` の保護設定の `required_status_checks` に並ぶチェックの名前。すべてが合格しないと `main` へマージできない | 要求で追加済み（`ci`） |
-| 検査ジョブ | `ci.yml` の jobs の 1 つ。まとめたチェックのジョブも検査ジョブの 1 つとして数える | 変えない（`ci`） |
+| 検査ジョブ | `ci.yml` の jobs の 1 つ。まとめたチェックのジョブも検査ジョブの 1 つとして数える | 変更（`ci`。意味の列挙に `pytest-all` を足す） |
 
 ## 機能一覧
 
@@ -85,7 +85,7 @@ I3 の 8 件のうち、E5 の後に必須になるのは I7 の 6 件である�
 | `tests/ci/test_ci_workflow.py`（新設） | 足す | PyYAML で `ci.yml` を読み、I1〜I6 を 1 条件 1 テストで固定する。I6 は判定の手順を bash で走らせて確かめる（決定 5） |
 | `docs/specifications/ci-checks.md` | 変える | まとめたチェックのジョブ・8 件の名前・必須チェック 6 件を書き、回帰テストの名前を「止めるもの」として書く（下の「文書の差分の対象」） |
 | `docs/developer/contributing.md` の「CI が実行するもの」 | 変える | まとめたチェック `Pytest` と、それが `main` の必須チェックであることを 1 段落で足す |
-| `docs/glossary/glossary.json` と `docs/glossary.md` | 変える | 語「まとめたチェック」を足し、`glossary.py render` で作り直す |
+| `docs/glossary/glossary.json` と `docs/glossary.md` | 変える | 語「まとめたチェック」を足し、語「検査ジョブ」の意味の列挙に `pytest-all` を足して、`glossary.py render` で作り直す |
 | `main` の保護設定の `required_status_checks` | E5 で変える（operation） | `checks` に `{"context": "Pytest", "app_id": 15368}` を足す。`strict` と既存の 5 件はそのまま（I7、決定 6） |
 
 次のものは変えない。
@@ -153,7 +153,7 @@ tests/ci/
 └── test_ci_workflow.py               # 新設（__init__.py は既にある）
 docs/specifications/ci-checks.md      # 上の表の 7 か所
 docs/developer/contributing.md        # 「CI が実行するもの」の 1 段落
-docs/glossary/glossary.json           # 語「まとめたチェック」
+docs/glossary/glossary.json           # 語「まとめたチェック」を足し、語「検査ジョブ」を直す
 docs/glossary.md                      # glossary.py render で作り直す
 ```
 
@@ -210,7 +210,9 @@ pytest のジョブは `if` を持たないため、今の `ci.yml` で `skipped
 
 ### 保護設定の変更（E5）
 
-E4 の後、承認を得て次を打つ。`checks` は置き換えのため、既存の 5 件を含めた 6 件を渡す。
+E4 の後、承認を得て次を打つ。`checks` は置き換えのため、既存の 5 件を含めた 6 件を渡す。`app_id` の `15368` は
+2026-09-28 に既存の 5 件で実測した値である（決定 6）。`before.json` の `.checks[].app_id` が 5 件とも `15368` でなければ
+`PATCH` を打たずに止め、本文を実値に直してから打ち直す。
 
 ```bash
 gh api repos/devbasex/devbase/branches/main/protection/required_status_checks > before.json
@@ -339,7 +341,10 @@ I3 は matrix の値まで固定するため、matrix の版を変えるとき�
 
 ### 決定 6: 保護設定は `PATCH` の `checks` で提供元を付けて足す
 
-今の必須チェック 5 件は、すべて提供元が GitHub Actions（app_id 15368）に固定されている。要求の前提 3 は提供元を
+今の必須チェック 5 件は、すべて提供元が GitHub Actions（app_id 15368）に固定されている
+（2026-09-28、`gh api repos/devbasex/devbase/branches/main/protection/required_status_checks -q '.checks[]'` の出力で
+5 件とも `"app_id":15368`）。E5 の直前にも同じ `gh api` を打ち、5 件の `app_id` が `15368` のままであることを確かめてから
+`PATCH` する。食い違えば `PATCH` せずに止め、本文の `app_id` を実値に直す。要求の前提 3 は提供元を
 GitHub Actions のまま保つとしている。`checks` に `app_id` を付けて渡せば、足した `Pytest` も同じ提供元に固定され、
 ほかの提供元が同じ名前の状態を出しても合格にならない。
 

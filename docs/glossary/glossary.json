@@ -349,7 +349,7 @@
     {
       "term": "検査ジョブ",
       "context": "ci",
-      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest）",
+      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all）",
       "source": "docs/specifications/ci-checks.md"
     },
     {
