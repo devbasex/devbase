@@ -225,6 +225,19 @@ PR には以下の情報を記載する。
 - **テスト計画**: 動作確認の手順
 - **関連 Issue**: あれば Issue 番号をリンク
 
+### CHANGELOG の更新
+
+`main` へのマージがそのまま配布になる。利用者に見える変更（devbase を使う人がコマンド・イメージ・設定を
+通じて気づく振る舞いの変化）を `main` へ入れる Pull Request は、同じ Pull Request で `CHANGELOG.md` の
+`[Unreleased]` を更新する。破壊的変更はその旨を明記する。
+
+- **CHANGELOG が要らない変更**: テストだけの変更、開発者向けの文書だけの変更、利用者に見えないリファクタリング
+- **統合ブランチ（`release/**`・`mission/**`）を通す変更**: 統合ブランチ宛ての個々の Pull Request では書かなくてよい。
+  統合ブランチから `main` への Pull Request の差分で `CHANGELOG.md` を更新する
+- **CI の未記入の警告**: `main` 宛ての Pull Request で `lib/`・`bin/`・`containers/`・`etc/`・`install.sh` のどれかを
+  変えて `CHANGELOG.md` を変えていないと、CI の `CHANGELOG check` が警告を出す。警告であってジョブは失敗にしない。
+  要らない変更かどうかはレビュアーが判断する
+
 ### レビュー観点
 
 レビュアーは以下の観点でコードを確認する。
@@ -256,6 +269,8 @@ tmux のサーバー・環境変数を共有しない前提で書く。
 `bin/*`・`install.sh`・`containers/base/` のシェルスクリプトの ShellCheck・`uv sync --locked` の後の `pytest tests/`
 （Python 3.10 / 3.13）を実行する。CI に `DEVBASE_ROOT` と Docker は無いため、テストは
 自前の一時ディレクトリを `DEVBASE_ROOT` に向け、実機を要するものは理由を添えて skip する。
+`main` 宛ての Pull Request では、あわせて CHANGELOG の検査（`CHANGELOG check`）が走る
+（[CHANGELOG の更新](#changelog-の更新)）。
 
 pytest の全版の結果は、まとめたチェック `Pytest`（ジョブ `pytest-all`）に 1 つにまとまる。pytest が 1 版でも
 失敗・取り消し・時間切れなら `Pytest` は `failure` になる。`main` の保護の必須チェックは
@@ -269,7 +284,7 @@ SHA-256 で照合して入れ、既定の水準（style まで）で走らせる
 （`tests/ci/test_shellcheck_job.py` と `tests/containers/test_base_shellcheck_ci.py` が理由の無い指示を止める）。
 `containers/base/` の直下にシェルスクリプト（`sh` か `bash` の shebang を持つか、拡張子が `.sh` のもの）を足したら、
 `ci.yml` の `Run ShellCheck on containers/base/` の一覧へも足す。足し忘れは `tests/containers/test_base_shellcheck_ci.py` が落とす。
-トリガー・検査の対象・抑止の注記の規則は [CI の検査（トリガーと ShellCheck）](../specifications/ci-checks.md) にある。
+トリガー・検査の対象・抑止の注記・CHANGELOG の検査の規則は [CI の検査（トリガー・ShellCheck・CHANGELOG）](../specifications/ci-checks.md) にある。
 手元では次で CI と同じ版の検査を打てる。
 
 ```bash

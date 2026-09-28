@@ -32,6 +32,7 @@ EXPECTED_CHECK_NAMES = {
     "Pytest (Python 3.10)",
     "Pytest (Python 3.13)",
     AGGREGATE_NAME,
+    "CHANGELOG check",
 }
 
 _MATRIX_EXPR = re.compile(r"\$\{\{\s*matrix\.([\w-]+)\s*\}\}")
@@ -91,7 +92,7 @@ def test_push_branches_are_main_and_integration_branches():
 
 
 def test_check_names_are_fixed():
-    """I3: 検査ジョブのチェックの名前は、既存の 7 件とまとめたチェックの 8 件とちょうど一致する。"""
+    """I3: 検査ジョブのチェックの名前は、既存の 7 件・まとめたチェック・CHANGELOG の検査の 9 件とちょうど一致する。"""
     names = [n for job in _workflow()["jobs"].values() for n in _check_names(job)]
     assert sorted(names) == sorted(EXPECTED_CHECK_NAMES)
 

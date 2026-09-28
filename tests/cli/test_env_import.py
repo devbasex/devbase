@@ -10,7 +10,7 @@ from typing import Tuple
 import pyrage
 import pytest
 
-from devbase.env import bundle, cipher
+from devbase.env import bundle, cipher, io_common
 from devbase.env.io_export import ExportOptions, export
 from devbase.env.io_import import (
     ImportError as ImportBundleError,
@@ -219,7 +219,7 @@ def test_read_passphrase_uses_getpass_on_tty(monkeypatch):
         calls['stream'] = stream
         return "hunter2"
 
-    monkeypatch.setattr("devbase.env.io_import.getpass.getpass", fake_getpass)
+    monkeypatch.setattr(io_common.getpass, "getpass", fake_getpass)
 
     pw = _read_passphrase(ImportOptions(source='/dev/null', passphrase_stdin=True))
     assert pw == "hunter2"
@@ -236,7 +236,7 @@ def test_read_passphrase_falls_back_to_stdin_on_pipe(monkeypatch, capsys):
     def fail_getpass(*args, **kwargs):
         raise AssertionError("getpass.getpass should not be called for piped stdin")
 
-    monkeypatch.setattr("devbase.env.io_import.getpass.getpass", fail_getpass)
+    monkeypatch.setattr(io_common.getpass, "getpass", fail_getpass)
 
     pw = _read_passphrase(ImportOptions(source='/dev/null', passphrase_stdin=True))
     assert pw == "piped-pass"
@@ -252,7 +252,7 @@ def test_read_passphrase_tty_eof_raises_import_error(monkeypatch):
     def raise_eof(*args, **kwargs):
         raise EOFError()
 
-    monkeypatch.setattr("devbase.env.io_import.getpass.getpass", raise_eof)
+    monkeypatch.setattr(io_common.getpass, "getpass", raise_eof)
 
     with pytest.raises(ImportBundleError, match="パスフレーズを読み取れません"):
         _read_passphrase(ImportOptions(source='/dev/null', passphrase_stdin=True))

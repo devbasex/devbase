@@ -1,15 +1,17 @@
-# CI の検査（トリガーと ShellCheck）
+# CI の検査（トリガー・ShellCheck・CHANGELOG）
 
 ## 概要
 
 devbase の継続的インテグレーションは `.github/workflows/ci.yml`（ワークフロー名 `CI`）の 1 本で、
-Python の構文・Ruff・ShellCheck・pytest の 4 種の検査ジョブを持つ。この仕様は次の 2 つを定める。
+Python の構文・Ruff・ShellCheck・pytest・CHANGELOG の 5 種の検査ジョブを持つ。この仕様は次の 3 つを定める。
 
 - **いつ走るか（トリガー）。** Pull Request は宛先を問わず走る。push は `main` と統合ブランチ
   （`release/**`・`mission/**`）でだけ走る
 - **ShellCheck が何をどう検査するか。** 基準の版の shellcheck を公式の配布物から SHA-256 を照合して入れ、
   `bin/*`・`install.sh`・`containers/base/` のシェルスクリプトのすべてを既定の水準（style まで）で検査する。
   指摘が 1 件でもあればジョブが失敗する
+- **CHANGELOG の検査が何を警告するか。** `main` 宛ての Pull Request で、見張るパスを変えて `CHANGELOG.md` を
+  変えていないとき、未記入の警告を出す。警告ではジョブを失敗にしない
 
 ShellCheck のジョブが成功していても水準が絞られていれば検査は破れており、抑止の指示さえあれば shellcheck は
 0 件を返す。そのため、検査ジョブの形・検査の対象の漏れ・抑止の理由は pytest が `ci.yml` と本文を読んで固定する。
@@ -21,7 +23,7 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 
 | コンテキスト | この仕様で 1 つの意味に決まるもの |
 | --- | --- |
-| 継続的インテグレーション（`ci`） | 検査ジョブとトリガー、ShellCheck の検査の対象・水準・基準の版、指摘と抑止の注記 |
+| 継続的インテグレーション（`ci`） | 検査ジョブとトリガー、ShellCheck の検査の対象・水準・基準の版、指摘と抑止の注記、見張るパスと未記入の警告 |
 
 隣り合うコンテキストとの関係:
 
@@ -38,7 +40,8 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 
 この仕様が使う語の定義は [用語集: 継続的インテグレーション（`ci`）](../glossary.md#継続的インテグレーションci)
 にある。使う語: 検査ジョブ・まとめたチェック・必須チェック・トリガー・統合ブランチ・積み重ねた Pull Request・ShellCheck の検査ジョブ・
-基準の版・指摘・抑止の注記・shellcheck の指示・base のシェルスクリプト・検査の対象。ラッパー（`bin/devbase`）は
+基準の版・指摘・抑止の注記・shellcheck の指示・base のシェルスクリプト・検査の対象・利用者に見える変更・
+見張るパス・CHANGELOG の検査・未記入の警告。ラッパー（`bin/devbase`）は
 [コマンドの入口（`cli`）](../glossary.md#コマンドの入口cli) の語である。
 
 ## 対象範囲
@@ -47,6 +50,7 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 - `ci.yml` の `shellcheck` ジョブ（shellcheck の導入・版の確認・3 つの検査の手順）
 - ShellCheck の検査の対象（`bin/*`・`install.sh`・base のシェルスクリプト）が守る規則: 指摘 0 件と、
   抑止の注記の書き方
+- `ci.yml` の `changelog` ジョブと、判定を持つ `.github/scripts/changelog_check.py`
 - 上の形を固定する pytest（`tests/ci/`・`tests/containers/test_base_shellcheck_ci.py`・
   `tests/containers/test_base_dockerfile_shellcheck.py` の版の突き合わせ）
 
@@ -58,6 +62,7 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 - `containers/base/` 以外の `containers/*` のスクリプト。ShellCheck の対象に入っていない
 - ShellCheck 以外の静的解析の規則の中身（Ruff の `--select` など）
 - base イメージへの shellcheck の導入（[base-image-shellcheck.md](base-image-shellcheck.md)）
+- `CHANGELOG.md` の `[Unreleased]` の中身（書き方・分類・文の質）と、CHANGELOG の自動生成
 
 ## 仕様
 
@@ -68,6 +73,7 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 | CI のワークフロー | `.github/workflows/ci.yml` | ワークフロー（`name: CI`） | 検査ジョブ（`name` で識別する） | トリガー（イベントと `branches` の絞り込み） |
 | ShellCheck の検査ジョブ | `ci.yml` の `shellcheck` ジョブ | ジョブ | 手順（step） | 基準の版（`SHELLCHECK_VERSION`）・配布物の SHA-256（`SHELLCHECK_SHA256`）・検査の対象のパス |
 | 検査の対象 | `bin/*`・`install.sh`・base のシェルスクリプトの本文 | 1 本のファイル | 指摘 | 抑止の注記（指示と理由の組）・`shell=` の指示 |
+| CHANGELOG の検査 | `ci.yml` の `changelog` ジョブと `.github/scripts/changelog_check.py` | ジョブ | — | 見張るパス（`WATCHED_PATHS`）・未記入の警告の文 |
 
 `tests/ci/` と `tests/containers/test_base_shellcheck_ci.py` はどの集約にも属さない。集約の状態を読んで
 固定するだけで、書き換えない。検査の対象と ShellCheck の検査ジョブはパスでだけつながり、2 つを揃えるのは
@@ -82,9 +88,11 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 | `shellcheck` | `ShellCheck` | 下の「ShellCheck の検査ジョブ」 |
 | `pytest` | `Pytest (Python ${{ matrix.python-version }})`（3.10 / 3.13） | `uv sync --locked` の後に `uv run --locked pytest tests/ -q`。`timeout-minutes: 15`、`fail-fast: false` |
 | `pytest-all` | `Pytest`（固定の文字列。matrix を持たない） | pytest の全版をまとめたチェック。`needs: pytest` と `if: always()` で全版を待ち、`needs.pytest.result` を `env` の `RESULT` で受けて `test "${RESULT}" = success` で判定する。`timeout-minutes: 5` |
+| `changelog` | `CHANGELOG check` | 下の「CHANGELOG の検査」。`main` 宛ての Pull Request でだけ走る |
 
 1 回の起動で走るチェックは 8 件になる: `Python syntax check (3.10)` / `(3.11)` / `(3.12)`・`Ruff lint`・
-`ShellCheck`・`Pytest (Python 3.10)`・`Pytest (Python 3.13)`・`Pytest`。
+`ShellCheck`・`Pytest (Python 3.10)`・`Pytest (Python 3.13)`・`Pytest`。`main` 宛ての Pull Request ではこれに
+`CHANGELOG check` が加わって 9 件になる。それ以外の起動では `CHANGELOG check` は skipped になる。
 
 まとめたチェック `Pytest` の結論は次のとおり。`skipped` は必須チェックで合格と扱われるため、pytest が
 成功以外のときも走って `failure` を返す。
@@ -205,13 +213,40 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 - `A && B || C`（SC2015）は `if` / `else` へ書き換える
 - 読まない変数（SC2034）は `_` にする（`entrypoint.sh` の `for _ in {1..30}`）
 
+### CHANGELOG の検査
+
+`main` へのマージがそのまま配布になるため、利用者に見える変更は `main` に入る時点で `CHANGELOG.md` の
+`[Unreleased]` に載っている状態にする。書き漏れをリリースの Pull Request ではなく変更の Pull Request の
+レビューで気づけるよう、`changelog` ジョブが未記入の警告を出す。
+
+```yaml
+changelog:
+  name: CHANGELOG check
+  if: github.event_name == 'pull_request' && github.base_ref == 'main'
+  permissions:
+    contents: read
+```
+
+| 項目 | 決まり |
+| --- | --- |
+| 対象の Pull Request | 宛先が `main` の Pull Request だけ。統合ブランチ宛て・積み重ねた Pull Request・`push` のイベントではジョブが skipped になり、警告を出さない。統合ブランチを通す変更は、統合ブランチから `main` への Pull Request の差分で `CHANGELOG.md` を変えていればよい |
+| 見張るパス | `lib/`・`bin/`・`containers/`・`etc/`・`install.sh`。`.github/scripts/changelog_check.py` の `WATCHED_PATHS` にだけ置き、pytest も同じ定義を読む。`docs/`・`tests/`・`issues/`・`.github/`・`.ndf/` は見張らない |
+| 差分 | `actions/checkout@v4`（`fetch-depth: 0`）の後、宛先ブランチを `origin/<宛先>` へ取り直し、`git diff --name-only origin/<宛先>...<head の commit>`（merge base から head まで）のパスを見る。head の commit は `github.event.pull_request.head.sha` |
+| 判定 | 差分に見張るパスのファイルが 1 つ以上あり、`CHANGELOG.md` が無いときに未記入の警告を 1 件出す。`[Unreleased]` の節の中に足したかまでは見ない |
+| 未記入の警告 | `::warning title=CHANGELOG 未記入::` の注記と `$GITHUB_STEP_SUMMARY` に、`CHANGELOG.md` の `[Unreleased]` の更新を求める文と、変えた見張るパスのファイルを出す。Pull Request へのコメントは書かない（fork からの Pull Request では書き込みの権限が無い） |
+| ジョブの結論 | 未記入の警告を出しても success。見張るパスの変更にも CHANGELOG が要らないもの（テストのための変更・利用者に見えないリファクタリング）があるため、要否はレビュアーが判断する |
+| 差分を得られないとき | 黙って通さず、`::error::` に理由を出してジョブを失敗にする。必須チェックではないためマージは止まらない |
+| 権限と実行 | `pull_request` のイベントで動かし、`pull_request_target` を使わない。ジョブの権限は `contents: read`。Docker もビルドも使わず、runner の `python3` で標準ライブラリだけの処理を打つ |
+
+`CHANGELOG check` は `main` の保護の必須チェックに加えない。警告であって止める検査ではないためである。
+
 ### 常に成り立つ条件
 
 | 条件 | 破れたとき何が止めるか |
 | --- | --- |
 | `pull_request` のトリガーは `branches` / `branches-ignore` を持たない | `tests/ci/test_ci_workflow.py` の `test_pull_request_does_not_filter_branches` |
 | `push` のトリガーの `branches` は `main`・`release/**`・`mission/**` の 3 つとちょうど一致し、`branches-ignore` を持たない | `tests/ci/test_ci_workflow.py` の `test_push_branches_are_main_and_integration_branches` |
-| 検査ジョブのチェックの名前（`name` を matrix の値で展開したもの）は上の 8 件とちょうど一致する | `tests/ci/test_ci_workflow.py` の `test_check_names_are_fixed`。変えたまま `main` へ入ると、必須チェックが「待ち」のまま残りマージできない |
+| 検査ジョブのチェックの名前（`name` を matrix の値で展開したもの）は上の 9 件（`CHANGELOG check` を含む）とちょうど一致する | `tests/ci/test_ci_workflow.py` の `test_check_names_are_fixed`。変えたまま `main` へ入ると、必須チェックが「待ち」のまま残りマージできない |
 | `pytest-all` の `name` は固定の文字列 `Pytest` で、`strategy` を持たない | `tests/ci/test_ci_workflow.py` の `test_aggregate_name_does_not_depend_on_matrix` |
 | `pytest-all` は `needs` に `pytest` を持ち、`if` が `always()` である | `tests/ci/test_ci_workflow.py` の `test_aggregate_waits_for_pytest` と `test_aggregate_always_runs` |
 | `pytest-all` の判定は `needs.pytest.result` を受け、`success` のときだけ 0 で終わる | `tests/ci/test_ci_workflow.py` の `test_aggregate_result_comes_from_pytest` と `test_aggregate_passes_only_on_success` |
@@ -223,18 +258,21 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 | 基準の版の既定の水準で、検査の対象の指摘が 0 件 | ShellCheck の検査ジョブが失敗する |
 | base のシェルスクリプトはすべて、`containers/base/` を検査する `shellcheck` の呼び出しの引数にある | `tests/containers/test_base_shellcheck_ci.py` が、載っていないファイル名を出して失敗する |
 | 検査の対象の shellcheck の指示は、同じ行か直前の行に理由を持つ | `tests/ci/test_shellcheck_job.py`（`bin/*`・`install.sh`）と `tests/containers/test_base_shellcheck_ci.py`（base のシェルスクリプト）が、ファイル名と行番号を出して失敗する |
+| `changelog` ジョブは `main` 宛ての `pull_request` でだけ走り、権限は `contents: read`、`changelog_check.py` を打つ | `tests/ci/test_changelog_check.py` |
+| 見張るパスは `WATCHED_PATHS` の 5 つだけで、`ci.yml` には書かない | `tests/ci/test_changelog_check.py` |
 | base の Dockerfile の版の確認は `SHELLCHECK_VERSION` と同じ版を求める | base のビルドが版の確認で止まる。2 つの食い違いは `tests/containers/test_base_dockerfile_shellcheck.py` の `test_version_check_matches_ci_pin` |
 
 ### ドメインイベント
 
 | # | イベント | 発生元 | 受け手 |
 | --- | --- | --- | --- |
-| E1 | Pull Request を開いた・push で更新した | 開発者・エージェント（GitHub が `pull_request` を発行する） | `pull_request` のトリガー → 8 件のチェック |
+| E1 | Pull Request を開いた・push で更新した | 開発者・エージェント（GitHub が `pull_request` を発行する） | `pull_request` のトリガー → 8 件のチェック（`main` 宛てでは `CHANGELOG check` を加えた 9 件） |
 | E2 | ブランチへ push が起きた（統合ブランチ・`main` への取り込みを含む） | 開発者・エージェントの push とマージ | `push` のトリガー。行き先が 3 系統のときだけ 8 件のチェック |
 | E3 | 検査ジョブが起動し、結果が出た | トリガー | Pull Request のチェック一覧と、`main` の保護設定の照合 |
 | E3a | pytest の全版が終わり、まとめたチェック `Pytest` の結論が出た | pytest のジョブ（成功・失敗・取り消しのどれでも） | Pull Request のチェック一覧と、`main` の保護設定の照合 |
 | E4 | `containers/base/` にシェルスクリプトを足した | 開発者 | Pytest ジョブの漏れの検査。`ci.yml` の一覧へ足すまで落ちる |
 | E5 | base イメージの shellcheck の版が上がった | Ubuntu のアーカイブの更新と base の再ビルド | 保守者。base のビルドが版の確認で止まるため、`ci.yml` の 2 つの値と Dockerfile の版の確認を一緒に上げる |
+| E6 | `main` 宛ての Pull Request の差分に見張るパスがあり `CHANGELOG.md` が無い | CHANGELOG の検査 | 作成者とレビュアー。作成者が `[Unreleased]` を書き足して push すると新しい実行では警告が出ない。レビュアーが利用者に見えない変更と判断すれば、そのままマージする |
 
 ## データ・設定
 
@@ -256,6 +294,7 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 | 検査の対象に指摘がある | その対象の `Run ShellCheck on ...` | shellcheck の指摘。ShellCheck のチェックが赤になる |
 | base のシェルスクリプトが `ci.yml` に無い | Pytest の `test_every_base_script_is_checked_by_ci` | `CI の ShellCheck の対象に無い containers/base のシェルスクリプト: <名前>, ... (.github/workflows/ci.yml の Run ShellCheck on containers/base/ へ足す)` |
 | 抑止の指示に理由が無い | Pytest の `test_directive_has_reason` / `test_directives_have_reason` | `<パス>:<行>: 抑える理由が無い: <行>` / `抑える理由が無い指示: containers/base/<名前>:<行>` |
+| CHANGELOG の検査で宛先ブランチや差分を得られない | `Check CHANGELOG.md is updated`（非 0） | `::error::CHANGELOG の検査: 宛先ブランチ <名前> を取れない: <git の出力>` / `... の差分を取れない: <git の出力>` |
 | `containers/base/` を検査する呼び出しが水準を指定した | Pytest の `test_base_commands_do_not_set_severity` | `水準を絞っている: <呼び出し>` |
 
 検査ジョブどうしは互いを待たない。待つのはまとめたチェックのジョブ（`pytest-all`）だけで、pytest の全版を
@@ -275,7 +314,7 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
   `ShellCheck`・`Pytest`。提供元は GitHub Actions に固定し、`strict` は `true`。pytest は版ごとの
   `Pytest (Python 3.10)` などではなく、まとめたチェック `Pytest` で照合する
 - **pytest の matrix の版を足し引きしても、保護設定は直さなくてよい。** `Pytest` の名前は版に依存しない。
-  `tests/ci/test_ci_workflow.py` の期待値（チェックの名前の 8 件）は一緒に直す
+  `tests/ci/test_ci_workflow.py` の期待値（チェックの名前の 9 件）は一緒に直す
 - **ほかの検査ジョブの `name` と matrix の値は変えない。** 必須チェックが名前で照合するため、変えると
   必須チェックが「待ち」のまま残る。変えるときは保護設定を同時に直す
 - `pull_request` のトリガーは merge commit の `ci.yml` で判定されるため、トリガーを変えた Pull Request は
@@ -295,6 +334,18 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 - 導入より後の手順に `grep -Fx "version: ${SHELLCHECK_VERSION#v}"` があること
 - shellcheck を打つ手順が 4 つ以上あって `shellcheck bin/*` と `shellcheck install.sh` を含み、すべて導入より
   後にあり、`shellcheck --version` から始まること
+
+`tests/ci/test_changelog_check.py`（`changelog_check.py` を読み込み、GitHub へ繋がない）:
+
+- `WATCHED_PATHS` がちょうど 5 つで、それぞれの下のファイルを変えて `CHANGELOG.md` を変えていないと、そのファイルを示すこと
+- 見張るパスと他のパスを混ぜたとき見張るパスのファイルだけを示し、警告の文が `CHANGELOG.md` と `[Unreleased]` を含むこと
+- `CHANGELOG.md` も変えていれば、また見張るパスが無ければ（`docs/`・`tests/`・`.github/`）警告しないこと。
+  `libs/`・`install.sh.bak` のような似た名前を見張らないこと
+- `main()` が、警告のときに `::warning` を 1 件だけ出して 0 を返し要約へ書くこと、宛先ブランチや差分を
+  得られないときと `BASE_REF` が無いときに `::error::` を出して 1 を返すこと（git は差し替える）
+- `ci.yml` のトリガーが変わらず `pull_request_target` が無いこと、既存の 4 つのジョブの `name` が残ること
+- `changelog` ジョブの `if` が `pull_request` と `main` 宛てで絞り、権限が `contents: read` だけで、
+  `fetch-depth: 0` の checkout の後に `BASE_REF` と `HEAD_SHA` を渡してスクリプトを打ち、docker を使わないこと
 
 `tests/containers/test_base_shellcheck_ci.py`（Docker を要さない）:
 
@@ -332,7 +383,7 @@ base のシェルスクリプトの振る舞いは、`entrypoint.sh` を `DEVBAS
 
 - `on.pull_request` が値を持たないか、`branches` と `branches-ignore` のどちらも持たないこと
 - `on.push.branches` が `main`・`release/**`・`mission/**` とちょうど一致し、`branches-ignore` を持たないこと
-- 各ジョブの `name` を matrix の値で展開した名前（式を含まない `name` には値を括弧で付け足す）が、上の 8 件と
+- 各ジョブの `name` を matrix の値で展開した名前（式を含まない `name` には値を括弧で付け足す）が、上の 9 件と
   ちょうど一致すること
 - `pytest-all` の `name` が `Pytest` で、`${{` を含まず、`strategy` を持たないこと
 - `pytest-all` の `needs` が `pytest` を含み、`if` が `always()` であること
@@ -347,6 +398,7 @@ pytest で確かめないもの:
   pass になり「待ち」が残らないこと
 - 指摘 0 件そのもの。ShellCheck の検査ジョブが確かめる。手元では base の shellcheck で同じ検査を打てる
 - ShellCheck の検査ジョブのログに手順ごとに `version: 0.11.0` が出ること。ジョブのログで見る
+- CHANGELOG の検査が実際の Pull Request で走り success で終わること。その Pull Request の `gh pr checks` で見る
 
 ## 関連リンク
 
@@ -359,4 +411,6 @@ pytest で確かめないもの:
   [#247](https://github.com/devbasex/devbase/issues/247)（基準の版と既定の水準）・
   [#259](https://github.com/devbasex/devbase/issues/259)（`containers/base/` の検査の対象）・
   [#277](https://github.com/devbasex/devbase/issues/277)（まとめたチェック `Pytest` と必須チェック）・
-  [#291](https://github.com/devbasex/devbase/issues/291)（トリガーと名前を固定する回帰テスト）
+  [#291](https://github.com/devbasex/devbase/issues/291)（トリガーと名前を固定する回帰テスト）・
+  [#335](https://github.com/devbasex/devbase/issues/335)（CHANGELOG の検査）
+- [開発者ガイド: CHANGELOG の更新](../developer/contributing.md#changelog-の更新)

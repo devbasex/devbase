@@ -107,3 +107,23 @@ jobs:
         run: |
           echo "pytest の matrix の結果: ${RESULT}"
           test "${RESULT}" = success
+
+  # CHANGELOG の検査 (#335)。main 宛ての Pull Request だけで走り、見張るパスを変えて CHANGELOG.md を
+  # 変えていなければ未記入の警告を出す。警告ではジョブを失敗にしない。見張るパスは
+  # .github/scripts/changelog_check.py の WATCHED_PATHS にだけ置く
+  changelog:
+    name: CHANGELOG check
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check CHANGELOG.md is updated
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/changelog_check.py
