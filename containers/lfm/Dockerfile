@@ -11,7 +11,7 @@
 # ==================================
 # Stage: CUDA ベース + 追加パッケージ
 # ==================================
-FROM nvidia/cuda:13.3.1-cudnn-devel-ubuntu26.04 AS cudabase
+FROM nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04 AS cudabase
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -86,7 +86,7 @@ FROM cudabase
 # devbase-base (ubuntu:26.04 / glibc 2.43) より古い OS の上に置くと
 # "GLIBC_2.4x not found" で即座に壊れる。そのため cudabase には
 # nvidia/cuda の ubuntu26.04 タグを使用する。
-# なお nvidia/cuda の ubuntu26.04 タグは CUDA 13.3.1 系のみが提供されているため、
+# なお nvidia/cuda の ubuntu26.04 タグは CUDA 13.3.1 以降だけが提供されているため、
 # containers/base の Ubuntu を上げる際は CUDA のバージョンも追随させる必要がある。
 COPY --from=devbase-base:latest /usr/local /usr/local
 COPY --from=devbase-base:latest /usr/bin/gh /usr/bin/node /usr/bin/
