@@ -21,7 +21,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pyrage
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -99,14 +98,3 @@ def stdout_field(result: subprocess.CompletedProcess, prefix: str) -> str | None
         if line.startswith(prefix):
             return line[len(prefix):]
     return None
-
-
-@pytest.fixture
-def age_keys(tmp_path):
-    """テスト専用の X25519 鍵を作り、公開鍵 age.pub と秘密鍵 age.key の組を返す。"""
-    identity = pyrage.x25519.Identity.generate()
-    pub_file = tmp_path / "age.pub"
-    pub_file.write_text(str(identity.to_public()) + "\n")
-    id_file = tmp_path / "age.key"
-    id_file.write_text(str(identity))
-    return pub_file, id_file
