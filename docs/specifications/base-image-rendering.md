@@ -25,7 +25,7 @@ fontconfig は Chromium / Playwright のスクリーンショット、PDF の生
 - base から派生するイメージ（`general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
   `trygroup`）への伝播の規則
 - `containers/lfm` は base を `FROM` で継がないが、`/etc/fonts/local.conf` を base から取り込むため
-  対象に含む（「運用」）
+  対象に含む（「運用」と [lfm が base の設定を取り込む経路](lfm-base-settings.md)）
 - `ENV LANG` は設定しない。LibreOffice と `pip` は同梱しない
 
 ## 用語
@@ -252,7 +252,8 @@ metric 互換の 2 つは、`30-metric-aliases.conf` が既に持っている対
   `COPY --from=devbase-base:latest` で取り込む。書体（`fonts-noto-cjk`）は lfm が自前で入れ、
   Playwright の `--with-deps` の後に `fc-cache -f` を 1 度走らせる（`containers/lfm/Dockerfile`）。
   base の設定を変えたときは base を建て直した後に lfm も建て直す。取り込みが保たれていることは
-  `tests/containers/test_lfm_base_settings.py` が固定する
+  `tests/containers/test_lfm_base_settings.py` が固定する。lfm での解決先は [lfm が base の設定を取り込む経路](lfm-base-settings.md) の
+  「lfm のフォントの解決先」にある
 - 確かめてあるのは `fc-match` の水準までで、LibreOffice と Chromium での実際の描画は未検証
   である。どちらも base に無く、LibreOffice は fontconfig とは別の照合も持つ
 - 解決先の表は arm64 で採ったものである。amd64 では `google-chrome-stable` が追加で入るため
@@ -298,6 +299,7 @@ CI はイメージを建てるジョブを持たないため、このテスト�
 
 ## 関連リンク
 
+- [lfm が base の設定を取り込む経路](lfm-base-settings.md)
 - [コンテナ操作ガイド: 文字の描画と、文書を扱う道具](../user/container-operations.md#文字の描画と文書を扱う道具base-以降)
 - [AI CLI alias の読み込み](ai-cli-alias-loading.md)
 - [Kiro CLI 認証永続化と tmux コピー操作](kiro-auth-persistence-and-tmux-copy.md)
