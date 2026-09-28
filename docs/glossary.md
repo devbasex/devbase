@@ -122,7 +122,7 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest） | — | — | `docs/specifications/ci-checks.md` |
+| 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest・CHANGELOG check） | — | — | `docs/specifications/ci-checks.md` |
 | 統合ブランチ | — | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — | `docs/specifications/ci-checks.md` |
 | トリガー | — | ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches） | — | — | `docs/specifications/ci-checks.md` |
 | 積み重ねた Pull Request | — | 宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request | — | — | `docs/specifications/ci-checks.md` |
