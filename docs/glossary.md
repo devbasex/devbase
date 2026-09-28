@@ -122,7 +122,7 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all） | — | — | `docs/specifications/ci-checks.md` |
+| 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all・CHANGELOG check） | — | — | `docs/specifications/ci-checks.md` |
 | 統合ブランチ | — | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — | `docs/specifications/ci-checks.md` |
 | 必須チェック | — | main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない | — | — | — |
 | まとめたチェック | — | pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する | — | — | — |
@@ -135,6 +135,10 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | base のシェルスクリプト | — | containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの | — | — | `docs/specifications/ci-checks.md` |
 | 検査の対象 | — | CI の ShellCheck ジョブで、引数に containers/base/ のパスを持つ shellcheck の行が並べたファイル | — | — | `docs/specifications/ci-checks.md` |
 | shellcheck の指示 | — | # shellcheck で始まるコメント（disable= / source= / shell=）。disable= と source= は抑止の注記の指示の側で、shell= は指摘を抑えない | — | — | `docs/specifications/ci-checks.md` |
+| 利用者に見える変更 | — | devbase を使う人がコマンド・イメージ・設定を通じて気づく振る舞いの変化。テストだけ・開発者向けの文書だけの変更は含まない | — | — | — |
+| 見張るパス | — | CHANGELOG の検査が利用者に見える変更の手がかりとして見る場所（lib/・bin/・containers/・install.sh・etc/） | — | — | — |
+| CHANGELOG の検査 | — | main 宛ての Pull Request で、見張るパスを変えて CHANGELOG.md を変えていないときに未記入の警告を出す検査ジョブ | — | — | — |
+| 未記入の警告 | — | CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない | — | — | — |
 
 ## テストの実行環境（`test`）
 

@@ -349,7 +349,7 @@
     {
       "term": "検査ジョブ",
       "context": "ci",
-      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all）",
+      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all・CHANGELOG check）",
       "source": "docs/specifications/ci-checks.md"
     },
     {
@@ -585,6 +585,34 @@
       "context": "image-lineage",
       "meaning": "到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧",
       "source": "docs/specifications/lfm-base-settings.md"
+    },
+    {
+      "term": "利用者に見える変更",
+      "context": "ci",
+      "meaning": "devbase を使う人がコマンド・イメージ・設定を通じて気づく振る舞いの変化。テストだけ・開発者向けの文書だけの変更は含まない",
+      "source": "",
+      "pending_source": "issues/issue-335-requirements.md"
+    },
+    {
+      "term": "見張るパス",
+      "context": "ci",
+      "meaning": "CHANGELOG の検査が利用者に見える変更の手がかりとして見る場所（lib/・bin/・containers/・install.sh・etc/）",
+      "source": "",
+      "pending_source": "issues/issue-335-requirements.md"
+    },
+    {
+      "term": "CHANGELOG の検査",
+      "context": "ci",
+      "meaning": "main 宛ての Pull Request で、見張るパスを変えて CHANGELOG.md を変えていないときに未記入の警告を出す検査ジョブ",
+      "source": "",
+      "pending_source": "issues/issue-335-requirements.md"
+    },
+    {
+      "term": "未記入の警告",
+      "context": "ci",
+      "meaning": "CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない",
+      "source": "",
+      "pending_source": "issues/issue-335-requirements.md"
     }
   ]
 }
