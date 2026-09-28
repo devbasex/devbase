@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
-from pathlib import Path
 
 import pytest
-import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+from tests.ci._workflow import CI_YML, REPO_ROOT, load_workflow
+
 SCRIPT = REPO_ROOT / ".github" / "scripts" / "changelog_check.py"
 
 
@@ -132,7 +130,7 @@ def test_main_fails_without_base_ref(monkeypatch, capsys, env):
 
 @pytest.fixture(scope="module")
 def workflow() -> dict:
-    return yaml.safe_load(CI_YML.read_text())
+    return load_workflow()
 
 
 @pytest.fixture(scope="module")

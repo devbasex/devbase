@@ -10,10 +10,9 @@ import re
 from pathlib import Path
 
 import pytest
-import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+from tests.ci._workflow import REPO_ROOT, load_workflow
+
 BASE_VERSION = "v0.11.0"
 
 _DIRECTIVE = re.compile(r"^\s*#\s*shellcheck\s")
@@ -62,7 +61,7 @@ def test_directive_has_reason(path, lineno, line, prev):
 
 @pytest.fixture(scope="module")
 def job() -> dict:
-    return yaml.safe_load(CI_YML.read_text())["jobs"]["shellcheck"]
+    return load_workflow()["jobs"]["shellcheck"]
 
 
 def _run(step: dict) -> str:
