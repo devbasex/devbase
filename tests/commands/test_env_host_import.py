@@ -677,6 +677,26 @@ def test_an_unregistered_value_is_not_whole_when_credentials_have_more(grouped, 
     assert source['profiles'] == ['dev']
 
 
+def test_an_unregistered_value_is_not_whole_when_the_host_has_fewer(grouped, openbao, host,
+                                                                   caplog):
+    """決定 10: 値にあって今のファイルに無いプロファイルがあれば、丸ごとにせず書かない"""
+    from devbase.env import aws_profiles
+
+    config = '[profile dev]\nregion = us-east-1\n'
+    both = config + '[profile prod]\nregion = us-east-1\n'
+    value = aws_profiles.build(both, None, ['dev', 'prod']).encode()
+    openbao.put(KKG, {keys.AWS_CONFIG_BASE64: value})
+    (host / '.aws' / 'config').write_text(config)
+    (host / '.aws' / 'credentials').unlink(missing_ok=True)
+    caplog.set_level(logging.INFO)
+
+    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+
+    assert openbao.get(KKG)[keys.AWS_CONFIG_BASE64] == value
+    assert SourcesManager(grouped, 'kkg').get_source('aws') is None
+    assert 'AWS認証: 選んだプロファイル prod が ~/.aws/config にありません' in infos(caplog)
+
+
 def test_a_skipped_unregistered_aws_value_is_not_registered(grouped, openbao, host, caplog):
     """決定 10: 値を読めず書かなかった AWS は、ほかの更新があっても控えに登録しない"""
     openbao.put(KKG, {keys.AWS_CONFIG_BASE64: 'not-a-tar'})

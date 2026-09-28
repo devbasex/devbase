@@ -817,7 +817,8 @@ def _aws_sync_plan(sources, targets, store):
     - 控えの項目が ``aws_profiles`` なら、控えの ``profiles`` とその連なりだけを切り出す (I7)
     - 控えの項目が ``tar_base64`` (選択を持たない既存の項目を含む) なら丸ごと (I8)
     - 控えに項目が無く参照にキーがあれば、値に入っているプロファイルを選択とみなす。今のファイルの
-      プロファイルがすべて値に入っていれば丸ごと。値が読めなければ書かない (決定 10)
+      プロファイルの集合が値のプロファイルの集合と一致すれば丸ごと。値が読めない、または値にあって
+      今のファイルに無いプロファイルがあれば書かない (決定 10)
     """
     from devbase.env import aws_profiles
     from devbase.env.collectors.aws import _encode_aws_config_files
@@ -847,10 +848,12 @@ def _aws_sync_plan(sources, targets, store):
                     label, store.display_label(holder.ref))
         return None
     config_text, credentials_text = aws_profiles.read_home()
-    # 丸ごとの判定は credentials にだけあるプロファイルも含める (値の側の名前と同じ数え方)
+    # 丸ごとの判定は credentials にだけあるプロファイルも含める (値の側の名前と同じ数え方)。
+    # 値にあって今のファイルに無いプロファイルがあるときに丸ごとにすると、共通の値から消えるため
+    # 集合が一致するときだけ丸ごとにする (それ以外は build の unknown で書かずに止まる)
     current = (set(aws_profiles.profile_names(config_text))
                | set(aws_profiles.credential_names(credentials_text)))
-    if current <= set(in_value):
+    if current == set(in_value):
         return _encode_aws_config_files, ALL
     payload = aws_profiles.build(config_text, credentials_text, in_value)
     if payload.unknown:
