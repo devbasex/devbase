@@ -476,87 +476,79 @@
       "term": "取り込み",
       "context": "secret",
       "meaning": "ホストの資格情報ファイルから読んだ値を、対象のグループの参照へ書くこと。利用者がキーボードで入れた値を書くことは含まない",
-      "source": "",
-      "pending_source": "issues/issue-314-requirements.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "取り込みの候補",
       "context": "secret",
       "meaning": "collector がホストで見つけた、取り込める値のまとまり。GCP は鍵ファイル 1 つ、AWS はプロファイル 1 つ、Git はホストの Git の設定の全体が 1 件",
-      "source": "",
-      "pending_source": "issues/issue-314-requirements.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "取り込みの方針",
       "context": "secret",
       "meaning": "対象のグループについて、取り込みの候補を「尋ねる」「取り込まない」「取り込む」のどれで扱うか。呼び出し側が決めて collector へ渡す",
-      "source": "",
-      "pending_source": "issues/issue-314-requirements.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "取り込みを許すグループの設定",
       "context": "secret",
       "meaning": "取り込みの方針をグループごとに名指しする端末の設定。$DEVBASE_ROOT/secrets/host-import.yml に置く。名指しの無いグループは「尋ねる」",
-      "source": "",
-      "pending_source": "issues/issue-314-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "AWS のプロファイル",
       "context": "secret",
       "meaning": "~/.aws/config の [default] または [profile <名前>] の節。compose のプロファイルとは別のもの",
-      "source": "",
-      "pending_source": "issues/issue-314-requirements.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "取り込みの選択",
       "context": "secret",
       "meaning": "取り込みの候補のうち、利用者が選んだもの。AWS は選んだプロファイルの名前の並び、GCP は参照に書いたプロファイル。同期済みハッシュの控えに残り、sync はこの範囲だけを入れ直す",
-      "source": "",
-      "pending_source": "issues/issue-314-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "AWS の丸ごとの取り込み",
       "context": "secret",
       "meaning": "~/.aws/config と ~/.aws/credentials を切り出さずにそのまま 1 つの tar にして AWS_CONFIG_BASE64 へ書くこと。#314 より前の振る舞い",
-      "source": "",
-      "pending_source": "issues/issue-314-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "AWS のプロファイルの連なり",
       "context": "secret",
       "meaning": "選んだ AWS のプロファイルが動くのに要る節。sso_session が指す [sso-session <名前>] と、source_profile が指すプロファイル（たどれる限り）",
-      "source": "",
-      "pending_source": "issues/issue-314-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "base の設定",
       "context": "image-lineage",
       "meaning": "base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定",
-      "pending_source": "issues/issue-275-requirements.md"
+      "source": "docs/specifications/lfm-base-settings.md"
     },
     {
       "term": "届く経路",
       "context": "image-lineage",
       "meaning": "base の設定が lfm のイメージへ入る道筋。lfm の Dockerfile の取り込みと、取り込めない ENV を同じ値で宣言すること",
-      "pending_source": "issues/issue-275-design.md"
+      "source": "docs/specifications/lfm-base-settings.md"
     },
     {
       "term": "取り込み",
       "context": "image-lineage",
       "meaning": "lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと",
-      "pending_source": "issues/issue-275-design.md"
+      "source": "docs/specifications/lfm-base-settings.md"
     },
     {
       "term": "到達の検査",
       "context": "image-lineage",
       "meaning": "base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py）",
-      "pending_source": "issues/issue-275-design.md"
+      "source": "docs/specifications/lfm-base-settings.md"
     },
     {
       "term": "除外表",
       "context": "image-lineage",
       "meaning": "到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧",
-      "pending_source": "issues/issue-275-design.md"
+      "source": "docs/specifications/lfm-base-settings.md"
     }
   ]
 }

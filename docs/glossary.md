@@ -75,14 +75,14 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | キーの行 | — | TUI の env の一覧の 1 行。キーと、そのキーがある参照（グループ・持ち主・適用範囲）の組。値の平文を持たない | — | — | `docs/specifications/secret-backend.md` |
 | 同期の書き込み先 | — | env sync がキーごとに選ぶ参照。--user なら個人共通、無ければキーが現にある参照（両方なら個人共通、どちらにも無ければ個人共通。個人単位の参照を持たない backend では常にチーム共通） | — | — | `docs/specifications/secret-backend.md` |
 | 同期済みハッシュの控え | — | env sync がソースファイルの位置とハッシュを記録する .env.sources[.<g>].yml。キャッシュ（機密の控え）とは別のもの | — | — | `docs/specifications/secret-backend.md` |
-| 取り込み | — | ホストの資格情報ファイルから読んだ値を、対象のグループの参照へ書くこと。利用者がキーボードで入れた値を書くことは含まない | — | — | — |
-| 取り込みの候補 | — | collector がホストで見つけた、取り込める値のまとまり。GCP は鍵ファイル 1 つ、AWS はプロファイル 1 つ、Git はホストの Git の設定の全体が 1 件 | — | — | — |
-| 取り込みの方針 | — | 対象のグループについて、取り込みの候補を「尋ねる」「取り込まない」「取り込む」のどれで扱うか。呼び出し側が決めて collector へ渡す | — | — | — |
-| 取り込みを許すグループの設定 | — | 取り込みの方針をグループごとに名指しする端末の設定。$DEVBASE_ROOT/secrets/host-import.yml に置く。名指しの無いグループは「尋ねる」 | — | — | — |
-| AWS のプロファイル | — | ~/.aws/config の [default] または [profile <名前>] の節。compose のプロファイルとは別のもの | — | — | — |
-| 取り込みの選択 | — | 取り込みの候補のうち、利用者が選んだもの。AWS は選んだプロファイルの名前の並び、GCP は参照に書いたプロファイル。同期済みハッシュの控えに残り、sync はこの範囲だけを入れ直す | — | — | — |
-| AWS の丸ごとの取り込み | — | ~/.aws/config と ~/.aws/credentials を切り出さずにそのまま 1 つの tar にして AWS_CONFIG_BASE64 へ書くこと。#314 より前の振る舞い | — | — | — |
-| AWS のプロファイルの連なり | — | 選んだ AWS のプロファイルが動くのに要る節。sso_session が指す [sso-session <名前>] と、source_profile が指すプロファイル（たどれる限り） | — | — | — |
+| 取り込み | — | ホストの資格情報ファイルから読んだ値を、対象のグループの参照へ書くこと。利用者がキーボードで入れた値を書くことは含まない | — | — | `docs/specifications/secret-backend.md` |
+| 取り込みの候補 | — | collector がホストで見つけた、取り込める値のまとまり。GCP は鍵ファイル 1 つ、AWS はプロファイル 1 つ、Git はホストの Git の設定の全体が 1 件 | — | — | `docs/specifications/secret-backend.md` |
+| 取り込みの方針 | — | 対象のグループについて、取り込みの候補を「尋ねる」「取り込まない」「取り込む」のどれで扱うか。呼び出し側が決めて collector へ渡す | — | — | `docs/specifications/secret-backend.md` |
+| 取り込みを許すグループの設定 | — | 取り込みの方針をグループごとに名指しする端末の設定。$DEVBASE_ROOT/secrets/host-import.yml に置く。名指しの無いグループは「尋ねる」 | — | — | `docs/specifications/secret-backend.md` |
+| AWS のプロファイル | — | ~/.aws/config の [default] または [profile <名前>] の節。compose のプロファイルとは別のもの | — | — | `docs/specifications/secret-backend.md` |
+| 取り込みの選択 | — | 取り込みの候補のうち、利用者が選んだもの。AWS は選んだプロファイルの名前の並び、GCP は参照に書いたプロファイル。同期済みハッシュの控えに残り、sync はこの範囲だけを入れ直す | — | — | `docs/specifications/secret-backend.md` |
+| AWS の丸ごとの取り込み | — | ~/.aws/config と ~/.aws/credentials を切り出さずにそのまま 1 つの tar にして AWS_CONFIG_BASE64 へ書くこと。#314 より前の振る舞い | — | — | `docs/specifications/secret-backend.md` |
+| AWS のプロファイルの連なり | — | 選んだ AWS のプロファイルが動くのに要る節。sso_session が指す [sso-session <名前>] と、source_profile が指すプロファイル（たどれる限り） | — | — | `docs/specifications/secret-backend.md` |
 
 ## スナップショット（`snapshot`）
 
@@ -155,8 +155,8 @@ base の設定が派生イメージと lfm へ届く道筋（containers/*/Docker
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| base の設定 | — | base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定 | — | — | — |
-| 届く経路 | — | base の設定が lfm のイメージへ入る道筋。lfm の Dockerfile の取り込みと、取り込めない ENV を同じ値で宣言すること | — | — | — |
-| 取り込み | — | lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと | — | — | — |
-| 到達の検査 | — | base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py） | — | — | — |
-| 除外表 | — | 到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧 | — | — | — |
+| base の設定 | — | base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定 | — | — | `docs/specifications/lfm-base-settings.md` |
+| 届く経路 | — | base の設定が lfm のイメージへ入る道筋。lfm の Dockerfile の取り込みと、取り込めない ENV を同じ値で宣言すること | — | — | `docs/specifications/lfm-base-settings.md` |
+| 取り込み | — | lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと | — | — | `docs/specifications/lfm-base-settings.md` |
+| 到達の検査 | — | base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py） | — | — | `docs/specifications/lfm-base-settings.md` |
+| 除外表 | — | 到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧 | — | — | `docs/specifications/lfm-base-settings.md` |
