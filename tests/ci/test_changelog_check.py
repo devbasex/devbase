@@ -135,6 +135,22 @@ def workflow() -> dict:
     return yaml.safe_load(CI_YML.read_text())
 
 
+def test_triggers_unchanged(workflow):
+    on = workflow[True]  # YAML 1.1 では `on` が真偽値として読まれる
+    assert set(on) == {"push", "pull_request"}
+    assert on["push"] == {"branches": ["main", "release/**", "mission/**"]}
+    assert on["pull_request"] is None
+    assert "pull_request_target" not in CI_YML.read_text()
+
+
+def test_existing_jobs_still_present(workflow):
+    names = {k: v["name"] for k, v in workflow["jobs"].items()}
+    assert names["python-syntax"] == "Python syntax check"
+    assert names["lint"] == "Ruff lint"
+    assert names["shellcheck"] == "ShellCheck"
+    assert names["pytest"] == "Pytest (Python ${{ matrix.python-version }})"
+
+
 @pytest.fixture(scope="module")
 def job(workflow) -> dict:
     return workflow["jobs"]["changelog"]
