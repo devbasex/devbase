@@ -37,7 +37,7 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 ## 用語
 
 この仕様が使う語の定義は [用語集: 継続的インテグレーション（`ci`）](../glossary.md#継続的インテグレーションci)
-にある。使う語: 検査ジョブ・トリガー・統合ブランチ・積み重ねた Pull Request・ShellCheck の検査ジョブ・
+にある。使う語: 検査ジョブ・まとめたチェック・必須チェック・トリガー・統合ブランチ・積み重ねた Pull Request・ShellCheck の検査ジョブ・
 基準の版・指摘・抑止の注記・shellcheck の指示・base のシェルスクリプト・検査の対象。ラッパー（`bin/devbase`）は
 [コマンドの入口（`cli`）](../glossary.md#コマンドの入口cli) の語である。
 
@@ -53,7 +53,8 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 含まないもの:
 
 - `.github/workflows/pages.yml`（install.sh の配信。[installer-hosting](../developer/installer-hosting.md)）
-- `main` の保護設定（必須チェックの一覧）そのもの。GitHub の設定で、`ci.yml` からは変えない
+- `main` の保護設定そのもの。GitHub の設定で、`ci.yml` からは変えない。必須チェックの一覧は、名前を
+  `ci.yml` と揃える取り決めとして「運用」に書く
 - `containers/base/` 以外の `containers/*` のスクリプト。ShellCheck の対象に入っていない
 - ShellCheck 以外の静的解析の規則の中身（Ruff の `--select` など）
 - base イメージへの shellcheck の導入（[base-image-shellcheck.md](base-image-shellcheck.md)）
@@ -80,9 +81,20 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 | `lint` | `Ruff lint` | `astral-sh/ruff-action@v3`、`check --select=E9,F63,F7,F82 lib` |
 | `shellcheck` | `ShellCheck` | 下の「ShellCheck の検査ジョブ」 |
 | `pytest` | `Pytest (Python ${{ matrix.python-version }})`（3.10 / 3.13） | `uv sync --locked` の後に `uv run --locked pytest tests/ -q`。`timeout-minutes: 15`、`fail-fast: false` |
+| `pytest-all` | `Pytest`（固定の文字列。matrix を持たない） | pytest の全版をまとめたチェック。`needs: pytest` と `if: always()` で全版を待ち、`needs.pytest.result` を `env` の `RESULT` で受けて `test "${RESULT}" = success` で判定する。`timeout-minutes: 5` |
 
-1 回の起動で走るチェックは 7 件になる: `Python syntax check (3.10)` / `(3.11)` / `(3.12)`・`Ruff lint`・
-`ShellCheck`・`Pytest (Python 3.10)`・`Pytest (Python 3.13)`。
+1 回の起動で走るチェックは 8 件になる: `Python syntax check (3.10)` / `(3.11)` / `(3.12)`・`Ruff lint`・
+`ShellCheck`・`Pytest (Python 3.10)`・`Pytest (Python 3.13)`・`Pytest`。
+
+まとめたチェック `Pytest` の結論は次のとおり。`skipped` は必須チェックで合格と扱われるため、pytest が
+成功以外のときも走って `failure` を返す。
+
+| pytest の全版 | `needs.pytest.result` | `Pytest` の結論 |
+| --- | --- | --- |
+| すべて成功 | `success` | `success` |
+| 1 版でも失敗・時間切れ | `failure` | `failure` |
+| 取り消された（ワークフローの取り消しを含む） | `cancelled` | `failure` |
+| 走らなかった | `skipped` | `failure` |
 
 ### トリガー
 
@@ -197,9 +209,12 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 
 | 条件 | 破れたとき何が止めるか |
 | --- | --- |
-| `pull_request` のトリガーは `branches` / `branches-ignore` を持たない | 止める pytest は無い。`main` 宛ての Pull Request では検査が走り続けるため、CI の結果からも分からない。`ci.yml` の変更のレビューで見る |
-| `push` のトリガーの `branches` は `main`・`release/**`・`mission/**` の 3 つとちょうど一致する | 同上 |
-| 検査ジョブのチェックの名前は上の 7 件のまま変わらない | 止める pytest は無い。変えると `main` 宛ての Pull Request で必須チェックが「待ち」のまま残り、マージできない |
+| `pull_request` のトリガーは `branches` / `branches-ignore` を持たない | `tests/ci/test_ci_workflow.py` の `test_pull_request_does_not_filter_branches` |
+| `push` のトリガーの `branches` は `main`・`release/**`・`mission/**` の 3 つとちょうど一致し、`branches-ignore` を持たない | `tests/ci/test_ci_workflow.py` の `test_push_branches_are_main_and_integration_branches` |
+| 検査ジョブのチェックの名前（`name` を matrix の値で展開したもの）は上の 8 件とちょうど一致する | `tests/ci/test_ci_workflow.py` の `test_check_names_are_fixed`。変えたまま `main` へ入ると、必須チェックが「待ち」のまま残りマージできない |
+| `pytest-all` の `name` は固定の文字列 `Pytest` で、`strategy` を持たない | `tests/ci/test_ci_workflow.py` の `test_aggregate_name_does_not_depend_on_matrix` |
+| `pytest-all` は `needs` に `pytest` を持ち、`if` が `always()` である | `tests/ci/test_ci_workflow.py` の `test_aggregate_waits_for_pytest` と `test_aggregate_always_runs` |
+| `pytest-all` の判定は `needs.pytest.result` を受け、`success` のときだけ 0 で終わる | `tests/ci/test_ci_workflow.py` の `test_aggregate_result_comes_from_pytest` と `test_aggregate_passes_only_on_success` |
 | `shellcheck` ジョブの `SHELLCHECK_VERSION` は `v0.11.0`、`SHELLCHECK_SHA256` は 64 桁の 16 進 | `tests/ci/test_shellcheck_job.py` |
 | 導入の手順は 1 つで、`sha256sum -c` を展開（`tar`）より前に打ち、`GITHUB_PATH` へ書く | 照合が合わなければ導入の手順でジョブが失敗する。形が崩れれば `tests/ci/test_shellcheck_job.py` |
 | 導入の後の手順に `grep -Fx "version: ${SHELLCHECK_VERSION#v}"` の版の確認がある | 版が違えば `Check ShellCheck version` でジョブが失敗する。確認が消えれば `tests/ci/test_shellcheck_job.py` |
@@ -214,9 +229,10 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 
 | # | イベント | 発生元 | 受け手 |
 | --- | --- | --- | --- |
-| E1 | Pull Request を開いた・push で更新した | 開発者・エージェント（GitHub が `pull_request` を発行する） | `pull_request` のトリガー → 7 件の検査ジョブ |
-| E2 | ブランチへ push が起きた（統合ブランチ・`main` への取り込みを含む） | 開発者・エージェントの push とマージ | `push` のトリガー。行き先が 3 系統のときだけ 7 件の検査ジョブ |
+| E1 | Pull Request を開いた・push で更新した | 開発者・エージェント（GitHub が `pull_request` を発行する） | `pull_request` のトリガー → 8 件のチェック |
+| E2 | ブランチへ push が起きた（統合ブランチ・`main` への取り込みを含む） | 開発者・エージェントの push とマージ | `push` のトリガー。行き先が 3 系統のときだけ 8 件のチェック |
 | E3 | 検査ジョブが起動し、結果が出た | トリガー | Pull Request のチェック一覧と、`main` の保護設定の照合 |
+| E3a | pytest の全版が終わり、まとめたチェック `Pytest` の結論が出た | pytest のジョブ（成功・失敗・取り消しのどれでも） | Pull Request のチェック一覧と、`main` の保護設定の照合 |
 | E4 | `containers/base/` にシェルスクリプトを足した | 開発者 | Pytest ジョブの漏れの検査。`ci.yml` の一覧へ足すまで落ちる |
 | E5 | base イメージの shellcheck の版が上がった | Ubuntu のアーカイブの更新と base の再ビルド | 保守者。base のビルドが版の確認で止まるため、`ci.yml` の 2 つの値と Dockerfile の版の確認を一緒に上げる |
 
@@ -242,7 +258,9 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 | 抑止の指示に理由が無い | Pytest の `test_directive_has_reason` / `test_directives_have_reason` | `<パス>:<行>: 抑える理由が無い: <行>` / `抑える理由が無い指示: containers/base/<名前>:<行>` |
 | `containers/base/` を検査する呼び出しが水準を指定した | Pytest の `test_base_commands_do_not_set_severity` | `水準を絞っている: <呼び出し>` |
 
-検査ジョブどうしは互いを待たない。漏れは Pytest のジョブが、指摘は ShellCheck のジョブが見つける。
+検査ジョブどうしは互いを待たない。待つのはまとめたチェックのジョブ（`pytest-all`）だけで、pytest の全版を
+待つ。漏れは Pytest のジョブが、指摘は ShellCheck のジョブが見つける。pytest が 1 版でも成功以外なら、
+まとめたチェック `Pytest` が `failure` になる。
 
 ## 運用
 
@@ -253,9 +271,13 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 - **`containers/base/` の直下にシェルスクリプトを足したら**、`Run ShellCheck on containers/base/` の一覧へ
   名前の順で足す
 - **`bin/` にファイルを足すと自動で検査に入る。** シェルでないファイルを `bin/` に置かない
-- **検査ジョブの `name` と matrix の値は変えない。** `main` の保護の必須チェック（現在は
-  `Python syntax check` の 3 版・`Ruff lint`・`ShellCheck` の 5 件。`Pytest` は必須に入っていない）が
-  名前で照合するため、変えると必須チェックが「待ち」のまま残る。変えるときは保護設定を同時に直す
+- **`main` の保護の必須チェックは 6 件**: `Python syntax check (3.10)` / `(3.11)` / `(3.12)`・`Ruff lint`・
+  `ShellCheck`・`Pytest`。提供元は GitHub Actions に固定し、`strict` は `true`。pytest は版ごとの
+  `Pytest (Python 3.10)` などではなく、まとめたチェック `Pytest` で照合する
+- **pytest の matrix の版を足し引きしても、保護設定は直さなくてよい。** `Pytest` の名前は版に依存しない。
+  `tests/ci/test_ci_workflow.py` の期待値（チェックの名前の 8 件）は一緒に直す
+- **ほかの検査ジョブの `name` と matrix の値は変えない。** 必須チェックが名前で照合するため、変えると
+  必須チェックが「待ち」のまま残る。変えるときは保護設定を同時に直す
 - `pull_request` のトリガーは merge commit の `ci.yml` で判定されるため、トリガーを変えた Pull Request は
   それ自身の検査で新しい形が効く
 
@@ -306,12 +328,23 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 base のシェルスクリプトの振る舞いは、`entrypoint.sh` を `DEVBASE_ENTRYPOINT_LIB_ONLY` で source する
 `tests/containers/test_entrypoint_*.py` と、`test_ai_cli_aliases.py`・`test_shellrc_dir.py` が守る。
 
+`tests/ci/test_ci_workflow.py`（`ci.yml` を `yaml.safe_load` で読む。`on` は `True` のキーになる）:
+
+- `on.pull_request` が値を持たないか、`branches` と `branches-ignore` のどちらも持たないこと
+- `on.push.branches` が `main`・`release/**`・`mission/**` とちょうど一致し、`branches-ignore` を持たないこと
+- 各ジョブの `name` を matrix の値で展開した名前（式を含まない `name` には値を括弧で付け足す）が、上の 8 件と
+  ちょうど一致すること
+- `pytest-all` の `name` が `Pytest` で、`${{` を含まず、`strategy` を持たないこと
+- `pytest-all` の `needs` が `pytest` を含み、`if` が `always()` であること
+- `pytest-all` の判定の手順の `env.RESULT` が `${{ needs.pytest.result }}` で、その `run` を bash で
+  `RESULT` = `success`・`failure`・`cancelled`・`skipped` の 4 通りに走らせると、`success` だけが 0 で終わること
+
 pytest で確かめないもの:
 
-- トリガーの形と検査ジョブの名前。`ci.yml` の変更のレビューと、その Pull Request 自身の検査の起動で見る。
-  宛先が `main`・`release/**`・`mission/**`・それ以外のどれでも 7 件のチェックが出ること、`main`・
-  `release/**`・`mission/**` 以外への push では起動しないこと、`main` 宛てで必須チェック 5 件が pass になり
-  「待ち」が残らないこと
+- 実際の起動と保護設定の照合。GitHub の上で見る。宛先が `main`・`release/**`・`mission/**`・それ以外の
+  どれでも 8 件のチェックが出ること、`main`・`release/**`・`mission/**` 以外への push では起動しないこと、
+  pytest が落ちたとき `Pytest` が `skipped` でなく `failure` になること、`main` 宛てで必須チェック 6 件が
+  pass になり「待ち」が残らないこと
 - 指摘 0 件そのもの。ShellCheck の検査ジョブが確かめる。手元では base の shellcheck で同じ検査を打てる
 - ShellCheck の検査ジョブのログに手順ごとに `version: 0.11.0` が出ること。ジョブのログで見る
 
@@ -324,4 +357,6 @@ pytest で確かめないもの:
 - [位置引数の解決](cli-argument-resolution.md)（検査の対象のラッパー `bin/devbase`）
 - 課題: [#216](https://github.com/devbasex/devbase/issues/216)（トリガー）・
   [#247](https://github.com/devbasex/devbase/issues/247)（基準の版と既定の水準）・
-  [#259](https://github.com/devbasex/devbase/issues/259)（`containers/base/` の検査の対象）
+  [#259](https://github.com/devbasex/devbase/issues/259)（`containers/base/` の検査の対象）・
+  [#277](https://github.com/devbasex/devbase/issues/277)（まとめたチェック `Pytest` と必須チェック）・
+  [#291](https://github.com/devbasex/devbase/issues/291)（トリガーと名前を固定する回帰テスト）
