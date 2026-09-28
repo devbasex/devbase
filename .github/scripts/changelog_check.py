@@ -16,6 +16,9 @@ import sys
 
 CHANGELOG = "CHANGELOG.md"
 
+# この検査の名前。エラー・通常出力・サマリーの見出しに使う
+CHECK_TITLE = "CHANGELOG の検査"
+
 # 見張るパス。利用者に見える変更の手がかりとして見る場所。ここだけで定義する (テストもここを読む)
 WATCHED_PATHS: tuple[str, ...] = ("lib/", "bin/", "containers/", "etc/", "install.sh")
 
@@ -56,32 +59,32 @@ def changed_paths(base_ref: str, head_sha: str) -> list[str]:
     return [line for line in diff.splitlines() if line]
 
 
-def _summary(text: str) -> None:
+def _summary(body: str) -> None:
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if path:
         with open(path, "a", encoding="utf-8") as f:
-            f.write(text + "\n")
+            f.write(f"### {CHECK_TITLE}\n\n{body}\n")
 
 
 def main() -> int:
     base_ref = os.environ.get("BASE_REF", "")
     head_sha = os.environ.get("HEAD_SHA", "")
     if not base_ref or not head_sha:
-        print("::error::CHANGELOG の検査: BASE_REF と HEAD_SHA が要る (pull_request のイベントで起動する)")
+        print(f"::error::{CHECK_TITLE}: BASE_REF と HEAD_SHA が要る (pull_request のイベントで起動する)")
         return 1
     try:
         paths = changed_paths(base_ref, head_sha)
     except RuntimeError as e:
-        print(f"::error::CHANGELOG の検査: {e}")
+        print(f"::error::{CHECK_TITLE}: {e}")
         return 1
     files = unrecorded_changes(paths)
     if files:
         message = warning_message(files)
         print(f"::warning title=CHANGELOG 未記入::{message}")
-        _summary(f"### CHANGELOG の検査\n\n{message}")
+        _summary(message)
     else:
-        print("CHANGELOG の検査: 未記入の警告なし")
-        _summary("### CHANGELOG の検査\n\n未記入の警告なし")
+        print(f"{CHECK_TITLE}: 未記入の警告なし")
+        _summary("未記入の警告なし")
     return 0
 
 
