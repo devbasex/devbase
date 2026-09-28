@@ -5,7 +5,7 @@
     {
       "name": "python",
       "frameworks": [],
-      "files": 257,
+      "files": 265,
       "version": "3.10"
     },
     {
@@ -33,14 +33,9 @@
   "test_duration": {
     "measured": [
       {
-        "seconds": 140.2,
+        "seconds": 76.1,
         "source": "ndf-record",
-        "detail": "NDF の実行の記録の直近 6 件の中央値"
-      },
-      {
-        "seconds": 103.0,
-        "source": "ci-steps",
-        "detail": "run 36288619761（.github/workflows/ci.yml）のテストの step 2 個の合計"
+        "detail": "NDF の実行の記録の直近 7 件の中央値"
       }
     ]
   },
@@ -49,8 +44,8 @@
     "workflows": [
       {
         "path": ".github/workflows/ci.yml",
-        "jobs": 7,
-        "wall_seconds": 78.0
+        "jobs": 5,
+        "wall_seconds": 45.0
       },
       {
         "path": ".github/workflows/pages.yml",
@@ -102,11 +97,11 @@
   },
   "analysis": {
     "analyzer": 1,
-    "at": "2026-09-27T20:49:06+00:00",
+    "at": "2026-09-28T07:43:12+00:00",
     "inputs": {
       ".github/workflows/ci.yml": "e9d0bf656f315eb4c993716be538e01f4a1a054e",
       ".github/workflows/pages.yml": "6ce8d59753f498aa64adfcc6f1f55a7e6306188e",
-      "pyproject.toml": "ca221332e83b2d27a6ccd3d04aff20431e8b5450"
+      "pyproject.toml": "f91722aa16a434510840b097bcadd93967b45ac8"
     },
     "branches": {
       "head": "main",
@@ -115,10 +110,9 @@
       ]
     },
     "written": {
-      "languages": "5c4692008ae515e42badcc47c36db93c12707a4cedaa83ef1f91853c9e54c2a6",
-      "test": "05ee1f8e85945b4f46b2a79698c8aba4fcadea0d6ae83f3aa1b84a5d3760d2f9",
-      "test_duration": "7023343f5bbe53672a65063992078bbc736f7df585d34e88a25007bdd2119d47",
-      "ci": "7dfd7b341c93bf79e82ecc6508d4e384a674c60881343dbbc8226449759aa5d5",
+      "languages": "e5c115a69dc47095f69bdc0701f1c05e705014a78903f6481aa084c77167c19e",
+      "test_duration": "bb9ed8b8d2b11b4fa0cce26e19e446aac9ad48482b43c36e9cc1865f72c87b5b",
+      "ci": "16244e539011938a502edb989cf2525d7401c84f07a3b4e689e0762f58775f0d",
       "services": "53f4e4c15a04bde773f9d0d89be06cd65f1a9248c0603b06b78bfa8a5f8a0771",
       "delivery": "5dbcd4bca9a6ebb23f6d4964d0714cb977119f9d7f0465cb77335e42b3a0c8c0",
       "issues": "c851aa29d3c11745f1307194db49eba6a488771771ea86c21c7237e400e336b8",
