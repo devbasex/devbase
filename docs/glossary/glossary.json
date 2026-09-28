@@ -485,6 +485,30 @@
       "source": "docs/specifications/base-shell-tests.md"
     },
     {
+      "term": "ラッパーの複製",
+      "context": "test",
+      "meaning": "exec_wrapper が一時ディレクトリの bin/devbase へ写した本物のラッパー。複製した位置から DEVBASE_ROOT が決まり、継承した値を見ない",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "偽の uv",
+      "context": "test",
+      "meaning": "PATH の先頭に置き、受け取った引数を UV: 行で出して 0 で終わる試験用の uv。ラッパーの外へ出る呼び出しはすべてこれを通る",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "経路の印",
+      "context": "test",
+      "meaning": "build の振り分け先を見分ける出力の行。Python の経路は「 devbase.cli project build <引数>」で終わる UV: 行、shell の経路は === Building devbase images === の行",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "差し替え先",
+      "context": "test",
+      "meaning": "テストが monkeypatch で置き換える属性を持つモジュール。置き換える関数を実際に呼ぶモジュールにする",
+      "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
       "term": "取り込み",
       "context": "secret",
       "meaning": "ホストの資格情報ファイルから読んだ値を、対象のグループの参照へ書くこと。利用者がキーボードで入れた値を書くことは含まない",

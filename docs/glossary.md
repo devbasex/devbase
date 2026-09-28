@@ -150,6 +150,10 @@ pytest が走るプロセスの環境と、テストが起動する外部のプ�
 | 隔離した tmux サーバ | — | TMUX を外し、専用のソケットで起動した試験用の tmux サーバ。利用者の tmux サーバに触れない | — | — | `docs/specifications/base-shell-tests.md` |
 | 故障の差し込み | — | 実物の tmux の前に置いたラッパーが、故障の表に当たる呼び出しだけを失敗させるか、呼び出しの前にセッションを消すこと | — | — | `docs/specifications/base-shell-tests.md` |
 | 偽の date | — | PATH の先に置き、date +%s にだけ実時刻へ指定の秒数を足した値を返す試験用の date | — | — | `docs/specifications/base-shell-tests.md` |
+| ラッパーの複製 | — | exec_wrapper が一時ディレクトリの bin/devbase へ写した本物のラッパー。複製した位置から DEVBASE_ROOT が決まり、継承した値を見ない | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 偽の uv | — | PATH の先頭に置き、受け取った引数を UV: 行で出して 0 で終わる試験用の uv。ラッパーの外へ出る呼び出しはすべてこれを通る | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 経路の印 | — | build の振り分け先を見分ける出力の行。Python の経路は「 devbase.cli project build <引数>」で終わる UV: 行、shell の経路は === Building devbase images === の行 | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 差し替え先 | — | テストが monkeypatch で置き換える属性を持つモジュール。置き換える関数を実際に呼ぶモジュールにする | — | — | `docs/specifications/cli-argument-resolution.md` |
 
 ## イメージの継承（`image-lineage`）
 
