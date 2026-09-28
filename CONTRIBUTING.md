@@ -44,6 +44,7 @@ devbase へのコントリビューションを歓迎します。バグ報告、
 ## Pull Request
 
 - PR テンプレートに沿って、変更内容と動作確認手順を記載してください。
+- `main` へのマージがそのまま配布になります。利用者に見える変更を `main` へ入れる Pull Request では、同じ Pull Request で `CHANGELOG.md` の `[Unreleased]` を更新してください（要らない変更の例と統合ブランチでの扱いは [PR プロセス](docs/developer/contributing.md#changelog-の更新)）。
 - レビュー指摘があった場合は、追加コミットで対応します（force push は避けてください）。
 - CI が通っていることを確認してから merge ready にしてください。
 
