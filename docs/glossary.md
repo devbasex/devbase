@@ -133,6 +133,10 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | base のシェルスクリプト | — | containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの | — | — | `docs/specifications/ci-checks.md` |
 | 検査の対象 | — | CI の ShellCheck ジョブで、引数に containers/base/ のパスを持つ shellcheck の行が並べたファイル | — | — | `docs/specifications/ci-checks.md` |
 | shellcheck の指示 | — | # shellcheck で始まるコメント（disable= / source= / shell=）。disable= と source= は抑止の注記の指示の側で、shell= は指摘を抑えない | — | — | `docs/specifications/ci-checks.md` |
+| 利用者に見える変更 | — | devbase を使う人がコマンド・イメージ・設定を通じて気づく振る舞いの変化。テストだけ・開発者向けの文書だけの変更は含まない | — | — | — |
+| 見張るパス | — | CHANGELOG の検査が利用者に見える変更の手がかりとして見る場所（lib/・bin/・containers/・install.sh・etc/） | — | — | — |
+| CHANGELOG の検査 | — | main 宛ての Pull Request で、見張るパスを変えて CHANGELOG.md を変えていないときに未記入の警告を出す検査ジョブ | — | — | — |
+| 未記入の警告 | — | CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない | — | — | — |
 
 ## テストの実行環境（`test`）
 
