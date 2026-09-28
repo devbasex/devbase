@@ -9,136 +9,120 @@
 修正前は `<image>` が剥がされないまま shell の cmd_build へ流れ、
 `docker buildx build ... <context> <image>` と PATH が 2 つになって必ず失敗した。
 
-wrapper テストは実際の `uv run` を避けるため run_python / cmd_build / compose_with_secrets
-をスタブへ差し替え、DEVBASE_ROOT を一時ディレクトリへ向けた薄いハーネスで dispatch だけを
-実行する (wrapper 冒頭の DEVBASE_ROOT 自動解決行も sed で除去する)。
+wrapper の節はすべて `exec_wrapper` (conftest.py) で動く。本物の bin/devbase を tmp へ複製して
+起動し、外への呼び出しの境界の `uv` だけを差し替える。Python の経路は ` devbase.cli project build
+<引数>` で終わる `UV:` 行で、shell の経路は `=== Building devbase images ===` の行で見分ける。
 """
 
 from __future__ import annotations
 
 import logging
-import os
-import subprocess
-from pathlib import Path
 
 import pytest
 
 from devbase.commands import container
+from tests.cli.conftest import stdout_field
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-WRAPPER = REPO_ROOT / "bin" / "devbase"
+BUILDING = "=== Building devbase images ==="
+PY_BUILD = " devbase.cli project build"
 
 
 # ===========================================================================
 # wrapper: build の振り分け (位置引数 / --expires / フラグのみ)
 # ===========================================================================
 
-def _run_wrapper(args, devbase_root, cwd=None):
-    """run_python / cmd_build / compose_with_secrets をスタブ化して dispatch だけ実行する。
-
-    - run_python           -> "PYTHON:<args>" を出力して終了
-    - cmd_build            -> "BUILD:<args>" を出力して終了
-    - compose_with_secrets -> "COMPOSE:<args>" (cmd_build へ入った場合の保険)
-    """
-    harness = (
-        'run_python() { echo "PYTHON:$*"; exit 0; }\n'
-        'cmd_build() { echo "BUILD:$*"; exit 0; }\n'
-        'compose_with_secrets() { echo "COMPOSE:$*"; exit 0; }\n'
-        'ensure_uv() { :; }\n'
-        'eval "$(sed -e \'/^run_python()/,/^}/d\' '
-        '            -e \'/^ensure_uv()/,/^}/d\' '
-        '            -e \'/^cmd_build()/,/^}/d\' '
-        '            -e \'/^compose_with_secrets()/,/^}/d\' '
-        '            -e \'/^DEVBASE_ROOT=/d\' "$WRAPPER_PATH")"\n'
-    )
-    env = {
-        **os.environ,
-        "DEVBASE_ROOT": str(devbase_root),
-        "WRAPPER_PATH": str(WRAPPER),
-    }
-    return subprocess.run(
-        ["bash", "-c", harness, "devbase", *args],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(cwd or REPO_ROOT),
-    )
+def _uv_lines(result):
+    """標準出力の `UV:` 行の残りをすべて返す。shell の経路は 2 行以上を出す。"""
+    return [line[len("UV:"):] for line in result.stdout.splitlines() if line.startswith("UV:")]
 
 
-def _line(result, prefix):
-    for line in result.stdout.splitlines():
-        if line.startswith(prefix):
-            return line[len(prefix):]
-    return None
+def _assert_python_route(result, args):
+    """Python の経路: ` devbase.cli project build <args>` で終わる `UV:` 行があり、shell に入らない。"""
+    assert result.returncode == 0, result.stderr
+    expected = " ".join([PY_BUILD, *args])
+    assert any(uv.endswith(expected) for uv in _uv_lines(result)), result.stdout
+    assert BUILDING not in result.stdout, result.stdout
+
+
+def _assert_shell_route(result):
+    """shell の経路: `=== Building` が出て、Python の project build を呼ばない。UV: 行を返す。"""
+    assert result.returncode == 0, result.stderr
+    assert BUILDING in result.stdout, result.stdout
+    uvs = _uv_lines(result)
+    assert not any(uv.endswith(PY_BUILD) or f"{PY_BUILD} " in uv for uv in uvs), result.stdout
+    return uvs
 
 
 @pytest.fixture
-def wrapper_root(tmp_path):
-    """`containers/base` を持ち、`projects/` は空の DEVBASE_ROOT。
+def wrapper_root(exec_wrapper):
+    """`containers/base` を持ち、`projects/` は空の複製。
 
     `projects/` を空にするのは、wrapper 冒頭の name 解決 (実在プロジェクト名なら cd して
     引数を除去する) を発火させないためである。`base` が name 解決へ吸われると、この
     テストが検証したい dispatch まで引数が届かない。
     """
-    (tmp_path / "containers" / "base").mkdir(parents=True)
-    (tmp_path / "containers" / "base" / "Dockerfile").write_text("FROM ubuntu:26.04\n")
-    (tmp_path / "projects").mkdir()
-    return tmp_path
+    exec_wrapper.container("base")
+    return exec_wrapper
 
 
 def test_wrapper_routes_build_image_to_python(wrapper_root):
     """`devbase build base` は Python の project build へ渡り、image が保たれる。"""
-    result = _run_wrapper(["build", "base"], wrapper_root)
-    assert _line(result, "PYTHON:") == "project build base"
-    # shell の compose ビルド経路へ落ちない (AC2)
-    assert _line(result, "BUILD:") is None
-    assert _line(result, "COMPOSE:") is None
+    _assert_python_route(wrapper_root(["build", "base"]), ["base"])
+
+
+def test_wrapper_build_image_ignores_inherited_devbase_root(wrapper_root, tmp_path_factory, monkeypatch):
+    """継承した `DEVBASE_ROOT` に同名のプロジェクトがあっても、複製の root だけを見る。
+
+    継承した値を使うと `base` が name 解決に吸われて shell の経路になる。
+    """
+    other = tmp_path_factory.mktemp("other_root")
+    (other / "projects" / "base").mkdir(parents=True)
+    monkeypatch.setenv("DEVBASE_ROOT", str(other))
+
+    r = wrapper_root(["build", "base"])
+
+    _assert_python_route(r, ["base"])
+    assert stdout_field(r, "PWD:") == str(wrapper_root.work), r.stdout
 
 
 def test_wrapper_routes_build_image_no_cache_to_python(wrapper_root):
     """`--no-cache` を伴っても image 指定は Python 経路で、引数の順序が保たれる。"""
-    result = _run_wrapper(["build", "base", "--no-cache"], wrapper_root)
-    assert _line(result, "PYTHON:") == "project build base --no-cache"
-    assert _line(result, "BUILD:") is None
+    _assert_python_route(wrapper_root(["build", "base", "--no-cache"]), ["base", "--no-cache"])
 
 
 def test_wrapper_routes_bare_build_to_shell(wrapper_root):
     """image 省略・フラグなしは shell の cmd_build (2 段の compose ビルド)。"""
-    result = _run_wrapper(["build"], wrapper_root)
-    assert _line(result, "BUILD:") == ""
-    assert _line(result, "PYTHON:") is None
+    _assert_shell_route(wrapper_root(["build"]))
 
 
 def test_wrapper_routes_build_no_cache_to_shell(wrapper_root):
-    """`devbase build --no-cache` は shell 経路のまま (退行防止)。"""
-    result = _run_wrapper(["build", "--no-cache"], wrapper_root)
-    assert _line(result, "BUILD:") == "--no-cache"
-    assert _line(result, "PYTHON:") is None
+    """`devbase build --no-cache` は shell 経路のまま (退行防止)。`--no-cache` は base のビルドへ届く。"""
+    uvs = _assert_shell_route(wrapper_root(["build", "--no-cache"]))
+    buildx = [uv for uv in uvs if "docker buildx build" in uv]
+    assert buildx and all(uv.endswith(" --no-cache") for uv in buildx), uvs
 
 
 def test_wrapper_routes_build_project_no_cache_to_shell(wrapper_root):
     """`--project-no-cache` は shell 経路のまま。
 
     Python の `_run_build(project_no_cache=True)` がこの形で wrapper を呼び戻すため、
-    ここが Python へ振り分けられると shell と Python の間で再帰する。
+    ここが Python へ振り分けられると shell と Python の間で再帰する。base のビルドには
+    `--no-cache` を付けない (`--no-cache` と同じ扱いにしない)。
     """
-    result = _run_wrapper(["build", "--project-no-cache"], wrapper_root)
-    assert _line(result, "BUILD:") == "--project-no-cache"
-    assert _line(result, "PYTHON:") is None
+    uvs = _assert_shell_route(wrapper_root(["build", "--project-no-cache"]))
+    buildx = [uv for uv in uvs if "docker buildx build" in uv]
+    assert buildx and not any("--no-cache" in uv for uv in buildx), uvs
 
 
 @pytest.mark.parametrize("flag", ["--expires", "--expires=7"])
 def test_wrapper_routes_build_expires_to_python(wrapper_root, flag):
     """`--expires` は作成日判定のため Python 経路 (既存仕様の維持)。"""
-    result = _run_wrapper(["build", flag], wrapper_root)
-    assert _line(result, "PYTHON:") == f"project build {flag}"
-    assert _line(result, "BUILD:") is None
+    _assert_python_route(wrapper_root(["build", flag]), [flag])
 
 
 def test_wrapper_routes_build_image_with_expires_to_python(wrapper_root):
     """image と `--expires` の併用も Python へ渡し、警告は Python 側で出す。"""
-    result = _run_wrapper(["build", "base", "--expires=7"], wrapper_root)
-    assert _line(result, "PYTHON:") == "project build base --expires=7"
+    _assert_python_route(wrapper_root(["build", "base", "--expires=7"]), ["base", "--expires=7"])
 
 
 # ===========================================================================
@@ -328,8 +312,6 @@ def test_single_build_accepts_real_container_directory_names(devbase_root, captu
 # 差し替える。cmd_build は本物のまま動くので `=== Building devbase images ===` が出ないことを
 # 確かめられる。run_python も docker も `uv` を通るため、`UV:` が無いことで両方を確かめる。
 # ===========================================================================
-
-from tests.cli.conftest import stdout_field  # noqa: E402
 
 BUILD_USAGE_TOKENS = ["--no-cache", "--project-no-cache", "--expires[=DAYS]", "--context NAME",
                       "<image>"]
