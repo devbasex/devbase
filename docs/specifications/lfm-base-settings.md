@@ -2,7 +2,7 @@
 
 ## 概要
 
-`containers/lfm` は `FROM nvidia/cuda:13.3.1-cudnn-devel-ubuntu26.04` から建ち、base を `FROM` で
+`containers/lfm` は `FROM nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04` から建ち、base を `FROM` で
 継がない。base の設定は、lfm の Dockerfile が `COPY --from=devbase-base:latest` で base のイメージ
 から**同じパスへ取り込む**ことで届く。取り込めない `ENV` は lfm が base と同じ値で宣言する。
 この 2 つが lfm への**届く経路**である。
@@ -251,9 +251,12 @@ base の `RUN` が作る symlink（`/usr/local/bin/tmux-go` など）は `/usr/l
 - base のイメージが無ければ lfm は建たない（ツールの取り込みも `devbase-base:latest` を要する）
 - 切り戻しはコミットの revert と 2 つのイメージの建て直しで足りる。lfm は取り込みの際に
   グループのボリュームへ書かない
-- 建てて確かめてあるのは arm64 である。`nvidia/cuda:13.3.1-cudnn-devel-ubuntu26.04` は arm64 と
+- 建てて確かめてあるのは arm64 である。`nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04` は arm64 と
   amd64 の両方を配っている。GPU（`--gpus all` での `nvidia-smi`）は amd64 の GPU を持つ端末で
   確かめる
+- GPU を使うホストの NVIDIA ドライバは CUDA 13.4 以上に対応している必要がある（`nvidia-smi` の `CUDA Version`）。
+  足りないと `--gpus all` の起動が `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=13.4` で止まる。
+  ドライバを上げて直す（#337）
 
 ## テスト観点
 

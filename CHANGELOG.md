@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Changed
+- **`containers/lfm` のもとのイメージを `nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04` に上げました（#337）。**
+  GPU を使うホストの NVIDIA ドライバは CUDA 13.4 以上に対応している必要があります（`nvidia-smi` の
+  `CUDA Version` で確かめられます）。足りないと `--gpus all` の起動が requirement error で止まるので、
+  ドライバを最新に上げてから `devbase build lfm` で建て直してください。
+
 ## [4.0.0] - 2026-09-28
 
 アカウントグループの宣言を必須にする破壊的変更を含みます。グループを宣言していない
