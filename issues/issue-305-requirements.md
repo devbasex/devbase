@@ -54,10 +54,11 @@
 - `lib/devbase/env/io_import.py` / `io_export.py` の、テストのためだけの `import getpass` を消す
 
 含まない:
-- 前提 5 のほかの 4 ファイルの `sed` のハーネス
+- 前提 5 のほかの 4 ファイルの `sed` のハーネス（#339）
 - `bin/devbase` の `cmd_build` と振り分けの実装の変更
 - `io_common.read_passphrase` の振る舞いの変更と、`_read_passphrase` の削除・改名
 - `test_build_image_argument.py` の Python 側（`container.cmd_build(image=...)`）のテスト
+- 設計のクラス図（型を足さず、`WrapperRoot` を含むどの型も変えないため対象が無い）
 
 ## ドメインイベント
 
