@@ -64,6 +64,14 @@ class ImportOptions:
     group: Optional[str] = None
 
 
+def _read_passphrase(opts: ImportOptions) -> Optional[str]:
+    """既存テストとの互換のために残している thin wrapper。
+    実体は :mod:`devbase.env.io_common.read_passphrase`。"""
+    return _io_common.read_passphrase(
+        opts.passphrase_env, opts.passphrase_stdin, ImportError
+    )
+
+
 def _validate_options(opts: ImportOptions) -> None:
     if opts.merge not in _merge.MERGE_MODES:
         raise ImportError(
@@ -91,9 +99,7 @@ def _decrypt_if_needed(blob: bytes, opts: ImportOptions) -> bytes:
             )
         return blob
 
-    passphrase = _io_common.read_passphrase(
-        opts.passphrase_env, opts.passphrase_stdin, ImportError
-    )
+    passphrase = _read_passphrase(opts)
     if passphrase is not None:
         return _cipher.decrypt(blob, passphrase=passphrase)
 

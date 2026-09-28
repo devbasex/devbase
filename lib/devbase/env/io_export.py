@@ -84,6 +84,14 @@ def _complete_dir_dest(dest: str, force_unencrypted: bool) -> str:
     return dest
 
 
+def _read_passphrase(opts: ExportOptions) -> Optional[str]:
+    """既存テストとの互換のために残している thin wrapper。
+    実体は :mod:`devbase.env.io_common.read_passphrase`。"""
+    return _io_common.read_passphrase(
+        opts.passphrase_env, opts.passphrase_stdin, ExportError
+    )
+
+
 def _sensitive_keys(entries: Sequence[_bundle.BundleEntry]) -> List[str]:
     """平文出力に含まれる機密キー候補を返す (警告表示用、.env エントリのみ走査)"""
     hits: set[str] = set()
@@ -121,9 +129,7 @@ def _validate_options(opts: ExportOptions) -> None:
 
 def _encrypt_payload(tar_blob: bytes, opts: ExportOptions) -> bytes:
     """``opts`` の鍵指定に従って tar.gz を暗号化する。鍵が無ければ既定鍵を試す"""
-    passphrase = _io_common.read_passphrase(
-        opts.passphrase_env, opts.passphrase_stdin, ExportError
-    )
+    passphrase = _read_passphrase(opts)
     # NOTE: --recipient と --passphrase-* の排他チェックは _validate_options で
     # fail-fast 済み。cipher.encrypt 側にも防御的チェックがある。
     recipients = (
