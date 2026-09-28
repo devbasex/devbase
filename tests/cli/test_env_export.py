@@ -6,7 +6,6 @@ import io
 import os
 from pathlib import Path
 
-import pyrage
 import pytest
 
 from devbase.env import bundle, cipher, io_common
@@ -26,16 +25,6 @@ def fake_root(tmp_path):
     (root / "projects" / "alpha" / ".env").write_text("ALPHA_API_KEY=xyz\n")
     (root / "projects" / "beta" / ".env").write_text("BETA_DB_PASSWORD=p\n")
     return root
-
-
-@pytest.fixture
-def age_keys(tmp_path):
-    identity = pyrage.x25519.Identity.generate()
-    pub_file = tmp_path / "age.pub"
-    pub_file.write_text(str(identity.to_public()) + "\n")
-    id_file = tmp_path / "age.key"
-    id_file.write_text(str(identity))
-    return pub_file, id_file
 
 
 def test_export_local_with_recipient_roundtrips(fake_root, age_keys, tmp_path):

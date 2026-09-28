@@ -44,16 +44,6 @@ def dest_root(tmp_path):
     return root
 
 
-@pytest.fixture
-def age_keys(tmp_path):
-    identity = pyrage.x25519.Identity.generate()
-    pub_file = tmp_path / "age.pub"
-    pub_file.write_text(str(identity.to_public()) + "\n")
-    id_file = tmp_path / "age.key"
-    id_file.write_text(str(identity))
-    return pub_file, id_file
-
-
 def _export_bundle(fake_root: Path, age_keys: Tuple[Path, Path],
                    tmp_path: Path) -> Path:
     pub_file, _ = age_keys
