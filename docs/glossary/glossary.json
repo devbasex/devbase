@@ -349,7 +349,7 @@
     {
       "term": "検査ジョブ",
       "context": "ci",
-      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest）",
+      "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all）",
       "source": "docs/specifications/ci-checks.md"
     },
     {
@@ -357,6 +357,18 @@
       "context": "ci",
       "meaning": "課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**）",
       "source": "docs/specifications/ci-checks.md"
+    },
+    {
+      "term": "必須チェック",
+      "context": "ci",
+      "meaning": "main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない",
+      "pending_source": "issues/issue-277-requirements.md"
+    },
+    {
+      "term": "まとめたチェック",
+      "context": "ci",
+      "meaning": "pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する",
+      "pending_source": "issues/issue-277-design.md"
     },
     {
       "term": "トリガー",
