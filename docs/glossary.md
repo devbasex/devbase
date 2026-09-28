@@ -124,6 +124,7 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | --- | --- | --- | --- | --- | --- |
 | 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest） | — | — | `docs/specifications/ci-checks.md` |
 | 統合ブランチ | — | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — | `docs/specifications/ci-checks.md` |
+| 必須チェック | — | main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない | — | — | — |
 | トリガー | — | ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches） | — | — | `docs/specifications/ci-checks.md` |
 | 積み重ねた Pull Request | — | 宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request | — | — | `docs/specifications/ci-checks.md` |
 | 指摘 | — | shellcheck が出す 1 件（SC の番号・水準・行） | — | — | `docs/specifications/ci-checks.md` |

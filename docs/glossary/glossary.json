@@ -359,6 +359,12 @@
       "source": "docs/specifications/ci-checks.md"
     },
     {
+      "term": "必須チェック",
+      "context": "ci",
+      "meaning": "main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない",
+      "pending_source": "issues/issue-277-requirements.md"
+    },
+    {
       "term": "トリガー",
       "context": "ci",
       "meaning": "ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches）",
