@@ -13,13 +13,15 @@ import configparser
 import gzip
 import hashlib
 import io
-import re
 import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-_HEADER_RE = re.compile(r'^\s*\[([^\]]+)\]\s*(?:[#;].*)?$')
+#: 節の見出し。AWS の CLI と SDK が使う configparser と同じ形 (``[private] trailing`` も
+#: ``private`` の節になる)。境界が食い違うと、選ばなかった節の行が選んだ節へ入る
+_HEADER_RE = configparser.RawConfigParser.SECTCRE
+_COMMENT_PREFIXES = ('#', ';')
 
 #: 控えの ``aws`` の項目で使うファイルの並び
 SOURCE_FILES = ["~/.aws/config", "~/.aws/credentials"]
@@ -81,14 +83,36 @@ def _normalize(header: str) -> str:
 
 
 def split_sections(text: str) -> Dict[str, str]:
-    """節の見出し (空白を 1 つに揃えたもの) → 見出しの行から次の見出しの前までの原文"""
+    """節の見出し (空白を 1 つに揃えたもの) → 見出しの行から次の見出しの前までの原文
+
+    節の境界は configparser (``RawConfigParser`` の既定) と同じに引く。見出しは前後の空白を
+    除いた行が ``[名前]`` で始まるもので、値の続きの行 (値を持つキーの後の、より深く字下げされた行)
+    は見出しに見えても続きとして扱う。空行は値の続きを切らない。コメントの行は値の続きを切る
+    (Python 3.12 まで。3.13 は切らない)。版で割れる行は見出しとして扱い、選んだ節を狭める側へ倒す。
+    """
     sections: Dict[str, List[str]] = {}
     current: Optional[str] = None
+    in_value = False  # 直前のキーの値が続き得るか
+    indent_level = 0
     for line in text.splitlines(keepends=True):
-        match = _HEADER_RE.match(line)
-        if match:
-            current = _normalize(match.group(1))
-            sections.setdefault(current, [])
+        stripped = line.strip()
+        if stripped.startswith(_COMMENT_PREFIXES):
+            in_value = False
+        elif not stripped:
+            pass
+        else:
+            cur_indent = len(line) - len(line.lstrip())
+            if current is not None and in_value and cur_indent > indent_level:
+                pass  # 値の続き
+            else:
+                indent_level = cur_indent
+                match = _HEADER_RE.match(stripped)
+                if match:
+                    current = _normalize(match.group('header'))
+                    sections.setdefault(current, [])
+                    in_value = False
+                else:
+                    in_value = current is not None
         if current is not None:
             sections[current].append(line)
     return {name: ''.join(lines) for name, lines in sections.items()}

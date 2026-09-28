@@ -135,6 +135,25 @@ def test_a_source_profile_only_in_credentials_is_included():
     assert payload.included[0].section == 'base'
 
 
+def test_a_header_with_trailing_text_starts_its_own_section():
+    # configparser (AWS の CLI) は `[private] trailing` を private の節と読む。
+    # 直前の dev の節へ取り込むと、dev だけを選んでも private の秘密鍵が送られる
+    credentials = ('[dev]\naws_secret_access_key = d\n'
+                   '[private] trailing\naws_secret_access_key = p\n')
+    payload = aws_profiles.build(None, credentials, ['dev'])
+
+    assert payload.credentials.decode() == '[dev]\naws_secret_access_key = d\n'
+    assert aws_profiles.credential_names(credentials) == ['dev', 'private']
+
+
+def test_an_indented_bracket_line_in_a_value_is_not_a_header():
+    # 値の続きの行は、見出しに見えても configparser と同じく値の一部とする
+    text = '[dev]\nk = a\n  [x]\n\n  b\n[w]\nk = c\n'
+
+    assert aws_profiles.split_sections(text) == {
+        'dev': '[dev]\nk = a\n  [x]\n\n  b\n', 'w': '[w]\nk = c\n'}
+
+
 def test_the_encoded_value_is_stable_and_readable():
     payload = aws_profiles.build(CONFIG, '[x]\nk = v\n', ['x'])
 
