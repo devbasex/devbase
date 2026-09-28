@@ -59,7 +59,7 @@ def _check_names(job: dict) -> list[str]:
     for values in itertools.product(*(axes[k] for k in keys)):
         combo = dict(zip(keys, values))
         if _MATRIX_EXPR.search(name):
-            names.append(_MATRIX_EXPR.sub(lambda m: str(combo[m.group(1)]), name))
+            names.append(_MATRIX_EXPR.sub(lambda m, combo=combo: str(combo[m.group(1)]), name))
         else:
             # 名前に matrix の式が無いと、GitHub は値を括弧で付け足す
             names.append(f"{name} ({', '.join(str(v) for v in values)})")
@@ -133,6 +133,7 @@ def test_aggregate_passes_only_on_success(result: str, passes: bool):
         ["bash", "-e", "-c", _aggregate_step()["run"]],
         env={"RESULT": result, "PATH": "/usr/bin:/bin"},
         capture_output=True,
+        check=False,
         text=True,
     )
     assert (proc.returncode == 0) is passes, proc.stdout + proc.stderr
