@@ -529,6 +529,28 @@ def test_cli_rotate_deleted_and_removed_prints_no_idle_message(tmp_path, caplog)
     assert not any("削除した世代はありません" in m for m in messages)
 
 
+@pytest.mark.parametrize("bad", ["file-link", "no-name"])
+def test_cli_rotate_removes_entries_that_list_cannot_open(tmp_path, caplog, bad):
+    """#269: ファイルを指すリンクや name の無いエントリがあっても、rotate は落ちずに一覧から外す。"""
+    backups = write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    data = yaml.safe_load((backups / "snapshot.yml").read_text())
+    entry = {"created_at": "2026-08-01T00:00:00", "incremental_count": 0,
+             "volumes": vols("nyle")}
+    if bad == "file-link":
+        target = tmp_path / "plain.txt"
+        target.write_text("keep")
+        (backups / "link").symlink_to(target)
+        entry["name"] = "link"
+    data["snapshots"].insert(0, entry)
+    (backups / "snapshot.yml").write_text(yaml.safe_dump(data))
+    ns = types.SimpleNamespace(subcommand="rotate", keep=2)
+
+    with caplog.at_level(logging.INFO, logger="devbase"):
+        assert cmd_snapshot(tmp_path, ns) == 0
+    assert names(tmp_path) == ["D1", "D2"]
+    assert not any("ローテーション不要です" in r.getMessage() for r in caplog.records)
+
+
 def test_safe_snap_dir_uses_path_components(tmp_path):
     """決定 7: 兄弟の backups-outside/ は文字列の前方一致でも通さない。"""
     _link_outside(tmp_path)

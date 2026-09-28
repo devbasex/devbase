@@ -267,8 +267,8 @@ def build_from_home(selected: Sequence[str], home: Optional[Path] = None) -> Aws
     return build(config_text, credentials_text, selected)
 
 
-def profiles_in_value(value: Optional[str]) -> Optional[List[str]]:
-    """``AWS_CONFIG_BASE64`` の値に入っているプロファイルの名前。値が読めなければ ``None``"""
+def _value_texts(value: Optional[str]) -> Optional[Tuple[Optional[str], Optional[str]]]:
+    """``AWS_CONFIG_BASE64`` の値の ``config`` と ``credentials`` の中身。値が読めなければ ``None``"""
     if not value:
         return None
     try:
@@ -282,6 +282,40 @@ def profiles_in_value(value: Optional[str]) -> Optional[List[str]]:
                        if 'credentials' in files else None)
     except UnicodeDecodeError:
         return None
+    return config, credentials
+
+
+def profiles_in_value(value: Optional[str]) -> Optional[List[str]]:
+    """``AWS_CONFIG_BASE64`` の値に入っているプロファイルの名前。値が読めなければ ``None``"""
+    texts = _value_texts(value)
+    if texts is None:
+        return None
+    config, credentials = texts
     names = profile_names(config)
     names += [n for n in credential_names(credentials) if n not in names]
     return names
+
+
+def chosen_in_value(value: Optional[str]) -> Optional[List[str]]:
+    """値に入っているプロファイルのうち、ほかのプロファイルの ``source_profile`` の連なりで
+    入ったものを除いた名前 (選んだプロファイルとみなす並び)。値が読めなければ ``None``
+
+    連なりが輪になっていて 1 つも残らないときは、値に入っている名前をすべて返す。
+    """
+    texts = _value_texts(value)
+    if texts is None:
+        return None
+    config, credentials = texts
+    names = profile_names(config)
+    names += [n for n in credential_names(credentials) if n not in names]
+    sections = split_sections(config or '')
+    referenced = set()
+    for name in names:
+        header = _config_section(sections, name)
+        if header is None:
+            continue
+        source = _values(sections[header]).get('source_profile')
+        if source and source != name:
+            referenced.add(source)
+    roots = [n for n in names if n not in referenced]
+    return roots or names

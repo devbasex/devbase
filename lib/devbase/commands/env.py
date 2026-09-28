@@ -878,7 +878,8 @@ def _aws_sync_plan(sources, targets, store):
         return None
     if report_conflicts(payload):
         return None
-    return payload.encode, in_value
+    # 控えに残すのは選んだプロファイルだけで、連なりで入った節は含めない (sync の時点で求め直す)
+    return payload.encode, aws_profiles.chosen_in_value(targets.get(key)) or in_value
 
 
 def _aws_selection_covers(targets, key, payload) -> bool:

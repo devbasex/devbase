@@ -142,11 +142,12 @@ def _snapshot_delete(mgr, name='') -> int:
 
 
 def _snapshot_rotate(mgr, keep=3, max_total=None) -> int:
-    before = len(mgr.list())
+    before = mgr.entry_count()
     deleted = mgr.rotate(keep=keep, max_total=max_total)
     # rotate() の戻り値は実際に消した数で、場所が不正なため一覧から外しただけの
-    # エントリは含まない (#269)。一覧の増減から外しただけの数を求める
-    removed_only = before - len(mgr.list()) - deleted
+    # エントリは含まない (#269)。一覧の増減から外しただけの数を求める。数えるのは snapshot.yml の
+    # エントリだけで、世代のディレクトリは開かない (場所が不正なエントリで落ちないため)
+    removed_only = before - mgr.entry_count() - deleted
     if deleted == 0 and removed_only == 0:
         logger.info("ローテーション不要です")
     elif deleted == 0:

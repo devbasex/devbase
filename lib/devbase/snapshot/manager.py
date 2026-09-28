@@ -301,6 +301,10 @@ class SnapshotManager:
                 snap['size_bytes'] = 0
         return snapshots
 
+    def entry_count(self) -> int:
+        """``snapshot.yml`` のエントリの数。世代のディレクトリは開かない"""
+        return len(self._load_metadata().get('snapshots', []))
+
     def last_snapshot_time(self, volumes: Optional[dict] = None) -> Optional[datetime]:
         """直近のスナップショット取得 (フル/差分) 日時を返す。
 

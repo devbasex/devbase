@@ -718,6 +718,24 @@ def test_an_unregistered_value_is_not_whole_when_the_host_has_fewer(grouped, ope
     assert 'AWS認証: 選んだプロファイル prod が ~/.aws/config にありません' in infos(caplog)
 
 
+def test_an_unregistered_value_records_only_the_chain_roots_as_chosen(grouped, openbao, host,
+                                                                     caplog):
+    """決定 10: 値の中の source_profile の連なりで入った節は、控えの選択に含めない"""
+    from devbase.env import aws_profiles
+
+    value = aws_profiles.build(AWS_CONFIG, AWS_CREDENTIALS, ['lixil']).encode()
+    assert aws_profiles.profiles_in_value(value) == ['lixil', 'lixil-base', 'lixil-root']
+    openbao.put(KKG, {keys.AWS_CONFIG_BASE64: value, keys.HOST_SSH_USER: 'u',
+                      keys.HOST_SSH_HOST: 'h'})
+    caplog.set_level(logging.INFO)
+
+    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+
+    source = SourcesManager(grouped, 'kkg').get_source('aws')
+    assert source['type'] == 'aws_profiles'
+    assert source['profiles'] == ['lixil']
+
+
 def test_a_skipped_unregistered_aws_value_is_not_registered(grouped, openbao, host, caplog):
     """決定 10: 値を読めず書かなかった AWS は、ほかの更新があっても控えに登録しない"""
     openbao.put(KKG, {keys.AWS_CONFIG_BASE64: 'not-a-tar'})
