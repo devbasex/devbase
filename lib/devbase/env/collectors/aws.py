@@ -197,6 +197,10 @@ def _collect_selected_profiles(env_file: EnvFile, host: HostImport) -> None:
         print(f"含めます: [{inclusion.section}] ({inclusion.reason})")
     for name in payload.missing:
         print(f"含めません: [{name}] が ~/.aws にありません")
+    if payload.conflicts:
+        for name in payload.conflicts:
+            logger.error("[%s] と空白だけが違う見出しの節が ~/.aws にあるため、取り込みを中止します", name)
+        return
     encoded = payload.encode()
     if not encoded:
         logger.error("AWS設定ファイルのエンコードに失敗しました")

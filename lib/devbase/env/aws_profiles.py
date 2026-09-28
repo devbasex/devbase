@@ -44,6 +44,9 @@ class AwsPayload:
     missing: List[str] = field(default_factory=list)
     #: 選んだのにファイルに無かったプロファイル
     unknown: List[str] = field(default_factory=list)
+    #: 空白を揃えると同じ名前になる、見出しの違う節が複数あった名前。切り出す節に当たれば
+    #: 別の節の原文 (秘密鍵を含む) が混ざるため、中身を作らない (``config`` も ``credentials`` も ``None``)
+    conflicts: List[str] = field(default_factory=list)
 
     def _files(self) -> List[Tuple[str, bytes]]:
         return [(name, data) for name, data in (('config', self.config),
@@ -83,14 +86,24 @@ def _normalize(header: str) -> str:
 
 
 def split_sections(text: str) -> Dict[str, str]:
+    """節の見出し (空白を 1 つに揃えたもの) → 原文。境界の引き方は :func:`_split` にある"""
+    return _split(text)[0]
+
+
+def _split(text: str) -> Tuple[Dict[str, str], List[str]]:
     """節の見出し (空白を 1 つに揃えたもの) → 見出しの行から次の見出しの前までの原文
 
     節の境界は configparser (``RawConfigParser`` の既定) と同じに引く。見出しは前後の空白を
     除いた行が ``[名前]`` で始まるもので、値の続きの行 (値を持つキーの後の、より深く字下げされた行)
     は見出しに見えても続きとして扱う。空行は値の続きを切らない。コメントの行は値の続きを切る
     (Python 3.12 まで。3.13 は切らない)。版で割れる行は見出しとして扱い、選んだ節を狭める側へ倒す。
+
+    2 つ目の戻り値は、空白を揃えると同じになるが元の見出しが違う節の名前 (``[dev]`` と ``[ dev ]``)。
+    configparser はこれらを別の節として読むため、同じ名前の原文へ連結すると別の節の中身が混ざる。
     """
     sections: Dict[str, List[str]] = {}
+    raw_headers: Dict[str, str] = {}
+    conflicts: List[str] = []
     current: Optional[str] = None
     in_value = False  # 直前のキーの値が続き得るか
     indent_level = 0
@@ -108,14 +121,17 @@ def split_sections(text: str) -> Dict[str, str]:
                 indent_level = cur_indent
                 match = _HEADER_RE.match(stripped)
                 if match:
-                    current = _normalize(match.group('header'))
+                    raw = match.group('header')
+                    current = _normalize(raw)
+                    if raw_headers.setdefault(current, raw) != raw and current not in conflicts:
+                        conflicts.append(current)
                     sections.setdefault(current, [])
                     in_value = False
                 else:
                     in_value = current is not None
         if current is not None:
             sections[current].append(line)
-    return {name: ''.join(lines) for name, lines in sections.items()}
+    return {name: ''.join(lines) for name, lines in sections.items()}, conflicts
 
 
 def _config_section(sections: Dict[str, str], profile: str) -> Optional[str]:
@@ -170,8 +186,8 @@ def _values(section_text: str) -> Dict[str, str]:
 def build(config_text: Optional[str], credentials_text: Optional[str],
           selected: Sequence[str]) -> AwsPayload:
     """選んだプロファイルとその連なりの節だけを切り出す"""
-    config_sections = split_sections(config_text or '')
-    cred_sections = split_sections(credentials_text or '')
+    config_sections, config_conflicts = _split(config_text or '')
+    cred_sections, cred_conflicts = _split(credentials_text or '')
     config_out: List[str] = []
     cred_out: List[str] = []
     payload = AwsPayload(None, None)
@@ -219,6 +235,10 @@ def build(config_text: Optional[str], credentials_text: Optional[str],
         if source and not add_profile(source, f'{label} の source_profile'):
             payload.missing.append(f'profile {source}')
 
+    payload.conflicts = ([h for h in config_out if h in config_conflicts]
+                         + [h for h in cred_out if h in cred_conflicts])
+    if payload.conflicts:
+        return payload
     if config_out:
         payload.config = ''.join(_ensure_newline(config_sections[h]) for h in config_out).encode('utf-8')
     if cred_out:

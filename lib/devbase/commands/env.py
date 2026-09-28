@@ -831,11 +831,28 @@ def _aws_sync_plan(sources, targets, store):
         for name in payload.unknown:
             logger.info("%s: 選んだプロファイル %s が ~/.aws/config にありません", label, name)
 
+    def report_conflicts(payload) -> bool:
+        for name in payload.conflicts:
+            logger.warning("%s: [%s] と空白だけが違う見出しの節が ~/.aws にあるため書きません",
+                           label, name)
+        return bool(payload.conflicts)
+
     source = sources.get_source('aws')
     if source and source.get('type') == 'aws_profiles':
         profiles = list(source.get('profiles') or [])
-        if targets.holder(key) is not None:
-            report_unknown(aws_profiles.build_from_home(profiles))
+        if targets.holder(key) is None:
+            return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+        payload = aws_profiles.build_from_home(profiles)
+        report_unknown(payload)
+        if report_conflicts(payload):
+            return None
+        # 選んだプロファイルが消えていれば控えと比べられず書かない (_sync_source が知らせる)
+        if not payload.unknown and not _aws_selection_covers(targets, key, payload):
+            dest = targets.target_for(key)
+            logger.info("%s: %sの値に選択外のプロファイルがあるため書きません"
+                        "（選択はグループの控えのもの。入れ直すなら devbase env init --reset）",
+                        label, store.display_label(dest.ref))
+            return None
         return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
     if source:
         return _encode_aws_config_files, ALL
@@ -859,7 +876,26 @@ def _aws_sync_plan(sources, targets, store):
     if payload.unknown:
         report_unknown(payload)
         return None
+    if report_conflicts(payload):
+        return None
     return payload.encode, in_value
+
+
+def _aws_selection_covers(targets, key, payload) -> bool:
+    """控えの選択で書き直しても、書く先の値のプロファイルが消えないか。
+
+    選択の控えはグループに 1 つで、どの参照へ書いたときの選択かを持たない。個人共通の値は
+    チーム共通の選択とは別に作られ得るため、書く先の値に選択 (と連なり) の外のプロファイルが
+    あれば、書き直すとそれが消える (#314 I7)。書く先に値が無ければ消えるものは無い。
+    """
+    from devbase.env import aws_profiles
+
+    dest = targets.target_for(key)
+    in_dest = aws_profiles.profiles_in_value(dest.get(key))
+    if in_dest is None:
+        return dest.get(key) is None
+    in_payload = aws_profiles.profiles_in_value(payload.encode())
+    return set(in_dest) <= set(in_payload or [])
 
 
 def _sync_unregistered(targets, store, counts, key, label, encode_fn, same=None):

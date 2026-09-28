@@ -146,6 +146,28 @@ def test_a_header_with_trailing_text_starts_its_own_section():
     assert aws_profiles.credential_names(credentials) == ['dev', 'private']
 
 
+def test_headers_that_differ_only_in_spaces_stop_the_extraction():
+    # configparser は `[dev]` と `[ dev ]` を別の節と読む。同じ dev へ連結すると、
+    # dev だけを選んでも別の節の秘密鍵が送られるため、中身を作らない
+    credentials = ('[dev]\naws_secret_access_key = d\n'
+                   '[ dev ]\naws_secret_access_key = p\n')
+    payload = aws_profiles.build(None, credentials, ['dev'])
+
+    assert payload.conflicts == ['dev']
+    assert payload.credentials is None
+    assert payload.encode() is None
+    assert payload.digest() is None
+
+
+def test_a_conflict_outside_the_selection_does_not_stop_the_extraction():
+    credentials = ('[dev]\naws_secret_access_key = d\n'
+                   '[other]\nk = a\n[ other ]\nk = b\n')
+    payload = aws_profiles.build(None, credentials, ['dev'])
+
+    assert payload.conflicts == []
+    assert payload.credentials.decode() == '[dev]\naws_secret_access_key = d\n'
+
+
 def test_an_indented_bracket_line_in_a_value_is_not_a_header():
     # 値の続きの行は、見出しに見えても configparser と同じく値の一部とする
     text = '[dev]\nk = a\n  [x]\n\n  b\n[w]\nk = c\n'

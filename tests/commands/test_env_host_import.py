@@ -568,6 +568,27 @@ def test_sync_watches_only_the_chosen_profiles(grouped, openbao, host, tty, monk
     assert SourcesManager(grouped, 'kkg').check_changed('aws') is False
 
 
+def test_sync_does_not_narrow_a_personal_value_with_the_team_selection(
+        grouped, openbao, host, tty, monkeypatch, caplog):
+    """I7: 控えの選択 (チーム共通へ kkg だけ) で、kkg と lixil を持つ個人共通の値を書き直さない"""
+    from devbase.env import aws_profiles
+
+    Answers(monkeypatch, {'選択 [1/2/3/4]': '1', '取り込む番号 (例: 3': '3'})
+    assert init(grouped) == 0
+    personal = aws_profiles.build(AWS_CONFIG, AWS_CREDENTIALS, ['kkg', 'lixil']).encode()
+    openbao.put(KKG_USER, {keys.AWS_CONFIG_BASE64: personal})
+    config = host / '.aws' / 'config'
+    config.write_text(AWS_CONFIG.replace('sso_account_id = 111111111111',
+                                         'sso_account_id = 999999999999'))
+    caplog.set_level(logging.INFO)
+
+    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+
+    assert openbao.get(KKG_USER)[keys.AWS_CONFIG_BASE64] == personal
+    assert any(line.startswith('AWS認証: ') and '選択外のプロファイルがあるため書きません' in line
+               for line in infos(caplog))
+
+
 def test_sync_reports_a_chosen_profile_that_disappeared(grouped, openbao, host, tty, monkeypatch,
                                                          caplog):
     Answers(monkeypatch, {'選択 [1/2/3/4]': '1', '取り込む番号 (例: 3': '3'})
