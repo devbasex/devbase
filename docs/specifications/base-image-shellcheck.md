@@ -135,5 +135,5 @@ CI はイメージを建てるジョブを持たないため、イメージの�
 - [lfm が base の設定を取り込む経路](lfm-base-settings.md)
 - [コンテナ操作ガイド: Bash の静的検査](../user/container-operations.md#bash-の静的検査base-以降)
 - [base イメージの文字の描画と、文書を扱う道具](base-image-rendering.md)
-- [CI の検査（トリガーと ShellCheck）](ci-checks.md)（CI の ShellCheck の検査ジョブ）
+- [CI の検査（トリガー・ShellCheck・CHANGELOG）](ci-checks.md)（CI の ShellCheck の検査ジョブ）
 - [ShellCheck](https://www.shellcheck.net/)
