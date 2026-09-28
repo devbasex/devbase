@@ -4,7 +4,28 @@
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-09-28
+
+アカウントグループの宣言を必須にする破壊的変更を含みます。グループを宣言していない
+プロジェクトは、`projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP` を書くまで `devbase up` が止まります。
+
 ### Changed
+- **アカウントグループの宣言を必須にし、`default` へ落とす扱いを外しました（#315、破壊的変更）。**
+  `projects/<name>/env` に空でない `DEVBASE_ACCOUNT_GROUP` が無いプロジェクトは、`devbase up` などが
+  宣言の書き方を示して止まります。`$DEVBASE_ROOT/env` での全体の既定は認めず、書いてあればその行を
+  消すよう示して止まります。`default` はグループ名に使えない予約語になり、`openbao.group_aliases` の
+  `default` の対応も読み込み時にエラーになります。グループ別の置き場（`backend: openbao`・`version: 2`）
+  では、プロジェクトの外で打つ機密のコマンドに `--group` が必須です（TUI は最初にグループを選ばせます）。
+  会社の機密を使わない個人・OSS のプロジェクト向けに `personal` を宣言できます。
+  **これまで宣言していなかったプロジェクトは、`devbase project migrate-volume --to <group>` で
+  `devbase_home_default` の中身を移し、宣言を書いてください**（手順とロールバックは
+  [環境変数の説明](docs/user/environment-variables.md) にあります）。
+- **`devbase list` の TUI の「環境変数」の操作を 4 つに整理しました（#312）。** 「キーの一覧と編集」
+  「認証情報の再同期 (sync)」「初期セットアップ (init)」「OpenBao の接続設定」です。役割が重なる
+  「変数一覧 (グローバル)」「エディタで編集 (edit)」「プロジェクト変数の対話設定 (project)」は外しました
+  （CLI の `devbase env list` / `edit` / `project` は変わりません）。キーの一覧の対象プロジェクトの選択に
+  キーの数を出し、← で範囲の選択へ戻れます。プロジェクトを選んだ後の一覧にはそのプロジェクトのキーだけを
+  出し、`★` の印は外しました。
 - **`devbase env init` / `sync` が、ホストの資格情報（`~/gcp-credentials/` の鍵・`~/.aws`・Git の設定）を
   確認なしにグループへ取り込まないようにしました（#314）。** 既定では候補の一覧を示して尋ね、何も選ばなければ
   取り込みません。端末でない実行（`devbase up` の子プロセスなど）では取り込みません。尋ねずに取り込む・取り込まない
@@ -886,7 +907,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v3.10.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/devbasex/devbase/compare/v3.10.0...v4.0.0
 [3.10.0]: https://github.com/devbasex/devbase/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/devbasex/devbase/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/devbasex/devbase/compare/v3.7.0...v3.8.0
