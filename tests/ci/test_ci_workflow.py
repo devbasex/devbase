@@ -77,6 +77,12 @@ def _aggregate_step() -> dict:
     return steps[0]
 
 
+def test_triggers_are_push_and_pull_request_only():
+    """トリガーは push と pull_request だけで、pull_request_target を使わない。"""
+    assert set(_triggers()) == {"push", "pull_request"}
+    assert "pull_request_target" not in CI_YML.read_text()
+
+
 def test_pull_request_does_not_filter_branches():
     """I1: Pull Request は宛先を絞らない（積み重ねた Pull Request も検査する）。"""
     pr = _triggers()["pull_request"]
