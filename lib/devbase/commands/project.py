@@ -234,11 +234,13 @@ def cmd_project_migrate_volume(devbase_root: Path, args) -> int:
     元は残す。引数の誤りは 2、前提を満たさない・写し損ねは 1。
     """
     from devbase.errors import DevbaseError
+    from devbase.env.groups import EXAMPLE_GROUP
     from devbase.volume.migrate import VolumeMigration, VolumeMigrationError
 
     group = getattr(args, 'to', None)
     if not group:
-        logger.error("--to <グループ> で移し先のグループを指定してください (例: --to acme)")
+        logger.error("--to <グループ> で移し先のグループを指定してください (例: --to %s)",
+                     EXAMPLE_GROUP)
         return 2
     try:
         migration = VolumeMigration(devbase_root, group)

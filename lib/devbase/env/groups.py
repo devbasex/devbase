@@ -36,6 +36,10 @@ logger = get_logger(__name__)
 #: 非機密設定のファイル名 (``$DEVBASE_ROOT/env``、``projects/<name>/env``)
 ENV_FILENAME = 'env'
 
+#: エラー文・使い方の文言がグループ名の書き方として示す例 (グループ名の例)。
+#: 文言を組む所は呼んだ時点でこの値を読む
+EXAMPLE_GROUP = 'acme'
+
 
 class GroupDeclarationError(DevbaseError):
     """グループの宣言が無い・空・使えない名前・``$DEVBASE_ROOT/env`` に行がある。
@@ -120,7 +124,7 @@ def declare(root: Path, project: Optional[str]) -> DeclaredGroup:
         )
     path = root / 'projects' / project / ENV_FILENAME
     relative = f"projects/{project}/{ENV_FILENAME}"
-    hint = f"{keys.DEVBASE_ACCOUNT_GROUP}=<グループ> (acme / personal など)"
+    hint = f"{keys.DEVBASE_ACCOUNT_GROUP}=<グループ> ({EXAMPLE_GROUP} / personal など)"
     found = _read_declaration(path)
     if found is None:
         raise GroupDeclarationError(

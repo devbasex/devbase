@@ -89,7 +89,7 @@ def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[s
         if declared is None:
             raise GroupOptionError(
                 "プロジェクトの外では対象のグループを決められません。"
-                "--group <名前> を付けてください (例: --group acme)")
+                f"--group <名前> を付けてください (例: --group {_groups.EXAMPLE_GROUP})")
         return declared.name
     if not grouped:
         raise GroupOptionError(
