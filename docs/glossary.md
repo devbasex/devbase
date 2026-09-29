@@ -140,6 +140,11 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | 見張るパス | — | CHANGELOG の検査が利用者に見える変更の手がかりとして見る場所（lib/・bin/・containers/・install.sh・etc/） | — | — | `docs/specifications/ci-checks.md` |
 | CHANGELOG の検査 | — | main 宛ての Pull Request で、見張るパスを変えて CHANGELOG.md を変えていないときに未記入の警告を出す検査ジョブ | — | — | `docs/specifications/ci-checks.md` |
 | 未記入の警告 | — | CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない | — | — | `docs/specifications/ci-checks.md` |
+| 固有の語 | — | 作成者の所属組織・顧客・社内プロダクト・個人に固有の名前。公開のリポジトリの文書・コード・テストに置かない | — | — | — |
+| 語の一覧 | — | 固有の語の検査が探す固有の語を 1 行 1 語で並べた平文。CI では secret、手元では追跡されない置き場に置き、公開のファイルに書かない | — | — | — |
+| 固有の語の検査 | — | 語の一覧を読み、追跡されたファイルから固有の語を含む行を探すスクリプトと、それを Pull Request で走らせる CI のジョブ | — | — | — |
+| 当たり | — | 固有の語の検査が見つけた、語を含む行。パスと行番号の組で示し、行の本文と語を出さない | — | — | — |
+| 例外の位置 | — | 固有の語の検査が当たりにしない行。パスと行の形の組で定め、語を含まない | — | — | — |
 
 ## テストの実行環境（`test`）
 
