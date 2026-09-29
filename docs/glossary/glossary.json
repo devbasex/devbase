@@ -557,6 +557,12 @@
       "source": "docs/specifications/secret-backend.md"
     },
     {
+      "term": "グループ名の例",
+      "context": "secret",
+      "meaning": "エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す",
+      "pending_source": "issues/issue-351-design.md"
+    },
+    {
       "term": "base の設定",
       "context": "image-lineage",
       "meaning": "base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定",
