@@ -27,7 +27,7 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 
 - `<name>` は `$DEVBASE_ROOT/projects/` 配下のプロジェクト名（`devbase project list` で確認可能）
 - 名前として受け付ける形は、英数字で始まり英数字・`.`・`-`・`_` だけからなる文字列です
-  （`carmo`、`github_work_time`、`carmo-ai`、`carmo.takemi`）。`../etc` や `a/b` のように
+  （`myapp`、`github_work_time`、`myapp-ai`、`myapp.alice`）。`../etc` や `a/b` のように
   形に合わない値は名前として扱わず、`..` や `/` で `projects/<name>` の外を指すことはできません。
   `[name]` を取るコマンドに渡すと、プロジェクト名に使えない形である旨を出して終了コード 1 になります
   （なお `projects/<name>` 自体がシンボリックリンクの場合は、その実体のディレクトリへ移動して
@@ -69,7 +69,7 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 そのコマンドの `docker` / `docker compose` を、指定した docker context の daemon へ向けます。
 
 ```bash
-devbase up carmo --context gpu-wsl     # この 1 回だけ gpu-wsl 上に立てる
+devbase up myapp --context gpu-wsl     # この 1 回だけ gpu-wsl 上に立てる
 devbase build --context gpu-wsl        # イメージをリモート側でビルドする
 ```
 
@@ -308,8 +308,8 @@ devbase project migrate-volume --to <group> [--dry-run]
 | `--dry-run` | いいえ | 前提の検査だけを行い、写す件数と移し先の状態を表示する（書かない） |
 
 ```bash
-devbase project migrate-volume --to nyle --dry-run
-devbase project migrate-volume --to nyle
+devbase project migrate-volume --to acme --dry-run
+devbase project migrate-volume --to acme
 ```
 
 - 元は読み取り専用で付け、`cp -a` でファイル・ディレクトリ・持ち主・権限・シンボリックリンク
@@ -331,7 +331,7 @@ devbase build --help
 ```
 
 `devbase build --help` / `-h` は、ビルドを起こさずにトップレベル `build` の使い方（上のオプションと
-`<image>` 指定）を出して終了コード 0 で終わります。`devbase build carmo --help` のようにプロジェクト名
+`<image>` 指定）を出して終了コード 0 で終わります。`devbase build myapp --help` のようにプロジェクト名
 の後ろに置いても、そのプロジェクトへ移動せずに使い方を出します。
 
 | モード | 子イメージ | 親イメージ（`FROM devbase-*`） |
@@ -414,7 +414,7 @@ devbase list [--no-interactive|--plain|-P]
 ```
 ? プロジェクトまたは操作を選択 (↑↓ 移動 / 名前で絞り込み / ←→ 下部メニュー / Enter 決定 / Esc・Ctrl-C 終了):
  » [1] adminer    (adminer, running (2 containers))
-   [2] carmo      (carmo, stopped)
+   [2] myapp      (myapp, stopped)
 ──────────────────────────────────────────────────────────────
   環境変数    プラグイン    スナップショット    ステータス
 ```
@@ -461,12 +461,12 @@ devbase list --no-interactive
 ```
 NAME          PLUGIN        STATUS
 adminer       adminer       running (2 containers)
-carmo         carmo         stopped
-carmo.takemi  carmo-fork    stopped
+myapp         myapp         stopped
+myapp.alice   myapp-fork    stopped
 ```
 
 - `PLUGIN` 列はシンボリックリンク先から解決するため、PLAN04 の同名衝突 suffix
-  （例 `carmo.takemi`）が付いていても正しいプラグイン名を表示します
+  （例 `myapp.alice`）が付いていても正しいプラグイン名を表示します
 - `STATUS` は `running (N containers)` / `stopped` / `unknown`（docker 未起動・
   `compose.yml` 不在等で判定不能）のいずれか
 
