@@ -613,6 +613,27 @@
       "meaning": "CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない",
       "source": "",
       "pending_source": "issues/issue-335-requirements.md"
+    },
+    {
+      "term": "固有の語",
+      "context": "ci",
+      "meaning": "作成者の所属組織・顧客・社内プロダクト・個人に固有の名前。公開のリポジトリの文書・コード・テストに置かない",
+      "source": "",
+      "pending_source": "issues/issue-353-requirements.md"
+    },
+    {
+      "term": "語の一覧",
+      "context": "ci",
+      "meaning": "固有の語の検査が探す固有の語を 1 行 1 語で並べた平文。CI では secret、手元では追跡されない置き場に置き、公開のファイルに書かない",
+      "source": "",
+      "pending_source": "issues/issue-353-requirements.md"
+    },
+    {
+      "term": "固有の語の検査",
+      "context": "ci",
+      "meaning": "語の一覧を読み、追跡されたファイルから固有の語を含む行を探すスクリプトと、それを Pull Request で走らせる CI のジョブ",
+      "source": "",
+      "pending_source": "issues/issue-353-requirements.md"
     }
   ]
 }
