@@ -63,7 +63,7 @@
 ## 未決
 
 - 未決 1: `lib/devbase/editor/opener.py:443` の例 `/home/ubuntu/share/work/uttarov2-doc.workspace` の置き換え先。#294 の表は「`myapp-doc.workspace` など `myapp` 系」とする。`myapp-doc.workspace` で進め、#294 の表と食い違えば表に合わせる（`design` で確定する）
-- 未決 2: #294 の表に無い語が `tests/` に残る。`csc`（`tests/commands/test_env_backend_migrate.py` の 24 件。社内プロダクトの略称）と `investment`（`tests/editor/test_opener.py:991,999`。作成者のプロジェクト名）。#294 の境界「確認してから行う: 表に無い固有の語を見つけたときの置き換え先（表へ足して本文を直す）」に当たるため、この課題では置き換え先を決めない。案は `csc` → `myapp-console`、`investment` → `myapp-ml`。#294 の表へ足すかを利用者が決めるまで、AC1 の対象に含めない
+- 未決 2: #294 の表に無い語が `tests/` に残る。`csc`（`tests/commands/test_env_backend_migrate.py` の 24 件。社内プロダクトの略称）と `investment`（`tests/editor/test_opener.py:991,999`。作成者のプロジェクト名）と `lixil`（`tests/commands/test_env_host_import.py` の 20 行。`[profile lixil]`・`lixil-base`・`lixil-root`・`AKIALIXIL`・`SECRET-LIXIL` など。他社の名前）。#294 の境界「確認してから行う: 表に無い固有の語を見つけたときの置き換え先（表へ足して本文を直す）」に当たるため、この課題では置き換え先を決めない。案は `csc` → `myapp-console`、`investment` → `myapp-ml`、`lixil` → `hooli`（大文字の `LIXIL` は `HOOLI`）。`lixil` は並びに依存する期待値（`test_env_host_import.py:384-386` のヘッダの並び、`:578` の `['kkg', 'lixil']`、`:727` のプロファイルの並び）があるため、置き換えるときは期待値の並びを置き換え後の名前で確かめ直す。#294 の表へ足すかを利用者が決めるまで、AC1 の対象に含めない
 
 ## ドメインイベント
 
