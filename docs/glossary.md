@@ -83,6 +83,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | 取り込みの選択 | — | 取り込みの候補のうち、利用者が選んだもの。AWS は選んだプロファイルの名前の並び、GCP は参照に書いたプロファイル。同期済みハッシュの控えに残り、sync はこの範囲だけを入れ直す | — | — | `docs/specifications/secret-backend.md` |
 | AWS の丸ごとの取り込み | — | ~/.aws/config と ~/.aws/credentials を切り出さずにそのまま 1 つの tar にして AWS_CONFIG_BASE64 へ書くこと。#314 より前の振る舞い | — | — | `docs/specifications/secret-backend.md` |
 | AWS のプロファイルの連なり | — | 選んだ AWS のプロファイルが動くのに要る節。sso_session が指す [sso-session <名前>] と、source_profile が指すプロファイル（たどれる限り） | — | — | `docs/specifications/secret-backend.md` |
+| グループ名の例 | — | エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す | — | — | — |
 
 ## スナップショット（`snapshot`）
 
@@ -124,8 +125,8 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | --- | --- | --- | --- | --- | --- |
 | 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all・CHANGELOG check） | — | — | `docs/specifications/ci-checks.md` |
 | 統合ブランチ | — | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — | `docs/specifications/ci-checks.md` |
-| 必須チェック | — | main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない | — | — | — |
-| まとめたチェック | — | pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する | — | — | — |
+| 必須チェック | — | main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない | — | — | `docs/specifications/ci-checks.md` |
+| まとめたチェック | — | pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する | — | — | `docs/specifications/ci-checks.md` |
 | トリガー | — | ci.yml の on: に書く 1 つのイベント（pull_request / push）と、その絞り込み（branches） | — | — | `docs/specifications/ci-checks.md` |
 | 積み重ねた Pull Request | — | 宛先が main でも統合ブランチでもない、別の作業ブランチの Pull Request | — | — | `docs/specifications/ci-checks.md` |
 | 指摘 | — | shellcheck が出す 1 件（SC の番号・水準・行） | — | — | `docs/specifications/ci-checks.md` |
@@ -135,10 +136,10 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | base のシェルスクリプト | — | containers/base/ の直下の通常のファイルのうち、先頭行が sh か bash を指す shebang か、名前が .sh で終わるもの | — | — | `docs/specifications/ci-checks.md` |
 | 検査の対象 | — | CI の ShellCheck ジョブで、引数に containers/base/ のパスを持つ shellcheck の行が並べたファイル | — | — | `docs/specifications/ci-checks.md` |
 | shellcheck の指示 | — | # shellcheck で始まるコメント（disable= / source= / shell=）。disable= と source= は抑止の注記の指示の側で、shell= は指摘を抑えない | — | — | `docs/specifications/ci-checks.md` |
-| 利用者に見える変更 | — | devbase を使う人がコマンド・イメージ・設定を通じて気づく振る舞いの変化。テストだけ・開発者向けの文書だけの変更は含まない | — | — | — |
-| 見張るパス | — | CHANGELOG の検査が利用者に見える変更の手がかりとして見る場所（lib/・bin/・containers/・install.sh・etc/） | — | — | — |
-| CHANGELOG の検査 | — | main 宛ての Pull Request で、見張るパスを変えて CHANGELOG.md を変えていないときに未記入の警告を出す検査ジョブ | — | — | — |
-| 未記入の警告 | — | CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない | — | — | — |
+| 利用者に見える変更 | — | devbase を使う人がコマンド・イメージ・設定を通じて気づく振る舞いの変化。テストだけ・開発者向けの文書だけの変更は含まない | — | — | `docs/specifications/ci-checks.md` |
+| 見張るパス | — | CHANGELOG の検査が利用者に見える変更の手がかりとして見る場所（lib/・bin/・containers/・install.sh・etc/） | — | — | `docs/specifications/ci-checks.md` |
+| CHANGELOG の検査 | — | main 宛ての Pull Request で、見張るパスを変えて CHANGELOG.md を変えていないときに未記入の警告を出す検査ジョブ | — | — | `docs/specifications/ci-checks.md` |
+| 未記入の警告 | — | CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない | — | — | `docs/specifications/ci-checks.md` |
 
 ## テストの実行環境（`test`）
 

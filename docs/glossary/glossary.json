@@ -362,13 +362,13 @@
       "term": "必須チェック",
       "context": "ci",
       "meaning": "main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない",
-      "pending_source": "issues/issue-277-requirements.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "まとめたチェック",
       "context": "ci",
       "meaning": "pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する",
-      "pending_source": "issues/issue-277-design.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "トリガー",
@@ -557,6 +557,12 @@
       "source": "docs/specifications/secret-backend.md"
     },
     {
+      "term": "グループ名の例",
+      "context": "secret",
+      "meaning": "エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す",
+      "pending_source": "issues/issue-351-design.md"
+    },
+    {
       "term": "base の設定",
       "context": "image-lineage",
       "meaning": "base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定",
@@ -590,29 +596,25 @@
       "term": "利用者に見える変更",
       "context": "ci",
       "meaning": "devbase を使う人がコマンド・イメージ・設定を通じて気づく振る舞いの変化。テストだけ・開発者向けの文書だけの変更は含まない",
-      "source": "",
-      "pending_source": "issues/issue-335-requirements.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "見張るパス",
       "context": "ci",
       "meaning": "CHANGELOG の検査が利用者に見える変更の手がかりとして見る場所（lib/・bin/・containers/・install.sh・etc/）",
-      "source": "",
-      "pending_source": "issues/issue-335-requirements.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "CHANGELOG の検査",
       "context": "ci",
       "meaning": "main 宛ての Pull Request で、見張るパスを変えて CHANGELOG.md を変えていないときに未記入の警告を出す検査ジョブ",
-      "source": "",
-      "pending_source": "issues/issue-335-requirements.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "未記入の警告",
       "context": "ci",
       "meaning": "CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない",
-      "source": "",
-      "pending_source": "issues/issue-335-requirements.md"
+      "source": "docs/specifications/ci-checks.md"
     }
   ]
 }
