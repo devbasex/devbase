@@ -634,6 +634,20 @@
       "meaning": "語の一覧を読み、追跡されたファイルから固有の語を含む行を探すスクリプトと、それを Pull Request で走らせる CI のジョブ",
       "source": "",
       "pending_source": "issues/issue-353-requirements.md"
+    },
+    {
+      "term": "当たり",
+      "context": "ci",
+      "meaning": "固有の語の検査が見つけた、語を含む行。パスと行番号の組で示し、行の本文と語を出さない",
+      "source": "",
+      "pending_source": "issues/issue-353-design.md"
+    },
+    {
+      "term": "例外の位置",
+      "context": "ci",
+      "meaning": "固有の語の検査が当たりにしない行。パスと行の形の組で定め、語を含まない",
+      "source": "",
+      "pending_source": "issues/issue-353-design.md"
     }
   ]
 }
