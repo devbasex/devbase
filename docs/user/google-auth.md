@@ -110,13 +110,13 @@ VS Code のポート転送の有無は関係ありません。
 $ gcloud auth list
         Credentialed Accounts
 ACTIVE  ACCOUNT
-*       takemi_ohama@kk-generation.com
+*       alice@globex.example
 
 To set the active account, run:
     $ gcloud config set account `ACCOUNT`
 
 $ gcloud config get account
-takemi_ohama@kk-generation.com
+alice@globex.example
 ```
 
 このとき `$CLOUDSDK_CONFIG` の中身は次のようになります。
@@ -233,7 +233,7 @@ $ devbase login <name>
 $ gcloud auth list
         Credentialed Accounts
 ACTIVE  ACCOUNT
-*       takemi_ohama@kk-generation.com
+*       alice@globex.example
 
 $ PYTHONPATH=/opt/google-cloud-sdk/lib/third_party python3 -c \
     "import google.auth; c, p = google.auth.default(); print(p, type(c).__name__)"
@@ -247,10 +247,10 @@ nyle-carmo-analysis Credentials
 
 ```console
 $ docker run --rm -v devbase_home_nyle:/g alpine ls /g/gcloud/legacy_credentials
-takemi_ohama@nyle.co.jp
+alice@acme.example
 
 $ docker run --rm -v devbase_home_kkg:/g alpine ls /g/gcloud/legacy_credentials
-takemi_ohama@kk-generation.com
+alice@globex.example
 ```
 
 コンテナ内から見ると、自分のグループのアカウントしか見えません。
@@ -258,11 +258,11 @@ takemi_ohama@kk-generation.com
 ```console
 # nyle グループのコンテナ
 $ gcloud config get account
-takemi_ohama@nyle.co.jp
+alice@acme.example
 
 # kkg グループのコンテナ
 $ gcloud config get account
-takemi_ohama@kk-generation.com
+alice@globex.example
 ```
 
 ## 4. gws（Google Workspace CLI）の認証
@@ -317,7 +317,7 @@ $ gws auth setup --dry-run
 Step 1/6: Checking for gcloud CLI...
   ✓ gcloud CLI found
 Step 2/6: Checking authentication...
-  ✓ Authenticated as takemi_ohama@kk-generation.com
+  ✓ Authenticated as alice@globex.example
 {
   "error": {
     "code": 400,
@@ -345,7 +345,7 @@ Listed 0 items.
 
 ```
   ✓ Step 1/5: gcloud CLI — found
-  ✓ Step 2/5: Authentication — takemi_ohama@nyle.co.jp
+  ✓ Step 2/5: Authentication — alice@acme.example
   ✓ Step 3/5: GCP project — nyle-carmo-analysis
   ✓ Step 4/5: Workspace APIs — 0 enabled, 22 skipped
   ▸ Step 5/5: OAuth credentials — Waiting for manual input...
@@ -621,7 +621,7 @@ $ readlink -f ~/.claude/plugins
 
 ```console
 $ devbase project logs <name> | grep "Account group"
-Account group: kkg (gcloud account: takemi_ohama@kk-generation.com, CLOUDSDK_CONFIG: /persistent/group/gcloud)
+Account group: kkg (gcloud account: alice@globex.example, CLOUDSDK_CONFIG: /persistent/group/gcloud)
 ```
 
 ### 認証の疎通
@@ -682,7 +682,7 @@ $ gcloud auth list
         Credentialed Accounts
 ACTIVE  ACCOUNT
         someone@example.com
-*       takemi_ohama@kk-generation.com
+*       alice@globex.example
 ```
 
 切り替えは `gcloud config set account`、要らないものは `gcloud auth revoke` で消します。

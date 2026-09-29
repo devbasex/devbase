@@ -244,9 +244,9 @@ issue #116 が `standard` 相当の Phase 分割で書かれていても、判�
 
 | AC | 結果 | 主な根拠 |
 |---|---|---|
-| AC1 | ✅ | `devbase down` → `up` の後も `gcloud auth list` が `takemi_ohama@kk-generation.com` を返し、`google.auth.default()` がユーザー認証 (`Credentials`) で通った |
+| AC1 | ✅ | `devbase down` → `up` の後も `gcloud auth list` が `alice@globex.example` を返し、`google.auth.default()` がユーザー認証 (`Credentials`) で通った |
 | AC2 | ✅ | `gws 0.22.5` がイメージに同梱。`credentials.enc` (334B) が再作成後も残り `auth_method: oauth2` / `storage: encrypted` を維持 |
-| AC3 | ✅ | `devbase_home_default/gcloud/legacy_credentials` = `takemi_ohama@nyle.co.jp`、`devbase_home_kkg/...` = `takemi_ohama@kk-generation.com`。`kkg` から `~/.claude/.credentials.json` は見えない |
+| AC3 | ✅ | `devbase_home_default/gcloud/legacy_credentials` = `alice@acme.example`、`devbase_home_kkg/...` = `alice@globex.example`。`kkg` から `~/.claude/.credentials.json` は見えない |
 | AC4 | ✅ | 両グループとも `readlink -f ~/.claude/plugins` = `/persistent/ai/.claude/plugins` |
 | AC5 | ✅ | `DEVBASE_ACCOUNT_GROUP` 未設定の `carmo-ai` が `default` で起動 |
 | AC6 | ✅ | `~/.claude/CLAUDE.md` / `settings.json` は壊れていない symlink かつファイル。`history.jsonl` はディレクトリでない |

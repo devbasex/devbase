@@ -44,7 +44,7 @@ devbase/
 │   │   │   └── projects/adminer/
 │   │   └── ...
 │   ├── github.com--volareinc--devbase-ext/     # ← github.com/volareinc/devbase-ext.git
-│   └── github.com--takemi-ohama--devbase-ext/  # ← github.com/takemi-ohama/devbase-ext.git
+│   └── github.com--alice--devbase-ext/  # ← github.com/alice/devbase-ext.git
 ├── plugins/                 # --link 専用 (repos/ ベース install では不使用。--link が 0 件なら削除)
 └── projects/                # repos/ を直接参照
     ├── adminer → ../repos/github.com--devbasex--devbase-samples/adminer/projects/adminer
@@ -131,15 +131,15 @@ projects/adminer → ../repos/github.com--devbasex--devbase-samples/adminer/proj
 ```
 projects/
 ├── carmo                                          → ../repos/github.com--volareinc--devbase-ext/carmo-web/projects/carmo  # winner (priority 高)
-└── carmo.github.com--takemi-ohama--devbase-ext    → ../repos/github.com--takemi-ohama--devbase-ext/personal/projects/carmo  # 明示指定用 (loser のみ)
+└── carmo.github.com--alice--devbase-ext    → ../repos/github.com--alice--devbase-ext/personal/projects/carmo  # 明示指定用 (loser のみ)
 ```
 
 - 衝突がない場合は bare name のみ (suffix なし、suffix 版は作成しない)
 - 衝突がある場合は winner が bare name を取得し、**loser のみ** suffix 版を作成
 - winner は bare name でアクセスできるため suffix 版は不要 (リンクの重複を避ける)
-- loser を使うには `cd projects/carmo.github.com--takemi-ohama--devbase-ext && devbase up` のように suffix 付きディレクトリに移動して起動する (`devbase up` は CWD のディレクトリ名を `COMPOSE_PROJECT_NAME` として使用する)
+- loser を使うには `cd projects/carmo.github.com--alice--devbase-ext && devbase up` のように suffix 付きディレクトリに移動して起動する (`devbase up` は CWD のディレクトリ名を `COMPOSE_PROJECT_NAME` として使用する)
 - suffix 識別子は `syncer._extract_owner()` が生成: repos/ ベースは `repos/<host--owner--repo>/...` の dirname 部分 (`parts[1]`) を、`--link` プラグインは `source` パス末尾を返す
-- **互換性確認済み**: `devbase up` は `basename "$PWD"` を `COMPOSE_PROJECT_NAME` に設定するだけでバリデーションなし。Docker Compose もドット・ハイフンを含むプロジェクト名を許容するため、`carmo.github.com--takemi-ohama--devbase-ext` 形式で問題なく動作する
+- **互換性確認済み**: `devbase up` は `basename "$PWD"` を `COMPOSE_PROJECT_NAME` に設定するだけでバリデーションなし。Docker Compose もドット・ハイフンを含むプロジェクト名を許容するため、`carmo.github.com--alice--devbase-ext` 形式で問題なく動作する
 - ログに衝突の全候補と suffix 付きアクセス方法を表示
 
 **変更対象**: `syncer.py` の `sync_projects()` に suffix リンク生成ロジック追加

@@ -33,14 +33,14 @@
 ## 前提
 
 - 前提 1: 移行対象は把握済み plugin リポジトリ 3 本。`repos/` 配下で `projects/*/env` は **136 件**
-  (`volareinc/devbase-ext` 122 / `takemi-ohama/devbase-ext` 8 / `devbasex/devbase-samples` 6)。
+  (`volareinc/devbase-ext` 122 / `alice/devbase-ext` 8 / `devbasex/devbase-samples` 6)。
   キー分布は `WORK_DIR`/`GIT_USER`/`GIT_REPO`/`DEVBASE_OPEN_EDITOR`/`CONTAINER_SCALE` が全 136 件、
   `ENABLE_SSH` 2 件、`GIT_HOST` 1 件、`AWS_CONFIG_BASE64` 1 件 → 機械変換で移行できる。
 - 前提 2: entrypoint は base image 由来の 1 本のみ (`containers/base/entrypoint.sh`)。lfm も
   `COPY --from=devbase-base` で同一ファイルを使う。変更は base 再ビルドで全イメージへ届く。
 - 前提 3: `projects/<name>/compose.yml` は `env_file: - env` を持ち、`env` が実在しないと compose が落ちる
   (`_drop_missing_env_files` は機密由来の参照しか落とさない)。→ 移行後も `env` ファイルは残す。
-- 前提 4: 題材 (pilot) は `takemi-ohama/devbase-ext` の 2 プロジェクト。
+- 前提 4: 題材 (pilot) は `alice/devbase-ext` の 2 プロジェクト。
   - `project-trygroup-prd` ← `project-trygroup-prd` + `project-trygroup-prd-customer` (同一 owner `KK-Generation` / 同一イメージ `containers/trygroup`)
   - `uttarov2` ← `uttarov2` (**gitlab.com** / `uttaro_dev`) + `uttarov2-doc` + `uttarov2migration` (**github.com** / `uttaro-dev2`)
   - 後者は **repo ごとに host が違う**ため、per-repo `host` の検証題材になる。統合後のイメージは `containers/php85` に寄せる。
@@ -185,7 +185,7 @@ devbase 本体:
 
 plugin リポジトリ (別 PR):
 
-- `takemi-ohama/devbase-ext`: pilot 統合 2 件 + 残り project の機械移行 (8 project)
+- `alice/devbase-ext`: pilot 統合 2 件 + 残り project の機械移行 (8 project)
 - `volareinc/devbase-ext`: 122 project の機械移行
 - `devbasex/devbase-samples`: 6 project の機械移行
 
@@ -241,7 +241,7 @@ plugin リポジトリ (別 PR):
 - **満たす受け入れ条件:** AC8 の周辺 (手順の再現性)
 - **進め方:** テスト駆動の対象外 (文書)。
 
-### Task 6: plugin repo 移行 — `takemi-ohama/devbase-ext` (pilot 含む)
+### Task 6: plugin repo 移行 — `alice/devbase-ext` (pilot 含む)
 
 - **対象ファイル:** `personal/projects/*`, `bplus/projects/*`
 - **変更内容:** Task 4 のコマンドで 8 project を移行。加えて pilot 統合:
@@ -278,7 +278,7 @@ plugin リポジトリ (別リポジトリのため release ブランチは使�
 
 | repo | branch 名 | 対応 Task | 概要 | 依存 |
 |---|---|---|---|---|
-| `takemi-ohama/devbase-ext` | `feature/PLAN32-project-yml` | Task 6 | 8 project の移行 + pilot 統合 2 件 | 本体 PR1〜4 |
+| `alice/devbase-ext` | `feature/PLAN32-project-yml` | Task 6 | 8 project の移行 + pilot 統合 2 件 | 本体 PR1〜4 |
 | `volareinc/devbase-ext` | `feature/PLAN32-project-yml` | Task 7 | 122 project の機械移行 | 本体 PR1〜4 |
 | `devbasex/devbase-samples` | `feature/PLAN32-project-yml` | Task 7 | 6 project の機械移行 | 本体 PR1〜4 |
 
@@ -333,7 +333,7 @@ plugin repo の PR は本体 release PR の merge 直後に merge する (flag d
 | devbasex/devbase | #108 | ドキュメントと CHANGELOG |
 | devbasex/devbase | #109 | 3.0.0 への版数引き上げ |
 | devbasex/devbase | #110 | フックへ clone 先・URL を渡す |
-| takemi-ohama/devbase-ext | #11 | 8 プロジェクトの移行 + pilot 統合 2 件 |
+| alice/devbase-ext | #11 | 8 プロジェクトの移行 + pilot 統合 2 件 |
 | volareinc/devbase-ext | #27 | 122 プロジェクトの移行 |
 | devbasex/devbase-samples | #4 | 6 プロジェクトの移行 |
 

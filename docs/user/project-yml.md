@@ -145,7 +145,7 @@ devbase-samples / devbase-ext などプロジェクト定義を持つリポジ�
 # projects/<name>/project.local.yml
 docker:
   context: gpu-wsl        # docker context ls に出る名前。未指定なら現在の context
-  home: /home/takemi      # リモート側の HOME。bind mount の ~ をこの値で展開する
+  home: /home/alice      # リモート側の HOME。bind mount の ~ をこの値で展開する
   # gid: 999              # リモート側の docker グループ gid。省略時は初回の up で自動取得
 ```
 

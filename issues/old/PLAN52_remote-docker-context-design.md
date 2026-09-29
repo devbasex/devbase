@@ -206,7 +206,7 @@ stateDiagram-v2
 ```yaml
 docker:
   context: gpu-wsl      # 任意。docker context ls の名前
-  home: /home/takemi    # 任意。リモート側の HOME（絶対パス）
+  home: /home/alice    # 任意。リモート側の HOME（絶対パス）
   gid: 999              # 任意。リモート側の docker グループ gid
 ```
 

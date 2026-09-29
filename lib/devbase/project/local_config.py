@@ -10,7 +10,7 @@
 
     docker:                 # 任意
       context: gpu-wsl      # 任意。`docker context ls` に出る名前
-      home: /home/takemi    # 任意。リモート側の HOME (絶対パス)。bind mount の ~ を展開する
+      home: /home/alice    # 任意。リモート側の HOME (絶対パス)。bind mount の ~ を展開する
       gid: 999              # 任意。リモート側の docker グループ gid
 
 ``project.yml`` へ深くマージはしない (決定 2)。初期スコープの ``docker`` 節は

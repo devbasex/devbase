@@ -312,7 +312,7 @@ entrypoint の変更はイメージを作り直すまで効かないため、dev
 起動ログの 1 行で、どのグループとしてどのアカウントで動いているかを確認できます。
 
 ```
-Account group: kkg (gcloud account: someone@kk-generation.com, CLOUDSDK_CONFIG: /persistent/group/gcloud)
+Account group: kkg (gcloud account: someone@globex.example, CLOUDSDK_CONFIG: /persistent/group/gcloud)
 ```
 - `share` 配下に置いた VS Code ワークスペースファイルは `DEVBASE_WORKSPACE` で開けます（リポジトリ 1 件の構成のみ。[環境変数](environment-variables.md) 参照）。
 

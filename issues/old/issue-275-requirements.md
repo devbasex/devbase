@@ -44,8 +44,8 @@
 - 前提 3: 子 issue #261 と #243 はこの課題の変更で一緒に解消する。#243 の「まず測る」は、直す前の lfm のイメージで `fc-match` を 1 度測って記録することで満たす（直した後の値だけでは、直しが効いたのかを示せない）
 - 前提 4: lfm の固有の中身（CUDA・cuDNN・Rust・gfortran・MeCab・NVIDIA Container Toolkit の設定・`/etc/docker/daemon.json`・`LD_LIBRARY_PATH`）は変えない
 - 前提 5: base の既定のビルド（`devbase build base`）の結果は変わらない。`FROM ubuntu:26.04` から建ち、`FROM devbase-base:latest` の派生イメージ（`bi-tools` / `general` / `go` / `latex` / `php` / `php85` / `trygroup`）は Dockerfile を変えずに建つ
-- 前提 6: 建てて確かめるのは手元の arm64 とする。`nvidia/cuda:13.3.1-cudnn-devel-ubuntu26.04` が arm64 を提供しないときは、amd64 の hammer05（WSL2 の GPU ホスト）で建てる
-- 前提 7: GPU を使う実行（`--gpus all` でコンテナから `nvidia-smi` が通る）は hammer05 でしか確かめられない。マージ前に hammer05 を使えないときは、リリース後テストの項目へ回し、その旨を Pull Request に書く
+- 前提 6: 建てて確かめるのは手元の arm64 とする。`nvidia/cuda:13.3.1-cudnn-devel-ubuntu26.04` が arm64 を提供しないときは、amd64 の gpu-host（WSL2 の GPU ホスト）で建てる
+- 前提 7: GPU を使う実行（`--gpus all` でコンテナから `nvidia-smi` が通る）は gpu-host でしか確かめられない。マージ前に gpu-host を使えないときは、リリース後テストの項目へ回し、その旨を Pull Request に書く
 
 ### base の設定の一覧
 
@@ -126,7 +126,7 @@ lfm のイメージの中での確認（`docker run --rm --entrypoint bash <lfm>
 - [ ] AC15: lfm で ubuntu が `sudo` なしで `npm i -g <小さなパッケージ>` を実行できる（`npm` グループの GID が base と一致したまま）
 - [ ] AC16: base の既定のビルドが `FROM ubuntu:26.04` から建ち、`tests/containers/` の既存のテストがすべて通る
 - [ ] AC17: `FROM devbase-base:latest` の派生イメージのうち 1 つ（`general`）が、Dockerfile を変えずに建つ
-- [ ] AC18: hammer05 で `--gpus all` を付けて起動した lfm のコンテナの中で `nvidia-smi` が 0 で終わる（前提 7。マージ前に確かめられないときはリリース後テストへ回す）
+- [ ] AC18: gpu-host で `--gpus all` を付けて起動した lfm のコンテナの中で `nvidia-smi` が 0 で終わる（前提 7。マージ前に確かめられないときはリリース後テストへ回す）
 
 文書:
 
@@ -157,7 +157,7 @@ lfm のイメージの中での確認（`docker run --rm --entrypoint bash <lfm>
 | 起動 | `devbase build base --no-cache` → `devbase build lfm --no-cache`（または lfm の Dockerfile を直接 `docker build`）→ AC1〜AC10・AC13〜AC15 を `docker run --rm` で確かめる |
 | テスト | `pytest tests/containers/`（AC11・AC12・AC16）。実環境の `DEVBASE_ROOT` を継がないようにして走らせる |
 | 静的解析・型検査 | CI の ShellCheck の検査ジョブ（シェルの断片を足したとき） |
-| 手動確認 | hammer05 で AC18。AC19 は差分を読んで `grep -n lfm docs/specifications/*.md` の各行を照らす |
+| 手動確認 | gpu-host で AC18。AC19 は差分を読んで `grep -n lfm docs/specifications/*.md` の各行を照らす |
 
 ## 前提とする取り決め
 

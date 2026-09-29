@@ -27,7 +27,7 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 
 - `<name>` は `$DEVBASE_ROOT/projects/` 配下のプロジェクト名（`devbase project list` で確認可能）
 - 名前として受け付ける形は、英数字で始まり英数字・`.`・`-`・`_` だけからなる文字列です
-  （`carmo`、`github_work_time`、`carmo-ai`、`carmo.takemi`）。`../etc` や `a/b` のように
+  （`carmo`、`github_work_time`、`carmo-ai`、`myapp.alice`）。`../etc` や `a/b` のように
   形に合わない値は名前として扱わず、`..` や `/` で `projects/<name>` の外を指すことはできません。
   `[name]` を取るコマンドに渡すと、プロジェクト名に使えない形である旨を出して終了コード 1 になります
   （なお `projects/<name>` 自体がシンボリックリンクの場合は、その実体のディレクトリへ移動して
@@ -462,11 +462,11 @@ devbase list --no-interactive
 NAME          PLUGIN        STATUS
 adminer       adminer       running (2 containers)
 carmo         carmo         stopped
-carmo.takemi  carmo-fork    stopped
+myapp.alice  carmo-fork    stopped
 ```
 
 - `PLUGIN` 列はシンボリックリンク先から解決するため、PLAN04 の同名衝突 suffix
-  （例 `carmo.takemi`）が付いていても正しいプラグイン名を表示します
+  （例 `myapp.alice`）が付いていても正しいプラグイン名を表示します
 - `STATUS` は `running (N containers)` / `stopped` / `unknown`（docker 未起動・
   `compose.yml` 不在等で判定不能）のいずれか
 

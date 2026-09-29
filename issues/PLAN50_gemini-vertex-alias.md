@@ -10,7 +10,7 @@
 > with-aiのコンテナで、geminiのvertex ai経由の利用ができなくなっています。設定を復帰させてください
 
 > OAuthで行きます。
-> takemi.ohama@gmail.comの現在のプランを調べたい
+> alice@example.comの現在のプランを調べたい
 
 利用者は Vertex AI ではなく OAuth（個人アカウント）で使う方針を選んだ。この計画が扱うのは、
 その方針を邪魔している devbase 側の作りである。
@@ -40,7 +40,7 @@ alias gemini='GOOGLE_GENAI_USE_VERTEXAI=true gemini --yolo "$@"'
 $ echo "$GOOGLE_CLOUD_PROJECT"
 nyle-carmo-analysis          # 空にしたはずの値。別の不具合（下記）
 $ gcloud auth list
-*  ohama.takemi@withjp.inc   # nyle のプロジェクトへの権限は無い
+*  alice@initech.example   # nyle のプロジェクトへの権限は無い
 ```
 
 ### alias の `"$@"` について

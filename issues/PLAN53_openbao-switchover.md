@@ -22,9 +22,9 @@
 
 ## 目的
 
-- 利用者（`takemi_ohama`）の端末 1 台が、age ストアではなく OpenBao から機密を読み書きする
+- 利用者（`alice`）の端末 1 台が、age ストアではなく OpenBao から機密を読み書きする
   状態にする
-- チーム共通の機密が OpenBao の `team/…` に、個人単位の機密が `users/takemi_ohama/…` に
+- チーム共通の機密が OpenBao の `team/…` に、個人単位の機密が `users/alice/…` に
   置かれ、手元の `.env` / `secrets/*.age` に平文・暗号文が残らない（退避先は除く）
 - #152 の現象（プロジェクトの `env` による共通機密の空上書きが効かない）が、#171 以降の
   `devbase up` で起きないことを実機で確かめる
@@ -35,8 +35,8 @@
   carmo-cdk の `main` から**利用者自身が管理者として**実行する。この計画は実行のコマンドと
   結果を記録するが、管理者の資格情報（Google ログイン）を扱わない
   （成否の判定: この計画の記録に管理者の token・`role_id`・`secret_id` の値が無い）
-- 前提 2: チーム共通の書き手は利用者自身（`takemi_ohama`）とする。他に書き手を置くかは
-  この計画の範囲外（成否の判定: 単位 3 の対象が `takemi_ohama` 1 名）
+- 前提 2: チーム共通の書き手は利用者自身（`alice`）とする。他に書き手を置くかは
+  この計画の範囲外（成否の判定: 単位 3 の対象が `alice` 1 名）
 - 前提 3: 移行の元は `secrets/global.env.age` と `secrets/projects/*.env.age` の age ストア
   であり、平文 `.env` は残っていない（`devbase env backend status` が `age` を返す。
   2026-09-14 に確認済み）
@@ -77,7 +77,7 @@
 - [x] 前提: 単位 2 まで終わっている
       操作: `devbase env backend test`
       結果: 終了コード 0 で、4 参照（`team/global` / `team/projects/<name>` /
-      `users/takemi_ohama/global` / `users/takemi_ohama/projects/<name>`）を読めた旨が出る
+      `users/alice/global` / `users/alice/projects/<name>`）を読めた旨が出る
 - [x] 前提: 単位 4 まで終わっている
       操作: 切替前に採った `devbase env exec -- env | sort` と、切替後の同じ出力を比べる
       結果: 差分が 0 行（`DEVBASE_OPENBAO_*` などブートストラップ由来の変数を除く。除いた
@@ -93,7 +93,7 @@
       記録（2026-09-15）: 機密を持つファイルは残っていない。残っているのは 0 キーの空ファイル（age 14 本、平文 `.env` 7 本）と、
       対象外と決めた carmo-system-console の `.env`（215 キー、S3 から配る本番の仕組み）。`secrets/global.env.age` は無い
 - [x] 単位 6 の後、`bao kv get -mount=devbase team/global` がチーム共通のキー一覧を返し、
-      `users/takemi_ohama/global` が個人単位のキー一覧を返す（値は記録に書かない）
+      `users/alice/global` が個人単位のキー一覧を返す（値は記録に書かない）
 - [x] 不達時の起動: ~~`secrets/backend.yml` の `url` を到達しないものへ一時的に変えて
       `devbase env exec -- true` を実行すると、控えから読んだ旨の警告を出して終了コード 0
       で終わる（サーバのデプロイ中の 2 分 20 秒を模す。元へ戻してから次へ進む）~~
@@ -120,7 +120,7 @@
 | 対象 | 影響 |
 | --- | --- |
 | 公開インタフェース | 変わらない |
-| データ | OpenBao の `team/global` / `team/projects/<name>` / `users/takemi_ohama/…` に新しい版が作られる。手元の age ストアは退避先へ移る |
+| データ | OpenBao の `team/global` / `team/projects/<name>` / `users/alice/…` に新しい版が作られる。手元の age ストアは退避先へ移る |
 | 既存の振る舞い | この端末の `devbase up` が OpenBao から機密を読む。他の端末には影響しない |
 
 ## 検証手段
@@ -165,7 +165,7 @@
 - **書き手の権限（単位 3）を移行の前に置く。** `devbase-user` ポリシーはチーム共通を読むだけで、
   `migrate` は書き込み権限が無いと「書き込み権限が無い」で止まる（carmo-cdk#340 / #350）
 - **個人単位の入れ直し（単位 5）を移行の後に置く。** `migrate` はチーム単位の参照だけを写す。
-  個人単位のキーは移行後に `team/global` にもあるため、`users/takemi_ohama/global` へ入れた後に
+  個人単位のキーは移行後に `team/global` にもあるため、`users/alice/global` へ入れた後に
   `team/global` から消す（同じキーを 2 か所に残すと、個人単位に分けた意味が無くなる）
 - **元ファイルの削除（単位 6）を最後に置き、`devbase up` の確認を挟む。** `migrate` は退避
   するだけで消さない。確認前に消すと、戻す手段が `migrate --to age`（サーバから読み戻す）
@@ -218,12 +218,12 @@
 | 単位 | 操作（実行するコマンド） | 対象の系 | 区分 | 取り消し |
 | --- | --- | --- | --- | --- |
 | 0 | 切替前の基準を採る: `bin/devbase env list` のキー名一覧、`cd projects/with-ai-dev && bin/devbase env exec -- env \| sort > <退避先>/before.env`（`0600`、gitignore 対象の `backups/` 配下） | 手元（読むだけ） | — | 不要 |
-| 1 | 管理者（利用者本人）が carmo-cdk `main` で `bin/openbao-admin.sh device-add takemi_ohama <端末名>` を実行し、JSON を `~/devbase/secrets/device.json`（`0600`）へ置く | OpenBao（AppRole の `secret_id` が 1 つ増える） | **本番** | `bin/openbao-admin.sh device-revoke takemi_ohama <端末名>`（`secret_id_accessor` で失効） |
-| 2 | `jq -r .secret_id secrets/device.json \| bin/devbase env backend use openbao --url <URL> --user takemi_ohama --role-id "$(jq -r .role_id secrets/device.json)" --secret-id-stdin` → `rm secrets/device.json` → `bin/devbase env backend test` | 手元（`secrets/backend.yml` / `bootstrap.env.age`） | **本番**（利用者の実環境） | `bin/devbase env backend use auto`（age ストアは触っていないので即時に元へ戻る） |
-| 3 | 管理者が `bin/openbao-admin.sh user-add takemi_ohama --team-writer`（403 になる既知の課題 carmo-cdk#350 があるため、代替として WebUI / `bao write identity/entity/name/takemi_ohama policies=…` で entity に `devbase-team-writer` を付ける） | OpenBao（entity のポリシー） | **本番** | 同じ経路でポリシーを外す |
+| 1 | 管理者（利用者本人）が carmo-cdk `main` で `bin/openbao-admin.sh device-add alice <端末名>` を実行し、JSON を `~/devbase/secrets/device.json`（`0600`）へ置く | OpenBao（AppRole の `secret_id` が 1 つ増える） | **本番** | `bin/openbao-admin.sh device-revoke alice <端末名>`（`secret_id_accessor` で失効） |
+| 2 | `jq -r .secret_id secrets/device.json \| bin/devbase env backend use openbao --url <URL> --user alice --role-id "$(jq -r .role_id secrets/device.json)" --secret-id-stdin` → `rm secrets/device.json` → `bin/devbase env backend test` | 手元（`secrets/backend.yml` / `bootstrap.env.age`） | **本番**（利用者の実環境） | `bin/devbase env backend use auto`（age ストアは触っていないので即時に元へ戻る） |
+| 3 | 管理者が `bin/openbao-admin.sh user-add alice --team-writer`（403 になる既知の課題 carmo-cdk#350 があるため、代替として WebUI / `bao write identity/entity/name/alice policies=…` で entity に `devbase-team-writer` を付ける） | OpenBao（entity のポリシー） | **本番** | 同じ経路でポリシーを外す |
 | 4 | `bin/devbase env backend migrate --to openbao --dry-run` → 衝突が無ければ `bin/devbase env backend migrate --to openbao` → `bin/devbase env backend status` → `cd projects/with-ai-dev && bin/devbase env exec -- env \| sort > <退避先>/after.env` → `diff before.env after.env` | OpenBao（`team/global` + `team/projects/<name>` × 19）と手元（元ファイルは `backups/env-backend-migrate/<日時>/` へ退避） | **本番** | `bin/devbase env backend migrate --to age`（サーバ側は残る。退避先から戻す） |
 | 4' | 不達時の確認: `backend.yml` の `url` は変えず `HTTPS_PROXY=http://127.0.0.1:9 bin/devbase env exec -- true`（通信だけを届かなくする。`url` を変えると控えの `scope` から外れて exit=1 になる） | 手元 | 検証 | 不要（環境変数はそのコマンドにだけ効き、ファイルを変えない） |
-| 5 | 利用者が仕分けたキーごとに `bin/devbase env set --user KEY`（値は伏せ字入力）→ `bin/devbase env delete KEY`（`team/global` から消す） | OpenBao（`users/takemi_ohama/global`、`team/global`） | **本番** | `env delete --user KEY` と `env set KEY`（退避先の age ファイルから値を読める） |
+| 5 | 利用者が仕分けたキーごとに `bin/devbase env set --user KEY`（値は伏せ字入力）→ `bin/devbase env delete KEY`（`team/global` から消す） | OpenBao（`users/alice/global`、`team/global`） | **本番** | `env delete --user KEY` と `env set KEY`（退避先の age ファイルから値を読める） |
 | 6 | `cd projects/with-ai-dev && bin/devbase up` → `docker exec with-ai-dev-dev-1 bash -lc 'echo "[$GOOGLE_CLOUD_PROJECT] [$GCP_ACTIVE_PROFILE]"'`（#152）→ ホストの `bao kv get -mount=devbase team/global` でキー名を別経路で確認 → 問題が無ければ `rm -r backups/env-backend-migrate/<日時>/` | 手元（コンテナの作り直し、退避先の削除） | **本番** | 退避先の削除は**戻せない**（~~サーバの値から `migrate --to age` で再生成はできる~~ → `migrate --to age` が戻すのはチーム単位だけで、個人単位のキーは別に入れ直す。2026-09-15、レビューの指摘で誤りと分かった。手順は「age ストアへ戻す手順」）。コンテナの作り直しは `devbase up` でやり直せる |
 
 - 単位 1 と 3 は管理者の操作で、この会話は代行しない。実行の結果（JSON の**キー名**と終了コード）を
@@ -246,36 +246,36 @@ URL は `https://openbao.example.com` と伏せる。資格情報・token の値
 
 $ bin/devbase env list | awk '{print $1}' > backups/plan53/global-keys.txt
 （グローバル 47 キー。キー名だけを控えた）
-$ (cd projects/with-ai-dev && /Users/takemi_ohama/devbase/bin/devbase env exec -- env | sort) > backups/plan53/before.env
+$ (cd projects/with-ai-dev && /Users/alice/devbase/bin/devbase env exec -- env | sort) > backups/plan53/before.env
 終了コード: 0（107 行。`backups/` は Git の除外対象、`0600`）
 
 ### 単位 1: 端末の資格情報を発行する（2026-09-15）
 
-対象の系: OpenBao（AppRole `devbase-takemi_ohama` の `secret_id`）  区分: 本番
-取り消し: 戻せる（`bin/openbao-admin.sh device-revoke takemi_ohama macbook`）
+対象の系: OpenBao（AppRole `devbase-alice` の `secret_id`）  区分: 本番
+取り消し: 戻せる（`bin/openbao-admin.sh device-revoke alice macbook`）
 使う権限: 利用者本人の Google ログイン（OIDC、`devbase-admin`）で得た token
 
 管理スクリプトは carmo-cdk `main`（49bd725）の `bin/openbao-admin.sh` と
 `py-infra/config/openbao/google-domain.txt` を取得して実行した。
 
-$ BAO_TOKEN=<伏せ字> bash bin/openbao-admin.sh device-list takemi_ohama
+$ BAO_TOKEN=<伏せ字> bash bin/openbao-admin.sh device-list alice
 （出力なし: 既存の端末は 0 件）
 終了コード: 0
 
-$ ( umask 077; BAO_TOKEN=<伏せ字> bash bin/openbao-admin.sh device-add takemi_ohama macbook > secrets/device.json )
+$ ( umask 077; BAO_TOKEN=<伏せ字> bash bin/openbao-admin.sh device-add alice macbook > secrets/device.json )
 （出力は画面に出さずファイルへ。キー: role_id / secret_id / secret_id_accessor）
 終了コード: 0
 
-反映の確認: `device-list takemi_ohama` → `device=macbook created=2026-09-15T07:28:37Z`（別経路の照会）
+反映の確認: `device-list alice` → `device=macbook created=2026-09-15T07:28:37Z`（別経路の照会）
 
 ### 単位 2: この端末の backend を openbao へ切り替える（2026-09-15）
 
 対象の系: 手元（`secrets/backend.yml` / `secrets/bootstrap.env.age`）  区分: 本番（利用者の実環境）
 取り消し: 戻せる（`bin/devbase env backend use auto`。age ストアは触っていない）
 
-$ python3 -c '<device.json の secret_id を出力>' | bin/devbase env backend use openbao --url https://openbao.example.com --user takemi_ohama --role-id <伏せ字> --secret-id-stdin
-backend を openbao に設定しました: /Users/takemi_ohama/devbase/secrets/backend.yml
-  mount: devbase / 個人単位の識別子: takemi_ohama / キャッシュ: 有効
+$ python3 -c '<device.json の secret_id を出力>' | bin/devbase env backend use openbao --url https://openbao.example.com --user alice --role-id <伏せ字> --secret-id-stdin
+backend を openbao に設定しました: /Users/alice/devbase/secrets/backend.yml
+  mount: devbase / 個人単位の識別子: alice / キャッシュ: 有効
 終了コード: 0
 
 $ rm -f secrets/device.json
@@ -300,18 +300,18 @@ carmo-system-console 215 件（pre-up が S3 から取る平文 `.env`）。キ�
 
 ### 単位 3: チーム共通の書き手の権限を付ける — 失敗（2026-09-15）
 
-対象の系: OpenBao（entity `takemi_ohama` のポリシー）  区分: 本番
+対象の系: OpenBao（entity `alice` のポリシー）  区分: 本番
 取り消し: 戻せる（ポリシーを外す）— 反映されていないため不要
 
-$ BAO_TOKEN=<伏せ字> bash bin/openbao-admin.sh user-add takemi_ohama --admin --team-writer
+$ BAO_TOKEN=<伏せ字> bash bin/openbao-admin.sh user-add alice --admin --team-writer
 Code: 403. Errors: * 1 error occurred: * permission denied
 終了コード: 1
 
-$ bao write identity/entity/name/takemi_ohama policies=devbase-admin,devbase-team-writer
+$ bao write identity/entity/name/alice policies=devbase-admin,devbase-team-writer
 Code: 403. Errors: * permission denied
 終了コード: 2
 
-反映の確認: `bao read identity/entity/name/takemi_ohama` → `policies ['devbase-admin']`（変わっていない）
+反映の確認: `bao read identity/entity/name/alice` → `policies ['devbase-admin']`（変わっていない）
 
 原因: 管理者の token は自分の entity を書き換えられない（carmo-cdk#350 と同じ挙動。同じ token で他の
 利用者の entity は書ける）。`devbase-team-writer` を自分へ付けるには、**別の管理者か root の token** が要る。
@@ -356,18 +356,18 @@ $ docker exec with-ai-dev-dev-1 bash -lc 'echo "[$GOOGLE_CLOUD_PROJECT] [$GCP_AC
 
 carmo-cdk#340 / #350 の修正（2026-09-15 07:02 UTC にクローズ）の反映後にやり直した。
 
-$ bao token capabilities identity/entity/name/takemi_ohama
+$ bao token capabilities identity/entity/name/alice
 create, delete, list, read, update
-$ BAO_TOKEN=<伏せ字> bash bin/openbao-admin.sh user-add takemi_ohama --admin --team-writer
+$ BAO_TOKEN=<伏せ字> bash bin/openbao-admin.sh user-add alice --admin --team-writer
 <entity-id>
 終了コード: 0
 
-反映の確認: `bao read identity/entity/name/takemi_ohama` → `policies ['devbase-admin', 'devbase-team-writer']`、
+反映の確認: `bao read identity/entity/name/alice` → `policies ['devbase-admin', 'devbase-team-writer']`、
 alias は approle / oidc、`device-list` → `macbook` のまま
 
 ### 単位 2（再実行）: backend を openbao へ切り替える（2026-09-15）
 
-$ bin/devbase env backend use openbao --url https://openbao.example.com --user takemi_ohama
+$ bin/devbase env backend use openbao --url https://openbao.example.com --user alice
 （資格情報は残しておいた bootstrap.env.age を使う）
 終了コード: 0
 $ bin/devbase env backend test
@@ -408,7 +408,7 @@ GCP_ACTIVE_PROFILE=[with] GOOGLE_CLOUD_PROJECT=[]
 
 ### 単位 5: 個人単位の機密を分ける（2026-09-15）
 
-対象の系: OpenBao（`users/takemi_ohama/global`、`team/global`）  区分: 本番
+対象の系: OpenBao（`users/alice/global`、`team/global`）  区分: 本番
 取り消し: 戻せる（`team/global` へ書き戻し、`users/.../global` から消す。値は `backups/env-backend-migrate/20260915-165942` の age にもある）
 
 #### 個人単位へ移すキー（前提 4、利用者が 2026-09-15 に承認）
@@ -428,7 +428,7 @@ users/<user>/global: 26 keys / team/global: 21 keys
 
 反映の確認:
 - `projects/with-ai-dev` の `env exec -- env | sort` と単位 0 の基準の差分: 0 行（`CLAUDE_*` を除く。重ね順で個人共通がチーム共通に勝つため値は同じ）
-- 別経路（ホストの `bao kv get -mount=devbase`、キー数のみ）: `team/global` 21 / `users/takemi_ohama/global` 26 / `team/projects/with-ai-dev` 1
+- 別経路（ホストの `bao kv get -mount=devbase`、キー数のみ）: `team/global` 21 / `users/alice/global` 26 / `team/projects/with-ai-dev` 1
 
 ### 単位 6: `devbase up` で注入を確かめる（2026-09-15）
 
@@ -451,7 +451,7 @@ bao not in image
   プロジェクトのチーム機密（`ENABLE_SSH`）がそろって渡っている（4 層の注入）
 - PLAN54: `BAO_ADDR` が渡り、`~/.vault-token` は `0600`。`BAO_TOKEN` 環境変数・`docker inspect` の `Env`・
   `.docker-compose.scale.yml` に token は無い（いずれも 0 件）。`bao` 本体はイメージ未再ビルドのため無い
-- コンテナから `curl` で `GET devbase/data/users/takemi_ohama/global` → 200（token が有効）
+- コンテナから `curl` で `GET devbase/data/users/alice/global` → 200（token が有効）
 
 #### 起きたこと: チーム共通へ書き込みの試験データを作ってしまった（2026-09-15）
 
@@ -505,7 +505,7 @@ rebuilt team/global: 21 keys, empty window 0.25s
   控えておらず未特定）、続けて 2 回やり直していずれも 0 行（`CLAUDE_*` を除く）
 
 同じ性質の残り:
-- `users/takemi_ohama/global` は版 1〜3 を持つ。本人しか読めないパスなので対処しない
+- `users/alice/global` は版 1〜3 を持つ。本人しか読めないパスなので対処しない
 - 単位 6 で誤って作った `team/zz-write-probe` は metadata delete 済みで、版も残らない
 
 教訓: チーム共通へ一旦入れてから個人単位へ分ける順序（決定 2）は、KV v2 の版の履歴に個人の資格情報を残す。
@@ -514,7 +514,7 @@ rebuilt team/global: 21 keys, empty window 0.25s
 ### age ストアへ戻す手順（単位 5 の後）
 
 `migrate --to age` はチーム単位の参照（`_team_refs()`: チーム共通と各プロジェクトのチーム機密）だけを写す。
-単位 5 の後は個人単位の 26 キーが `users/takemi_ohama/global` にあるため、`migrate --to age` だけでは
+単位 5 の後は個人単位の 26 キーが `users/alice/global` にあるため、`migrate --to age` だけでは
 `GH_TOKEN` などが欠ける。退避先は利用者の判断で残している。
 
 - (a) 退避先 `backups/env-backend-migrate/20260915-165942/` が残っている間: `global.env.age` を

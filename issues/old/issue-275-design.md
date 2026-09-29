@@ -136,7 +136,7 @@ graph TD
         B[docker buildx: base → lfm]
         R[docker run: lfm のイメージの検査]
     end
-    subgraph hammer05["hammer05（amd64 / WSL2 + GPU）"]
+    subgraph gpu-host["gpu-host（amd64 / WSL2 + GPU）"]
         G[docker run --gpus all: nvidia-smi]
     end
     B -->|devbase-base:latest と devbase-lfm:latest| R
@@ -144,7 +144,7 @@ graph TD
 
 `nvidia/cuda:13.3.1-cudnn-devel-ubuntu26.04` は arm64 と amd64 の両方を配っている（2026-09-28 に
 レジストリの manifest list で確かめた。`linux/arm64` と `linux/amd64` の 2 つ）。建てて確かめるのは
-手元の arm64 で足り、hammer05 が要るのは AC18 だけである。
+手元の arm64 で足り、gpu-host が要るのは AC18 だけである。
 
 ### 置き場所
 
@@ -265,7 +265,7 @@ I6〜I9 は項目の照合ではなく lfm の Dockerfile の形の検査であ�
 （`/etc/devbase/shellrc-dir.sh` が無い）ときは skip する。** 古いイメージを持つ人の `pytest tests/` が
 全員赤くなるのを避ける。`docker run` の回数はイメージごとに抑える（プローブを 1 回にまとめる）。
 
-GPU を使う AC18 は、このモジュールに入れない。`--gpus all` が通る端末が hammer05 に限られ、
+GPU を使う AC18 は、このモジュールに入れない。`--gpus all` が通る端末が gpu-host に限られ、
 手元では常に skip になる。手順は Pull Request のテスト計画に書く。
 
 ## 処理の流れ
@@ -415,7 +415,7 @@ Playwright の導入は lfm がブラウザを `~/.cache` に残す唯一の場�
 | --- | --- |
 | AC16 | `pytest tests/containers/`（既存のテストが通る）と、base の Dockerfile の差分がコメントだけであること |
 | AC17 | `general` を Dockerfile を変えずに建てる |
-| AC18 | hammer05 で `--gpus all` を付けた lfm のコンテナの `nvidia-smi`。使えなければリリース後テストへ回し、Pull Request に書く |
+| AC18 | gpu-host で `--gpus all` を付けた lfm のコンテナの `nvidia-smi`。使えなければリリース後テストへ回し、Pull Request に書く |
 | AC19 | `grep -n lfm docs/specifications/*.md` の各行を、建てた lfm のイメージの状態と照らす |
 | AC20 | 変更前の lfm を建て、#243 の確かめ方で `fc-match` を測って Pull Request に残す。同じイメージで AC14 のハッシュと大きさも測る |
 
@@ -424,7 +424,7 @@ Playwright の導入は lfm がブラウザを `~/.cache` に残す唯一の場�
 | 項目 | 内容 |
 | --- | --- |
 | 変更前の lfm のイメージ | 手元に `devbase-lfm` が無く、変更前の `fc-match`・AC14 のハッシュ・大きさは未測定である。実装の最初のタスクで建てて測る（AC20） |
-| amd64 での `fc-match` | amd64 の lfm は `google-chrome-stable` を入れるため、`--with-deps` が入れる書体の顔ぶれが違いうる。hammer05 で建てるまで分からない |
+| amd64 での `fc-match` | amd64 の lfm は `google-chrome-stable` を入れるため、`--with-deps` が入れる書体の顔ぶれが違いうる。gpu-host で建てるまで分からない |
 | `COPY --from` の所有者 | 取り込みは所有者の数値を保つ前提で既存の取り込みが組まれている。C4 が ubuntu の所有になるかは建てて確かめる。ならなければ `--chown` を付ける。C5 は親の `~/.claude` ごと先に決めて置く（命令の並び）ため、ここに残らない |
 | rustup の `~/.bashrc` への追記 | rustup が `~/.bashrc` へ追記するかは導入時の判定に依る。I7 はどちらでも lfm の追記を守る |
-| GPU の実行（AC18） | hammer05 を使える時期に依る |
+| GPU の実行（AC18） | gpu-host を使える時期に依る |

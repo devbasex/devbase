@@ -49,7 +49,7 @@ CI の ShellCheck は `severity: error` で走る。
 v3.7.0 の振り返り（起票の取りこぼしを拾う工程）。
 
 - PR #213 の本文「未検証の項目 / 既存の失敗」
-- `/Users/takemi_ohama/devbase/.github/workflows/ci.yml:34-45`
+- `/Users/alice/devbase/.github/workflows/ci.yml:34-45`
 
 `gh issue list --repo devbasex/devbase --state all --search "shellcheck"` は #216 / #141 / #139 の
 3 件で、**この 9 件を扱う課題は無い。**

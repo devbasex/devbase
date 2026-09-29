@@ -213,8 +213,8 @@ issue #162 の提案として書かれているものを、この仕様の決定
 
 ### bind mount の `~`
 
-- [ ] リモート扱いで `docker.home: /home/takemi` があるとき、`compose.yml` の
-      `~/.aws:/home/ubuntu/.aws` は生成物で `/home/takemi/.aws:/home/ubuntu/.aws` になる
+- [ ] リモート扱いで `docker.home: /home/alice` があるとき、`compose.yml` の
+      `~/.aws:/home/ubuntu/.aws` は生成物で `/home/alice/.aws:/home/ubuntu/.aws` になる
 - [ ] `~` 単独（`~:/x`）と長い書式（`source: ~/.aws`）も同じ規則で展開される
 - [ ] `~user/...` のような他ユーザ指定の `~` は書き換えず、警告に載せる
 - [ ] ローカル扱いでは `docker.home` があっても `~` を書き換えない（従来どおり compose の展開に

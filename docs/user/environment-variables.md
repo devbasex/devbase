@@ -453,7 +453,7 @@ ssh 鍵・TLS・WSL / EC2 の違いは docker 側の問題として devbase か�
 ```bash
 # Windows の WSL2 内 dockerd（WSL 内で sshd を動かし、Docker Desktop の WSL 統合か
 # WSL 内へ直接インストールした dockerd を使う。Windows 側 OpenSSH 経由にはしない）
-docker context create gpu-wsl --docker "host=ssh://takemi@winpc"
+docker context create gpu-wsl --docker "host=ssh://alice@gpu-host"
 
 # EC2（ssh 経由なので TLS 証明書の配布は要らない）
 docker context create ec2 --docker "host=ssh://ubuntu@ec2-host"
@@ -470,7 +470,7 @@ docker context ls          # 名前を確認する。`docker context use` で切
 # projects/<name>/project.local.yml（gitignore 対象。個人・機材ごとの設定）
 docker:
   context: gpu-wsl
-  home: /home/takemi      # ~/.aws などを bind mount するプロジェクトだけ要る
+  home: /home/alice      # ~/.aws などを bind mount するプロジェクトだけ要る
   # gid: 999              # 省略すると初回の up で自動取得して .cache/docker-gid/<context> に控える
 ```
 

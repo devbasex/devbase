@@ -11,7 +11,7 @@
 
 ## 依頼（原文）
 
-> - この端末の置き場 | `team/global`（21 キー）・`team/projects/*`・`users/takemi_ohama/*` をグループ別のパスへ移し直す
+> - この端末の置き場 | `team/global`（21 キー）・`team/projects/*`・`users/alice/*` をグループ別のパスへ移し直す
 > - 移行の順序と、KV v2 の版の履歴に他グループの機密を残さない手順（#181 の記録にある教訓）
 
 （#182 本文「変わるところ（見込み）」と「未決」から）
@@ -33,7 +33,7 @@
   サーバのポリシーはグループ単位に切り替わっている（carmo-cdk#365、2026-09-16 に実環境へ反映済み）。この端末の
   AppRole の token の `identity_policies` は `devbase-admin` / `devbase-team-{nyle,with,kkg}` /
   `devbase-team-writer-{nyle,with,kkg}`。`bao token capabilities` で、新しいパス（`team/<g>/global`・
-  `users/takemi_ohama/<g>/global`）は読み書き、古いパスは `data` の読み取りと `metadata` の削除ができることを確かめた
+  `users/alice/<g>/global`）は読み書き、古いパスは `data` の読み取りと `metadata` の削除ができることを確かめた
   （古いパスを読めるのは管理者だけ。2026-09-16）
 - 前提 5: with / kkg のプロジェクトの `env` にある空の上書き（`BIGQUERY_*` など）はこの作業では消さない
   （残っていても害が無い。消すかは別に決める）
@@ -49,7 +49,7 @@
       `projects/bi-tools`（nyle）の同じ出力は単位 0 の基準と差分 0 行（`CLAUDE_*` を除く）
 - [x] 3. 単位 3 で、別経路（ホストの `bao kv get -mount=devbase`、キー数のみ）で新しいパスのキー数が
       「配る先」の表と一致する
-- [x] 4. 単位 4 の後、古いパス（`team/global`、`users/takemi_ohama/global`、`team/projects/<5 件>`）を
+- [x] 4. 単位 4 の後、古いパス（`team/global`、`users/alice/global`、`team/projects/<5 件>`）を
       `bao kv metadata get` すると見つからない（版の履歴が残っていない）
 - [x] 5. 記録に機密の値・`role_id` / `secret_id`・token が無い（`hvs.` / `secret_id=` / `role_id=` の grep で、この条件の行を除いて 0 件）
 
@@ -59,10 +59,10 @@
 
 | 新しいパス | キー | 件数 | 元のパス |
 | --- | --- | ---: | --- |
-| `team/nyle/global` | `team/global` の 21 キーすべて + `GCP_CREDENTIALS_BASE64__default` | 22 | `team/global` / `users/takemi_ohama/global` |
-| `users/takemi_ohama/nyle/global` | `users/takemi_ohama/global` の 26 キーから `GCP_CREDENTIALS_BASE64__default` を除いたもの | 25 | `users/takemi_ohama/global` |
-| `users/takemi_ohama/with/global` | 会社に依らない 17 キー（下の一覧） | 17 | `users/takemi_ohama/global` |
-| `users/takemi_ohama/kkg/global` | 同上 | 17 | `users/takemi_ohama/global` |
+| `team/nyle/global` | `team/global` の 21 キーすべて + `GCP_CREDENTIALS_BASE64__default` | 22 | `team/global` / `users/alice/global` |
+| `users/alice/nyle/global` | `users/alice/global` の 26 キーから `GCP_CREDENTIALS_BASE64__default` を除いたもの | 25 | `users/alice/global` |
+| `users/alice/with/global` | 会社に依らない 17 キー（下の一覧） | 17 | `users/alice/global` |
+| `users/alice/kkg/global` | 同上 | 17 | `users/alice/global` |
 | `team/nyle/projects/bi-tools` / `car-pricing` / `carmo-screening` | `ENABLE_SSH` | 各 1 | `team/projects/<name>` |
 | `team/kkg/projects/project-trygroup-prd` | `ENABLE_SSH` | 1 | `team/projects/project-trygroup-prd` |
 | `team/with/projects/with-ai-dev` | `ENABLE_SSH` | 1 | `team/projects/with-ai-dev` |
@@ -118,7 +118,7 @@
 | 1 | 移し直しのスクリプト（`backups/plan57/relocate.py`、記録には処理の中身を書く）を実行: 「配る先」の 9 パスへ書き、読み戻して一致を確認。古いパスと `backend.yml` は変えない | OpenBao（新しい 9 パス） | **本番** | 新しい 9 パスを `metadata` ごと消す（まだ誰も読んでいないので影響なし） |
 | 2 | `bin/devbase env backend use openbao --layout group --group-alias default=nyle` → `bin/devbase env backend status`（`$DEVBASE_ROOT` と `projects/with-ai-dev`）→ `bin/devbase env backend test` | 手元（`secrets/backend.yml`、`secrets/cache/`） | **本番**（利用者の実環境） | `bin/devbase env backend use openbao --layout flat`（古いパスが残っているので即時に元へ戻る） |
 | 3 | 確認: 単位 0 の 3 プロジェクトで `env exec -- env \| sort` を採り直して基準と比べる。ホストの `bao kv get -mount=devbase <新しいパス>` でキー数を別経路で確かめる | 手元（読むだけ）/ OpenBao（読むだけ） | — | 不要 |
-| 4 | 古いパス 7 件（`team/global`、`users/takemi_ohama/global`、`team/projects/{bi-tools,car-pricing,carmo-screening,project-trygroup-prd,with-ai-dev}`）を `metadata` ごと消す → `bao kv metadata get` で見つからないことを確かめる → `backups/plan57/before-*.env` を消す | OpenBao（古い 7 パス）、手元 | **本番** | **戻せない**（全版の履歴を消す）。消した後に値が要るときは、新しいパスから読める（`team/nyle/global` などに同じ値がある）。`version: 1` へ戻すには、新しいパスの値を古いパスへ書き戻す必要がある |
+| 4 | 古いパス 7 件（`team/global`、`users/alice/global`、`team/projects/{bi-tools,car-pricing,carmo-screening,project-trygroup-prd,with-ai-dev}`）を `metadata` ごと消す → `bao kv metadata get` で見つからないことを確かめる → `backups/plan57/before-*.env` を消す | OpenBao（古い 7 パス）、手元 | **本番** | **戻せない**（全版の履歴を消す）。消した後に値が要るときは、新しいパスから読める（`team/nyle/global` などに同じ値がある）。`version: 1` へ戻すには、新しいパスの値を古いパスへ書き戻す必要がある |
 
 - **失敗した単位より後は実行しない**（`operation-run.md` の 6）
 - **取り消せない単位: 4。** 実行の前にそのことを示し、承認を得る
@@ -149,8 +149,8 @@ $ T=$(bin/devbase env token --print); BAO_TOKEN=$T bao token lookup -format=json
 ["devbase-admin","devbase-team-kkg","devbase-team-nyle","devbase-team-with","devbase-team-writer-kkg","devbase-team-writer-nyle","devbase-team-writer-with"]
 $ BAO_TOKEN=$T bao token capabilities devbase/<パス>
 data/team/global: read / data/team/{nyle,with,kkg}/global: create, delete, patch, read, update /
-data/users/takemi_ohama/nyle/global: create, delete, patch, read, update / data/team/projects/with-ai-dev: read /
-metadata/team/global・metadata/team/projects/with-ai-dev・metadata/users/takemi_ohama/global: delete, list, read
+data/users/alice/nyle/global: create, delete, patch, read, update / data/team/projects/with-ai-dev: read /
+metadata/team/global・metadata/team/projects/with-ai-dev・metadata/users/alice/global: delete, list, read
 終了コード: 0
 
 （token の値は変数に置いただけで表示していない）
@@ -164,7 +164,7 @@ metadata/team/global・metadata/team/projects/with-ai-dev・metadata/users/takem
 
 1. 今の `backend.yml`（`version: 1`）の `SecretStore` と、同じ接続先で `version: 2`（`layout: group`、
    `default → nyle`）の設定を明示した `SecretStore` を作る（`backend.yml` は書き換えない）
-2. 古いパスを `fetch`: `team/global` が 21 キー、`users/takemi_ohama/global` が 26 キーであること、
+2. 古いパスを `fetch`: `team/global` が 21 キー、`users/alice/global` が 26 キーであること、
    `GCP_CREDENTIALS_BASE64__default` が個人単位にあること、会社に依らない 17 キーがそろうこと、
    `team/projects/<5 件>` が `ENABLE_SSH` だけであることを assert
 3. 新しいパスが空であることを assert してから、「配る先」の表どおりに `save`（読んだ版を基準にした CAS）
@@ -172,9 +172,9 @@ metadata/team/global・metadata/team/projects/with-ai-dev・metadata/users/takem
 
 $ DEVBASE_ROOT=$PWD PYTHONPATH=lib uv run python backups/plan57/relocate.py
 devbase/team/nyle/global: 22 keys (読み戻し一致)
-devbase/users/takemi_ohama/nyle/global: 25 keys (読み戻し一致)
-devbase/users/takemi_ohama/with/global: 17 keys (読み戻し一致)
-devbase/users/takemi_ohama/kkg/global: 17 keys (読み戻し一致)
+devbase/users/alice/nyle/global: 25 keys (読み戻し一致)
+devbase/users/alice/with/global: 17 keys (読み戻し一致)
+devbase/users/alice/kkg/global: 17 keys (読み戻し一致)
 devbase/team/nyle/projects/bi-tools: 1 keys (読み戻し一致)
 devbase/team/nyle/projects/car-pricing: 1 keys (読み戻し一致)
 devbase/team/nyle/projects/carmo-screening: 1 keys (読み戻し一致)
@@ -199,18 +199,18 @@ backend を openbao に設定しました: ~/devbase/secrets/backend.yml
 $ bin/devbase env backend status
   レイアウト: group (version 2)
   グループ:   default → nyle ($DEVBASE_ROOT/env に宣言なし)
-  置き場: devbase/team/nyle/global / devbase/team/nyle/projects/<name> / devbase/users/takemi_ohama/nyle/global / devbase/users/takemi_ohama/nyle/projects/<name>
+  置き場: devbase/team/nyle/global / devbase/team/nyle/projects/<name> / devbase/users/alice/nyle/global / devbase/users/alice/nyle/projects/<name>
   接続資格情報: role_id [伏せた] (~/devbase/secrets/bootstrap.env.age)
 終了コード: 0
 
 $ cd projects/with-ai-dev && bin/devbase env backend status
   グループ:   with (projects/with-ai-dev/env)
-  置き場: devbase/team/with/global / devbase/team/with/projects/with-ai-dev / devbase/users/takemi_ohama/with/global / devbase/users/takemi_ohama/with/projects/with-ai-dev
+  置き場: devbase/team/with/global / devbase/team/with/projects/with-ai-dev / devbase/users/alice/with/global / devbase/users/alice/with/projects/with-ai-dev
 終了コード: 0
 
 $ bin/devbase env backend test
 対象のグループと違う置き場のプロジェクトは調べていません: project-trygroup-prd (kkg), with-ai-dev (with)
-読めた参照: 74 件（0 変数でないもの: team/nyle/global 22 / users/takemi_ohama/nyle/global 25 / team/nyle/projects/{bi-tools,car-pricing,carmo-screening} 各 1）
+読めた参照: 74 件（0 変数でないもの: team/nyle/global 22 / users/alice/nyle/global 25 / team/nyle/projects/{bi-tools,car-pricing,carmo-screening} 各 1）
 終了コード: 0
 
 受け入れ条件 1: 満たす
@@ -256,9 +256,9 @@ with-ai-dev exit=0 lines=85 / project-trygroup-prd exit=0 lines=84 / bi-tools ex
 | パス | キー数 | 終了コード |
 | --- | ---: | ---: |
 | team/nyle/global | 22 | 0 |
-| users/takemi_ohama/nyle/global | 25 | 0 |
-| users/takemi_ohama/with/global | 17 | 0 |
-| users/takemi_ohama/kkg/global | 17 | 0 |
+| users/alice/nyle/global | 25 | 0 |
+| users/alice/with/global | 17 | 0 |
+| users/alice/kkg/global | 17 | 0 |
 | team/nyle/projects/bi-tools | 1 | 0 |
 | team/nyle/projects/car-pricing | 1 | 0 |
 | team/nyle/projects/carmo-screening | 1 | 0 |
@@ -277,9 +277,9 @@ with-ai-dev exit=0 lines=85 / project-trygroup-prd exit=0 lines=84 / bi-tools ex
 取り消し: **戻せない**（利用者が 2026-09-16 に、戻せないことを示したうえで承認した）
 
 $ T=$(bin/devbase env token --print)
-$ for p in team/global users/takemi_ohama/global team/projects/{bi-tools,car-pricing,carmo-screening,project-trygroup-prd,with-ai-dev}; do BAO_TOKEN=$T bao kv metadata delete -mount=devbase $p; done
+$ for p in team/global users/alice/global team/projects/{bi-tools,car-pricing,carmo-screening,project-trygroup-prd,with-ai-dev}; do BAO_TOKEN=$T bao kv metadata delete -mount=devbase $p; done
 Success! Data deleted (if it existed) at: devbase/metadata/team/global
-Success! Data deleted (if it existed) at: devbase/metadata/users/takemi_ohama/global
+Success! Data deleted (if it existed) at: devbase/metadata/users/alice/global
 Success! Data deleted (if it existed) at: devbase/metadata/team/projects/bi-tools
 Success! Data deleted (if it existed) at: devbase/metadata/team/projects/car-pricing
 Success! Data deleted (if it existed) at: devbase/metadata/team/projects/carmo-screening

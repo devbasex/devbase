@@ -186,7 +186,7 @@ flowchart LR
       `_get_container_status` ロジックを再利用）
     - PLUGIN 列は symlink 先 (`repos/<repo>/<plugin>/projects/<name>`) から plugin 名を解決
       （`_get_container_status` は plugin 情報を返さないため、symlink 先解決ロジックの追加が必要）
-    - PLAN04 の同名衝突 suffix（例 `carmo.takemi`）もそのまま表示。**suffix がリンク名のみに
+    - PLAN04 の同名衝突 suffix（例 `myapp.alice`）もそのまま表示。**suffix がリンク名のみに
       付くのか、リンク先 dir 名 (`projects/<name>`) にも付くのか**を PLAN04 の付与仕様で確認し、
       PLUGIN 列の解決ロジックがどちらでも壊れないことを担保する
   - `project ps` は従来の `docker compose ps`（CWD/対象プロジェクト）と一覧の役割を整理
