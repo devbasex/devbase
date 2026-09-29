@@ -32,3 +32,9 @@ gh-payload.json
 
 # 開発用の作業ツリー
 .worktrees/
+
+# 社内向けの文書（社内のホスト名・アカウント ID などを含み、公開しない引き渡し・手順）の置き場。
+# issues/internal/ の下か、issues/ 直下の *.internal.md・*-handover.md に置く。git add -A で拾わない
+issues/internal/
+issues/*.internal.md
+issues/*-handover.md
