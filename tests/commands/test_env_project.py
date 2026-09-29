@@ -16,7 +16,7 @@ def project_setup(tmp_path, monkeypatch):
     """一時ディレクトリの実 SecretStore を使い、projects/web 配下に移動する"""
     project_dir = tmp_path / 'projects' / 'web'
     project_dir.mkdir(parents=True)
-    (project_dir / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+    (project_dir / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     monkeypatch.setenv('PWD', str(project_dir))
     monkeypatch.chdir(project_dir)
     return tmp_path, project_dir

@@ -1,7 +1,7 @@
 """読み替えのあるグループでの見出しの表示 (PLAN64 / #188)
 
 `group_aliases` のある置き場では、見出しのグループ名が読み替えの前と後
-(`acme → nyle`) になり、隣に並ぶパスと同じグループを指していると読める。
+(`umbrella → acme`) になり、隣に並ぶパスと同じグループを指していると読める。
 読み替えの対応が無いグループ・`version: 1` ・ファイル backend の出力は変わらない。
 """
 
@@ -14,8 +14,8 @@ from devbase.commands import env_backend
 from devbase.env import backend_config as bc
 
 
-ALIASES = {'acme': 'nyle'}
-BOTH = 'acme → nyle'
+ALIASES = {'umbrella': 'acme'}
+BOTH = 'umbrella → acme'
 
 
 def at(monkeypatch, root, rel=''):
@@ -24,11 +24,11 @@ def at(monkeypatch, root, rel=''):
 
 @pytest.fixture
 def aliased(openbao_root, openbao):
-    """``version: 2`` で ``acme`` を ``nyle`` へ読み替える置き場 (``web`` は ``acme``)"""
+    """``version: 2`` で ``umbrella`` を ``acme`` へ読み替える置き場 (``web`` は ``umbrella``)"""
     from tests.conftest import configure_openbao
 
     configure_openbao(openbao_root, openbao, layout=bc.LAYOUT_GROUP, group_aliases=ALIASES)
-    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
+    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=umbrella\n')
     return openbao_root
 
 
@@ -38,18 +38,18 @@ def aliased(openbao_root, openbao):
 
 def test_backend_test_headings_show_both_names_next_to_the_path(aliased, openbao, monkeypatch,
                                                                 capsys):
-    openbao.put('team/nyle/global', {'A': '1'})
-    openbao.put('users/member01/nyle/global', {'B': '2'})
+    openbao.put('team/acme/global', {'A': '1'})
+    openbao.put('users/member01/acme/global', {'B': '2'})
     at(monkeypatch, aliased, 'projects/web')
 
     assert env_backend.cmd_env_backend_test(aliased) == 0
 
     lines = capsys.readouterr().out.splitlines()
-    for label, path in ((f'グローバル（グループ {BOTH}）', 'devbase/team/nyle/global'),
+    for label, path in ((f'グローバル（グループ {BOTH}）', 'devbase/team/acme/global'),
                         (f'個人のグローバル（グループ {BOTH}）',
-                         'devbase/users/member01/nyle/global'),
+                         'devbase/users/member01/acme/global'),
                         (f"プロジェクト 'web'（グループ {BOTH}）",
-                         'devbase/team/nyle/projects/web')):
+                         'devbase/team/acme/projects/web')):
         # 見出しとパスが同じ行に並び、同じグループを指していることを見る (#188)
         row = [line for line in lines if line.startswith(f'  {label} ')]
         assert len(row) == 1, label
@@ -58,17 +58,17 @@ def test_backend_test_headings_show_both_names_next_to_the_path(aliased, openbao
 
 def test_backend_test_only_reads_the_current_group_and_labels_skipped_projects(
         aliased, openbao, monkeypatch, capsys):
-    """現状固定: with の参照を表示し、別の置き場の api は読み替え名で案内する。"""
+    """現状固定: initech の参照を表示し、別の置き場の api は読み替え名で案内する。"""
     (aliased / 'projects' / 'api').mkdir()
-    (aliased / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
-    (aliased / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
-    openbao.put('team/nyle/global', {'A': '1'})
-    openbao.put('team/nyle/projects/api', {'B': '2'})
-    openbao.put('users/member01/nyle/projects/api', {'C': '3'})
-    openbao.put('team/with/global', {'D': '4'})
-    openbao.put('users/member01/with/global', {'E': '5'})
-    openbao.put('team/with/projects/web', {'F': '6'})
-    openbao.put('users/member01/with/projects/web', {'G': '7'})
+    (aliased / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=umbrella\n')
+    (aliased / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
+    openbao.put('team/acme/global', {'A': '1'})
+    openbao.put('team/acme/projects/api', {'B': '2'})
+    openbao.put('users/member01/acme/projects/api', {'C': '3'})
+    openbao.put('team/initech/global', {'D': '4'})
+    openbao.put('users/member01/initech/global', {'E': '5'})
+    openbao.put('team/initech/projects/web', {'F': '6'})
+    openbao.put('users/member01/initech/projects/web', {'G': '7'})
     at(monkeypatch, aliased, 'projects/web')
 
     assert env_backend.cmd_env_backend_test(aliased) == 0
@@ -78,14 +78,14 @@ def test_backend_test_only_reads_the_current_group_and_labels_skipped_projects(
     skipped_rows = [line for line in skipped.splitlines() if '調べていません' in line]
     assert len(skipped_rows) == 1
     assert 'api' in skipped_rows[0]
-    assert 'nyle' in skipped_rows[0]
+    assert 'acme' in skipped_rows[0]
     assert 'api' not in read
     for label, path in (
-            ('グローバル（グループ with）', 'devbase/team/with/global'),
-            ('個人のグローバル（グループ with）', 'devbase/users/member01/with/global'),
-            ("プロジェクト 'web'（グループ with）", 'devbase/team/with/projects/web'),
-            ("個人のプロジェクト 'web'（グループ with）",
-             'devbase/users/member01/with/projects/web')):
+            ('グローバル（グループ initech）', 'devbase/team/initech/global'),
+            ('個人のグローバル（グループ initech）', 'devbase/users/member01/initech/global'),
+            ("プロジェクト 'web'（グループ initech）", 'devbase/team/initech/projects/web'),
+            ("個人のプロジェクト 'web'（グループ initech）",
+             'devbase/users/member01/initech/projects/web')):
         rows = [line for line in read.splitlines() if line.startswith(f'  {label} ')]
         assert len(rows) == 1, label
         assert path in rows[0]
@@ -96,10 +96,10 @@ def test_backend_test_only_reads_the_current_group_and_labels_skipped_projects(
 # ---------------------------------------------------------------------------
 
 def test_list_headings_and_counts_show_both_names(aliased, openbao, monkeypatch, capsys):
-    openbao.put('team/nyle/global', {'A': '1'})
-    openbao.put('users/member01/nyle/global', {'B': '2'})
-    openbao.put('team/nyle/projects/web', {'C': '3'})
-    openbao.put('users/member01/nyle/projects/web', {'D': '4'})
+    openbao.put('team/acme/global', {'A': '1'})
+    openbao.put('users/member01/acme/global', {'B': '2'})
+    openbao.put('team/acme/projects/web', {'C': '3'})
+    openbao.put('users/member01/acme/projects/web', {'D': '4'})
     at(monkeypatch, aliased, 'projects/web')
 
     assert env_cmd.cmd_env_list(aliased, keys_only=True) == 0
@@ -123,24 +123,24 @@ def test_list_headings_and_counts_show_both_names(aliased, openbao, monkeypatch,
 
 def test_migration_plan_listing_shows_both_names(aliased, openbao, capsys):
     """移行の計画の一覧 (``_MigrationPlan._heading``)"""
-    openbao.put('team/nyle/global', {'A': '1'})
+    openbao.put('team/acme/global', {'A': '1'})
 
-    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True, group='acme') == 0
+    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True, group='umbrella') == 0
 
     out = capsys.readouterr().out
     assert f'グローバル（グループ {BOTH}）' in out
-    assert 'devbase/team/nyle/global' in out
+    assert 'devbase/team/acme/global' in out
 
 
 def test_migration_plan_listing_shows_both_names_for_project(aliased, openbao, capsys):
     """現状固定: 移行計画の一覧にプロジェクトの機密の見出しとサーバ上のパスを出す。"""
-    openbao.put('team/nyle/projects/web', {'B': '2'})
+    openbao.put('team/acme/projects/web', {'B': '2'})
 
-    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True, group='acme') == 0
+    assert env_backend.cmd_env_backend_migrate(aliased, to='age', dry_run=True, group='umbrella') == 0
 
     out = capsys.readouterr().out
     assert f"プロジェクト 'web'（グループ {BOTH}）" in out
-    assert 'devbase/team/nyle/projects/web' in out
+    assert 'devbase/team/acme/projects/web' in out
 
 
 @pytest.fixture
@@ -162,13 +162,13 @@ def aliased_age(aliased):
 def test_migration_plan_listing_to_openbao_shows_both_names_next_to_the_path(
         aliased_age, openbao, capsys):
     """現状固定: 逆向き (age → openbao) の一覧も読み替えの前と後と移行先のパスを並べる。"""
-    assert env_backend.cmd_env_backend_migrate(aliased_age, to='openbao', assume_yes=True, group='acme',
+    assert env_backend.cmd_env_backend_migrate(aliased_age, to='openbao', assume_yes=True, group='umbrella',
                                                dry_run=True) == 0
 
     out = capsys.readouterr().out
-    for label, path in ((f'グローバル（グループ {BOTH}）', 'devbase/team/nyle/global'),
+    for label, path in ((f'グローバル（グループ {BOTH}）', 'devbase/team/acme/global'),
                         (f"プロジェクト 'web'（グループ {BOTH}）",
-                         'devbase/team/nyle/projects/web')):
+                         'devbase/team/acme/projects/web')):
         # 見出しと移行先のパスが同じ行に並ぶ (桁揃えの空白は見ない)
         rows = [line for line in out.splitlines() if line.startswith(f'  {label}')]
         assert len(rows) == 1, label
@@ -180,14 +180,14 @@ def test_migration_plan_listing_to_openbao_shows_both_names_next_to_the_path(
 
 def test_completion_listing_after_migrating_to_age_shows_both_names(aliased, openbao, capsys):
     """``--to age`` の完了後の「サーバ上の機密はそのまま残っています」の一覧"""
-    openbao.put('team/nyle/global', {'A': '1'})
+    openbao.put('team/acme/global', {'A': '1'})
 
-    assert env_backend.cmd_env_backend_migrate(aliased, to='age', assume_yes=True, group='acme') == 0
+    assert env_backend.cmd_env_backend_migrate(aliased, to='age', assume_yes=True, group='umbrella') == 0
 
     out = capsys.readouterr().out
     tail = out[out.index('サーバ上の機密はそのまま残っています'):]
     assert f'グローバル（グループ {BOTH}）' in tail
-    assert 'devbase/team/nyle/global' in tail
+    assert 'devbase/team/acme/global' in tail
 
 
 # ---------------------------------------------------------------------------
@@ -195,15 +195,15 @@ def test_completion_listing_after_migrating_to_age_shows_both_names(aliased, ope
 # ---------------------------------------------------------------------------
 
 def test_a_group_without_an_alias_keeps_its_name(aliased, openbao, monkeypatch, capsys):
-    (aliased / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
-    openbao.put('team/kkg/global', {'A': '1'})
+    (aliased / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=globex\n')
+    openbao.put('team/globex/global', {'A': '1'})
     at(monkeypatch, aliased, 'projects/web')
 
     assert env_cmd.cmd_env_list(aliased, keys_only=True) == 0
     assert env_backend.cmd_env_backend_test(aliased) == 0
 
     out = capsys.readouterr().out
-    assert '（グループ kkg）' in out
+    assert '（グループ globex）' in out
     assert '→' not in out
 
 

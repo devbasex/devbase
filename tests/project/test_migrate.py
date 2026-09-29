@@ -9,8 +9,8 @@ import pytest
 from devbase.project.config import load_project_config
 from devbase.project.migrate import migrate_project, migrate_projects
 
-LEGACY_ENV = """GIT_USER=volareinc
-GIT_REPO=carmo
+LEGACY_ENV = """GIT_USER=example-org
+GIT_REPO=myapp
 WORK_DIR=/work/$GIT_REPO
 CONTAINER_SCALE=1
 # up/list 完了後に dev コンテナへ接続した VS Code を自動で開く (PLAN31_3)
@@ -18,7 +18,7 @@ DEVBASE_OPEN_EDITOR=1
 """
 
 
-def project(tmp_path: Path, name: str = "carmo", env: str = LEGACY_ENV) -> Path:
+def project(tmp_path: Path, name: str = "myapp", env: str = LEGACY_ENV) -> Path:
     directory = tmp_path / name
     directory.mkdir()
     (directory / "env").write_text(env, encoding="utf-8")
@@ -33,7 +33,7 @@ def test_creates_project_yml_from_env(tmp_path):
     assert result.status == "migrated"
     config = load_project_config(directory)
     assert [(r.host, r.owner, r.repo, r.dir) for r in config.repos] == [
-        ("github.com", "volareinc", "carmo", "carmo")]
+        ("github.com", "example-org", "myapp", "myapp")]
     assert config.scale == 1
     assert config.open_editor is True
     assert config.work_dir is None  # 既定 (/work/<repo>) と同じなら書かない
@@ -72,19 +72,19 @@ def test_keeps_the_env_file_even_when_it_becomes_empty(tmp_path):
 
 def test_non_default_host_and_work_dir_are_kept(tmp_path):
     directory = project(tmp_path, env=(
-        "GIT_USER=uttaro_dev\nGIT_REPO=uttarov2\nGIT_HOST=gitlab.com\n"
+        "GIT_USER=example_dev\nGIT_REPO=myapp\nGIT_HOST=gitlab.com\n"
         "WORK_DIR=/work/$GIT_REPO/src\nCONTAINER_SCALE=1\n"))
 
     migrate_project(directory)
 
     config = load_project_config(directory)
     assert config.repos[0].host == "gitlab.com"
-    assert config.work_dir == "/work/uttarov2/src"
+    assert config.work_dir == "/work/myapp/src"
 
 
 def test_open_editor_off_is_preserved(tmp_path):
     directory = project(tmp_path, env=(
-        "GIT_USER=volareinc\nGIT_REPO=carmo\nDEVBASE_OPEN_EDITOR=0\n"))
+        "GIT_USER=example-org\nGIT_REPO=myapp\nDEVBASE_OPEN_EDITOR=0\n"))
 
     migrate_project(directory)
 
@@ -92,7 +92,7 @@ def test_open_editor_off_is_preserved(tmp_path):
 
 
 def test_absent_optional_keys_are_not_written(tmp_path):
-    directory = project(tmp_path, env="GIT_USER=volareinc\nGIT_REPO=carmo\n")
+    directory = project(tmp_path, env="GIT_USER=example-org\nGIT_REPO=myapp\n")
 
     migrate_project(directory)
 
@@ -127,8 +127,8 @@ def test_existing_project_yml_is_never_overwritten(tmp_path):
     """手で整えた設定 (複数 repo 等) を移行が壊さない"""
     directory = project(tmp_path)
     (directory / "project.yml").write_text(
-        "version: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
-        "  - owner: volareinc\n    repo: carmo-batch\n", encoding="utf-8")
+        "version: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n"
+        "  - owner: example-org\n    repo: myapp-batch\n", encoding="utf-8")
 
     result = migrate_project(directory)
 
@@ -149,7 +149,7 @@ def test_project_without_repo_keys_is_skipped(tmp_path):
 
 
 def test_missing_env_file_is_skipped(tmp_path):
-    directory = tmp_path / "carmo"
+    directory = tmp_path / "myapp"
     directory.mkdir()
 
     result = migrate_project(directory)
@@ -159,7 +159,7 @@ def test_missing_env_file_is_skipped(tmp_path):
 
 def test_generated_config_is_validated(tmp_path):
     """検証に通らない値 (空白混じり等) は書き出さずに失敗として報告する"""
-    directory = project(tmp_path, env="GIT_USER=vol areinc\nGIT_REPO=carmo\n")
+    directory = project(tmp_path, env="GIT_USER=vol areinc\nGIT_REPO=myapp\n")
 
     result = migrate_project(directory)
 
@@ -178,7 +178,7 @@ def test_migrate_projects_walks_every_project(tmp_path):
 
     assert {r.name: r.status for r in results} == {
         "a": "migrated", "b": "migrated", "c": "skipped"}
-    assert load_project_config(projects / "a").repos[0].repo == "carmo"
+    assert load_project_config(projects / "a").repos[0].repo == "myapp"
 
 
 def test_migrate_projects_follows_symlinks_to_the_plugin_repo(tmp_path):
@@ -188,13 +188,13 @@ def test_migrate_projects_follows_symlinks_to_the_plugin_repo(tmp_path):
     real = project(plugin_repo)
     projects = tmp_path / "projects"
     projects.mkdir()
-    (projects / "carmo").symlink_to(real, target_is_directory=True)
+    (projects / "myapp").symlink_to(real, target_is_directory=True)
 
     results = migrate_projects(projects)
 
     assert [r.status for r in results] == ["migrated"]
     assert (real / "project.yml").is_file()
-    assert not (projects / "carmo" / "project.yml").is_symlink()
+    assert not (projects / "myapp" / "project.yml").is_symlink()
 
 
 def test_string_values_that_look_like_yaml_scalars_stay_strings(tmp_path):
@@ -218,15 +218,15 @@ def test_plain_values_are_written_without_quotes(tmp_path):
 
     document = migrate_project(directory, dry_run=True).project_yml
 
-    assert "  - owner: volareinc\n" in document
-    assert "    repo: carmo\n" in document
+    assert "  - owner: example-org\n" in document
+    assert "    repo: myapp\n" in document
 
 
 def test_broken_yaml_from_env_fails_only_that_project(tmp_path):
     """閉じられていない引用符の env は、その 1 件だけ failed になり一括移行は止まらない"""
     projects = tmp_path / "projects"
     projects.mkdir()
-    project(projects, "broken", env='GIT_USER=volareinc\nGIT_REPO="carmo\n')
+    project(projects, "broken", env='GIT_USER=example-org\nGIT_REPO="myapp\n')
     project(projects, "sound")
 
     results = migrate_projects(projects)
@@ -244,7 +244,7 @@ def test_unreadable_env_is_reported_as_failed(tmp_path):
     projects.mkdir()
     bad = projects / "bad"
     bad.mkdir()
-    (bad / "env").write_bytes(b"GIT_USER=vol\xffareinc\nGIT_REPO=carmo\n")
+    (bad / "env").write_bytes(b"GIT_USER=vol\xffareinc\nGIT_REPO=myapp\n")
     project(projects, "sound")
 
     results = migrate_projects(projects)
@@ -257,12 +257,12 @@ def test_broken_existing_project_yml_keeps_env_untouched(tmp_path):
     """既存 project.yml が壊れているとき env の旧キー (復旧元) は消さない"""
     directory = project(tmp_path)
     (directory / "project.yml").write_text(
-        "version: 1\nrepos:\n  - owner: volareinc\n", encoding="utf-8")
+        "version: 1\nrepos:\n  - owner: example-org\n", encoding="utf-8")
 
     result = migrate_project(directory)
 
     assert result.status == "failed"
-    assert "GIT_REPO=carmo" in (directory / "env").read_text(encoding="utf-8")
+    assert "GIT_REPO=myapp" in (directory / "env").read_text(encoding="utf-8")
 
 
 def test_writes_are_atomic(tmp_path, monkeypatch):

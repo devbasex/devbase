@@ -171,7 +171,7 @@ class TestUrlToReposDirname:
         assert _url_to_repos_dirname("git@github.com:user/my-repo.git") == "github.com--user--my-repo"
 
     def test_owner_with_hyphens(self):
-        assert _url_to_repos_dirname("https://github.com/takemi-ohama/devbase-ext.git") == "github.com--takemi-ohama--devbase-ext"
+        assert _url_to_repos_dirname("https://github.com/alice/devbase-plugins.git") == "github.com--alice--devbase-plugins"
 
     def test_different_hosts_produce_different_dirnames(self):
         """github.com and gitlab.com repos with same owner/name must not collide."""
@@ -791,7 +791,7 @@ class TestSyncProjectsNameForm:
 
     def test_usable_names_are_not_warned(self, registry, devbase_root, caplog):
         """2: 名前の形に合う名前だけなら、名前の形の警告は 1 行も出ない"""
-        _install_repo_plugin(registry, devbase_root, ["ok-name", "carmo_ai", "a.b"])
+        _install_repo_plugin(registry, devbase_root, ["ok-name", "myapp_ai", "a.b"])
 
         with caplog.at_level(logging.WARNING):
             count = sync_projects(registry, verbose=False)
@@ -802,42 +802,42 @@ class TestSyncProjectsNameForm:
     def test_alias_with_usable_base_and_owner_is_linked_without_warning(
             self, registry, devbase_root, caplog):
         """競合時に正常な名前の別名リンクを警告なしで作る現状を固定する。"""
-        _install_repo_plugin(registry, devbase_root, ["carmo"], priority=10)
-        _install_link_plugin(registry, devbase_root, "my-local-repo", ["carmo"])
+        _install_repo_plugin(registry, devbase_root, ["myapp"], priority=10)
+        _install_link_plugin(registry, devbase_root, "my-local-repo", ["myapp"])
 
         with caplog.at_level(logging.WARNING):
             count = sync_projects(registry, verbose=False)
 
         assert count == 2
-        winner = devbase_root / "projects" / "carmo"
-        alias = devbase_root / "projects" / "carmo.my-local-repo"
+        winner = devbase_root / "projects" / "myapp"
+        alias = devbase_root / "projects" / "myapp.my-local-repo"
         assert winner.is_symlink()
         assert alias.is_symlink()
         assert winner.resolve() == (
             devbase_root / "repos" / "github.com--testorg--testrepo"
-            / "p1" / "projects" / "carmo")
-        assert alias.resolve() == devbase_root / "my-local-repo" / "p2" / "projects" / "carmo"
+            / "p1" / "projects" / "myapp")
+        assert alias.resolve() == devbase_root / "my-local-repo" / "p2" / "projects" / "myapp"
         assert winner.is_dir() and alias.is_dir()
         assert _name_form_warnings(caplog) == []
 
     def test_alias_with_unusable_owner_points_at_the_owner(
             self, registry, devbase_root, caplog):
         """3: 別名の <owner> の側が原因なら、プラグイン側の改名を促さない"""
-        _install_repo_plugin(registry, devbase_root, ["carmo"], priority=10)
-        _install_link_plugin(registry, devbase_root, "my plugin", ["carmo"])
+        _install_repo_plugin(registry, devbase_root, ["myapp"], priority=10)
+        _install_link_plugin(registry, devbase_root, "my plugin", ["myapp"])
 
         with caplog.at_level(logging.WARNING):
             count = sync_projects(registry, verbose=False)
 
         assert count == 2
-        assert (devbase_root / "projects" / "carmo.my plugin").is_symlink()
+        assert (devbase_root / "projects" / "myapp.my plugin").is_symlink()
         warnings = _name_form_warnings(caplog)
         assert len(warnings) == 1
         [message] = warnings
-        assert "'carmo.my plugin'" in message
+        assert "'myapp.my plugin'" in message
         assert "'my plugin'" in message
         assert "元パス" in message
-        assert "projects/carmo を改名しても直りません" in message
+        assert "projects/myapp を改名しても直りません" in message
 
     def test_alias_with_unusable_base_points_at_the_plugin(
             self, registry, devbase_root, caplog):

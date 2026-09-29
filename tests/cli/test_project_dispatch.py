@@ -35,9 +35,9 @@ def test_create_parser_accepts_project_subcommands(sub):
 
 def test_project_up_accepts_optional_name():
     parser = cli._create_parser()
-    with_name = parser.parse_args(['project', 'up', 'carmo'])
+    with_name = parser.parse_args(['project', 'up', 'myapp'])
     assert with_name.subcommand == 'up'
-    assert with_name.name == 'carmo'
+    assert with_name.name == 'myapp'
 
     without_name = parser.parse_args(['project', 'up'])
     assert without_name.name is None
@@ -51,8 +51,8 @@ def test_project_scale_positional_is_unambiguous():
     assert only_scale.name is None
     assert only_scale.new_scale == 3
 
-    name_and_scale = parser.parse_args(['project', 'scale', 'carmo', '3'])
-    assert name_and_scale.name == 'carmo'
+    name_and_scale = parser.parse_args(['project', 'scale', 'myapp', '3'])
+    assert name_and_scale.name == 'myapp'
     assert name_and_scale.new_scale == 3
 
 
@@ -125,9 +125,9 @@ def test_lifecycle_passes_name_to_cmd_up(monkeypatch):
     monkeypatch.setattr(container, 'cmd_up',
                         lambda project_name=None, scale=None, **kwargs:
                         captured.update(project_name=project_name) or 0)
-    args = _args(subcommand='up', name='carmo', scale=None)
+    args = _args(subcommand='up', name='myapp', scale=None)
     assert container._dispatch_lifecycle(args) == 0
-    assert captured['project_name'] == 'carmo'
+    assert captured['project_name'] == 'myapp'
 
 
 def test_lifecycle_container_path_has_no_name(monkeypatch):
@@ -158,9 +158,9 @@ def test_lifecycle_resolves_name_before_handler(monkeypatch):
     monkeypatch.setattr(container, 'cmd_up',
                         lambda project_name=None, scale=None, **kwargs:
                         order.append(('up', project_name)) or 0)
-    args = _args(subcommand='up', name='carmo', scale=None)
+    args = _args(subcommand='up', name='myapp', scale=None)
     assert container._dispatch_lifecycle(args) == 0
-    assert order == [('resolve', 'carmo'), ('up', 'carmo')]
+    assert order == [('resolve', 'myapp'), ('up', 'myapp')]
 
 
 def test_lifecycle_aborts_when_name_unresolved(monkeypatch):
@@ -263,12 +263,12 @@ def test_dispatch_shortcut_routes_to_cmd_project_not_container(monkeypatch):
 def test_container_subcommands_reject_name_positional(group, sub):
     """受け入れ条件 12 (単体): `container <sub> <name>` は parser が `[name]` を持たず SystemExit(2)。
 
-    `scale` は `carmo` が `new_scale` の int 型エラーになり、他は `unrecognized arguments`。
+    `scale` は `myapp` が `new_scale` の int 型エラーになり、他は `unrecognized arguments`。
     どちらも終了コード 2 (PLAN61 決定 10 / #200)。
     """
     parser = cli._create_parser()
     with pytest.raises(SystemExit) as exc:
-        parser.parse_args([group, sub, 'carmo'])
+        parser.parse_args([group, sub, 'myapp'])
     assert exc.value.code == 2
 
 
@@ -308,9 +308,9 @@ def test_build_positional_is_image_in_both_groups(group):
 
 def test_shortcut_up_accepts_optional_name():
     parser = cli._create_parser()
-    with_name = parser.parse_args(['up', 'carmo'])
+    with_name = parser.parse_args(['up', 'myapp'])
     assert with_name.command == 'up'
-    assert with_name.name == 'carmo'
+    assert with_name.name == 'myapp'
 
     without_name = parser.parse_args(['up'])
     assert without_name.name is None
@@ -318,16 +318,16 @@ def test_shortcut_up_accepts_optional_name():
 
 def test_shortcut_down_accepts_optional_name():
     parser = cli._create_parser()
-    args = parser.parse_args(['down', 'carmo'])
+    args = parser.parse_args(['down', 'myapp'])
     assert args.command == 'down'
-    assert args.name == 'carmo'
+    assert args.name == 'myapp'
 
 
 def test_shortcut_ps_accepts_optional_name():
     parser = cli._create_parser()
-    args = parser.parse_args(['ps', 'carmo', '--all'])
+    args = parser.parse_args(['ps', 'myapp', '--all'])
     assert args.command == 'ps'
-    assert args.name == 'carmo'
+    assert args.name == 'myapp'
     assert args.all is True
 
 
@@ -339,8 +339,8 @@ def test_shortcut_scale_positional_is_unambiguous():
     assert only_scale.name is None
     assert only_scale.new_scale == 3
 
-    name_and_scale = parser.parse_args(['scale', 'carmo', '3'])
-    assert name_and_scale.name == 'carmo'
+    name_and_scale = parser.parse_args(['scale', 'myapp', '3'])
+    assert name_and_scale.name == 'myapp'
     assert name_and_scale.new_scale == 3
 
 
@@ -353,9 +353,9 @@ def test_shortcut_up_propagates_name_through_dispatch(monkeypatch):
                         lambda project_name=None, scale=None, **kwargs:
                         captured.update(project_name=project_name) or 0)
     # ショートカット parser が生成する namespace を再現 (name 属性を持つ)
-    args = _args(command='up', name='carmo', scale=None)
+    args = _args(command='up', name='myapp', scale=None)
     assert cli._dispatch('up', args) == 0
-    assert captured['project_name'] == 'carmo'
+    assert captured['project_name'] == 'myapp'
 
 
 def test_shortcut_scale_propagates_name_through_dispatch(monkeypatch):
@@ -366,9 +366,9 @@ def test_shortcut_scale_propagates_name_through_dispatch(monkeypatch):
     monkeypatch.setattr(container, 'cmd_scale',
                         lambda new_scale=None, project_name=None:
                         captured.update(project_name=project_name, new_scale=new_scale) or 0)
-    args = _args(command='scale', name='carmo', new_scale=3)
+    args = _args(command='scale', name='myapp', new_scale=3)
     assert cli._dispatch('scale', args) == 0
-    assert captured['project_name'] == 'carmo'
+    assert captured['project_name'] == 'myapp'
     assert captured['new_scale'] == 3
 
 
@@ -404,8 +404,8 @@ def _project_config(*repos):
     from devbase.project.config import parse_project_config
     return parse_project_config({
         "version": 1,
-        "defaults": {"owner": "volareinc"},
-        "repos": [{"repo": r} for r in (repos or ("carmo",))],
+        "defaults": {"owner": "example-org"},
+        "repos": [{"repo": r} for r in (repos or ("myapp",))],
     }, source="project.yml")
 
 
@@ -417,7 +417,7 @@ def test_maybe_open_editor_disabled_by_default(monkeypatch):
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', None, None, 1, _project_config())
+    container._maybe_open_editor('myapp', None, None, 1, _project_config())
     assert called == []
 
 
@@ -430,9 +430,9 @@ def test_maybe_open_editor_flag_overrides_env(monkeypatch):
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
     monkeypatch.setattr(container, 'get_dev_service_name', lambda: 'dev')
-    container._maybe_open_editor('carmo', True, 1, 1, _project_config())
+    container._maybe_open_editor('myapp', True, 1, 1, _project_config())
     assert len(called) == 1
-    assert called[0]['project_name'] == 'carmo'
+    assert called[0]['project_name'] == 'myapp'
 
 
 def test_maybe_open_editor_failure_does_not_raise(monkeypatch):
@@ -446,7 +446,7 @@ def test_maybe_open_editor_failure_does_not_raise(monkeypatch):
         raise RuntimeError("x")
 
     monkeypatch.setattr(opener, 'open_editor', boom)
-    container._maybe_open_editor('carmo', None, None, 1, _project_config())  # 例外が出なければ OK
+    container._maybe_open_editor('myapp', None, None, 1, _project_config())  # 例外が出なければ OK
 
 
 @pytest.mark.parametrize('bad_index', [0, -1, 3])
@@ -459,7 +459,7 @@ def test_maybe_open_editor_out_of_range_index_falls_back(monkeypatch, bad_index)
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', True, bad_index, 2, _project_config())
+    container._maybe_open_editor('myapp', True, bad_index, 2, _project_config())
     assert len(called) == 1
     assert called[0]['index'] == 1
 
@@ -473,7 +473,7 @@ def test_maybe_open_editor_valid_index_within_scale(monkeypatch):
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', True, 2, 3, _project_config())
+    container._maybe_open_editor('myapp', True, 2, 3, _project_config())
     assert called[0]['index'] == 2
 
 
@@ -486,7 +486,7 @@ def test_maybe_open_editor_forwards_compose_file(monkeypatch):
     called = []
     monkeypatch.setattr(opener, 'open_editor',
                         lambda **kw: called.append(kw) or 'launch')
-    container._maybe_open_editor('carmo', True, 1, 1, _project_config(),
+    container._maybe_open_editor('myapp', True, 1, 1, _project_config(),
                                  compose_file='override.yml')
     assert called[0]['compose_file'] == 'override.yml'
 

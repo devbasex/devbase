@@ -32,7 +32,7 @@ def root(tmp_path, monkeypatch):
     解決は対象プロジェクトへ chdir してから行う。テストの CWD は ``elsewhere`` に置き、
     別ディレクトリから一覧を開いた状況にする。
     """
-    (tmp_path / "projects" / "carmo").mkdir(parents=True)
+    (tmp_path / "projects" / "myapp").mkdir(parents=True)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.setenv("DEVBASE_ROOT", str(tmp_path))
@@ -43,7 +43,7 @@ def root(tmp_path, monkeypatch):
 
 
 def generated(root):
-    path = root / "projects" / "carmo" / ".docker-compose.scale.yml"
+    path = root / "projects" / "myapp" / ".docker-compose.scale.yml"
     path.write_text("services: {}\n")
     return path
 
@@ -65,7 +65,7 @@ def test_profile_items_follow_running_ops_when_profiles_exist(root, monkeypatch)
     path = generated(root)
     asked = resolve_to(monkeypatch, {"test": ["app"]})
 
-    ops = actions_project._running_ops(root, "carmo")
+    ops = actions_project._running_ops(root, "myapp")
 
     assert ops == list(actions_project._RUNNING_OPS) + PROFILE_ITEMS
     assert asked == [path.resolve()]
@@ -76,13 +76,13 @@ def test_no_profile_items_without_profiles(root, monkeypatch, result):
     generated(root)
     resolve_to(monkeypatch, result)
 
-    assert actions_project._running_ops(root, "carmo") == list(actions_project._RUNNING_OPS)
+    assert actions_project._running_ops(root, "myapp") == list(actions_project._RUNNING_OPS)
 
 
 def test_no_profile_items_before_first_up(root, monkeypatch):
     asked = resolve_to(monkeypatch, {"test": ["app"]})
 
-    assert actions_project._running_ops(root, "carmo") == list(actions_project._RUNNING_OPS)
+    assert actions_project._running_ops(root, "myapp") == list(actions_project._RUNNING_OPS)
     assert asked == []
 
 
@@ -101,10 +101,10 @@ def test_profile_item_asks_profile_name_even_for_one_and_delegates(root, monkeyp
     monkeypatch.setattr(container, "cmd_project",
                         lambda args: delegated.append(vars(args).copy()) or 0)
 
-    assert actions_project._run_operation(root, "carmo", op) == 0
+    assert actions_project._run_operation(root, "myapp", op) == 0
 
     assert prompts == [[("test", "test")]]
-    assert delegated == [{"subcommand": "profile", "name": "carmo",
+    assert delegated == [{"subcommand": "profile", "name": "myapp",
                           "profile_subcommand": sub, "profile": "test"}]
 
 
@@ -115,7 +115,7 @@ def test_profile_selection_back_returns_to_submenu(root, monkeypatch):
     delegated = []
     monkeypatch.setattr(container, "cmd_project", lambda args: delegated.append(args) or 0)
 
-    assert actions_project._run_operation(root, "carmo", "profile-up") is flow.ARG_CANCEL
+    assert actions_project._run_operation(root, "myapp", "profile-up") is flow.ARG_CANCEL
     assert delegated == []
 
 
@@ -129,7 +129,7 @@ def test_profile_item_without_resolved_names_returns_to_submenu(root, monkeypatc
     delegated = []
     monkeypatch.setattr(container, "cmd_project", lambda args: delegated.append(args) or 0)
 
-    assert actions_project._run_operation(root, "carmo", "profile-up") is flow.ARG_CANCEL
+    assert actions_project._run_operation(root, "myapp", "profile-up") is flow.ARG_CANCEL
     assert prompts == []
     assert delegated == []
 
@@ -148,7 +148,7 @@ def test_profile_ops_return_to_project_list(root, monkeypatch, op):
     monkeypatch.setattr(menu, "select", lambda *a, **k: "test")
     monkeypatch.setattr(container, "cmd_project", lambda args: 0)
 
-    result = actions_project.handle_row(root, {"name": "carmo", "status": "running (2 containers)"})
+    result = actions_project.handle_row(root, {"name": "myapp", "status": "running (2 containers)"})
 
     assert result is menu.MENU_BACK        # 1 回の実行で一覧へ戻る (2 回目の選択が無い)
     assert len(shown) == 1 and PROFILE_ITEMS[0] in shown[0]
@@ -161,7 +161,7 @@ def test_profiles_resolve_inside_target_project_and_restore_session(root, monkey
     参照しても解決できるようにするため。終わった後は CWD と ``os.environ`` を戻し、
     TUI セッションへ残さない。
     """
-    project = root / "projects" / "carmo"
+    project = root / "projects" / "myapp"
     (project / "env").write_text("REVIEW_APP_IMAGE=review:latest\n")
     generated(root)
     injected = []
@@ -181,10 +181,10 @@ def test_profiles_resolve_inside_target_project_and_restore_session(root, monkey
     before_cwd = Path.cwd()
     before_env = os.environ.copy()
 
-    ops = actions_project._running_ops(root, "carmo")
+    ops = actions_project._running_ops(root, "myapp")
 
     assert ops == list(actions_project._RUNNING_OPS) + PROFILE_ITEMS
-    assert seen == {"cwd": project.resolve(), "image": "review:latest", "project": "carmo"}
+    assert seen == {"cwd": project.resolve(), "image": "review:latest", "project": "myapp"}
     assert injected == [(False, project.resolve())]
     assert Path.cwd() == before_cwd
     assert os.environ.copy() == before_env

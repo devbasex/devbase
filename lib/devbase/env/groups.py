@@ -120,7 +120,7 @@ def declare(root: Path, project: Optional[str]) -> DeclaredGroup:
         )
     path = root / 'projects' / project / ENV_FILENAME
     relative = f"projects/{project}/{ENV_FILENAME}"
-    hint = f"{keys.DEVBASE_ACCOUNT_GROUP}=<グループ> (nyle / personal など)"
+    hint = f"{keys.DEVBASE_ACCOUNT_GROUP}=<グループ> (acme / personal など)"
     found = _read_declaration(path)
     if found is None:
         raise GroupDeclarationError(

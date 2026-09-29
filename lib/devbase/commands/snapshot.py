@@ -43,7 +43,7 @@ def _create_group(devbase_root: Path, group):
     project = _runtime.current_project_name(devbase_root)
     if project is None:
         logger.error("プロジェクトの外では対象のグループを決められません。"
-                     "--group <名前> を付けてください (例: --group nyle)")
+                     "--group <名前> を付けてください (例: --group acme)")
         return None, EXIT_USAGE
     try:
         return _groups.declare(devbase_root, project).name, None

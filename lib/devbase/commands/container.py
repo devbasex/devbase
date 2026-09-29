@@ -963,7 +963,7 @@ def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
 
     既定のタイトルは編集中ファイル名が先頭に来るため、複数プロジェクトの窓を
     並べるとどれがどれか分からなくなる。コンテナ内の Remote settings へ
-    ``window.title`` を書いて、``nyle-dx-dev-1 - ファイル名`` の形に固定する
+    ``window.title`` を書いて、``myapp-dev-1 - ファイル名`` の形に固定する
     (詳細と方式の選定理由は :mod:`devbase.editor.window_title`)。
 
     エディタ自動オープンの有無 (``open_editor``) とは独立に行う。手で

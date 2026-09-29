@@ -18,7 +18,7 @@ from devbase.project.config import parse_project_config
 
 def config_of(*repos):
     return parse_project_config(
-        {"version": 1, "defaults": {"owner": "volareinc"},
+        {"version": 1, "defaults": {"owner": "example-org"},
          "repos": [{"repo": r} for r in repos]},
         source="project.yml")
 
@@ -48,50 +48,50 @@ def warnings_of(caplog):
 
 
 def test_missing_repositories_are_named_with_their_clone_url(work_listing, caplog):
-    work_listing({"dev-1": "carmo\n"})
+    work_listing({"dev-1": "myapp\n"})
 
     with caplog.at_level(logging.WARNING):
-        container._report_missing_repos(config_of("carmo", "carmo-batch"),
+        container._report_missing_repos(config_of("myapp", "myapp-batch"),
                                         scale=1, dev_service_name="dev",
-                                        project_name="carmo")
+                                        project_name="myapp")
 
     messages = "\n".join(warnings_of(caplog))
-    assert "carmo-batch" in messages
-    assert "https://github.com/volareinc/carmo-batch.git" in messages
+    assert "myapp-batch" in messages
+    assert "https://github.com/example-org/myapp-batch.git" in messages
 
 
 def test_nothing_is_reported_when_every_repository_is_present(work_listing, caplog):
     """揃っているときの出力は従来どおり (正常時にノイズを増やさない)。"""
-    work_listing({"dev-1": "carmo\ncarmo-batch\n"})
+    work_listing({"dev-1": "myapp\nmyapp-batch\n"})
 
     with caplog.at_level(logging.WARNING):
-        container._report_missing_repos(config_of("carmo", "carmo-batch"),
+        container._report_missing_repos(config_of("myapp", "myapp-batch"),
                                         scale=1, dev_service_name="dev",
-                                        project_name="carmo")
+                                        project_name="myapp")
 
     assert warnings_of(caplog) == []
 
 
 def test_other_directories_in_the_shared_work_volume_are_ignored(work_listing, caplog):
     """/work は他プロジェクトと共有される。関係ないディレクトリは判定に使わない。"""
-    work_listing({"dev-1": "carmo\ncarmo-batch\nuttaro-system\n.pnpm-store\n"})
+    work_listing({"dev-1": "myapp\nmyapp-batch\nmyapp-system\n.pnpm-store\n"})
 
     with caplog.at_level(logging.WARNING):
-        container._report_missing_repos(config_of("carmo", "carmo-batch"),
+        container._report_missing_repos(config_of("myapp", "myapp-batch"),
                                         scale=1, dev_service_name="dev",
-                                        project_name="carmo")
+                                        project_name="myapp")
 
     assert warnings_of(caplog) == []
 
 
 def test_every_instance_is_checked(work_listing, caplog):
     """scale>1 では instance ごとに /work ボリュームが別なので全部見る。"""
-    calls = work_listing({"dev-1": "carmo\ncarmo-batch\n", "dev-2": "carmo\n"})
+    calls = work_listing({"dev-1": "myapp\nmyapp-batch\n", "dev-2": "myapp\n"})
 
     with caplog.at_level(logging.WARNING):
-        container._report_missing_repos(config_of("carmo", "carmo-batch"),
+        container._report_missing_repos(config_of("myapp", "myapp-batch"),
                                         scale=2, dev_service_name="dev",
-                                        project_name="carmo")
+                                        project_name="myapp")
 
     assert [c[2] for c in calls] == ["dev-1", "dev-2"]
     messages = "\n".join(warnings_of(caplog))
@@ -104,8 +104,8 @@ def test_a_failed_lookup_stays_silent(work_listing, caplog):
     work_listing({"dev-1": subprocess.CalledProcessError(1, "docker")})
 
     with caplog.at_level(logging.WARNING):
-        container._report_missing_repos(config_of("carmo", "carmo-batch"),
+        container._report_missing_repos(config_of("myapp", "myapp-batch"),
                                         scale=1, dev_service_name="dev",
-                                        project_name="carmo")
+                                        project_name="myapp")
 
     assert warnings_of(caplog) == []

@@ -1,6 +1,6 @@
 """偽の OpenBao サーバ (標準ライブラリの http.server で立てる)
 
-PLAN51 の結合テストが使う。実サーバは `carmo-cdk#312` の完了後にしか使えないため、
+PLAN51 の結合テストが使う。実サーバは `myapp-cdk#312` の完了後にしか使えないため、
 仕様「OpenBao との契約」の 4 経路 (AppRole のログイン、KV v2 の取得・版付き保存・
 メタデータ削除) だけを平文 HTTP で再現し、受信したリクエストを記録して検査できるように
 する。接続先が ``http://127.0.0.1:<port>`` になるのは、``backend_config`` がループバック
@@ -539,12 +539,12 @@ def configure_openbao(root, server: FakeOpenBao, *, user: str = 'member01',
 
 @pytest.fixture
 def openbao_root(tmp_path, monkeypatch, openbao):
-    """age 鍵を持ち、偽サーバを backend にした DEVBASE_ROOT。``projects/web`` は ``nyle`` を宣言する"""
+    """age 鍵を持ち、偽サーバを backend にした DEVBASE_ROOT。``projects/web`` は ``acme`` を宣言する"""
     from devbase.env import agekeys
 
     (tmp_path / 'projects' / 'web').mkdir(parents=True)
     # どのプロジェクトもグループを宣言する (#315)。flat の置き場ではパスに影響しない
-    (tmp_path / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+    (tmp_path / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.setenv('PWD', str(tmp_path))

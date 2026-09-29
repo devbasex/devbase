@@ -22,7 +22,7 @@ def write(root, text):
 
 def test_no_file_means_every_group_asks(tmp_path):
     assert host_import.load(tmp_path) == {}
-    assert host_import.resolve({}, 'kkg', interactive=True).policy is ImportPolicy.ASK
+    assert host_import.resolve({}, 'globex', interactive=True).policy is ImportPolicy.ASK
 
 
 @pytest.mark.parametrize('text', ['', 'groups:\n', 'groups: {}\n'])
@@ -32,24 +32,24 @@ def test_an_empty_file_means_every_group_asks(tmp_path, text):
 
 
 def test_named_groups_get_their_policy(tmp_path):
-    write(tmp_path, 'groups:\n  nyle: import\n  kkg: skip\n  with: ask\n')
+    write(tmp_path, 'groups:\n  acme: import\n  globex: skip\n  initech: ask\n')
     policies = host_import.load(tmp_path)
 
-    assert host_import.resolve(policies, 'nyle', interactive=False).policy is ImportPolicy.IMPORT
-    assert host_import.resolve(policies, 'kkg', interactive=True).policy is ImportPolicy.SKIP
-    assert host_import.resolve(policies, 'with', interactive=True).policy is ImportPolicy.ASK
+    assert host_import.resolve(policies, 'acme', interactive=False).policy is ImportPolicy.IMPORT
+    assert host_import.resolve(policies, 'globex', interactive=True).policy is ImportPolicy.SKIP
+    assert host_import.resolve(policies, 'initech', interactive=True).policy is ImportPolicy.ASK
     assert host_import.resolve(policies, 'other', interactive=True).policy is ImportPolicy.ASK
 
 
 def test_no_group_asks(tmp_path):
     """前提 4: 対象のグループが決まらなければ ask"""
-    assert host_import.resolve({'nyle': ImportPolicy.IMPORT}, None,
+    assert host_import.resolve({'acme': ImportPolicy.IMPORT}, None,
                                interactive=True).policy is ImportPolicy.ASK
 
 
 def test_ask_without_a_terminal_falls_back_to_skip(caplog):
     caplog.set_level(logging.INFO)
-    host = host_import.resolve({}, 'kkg', interactive=False)
+    host = host_import.resolve({}, 'globex', interactive=False)
 
     assert host.policy is ImportPolicy.SKIP
     assert host.fell_back
@@ -76,7 +76,7 @@ def test_parse_selection(raw, indexes, all_):
 
 def test_import_selects_everything_without_asking(monkeypatch):
     monkeypatch.setattr('builtins.input', lambda prompt='': pytest.fail('asked'))
-    host = host_import.HostImport(ImportPolicy.IMPORT, 'nyle')
+    host = host_import.HostImport(ImportPolicy.IMPORT, 'acme')
 
     assert host.choose('AWS認証', 't', ['a', 'b'], 'h').all
     assert host.confirm('Git認証', 'q') is True

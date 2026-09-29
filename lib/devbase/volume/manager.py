@@ -81,7 +81,7 @@ def validate_account_group(name: str) -> str:
     if name == LEGACY_GROUP_NAME:
         raise DevbaseError(
             f"{keys.DEVBASE_ACCOUNT_GROUP} に予約語は使えません: '{name}'。"
-            "移し先のグループ名 (nyle / personal など) を書いてください。"
+            "移し先のグループ名 (acme / personal など) を書いてください。"
             f"{LEGACY_GROUP_VOLUME} の中身は "
             "devbase project migrate-volume --to <グループ> で移せます"
         )

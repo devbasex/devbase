@@ -26,8 +26,8 @@ def _project(root: Path, name: str = 'web') -> Path:
     project = root / 'projects' / name
     project.mkdir(parents=True, exist_ok=True)
     (project / 'project.yml').write_text(
-        "version: 1\nscale: 2\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
-    (project / 'env').write_text("DEVBASE_ACCOUNT_GROUP=nyle\n")
+        "version: 1\nscale: 2\nrepos:\n  - owner: example-org\n    repo: myapp\n")
+    (project / 'env').write_text("DEVBASE_ACCOUNT_GROUP=acme\n")
     return project
 
 

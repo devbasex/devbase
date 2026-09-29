@@ -263,15 +263,15 @@ SECRET_VALUE = 'do-not-print-this-value'
 
 @pytest.fixture
 def grouped(openbao_root, openbao):
-    """``version: 2`` (``acme`` → ``nyle``)。``web`` と ``mobile`` は ``with``、``api`` は ``acme``"""
+    """``version: 2`` (``umbrella`` → ``acme``)。``web`` と ``mobile`` は ``initech``、``api`` は ``umbrella``"""
     from tests.conftest import configure_openbao
 
-    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'acme': 'nyle'})
-    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'umbrella': 'acme'})
+    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
     (openbao_root / 'projects' / 'mobile').mkdir()
-    (openbao_root / 'projects' / 'mobile' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    (openbao_root / 'projects' / 'mobile' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
     (openbao_root / 'projects' / 'api').mkdir()
-    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
+    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=umbrella\n')
     return openbao_root
 
 
@@ -291,36 +291,36 @@ def config_bytes(root):
 
 def test_grouped_status_in_an_aliased_project_shows_the_alias_and_its_paths(
         grouped, openbao, monkeypatch, capsys):
-    """受け入れ条件 11: projects/api (acme) で acme → nyle と宣言の行と 4 パス"""
+    """受け入れ条件 11: projects/api (umbrella) で umbrella → acme と宣言の行と 4 パス"""
     at(monkeypatch, grouped, 'projects/api')
 
     assert env_backend.cmd_env_backend_status(grouped) == 0
 
     out = capsys.readouterr().out
     assert 'レイアウト: group (version 2)' in out
-    assert 'acme → nyle (projects/api/env:1)' in out
-    assert 'devbase/team/nyle/global' in out
-    assert 'devbase/team/nyle/projects/api' in out
-    assert 'devbase/users/member01/nyle/global' in out
-    assert 'devbase/users/member01/nyle/projects/api' in out
+    assert 'umbrella → acme (projects/api/env:1)' in out
+    assert 'devbase/team/acme/global' in out
+    assert 'devbase/team/acme/projects/api' in out
+    assert 'devbase/users/member01/acme/global' in out
+    assert 'devbase/users/member01/acme/projects/api' in out
     assert 'devbase/team/global' not in out and 'devbase/team/projects/' not in out
     assert openbao.received == []                      # 表示のためにサーバへ要求しない
     assert 's3cret' not in out
 
 
 def test_grouped_status_in_a_declaring_project_shows_its_file(grouped, monkeypatch, capsys):
-    """受け入れ条件 11: projects/web (with) の下位ディレクトリでも web の置き場"""
+    """受け入れ条件 11: projects/web (initech) の下位ディレクトリでも web の置き場"""
     at(monkeypatch, grouped, 'projects/web/src')
 
     assert env_backend.cmd_env_backend_status(grouped) == 0
 
     out = capsys.readouterr().out
-    assert 'with (projects/web/env:1)' in out
-    assert 'devbase/team/with/global' in out
-    assert 'devbase/team/with/projects/web' in out
-    assert 'devbase/users/member01/with/global' in out
-    assert 'devbase/users/member01/with/projects/web' in out
-    assert 'nyle' not in out.split('置き場')[1].split('キャッシュ')[0]
+    assert 'initech (projects/web/env:1)' in out
+    assert 'devbase/team/initech/global' in out
+    assert 'devbase/team/initech/projects/web' in out
+    assert 'devbase/users/member01/initech/global' in out
+    assert 'devbase/users/member01/initech/projects/web' in out
+    assert 'acme' not in out.split('置き場')[1].split('キャッシュ')[0]
 
 
 def test_grouped_status_outside_projects_has_no_group(grouped, monkeypatch, capsys):
@@ -339,7 +339,7 @@ def test_grouped_status_outside_projects_has_no_group(grouped, monkeypatch, caps
 
 
 def test_grouped_status_refuses_the_root_env_declaration(grouped, monkeypatch, capsys):
-    (grouped / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
+    (grouped / 'env').write_text('DEVBASE_ACCOUNT_GROUP=globex\n')
     at(monkeypatch, grouped)
 
     assert env_backend.cmd_env_backend_status(grouped) == 0
@@ -378,7 +378,7 @@ def test_use_without_layout_inherits_version_2_and_its_aliases(grouped, monkeypa
     config = bc.load(grouped)
     assert config.version == 2 and config.openbao.layout == 'group'
     assert config.openbao.user == 'member02'
-    assert config.openbao.group_aliases == {'acme': 'nyle'}
+    assert config.openbao.group_aliases == {'umbrella': 'acme'}
 
 
 def test_use_without_layout_inherits_version_1(openbao_root):
@@ -396,7 +396,7 @@ def test_use_age_keeps_the_version_2_openbao_settings(grouped):
     config = bc.load(grouped)
     assert config.backend == 'age'
     assert config.version == 2
-    assert config.openbao.group_aliases == {'acme': 'nyle'}
+    assert config.openbao.group_aliases == {'umbrella': 'acme'}
 
 
 def test_use_layout_group_drops_the_flat_paths(openbao_root, openbao, capsys):
@@ -409,7 +409,7 @@ def test_use_layout_group_drops_the_flat_paths(openbao_root, openbao, capsys):
         backend='openbao', version=1,
         openbao=replace_settings(config.openbao, path_team_global='kv/common')))
 
-    args = use_args('openbao', layout='group', group_aliases=['acme=nyle'])
+    args = use_args('openbao', layout='group', group_aliases=['umbrella=acme'])
     assert env_backend.cmd_env_backend_use(openbao_root, args) == 0
 
     raw = yaml.safe_load(config_bytes(openbao_root))
@@ -417,10 +417,10 @@ def test_use_layout_group_drops_the_flat_paths(openbao_root, openbao, capsys):
     assert raw['openbao']['layout'] == 'group'
     assert 'path_team_global' not in raw['openbao']
     assert 'path_team_project_prefix' not in raw['openbao']
-    assert raw['openbao']['group_aliases'] == {'acme': 'nyle'}
+    assert raw['openbao']['group_aliases'] == {'umbrella': 'acme'}
     loaded = bc.load(openbao_root)
-    assert loaded.openbao.display_path(SecretRef.for_global(group='acme')) == \
-        'devbase/team/nyle/global'
+    assert loaded.openbao.display_path(SecretRef.for_global(group='umbrella')) == \
+        'devbase/team/acme/global'
 
 
 def replace_settings(settings, **kw):
@@ -436,20 +436,20 @@ def test_use_layout_flat_writes_version_1_and_reports_dropped_aliases(grouped, c
     assert config.version == 1 and config.openbao.layout == 'flat'
     assert config.openbao.group_aliases == {}
     out = capsys.readouterr().out
-    assert 'group_aliases' in out and 'acme → nyle' in out
+    assert 'group_aliases' in out and 'umbrella → acme' in out
 
 
 def test_use_group_alias_replaces_the_existing_aliases(grouped):
-    args = use_args('openbao', group_aliases=['kkg=kkg-main', 'with=with-main'])
+    args = use_args('openbao', group_aliases=['globex=globex-main', 'initech=initech-main'])
 
     assert env_backend.cmd_env_backend_use(grouped, args) == 0
 
-    assert bc.load(grouped).openbao.group_aliases == {'kkg': 'kkg-main', 'with': 'with-main'}
+    assert bc.load(grouped).openbao.group_aliases == {'globex': 'globex-main', 'initech': 'initech-main'}
 
 
 @pytest.mark.parametrize('alias', [
-    'default=global', 'default=projects', 'ubuntu=nyle', 'default=ubuntu', '1=nyle',
-    'default=1', 'bad name=nyle', 'a/b=nyle', 'default=a/b', 'default', 'default=', '=nyle',
+    'default=global', 'default=projects', 'ubuntu=acme', 'default=ubuntu', '1=acme',
+    'default=1', 'bad name=acme', 'a/b=acme', 'default=a/b', 'default', 'default=', '=acme',
 ])
 def test_use_rejects_an_unusable_group_alias_without_writing(grouped, caplog, alias):
     """決定 1: FROM / TO は DEVBASE_ACCOUNT_GROUP と同じ検証、TO の global / projects も 2"""
@@ -464,16 +464,16 @@ def test_use_rejects_an_unusable_group_alias_without_writing(grouped, caplog, al
 
 def test_use_accepts_global_as_the_alias_source(grouped):
     """FROM の global は拒まない (global という名前のグループを別の置き場へ向ける)"""
-    args = use_args('openbao', group_aliases=['global=nyle'])
+    args = use_args('openbao', group_aliases=['global=acme'])
 
     assert env_backend.cmd_env_backend_use(grouped, args) == 0
-    assert bc.load(grouped).openbao.group_aliases == {'global': 'nyle'}
+    assert bc.load(grouped).openbao.group_aliases == {'global': 'acme'}
 
 
 def test_use_rejects_conflicting_aliases_for_the_same_group(grouped, caplog):
     before = config_bytes(grouped)
 
-    args = use_args('openbao', group_aliases=['default=nyle', 'default=with'])
+    args = use_args('openbao', group_aliases=['default=acme', 'default=initech'])
     assert env_backend.cmd_env_backend_use(grouped, args) == 2
 
     assert config_bytes(grouped) == before
@@ -483,7 +483,7 @@ def test_use_rejects_conflicting_aliases_for_the_same_group(grouped, caplog):
 def test_use_rejects_group_alias_with_the_flat_layout(grouped, openbao_root, caplog):
     before = config_bytes(grouped)
 
-    args = use_args('openbao', layout='flat', group_aliases=['acme=nyle'])
+    args = use_args('openbao', layout='flat', group_aliases=['umbrella=acme'])
     assert env_backend.cmd_env_backend_use(grouped, args) == 2
 
     assert config_bytes(grouped) == before
@@ -493,14 +493,14 @@ def test_use_rejects_group_alias_with_the_flat_layout(grouped, openbao_root, cap
 def test_use_rejects_group_alias_when_the_existing_config_is_version_1(openbao_root, caplog):
     before = config_bytes(openbao_root)
 
-    args = use_args('openbao', group_aliases=['acme=nyle'])
+    args = use_args('openbao', group_aliases=['umbrella=acme'])
     assert env_backend.cmd_env_backend_use(openbao_root, args) == 2
 
     assert config_bytes(openbao_root) == before
     assert '--group-alias' in errors(caplog)
 
 
-@pytest.mark.parametrize('kw', [{'layout': 'group'}, {'group_aliases': ['default=nyle']}])
+@pytest.mark.parametrize('kw', [{'layout': 'group'}, {'group_aliases': ['default=acme']}])
 def test_use_rejects_layout_options_for_a_file_backend(grouped, caplog, kw):
     before = config_bytes(grouped)
 
@@ -551,9 +551,9 @@ def test_use_parser_accepts_layout_and_repeated_group_aliases():
     ns = parser.parse_args(['env', 'backend', 'use', 'openbao'])
     assert ns.layout is None and ns.group_aliases is None
     ns = parser.parse_args(['env', 'backend', 'use', 'openbao', '--layout', 'group',
-                            '--group-alias', 'default=nyle', '--group-alias', 'kkg=k'])
+                            '--group-alias', 'default=acme', '--group-alias', 'globex=k'])
     assert ns.layout == 'group'
-    assert ns.group_aliases == ['default=nyle', 'kkg=k']
+    assert ns.group_aliases == ['default=acme', 'globex=k']
     with pytest.raises(SystemExit):
         parser.parse_args(['env', 'backend', 'use', 'openbao', '--layout', 'nested'])
 
@@ -562,16 +562,16 @@ def test_use_parser_accepts_layout_and_repeated_group_aliases():
 
 def test_grouped_backend_test_only_probes_the_projects_group(grouped, openbao, monkeypatch,
                                                             capsys):
-    """受け入れ条件 17: web (with) では with の置き場と with のプロジェクトだけ"""
-    openbao.put('team/with/global', {'A': SECRET_VALUE})
+    """受け入れ条件 17: web (initech) では initech の置き場と initech のプロジェクトだけ"""
+    openbao.put('team/initech/global', {'A': SECRET_VALUE})
     at(monkeypatch, grouped, 'projects/web')
 
     assert env_backend.cmd_env_backend_test(grouped) == 0
 
     assert kv_paths(openbao) == {
-        'team/with/global', 'users/member01/with/global',
-        'team/with/projects/mobile', 'users/member01/with/projects/mobile',
-        'team/with/projects/web', 'users/member01/with/projects/web',
+        'team/initech/global', 'users/member01/initech/global',
+        'team/initech/projects/mobile', 'users/member01/initech/projects/mobile',
+        'team/initech/projects/web', 'users/member01/initech/projects/web',
     }
     assert openbao.logins == 1
     out = capsys.readouterr().out
@@ -580,14 +580,14 @@ def test_grouped_backend_test_only_probes_the_projects_group(grouped, openbao, m
 
 def test_grouped_backend_test_outside_projects_uses_the_group_option(grouped, openbao,
                                                                     monkeypatch):
-    """受け入れ条件 17・#315: $DEVBASE_ROOT では --group nyle の置き場 (acme → nyle の api) だけ"""
+    """受け入れ条件 17・#315: $DEVBASE_ROOT では --group acme の置き場 (umbrella → acme の api) だけ"""
     at(monkeypatch, grouped)
 
-    assert env_backend.cmd_env_backend_test(grouped, group='nyle') == 0
+    assert env_backend.cmd_env_backend_test(grouped, group='acme') == 0
 
     assert kv_paths(openbao) == {
-        'team/nyle/global', 'users/member01/nyle/global',
-        'team/nyle/projects/api', 'users/member01/nyle/projects/api',
+        'team/acme/global', 'users/member01/acme/global',
+        'team/acme/projects/api', 'users/member01/acme/projects/api',
     }
 
 

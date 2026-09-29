@@ -89,7 +89,7 @@ def names(root: Path) -> list:
 # ---------------------------------------------------------------------------
 
 def test_series_label_names_the_group():
-    assert SnapshotManager.series_label(vols("with")) == "グループ with"
+    assert SnapshotManager.series_label(vols("initech")) == "グループ initech"
     assert SnapshotManager.series_label({"": "devbase_home_ubuntu"}) == \
         "旧レイアウト（共通ボリュームのみ）"
 
@@ -105,61 +105,61 @@ def test_series_key_ignores_order():
 # ---------------------------------------------------------------------------
 
 def test_returning_group_appends_to_its_latest_generation(tmp_path):
-    """1: nyle → with → nyle で、nyle の世代へ差分を積む。"""
-    RecordingManager(tmp_path, group="nyle").create(name="A")
-    RecordingManager(tmp_path, group="with").create(name="B")
+    """1: acme → initech → acme で、acme の世代へ差分を積む。"""
+    RecordingManager(tmp_path, group="acme").create(name="A")
+    RecordingManager(tmp_path, group="initech").create(name="B")
 
-    mgr = RecordingManager(tmp_path, group="nyle")
+    mgr = RecordingManager(tmp_path, group="acme")
     assert mgr.auto_snapshot_target() == "A"
     assert (mgr.auto_snapshot_target() is None) is False
 
 
 def test_group_without_generation_starts_a_new_one(tmp_path, caplog):
     """2: 系列に世代が無ければ新しい世代にする。理由を出す。"""
-    write_state(tmp_path, [("A", "nyle", 0)])
-    mgr = RecordingManager(tmp_path, group="with")
+    write_state(tmp_path, [("A", "acme", 0)])
+    mgr = RecordingManager(tmp_path, group="initech")
 
     with caplog.at_level(logging.INFO, logger="devbase"):
         assert mgr.auto_snapshot_target() is None
-    assert any("グループ with の世代がまだ無いため" in r.getMessage()
+    assert any("グループ initech の世代がまだ無いため" in r.getMessage()
                for r in caplog.records)
 
 
 def test_incremental_limit_is_counted_per_series(tmp_path, caplog):
     """3: 差分の上限は系列ごと。他の系列の差分数を見ない。"""
-    write_state(tmp_path, [("W", "with", 0), ("D", "nyle", 10)])
+    write_state(tmp_path, [("W", "initech", 0), ("D", "acme", 10)])
 
     with caplog.at_level(logging.INFO, logger="devbase"):
-        assert RecordingManager(tmp_path, group="nyle").auto_snapshot_target() is None
-    assert any("上限 (10) に達した" in r.getMessage() and "グループ nyle" in r.getMessage()
+        assert RecordingManager(tmp_path, group="acme").auto_snapshot_target() is None
+    assert any("上限 (10) に達した" in r.getMessage() and "グループ acme" in r.getMessage()
                for r in caplog.records)
-    assert RecordingManager(tmp_path, group="with").auto_snapshot_target() == "W"
+    assert RecordingManager(tmp_path, group="initech").auto_snapshot_target() == "W"
 
 
 def test_legacy_generation_is_not_appended_to(tmp_path):
     """4: 旧レイアウトの世代だけなら新しい世代にする。"""
     write_state(tmp_path, [("old", None, 0)])
-    assert RecordingManager(tmp_path, group="nyle").auto_snapshot_target() is None
+    assert RecordingManager(tmp_path, group="acme").auto_snapshot_target() is None
 
 
 def test_meta_mismatch_starts_a_new_generation(tmp_path, caplog):
     """snapshot.yml と meta.yml の組が食い違えば積まない (判定の順 2)。"""
-    backups = write_state(tmp_path, [("D", "nyle", 0)])
+    backups = write_state(tmp_path, [("D", "acme", 0)])
     meta = yaml.safe_load((backups / "D" / "meta.yml").read_text())
-    meta["volumes"] = vols("kkg")
+    meta["volumes"] = vols("globex")
     (backups / "D" / "meta.yml").write_text(yaml.safe_dump(meta))
 
     with caplog.at_level(logging.INFO, logger="devbase"):
-        assert RecordingManager(tmp_path, group="nyle").auto_snapshot_target() is None
+        assert RecordingManager(tmp_path, group="acme").auto_snapshot_target() is None
     assert any("meta.yml の対象ボリューム" in r.getMessage() for r in caplog.records)
 
 
 def test_series_latest_uses_created_at(tmp_path):
-    write_state(tmp_path, [("D1", "nyle", 0), ("W", "with", 0), ("D2", "nyle", 0)])
-    mgr = RecordingManager(tmp_path, group="nyle")
+    write_state(tmp_path, [("D1", "acme", 0), ("W", "initech", 0), ("D2", "acme", 0)])
+    mgr = RecordingManager(tmp_path, group="acme")
     assert mgr.series_latest()["name"] == "D2"
-    assert mgr.series_latest(vols("with"))["name"] == "W"
-    assert mgr.series_latest(vols("kkg")) is None
+    assert mgr.series_latest(vols("initech"))["name"] == "W"
+    assert mgr.series_latest(vols("globex")) is None
 
 
 def _unquote_created_at(backups: Path, *targets: str) -> None:
@@ -174,15 +174,15 @@ def _unquote_created_at(backups: Path, *targets: str) -> None:
 
 def test_series_latest_accepts_yaml_timestamp(tmp_path):
     """手で書いた snapshot.yml の引用符なしの日時が混ざっても比べられる。"""
-    backups = write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    backups = write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0)])
     _unquote_created_at(backups, "D1")
-    assert RecordingManager(tmp_path, group="nyle").series_latest()["name"] == "D2"
+    assert RecordingManager(tmp_path, group="acme").series_latest()["name"] == "D2"
 
 
 def test_rotate_accepts_yaml_timestamp(tmp_path):
     backups = write_state(tmp_path, [
-        ("D1", "nyle", 0), ("D2", "nyle", 0), ("D3", "nyle", 0),
-        ("D4", "nyle", 0)])
+        ("D1", "acme", 0), ("D2", "acme", 0), ("D3", "acme", 0),
+        ("D4", "acme", 0)])
     _unquote_created_at(backups, "D2", "D4")
     assert SnapshotManager(tmp_path).rotate() == 1
     assert names(tmp_path) == ["D2", "D3", "D4"]
@@ -190,7 +190,7 @@ def test_rotate_accepts_yaml_timestamp(tmp_path):
 
 def test_load_metadata_returns_created_at_as_str(tmp_path):
     """読み取りの境界で ``created_at`` を ISO 形式の文字列にそろえる。"""
-    backups = write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    backups = write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0)])
     _unquote_created_at(backups, "D1")
     snaps = SnapshotManager(tmp_path)._load_metadata()["snapshots"]
     assert [s["created_at"] for s in snaps] == [
@@ -199,7 +199,7 @@ def test_load_metadata_returns_created_at_as_str(tmp_path):
 
 def test_snapshot_list_accepts_yaml_timestamp(tmp_path, capsys):
     """引用符なしの日時が混ざっても ``devbase snapshot list`` が一覧を出す。"""
-    backups = write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    backups = write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0)])
     _unquote_created_at(backups, "D1")
     ns = types.SimpleNamespace(subcommand="list")
     assert cmd_snapshot(tmp_path, ns) == 0
@@ -226,7 +226,7 @@ def _entry(root: Path, name: str) -> dict:
 
 def test_create_numbers_incrementals_in_order(tmp_path):
     """現状固定: 2 本目以降の差分は incr-002 と番号を進め、差分数を両方の台帳へ書く。"""
-    mgr = ArchiveRecordingManager(tmp_path, group="nyle")
+    mgr = ArchiveRecordingManager(tmp_path, group="acme")
     mgr.create(name="g")
     mgr.create(name="g", full=False)
     mgr.create(name="g", full=False)
@@ -243,7 +243,7 @@ def test_create_numbers_incrementals_in_order(tmp_path):
 
 def test_create_without_snar_falls_back_to_full(tmp_path):
     """現状固定: 既存世代に snapshot.snar が無ければ差分でなく full を作り直す。"""
-    mgr = ArchiveRecordingManager(tmp_path, group="nyle")
+    mgr = ArchiveRecordingManager(tmp_path, group="acme")
     mgr.create(name="h")
     mgr.create(name="h", full=False)
     snap_dir = tmp_path / "backups" / "h"
@@ -266,17 +266,17 @@ def test_create_without_snar_falls_back_to_full(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_last_snapshot_time_per_series(tmp_path):
-    backups = write_state(tmp_path, [("W", "with", 0), ("D", "nyle", 0)])
+    backups = write_state(tmp_path, [("W", "initech", 0), ("D", "acme", 0)])
     now = time.time()
     os.utime(backups / "D" / "full.tar.zst", (now - 600, now - 600))
     os.utime(backups / "W" / "full.tar.zst", (now - 7200, now - 7200))
 
     mgr = SnapshotManager(tmp_path)
-    d = mgr.last_snapshot_time(vols("nyle")).timestamp()
-    w = mgr.last_snapshot_time(vols("with")).timestamp()
+    d = mgr.last_snapshot_time(vols("acme")).timestamp()
+    w = mgr.last_snapshot_time(vols("initech")).timestamp()
     assert abs(d - (now - 600)) < 2
     assert abs(w - (now - 7200)) < 2
-    assert mgr.last_snapshot_time(vols("kkg")) is None
+    assert mgr.last_snapshot_time(vols("globex")) is None
     # 省けば全体 (現行どおり)
     assert abs(mgr.last_snapshot_time().timestamp() - (now - 600)) < 2
 
@@ -286,17 +286,17 @@ def test_last_snapshot_time_per_series(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_rotate_keeps_per_series(tmp_path, caplog):
-    """8・17: nyle 4・with 1 で nyle の最古だけを消す。"""
+    """8・17: acme 4・initech 1 で acme の最古だけを消す。"""
     backups = write_state(tmp_path, [
-        ("D1", "nyle", 0), ("D2", "nyle", 0), ("W1", "with", 0),
-        ("D3", "nyle", 0), ("D4", "nyle", 0)])
+        ("D1", "acme", 0), ("D2", "acme", 0), ("W1", "initech", 0),
+        ("D3", "acme", 0), ("D4", "acme", 0)])
 
     with caplog.at_level(logging.INFO, logger="devbase"):
         assert SnapshotManager(tmp_path).rotate() == 1
     assert names(tmp_path) == ["D2", "W1", "D3", "D4"]
     assert not (backups / "D1").exists()
     assert (backups / "W1").exists()
-    assert any("グループ nyle の 1 世代を削除しました" in r.getMessage()
+    assert any("グループ acme の 1 世代を削除しました" in r.getMessage()
                for r in caplog.records)
 
 
@@ -304,7 +304,7 @@ def test_alternating_groups_keep_three_each(tmp_path):
     """9: 交互に 4 つずつ作っても各 3 世代が残る。"""
     entries = []
     for i in range(4):
-        entries += [(f"D{i}", "nyle", 0), (f"W{i}", "with", 0)]
+        entries += [(f"D{i}", "acme", 0), (f"W{i}", "initech", 0)]
     write_state(tmp_path, entries)
 
     assert SnapshotManager(tmp_path).rotate() == 2
@@ -357,16 +357,16 @@ def test_total_limit_cannot_remove_series_latest(tmp_path, caplog):
 
 
 def test_legacy_series_is_counted_separately(tmp_path):
-    """13: 旧レイアウト 3 と nyle 3 は、どちらも消さない。"""
+    """13: 旧レイアウト 3 と acme 3 は、どちらも消さない。"""
     write_state(tmp_path, [("L1", None, 0), ("L2", None, 0), ("L3", None, 0),
-                           ("D1", "nyle", 0), ("D2", "nyle", 0), ("D3", "nyle", 0)])
+                           ("D1", "acme", 0), ("D2", "acme", 0), ("D3", "acme", 0)])
     assert SnapshotManager(tmp_path).rotate() == 0
 
 
 @pytest.mark.parametrize("kwargs", [{"keep": 0}, {"max_total": 0}, {"keep": -1}])
 def test_rotate_rejects_non_positive(tmp_path, kwargs):
     """14: 0 以下は SnapshotError。何も消さない。"""
-    backups = write_state(tmp_path, [(f"D{i}", "nyle", 0) for i in range(5)])
+    backups = write_state(tmp_path, [(f"D{i}", "acme", 0) for i in range(5)])
     with pytest.raises(SnapshotError):
         SnapshotManager(tmp_path).rotate(**kwargs)
     assert all((backups / f"D{i}").exists() for i in range(5))
@@ -374,15 +374,15 @@ def test_rotate_rejects_non_positive(tmp_path, kwargs):
 
 @pytest.mark.parametrize("attrs", [{"keep": 0}, {"keep": 3, "max_total": 0}])
 def test_cli_rotate_rejects_non_positive(tmp_path, attrs):
-    write_state(tmp_path, [("D1", "nyle", 0)])
+    write_state(tmp_path, [("D1", "acme", 0)])
     ns = types.SimpleNamespace(subcommand="rotate", **attrs)
     assert cmd_snapshot(tmp_path, ns) == 1
 
 
 def test_cli_rotate_passes_max_total(tmp_path):
     """15: --max-total が manager へ渡る (既定の 6 なら 0 件になる)。"""
-    write_state(tmp_path, [("D1", "nyle", 0), ("W1", "with", 0),
-                           ("D2", "nyle", 0), ("W2", "with", 0)])
+    write_state(tmp_path, [("D1", "acme", 0), ("W1", "initech", 0),
+                           ("D2", "acme", 0), ("W2", "initech", 0)])
     ns = types.SimpleNamespace(subcommand="rotate", keep=2, max_total=2)
     assert cmd_snapshot(tmp_path, ns) == 0
     assert names(tmp_path) == ["D2", "W2"]
@@ -407,13 +407,13 @@ def test_existing_state_is_left_untouched(tmp_path):
         "snapshots": [
             {"name": "20260915-231738", "created_at": "2026-09-15T23:17:38.1",
              "updated_at": "2026-09-22T10:00:00", "incremental_count": 9,
-             "volumes": vols("nyle")},
+             "volumes": vols("acme")},
             {"name": "20260920-212546", "created_at": "2026-09-20T21:25:46.1",
              "updated_at": "2026-09-20T21:25:46.1", "incremental_count": 0,
-             "volumes": vols("with")},
+             "volumes": vols("initech")},
             {"name": "20260923-081407", "created_at": "2026-09-23T08:14:07.1",
              "updated_at": "2026-09-23T08:14:07.1", "incremental_count": 0,
-             "volumes": vols("nyle")},
+             "volumes": vols("acme")},
         ],
     }
     (backups / "snapshot.yml").write_text(yaml.safe_dump(real))
@@ -432,8 +432,8 @@ def test_rotate_does_not_remove_outside_backups(tmp_path, caplog):
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "keep.txt").write_text("keep")
-    write_state(tmp_path, [("../outside", "nyle", 0), ("D1", "nyle", 0),
-                           ("D2", "nyle", 0), ("D3", "nyle", 0)])
+    write_state(tmp_path, [("../outside", "acme", 0), ("D1", "acme", 0),
+                           ("D2", "acme", 0), ("D3", "acme", 0)])
 
     with caplog.at_level(logging.INFO, logger="devbase"):
         SnapshotManager(tmp_path).rotate()
@@ -455,8 +455,8 @@ def _link_outside(tmp_path: Path) -> Path:
 def test_rotate_does_not_follow_symlink_outside(tmp_path, caplog):
     """26: 兄弟の backups-outside/ を指すリンクの世代は、リンク先を消さない。"""
     outside = _link_outside(tmp_path)
-    write_state(tmp_path, [("old", "nyle", 0), ("D1", "nyle", 0),
-                           ("D2", "nyle", 0), ("D3", "nyle", 0)])
+    write_state(tmp_path, [("old", "acme", 0), ("D1", "acme", 0),
+                           ("D2", "acme", 0), ("D3", "acme", 0)])
 
     with caplog.at_level(logging.INFO, logger="devbase"):
         SnapshotManager(tmp_path).rotate()
@@ -470,12 +470,12 @@ def test_rotate_does_not_follow_symlink_outside(tmp_path, caplog):
 
 def test_rotate_does_not_follow_symlink_inside(tmp_path, caplog):
     """26: backups/ の中の系列の最新を指すリンクでも、その中身を消さない。"""
-    backups = write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0),
-                                     ("new", "nyle", 0)])
+    backups = write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0),
+                                     ("new", "acme", 0)])
     (backups / "old").symlink_to(backups / "new", target_is_directory=True)
     data = yaml.safe_load((backups / "snapshot.yml").read_text())
     data["snapshots"].insert(0, {"name": "old", "created_at": "2026-08-01T00:00:00",
-                                 "incremental_count": 0, "volumes": vols("nyle")})
+                                 "incremental_count": 0, "volumes": vols("acme")})
     (backups / "snapshot.yml").write_text(yaml.safe_dump(data))
 
     with caplog.at_level(logging.INFO, logger="devbase"):
@@ -488,8 +488,8 @@ def test_rotate_does_not_follow_symlink_inside(tmp_path, caplog):
 def test_cli_rotate_reports_removed_only_entries(tmp_path, caplog):
     """#269: 一覧から外しただけのとき「ローテーション不要です」を出さず、外した数を伝える。"""
     outside = _link_outside(tmp_path)
-    write_state(tmp_path, [("old", "nyle", 0), ("D1", "nyle", 0),
-                           ("D2", "nyle", 0), ("D3", "nyle", 0)])
+    write_state(tmp_path, [("old", "acme", 0), ("D1", "acme", 0),
+                           ("D2", "acme", 0), ("D3", "acme", 0)])
     ns = types.SimpleNamespace(subcommand="rotate", keep=3)
 
     with caplog.at_level(logging.INFO, logger="devbase"):
@@ -505,7 +505,7 @@ def test_cli_rotate_reports_removed_only_entries(tmp_path, caplog):
 
 def test_cli_rotate_reports_nothing_to_do(tmp_path, caplog):
     """#269: 候補が無く一覧も変わらないときだけ「ローテーション不要です」を出す。"""
-    write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0)])
     ns = types.SimpleNamespace(subcommand="rotate", keep=3)
 
     with caplog.at_level(logging.INFO, logger="devbase"):
@@ -517,8 +517,8 @@ def test_cli_rotate_reports_nothing_to_do(tmp_path, caplog):
 def test_cli_rotate_deleted_and_removed_prints_no_idle_message(tmp_path, caplog):
     """#269: 消した世代と外しただけの世代が混じるとき「不要です」も「ありません」も出ない。"""
     _link_outside(tmp_path)
-    write_state(tmp_path, [("old", "nyle", 0), ("D1", "nyle", 0),
-                           ("D2", "nyle", 0), ("D3", "nyle", 0)])
+    write_state(tmp_path, [("old", "acme", 0), ("D1", "acme", 0),
+                           ("D2", "acme", 0), ("D3", "acme", 0)])
     ns = types.SimpleNamespace(subcommand="rotate", keep=2)
 
     with caplog.at_level(logging.INFO, logger="devbase"):
@@ -532,10 +532,10 @@ def test_cli_rotate_deleted_and_removed_prints_no_idle_message(tmp_path, caplog)
 @pytest.mark.parametrize("bad", ["file-link", "no-name"])
 def test_cli_rotate_removes_entries_that_list_cannot_open(tmp_path, caplog, bad):
     """#269: ファイルを指すリンクや name の無いエントリがあっても、rotate は落ちずに一覧から外す。"""
-    backups = write_state(tmp_path, [("D1", "nyle", 0), ("D2", "nyle", 0)])
+    backups = write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0)])
     data = yaml.safe_load((backups / "snapshot.yml").read_text())
     entry = {"created_at": "2026-08-01T00:00:00", "incremental_count": 0,
-             "volumes": vols("nyle")}
+             "volumes": vols("acme")}
     if bad == "file-link":
         target = tmp_path / "plain.txt"
         target.write_text("keep")
@@ -562,7 +562,7 @@ def test_safe_snap_dir_uses_path_components(tmp_path):
 def test_cli_delete_refuses_symlink(tmp_path):
     """27: delete はリンクの世代を止め、リンク先を消さない。"""
     outside = _link_outside(tmp_path)
-    write_state(tmp_path, [("old", "nyle", 0)])
+    write_state(tmp_path, [("old", "acme", 0)])
     ns = types.SimpleNamespace(subcommand="delete", name="old")
     assert cmd_snapshot(tmp_path, ns) == 1
     assert (outside / "keep.txt").read_text() == "keep"
@@ -572,7 +572,7 @@ def test_cli_delete_refuses_symlink(tmp_path):
 def test_other_operations_refuse_symlink(tmp_path, op):
     """28: restore / copy / create もリンクの世代で止まり、何も書かない。"""
     outside = _link_outside(tmp_path)
-    write_state(tmp_path, [("old", "nyle", 0)])
+    write_state(tmp_path, [("old", "acme", 0)])
     mgr = RecordingManager(tmp_path)
 
     with pytest.raises(SnapshotError):
@@ -588,7 +588,7 @@ def test_other_operations_refuse_symlink(tmp_path, op):
 
 
 def _bad_latest(tmp_path: Path, kind: str) -> tuple:
-    """系列 nyle の最新がリンクか ``../outside`` の状態を作る。(名前, 外の場所) を返す。"""
+    """系列 acme の最新がリンクか ``../outside`` の状態を作る。(名前, 外の場所) を返す。"""
     if kind == "symlink":
         outside = _link_outside(tmp_path)
         name = "old"
@@ -597,7 +597,7 @@ def _bad_latest(tmp_path: Path, kind: str) -> tuple:
         outside.mkdir()
         (outside / "keep.txt").write_text("keep")
         name = "../outside"
-    write_state(tmp_path, [("D1", "nyle", 0), (name, "nyle", 0)])
+    write_state(tmp_path, [("D1", "acme", 0), (name, "acme", 0)])
     return name, outside
 
 
@@ -605,7 +605,7 @@ def _bad_latest(tmp_path: Path, kind: str) -> tuple:
 def test_bad_latest_starts_a_new_generation(tmp_path, caplog, kind):
     """決定 7: 系列の最新が扱えない世代なら積まず、理由を WARNING で 1 行出す。"""
     name, _ = _bad_latest(tmp_path, kind)
-    mgr = RecordingManager(tmp_path, group="nyle")
+    mgr = RecordingManager(tmp_path, group="acme")
 
     with caplog.at_level(logging.INFO, logger="devbase"):
         assert mgr.auto_snapshot_target() is None
@@ -617,7 +617,7 @@ def test_bad_latest_starts_a_new_generation(tmp_path, caplog, kind):
 def test_bad_latest_is_left_behind_and_rotated_out(tmp_path, kind):
     """新しい世代を作れば、扱えない世代は最新でなくなり、rotate が一覧から外す。"""
     name, outside = _bad_latest(tmp_path, kind)
-    mgr = RecordingManager(tmp_path, group="nyle")
+    mgr = RecordingManager(tmp_path, group="acme")
 
     created = mgr.create(name=mgr.auto_snapshot_target())
     assert mgr.auto_snapshot_target() == created

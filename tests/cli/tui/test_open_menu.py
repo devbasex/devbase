@@ -23,8 +23,8 @@ def test_open_dispatches_to_the_shared_handler(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(actions_project, "dispatch_lifecycle",
                         lambda sub, name, **attrs: calls.append((sub, name, attrs)) or 0)
-    assert actions_project._OP_HANDLERS["open"](tmp_path, "carmo") == 0
-    assert calls == [("open", "carmo", {"open_index": None})]
+    assert actions_project._OP_HANDLERS["open"](tmp_path, "myapp") == 0
+    assert calls == [("open", "myapp", {"open_index": None})]
 
 
 def test_open_stays_in_the_submenu():
@@ -50,8 +50,8 @@ def test_current_open_result_allows_next_operation(monkeypatch, tmp_path, open_r
     monkeypatch.setattr('builtins.input', lambda prompt: '')
     monkeypatch.setattr(actions_project, 'dispatch_lifecycle', dispatch)
 
-    result = actions_project.handle_row(tmp_path, {'name': 'carmo', 'status': 'running'})
+    result = actions_project.handle_row(tmp_path, {'name': 'myapp', 'status': 'running'})
 
     assert result is actions_project.menu.MENU_BACK
-    assert calls == [('open', 'carmo', {'open_index': None}),
-                     ('ps', 'carmo', {'all': False})]
+    assert calls == [('open', 'myapp', {'open_index': None}),
+                     ('ps', 'myapp', {'all': False})]

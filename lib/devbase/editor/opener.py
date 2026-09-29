@@ -440,7 +440,7 @@ def resolve_workspace(environ=None) -> Optional[str]:
     """開く VS Code ワークスペースファイル (``*.code-workspace``) のコンテナ内パス。
 
     ``DEVBASE_WORKSPACE`` env にコンテナ内の絶対パス (例
-    ``/home/ubuntu/share/work/uttarov2-doc.workspace``) が指定されていればそれを返す。
+    ``/home/ubuntu/share/work/myapp-doc.workspace``) が指定されていればそれを返す。
     未設定・空文字なら None を返し、呼び出し側 (:func:`open_editor`) はフォルダを
     ``--folder-uri`` で開く。
 

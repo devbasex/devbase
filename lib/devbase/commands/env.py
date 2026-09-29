@@ -89,7 +89,7 @@ def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[s
         if declared is None:
             raise GroupOptionError(
                 "プロジェクトの外では対象のグループを決められません。"
-                "--group <名前> を付けてください (例: --group nyle)")
+                "--group <名前> を付けてください (例: --group acme)")
         return declared.name
     if not grouped:
         raise GroupOptionError(
@@ -1090,7 +1090,7 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
 
 
 def _group_suffix(store, ref) -> str:
-    """見出しに付けるグループの表示 (``（グループ acme → nyle）``)。グループの無い参照では空。
+    """見出しに付けるグループの表示 (``（グループ umbrella → acme）``)。グループの無い参照では空。
 
     文言は ``SecretRef.label()`` が持ち、ここでは写さずに差分だけを取り出す。読み替えの
     有無は ``SecretStore.display_label`` が決める (PLAN64 決定 3)。グループを外した参照の

@@ -11,14 +11,14 @@ Python に閉じ込めることで、entrypoint (bash) は ``base64 -d`` と ``w
     version: 1              # 必須
     scale: 1                # 任意。旧 CONTAINER_SCALE
     open_editor: true       # 任意。旧 DEVBASE_OPEN_EDITOR
-    work_dir: /work/carmo   # 任意。既定は primary repo の /work/<dir>
+    work_dir: /work/myapp   # 任意。既定は primary repo の /work/<dir>
     defaults:               # 任意。repos の各要素へ継承させる既定値
       host: github.com
-      owner: volareinc
+      owner: example-org
     repos:
-      - repo: carmo         # 必須
+      - repo: myapp         # 必須
         primary: true       # 任意。未指定なら先頭要素が primary
-      - repo: carmo-batch
+      - repo: myapp-batch
         dir: batch          # 任意。/work 配下の clone 先名 (既定 repo 名)
         branch: develop     # 任意。clone 後に checkout
         init: false         # 任意 (既定 true)。clone 後の ./init.sh 実行有無

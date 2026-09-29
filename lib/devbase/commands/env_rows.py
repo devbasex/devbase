@@ -23,7 +23,7 @@ class KeyRow:
     ref: SecretRef
     owner_label: str
     scope_label: str
-    #: ``version: 2`` のときだけ。読み替えがあれば ``acme → nyle`` の形
+    #: ``version: 2`` のときだけ。読み替えがあれば ``umbrella → acme`` の形
     group_label: Optional[str]
 
 

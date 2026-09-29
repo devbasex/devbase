@@ -10,4 +10,4 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _declared_account_group(_isolate_env, monkeypatch):
-    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'nyle')
+    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'acme')

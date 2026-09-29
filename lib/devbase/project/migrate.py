@@ -121,7 +121,7 @@ def _migrate_project(project_dir: Path, dry_run: bool) -> MigrationResult:
             name, project_dir, "skipped",
             reason=f"env に {' / '.join(missing)} がないため変換できません")
 
-    # host / owner / repo / 作業ディレクトリに引用符が残るのは、``GIT_REPO="carmo``
+    # host / owner / repo / 作業ディレクトリに引用符が残るのは、``GIT_REPO="myapp``
     # のように env 側の引用符が閉じていない場合だけ。YAML では正しく引用して
     # 書けてしまう (= 引用符込みのリポジトリ名として通ってしまう) ため、
     # 生成前に malformed な env として弾く。
@@ -180,7 +180,7 @@ def _yaml_scalar(value: str) -> str:
     ただの文字列だが、素で埋め込むと YAML 1.1 の暗黙タグで int / bool / date に
     なり、ローダの「文字列で指定してください」で移行が失敗する。
     ``yaml.safe_dump`` に判断を任せることで、引用が要る値だけが引用され、
-    ``carmo-web`` のような通常の値は素のまま (= 生成物の見た目は変わらない)。
+    ``myapp-web`` のような通常の値は素のまま (= 生成物の見た目は変わらない)。
     """
     return yaml.safe_dump(
         value, default_flow_style=True, width=10 ** 6, allow_unicode=True,

@@ -1,6 +1,6 @@
 """``projects/<name>/project.local.yml`` (個人・機材ごとの設定) の読み込み (PLAN52)。
 
-``project.yml`` はチームで共有される正であり、devbase-samples / devbase-ext の
+``project.yml`` はチームで共有される正であり、devbase-samples / devbase-plugins の
 リポジトリに載る。「このプロジェクトのコンテナは別ホストの Docker に立てる」は
 個人の事情で、リモート側の HOME や docker グループの gid に至っては機材そのものに
 依存する。共有ファイルに混ぜると同じ ``project.yml`` を使う他の人の ``up`` が壊れる
@@ -10,7 +10,7 @@
 
     docker:                 # 任意
       context: gpu-wsl      # 任意。`docker context ls` に出る名前
-      home: /home/takemi    # 任意。リモート側の HOME (絶対パス)。bind mount の ~ を展開する
+      home: /home/alice    # 任意。リモート側の HOME (絶対パス)。bind mount の ~ を展開する
       gid: 999              # 任意。リモート側の docker グループ gid
 
 ``project.yml`` へ深くマージはしない (決定 2)。初期スコープの ``docker`` 節は

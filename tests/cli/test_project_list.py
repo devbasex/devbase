@@ -55,8 +55,8 @@ def _link_project(devbase_root: Path, link_name: str, plugin_path: str, proj: st
 def test_resolve_plugin_name_repos_based(tmp_path):
     from devbase.commands.project import _resolve_plugin_name
 
-    _make_plugin_project(tmp_path, "repos/owner--repo/myplugin", "carmo")
-    link = _link_project(tmp_path, "carmo", "repos/owner--repo/myplugin", "carmo")
+    _make_plugin_project(tmp_path, "repos/owner--repo/myplugin", "myapp")
+    link = _link_project(tmp_path, "myapp", "repos/owner--repo/myplugin", "myapp")
 
     assert _resolve_plugin_name(link) == "myplugin"
 
@@ -64,24 +64,24 @@ def test_resolve_plugin_name_repos_based(tmp_path):
 def test_resolve_plugin_name_linked(tmp_path):
     from devbase.commands.project import _resolve_plugin_name
 
-    _make_plugin_project(tmp_path, "plugins/foo", "carmo")
-    link = _link_project(tmp_path, "carmo", "plugins/foo", "carmo")
+    _make_plugin_project(tmp_path, "plugins/foo", "myapp")
+    link = _link_project(tmp_path, "myapp", "plugins/foo", "myapp")
 
     assert _resolve_plugin_name(link) == "foo"
 
 
 def test_resolve_plugin_name_collision_suffix_uses_target_not_linkname(tmp_path):
-    """衝突 suffix (carmo.takemi) はリンク名のみに付き、ターゲット dir は素の carmo。
+    """衝突 suffix (myapp.alice) はリンク名のみに付き、ターゲット dir は素の myapp。
 
     PLUGIN 解決は link 名でなく symlink 先から行うため suffix で壊れてはならない。
     """
     from devbase.commands.project import _resolve_plugin_name
 
-    _make_plugin_project(tmp_path, "repos/takemi--carmo/carmo-plugin", "carmo")
-    link = _link_project(tmp_path, "carmo.takemi--carmo",
-                         "repos/takemi--carmo/carmo-plugin", "carmo")
+    _make_plugin_project(tmp_path, "repos/alice--myapp/myapp-plugin", "myapp")
+    link = _link_project(tmp_path, "myapp.alice--myapp",
+                         "repos/alice--myapp/myapp-plugin", "myapp")
 
-    assert _resolve_plugin_name(link) == "carmo-plugin"
+    assert _resolve_plugin_name(link) == "myapp-plugin"
 
 
 def test_resolve_plugin_name_real_dir_returns_none(tmp_path):

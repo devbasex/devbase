@@ -23,8 +23,8 @@ VSCODE_TARGET = "/home/ubuntu/.vscode-server"
 def in_tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DEV_SERVICE_NAME", raising=False)
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
-    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "carmo-ai")
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")  # up が宣言から置いた後 (#315)
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "myapp-ai")
     return tmp_path
 
 
@@ -62,7 +62,7 @@ def test_vscode_mount_is_added_when_absent(in_tmp_cwd):
     compose.generate_scaled_compose(scale=1)
 
     dev = _load_scaled(in_tmp_cwd)["services"]["dev-1"]
-    assert _mount_source(dev, VSCODE_TARGET) == "devbase_vscode_carmo-ai_1"
+    assert _mount_source(dev, VSCODE_TARGET) == "devbase_vscode_myapp-ai_1"
 
 
 def test_each_instance_mounts_its_own_volume(in_tmp_cwd):
@@ -73,9 +73,9 @@ def test_each_instance_mounts_its_own_volume(in_tmp_cwd):
 
     services = _load_scaled(in_tmp_cwd)["services"]
     assert _mount_source(services["dev-1"], VSCODE_TARGET) == \
-        "devbase_vscode_carmo-ai_1"
+        "devbase_vscode_myapp-ai_1"
     assert _mount_source(services["dev-2"], VSCODE_TARGET) == \
-        "devbase_vscode_carmo-ai_2"
+        "devbase_vscode_myapp-ai_2"
 
 
 def test_mount_follows_project_name(in_tmp_cwd, monkeypatch):
@@ -126,8 +126,8 @@ def test_vscode_volumes_are_declared_external(in_tmp_cwd):
     compose.generate_scaled_compose(scale=2)
 
     volumes = _load_scaled(in_tmp_cwd)["volumes"]
-    assert volumes["devbase_vscode_carmo-ai_1"] == {"external": True}
-    assert volumes["devbase_vscode_carmo-ai_2"] == {"external": True}
+    assert volumes["devbase_vscode_myapp-ai_1"] == {"external": True}
+    assert volumes["devbase_vscode_myapp-ai_2"] == {"external": True}
 
 
 def test_project_volumes_are_kept(in_tmp_cwd):
@@ -160,4 +160,4 @@ def test_declared_vscode_mount_is_not_overridden(in_tmp_cwd):
     dev = scaled["services"]["dev-1"]
     assert _mount_source(dev, VSCODE_TARGET) == "./vscode-server"
     # 使わないボリュームを宣言しない (external は実体を要求する)
-    assert "devbase_vscode_carmo-ai_1" not in scaled["volumes"]
+    assert "devbase_vscode_myapp-ai_1" not in scaled["volumes"]
