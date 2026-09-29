@@ -127,3 +127,21 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 .github/scripts/changelog_check.py
+
+  # 固有の語の検査 (#353)。すべてのトリガーで走り、secret PROPER_TERMS の語の一覧で追跡されたファイルを探す。
+  # secret は検査の手順の env にだけ渡す。フォークや未登録で空なら、検査は飛ばして成功で終わる。
+  # secret の登録と更新は人が行う
+  proper-terms:
+    name: Proper term check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check proper terms
+        env:
+          PROPER_TERMS: ${{ secrets.PROPER_TERMS }}
+        run: python3 .github/scripts/proper_term_check.py
