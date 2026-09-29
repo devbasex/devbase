@@ -2,7 +2,7 @@
 
 外部リポジトリ（アプリ本体）を丸ごと取り込み、複数コンテナ（app / nginx / db 等）で共有して動かすタイプのプロジェクト向けのガイドです。`pre-up` ライフサイクルフックで **ホスト側リポジトリの clone/pull** と **共有 work ボリュームへの populate** を行い、2 回目以降の `devbase up` では populate 済みを検出して同期をスキップする冪等パターンを解説します。
 
-リファレンス実装は Laravel Sail ベースの `carmo-system-console` プラグインです。**このリポジトリには含まれません** — 社内向けの private プラグインレジストリで配布されており、`devbase plugin install` 後に `projects/carmo-system-console/`（`projects/` は `.gitignore` 対象）へ展開されます。アクセス権が無い場合でも、本書のコード断片と [チェックリスト](#7-チェックリスト新規に-repo-連携プロジェクトを作るとき) だけでパターンを再現できます。
+リファレンス実装は Laravel Sail ベースの `myapp-system-console` プラグインです。**このリポジトリには含まれません** — 社内向けの private プラグインレジストリで配布されており、`devbase plugin install` 後に `projects/myapp-system-console/`（`projects/` は `.gitignore` 対象）へ展開されます。アクセス権が無い場合でも、本書のコード断片と [チェックリスト](#7-チェックリスト新規に-repo-連携プロジェクトを作るとき) だけでパターンを再現できます。
 
 > **前提:** ライフサイクルフック自体の基本は [プラグイン開発クイックスタート](quickstart.md#25-ライフサイクルフック任意) を、共有ボリュームや `scale` の一般論は [compose.yml ガイドライン](compose-yml-guidelines.md) と [コンテナ操作ガイド](../user/container-operations.md#並行開発) を参照してください。本書はそれらを組み合わせた「repo 連携」パターンに絞って説明します。
 
@@ -26,7 +26,7 @@
 
 ```mermaid
 graph TD
-    S["リモート git リポジトリ<br/>(volareinc/app 等)"] -->|"pre-up ① clone/pull"| R["ホスト ./repo<br/>(app のビルドコンテキスト)"]
+    S["リモート git リポジトリ<br/>(example-org/app 等)"] -->|"pre-up ① clone/pull"| R["ホスト ./repo<br/>(app のビルドコンテキスト)"]
     S3["S3<br/>env/&lt;env&gt;.env"] -->|"pre-up ② 取得"| E["ホスト ./.env<br/>(compose 変数展開用)"]
     R -->|"pre-up ③ populate"| V["共有 work ボリューム<br/>/work/&lt;リポジトリ名&gt;"]
     E -->|"pre-up ④ 配置"| V
@@ -102,7 +102,7 @@ volumes:
 # projects/<name>/pre-up
 set -e
 
-REPO_DIR="$DEVBASE_PRIMARY_DIR"                       # 例: carmo-system-console
+REPO_DIR="$DEVBASE_PRIMARY_DIR"                       # 例: myapp-system-console
 WORK_VOLUME="${DEVBASE_WORK_VOLUME:-devbase_work_1}"
 
 # ① ビルドコンテキストの clone / pull
@@ -224,7 +224,7 @@ devbase up
 | `DEVBASE_WORK_DIR` | コンテナ内の既定の作業ディレクトリ |
 | `DEVBASE_REPO_DIRS` | 全リポジトリのディレクトリ名（宣言順・空白区切り） |
 
-> **Note:** `.env` の環境選択（例: `s3://.../env/local.env` の `local` 部分）など、S3 パスやプロファイルはプロジェクト固有の変数（例: `CARMO_ENV`）で制御することがあります。プロジェクトの `pre-up` 冒頭コメントを参照してください。
+> **Note:** `.env` の環境選択（例: `s3://.../env/local.env` の `local` 部分）など、S3 パスやプロファイルはプロジェクト固有の変数（例: `MYAPP_ENV`）で制御することがあります。プロジェクトの `pre-up` 冒頭コメントを参照してください。
 
 ---
 
@@ -245,7 +245,7 @@ devbase up
 
 ## 参考
 
-- リファレンス実装: `carmo-system-console` プラグインの `pre-up` / `compose.yml` / `README.md`（社内 private レジストリ配布。インストール後は `projects/carmo-system-console/` 配下に展開され、このリポジトリには含まれません）
+- リファレンス実装: `myapp-system-console` プラグインの `pre-up` / `compose.yml` / `README.md`（社内 private レジストリ配布。インストール後は `projects/myapp-system-console/` 配下に展開され、このリポジトリには含まれません）
 - [プラグイン開発クイックスタート](quickstart.md) — ライフサイクルフックの基本
 - [compose.yml ガイドライン](compose-yml-guidelines.md) — 共有ボリューム・スケール構成
 - [コンテナ操作ガイド](../user/container-operations.md) — `/work` ボリュームの一般論

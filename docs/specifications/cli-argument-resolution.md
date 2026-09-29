@@ -271,15 +271,15 @@ Options:
 
 使い方をラッパーが出すのは、トップレベル `build` が shell の `cmd_build` と Python の
 `project build` に振り分けられ、受け付ける引数が両者で違う（`--project-no-cache` は shell にだけ
-ある）ためである。判定を name 解決より前に置くのは、`build carmo --help` で `projects/carmo` への
+ある）ためである。判定を name 解決より前に置くのは、`build myapp --help` で `projects/myapp` への
 `cd` とその `env` の読み込みを起こさないためである。起動時の `$DEVBASE_ROOT/env` と実行時の
 ディレクトリの `env` の読み込みは、コマンド名の解決より前に全コマンド共通で起きる。
 
 ### `container` / `ct` グループ
 
 `container` / `ct` は name 解決の対象外である。parser が `[name]` を持たないため、
-`devbase container up carmo` は `projects/carmo` が実在しても argparse の usage エラー
-（`unrecognized arguments: carmo`、終了コード 2）になる。`container scale <name> N` は
+`devbase container up myapp` は `projects/myapp` が実在しても argparse の usage エラー
+（`unrecognized arguments: myapp`、終了コード 2）になる。`container scale <name> N` は
 `new_scale` の型エラーで同じく 2 である。名前なしの `devbase container up` は今までどおり実行時の
 ディレクトリのプロジェクトで動き、非推奨の警告を出す。
 
@@ -369,7 +369,7 @@ graph TD
 ```
 $ ls -l $DEVBASE_ROOT/projects
 lrwxr-xr-x  adminer   -> ../repos/github.com--devbasex--devbase-samples/adminer/projects/adminer
-lrwxr-xr-x  carmo     -> ../repos/github.com--volareinc--devbase-ext/carmo-web/projects/carmo
+lrwxr-xr-x  myapp     -> ../repos/github.com--example-org--devbase-plugins/myapp-web/projects/myapp
 ```
 
 `maybe_cd_project` の `cd "$target"` も Python 側の `os.chdir` もリンクを辿るため、対象が
@@ -452,7 +452,7 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 
 ## テスト観点
 
-- 名前の形が実在のプロジェクト名（`carmo`・`github_work_time`・`carmo-ai`）を通し、`../etc`・
+- 名前の形が実在のプロジェクト名（`myapp`・`github_work_time`・`myapp-ai`）を通し、`../etc`・
   `a/b`・`.`・`..`・空・`-x`・`café` を弾くこと（`tests/utils/test_names.py`）
 - プロジェクトとして数える名前の述語が `.` 始まりと空だけを外すこと（`tests/utils/test_names.py`）。
   述語を差し替えると `projects/` の走査がすべてそれに従うこと、`.` 始まりの判定と名前の形の説明文が

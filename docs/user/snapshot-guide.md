@@ -87,7 +87,7 @@ graph LR
 
 ```mermaid
 graph TD
-    subgraph 系列 nyle
+    subgraph 系列 acme
         subgraph 世代 1（最古）
             A1[full.tar.zst]
             A2[incr-001.tar.zst]
@@ -98,7 +98,7 @@ graph TD
             B2[incr-001.tar.zst]
         end
     end
-    subgraph 系列 with
+    subgraph 系列 initech
         subgraph 世代 3（系列の最新）
             C1[full.tar.zst]
         end
@@ -131,12 +131,12 @@ flowchart TD
 （系列に世代が無い / 差分が上限に達した）を 1 行出します。
 
 ```text
-[0/6] スナップショットを差分更新中: 20260920-212546 (グループ with)
+[0/6] スナップショットを差分更新中: 20260920-212546 (グループ initech)
 ```
 
 直近のスナップショットから `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES`（既定 60 分）以内なら
-スナップショットを飛ばします。この間隔も系列ごとに判定するため、nyle のプロジェクトを
-起動した直後に with のプロジェクトを起動しても、with の系列は控えます。
+スナップショットを飛ばします。この間隔も系列ごとに判定するため、acme のプロジェクトを
+起動した直後に initech のプロジェクトを起動しても、initech の系列は控えます。
 
 ### `devbase down` 時の動作
 
@@ -185,7 +185,7 @@ backups/
 示して終了コード 1 で止まります。TUI の「作成」は、名前の前に対象のグループを選ばせます。
 
 ```bash
-devbase snapshot create --group nyle
+devbase snapshot create --group acme
 ```
 
 #### 自動命名（タイムスタンプ）
@@ -229,8 +229,8 @@ devbase snapshot list
 名前                     作成日時                    差分数        サイズ  対象ボリューム
 ------------------------------------------------------------------------------------------
 20260218-080000          2026-02-18 08:00:00           3       1.2GB  devbase_home_ubuntu
-20260220-103000          2026-02-20 10:30:00           2     850.0MB  devbase_home_ubuntu, devbase_home_nyle
-before-upgrade           2026-02-21 14:00:00           1       2.1GB  devbase_home_ubuntu, devbase_home_kkg
+20260220-103000          2026-02-20 10:30:00           2     850.0MB  devbase_home_ubuntu, devbase_home_acme
+before-upgrade           2026-02-21 14:00:00           1       2.1GB  devbase_home_ubuntu, devbase_home_globex
 ```
 
 「対象ボリューム」が `devbase_home_ubuntu` だけの世代は、アカウントグループ分離より**前**に
@@ -258,7 +258,7 @@ before-upgrade           2026-02-21 14:00:00           1       2.1GB  devbase_ho
 $ devbase snapshot create --name 20260218-080000
 スナップショット操作に失敗: スナップショット '20260218-080000' は別のボリューム構成
 (devbase_home_ubuntu) で作られています。現在の対象は devbase_home_ubuntu,
-devbase_home_nyle です。新しい世代を作成してください (devbase snapshot create)
+devbase_home_acme です。新しい世代を作成してください (devbase snapshot create)
 ```
 
 ### スナップショットからの復元

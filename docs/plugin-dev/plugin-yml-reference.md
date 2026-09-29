@@ -147,7 +147,7 @@ requires:
 `devbase plugin install` は、要件を満たさない Plugin のインストールを**中止**します。
 
 ```
-Error: プラグイン 'carmo-web' は devbase >=3.0.0 を要求していますが、現在の devbase は 2.2.0 です。
+Error: プラグイン 'myapp-web' は devbase >=3.0.0 を要求していますが、現在の devbase は 2.2.0 です。
 devbase を更新してから再度インストールしてください (検証を飛ばす場合は DEVBASE_IGNORE_PLUGIN_REQUIRES=1)。
 ```
 
@@ -165,7 +165,7 @@ devbase を更新してから再度インストールしてください (検証�
 更新自体は既に済んでいて中止できないため、要件を満たさなくなった Plugin は**警告**で知らせます。
 
 ```
-WARNING プラグイン 'carmo-web' は devbase >=4.0.0 を要求していますが、現在の devbase は 3.0.0 です。
+WARNING プラグイン 'myapp-web' は devbase >=4.0.0 を要求していますが、現在の devbase は 3.0.0 です。
 devbase 本体を更新してください (この警告を止める場合は DEVBASE_IGNORE_PLUGIN_REQUIRES=1)。
 ```
 

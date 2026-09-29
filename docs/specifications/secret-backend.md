@@ -514,7 +514,7 @@ backend では参照のグループが常に空で、参照の値・等価性・
 `group_aliases` に対応があれば読み替え、読み替えた後の名前が `global` / `projects` なら拒む
 （`team/<g>/…` が `version: 1` の `team/global` / `team/projects/<name>` と重なるため）。
 `global` を読み替え元にする対応は受け付ける。2 つのグループが同じ置き場かは読み替えた後の
-名前で比べる（`SecretStore.same_storage_group`）。文言には読み替えの前と後を `acme → nyle`
+名前で比べる（`SecretStore.same_storage_group`）。文言には読み替えの前と後を `umbrella → acme`
 の形で出す（`display_group`）。**除くのは、引数なしの `SecretRef.label()` で参照を表示する
 エラー文言・警告・ログだけ**で、そこには読み替える前の名前が出る（前項）。`display_group` を直接
 呼ぶ文言は、エラーであっても前と後を出す（`--group` がプロジェクトのグループと違う置き場である旨の
@@ -530,7 +530,7 @@ backend では参照のグループが常に空で、参照の値・等価性・
 **読み替えを置き場の上だけで行う理由。** グループ名を変えるとボリューム名 `devbase_home_<group>` が
 変わり、既存の認証と会話ログのボリュームを移すことになる。読み替えを端末の設定に置けば、ボリュームに
 触らず、置き場のグループ名はその端末の設定にだけ入る。旧既定の `default` は予約語で、`group_aliases` の
-キーにも値にも使えない（`BackendConfigError`。#315）。`default: nyle` のような読み替えは、宣言の無い
+キーにも値にも使えない（`BackendConfigError`。#315）。`default: acme` のような読み替えは、宣言の無い
 プロジェクトを黙ってあるグループへ落とす経路だったためである。devbase は `backend.yml` を書き換えず、
 利用者がその行を消す。
 
@@ -559,14 +559,14 @@ backend では参照のグループが常に空で、参照の値・等価性・
 | 使えない名前（`validate_account_group` の規則、読み替えた後が `global` / `projects`） | 理由を述べて 2。読み書きしない |
 | `version: 1` またはファイル backend で `--group` | グループ別の置き場を選んだ設定でだけ使える旨を述べて 2 |
 
-`-p` でプロジェクトのグループと違う置き場を拒むのは、`team/kkg/projects/web` に書けても `web` の
-グループが `with` なら `up` はそこを読まず、書けたように見えて使われない機密が残るためである。
+`-p` でプロジェクトのグループと違う置き場を拒むのは、`team/globex/projects/web` に書けても `web` の
+グループが `initech` なら `up` はそこを読まず、書けたように見えて使われない機密が残るためである。
 文言でプロジェクトの `env` の `DEVBASE_ACCOUNT_GROUP` を直すよう案内する。`list` の見出しは
-`=== グローバル（グループ with） (...) ===` / `=== プロジェクト: web（グループ with） (...) ===`
+`=== グローバル（グループ initech） (...) ===` / `=== プロジェクト: web（グループ initech） (...) ===`
 の形になる（`version: 1` ではグループが付かない）。`group_aliases` に対応のあるグループでは、
-読み替えの前と後が並んで `=== グローバル（グループ acme → nyle） (...) ===` /
-`=== プロジェクト: web（グループ acme → nyle） (...) ===` になり、隣に並ぶパス
-（`devbase/team/nyle/global`）と同じグループを指していると読める。
+読み替えの前と後が並んで `=== グローバル（グループ umbrella → acme） (...) ===` /
+`=== プロジェクト: web（グループ umbrella → acme） (...) ===` になり、隣に並ぶパス
+（`devbase/team/acme/global`）と同じグループを指していると読める。
 
 #### dispatch 前の注入
 
@@ -747,7 +747,7 @@ AWS は取り込みの選択の範囲だけで比べて入れ直す。控えの 
 | `migrate --to <name>` | `--to age\|openbao` `--exclude-project NAME`（繰り返し可） `--dry-run` `--yes` `--group NAME` | 後述 | 衝突・`projects/` に無い `--exclude-project` の名前は 2、読み戻しの不一致・書き込み失敗は 1 |
 
 `version: 2` の `status` は、置き場の前にレイアウトの行（`レイアウト: group (version 2)`）と
-対象のグループの行（`グループ:   acme → nyle (projects/api/env:3)`
+対象のグループの行（`グループ:   umbrella → acme (projects/api/env:3)`
 の形。括弧は決めたファイルと行）を足し、4 参照のパスを対象のグループで組んで出す。プロジェクトの
 外では `グループ:   なし（プロジェクトの外）` と出し、パスを `<mount>/team/<g>/…` の形で出す。グループを決められ
 なければ `グループ:   決められません (<理由>)` と出してパスを省く。`version: 1` とファイル backend
@@ -873,9 +873,9 @@ token をホストのディスクへ置かない決まりを守るためであ�
 `users/<user>/...` の取得が 403 になる。
 
 サーバ側の構成（KV v2 のマウント、ポリシー、AppRole、token の期限）は devbase の範囲外で、
-運用側のリポジトリ（carmo-cdk#312）が持つ。devbase が前提にするのは、上の 4 経路と
+運用側のリポジトリが持つ。devbase が前提にするのは、上の 4 経路と
 「本人のパスは読み書きでき、チームのパスは読め、他人のパスは拒まれる」ことだけである。
-ポリシーを `version: 2` のグループ単位に絞る変更も運用側のリポジトリの課題（carmo-cdk#363）が
+ポリシーを `version: 2` のグループ単位に絞る変更も運用側のリポジトリの課題が
 扱う。devbase は 1 回の操作で対象のグループのパスだけを要求するため、グループ単位に絞った
 サーバでも対象のグループの操作は通る。
 
@@ -1201,7 +1201,7 @@ openbao:
   path_team_prefix: team
   path_user_prefix: users
   group_aliases:
-    acme: nyle
+    umbrella: acme
   timeout_seconds: 5
 cache:
   enabled: true
@@ -1276,7 +1276,7 @@ sources:
     type: aws_profiles
     files: [~/.aws/config, ~/.aws/credentials]
     env_key: AWS_CONFIG_BASE64
-    profiles: [kkg]
+    profiles: [globex]
     hash: 3f1c...
     synced_at: '2026-09-28T10:00:00'
 ```
@@ -1291,8 +1291,8 @@ sources:
 
 ```yaml
 groups:
-  nyle: import    # 尋ねずに取り込む
-  kkg: skip       # 尋ねずに取り込まない
+  acme: import    # 尋ねずに取り込む
+  globex: skip       # 尋ねずに取り込まない
   # 名指しの無いグループは ask（尋ねる）
 ```
 
@@ -1379,7 +1379,7 @@ groups:
   `sync` はそこを更新する
 - グループの読み替え（グループ名 → 置き場のグループ名）は `backend.yml` の `group_aliases` 1 か所に
   書き、`env backend status` で確かめる。`default` は読み替えのキーにも値にも使えない。旧版の
-  `default: nyle` が残っていれば設定の読み込みで止まるので、その行を消す
+  `default: acme` が残っていれば設定の読み込みで止まるので、その行を消す
 - 各プロジェクトの `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=<グループ>` を書く（必須）。
   `projects/*` は plugin repo の持ち物で、宣言は各 plugin repo に書く。`$DEVBASE_ROOT/env` の行は消す。
   `up` / `scale` がグループの食い違いで止まったら、起動したいグループに合わせて、プロジェクトの
@@ -1540,7 +1540,7 @@ groups:
 - 読み替えのあるグループで、`backend test` の参照ごとの行、`env list` の節の見出しと件数の行、
   `backend migrate` の移行の計画の一覧と `--to age` の完了後の一覧が、どれも読み替えの前と後の
   両方を出すこと（`tests/commands/test_env_group_label.py`）
-- 読み替えの対応が無いグループ（`kkg`）では `（グループ kkg）` のままで `→` が出ないこと（同上）
+- 読み替えの対応が無いグループ（`globex`）では `（グループ globex）` のままで `→` が出ないこと（同上）
 - `version: 1` とファイル backend では出力全体に `（グループ` が 1 つも現れないこと。前方一致
   （`'=== グローバル'`）で見ると見出しが変わっても通ってしまうため、出力全体で見る（同上）
 - 引数なしの `label()` を通るエラーの文言と警告（レイアウトと合わない参照の拒否、置き場に
@@ -1566,7 +1566,7 @@ groups:
   #206（機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` を注入しない、#185。設計は #205）、
   #317 / #318（アカウントグループの宣言の必須化と `default` の廃止、#315。設計は #316）
 - Infisical から OpenBao への切り替えの経緯: devbasex/devbase#166
-- サーバのポリシーをグループ単位に絞る課題: 運用側のリポジトリ（carmo-cdk#363）
+- サーバのポリシーをグループ単位に絞る課題: 運用側のリポジトリ
 - [環境変数ガイド: アカウントグループ](../user/environment-variables.md#アカウントグループ-devbase_account_group)
 - [OpenBao: KV v2 API](https://openbao.org/api-docs/secret/kv/kv-v2/)
 - [OpenBao: AppRole auth](https://openbao.org/docs/auth/approle/)

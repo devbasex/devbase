@@ -242,11 +242,11 @@ devbase project up <name>
 
 | キー | 説明 |
 |------|------|
-| `DEVBASE_ACCOUNT_GROUP` | アカウントグループ名（例: `nyle` / `personal` / `with` / `kkg`）。グループごとに `devbase_home_<group>` ボリュームが作られ、コンテナへ `/persistent/group` としてマウントされる |
+| `DEVBASE_ACCOUNT_GROUP` | アカウントグループ名（例: `acme` / `personal` / `initech` / `globex`）。グループごとに `devbase_home_<group>` ボリュームが作られ、コンテナへ `/persistent/group` としてマウントされる |
 
 ```bash
 # projects/<name>/env
-DEVBASE_ACCOUNT_GROUP=kkg
+DEVBASE_ACCOUNT_GROUP=globex
 ```
 
 同じグループのコンテナは Claude Code / gcloud / gws の認証と会話ログを共有し、
@@ -324,16 +324,16 @@ Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP 
 グループを宣言していなかったプロジェクトは、ボリューム `devbase_home_default`（旧既定の
 ボリューム）を使い、グループ別の置き場では `group_aliases` の `default: <グループ>` で
 機密を読んでいました。`default` は予約語になったため、次の順に移します。例は移し先を
-`nyle` とした場合です（移し先は端末ごとに違います。`devbase_home_default` の中身の持ち主の
+`acme` とした場合です（移し先は端末ごとに違います。`devbase_home_default` の中身の持ち主の
 グループを選んでください）。
 
 | 順 | 手順 |
 |---|---|
 | 1 | **更新する前に**、宣言の無いプロジェクトと、移し先のグループを宣言したプロジェクトのコンテナを `devbase down` で止める |
 | 2 | devbase を新しい版へ更新する |
-| 3 | `devbase project migrate-volume --to nyle` で `devbase_home_default` の中身を `devbase_home_nyle` へ写す（`--dry-run` で先に確かめられる） |
-| 4 | `secrets/backend.yml` の `openbao.group_aliases` から `default: nyle` の行を消す |
-| 5 | 各プロジェクトの `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=nyle` などを書く（plugin repo のプロジェクトは plugin repo の更新を `devbase plugin` で取り込む） |
+| 3 | `devbase project migrate-volume --to acme` で `devbase_home_default` の中身を `devbase_home_acme` へ写す（`--dry-run` で先に確かめられる） |
+| 4 | `secrets/backend.yml` の `openbao.group_aliases` から `default: acme` の行を消す |
+| 5 | 各プロジェクトの `projects/<name>/env` に `DEVBASE_ACCOUNT_GROUP=acme` などを書く（plugin repo のプロジェクトは plugin repo の更新を `devbase plugin` で取り込む） |
 | 6 | `devbase build --no-cache` でイメージを作り直してから、プロジェクトを `devbase up` し、`claude` のログイン・`gh auth status`・`gcloud config get account`・MCP のトークンが移行前と同じか確かめる |
 
 `migrate-volume` は次のどれかに当たると、先へ何も書かずに止まります。
@@ -354,9 +354,9 @@ Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP 
 機密は `devbase env init --group personal` などで入れます。
 
 **ロールバック。** devbase を前の版へ戻し、`secrets/backend.yml` の `openbao.group_aliases` へ
-`default: nyle` を戻し、手順 5 で書いた宣言の行を外します。元の `devbase_home_default` が
+`default: acme` を戻し、手順 5 で書いた宣言の行を外します。元の `devbase_home_default` が
 残っているため、移行の前と同じ状態で起動します（宣言を残したまま前の版へ戻しても、宣言した
-プロジェクトは写した `devbase_home_nyle` を使って動きます）。`devbase_home_default` は、
+プロジェクトは写した `devbase_home_acme` を使って動きます）。`devbase_home_default` は、
 ロールバックが要らないと判断した後に手で `docker volume rm devbase_home_default` で消します。
 `devbase_home_default` のスナップショットの系列は残り、元のボリュームへだけ復元できます
 （[スナップショットガイド](snapshot-guide.md)）。
@@ -376,12 +376,12 @@ Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP 
 |------|------|
 | `DEVBASE_OPEN_EDITOR` | 真（`1`/`true`/`yes`/`on`）で `up` 後にエディタを開く。`devbase env init` の対話既定は `1`（有効）なので、init 済みの環境では通常 ON。キー自体が未設定のときのみ OFF に倒れる。`project.yml` の `open_editor` が指定されていればそちらが優先 |
 | `DEVBASE_EDITOR` | 起動コマンド（既定: `code`）。`cursor` / `code-insiders` 等も可 |
-| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/uttarov2-doc.workspace`）。**効くのはリポジトリ 1 件の構成だけ**です。2 件以上の構成では `devbase up` が自動生成した `/work/<プロジェクト名>.code-workspace` を直接開くため、この env を設定しても上書きできません。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
+| `DEVBASE_WORKSPACE` | 開く `*.code-workspace` ファイルの**コンテナ内絶対パス**を明示指定する（例 `/home/ubuntu/share/work/myapp-doc.workspace`）。**効くのはリポジトリ 1 件の構成だけ**です。2 件以上の構成では `devbase up` が自動生成した `/work/<プロジェクト名>.code-workspace` を直接開くため、この env を設定しても上書きできません。`~/share`（= 全コンテナ共有ボリューム `/persistent/ai/share` への symlink）配下に置けば全コンテナで共用可 |
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
 | `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。**空文字（`DEVBASE_EDITOR_SSH_HOST=`）はネストのオプトアウト**で、フラット URI を強制する。下記「リモート Docker」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | attach に使う docker context を手で決めたいときだけ明示する。未設定なら devbase が解決した context（`--context` / `DEVBASE_DOCKER_CONTEXT` / `project.local.yml`）、それも無ければ跨ホスト時にホストの `docker context show` |
 | `DEVBASE_DOCKER_CONTEXT` | `devbase up/down/ps/logs/login/scale/build/rebuild/open` が向ける docker context。`project.local.yml` の `docker.context` より優先し、CLI `--context` に負ける。グローバル `.env` に書くと全プロジェクトが同じホストへ向くため、通常は `project.local.yml` に書く。下記「リモート Docker」参照 |
-| `DEVBASE_WINDOW_TITLE` | attach 先 VS Code の `window.title` テンプレート。`{container}` が実コンテナ名（例 `nyle-dx-dev-1`）に置換される。既定は `{container}${separator}${dirty}${activeEditorShort}`。`0` / `false` / `off` / 空文字で無効化。下記「ウィンドウタイトル」参照 |
+| `DEVBASE_WINDOW_TITLE` | attach 先 VS Code の `window.title` テンプレート。`{container}` が実コンテナ名（例 `myapp-dev-1`）に置換される。既定は `{container}${separator}${dirty}${activeEditorShort}`。`0` / `false` / `off` / 空文字で無効化。下記「ウィンドウタイトル」参照 |
 
 都度の上書きは CLI フラグで行います: `devbase up --open` / `--no-open` / `--open-index N`（env より優先）。
 
@@ -392,7 +392,7 @@ Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP 
 VS Code の既定タイトルは編集中ファイル名が先頭に来るため、複数プロジェクトの窓を並べるとどれがどれか判別できません。devbase は `up` のたびに各 dev コンテナへ **コンテナ名始まりのタイトル**を設定します。
 
 ```
-nyle-dx-dev-1 - main.py
+myapp-dev-1 - main.py
 ```
 
 書き込み先は**コンテナ内**の Remote settings `~/.vscode-server/data/Machine/settings.json` の `window.title` です（`window.title` は WINDOW スコープなのでリモート設定で有効）。クライアント側の attached container config ではなくコンテナ内へ書くのは、
@@ -453,7 +453,7 @@ ssh 鍵・TLS・WSL / EC2 の違いは docker 側の問題として devbase か�
 ```bash
 # Windows の WSL2 内 dockerd（WSL 内で sshd を動かし、Docker Desktop の WSL 統合か
 # WSL 内へ直接インストールした dockerd を使う。Windows 側 OpenSSH 経由にはしない）
-docker context create gpu-wsl --docker "host=ssh://takemi@winpc"
+docker context create gpu-wsl --docker "host=ssh://alice@winpc"
 
 # EC2（ssh 経由なので TLS 証明書の配布は要らない）
 docker context create ec2 --docker "host=ssh://ubuntu@ec2-host"
@@ -470,7 +470,7 @@ docker context ls          # 名前を確認する。`docker context use` で切
 # projects/<name>/project.local.yml（gitignore 対象。個人・機材ごとの設定）
 docker:
   context: gpu-wsl
-  home: /home/takemi      # ~/.aws などを bind mount するプロジェクトだけ要る
+  home: /home/alice      # ~/.aws などを bind mount するプロジェクトだけ要る
   # gid: 999              # 省略すると初回の up で自動取得して .cache/docker-gid/<context> に控える
 ```
 
