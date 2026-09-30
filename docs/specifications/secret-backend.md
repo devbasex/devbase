@@ -49,6 +49,7 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | --- | --- |
 | 参照（`SecretRef`） | 機密の宛先。適用範囲（`global` / `project`）と持ち主（`team` / `user`）の組み合わせで 4 種。`version: 2` ではグループも持つ |
 | アカウントグループ（グループ） | `DEVBASE_ACCOUNT_GROUP` の値。プロジェクトごとに `projects/<name>/env` で宣言する（必須。既定の値は無い）。ボリューム `devbase_home_<group>` の単位でもある |
+| グループ名の例 | エラー文・使い方の文言がグループ名の書き方として示す名前（`acme`）。`lib/devbase/env/groups.py` の `EXAMPLE_GROUP` の 1 か所で定め、ほかの文言はそこから読む |
 | レイアウト（`layout`） | 置き場のパスの並び。`flat`（`version: 1`、グループを含まない）と `group`（`version: 2`、グループを含む） |
 | `group_aliases` | グループ名から置き場のグループ名への対応。`backend.yml` の `openbao` 節に置き、ボリューム名を変えずに置き場の上だけ読み替える |
 | 置き場のグループ名 | パスに入れる名前。グループ名を `group_aliases` で読み替えた後の名前（対応が無ければグループ名のまま）。以下 `<g>` と書く |

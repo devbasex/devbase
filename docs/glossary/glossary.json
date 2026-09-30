@@ -560,7 +560,7 @@
       "term": "グループ名の例",
       "context": "secret",
       "meaning": "エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す",
-      "pending_source": "issues/issue-351-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "base の設定",
@@ -620,36 +620,31 @@
       "term": "固有の語",
       "context": "ci",
       "meaning": "作成者の所属組織・顧客・社内プロダクト・個人に固有の名前。公開のリポジトリの文書・コード・テストに置かない",
-      "source": "",
-      "pending_source": "issues/issue-353-requirements.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "語の一覧",
       "context": "ci",
       "meaning": "固有の語の検査が探す固有の語を 1 行 1 語で並べた平文。CI では secret、手元では追跡されない置き場に置き、公開のファイルに書かない",
-      "source": "",
-      "pending_source": "issues/issue-353-requirements.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "固有の語の検査",
       "context": "ci",
       "meaning": "語の一覧を読み、追跡されたファイルから固有の語を含む行を探すスクリプトと、それを Pull Request で走らせる CI のジョブ",
-      "source": "",
-      "pending_source": "issues/issue-353-requirements.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "当たり",
       "context": "ci",
       "meaning": "固有の語の検査が見つけた、語を含む行。パスと行番号の組で示し、行の本文と語を出さない",
-      "source": "",
-      "pending_source": "issues/issue-353-design.md"
+      "source": "docs/specifications/ci-checks.md"
     },
     {
       "term": "例外の位置",
       "context": "ci",
       "meaning": "固有の語の検査が当たりにしない行。パスと行の形の組で定め、語を含まない",
-      "source": "",
-      "pending_source": "issues/issue-353-design.md"
+      "source": "docs/specifications/ci-checks.md"
     }
   ]
 }
