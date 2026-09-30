@@ -1613,6 +1613,59 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
     return 0
 
 
+def _record_aws_source(sources: SourcesManager, aws_selection) -> None:
+    """AWS の取り込みの選択に合わせてソースを登録する (#314 決定 6)"""
+    from devbase.env import aws_profiles
+
+    selection = aws_selection
+    if selection is _KEEP_SELECTION:
+        existing = sources.get_source('aws') or {}
+        selection = (existing.get('profiles') if existing.get('type') == 'aws_profiles'
+                     else None)
+    if isinstance(selection, (list, tuple)):
+        payload = aws_profiles.build_from_home(selection)
+        h = payload.digest() if selection and not payload.unknown else None
+        if h:
+            sources.set_source('aws', 'aws_profiles', list(aws_profiles.SOURCE_FILES),
+                               keys.AWS_CONFIG_BASE64, h, profiles=list(selection))
+    else:
+        h = dir_hash(Path.home() / '.aws', ['config', 'credentials'])
+        if h:
+            sources.set_source('aws', 'tar_base64', list(aws_profiles.SOURCE_FILES),
+                               keys.AWS_CONFIG_BASE64, h)
+
+
+def _record_git_source(sources: SourcesManager) -> None:
+    """``~/.git-credentials`` をソースとして登録する"""
+    cred_path = Path.home() / '.git-credentials'
+    h = file_hash(cred_path)
+    if h:
+        sources.set_source('git_credentials', 'file_base64',
+                          ["~/.git-credentials"],
+                          keys.GIT_CREDENTIALS_BASE64, h)
+
+
+def _record_gcp_source(sources: SourcesManager, files, get) -> None:
+    """GCP の認証情報をプロファイルごとにソースとして登録する"""
+    all_vars = {}
+    for f in reversed(files):
+        all_vars.update(f.get_all())
+    prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
+    _resolve_gcp_path = _gcp_profile_files()
+
+    gcp_profiles = {
+        name: {'file': str(path), 'hash': file_hash(path)}
+        for key in all_vars if key.startswith(prefix)
+        for name in [key[len(prefix):]]
+        for path in [_resolve_gcp_path(name)]
+        if path and path.exists()
+    }
+
+    if gcp_profiles:
+        active = get(keys.GCP_ACTIVE_PROFILE, "default")
+        sources.set_gcp_source(gcp_profiles, active)
+
+
 def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFile,
                             aws_selection=_KEEP_SELECTION) -> None:
     """ソースメタデータを更新する (``env_file`` の参照のグループの控え。PLAN56 決定 13)
@@ -1640,51 +1693,13 @@ def _update_source_metadata(devbase_root: Path, env_file: EnvFile, *more: EnvFil
 
     # AWS (``_SKIP_SELECTION`` なら書き込みを見送ったので控えにも触れない)
     if aws_selection is not _SKIP_SELECTION and _get(keys.AWS_CONFIG_BASE64):
-        from devbase.env import aws_profiles
-
-        selection = aws_selection
-        if selection is _KEEP_SELECTION:
-            existing = sources.get_source('aws') or {}
-            selection = (existing.get('profiles') if existing.get('type') == 'aws_profiles'
-                         else None)
-        if isinstance(selection, (list, tuple)):
-            payload = aws_profiles.build_from_home(selection)
-            h = payload.digest() if selection and not payload.unknown else None
-            if h:
-                sources.set_source('aws', 'aws_profiles', list(aws_profiles.SOURCE_FILES),
-                                   keys.AWS_CONFIG_BASE64, h, profiles=list(selection))
-        else:
-            h = dir_hash(Path.home() / '.aws', ['config', 'credentials'])
-            if h:
-                sources.set_source('aws', 'tar_base64', list(aws_profiles.SOURCE_FILES),
-                                   keys.AWS_CONFIG_BASE64, h)
+        _record_aws_source(sources, aws_selection)
 
     # Git
     if _get(keys.GIT_CREDENTIALS_BASE64):
-        cred_path = Path.home() / '.git-credentials'
-        h = file_hash(cred_path)
-        if h:
-            sources.set_source('git_credentials', 'file_base64',
-                              ["~/.git-credentials"],
-                              keys.GIT_CREDENTIALS_BASE64, h)
+        _record_git_source(sources)
 
     # GCP (プロファイルごと)
-    all_vars = {}
-    for f in reversed(files):
-        all_vars.update(f.get_all())
-    prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
-    _resolve_gcp_path = _gcp_profile_files()
-
-    gcp_profiles = {
-        name: {'file': str(path), 'hash': file_hash(path)}
-        for key in all_vars if key.startswith(prefix)
-        for name in [key[len(prefix):]]
-        for path in [_resolve_gcp_path(name)]
-        if path and path.exists()
-    }
-
-    if gcp_profiles:
-        active = _get(keys.GCP_ACTIVE_PROFILE, "default")
-        sources.set_gcp_source(gcp_profiles, active)
+    _record_gcp_source(sources, files, _get)
 
     sources.save()
