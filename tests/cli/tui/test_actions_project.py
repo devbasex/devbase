@@ -38,7 +38,7 @@ def _seq(*values):
 # ---------------------------------------------------------------------------
 
 def _row(status):
-    return {"name": "carmo", "plugin": "p", "status": status}
+    return {"name": "myapp", "plugin": "p", "status": status}
 
 
 # rebuild メニューは build --no-cache へ委譲するため subcommand は "build" になる。
@@ -62,8 +62,8 @@ def test_handle_row_running_shows_action_menu(monkeypatch, tmp_path, action,
 
     result = actions_project.handle_row(tmp_path, _row("running (2 containers)"))
     assert result is menu.MENU_BACK          # 実行後サブメニューに留まり、戻りは MENU_BACK
-    assert seen["name"] == "carmo"
-    assert captured == {"subcommand": expected_subcommand, "name": "carmo"}
+    assert seen["name"] == "myapp"
+    assert captured == {"subcommand": expected_subcommand, "name": "myapp"}
 
 
 def test_handle_row_stays_in_submenu_for_non_updown_op(monkeypatch, tmp_path):
@@ -118,7 +118,7 @@ def test_handle_row_non_running_direct_up(monkeypatch, tmp_path, status):
     result = actions_project.handle_row(tmp_path, _row(status))
     assert result == 0                       # 直接 up の rc を返す
     assert action_calls == [], "非 running ではサブメニューを出さない"
-    assert captured == {"subcommand": "up", "name": "carmo"}
+    assert captured == {"subcommand": "up", "name": "myapp"}
 
 
 def test_handle_row_action_menu_back_returns_menu_back(monkeypatch, tmp_path):
@@ -159,7 +159,7 @@ def test_select_action_lists_all_ops(monkeypatch):
         return "logs"
 
     monkeypatch.setattr(menu, "select", fake_select)
-    assert actions_project._select_action("carmo") == "logs"
+    assert actions_project._select_action("myapp") == "logs"
     assert captured["back"] is True
     assert captured["search"] is False
     # open を先頭にしつつ全9操作を提示する (PR2 / PLAN59)。
@@ -192,15 +192,15 @@ def _capture_dispatch(monkeypatch):
 
 def test_run_operation_up_passes_scale_none(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
-    assert actions_project._run_operation(tmp_path, "carmo", "up") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "up") == 0
     assert captured["subcommand"] == "up" and captured["scale"] is None
 
 
 def test_run_operation_rebuild(monkeypatch, tmp_path):
     """「再ビルド (rebuild --no-cache)」は build --no-cache へ委譲する (no-cache 正規経路)。"""
     captured = _capture_dispatch(monkeypatch)
-    assert actions_project._run_operation(tmp_path, "carmo", "rebuild") == 0
-    assert captured["subcommand"] == "build" and captured["name"] == "carmo"
+    assert actions_project._run_operation(tmp_path, "myapp", "rebuild") == 0
+    assert captured["subcommand"] == "build" and captured["name"] == "myapp"
     assert captured["no_cache"] is True
 
 
@@ -209,7 +209,7 @@ def test_run_operation_down_runs_without_confirm(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "confirm",
                         lambda *a, **k: pytest.fail("down で確認を求めない"))
-    assert actions_project._run_operation(tmp_path, "carmo", "down") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "down") == 0
     assert captured["subcommand"] == "down"
 
 
@@ -217,7 +217,7 @@ def test_run_operation_login_collects_index(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     # menu.integer で正の整数を保証し、index は文字列契約のため str 化して渡す。
     monkeypatch.setattr(menu, "integer", lambda *a, **k: 3)
-    assert actions_project._run_operation(tmp_path, "carmo", "login") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "login") == 0
     assert captured["subcommand"] == "login" and captured["index"] == "3"
 
 
@@ -230,7 +230,7 @@ def test_run_operation_login_cancel(monkeypatch, tmp_path, int_ret):
     ret = menu.MENU_BACK if int_ret == "BACK" else None
     monkeypatch.setattr(menu, "integer", lambda *a, **k: ret)
     expected = actions_project._ARG_CANCEL if int_ret == "BACK" else None
-    assert actions_project._run_operation(tmp_path, "carmo", "login") is expected
+    assert actions_project._run_operation(tmp_path, "myapp", "login") is expected
     assert called == []
 
 
@@ -239,7 +239,7 @@ def test_run_operation_ps_runs_without_confirm(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "confirm",
                         lambda *a, **k: pytest.fail("ps で確認を求めない"))
-    assert actions_project._run_operation(tmp_path, "carmo", "ps") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "ps") == 0
     assert captured["subcommand"] == "ps" and captured["all"] is False
 
 
@@ -249,7 +249,7 @@ def test_run_operation_logs_collects_tail_only(monkeypatch, tmp_path):
     monkeypatch.setattr(menu, "confirm",
                         lambda *a, **k: pytest.fail("logs で確認を求めない"))
     monkeypatch.setattr(actions_project, "_optional_int", lambda msg: 50)  # tail=50
-    assert actions_project._run_operation(tmp_path, "carmo", "logs") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "logs") == 0
     assert captured["subcommand"] == "logs"
     assert captured["follow"] is False and captured["tail"] == 50
 
@@ -257,7 +257,7 @@ def test_run_operation_logs_collects_tail_only(monkeypatch, tmp_path):
 def test_run_operation_logs_tail_empty_is_none(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(actions_project, "_optional_int", lambda msg: None)  # 空 = 全件
-    assert actions_project._run_operation(tmp_path, "carmo", "logs") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "logs") == 0
     assert captured["follow"] is False and captured["tail"] is None
 
 
@@ -268,14 +268,14 @@ def test_run_operation_logs_tail_ctrl_c_aborts(monkeypatch, tmp_path):
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
     monkeypatch.setattr(actions_project, "_optional_int",
                         lambda msg: actions_project._ABORT)
-    assert actions_project._run_operation(tmp_path, "carmo", "logs") is None
+    assert actions_project._run_operation(tmp_path, "myapp", "logs") is None
     assert called == []
 
 
 def test_run_operation_scale_collects_int(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "integer", lambda *a, **k: 4)
-    assert actions_project._run_operation(tmp_path, "carmo", "scale") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "scale") == 0
     assert captured["subcommand"] == "scale" and captured["new_scale"] == 4
 
 
@@ -288,14 +288,14 @@ def test_run_operation_scale_cancel(monkeypatch, tmp_path, int_ret):
     ret = menu.MENU_BACK if int_ret == "BACK" else None
     monkeypatch.setattr(menu, "integer", lambda *a, **k: ret)
     expected = actions_project._ARG_CANCEL if int_ret == "BACK" else None
-    assert actions_project._run_operation(tmp_path, "carmo", "scale") is expected
+    assert actions_project._run_operation(tmp_path, "myapp", "scale") is expected
     assert called == []
 
 
 def test_run_operation_build_selects_image(monkeypatch, tmp_path):
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(actions_project, "_select_build_image", lambda root: "web")
-    assert actions_project._run_operation(tmp_path, "carmo", "build") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "build") == 0
     assert captured["subcommand"] == "build" and captured["image"] == "web"
 
 
@@ -303,7 +303,7 @@ def test_run_operation_build_compose_all_is_image_none(monkeypatch, tmp_path):
     """compose.yml 全体 ('') は image=None で委譲する (CLI の引数省略と同じ)。"""
     captured = _capture_dispatch(monkeypatch)
     monkeypatch.setattr(actions_project, "_select_build_image", lambda root: "")
-    assert actions_project._run_operation(tmp_path, "carmo", "build") == 0
+    assert actions_project._run_operation(tmp_path, "myapp", "build") == 0
     assert captured["subcommand"] == "build" and captured["image"] is None
 
 
@@ -313,7 +313,7 @@ def test_run_operation_build_cancel(monkeypatch, tmp_path):
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
     monkeypatch.setattr(actions_project, "_select_build_image",
                         lambda root: actions_project._ARG_CANCEL)
-    assert actions_project._run_operation(tmp_path, "carmo", "build") is actions_project._ARG_CANCEL
+    assert actions_project._run_operation(tmp_path, "myapp", "build") is actions_project._ARG_CANCEL
     assert called == []
 
 
@@ -323,7 +323,7 @@ def test_run_operation_build_ctrl_c_aborts(monkeypatch, tmp_path):
     called = []
     monkeypatch.setattr(container_mod, "cmd_project", lambda args: called.append(1) or 0)
     monkeypatch.setattr(actions_project, "_select_build_image", lambda root: None)
-    assert actions_project._run_operation(tmp_path, "carmo", "build") is None
+    assert actions_project._run_operation(tmp_path, "myapp", "build") is None
     assert called == []
 
 
@@ -435,7 +435,7 @@ def test_operation_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
 
     monkeypatch.setattr(actions_project, "_run_operation", fake_run_op)
 
-    assert actions_project._operation_menu(tmp_path, "carmo") is menu.MENU_BACK
+    assert actions_project._operation_menu(tmp_path, "myapp") is menu.MENU_BACK
     assert run_calls == ["scale", "build"]
     assert len(select_calls) == 3, "引数中止と実行後にサブメニューが再表示される"
 
@@ -453,7 +453,7 @@ def test_operation_menu_clears_screen_after_execution(monkeypatch, tmp_path):
     clears = []
     monkeypatch.setattr(menu, "clear_screen", lambda: clears.append(1))
 
-    assert actions_project._operation_menu(tmp_path, "carmo") is menu.MENU_BACK
+    assert actions_project._operation_menu(tmp_path, "myapp") is menu.MENU_BACK
     assert clears == [1], "実行 (build) の 1 回のみクリア (scale の中止ではしない)"
 
 

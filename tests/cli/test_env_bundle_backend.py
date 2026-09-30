@@ -388,13 +388,13 @@ GROUPED_SECRET = 'do-not-print-this-value'
 
 @pytest.fixture
 def grouped(openbao_root, openbao):
-    """``version: 2`` ``web`` は ``with``、``api`` は ``nyle``"""
+    """``version: 2`` ``web`` は ``initech``、``api`` は ``acme``"""
     from tests.conftest import configure_openbao
 
     configure_openbao(openbao_root, openbao, layout='group')
-    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
     (openbao_root / 'projects' / 'api').mkdir()
-    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     return openbao_root
 
 
@@ -405,19 +405,19 @@ def kv_paths(openbao):
 def test_grouped_export_collects_only_the_target_groups_projects(grouped, openbao, bundle_keys,
                                                                  tmp_path, caplog):
     pub, key = bundle_keys
-    openbao.put('team/nyle/global', {'GLOBAL': '1'})
-    openbao.put('team/nyle/projects/api', {'API': '1'})
-    openbao.put('team/with/projects/web', {'WEB': GROUPED_SECRET})
+    openbao.put('team/acme/global', {'GLOBAL': '1'})
+    openbao.put('team/acme/projects/api', {'API': '1'})
+    openbao.put('team/initech/projects/web', {'WEB': GROUPED_SECRET})
     dest = tmp_path / 'out.dbenv'
 
-    assert export(grouped, ExportOptions(dest=str(dest), recipients=[f'@{pub}'], group='nyle')) == 0
+    assert export(grouped, ExportOptions(dest=str(dest), recipients=[f'@{pub}'], group='acme')) == 0
 
     _, members = bundle.unpack(cipher.decrypt(dest.read_bytes(), identities=[str(key)]))
     assert set(members) == {'env/global.env', 'env/projects/api/.env'}
-    assert kv_paths(openbao) == {'team/nyle/global', 'team/nyle/projects/api'}
+    assert kv_paths(openbao) == {'team/acme/global', 'team/acme/projects/api'}
     skipped = [r.getMessage() for r in caplog.records
                if r.levelno >= 30 and 'web' in r.getMessage()]
-    assert len(skipped) == 1 and 'with' in skipped[0]
+    assert len(skipped) == 1 and 'initech' in skipped[0]
     assert GROUPED_SECRET not in caplog.text
     assert openbao.secret_id not in caplog.text
 
@@ -425,19 +425,19 @@ def test_grouped_export_collects_only_the_target_groups_projects(grouped, openba
 def test_grouped_export_bundles_the_target_groups_sources_file(grouped, openbao, bundle_keys,
                                                                tmp_path, monkeypatch):
     pub, key = bundle_keys
-    openbao.put('team/with/global', {'GLOBAL': '1'})
+    openbao.put('team/initech/global', {'GLOBAL': '1'})
     (grouped / '.env.sources.yml').write_text('sources: {flat: {}}\n')
-    (grouped / '.env.sources.nyle.yml').write_text('sources: {nyle: {}}\n')
-    (grouped / '.env.sources.with.yml').write_text('sources: {with: {}}\n')
+    (grouped / '.env.sources.acme.yml').write_text('sources: {acme: {}}\n')
+    (grouped / '.env.sources.initech.yml').write_text('sources: {initech: {}}\n')
     monkeypatch.setenv('PWD', str(grouped / 'projects' / 'web'))
     dest = tmp_path / 'out.dbenv'
 
     assert export(grouped, ExportOptions(dest=str(dest), recipients=[f'@{pub}'])) == 0
 
     _, members = bundle.unpack(cipher.decrypt(dest.read_bytes(), identities=[str(key)]))
-    assert members['env/sources.yml'] == b'sources: {with: {}}\n'
+    assert members['env/sources.yml'] == b'sources: {initech: {}}\n'
     assert set(members) == {'env/global.env', 'env/sources.yml'}
-    assert kv_paths(openbao) <= {'team/with/global', 'team/with/projects/web'}
+    assert kv_paths(openbao) <= {'team/initech/global', 'team/initech/projects/web'}
 
 
 def test_grouped_import_refuses_a_bundle_with_another_groups_project(grouped, openbao,
@@ -451,10 +451,10 @@ def test_grouped_import_refuses_a_bundle_with_another_groups_project(grouped, op
 
     with pytest.raises(EnvImportError) as exc:
         import_bundle(grouped, ImportOptions(source=str(src), identities=[str(key)],
-                                             group='nyle'))
+                                             group='acme'))
 
     message = str(exc.value)
-    assert 'web' in message and 'with' in message and '--exclude-project' in message
+    assert 'web' in message and 'initech' in message and '--exclude-project' in message
     assert 'api' not in message
     assert GROUPED_SECRET not in message
     assert openbao.received == []
@@ -466,7 +466,7 @@ def test_grouped_import_dry_run_is_refused_as_well(grouped, openbao, bundle_keys
     src = make_bundle(tmp_path, pub, {'env/projects/web/.env': b'WEB=1\n'})
 
     with pytest.raises(EnvImportError):
-        import_bundle(grouped, ImportOptions(source=str(src), identities=[str(key)], group='nyle',
+        import_bundle(grouped, ImportOptions(source=str(src), identities=[str(key)], group='acme',
                                              dry_run=True))
 
     assert openbao.received == []
@@ -483,14 +483,14 @@ def test_grouped_import_with_the_other_group_excluded_writes_the_target_group(
     })
 
     assert import_bundle(grouped, ImportOptions(
-        group='nyle',
+        group='acme',
         source=str(src), identities=[str(key)], exclude_projects=['web'],
         merge_metadata=True)) == 0
 
-    assert openbao.get('team/nyle/global') == {'A': '1'}
-    assert openbao.get('team/nyle/projects/api') == {'API': '1'}
-    assert kv_paths(openbao) == {'team/nyle/global', 'team/nyle/projects/api'}
-    assert (grouped / '.env.sources.nyle.yml').is_file()
+    assert openbao.get('team/acme/global') == {'A': '1'}
+    assert openbao.get('team/acme/projects/api') == {'API': '1'}
+    assert kv_paths(openbao) == {'team/acme/global', 'team/acme/projects/api'}
+    assert (grouped / '.env.sources.acme.yml').is_file()
     assert not (grouped / '.env.sources.yml').exists()
 
 
@@ -510,13 +510,13 @@ def test_grouped_export_stops_on_an_undeclared_project(grouped, openbao, bundle_
     from devbase.env.groups import GroupDeclarationError
 
     (grouped / 'projects' / 'undeclared').mkdir()
-    openbao.put('team/nyle/global', {'GLOBAL': '1'})
+    openbao.put('team/acme/global', {'GLOBAL': '1'})
     pub, _ = bundle_keys
     dest = tmp_path / 'out.dbenv'
     with pytest.raises(GroupDeclarationError) as exc:
-        export(grouped, ExportOptions(dest=str(dest), recipients=[f'@{pub}'], group='nyle'))
+        export(grouped, ExportOptions(dest=str(dest), recipients=[f'@{pub}'], group='acme'))
     assert 'undeclared' in str(exc.value)
     assert not dest.exists()
 
-    assert export(grouped, ExportOptions(dest=str(dest), recipients=[f'@{pub}'], group='nyle',
+    assert export(grouped, ExportOptions(dest=str(dest), recipients=[f'@{pub}'], group='acme',
                                          exclude_projects=['undeclared'])) == 0

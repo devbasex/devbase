@@ -724,7 +724,7 @@ class SnapshotManager:
 
     @staticmethod
     def series_label(volumes: dict) -> str:
-        """系列の表示名 (ログ用)。例: ``グループ nyle``。"""
+        """系列の表示名 (ログ用)。例: ``グループ acme``。"""
         group = volumes.get(GROUP_MOUNT)
         if isinstance(group, str) and group:
             if group.startswith(SHARED_VOLUME_PREFIX):
@@ -1107,7 +1107,7 @@ class SnapshotManager:
             try:
                 # 正規化した結果が元の名前と**一致**することまで見る。
                 # 検証は前後空白を落とした名前に正規化するので、通るかどうかだけでは
-                # `devbase_home_  kkg  ` を弾けない。
+                # `devbase_home_  globex  ` を弾けない。
                 # 実際にマウントされるのは正規化前の生の名前である。
                 if get_group_volume(group) != name:
                     reject(f"グループボリューム {name!r} は正規化された名前では"

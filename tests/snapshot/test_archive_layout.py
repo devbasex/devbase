@@ -29,7 +29,7 @@ from devbase.snapshot.manager import (
 
 @pytest.fixture(autouse=True)
 def _group_env(monkeypatch):
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")
 
 
 class RecordingManager(SnapshotManager):
@@ -104,7 +104,7 @@ def test_backup_command_has_same_shape_for_full_and_incr():
 # マウント先の helper
 # ---------------------------------------------------------------------------
 
-VOLUMES = {"ai": "devbase_home_ubuntu", "group": "devbase_home_nyle"}
+VOLUMES = {"ai": "devbase_home_ubuntu", "group": "devbase_home_acme"}
 LEGACY = {"": "devbase_home_ubuntu"}
 
 
@@ -128,7 +128,7 @@ def test_clear_command_clears_exactly_the_restore_mount_points(volumes):
 def test_backup_mounts_are_read_only_under_source():
     assert SnapshotManager.volume_mount_args(VOLUMES, "backup") == [
         "-v", f"devbase_home_ubuntu:{BACKUP_ROOT}/ai:ro",
-        "-v", f"devbase_home_nyle:{BACKUP_ROOT}/group:ro",
+        "-v", f"devbase_home_acme:{BACKUP_ROOT}/group:ro",
     ]
 
 

@@ -42,8 +42,8 @@ def test_counts_aggregates_single_docker_ps(monkeypatch):
 
         class R:
             returncode = 0
-            # 9 個のうち carmo-system-console が複数 (複数コンテナ project)
-            stdout = "carmo-ai\ncarmo-system-console\ncarmo-system-console\n"
+            # 9 個のうち myapp-system-console が複数 (複数コンテナ project)
+            stdout = "myapp-ai\nmyapp-system-console\nmyapp-system-console\n"
 
         return R()
 
@@ -53,7 +53,7 @@ def test_counts_aggregates_single_docker_ps(monkeypatch):
 
     counts = _running_counts_by_project()
 
-    assert counts == {"carmo-ai": 1, "carmo-system-console": 2}
+    assert counts == {"myapp-ai": 1, "myapp-system-console": 2}
     # 1 回しか docker を起動していない
     assert len(calls) == 1
     # docker compose ps ではなく docker ps をラベル filter で叩いている

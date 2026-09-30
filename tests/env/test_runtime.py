@@ -601,15 +601,15 @@ class _GroupedStore(_FourLayerStore):
 
 
 def test_resolve_passes_the_projects_group_to_the_four_references(root):
-    store = _GroupedStore(_layers(team_global={'K': 'tg'}), 'with')
+    store = _GroupedStore(_layers(team_global={'K': 'tg'}), 'initech')
 
     runtime.resolve(root, 'web', store=store)
 
     assert store.asked == ['web']
     assert store.loaded == [
-        SecretRef.for_global(group='with'), SecretRef.for_global(owner='user', group='with'),
-        SecretRef.for_project('web', group='with'),
-        SecretRef.for_project('web', owner='user', group='with')]
+        SecretRef.for_global(group='initech'), SecretRef.for_global(owner='user', group='initech'),
+        SecretRef.for_project('web', group='initech'),
+        SecretRef.for_project('web', owner='user', group='initech')]
 
 
 def test_resolve_without_a_group_builds_the_same_references_as_before(root):
@@ -623,23 +623,23 @@ def test_resolve_without_a_group_builds_the_same_references_as_before(root):
 
 
 def test_resolve_with_the_group_layout_requests_only_the_group_paths(openbao_root, openbao):
-    """受け入れ条件 1 (単体): ``with`` のプロジェクトは ``with`` の 4 パスだけを取得する"""
+    """受け入れ条件 1 (単体): ``initech`` のプロジェクトは ``initech`` の 4 パスだけを取得する"""
     from tests.conftest import configure_openbao
 
     root = openbao_root
     configure_openbao(root, openbao, layout='group')
-    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
-    openbao.put('team/with/global', {'A': 'with'})
+    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
+    openbao.put('team/initech/global', {'A': 'initech'})
     openbao.put('team/global', {'A': 'flat'})
-    openbao.put('team/nyle/global', {'A': 'nyle'})
+    openbao.put('team/acme/global', {'A': 'acme'})
 
     resolved = runtime.resolve(root, 'web', store=SecretStore(root))
 
-    assert resolved.values == {'A': 'with'}
+    assert resolved.values == {'A': 'initech'}
     assert openbao.logins == 1
     assert sorted(r.kv_path for r in openbao.requests_of('GET')) == sorted([
-        'team/with/global', 'users/member01/with/global',
-        'team/with/projects/web', 'users/member01/with/projects/web'])
+        'team/initech/global', 'users/member01/initech/global',
+        'team/initech/projects/web', 'users/member01/initech/projects/web'])
 
 
 # ---------------------------------------------------------------------------
@@ -675,7 +675,7 @@ def _save(store, backend, ref, data):
 def test_inject_does_not_put_the_stores_account_group_into_the_environment(
         account_group_root, store, backend):
     """受け入れ条件 1: 置き場の値はプロセスへ載らず、ボリュームのグループは決まらないまま"""
-    _save(store, backend, GLOBAL, {ACCOUNT_GROUP: 'kkg', 'TOKEN': 't'})
+    _save(store, backend, GLOBAL, {ACCOUNT_GROUP: 'globex', 'TOKEN': 't'})
 
     runtime.inject(account_group_root, 'web', store=store)
 
@@ -689,31 +689,31 @@ def test_inject_does_not_put_the_stores_account_group_into_the_environment(
 def test_inject_keeps_the_environments_account_group(account_group_root, store, backend,
                                                      monkeypatch):
     """受け入れ条件 2: env ファイル由来の値 (プロセスの環境変数) はそのまま"""
-    monkeypatch.setenv(ACCOUNT_GROUP, 'with')
-    _save(store, backend, GLOBAL, {ACCOUNT_GROUP: 'kkg', 'TOKEN': 't'})
+    monkeypatch.setenv(ACCOUNT_GROUP, 'initech')
+    _save(store, backend, GLOBAL, {ACCOUNT_GROUP: 'globex', 'TOKEN': 't'})
 
     runtime.inject(account_group_root, 'web', store=store)
 
-    assert os.environ[ACCOUNT_GROUP] == 'with'
-    assert resolve_account_group() == 'with'
+    assert os.environ[ACCOUNT_GROUP] == 'initech'
+    assert resolve_account_group() == 'initech'
 
 
 def test_inject_keeps_the_projects_env_declaration(account_group_root, store, monkeypatch):
     """受け入れ条件 2: projects/web/env の宣言 (重ね順 3 が働く場合) でも同じ"""
-    (account_group_root / 'projects' / 'web' / 'env').write_text(f'{ACCOUNT_GROUP}=with\n')
-    monkeypatch.setenv(ACCOUNT_GROUP, 'with')
-    store.age.save(GLOBAL, {ACCOUNT_GROUP: 'kkg'})
+    (account_group_root / 'projects' / 'web' / 'env').write_text(f'{ACCOUNT_GROUP}=initech\n')
+    monkeypatch.setenv(ACCOUNT_GROUP, 'initech')
+    store.age.save(GLOBAL, {ACCOUNT_GROUP: 'globex'})
 
     resolved = runtime.inject(account_group_root, 'web', store=store)
 
-    assert os.environ[ACCOUNT_GROUP] == 'with'
+    assert os.environ[ACCOUNT_GROUP] == 'initech'
     assert ACCOUNT_GROUP not in resolved.values
 
 
 @pytest.mark.parametrize('layer', ['team_global', 'user_global', 'team_web', 'user_web'])
 def test_every_store_layer_is_dropped_from_the_environment(account_group_root, layer):
     """受け入れ条件 3: 4 つの置き場のどれにあっても載らない"""
-    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'kkg', 'K': 'v'}}))
+    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'globex', 'K': 'v'}}))
 
     runtime.inject(account_group_root, 'web', store=store)
 
@@ -726,21 +726,21 @@ def test_every_store_layer_is_dropped_from_the_environment(account_group_root, l
 @pytest.mark.parametrize('layer', ['team_global', 'user_global', 'team_web', 'user_web'])
 def test_every_store_layer_loses_to_the_environment(account_group_root, layer, monkeypatch):
     """受け入れ条件 3: プロジェクトの置き場 (重ね順 4・5) にあっても env ファイルの値が残る"""
-    (account_group_root / 'projects' / 'web' / 'env').write_text(f'{ACCOUNT_GROUP}=with\n')
-    monkeypatch.setenv(ACCOUNT_GROUP, 'with')
-    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'kkg'}}))
+    (account_group_root / 'projects' / 'web' / 'env').write_text(f'{ACCOUNT_GROUP}=initech\n')
+    monkeypatch.setenv(ACCOUNT_GROUP, 'initech')
+    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'globex'}}))
 
     runtime.inject(account_group_root, 'web', store=store)
 
-    assert os.environ[ACCOUNT_GROUP] == 'with'
-    assert resolve_account_group() == 'with'
+    assert os.environ[ACCOUNT_GROUP] == 'initech'
+    assert resolve_account_group() == 'initech'
 
 
 def test_resolve_never_lists_the_account_group(account_group_root):
     """受け入れ条件 5: names / global_names / project_names / values のどれにも無い"""
     store = _FourLayerStore(_layers(
-        team_global={ACCOUNT_GROUP: 'kkg', 'A': '1'}, user_global={ACCOUNT_GROUP: 'kkg'},
-        team_web={ACCOUNT_GROUP: 'kkg', 'C': '3'}, user_web={ACCOUNT_GROUP: 'kkg'}))
+        team_global={ACCOUNT_GROUP: 'globex', 'A': '1'}, user_global={ACCOUNT_GROUP: 'globex'},
+        team_web={ACCOUNT_GROUP: 'globex', 'C': '3'}, user_web={ACCOUNT_GROUP: 'globex'}))
 
     resolved = runtime.resolve(account_group_root, 'web', store=store)
 
@@ -751,7 +751,7 @@ def test_resolve_never_lists_the_account_group(account_group_root):
 
 
 def test_child_env_does_not_carry_the_stores_account_group(account_group_root):
-    store = _FourLayerStore(_layers(team_global={ACCOUNT_GROUP: 'kkg', 'A': '1'}))
+    store = _FourLayerStore(_layers(team_global={ACCOUNT_GROUP: 'globex', 'A': '1'}))
 
     env = runtime.child_env(account_group_root, 'web', base={'PATH': '/bin'}, store=store)
 
@@ -779,7 +779,7 @@ DELETE = f'devbase env delete {ACCOUNT_GROUP}'
 def test_warns_once_with_the_store_and_how_to_delete(account_group_root, caplog,
                                                      layer, label, how):
     """受け入れ条件 4: キー名・置き場の種類・消し方を含み、値は含まない"""
-    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'kkg'}}))
+    store = _FourLayerStore(_layers(**{layer: {ACCOUNT_GROUP: 'globex'}}))
 
     with caplog.at_level(logging.WARNING):
         runtime.resolve(account_group_root, 'web', store=store)
@@ -790,39 +790,39 @@ def test_warns_once_with_the_store_and_how_to_delete(account_group_root, caplog,
     assert f'機密の置き場（{label}）' in message
     assert 'projects/<name>/env' in message and '$DEVBASE_ROOT/env' not in message
     assert message.endswith(how)
-    assert 'kkg' not in message
+    assert 'globex' not in message
 
 
 def test_warning_for_a_grouped_reference_names_the_group(account_group_root, caplog):
     """グループを持つ参照は label にグループが付き、--group を添える"""
-    store = _GroupedStore(_layers(user_web={ACCOUNT_GROUP: 'kkg'}), 'with')
+    store = _GroupedStore(_layers(user_web={ACCOUNT_GROUP: 'globex'}), 'initech')
 
     with caplog.at_level(logging.WARNING):
         runtime.resolve(account_group_root, 'web', store=store)
 
     messages = _warnings(caplog)
     assert len(messages) == 1
-    assert "機密の置き場（個人のプロジェクト 'web'（グループ with））" in messages[0]
-    assert messages[0].endswith(f'{DELETE} -p --user --group with（projects/web で実行）')
+    assert "機密の置き場（個人のプロジェクト 'web'（グループ initech））" in messages[0]
+    assert messages[0].endswith(f'{DELETE} -p --user --group initech（projects/web で実行）')
 
 
 def test_warning_for_a_grouped_global_reference_still_adds_the_group(account_group_root,
                                                                      caplog):
     """決定 5: 共通の参照でも --group を付け、どこで打っても同じ置き場を指す"""
-    store = _GroupedStore(_layers(team_global={ACCOUNT_GROUP: 'kkg'}), 'with')
+    store = _GroupedStore(_layers(team_global={ACCOUNT_GROUP: 'globex'}), 'initech')
 
     with caplog.at_level(logging.WARNING):
         runtime.resolve(account_group_root, None, store=store)
 
     messages = _warnings(caplog)
     assert len(messages) == 1
-    assert '機密の置き場（グローバル（グループ with））' in messages[0]
-    assert messages[0].endswith(f'{DELETE} --group with')
+    assert '機密の置き場（グローバル（グループ initech））' in messages[0]
+    assert messages[0].endswith(f'{DELETE} --group initech')
 
 
 def test_warning_is_not_repeated_across_stores_and_release(account_group_root, caplog):
     """受け入れ条件 4: 同じ参照は release_store と別の store をまたいでも 1 回"""
-    layers = _layers(team_global={ACCOUNT_GROUP: 'kkg'})
+    layers = _layers(team_global={ACCOUNT_GROUP: 'globex'})
 
     with caplog.at_level(logging.WARNING):
         runtime.resolve(account_group_root, 'web', store=_FourLayerStore(layers))
@@ -834,8 +834,8 @@ def test_warning_is_not_repeated_across_stores_and_release(account_group_root, c
 
 
 def test_each_reference_warns_separately(account_group_root, caplog):
-    store = _FourLayerStore(_layers(team_global={ACCOUNT_GROUP: 'kkg'},
-                                    user_web={ACCOUNT_GROUP: 'kkg'}))
+    store = _FourLayerStore(_layers(team_global={ACCOUNT_GROUP: 'globex'},
+                                    user_web={ACCOUNT_GROUP: 'globex'}))
 
     with caplog.at_level(logging.WARNING):
         runtime.resolve(account_group_root, 'web', store=store)
@@ -871,7 +871,7 @@ def test_grouped_resolve_without_a_group_reads_nothing(openbao_root, openbao, pr
     root = openbao_root
     configure_openbao(root, openbao, layout='group')
     (root / 'projects' / 'api').mkdir()
-    openbao.put('team/nyle/global', {'A': 'nyle'})
+    openbao.put('team/acme/global', {'A': 'acme'})
 
     resolved = runtime.resolve(root, project, store=SecretStore(root))
 

@@ -79,9 +79,9 @@ files:
   - path: env/global.env
     sha256: <64 文字 hex>
     origin: $DEVBASE_ROOT/.env
-  - path: env/projects/carmo/.env
+  - path: env/projects/myapp/.env
     sha256: <64 文字 hex>
-    origin: $DEVBASE_ROOT/projects/carmo/.env
+    origin: $DEVBASE_ROOT/projects/myapp/.env
 ```
 
 import 時は以下を検証します:
@@ -237,7 +237,7 @@ devbase env export ./team.dbenv \
   --recipient @charlie.pub
 
 # 特定プロジェクトのみ
-devbase env export ./carmo.dbenv --include-project carmo
+devbase env export ./myapp.dbenv --include-project myapp
 
 # S3 に直接保存 (KMS 暗号化)
 DEVBASE_S3_SSE_KMS_KEY_ID=alias/devbase \
@@ -301,7 +301,7 @@ devbase env import ./bundle.dbenv --merge prefer-incoming
 devbase env import ./bundle.dbenv --replace-keys AWS_CONFIG_BASE64,AWS_SESSION_TOKEN
 
 # 特定プロジェクトだけ復元
-devbase env import ./bundle.dbenv --include-project carmo
+devbase env import ./bundle.dbenv --include-project myapp
 
 # S3 から取得 + passphrase で復号
 devbase env import s3://my-bucket/envs/2026-05-23.dbenv \

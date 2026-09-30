@@ -70,7 +70,7 @@ devbase project profile list              # プロファイルと稼働状況を
 devbase project profile up test           # test のサービスを起動する
 devbase project profile down test         # test のサービスを停止して削除する（ボリュームは残る）
 
-devbase project profile up carmo test     # 任意のディレクトリから carmo の test を起動する
+devbase project profile up myapp test     # 任意のディレクトリから myapp の test を起動する
 ```
 
 `devbase list` で起動中のプロジェクトを選ぶと、操作のメニューに「テスト用サーバ起動 (profile up)」「テスト用サーバ停止 (profile down)」が出ます（プロファイルを持つプロジェクトだけ）。

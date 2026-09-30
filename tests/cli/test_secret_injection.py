@@ -203,11 +203,11 @@ def test_main_passes_the_parsed_name_via_top_level_shortcut(monkeypatch):
                         lambda cmd, subcommand=None, name=None: seen.update(
                             cmd=cmd, subcommand=subcommand, name=name))
     monkeypatch.setattr(cli, '_dispatch', lambda cmd, args: 0)
-    monkeypatch.setattr('sys.argv', ['devbase', 'up', 'carmo'])
+    monkeypatch.setattr('sys.argv', ['devbase', 'up', 'myapp'])
 
     assert cli.main() == 0
     assert seen['cmd'] == 'up'
-    assert seen['name'] == 'carmo'
+    assert seen['name'] == 'myapp'
 
 
 def test_main_preserves_command_result_after_secret_devbase_error(monkeypatch, tmp_path):

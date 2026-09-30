@@ -4,7 +4,7 @@ devbase のコンテナで Google Cloud（gcloud）と Google Workspace（gws）
 **アカウントグループごとに人が 1 回だけ対話的に認証する**ことを前提にした仕組みなので、
 新しいグループを足すときはこのページを最初から順に実行してください。
 
-このページのコマンドと出力は、すべて実機（`carmo-ai` コンテナ、gcloud 582.0.0 / gws 0.22.5）で
+このページのコマンドと出力は、すべて実機（`myapp-ai` コンテナ、gcloud 582.0.0 / gws 0.22.5）で
 実行した結果を貼っています。
 
 ## 1. 前提
@@ -20,7 +20,7 @@ devbase のコンテナで Google Cloud（gcloud）と Google Workspace（gws）
 | `/persistent/ai` | `devbase_home_ubuntu` | 全コンテナ | `~/.claude/plugins` などテナントに紐づかない共通資産 |
 | `/persistent/group` | `devbase_home_<group>` | 同じグループ | gcloud / gws の設定、Claude Code の認証と会話ログ、`.gemini` |
 
-nyle.co.jp で認証した gcloud を kk-generation.com のプロジェクトが引き継がないための仕切りです。
+acme.example で認証した gcloud を globex.example のプロジェクトが引き継がないための仕切りです。
 ボリューム構造の全体は [コンテナ操作ガイド](container-operations.md) を参照してください。
 
 ### `~/.config/gcloud` は gcloud の設定ディレクトリ**ではありません**
@@ -47,7 +47,7 @@ BigQuery クライアントなどのライブラリも同じ場所を見ます�
 
 ```bash
 # projects/<name>/env
-DEVBASE_ACCOUNT_GROUP=kkg
+DEVBASE_ACCOUNT_GROUP=globex
 GCP_AUTH_MODE=adc          # サービスアカウント鍵を使わない場合（推奨）
 ```
 
@@ -73,7 +73,7 @@ Error: Deploy failed: DEVBASE_ACCOUNT_GROUP が不正です: 'bad name'。Docker
 
 ```console
 $ echo $DEVBASE_ACCOUNT_GROUP
-kkg
+globex
 $ echo $CLOUDSDK_CONFIG
 /persistent/group/gcloud
 ```
@@ -165,7 +165,7 @@ $ ls -l $CLOUDSDK_CONFIG/application_default_credentials.json
 ```console
 $ PYTHONPATH=/opt/google-cloud-sdk/lib/third_party python3 -c \
     "import google.auth; c, p = google.auth.default(); print(p, type(c).__name__)"
-nyle-carmo-analysis Credentials
+acme-myapp-analysis Credentials
 ```
 
 > **Note:** ここに出る `Credentials` は**クラスの短い名前**で、それだけではユーザー認証と
@@ -237,7 +237,7 @@ ACTIVE  ACCOUNT
 
 $ PYTHONPATH=/opt/google-cloud-sdk/lib/third_party python3 -c \
     "import google.auth; c, p = google.auth.default(); print(p, type(c).__name__)"
-nyle-carmo-analysis Credentials
+acme-myapp-analysis Credentials
 ```
 
 ### 3.4 グループごとに別のアカウントになっていることの確認
@@ -246,21 +246,21 @@ nyle-carmo-analysis Credentials
 認証情報が入っていることが分かります。
 
 ```console
-$ docker run --rm -v devbase_home_nyle:/g alpine ls /g/gcloud/legacy_credentials
+$ docker run --rm -v devbase_home_acme:/g alpine ls /g/gcloud/legacy_credentials
 alice@acme.example
 
-$ docker run --rm -v devbase_home_kkg:/g alpine ls /g/gcloud/legacy_credentials
+$ docker run --rm -v devbase_home_globex:/g alpine ls /g/gcloud/legacy_credentials
 alice@globex.example
 ```
 
 コンテナ内から見ると、自分のグループのアカウントしか見えません。
 
 ```console
-# nyle グループのコンテナ
+# acme グループのコンテナ
 $ gcloud config get account
 alice@acme.example
 
-# kkg グループのコンテナ
+# globex グループのコンテナ
 $ gcloud config get account
 alice@globex.example
 ```
@@ -346,7 +346,7 @@ Listed 0 items.
 ```
   ✓ Step 1/5: gcloud CLI — found
   ✓ Step 2/5: Authentication — alice@acme.example
-  ✓ Step 3/5: GCP project — nyle-carmo-analysis
+  ✓ Step 3/5: GCP project — acme-myapp-analysis
   ✓ Step 4/5: Workspace APIs — 0 enabled, 22 skipped
   ▸ Step 5/5: OAuth credentials — Waiting for manual input...
 
@@ -387,7 +387,7 @@ $ gws auth status
   "credential_source": "client_secret.json",
   "enabled_api_count": 110,
   ...
-  "project_id": "nyle-carmo-analysis",
+  "project_id": "acme-myapp-analysis",
   "storage": "none"
 }
 ```
@@ -597,7 +597,7 @@ $ echo ${BIGQUERY_KEY_FILE-<unset>}
 $ devbase status
 ...
 [環境]
-  アカウントグループ          kkg (devbase_home_kkg / env)
+  アカウントグループ          globex (devbase_home_globex / env)
 ```
 
 末尾は値が `env` 由来か、未設定によるフォールバック（`既定`）かを示します。
@@ -606,7 +606,7 @@ $ devbase status
 
 ```console
 $ echo $DEVBASE_ACCOUNT_GROUP
-kkg
+globex
 $ echo $CLOUDSDK_CONFIG
 /persistent/group/gcloud
 $ readlink -f ~/.claude
@@ -621,7 +621,7 @@ $ readlink -f ~/.claude/plugins
 
 ```console
 $ devbase project logs <name> | grep "Account group"
-Account group: kkg (gcloud account: alice@globex.example, CLOUDSDK_CONFIG: /persistent/group/gcloud)
+Account group: globex (gcloud account: alice@globex.example, CLOUDSDK_CONFIG: /persistent/group/gcloud)
 ```
 
 ### 認証の疎通
@@ -638,7 +638,7 @@ gws auth status                     # gws の認証状態
 ```console
 $ PYTHONPATH=/opt/google-cloud-sdk/lib/third_party python3 -c \
     "import google.auth; c, p = google.auth.default(); print(p, type(c).__name__)"
-nyle-carmo-analysis Credentials
+acme-myapp-analysis Credentials
 ```
 
 ## 7. トラブルシュート

@@ -65,9 +65,9 @@ def test_resolve_template_custom():
 # ---------------------------------------------------------------------------
 
 def test_render_substitutes_container_only():
-    out = window_title.render(window_title.DEFAULT_TEMPLATE, "nyle-dx-dev-1")
+    out = window_title.render(window_title.DEFAULT_TEMPLATE, "myapp-dev-1")
     # コンテナ名は埋まり、VS Code のタイトル変数はそのまま残る。
-    assert out.startswith("nyle-dx-dev-1")
+    assert out.startswith("myapp-dev-1")
     assert "${activeEditorShort}" in out
     assert "{container}" not in out
 
@@ -77,20 +77,20 @@ def test_render_substitutes_container_only():
 # ---------------------------------------------------------------------------
 
 def test_merge_settings_into_empty_file():
-    merged = window_title.merge_settings("", "nyle-dx-dev-1")
-    assert json.loads(merged) == {"window.title": "nyle-dx-dev-1"}
+    merged = window_title.merge_settings("", "myapp-dev-1")
+    assert json.loads(merged) == {"window.title": "myapp-dev-1"}
 
 
 def test_merge_settings_preserves_existing_keys():
     current = json.dumps({"editor.fontSize": 14})
-    merged = window_title.merge_settings(current, "nyle-dx-dev-1")
+    merged = window_title.merge_settings(current, "myapp-dev-1")
     assert json.loads(merged) == {"editor.fontSize": 14,
-                                  "window.title": "nyle-dx-dev-1"}
+                                  "window.title": "myapp-dev-1"}
 
 
 def test_merge_settings_noop_when_already_set():
-    current = json.dumps({"window.title": "nyle-dx-dev-1"})
-    assert window_title.merge_settings(current, "nyle-dx-dev-1") is None
+    current = json.dumps({"window.title": "myapp-dev-1"})
+    assert window_title.merge_settings(current, "myapp-dev-1") is None
 
 
 def test_merge_settings_skips_unparsable_file():
@@ -117,32 +117,32 @@ def test_merge_settings_replaces_title_in_jsonc_keeping_comments():
         '\t"editor.fontSize": 14, // 末尾カンマ\n'
         "}\n"
     )
-    merged = window_title.merge_settings(current, "nyle-dx-dev-1")
+    merged = window_title.merge_settings(current, "myapp-dev-1")
     assert "// 自分で書いたメモ" in merged
     assert "// 末尾カンマ" in merged
     assert json.loads(window_title.strip_jsonc(merged)) == {
-        "window.title": "nyle-dx-dev-1", "editor.fontSize": 14}
+        "window.title": "myapp-dev-1", "editor.fontSize": 14}
 
 
 def test_merge_settings_inserts_title_into_jsonc_without_key():
     current = "{\n\t/* 既存 */\n\t\"editor.fontSize\": 14,\n}\n"
-    merged = window_title.merge_settings(current, "nyle-dx-dev-1")
+    merged = window_title.merge_settings(current, "myapp-dev-1")
     assert "/* 既存 */" in merged
     assert json.loads(window_title.strip_jsonc(merged)) == {
-        "window.title": "nyle-dx-dev-1", "editor.fontSize": 14}
+        "window.title": "myapp-dev-1", "editor.fontSize": 14}
 
 
 def test_merge_settings_inserts_title_into_comment_only_jsonc():
-    merged = window_title.merge_settings("{ // メモだけ\n}", "nyle-dx-dev-1")
+    merged = window_title.merge_settings("{ // メモだけ\n}", "myapp-dev-1")
     assert "// メモだけ" in merged
     assert json.loads(window_title.strip_jsonc(merged)) == {
-        "window.title": "nyle-dx-dev-1"}
+        "window.title": "myapp-dev-1"}
 
 
 def test_merge_settings_noop_when_already_set_in_jsonc():
     """コメント付きでも同値なら書かない (mtime を無駄に変えない)。"""
-    current = '{\n\t// メモ\n\t"window.title": "nyle-dx-dev-1",\n}\n'
-    assert window_title.merge_settings(current, "nyle-dx-dev-1") is None
+    current = '{\n\t// メモ\n\t"window.title": "myapp-dev-1",\n}\n'
+    assert window_title.merge_settings(current, "myapp-dev-1") is None
 
 
 def test_strip_jsonc_keeps_offsets_and_ignores_string_contents():
@@ -158,24 +158,24 @@ def test_strip_jsonc_keeps_offsets_and_ignores_string_contents():
 
 def test_apply_writes_merged_settings():
     runner = _Runner(existing=json.dumps({"editor.fontSize": 14}))
-    ok = window_title.apply_to_container("nyle-dx-dev-1", environ={}, runner=runner)
+    ok = window_title.apply_to_container("myapp-dev-1", environ={}, runner=runner)
     assert ok is True
     written = json.loads(runner.written)
     assert written["editor.fontSize"] == 14
-    assert written["window.title"].startswith("nyle-dx-dev-1")
+    assert written["window.title"].startswith("myapp-dev-1")
     # read → write の 2 回、いずれも対象コンテナへの docker exec。
     assert len(runner.calls) == 2
     for args, _ in runner.calls:
         assert args[:2] == ["docker", "exec"]
-        assert "nyle-dx-dev-1" in args
+        assert "myapp-dev-1" in args
 
 
 def test_apply_creates_settings_when_file_missing():
     """VS Code が一度も繋がっていないコンテナ (settings.json 不在) でも書ける。"""
     runner = _Runner(existing="")
-    ok = window_title.apply_to_container("nyle-dx-dev-1", environ={}, runner=runner)
+    ok = window_title.apply_to_container("myapp-dev-1", environ={}, runner=runner)
     assert ok is True
-    assert json.loads(runner.written)["window.title"].startswith("nyle-dx-dev-1")
+    assert json.loads(runner.written)["window.title"].startswith("myapp-dev-1")
     # 読み取りは「不在」だけを成功 (空) 扱いにする。全失敗を握り潰さない。
     read_command = runner.calls[0][0][-1]
     assert '[ -e "$HOME/.vscode-server/data/Machine/settings.json" ] || exit 0' in read_command
@@ -187,15 +187,15 @@ def test_apply_creates_settings_when_file_missing():
 def test_apply_skips_when_disabled():
     runner = _Runner()
     ok = window_title.apply_to_container(
-        "nyle-dx-dev-1", environ={"DEVBASE_WINDOW_TITLE": "0"}, runner=runner)
+        "myapp-dev-1", environ={"DEVBASE_WINDOW_TITLE": "0"}, runner=runner)
     assert ok is False
     assert runner.calls == []
 
 
 def test_apply_skips_write_when_unchanged():
-    title = window_title.render(window_title.DEFAULT_TEMPLATE, "nyle-dx-dev-1")
+    title = window_title.render(window_title.DEFAULT_TEMPLATE, "myapp-dev-1")
     runner = _Runner(existing=json.dumps({"window.title": title}))
-    ok = window_title.apply_to_container("nyle-dx-dev-1", environ={}, runner=runner)
+    ok = window_title.apply_to_container("myapp-dev-1", environ={}, runner=runner)
     assert ok is False
     assert runner.written is None
     assert len(runner.calls) == 1  # read のみ
@@ -203,14 +203,14 @@ def test_apply_skips_write_when_unchanged():
 
 def test_apply_returns_false_when_exec_fails():
     runner = _Runner(read_rc=1)
-    ok = window_title.apply_to_container("nyle-dx-dev-1", environ={}, runner=runner)
+    ok = window_title.apply_to_container("myapp-dev-1", environ={}, runner=runner)
     assert ok is False
     assert runner.written is None
 
 
 def test_apply_returns_false_when_write_fails():
     runner = _Runner(write_rc=1)
-    ok = window_title.apply_to_container("nyle-dx-dev-1", environ={}, runner=runner)
+    ok = window_title.apply_to_container("myapp-dev-1", environ={}, runner=runner)
     assert ok is False
 
 
@@ -219,7 +219,7 @@ def test_apply_survives_runner_exception():
         raise OSError("docker not found")
 
     assert window_title.apply_to_container(
-        "nyle-dx-dev-1", environ={}, runner=boom) is False
+        "myapp-dev-1", environ={}, runner=boom) is False
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ def _run_write_command(home, payload):
 
 def test_apply_write_command_replaces_atomically():
     runner = _Runner(existing=json.dumps({"editor.fontSize": 14}))
-    window_title.apply_to_container("nyle-dx-dev-1", environ={}, runner=runner)
+    window_title.apply_to_container("myapp-dev-1", environ={}, runner=runner)
     command = runner.calls[1][0][-1]
     # 直接 truncate せず、同一ディレクトリの一時ファイルへ書いてから mv する。
     assert 'cat > "$HOME/.vscode-server/data/Machine/.settings.json.devbase.$$"' in command
@@ -322,7 +322,7 @@ def test_apply_skips_write_when_existing_settings_unreadable():
     """読み取りが非 0 なら書き込みへ進まない (既存設定を空で上書きしない)。"""
     runner = _Runner(existing="", read_rc=1)
     assert window_title.apply_to_container(
-        "nyle-dx-dev-1", environ={}, runner=runner) is False
+        "myapp-dev-1", environ={}, runner=runner) is False
     assert runner.written is None
 
 

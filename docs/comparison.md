@@ -195,11 +195,11 @@ devbase は「**ホスト ↔ dev コンテナ**」型、こちらは「**dev �
 
 ```mermaid
 flowchart LR
-  E[extension<br/>GitHub repo] --> P1[plugin: carmo-system]
-  E --> P2[plugin: carmo-ai]
-  P1 --> Pr1[project: carmo-cdk]
-  P1 --> Pr2[project: carmo-batch]
-  P2 --> Pr3[project: carmo-screening]
+  E[extension<br/>GitHub repo] --> P1[plugin: myapp-system]
+  E --> P2[plugin: myapp-ai]
+  P1 --> Pr1[project: myapp-cdk]
+  P1 --> Pr2[project: myapp-batch]
+  P2 --> Pr3[project: myapp-screening]
 ```
 
 public な devbase 本体に、private な extension を**重ねるだけ**で組織秘の構成を共有できる。DevPod / Codespaces / Dev Containers にはこの**配布抽象化レイヤ**が無い。

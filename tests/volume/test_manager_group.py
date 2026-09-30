@@ -65,33 +65,33 @@ def test_validate_rejects_empty():
 
 def test_explicit_none_reads_environment(monkeypatch):
     """引数省略時は環境変数を読む (前提 3: 3 レベルの解決結果が入っている)。"""
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
-    assert manager.resolve_account_group() == "kkg"
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "globex")
+    assert manager.resolve_account_group() == "globex"
 
 
 def test_argument_wins_over_environment(monkeypatch):
     """引数が環境変数より優先される。"""
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
-    assert manager.resolve_account_group("with") == "with"
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "globex")
+    assert manager.resolve_account_group("initech") == "initech"
 
 
 def test_surrounding_whitespace_is_stripped(monkeypatch):
     """env ファイル由来の前後空白は落とす。"""
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "  kkg  ")
-    assert manager.resolve_account_group() == "kkg"
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "  globex  ")
+    assert manager.resolve_account_group() == "globex"
 
 
 # ---------------------------------------------------------------------------
 # 正常系
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("group", ["nyle", "personal", "kkg", "with", "a", "a-b_c.d", "g1", "1g"])
+@pytest.mark.parametrize("group", ["acme", "personal", "globex", "initech", "a", "a-b_c.d", "g1", "1g"])
 def test_valid_group_names_are_accepted(group):
     assert manager.resolve_account_group(group) == group
 
 
 def test_group_volume_name():
-    assert manager.get_group_volume("kkg") == "devbase_home_kkg"
+    assert manager.get_group_volume("globex") == "devbase_home_globex"
 
 
 def test_group_volume_reads_environment(monkeypatch):
@@ -114,8 +114,8 @@ def test_group_volume_validates_its_argument():
     ".leading-dot",
     "_leading-underscore",
     "with space",
-    "with/slash",
-    "with:colon",
+    "initech/slash",
+    "initech:colon",
     "日本語",
     "bad!name",          # 記号を含む
 ])

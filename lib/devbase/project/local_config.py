@@ -1,6 +1,6 @@
 """``projects/<name>/project.local.yml`` (個人・機材ごとの設定) の読み込み (PLAN52)。
 
-``project.yml`` はチームで共有される正であり、devbase-samples / devbase-ext の
+``project.yml`` はチームで共有される正であり、devbase-samples / devbase-plugins の
 リポジトリに載る。「このプロジェクトのコンテナは別ホストの Docker に立てる」は
 個人の事情で、リモート側の HOME や docker グループの gid に至っては機材そのものに
 依存する。共有ファイルに混ぜると同じ ``project.yml`` を使う他の人の ``up`` が壊れる

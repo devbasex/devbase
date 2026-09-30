@@ -160,10 +160,10 @@ devbase のコンテナは 4 種類のボリュームを使用します。
 
 ```bash
 # projects/<name>/env
-DEVBASE_ACCOUNT_GROUP=kkg
+DEVBASE_ACCOUNT_GROUP=globex
 ```
 
-これは「nyle.co.jp で認証した gcloud を kk-generation.com のプロジェクトが引き継がない」
+これは「acme.example で認証した gcloud を globex.example のプロジェクトが引き継がない」
 ようにするための仕切りです。同じグループのコンテナは認証を共有し、違うグループのコンテナは
 互いの認証に到達できません。一方で `~/.claude/plugins`（238MB）のような共通資産は
 `/persistent/ai` に置かれるため、グループを増やしても重複しません。
@@ -174,7 +174,7 @@ DEVBASE_ACCOUNT_GROUP=kkg
 ```
 [環境]
   devbase/.env            42変数 (最終更新: 2026-08-29)
-  アカウントグループ          kkg (devbase_home_kkg / projects/web/env:1)
+  アカウントグループ          globex (devbase_home_globex / projects/web/env:1)
 ```
 
 末尾は宣言のファイルと行です。プロジェクトの外では「なし（プロジェクトの外）」、宣言の
@@ -312,7 +312,7 @@ entrypoint の変更はイメージを作り直すまで効かないため、dev
 起動ログの 1 行で、どのグループとしてどのアカウントで動いているかを確認できます。
 
 ```
-Account group: kkg (gcloud account: someone@globex.example, CLOUDSDK_CONFIG: /persistent/group/gcloud)
+Account group: globex (gcloud account: someone@globex.example, CLOUDSDK_CONFIG: /persistent/group/gcloud)
 ```
 - `share` 配下に置いた VS Code ワークスペースファイルは `DEVBASE_WORKSPACE` で開けます（リポジトリ 1 件の構成のみ。[環境変数](environment-variables.md) 参照）。
 

@@ -18,9 +18,9 @@ def test_dispatch_lifecycle_builds_namespace_and_calls_cmd_project(monkeypatch):
                             subcommand=args.subcommand, name=args.name,
                             scale=getattr(args, "scale", "MISSING")) or 0)
 
-    rc = dispatch.dispatch_lifecycle("up", "carmo", scale=None)
+    rc = dispatch.dispatch_lifecycle("up", "myapp", scale=None)
     assert rc == 0
-    assert captured == {"subcommand": "up", "name": "carmo", "scale": None}
+    assert captured == {"subcommand": "up", "name": "myapp", "scale": None}
 
 
 def test_dispatch_lifecycle_name_optional(monkeypatch):
@@ -44,12 +44,12 @@ def test_dispatch_lifecycle_restores_cwd_and_env(monkeypatch, tmp_path):
     """
     from devbase.commands import container as container_mod
 
-    other = tmp_path / "projects" / "carmo"
+    other = tmp_path / "projects" / "myapp"
     other.mkdir(parents=True)
 
     def mutating_handler(args):
         os.chdir(other)                                  # chdir 残留を模擬
-        os.environ["COMPOSE_PROJECT_NAME"] = "carmo"     # 上書き残留を模擬
+        os.environ["COMPOSE_PROJECT_NAME"] = "myapp"     # 上書き残留を模擬
         os.environ["DEV_SERVICE_NAME"] = "leaked"        # 新規キー残留を模擬
         os.environ.pop("DEVBASE_TEST_KEEP", None)        # 既存キー削除を模擬
         return 0
@@ -60,7 +60,7 @@ def test_dispatch_lifecycle_restores_cwd_and_env(monkeypatch, tmp_path):
     monkeypatch.delenv("DEV_SERVICE_NAME", raising=False)
     monkeypatch.setenv("COMPOSE_PROJECT_NAME", "before")
 
-    rc = dispatch.dispatch_lifecycle("up", "carmo", scale=None)
+    rc = dispatch.dispatch_lifecycle("up", "myapp", scale=None)
 
     assert rc == 0
     assert Path.cwd() == tmp_path                        # CWD 復元
@@ -85,7 +85,7 @@ def test_dispatch_lifecycle_restores_state_on_exception(monkeypatch, tmp_path):
     monkeypatch.delenv("DEV_SERVICE_NAME", raising=False)
 
     with pytest.raises(RuntimeError):
-        dispatch.dispatch_lifecycle("up", "carmo", scale=None)
+        dispatch.dispatch_lifecycle("up", "myapp", scale=None)
 
     assert Path.cwd() == old_cwd
     assert "DEV_SERVICE_NAME" not in os.environ
@@ -161,8 +161,8 @@ def test_lifecycle_after_env_edit_reads_written_values(openbao_root, openbao, mo
     root = openbao_root
     web = root / 'projects' / 'web'
     (web / 'project.yml').write_text(
-        "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
-    (web / 'env').write_text("DEVBASE_ACCOUNT_GROUP=nyle\n")
+        "version: 1\nscale: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n")
+    (web / 'env').write_text("DEVBASE_ACCOUNT_GROUP=acme\n")
     openbao.put('team/global', {'REVIEW_KEY': 'old'})
     openbao.put('team/projects/web', {'WEB_ONLY': 'w'})
     monkeypatch.setenv('DEVBASE_ROOT', str(root))

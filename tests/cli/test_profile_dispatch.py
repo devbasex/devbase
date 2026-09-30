@@ -46,14 +46,14 @@ def test_project_profile_takes_profile_only(op):
 
 @pytest.mark.parametrize('op', ['up', 'down'])
 def test_project_profile_takes_name_then_profile(op):
-    args = parse('project', 'profile', op, 'carmo', 'test')
-    assert args.name == 'carmo'
+    args = parse('project', 'profile', op, 'myapp', 'test')
+    assert args.name == 'myapp'
     assert args.profile == 'test'
 
 
 def test_project_profile_list_takes_optional_name():
     assert parse('project', 'profile', 'list').name is None
-    assert parse('project', 'profile', 'list', 'carmo').name == 'carmo'
+    assert parse('project', 'profile', 'list', 'myapp').name == 'myapp'
 
 
 @pytest.mark.parametrize('group', ['container', 'ct'])
@@ -62,7 +62,7 @@ def test_container_profile_rejects_project_name(group, capsys):
     assert args.profile == 'test'
     assert not hasattr(args, 'name')
     with pytest.raises(SystemExit):
-        parse(group, 'profile', 'up', 'carmo', 'test')
+        parse(group, 'profile', 'up', 'myapp', 'test')
 
 
 def test_project_profile_list_is_not_project_list(monkeypatch, recorded):
@@ -78,11 +78,11 @@ def test_project_profile_list_is_not_project_list(monkeypatch, recorded):
 
 
 def test_named_profile_up_resolves_project_first(recorded):
-    args = parse('project', 'profile', 'up', 'carmo', 'test', '--context', 'remote')
+    args = parse('project', 'profile', 'up', 'myapp', 'test', '--context', 'remote')
 
     assert cli._dispatch('project', args) == 0
 
-    assert recorded == [('resolve', 'carmo'), ('up', 'test', {'context': 'remote'})]
+    assert recorded == [('resolve', 'myapp'), ('up', 'test', {'context': 'remote'})]
 
 
 def test_profile_without_name_runs_in_current_project(recorded):

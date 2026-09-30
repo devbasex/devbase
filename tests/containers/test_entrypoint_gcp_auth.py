@@ -84,13 +84,13 @@ def test_explicit_key_mode_writes_the_key(home):
 
 def test_active_profile_selects_the_key(home):
     values = setup_credentials(home, {
-        "GCP_ACTIVE_PROFILE": "kkg",
-        "GCP_CREDENTIALS_BASE64__kkg": KEY_B64,
+        "GCP_ACTIVE_PROFILE": "globex",
+        "GCP_CREDENTIALS_BASE64__globex": KEY_B64,
         "GCP_CREDENTIALS_BASE64__default": base64.b64encode(b"wrong").decode(),
     })
 
     assert (home / ".config" / "gcloud" / "credentials.json").read_text() == KEY_JSON
-    assert "profile: kkg" in values["stdout"]
+    assert "profile: globex" in values["stdout"]
 
 
 def test_custom_paths_are_honoured(home, tmp_path):

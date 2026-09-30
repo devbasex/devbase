@@ -185,7 +185,7 @@ def test_run_operation_init_runs_without_confirm(monkeypatch, tmp_path):
 
 def test_run_in_project_restores_cwd_on_exception(monkeypatch, tmp_path):
     """ハンドラが例外を投げても CWD / PWD は復帰する (try/finally)。"""
-    target = tmp_path / "projects" / "carmo"
+    target = tmp_path / "projects" / "myapp"
     target.mkdir(parents=True)
     monkeypatch.setenv("PWD", "/original/pwd")
 
@@ -194,14 +194,14 @@ def test_run_in_project_restores_cwd_on_exception(monkeypatch, tmp_path):
 
     before = os.getcwd()
     with pytest.raises(RuntimeError):
-        actions_env._run_in_project(tmp_path, "carmo", _boom)
+        actions_env._run_in_project(tmp_path, "myapp", _boom)
     assert os.getcwd() == before
     assert os.environ["PWD"] == "/original/pwd"
 
 
 def test_run_in_project_restores_unset_pwd(monkeypatch, tmp_path):
     """元の環境に PWD が無い場合は復帰時に PWD を残さない。"""
-    target = tmp_path / "projects" / "carmo"
+    target = tmp_path / "projects" / "myapp"
     target.mkdir(parents=True)
     monkeypatch.delenv("PWD", raising=False)
 
@@ -211,7 +211,7 @@ def test_run_in_project_restores_unset_pwd(monkeypatch, tmp_path):
         seen["pwd"] = os.environ.get("PWD")
         return 0
 
-    assert actions_env._run_in_project(tmp_path, "carmo", _probe) == 0
+    assert actions_env._run_in_project(tmp_path, "myapp", _probe) == 0
     assert seen["pwd"] == str(target)
     assert "PWD" not in os.environ
 
@@ -258,7 +258,7 @@ def _grouped_root(root, openbao_url='https://x.example.com'):
     (root / 'secrets' / 'backend.yml').write_text(
         'version: 2\nbackend: openbao\nopenbao:\n'
         f'  url: {openbao_url}\n  user: me\n  layout: group\n')
-    for name, group in (('web', 'with'), ('api', 'nyle')):
+    for name, group in (('web', 'initech'), ('api', 'acme')):
         (root / 'projects' / name).mkdir(parents=True, exist_ok=True)
         (root / 'projects' / name / 'env').write_text(f'DEVBASE_ACCOUNT_GROUP={group}\n')
     (root / 'projects' / 'undeclared').mkdir(parents=True, exist_ok=True)
@@ -275,15 +275,15 @@ def test_grouped_sync_and_init_ask_for_the_group_first(monkeypatch, tmp_path, op
 
     def select(message, choices, **kwargs):
         seen.append([v for _, v in choices])
-        return 'nyle'
+        return 'acme'
 
     monkeypatch.setattr(menu, 'select', select)
 
     assert actions_env._run_operation(tmp_path, op) == 0
 
-    assert captured['attrs'] == {'subcommand': op, **extra, 'group': 'nyle'}
+    assert captured['attrs'] == {'subcommand': op, **extra, 'group': 'acme'}
     values = seen[0]
-    assert values[:2] == ['nyle', 'with']
+    assert values[:2] == ['acme', 'initech']
     assert 'default' not in values
 
 

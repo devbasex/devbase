@@ -136,7 +136,7 @@ def test_run_interactive_opens_top_menu(tmp_path, monkeypatch):
 # トップ画面: プロジェクト一覧 + カテゴリ項目
 # ---------------------------------------------------------------------------
 
-_ROWS = [{"name": "carmo", "plugin": "p", "status": "stopped"},
+_ROWS = [{"name": "myapp", "plugin": "p", "status": "stopped"},
          {"name": "beta", "plugin": "q", "status": "running (1 containers)"}]
 
 

@@ -17,7 +17,7 @@ def root(tmp_path, monkeypatch):
     (tmp_path / 'projects' / 'web').mkdir(parents=True)
     (tmp_path / 'projects' / 'api').mkdir(parents=True)
     # プロセスの環境変数は見ない。見ていれば下のテストの期待値が崩れるよう、別の値を置く
-    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'kkg')
+    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'globex')
     return tmp_path
 
 
@@ -31,10 +31,10 @@ def write_env(path, text: str):
 # ---------------------------------------------------------------------------
 
 def test_project_declaration_is_read_with_its_line(root):
-    write_env(root / 'projects' / 'web' / 'env', 'FOO=1\nDEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'web' / 'env', 'FOO=1\nDEVBASE_ACCOUNT_GROUP=initech\n')
 
     declared = groups.declare(root, 'web')
-    assert declared.name == 'with'
+    assert declared.name == 'initech'
     assert declared.source == root / 'projects' / 'web' / 'env'
     assert declared.line == 2
     assert groups.describe_source(root, declared) == 'projects/web/env:2'
@@ -68,8 +68,8 @@ def test_empty_declaration_stops_with_its_line(root):
 
 def test_root_env_declaration_is_refused_even_when_the_project_declares(root):
     """``$DEVBASE_ROOT/env`` の宣言は名前を変えた既定になるため止める (前提 2)"""
-    write_env(root / 'env', 'FOO=1\nDEVBASE_ACCOUNT_GROUP=nyle\n')
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'env', 'FOO=1\nDEVBASE_ACCOUNT_GROUP=acme\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
 
     with pytest.raises(groups.GroupDeclarationError) as exc:
         groups.declare(root, 'web')
@@ -79,7 +79,7 @@ def test_root_env_declaration_is_refused_even_when_the_project_declares(root):
 
 def test_empty_root_env_declaration_is_refused_too(root):
     write_env(root / 'env', 'DEVBASE_ACCOUNT_GROUP=\n')
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
 
     with pytest.raises(groups.GroupDeclarationError):
         groups.declare(root, 'web')
@@ -102,9 +102,9 @@ def test_default_declaration_is_refused_with_the_migration_hint(root):
 
 
 def test_process_environment_is_not_read(root):
-    """決定 3: ``DEVBASE_ACCOUNT_GROUP=kkg`` がプロセスにあっても、ファイルの宣言で決まる"""
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
-    assert groups.declare(root, 'web').name == 'with'
+    """決定 3: ``DEVBASE_ACCOUNT_GROUP=globex`` がプロセスにあっても、ファイルの宣言で決まる"""
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
+    assert groups.declare(root, 'web').name == 'initech'
     with pytest.raises(groups.GroupDeclarationError):
         groups.declare(root, 'api')
 
@@ -117,11 +117,11 @@ def test_does_not_take_a_store():
 def test_value_in_the_store_does_not_change_the_group(openbao_root, openbao, monkeypatch):
     """受け入れ条件 4: 置き場に書いた ``DEVBASE_ACCOUNT_GROUP`` は使わない"""
     root = openbao_root
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
-    openbao.put('team/with/global', {'DEVBASE_ACCOUNT_GROUP': 'nyle'})
-    openbao.put('team/global', {'DEVBASE_ACCOUNT_GROUP': 'nyle'})
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
+    openbao.put('team/initech/global', {'DEVBASE_ACCOUNT_GROUP': 'acme'})
+    openbao.put('team/global', {'DEVBASE_ACCOUNT_GROUP': 'acme'})
 
-    assert groups.declare(root, 'web').name == 'with'
+    assert groups.declare(root, 'web').name == 'initech'
 
 
 @pytest.mark.parametrize('name', ['ubuntu', 'default', '1', 'bad name', 'a/b'])
@@ -143,18 +143,18 @@ def test_invalid_names_are_rejected_with_the_volume_reason(root, name):
 # ---------------------------------------------------------------------------
 
 def test_declared_groups_lists_only_declarations(root):
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
     write_env(root / 'projects' / 'api' / 'env', 'FOO=1\n')
     (root / 'projects' / 'cli').mkdir()
-    write_env(root / 'projects' / 'cli' / 'env', 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+    write_env(root / 'projects' / 'cli' / 'env', 'DEVBASE_ACCOUNT_GROUP=acme\n')
     (root / 'projects' / 'dup').mkdir()
-    write_env(root / 'projects' / 'dup' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'dup' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
 
-    assert groups.declared_groups(root) == ['nyle', 'with']
+    assert groups.declared_groups(root) == ['acme', 'initech']
 
 
 def test_undeclared_projects_are_listed_in_order(root):
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
 
     assert groups.undeclared_projects(root, ['api', 'web']) == ['api']
     with pytest.raises(groups.GroupDeclarationError) as exc:
@@ -176,13 +176,13 @@ def test_reference_group_defaults_to_none_and_keeps_equality():
 
 
 def test_reference_group_is_part_of_the_equality_and_the_label():
-    with_ref = SecretRef.for_global(group='with')
-    nyle_ref = SecretRef.for_global(group='nyle')
+    initech_ref = SecretRef.for_global(group='initech')
+    acme_ref = SecretRef.for_global(group='acme')
 
-    assert with_ref != nyle_ref
-    assert with_ref.label() == 'グローバル（グループ with）'
-    assert SecretRef.for_project('web', owner='user', group='with').label() == \
-        "個人のプロジェクト 'web'（グループ with）"
+    assert initech_ref != acme_ref
+    assert initech_ref.label() == 'グローバル（グループ initech）'
+    assert SecretRef.for_project('web', owner='user', group='initech').label() == \
+        "個人のプロジェクト 'web'（グループ initech）"
     assert SecretRef.for_global().label() == 'グローバル'
 
 
@@ -198,7 +198,7 @@ def _write_config(root, text):
 
 
 def test_ref_group_is_none_for_file_backends(root):
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
     _write_config(root, 'version: 1\nbackend: age\n')
 
     assert SecretStore(root).ref_group('web') is None
@@ -206,7 +206,7 @@ def test_ref_group_is_none_for_file_backends(root):
 
 
 def test_ref_group_is_none_for_the_flat_layout(root):
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
     _write_config(root, 'version: 1\nbackend: openbao\nopenbao:\n'
                         '  url: https://x.example.com\n  user: me\n')
 
@@ -216,23 +216,23 @@ def test_ref_group_is_none_for_the_flat_layout(root):
 def test_storage_group_is_none_without_the_group_layout(root):
     """グループ名を渡しても、グループ別の置き場でない設定では ``None`` (決定 5)"""
     _write_config(root, 'version: 1\nbackend: age\n')
-    assert SecretStore(root).storage_group('with') is None
-    assert SecretStore(root, config=bc.BackendConfig()).storage_group('with') is None
+    assert SecretStore(root).storage_group('initech') is None
+    assert SecretStore(root, config=bc.BackendConfig()).storage_group('initech') is None
 
     _write_config(root, 'version: 1\nbackend: openbao\nopenbao:\n'
                         '  url: https://x.example.com\n  user: me\n')
-    assert SecretStore(root).storage_group('with') is None
+    assert SecretStore(root).storage_group('initech') is None
 
 
 def test_ref_group_reads_the_declaration_for_the_group_layout(root):
-    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'web' / 'env', 'DEVBASE_ACCOUNT_GROUP=initech\n')
     _write_config(root, 'version: 2\nbackend: openbao\nopenbao:\n'
                         '  url: https://x.example.com\n  user: me\n  layout: group\n'
-                        '  group_aliases:\n    with: nyle\n')
+                        '  group_aliases:\n    initech: acme\n')
 
     store = SecretStore(root)
     # 読み替えは参照ではなくパスの組み立てで行う (参照は宣言どおりの名前を持つ)
-    assert store.ref_group('web') == 'with'
+    assert store.ref_group('web') == 'initech'
     # 宣言が無い・プロジェクトの外ではグループが決まらない (既定の値は無い。#315)
     with pytest.raises(groups.GroupDeclarationError):
         store.ref_group('api')
@@ -242,17 +242,17 @@ def test_ref_group_reads_the_declaration_for_the_group_layout(root):
 
 def test_export_prefixed_declaration_is_read(root):
     """ラッパーの ``source`` と同じく ``export DEVBASE_ACCOUNT_GROUP=...`` も宣言として読む"""
-    write_env(root / 'projects' / 'web' / 'env', 'export DEVBASE_ACCOUNT_GROUP=with\n')
+    write_env(root / 'projects' / 'web' / 'env', 'export DEVBASE_ACCOUNT_GROUP=initech\n')
 
-    assert groups.declare(root, 'web').name == 'with'
+    assert groups.declare(root, 'web').name == 'initech'
 
 
 def test_last_declaration_wins_across_export_and_plain_lines(root):
     """同じキーを ``export`` の有無を混ぜて繰り返したときも、``source`` と同じく最後の行が勝つ"""
     write_env(root / 'projects' / 'web' / 'env',
-              'DEVBASE_ACCOUNT_GROUP=nyle\nexport DEVBASE_ACCOUNT_GROUP=kkg\n'
-              'DEVBASE_ACCOUNT_GROUP=with\n')
+              'DEVBASE_ACCOUNT_GROUP=acme\nexport DEVBASE_ACCOUNT_GROUP=globex\n'
+              'DEVBASE_ACCOUNT_GROUP=initech\n')
 
     declared = groups.declare(root, 'web')
-    assert declared.name == 'with'
+    assert declared.name == 'initech'
     assert declared.line == 3

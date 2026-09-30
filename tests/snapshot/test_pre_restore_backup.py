@@ -15,7 +15,7 @@ import yaml
 from devbase.errors import SnapshotCommandError, SnapshotError
 from devbase.snapshot.manager import SnapshotManager
 
-WITH_VOLUMES = {"ai": "devbase_home_ubuntu", "group": "devbase_home_with"}
+INITECH_VOLUMES = {"ai": "devbase_home_ubuntu", "group": "devbase_home_initech"}
 REAL_ERROR_STDERR = "tar: ./ai/x: Cannot write: No space left on device\n"
 
 
@@ -101,7 +101,7 @@ def _warnings(caplog) -> list[str]:
 
 def test_without_a_group_the_backup_takes_the_generation_volumes(tmp_path, caplog):
     """グループを置かずに復元しても、世代の組を控える (受け入れ条件 1)。"""
-    _write_generation(tmp_path, "X", {"volumes": WITH_VOLUMES})
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
     mgr = RecordingManager(tmp_path)
 
     with caplog.at_level("INFO"):
@@ -109,37 +109,37 @@ def test_without_a_group_the_backup_takes_the_generation_volumes(tmp_path, caplo
 
     backups = mgr.backup_calls()
     assert len(backups) == 1
-    assert _mounted(backups[0]) == ["devbase_home_ubuntu", "devbase_home_with"]
+    assert _mounted(backups[0]) == ["devbase_home_ubuntu", "devbase_home_initech"]
     assert _warnings(caplog) == []
     assert len(mgr.restore_calls()) >= 1
 
 
 def test_the_backup_records_the_generation_volumes(tmp_path):
     """控えの meta.yml と一覧のエントリに、控えた組が載る (受け入れ条件 2)。"""
-    _write_generation(tmp_path, "X", {"volumes": WITH_VOLUMES})
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
     mgr = RecordingManager(tmp_path)
 
     mgr.restore("X")
 
     [pre] = _pre_restore_dirs(tmp_path)
     meta = yaml.safe_load((pre / "meta.yml").read_text())
-    assert meta["volumes"] == WITH_VOLUMES
+    assert meta["volumes"] == INITECH_VOLUMES
     [entry] = [e for e in _entries(tmp_path) if e["name"] == pre.name]
-    assert entry["volumes"] == WITH_VOLUMES
+    assert entry["volumes"] == INITECH_VOLUMES
 
 
 def test_another_group_in_the_environment_does_not_change_the_backup(
         tmp_path, monkeypatch):
     """実行時のグループが別でも、控えは世代の組 (受け入れ条件 3)。"""
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")
-    _write_generation(tmp_path, "X", {"volumes": WITH_VOLUMES})
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
     mgr = RecordingManager(tmp_path)
 
     mgr.restore("X")
 
     [backup] = mgr.backup_calls()
-    assert "devbase_home_with" in _mounted(backup)
-    assert "devbase_home_nyle" not in _mounted(backup)
+    assert "devbase_home_initech" in _mounted(backup)
+    assert "devbase_home_acme" not in _mounted(backup)
 
 
 def test_a_legacy_generation_is_backed_up_at_the_root(tmp_path):
@@ -174,7 +174,7 @@ def test_the_former_default_volume_is_backed_up_too(tmp_path):
 
 def test_a_failed_backup_leaves_nothing_behind(tmp_path, caplog):
     """控えに失敗しても復元は続き、痕跡を残さない (受け入れ条件 6)。"""
-    _write_generation(tmp_path, "X", {"volumes": WITH_VOLUMES})
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
     mgr = RecordingManager(tmp_path, fail_backup=True)
 
     with caplog.at_level("WARNING"):
@@ -189,7 +189,7 @@ def test_a_failed_backup_leaves_nothing_behind(tmp_path, caplog):
 def test_a_failed_backup_keeps_an_existing_directory_of_the_same_name(
         tmp_path, monkeypatch):
     """同じ名前の控えが既にあれば、それは前の控えなので消さない (I3)。"""
-    _write_generation(tmp_path, "X", {"volumes": WITH_VOLUMES})
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
     existing = tmp_path / "backups" / "pre-restore-20260928-120000"
     existing.mkdir()
     (existing / "full.tar.zst").write_text("earlier")
@@ -212,7 +212,7 @@ def test_a_failed_backup_keeps_an_existing_directory_of_the_same_name(
 
 def test_without_a_backup_the_failure_message_does_not_point_to_one(tmp_path):
     """控えも展開も失敗したら、別の世代から戻す案内になる (受け入れ条件 7)。"""
-    _write_generation(tmp_path, "X", {"volumes": WITH_VOLUMES})
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
     mgr = RecordingManager(tmp_path, fail_backup=True, fail_restore=True)
 
     with pytest.raises(SnapshotError) as e:
@@ -224,7 +224,7 @@ def test_without_a_backup_the_failure_message_does_not_point_to_one(tmp_path):
 
 def test_the_failure_message_points_to_a_backup_of_the_same_volumes(tmp_path):
     """控えが成功し展開が失敗したら、その控えを示し、組は復元先と一致する (受け入れ条件 8)。"""
-    _write_generation(tmp_path, "X", {"volumes": WITH_VOLUMES})
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
     mgr = RecordingManager(tmp_path, fail_restore=True)
 
     with pytest.raises(SnapshotError) as e:
@@ -244,7 +244,7 @@ def test_the_failure_message_points_to_a_backup_of_the_same_volumes(tmp_path):
 def test_an_invalid_generation_is_refused_before_the_backup(tmp_path):
     """組が検証を通らなければ、控えも復元も行わない (受け入れ条件 9)。"""
     _write_generation(tmp_path, "bad", {
-        "volumes": {"ai": "../../etc", "group": "devbase_home_with"},
+        "volumes": {"ai": "../../etc", "group": "devbase_home_initech"},
     })
     mgr = RecordingManager(tmp_path)
 
@@ -257,7 +257,7 @@ def test_an_invalid_generation_is_refused_before_the_backup(tmp_path):
 
 def test_the_backup_target_is_logged_before_the_backup(tmp_path, caplog):
     """控えの前に、控える対象ボリュームを並べた info を 1 行出す (受け入れ条件 10)。"""
-    _write_generation(tmp_path, "X", {"volumes": WITH_VOLUMES})
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
     logged_before_backup: list[bool] = []
 
     class LoggingCheckManager(RecordingManager):
@@ -275,5 +275,5 @@ def test_the_backup_target_is_logged_before_the_backup(tmp_path, caplog):
              if r.levelname == "INFO" and "バックアップします" in r.getMessage()]
     assert len(lines) == 1
     assert "devbase_home_ubuntu" in lines[0]
-    assert "devbase_home_with" in lines[0]
+    assert "devbase_home_initech" in lines[0]
     assert logged_before_backup == [True]

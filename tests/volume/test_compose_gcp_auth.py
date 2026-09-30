@@ -36,7 +36,7 @@ SECRET_NAMES = [
 def project(tmp_path, monkeypatch):
     (tmp_path / "compose.yml").write_text(COMPOSE)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")  # up が宣言から置いた後 (#315)
     monkeypatch.delenv("GCP_AUTH_MODE", raising=False)
     monkeypatch.delenv("GCP_ACTIVE_PROFILE", raising=False)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", raising=False)
@@ -354,17 +354,17 @@ def test_other_profiles_key_does_not_enable_key_mode(project, monkeypatch):
 MULTI_PROFILE_SECRETS = [
     "ANTHROPIC_API_KEY",
     "GCP_CREDENTIALS_BASE64__default",
-    "GCP_CREDENTIALS_BASE64__with",
+    "GCP_CREDENTIALS_BASE64__initech",
     "GOOGLE_APPLICATION_CREDENTIALS_BASE64",
 ]
 
 
 @pytest.fixture
 def multi_profile(project, monkeypatch):
-    """with グループのプロジェクトから、nyle の鍵も見えている状態を作る。"""
-    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    """initech グループのプロジェクトから、acme の鍵も見えている状態を作る。"""
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "initech")
     monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
-    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__with", "eyJ9")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__initech", "eyJ9")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", "eyJ9")
     return project
 
@@ -381,14 +381,14 @@ def test_other_profiles_key_is_not_passed_to_the_container(multi_profile):
     assert "GCP_CREDENTIALS_BASE64__default" not in names
     assert "GOOGLE_APPLICATION_CREDENTIALS_BASE64" not in names
     # 自分のプロファイルの鍵と無関係な機密は従来どおり渡す
-    assert "GCP_CREDENTIALS_BASE64__with" in names
+    assert "GCP_CREDENTIALS_BASE64__initech" in names
     assert "ANTHROPIC_API_KEY" in names
 
 
 def test_adc_project_gets_no_key_material_at_all(project, monkeypatch):
-    """#133 の with-ai-dev の構成。鍵の実体が 1 本も渡らない。"""
+    """#133 の myapp-ai-dev の構成。鍵の実体が 1 本も渡らない。"""
     monkeypatch.setenv("GCP_AUTH_MODE", "adc")
-    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "initech")
     monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", "eyJ9")
 
@@ -403,7 +403,7 @@ def test_adc_project_gets_no_key_material_at_all(project, monkeypatch):
 def test_legacy_key_still_drives_auto_key_mode(project, monkeypatch):
     """adc を宣言しないと、後方互換キーが鍵モードを引き起こし残り続ける。
 
-    #133 で with-ai-dev が踏んだ経路である。アクティブプロファイルの鍵が無いと
+    #133 で myapp-ai-dev が踏んだ経路である。アクティブプロファイルの鍵が無いと
     ``has_service_account_key`` は後方互換キーへフォールバックして ``key`` を
     返し、entrypoint も同じ判定でその鍵を書き出す。したがってこの構成では
     後方互換キーを外せない (外すと鍵の供給源を失って壊れる)。
@@ -411,7 +411,7 @@ def test_legacy_key_still_drives_auto_key_mode(project, monkeypatch):
     この除外だけでは足りず、プロジェクト側の ``GCP_AUTH_MODE=adc`` の宣言と
     組み合わせて初めて他社の鍵が渡らなくなる。
     """
-    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "initech")
     monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_BASE64", "eyJ9")
 
@@ -432,16 +432,16 @@ def test_enumerated_but_unset_names_are_excluded_too(project, monkeypatch):
 
     os.environ に載る前でも、列挙される名前から他プロファイルの鍵を外す。
     """
-    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
-    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__with", "eyJ9")
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "initech")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__initech", "eyJ9")
 
     generate_scaled_compose(
-        1, secret_env_names=["GCP_CREDENTIALS_BASE64__kkg",
-                             "GCP_CREDENTIALS_BASE64__with"])
+        1, secret_env_names=["GCP_CREDENTIALS_BASE64__globex",
+                             "GCP_CREDENTIALS_BASE64__initech"])
 
     names = env_names(project)
-    assert "GCP_CREDENTIALS_BASE64__kkg" not in names
-    assert "GCP_CREDENTIALS_BASE64__with" in names
+    assert "GCP_CREDENTIALS_BASE64__globex" not in names
+    assert "GCP_CREDENTIALS_BASE64__initech" in names
 
 
 def test_legacy_key_survives_when_it_is_the_only_source(project, monkeypatch):
@@ -462,7 +462,7 @@ def test_legacy_key_survives_when_it_is_the_only_source(project, monkeypatch):
 def test_non_dev_services_keep_the_key_material(project, monkeypatch):
     """除外は dev だけ。共通機密から鍵を受け取っていた非 dev サービスは維持。"""
     (project / "compose.yml").write_text(ENV_FILE_COMPOSE)
-    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "initech")
     monkeypatch.setenv("GCP_CREDENTIALS_BASE64__default", "eyJ9")
 
     generate_scaled_compose(
@@ -481,7 +481,7 @@ INLINE_KEY_MAP_COMPOSE = """services:
     image: alpine
     environment:
       GCP_CREDENTIALS_BASE64__default: eyJ9
-      GCP_CREDENTIALS_BASE64__kkg: eyJ9
+      GCP_CREDENTIALS_BASE64__globex: eyJ9
       TZ: Asia/Tokyo
     volumes:
       - x:/work
@@ -498,7 +498,7 @@ INLINE_KEY_LIST_COMPOSE = """services:
     image: alpine
     environment:
       - GCP_CREDENTIALS_BASE64__default=eyJ9
-      - GCP_CREDENTIALS_BASE64__kkg
+      - GCP_CREDENTIALS_BASE64__globex
       - TZ=Asia/Tokyo
     volumes:
       - x:/work
@@ -517,14 +517,14 @@ def test_inline_key_material_is_dropped_from_dev(project, monkeypatch, compose_t
     map 記法と list 記法（``KEY=VALUE`` と名前参照のみ）の両方を確認する。
     """
     (project / "compose.yml").write_text(compose_text)
-    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
-    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__with", "eyJ9")
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "initech")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__initech", "eyJ9")
 
     generate_scaled_compose(1)
 
     names = env_names(project)
     assert "GCP_CREDENTIALS_BASE64__default" not in names
-    assert "GCP_CREDENTIALS_BASE64__kkg" not in names
+    assert "GCP_CREDENTIALS_BASE64__globex" not in names
     # 鍵と無関係な直書きの値は残す
     assert "TZ" in names
 
@@ -532,8 +532,8 @@ def test_inline_key_material_is_dropped_from_dev(project, monkeypatch, compose_t
 def test_inline_key_material_of_non_dev_services_is_kept(project, monkeypatch):
     """非 dev サービスの明示設定は消さない（既存方針の踏襲）。"""
     (project / "compose.yml").write_text(INLINE_KEY_MAP_COMPOSE)
-    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "with")
-    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__with", "eyJ9")
+    monkeypatch.setenv("GCP_ACTIVE_PROFILE", "initech")
+    monkeypatch.setenv("GCP_CREDENTIALS_BASE64__initech", "eyJ9")
 
     generate_scaled_compose(1)
 

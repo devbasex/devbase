@@ -43,13 +43,13 @@ volumes:
   x: {}
 """
 
-REPO_ENV = {"DEVBASE_REPOS": "cGxhbg==", "DEVBASE_PRIMARY_DIR": "carmo"}
+REPO_ENV = {"DEVBASE_REPOS": "cGxhbg==", "DEVBASE_PRIMARY_DIR": "myapp"}
 
 # devbase 自身が dev サービスへ常に載せる環境変数 (PLAN39)。
 # 個々のテストの期待値からは除いて比較し、内容そのものは
 # test_devbase_managed_environment_is_always_present で固定する。
 DEVBASE_MANAGED = {
-    "DEVBASE_ACCOUNT_GROUP": "nyle",
+    "DEVBASE_ACCOUNT_GROUP": "acme",
     "CLOUDSDK_CONFIG": "/persistent/group/gcloud",
     "GOOGLE_WORKSPACE_CLI_CONFIG_DIR": "/persistent/group/gws",
     "GCP_AUTH_MODE": "adc",
@@ -62,7 +62,7 @@ def project(tmp_path, monkeypatch):
     # devbase 由来の変数は常に dev へ載る (PLAN39)。外部環境で値が変わらないよう
     # 解決の入力になるキーを落としておく。
     # グループは up が宣言から置いた後の値 (#315)
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")
     for name in ("GCP_AUTH_MODE",
                  "GOOGLE_APPLICATION_CREDENTIALS_BASE64"):
         monkeypatch.delenv(name, raising=False)
@@ -96,7 +96,7 @@ def test_dev_instances_receive_the_extra_environment(project):
     services = generated(project)["services"]
     for name in ("dev-1", "dev-2"):
         assert env_of(services[name])["DEVBASE_REPOS"] == "cGxhbg=="
-        assert env_of(services[name])["DEVBASE_PRIMARY_DIR"] == "carmo"
+        assert env_of(services[name])["DEVBASE_PRIMARY_DIR"] == "myapp"
         # 元からある値は残す
         assert env_of(services[name])["FEATURE_FLAG"] == "enabled"
 
@@ -120,7 +120,7 @@ def test_list_form_environment_is_supported(project):
     assert user_env(dev) == {
         "FEATURE_FLAG": "enabled",
         "DEVBASE_REPOS": "cGxhbg==",
-        "DEVBASE_PRIMARY_DIR": "carmo",
+        "DEVBASE_PRIMARY_DIR": "myapp",
     }
 
 
@@ -176,7 +176,7 @@ volumes:
     dev = generated(project)["services"]["dev-1"]
     assert user_env(dev) == {
         "DEVBASE_REPOS": "cGxhbg==",
-        "DEVBASE_PRIMARY_DIR": "carmo",
+        "DEVBASE_PRIMARY_DIR": "myapp",
     }
 
 

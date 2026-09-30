@@ -306,7 +306,7 @@ def test_is_open_enabled(value, expected):
 def test_is_open_enabled_prefers_the_project_config(open_editor, env_value, expected):
     config = parse_project_config({
         "version": 1,
-        "repos": [{"owner": "volareinc", "repo": "carmo"}],
+        "repos": [{"owner": "example-org", "repo": "myapp"}],
         **({} if open_editor is None else {"open_editor": open_editor}),
     }, source="project.yml")
     env = {} if env_value is None else {"DEVBASE_OPEN_EDITOR": env_value}
@@ -529,17 +529,17 @@ def test_resolve_container_name_deterministic():
     def failing_runner(cmd, **kw):
         return _Proc(returncode=1, stdout="")
 
-    assert opener.resolve_container_name("dev", "carmo", 1, runner=failing_runner) \
-        == "carmo-dev-1"
-    assert opener.resolve_container_name("app", "carmo", 3, runner=failing_runner) \
-        == "carmo-app-3"
+    assert opener.resolve_container_name("dev", "myapp", 1, runner=failing_runner) \
+        == "myapp-dev-1"
+    assert opener.resolve_container_name("app", "myapp", 3, runner=failing_runner) \
+        == "myapp-app-3"
 
 
 def test_resolve_container_name_falls_back_when_docker_absent(monkeypatch):
     """docker 不在 (例外) でも決定的名で必ず動く。"""
     monkeypatch.setattr(opener, "_query_container_name",
                         lambda *a, **kw: None)
-    assert opener.resolve_container_name("dev", "carmo", 1) == "carmo-dev-1"
+    assert opener.resolve_container_name("dev", "myapp", 1) == "myapp-dev-1"
 
 
 def test_resolve_container_name_prefers_docker_name_ndjson():
@@ -551,7 +551,7 @@ def test_resolve_container_name_prefers_docker_name_ndjson():
         return _Proc(returncode=0,
                      stdout='{"Name":"real-dev-2","Service":"dev-2"}\n')
 
-    assert opener.resolve_container_name("dev", "carmo", 2, runner=runner) \
+    assert opener.resolve_container_name("dev", "myapp", 2, runner=runner) \
         == "real-dev-2"
 
 
@@ -561,7 +561,7 @@ def test_resolve_container_name_prefers_docker_name_json_array():
         return _Proc(returncode=0,
                      stdout='[{"Name":"real-dev-1","Service":"dev-1"}]')
 
-    assert opener.resolve_container_name("dev", "carmo", 1, runner=runner) \
+    assert opener.resolve_container_name("dev", "myapp", 1, runner=runner) \
         == "real-dev-1"
 
 
@@ -607,7 +607,7 @@ def test_resolve_container_name_forwards_compose_file():
         return _Proc(returncode=0, stdout='{"Name":"real-dev-2"}\n')
 
     name = opener.resolve_container_name(
-        "dev", "carmo", 2, compose_file="override.yml", runner=runner)
+        "dev", "myapp", 2, compose_file="override.yml", runner=runner)
     assert name == "real-dev-2"
     cmd = captured["cmd"]
     assert "-f" in cmd
@@ -629,9 +629,9 @@ def test_resolve_workspace_blank_is_none():
 
 
 def test_resolve_workspace_returns_path():
-    env = {"DEVBASE_WORKSPACE": "/home/ubuntu/share/work/uttarov2-doc.workspace"}
+    env = {"DEVBASE_WORKSPACE": "/home/ubuntu/share/work/myapp-doc.workspace"}
     assert opener.resolve_workspace(env) == \
-        "/home/ubuntu/share/work/uttarov2-doc.workspace"
+        "/home/ubuntu/share/work/myapp-doc.workspace"
 
 
 def test_open_editor_opens_the_given_workspace_as_a_file(monkeypatch, tmp_path):
@@ -639,28 +639,28 @@ def test_open_editor_opens_the_given_workspace_as_a_file(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(opener, "resolve_editor_cmd", lambda env=None: ["code"])
     monkeypatch.setattr(opener, "resolve_container_name",
-                        lambda *a, **kw: "carmo-dev-1")
+                        lambda *a, **kw: "myapp-dev-1")
 
     action = opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
-        workspace="/work/carmo.code-workspace",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
+        workspace="/work/myapp.code-workspace",
         environ={"TERM": "xterm"}, isatty=True, system="Linux",
         launcher=lambda cmd, env: calls.append(cmd),
     )
 
     assert action == "launch"
     assert calls[0][1] == "--file-uri"
-    assert "carmo.code-workspace" in calls[0][2]
+    assert "myapp.code-workspace" in calls[0][2]
 
 
 def test_open_editor_opens_the_folder_without_a_workspace(monkeypatch):
     calls = []
     monkeypatch.setattr(opener, "resolve_editor_cmd", lambda env=None: ["code"])
     monkeypatch.setattr(opener, "resolve_container_name",
-                        lambda *a, **kw: "carmo-dev-1")
+                        lambda *a, **kw: "myapp-dev-1")
 
     opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
         environ={"TERM": "xterm"}, isatty=True, system="Linux",
         launcher=lambda cmd, env: calls.append(cmd),
     )
@@ -726,7 +726,7 @@ def test_open_editor_launch_invokes_launcher(monkeypatch):
     monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
     calls = []
     result = opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
         environ={}, isatty=True, launcher=lambda cmd, env: calls.append(cmd),
     )
     assert result == "launch"
@@ -735,7 +735,7 @@ def test_open_editor_launch_invokes_launcher(monkeypatch):
     assert cmd[0] == "code"
     assert cmd[1] == "--folder-uri"
     assert cmd[2].startswith("vscode-remote://attached-container+")
-    assert cmd[2].endswith("/work/carmo")
+    assert cmd[2].endswith("/work/myapp")
 
 
 def test_open_editor_launch_uses_file_uri_for_workspace(monkeypatch):
@@ -743,17 +743,17 @@ def test_open_editor_launch_uses_file_uri_for_workspace(monkeypatch):
     monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
     calls = []
     result = opener.open_editor(
-        project_name="uttarov2-doc", dev_service_name="dev",
-        workdir="/work/uttarov2-doc",
+        project_name="myapp-doc", dev_service_name="dev",
+        workdir="/work/myapp-doc",
         environ={"DEVBASE_WORKSPACE":
-                 "/home/ubuntu/share/work/uttarov2-doc.workspace"},
+                 "/home/ubuntu/share/work/myapp-doc.workspace"},
         isatty=True, launcher=lambda cmd, env: calls.append(cmd),
     )
     assert result == "launch"
     cmd = calls[0]
     assert cmd[1] == "--file-uri"
     assert cmd[2].startswith("vscode-remote://attached-container+")
-    assert cmd[2].endswith("/home/ubuntu/share/work/uttarov2-doc.workspace")
+    assert cmd[2].endswith("/home/ubuntu/share/work/myapp-doc.workspace")
 
 
 def test_open_editor_print_command_file_uri_for_workspace(monkeypatch, caplog):
@@ -762,17 +762,17 @@ def test_open_editor_print_command_file_uri_for_workspace(monkeypatch, caplog):
     monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
     with caplog.at_level(logging.INFO):
         result = opener.open_editor(
-            project_name="uttarov2-doc", dev_service_name="dev",
-            workdir="/work/uttarov2-doc",
+            project_name="myapp-doc", dev_service_name="dev",
+            workdir="/work/myapp-doc",
             environ={"SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22",
                      "DEVBASE_WORKSPACE":
-                     "/home/ubuntu/share/work/uttarov2-doc.workspace"},
+                     "/home/ubuntu/share/work/myapp-doc.workspace"},
             isatty=True, launcher=lambda cmd, env: None,
         )
     assert result == "print_command"
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "code --file-uri" in text
-    assert "uttarov2-doc.workspace" in text
+    assert "myapp-doc.workspace" in text
 
 
 def test_open_editor_launch_nested_uri_under_remote_ssh(monkeypatch):
@@ -841,7 +841,7 @@ def test_open_editor_skip_when_no_editor(monkeypatch):
     monkeypatch.setattr(opener.shutil, "which", lambda c: None)
     calls = []
     result = opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
         environ={}, launcher=lambda cmd, env: calls.append(cmd),
     )
     assert result == "skip"
@@ -852,7 +852,7 @@ def test_open_editor_print_command_under_plain_ssh(monkeypatch):
     monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
     calls = []
     result = opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
         environ={"SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22"}, isatty=True,
         launcher=lambda cmd, env: calls.append(cmd),
     )
@@ -867,7 +867,7 @@ def test_open_editor_print_command_without_local_editor(monkeypatch, caplog):
     calls = []
     with caplog.at_level(logging.INFO):
         result = opener.open_editor(
-            project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+            project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
             environ={"SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22"}, isatty=True,
             launcher=lambda cmd, env: calls.append(cmd),
         )
@@ -884,7 +884,7 @@ def test_open_editor_print_command_uses_explicit_display_editor(monkeypatch, cap
     monkeypatch.setattr(opener.shutil, "which", lambda c: None)
     with caplog.at_level(logging.INFO):
         result = opener.open_editor(
-            project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+            project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
             environ={"SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22",
                      "DEVBASE_EDITOR": "cursor"},
             isatty=True, launcher=lambda cmd, env: None,
@@ -902,7 +902,7 @@ def test_open_editor_launch_failure_is_swallowed(monkeypatch):
 
     # 例外を握り潰し launch を返す (up を倒さない)
     result = opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
         environ={}, isatty=True, launcher=boom,
     )
     assert result == "launch"
@@ -922,20 +922,20 @@ def test_open_editor_local_terminal_with_docker_context(monkeypatch):
     monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
     calls = []
     opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
         environ={}, isatty=True, launcher=lambda cmd, env: calls.append(cmd),
         docker_context="gpu-wsl",
     )
     uri = calls[0][2]
     assert "@ssh-remote" not in uri
-    assert _decode(uri) == {"containerName": "/carmo-dev-1", "settings": {"context": "gpu-wsl"}}
+    assert _decode(uri) == {"containerName": "/myapp-dev-1", "settings": {"context": "gpu-wsl"}}
 
 
 def test_open_editor_local_terminal_without_docker_context_has_no_settings(monkeypatch):
     monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
     calls = []
     opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
         environ={}, isatty=True, launcher=lambda cmd, env: calls.append(cmd),
     )
     assert "settings" not in _decode(calls[0][2])
@@ -1062,7 +1062,7 @@ def test_open_editor_explicit_editor_context_beats_resolved(monkeypatch):
     monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/bin/code")
     calls = []
     opener.open_editor(
-        project_name="carmo", dev_service_name="dev", workdir="/work/carmo",
+        project_name="myapp", dev_service_name="dev", workdir="/work/myapp",
         environ={"DEVBASE_EDITOR_DOCKER_CONTEXT": "manual"}, isatty=True,
         launcher=lambda cmd, env: calls.append(cmd), docker_context="gpu-wsl",
     )

@@ -752,7 +752,7 @@ def _add_shortcuts(subparsers):
 
     委譲先の `project` サブコマンドと引数体系を揃えるため、`up` / `down` / `ps` /
     `scale` は `project <sub> [name]` と同じく省略可能な `[name]` positional を
-    受け付ける (`devbase up carmo` ≡ `devbase project up carmo`)。受理した name は
+    受け付ける (`devbase up myapp` ≡ `devbase project up myapp`)。受理した name は
     _dispatch でショートカット経由でも下流 (cmd_project → _dispatch_lifecycle) へ
     伝播する。name の実解決は PLAN06 Task 2 (PR2) で実装するため、PR1 では up/scale
     も含め name 指定時に未対応 warning を出す (container.py 参照)。

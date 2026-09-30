@@ -14,7 +14,7 @@ from devbase.env import compose_migrate as cm
 BASIC = """services:
 
   dev:
-    image: carmo:latest
+    image: myapp:latest
     env_file:
       - ${DEVBASE_ROOT}/.env
       - env

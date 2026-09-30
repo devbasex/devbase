@@ -528,20 +528,20 @@ def test_group_layout_refuses_a_reference_without_a_group(openbao_root, openbao)
 def test_flat_layout_refuses_a_reference_with_a_group(store, openbao):
     """``version: 1`` の参照は常にグループを持たない (決定 5)。持っていれば黙って無視しない"""
     with pytest.raises(SecretStoreError):
-        store.load(SecretRef.for_global(group='with'))
+        store.load(SecretRef.for_global(group='initech'))
     assert openbao.received == []
 
 
 def test_group_layout_reads_and_writes_the_group_paths(openbao_root, openbao):
     from tests.conftest import configure_openbao
 
-    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'acme': 'nyle'})
+    configure_openbao(openbao_root, openbao, layout='group', group_aliases={'umbrella': 'acme'})
     store = SecretStore(openbao_root)
 
-    store.save(SecretRef.for_project('web', group='with'), {'A': '1'})
-    store.save(SecretRef.for_global(owner='user', group='acme'), {'B': '2'})
+    store.save(SecretRef.for_project('web', group='initech'), {'A': '1'})
+    store.save(SecretRef.for_global(owner='user', group='umbrella'), {'B': '2'})
 
-    assert openbao.get('team/with/projects/web') == {'A': '1'}
-    assert openbao.get('users/member01/nyle/global') == {'B': '2'}
+    assert openbao.get('team/initech/projects/web') == {'A': '1'}
+    assert openbao.get('users/member01/acme/global') == {'B': '2'}
     assert {r.kv_path for r in openbao.received if r.kv_path} == {
-        'team/with/projects/web', 'users/member01/nyle/global'}
+        'team/initech/projects/web', 'users/member01/acme/global'}

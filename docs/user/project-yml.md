@@ -13,11 +13,11 @@ clone されます。関連する複数リポジトリ（本体・ドキュメ�
 ```yaml
 version: 1
 repos:
-  - owner: volareinc
-    repo: carmo
+  - owner: example-org
+    repo: myapp
 ```
 
-`devbase up` すると、コンテナ内の `/work/carmo` にリポジトリが clone され、
+`devbase up` すると、コンテナ内の `/work/myapp` にリポジトリが clone され、
 ログイン直後の作業ディレクトリもそこになります。
 
 ## 複数リポジトリ
@@ -28,15 +28,15 @@ scale: 1
 open_editor: true
 
 defaults:
-  owner: uttaro-dev2
+  owner: example-org
 
 repos:
-  - repo: uttarov2          # 先頭が primary
+  - repo: myapp          # 先頭が primary
     host: gitlab.com        # リポジトリごとにホストを変えられる
-    owner: uttaro_dev
+    owner: example_dev
     dir: system             # /work/system へ clone する
-  - repo: uttarov2-doc
-  - repo: uttarov2migration
+  - repo: myapp-doc
+  - repo: myapp-migration
     branch: develop
     init: false
 ```
@@ -138,7 +138,7 @@ compose の起動時に失敗します。
 機材そのものに依存します。共有ファイルに混ぜると、同じ `project.yml` を使う他の人の
 `devbase up` が壊れるため、別ファイルにします。
 
-devbase-samples / devbase-ext などプロジェクト定義を持つリポジトリでは、`.gitignore` に
+devbase-samples / devbase-plugins などプロジェクト定義を持つリポジトリでは、`.gitignore` に
 `project.local.yml` を加えてください（devbase 本体は `projects/*` ごと除外済みです）。
 
 ```yaml
