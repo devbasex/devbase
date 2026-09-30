@@ -271,6 +271,7 @@ tmux のサーバー・環境変数を共有しない前提で書く。
 自前の一時ディレクトリを `DEVBASE_ROOT` に向け、実機を要するものは理由を添えて skip する。
 `main` 宛ての Pull Request では、あわせて CHANGELOG の検査（`CHANGELOG check`）が走る
 （[CHANGELOG の更新](#changelog-の更新)）。
+すべてのトリガーで、固有の語の検査（`Proper term check`）も走る（[固有の語の検査](#固有の語の検査)）。
 
 pytest の全版の結果は、まとめたチェック `Pytest`（ジョブ `pytest-all`）に 1 つにまとまる。pytest が 1 版でも
 失敗・取り消し・時間切れなら `Pytest` は `failure` になる。`main` の保護の必須チェックは
@@ -284,7 +285,7 @@ SHA-256 で照合して入れ、既定の水準（style まで）で走らせる
 （`tests/ci/test_shellcheck_job.py` と `tests/containers/test_base_shellcheck_ci.py` が理由の無い指示を止める）。
 `containers/base/` の直下にシェルスクリプト（`sh` か `bash` の shebang を持つか、拡張子が `.sh` のもの）を足したら、
 `ci.yml` の `Run ShellCheck on containers/base/` の一覧へも足す。足し忘れは `tests/containers/test_base_shellcheck_ci.py` が落とす。
-トリガー・検査の対象・抑止の注記・CHANGELOG の検査の規則は [CI の検査（トリガー・ShellCheck・CHANGELOG）](../specifications/ci-checks.md) にある。
+トリガー・検査の対象・抑止の注記・CHANGELOG の検査・固有の語の検査の規則は [CI の検査（トリガー・ShellCheck・CHANGELOG・固有の語）](../specifications/ci-checks.md) にある。
 手元では次で CI と同じ版の検査を打てる。
 
 ```bash
@@ -293,6 +294,37 @@ docker run --rm -v "$PWD":/w -w /w --entrypoint shellcheck devbase-base:latest c
   containers/base/dind containers/base/entrypoint.sh containers/base/shellrc-dir.sh \
   containers/base/tmux-clean containers/base/tmux-first containers/base/tmux-session
 ```
+
+### 固有の語の検査
+
+作成者の所属組織・顧客・社内プロダクト・個人に固有の名前（固有の語）を、文書・コード・テストへ持ち込まない。
+`.github/scripts/proper_term_check.py` が語の一覧を読み、`git ls-files` が返す追跡されたファイルから語を含む行を
+探す。語は正規表現でなく文字列として、大文字小文字を区別せずに部分一致で探す。当たりはパスと行番号だけで示し、
+語と行の本文は出さない。語の一覧は公開のファイル・ログ・Pull Request の本文とコメントに書かない。
+
+CI の `Proper term check` は、リポジトリの Actions の secret `PROPER_TERMS` を一覧として使う。secret の登録と
+更新は人が行う。secret が未登録のときと、フォークからの Pull Request では、検査を飛ばして成功で終わる。
+
+手元では、1 行 1 語の UTF-8 の平文を `${XDG_CONFIG_HOME:-$HOME/.config}/devbase/proper-terms.txt` に置く。
+空の行と `#` で始まる行は読み飛ばす。リポジトリの外に置くため、どの worktree から打っても同じ一覧を読む。
+push の前に、リポジトリの中で次を打つ（Python 3.10 以上と `git` が要る）。
+
+```bash
+python3 .github/scripts/proper_term_check.py                          # 既定の置き場の一覧で打つ
+python3 .github/scripts/proper_term_check.py --terms /path/to/terms.txt  # 別の一覧で打つ
+```
+
+一覧の出所は `--terms` のファイル・環境変数 `PROPER_TERMS`・既定の置き場の順で、最初に当たった 1 つだけを使う。
+中身は作業ツリーから読むため、コミットしていない変更も対象になる。
+
+| 終了コード | 意味 |
+| --- | --- |
+| 0 | 当たり 0 件、または一覧が無い・空で飛ばした |
+| 1 | 当たりが 1 件以上ある（`<パス>:<行番号>` を 1 行ずつ出す） |
+| 2 | 一覧を読めない（`--terms` のファイルが無い・権限・UTF-8 でない）、`git` が使えない・リポジトリの外、引数の誤り |
+
+`LICENSE` の著作権表示の行と `.ndf/mvv.json` の `approved_by` の行は当たりにしない。UTF-8 で読めないファイルと
+symlink は対象から外し、外した数を要約の行に出す。
 
 ### 手動テストの手順
 
