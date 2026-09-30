@@ -55,6 +55,29 @@ def test_returning_group_appends_to_its_generation(root, caplog):
     assert any("差分更新中: A (グループ acme)" in m for m in messages)
 
 
+def test_generation_archived_from_source_root_starts_new(root, caplog):
+    """``/source`` を起点に控えた世代 (``archive_root`` が無い) へは差分を積まない。
+
+    その世代の snar は起点を ``.`` で記録しており、積むと差分がボリューム全体になる。
+    新しい世代を作り、理由を出す。
+    """
+    backups = write_state(root, [("A", "acme", 3)])
+    meta_path = backups / "A" / "meta.yml"
+    meta = yaml.safe_load(meta_path.read_text())
+    del meta["archive_root"]
+    meta_path.write_text(yaml.safe_dump(meta))
+
+    with caplog.at_level(logging.INFO, logger="devbase"):
+        container._auto_snapshot()
+
+    assert not (backups / "A" / "incr-001.tar.zst").exists()
+    assert len(names(root)) == 2
+    new = [n for n in names(root) if n != "A"][0]
+    assert yaml.safe_load((backups / new / "meta.yml").read_text())["archive_root"] == "members"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("起点" in m and "A" in m for m in messages)
+
+
 def test_group_without_generation_creates_new(root, monkeypatch, caplog):
     """2・16: initech の世代が無ければ full の世代を作り、理由を出す。"""
     write_state(root, [("A", "acme", 0)])
