@@ -295,6 +295,22 @@ def test_config_save_failure_keeps_the_source_files_in_place(age_root, openbao, 
     assert SecretStore(age_root).load(GLOBAL)['A'] == 'a-value'
 
 
+
+def test_unreadable_backend_config_stops_with_1(age_root, openbao, monkeypatch):
+    def broken_load(root):
+        raise bc.BackendConfigError('broken')
+
+    monkeypatch.setattr(bc, 'load', broken_load)
+
+    assert migrate(age_root, 'openbao') == 1
+
+
+def test_missing_openbao_settings_stops_as_usage_error(age_root, openbao, monkeypatch):
+    monkeypatch.setattr(bc, 'load', lambda root: bc.BackendConfig())
+
+    assert migrate(age_root, 'openbao') == env_backend.EXIT_USAGE
+    assert not any(r.kv_path for r in openbao.requests_of('POST'))
+
 # ---------------------------------------------------------------------------
 # グループ別の置き場と --exclude-project (PLAN56 受け入れ条件 12・14)
 # ---------------------------------------------------------------------------

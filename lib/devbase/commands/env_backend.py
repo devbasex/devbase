@@ -546,7 +546,6 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
     必須で、宣言の無いプロジェクトが 1 つでもあれば書き込みの前に止める (#315 I11)。
     """
     from devbase.commands.env import GroupOptionError, _target_group
-    from devbase.env import cache as _cache
     from devbase.env import groups as _groups
     from devbase.env.openbao import OpenBaoBackend
 
@@ -561,21 +560,9 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
                      "ありません: %s", ', '.join(unknown))
         return EXIT_USAGE
 
-    try:
-        config = _bc.load(root)
-    except _bc.BackendConfigError as e:
-        logger.error("%s", e)
-        return 1
-    if config.openbao is None:
-        logger.error("OpenBao の接続設定がありません。先に "
-                     "`devbase env backend use openbao --url ... --user ...` "
-                     "で設定してください")
-        return EXIT_USAGE
-    try:
-        config.openbao.validate()
-    except _bc.BackendConfigError as e:
-        logger.error("%s", e)
-        return EXIT_USAGE
+    config = _load_migrate_config(root)
+    if isinstance(config, int):
+        return config
 
     # 移行元と移行先は設定ファイルの backend とは無関係に組み立てる。移行の途中で
     # 設定を変えず、成功したときだけ書き換えるため。
@@ -635,6 +622,39 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         logger.error("移行を中止しました: %s", e)
         return 1
 
+    return _switch_backend_after_migration(root, config, plan)
+
+
+def _load_migrate_config(root: Path):
+    """移行に使う設定を読み、OpenBao の接続設定を確かめる。
+
+    Returns:
+        設定。使えないときは終了コード (読めなければ 1、接続設定の不足・不正は
+        ``EXIT_USAGE``)。
+    """
+    try:
+        config = _bc.load(root)
+    except _bc.BackendConfigError as e:
+        logger.error("%s", e)
+        return 1
+    if config.openbao is None:
+        logger.error("OpenBao の接続設定がありません。先に "
+                     "`devbase env backend use openbao --url ... --user ...` "
+                     "で設定してください")
+        return EXIT_USAGE
+    try:
+        config.openbao.validate()
+    except _bc.BackendConfigError as e:
+        logger.error("%s", e)
+        return EXIT_USAGE
+    return config
+
+
+def _switch_backend_after_migration(root: Path, config, plan: '_MigrationPlan') -> int:
+    """移行の適用後に設定を切り替え、方向ごとに退避かキャッシュ破棄をして結果を出す"""
+    from devbase.env import cache as _cache
+
+    to = plan.to
     # 設定の切り替えを退避より先に行う。逆にすると、設定を書けなかったときに
     # 元のファイルだけが移動済みになり、設定が指す先から機密が読めなくなる。
     try:
