@@ -212,12 +212,8 @@ def _get_snapshot_info(devbase_root: Path) -> dict | None:
         return None
 
 
-def cmd_status(devbase_root: Path) -> int:
-    """devbase 環境のステータスを一覧表示する"""
-
-    print(f"devbase v{__version__}")
-
-    # --- コンテナセクション ---
+def _print_container_section(devbase_root: Path) -> None:
+    """コンテナセクションを表示する"""
     try:
         projects_dir = devbase_root / "projects"
         containers = _get_container_status(projects_dir)
@@ -229,7 +225,9 @@ def cmd_status(devbase_root: Path) -> int:
     except Exception:
         logger.debug("コンテナ情報の取得に失敗しました", exc_info=True)
 
-    # --- プラグインセクション ---
+
+def _print_plugin_section(devbase_root: Path) -> None:
+    """プラグインセクションを表示する"""
     try:
         registry = PluginRegistry(devbase_root)
         plugins = _get_plugin_info(registry)
@@ -241,7 +239,9 @@ def cmd_status(devbase_root: Path) -> int:
     except Exception:
         logger.debug("プラグイン情報の取得に失敗しました", exc_info=True)
 
-    # --- 環境セクション ---
+
+def _print_env_section(devbase_root: Path) -> None:
+    """環境セクションを表示する"""
     try:
         env_info = _get_env_info(devbase_root)
         group_info = _get_account_group(devbase_root)
@@ -268,7 +268,9 @@ def cmd_status(devbase_root: Path) -> int:
     except Exception:
         logger.debug("環境情報の取得に失敗しました", exc_info=True)
 
-    # --- スナップショットセクション ---
+
+def _print_snapshot_section(devbase_root: Path) -> None:
+    """スナップショットセクションを表示する"""
     try:
         snap_info = _get_snapshot_info(devbase_root)
         if snap_info is not None:
@@ -283,5 +285,16 @@ def cmd_status(devbase_root: Path) -> int:
                 print("  なし")
     except Exception:
         logger.debug("スナップショット情報の取得に失敗しました", exc_info=True)
+
+
+def cmd_status(devbase_root: Path) -> int:
+    """devbase 環境のステータスを一覧表示する"""
+
+    print(f"devbase v{__version__}")
+
+    _print_container_section(devbase_root)
+    _print_plugin_section(devbase_root)
+    _print_env_section(devbase_root)
+    _print_snapshot_section(devbase_root)
 
     return 0
