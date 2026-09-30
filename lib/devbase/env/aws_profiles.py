@@ -16,7 +16,7 @@ import io
 import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 #: 節の見出し。AWS の CLI と SDK が使う configparser と同じ形 (``[private] trailing`` も
 #: ``private`` の節になる)。境界が食い違うと、選ばなかった節の行が選んだ節へ入る
@@ -220,31 +220,43 @@ def build(config_text: Optional[str], credentials_text: Optional[str],
         name, header = queue.pop(0)
         if header is None:
             continue
-        values = _values(config_sections[header])
-        label = 'default' if header in ('default', 'profile default') else f'profile {name}'
-        session = values.get('sso_session')
-        if session and session not in seen_sessions:
-            session_header = _normalize(f'sso-session {session}')
-            if session_header in config_sections:
-                seen_sessions.append(session)
-                config_out.append(session_header)
-                payload.included.append(Inclusion(session_header, f'{label} の sso_session'))
-            else:
-                payload.missing.append(session_header)
-        source = values.get('source_profile')
-        if source and not add_profile(source, f'{label} の source_profile'):
-            payload.missing.append(f'profile {source}')
+        _resolve_chain(name, header, config_sections, payload, config_out,
+                       seen_sessions, add_profile)
 
     payload.conflicts = ([h for h in config_out if h in config_conflicts]
                          + [h for h in cred_out if h in cred_conflicts])
     if payload.conflicts:
         return payload
-    if config_out:
-        payload.config = ''.join(_ensure_newline(config_sections[h]) for h in config_out).encode('utf-8')
-    if cred_out:
-        payload.credentials = ''.join(_ensure_newline(cred_sections[h])
-                                      for h in cred_out).encode('utf-8')
+    payload.config = _encode_sections(config_sections, config_out)
+    payload.credentials = _encode_sections(cred_sections, cred_out)
     return payload
+
+
+def _resolve_chain(name: str, header: str, config_sections: Dict[str, str],
+                   payload: AwsPayload, config_out: List[str], seen_sessions: List[str],
+                   add_profile: Callable[[str, Optional[str]], bool]) -> None:
+    """1 つのプロファイルの ``sso_session`` と ``source_profile`` の連なりを解決する"""
+    values = _values(config_sections[header])
+    label = 'default' if header in ('default', 'profile default') else f'profile {name}'
+    session = values.get('sso_session')
+    if session and session not in seen_sessions:
+        session_header = _normalize(f'sso-session {session}')
+        if session_header in config_sections:
+            seen_sessions.append(session)
+            config_out.append(session_header)
+            payload.included.append(Inclusion(session_header, f'{label} の sso_session'))
+        else:
+            payload.missing.append(session_header)
+    source = values.get('source_profile')
+    if source and not add_profile(source, f'{label} の source_profile'):
+        payload.missing.append(f'profile {source}')
+
+
+def _encode_sections(sections: Dict[str, str], out: List[str]) -> Optional[bytes]:
+    """選んだ節を順に連ねた原文 (選んだ節が無ければ ``None``)"""
+    if not out:
+        return None
+    return ''.join(_ensure_newline(sections[h]) for h in out).encode('utf-8')
 
 
 def _ensure_newline(text: str) -> str:
