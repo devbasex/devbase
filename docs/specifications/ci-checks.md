@@ -283,8 +283,11 @@ proper-terms:
 | 権限と実行 | ジョブの権限は `contents: read` だけで、checkout は `persist-credentials: false`。artifact と Pull Request へのコメントの手順を持たない。runner の `python3` で標準ライブラリだけの処理を打つ |
 
 失敗の理由は定型文だけを出し、例外の文言（`UnicodeDecodeError` の本文など）をそのまま出さない。読めなかった
-バイトが一覧の断片になりうるためである。`Proper term check` を `main` の必須チェックに加えるかは、`main` で
-当たり 0 件を確かめた後に利用者が決める。
+バイトが一覧の断片になりうるためである。
+
+`Proper term check` は `main` の保護の必須チェックに加えない（[#366](https://github.com/devbasex/devbase/issues/366)
+で利用者が決めた）。secret が渡らないフォークからの Pull Request では検査を飛ばして成功で終わるため、必須にしても
+混入を止め切れない。失敗はレビュアーが見て止める。
 
 ### 常に成り立つ条件
 
@@ -365,7 +368,8 @@ proper-terms:
 - **`bin/` にファイルを足すと自動で検査に入る。** シェルでないファイルを `bin/` に置かない
 - **`main` の保護の必須チェックは 6 件**: `Python syntax check (3.10)` / `(3.11)` / `(3.12)`・`Ruff lint`・
   `ShellCheck`・`Pytest`。提供元は GitHub Actions に固定し、`strict` は `true`。pytest は版ごとの
-  `Pytest (Python 3.10)` などではなく、まとめたチェック `Pytest` で照合する
+  `Pytest (Python 3.10)` などではなく、まとめたチェック `Pytest` で照合する。`CHANGELOG check` と
+  `Proper term check` は加えない
 - **pytest の matrix の版を足し引きしても、保護設定は直さなくてよい。** `Pytest` の名前は版に依存しない。
   `tests/ci/test_ci_workflow.py` の期待値（チェックの名前の 10 件）は一緒に直す
 - **ほかの検査ジョブの `name` と matrix の値は変えない。** 必須チェックが名前で照合するため、変えると
