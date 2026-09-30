@@ -95,12 +95,12 @@ def test_create_refuses_the_reserved_default(tmp_path, monkeypatch, recorded):
 def test_create_inside_a_project_uses_its_declaration(tmp_path, monkeypatch, recorded):
     project = tmp_path / "projects" / "web"
     project.mkdir(parents=True)
-    (project / "env").write_text("DEVBASE_ACCOUNT_GROUP=with\n")
+    (project / "env").write_text("DEVBASE_ACCOUNT_GROUP=initech\n")
     monkeypatch.setenv("PWD", str(project))
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")      # プロセスの値は見ない
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "globex")      # プロセスの値は見ない
 
     assert _create(tmp_path, group=None) == 0
-    assert recorded["group"] == "with"
+    assert recorded["group"] == "initech"
 
 
 def test_create_inside_an_undeclared_project_stops(tmp_path, monkeypatch, recorded, caplog):
@@ -114,13 +114,13 @@ def test_create_inside_an_undeclared_project_stops(tmp_path, monkeypatch, record
 
 
 @pytest.mark.parametrize("argv", [
-    ["env", "export", "--group", "nyle"],
-    ["env", "import", "bundle.dbenv", "--group", "nyle"],
-    ["env", "backend", "test", "--group", "nyle"],
-    ["env", "backend", "migrate", "--to", "openbao", "--group", "nyle"],
-    ["snapshot", "create", "--group", "nyle"],
+    ["env", "export", "--group", "acme"],
+    ["env", "import", "bundle.dbenv", "--group", "acme"],
+    ["env", "backend", "test", "--group", "acme"],
+    ["env", "backend", "migrate", "--to", "openbao", "--group", "acme"],
+    ["snapshot", "create", "--group", "acme"],
 ])
 def test_parsers_accept_the_group_option(argv):
     from devbase import cli
 
-    assert cli._create_parser().parse_args(argv).group == "nyle"
+    assert cli._create_parser().parse_args(argv).group == "acme"

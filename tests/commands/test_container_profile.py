@@ -218,7 +218,7 @@ def test_profile_up_returns_compose_exit_code(project, monkeypatch):
 
 def write_project_yml(root: Path, scale: int = 1):
     (root / 'project.yml').write_text(
-        f"version: 1\nscale: {scale}\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
+        f"version: 1\nscale: {scale}\nrepos:\n  - owner: example-org\n    repo: myapp\n")
 
 
 DEPLOY_DUMP = ('#!/bin/bash\n'

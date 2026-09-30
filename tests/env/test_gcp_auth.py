@@ -153,21 +153,21 @@ def test_container_env_carries_the_resolved_mode():
 
 def test_inactive_profile_keys_are_excluded():
     """アクティブプロファイル以外の鍵は entrypoint が読まないので外す。"""
-    env = {keys.GCP_ACTIVE_PROFILE: "with",
+    env = {keys.GCP_ACTIVE_PROFILE: "initech",
            "GCP_CREDENTIALS_BASE64__default": "eyJ9",
-           "GCP_CREDENTIALS_BASE64__kkg": "eyJ9",
-           "GCP_CREDENTIALS_BASE64__with": "eyJ9"}
+           "GCP_CREDENTIALS_BASE64__globex": "eyJ9",
+           "GCP_CREDENTIALS_BASE64__initech": "eyJ9"}
 
     excluded = set(gcp_auth.inactive_profile_key_names(env))
 
     assert excluded == {"GCP_CREDENTIALS_BASE64__default",
-                        "GCP_CREDENTIALS_BASE64__kkg"}
+                        "GCP_CREDENTIALS_BASE64__globex"}
 
 
 def test_active_profile_key_is_kept():
     """自分のプロファイルの鍵は entrypoint が使うので残す。"""
-    env = {keys.GCP_ACTIVE_PROFILE: "with",
-           "GCP_CREDENTIALS_BASE64__with": "eyJ9"}
+    env = {keys.GCP_ACTIVE_PROFILE: "initech",
+           "GCP_CREDENTIALS_BASE64__initech": "eyJ9"}
 
     assert gcp_auth.inactive_profile_key_names(env) == ()
 
@@ -192,8 +192,8 @@ def test_adc_excludes_the_legacy_key():
 
 def test_key_mode_with_profile_key_excludes_the_legacy_key():
     """プロファイル別キーが使われるならフォールバックは発生しない。"""
-    env = {keys.GCP_ACTIVE_PROFILE: "with",
-           "GCP_CREDENTIALS_BASE64__with": "eyJ9",
+    env = {keys.GCP_ACTIVE_PROFILE: "initech",
+           "GCP_CREDENTIALS_BASE64__initech": "eyJ9",
            "GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9"}
 
     assert keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64 in \
@@ -214,8 +214,8 @@ def test_key_mode_without_profile_key_keeps_the_legacy_key():
 
 def test_empty_profile_key_counts_as_absent():
     """空文字は has_service_account_key と同じく「無い」扱い。"""
-    env = {keys.GCP_ACTIVE_PROFILE: "with",
-           "GCP_CREDENTIALS_BASE64__with": "",
+    env = {keys.GCP_ACTIVE_PROFILE: "initech",
+           "GCP_CREDENTIALS_BASE64__initech": "",
            "GOOGLE_APPLICATION_CREDENTIALS_BASE64": "eyJ9"}
 
     assert keys.GOOGLE_APPLICATION_CREDENTIALS_BASE64 not in \

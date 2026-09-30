@@ -9,7 +9,7 @@ import pytest
 
 from devbase.commands.project import cmd_project_migrate_config
 
-LEGACY_ENV = ("GIT_USER=volareinc\nGIT_REPO=carmo\nWORK_DIR=/work/$GIT_REPO\n"
+LEGACY_ENV = ("GIT_USER=example-org\nGIT_REPO=myapp\nWORK_DIR=/work/$GIT_REPO\n"
               "CONTAINER_SCALE=1\nDEVBASE_OPEN_EDITOR=1\n")
 
 
@@ -17,7 +17,7 @@ LEGACY_ENV = ("GIT_USER=volareinc\nGIT_REPO=carmo\nWORK_DIR=/work/$GIT_REPO\n"
 def devbase_root(tmp_path):
     projects = tmp_path / "projects"
     projects.mkdir()
-    for name in ("carmo", "adminer"):
+    for name in ("myapp", "adminer"):
         directory = projects / name
         directory.mkdir()
         (directory / "env").write_text(LEGACY_ENV, encoding="utf-8")
@@ -31,7 +31,7 @@ def args(**kw):
 def test_migrates_every_project(devbase_root, capsys):
     assert cmd_project_migrate_config(devbase_root, args()) == 0
 
-    for name in ("carmo", "adminer"):
+    for name in ("myapp", "adminer"):
         assert (devbase_root / "projects" / name / "project.yml").is_file()
     out = capsys.readouterr().out
     assert "migrated" in out
@@ -40,15 +40,15 @@ def test_migrates_every_project(devbase_root, capsys):
 def test_dry_run_writes_nothing(devbase_root, capsys):
     assert cmd_project_migrate_config(devbase_root, args(dry_run=True)) == 0
 
-    assert not (devbase_root / "projects" / "carmo" / "project.yml").exists()
+    assert not (devbase_root / "projects" / "myapp" / "project.yml").exists()
     # 生成される内容を確認できること
     assert "version: 1" in capsys.readouterr().out
 
 
 def test_named_projects_only(devbase_root):
-    cmd_project_migrate_config(devbase_root, args(names=["carmo"]))
+    cmd_project_migrate_config(devbase_root, args(names=["myapp"]))
 
-    assert (devbase_root / "projects" / "carmo" / "project.yml").is_file()
+    assert (devbase_root / "projects" / "myapp" / "project.yml").is_file()
     assert not (devbase_root / "projects" / "adminer" / "project.yml").exists()
 
 
@@ -58,8 +58,8 @@ def test_unknown_project_is_an_error(devbase_root, capsys):
 
 
 def test_failed_conversion_is_reported_as_an_error(devbase_root, capsys):
-    (devbase_root / "projects" / "carmo" / "env").write_text(
-        "GIT_USER=vol areinc\nGIT_REPO=carmo\n", encoding="utf-8")
+    (devbase_root / "projects" / "myapp" / "env").write_text(
+        "GIT_USER=vol areinc\nGIT_REPO=myapp\n", encoding="utf-8")
 
     assert cmd_project_migrate_config(devbase_root, args()) == 1
     assert "failed" in capsys.readouterr().out.lower()
@@ -75,7 +75,7 @@ def test_projects_dir_override(tmp_path, devbase_root):
         devbase_root, args(projects_dir=str(plugin_projects))) == 0
 
     assert (plugin_projects / "appliv" / "project.yml").is_file()
-    assert not (devbase_root / "projects" / "carmo" / "project.yml").exists()
+    assert not (devbase_root / "projects" / "myapp" / "project.yml").exists()
 
 
 def test_missing_projects_dir_is_an_error(devbase_root, tmp_path, capsys):

@@ -18,23 +18,23 @@ def _services():
             {'type': 'volume', 'source': 'named', 'target': '/data'},
         ]},
         'db': {'volumes': ['./init.sql:/docker-entrypoint-initdb.d/init.sql',
-                           '~alice/x:/x']},
+                           '~bob/x:/x']},
         'nothing': {},
     }
 
 
 def test_expand_home_rewrites_tilde_forms():
     services = _services()
-    warnings = bind_mounts.expand_home(services, '/home/takemi')
-    assert services['dev-1']['volumes'][0] == '/home/takemi/.aws:/home/ubuntu/.aws'
-    assert services['dev-1']['volumes'][1] == '/home/takemi:/mnt/home:ro'
-    assert services['dev-1']['volumes'][4]['source'] == '/home/takemi/devbase'
+    warnings = bind_mounts.expand_home(services, '/home/alice')
+    assert services['dev-1']['volumes'][0] == '/home/alice/.aws:/home/ubuntu/.aws'
+    assert services['dev-1']['volumes'][1] == '/home/alice:/mnt/home:ro'
+    assert services['dev-1']['volumes'][4]['source'] == '/home/alice/devbase'
     # 触らないもの
     assert services['dev-1']['volumes'][2] == '/var/run/docker.sock:/var/run/docker.sock'
     assert services['dev-1']['volumes'][3] == 'devbase_work_1:/work'
     assert services['dev-1']['volumes'][5]['source'] == 'named'
     # 書き換えず警告に載せるもの
-    assert warnings == ['db: ./init.sql:/docker-entrypoint-initdb.d/init.sql', 'db: ~alice/x:/x']
+    assert warnings == ['db: ./init.sql:/docker-entrypoint-initdb.d/init.sql', 'db: ~bob/x:/x']
 
 
 def test_expand_home_strips_trailing_slash():
@@ -53,7 +53,7 @@ def test_collect_remote_warnings_without_home_lists_tilde_and_relative():
         'dev-1: ~:/mnt/home:ro',
         'dev-1: ~/devbase:/work/devbase',
         'db: ./init.sql:/docker-entrypoint-initdb.d/init.sql',
-        'db: ~alice/x:/x',
+        'db: ~bob/x:/x',
     ]
 
 

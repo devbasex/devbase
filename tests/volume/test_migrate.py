@@ -19,7 +19,7 @@ from devbase.volume.migrate import VolumeMigration, VolumeMigrationError
 _REAL_RUN = subprocess.run
 
 SOURCE = 'devbase_home_default'
-TARGET = 'devbase_home_nyle'
+TARGET = 'devbase_home_acme'
 
 
 class FakeDocker:
@@ -109,7 +109,7 @@ def created(monkeypatch):
     return names
 
 
-def migration(tmp_path, docker, group='nyle'):
+def migration(tmp_path, docker, group='acme'):
     return VolumeMigration(tmp_path, group, runner=docker,
                            image_provider=lambda root: 'devbase-snapshot:latest')
 
@@ -201,12 +201,12 @@ def test_a_missing_source_stops(tmp_path, created):
 
 @pytest.mark.parametrize('volume', [SOURCE, TARGET])
 def test_a_running_container_on_either_volume_stops(tmp_path, created, volume):
-    docker = FakeDocker(volumes={SOURCE, TARGET}, running={volume: ['carmo-ai-dev-1']})
+    docker = FakeDocker(volumes={SOURCE, TARGET}, running={volume: ['myapp-ai-dev-1']})
 
     with pytest.raises(VolumeMigrationError) as exc:
         migration(tmp_path, docker).run()
 
-    assert 'carmo-ai-dev-1' in str(exc.value) and 'devbase down' in str(exc.value)
+    assert 'myapp-ai-dev-1' in str(exc.value) and 'devbase down' in str(exc.value)
     assert created == []
     assert not any('cp' in c for c in docker.runs())
 
@@ -277,7 +277,7 @@ def test_command_dry_run_reports_without_writing(tmp_path, monkeypatch, created,
     monkeypatch.setattr('devbase.snapshot.manager.ensure_snapshot_image',
                         lambda root: 'devbase-snapshot:latest')
 
-    assert project.cmd_project_migrate_volume(tmp_path, _args(to='nyle', dry_run=True)) == 0
+    assert project.cmd_project_migrate_volume(tmp_path, _args(to='acme', dry_run=True)) == 0
 
     out = capsys.readouterr().out
     assert f'{SOURCE} → {TARGET} へ 3 件を写せます' in out
@@ -293,11 +293,11 @@ def test_command_reports_the_next_steps(tmp_path, monkeypatch, created, capsys):
     monkeypatch.setattr('devbase.snapshot.manager.ensure_snapshot_image',
                         lambda root: 'devbase-snapshot:latest')
 
-    assert project.cmd_project_migrate_volume(tmp_path, _args(to='nyle')) == 0
+    assert project.cmd_project_migrate_volume(tmp_path, _args(to='acme')) == 0
 
     out = capsys.readouterr().out
     assert '3 件を写しました' in out and '残してあります' in out
-    assert 'group_aliases' in out and 'DEVBASE_ACCOUNT_GROUP=nyle' in out
+    assert 'group_aliases' in out and 'DEVBASE_ACCOUNT_GROUP=acme' in out
 
 
 def test_command_failure_is_one(tmp_path, monkeypatch, created, caplog):
@@ -308,7 +308,7 @@ def test_command_failure_is_one(tmp_path, monkeypatch, created, caplog):
     monkeypatch.setattr('devbase.snapshot.manager.ensure_snapshot_image',
                         lambda root: 'devbase-snapshot:latest')
 
-    assert project.cmd_project_migrate_volume(tmp_path, _args(to='nyle')) == 1
+    assert project.cmd_project_migrate_volume(tmp_path, _args(to='acme')) == 1
     assert SOURCE in caplog.text
 
 
@@ -316,5 +316,5 @@ def test_parser_accepts_migrate_volume():
     from devbase import cli
 
     args = cli._create_parser().parse_args(
-        ['project', 'migrate-volume', '--to', 'nyle', '--dry-run'])
-    assert args.subcommand == 'migrate-volume' and args.to == 'nyle' and args.dry_run is True
+        ['project', 'migrate-volume', '--to', 'acme', '--dry-run'])
+    assert args.subcommand == 'migrate-volume' and args.to == 'acme' and args.dry_run is True

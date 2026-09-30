@@ -233,11 +233,11 @@ class TestDirsDiffer:
 
 class TestIsBakName:
     def test_plain_bak_matches(self):
-        assert _is_bak_name("carmo.bak") is True
+        assert _is_bak_name("myapp.bak") is True
 
     def test_numbered_bak_matches(self):
-        assert _is_bak_name("carmo.bak-2") is True
-        assert _is_bak_name("carmo.bak-17") is True
+        assert _is_bak_name("myapp.bak-2") is True
+        assert _is_bak_name("myapp.bak-17") is True
 
     def test_substring_bak_does_not_match(self):
         # The previous `'.bak' in name` check wrongly flagged these.
@@ -340,59 +340,59 @@ class TestMigrateClean:
 
 class TestMigrateWithLocalChanges:
     def test_diverged_copy_preserved_as_bak(self, registry, devbase_root):
-        plugins = [{"name": "carmo", "path": "carmo", "projects": ["carmo"]}]
+        plugins = [{"name": "myapp", "path": "myapp", "projects": ["myapp"]}]
         _make_repo_clone(devbase_root, plugins)
         _register_repo(registry, plugins)
         # User added a local .env that does not exist upstream
-        _make_legacy_copy(devbase_root, "carmo", plugins[0],
-                          extra={"projects/carmo/.env": "LOCAL=1\n"})
-        registry.add(_installed("carmo", "plugins/carmo"))
+        _make_legacy_copy(devbase_root, "myapp", plugins[0],
+                          extra={"projects/myapp/.env": "LOCAL=1\n"})
+        registry.add(_installed("myapp", "plugins/myapp"))
 
         result = migrate(registry)
 
-        assert result.preserved == ["carmo"]
+        assert result.preserved == ["myapp"]
         assert result.migrated == []
-        bak = devbase_root / "plugins" / "carmo.bak"
+        bak = devbase_root / "plugins" / "myapp.bak"
         assert bak.is_dir()
-        assert (bak / "projects" / "carmo" / ".env").read_text() == "LOCAL=1\n"
+        assert (bak / "projects" / "myapp" / ".env").read_text() == "LOCAL=1\n"
         # original copy path no longer present
-        assert not (devbase_root / "plugins" / "carmo").exists()
+        assert not (devbase_root / "plugins" / "myapp").exists()
 
     def test_bak_retained_plugins_dir_not_cleaned(self, registry, devbase_root):
-        plugins = [{"name": "carmo", "path": "carmo", "projects": ["carmo"]}]
+        plugins = [{"name": "myapp", "path": "myapp", "projects": ["myapp"]}]
         _make_repo_clone(devbase_root, plugins)
         _register_repo(registry, plugins)
-        _make_legacy_copy(devbase_root, "carmo", plugins[0],
+        _make_legacy_copy(devbase_root, "myapp", plugins[0],
                           extra={"extra.txt": "x\n"})
-        registry.add(_installed("carmo", "plugins/carmo"))
+        registry.add(_installed("myapp", "plugins/myapp"))
 
         result = migrate(registry)
 
         assert result.plugins_dir_cleaned is False
         # path is still rewritten to repos/ even when copy is preserved
-        assert registry.get("carmo").path == f"repos/{DIRNAME}/carmo"
+        assert registry.get("myapp").path == f"repos/{DIRNAME}/myapp"
 
     def test_existing_bak_is_not_overwritten(self, registry, devbase_root):
-        plugins = [{"name": "carmo", "path": "carmo", "projects": ["carmo"]}]
+        plugins = [{"name": "myapp", "path": "myapp", "projects": ["myapp"]}]
         _make_repo_clone(devbase_root, plugins)
         _register_repo(registry, plugins)
-        _make_legacy_copy(devbase_root, "carmo", plugins[0],
-                          extra={"projects/carmo/.env": "LOCAL=1\n"})
-        registry.add(_installed("carmo", "plugins/carmo"))
-        # A previous migration run already preserved carmo.bak with its own data
-        prev_bak = devbase_root / "plugins" / "carmo.bak"
+        _make_legacy_copy(devbase_root, "myapp", plugins[0],
+                          extra={"projects/myapp/.env": "LOCAL=1\n"})
+        registry.add(_installed("myapp", "plugins/myapp"))
+        # A previous migration run already preserved myapp.bak with its own data
+        prev_bak = devbase_root / "plugins" / "myapp.bak"
         prev_bak.mkdir(parents=True)
         (prev_bak / "old.txt").write_text("PREVIOUS\n")
 
         result = migrate(registry)
 
-        assert result.preserved == ["carmo"]
+        assert result.preserved == ["myapp"]
         # the old .bak survives untouched
         assert (prev_bak / "old.txt").read_text() == "PREVIOUS\n"
         # the new diverged copy lands in a distinct .bak-2 dir
-        new_bak = devbase_root / "plugins" / "carmo.bak-2"
+        new_bak = devbase_root / "plugins" / "myapp.bak-2"
         assert new_bak.is_dir()
-        assert (new_bak / "projects" / "carmo" / ".env").read_text() == "LOCAL=1\n"
+        assert (new_bak / "projects" / "myapp" / ".env").read_text() == "LOCAL=1\n"
 
 
 class TestMigrateClonesMissingRepo:
@@ -544,14 +544,14 @@ class TestCleanupPluginsDir:
         assert (plugins_dir / "my.bakery").is_dir()
 
     def test_numbered_bak_dir_is_retained(self, registry, devbase_root):
-        # A real preserved copy from a prior run (carmo.bak-2) keeps plugins/
-        # uncleaned just like carmo.bak does.
+        # A real preserved copy from a prior run (myapp.bak-2) keeps plugins/
+        # uncleaned just like myapp.bak does.
         plugins_dir = devbase_root / "plugins"
         plugins_dir.mkdir()
-        (plugins_dir / "carmo.bak-2").mkdir()
+        (plugins_dir / "myapp.bak-2").mkdir()
 
         assert _cleanup_plugins_dir(registry) is False
-        assert (plugins_dir / "carmo.bak-2").is_dir()
+        assert (plugins_dir / "myapp.bak-2").is_dir()
 
 
 class TestMigratePartialCloneRecovery:
@@ -608,7 +608,7 @@ class TestMigrateBatchesRegistryWrites:
     def test_multiple_plugins_all_persisted_with_single_save(self, registry, devbase_root):
         plugins = [
             {"name": "adminer", "path": "adminer", "projects": ["adminer"]},
-            {"name": "carmo", "path": "carmo", "projects": ["carmo"]},
+            {"name": "myapp", "path": "myapp", "projects": ["myapp"]},
             {"name": "redis", "path": "redis", "projects": ["redis"]},
         ]
         _make_repo_clone(devbase_root, plugins)
@@ -622,7 +622,7 @@ class TestMigrateBatchesRegistryWrites:
         ) as save_spy:
             result = migrate(registry)
 
-        assert sorted(result.migrated) == ["adminer", "carmo", "redis"]
+        assert sorted(result.migrated) == ["adminer", "myapp", "redis"]
         # All three path rewrites land in a single plugins.yml save rather than
         # one save per plugin.
         assert save_spy.call_count == 1
@@ -774,7 +774,7 @@ class TestAutoMigrateOnInstall:
     def test_install_triggers_migration_of_legacy(self, registry, devbase_root):
         plugins = [
             {"name": "adminer", "path": "adminer", "projects": ["adminer"]},
-            {"name": "carmo", "path": "carmo", "projects": ["carmo"]},
+            {"name": "myapp", "path": "myapp", "projects": ["myapp"]},
         ]
         _make_repo_clone(devbase_root, plugins)
         _register_repo(registry, plugins)
@@ -782,12 +782,12 @@ class TestAutoMigrateOnInstall:
         registry.add(_installed("adminer", "plugins/adminer"))
 
         from devbase.plugin.installer import install_plugin
-        install_plugin(registry, "carmo")
+        install_plugin(registry, "myapp")
 
         # pre-existing legacy install migrated as a side effect
         assert registry.get("adminer").path == f"repos/{DIRNAME}/adminer"
         # the explicitly requested install also succeeds
-        assert registry.get("carmo").path == f"repos/{DIRNAME}/carmo"
+        assert registry.get("myapp").path == f"repos/{DIRNAME}/myapp"
 
 
 class TestAutoMigrateWarningSuppression:
@@ -799,15 +799,15 @@ class TestAutoMigrateWarningSuppression:
         # each time — a concise INFO hint pointing at `devbase plugin migrate`
         # is enough (the explicit command prints the full detail).
         plugins = [
-            {"name": "carmo", "path": "carmo", "projects": ["carmo"]},
+            {"name": "myapp", "path": "myapp", "projects": ["myapp"]},
             {"name": "redis", "path": "redis", "projects": ["redis"]},
         ]
         _make_repo_clone(devbase_root, plugins)
         _register_repo(registry, plugins)
-        # carmo diverges (user-added file) -> will be preserved, not migrated.
-        _make_legacy_copy(devbase_root, "carmo", plugins[0],
-                          extra={"projects/carmo/.env": "LOCAL=1\n"})
-        registry.add(_installed("carmo", "plugins/carmo"))
+        # myapp diverges (user-added file) -> will be preserved, not migrated.
+        _make_legacy_copy(devbase_root, "myapp", plugins[0],
+                          extra={"projects/myapp/.env": "LOCAL=1\n"})
+        registry.add(_installed("myapp", "plugins/myapp"))
 
         from devbase.plugin.installer import _auto_migrate
         import logging

@@ -12,8 +12,8 @@ from devbase.volume import compose
 def in_tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DEV_SERVICE_NAME", raising=False)
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
-    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "carmo-ai")
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")  # up が宣言から置いた後 (#315)
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "myapp-ai")
     (tmp_path / "compose.yml").write_text(yaml.safe_dump({"services": {
         "dev": {"image": "dev:latest", "volumes": ["~/.aws:/home/ubuntu/.aws",
                                                    "/var/run/docker.sock:/var/run/docker.sock"]},
@@ -34,8 +34,8 @@ def test_local_generation_keeps_tilde(in_tmp_cwd):
 
 def test_remote_with_home_rewrites_and_warns_for_relative(in_tmp_cwd, caplog):
     with caplog.at_level("WARNING"):
-        compose.generate_scaled_compose(1, docker_home="/home/takemi", remote=True)
-    assert "/home/takemi/.aws:/home/ubuntu/.aws" in _sources(in_tmp_cwd, "dev-1")
+        compose.generate_scaled_compose(1, docker_home="/home/alice", remote=True)
+    assert "/home/alice/.aws:/home/ubuntu/.aws" in _sources(in_tmp_cwd, "dev-1")
     assert "./init.sql:/init.sql" in _sources(in_tmp_cwd, "db")
     assert "db: ./init.sql:/init.sql" in caplog.text
     assert "~/.aws" not in caplog.text

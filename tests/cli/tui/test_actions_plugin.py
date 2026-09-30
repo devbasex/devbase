@@ -578,7 +578,7 @@ def test_select_name_back_or_ctrl_c(monkeypatch, sel):
 
 def test_select_installed_plugin_reads_registry(monkeypatch, tmp_path):
     """plugins.yml の導入済み plugin が選択肢に並ぶ (registry 結合)。"""
-    _seed_registry(tmp_path, plugins=("ndf", "carmo"))
+    _seed_registry(tmp_path, plugins=("ndf", "myapp"))
     captured = {}
 
     def fake_select(message, choices, *, back, search):
@@ -587,7 +587,7 @@ def test_select_installed_plugin_reads_registry(monkeypatch, tmp_path):
 
     monkeypatch.setattr(menu, "select", fake_select)
     assert actions_plugin._select_installed_plugin(tmp_path, "選択") == "ndf"
-    assert captured["values"] == ["ndf", "carmo"]
+    assert captured["values"] == ["ndf", "myapp"]
 
 
 def test_select_installed_plugin_empty_is_cancel(monkeypatch, tmp_path):

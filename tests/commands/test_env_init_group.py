@@ -37,36 +37,36 @@ def _init(root, *argv):
 
 
 def test_parser_accepts_group_on_init():
-    args = cli._create_parser().parse_args(['env', 'init', '--group', 'with'])
-    assert args.group == 'with'
+    args = cli._create_parser().parse_args(['env', 'init', '--group', 'initech'])
+    assert args.group == 'initech'
     assert cli._create_parser().parse_args(['env', 'init']).group is None
 
 
 def test_init_with_a_group_writes_that_groups_team_global(grouped_root, openbao, collect):
-    assert _init(grouped_root, '--group', 'with') == 0
+    assert _init(grouped_root, '--group', 'initech') == 0
 
-    assert openbao.get('team/with/global') == {'INIT_KEY': 'value'}
-    assert {r.kv_path for r in openbao.received if r.kv_path} == {'team/with/global'}
+    assert openbao.get('team/initech/global') == {'INIT_KEY': 'value'}
+    assert {r.kv_path for r in openbao.received if r.kv_path} == {'team/initech/global'}
 
 
 def test_init_group_before_the_alias_writes_the_aliased_path(grouped_root, openbao, collect):
     from tests.conftest import configure_openbao
 
-    configure_openbao(grouped_root, openbao, layout='group', group_aliases={'acme': 'nyle'})
+    configure_openbao(grouped_root, openbao, layout='group', group_aliases={'umbrella': 'acme'})
 
-    assert _init(grouped_root, '--group', 'acme') == 0
+    assert _init(grouped_root, '--group', 'umbrella') == 0
 
-    assert openbao.get('team/nyle/global') == {'INIT_KEY': 'value'}
+    assert openbao.get('team/acme/global') == {'INIT_KEY': 'value'}
 
 
 def test_init_without_a_group_uses_the_declared_group(grouped_root, openbao, collect,
                                                       monkeypatch):
-    (grouped_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=kkg\n')
+    (grouped_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=globex\n')
     monkeypatch.setenv('PWD', str(grouped_root / 'projects' / 'web'))
 
     assert _init(grouped_root) == 0
 
-    assert openbao.get('team/kkg/global') == {'INIT_KEY': 'value'}
+    assert openbao.get('team/globex/global') == {'INIT_KEY': 'value'}
 
 
 def test_init_outside_projects_without_a_group_is_a_usage_error(grouped_root, openbao, collect,
@@ -96,13 +96,13 @@ def test_init_rejects_unusable_group_names(grouped_root, openbao, collect, name,
 
 
 def test_init_group_is_refused_with_the_flat_layout(openbao_root, openbao, collect, caplog):
-    assert _init(openbao_root, '--group', 'with') == 2
+    assert _init(openbao_root, '--group', 'initech') == 2
 
     assert openbao.received == []
     assert 'グループ別の置き場' in caplog.text
 
 
 def test_init_group_is_refused_with_a_file_backend(tmp_path, collect, caplog):
-    assert _init(tmp_path, '--group', 'with') == 2
+    assert _init(tmp_path, '--group', 'initech') == 2
 
     assert not (tmp_path / '.env').exists()

@@ -16,7 +16,7 @@ from devbase.commands import container
 from devbase.editor import opener
 from devbase.utils import docker_context as dc
 
-PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n"
 
 
 @pytest.fixture(autouse=True)
@@ -195,7 +195,7 @@ def test_print_command_is_a_success(harness):
 
 def test_workspace_is_opened_for_multiple_repos(harness, project):
     (project / 'project.yml').write_text(
-        PROJECT_YML + "  - owner: volareinc\n    repo: other\n")
+        PROJECT_YML + "  - owner: example-org\n    repo: other\n")
     assert _open() == 0
     assert harness.opened[0]['workspace']
 

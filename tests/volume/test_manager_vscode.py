@@ -20,7 +20,7 @@ from devbase.volume import manager
 def _clean_env(monkeypatch):
     """外部環境の COMPOSE_PROJECT_NAME に左右されないよう既定で未設定にする。"""
     monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")  # up が宣言から置いた後 (#315)
 
 
 # ---------------------------------------------------------------------------
@@ -29,19 +29,19 @@ def _clean_env(monkeypatch):
 
 def test_volume_name_contains_project_and_index():
     """名前は devbase_vscode_<project>_<index>。"""
-    assert manager.get_vscode_volume_for("carmo-ai", 1) == \
-        "devbase_vscode_carmo-ai_1"
+    assert manager.get_vscode_volume_for("myapp-ai", 1) == \
+        "devbase_vscode_myapp-ai_1"
 
 
 def test_each_instance_gets_its_own_volume():
     """scale > 1 でインスタンスごとに別のボリュームになる (AC3)。"""
-    names = {manager.get_vscode_volume_for("carmo-ai", i) for i in (1, 2, 3)}
+    names = {manager.get_vscode_volume_for("myapp-ai", i) for i in (1, 2, 3)}
     assert len(names) == 3
 
 
 def test_each_project_gets_its_own_volume():
     """プロジェクトが違えば別のボリュームになる (AC4)。"""
-    assert manager.get_vscode_volume_for("carmo-ai", 1) != \
+    assert manager.get_vscode_volume_for("myapp-ai", 1) != \
         manager.get_vscode_volume_for("bi-tools", 1)
 
 
@@ -52,17 +52,17 @@ def test_project_name_falls_back_to_environment(monkeypatch):
     別々にプロジェクト名を決めると、作った名前とマウントする名前がずれる。
     ``devbase up`` と同じ ``get_project_name`` へ委ねて経路を 1 つにする。
     """
-    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "carmo-ai")
-    assert manager.get_vscode_volume_for(None, 1) == "devbase_vscode_carmo-ai_1"
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "myapp-ai")
+    assert manager.get_vscode_volume_for(None, 1) == "devbase_vscode_myapp-ai_1"
 
 
 def test_project_name_falls_back_to_current_directory(monkeypatch, tmp_path):
     """COMPOSE_PROJECT_NAME が無ければカレントディレクトリ名 (``devbase up`` と同じ)。"""
-    project = tmp_path / "carmo-ai"
+    project = tmp_path / "myapp-ai"
     project.mkdir()
     monkeypatch.chdir(project)
 
-    assert manager.get_vscode_volume_for(None, 1) == "devbase_vscode_carmo-ai_1"
+    assert manager.get_vscode_volume_for(None, 1) == "devbase_vscode_myapp-ai_1"
 
 
 # ---------------------------------------------------------------------------
@@ -105,10 +105,10 @@ def test_ensure_volumes_creates_one_per_instance(monkeypatch):
     """scale の数だけ VS Code Server ボリュームを作る。"""
     created = _record_docker(monkeypatch)
 
-    manager.ensure_volumes(2, project_name="carmo-ai")
+    manager.ensure_volumes(2, project_name="myapp-ai")
 
-    assert "devbase_vscode_carmo-ai_1" in created
-    assert "devbase_vscode_carmo-ai_2" in created
+    assert "devbase_vscode_myapp-ai_1" in created
+    assert "devbase_vscode_myapp-ai_2" in created
 
 
 def test_ensure_volumes_keeps_existing_volumes(monkeypatch):
@@ -116,20 +116,20 @@ def test_ensure_volumes_keeps_existing_volumes(monkeypatch):
     created: list[str] = []
     monkeypatch.setattr(
         manager.VolumeManager, "_volume_exists",
-        lambda self, name: name == "devbase_vscode_carmo-ai_1")
+        lambda self, name: name == "devbase_vscode_myapp-ai_1")
     monkeypatch.setattr(
         manager.VolumeManager, "create_volume",
         lambda self, name: created.append(name) or True)
 
-    manager.ensure_volumes(1, project_name="carmo-ai")
+    manager.ensure_volumes(1, project_name="myapp-ai")
 
-    assert "devbase_vscode_carmo-ai_1" not in created
+    assert "devbase_vscode_myapp-ai_1" not in created
 
 
 def test_ensure_volumes_does_not_create_volumes_beyond_scale(monkeypatch):
     """scale を超えるインスタンスのボリュームは作らない。"""
     created = _record_docker(monkeypatch)
 
-    manager.ensure_volumes(1, project_name="carmo-ai")
+    manager.ensure_volumes(1, project_name="myapp-ai")
 
-    assert "devbase_vscode_carmo-ai_2" not in created
+    assert "devbase_vscode_myapp-ai_2" not in created

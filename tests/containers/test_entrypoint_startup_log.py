@@ -63,10 +63,10 @@ def test_group_and_account_are_reported(tmp_path, fake_bin):
     path = fake_bin('echo "someone@example.com"')
 
     result = run('CLOUDSDK_CONFIG=/persistent/group/gcloud '
-                 'devbase_log_account_group "kkg"', tmp_path, path)
+                 'devbase_log_account_group "globex"', tmp_path, path)
 
     assert result.returncode == 0, result.stderr
-    assert "Account group: kkg" in result.stdout
+    assert "Account group: globex" in result.stdout
     assert "gcloud account: someone@example.com" in result.stdout
     assert "CLOUDSDK_CONFIG: /persistent/group/gcloud" in result.stdout
 
@@ -75,7 +75,7 @@ def test_unauthenticated_gcloud_does_not_stop_startup(tmp_path, fake_bin):
     """未ログインだと gcloud は非 0 を返す。set -e で起動を落とさない。"""
     path = fake_bin('echo "ERROR: unset" >&2; exit 1')
 
-    result = run('devbase_log_account_group "nyle"', tmp_path, path)
+    result = run('devbase_log_account_group "acme"', tmp_path, path)
 
     assert result.returncode == 0, result.stderr
     assert "gcloud account: unset" in result.stdout
@@ -85,7 +85,7 @@ def test_empty_account_is_reported_as_unset(tmp_path, fake_bin):
     """`gcloud config get account` は未設定でも終了コード 0 で空を返すことがある。"""
     path = fake_bin('exit 0')
 
-    result = run('devbase_log_account_group "nyle"', tmp_path, path)
+    result = run('devbase_log_account_group "acme"', tmp_path, path)
 
     assert result.returncode == 0, result.stderr
     assert "gcloud account: unset" in result.stdout
@@ -93,7 +93,7 @@ def test_empty_account_is_reported_as_unset(tmp_path, fake_bin):
 
 def test_missing_gcloud_is_reported(tmp_path, no_gcloud_path):
     """gcloud を含まないイメージでも落ちない。"""
-    result = run('devbase_log_account_group "nyle"', tmp_path, path=no_gcloud_path)
+    result = run('devbase_log_account_group "acme"', tmp_path, path=no_gcloud_path)
 
     assert result.returncode == 0, result.stderr
     assert "gcloud not installed" in result.stdout
@@ -108,7 +108,7 @@ def test_missing_account_group_stops_the_startup(tmp_path, no_gcloud_path):
 
 
 def test_passed_account_group_lets_the_startup_continue(tmp_path, no_gcloud_path):
-    result = run('DEVBASE_ACCOUNT_GROUP=nyle devbase_require_account_group && echo ok', tmp_path,
+    result = run('DEVBASE_ACCOUNT_GROUP=acme devbase_require_account_group && echo ok', tmp_path,
                  path=no_gcloud_path)
 
     assert result.returncode == 0, result.stderr

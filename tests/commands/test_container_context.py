@@ -18,7 +18,7 @@ from devbase.env import runtime as secret_runtime
 from devbase.errors import DevbaseError
 from devbase.utils import docker_context as dc
 
-PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n"
 
 
 def _proc(stdout="", returncode=0, stderr=""):
@@ -165,7 +165,7 @@ def test_up_same_as_current_context_is_local(up_harness, docker_calls, project):
 def test_up_remote_skips_auto_snapshot_and_passes_home(up_harness, docker_calls, project,
                                                         monkeypatch, caplog):
     (project / 'project.local.yml').write_text(
-        "docker:\n  context: gpu-wsl\n  gid: 42\n  home: /home/takemi\n")
+        "docker:\n  context: gpu-wsl\n  gid: 42\n  home: /home/alice\n")
     # 実物の _auto_snapshot に戻す。リモート扱いなら SnapshotManager に触る前に抜ける
     monkeypatch.setattr(container, '_auto_snapshot', up_harness['_real_snapshot'])
     from devbase.snapshot import manager as snapshot_manager
@@ -174,7 +174,7 @@ def test_up_remote_skips_auto_snapshot_and_passes_home(up_harness, docker_calls,
     with caplog.at_level('WARNING'):
         assert container.cmd_up() == 0
     assert 'スナップショット' in caplog.text
-    assert up_harness['generate']['kwargs'] == {'docker_home': '/home/takemi', 'remote': True}
+    assert up_harness['generate']['kwargs'] == {'docker_home': '/home/alice', 'remote': True}
 
 
 def test_up_gid_probe_failure_stops_before_touching_containers(up_harness, docker_calls,

@@ -155,7 +155,7 @@ class SecretRef:
         既定 (``None``) は ``self.group``、つまり読み替える**前**の名前である
         (PLAN64 決定 2)。読み替えの解決は ``BackendConfigError`` を送出しうるため、
         誤りを伝える文言・警告・ログは引数なしで呼び、解決を背負わない。読み替えの
-        前後 (``acme → nyle``) を出す見出しは
+        前後 (``umbrella → acme``) を出す見出しは
         :meth:`SecretStore.display_label` を通る。
         """
         # チーム単位の文字列は変えない。誤りの伝達や桁揃えに埋め込まれており、

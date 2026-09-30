@@ -56,7 +56,7 @@ def up_harness(tmp_path, monkeypatch):
     dc.reset()
     # PLAN32: cmd_up は project.yml を唯一の正として読む
     (tmp_path / 'project.yml').write_text(
-        "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
+        "version: 1\nscale: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n")
     calls: list = []
 
     monkeypatch.setattr(container, 'get_project_name', lambda: 'proj')
@@ -176,7 +176,7 @@ openbao:
   user: member01
   layout: group
   group_aliases:
-    default: nyle
+    default: acme
 """
 
 FLAT_CONFIG = """\
@@ -187,7 +187,7 @@ openbao:
   user: member01
 """
 
-PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n"
 
 
 @pytest.fixture
@@ -269,8 +269,8 @@ def test_up_stops_on_an_empty_declaration(up_env, caplog):
 def test_up_stops_on_a_root_env_declaration(up_env, caplog):
     """#315 前提 2: $DEVBASE_ROOT/env の宣言は、プロジェクトが宣言済みでも止める"""
     _config(up_env['root'], FLAT_CONFIG)
-    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=nyle\n')
-    (up_env['root'] / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=acme\n')
+    (up_env['root'] / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
 
     assert container.cmd_up() == 1
 
@@ -304,21 +304,21 @@ def test_up_stops_on_a_group_mismatch_before_any_side_effect(up_env, caplog, mon
                                                              config):
     """I2: 環境変数と宣言が違えば backend を問わず止まり、2 つの値と出所を出す"""
     _config(up_env['root'], config)
-    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=nyle\n')
-    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'kkg')
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=acme\n')
+    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'globex')
 
     assert container.cmd_up() == 1
 
     assert up_env['calls'] == []
     text = caplog.text
-    assert 'kkg' in text and 'nyle' in text
+    assert 'globex' in text and 'acme' in text
     assert 'projects/api/env:1' in text
 
 
 def test_matching_groups_pass_the_check(up_env, monkeypatch):
     _config(up_env['root'], GROUPED_CONFIG)
-    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=kkg\n')
-    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'kkg')
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=globex\n')
+    monkeypatch.setenv('DEVBASE_ACCOUNT_GROUP', 'globex')
 
     assert container._require_group_declaration() is True
 
@@ -326,15 +326,15 @@ def test_matching_groups_pass_the_check(up_env, monkeypatch):
 def test_unset_environment_is_filled_from_the_declaration(up_env):
     """決定 5: 環境変数が未設定なら宣言の値を置く (ボリュームと機密が同じ値になる)"""
     _config(up_env['root'], FLAT_CONFIG)
-    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=with\n')
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=initech\n')
 
     assert container._require_group_declaration() is True
-    assert os.environ['DEVBASE_ACCOUNT_GROUP'] == 'with'
+    assert os.environ['DEVBASE_ACCOUNT_GROUP'] == 'initech'
 
 
 def test_declared_up_proceeds_to_the_next_check(up_env, monkeypatch):
     _config(up_env['root'], FLAT_CONFIG)
-    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=acme\n')
     monkeypatch.setattr(container, '_ensure_env_files',
                         lambda: up_env['calls'].append(('env-files',)) or False)
 
@@ -345,7 +345,7 @@ def test_declared_up_proceeds_to_the_next_check(up_env, monkeypatch):
 
 def test_declared_scale_proceeds(up_env, monkeypatch):
     _config(up_env['root'], FLAT_CONFIG)
-    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=nyle\n')
+    _declare(up_env, 'DEVBASE_ACCOUNT_GROUP=acme\n')
 
     def stop_here(*args, **kwargs):
         raise DevbaseError('ここで止める')
@@ -418,17 +418,17 @@ def test_store_account_group_does_not_stop_the_group_check(openbao_root, openbao
                                                             monkeypatch, caplog):
     """受け入れ条件 6: dispatch 前の注入 → 食い違いの検査 の順に呼んでも True。
 
-    ``projects/web`` は ``nyle`` を宣言し、共通の機密 (``team/nyle/global``) に
-    ``DEVBASE_ACCOUNT_GROUP=kkg`` がある。注入が置き場の値をプロセスへ載せると、環境変数は
-    ``kkg``・宣言は ``nyle`` で止まる。
+    ``projects/web`` は ``acme`` を宣言し、共通の機密 (``team/acme/global``) に
+    ``DEVBASE_ACCOUNT_GROUP=globex`` がある。注入が置き場の値をプロセスへ載せると、環境変数は
+    ``globex``・宣言は ``acme`` で止まる。
     """
     from tests.conftest import configure_openbao
     from devbase.env import runtime
 
     root = openbao_root
     configure_openbao(root, openbao, layout='group')
-    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
-    openbao.put('team/nyle/global', {'DEVBASE_ACCOUNT_GROUP': 'kkg', 'TOKEN': 't'})
+    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
+    openbao.put('team/acme/global', {'DEVBASE_ACCOUNT_GROUP': 'globex', 'TOKEN': 't'})
     monkeypatch.setenv('DEVBASE_ROOT', str(root))
     monkeypatch.setenv('PWD', str(root / 'projects' / 'web'))
     monkeypatch.delenv('DEVBASE_ACCOUNT_GROUP', raising=False)
@@ -440,7 +440,7 @@ def test_store_account_group_does_not_stop_the_group_check(openbao_root, openbao
 
         assert 'DEVBASE_ACCOUNT_GROUP' not in os.environ
         assert container._require_group_declaration() is True
-        assert os.environ['DEVBASE_ACCOUNT_GROUP'] == 'nyle'
+        assert os.environ['DEVBASE_ACCOUNT_GROUP'] == 'acme'
         assert os.environ['TOKEN'] == 't'
         assert '食い違う' not in caplog.text
     finally:

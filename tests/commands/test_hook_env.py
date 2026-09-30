@@ -30,8 +30,8 @@ DUMP_SCRIPT = '''#!/bin/bash
 def config():
     return parse_project_config({
         "version": 1,
-        "defaults": {"owner": "volareinc"},
-        "repos": [{"repo": "carmo"}, {"repo": "carmo-batch"}],
+        "defaults": {"owner": "example-org"},
+        "repos": [{"repo": "myapp"}, {"repo": "myapp-batch"}],
     }, source="project.yml")
 
 
@@ -47,10 +47,10 @@ def test_pre_up_hook_receives_the_repo_layout(tmp_path, monkeypatch, config):
     assert container._run_pre_up_hook(config) is True
 
     values = dumped(tmp_path)
-    assert values["DEVBASE_PRIMARY_DIR"] == "carmo"
-    assert values["DEVBASE_PRIMARY_URL"] == "https://github.com/volareinc/carmo.git"
-    assert values["DEVBASE_WORK_DIR"] == "/work/carmo"
-    assert values["DEVBASE_REPO_DIRS"] == "carmo carmo-batch"
+    assert values["DEVBASE_PRIMARY_DIR"] == "myapp"
+    assert values["DEVBASE_PRIMARY_URL"] == "https://github.com/example-org/myapp.git"
+    assert values["DEVBASE_WORK_DIR"] == "/work/myapp"
+    assert values["DEVBASE_REPO_DIRS"] == "myapp myapp-batch"
 
 
 def test_deploy_hook_receives_the_repo_layout_and_index(tmp_path, monkeypatch, config):
@@ -61,7 +61,7 @@ def test_deploy_hook_receives_the_repo_layout_and_index(tmp_path, monkeypatch, c
     container._run_deploy_script_for_instances(deploy, [2], config)
 
     values = dumped(tmp_path)
-    assert values["DEVBASE_WORK_DIR"] == "/work/carmo"
+    assert values["DEVBASE_WORK_DIR"] == "/work/myapp"
     assert values["DEVBASE_INSTANCE_INDEX"] == "2"
 
 

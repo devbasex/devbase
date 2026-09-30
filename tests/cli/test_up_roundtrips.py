@@ -40,8 +40,8 @@ def _write_project(root: Path, name: str) -> Path:
     project = root / 'projects' / name
     project.mkdir(parents=True, exist_ok=True)
     (project / 'project.yml').write_text(
-        "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n")
-    (project / 'env').write_text(f"PROJECT_MARK={name}\nDEVBASE_ACCOUNT_GROUP=nyle\n")
+        "version: 1\nscale: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n")
+    (project / 'env').write_text(f"PROJECT_MARK={name}\nDEVBASE_ACCOUNT_GROUP=acme\n")
     return project
 
 
@@ -232,15 +232,15 @@ def test_up_after_env_init_reads_written_values(up_root, openbao, monkeypatch):
 # グループ別の置き場 (PLAN56)
 # ---------------------------------------------------------------------------
 
-G_WITH = ['team/with/global', 'users/member01/with/global',
-          'team/with/projects/web', 'users/member01/with/projects/web']
-G_NYLE_API = ['team/nyle/global', 'users/member01/nyle/global',
-              'team/nyle/projects/api', 'users/member01/nyle/projects/api']
+G_INITECH = ['team/initech/global', 'users/member01/initech/global',
+          'team/initech/projects/web', 'users/member01/initech/projects/web']
+G_ACME_API = ['team/acme/global', 'users/member01/acme/global',
+              'team/acme/projects/api', 'users/member01/acme/projects/api']
 
 
 @pytest.fixture
 def grouped(up_root, openbao, monkeypatch):
-    """``version: 2`` ``web`` は ``with``、``api`` は ``nyle``。
+    """``version: 2`` ``web`` は ``initech``、``api`` は ``acme``。
 
     ``up_root`` の従来のパスの機密 (``team/global`` など) は置いたままにし、要求が 0 回で
     あることを確かめる。``_resolve_project_name`` が載せる変数は、元が未設定でも復元
@@ -252,14 +252,14 @@ def grouped(up_root, openbao, monkeypatch):
     root = up_root['root']
     configure_openbao(root, openbao, layout='group')
     with (root / 'projects' / 'web' / 'env').open('a') as f:
-        f.write('DEVBASE_ACCOUNT_GROUP=with\n')
-    openbao.put('team/with/global', {'SHARED': 'with-team'})
-    openbao.put('users/member01/with/global', {'MINE': 'with-me'})
-    openbao.put('team/with/projects/web', {'WEB_ONLY': 'w'})
-    openbao.put('team/nyle/global', {'SHARED': 'nyle-team', 'NYLE_ONLY': 'n'})
-    openbao.put('users/member01/nyle/global', {'MINE': 'nyle-me'})
-    openbao.put('team/nyle/projects/api', {'API_ONLY': 'a'})
-    for name in ('DEVBASE_ACCOUNT_GROUP', 'NYLE_ONLY', 'COMPOSE_PROJECT_NAME', 'PROJECT_MARK',
+        f.write('DEVBASE_ACCOUNT_GROUP=initech\n')
+    openbao.put('team/initech/global', {'SHARED': 'initech-team'})
+    openbao.put('users/member01/initech/global', {'MINE': 'initech-me'})
+    openbao.put('team/initech/projects/web', {'WEB_ONLY': 'w'})
+    openbao.put('team/acme/global', {'SHARED': 'acme-team', 'ACME_ONLY': 'n'})
+    openbao.put('users/member01/acme/global', {'MINE': 'acme-me'})
+    openbao.put('team/acme/projects/api', {'API_ONLY': 'a'})
+    for name in ('DEVBASE_ACCOUNT_GROUP', 'ACME_ONLY', 'COMPOSE_PROJECT_NAME', 'PROJECT_MARK',
                  'SHARED', 'MINE', 'WEB_ONLY', 'API_ONLY', 'INIT_KEY', 'PWD'):
         monkeypatch.setenv(name, 'x')
         monkeypatch.delenv(name)
@@ -295,29 +295,29 @@ def _all_kv_paths(openbao):
 
 
 def test_grouped_up_in_project_reads_only_its_group(grouped, openbao, monkeypatch):
-    """受け入れ条件 1: ``web`` (``with``) の ``up`` は ``with`` の 4 パスだけ、認証 1 回"""
-    _enter(grouped['root'], 'web', monkeypatch, declared='with')
+    """受け入れ条件 1: ``web`` (``initech``) の ``up`` は ``initech`` の 4 パスだけ、認証 1 回"""
+    _enter(grouped['root'], 'web', monkeypatch, declared='initech')
 
     assert _run_named_up() == 0
 
     assert openbao.logins == 1
-    assert _gets(openbao) == sorted(G_WITH)
-    assert _all_kv_paths(openbao) == set(G_WITH)
-    assert grouped['secrets'].values['SHARED'] == 'with-team'
-    assert grouped['environ']['MINE'] == 'with-me'
+    assert _gets(openbao) == sorted(G_INITECH)
+    assert _all_kv_paths(openbao) == set(G_INITECH)
+    assert grouped['secrets'].values['SHARED'] == 'initech-team'
+    assert grouped['environ']['MINE'] == 'initech-me'
 
 
-def test_grouped_up_of_a_nyle_project_reads_the_nyle_group(grouped, openbao, monkeypatch):
-    """受け入れ条件 2・#315: ``nyle`` の宣言は ``team/nyle/…`` と ``devbase_home_nyle``"""
+def test_grouped_up_of_a_acme_project_reads_the_acme_group(grouped, openbao, monkeypatch):
+    """受け入れ条件 2・#315: ``acme`` の宣言は ``team/acme/…`` と ``devbase_home_acme``"""
     _enter(grouped['root'], 'api', monkeypatch)
 
     assert _run_named_up() == 0
 
     assert openbao.logins == 1
-    assert _gets(openbao) == sorted(G_NYLE_API)
-    assert _all_kv_paths(openbao) == set(G_NYLE_API)
-    assert grouped['group_volume'] == 'devbase_home_nyle'
-    assert grouped['secrets'].values['NYLE_ONLY'] == 'n'
+    assert _gets(openbao) == sorted(G_ACME_API)
+    assert _all_kv_paths(openbao) == set(G_ACME_API)
+    assert grouped['group_volume'] == 'devbase_home_acme'
+    assert grouped['secrets'].values['ACME_ONLY'] == 'n'
 
 
 def test_grouped_up_without_a_declaration_stops_before_reading(grouped, openbao, monkeypatch,
@@ -335,29 +335,29 @@ def test_grouped_up_without_a_declaration_stops_before_reading(grouped, openbao,
 
 def test_grouped_up_other_project_does_not_touch_the_callers_group(grouped, openbao,
                                                                    monkeypatch):
-    """受け入れ条件 7: ``api`` (``nyle``) の中で ``up web`` → ``with`` の 4 パスだけ、認証 1 回"""
+    """受け入れ条件 7: ``api`` (``acme``) の中で ``up web`` → ``initech`` の 4 パスだけ、認証 1 回"""
     _enter(grouped['root'], 'api', monkeypatch)
 
     assert _run_named_up('web') == 0
 
     assert openbao.logins == 1
-    assert _gets(openbao) == sorted(G_WITH)
-    assert _all_kv_paths(openbao) == set(G_WITH)
-    for key in ('API_ONLY', 'NYLE_ONLY'):
+    assert _gets(openbao) == sorted(G_INITECH)
+    assert _all_kv_paths(openbao) == set(G_INITECH)
+    for key in ('API_ONLY', 'ACME_ONLY'):
         assert key not in grouped['environ']
         assert key not in grouped['secrets'].values
-    assert grouped['secrets'].values['SHARED'] == 'with-team'
+    assert grouped['secrets'].values['SHARED'] == 'initech-team'
 
 
 def test_grouped_up_after_env_init_reads_the_value_written_to_its_group(grouped, openbao,
                                                                         monkeypatch):
-    """受け入れ条件 18: 子プロセスの ``env init`` が ``--group with`` で ``team/with/global`` へ書く"""
+    """受け入れ条件 18: 子プロセスの ``env init`` が ``--group initech`` で ``team/initech/global`` へ書く"""
     from devbase.commands import env as env_cmd
 
     root = grouped['root']
-    openbao.secrets.pop('team/with/global')
-    openbao.versions.pop('team/with/global')
-    _enter(root, 'web', monkeypatch, declared='with')
+    openbao.secrets.pop('team/initech/global')
+    openbao.versions.pop('team/initech/global')
+    _enter(root, 'web', monkeypatch, declared='initech')
 
     class _Registry:
         collectors = [types.SimpleNamespace(
@@ -392,12 +392,12 @@ def test_grouped_up_after_env_init_reads_the_value_written_to_its_group(grouped,
 
     assert _run_named_up() == 0
 
-    assert child['argv'][-4:] == ['env', 'init', '--group', 'with']
+    assert child['argv'][-4:] == ['env', 'init', '--group', 'initech']
     assert child['cwd'] == str(root)
-    assert openbao.get('team/with/global') == {'INIT_KEY': 'value'}
+    assert openbao.get('team/initech/global') == {'INIT_KEY': 'value'}
     assert grouped['secrets'].values['INIT_KEY'] == 'value'
     assert grouped['environ']['INIT_KEY'] == 'value'
-    assert _all_kv_paths(openbao) == set(G_WITH)
+    assert _all_kv_paths(openbao) == set(G_INITECH)
 
 
 def test_flat_up_does_not_pass_a_group_to_env_init(up_root, openbao, monkeypatch):

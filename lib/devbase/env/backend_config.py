@@ -191,7 +191,7 @@ class OpenBaoSettings:
 
         for source, target in self.group_aliases.items():
             if LEGACY_GROUP_NAME in (source, target):
-                # 旧既定の読み替え (default: nyle など) は、宣言の無いプロジェクトを黙って
+                # 旧既定の読み替え (default: acme など) は、宣言の無いプロジェクトを黙って
                 # あるグループへ落とす経路だった。devbase は backend.yml を書き換えない (#315 決定 9)
                 raise BackendConfigError(
                     f"openbao.group_aliases の '{source}: {target}' は使えません。"
@@ -224,7 +224,7 @@ class OpenBaoSettings:
         return mapped
 
     def display_group(self, group: str) -> str:
-        """文言に出すグループ名。読み替えがあれば前と後の両方 (``acme → nyle``)"""
+        """文言に出すグループ名。読み替えがあれば前と後の両方 (``umbrella → acme``)"""
         mapped = self.storage_group(group)
         return group if mapped == group else f'{group} → {mapped}'
 
