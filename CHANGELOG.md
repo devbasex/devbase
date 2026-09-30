@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Added
+- **base イメージに `python3-psutil` を入れました。** コンテナの中のシステムの `python3` で
+  `import psutil` が使えます（NDF のスクリプトがプロセスの一覧と資源の量を読むのに使います）。
+  反映には `devbase container build` でイメージを建て直してください。
+
 ### Changed
 - **`containers/lfm` のもとのイメージを `nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04` に上げました（#337）。**
   GPU を使うホストの NVIDIA ドライバは CUDA 13.4 以上に対応している必要があります（`nvidia-smi` の

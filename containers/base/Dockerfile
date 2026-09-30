@@ -26,6 +26,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # 文書を扱う軽量の道具 (#160)。PDF を画像にする・調べる、OOXML を壊さずに読み書きする。
     # LibreOffice (展開 372〜459MB) と pip は入れない。Python パッケージは uv / uvx で賄う。
     poppler-utils python3-pil python3-defusedxml python3-lxml \
+    # プロセスの一覧と資源の量を読む (NDF のスクリプトがシステムの python3 で import する)。
+    python3-psutil \
     # Bash の静的検査 (#249)。bash-language-server は診断を shellcheck に任せており、
     # 無いとエラーも警告も出さずに診断が空になる。
     shellcheck; \
