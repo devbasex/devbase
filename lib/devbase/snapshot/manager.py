@@ -945,8 +945,10 @@ class SnapshotManager:
             'volumes': dict(volumes),
             'files': [FULL_ARCHIVE],
             'incremental_count': 0,
-            'archive_root': ARCHIVE_ROOT_MEMBERS,
         }
+        if '' not in volumes:
+            # 旧レイアウト (ルートへ直接マウント) の起点は ``.`` のままなので書かない
+            meta['archive_root'] = ARCHIVE_ROOT_MEMBERS
         self._save_snap_meta(snap_dir, meta)
 
     def _create_incremental(self, name: str, snap_dir: Path) -> None:
@@ -960,6 +962,14 @@ class SnapshotManager:
                 f"スナップショット '{name}' は別のボリューム構成 "
                 f"({', '.join(recorded.values())}) で作られています。"
                 f"現在の対象は {', '.join(self.volumes.values())} です。"
+                "新しい世代を作成してください (devbase snapshot create)"
+            )
+
+        if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+            # 通常はここへ来ない (auto_snapshot_target が新世代へ倒す)。snar が起点を ``.`` で
+            # 記録しているため、積むと差分がボリューム全体になる。
+            raise SnapshotError(
+                f"スナップショット '{name}' は控えの起点が古い形 (/source) で作られています。"
                 "新しい世代を作成してください (devbase snapshot create)"
             )
 

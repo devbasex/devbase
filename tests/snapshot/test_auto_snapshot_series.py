@@ -180,3 +180,18 @@ def test_invalid_group_warns_without_creating_metadata(root, monkeypatch, caplog
     warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert not (root / "backups" / "snapshot.yml").exists()
+
+
+def test_explicit_incremental_to_a_source_root_generation_is_refused(root):
+    """名前を明示して古い形の世代へ差分を作ろうとすると、理由を示して止める。"""
+    from devbase.snapshot.manager import SnapshotError
+
+    backups = write_state(root, [("A", "acme", 0)])
+    meta_path = backups / "A" / "meta.yml"
+    meta = yaml.safe_load(meta_path.read_text())
+    del meta["archive_root"]
+    meta_path.write_text(yaml.safe_dump(meta))
+
+    with pytest.raises(SnapshotError, match="起点が古い形"):
+        SnapshotManager(root).create(name="A")
+    assert not (backups / "A" / "incr-001.tar.zst").exists()
