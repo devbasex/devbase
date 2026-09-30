@@ -1,6 +1,6 @@
 """#276: プロジェクトとして数える名前の述語と、名前の形の説明の消費側。
 
-``projects/`` の走査 13 か所 (S1〜S13。番号は ``issues/issue-276-design.md`` の走査の表) が、
+``projects/`` の走査 13 か所 (S1〜S13。番号は設計 https://github.com/devbasex/devbase/pull/296 の走査の表) が、
 名前の条件として ``devbase.utils.names.counts_as_project`` を呼ぶことを見る。定義元の 1 か所を
 差し替え、それがすべての走査へ届くかで確かめる。独自の規則を持つ走査や、
 ``from devbase.utils.names import counts_as_project`` と読み込んだ走査には差し替えが届かず、

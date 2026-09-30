@@ -217,8 +217,8 @@
 - **`group_aliases` のある置き場で、機密の参照の見出しがグループの読み替えの前と後を出すように
   しました（PLAN64 / #188）。** `devbase env list` の節の見出しと件数の行、`devbase env backend test`
   の参照ごとの行、`devbase env backend migrate` の移行の計画の一覧と `--to age` の完了後の一覧が、
-  `グローバル（グループ default）` から `グローバル（グループ default → nyle）` になります。これまでは
-  読み替える前の名前だけが出て、隣に並ぶパス（`devbase/team/nyle/global`）と食い違って見えていました。
+  `グローバル（グループ default）` から `グローバル（グループ default → acme）` になります。これまでは
+  読み替える前の名前だけが出て、隣に並ぶパス（`devbase/team/acme/global`）と食い違って見えていました。
   読み替えの対応が無いグループ・`version: 1` ・ファイル backend（`plaintext` / `age`）の見出しと、
   エラー文言・警告・ログ・`devbase env backend status` の表示は変わりません。置き場のパス・サーバへの
   要求・キャッシュにも影響しません。
@@ -265,7 +265,7 @@
 ### Fixed
 - **`devbase build --help` / `-h` がビルドを始めてしまう**のを直しました（PLAN61 / #196）。
   `build` の使い方（`--no-cache` / `--project-no-cache` / `--expires[=DAYS]` / `--context NAME` /
-  `<image>` 指定）を出して終了コード 0 で終わります。`devbase build carmo --help` のように
+  `<image>` 指定）を出して終了コード 0 で終わります。`devbase build myapp --help` のように
   プロジェクト名の後ろに置いても、そのプロジェクトへ移動せずに使い方を出します。
 - **tmux の中で URL がクリックできなくなっていた**のを直しました。tmux は端末が `Hls`
   能力を持つときだけハイパーリンク (OSC 8) を書き出し、持たない端末ではリンクを捨てて
@@ -522,7 +522,7 @@ devbase build base --no-cache
 
 - **永続化ボリュームをアカウントグループ単位に分離**しました (PLAN39 / #116)。
   これまで認証情報と会話ログは全コンテナ共通の `devbase_home_ubuntu` に置かれていたため、
-  nyle.co.jp で認証した Claude Code / gcloud を kk-generation.com のプロジェクトが
+  acme.example で認証した Claude Code / gcloud を globex.example のプロジェクトが
   そのまま引き継いでしまい、企業テナントの境界を越えていました。`DEVBASE_ACCOUNT_GROUP`
   (未設定なら `default`) で使用する Google / AWS アカウントの単位を宣言すると、
   グループごとに `devbase_home_<group>` が作られ `/persistent/group` としてマウントされます。
@@ -583,7 +583,7 @@ devbase build base --no-cache
   > 同梱していないため対象外です。
 
 - **VS Code のウィンドウタイトルをコンテナ名始まりに固定**するようにしました
-  (例 `nyle-dx-dev-1 - main.py`)。既定のタイトルは編集中ファイル名が先頭に来るため、
+  (例 `myapp-dev-1 - main.py`)。既定のタイトルは編集中ファイル名が先頭に来るため、
   複数プロジェクトの窓を並べるとどれがどのプロジェクトか判別できませんでした。
   `devbase up` が各 dev コンテナ内の Remote settings
   (`~/.vscode-server/data/Machine/settings.json`) へ `window.title` を書きます。
@@ -873,7 +873,7 @@ devbase build base --no-cache
   作り直す 2 段ビルドは従来どおり `devbase build --no-cache` を使用してください。
 - **`devbase project` サブコマンド群を新設**しました (PLAN06)。CWD に依存せずプロジェクト名でコンテナ操作ができます。
   - `devbase project up/down/ps/logs/scale [name]` で、任意のディレクトリから `$DEVBASE_ROOT/projects/<name>` を対象に操作できます。名前解決はラッパー (`bin/devbase`) が対象ディレクトリへ `cd` してから実行するため、シェル実装の `build` を含む全操作が名前指定で成立します（呼び出し元シェルの作業ディレクトリは変わりません）。存在しない名前はエラーになり候補が提示されます。
-  - `devbase project list` で `$DEVBASE_ROOT/projects/` 配下を `NAME` / `PLUGIN` / `STATUS` の一覧表示します。`PLUGIN` 列はシンボリックリンク先から解決するため、PLAN04 の同名衝突 suffix（例 `carmo.takemi`）が付いていても正しいプラグイン名を表示します。**TTY ではデフォルトで対話選択**になり、一覧から番号で選んだプロジェクトを `project up` で起動します。`--no-interactive`（`--plain` / `-P`）で一覧表示のみに切り替えられ、パイプ・リダイレクト・CI などの非 TTY 環境では自動的に一覧表示へフォールバックします（`--interactive` / `-i` は後方互換として引き続き受け付けます）。
+  - `devbase project list` で `$DEVBASE_ROOT/projects/` 配下を `NAME` / `PLUGIN` / `STATUS` の一覧表示します。`PLUGIN` 列はシンボリックリンク先から解決するため、PLAN04 の同名衝突 suffix（例 `myapp.alice`）が付いていても正しいプラグイン名を表示します。**TTY ではデフォルトで対話選択**になり、一覧から番号で選んだプロジェクトを `project up` で起動します。`--no-interactive`（`--plain` / `-P`）で一覧表示のみに切り替えられ、パイプ・リダイレクト・CI などの非 TTY 環境では自動的に一覧表示へフォールバックします（`--interactive` / `-i` は後方互換として引き続き受け付けます）。
   - トップレベルシノニム `devbase up/down/ps/scale [name]` / `devbase build [image]` / `devbase login [index]` / `devbase list` を整備しました（`logs` はシノニムを持たず `devbase project logs` のみ）。
   - bash / zsh のシェル補完に `project` グループとプロジェクト名補完（`$DEVBASE_ROOT/projects/` 配下を列挙）を追加しました。
   - 利用者向けドキュメント `docs/user/cli-reference.md`（現 [`docs/user/cli-reference/`](docs/user/cli-reference/README.md)） / [`docs/user/container-operations.md`](docs/user/container-operations.md) を `project` 体系に更新しました。

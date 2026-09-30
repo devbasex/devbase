@@ -1560,7 +1560,7 @@ groups:
 - [機密の保存先を選ぶ](../user/env-backend.md)
 - [環境変数の暗号化](../user/env-encryption.md)
 - [CLI リファレンス: env](../user/cli-reference/03-env.md)
-- 発端の依頼: `issues/security-key.md`
+- 発端の依頼と設計: devbasex/devbase#159
 - 実装 PR: devbasex/devbase#171（Infisical 版 #167 を置き換え）、#177（`up` の往復、#168）、
   #178（コンテナの `bao`、#169）、#184（アカウントグループごとの置き場、#182。設計は #183）、
   #206（機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` を注入しない、#185。設計は #205）、

@@ -10,7 +10,7 @@ TUI は CLI のロジックを再実装せず、``types.SimpleNamespace`` を組
 - ``dispatch_group``: env / plugin / snapshot 等の ``handler(devbase_root, args)``
   シグネチャを持つグループハンドラ向け (PR3 以降で使用)。
 
-属性契約は ``issues/PLAN31_2_list-tui-unified.md`` 2.3 の表に従う。CLI 実行と差異を
+属性契約は導入時の設計 (https://github.com/devbasex/devbase/pull/55) に従う。CLI 実行と差異を
 出さないため、呼び出し側が CLI parser の既定値どおりの属性を ``**attrs`` で渡す。
 """
 

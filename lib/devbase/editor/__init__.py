@@ -1,4 +1,4 @@
 """エディタ自動オープン (devbase up 後の dev コンテナ接続)。
 
-詳細設計は issues/PLAN31_3_up-open-editor.md を参照。
+仕様は docs/specifications/editor-open.md、導入の経緯は https://github.com/devbasex/devbase/pull/69 を参照。
 """

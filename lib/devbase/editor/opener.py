@@ -1,6 +1,6 @@
 """`devbase up` 後に dev コンテナへ接続した VS Code を自動で開く。
 
-設計の核心 (issues/PLAN31_3_up-open-editor.md §2):
+設計の核心 (docs/specifications/editor-open.md、導入は https://github.com/devbasex/devbase/pull/69):
 
 - 一貫機構は **PATH 上の ``code`` への委譲**。VS Code 統合ターミナルでは
   ``VSCODE_IPC_HOOK_CLI`` 経由でクライアント側 VS Code に「このフォルダを開け」を
