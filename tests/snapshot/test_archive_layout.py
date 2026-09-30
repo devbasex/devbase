@@ -83,6 +83,10 @@ def test_incr_glob_matches_what_is_archive_file_accepts(tmp_path: Path):
 # コマンドの helper
 # ---------------------------------------------------------------------------
 
+VOLUMES = {"ai": "devbase_home_ubuntu", "group": "devbase_home_acme"}
+LEGACY = {"": "devbase_home_ubuntu"}
+
+
 def test_restore_command_has_same_shape_for_full_and_incr():
     full = SnapshotManager.restore_command(FULL_ARCHIVE)
     incr = SnapshotManager.restore_command("incr-002.tar.zst")
@@ -92,21 +96,27 @@ def test_restore_command_has_same_shape_for_full_and_incr():
 
 
 def test_backup_command_has_same_shape_for_full_and_incr():
-    full = SnapshotManager.backup_command(FULL_ARCHIVE)
-    incr = SnapshotManager.backup_command("incr-002.tar.zst")
+    full = SnapshotManager.backup_command(FULL_ARCHIVE, VOLUMES)
+    incr = SnapshotManager.backup_command("incr-002.tar.zst", VOLUMES)
     assert full.replace(FULL_ARCHIVE, "X") == incr.replace("incr-002.tar.zst", "X")
     assert f"--listed-incremental={ARCHIVE_MOUNT}/{SNAR_FILE}" in full
-    assert f"-C {BACKUP_ROOT} ." in full
     assert full.endswith(f"-o {ARCHIVE_MOUNT}/{FULL_ARCHIVE}")
+
+
+def test_backup_command_starts_from_the_mounted_volumes():
+    """起点は各ボリュームのマウント先で、``/source`` そのものではない。
+
+    ``/source`` はコンテナを起動するたびに作られ inode が変わる。起点にすると GNU tar が
+    毎回「新しいディレクトリ」とみなし、差分がボリューム全体になる。
+    """
+    cmd = SnapshotManager.backup_command(FULL_ARCHIVE, VOLUMES)
+    assert f"-C {BACKUP_ROOT} ai group |" in cmd
+    assert f"-C {BACKUP_ROOT} . " not in cmd
 
 
 # ---------------------------------------------------------------------------
 # マウント先の helper
 # ---------------------------------------------------------------------------
-
-VOLUMES = {"ai": "devbase_home_ubuntu", "group": "devbase_home_acme"}
-LEGACY = {"": "devbase_home_ubuntu"}
-
 
 def test_mount_points_follow_mode_and_layout():
     assert SnapshotManager.mount_points(VOLUMES, "backup") == [
@@ -141,8 +151,9 @@ def test_create_and_restore_go_through_the_helpers(tmp_path: Path):
     mgr.create(name="snap1")
     mgr.create(name="snap1")  # 差分
     backup_cmds = [c["command"] for c in mgr.calls if c["mode"] == "backup"]
-    assert backup_cmds[0] == SnapshotManager.backup_command(FULL_ARCHIVE)
-    assert backup_cmds[1].endswith(SnapshotManager.backup_command(incr_archive_name(1)))
+    assert backup_cmds[0] == SnapshotManager.backup_command(FULL_ARCHIVE, mgr.volumes)
+    assert backup_cmds[1].endswith(
+        SnapshotManager.backup_command(incr_archive_name(1), mgr.volumes))
     assert backup_cmds[1].startswith(
         f"cp {ARCHIVE_MOUNT}/{SNAR_FILE} {ARCHIVE_MOUNT}/{SNAR_FILE}.bak && ")
 

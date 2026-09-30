@@ -51,6 +51,11 @@ BACKUP_ROOT = '/source'
 RESTORE_ROOT = '/target'
 ARCHIVE_MOUNT = '/backup'
 
+# meta.yml の ``archive_root``。この値を持つ世代は、各ボリュームのマウント先 (``ai`` /
+# ``group``) を起点に控えている。持たない世代は ``/source`` を起点に控えており、その snar へ
+# 差分を積むとボリューム全体が入るため、新しい世代へ倒す。
+ARCHIVE_ROOT_MEMBERS = 'members'
+
 
 def incr_archive_name(num: int) -> str:
     """``num`` 本目の差分アーカイブ名 (``incr-001.tar.zst`` の形) を返す。"""
@@ -790,6 +795,11 @@ class SnapshotManager:
                     "世代 %s の meta.yml の対象ボリューム (%s) が %s と一致しないため、"
                     "新しい世代を作成します", name, ', '.join(recorded.values()), label)
                 return None
+            if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+                logger.info(
+                    "世代 %s は控えの起点が古い形 (/source) のため、新しい世代を作成します",
+                    name)
+                return None
 
         if latest.get('incremental_count', 0) >= max_incrementals:
             logger.info(
@@ -807,15 +817,20 @@ class SnapshotManager:
         return ensure_snapshot_image(self.devbase_root)
 
     @staticmethod
-    def backup_command(archive: str) -> str:
+    def backup_command(archive: str, volumes: dict) -> str:
         """対象を 1 本のアーカイブへ書き出すコマンドを組み立てる。
 
         full も差分も同じ形で、``snapshot.snar`` に前回の状態を積み上げる。
         差分は ``archive`` に ``incr-NNN.tar.zst`` を渡す。
+
+        起点は各ボリュームのマウント先 (``ai`` / ``group``) で、``/source`` そのものではない。
+        ``/source`` はコンテナを起動するたびに作られ inode が変わるため、GNU tar が毎回
+        新しいディレクトリとみなし、差分がボリューム全体になる。
         """
+        members = ' '.join(sub or '.' for sub in volumes)
         return (
             f"tar --listed-incremental={ARCHIVE_MOUNT}/{SNAR_FILE} "
-            f"-cf - -C {BACKUP_ROOT} . | zstd -1 -T0 -o {ARCHIVE_MOUNT}/{archive}"
+            f"-cf - -C {BACKUP_ROOT} {members} | zstd -1 -T0 -o {ARCHIVE_MOUNT}/{archive}"
         )
 
     @staticmethod
@@ -919,7 +934,7 @@ class SnapshotManager:
             volumes = self.volumes
         logger.info("フルバックアップを作成中: %s", name)
         self._run_docker_tar(
-            snap_dir, 'backup', self.backup_command(FULL_ARCHIVE), volumes,
+            snap_dir, 'backup', self.backup_command(FULL_ARCHIVE, volumes), volumes,
         )
 
         # meta.yml を作成
@@ -931,6 +946,9 @@ class SnapshotManager:
             'files': [FULL_ARCHIVE],
             'incremental_count': 0,
         }
+        if '' not in volumes:
+            # 旧レイアウト (ルートへ直接マウント) の起点は ``.`` のままなので書かない
+            meta['archive_root'] = ARCHIVE_ROOT_MEMBERS
         self._save_snap_meta(snap_dir, meta)
 
     def _create_incremental(self, name: str, snap_dir: Path) -> None:
@@ -944,6 +962,14 @@ class SnapshotManager:
                 f"スナップショット '{name}' は別のボリューム構成 "
                 f"({', '.join(recorded.values())}) で作られています。"
                 f"現在の対象は {', '.join(self.volumes.values())} です。"
+                "新しい世代を作成してください (devbase snapshot create)"
+            )
+
+        if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+            # 通常はここへ来ない (auto_snapshot_target が新世代へ倒す)。snar が起点を ``.`` で
+            # 記録しているため、積むと差分がボリューム全体になる。
+            raise SnapshotError(
+                f"スナップショット '{name}' は控えの起点が古い形 (/source) で作られています。"
                 "新しい世代を作成してください (devbase snapshot create)"
             )
 
@@ -965,7 +991,7 @@ class SnapshotManager:
         self._run_docker_tar(
             snap_dir, 'backup',
             f"cp {ARCHIVE_MOUNT}/{SNAR_FILE} {ARCHIVE_MOUNT}/{SNAR_FILE}.bak && "
-            + self.backup_command(incr_name)
+            + self.backup_command(incr_name, self.volumes)
         )
 
         # meta.yml を更新

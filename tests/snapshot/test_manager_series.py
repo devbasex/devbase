@@ -68,6 +68,7 @@ def write_state(root: Path, entries: list) -> Path:
                 meta["volume"] = "devbase_home_ubuntu"
             else:
                 meta["volumes"] = vols(group)
+                meta["archive_root"] = "members"
             (snap_dir / "meta.yml").write_text(yaml.safe_dump(meta))
         entry = {"name": name, "created_at": created, "updated_at": created,
                  "incremental_count": incr}
