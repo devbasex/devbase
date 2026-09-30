@@ -148,13 +148,19 @@ def strip_jsonc(text: str) -> str:
             i = _end_of_string(stripped, i)
             continue
         if ch == ",":
-            j = i + 1
-            while j < n and stripped[j].isspace():
-                j += 1
+            j = _skip_ws(stripped, i + 1)
             if j < n and stripped[j] in "}]":
                 out[i] = " "
         i += 1
     return "".join(out)
+
+
+def _skip_ws(text: str, i: int) -> int:
+    """``text[i]`` 以降で空白でない最初の位置を返す (無ければ ``len(text)``)。"""
+    n = len(text)
+    while i < n and text[i].isspace():
+        i += 1
+    return i
 
 
 def _skip_value(text: str, i: int) -> int:
@@ -190,17 +196,14 @@ def _root_members(text: str):
     ``json.loads`` が通ったものを渡す前提なので、想定外の形は None で諦める。
     """
     n = len(text)
-    i = 0
-    while i < n and text[i].isspace():
-        i += 1
+    i = _skip_ws(text, 0)
     if i >= n or text[i] != "{":
         return None
     open_index = i
     i += 1
     members = []
     while True:
-        while i < n and text[i].isspace():
-            i += 1
+        i = _skip_ws(text, i)
         if i >= n:
             return None
         if text[i] == "}":
@@ -213,13 +216,11 @@ def _root_members(text: str):
         except ValueError:
             return None
         i = key_end
-        while i < n and text[i].isspace():
-            i += 1
+        i = _skip_ws(text, i)
         if i >= n or text[i] != ":":
             return None
         i += 1
-        while i < n and text[i].isspace():
-            i += 1
+        i = _skip_ws(text, i)
         if i >= n:
             return None
         value_start = i
@@ -227,8 +228,7 @@ def _root_members(text: str):
         if i < 0:
             return None
         members.append((key, value_start, i))
-        while i < n and text[i].isspace():
-            i += 1
+        i = _skip_ws(text, i)
         if i < n and text[i] == ",":
             i += 1
 
