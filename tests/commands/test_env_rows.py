@@ -232,14 +232,14 @@ def test_group_choices_dedupe_by_storage_group(grouped, openbao):
     """候補は宣言だけから作り、置き場のグループ名で重複を除く。宣言の無いプロジェクトは飛ばす"""
     from tests.conftest import configure_openbao
 
-    configure_openbao(grouped, openbao, layout='group', group_aliases={'acme': 'team-a'})
+    configure_openbao(grouped, openbao, layout='group', group_aliases={'umbrella': 'team-a'})
     (grouped / 'projects' / 'api').mkdir()
-    (grouped / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
+    (grouped / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=umbrella\n')
     (grouped / 'projects' / 'ops').mkdir()
     (grouped / 'projects' / 'ops' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=team-c\n')
     (grouped / 'projects' / 'undeclared').mkdir()
 
-    assert env_rows.group_choices(grouped) == ['acme', 'team-c']
+    assert env_rows.group_choices(grouped) == ['team-a', 'team-c']
 
 
 def test_group_choices_ignore_the_root_env(grouped):

@@ -23,10 +23,10 @@ from devbase import cli
 
 def test_project_rebuild_accepts_optional_name():
     parser = cli._create_parser()
-    with_name = parser.parse_args(['project', 'rebuild', 'carmo'])
+    with_name = parser.parse_args(['project', 'rebuild', 'myapp'])
     assert with_name.command == 'project'
     assert with_name.subcommand == 'rebuild'
-    assert with_name.name == 'carmo'
+    assert with_name.name == 'myapp'
 
     without_name = parser.parse_args(['project', 'rebuild'])
     assert without_name.subcommand == 'rebuild'
@@ -42,9 +42,9 @@ def test_container_rebuild_subcommand():
 
 def test_top_level_rebuild_shortcut():
     parser = cli._create_parser()
-    ns = parser.parse_args(['rebuild', 'carmo'])
+    ns = parser.parse_args(['rebuild', 'myapp'])
     assert ns.command == 'rebuild'
-    assert ns.name == 'carmo'
+    assert ns.name == 'myapp'
 
 
 def test_rebuild_in_shortcuts():
@@ -86,9 +86,9 @@ def test_lifecycle_rebuild_resolves_name_first(monkeypatch):
                         lambda name: order.append(('resolve', name)) or True)
     monkeypatch.setattr(container, 'cmd_rebuild',
                         lambda: order.append('rebuild') or 0)
-    args = types.SimpleNamespace(subcommand='rebuild', name='carmo')
+    args = types.SimpleNamespace(subcommand='rebuild', name='myapp')
     assert container._dispatch_lifecycle(args) == 0
-    assert order == [('resolve', 'carmo'), 'rebuild']
+    assert order == [('resolve', 'myapp'), 'rebuild']
 
 
 # ---------------------------------------------------------------------------

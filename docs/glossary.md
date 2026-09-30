@@ -83,7 +83,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | 取り込みの選択 | — | 取り込みの候補のうち、利用者が選んだもの。AWS は選んだプロファイルの名前の並び、GCP は参照に書いたプロファイル。同期済みハッシュの控えに残り、sync はこの範囲だけを入れ直す | — | — | `docs/specifications/secret-backend.md` |
 | AWS の丸ごとの取り込み | — | ~/.aws/config と ~/.aws/credentials を切り出さずにそのまま 1 つの tar にして AWS_CONFIG_BASE64 へ書くこと。#314 より前の振る舞い | — | — | `docs/specifications/secret-backend.md` |
 | AWS のプロファイルの連なり | — | 選んだ AWS のプロファイルが動くのに要る節。sso_session が指す [sso-session <名前>] と、source_profile が指すプロファイル（たどれる限り） | — | — | `docs/specifications/secret-backend.md` |
-| グループ名の例 | — | エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す | — | — | — |
+| グループ名の例 | — | エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す | — | — | `docs/specifications/secret-backend.md` |
 
 ## スナップショット（`snapshot`）
 
@@ -123,7 +123,7 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all・CHANGELOG check） | — | — | `docs/specifications/ci-checks.md` |
+| 検査ジョブ | — | ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all・CHANGELOG check・Proper term check） | — | — | `docs/specifications/ci-checks.md` |
 | 統合ブランチ | — | 課題の Pull Request の宛先になる main 以外のブランチ（release/** と mission/**） | — | — | `docs/specifications/ci-checks.md` |
 | 必須チェック | — | main の保護設定の required_status_checks に並ぶチェックの名前。すべてが合格しないと main へマージできない | — | — | `docs/specifications/ci-checks.md` |
 | まとめたチェック | — | pytest の matrix の全版の結果を 1 つにまとめ、版に依存しない名前 Pytest で出るチェック。全版が成功したときだけ成功する | — | — | `docs/specifications/ci-checks.md` |
@@ -140,11 +140,11 @@ GitHub Actions の CI（.github/workflows/ci.yml）と、そこで走る静的�
 | 見張るパス | — | CHANGELOG の検査が利用者に見える変更の手がかりとして見る場所（lib/・bin/・containers/・install.sh・etc/） | — | — | `docs/specifications/ci-checks.md` |
 | CHANGELOG の検査 | — | main 宛ての Pull Request で、見張るパスを変えて CHANGELOG.md を変えていないときに未記入の警告を出す検査ジョブ | — | — | `docs/specifications/ci-checks.md` |
 | 未記入の警告 | — | CHANGELOG の検査が出す GitHub Actions の警告の注記。ジョブを失敗にしない | — | — | `docs/specifications/ci-checks.md` |
-| 固有の語 | — | 作成者の所属組織・顧客・社内プロダクト・個人に固有の名前。公開のリポジトリの文書・コード・テストに置かない | — | — | — |
-| 語の一覧 | — | 固有の語の検査が探す固有の語を 1 行 1 語で並べた平文。CI では secret、手元では追跡されない置き場に置き、公開のファイルに書かない | — | — | — |
-| 固有の語の検査 | — | 語の一覧を読み、追跡されたファイルから固有の語を含む行を探すスクリプトと、それを Pull Request で走らせる CI のジョブ | — | — | — |
-| 当たり | — | 固有の語の検査が見つけた、語を含む行。パスと行番号の組で示し、行の本文と語を出さない | — | — | — |
-| 例外の位置 | — | 固有の語の検査が当たりにしない行。パスと行の形の組で定め、語を含まない | — | — | — |
+| 固有の語 | — | 作成者の所属組織・顧客・社内プロダクト・個人に固有の名前。公開のリポジトリの文書・コード・テストに置かない | — | — | `docs/specifications/ci-checks.md` |
+| 語の一覧 | — | 固有の語の検査が探す固有の語を 1 行 1 語で並べた平文。CI では secret、手元では追跡されない置き場に置き、公開のファイルに書かない | — | — | `docs/specifications/ci-checks.md` |
+| 固有の語の検査 | — | 語の一覧を読み、追跡されたファイルから固有の語を含む行を探すスクリプトと、それを Pull Request で走らせる CI のジョブ | — | — | `docs/specifications/ci-checks.md` |
+| 当たり | — | 固有の語の検査が見つけた、語を含む行。パスと行番号の組で示し、行の本文と語を出さない | — | — | `docs/specifications/ci-checks.md` |
+| 例外の位置 | — | 固有の語の検査が当たりにしない行。パスと行の形の組で定め、語を含まない | — | — | `docs/specifications/ci-checks.md` |
 
 ## テストの実行環境（`test`）
 

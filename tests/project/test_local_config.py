@@ -39,9 +39,9 @@ def test_empty_file_is_same_as_missing(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_reads_docker_section(tmp_path):
-    write_local(tmp_path, "docker:\n  context: gpu-wsl\n  home: /home/takemi\n  gid: 999\n")
+    write_local(tmp_path, "docker:\n  context: gpu-wsl\n  home: /home/alice\n  gid: 999\n")
     config = load_project_local_config(tmp_path)
-    assert config.docker == DockerSettings(context="gpu-wsl", home="/home/takemi", gid=999)
+    assert config.docker == DockerSettings(context="gpu-wsl", home="/home/alice", gid=999)
 
 
 def test_docker_section_all_optional():
@@ -81,7 +81,7 @@ def test_invalid_gid_is_rejected(value):
     assert "gid" in str(e.value)
 
 
-@pytest.mark.parametrize("value", ["home/takemi", "~", "", 3])
+@pytest.mark.parametrize("value", ["home/alice", "~", "", 3])
 def test_home_must_be_absolute(value):
     with pytest.raises(ConfigError) as e:
         parse_project_local_config({"docker": {"home": value}}, source="local")

@@ -18,7 +18,7 @@ from devbase.snapshot.manager import SnapshotManager
 
 @pytest.fixture(autouse=True)
 def _clean_group_env(monkeypatch):
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "nyle")  # up が宣言から置いた後 (#315)
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")  # up が宣言から置いた後 (#315)
 
 
 @pytest.fixture
@@ -55,22 +55,22 @@ def test_both_volumes_are_targeted(root):
 
     assert mgr.volumes == {
         "ai": "devbase_home_ubuntu",
-        "group": "devbase_home_nyle",
+        "group": "devbase_home_acme",
     }
 
 
 def test_group_volume_follows_the_account_group(root, monkeypatch):
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "globex")
     mgr = RecordingManager(root)
 
-    assert mgr.volumes["group"] == "devbase_home_kkg"
+    assert mgr.volumes["group"] == "devbase_home_globex"
 
 
 def test_explicit_group_wins(root, monkeypatch):
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
-    mgr = RecordingManager(root, group="with")
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "globex")
+    mgr = RecordingManager(root, group="initech")
 
-    assert mgr.volumes["group"] == "devbase_home_with"
+    assert mgr.volumes["group"] == "devbase_home_initech"
 
 
 def test_backup_mounts_both_volumes_read_only(root):
@@ -81,7 +81,7 @@ def test_backup_mounts_both_volumes_read_only(root):
     mounts = mgr.calls[0]["mounts"]
     assert mounts == [
         "-v", "devbase_home_ubuntu:/source/ai:ro",
-        "-v", "devbase_home_nyle:/source/group:ro",
+        "-v", "devbase_home_acme:/source/group:ro",
     ]
 
 
@@ -95,7 +95,7 @@ def test_restore_mounts_both_volumes_writable(root):
     restore_calls = [c for c in mgr.calls if c["mode"] == "restore"]
     assert restore_calls[0]["mounts"] == [
         "-v", "devbase_home_ubuntu:/target/ai",
-        "-v", "devbase_home_nyle:/target/group",
+        "-v", "devbase_home_acme:/target/group",
     ]
 
 
@@ -124,7 +124,7 @@ def test_metadata_records_the_target_volumes(root):
     meta = yaml.safe_load((root / "backups" / "snap1" / "meta.yml").read_text())
     assert meta["volumes"] == {
         "ai": "devbase_home_ubuntu",
-        "group": "devbase_home_nyle",
+        "group": "devbase_home_acme",
     }
 
 
@@ -134,7 +134,7 @@ def test_global_metadata_records_the_target_volumes(root):
     mgr.create(name="snap1")
 
     meta = yaml.safe_load((root / "backups" / "snapshot.yml").read_text())
-    assert meta["snapshots"][0]["volumes"]["group"] == "devbase_home_nyle"
+    assert meta["snapshots"][0]["volumes"]["group"] == "devbase_home_acme"
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def test_group_change_starts_a_new_generation(root, monkeypatch):
     mgr = RecordingManager(root)
     mgr.create(name="snap1")
 
-    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "kkg")
+    monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "globex")
     other = RecordingManager(root)
 
     assert (other.auto_snapshot_target() is None) is True
@@ -230,7 +230,7 @@ def test_incremental_on_a_different_layout_is_refused(root):
 
     message = str(excinfo.value)
     assert "devbase_home_ubuntu" in message
-    assert "devbase_home_nyle" in message
+    assert "devbase_home_acme" in message
 
 
 def test_invalid_group_does_not_break_read_only_operations(root, monkeypatch):
@@ -323,7 +323,7 @@ def test_restore_refuses_before_touching_the_volumes(root):
 
 
 @pytest.mark.parametrize("group_volume", [
-    "devbase_home_default", "devbase_home_kkg", "devbase_home_with",
+    "devbase_home_default", "devbase_home_globex", "devbase_home_initech",
     "devbase_home_a-b_c.d",
 ])
 def test_devbase_owned_volume_names_pass(root, group_volume):
@@ -342,7 +342,7 @@ def test_devbase_owned_volume_names_pass(root, group_volume):
     "devbase_work_1",          # devbase の作業ボリューム (スナップショット対象外)
     "devbase_home_ubuntu",     # group 側に共通ボリュームを書く
     "devbase_home_1",          # 数字のみのグループ名 (index と衝突)
-    "home_kkg",                # プレフィックスが違う
+    "home_globex",                # プレフィックスが違う
 ])
 def test_unrelated_volume_names_are_rejected_for_the_group_mount(root, name):
     """named volume の形をしているだけでは通さない。
@@ -361,7 +361,7 @@ def test_unrelated_volume_names_are_rejected_for_the_group_mount(root, name):
         mgr.snapshot_volumes(snap_dir)
 
 
-@pytest.mark.parametrize("name", ["mysql_data", "devbase_home_kkg", "devbase_work_1"])
+@pytest.mark.parametrize("name", ["mysql_data", "devbase_home_globex", "devbase_work_1"])
 def test_shared_mount_only_accepts_the_shared_volume(root, name):
     from devbase.errors import SnapshotError
 
@@ -377,8 +377,8 @@ def test_shared_mount_only_accepts_the_shared_volume(root, name):
 
 @pytest.mark.parametrize("name", [
     "devbase_home_",           # 空のグループ名
-    "devbase_home_  kkg  ",    # 前後空白 (resolve は空白を落としてしまう)
-    "devbase_home_ KKG",
+    "devbase_home_  globex  ",    # 前後空白 (resolve は空白を落としてしまう)
+    "devbase_home_ GLOBEX",
 ])
 def test_unnormalised_group_volume_names_are_rejected(root, name):
     """検証を通るかどうかだけでは足りない。

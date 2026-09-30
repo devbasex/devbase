@@ -79,9 +79,11 @@ def validate_account_group(name: str) -> str:
             f"共通ボリューム {HOME_UBUNTU_VOLUME} と同じ名前になります"
         )
     if name == LEGACY_GROUP_NAME:
+        from devbase.env.groups import EXAMPLE_GROUP
+
         raise DevbaseError(
             f"{keys.DEVBASE_ACCOUNT_GROUP} に予約語は使えません: '{name}'。"
-            "移し先のグループ名 (nyle / personal など) を書いてください。"
+            f"移し先のグループ名 ({EXAMPLE_GROUP} / personal など) を書いてください。"
             f"{LEGACY_GROUP_VOLUME} の中身は "
             "devbase project migrate-volume --to <グループ> で移せます"
         )

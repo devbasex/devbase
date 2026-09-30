@@ -21,7 +21,7 @@ from devbase.utils import docker
 from devbase.utils import docker_context as dc
 
 
-PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+PROJECT_YML = "version: 1\nscale: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n"
 
 # 生成物のサービスとそのプロファイル。``config --services`` の応答はここから作る
 NO_PROFILE_SERVICES = {'dev-1': [], 'dev-2': [], 'redis': []}
@@ -398,7 +398,7 @@ def test_scale_passes_explicit_project_name(scale_harness, monkeypatch):
 def test_scale_without_explicit_scale_treats_default_scale_as_current_and_rejects_scale_two(scale_harness):
     """現状固定: project.yml に scale 指定がない場合、DEFAULT_SCALE (2) が現在台数となり scale 2 は拒否される。"""
     project_file = scale_harness['root'] / 'project.yml'
-    content_without_scale = "version: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+    content_without_scale = "version: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n"
     project_file.write_text(content_without_scale)
 
     assert container.cmd_scale(2) == 1
@@ -409,7 +409,7 @@ def test_scale_without_explicit_scale_treats_default_scale_as_current_and_reject
 def test_scale_without_explicit_scale_deploys_only_instance_above_default_scale(scale_harness, monkeypatch):
     """現状固定: project.yml に scale 指定がない場合、scale 3 への増設で deploy は 3 のみ実行される。"""
     project_file = scale_harness['root'] / 'project.yml'
-    content_without_scale = "version: 1\nrepos:\n  - owner: volareinc\n    repo: carmo\n"
+    content_without_scale = "version: 1\nrepos:\n  - owner: example-org\n    repo: myapp\n"
     project_file.write_text(content_without_scale)
 
     (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')

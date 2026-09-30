@@ -18,7 +18,7 @@ base image から **sshd を廃止**し、`devbase orca` 連携および `ENABLE
 
 1. Mac 側で **Remote Login (sshd)** を有効化する（システム設定 > 一般 > 共有 > リモートログイン。
    既に有効な環境なら不要）。
-2. Windows の VS Code に **Remote-SSH 拡張**を入れ、Mac（`takemi_ohama@<Mac-LAN-IP>`）へ接続する。
+2. Windows の VS Code に **Remote-SSH 拡張**を入れ、Mac（`alice@<Mac-LAN-IP>`）へ接続する。
 3. 接続した Mac 上で対象プロジェクトに移動してコンテナへ入る。従来どおり git worktree / AI CLI が使える。
 
    ```bash
@@ -35,7 +35,7 @@ base image から **sshd を廃止**し、`devbase orca` 連携および `ENABLE
 
 当初は devbase 独自の agent orchestration（`docker exec` + tmux + VS Code Extension）を
 追加する検討を進めていましたが、Claude アプリ本体に同等の機能が追加されたため**廃案**としました。
-当時の検討記録は [`issues/old/i34-orcalike.md`](../../issues/old/i34-orcalike.md) にあります。
+当時の検討記録は [devbasex/devbase#87](https://github.com/devbasex/devbase/pull/87) にあります。
 複数コンテナの AI セッションを束ねたい場合は、Claude アプリ側の機能を利用してください。
 
 ## クリーンアップ（任意）

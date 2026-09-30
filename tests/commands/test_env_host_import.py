@@ -21,9 +21,9 @@ from devbase.commands import env as env_cmd
 from devbase.env import host_import, keys
 from devbase.env.sources import SourcesManager
 
-KKG = 'team/kkg/global'
-KKG_USER = 'users/member01/kkg/global'
-NYLE = 'team/nyle/global'
+GLOBEX = 'team/globex/global'
+GLOBEX_USER = 'users/member01/globex/global'
+ACME = 'team/acme/global'
 
 #: AC2: 全部断ったときに、チーム共通に 1 つも無いはずのキー
 IMPORTED_KEYS = (
@@ -40,27 +40,27 @@ AWS_CONFIG = """\
 [default]
 region = ap-northeast-1
 
-[profile carmo-dev]
+[profile myapp-dev]
 region = us-east-1
 
-[profile kkg]
-sso_session = kkg-sso
+[profile globex]
+sso_session = globex-sso
 sso_account_id = 111111111111
 region = ap-northeast-1
 
-[sso-session kkg-sso]
-sso_start_url = https://kkg.awsapps.com/start
+[sso-session globex-sso]
+sso_start_url = https://globex.awsapps.com/start
 sso_region = ap-northeast-1
 
-[profile lixil]
+[profile hooli]
 role_arn = arn:aws:iam::222222222222:role/x
-source_profile = lixil-base
+source_profile = hooli-base
 
-[profile lixil-base]
+[profile hooli-base]
 role_arn = arn:aws:iam::333333333333:role/y
-source_profile = lixil-root
+source_profile = hooli-root
 
-[profile lixil-root]
+[profile hooli-root]
 region = us-west-2
 
 [services s3]
@@ -73,20 +73,20 @@ AWS_CREDENTIALS = """\
 aws_access_key_id = AKIADEFAULT
 aws_secret_access_key = SECRET-DEFAULT
 
-[carmo-dev]
-aws_access_key_id = AKIACARMO
-aws_secret_access_key = SECRET-CARMO
+[myapp-dev]
+aws_access_key_id = AKIAMYAPP
+aws_secret_access_key = SECRET-MYAPP
 
-[kkg]
-aws_access_key_id = AKIAKKG
-aws_secret_access_key = SECRET-KKG
+[globex]
+aws_access_key_id = AKIAGLOBEX
+aws_secret_access_key = SECRET-GLOBEX
 
-[lixil-root]
-aws_access_key_id = AKIALIXIL
-aws_secret_access_key = SECRET-LIXIL
+[hooli-root]
+aws_access_key_id = AKIAHOOLI
+aws_secret_access_key = SECRET-HOOLI
 """
 
-SECRETS = ('SECRET-DEFAULT', 'SECRET-CARMO', 'SECRET-KKG', 'SECRET-LIXIL',
+SECRETS = ('SECRET-DEFAULT', 'SECRET-MYAPP', 'SECRET-GLOBEX', 'SECRET-HOOLI',
            'PRIVATE-KEY-BQ', 'PRIVATE-KEY-AN', 'ghp_TOKEN123')
 
 
@@ -109,7 +109,7 @@ def host(home, monkeypatch):
     creds = home / 'gcp-credentials'
     creds.mkdir()
     (creds / 'bigquery_full.json').write_text(json.dumps(
-        {'project_id': 'nyle-carmo-analysis', 'private_key': 'PRIVATE-KEY-BQ'}))
+        {'project_id': 'acme-myapp-analysis', 'private_key': 'PRIVATE-KEY-BQ'}))
     (creds / 'analytics.json').write_text(json.dumps({'private_key': 'PRIVATE-KEY-AN'}))
     monkeypatch.setattr(google, 'GCP_CREDENTIALS_DIR', creds)
     monkeypatch.setattr(google, 'LEGACY_CREDENTIALS_FILE', home / 'none.json')
@@ -175,7 +175,7 @@ def headers(text: str) -> list:
     return [line.strip() for line in text.splitlines() if line.strip().startswith('[')]
 
 
-def init(root, group='kkg'):
+def init(root, group='globex'):
     return env_cmd.cmd_env_init(root, reset=True, group=group)
 
 
@@ -204,9 +204,9 @@ def test_asking_shows_the_candidates_before_writing(grouped, openbao, host, tty,
     out = capsys.readouterr().out
     assert 'ホストで見つけた GCP の鍵 (2件):' in out
     assert '1) analytics (project: N/A)' in out
-    assert '2) bigquery_full (project: nyle-carmo-analysis)' in out
+    assert '2) bigquery_full (project: acme-myapp-analysis)' in out
     assert '~/.aws/config のプロファイル (6件):' in out
-    assert '3) kkg' in out
+    assert '3) globex' in out
     assert ('ホストの Git の設定から取り込めるキー: GIT_USER_NAME, GIT_USER_EMAIL, '
             'GIT_CREDENTIALS_BASE64, GITHUB_PERSONAL_ACCESS_TOKEN, GH_TOKEN') in out
     assert sum('取り込む番号' in p for p in answers.prompts) == 2
@@ -217,12 +217,12 @@ def test_asking_shows_the_candidates_before_writing(grouped, openbao, host, tty,
 
 
 def test_enter_everywhere_writes_no_host_credentials(grouped, openbao, host, tty, monkeypatch):
-    """AC2: 全部 Enter で答えると、kkg のチーム共通に取り込みのキーが 1 つも無い"""
+    """AC2: 全部 Enter で答えると、globex のチーム共通に取り込みのキーが 1 つも無い"""
     Answers(monkeypatch)
 
     assert init(grouped) == 0
 
-    stored = openbao.get(KKG) or {}
+    stored = openbao.get(GLOBEX) or {}
     assert not [k for k in stored if k in IMPORTED_KEYS
                 or k.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX)]
 
@@ -237,11 +237,11 @@ def test_non_terminal_stdin_imports_nothing_even_with_piped_answers(grouped, ope
 
     assert init(grouped) == 0
 
-    stored = openbao.get(KKG) or {}
+    stored = openbao.get(GLOBEX) or {}
     assert not [k for k in stored if k in IMPORTED_KEYS
                 or k.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX)]
     assert not any('取り込む番号' in p or '取り込みますか' in p for p in answers.prompts)
-    assert ('標準入力が端末でないため、ホストの資格情報は取り込みません (kkg)。'
+    assert ('標準入力が端末でないため、ホストの資格情報は取り込みません (globex)。'
             '取り込むなら secrets/host-import.yml で import を指定します') in infos(caplog)
 
 
@@ -255,24 +255,24 @@ def test_dev_null_stdin_exits_zero_and_imports_nothing(grouped, openbao, host, m
 
     assert init(grouped) == 0
 
-    stored = openbao.get(KKG) or {}
+    stored = openbao.get(GLOBEX) or {}
     assert not [k for k in stored if k in IMPORTED_KEYS
                 or k.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX)]
 
 
 def test_skip_policy_asks_nothing(grouped, openbao, host, tty, monkeypatch, caplog):
     """AC14: skip と名指ししたグループは取り込みの質問を出さず、AC2 と同じ結果"""
-    write_policy(grouped, 'groups:\n  kkg: skip\n')
+    write_policy(grouped, 'groups:\n  globex: skip\n')
     answers = Answers(monkeypatch, {'選択 [1/2/3/4]': '1'})
     caplog.set_level(logging.INFO)
 
     assert init(grouped) == 0
 
-    stored = openbao.get(KKG) or {}
+    stored = openbao.get(GLOBEX) or {}
     assert not [k for k in stored if k in IMPORTED_KEYS
                 or k.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX)]
     assert not any('取り込む番号' in p or '取り込みますか' in p for p in answers.prompts)
-    assert 'GCP認証: 取り込まない設定のため飛ばしました (kkg)' in infos(caplog)
+    assert 'GCP認証: 取り込まない設定のため飛ばしました (globex)' in infos(caplog)
 
 
 # ---------------------------------------------------------------------------
@@ -285,11 +285,11 @@ def test_choosing_one_gcp_key_writes_only_that_key(grouped, openbao, host, tty, 
 
     assert init(grouped) == 0
 
-    stored = openbao.get(KKG)
+    stored = openbao.get(GLOBEX)
     assert keys.gcp_credentials_key('bigquery_full') in stored
     assert keys.gcp_credentials_key('analytics') not in stored
     assert stored[keys.GCP_ACTIVE_PROFILE] == 'bigquery_full'
-    assert stored[keys.GOOGLE_CLOUD_PROJECT] == 'nyle-carmo-analysis'
+    assert stored[keys.GOOGLE_CLOUD_PROJECT] == 'acme-myapp-analysis'
 
 
 def test_none_as_the_active_profile_writes_no_gcp_key(grouped, openbao, host, tty, monkeypatch):
@@ -299,7 +299,7 @@ def test_none_as_the_active_profile_writes_no_gcp_key(grouped, openbao, host, tt
     assert init(grouped) == 0
 
     assert any('none で設定しない' in p for p in answers.prompts)
-    stored = openbao.get(KKG) or {}
+    stored = openbao.get(GLOBEX) or {}
     assert not [k for k in stored if k.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX)]
     for key in (keys.GCP_ACTIVE_PROFILE, keys.GOOGLE_APPLICATION_CREDENTIALS,
                 keys.BIGQUERY_KEY_FILE, keys.GOOGLE_CLOUD_PROJECT, keys.BIGQUERY_PROJECT,
@@ -317,7 +317,7 @@ def test_an_unknown_active_profile_is_asked_again(grouped, openbao, host, tty, m
 
     assert sum('アクティブプロファイル' in p for p in answers.prompts) == 2
     assert "'bigquery_ful' は選んだ鍵にありません" in capsys.readouterr().out
-    assert openbao.get(KKG)[keys.GCP_ACTIVE_PROFILE] == 'bigquery_full'
+    assert openbao.get(GLOBEX)[keys.GCP_ACTIVE_PROFILE] == 'bigquery_full'
 
 
 def test_an_unknown_active_profile_then_eof_uses_the_default():
@@ -343,32 +343,32 @@ def test_an_unknown_active_profile_then_eof_uses_the_default():
 # init: AWS (AC6・AC7・AC8)
 # ---------------------------------------------------------------------------
 
-def test_choosing_kkg_imports_only_its_sections(grouped, openbao, host, tty, monkeypatch, capsys):
-    """AC6: [profile kkg] と sso_session の節、credentials は [kkg] だけ"""
+def test_choosing_globex_imports_only_its_sections(grouped, openbao, host, tty, monkeypatch, capsys):
+    """AC6: [profile globex] と sso_session の節、credentials は [globex] だけ"""
     Answers(monkeypatch, {'選択 [1/2/3/4]': '1', '取り込む番号 (例: 3': '3'})
 
     assert init(grouped) == 0
 
-    stored = openbao.get(KKG)
+    stored = openbao.get(GLOBEX)
     files = aws_files(stored[keys.AWS_CONFIG_BASE64])
-    assert headers(files['config']) == ['[profile kkg]', '[sso-session kkg-sso]']
-    assert headers(files['credentials']) == ['[kkg]']
+    assert headers(files['config']) == ['[profile globex]', '[sso-session globex-sso]']
+    assert headers(files['credentials']) == ['[globex]']
     assert 'SECRET-DEFAULT' not in files['credentials']
-    assert stored[keys.AWS_PROFILE] == 'kkg'
-    assert '含めます: [sso-session kkg-sso] (profile kkg の sso_session)' in capsys.readouterr().out
-    source = SourcesManager(grouped, 'kkg').get_source('aws')
+    assert stored[keys.AWS_PROFILE] == 'globex'
+    assert '含めます: [sso-session globex-sso] (profile globex の sso_session)' in capsys.readouterr().out
+    source = SourcesManager(grouped, 'globex').get_source('aws')
     assert source['type'] == 'aws_profiles'
-    assert source['profiles'] == ['kkg']
+    assert source['profiles'] == ['globex']
 
 
 def test_a_profile_without_credentials_imports_no_credentials_file(grouped, openbao, host, tty,
                                                                    monkeypatch):
     Answers(monkeypatch, {'選択 [1/2/3/4]': '1', '取り込む番号 (例: 3': '1'})
-    (host / '.aws' / 'credentials').write_text('[kkg]\naws_access_key_id = A\n')
+    (host / '.aws' / 'credentials').write_text('[globex]\naws_access_key_id = A\n')
 
     assert init(grouped) == 0
 
-    files = aws_files(openbao.get(KKG)[keys.AWS_CONFIG_BASE64])
+    files = aws_files(openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64])
     assert set(files) == {'config'}
     assert headers(files['config']) == ['[default]']
 
@@ -380,14 +380,14 @@ def test_source_profile_chains_are_included_with_a_reason(grouped, openbao, host
 
     assert init(grouped) == 0
 
-    files = aws_files(openbao.get(KKG)[keys.AWS_CONFIG_BASE64])
-    assert headers(files['config']) == ['[profile lixil]', '[profile lixil-base]',
-                                        '[profile lixil-root]']
-    assert headers(files['credentials']) == ['[lixil-root]']
+    files = aws_files(openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64])
+    assert headers(files['config']) == ['[profile hooli]', '[profile hooli-base]',
+                                        '[profile hooli-root]']
+    assert headers(files['credentials']) == ['[hooli-root]']
     out = capsys.readouterr().out
-    assert '含めます: [profile lixil-base] (profile lixil の source_profile)' in out
-    assert '含めます: [profile lixil-root] (profile lixil-base の source_profile)' in out
-    assert 'SECRET-LIXIL' not in out
+    assert '含めます: [profile hooli-base] (profile hooli の source_profile)' in out
+    assert '含めます: [profile hooli-root] (profile hooli-base の source_profile)' in out
+    assert 'SECRET-HOOLI' not in out
 
 
 def test_all_imports_the_whole_aws_directory(grouped, openbao, host, tty, monkeypatch):
@@ -395,9 +395,9 @@ def test_all_imports_the_whole_aws_directory(grouped, openbao, host, tty, monkey
 
     assert init(grouped) == 0
 
-    files = aws_files(openbao.get(KKG)[keys.AWS_CONFIG_BASE64])
+    files = aws_files(openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64])
     assert files == {'config': AWS_CONFIG, 'credentials': AWS_CREDENTIALS}
-    assert SourcesManager(grouped, 'kkg').get_source('aws')['type'] == 'tar_base64'
+    assert SourcesManager(grouped, 'globex').get_source('aws')['type'] == 'tar_base64'
 
 
 def test_aws_defaults_to_skip_and_access_keys_need_a_confirmation(grouped, openbao, host, tty,
@@ -409,7 +409,7 @@ def test_aws_defaults_to_skip_and_access_keys_need_a_confirmation(grouped, openb
 
     assert any('(デフォルト: 4)' in p for p in answers.prompts if p.startswith('選択 [1/2/3/4]'))
     assert any(p.startswith('取り込みますか?') for p in answers.prompts)
-    stored = openbao.get(KKG) or {}
+    stored = openbao.get(GLOBEX) or {}
     assert keys.AWS_ACCESS_KEY_ID not in stored
     assert keys.AWS_SECRET_ACCESS_KEY not in stored
 
@@ -417,16 +417,16 @@ def test_aws_defaults_to_skip_and_access_keys_need_a_confirmation(grouped, openb
 def test_out_of_range_numbers_import_nothing(grouped, openbao, host, tty, monkeypatch, caplog):
     """I2・E5: 範囲外・数字でない語は 0 件として 1 行知らせる"""
     Answers(monkeypatch, {'選択 [1/2/3/4]': '1', '取り込む番号 (例: 3': '9',
-                          '取り込む番号 (例: 1,2': 'kkg'})
+                          '取り込む番号 (例: 1,2': 'globex'})
     caplog.set_level(logging.INFO)
 
     assert init(grouped) == 0
 
-    stored = openbao.get(KKG) or {}
+    stored = openbao.get(GLOBEX) or {}
     assert keys.AWS_CONFIG_BASE64 not in stored
     assert not [k for k in stored if k.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX)]
     assert '取り込む番号として読めないため、取り込みません: 9' in infos(caplog)
-    assert '取り込む番号として読めないため、取り込みません: kkg' in infos(caplog)
+    assert '取り込む番号として読めないため、取り込みません: globex' in infos(caplog)
 
 
 # ---------------------------------------------------------------------------
@@ -472,13 +472,13 @@ def test_import_policy_keeps_the_previous_questions_and_values(grouped, openbao,
     from devbase.commands.env import _aws_payload
     from devbase.env.collectors.aws import _encode_aws_config_files
 
-    write_policy(grouped, 'groups:\n  nyle: import\n')
+    write_policy(grouped, 'groups:\n  acme: import\n')
     answers = Answers(monkeypatch)
 
-    assert init(grouped, group='nyle') == 0
+    assert init(grouped, group='acme') == 0
 
     assert [p for p in answers.prompts if not p.startswith('HOST_SSH_USER')] == PROMPTS_BEFORE
-    stored = openbao.get(NYLE)
+    stored = openbao.get(ACME)
     assert set(stored) == KEYS_BEFORE
     gcp = {keys.gcp_credentials_key(n) for n in ('analytics', 'bigquery_full')}
     assert gcp <= set(stored)
@@ -487,7 +487,7 @@ def test_import_policy_keeps_the_previous_questions_and_values(grouped, openbao,
     assert stored[keys.AWS_PROFILE] == 'default'
     assert stored[keys.GIT_USER_NAME] == 'Member'
     assert stored[keys.GH_TOKEN] == 'ghp_TOKEN123'
-    assert SourcesManager(grouped, 'nyle').get_source('aws')['type'] == 'tar_base64'
+    assert SourcesManager(grouped, 'acme').get_source('aws')['type'] == 'tar_base64'
 
 
 # ---------------------------------------------------------------------------
@@ -495,12 +495,12 @@ def test_import_policy_keeps_the_previous_questions_and_values(grouped, openbao,
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('text, needle', [
-    ('groups: [nyle', 'YAML として読めません'),
-    ('- nyle\n', '最上位は groups を持つマッピング'),
-    ('groups: nyle\n', 'groups はグループ名から方針へのマッピング'),
-    ('groups:\n  nyle: yes-please\n', "groups.nyle の方針が不正です: 'yes-please'"),
+    ('groups: [acme', 'YAML として読めません'),
+    ('- acme\n', '最上位は groups を持つマッピング'),
+    ('groups: acme\n', 'groups はグループ名から方針へのマッピング'),
+    ('groups:\n  acme: yes-please\n', "groups.acme の方針が不正です: 'yes-please'"),
     ('groups:\n  default: import\n', 'groups.default は使えないグループ名です'),
-    ('group:\n  nyle: import\n', 'group は使えないキーです'),
+    ('group:\n  acme: import\n', 'group は使えないキーです'),
 ])
 @pytest.mark.parametrize('command', ['init', 'sync'])
 def test_a_broken_policy_file_stops_before_opening_the_refs(grouped, openbao, monkeypatch,
@@ -512,7 +512,7 @@ def test_a_broken_policy_file_stops_before_opening_the_refs(grouped, openbao, mo
     if command == 'init':
         rc = init(grouped)
     else:
-        rc = env_cmd.cmd_env_sync(grouped, group='kkg')
+        rc = env_cmd.cmd_env_sync(grouped, group='globex')
 
     assert rc == 1
     assert opened == []
@@ -532,9 +532,9 @@ def test_sync_after_declining_everything_adds_nothing(grouped, openbao, host, tt
     (host / '.aws' / 'config').write_text(AWS_CONFIG + '\n[profile new]\n')
     (host / '.git-credentials').write_text('https://member:ghp_OTHER@github.com\n')
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    for path in (KKG, KKG_USER):
+    for path in (GLOBEX, GLOBEX_USER):
         stored = openbao.get(path) or {}
         assert not [k for k in stored if k in IMPORTED_KEYS
                     or k.startswith(keys.GCP_CREDENTIALS_BASE64_PREFIX)]
@@ -544,47 +544,47 @@ def test_sync_watches_only_the_chosen_profiles(grouped, openbao, host, tty, monk
     """AC10・I7: 選ばなかった節の書き換えは変更なし。選んだ節の書き換えは選んだ節だけで入れ直す"""
     Answers(monkeypatch, {'選択 [1/2/3/4]': '1', '取り込む番号 (例: 3': '3'})
     assert init(grouped) == 0
-    before = openbao.get(KKG)[keys.AWS_CONFIG_BASE64]
+    before = openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64]
     config = host / '.aws' / 'config'
     config.write_text(AWS_CONFIG.replace('region = us-east-1', 'region = eu-west-1'))
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    assert openbao.get(KKG)[keys.AWS_CONFIG_BASE64] == before
+    assert openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64] == before
     assert 'AWS認証: 変更なし' in infos(caplog)
 
     caplog.clear()
     config.write_text(config.read_text().replace('sso_account_id = 111111111111',
                                                  'sso_account_id = 999999999999'))
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    files = aws_files(openbao.get(KKG)[keys.AWS_CONFIG_BASE64])
-    assert headers(files['config']) == ['[profile kkg]', '[sso-session kkg-sso]']
+    files = aws_files(openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64])
+    assert headers(files['config']) == ['[profile globex]', '[sso-session globex-sso]']
     assert '999999999999' in files['config']
-    assert headers(files['credentials']) == ['[kkg]']
+    assert headers(files['credentials']) == ['[globex]']
     assert 'AWS認証: 更新しました' in infos(caplog)
-    assert SourcesManager(grouped, 'kkg').check_changed('aws') is False
+    assert SourcesManager(grouped, 'globex').check_changed('aws') is False
 
 
 def test_sync_does_not_narrow_a_personal_value_with_the_team_selection(
         grouped, openbao, host, tty, monkeypatch, caplog):
-    """I7: 控えの選択 (チーム共通へ kkg だけ) で、kkg と lixil を持つ個人共通の値を書き直さない"""
+    """I7: 控えの選択 (チーム共通へ globex だけ) で、globex と hooli を持つ個人共通の値を書き直さない"""
     from devbase.env import aws_profiles
 
     Answers(monkeypatch, {'選択 [1/2/3/4]': '1', '取り込む番号 (例: 3': '3'})
     assert init(grouped) == 0
-    personal = aws_profiles.build(AWS_CONFIG, AWS_CREDENTIALS, ['kkg', 'lixil']).encode()
-    openbao.put(KKG_USER, {keys.AWS_CONFIG_BASE64: personal})
+    personal = aws_profiles.build(AWS_CONFIG, AWS_CREDENTIALS, ['globex', 'hooli']).encode()
+    openbao.put(GLOBEX_USER, {keys.AWS_CONFIG_BASE64: personal})
     config = host / '.aws' / 'config'
     config.write_text(AWS_CONFIG.replace('sso_account_id = 111111111111',
                                          'sso_account_id = 999999999999'))
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    assert openbao.get(KKG_USER)[keys.AWS_CONFIG_BASE64] == personal
+    assert openbao.get(GLOBEX_USER)[keys.AWS_CONFIG_BASE64] == personal
     assert any(line.startswith('AWS認証: ') and '選択外のプロファイルがあるため書きません' in line
                for line in infos(caplog))
 
@@ -593,16 +593,16 @@ def test_sync_reports_a_chosen_profile_that_disappeared(grouped, openbao, host, 
                                                          caplog):
     Answers(monkeypatch, {'選択 [1/2/3/4]': '1', '取り込む番号 (例: 3': '3'})
     assert init(grouped) == 0
-    before = openbao.get(KKG)[keys.AWS_CONFIG_BASE64]
+    before = openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64]
     (host / '.aws' / 'config').write_text('[default]\n')
     (host / '.aws' / 'credentials').write_text('[default]\n')
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    assert openbao.get(KKG)[keys.AWS_CONFIG_BASE64] == before
+    assert openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64] == before
     lines = infos(caplog)
-    assert 'AWS認証: 選んだプロファイル kkg が ~/.aws/config にありません' in lines
+    assert 'AWS認証: 選んだプロファイル globex が ~/.aws/config にありません' in lines
     assert 'AWS認証: 控えと比べられません（ハッシュか元のファイルがありません）' in lines
 
 
@@ -610,7 +610,7 @@ def test_sync_reports_a_chosen_profile_that_disappeared(grouped, openbao, host, 
 def test_sync_does_not_write_a_registered_source_missing_from_the_refs(
         grouped, openbao, host, tty, monkeypatch, caplog, source):
     """AC11・I5: 控えに登録済みでも、参照から消したキーは書かずに 1 行知らせる"""
-    write_policy(grouped, 'groups:\n  kkg: import\n')
+    write_policy(grouped, 'groups:\n  globex: import\n')
     Answers(monkeypatch)
     assert init(grouped) == 0
     key, label, touch = {
@@ -621,17 +621,17 @@ def test_sync_does_not_write_a_registered_source_missing_from_the_refs(
         'gcp': (keys.gcp_credentials_key('analytics'), 'GCP認証 (analytics)',
                 lambda: (host / 'gcp-credentials' / 'analytics.json').write_text('{}')),
     }[source]
-    stored = openbao.get(KKG)
+    stored = openbao.get(GLOBEX)
     assert key in stored
     del stored[key]
-    openbao.put(KKG, stored)
+    openbao.put(GLOBEX, stored)
     touch()
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    assert key not in (openbao.get(KKG) or {})
-    assert key not in (openbao.get(KKG_USER) or {})
+    assert key not in (openbao.get(GLOBEX) or {})
+    assert key not in (openbao.get(GLOBEX_USER) or {})
     assert (f'{label}: 参照にキーが無いため書きません。取り込むなら devbase env init --reset、'
             '手で入れるなら devbase env set') in infos(caplog)
 
@@ -642,36 +642,36 @@ def test_import_policy_sync_updates_the_whole_directory(grouped, openbao, host, 
     from devbase.commands.env import _aws_payload
     from devbase.env.collectors.aws import _encode_aws_config_files
 
-    write_policy(grouped, 'groups:\n  nyle: import\n')
+    write_policy(grouped, 'groups:\n  acme: import\n')
     Answers(monkeypatch)
-    assert init(grouped, group='nyle') == 0
+    assert init(grouped, group='acme') == 0
     (host / '.aws' / 'config').write_text(AWS_CONFIG + '\n[profile new]\n')
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='nyle') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='acme') == 0
 
-    assert (_aws_payload(openbao.get(NYLE)[keys.AWS_CONFIG_BASE64])
+    assert (_aws_payload(openbao.get(ACME)[keys.AWS_CONFIG_BASE64])
             == _aws_payload(_encode_aws_config_files()))
     assert 'AWS認証: 更新しました' in infos(caplog)
 
 
 def test_an_unregistered_partial_value_is_compared_within_its_profiles(grouped, openbao, host,
                                                                        caplog):
-    """決定 10: 控えに項目が無く、参照の値が kkg だけなら、kkg の範囲だけで比べる"""
+    """決定 10: 控えに項目が無く、参照の値が globex だけなら、globex の範囲だけで比べる"""
     from devbase.env import aws_profiles
 
-    value = aws_profiles.build(AWS_CONFIG, AWS_CREDENTIALS, ['kkg']).encode()
-    openbao.put(KKG, {keys.AWS_CONFIG_BASE64: value, keys.HOST_SSH_USER: 'u',
+    value = aws_profiles.build(AWS_CONFIG, AWS_CREDENTIALS, ['globex']).encode()
+    openbao.put(GLOBEX, {keys.AWS_CONFIG_BASE64: value, keys.HOST_SSH_USER: 'u',
                       keys.HOST_SSH_HOST: 'h'})
     (host / '.aws' / 'config').write_text(AWS_CONFIG.replace('us-east-1', 'eu-west-1'))
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    assert openbao.get(KKG)[keys.AWS_CONFIG_BASE64] == value
-    source = SourcesManager(grouped, 'kkg').get_source('aws')
+    assert openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64] == value
+    source = SourcesManager(grouped, 'globex').get_source('aws')
     assert source['type'] == 'aws_profiles'
-    assert source['profiles'] == ['kkg']
+    assert source['profiles'] == ['globex']
 
 
 def test_an_unregistered_value_is_not_whole_when_credentials_have_more(grouped, openbao, host,
@@ -682,18 +682,18 @@ def test_an_unregistered_value_is_not_whole_when_credentials_have_more(grouped, 
     config = '[profile dev]\nregion = us-east-1\n'
     dev_creds = '[dev]\naws_access_key_id = AKIADEV\naws_secret_access_key = SECRET-DEV\n'
     value = aws_profiles.build(config, dev_creds, ['dev']).encode()
-    openbao.put(KKG, {keys.AWS_CONFIG_BASE64: value})
+    openbao.put(GLOBEX, {keys.AWS_CONFIG_BASE64: value})
     (host / '.aws' / 'config').write_text(config)
     (host / '.aws' / 'credentials').write_text(
         dev_creds + '\n[private]\naws_access_key_id = AKIAPRIV\n'
         'aws_secret_access_key = SECRET-PRIVATE\n')
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    stored = aws_files(openbao.get(KKG)[keys.AWS_CONFIG_BASE64])
+    stored = aws_files(openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64])
     assert 'SECRET-PRIVATE' not in stored.get('credentials', '')
-    source = SourcesManager(grouped, 'kkg').get_source('aws')
+    source = SourcesManager(grouped, 'globex').get_source('aws')
     assert source['type'] == 'aws_profiles'
     assert source['profiles'] == ['dev']
 
@@ -706,15 +706,15 @@ def test_an_unregistered_value_is_not_whole_when_the_host_has_fewer(grouped, ope
     config = '[profile dev]\nregion = us-east-1\n'
     both = config + '[profile prod]\nregion = us-east-1\n'
     value = aws_profiles.build(both, None, ['dev', 'prod']).encode()
-    openbao.put(KKG, {keys.AWS_CONFIG_BASE64: value})
+    openbao.put(GLOBEX, {keys.AWS_CONFIG_BASE64: value})
     (host / '.aws' / 'config').write_text(config)
     (host / '.aws' / 'credentials').unlink(missing_ok=True)
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    assert openbao.get(KKG)[keys.AWS_CONFIG_BASE64] == value
-    assert SourcesManager(grouped, 'kkg').get_source('aws') is None
+    assert openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64] == value
+    assert SourcesManager(grouped, 'globex').get_source('aws') is None
     assert 'AWS認証: 選んだプロファイル prod が ~/.aws/config にありません' in infos(caplog)
 
 
@@ -723,29 +723,29 @@ def test_an_unregistered_value_records_only_the_chain_roots_as_chosen(grouped, o
     """決定 10: 値の中の source_profile の連なりで入った節は、控えの選択に含めない"""
     from devbase.env import aws_profiles
 
-    value = aws_profiles.build(AWS_CONFIG, AWS_CREDENTIALS, ['lixil']).encode()
-    assert aws_profiles.profiles_in_value(value) == ['lixil', 'lixil-base', 'lixil-root']
-    openbao.put(KKG, {keys.AWS_CONFIG_BASE64: value, keys.HOST_SSH_USER: 'u',
+    value = aws_profiles.build(AWS_CONFIG, AWS_CREDENTIALS, ['hooli']).encode()
+    assert aws_profiles.profiles_in_value(value) == ['hooli', 'hooli-base', 'hooli-root']
+    openbao.put(GLOBEX, {keys.AWS_CONFIG_BASE64: value, keys.HOST_SSH_USER: 'u',
                       keys.HOST_SSH_HOST: 'h'})
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    source = SourcesManager(grouped, 'kkg').get_source('aws')
+    source = SourcesManager(grouped, 'globex').get_source('aws')
     assert source['type'] == 'aws_profiles'
-    assert source['profiles'] == ['lixil']
+    assert source['profiles'] == ['hooli']
 
 
 def test_a_skipped_unregistered_aws_value_is_not_registered(grouped, openbao, host, caplog):
     """決定 10: 値を読めず書かなかった AWS は、ほかの更新があっても控えに登録しない"""
-    openbao.put(KKG, {keys.AWS_CONFIG_BASE64: 'not-a-tar'})
+    openbao.put(GLOBEX, {keys.AWS_CONFIG_BASE64: 'not-a-tar'})
     caplog.set_level(logging.INFO)
 
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    assert openbao.get(KKG)[keys.AWS_CONFIG_BASE64] == 'not-a-tar'
-    assert (openbao.get(KKG_USER) or {}).get(keys.HOST_SSH_HOST)
-    assert SourcesManager(grouped, 'kkg').get_source('aws') is None
+    assert openbao.get(GLOBEX)[keys.AWS_CONFIG_BASE64] == 'not-a-tar'
+    assert (openbao.get(GLOBEX_USER) or {}).get(keys.HOST_SSH_HOST)
+    assert SourcesManager(grouped, 'globex').get_source('aws') is None
 
 
 # ---------------------------------------------------------------------------

@@ -34,8 +34,8 @@
 `version: 1` の設定やファイル backend では、プロジェクトの外で `--group` を付けずに打った
 コマンドの振る舞いは変わりません。
 
-「同じ置き場」かは `group_aliases` で読み替えた後の名前で比べます（`acme: nyle` の読み替えが
-あれば、`acme` を宣言したプロジェクトで `--group nyle -p` が通ります）。
+「同じ置き場」かは `group_aliases` で読み替えた後の名前で比べます（`umbrella: acme` の読み替えが
+あれば、`umbrella` を宣言したプロジェクトで `--group acme -p` が通ります）。
 
 ## `devbase env init`
 
@@ -65,7 +65,7 @@ GCP・AWS・Git のステップは、ホストの `~/gcp-credentials/`・`~/.aws
 
 ホストで見つけた GCP の鍵 (2件):
   1) analytics (project: N/A)
-  2) bigquery_full (project: nyle-carmo-analysis)
+  2) bigquery_full (project: acme-myapp-analysis)
 取り込む番号 (例: 1,2 / all で全部 / 空で取り込まない): 2
 
 アクティブプロファイル (名前 / none で設定しない、デフォルト: bigquery_full):
@@ -84,8 +84,8 @@ GCP・AWS・Git のステップは、ホストの `~/gcp-credentials/`・`~/.aws
 
 ```yaml
 groups:
-  nyle: import    # 尋ねずに取り込む（AWS は ~/.aws を丸ごと）
-  kkg: skip       # 尋ねずに取り込まない
+  acme: import    # 尋ねずに取り込む（AWS は ~/.aws を丸ごと）
+  globex: skip       # 尋ねずに取り込まない
 ```
 
 方針は `ask`（尋ねる）・`skip`（取り込まない）・`import`（取り込む）の 3 つです。グループ名は
@@ -222,7 +222,7 @@ devbase env list [-g|-p] [-r] [-k] [--user] [--group NAME]
 | `-r` | 値も表示（デフォルトではキーのみ） |
 | `-k` | キー名でソート |
 | `--user` | 個人単位の置き場だけを表示（サーバ backend のみ） |
-| `--group NAME` | 対象のグループを指定（グループ別の置き場のみ）。見出しにグループ名が付く（例: `=== グローバル（グループ kkg） ...`。`group_aliases` で読み替えているグループは `=== グローバル（グループ acme → nyle） ...`） |
+| `--group NAME` | 対象のグループを指定（グループ別の置き場のみ）。見出しにグループ名が付く（例: `=== グローバル（グループ globex） ...`。`group_aliases` で読み替えているグループは `=== グローバル（グループ umbrella → acme） ...`） |
 
 ```bash
 # グローバル変数のみ、値付きで表示
@@ -259,8 +259,8 @@ devbase env set GCP_ACTIVE_PROFILE=my-project -p
 # 自分だけの値として設定 (OpenBao)
 devbase env set AWS_ACCESS_KEY_ID=AKIA... --user
 
-# グループ kkg のチーム共通に設定 (グループ別の置き場)
-devbase env set SOME_KEY=value --group kkg
+# グループ globex のチーム共通に設定 (グループ別の置き場)
+devbase env set SOME_KEY=value --group globex
 ```
 
 ## `devbase env get`
@@ -560,7 +560,7 @@ devbase env backend migrate --to <age|openbao> [--exclude-project NAME]... [--dr
 
 | サブコマンド | 内容 |
 |---|---|
-| `status` | 現在の backend 名、保存先、参照ごとの置き場、キャッシュの状態を表示。グループ別の置き場では、レイアウト、対象のグループ（読み替えがあれば `acme → nyle` の形）と宣言のファイルと行、そのグループで組んだ 4 つのパスも出す。プロジェクトの外では「なし（プロジェクトの外）」と `<g>` のパスを出す |
+| `status` | 現在の backend 名、保存先、参照ごとの置き場、キャッシュの状態を表示。グループ別の置き場では、レイアウト、対象のグループ（読み替えがあれば `umbrella → acme` の形）と宣言のファイルと行、そのグループで組んだ 4 つのパスも出す。プロジェクトの外では「なし（プロジェクトの外）」と `<g>` のパスを出す |
 | `use <name>` | backend を切り替える（`auto` / `plaintext` / `age` / `openbao`）。検証に失敗したときは設定を書き換えない。`secret_id` は `--secret-id-stdin` か伏せ字入力で受け取り、引数では受け取らない |
 | `test` | サーバへ接続し、参照ごとに読めるかを確かめる。グループ別の置き場では対象のグループ（`--group NAME`、プロジェクトの外では必須）の置き場だけを調べ、グループの違うプロジェクトと宣言の無いプロジェクトは名前を表示して調べない |
 | `migrate --to NAME` | チーム単位の機密を別の backend へ写す。移行先に同じキーがあれば 1 件も書かない。読み戻して一致しなければ作成したキーだけを消す |
@@ -577,8 +577,8 @@ devbase env backend migrate --to <age|openbao> [--exclude-project NAME]... [--dr
 レイアウトが変わると、手元のキャッシュ（`secrets/cache/`）を消します。
 
 ```bash
-# グループ別の置き場を選び、acme を宣言したプロジェクトを nyle の置き場で扱う
-devbase env backend use openbao --layout group --group-alias acme=nyle
+# グループ別の置き場を選び、umbrella を宣言したプロジェクトを acme の置き場で扱う
+devbase env backend use openbao --layout group --group-alias umbrella=acme
 
 # 従来の置き場へ戻す
 devbase env backend use openbao --layout flat

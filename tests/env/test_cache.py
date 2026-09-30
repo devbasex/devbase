@@ -442,18 +442,18 @@ def test_concurrent_generations_do_not_mix(openbao_root, openbao):
 
 @pytest.fixture
 def grouped_root(openbao_root, openbao):
-    """``version: 2``。``web`` は ``with``、``api`` は ``nyle``"""
+    """``version: 2``。``web`` は ``initech``、``api`` は ``acme``"""
     from tests.conftest import configure_openbao
 
     root = openbao_root
     configure_openbao(root, openbao, layout='group')
-    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    (root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
     (root / 'projects' / 'api').mkdir(parents=True, exist_ok=True)
-    (root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
-    openbao.put('team/with/global', {'A': 'with-global'})
-    openbao.put('team/with/projects/web', {'B': 'with-web'})
-    openbao.put('team/nyle/global', {'A': 'nyle-global'})
-    openbao.put('team/nyle/projects/api', {'B': 'nyle-api'})
+    (root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
+    openbao.put('team/initech/global', {'A': 'initech-global'})
+    openbao.put('team/initech/projects/web', {'B': 'initech-web'})
+    openbao.put('team/acme/global', {'A': 'acme-global'})
+    openbao.put('team/acme/projects/api', {'B': 'acme-api'})
     return root
 
 
@@ -464,18 +464,18 @@ def test_grouped_caches_are_separate_files_and_index_keys(grouped_root):
 
     base = root / 'secrets' / 'cache'
     assert cache.cached_files(root) == sorted([
-        base / 'team' / 'nyle' / 'global.env.age',
-        base / 'team' / 'nyle' / 'projects' / 'api.env.age',
-        base / 'team' / 'with' / 'global.env.age',
-        base / 'team' / 'with' / 'projects' / 'web.env.age',
-        base / 'user' / 'nyle' / 'global.env.age',
-        base / 'user' / 'nyle' / 'projects' / 'api.env.age',
-        base / 'user' / 'with' / 'global.env.age',
-        base / 'user' / 'with' / 'projects' / 'web.env.age'])
+        base / 'team' / 'acme' / 'global.env.age',
+        base / 'team' / 'acme' / 'projects' / 'api.env.age',
+        base / 'team' / 'initech' / 'global.env.age',
+        base / 'team' / 'initech' / 'projects' / 'web.env.age',
+        base / 'user' / 'acme' / 'global.env.age',
+        base / 'user' / 'acme' / 'projects' / 'api.env.age',
+        base / 'user' / 'initech' / 'global.env.age',
+        base / 'user' / 'initech' / 'projects' / 'web.env.age'])
     assert set(cache.read_index(root)) == {
-        'team:nyle:global', 'team:nyle:project:api', 'user:nyle:global',
-        'user:nyle:project:api', 'team:with:global', 'team:with:project:web',
-        'user:with:global', 'user:with:project:web'}
+        'team:acme:global', 'team:acme:project:api', 'user:acme:global',
+        'user:acme:project:api', 'team:initech:global', 'team:initech:project:web',
+        'user:initech:global', 'user:initech:project:web'}
 
 
 def test_unreachable_uses_each_groups_own_cache(grouped_root, openbao):
@@ -488,8 +488,8 @@ def test_unreachable_uses_each_groups_own_cache(grouped_root, openbao):
     api = runtime.resolve(root, 'api', store=SecretStore(root))
     web = runtime.resolve(root, 'web', store=SecretStore(root))
 
-    assert api.values == {'A': 'nyle-global', 'B': 'nyle-api'}
-    assert web.values == {'A': 'with-global', 'B': 'with-web'}
+    assert api.values == {'A': 'acme-global', 'B': 'acme-api'}
+    assert web.values == {'A': 'initech-global', 'B': 'initech-web'}
 
 
 def test_flat_cache_is_not_used_for_a_grouped_reference(openbao_root, openbao):
@@ -502,7 +502,7 @@ def test_flat_cache_is_not_used_for_a_grouped_reference(openbao_root, openbao):
     configure_openbao(root, openbao, layout='group')
     web = root / 'projects' / 'web'
     web.mkdir(parents=True, exist_ok=True)
-    (web / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+    (web / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     openbao.stop()
 
     with pytest.raises(SecretUnreachableError) as exc:

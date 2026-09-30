@@ -25,7 +25,7 @@ def bao_root(openbao_root, monkeypatch):
 def file_root(tmp_path, monkeypatch):
     """backend 未設定 (平文) の DEVBASE_ROOT (projects/web で実行)"""
     (tmp_path / 'projects' / 'web').mkdir(parents=True)
-    (tmp_path / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+    (tmp_path / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path))
     monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
@@ -44,8 +44,8 @@ TARGETS = [
     dict(project=True),
     dict(user=True),
     dict(project=True, user=True),
-    dict(group='kkg'),
-    dict(project=True, group='kkg'),
+    dict(group='globex'),
+    dict(project=True, group='globex'),
 ]
 
 
@@ -53,7 +53,7 @@ TARGETS = [
 def test_set_refuses_the_account_group_without_opening_the_store(bao_root, openbao,
                                                                   caplog, kwargs):
     """どの宛先でも 1。ログインも書き込みも要求しない"""
-    rc = env_cmd.cmd_env_set(bao_root, f'{ACCOUNT_GROUP}=kkg', **kwargs)
+    rc = env_cmd.cmd_env_set(bao_root, f'{ACCOUNT_GROUP}=globex', **kwargs)
 
     assert rc == 1
     assert openbao.requests_of('POST') == []
@@ -67,7 +67,7 @@ def test_set_refuses_the_account_group_without_opening_the_store(bao_root, openb
                          ids=['global', 'project'])
 def test_set_refuses_the_account_group_without_creating_the_file(file_root, caplog, kwargs):
     """ファイル backend では .env を作らない"""
-    rc = env_cmd.cmd_env_set(file_root, f'{ACCOUNT_GROUP}=kkg', **kwargs)
+    rc = env_cmd.cmd_env_set(file_root, f'{ACCOUNT_GROUP}=globex', **kwargs)
 
     assert rc == 1
     assert not (file_root / '.env').exists()
@@ -77,7 +77,7 @@ def test_set_refuses_the_account_group_without_creating_the_file(file_root, capl
 
 
 def test_set_refuses_the_account_group_with_surrounding_spaces(file_root):
-    assert env_cmd.cmd_env_set(file_root, f'  {ACCOUNT_GROUP} = kkg') == 1
+    assert env_cmd.cmd_env_set(file_root, f'  {ACCOUNT_GROUP} = globex') == 1
     assert not (file_root / '.env').exists()
 
 

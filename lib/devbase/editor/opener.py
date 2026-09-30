@@ -1,6 +1,6 @@
 """`devbase up` 後に dev コンテナへ接続した VS Code を自動で開く。
 
-設計の核心 (issues/PLAN31_3_up-open-editor.md §2):
+設計の核心 (docs/specifications/editor-open.md、導入は https://github.com/devbasex/devbase/pull/69):
 
 - 一貫機構は **PATH 上の ``code`` への委譲**。VS Code 統合ターミナルでは
   ``VSCODE_IPC_HOOK_CLI`` 経由でクライアント側 VS Code に「このフォルダを開け」を
@@ -440,7 +440,7 @@ def resolve_workspace(environ=None) -> Optional[str]:
     """開く VS Code ワークスペースファイル (``*.code-workspace``) のコンテナ内パス。
 
     ``DEVBASE_WORKSPACE`` env にコンテナ内の絶対パス (例
-    ``/home/ubuntu/share/work/uttarov2-doc.workspace``) が指定されていればそれを返す。
+    ``/home/ubuntu/share/work/myapp-doc.workspace``) が指定されていればそれを返す。
     未設定・空文字なら None を返し、呼び出し側 (:func:`open_editor`) はフォルダを
     ``--folder-uri`` で開く。
 

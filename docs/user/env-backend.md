@@ -78,7 +78,7 @@ TTY で実行する場合は `--secret-id-stdin` を省くと伏せ字入力を�
 ### 3. 接続を確かめる
 
 ```bash
-devbase env backend test --group nyle     # プロジェクトの外ではグループを名指しする
+devbase env backend test --group acme     # プロジェクトの外ではグループを名指しする
 devbase env backend status
 ```
 
@@ -93,8 +93,8 @@ TUI の「環境変数」→「OpenBao の接続設定」からも変えられ�
 ### 4. 既存の機密を移す
 
 ```bash
-devbase env backend migrate --to openbao --group nyle --dry-run   # 移すキー名だけを確認（値は出ない）
-devbase env backend migrate --to openbao --group nyle
+devbase env backend migrate --to openbao --group acme --dry-run   # 移すキー名だけを確認（値は出ない）
+devbase env backend migrate --to openbao --group acme
 ```
 
 移行は次の順で進み、途中で失敗すると設定は移行前のまま残ります。
@@ -125,7 +125,7 @@ devbase env backend migrate --to openbao --group nyle
 打ち間違いとして何もせずに終了コード 2 で止まります。
 
 ```bash
-devbase env backend migrate --to openbao --group nyle --exclude-project csc --dry-run
+devbase env backend migrate --to openbao --group acme --exclude-project myapp-console --dry-run
 ```
 
 移すのはチーム単位の機密（共通とプロジェクト）だけです。個人単位の機密は
@@ -241,8 +241,8 @@ OpenBao の KV v2 にはコメント・空行の置き場がありません。`d
 このキーを置き場へ書かずに終了コード 1 で止まります（[環境変数ガイド](environment-variables.md#機密の置き場には書けない)）。
 
 ボリューム名（`devbase_home_<group>`）はそのままに、置き場の上だけ別の名前で扱うには
-`group_aliases` を使います。`acme: nyle` なら、`acme` を宣言したプロジェクトは
-`team/nyle/…` を読み書きします。`default` はキーにも値にも使えません。`default` を置いた
+`group_aliases` を使います。`umbrella: acme` なら、`umbrella` を宣言したプロジェクトは
+`team/acme/…` を読み書きします。`default` はキーにも値にも使えません。`default` を置いた
 設定は読み込みで止まり、`secrets/backend.yml` の `openbao.group_aliases` から消す行を示します
 （移行の手順は [`default` からの移行](environment-variables.md#default-からの移行)）。
 
@@ -259,7 +259,7 @@ openbao:
   path_team_prefix: team        # チーム単位の親 (既定 team)
   path_user_prefix: users
   group_aliases:                # グループ名 → 置き場のグループ名 (既定は空)
-    acme: nyle
+    umbrella: acme
   timeout_seconds: 5
 cache:
   enabled: true
@@ -276,7 +276,7 @@ cache:
 devbase env backend use openbao --layout group
 
 # レイアウトはそのままで読み替えを指定し直す (今の読み替えは丸ごと置き換わる)
-devbase env backend use openbao --group-alias acme=nyle
+devbase env backend use openbao --group-alias umbrella=acme
 
 # 従来の置き場 (version: 1) へ戻す
 devbase env backend use openbao --layout flat
@@ -310,7 +310,7 @@ backend を openbao に設定しました: .../secrets/backend.yml
   mount:   devbase
   個人単位の識別子: member01
   レイアウト: flat (version 1)
-  group_aliases (acme → nyle) を捨てました (version: 1 は読み替えを持ちません)
+  group_aliases (umbrella → acme) を捨てました (version: 1 は読み替えを持ちません)
   キャッシュ: 有効
   キャッシュ (.../secrets/cache) を消しました (レイアウトが group から flat へ変わったため)
   接続を確かめる: devbase env backend test
@@ -335,17 +335,17 @@ $ cd projects/api && devbase env backend status
   mount:   devbase
   個人単位の識別子: member01
   レイアウト: group (version 2)
-  グループ:   acme → nyle (projects/api/env:1)
+  グループ:   umbrella → acme (projects/api/env:1)
 
   置き場 (<mount>/<path>):
-    チーム共通:           devbase/team/nyle/global
-    チームのプロジェクト: devbase/team/nyle/projects/api
-    個人共通:             devbase/users/member01/nyle/global
-    個人のプロジェクト:   devbase/users/member01/nyle/projects/api
+    チーム共通:           devbase/team/acme/global
+    チームのプロジェクト: devbase/team/acme/projects/api
+    個人共通:             devbase/users/member01/acme/global
+    個人のプロジェクト:   devbase/users/member01/acme/projects/api
 ```
 
-`projects/web/env` に `DEVBASE_ACCOUNT_GROUP=with` があれば、`projects/web` では
-`グループ:   with (projects/web/env:1)` と `devbase/team/with/…` が出ます。プロジェクトの外では
+`projects/web/env` に `DEVBASE_ACCOUNT_GROUP=initech` があれば、`projects/web` では
+`グループ:   initech (projects/web/env:1)` と `devbase/team/initech/…` が出ます。プロジェクトの外では
 `グループ:   なし（プロジェクトの外）` と出て、パスのグループとプロジェクト名が `<g>` /
 `<name>` のまま出ます。
 
@@ -361,9 +361,9 @@ $ cd projects/api && devbase env backend status
 
 ```bash
 cd "$DEVBASE_ROOT"
-devbase env list --group kkg              # team/kkg/global と users/<user>/kkg/global
-devbase env set --group kkg KEY=value     # team/kkg/global へ書く
-devbase env set --user --group kkg KEY=value
+devbase env list --group globex              # team/globex/global と users/<user>/globex/global
+devbase env set --group globex KEY=value     # team/globex/global へ書く
+devbase env set --user --group globex KEY=value
 ```
 
 | 状況 | 結果 |
@@ -381,17 +381,17 @@ devbase env set --user --group kkg KEY=value
 `version: 1` の設定やファイル backend では、プロジェクトの外で `--group` を付けずに打った
 コマンドの振る舞いは変わりません。
 
-「同じ置き場」かは読み替えた後の名前で比べます。`acme: nyle` の読み替えがあれば、`acme` を
-宣言したプロジェクトで `-p --group nyle` も `-p --group acme` も通ります。
+「同じ置き場」かは読み替えた後の名前で比べます。`umbrella: acme` の読み替えがあれば、`umbrella` を
+宣言したプロジェクトで `-p --group acme` も `-p --group umbrella` も通ります。
 
 `-p` で別のグループのプロジェクトの参照へ書けないのは、書いても `devbase up` がそこを
 読まないためです。プロジェクトのグループを変えるときは `projects/<name>/env` の
 `DEVBASE_ACCOUNT_GROUP` を直してください。
 
-`env list` の見出しにはグループが付きます（例: `=== グローバル（グループ kkg） (...) ===`）。
+`env list` の見出しにはグループが付きます（例: `=== グローバル（グループ globex） (...) ===`）。
 `group_aliases` で読み替えているグループでは、読み替えの前と後が並びます
-（例: `=== グローバル（グループ acme → nyle） (...) ===`）。`env backend test` の一覧も同じ形で、
-見出しのグループ名と隣のパス（`devbase/team/nyle/global`）が同じグループを指します。
+（例: `=== グローバル（グループ umbrella → acme） (...) ===`）。`env backend test` の一覧も同じ形で、
+見出しのグループ名と隣のパス（`devbase/team/acme/global`）が同じグループを指します。
 
 ### `init` / `sync` / `project` / `export` / `import`
 
@@ -415,17 +415,17 @@ devbase env set --user --group kkg KEY=value
 書き換え・`env init` の起動より前に確かめます。
 
 ```text
-$ cd projects/api                     # env に DEVBASE_ACCOUNT_GROUP=nyle
-$ DEVBASE_ACCOUNT_GROUP=kkg devbase up
+$ cd projects/api                     # env に DEVBASE_ACCOUNT_GROUP=acme
+$ DEVBASE_ACCOUNT_GROUP=globex devbase up
 Error: プロセスの環境変数と宣言のアカウントグループが食い違うため起動しません
-  環境変数: kkg (プロセスの環境変数 DEVBASE_ACCOUNT_GROUP)
-  宣言:     nyle (projects/api/env:1)
+  環境変数: globex (プロセスの環境変数 DEVBASE_ACCOUNT_GROUP)
+  宣言:     acme (projects/api/env:1)
   グループを変えるならプロジェクトの env の DEVBASE_ACCOUNT_GROUP を直し、環境変数は外してください
 ```
 
 | 起動したいグループ | 直し方 |
 |---|---|
-| 環境変数で指定したグループ（例: `kkg`） | `projects/<name>/env` の宣言を `DEVBASE_ACCOUNT_GROUP=kkg` に直し、環境変数を外す |
+| 環境変数で指定したグループ（例: `globex`） | `projects/<name>/env` の宣言を `DEVBASE_ACCOUNT_GROUP=globex` に直し、環境変数を外す |
 | 宣言のグループ | シェルの環境変数を外す（`unset DEVBASE_ACCOUNT_GROUP`。シェルの設定ファイルで `export` していればその行も消す） |
 
 機密の置き場に書いた `DEVBASE_ACCOUNT_GROUP` はこの食い違いを起こしません（置き場の値は
@@ -468,10 +468,10 @@ bao kv get -mount=devbase users/<user>/global                  # 一覧
 bao kv get -mount=devbase -field=API_KEY users/<user>/global   # 1 キー
 bao kv patch -mount=devbase users/<user>/global NEW_KEY=value  # 1 キーを足す・変える
 
-# version: 2 (グループ nyle のプロジェクト)
-bao kv get -mount=devbase users/<user>/nyle/global
-bao kv get -mount=devbase -field=API_KEY users/<user>/nyle/projects/<name>
-bao kv patch -mount=devbase users/<user>/nyle/global NEW_KEY=value
+# version: 2 (グループ acme のプロジェクト)
+bao kv get -mount=devbase users/<user>/acme/global
+bao kv get -mount=devbase -field=API_KEY users/<user>/acme/projects/<name>
+bao kv patch -mount=devbase users/<user>/acme/global NEW_KEY=value
 ```
 
 **`kv put` はパスの中身を丸ごと置き換えます。** 指定しなかったキーは消えるので、1 キーだけを
@@ -543,7 +543,7 @@ devbase env backend use openbao --cache      # 元に戻す
 ## 元へ戻す
 
 ```bash
-devbase env backend migrate --to age --group nyle
+devbase env backend migrate --to age --group acme
 ```
 
 サーバ上の機密は**消しません**（他の利用者が参照している可能性があるため）。残っている

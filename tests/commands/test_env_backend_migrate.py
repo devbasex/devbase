@@ -295,11 +295,27 @@ def test_config_save_failure_keeps_the_source_files_in_place(age_root, openbao, 
     assert SecretStore(age_root).load(GLOBAL)['A'] == 'a-value'
 
 
+
+def test_unreadable_backend_config_stops_with_1(age_root, openbao, monkeypatch):
+    def broken_load(root):
+        raise bc.BackendConfigError('broken')
+
+    monkeypatch.setattr(bc, 'load', broken_load)
+
+    assert migrate(age_root, 'openbao') == 1
+
+
+def test_missing_openbao_settings_stops_as_usage_error(age_root, openbao, monkeypatch):
+    monkeypatch.setattr(bc, 'load', lambda root: bc.BackendConfig())
+
+    assert migrate(age_root, 'openbao') == env_backend.EXIT_USAGE
+    assert not any(r.kv_path for r in openbao.requests_of('POST'))
+
 # ---------------------------------------------------------------------------
 # グループ別の置き場と --exclude-project (PLAN56 受け入れ条件 12・14)
 # ---------------------------------------------------------------------------
 
-CSC = SecretRef.for_project('csc')
+MYAPP_CONSOLE = SecretRef.for_project('myapp-console')
 API = SecretRef.for_project('api')
 
 
@@ -315,14 +331,14 @@ def _grouped_settings(root, openbao):
 
 @pytest.fixture
 def grouped_age_root(openbao_root, openbao):
-    """age に共通・web (with)・csc (nyle) の機密を持ち、version 2 の OpenBao 設定で backend は age"""
-    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
-    (openbao_root / 'projects' / 'csc').mkdir()
-    (openbao_root / 'projects' / 'csc' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+    """age に共通・web (initech)・myapp-console (acme) の機密を持ち、version 2 の OpenBao 設定で backend は age"""
+    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
+    (openbao_root / 'projects' / 'myapp-console').mkdir()
+    (openbao_root / 'projects' / 'myapp-console' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     store = SecretStore(openbao_root, config=bc.BackendConfig())
     store.age.save(GLOBAL, {'A': 'a-value'})
     store.age.save(WEB, {'W': 'w-value'})
-    store.age.save(CSC, {'C': 'c-value'})
+    store.age.save(MYAPP_CONSOLE, {'C': 'c-value'})
     settings = _grouped_settings(openbao_root, openbao)
     bc.save(openbao_root, bc.BackendConfig(backend='age', openbao=settings, version=2))
     return openbao_root
@@ -330,20 +346,20 @@ def grouped_age_root(openbao_root, openbao):
 
 def test_grouped_migration_writes_each_projects_group_and_skips_excluded(
         grouped_age_root, openbao, capsys, monkeypatch):
-    """受け入れ条件 12: 共通は --group の team/nyle/global、web は team/with/projects/web、csc は触らない"""
+    """受け入れ条件 12: 共通は --group の team/acme/global、web は team/initech/projects/web、myapp-console は触らない"""
     # プロジェクトの参照のグループは実行時のディレクトリ (web) に左右されない
     monkeypatch.setenv('PWD', str(grouped_age_root / 'projects' / 'web'))
 
-    assert migrate(grouped_age_root, 'openbao', exclude_projects=['csc'], group='nyle') == 0
+    assert migrate(grouped_age_root, 'openbao', exclude_projects=['myapp-console'], group='acme') == 0
 
-    assert openbao.get('team/nyle/global') == {'A': 'a-value'}
-    assert openbao.get('team/with/projects/web') == {'W': 'w-value'}
-    assert not [p for p in kv_paths(openbao) if 'csc' in p]
-    assert kv_paths(openbao) <= {'team/nyle/global', 'team/with/projects/web'}
+    assert openbao.get('team/acme/global') == {'A': 'a-value'}
+    assert openbao.get('team/initech/projects/web') == {'W': 'w-value'}
+    assert not [p for p in kv_paths(openbao) if 'myapp-console' in p]
+    assert kv_paths(openbao) <= {'team/acme/global', 'team/initech/projects/web'}
     config = bc.load(grouped_age_root)
     assert config.backend == 'openbao' and config.version == 2
-    # csc は退避されずに元の位置に残る
-    assert (grouped_age_root / 'secrets' / 'projects' / 'csc.env.age').exists()
+    # myapp-console は退避されずに元の位置に残る
+    assert (grouped_age_root / 'secrets' / 'projects' / 'myapp-console.env.age').exists()
     assert not (grouped_age_root / 'secrets' / 'projects' / 'web.env.age').exists()
     moved = list((grouped_age_root / 'backups' / 'env-backend-migrate').rglob('*.age'))
     assert {p.name for p in moved} == {'global.env.age', 'web.env.age'}
@@ -354,17 +370,17 @@ def test_grouped_migration_writes_each_projects_group_and_skips_excluded(
 def test_grouped_dry_run_shows_the_paths_and_conflicting_key_names_only(
         grouped_age_root, openbao, capsys):
     """受け入れ条件 12・14: --dry-run は <mount>/<パス> と衝突したキー名だけ"""
-    openbao.put('team/with/projects/web', {'W': 'on-server-value'})
+    openbao.put('team/initech/projects/web', {'W': 'on-server-value'})
 
-    rc = migrate(grouped_age_root, 'openbao', dry_run=True, exclude_projects=['csc'],
-                 group='nyle')
+    rc = migrate(grouped_age_root, 'openbao', dry_run=True, exclude_projects=['myapp-console'],
+                 group='acme')
 
     assert rc == 2                               # 衝突は --dry-run でも今どおり 2
     out = capsys.readouterr().out
-    assert 'devbase/team/nyle/global' in out
-    assert 'devbase/team/with/projects/web' in out
+    assert 'devbase/team/acme/global' in out
+    assert 'devbase/team/initech/projects/web' in out
     assert 'W' in out and 'A' in out
-    assert 'csc' not in out
+    assert 'myapp-console' not in out
     for value in ('a-value', 'w-value', 'c-value', 'on-server-value', 's3cret'):
         assert value not in out
     assert not any(r.kv_path for r in openbao.requests_of('POST'))
@@ -372,10 +388,10 @@ def test_grouped_dry_run_shows_the_paths_and_conflicting_key_names_only(
 
 
 def test_grouped_dry_run_without_conflicts_writes_nothing(grouped_age_root, openbao, capsys):
-    assert migrate(grouped_age_root, 'openbao', dry_run=True, group='nyle') == 0
+    assert migrate(grouped_age_root, 'openbao', dry_run=True, group='acme') == 0
 
     out = capsys.readouterr().out
-    assert 'devbase/team/nyle/projects/csc' in out
+    assert 'devbase/team/acme/projects/myapp-console' in out
     assert not any(r.kv_path for r in openbao.requests_of('POST'))
 
 
@@ -394,13 +410,13 @@ def test_grouped_migration_stops_on_an_undeclared_project(grouped_age_root, open
     """#315 I11: 宣言の無いプロジェクトがあれば書き込みの前に名前を挙げて止まる"""
     (grouped_age_root / 'projects' / 'undeclared').mkdir()
 
-    assert migrate(grouped_age_root, 'openbao', group='nyle') == 1
+    assert migrate(grouped_age_root, 'openbao', group='acme') == 1
 
     assert 'undeclared' in errors(caplog) and '--exclude-project' in errors(caplog)
     assert not any(r.kv_path for r in openbao.requests_of('POST'))
     assert bc.load(grouped_age_root).backend == 'age'
 
-    assert migrate(grouped_age_root, 'openbao', group='nyle', dry_run=True,
+    assert migrate(grouped_age_root, 'openbao', group='acme', dry_run=True,
                    exclude_projects=['undeclared']) == 0
 
 
@@ -408,7 +424,7 @@ def test_grouped_migration_stops_on_an_undeclared_project(grouped_age_root, open
 def test_excluding_an_unknown_project_is_a_usage_error(grouped_age_root, openbao, caplog, to):
     before = (grouped_age_root / 'secrets' / 'backend.yml').read_bytes()
 
-    assert migrate(grouped_age_root, to, exclude_projects=['csc', 'nosuch']) == 2
+    assert migrate(grouped_age_root, to, exclude_projects=['myapp-console', 'nosuch']) == 2
 
     assert 'nosuch' in errors(caplog)
     assert openbao.received == []
@@ -416,27 +432,27 @@ def test_excluding_an_unknown_project_is_a_usage_error(grouped_age_root, openbao
 
 
 def test_flat_migration_also_honours_exclude_project(age_root, openbao):
-    (age_root / 'projects' / 'csc').mkdir()
-    SecretStore(age_root, config=bc.BackendConfig()).age.save(CSC, {'C': 'c-value'})
+    (age_root / 'projects' / 'myapp-console').mkdir()
+    SecretStore(age_root, config=bc.BackendConfig()).age.save(MYAPP_CONSOLE, {'C': 'c-value'})
 
-    assert migrate(age_root, 'openbao', exclude_projects=['csc']) == 0
+    assert migrate(age_root, 'openbao', exclude_projects=['myapp-console']) == 0
 
     assert openbao.get(TEAM_WEB) == {'W': 'w-value'}
-    assert openbao.requests_to('team/projects/csc') == []
-    assert (age_root / 'secrets' / 'projects' / 'csc.env.age').exists()
+    assert openbao.requests_to('team/projects/myapp-console') == []
+    assert (age_root / 'secrets' / 'projects' / 'myapp-console.env.age').exists()
 
 
 @pytest.fixture
 def grouped_openbao_root(openbao_root, openbao):
-    """version 2 の OpenBao。web は with、api は nyle"""
+    """version 2 の OpenBao。web は initech、api は acme"""
     _grouped_settings(openbao_root, openbao)
-    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
     (openbao_root / 'projects' / 'api').mkdir()
-    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
-    openbao.put('team/nyle/global', {'A': 'a-value'})
-    openbao.put('team/with/global', {'WITH_ONLY': 'with-value'})
-    openbao.put('team/with/projects/web', {'W': 'w-value'})
-    openbao.put('team/nyle/projects/api', {'P': 'p-value'})
+    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
+    openbao.put('team/acme/global', {'A': 'a-value'})
+    openbao.put('team/initech/global', {'INITECH_ONLY': 'initech-value'})
+    openbao.put('team/initech/projects/web', {'W': 'w-value'})
+    openbao.put('team/acme/projects/api', {'P': 'p-value'})
     return openbao_root
 
 
@@ -446,43 +462,43 @@ def test_grouped_migration_back_to_age_leaves_other_groups_common_on_the_server(
     他のグループの共通は要求せずにパスを表示する"""
     monkeypatch.setenv('PWD', str(grouped_openbao_root / 'projects' / 'web'))
 
-    assert migrate(grouped_openbao_root, 'age', group='nyle') == 0
+    assert migrate(grouped_openbao_root, 'age', group='acme') == 0
 
     local = SecretStore(grouped_openbao_root, config=bc.BackendConfig())
     assert local.age.load(GLOBAL) == {'A': 'a-value'}
     assert local.age.load(WEB) == {'W': 'w-value'}
     assert local.age.load(API) == {'P': 'p-value'}
-    assert openbao.requests_to('team/with/global') == []
+    assert openbao.requests_to('team/initech/global') == []
     assert not [p for p in kv_paths(openbao) if p.startswith('users/')]
     config = bc.load(grouped_openbao_root)
     assert config.backend == 'age' and config.version == 2
     out = capsys.readouterr().out
-    assert 'devbase/team/with/global' in out
-    assert 'with' in out
-    for value in ('a-value', 'with-value', 'w-value', 'p-value', 's3cret'):
+    assert 'devbase/team/initech/global' in out
+    assert 'initech' in out
+    for value in ('a-value', 'initech-value', 'w-value', 'p-value', 's3cret'):
         assert value not in out
 
 
 def test_grouped_migration_back_to_age_dry_run_names_the_other_groups(
         grouped_openbao_root, openbao, capsys):
-    assert migrate(grouped_openbao_root, 'age', dry_run=True, group='nyle') == 0
+    assert migrate(grouped_openbao_root, 'age', dry_run=True, group='acme') == 0
 
     out = capsys.readouterr().out
-    assert 'devbase/team/with/global' in out
-    assert 'devbase/team/nyle/global' in out and 'devbase/team/with/projects/web' in out
-    assert openbao.requests_to('team/with/global') == []
+    assert 'devbase/team/initech/global' in out
+    assert 'devbase/team/acme/global' in out and 'devbase/team/initech/projects/web' in out
+    assert openbao.requests_to('team/initech/global') == []
     assert not (grouped_openbao_root / 'secrets' / 'global.env.age').exists()
 
 
 def test_grouped_migration_back_to_age_excluding_the_other_group(grouped_openbao_root, openbao,
                                                                  capsys):
-    assert migrate(grouped_openbao_root, 'age', exclude_projects=['web'], group='nyle') == 0
+    assert migrate(grouped_openbao_root, 'age', exclude_projects=['web'], group='acme') == 0
 
-    assert not [p for p in kv_paths(openbao) if p.startswith('team/with/')]
+    assert not [p for p in kv_paths(openbao) if p.startswith('team/initech/')]
     local = SecretStore(grouped_openbao_root, config=bc.BackendConfig())
     assert not local.age.exists(WEB)
     assert local.age.load(API) == {'P': 'p-value'}
-    assert 'devbase/team/with/global' not in capsys.readouterr().out
+    assert 'devbase/team/initech/global' not in capsys.readouterr().out
 
 
 def test_migrate_parser_accepts_repeated_exclude_project():
@@ -495,8 +511,8 @@ def test_migrate_parser_accepts_repeated_exclude_project():
     ns = parser.parse_args(['env', 'backend', 'migrate', '--to', 'openbao'])
     assert ns.exclude_projects == []
     ns = parser.parse_args(['env', 'backend', 'migrate', '--to', 'openbao',
-                            '--exclude-project', 'csc', '--exclude-project', 'web'])
-    assert ns.exclude_projects == ['csc', 'web']
+                            '--exclude-project', 'myapp-console', '--exclude-project', 'web'])
+    assert ns.exclude_projects == ['myapp-console', 'web']
 
 
 def test_backend_dispatch_passes_exclude_projects(monkeypatch, tmp_path):
@@ -510,7 +526,7 @@ def test_backend_dispatch_passes_exclude_projects(monkeypatch, tmp_path):
 
     monkeypatch.setattr(env_backend, 'cmd_env_backend_migrate', fake)
     args = SimpleNamespace(backend_action='migrate', to='openbao', dry_run=False,
-                           assume_yes=True, exclude_projects=['csc'])
+                           assume_yes=True, exclude_projects=['myapp-console'])
 
     assert env_backend.cmd_env_backend(tmp_path, args) == 0
-    assert seen['exclude_projects'] == ['csc']
+    assert seen['exclude_projects'] == ['myapp-console']

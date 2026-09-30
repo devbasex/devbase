@@ -334,18 +334,18 @@ def test_wrapper_build_help_prints_usage_without_building(exec_wrapper, flag):
 
 @pytest.mark.parametrize("flag", ["--help", "-h"])
 def test_wrapper_build_name_help_does_not_cd_or_read_env(exec_wrapper, flag):
-    """受け入れ条件 11: `build carmo --help` も cd せず、carmo の env を読まずに使い方を出す。
+    """受け入れ条件 11: `build myapp --help` も cd せず、myapp の env を読まずに使い方を出す。
 
-    `projects/carmo/env` に `echo CARMO_ENV_READ >&2` を置く。wrapper は env を source するため、
+    `projects/myapp/env` に `echo MYAPP_ENV_READ >&2` を置く。wrapper は env を source するため、
     この行は cd と読み込みが起きたときだけ stderr に出る。
     """
-    exec_wrapper.project("carmo", env="echo CARMO_ENV_READ >&2\n")
+    exec_wrapper.project("myapp", env="echo MYAPP_ENV_READ >&2\n")
 
-    r = exec_wrapper(["build", "carmo", flag])
+    r = exec_wrapper(["build", "myapp", flag])
 
     _assert_build_usage(r)
     assert stdout_field(r, "PWD:") is None, r.stdout
-    assert "CARMO_ENV_READ" not in r.stderr, r.stderr
+    assert "MYAPP_ENV_READ" not in r.stderr, r.stderr
 
 
 @pytest.mark.parametrize("flag", ["--help", "-h"])
@@ -407,12 +407,12 @@ def test_wrapper_build_image_wins_over_same_named_project_and_notes(exec_wrapper
 
 def test_wrapper_build_project_only_name_cds_and_builds_project(exec_wrapper):
     """受け入れ条件 7: projects/ にだけある名前は今と同じくプロジェクトのビルド (cmd_build)。"""
-    exec_wrapper.project("carmo")
+    exec_wrapper.project("myapp")
 
-    r = exec_wrapper(["build", "carmo"])
+    r = exec_wrapper(["build", "myapp"])
 
     assert "=== Building devbase images ===" in r.stdout, r.stdout
-    assert stdout_field(r, "PWD:") == str(exec_wrapper.root / "projects" / "carmo"), r.stdout
+    assert stdout_field(r, "PWD:") == str(exec_wrapper.root / "projects" / "myapp"), r.stdout
     assert r.stderr.strip() == "", r.stderr
 
 

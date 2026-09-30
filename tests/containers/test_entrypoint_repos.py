@@ -419,7 +419,7 @@ def test_missing_primary_dir_does_not_fail_startup(tmp_path, work):
 def test_old_git_repo_env_is_no_longer_honoured(tmp_path, work):
     """PLAN32 は後方互換を持たない。GIT_USER/GIT_REPO では clone しない。"""
     result = run_entrypoint_fn(f'devbase_clone_repos "{work}"',
-                               {"GIT_USER": "volareinc", "GIT_REPO": "carmo"}, tmp_path)
+                               {"GIT_USER": "example-org", "GIT_REPO": "myapp"}, tmp_path)
 
     assert result.returncode == 0, result.stderr
     assert list(work.iterdir()) == []

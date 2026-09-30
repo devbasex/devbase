@@ -436,7 +436,7 @@ case "$_resolved_cmd" in
 esac
 
 # `build` の -h / --help は name 解決より前に判定する (PLAN61 決定 7・8 / #196)。後に置くと
-# `build carmo --help` で projects/carmo への cd とその env の読み込みが先に起きる。
+# `build myapp --help` で projects/myapp への cd とその env の読み込みが先に起きる。
 # `--context --help` の `--help` も使い方 (argparse も `-` 始まりを値に取らない)。
 # `--context=--help` は語が違うので使い方にならず、下流の argparse で usage エラーになる。
 if [ "$_resolved_cmd" = "build" ]; then
@@ -468,7 +468,7 @@ fi
 #
 # トップレベルシノニム (`login` を含む) は「実在 project なら cd」方針を維持する:
 # トップレベル `login` は Python parser を経由せず wrapper cd だけが name 指定の手段であり、
-# `login carmo` を「そのプロジェクトを操作」と解釈する設計 (存在性ベース判定)。
+# `login myapp` を「そのプロジェクトを操作」と解釈する設計 (存在性ベース判定)。
 # `build` は containers/ との衝突をイメージ優先で分ける (下の `build)` 分岐)。
 _DEVBASE_ARGS=("${@:2}")
 # 同期注意 (メンテナンス性): 下記 2 リストは cli.py の parser 定義に対応する。

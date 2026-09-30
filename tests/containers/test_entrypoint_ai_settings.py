@@ -45,7 +45,7 @@ def roots(tmp_path: Path):
     return home, ai, group
 
 
-def setup(roots, group_name: str = "nyle", cwd: Path | None = None):
+def setup(roots, group_name: str = "acme", cwd: Path | None = None):
     home, ai, grp = roots
     result = run_entrypoint_fn(
         f'devbase_setup_ai_settings "{home}" "{ai}" "{grp}" "{group_name}"',
@@ -71,7 +71,7 @@ def test_shared_entries_point_at_the_shared_volume(roots):
 
 def test_group_entries_point_at_the_group_volume(roots):
     home, _, grp = roots
-    setup(roots, "kkg")
+    setup(roots, "globex")
 
     for entry in (".claude.json", ".claude", ".gemini", ".local/share/kiro-cli",
                   ".shellrc.d"):
@@ -83,7 +83,7 @@ def test_group_entries_point_at_the_group_volume(roots):
 def test_shellrc_dir_is_an_empty_group_directory(roots):
     """PLAN70: 置き場所はグループ側のディレクトリで、devbase は中へ何も書かない。"""
     home, _, grp = roots
-    setup(roots, "kkg")
+    setup(roots, "globex")
 
     target = grp / ".shellrc.d"
     assert target.is_dir() and not target.is_symlink()
@@ -92,7 +92,7 @@ def test_shellrc_dir_is_an_empty_group_directory(roots):
 
 def test_kiro_cli_data_points_at_the_group_volume(roots):
     home, _, grp = roots
-    setup(roots, "kkg")
+    setup(roots, "globex")
 
     link = home / ".local" / "share" / "kiro-cli"
     assert link.is_symlink()
@@ -105,7 +105,7 @@ def test_existing_kiro_cli_data_is_seeded_before_linking(roots):
     source.mkdir(parents=True)
     (source / "data.sqlite3").write_text("logged-in")
 
-    setup(roots, "kkg")
+    setup(roots, "globex")
 
     assert source.is_symlink()
     assert (grp / ".local" / "share" / "kiro-cli" / "data.sqlite3").read_text() == "logged-in"
@@ -120,7 +120,7 @@ def test_existing_group_kiro_data_is_not_overwritten(roots):
     (source / "data.sqlite3").write_text("stale")
     (target / "data.sqlite3").write_text("refreshed")
 
-    setup(roots, "kkg")
+    setup(roots, "globex")
 
     assert (target / "data.sqlite3").read_text() == "refreshed"
 
@@ -128,12 +128,12 @@ def test_existing_group_kiro_data_is_not_overwritten(roots):
 def test_kiro_cli_data_is_separate_between_groups(roots, tmp_path):
     home_a, ai, group_a = roots
     home_b = tmp_path / "home-b"
-    group_b = tmp_path / "persistent" / "kkg"
+    group_b = tmp_path / "persistent" / "globex"
     home_b.mkdir()
 
-    setup((home_a, ai, group_a), "nyle")
-    setup((home_b, ai, group_b), "kkg")
-    (home_a / ".local" / "share" / "kiro-cli" / "identity").write_text("nyle")
+    setup((home_a, ai, group_a), "acme")
+    setup((home_b, ai, group_b), "globex")
+    (home_a / ".local" / "share" / "kiro-cli" / "identity").write_text("acme")
 
     assert not (home_b / ".local" / "share" / "kiro-cli" / "identity").exists()
 
@@ -141,12 +141,12 @@ def test_kiro_cli_data_is_separate_between_groups(roots, tmp_path):
 def test_switching_groups_in_the_same_home_does_not_copy_kiro_data(roots, tmp_path):
     """既存 symlink 経由で前グループの認証状態を次グループへ移さない。"""
     home, ai, group_a = roots
-    group_b = tmp_path / "persistent" / "kkg"
+    group_b = tmp_path / "persistent" / "globex"
 
-    setup((home, ai, group_a), "nyle")
-    (home / ".local" / "share" / "kiro-cli" / "identity").write_text("nyle")
+    setup((home, ai, group_a), "acme")
+    (home / ".local" / "share" / "kiro-cli" / "identity").write_text("acme")
 
-    setup((home, ai, group_b), "kkg")
+    setup((home, ai, group_b), "globex")
 
     assert (home / ".local" / "share" / "kiro-cli").resolve() == \
         (group_b / ".local" / "share" / "kiro-cli").resolve()
@@ -156,7 +156,7 @@ def test_switching_groups_in_the_same_home_does_not_copy_kiro_data(roots, tmp_pa
 def test_kiro_home_seed_is_not_attempted_from_shared_volume(roots):
     """Kiro 2.x のデータはホーム由来なので /persistent/ai を探索しない。"""
     _, ai, _ = roots
-    result = setup(roots, "nyle")
+    result = setup(roots, "acme")
 
     assert f"skip (シード元なし): {ai}/.local/share/kiro-cli" not in result.stdout
 
@@ -169,7 +169,7 @@ def test_claude_defaults_to_the_group_volume(roots):
     既定をグループ側に倒して共通にしたいものだけを名指しする。
     """
     home, _, grp = roots
-    setup(roots, "kkg")
+    setup(roots, "globex")
 
     (home / ".claude" / "projects").mkdir(parents=True)
     assert (grp / ".claude" / "projects").is_dir()
@@ -178,7 +178,7 @@ def test_claude_defaults_to_the_group_volume(roots):
 def test_shared_assets_under_claude_point_at_the_shared_volume(roots):
     """AC4: どのグループから見ても共通資産は同一実体を指す。"""
     home, ai, _ = roots
-    setup(roots, "kkg")
+    setup(roots, "globex")
 
     for entry in ("plugins", "skills", "commands", "CLAUDE.md", "settings.json"):
         path = home / ".claude" / entry
@@ -190,17 +190,17 @@ def test_two_groups_share_assets_but_not_credentials(roots, tmp_path):
     home_a, ai, group_a = roots
     home_b = tmp_path / "home-b"
     home_b.mkdir()
-    group_b = tmp_path / "persistent" / "kkg"
+    group_b = tmp_path / "persistent" / "globex"
 
-    setup((home_a, ai, group_a), "nyle")
-    setup((home_b, ai, group_b), "kkg")
+    setup((home_a, ai, group_a), "acme")
+    setup((home_b, ai, group_b), "globex")
 
     # 共通資産は同一実体
     assert (home_a / ".claude" / "plugins").resolve() == \
         (home_b / ".claude" / "plugins").resolve()
 
     # グループ別データは互いに到達できない
-    (home_a / ".claude" / ".credentials.json").write_text("nyle-secret")
+    (home_a / ".claude" / ".credentials.json").write_text("acme-secret")
     assert not (home_b / ".claude" / ".credentials.json").exists()
 
     # PLAN70: シェルの設定の置き場所もグループごとに分かれる
@@ -279,7 +279,7 @@ def test_existing_wrong_symlink_is_replaced(roots):
     (ai / ".claude").mkdir(parents=True)
     (home / ".claude").symlink_to(ai / ".claude")
 
-    setup(roots, "kkg")
+    setup(roots, "globex")
 
     assert (home / ".claude").resolve() == (grp / ".claude").resolve()
 
@@ -334,7 +334,7 @@ def _seed_source(ai: Path) -> None:
     (ai / ".gemini" / "settings.json").write_text('{"auth": "vertex-ai"}')
 
 
-@pytest.mark.parametrize("group_name", ["nyle", "kkg", "default"])
+@pytest.mark.parametrize("group_name", ["acme", "globex", "default"])
 def test_no_group_is_seeded_from_the_shared_volume(roots, group_name):
     """#315 I13: どのグループ名でも ``/persistent/ai`` の分類 B をグループ側へ写さない"""
     home, ai, grp = roots
@@ -432,7 +432,7 @@ def test_new_group_gets_a_parsable_claude_json(roots):
     で起動を拒否する。グループ側は取り込みを行わないため、必ずプレースホルダになる。
     """
     home, _, grp = roots
-    setup(roots, group_name="with")
+    setup(roots, group_name="initech")
 
     assert (grp / ".claude.json").read_text() == "{}"
     assert json.loads((home / ".claude.json").read_text()) == {}
@@ -444,7 +444,7 @@ def test_shared_settings_json_is_parsable(roots):
     共通ボリュームを新規に作った場合、同じ経路で 0 バイトになる。
     """
     _, ai, _ = roots
-    setup(roots, group_name="with")
+    setup(roots, group_name="initech")
 
     assert json.loads((ai / ".claude" / "settings.json").read_text()) == {}
 
@@ -452,7 +452,7 @@ def test_shared_settings_json_is_parsable(roots):
 def test_non_json_entries_stay_empty(roots):
     """``CLAUDE.md`` は空のままでよい。Markdown は空で妥当。"""
     _, ai, _ = roots
-    setup(roots, group_name="with")
+    setup(roots, group_name="initech")
 
     assert (ai / ".claude" / "CLAUDE.md").read_text() == ""
 
@@ -466,7 +466,7 @@ def test_history_jsonl_is_not_pre_created(roots):
     ディレクトリとして作られないようにするための型ヒントである。
     """
     _, _, grp = roots
-    setup(roots, group_name="with")
+    setup(roots, group_name="initech")
 
     assert not (grp / ".claude" / "history.jsonl").exists()
 
@@ -480,8 +480,8 @@ def test_existing_file_content_is_not_overwritten(roots):
     grp.mkdir(parents=True, exist_ok=True)
     (grp / ".claude.json").write_text('{"oauthAccount": "keep me"}')
 
-    setup(roots, group_name="with")
-    setup(roots, group_name="with")
+    setup(roots, group_name="initech")
+    setup(roots, group_name="initech")
 
     assert json.loads((grp / ".claude.json").read_text()) == {
         "oauthAccount": "keep me"}
@@ -497,6 +497,6 @@ def test_deliberately_emptied_file_is_left_alone(roots):
     grp.mkdir(parents=True, exist_ok=True)
     (grp / ".claude.json").write_text("")
 
-    setup(roots, group_name="with")
+    setup(roots, group_name="initech")
 
     assert (grp / ".claude.json").read_text() == ""

@@ -96,8 +96,8 @@ from __future__ import annotations
 import difflib
 import re
 from pathlib import Path
-from typing import (Any, Dict, Iterable, List, NamedTuple, Optional, Sequence,
-                    Set, Tuple)
+from typing import (Any, Callable, Dict, Iterable, List, NamedTuple, Optional,
+                    Sequence, Set, Tuple)
 
 import yaml
 
@@ -768,6 +768,35 @@ def remaining_secret_env_file_refs(
     return found
 
 
+def _reset_service_state() -> Tuple[None, None, None]:
+    """``services:`` の開始/離脱で (service_indent, current, env_file_indent) を初期化する"""
+    return None, None, None
+
+
+def _record_env_file_block_line(line: str, record: Callable[[str, str], None],
+                                current: str) -> None:
+    """``env_file:`` ブロック内の 1 行から参照を拾って記録する"""
+    item = _LIST_ITEM_RE.match(line)
+    if item:
+        for ref in _list_item_refs(item.group(2))[0]:
+            record(current, ref)
+        return
+    # `- ` で始まらない行は long syntax の続き (`path:` / `required:`)。
+    # ブロックを抜けたことにすると後続のエントリを取りこぼす
+    ref = _long_syntax_ref(line)
+    if ref is not None:
+        record(current, ref)
+
+
+def _record_inline_env_file(line: str, record: Callable[[str, str], None],
+                            current: str) -> None:
+    """``env_file: xxx`` / ``env_file: [a, b]`` の 1 行記法から参照を記録する"""
+    inline = _ENV_FILE_INLINE_RE.match(line)
+    if inline:
+        for value in _inline_entries(inline.group(1)):
+            record(current, value)
+
+
 def services_with_secret_env_file(
         text: str,
         targets: Iterable[str] = (TARGET_GLOBAL, TARGET_PROJECT)
@@ -817,17 +846,13 @@ def services_with_secret_env_file(
             match = _SERVICES_KEY_RE.match(line)
             if match:
                 services_indent = len(match.group(1))
-                service_indent = None
-                current = None
-                env_file_indent = None
+                service_indent, current, env_file_indent = _reset_service_state()
             continue
 
         if indent <= services_indent:
             # services: セクションを抜けた (volumes: / networks: など)
             services_indent = None
-            service_indent = None
-            current = None
-            env_file_indent = None
+            service_indent, current, env_file_indent = _reset_service_state()
             match = _SERVICES_KEY_RE.match(line)
             if match:
                 services_indent = len(match.group(1))
@@ -847,16 +872,7 @@ def services_with_secret_env_file(
             continue
 
         if env_file_indent is not None and indent > env_file_indent:
-            item = _LIST_ITEM_RE.match(line)
-            if item:
-                for ref in _list_item_refs(item.group(2))[0]:
-                    record(current, ref)
-                continue
-            # `- ` で始まらない行は long syntax の続き (`path:` / `required:`)。
-            # ブロックを抜けたことにすると後続のエントリを取りこぼす
-            ref = _long_syntax_ref(line)
-            if ref is not None:
-                record(current, ref)
+            _record_env_file_block_line(line, record, current)
             continue
         env_file_indent = None
 
@@ -864,10 +880,7 @@ def services_with_secret_env_file(
             env_file_indent = indent
             continue
 
-        inline = _ENV_FILE_INLINE_RE.match(line)
-        if inline:
-            for value in _inline_entries(inline.group(1)):
-                record(current, value)
+        _record_inline_env_file(line, record, current)
 
     return found
 

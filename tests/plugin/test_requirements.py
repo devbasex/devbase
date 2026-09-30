@@ -12,7 +12,7 @@ from devbase.plugin.requirements import (
 )
 
 
-def info(requires=None, name="carmo-web") -> PluginInfo:
+def info(requires=None, name="myapp-web") -> PluginInfo:
     return PluginInfo(name=name, version="1.0.0", requires_devbase=requires)
 
 
@@ -67,7 +67,7 @@ def test_unsatisfied_requirement_raises(spec, current):
         check_devbase_requirement(info(spec), current_version=current)
 
     message = str(excinfo.value)
-    assert "carmo-web" in message      # どのプラグインか
+    assert "myapp-web" in message      # どのプラグインか
     assert spec in message             # 要求
     assert current in message          # 現在の版
 
@@ -233,7 +233,7 @@ def test_env_override_is_case_insensitive_and_off_by_default(value, monkeypatch)
 def test_warn_variant_does_not_raise(caplog):
     warn_unmet_devbase_requirement(info(">=99.0.0"), current_version="3.0.0")
 
-    assert any("carmo-web" in r.getMessage() for r in caplog.records)
+    assert any("myapp-web" in r.getMessage() for r in caplog.records)
 
 
 def test_warn_variant_is_silent_when_satisfied(caplog):

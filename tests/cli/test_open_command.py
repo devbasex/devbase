@@ -28,8 +28,8 @@ def _parse(*argv):
 
 @pytest.mark.parametrize('argv', [['open'], ['project', 'open']])
 def test_open_takes_name_index_and_context(argv):
-    ns = _parse(*argv, 'carmo', '--open-index', '2', '--context', 'remote')
-    assert ns.name == 'carmo'
+    ns = _parse(*argv, 'myapp', '--open-index', '2', '--context', 'remote')
+    assert ns.name == 'myapp'
     assert ns.open_index == 2
     assert ns.context == 'remote'
 
@@ -40,7 +40,7 @@ def test_container_open_takes_no_name():
     assert ns.open_index == 2
     assert not hasattr(ns, 'name')
     with pytest.raises(SystemExit):
-        _parse('container', 'open', 'carmo')
+        _parse('container', 'open', 'myapp')
 
 
 @pytest.mark.parametrize('flag', ['--open', '--no-open'])
@@ -79,10 +79,10 @@ def test_shortcut_dispatches_to_cmd_open(monkeypatch):
     monkeypatch.setattr(container, '_enter_project', lambda name: seen.setdefault('entered', name))
     monkeypatch.setattr(container, 'cmd_open',
                         lambda **kw: seen.setdefault('open', kw) and 0)
-    ns = _parse('open', 'carmo', '--open-index', '2')
+    ns = _parse('open', 'myapp', '--open-index', '2')
     cli._dispatch('open', ns)
-    assert seen['entered'] == 'carmo'
-    assert seen['open'] == {'project_name': 'carmo', 'open_index': 2}
+    assert seen['entered'] == 'myapp'
+    assert seen['open'] == {'project_name': 'myapp', 'open_index': 2}
 
 
 def test_project_open_dispatches_to_cmd_open(monkeypatch):
@@ -93,11 +93,11 @@ def test_project_open_dispatches_to_cmd_open(monkeypatch):
     monkeypatch.setattr(container, '_enter_project', lambda name: seen.setdefault('entered', name))
     monkeypatch.setattr(container, 'cmd_open',
                         lambda **kw: seen.setdefault('open', kw) and 0)
-    ns = _parse('project', 'open', 'carmo', '--open-index', '2')
+    ns = _parse('project', 'open', 'myapp', '--open-index', '2')
 
     assert cli._dispatch('project', ns) == 0
-    assert seen['entered'] == 'carmo'
-    assert seen['open'] == {'project_name': 'carmo', 'open_index': 2}
+    assert seen['entered'] == 'myapp'
+    assert seen['open'] == {'project_name': 'myapp', 'open_index': 2}
 
 
 # --- 前方一致 (受け入れ条件 16) -------------------------------------------------
@@ -142,20 +142,20 @@ def _field(result, prefix):
 
 @pytest.fixture
 def wrapper_root(tmp_path):
-    (tmp_path / "projects" / "carmo").mkdir(parents=True)
+    (tmp_path / "projects" / "myapp").mkdir(parents=True)
     return tmp_path
 
 
 def test_wrapper_top_level_open_name_cds_and_strips(wrapper_root):
-    r = _run_wrapper(["open", "carmo", "--open-index", "2"], wrapper_root)
+    r = _run_wrapper(["open", "myapp", "--open-index", "2"], wrapper_root)
     assert "unknown command" not in r.stderr.lower(), r.stderr
-    assert _field(r, "PWD:").endswith("/projects/carmo"), r.stdout
+    assert _field(r, "PWD:").endswith("/projects/myapp"), r.stdout
     assert _field(r, "PYTHON:") == "open --open-index 2", r.stdout
 
 
 def test_wrapper_project_open_name_cds_and_strips(wrapper_root):
-    r = _run_wrapper(["project", "open", "carmo"], wrapper_root)
-    assert _field(r, "PWD:").endswith("/projects/carmo"), r.stdout
+    r = _run_wrapper(["project", "open", "myapp"], wrapper_root)
+    assert _field(r, "PWD:").endswith("/projects/myapp"), r.stdout
     assert _field(r, "PYTHON:") == "project open", r.stdout
 
 

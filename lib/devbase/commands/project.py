@@ -32,7 +32,7 @@ def _resolve_plugin_name(entry: Path) -> str | None:
     """projects/ 配下の entry が属する plugin 名を解決する。
 
     entry が symlink の場合、その **リンク先** (``../<plugin.path>/projects/<proj>``)
-    から plugin 名を解決する。PLAN04 の同名衝突 suffix (例 ``carmo.takemi--carmo``)
+    から plugin 名を解決する。PLAN04 の同名衝突 suffix (例 ``myapp.alice--myapp``)
     は **リンク名のみ** に付与され、リンク先 dir 名は素の ``<proj>`` のままであるため、
     リンク名でなくリンク先を辿ることで suffix の有無に関わらず正しく解決できる。
 
@@ -234,11 +234,13 @@ def cmd_project_migrate_volume(devbase_root: Path, args) -> int:
     元は残す。引数の誤りは 2、前提を満たさない・写し損ねは 1。
     """
     from devbase.errors import DevbaseError
+    from devbase.env.groups import EXAMPLE_GROUP
     from devbase.volume.migrate import VolumeMigration, VolumeMigrationError
 
     group = getattr(args, 'to', None)
     if not group:
-        logger.error("--to <グループ> で移し先のグループを指定してください (例: --to nyle)")
+        logger.error("--to <グループ> で移し先のグループを指定してください (例: --to %s)",
+                     EXAMPLE_GROUP)
         return 2
     try:
         migration = VolumeMigration(devbase_root, group)

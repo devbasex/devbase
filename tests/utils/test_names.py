@@ -15,15 +15,15 @@ from devbase.utils.names import (
 )
 
 
-@pytest.mark.parametrize("name", ["carmo", "github_work_time", "carmo-ai", "php85",
-                                  "carmo.takemi", "9lives", "a"])
+@pytest.mark.parametrize("name", ["myapp", "github_work_time", "myapp-ai", "php85",
+                                  "myapp.alice", "9lives", "a"])
 def test_accepts_real_project_names(name):
     """受け入れ条件 5: 実在するプロジェクト名の形は通る。"""
     assert is_single_segment_name(name) is True
 
 
 @pytest.mark.parametrize("name", ["../etc", "a/b", ".", "..", "", "-x", "..\\etc",
-                                  "a b", "carmo\n", ".hidden", "_private"])
+                                  "a b", "myapp\n", ".hidden", "_private"])
 def test_rejects_paths_flags_and_empty(name):
     """`..` `/` `\\` 空 `-` 始まり 末尾の改行 `.` 始まり `_` 始まりは名前の形ではない。"""
     assert is_single_segment_name(name) is False
@@ -39,7 +39,7 @@ def test_pattern_is_the_image_name_allowlist():
     assert SINGLE_SEGMENT_NAME_PATTERN == r"[A-Za-z0-9][A-Za-z0-9._-]*"
 
 
-@pytest.mark.parametrize("name", ["foo", "_foo", "-x", "carmo-ai", "café", "a b"])
+@pytest.mark.parametrize("name", ["foo", "_foo", "-x", "myapp-ai", "café", "a b"])
 def test_counts_as_project_ignores_the_name_form(name):
     """#276: `.` で始まらない名前は、名前の形に合わなくてもプロジェクトとして数える。"""
     assert counts_as_project(name) is True

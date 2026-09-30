@@ -136,7 +136,7 @@ def test_import_of_usable_names_does_not_warn(tmp_path, caplog):
     """8: 名前の形に合う名前だけなら、名前の形の警告は 1 行も出ない"""
     root = tmp_path / 'root'
     root.mkdir()
-    src = _write_project_bundle(tmp_path, ['ok-name', 'carmo_ai'])
+    src = _write_project_bundle(tmp_path, ['ok-name', 'myapp_ai'])
 
     with caplog.at_level(logging.WARNING):
         assert import_bundle(root, _project_options(src)) == 0

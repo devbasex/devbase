@@ -248,8 +248,8 @@ def test_doctor_probes_the_grouped_sources_file_and_cache_for_git_ignore(git_roo
 
     assert env_ops.cmd_env_doctor(git_root) == 1
     out = capsys.readouterr().out
-    assert '.env.sources.nyle.yml' in out
-    assert 'secrets/cache/team/nyle/global.env.age' in out
+    assert '.env.sources.acme.yml' in out
+    assert 'secrets/cache/team/acme/global.env.age' in out
 
     (git_root / '.gitignore').write_text(
         '.env\n.env.bak*\nsecrets/\nprojects/*/.env\n.env.sources*.yml\n')

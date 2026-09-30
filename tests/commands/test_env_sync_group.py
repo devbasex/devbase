@@ -20,13 +20,13 @@ def b64(text: str) -> str:
 
 @pytest.fixture
 def grouped(openbao_root, openbao):
-    """``version: 2`` ``web`` は ``with``、``api`` は ``nyle``"""
+    """``version: 2`` ``web`` は ``initech``、``api`` は ``acme``"""
     from tests.conftest import configure_openbao
 
     configure_openbao(openbao_root, openbao, layout='group')
-    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=with\n')
+    (openbao_root / 'projects' / 'web' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=initech\n')
     (openbao_root / 'projects' / 'api').mkdir()
-    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=nyle\n')
+    (openbao_root / 'projects' / 'api' / 'env').write_text('DEVBASE_ACCOUNT_GROUP=acme\n')
     return openbao_root
 
 
@@ -62,24 +62,24 @@ def kv_paths(openbao):
 
 def test_sync_keeps_the_synced_hashes_per_storage_group(grouped, openbao, monkeypatch,
                                                          git_credentials):
-    """決定 13: nyle と with を順に同期しても、ソースの更新をそれぞれが検出する"""
+    """決定 13: acme と initech を順に同期しても、ソースの更新をそれぞれが検出する"""
     for project in ('api', 'web'):
         at(monkeypatch, grouped, f'projects/{project}')
         assert env_cmd.cmd_env_init(grouped) == 0
 
-    assert openbao.get('team/nyle/global')[keys.GIT_CREDENTIALS_BASE64] == b64('v1')
-    assert openbao.get('team/with/global')[keys.GIT_CREDENTIALS_BASE64] == b64('v1')
-    assert (grouped / '.env.sources.nyle.yml').is_file()
-    assert (grouped / '.env.sources.with.yml').is_file()
+    assert openbao.get('team/acme/global')[keys.GIT_CREDENTIALS_BASE64] == b64('v1')
+    assert openbao.get('team/initech/global')[keys.GIT_CREDENTIALS_BASE64] == b64('v1')
+    assert (grouped / '.env.sources.acme.yml').is_file()
+    assert (grouped / '.env.sources.initech.yml').is_file()
     assert not (grouped / '.env.sources.yml').exists()
 
     git_credentials.write_text('v2')
-    for project, path in (('api', 'team/nyle/global'), ('web', 'team/with/global')):
+    for project, path in (('api', 'team/acme/global'), ('web', 'team/initech/global')):
         at(monkeypatch, grouped, f'projects/{project}/src')
         assert env_cmd.cmd_env_sync(grouped) == 0
         assert openbao.get(path)[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
 
-    assert kv_paths(openbao) == {'team/nyle/global', 'team/with/global'}
+    assert kv_paths(openbao) == {'team/acme/global', 'team/initech/global'}
 
 
 def test_sync_outside_projects_needs_the_group(grouped, openbao, git_credentials, caplog):
@@ -92,13 +92,13 @@ def test_sync_outside_projects_needs_the_group(grouped, openbao, git_credentials
 
 def test_sync_outside_projects_uses_the_group_option(grouped, openbao, monkeypatch,
                                                      git_credentials):
-    assert env_cmd.cmd_env_init(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_init(grouped, group='globex') == 0
     git_credentials.write_text('v2')
-    assert env_cmd.cmd_env_sync(grouped, group='kkg') == 0
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
 
-    assert openbao.get('team/kkg/global')[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
-    assert (grouped / '.env.sources.kkg.yml').is_file()
-    assert kv_paths(openbao) == {'team/kkg/global'}
+    assert openbao.get('team/globex/global')[keys.GIT_CREDENTIALS_BASE64] == b64('v2')
+    assert (grouped / '.env.sources.globex.yml').is_file()
+    assert kv_paths(openbao) == {'team/globex/global'}
 
 
 def test_sync_uses_the_single_sources_file_with_the_flat_layout(openbao_root, openbao,
@@ -121,5 +121,5 @@ def test_project_writes_the_projects_group(grouped, openbao, monkeypatch):
 
     assert env_cmd.cmd_env_project(grouped) == 0
 
-    assert set(openbao.get('team/with/projects/web')) == {'GENERATED'}
-    assert kv_paths(openbao) == {'team/with/projects/web'}
+    assert set(openbao.get('team/initech/projects/web')) == {'GENERATED'}
+    assert kv_paths(openbao) == {'team/initech/projects/web'}
