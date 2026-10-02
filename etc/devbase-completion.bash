@@ -33,7 +33,7 @@ _devbase_completions() {
 
     local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale open list help"
     # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
-    local project_subcommands="up down ps login logs scale build rebuild list profile open"
+    local project_subcommands="up down ps login logs scale build rebuild list profile open post-start"
     local container_subcommands="up down ps login logs scale build rebuild profile open"
     local env_subcommands="init sync list set get delete edit project export import keygen exec encrypt decrypt rekey doctor"
     local plugin_subcommands="list install uninstall update info sync repo"
@@ -140,6 +140,14 @@ _devbase_completions() {
                     open)
                         if [[ "$cur" == -* ]]; then
                             COMPREPLY=($(compgen -W "--open-index --context" -- "$cur"))
+                        else
+                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        fi
+                        ;;
+                    # post-start は [name] と --context を取る (#371)
+                    post-start)
+                        if [[ "$cur" == -* ]]; then
+                            COMPREPLY=($(compgen -W "--context" -- "$cur"))
                         else
                             COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
                         fi

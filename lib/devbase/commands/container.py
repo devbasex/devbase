@@ -736,6 +736,7 @@ def _dispatch_lifecycle(args) -> int:
             'open':  lambda: cmd_open(project_name=project_name,
                                       open_index=getattr(args, 'open_index', None),
                                       **ctx),
+            'post-start': lambda: cmd_post_start(project_name=project_name, **ctx),
         }
 
         handler = handlers.get(subcmd)
