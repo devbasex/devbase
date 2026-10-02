@@ -1334,6 +1334,28 @@ def _report_startup_failure(label: str, error: ContainerStartupError,
                  "（全インスタンスを作り直します）", project_name)
 
 
+def _start_or_partial(run_pipeline, scale: int):
+    """起動のパイプラインを呼び、``(override_file, started, startup_error)`` を返す (#371)。
+
+    すべて起動できれば ``(生成した構成, [1..scale], None)``。起動できなかったインスタンスが
+    あれば ``(_SCALE_COMPOSE_FILE, 起動できた番号, ContainerStartupError)`` を返す。
+    """
+    try:
+        override_file = run_pipeline()
+    except ContainerStartupError as e:
+        return _SCALE_COMPOSE_FILE, list(e.ready), e
+    return override_file, list(range(1, scale + 1)), None
+
+
+def _finish_partial(label: str, error: Optional[ContainerStartupError],
+                    project_name: str) -> bool:
+    """起動できなかったインスタンスがあれば出力の最後に報告し、``True`` を返す。"""
+    if error is None:
+        return False
+    _report_startup_failure(label, error, project_name)
+    return True
+
+
 def _run_deploy_pipeline(project_name: str, scale: int, config,
                          target: docker_context.DockerTarget,
                          dev_service_name: str) -> Path:
@@ -1418,17 +1440,13 @@ def cmd_up(project_name: str = None, scale: int = None,
         _auto_snapshot()
 
     try:
-        startup_error = None
-        try:
-            override_file = _run_deploy_pipeline(
-                project_name, scale, config, target, dev_service_name)
-            started = list(range(1, scale + 1))
-        except ContainerStartupError as e:
-            # 起動できたインスタンスへは後処理を行ってから失敗として終える (#371)
-            startup_error = e
-            override_file = _SCALE_COMPOSE_FILE
-            started = list(e.ready)
-            _warn_partial_start(e, started, dev_service_name)
+        # 起動できたインスタンスへは後処理を行ってから失敗として終える (#371)
+        override_file, started, startup_error = _start_or_partial(
+            lambda: _run_deploy_pipeline(
+                project_name, scale, config, target, dev_service_name),
+            scale)
+        if startup_error is not None:
+            _warn_partial_start(startup_error, started, dev_service_name)
 
         _run_post_start(project_name, scale, started, dev_service_name, config,
                         override_file)
@@ -1437,8 +1455,7 @@ def cmd_up(project_name: str = None, scale: int = None,
                            config, compose_file=override_file,
                            docker_context_name=target.context, started=started)
 
-        if startup_error is not None:
-            _report_startup_failure('Deploy', startup_error, project_name)
+        if _finish_partial('Deploy', startup_error, project_name):
             return 1
         logger.info("=== Deploy completed successfully ===")
         return 0
@@ -1844,17 +1861,12 @@ def cmd_scale(new_scale: int, project_name: str = None,
         return 1
 
     try:
-        startup_error = None
-        try:
-            override_file = _run_scale_pipeline(project_name, new_scale, current_scale,
-                                                config, target, dev_service_name)
-            if override_file is None:
-                return 1
-            started = list(range(1, new_scale + 1))
-        except ContainerStartupError as e:
-            startup_error = e
-            override_file = _SCALE_COMPOSE_FILE
-            started = list(e.ready)
+        override_file, started, startup_error = _start_or_partial(
+            lambda: _run_scale_pipeline(project_name, new_scale, current_scale,
+                                        config, target, dev_service_name),
+            new_scale)
+        if override_file is None:
+            return 1
 
         # 後処理の対象は増やしたインスタンスのうち起動できたもの。既存のものは up か
         # 前の scale で済んでいる (#224)
@@ -1865,8 +1877,7 @@ def cmd_scale(new_scale: int, project_name: str = None,
         _run_post_start(project_name, new_scale, targets, dev_service_name, config,
                         override_file)
 
-        if startup_error is not None:
-            _report_startup_failure('Scale', startup_error, project_name)
+        if _finish_partial('Scale', startup_error, project_name):
             return 1
 
         logger.info("=== Scale completed successfully ===")
