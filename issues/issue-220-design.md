@@ -289,7 +289,10 @@ lfm のビルドが本体を取得し直す。本体を要する使い方も arm
 
 マージ前の確認は `devbase-base:latest` を上書きしない別のタグで行う（前提 8）。既定を `devbase-base:latest` にした
 検査が環境変数で別のタグも見られれば、マージ前の確認とリリース後テストで同じ検査を走らせられる。Docker が無い・
-イメージが無い・置き場の無い古いイメージのときは skip する（`test_base_image_font_matching.py` と同じ扱い）。
+イメージが無いときは skip する（`test_base_image_font_matching.py` と同じ扱い）。置き場の無いイメージを skip する
+のは、`DEVBASE_TEST_BASE_IMAGE` を渡さず既定の `devbase-base:latest` を見るときだけにする。`DEVBASE_TEST_BASE_IMAGE`
+を明示したときは、置き場が無くても skip せず落とす。置き場を消して建てたイメージは置き場の無い古いイメージと
+見分けられないため、明示したタグまで skip すると、テスト設計の「片付けに置き場を足して建てる」壊し方が skip で通る。
 
 手で打つコマンドの列だけで確かめる案は、同じ確認をリリース後テストと #242 で繰り返せないため採らない。
 検査を `devbase-base:latest` に固定する案は、マージ前に利用者の環境が使うイメージを上書きさせるため採らない。
@@ -322,8 +325,10 @@ PR に残せば人が読み直せる。Dockerfile の形と建てたイメージ
 | 受け入れ条件 13 | `CHANGELOG.md` の `[Unreleased]` に置き場と snap スタブの項目がある | PR のレビューで見る |
 | 受け入れ条件 14 | `.ndf/project.json` の `test.suites` の pytest のコマンドが通る | — |
 
-建てたイメージの検査（受け入れ条件 5〜9）は、`devbase-base:latest` に置き場が無い間は skip する。マージ前は
-`DEVBASE_TEST_BASE_IMAGE` に別のタグを渡して走らせ、出力を PR に残す（決定 3）。
+建てたイメージの検査（受け入れ条件 5〜9）は、`DEVBASE_TEST_BASE_IMAGE` を渡さず既定の `devbase-base:latest` を
+見るときに限り、置き場が無い間は skip する。マージ前は `DEVBASE_TEST_BASE_IMAGE` に別のタグを渡して走らせ、出力を
+PR に残す。このとき置き場が無ければ skip せず落ちる（決定 3）。表の「どう壊したら落ちるべきか」の壊し方は、
+壊して建てたタグを `DEVBASE_TEST_BASE_IMAGE` に渡して確かめる。
 
 ## 設計の結果
 
