@@ -240,7 +240,7 @@ def _collect_profile_and_region(env_file: EnvFile, parser: "AWSConfigParser",
         env_file.set(keys.AWS_DEFAULT_REGION, region)
         logger.info("%s: 自動取得完了 (%s)", keys.AWS_DEFAULT_REGION, region)
     else:
-        region = safe_input(f"{keys.AWS_DEFAULT_REGION} (デフォルト: ap-northeast-1): ", "ap-northeast-1")
+        region = safe_input(f"{keys.AWS_DEFAULT_REGION} (デフォルト: {DEFAULT_REGION}): ", DEFAULT_REGION)
         env_file.set(keys.AWS_DEFAULT_REGION, region)
 
 
