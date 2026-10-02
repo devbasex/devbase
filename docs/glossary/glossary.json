@@ -645,6 +645,13 @@
       "context": "ci",
       "meaning": "固有の語の検査が当たりにしない行。パスと行の形の組で定め、語を含まない",
       "source": "docs/specifications/ci-checks.md"
+    },
+    {
+      "term": "プロファイル名の正規化",
+      "context": "secret",
+      "meaning": "GCP の鍵ファイル名の拡張子を除いた部分のうち [A-Za-z0-9_] 以外を _ へ置き換え、GCP のプロファイル名（GCP_CREDENTIALS_BASE64_<名前> の <名前>）にすること",
+      "source": "",
+      "pending_source": "issues/issue-334-requirements.md"
     }
   ]
 }

@@ -84,6 +84,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | AWS の丸ごとの取り込み | — | ~/.aws/config と ~/.aws/credentials を切り出さずにそのまま 1 つの tar にして AWS_CONFIG_BASE64 へ書くこと。#314 より前の振る舞い | — | — | `docs/specifications/secret-backend.md` |
 | AWS のプロファイルの連なり | — | 選んだ AWS のプロファイルが動くのに要る節。sso_session が指す [sso-session <名前>] と、source_profile が指すプロファイル（たどれる限り） | — | — | `docs/specifications/secret-backend.md` |
 | グループ名の例 | — | エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す | — | — | `docs/specifications/secret-backend.md` |
+| プロファイル名の正規化 | — | GCP の鍵ファイル名の拡張子を除いた部分のうち [A-Za-z0-9_] 以外を _ へ置き換え、GCP のプロファイル名（GCP_CREDENTIALS_BASE64_<名前> の <名前>）にすること | — | — | — |
 
 ## スナップショット（`snapshot`）
 
