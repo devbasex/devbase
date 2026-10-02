@@ -38,7 +38,7 @@ lfm はブラウザの置き場の中身を書き換えない。lfm の `npx pla
 | I3 | base のブラウザの置き場 | 置き場は利用者 `ubuntu` が書き込める（所有者 `ubuntu`、グループ `npm`、`2775`） | 建てたイメージの検査が落ちる。実行時の道具の取得（E8）が失敗する |
 | I4 | base のブラウザの置き場 | 置き場の Chromium は、イメージの Playwright の CLI の版が求める版で、ネットワーク無しで起動できる | 建てたイメージの検査が落ちる |
 | I5 | base の apt のブラウザ | `apt-get install` に `chromium-browser` が無い | Dockerfile の形の検査と、建てたイメージの `dpkg -s` が落ちる |
-| I6 | base の apt のブラウザ | システムの Chrome の取得元は `arch=amd64` に限られている（前提 4・未決 U1） | Dockerfile の形の検査が落ちる |
+| I6 | base の apt のブラウザ | システムの Chrome の取得元は `arch=amd64` に限られている（前提 4・決定 5） | Dockerfile の形の検査が落ちる |
 | I7 | base のブラウザの置き場 | ブラウザの依存パッケージ（`fonts-liberation`・`fonts-ipafont-gothic`・`fonts-wqy-zenhei`・`libnss3`）は減らない | 建てたイメージの `dpkg -s` が落ちる |
 | I8 | base のブラウザの置き場 | `fc-cache -f` は Playwright の `RUN` より後にある（前提 2 で順序は変わらない） | 既存のフォントの検査が落ちる |
 | I9 | lfm のブラウザの宣言 | lfm に base と同じ値の `ENV PLAYWRIGHT_BROWSERS_PATH` があり、lfm の `npx playwright install --with-deps chromium` を含む `RUN` より前にある | 到達の検査（値の一致）と lfm の形の検査（順序）が落ちる |
@@ -57,7 +57,7 @@ lfm はブラウザの置き場の中身を書き換えない。lfm の `npx pla
 | E6 | lfm のビルドがブラウザの依存パッケージを入れた。同じ版のブラウザは取得し直さなかった | lfm の `npx playwright install --with-deps chromium` | lfm の `fc-cache -f` |
 | E7 | コンテナの利用者が Playwright の Chromium を起動し、ページを PDF やスクリーンショットにした | 利用者・道具 | 建てたイメージの検査（受け入れ条件 5・7） |
 | E8 | 実行時の道具が、別の版の Playwright の Chromium をブラウザの置き場へ取得した | `playwright-kit` の初回の実行など | ブラウザの置き場（I3 で書き込める） |
-| E9 | 利用者がシステムの Chrome を起動した | Playwright を介さない道具 | amd64 だけ（I6・未決 U1） |
+| E9 | 利用者がシステムの Chrome を起動した | Playwright を介さない道具 | amd64 だけ（I6・決定 5） |
 
 ### 用語
 
@@ -248,7 +248,7 @@ lfm の `/usr/local`（npm のグローバル領域）は base から取り込�
 | --- | --- |
 | 利用者・道具がイメージの Playwright を使う（E7） | `PLAYWRIGHT_BROWSERS_PATH` を見て `/opt/ms-playwright` の Chromium を起動する。取得は起きない |
 | 道具が別の版の Playwright で `playwright install chromium` を打つ（E8） | 同じ環境変数に従って `/opt/ms-playwright` へ別の版のディレクトリを足す。コンテナを作り直すと消える（前提 5） |
-| Playwright を介さずに Chrome を呼ぶ（E9） | amd64 はシステムの Chrome、arm64 には無い（未決 U1） |
+| Playwright を介さずに Chrome を呼ぶ（E9） | amd64 はシステムの Chrome、arm64 には無い（決定 5） |
 
 ## 非機能の実現方式
 
@@ -306,6 +306,14 @@ PR に残せば人が読み直せる。Dockerfile の形と建てたイメージ
 
 根拠: 根拠なし（MVV 版 1）
 
+### 決定 5: システムの Chrome は amd64 だけに入れ、arm64 には入れない
+
+arm64 で Chromium を使う手段は、Playwright の Chromium（ブラウザの置き場）で足りる。システムの Chrome を arm64 にも
+入れると、イメージが大きくなり、受け入れ条件 4・I6 の範囲が変わる。`BROWSER_PKG` の分岐と `arch=amd64` は今のまま残す。
+arm64 でシステムの Chrome が要る使い方が出てきたら、別の課題として扱う。
+
+根拠: 設計の承認（P1）で利用者が決めた（2026-10-03）
+
 ## テスト設計
 
 | 受け入れ条件・不変条件 | どの振る舞いで縛るか | どう壊したら落ちるべきか |
@@ -345,4 +353,3 @@ PR に残す。このとき置き場が無ければ skip せず落ちる（決�
 | イメージの大きさの増分 | 要求の見込みは約 150 MB。本体と headless の shell の両方を置く（決定 2）ため、実測はこれより大きくなりうる。非機能の表の手順で実測し、PR に残す |
 | lfm で取得が飛ぶこと | lfm の Playwright の CLI が base と同じ版であることから導いた（処理の流れ）。lfm の実機のビルドは CUDA のイメージを要するため、リリース後テストで確かめる（前提 7） |
 | amd64 の振る舞い | 受け入れ条件 5〜9 の amd64 での確認は #242 で行う（前提 7） |
-| 未決 U1 | システムの Chrome を arm64 でも入れるか。設計 PR の承認までに利用者が決める。入れると決めたら受け入れ条件 4・I6・決定の範囲を書き換える |
