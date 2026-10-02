@@ -98,6 +98,10 @@ def test_eight_containers_relink_a_settings_file(volumes):
         # 受け入れ条件 1 の状態 (settings.json だけ通常のファイル) にし、合図を消す
         r = _run(names, "rm -f /go/go /persistent/group/.claude/settings.json && "
                         "echo '{}' > /persistent/group/.claude/settings.json && "
+                        # 開発ユーザーの持ち物にする。root の持ち物は控えのハードリンクを
+                        # 作れず、張らずに残す (#372)
+                        "chown --reference=/persistent/group/.claude "
+                        "/persistent/group/.claude/settings.json && "
                         "chmod 777 /go", user="root")
         assert r.returncode == 0, r.stderr
         ids = []

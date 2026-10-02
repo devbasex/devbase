@@ -528,9 +528,78 @@ devbase_apply_ai_settings() {
         devbase_link_setting "$home_root/$entry" "$group_root/$entry" "$owner"
     done
     for entry in "${DEVBASE_SHARED_CLAUDE_SETTINGS[@]}"; do
+        # ファイルのエントリは、置き換わった共有のリンクの中身を控えに残してから張る
+        # (#372)。控えを作れなければ、そのリンクだけ張らずに残す。
+        if devbase_is_file_entry "$entry" &&
+            ! devbase_keep_replaced_link "$group_root/.claude/$entry" \
+                "$ai_root/.claude/$entry"; then
+            continue
+        fi
         devbase_link_setting "$group_root/.claude/$entry" \
             "$ai_root/.claude/$entry" "$owner"
     done
+}
+
+# <link_path>.replaced-* のどれかが <link_path> と同じ中身か判定する (何も出力しない)。
+devbase_same_copy_exists() {
+    local link_path="$1" copy
+
+    for copy in "$link_path".replaced-*; do
+        [ -f "$copy" ] && [ ! -L "$copy" ] || continue
+        if cmp -s "$link_path" "$copy"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# 置き換わった共有のリンクの中身を控えに残す (#372)。
+#
+# 共有のリンクの位置が symlink でない通常のファイルで、中身が共通のボリュームの
+# 実体とも既にある控えとも違うときだけ、同じ `.claude` の下へ
+# `<link_path>.replaced-<UTC の時刻>` をハードリンクで作り、WARNING の行を出す。
+# ハードリンクなので中身・所有者・権限は元と同じで、既にある名前を上書きしない。
+# 位置そのものは書き換えない (消して張るのは devbase_link_setting)。共通のボリュームへは
+# 書かない。
+#
+# 終了コードは 張ってよい 0 / 控えを作れないため張らずに残す 1。`ln` に失敗したときは
+# 終了コードではなく読み直して決める (ロックなしで同時に走った相手が先に位置を消した・
+# 同じ中身の控えを先に作ったときは 0)。
+devbase_keep_replaced_link() {
+    local link_path="$1" target_path="$2" copy err
+
+    if [ -L "$link_path" ] || [ ! -f "$link_path" ]; then
+        return 0
+    fi
+    # cmp は 同じ 0 / 違う 1 / 読めない・相手が無い 2。0 だけを「同じ」とする
+    if cmp -s "$link_path" "$target_path"; then
+        return 0
+    fi
+    if devbase_same_copy_exists "$link_path"; then
+        return 0
+    fi
+
+    copy="${link_path}.replaced-$(date -u +%Y%m%dT%H%M%SZ)"
+    # -P: symlink をたどらない (GNU と BSD で既定が違う)
+    if err=$(ln -P "$link_path" "$copy" 2>&1); then
+        # 見た後に相手が位置を張り直していると、symlink そのもののハードリンクが残る。
+        # 中身を持たない控えなので消す
+        if [ -L "$copy" ]; then
+            rm -f "$copy"
+            return 0
+        fi
+        echo "WARNING: 共有のリンクが通常のファイルに置き換わっていたため、中身を控えに残して張り直す: ${copy}" >&2
+        return 0
+    fi
+    # 読み直す
+    if [ -L "$link_path" ] || [ ! -f "$link_path" ]; then
+        return 0
+    fi
+    if devbase_same_copy_exists "$link_path"; then
+        return 0
+    fi
+    echo "WARNING: 共有のリンクが通常のファイルに置き換わっているが、控えに残せないため張り直さずに残す: ${link_path} (${err})" >&2
+    return 1
 }
 
 # ===================================================================
