@@ -690,7 +690,7 @@
     {
       "term": "後処理の対象",
       "context": "post-start",
-      "meaning": "インスタンスごとの処理を行うインスタンスの集合。up は起動できたインスタンス、scale は増やしたインスタンスのうち起動できたもの、やり直しは動いているインスタンス",
+      "meaning": "インスタンスごとの処理を行うインスタンスの集合。up は起動できたインスタンス、scale は増やしたインスタンスのうち起動できたもの、やり直しは動いていて entrypoint の完了の印を確かめられたインスタンス",
       "pending_source": "issues/issue-224-requirements.md"
     },
     {
@@ -714,7 +714,7 @@
     {
       "term": "起動の後の処理のやり直し",
       "context": "post-start",
-      "meaning": "動いているインスタンスへ、インスタンスごとの処理から ./deploy を除いた 3 つを行い直すコマンド（devbase project post-start）",
+      "meaning": "動いていて entrypoint の完了の印を確かめられたインスタンスへ、インスタンスごとの処理から ./deploy を除いた 3 つを行い直すコマンド（devbase project post-start）",
       "pending_source": "issues/issue-224-design.md"
     }
   ]
