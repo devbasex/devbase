@@ -156,3 +156,115 @@ def test_the_heading_shows_the_url_and_whether_credentials_are_set(openbao_root,
 
     assert openbao.url in out
     assert '設定済み' in out
+
+
+# -- グループ別の置き場での確認 (#386) ----------------------------------------------
+
+@pytest.fixture
+def grouped(openbao_root, openbao):
+    """version: 2・layout: group。projects/web は acme を宣言している (openbao_root)"""
+    from tests.conftest import configure_openbao
+
+    configure_openbao(openbao_root, openbao, layout='group')
+    return openbao_root
+
+
+def kv_paths(openbao):
+    return {r.kv_path for r in openbao.received if r.kv_path}
+
+
+def local_url(openbao):
+    return f'http://localhost:{openbao.port}'
+
+
+def test_outside_projects_the_check_uses_the_chosen_group(grouped, openbao, monkeypatch,
+                                                         caplog):
+    """AC1・AC2: プロジェクトの外では選んだグループで確かめ、成功で終わる"""
+    script = Script(monkeypatch, text=[local_url(openbao)], secret=['', ''], select=['acme'])
+
+    rc, out = run(grouped)
+
+    assert rc == 0
+    assert '読めた参照' in out
+    assert script.messages('select') == [f'グループを選択 {menu.HINT_BACK}:']
+    assert not script.messages('confirm')
+    assert '接続を確かめられませんでした' not in logs(caplog)
+    paths = kv_paths(openbao)
+    assert 'team/acme/global' in paths
+    assert all('/acme/' in p for p in paths), paths       # --group acme と同じ置き場
+    assert bc.load(grouped).version == 2
+
+
+def test_outside_projects_a_failed_check_still_offers_to_retry(grouped, openbao, monkeypatch,
+                                                              caplog):
+    """AC3: 認証に失敗すれば、グループを選んだ後に今と同じ警告と入れ直しの問い"""
+    script = Script(monkeypatch, text=[''], secret=['', 'wrong-secret'], select=['acme'],
+                    confirm=[False])
+
+    rc, _ = run(grouped)
+
+    assert rc == 1
+    assert '接続を確かめられませんでした。保存した設定は残っています' in logs(caplog)
+    assert script.messages('confirm') == ['接続設定を入れ直しますか?']
+    assert bootstrap.load(grouped).secret_id == 'wrong-secret'
+
+
+def test_backing_out_of_the_group_skips_the_check(grouped, openbao, monkeypatch, caplog):
+    """AC4: グループの選択で戻ると確かめずに戻る。保存した設定は残り、入れ直しは問わない"""
+    monkeypatch.setattr(env_backend, 'cmd_env_backend_test',
+                        lambda *a, **k: pytest.fail('test を呼んではいけない'))
+    script = Script(monkeypatch, text=[''], secret=['', 'new-secret'],
+                    select=[menu.MENU_BACK])
+
+    rc, out = run(grouped)
+
+    assert rc is flow.ARG_CANCEL
+    assert '保存した設定は残っています' in out
+    assert not script.messages('confirm')
+    assert bootstrap.load(grouped).secret_id == 'new-secret'
+
+
+def test_an_unusable_group_name_returns_to_the_selection(grouped, openbao, monkeypatch,
+                                                        caplog):
+    """AC5: 使えない名前は --group と同じ検証の文を出して選択へ戻る"""
+    from devbase.tui.actions_env_keys import TYPE_GROUP
+
+    script = Script(monkeypatch, text=[local_url(openbao), 'Bad Name!'], secret=['', ''],
+                    select=[TYPE_GROUP, 'acme'])
+
+    rc, out = run(grouped)
+
+    assert rc == 0
+    assert '--group に使えない名前です' in logs(caplog)
+    assert len(script.messages('select')) == 2
+    assert '読めた参照' in out
+
+
+def test_inside_a_project_the_check_uses_the_declared_group(grouped, openbao, monkeypatch):
+    """AC7: プロジェクトの中ではグループを選ばせず、宣言のグループで確かめる"""
+    monkeypatch.setenv('PWD', str(grouped / 'projects' / 'web'))
+    script = Script(monkeypatch, text=[local_url(openbao)], secret=['', ''])
+
+    rc, out = run(grouped)
+
+    assert rc == 0
+    assert '読めた参照' in out
+    assert not script.messages('select')
+    paths = kv_paths(openbao)
+    assert 'team/acme/projects/web' in paths
+    assert all('/acme/' in p for p in paths), paths
+
+
+def test_a_flat_layout_checks_without_a_group(openbao_root, openbao, monkeypatch):
+    """AC6: version: 1 ではグループを選ばせず、group を渡さずに確かめる"""
+    seen = []
+    real = env_backend.cmd_env_backend_test
+    monkeypatch.setattr(env_backend, 'cmd_env_backend_test',
+                        lambda root, group=None: seen.append(group) or real(root, group))
+    script = Script(monkeypatch, text=[local_url(openbao)], secret=['', ''])
+
+    rc, _ = run(openbao_root)
+
+    assert rc == 0
+    assert seen == [None]
+    assert not script.messages('select')
