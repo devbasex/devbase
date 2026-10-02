@@ -811,6 +811,20 @@
       "context": "container-start",
       "meaning": "エントリを「無いときだけ作る」操作。同時に呼んでも作れるのは 1 つのプロセスだけで、作れたプロセスだけがそのエントリの中身を書く。退避とプレースホルダが使う",
       "source": "docs/specifications/container-link-stage.md"
+    },
+    {
+      "term": "置き換わった共有のリンク",
+      "context": "container-start",
+      "meaning": "共有のリンクの位置にある、symlink ではない通常のファイル。コンテナの中のツールが一時ファイルの rename で settings.json へ書くと、共有のリンクがこれに置き換わる",
+      "source": "",
+      "pending_source": "issues/issue-372-requirements.md"
+    },
+    {
+      "term": "共有のリンクの控え",
+      "context": "container-start",
+      "meaning": "置き換わった共有のリンクの中身が共通のボリュームの実体と違うとき、リンクの段が張り直す前にグループのボリュームの同じ .claude の下へ別の名前で残したファイル。自動では消さず、共通のボリュームへも取り込まない",
+      "source": "",
+      "pending_source": "issues/issue-372-requirements.md"
     }
   ]
 }
