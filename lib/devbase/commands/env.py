@@ -954,30 +954,6 @@ def _sync_source(sources, targets, name, label, encode_fn, *, env_key, store, co
         logger.info("%s: 控えと比べられません（ハッシュか元のファイルがありません）", label)
 
 
-def _gcp_profile_files():
-    """GCP のプロファイル名 → 鍵ファイルを引く関数 (``env init`` の登録と同じ引き方)"""
-    from devbase.env.collectors.google import GCP_CREDENTIALS_DIR, LEGACY_CREDENTIALS_FILE
-
-    file_map = {}
-    if GCP_CREDENTIALS_DIR.is_dir():
-        from devbase.env.collectors.google import _safe_profile_name
-        file_map = {
-            _safe_profile_name(f.stem): f
-            for f in GCP_CREDENTIALS_DIR.iterdir()
-            if f.suffix == '.json' and f.is_file()
-        }
-
-    def resolve(profile_name: str):
-        mapped = file_map.get(profile_name)
-        if mapped and mapped.exists():
-            return mapped
-        if profile_name == 'default' and LEGACY_CREDENTIALS_FILE.exists():
-            return LEGACY_CREDENTIALS_FILE
-        return None
-
-    return resolve
-
-
 def _sync_gcp(sources, targets, *, store, counts):
     """GCPプロファイルの同期処理。更新件数を返す。
 
@@ -989,7 +965,8 @@ def _sync_gcp(sources, targets, *, store, counts):
     gcp_source = sources.get_source('gcp') or {}
     registered = gcp_source.get('profiles', {})
     prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
-    resolve = _gcp_profile_files()
+    from devbase.env.collectors.google import find_credential_files
+    resolve = find_credential_files().lookup
     names = sorted({k[len(prefix):] for f in targets.files for k in f.get_all()
                     if k.startswith(prefix)} - set(registered))
     updated = 0
@@ -1651,7 +1628,8 @@ def _record_gcp_source(sources: SourcesManager, files, get) -> None:
     for f in reversed(files):
         all_vars.update(f.get_all())
     prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
-    _resolve_gcp_path = _gcp_profile_files()
+    from devbase.env.collectors.google import find_credential_files
+    _resolve_gcp_path = find_credential_files().lookup
 
     gcp_profiles = {
         name: {'file': str(path), 'hash': file_hash(path)}
