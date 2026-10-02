@@ -65,6 +65,11 @@
       "id": "post-start",
       "name": "起動の後の処理",
       "meaning": "devbase up / scale がコンテナを起動して待ち、その後にホストの側から行う処理（lib/devbase/commands/container.py）"
+    },
+    {
+      "id": "browser",
+      "name": "base イメージのブラウザ",
+      "meaning": "base と lfm のイメージに入るブラウザと、その置き場（containers/base/Dockerfile / containers/lfm/Dockerfile）"
     }
   ],
   "terms": [
@@ -825,6 +830,41 @@
       "meaning": "置き換わった共有のリンクの中身が共通のボリュームの実体と違うとき、リンクの段が張り直す前にグループのボリュームの同じ .claude の下へ別の名前で残したファイル。自動では消さず、共通のボリュームへも取り込まない",
       "source": "",
       "pending_source": "issues/issue-372-requirements.md"
+    },
+    {
+      "term": "ブラウザの置き場",
+      "context": "browser",
+      "meaning": "Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す。この変更で /opt/ms-playwright にする（変更前は既定の ~/.cache/ms-playwright）",
+      "source": "",
+      "pending_source": "issues/issue-220-requirements.md"
+    },
+    {
+      "term": "Playwright の Chromium",
+      "context": "browser",
+      "meaning": "playwright install chromium がブラウザの置き場へ取得する Chromium（版ごとのディレクトリ）。amd64 と arm64 の両方で取れる",
+      "source": "",
+      "pending_source": "issues/issue-220-requirements.md"
+    },
+    {
+      "term": "システムの Chrome",
+      "context": "browser",
+      "meaning": "apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ",
+      "source": "",
+      "pending_source": "issues/issue-220-requirements.md"
+    },
+    {
+      "term": "snap スタブ",
+      "context": "browser",
+      "meaning": "Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない",
+      "source": "",
+      "pending_source": "issues/issue-220-requirements.md"
+    },
+    {
+      "term": "ブラウザの依存パッケージ",
+      "context": "browser",
+      "meaning": "playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む",
+      "source": "",
+      "pending_source": "issues/issue-220-requirements.md"
     }
   ]
 }

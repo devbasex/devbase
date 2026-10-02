@@ -218,3 +218,15 @@ devbase up / scale がコンテナを起動して待ち、その後にホスト�
 | 起動できなかった理由 | — | 起動できなかったインスタンスに 1 つ付く区分。終了した・見つからない・時間切れの 3 つ | — | — | `docs/specifications/post-start.md` |
 | 起動の後の処理の段 | — | 後処理の対象を受けて、インスタンスごとの処理を決まった順に行う 1 つの関数 | — | — | `docs/specifications/post-start.md` |
 | 起動の後の処理のやり直し | — | 動いていて entrypoint の完了の印を確かめられたインスタンスへ、インスタンスごとの処理から ./deploy を除いた 3 つを行い直すコマンド（devbase project post-start） | — | — | `docs/specifications/post-start.md` |
+
+## base イメージのブラウザ（`browser`）
+
+base と lfm のイメージに入るブラウザと、その置き場（containers/base/Dockerfile / containers/lfm/Dockerfile）
+
+| 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
+| --- | --- | --- | --- | --- | --- |
+| ブラウザの置き場 | — | Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す。この変更で /opt/ms-playwright にする（変更前は既定の ~/.cache/ms-playwright） | — | — | — |
+| Playwright の Chromium | — | playwright install chromium がブラウザの置き場へ取得する Chromium（版ごとのディレクトリ）。amd64 と arm64 の両方で取れる | — | — | — |
+| システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ | — | — | — |
+| snap スタブ | — | Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない | — | — | — |
+| ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む | — | — | — |
