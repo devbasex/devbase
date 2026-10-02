@@ -3,6 +3,7 @@
 import os
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -15,6 +16,9 @@ logger = get_logger("devbase.utils.docker")
 #: (PLAN58 決定 7)。どのプロジェクトも定義しない名前で、利用者の端末の値とプロジェクトの
 #: ``.env`` の値をどちらも無効にする。有効なプロファイルは経路ごとに ``--profile`` で決める。
 NO_PROFILE = '__devbase_none__'
+
+#: entrypoint が処理を終えたときにコンテナ内へ置く完了の印。起動の待ちと post-start が確かめる。
+ENTRYPOINT_READY_FILE = '/tmp/entrypoint-ready'
 
 
 def compose_env(environ: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
@@ -151,110 +155,151 @@ def get_container_status(
     return None
 
 
-def check_containers_running(
-    container_prefix: str,
-    scale: int,
-    compose_file: Optional[Path] = None
-) -> Tuple[bool, Optional[str]]:
+_STARTUP_REASON_TEXT = {
+    'exited': 'exited unexpectedly',
+    'not_found': 'container not found',
+}
+
+
+@dataclass(frozen=True)
+class StartupFailure:
+    """起動の待ちで起動できなかった 1 インスタンス。
+
+    ``reason`` は ``exited``・``not_found``・``timeout`` のどれかで、``logs`` は
+    ``exited`` のときだけ中身を持つ (ログの末尾。取れなければ空)。
     """
-    Check if all containers are running (not exited)
 
-    Args:
-        container_prefix: Container name prefix (e.g., "dev")
-        scale: Number of containers to check
-        compose_file: Compose file path (optional)
+    index: int
+    service: str
+    reason: str
+    logs: str = ''
+    timeout: int = 0
 
-    Returns:
-        Tuple of (all_running: bool, error_message: Optional[str])
+    def describe(self) -> str:
+        """利用者へ出す 1 インスタンス分の文言 (ログの末尾を含む)。"""
+        if self.reason == 'timeout':
+            text = f"timeout ({self.timeout}s) waiting for the entrypoint to complete"
+        else:
+            text = _STARTUP_REASON_TEXT.get(self.reason, self.reason)
+        lines = [f"  - {self.service}: {text}"]
+        if self.reason == 'exited' and self.logs:
+            lines.append("    Last logs:")
+            lines.extend(f"    {line}" for line in self.logs.splitlines())
+        return '\n'.join(lines)
+
+
+class ContainerStartupError(DockerError):
+    """起動の待ちで、起動できなかったインスタンスが 1 つ以上あった。
+
+    ``ready`` は起動できた番号、``failures`` は起動できなかったインスタンスで、どちらも番号の
+    昇順に並び、合わせると待った番号の全部になる。
     """
-    for i in range(1, scale + 1):
-        service_name = f"{container_prefix}-{i}"
-        status = get_container_status(service_name, compose_file)
 
-        if status is None:
-            return False, f"Container {service_name} not found"
+    def __init__(self, ready: Sequence[int], failures: Sequence[StartupFailure]):
+        self.ready: Tuple[int, ...] = tuple(sorted(ready))
+        self.failures: Tuple[StartupFailure, ...] = tuple(
+            sorted(failures, key=lambda f: f.index))
+        total = len(self.ready) + len(self.failures)
+        header = (f"Container startup failed: {len(self.failures)} of {total} "
+                  f"instances did not become ready.")
+        super().__init__('\n'.join([header] + [f.describe() for f in self.failures]))
 
-        # Check if container exited
-        status_lower = status.lower()
-        if 'exited' in status_lower or 'dead' in status_lower:
-            # Get container logs for error details
-            try:
-                result = docker_compose(
-                    ['logs', '--tail', '10', service_name],
-                    compose_file=compose_file,
-                    check=False,
-                    capture_output=True,
-                    silent_error=True
-                )
-                logs = result.stdout.strip() or result.stderr.strip()
-                return False, f"Container {service_name} exited unexpectedly.\nLast logs:\n{logs}"
-            except Exception:
-                return False, f"Container {service_name} exited unexpectedly (status: {status})"
 
-    return True, None
+def _container_logs_tail(service_name: str, compose_file: Optional[Path]) -> str:
+    """終了したコンテナのログの末尾 (10 行まで)。取れなければ空。"""
+    try:
+        result = docker_compose(
+            ['logs', '--tail', '10', service_name],
+            compose_file=compose_file,
+            check=False,
+            capture_output=True,
+            silent_error=True
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ''  # ログが取れなくても、起動できなかったことは伝える
+    return (result.stdout or '').strip() or (result.stderr or '').strip()
+
+
+def _is_ready(service_name: str, ready_file: str, compose_file: Optional[Path]) -> bool:
+    try:
+        docker_compose(
+            ['exec', '-T', service_name, 'test', '-f', ready_file],
+            compose_file=compose_file,
+            check=True,
+            capture_output=True,
+            silent_error=True
+        )
+    except subprocess.CalledProcessError:
+        return False
+    return True
 
 
 def wait_for_containers_ready(
     container_prefix: str,
     scale: int,
-    ready_file: str = '/tmp/entrypoint-ready',
+    ready_file: str = ENTRYPOINT_READY_FILE,
     timeout: int = 60,
     compose_file: Optional[Path] = None
 ) -> bool:
     """
     Wait for all containers' entrypoint to complete
 
+    1 から ``scale`` までの番号を巡ごとに確かめる。1 巡では、まだ決まっていない番号ごとに
+    状態を 1 回、動いていれば完了の印を 1 回確かめる。決まった番号 (起動できた・終了した・
+    見つからない) へは、その後の巡で問い合わせない。1 台が起動できなくても、残りの番号は
+    制限まで待つ。巡の数は ``timeout`` を超えない (1 巡ごとに 1 秒休む)。
+
     Args:
         container_prefix: Container name prefix (e.g., "dev")
         scale: Number of containers to wait for
         ready_file: File path to check in container
-        timeout: Maximum wait time in seconds
+        timeout: Maximum number of 1-second rounds
         compose_file: Compose file path (optional)
 
     Returns:
         True if all containers are ready
 
     Raises:
-        DockerError: If containers fail to start or timeout
+        ContainerStartupError: 起動できなかった番号が 1 つ以上あったとき。起動できた番号と、
+            起動できなかった番号ごとの理由 (終了した・見つからない・時間切れ) を持つ
     """
     logger.info("Waiting for container entrypoint to complete...")
 
-    waited = 0
-    while waited < timeout:
-        # First check if containers are still running
-        all_running, error_msg = check_containers_running(
-            container_prefix, scale, compose_file
-        )
-        if not all_running:
-            raise DockerError(f"Container startup failed: {error_msg}")
-
-        all_ready = True
-
-        for i in range(1, scale + 1):
+    pending = list(range(1, scale + 1))
+    ready: List[int] = []
+    failures: List[StartupFailure] = []
+    rounds = 0
+    while pending and rounds < timeout:
+        still_pending = []
+        for i in pending:
             service_name = f"{container_prefix}-{i}"
-
-            # Check if ready file exists in container
-            try:
-                cmd = ['exec', '-T', service_name, 'test', '-f', ready_file]
-                docker_compose(
-                    cmd,
-                    compose_file=compose_file,
-                    check=True,
-                    capture_output=True,
-                    silent_error=True
-                )
-            except subprocess.CalledProcessError:
-                all_ready = False
-                break
-
-        if all_ready:
-            logger.info("All containers ready")
-            return True
-
+            status = get_container_status(service_name, compose_file)
+            if status is None:
+                failures.append(StartupFailure(i, service_name, 'not_found'))
+                continue
+            status_lower = status.lower()
+            if 'exited' in status_lower or 'dead' in status_lower:
+                failures.append(StartupFailure(
+                    i, service_name, 'exited',
+                    _container_logs_tail(service_name, compose_file)))
+                continue
+            if _is_ready(service_name, ready_file, compose_file):
+                ready.append(i)
+            else:
+                still_pending.append(i)
+        pending = still_pending
+        if not pending:
+            break
         time.sleep(1)
-        waited += 1
+        rounds += 1
 
-    raise DockerError(f"Timeout ({timeout}s) waiting for containers to be ready")
+    failures.extend(
+        StartupFailure(i, f"{container_prefix}-{i}", 'timeout', timeout=timeout)
+        for i in pending)
+    if failures:
+        raise ContainerStartupError(ready, failures)
+    logger.info("All containers ready")
+    return True
 
 
 def docker_compose_down(compose_file: Optional[Path] = None) -> None:

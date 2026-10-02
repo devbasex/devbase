@@ -454,7 +454,7 @@ fi
 #   トップレベルシノニム <sub> <name> -> $2
 #
 # 重要 (PLAN06 codex 指摘対応): `project` グループでは parser が `name` positional を
-# 持つサブコマンド (`up`/`down`/`ps`/`logs`/`scale`/`rebuild`/`open`) に限定して $3 を
+# 持つサブコマンド (`up`/`down`/`ps`/`logs`/`scale`/`rebuild`/`open`/`post-start`) に限定して $3 を
 # name 解決する。`project login` / `project build` は単一 positional が index / image
 # (旧 container 互換) であり parser が name を受け付けない (cli.py の
 # _add_login_subparser / _add_build_subparser 参照)。これらで $3 を name strip すると、
@@ -474,14 +474,14 @@ _DEVBASE_ARGS=("${@:2}")
 # 同期注意 (メンテナンス性): 下記 2 リストは cli.py の parser 定義に対応する。
 #   _PROJECT_NAME_SUBCOMMANDS = `project` で `name` positional を受け付けるサブコマンド
 #       集合。cli.py の _add_project_parser で `add_argument('name', ...)` を持つもの
-#       (up/down/ps/logs/scale/rebuild/open) と一致させる。login/build は index/image
+#       (up/down/ps/logs/scale/rebuild/open/post-start) と一致させる。login/build は index/image
 #       互換のため意図的に除外 (上のコメント参照)。
 #   _NAME_RESOLVABLE_SHORTCUTS = トップレベルシノニムのうち「実在 project なら cd」
 #       を許すもの。cli.py の SHORTCUTS 経由で project サブコマンドへ写像される
 #       集合 + shell 実装の build を含む。
 # cli.py 側でサブコマンドを追加/削除した際は両リストの更新漏れに注意すること
 # (cli.py の _add_project_parser / SHORTCUTS にも対の注記あり)。
-_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale rebuild open "
+_PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale rebuild open post-start "
 _NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build rebuild open "
 case "$_resolved_cmd" in
     project)

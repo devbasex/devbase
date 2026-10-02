@@ -20,6 +20,8 @@ from devbase.volume.compose import (
     get_dev_service_name,
 )
 from devbase.utils.docker import (
+    ENTRYPOINT_READY_FILE,
+    ContainerStartupError,
     compose_env,
     docker_compose,
     docker_compose_down,
@@ -735,6 +737,7 @@ def _dispatch_lifecycle(args) -> int:
             'open':  lambda: cmd_open(project_name=project_name,
                                       open_index=getattr(args, 'open_index', None),
                                       **ctx),
+            'post-start': lambda: cmd_post_start(project_name=project_name, **ctx),
         }
 
         handler = handlers.get(subcmd)
@@ -926,9 +929,17 @@ def _bao_environment() -> dict:
     return {'BAO_ADDR': store.config.openbao.url}
 
 
+def _target_indices(indices, scale: int, start: int = 1) -> list[int]:
+    """個々の処理が対象にする番号。``indices`` が無ければ ``start`` から ``scale`` まで。"""
+    return list(indices) if indices is not None else list(range(start, scale + 1))
+
+
 def _push_bao_token(project_name: str, scale: int, dev_service_name: str,
-                    compose_file=None, start: int = 1) -> None:
+                    compose_file=None, start: int = 1, *, indices=None) -> None:
     """各 dev コンテナの ``~/.vault-token`` へ token を書く (PLAN54)。
+
+    ``indices`` を渡すとその番号のコンテナにだけ書く (起動の後の処理の対象。#224・#371)。
+    渡さなければ ``start`` から ``scale`` まで。
 
     backend が ``openbao`` でなければ何もしない。token が取れない・書けないときは
     警告にとどめる (起動は済んでおり、``devbase env token`` でやり直せる)。
@@ -944,7 +955,7 @@ def _push_bao_token(project_name: str, scale: int, dev_service_name: str,
         token = store.backend_for(SecretRef.for_global()).issue_token()
         names = [opener.resolve_container_name(dev_service_name, project_name, index,
                                                compose_file=compose_file)
-                 for index in range(start, scale + 1)]
+                 for index in _target_indices(indices, scale, start)]
         written = container_token.push(names, token)
     except Exception as e:  # noqa: BLE001 - 付随処理で up を倒さない
         logger.warning("コンテナへ bao の token を書けませんでした (devbase env token で"
@@ -958,7 +969,7 @@ def _push_bao_token(project_name: str, scale: int, dev_service_name: str,
 
 
 def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
-                         compose_file=None) -> None:
+                         compose_file=None, *, indices=None) -> None:
     """各 dev コンテナの VS Code ウィンドウタイトルをコンテナ名始まりにする。
 
     既定のタイトルは編集中ファイル名が先頭に来るため、複数プロジェクトの窓を
@@ -970,13 +981,15 @@ def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
     「コンテナにアタッチ」した窓にも同じタイトルが要るため。
 
     失敗しても ``up`` は倒さない (タイトルは付随的な体験改善のため)。
+
+    ``indices`` を渡すとその番号にだけ行う (起動の後の処理の対象)。渡さなければ 1 から ``scale``。
     """
     from devbase.editor import opener, window_title
 
     template = window_title.resolve_template()
     if template is None:
         return
-    for index in range(1, scale + 1):
+    for index in _target_indices(indices, scale):
         try:
             container_name = opener.resolve_container_name(
                 dev_service_name, project_name, index, compose_file=compose_file)
@@ -988,7 +1001,8 @@ def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
                        open_index: Optional[int], scale: int,
                        config, compose_file=None,
-                       docker_context_name: Optional[str] = None) -> None:
+                       docker_context_name: Optional[str] = None, *,
+                       started=None) -> None:
     """`up` 完了後に dev コンテナへ接続したエディタを開く ([6/6])。
 
     有効判定は ``open_flag`` (CLI ``--open``/``--no-open``) が優先、None なら
@@ -1005,6 +1019,10 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
     ``compose_file`` は実コンテナ名問い合わせ用の override compose。``up`` 起動時と
     同じファイルを渡さないと ``{dev}-{index}`` サービスが見えず実名取得に失敗する。
     未指定なら ``.docker-compose.scale.yml`` が存在すればそれ、無ければ None。
+
+    ``started`` (起動できた番号) を渡すと、開く番号がそこに無いときは開かずに警告する。
+    ほかの番号へは替えない。利用者が指定した番号と違うインスタンスで作業を始めさせないため
+    (#371 決定 5)。
     """
     from devbase.editor import opener
 
@@ -1014,6 +1032,11 @@ def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
         return
 
     open_index = _resolve_open_index(open_index, scale)
+    if started is not None and open_index not in started:
+        logger.warning("%s-%d は起動できなかったため、エディタを開きません "
+                       "(起こし直した後に devbase open %d で開けます)",
+                       get_dev_service_name(), open_index, open_index)
+        return
 
     logger.info("[6/6] Opening editor attached to the dev container...")
     try:
@@ -1119,7 +1142,7 @@ def cmd_open(project_name: Optional[str] = None, open_index: Optional[int] = Non
 
 def _report_missing_repos(config, scale: int, dev_service_name: str,
                           project_name: str,
-                          compose_file: Optional[Path] = None) -> None:
+                          compose_file: Optional[Path] = None, *, indices=None) -> None:
     """``project.yml`` に書いたのに ``/work`` へ無いリポジトリを警告する (PLAN37)。
 
     clone の失敗は entrypoint 側で warning に留めてコンテナ起動を続ける
@@ -1132,8 +1155,10 @@ def _report_missing_repos(config, scale: int, dev_service_name: str,
 
     問い合わせ自体の失敗 (コンテナが既に落ちている等) では何も言わない。``up`` は
     ここまでで成功しており、付随情報のために倒す価値はない。
+
+    ``indices`` を渡すとその番号にだけ行う (起動の後の処理の対象)。渡さなければ 1 から ``scale``。
     """
-    for index in range(1, scale + 1):
+    for index in _target_indices(indices, scale):
         service = f"{dev_service_name}-{index}"
         try:
             result = docker_compose(
@@ -1247,6 +1272,91 @@ def _run_pre_up_checks(config) -> bool:
     return True
 
 
+def _run_post_start(project_name: str, scale: int, indices, dev_service_name: str,
+                    config, compose_file, run_deploy: bool = True) -> None:
+    """起動の後の処理の段。後処理の対象の番号へ、インスタンスごとの処理を決まった順に行う。
+
+    順は、不足リポジトリの報告 → ``./deploy`` → token の配布 → 窓のタイトルの設定で、
+    ``up`` / ``scale`` / ``project post-start`` が共有する (#224・#371)。対象は呼び出し元が
+    決め、この段は番号を足しも引きもしない。対象が空なら何も行わない (token も発行しない)。
+    ``run_deploy`` が偽なら ``./deploy`` を走らせない (``project post-start``)。
+
+    個々の処理の失敗は、それぞれの今の扱い (警告か無言) にとどめ、ここから投げない。
+    """
+    indices = list(indices)
+    if not indices:
+        return
+
+    # clone できなかった repo があれば伝える (揃っていれば何も出さない)。
+    _report_missing_repos(config, scale, dev_service_name, project_name,
+                          compose_file=compose_file, indices=indices)
+
+    deploy_script = Path('./deploy')
+    if run_deploy and deploy_script.exists() and deploy_script.is_file():
+        _run_deploy_script_for_instances(deploy_script, indices, config)
+
+    # 起動中のコンテナの bao が使う token を書く (PLAN54)。backend が openbao の
+    # ときだけ。書けなくても起動は済んでいるので倒さない。
+    _push_bao_token(project_name, scale, dev_service_name, compose_file=compose_file,
+                    indices=indices)
+
+    # VS Code のウィンドウタイトルをコンテナ名始まりに固定する
+    # (自動オープンの有無に関わらず、手動アタッチにも効かせるため)。
+    _apply_window_titles(project_name, scale, dev_service_name,
+                         compose_file=compose_file, indices=indices)
+
+
+def _warn_partial_start(error: ContainerStartupError, targets, dev_service_name: str) -> None:
+    """起動の待ちの直後に、起動できなかった名前と、後処理を続けるかを 1 行で出す。
+
+    処理先に出すのは後処理の対象だけである (``scale`` の既存のインスタンスは出さない)。
+    """
+    failed = ', '.join(f.service for f in error.failures)
+    if targets:
+        names = ', '.join(f"{dev_service_name}-{i}" for i in targets)
+        logger.warning("起動できなかったインスタンスがあります: %s。%s へ起動の後の処理を続けます",
+                       failed, names)
+    else:
+        logger.warning("起動できなかったインスタンスがあります: %s。起動の後の処理を行う"
+                       "インスタンスが無いため、起動の後の処理は行いません", failed)
+
+
+def _report_startup_failure(label: str, error: ContainerStartupError,
+                            project_name: str) -> None:
+    """起動できなかったインスタンスの名前・理由と、補う手順を出力の最後に出す (#371)。"""
+    logger.error("%s failed: %s", label, error)
+    logger.error("起動できなかったインスタンスには、起動の後の処理を行っていません。補う手順:")
+    logger.error("  落ちたコンテナを起こし直し、その起動が終わった後に、次のコマンドで"
+                 "起動の後の処理をやり直します（./deploy は走りません）")
+    logger.error("  devbase project post-start %s", project_name)
+    logger.error("  docker start で起こし直しただけでは、起動の後の処理"
+                 "（token の配布・窓のタイトルの設定など）は行われません")
+    logger.error("  ./deploy を含めて最初からやり直すには devbase up %s を打ちます"
+                 "（全インスタンスを作り直します）", project_name)
+
+
+def _start_or_partial(run_pipeline, scale: int):
+    """起動のパイプラインを呼び、``(override_file, started, startup_error)`` を返す (#371)。
+
+    すべて起動できれば ``(生成した構成, [1..scale], None)``。起動できなかったインスタンスが
+    あれば ``(_SCALE_COMPOSE_FILE, 起動できた番号, ContainerStartupError)`` を返す。
+    """
+    try:
+        override_file = run_pipeline()
+    except ContainerStartupError as e:
+        return _SCALE_COMPOSE_FILE, list(e.ready), e
+    return override_file, list(range(1, scale + 1)), None
+
+
+def _finish_partial(label: str, error: Optional[ContainerStartupError],
+                    project_name: str) -> bool:
+    """起動できなかったインスタンスがあれば出力の最後に報告し、``True`` を返す。"""
+    if error is None:
+        return False
+    _report_startup_failure(label, error, project_name)
+    return True
+
+
 def _run_deploy_pipeline(project_name: str, scale: int, config,
                          target: docker_context.DockerTarget,
                          dev_service_name: str) -> Path:
@@ -1256,8 +1366,8 @@ def _run_deploy_pipeline(project_name: str, scale: int, config,
     暗号文の破損でここが失敗しても、稼働中の開発環境を落としたままにしないため。
     :func:`_previous_scale_compose` が退避した旧構成で停止し、生成した新構成で
     起動して ready を待つ。生成した override compose のパスを返す (後処理の
-    ``_report_missing_repos`` / ``_apply_window_titles`` / ``_maybe_open_editor``
-    が同じファイルを ``-f`` で使う)。
+    :func:`_run_post_start` と ``_maybe_open_editor`` が同じファイルを ``-f`` で使う)。
+    起動できなかったインスタンスがあれば、起動の待ちの ``ContainerStartupError`` をそのまま通す。
     """
     logger.info("[1/6] Ensuring volumes exist...")
     ensure_volumes(scale, project_name)
@@ -1331,32 +1441,23 @@ def cmd_up(project_name: str = None, scale: int = None,
         _auto_snapshot()
 
     try:
-        override_file = _run_deploy_pipeline(
-            project_name, scale, config, target, dev_service_name)
+        # 起動できたインスタンスへは後処理を行ってから失敗として終える (#371)
+        override_file, started, startup_error = _start_or_partial(
+            lambda: _run_deploy_pipeline(
+                project_name, scale, config, target, dev_service_name),
+            scale)
+        if startup_error is not None:
+            _warn_partial_start(startup_error, started, dev_service_name)
 
-        # clone できなかった repo があれば伝える (揃っていれば何も出さない)。
-        _report_missing_repos(config, scale, dev_service_name, project_name,
-                              compose_file=override_file)
-
-        # Run project-specific deploy script for each scaled instance
-        deploy_script = Path('./deploy')
-        if deploy_script.exists() and deploy_script.is_file():
-            _run_deploy_script_for_instances(deploy_script, range(1, scale + 1),
-                                             config)
-
-        # 起動中のコンテナの bao が使う token を書く (PLAN54)。backend が openbao の
-        # ときだけ。書けなくても起動は済んでいるので up は倒さない。
-        _push_bao_token(project_name, scale, dev_service_name, compose_file=override_file)
-
-        # VS Code のウィンドウタイトルをコンテナ名始まりに固定する
-        # (自動オープンの有無に関わらず、手動アタッチにも効かせるため up 側で行う)。
-        _apply_window_titles(project_name, scale, dev_service_name,
-                             compose_file=override_file)
+        _run_post_start(project_name, scale, started, dev_service_name, config,
+                        override_file)
 
         _maybe_open_editor(project_name, open_editor, open_index, scale,
                            config, compose_file=override_file,
-                           docker_context_name=target.context)
+                           docker_context_name=target.context, started=started)
 
+        if _finish_partial('Deploy', startup_error, project_name):
+            return 1
         logger.info("=== Deploy completed successfully ===")
         return 0
 
@@ -1408,6 +1509,78 @@ def cmd_login(index: str = '1', context: Optional[str] = None) -> int:
 
     # 経路の表の 1 つとして子プロセスの COMPOSE_PROFILES を打ち消す (PLAN65 決定 2)
     return subprocess.run(cmd, env=compose_env()).returncode
+
+
+# ---------------------------------------------------------------------------
+# cmd_post_start
+# ---------------------------------------------------------------------------
+
+def _entrypoint_ready(container_name: str) -> bool:
+    """動いているコンテナの entrypoint の完了の印を 1 回だけ確かめる (待たない)。
+
+    確認の呼び出しそのものが失敗したときも、確かめられないものとして ``False`` を返す。
+    """
+    try:
+        result = subprocess.run(
+            ['docker', 'exec', container_name, 'test', '-f', ENTRYPOINT_READY_FILE],
+            capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def cmd_post_start(project_name: Optional[str] = None, context: Optional[str] = None) -> int:
+    """動いているインスタンスへ、起動の後の処理をコンテナに触らずにやり直す (#371)。
+
+    対象は、動いていて entrypoint の完了の印を確かめられたインスタンスである。不足リポジトリの
+    報告 → token の配布 → 窓のタイトルの設定を行い、``./deploy`` は走らせず、エディタも
+    開かない。コンテナを起動・停止・削除しない。
+
+    戻り値: 対象が 1 つ以上あれば 0 (処理しなかった番号は警告で出す)。1 つも動いていない・
+    完了の印を確かめられたものが無い・状態を取得できないときは 1。
+    """
+    if project_name is None:
+        project_name = get_project_name()
+
+    config = project_runtime.current_project_config()
+    # 接続先の反映と機密の任意注入は login と同じ。ボリュームも構成も作らないため、
+    # グループの宣言の検査と project.yml の書き換えは行わない
+    _prepare_compose(context)
+
+    dev_service_name = get_dev_service_name()
+    running = running_dev_instances(project_name, dev_service_name)
+    if running is None:
+        logger.error("dev コンテナの状態を取得できないため、起動の後の処理を行えません")
+        return 1
+    if not running:
+        logger.error("動いている %s のインスタンスがありません。起動には devbase up を使います",
+                     dev_service_name)
+        return 1
+
+    targets = []
+    not_ready = []
+    for index, name in running:
+        (targets if _entrypoint_ready(name) else not_ready).append(index)
+
+    scale = config.scale if config.scale is not None else project_runtime.DEFAULT_SCALE
+    running_indices = {index for index, _name in running}
+    stopped = [i for i in range(1, scale + 1) if i not in running_indices]
+    if stopped:
+        logger.warning("動いていないため処理しません: %s",
+                       ', '.join(f"{dev_service_name}-{i}" for i in stopped))
+    if not_ready:
+        logger.warning("entrypoint の完了を確かめられないため処理しません: %s "
+                       "(起動が終わってから、もう一度打ちます)",
+                       ', '.join(f"{dev_service_name}-{i}" for i in not_ready))
+    if not targets:
+        logger.error("起動の後の処理を行えるインスタンスがありません")
+        return 1
+
+    compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
+    _run_post_start(project_name, scale, targets, dev_service_name, config, compose_file,
+                    run_deploy=False)
+    logger.info("=== Post-start completed ===")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -1616,8 +1789,8 @@ def _run_scale_pipeline(project_name: str, new_scale: int, current_scale: int,
     ``cmd_up`` の :func:`_run_deploy_pipeline` と対称の段 (PLAN65 決定 8)。``scale`` は
     既存のコンテナを止めず、退避も取らない。起動が 0 以外で終わったときだけ
     ``Failed to start new containers`` を出して ``None`` を返す。それ以外の失敗は
-    ``DevbaseError`` / ``DockerError`` のまま伝播する。後処理 (bao の token・``./deploy``)
-    は ``cmd_scale`` の本体が行う。
+    ``DevbaseError`` / ``DockerError`` のまま伝播する (起動できなかったインスタンスがあれば
+    ``ContainerStartupError``)。起動の後の処理は ``cmd_scale`` の本体が行う。
     """
     logger.info("[1/5] Updating %s: scale=%d -> %d...",
                 project_runtime.PROJECT_CONFIG_FILENAME, current_scale, new_scale)
@@ -1686,20 +1859,24 @@ def cmd_scale(new_scale: int, project_name: str = None,
         return 1
 
     try:
-        override_file = _run_scale_pipeline(project_name, new_scale, current_scale,
-                                            config, target, dev_service_name)
+        override_file, started, startup_error = _start_or_partial(
+            lambda: _run_scale_pipeline(project_name, new_scale, current_scale,
+                                        config, target, dev_service_name),
+            new_scale)
         if override_file is None:
             return 1
 
-        # 増やしたインスタンスにも bao の token を書く (PLAN54。既存のものは up で書いてある)
-        _push_bao_token(project_name, new_scale, dev_service_name, compose_file=override_file,
-                        start=current_scale + 1)
+        # 後処理の対象は増やしたインスタンスのうち起動できたもの。既存のものは up か
+        # 前の scale で済んでいる (#224)
+        targets = [i for i in started if i > current_scale]
+        if startup_error is not None:
+            _warn_partial_start(startup_error, targets, dev_service_name)
 
-        # Run project-specific deploy script for newly added instances
-        deploy_script = Path('./deploy')
-        if deploy_script.exists() and deploy_script.is_file():
-            _run_deploy_script_for_instances(
-                deploy_script, range(current_scale + 1, new_scale + 1), config)
+        _run_post_start(project_name, new_scale, targets, dev_service_name, config,
+                        override_file)
+
+        if _finish_partial('Scale', startup_error, project_name):
+            return 1
 
         logger.info("=== Scale completed successfully ===")
         logger.info("Container scale: %d -> %d", current_scale, new_scale)

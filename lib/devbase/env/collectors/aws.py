@@ -4,6 +4,7 @@ import base64
 import configparser
 import io
 import tarfile
+from enum import Enum
 from pathlib import Path
 from typing import Optional, List, Tuple
 
@@ -17,6 +18,15 @@ from devbase.env.host_import import ALL, HostImport
 logger = get_logger(__name__)
 
 STEP = "AWS認証"
+#: ホストに region が無いとき・ホストの region を使わないときの region の既定の値
+DEFAULT_REGION = "ap-northeast-1"
+
+
+class KeyDecision(Enum):
+    """方法 3 で、ホストの ``[default]`` の鍵を取り込むかを決めた結果 (#334 決定 4)"""
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    NOT_ASKED = "not_asked"
 
 
 class AWSConfigParser:
@@ -43,6 +53,14 @@ class AWSConfigParser:
             return []
 
     def get_profile_region(self, profile: str) -> Optional[str]:
+        found = self.find_profile_region(profile)
+        return found[1] if found else None
+
+    def find_profile_region(self, profile: str) -> Optional[Tuple[str, str]]:
+        """プロファイルの節の名前と region を返す。節か region が無ければ ``None``
+
+        ``default`` は ``[default]``、ほかは ``[profile <名前>]``、無ければ ``[<名前>]`` を引く。
+        """
         if not self.config_path.exists():
             return None
         config = configparser.ConfigParser()
@@ -55,7 +73,7 @@ class AWSConfigParser:
                 if section not in config:
                     section = profile
             if section in config and 'region' in config[section]:
-                return config[section]['region']
+                return section, config[section]['region']
         except Exception as e:
             logger.warning("AWS configのパースに失敗: %s", e)
         return None
@@ -151,7 +169,7 @@ def collect_aws_credentials(env_file: EnvFile, *, host: HostImport) -> None:
 
     auth_handlers = {
         "1": lambda: _collect_config_base64(env_file, host),
-        "2": lambda: _collect_sso_profile(env_file),
+        "2": lambda: _collect_sso_profile(env_file, host),
         "3": lambda: _collect_access_keys(env_file, host),
         "4": lambda: logger.info("AWS認証設定をスキップしました"),
     }
@@ -222,7 +240,7 @@ def _collect_profile_and_region(env_file: EnvFile, parser: "AWSConfigParser",
         env_file.set(keys.AWS_DEFAULT_REGION, region)
         logger.info("%s: 自動取得完了 (%s)", keys.AWS_DEFAULT_REGION, region)
     else:
-        region = safe_input(f"{keys.AWS_DEFAULT_REGION} (デフォルト: ap-northeast-1): ", "ap-northeast-1")
+        region = safe_input(f"{keys.AWS_DEFAULT_REGION} (デフォルト: {DEFAULT_REGION}): ", DEFAULT_REGION)
         env_file.set(keys.AWS_DEFAULT_REGION, region)
 
 
@@ -251,7 +269,7 @@ def _collect_whole_config(env_file: EnvFile) -> None:
         logger.error("AWS設定ファイルのエンコードに失敗しました")
 
 
-def _collect_sso_profile(env_file: EnvFile) -> None:
+def _collect_sso_profile(env_file: EnvFile, host: HostImport) -> None:
     parser = AWSConfigParser()
     profiles = parser.get_profiles()
     if profiles:
@@ -264,13 +282,8 @@ def _collect_sso_profile(env_file: EnvFile) -> None:
         return
 
     env_file.set(keys.AWS_PROFILE, profile)
-    region = parser.get_profile_region(profile)
-    if region:
-        env_file.set(keys.AWS_DEFAULT_REGION, region)
-        logger.info("%s: 自動取得完了 (%s)", keys.AWS_DEFAULT_REGION, region)
-    else:
-        region = safe_input(f"{keys.AWS_DEFAULT_REGION} (デフォルト: ap-northeast-1): ", "ap-northeast-1")
-        env_file.set(keys.AWS_DEFAULT_REGION, region)
+    # 決定 5: 方法 2 は参照に残った前の方法の region を持ち越さず、方針に従って決め直す
+    _collect_region(env_file, parser, profile, host, KeyDecision.NOT_ASKED, keep_existing=False)
 
     sso_url = safe_input(f"{keys.AWS_SSO_URL} (空でスキップ): ")
     if sso_url:
@@ -280,13 +293,20 @@ def _collect_sso_profile(env_file: EnvFile) -> None:
 def _collect_access_keys(env_file: EnvFile, host: HostImport) -> None:
     parser = AWSConfigParser()
     access_key, secret_key = parser.get_default_credentials()
-    if (access_key or secret_key) and not host.importing:
+    if host.importing:
+        decision = KeyDecision.ACCEPTED
+    elif access_key or secret_key:
         if host.asking:
             print(f"~/.aws/credentials の [default] に {keys.AWS_ACCESS_KEY_ID} / "
                   f"{keys.AWS_SECRET_ACCESS_KEY} があります")
-        if not host.confirm(STEP, "取り込みますか?"):
+        if host.confirm(STEP, "取り込みますか?"):
+            decision = KeyDecision.ACCEPTED
+        else:
             host.declined(STEP)
             access_key = secret_key = None
+            decision = KeyDecision.DECLINED
+    else:
+        decision = KeyDecision.NOT_ASKED
 
     for key_name, auto_value in {keys.AWS_ACCESS_KEY_ID: access_key,
                                   keys.AWS_SECRET_ACCESS_KEY: secret_key}.items():
@@ -298,17 +318,43 @@ def _collect_access_keys(env_file: EnvFile, host: HostImport) -> None:
             if value:
                 env_file.set(key_name, value)
 
-    existing_region = env_file.get(keys.AWS_DEFAULT_REGION)
-    if not existing_region:
-        region = parser.get_profile_region('default')
-        if region:
-            env_file.set(keys.AWS_DEFAULT_REGION, region)
-            logger.info("%s: 自動取得完了 (%s)", keys.AWS_DEFAULT_REGION, region)
+    _collect_region(env_file, parser, 'default', host, decision, keep_existing=True)
+
+
+def _collect_region(env_file: EnvFile, parser: AWSConfigParser, profile: str,
+                    host: HostImport, decision: KeyDecision, *, keep_existing: bool) -> None:
+    """方法 2・方法 3 の ``AWS_DEFAULT_REGION`` を、取り込みの方針と鍵の確認の結果で決める (#334)
+
+    - ``keep_existing`` で参照に region があれば残す (方法 3 だけ。I4)
+    - 「取り込む」か鍵を受け入れたら、ホストの region を入力なしで書く (I2)
+    - 「尋ねる」で確認を出さなかったら、ホストの region を入力の既定の値として見せる (I3)
+    - 「取り込まない」と鍵を断ったときは、ホストを読まずに入力へ進む (I1)。知らせは
+      確認で出していないときだけ 1 行出す (I5)
+    """
+    existing = env_file.get(keys.AWS_DEFAULT_REGION)
+    if keep_existing and existing:
+        logger.info("%s: 設定済み (%s)", keys.AWS_DEFAULT_REGION, existing)
+        return
+
+    prompt = f"{keys.AWS_DEFAULT_REGION} (デフォルト: {DEFAULT_REGION}): "
+    default = DEFAULT_REGION
+    if host.importing or decision is KeyDecision.ACCEPTED:
+        found = parser.find_profile_region(profile)
+        if found:
+            env_file.set(keys.AWS_DEFAULT_REGION, found[1])
+            logger.info("%s: 自動取得完了 (%s)", keys.AWS_DEFAULT_REGION, found[1])
+            return
+    elif decision is KeyDecision.NOT_ASKED:
+        if host.asking:
+            found = parser.find_profile_region(profile)
+            if found:
+                section, default = found
+                prompt = (f"{keys.AWS_DEFAULT_REGION} (デフォルト: {default}、"
+                          f"~/.aws/config の [{section}] から): ")
         else:
-            region = safe_input(f"{keys.AWS_DEFAULT_REGION} (デフォルト: ap-northeast-1): ", "ap-northeast-1")
-            env_file.set(keys.AWS_DEFAULT_REGION, region)
-    else:
-        logger.info("%s: 設定済み (%s)", keys.AWS_DEFAULT_REGION, existing_region)
+            host.notify_skipped(STEP)
+
+    env_file.set(keys.AWS_DEFAULT_REGION, safe_input(prompt, default))
 
 
 COLLECTOR = Collector(

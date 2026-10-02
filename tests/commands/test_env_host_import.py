@@ -781,3 +781,82 @@ def test_a_collector_reading_host_files_must_declare_it():
                   source_files=['~/.x'])
     assert Collector(name='x', display_name='X', collect_fn=lambda env_file, *, host: None,
                      source_files=['~/.x'], host_import=True).host_import
+
+
+# ---------------------------------------------------------------------------
+# GCP の正規化と衝突の警告 (#334 AC11〜AC17・I7〜I9)
+# ---------------------------------------------------------------------------
+
+RENAMED = "プロファイル名 'my-proj' を 'my_proj' に正規化しました"
+
+
+def warnings(caplog) -> list:
+    return [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def collisions(caplog) -> list:
+    return [m for m in warnings(caplog) if 'が衝突しています' in m]
+
+
+@pytest.fixture
+def renamed_key(host):
+    """正規化で my_proj になる鍵ファイル (候補の並びで 3 番目)"""
+    path = host / 'gcp-credentials' / 'my-proj.json'
+    path.write_text(json.dumps({'project_id': 'acme-my-proj', 'private_key': 'PRIVATE-KEY-MP'}))
+    return path
+
+
+@pytest.mark.parametrize('policy, answer, expected', [
+    ('skip', '', 0),
+    ('ask', '', 0),
+    ('ask', '1', 0),   # analytics だけ
+    ('ask', '3', 1),   # my_proj
+    ('import', '', 1),
+])
+def test_one_init_warns_about_a_renamed_key_only_when_importing_it(
+        grouped, openbao, host, renamed_key, tty, monkeypatch, caplog, policy, answer, expected):
+    """AC11〜AC15・I7: 控えの更新を含む 1 回の init で、取り込む名前についてだけ 1 回"""
+    write_policy(grouped, f'groups:\n  globex: {policy}\n')
+    Answers(monkeypatch, {'取り込む番号 (例: 1,2': answer})
+
+    assert init(grouped) == 0
+
+    assert warnings(caplog).count(RENAMED) == expected
+    stored = openbao.get(GLOBEX) or {}
+    assert (keys.gcp_credentials_key('my_proj') in stored) == bool(expected)
+
+
+@pytest.mark.parametrize('policy, expected', [('skip', 0), ('import', 1)])
+def test_a_collision_is_reported_only_when_importing(grouped, openbao, host, tty, monkeypatch,
+                                                     caplog, policy, expected):
+    """AC16・I8・I9: 衝突の警告は取り込むときだけ 1 回。init と控えの更新は先のファイルを採る"""
+    creds = host / 'gcp-credentials'
+    (creds / 'a-b.json').write_text(json.dumps({'private_key': 'FIRST'}))
+    (creds / 'a_b.json').write_text(json.dumps({'private_key': 'SECOND'}))
+    write_policy(grouped, f'groups:\n  globex: {policy}\n')
+    Answers(monkeypatch)
+
+    assert init(grouped) == 0
+
+    assert len(collisions(caplog)) == expected
+    if expected:
+        stored = openbao.get(GLOBEX)
+        assert base64.b64decode(stored[keys.gcp_credentials_key('a_b')]) == \
+            (creds / 'a-b.json').read_bytes()
+        profiles = SourcesManager(grouped, 'globex').get_source('gcp')['profiles']
+        assert profiles['a_b']['file'] == str(creds / 'a-b.json')
+
+
+def test_sync_looks_up_a_renamed_key_without_warning(grouped, openbao, host, renamed_key,
+                                                     caplog):
+    """AC17・I6・I9: 控えに無い my_proj の鍵を、警告を出さずに my-proj.json として引く"""
+    openbao.put(GLOBEX, {keys.gcp_credentials_key('my_proj'): 'OLD', keys.HOST_SSH_USER: 'u',
+                         keys.HOST_SSH_HOST: 'h'})
+    caplog.set_level(logging.INFO)
+
+    assert env_cmd.cmd_env_sync(grouped, group='globex') == 0
+
+    assert warnings(caplog) == []
+    stored = openbao.get(GLOBEX)
+    assert base64.b64decode(stored[keys.gcp_credentials_key('my_proj')]) == \
+        renamed_key.read_bytes()

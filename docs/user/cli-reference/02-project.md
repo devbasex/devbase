@@ -6,7 +6,7 @@
 
 ## プロジェクト名指定（CWD 非依存）
 
-`up` / `down` / `ps` / `logs` / `scale` / `rebuild` / `open` は省略可能な `[name]` 引数を取ります。`[name]`
+`up` / `down` / `ps` / `logs` / `scale` / `rebuild` / `open` / `post-start` は省略可能な `[name]` 引数を取ります。`[name]`
 を指定すると、**現在のディレクトリに依存せず** `$DEVBASE_ROOT/projects/<name>` を対象に
 操作できます。
 
@@ -20,7 +20,7 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 
 > **`profile` も `[name]` を取りますが、解決の経路が違います。** `project profile up` /
 > `profile down` / `profile list` は `[name]` を受け付けますが、`bin/devbase` の
-> `_PROJECT_NAME_SUBCOMMANDS`（`up` / `down` / `ps` / `logs` / `scale` / `rebuild` / `open`）
+> `_PROJECT_NAME_SUBCOMMANDS`（`up` / `down` / `ps` / `logs` / `scale` / `rebuild` / `open` / `post-start`）
 > には入っていません。`profile` では 3 番目の引数に `up` / `down` / `list` が来るため、
 > ラッパーでは位置で名前を解決できないからです。名前の解決は Python 側の
 > `_dispatch_lifecycle` が行います。
@@ -65,7 +65,7 @@ cd $DEVBASE_ROOT/projects/adminer && devbase project up
 ## `--context NAME`（共通オプション）
 
 `up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` / `open` / `profile`（`project` /
-`container` 配下と、トップレベルのショートカット）は `--context NAME` を受け付けます。
+`container` 配下と、トップレベルのショートカット）と `project post-start` は `--context NAME` を受け付けます。
 そのコマンドの `docker` / `docker compose` を、指定した docker context の daemon へ向けます。
 
 ```bash
@@ -115,6 +115,29 @@ devbase up [name] [--context NAME]
   - `image:` のみ、前回 pull から7日以上経過 → `docker pull` で再取得
     （前回 pull 日時は `${DEVBASE_ROOT}/.cache/pulls/<image>` の touch-file mtime で判定）
   - 閾値は `DEVBASE_IMAGE_MAX_AGE_DAYS` 環境変数で上書き可能（既定 7、不正値は警告して既定値）
+- コンテナを起動した後、entrypoint の完了（コンテナの中の `/tmp/entrypoint-ready`）を最長 60 回（1 秒おき）待ちます。
+  1 台が起動できなくても、残りのコンテナの完了は待ち続けます
+- 起動できたコンテナへ、**起動の後の処理**を次の順で行います。どれも失敗しても `up` を失敗にはしません
+  1. clone できなかったリポジトリの報告（`/work` に無いリポジトリを警告で出す）
+  2. プロジェクトの `./deploy`（あれば。番号ごとに `DEVBASE_INSTANCE_INDEX` を付けて走らせる）
+  3. backend が `openbao` のとき、コンテナの `~/.vault-token` へ token を書く
+  4. VS Code の窓のタイトルをコンテナ名始まりにする（[環境変数ガイドの「ウィンドウタイトル」](../environment-variables.md#ウィンドウタイトルどの窓がどのプロジェクトか)）
+  5. エディタの自動オープン（有効なときだけ。開く番号のコンテナにだけ）
+
+### 起動できなかったコンテナがあるとき
+
+起動の待ちの間に終了した・見つからない・時間内に entrypoint が終わらなかったコンテナがあると、`up` は次のように動きます。
+
+- 起動できたコンテナには、上の 1〜4 を行います。起動できなかったコンテナには行いません
+- エディタは、開く番号のコンテナが起動できていれば開きます。起動できていなければ、警告を出して開きません（ほかの番号へは替えません）
+- 起動できたコンテナを止めたり消したりはしません
+- 出力の最後に `Deploy failed` の行、起動できなかったすべてのコンテナの名前と理由（`exited unexpectedly` とログの末尾 10 行・`container not found`・`timeout`）、補う手順を出し、終了コード `1` で終わります
+
+補う手順は次のとおりです。
+
+1. 落ちたコンテナを起こし直す（`docker start <コンテナ名>` など）
+2. その起動が終わった後に `devbase project post-start <name>` を打つ。`docker start` で起こし直しただけでは、起動の後の処理（token の配布・窓のタイトルの設定など）は行われません
+3. `./deploy` も含めて最初からやり直すときは `devbase up <name>` を打つ（全コンテナを作り直します）
 
 > **Note (entrypoint / Dockerfile を変更したとき):** `containers/` 配下の `entrypoint.sh` や
 > Dockerfile はビルド時にイメージへ焼き込まれます。これらを変更しても、上記のとおり
@@ -149,6 +172,31 @@ devbase container open [--open-index N] [--context NAME]
 - 開くかどうかの設定（`project.yml` の `open_editor` / `DEVBASE_OPEN_EDITOR`）は見ません。明示のコマンドなので、自動オープンを無効にした端末でも開きます
 - 番号の上限は `project.yml` の `scale` ではなく、動いているコンテナで決まります（`devbase scale` で増やした分も開けます）
 - `--open` / `--no-open` は受け付けません（`up` の自動オープンのためのオプションです）
+
+## `devbase project post-start`
+
+動いているコンテナへ、`up` の起動の後の処理を、コンテナを作り直さずにやり直します。`up` / `scale` で起動できなかったコンテナを起こし直した後や、時間切れになったコンテナが後から起動を終えた後に使います。
+
+```
+devbase project post-start [name] [--context NAME]
+```
+
+| パラメータ | 必須 | デフォルト | 説明 |
+|-----------|------|-----------|------|
+| `name` | いいえ | カレント | 対象プロジェクト名 |
+
+- 対象は、動いていて entrypoint の完了（`/tmp/entrypoint-ready`）を確かめられた dev コンテナです。完了を待たず、各コンテナを 1 回だけ確かめます
+- 対象へ、clone できなかったリポジトリの報告 → token の配布（backend が `openbao` のとき）→ 窓のタイトルの設定を行います
+- `./deploy` は走らせず、エディタも開きません（エディタは `devbase open` で開けます）
+- コンテナを起動・停止・作り直しはしません。何度打っても同じ結果になります
+- トップレベルの短縮形と `container` グループにはありません
+
+| 状態 | 動き | 終了コード |
+|------|------|-----------|
+| 対象のコンテナが 1 つ以上ある | 対象へ処理を行う。`project.yml` の `scale` までの番号のうち、動いていないものと、entrypoint の完了を確かめられないものを、分けて警告で出す。最後に `=== Post-start completed ===` を出す | `0` |
+| 動いているが、entrypoint の完了を確かめられたものが 1 つも無い | 処理を行わない。起動が終わってからもう一度打つ | `1` |
+| dev コンテナが 1 つも動いていない | 処理を行わない。起動には `devbase up` を使う（起動はしない） | `1` |
+| コンテナの状態を取得できない（Docker のデーモンに届かない） | 処理を行わない | `1` |
 
 ## `devbase project down`
 
@@ -239,6 +287,16 @@ devbase project scale adminer 3
 新しい値は `project.yml` の `scale` に書き戻されるため、次回の `devbase up` にも引き継がれます。
 `up` と同じく最初にアカウントグループの宣言を確かめ、読めなければ `project.yml` を書き換える前に
 止まります。
+
+増やしたコンテナが起動できたら、`up` と同じ起動の後の処理（clone できなかったリポジトリの報告 →
+`./deploy` → token の配布 → 窓のタイトルの設定）を、増やしたコンテナにだけ同じ順で行います。
+既存のコンテナには行いません。エディタは開きません。
+
+起動できなかったコンテナがあるときは、`up` と同じく、増やしたコンテナのうち起動できたものにだけ
+起動の後の処理を行い、`Scale failed` の行と、起動できなかったすべてのコンテナの名前・理由・補う手順
+（`devbase project post-start <name>`）を出して終了コード `1` で終わります。既存のコンテナが
+起動できなかったときも同じです。`project.yml` の `scale` は書き換わったまま残るため、同じ数で
+`devbase scale` を打ち直すことはできません。補うには `devbase project post-start` を使います。
 
 ## `devbase project profile`
 

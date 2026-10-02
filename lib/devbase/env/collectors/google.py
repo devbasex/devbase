@@ -3,8 +3,9 @@
 import base64
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
 from devbase.log import get_logger
 from devbase.env import keys
@@ -38,38 +39,69 @@ def _extract_project_id(file_path: Path) -> Optional[str]:
 
 
 def _safe_profile_name(name: str) -> str:
-    """プロファイル名を環境変数として安全な文字種に正規化"""
-    safe_name = re.sub(r'[^A-Za-z0-9_]', '_', name)
-    if safe_name != name:
-        logger.warning("プロファイル名 '%s' を '%s' に正規化しました", name, safe_name)
-    return safe_name
+    """プロファイル名を環境変数として安全な文字種に正規化する (警告は出さない。#334 I6)"""
+    return re.sub(r'[^A-Za-z0-9_]', '_', name)
 
 
-def _discover_credential_files() -> dict:
-    """利用可能なcredentialファイルを検出する"""
+@dataclass
+class CredentialFiles:
+    """鍵ファイルの発見の結果 (#334)
+
+    ``files`` はプロファイル名 → 鍵ファイル (ファイル名の昇順)。``renamed`` は正規化で変わった
+    名前 → 元の名前、``collisions`` は名前 → 同じ名前に正規化され、先のファイルに負けて外した
+    鍵ファイルの並び。
+    """
+    files: Dict[str, Path] = field(default_factory=dict)
+    renamed: Dict[str, str] = field(default_factory=dict)
+    collisions: Dict[str, List[Path]] = field(default_factory=dict)
+
+    def lookup(self, name: str) -> Optional[Path]:
+        """プロファイル名から鍵ファイルを引く。``default`` で無ければ ``~/google_credential.json``"""
+        path = self.files.get(name)
+        if path and path.exists():
+            return path
+        if name == 'default' and LEGACY_CREDENTIALS_FILE.exists():
+            return LEGACY_CREDENTIALS_FILE
+        return None
+
+
+def find_credential_files() -> CredentialFiles:
+    """``~/gcp-credentials/`` の鍵ファイルを見つける。JSON を読まず、何も出力しない (I6・I9)
+
+    ファイル名の昇順に読み、正規化した名前が衝突したら先のファイルを採る。ディレクトリに
+    鍵が無ければ ``~/google_credential.json`` を ``default`` として返す。
+    """
+    found = CredentialFiles()
     if GCP_CREDENTIALS_DIR.is_dir():
-        profiles = {}
         for f in sorted(GCP_CREDENTIALS_DIR.iterdir()):
             if f.suffix != '.json' or not f.is_file():
                 continue
-            safe_name = _safe_profile_name(f.stem)
-            if safe_name in profiles:
-                logger.warning(
-                    "プロファイル名 '%s' が衝突しています: '%s' と '%s' (後者をスキップ)",
-                    safe_name, profiles[safe_name]['file'], str(f),
-                )
+            name = _safe_profile_name(f.stem)
+            if name in found.files:
+                found.collisions.setdefault(name, []).append(f)
                 continue
-            profiles[safe_name] = {'file': str(f), 'project_id': _extract_project_id(f)}
-        if profiles:
-            return profiles
+            found.files[name] = f
+            if name != f.stem:
+                found.renamed[name] = f.stem
+        if found.files:
+            return found
+        found = CredentialFiles()
 
     if LEGACY_CREDENTIALS_FILE.exists():
-        return {'default': {
-            'file': str(LEGACY_CREDENTIALS_FILE),
-            'project_id': _extract_project_id(LEGACY_CREDENTIALS_FILE),
-        }}
+        found.files['default'] = LEGACY_CREDENTIALS_FILE
+    return found
 
-    return {}
+
+def _warn_for_chosen(chosen: List[str], found: CredentialFiles) -> None:
+    """取り込むと決めた名前について、正規化と衝突の警告を 1 回ずつ出す (I7・I8)"""
+    for name in chosen:
+        if name in found.renamed:
+            logger.warning("プロファイル名 '%s' を '%s' に正規化しました", found.renamed[name], name)
+        for dropped in found.collisions.get(name, []):
+            logger.warning(
+                "プロファイル名 '%s' が衝突しています: '%s' と '%s' (後者をスキップ)",
+                name, str(found.files[name]), str(dropped),
+            )
 
 
 def collect_google_credentials(env_file: EnvFile, *, host: HostImport) -> None:
@@ -80,9 +112,9 @@ def collect_google_credentials(env_file: EnvFile, *, host: HostImport) -> None:
     """
     print("\n=== Google Cloud認証情報 ===")
 
-    profiles = _discover_credential_files()
+    found = find_credential_files()
 
-    if not profiles:
+    if not found.files:
         existing = env_file.get(keys.gcp_credentials_key("default"))
         has_key = bool(existing)
         if existing:
@@ -99,15 +131,14 @@ def collect_google_credentials(env_file: EnvFile, *, host: HostImport) -> None:
         _collect_common_settings(env_file, has_key=has_key)
         return
 
-    names = list(profiles.keys())
+    names = list(found.files)
+    project_ids = {name: _extract_project_id(path) for name, path in found.files.items()}
     if host.importing:
-        print(f"\n検出されたcredential ({len(profiles)}件):")
-        print('\n'.join(f"  - {name} (project: {info.get('project_id', 'N/A')})"
-                        for name, info in profiles.items()))
+        print(f"\n検出されたcredential ({len(names)}件):")
+        print('\n'.join(f"  - {name} (project: {project_ids[name]})" for name in names))
         chosen = names
     else:
-        labels = [f"{name} (project: {info.get('project_id') or 'N/A'})"
-                  for name, info in profiles.items()]
+        labels = [f"{name} (project: {project_ids[name] or 'N/A'})" for name in names]
         selection = host.choose(STEP, f"ホストで見つけた GCP の鍵 ({len(names)}件):", labels,
                                 "例: 1,2 / all で全部 / 空で取り込まない")
         chosen = [names[i] for i in selection.indexes]
@@ -116,6 +147,7 @@ def collect_google_credentials(env_file: EnvFile, *, host: HostImport) -> None:
         host.declined(STEP)
         host.record('gcp', [])
         return
+    _warn_for_chosen(chosen, found)
 
     default_active = 'default' if 'default' in chosen else chosen[0]
     active = _ask_active_profile(chosen, default_active)
@@ -125,13 +157,12 @@ def collect_google_credentials(env_file: EnvFile, *, host: HostImport) -> None:
         return
 
     for name in chosen:
-        _register_profile(env_file, name, Path(profiles[name]['file']))
+        _register_profile(env_file, name, found.files[name])
 
     env_file.set(keys.GCP_ACTIVE_PROFILE, active)
     logger.info("%s: %s", keys.GCP_ACTIVE_PROFILE, active)
 
-    active_info = profiles.get(active, {})
-    project_id = active_info.get('project_id')
+    project_id = project_ids.get(active)
     if project_id:
         env_file.set(keys.GOOGLE_CLOUD_PROJECT, project_id)
         env_file.set(keys.BIGQUERY_PROJECT, project_id)

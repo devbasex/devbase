@@ -74,7 +74,7 @@ GCP・AWS・Git のステップは、ホストの `~/gcp-credentials/`・`~/.aws
 | ステップ | 尋ね方 |
 |---|---|
 | GCP | 鍵ファイルを番号で選ぶ（`1,2` か `1 2`、`all` で全部）。1 つも選ばなければ GCP の共通設定（`GOOGLE_CLOUD_LOCATION` など）も書きません。アクティブプロファイルに `none` と入れると GCP を何も書きません。選んだ鍵に無い名前は尋ね直します |
-| AWS | 認証方法の既定は `4`（スキップ）。`1` Config Files では `~/.aws/config` のプロファイルを番号で選び、選んだ節と、それが `sso_session` / `source_profile` で指す節だけを `AWS_CONFIG_BASE64` に入れます（含めた節は `含めます: [...]` の行で出ます）。`all` なら `~/.aws` を丸ごと入れます。`3` Access Key は `~/.aws/credentials` の `[default]` の鍵を入れる前に `[y/N]` で確かめます |
+| AWS | 認証方法の既定は `4`（スキップ）。`1` Config Files では `~/.aws/config` のプロファイルを番号で選び、選んだ節と、それが `sso_session` / `source_profile` で指す節だけを `AWS_CONFIG_BASE64` に入れます（含めた節は `含めます: [...]` の行で出ます）。`all` なら `~/.aws` を丸ごと入れます。`3` Access Key は `~/.aws/credentials` の `[default]` の鍵を入れる前に `[y/N]` で確かめ、断ると `~/.aws/config` の region も使いません。`2` SSO Profile と鍵の無い `3` では、`~/.aws/config` の region を `AWS_DEFAULT_REGION` の既定の値として見せます（Enter で受け入れます） |
 | Git | 取り込めるキーの名前を並べて `[y/N]` で 1 回だけ尋ねます。断ると Git の値を 1 つも書きません（後から `devbase env set` で足せます） |
 
 標準入力が端末でないとき（`devbase up` の子プロセスの `env init` など）は、尋ねずに何も取り込みません。

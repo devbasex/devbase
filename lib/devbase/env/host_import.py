@@ -134,14 +134,15 @@ class HostImport:
     def _group_label(self) -> str:
         return self.group or 'グループの指定なし'
 
-    def _skipped(self, step: str) -> None:
+    def notify_skipped(self, step: str) -> None:
+        """「取り込まない」(端末でない「尋ねる」を含む) のために飛ばしたことを 1 行知らせる"""
         if self.fell_back:
             logger.info("%s: 標準入力が端末でないため飛ばしました (%s)", step, self._group_label())
         else:
             logger.info("%s: 取り込まない設定のため飛ばしました (%s)", step, self._group_label())
 
     def declined(self, step: str) -> None:
-        """「尋ねる」で断られたことを 1 行知らせる (「取り込まない」は ``_skipped`` が知らせ済み)"""
+        """「尋ねる」で断られたことを 1 行知らせる (「取り込まない」は ``notify_skipped`` が知らせ済み)"""
         if self.asking:
             logger.info("%s: 取り込みません", step)
 
@@ -150,7 +151,7 @@ class HostImport:
         if self.policy is ImportPolicy.IMPORT:
             return Selection(list(range(len(labels))), all=True)
         if self.policy is ImportPolicy.SKIP:
-            self._skipped(step)
+            self.notify_skipped(step)
             return Selection()
         print(f"\n{title}")
         for i, label in enumerate(labels, 1):
@@ -164,7 +165,7 @@ class HostImport:
         if self.policy is ImportPolicy.IMPORT:
             return True
         if self.policy is ImportPolicy.SKIP:
-            self._skipped(step)
+            self.notify_skipped(step)
             return False
         from devbase.env.store import safe_input
         return safe_input(f"{question} [y/N]: ", 'n').lower() == 'y'

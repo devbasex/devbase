@@ -21,6 +21,17 @@ _devbase_project_names() {
     fi
 }
 
+# cur が `-` で始まるときはフラグ候補 ($1) を COMPREPLY に入れる。
+# 第 3 引数に names を渡すと、それ以外のときにプロジェクト名を補完する。
+_devbase_complete_flags() {
+    local flags="$1" cur="$2" fallback="${3:-}"
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+    elif [ "$fallback" = "names" ]; then
+        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+    fi
+}
+
 _devbase_completions() {
     local cur prev words cword
     _init_completion 2>/dev/null || {
@@ -33,12 +44,16 @@ _devbase_completions() {
 
     local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale open list help"
     # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
-    local project_subcommands="up down ps login logs scale build rebuild list profile open"
+    local project_subcommands="up down ps login logs scale build rebuild list profile open post-start"
     local container_subcommands="up down ps login logs scale build rebuild profile open"
     local env_subcommands="init sync list set get delete edit project export import keygen exec encrypt decrypt rekey doctor"
     local plugin_subcommands="list install uninstall update info sync repo"
     local repo_subcommands="add remove list refresh"
     local snapshot_subcommands="create list restore copy delete rotate"
+    # ps / logs / open のフラグ候補 (トップレベル・project・container で共通)。
+    local ps_flags="--all -a"
+    local logs_flags="--follow -f --tail"
+    local open_flags="--open-index --context"
 
     case "$cword" in
         1)
@@ -56,19 +71,11 @@ _devbase_completions() {
                     ;;
                 # open は [name] と --open-index / --context を取る (PLAN59)。
                 open)
-                    if [[ "$cur" == -* ]]; then
-                        COMPREPLY=($(compgen -W "--open-index --context" -- "$cur"))
-                    else
-                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
-                    fi
+                    _devbase_complete_flags "$open_flags" "$cur" names
                     ;;
                 # ps は [name] と -a フラグの両方を取る (project ps と同じ挙動)。
                 ps)
-                    if [[ "$cur" == -* ]]; then
-                        COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
-                    else
-                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
-                    fi
+                    _devbase_complete_flags "$ps_flags" "$cur" names
                     ;;
                 # list は位置引数を取らず対話制御フラグのみ。`-*` ガードを外し
                 # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
@@ -97,9 +104,7 @@ _devbase_completions() {
             # トップレベルシノニム ps: `devbase ps web -<TAB>` (group=ps, cword=3)
             # でも name 位置が埋まった後にフラグを補完する。project ps と対称化。
             if [ "$group" = "ps" ]; then
-                if [[ "$cur" == -* ]]; then
-                    COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
-                fi
+                _devbase_complete_flags "$ps_flags" "$cur"
             fi
             # project subcommand arguments (推奨グループ)
             if [ "$group" = "project" ]; then
@@ -116,18 +121,10 @@ _devbase_completions() {
                         COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
                         ;;
                     ps)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
-                        else
-                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
-                        fi
+                        _devbase_complete_flags "$ps_flags" "$cur" names
                         ;;
                     logs)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--follow -f --tail" -- "$cur"))
-                        else
-                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
-                        fi
+                        _devbase_complete_flags "$logs_flags" "$cur" names
                         ;;
                     # list は位置引数を取らず対話制御フラグのみ。`-*` ガードを外し
                     # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
@@ -138,8 +135,12 @@ _devbase_completions() {
                         COMPREPLY=($(compgen -W "up down list" -- "$cur"))
                         ;;
                     open)
+                        _devbase_complete_flags "$open_flags" "$cur" names
+                        ;;
+                    # post-start は [name] と --context を取る (#371)
+                    post-start)
                         if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--open-index --context" -- "$cur"))
+                            COMPREPLY=($(compgen -W "--context" -- "$cur"))
                         else
                             COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
                         fi
@@ -159,19 +160,13 @@ _devbase_completions() {
                         COMPREPLY=($(compgen -W "up down list" -- "$cur"))
                         ;;
                     open)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--open-index --context" -- "$cur"))
-                        fi
+                        _devbase_complete_flags "$open_flags" "$cur"
                         ;;
                     ps)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
-                        fi
+                        _devbase_complete_flags "$ps_flags" "$cur"
                         ;;
                     logs)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--follow -f --tail" -- "$cur"))
-                        fi
+                        _devbase_complete_flags "$logs_flags" "$cur"
                         ;;
                 esac
             fi
@@ -259,14 +254,10 @@ _devbase_completions() {
             if [ "$group" = "project" ]; then
                 case "${words[2]}" in
                     ps)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--all -a" -- "$cur"))
-                        fi
+                        _devbase_complete_flags "$ps_flags" "$cur"
                         ;;
                     logs)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--follow -f --tail" -- "$cur"))
-                        fi
+                        _devbase_complete_flags "$logs_flags" "$cur"
                         ;;
                 esac
             fi
