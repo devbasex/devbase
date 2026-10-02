@@ -297,23 +297,63 @@ devbase_ensure_persistent_root() {
     fi
 }
 
+# リンクの段のロックを待つ秒数の上限 (#357)。超えたら警告を出してロックなしで進む。
+# 止まったまま終わらない持ち主が 1 つあるだけで、ほかのすべてのコンテナの起動が
+# 止まるのを避ける。ロックなしでも、張り替えの試行と排他の作成で結果は壊れない。
+DEVBASE_LINK_LOCK_WAIT=10
+
+# 張り替えの試行の上限 (#357)。修正前のイメージのコンテナは 1 つにつき 1 回だけ
+# 正しいリンクを消すため、同時起動 8 個なら試行は 9 回までに収まる。その 2 倍の余裕
+DEVBASE_LINK_TRIES=20
+
+# エントリを**無いときだけ**作る (排他の作成、#357)。
+#
+# 第 1 引数は file か dir。終了コードは 作れた 0 / 既にあった 1 / 作れない 2。
+# 同時に呼んでも 0 を返すのは 1 つのプロセスだけで、そのプロセスだけが中身を書く。
+# 通常のファイルは noclobber の `>` で作る。ディレクトリは perl から mkdir(2) を呼ぶ。
+# base イメージの mkdir (uutils) は同時に呼ぶと 2 つ以上が 0 で終わり、作れた
+# プロセスを 1 つに決められないため使わない。perl が無い環境では mkdir で作る。
+devbase_create_entry() {
+    local kind="$1" path="$2" err
+
+    if [ "$kind" = "file" ]; then
+        err=$( { set -C; : > "$path"; } 2>&1 ) && return 0
+    elif command -v perl >/dev/null 2>&1; then
+        err=$(perl -e 'mkdir($ARGV[0]) or die "mkdir: $!\n"' "$path" 2>&1) && return 0
+    else
+        err=$(mkdir "$path" 2>&1) && return 0
+    fi
+    # 作る操作の終了コードではなく、読み直して決める
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        return 1
+    fi
+    echo "ERROR: エントリを作れない: ${path} (${err})" >&2
+    return 2
+}
+
 # 実体が無ければプレースホルダを作る (親ディレクトリごと)。
 devbase_ensure_entry() {
-    local path="$1"
+    local path="$1" rc=0
 
     mkdir -p "$(dirname "$path")"
     if [ -e "$path" ]; then
         return 0
     fi
     if devbase_is_file_entry "$path"; then
-        if devbase_is_json_file_entry "$path"; then
+        devbase_create_entry file "$path" || rc=$?
+        # 作れたプロセスだけが中身を書く。ほかのプロセスが作ったものは触らない
+        if [ "$rc" -eq 0 ] && devbase_is_json_file_entry "$path"; then
             printf '{}' > "$path"
-        else
-            : > "$path"
         fi
     else
-        mkdir -p "$path"
+        devbase_create_entry dir "$path" || rc=$?
     fi
+    [ "$rc" -ne 2 ]
+}
+
+# <link_path> が <target_path> を指す symlink か判定する (何も出力しない)。
+devbase_link_is_set() {
+    [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]
 }
 
 # <link_path> を <target_path> への symlink にする。
@@ -324,33 +364,52 @@ devbase_ensure_entry() {
 #
 # 既存の実体は `rm -rf` してから張り直す。symlink に対する `rm -rf` は
 # **リンクだけ**を消すので、共通側の実体は巻き添えにならない。
+#
+# 同じグループのコンテナは同じ共有のリンクを同時に張り直す (#357)。成否は `ln` と
+# `rm` の終了コードではなく、張った後に読み直した結果で決め、正しくなるまで
+# DEVBASE_LINK_TRIES 回まで繰り返す。`ln` に -n を付けるのは、相手が先に張った
+# ディレクトリへのリンクの中へ、入れ子のリンクを作らないためである。
 devbase_link_setting() {
     local link_path="$1" target_path="$2" owner="${3:-${USERNAME:-ubuntu}}"
+    local try=1 err=""
 
     devbase_ensure_entry "$target_path"
 
-    if [ -L "$link_path" ] && [ "$(readlink "$link_path")" = "$target_path" ]; then
+    if devbase_link_is_set "$link_path" "$target_path"; then
         echo "  ✓ ${link_path} (symlink exists)"
         return 0
     fi
 
-    mkdir -p "$(dirname "$link_path")"
-    if [ -e "$link_path" ] || [ -L "$link_path" ]; then
-        echo "  Removing existing ${link_path}..."
-        rm -rf "$link_path"
-    fi
-
-    echo "  Creating symlink: ${link_path} -> ${target_path}"
-    ln -s "$target_path" "$link_path"
-    chown -h "${owner}:${owner}" "$link_path" 2>/dev/null || true
+    mkdir -p "$(dirname "$link_path")" 2>/dev/null || true
+    while :; do
+        if [ -e "$link_path" ] || [ -L "$link_path" ]; then
+            [ "$try" -eq 1 ] && echo "  Removing existing ${link_path}..."
+            err=$(rm -rf "$link_path" 2>&1) || true
+        fi
+        [ "$try" -eq 1 ] && echo "  Creating symlink: ${link_path} -> ${target_path}"
+        err=$(ln -sn "$target_path" "$link_path" 2>&1) || true
+        if devbase_link_is_set "$link_path" "$target_path"; then
+            chown -h "${owner}:${owner}" "$link_path" 2>/dev/null || true
+            return 0
+        fi
+        if [ "$try" -ge "$DEVBASE_LINK_TRIES" ]; then
+            echo "ERROR: symlink を張れない: ${link_path} -> ${target_path} (${err})" >&2
+            return 1
+        fi
+        try=$((try + 1))
+    done
 }
 
 # シード元から 1 エントリを**コピー**する (既にあれば何もしない)。
 #
 # 第 3 引数以降は「コピーしない直下の名前」。分類 A の共通資産をグループ側へ
 # 複製しないために使う。
+#
+# コピー先は排他の作成で作り、作れたプロセスだけが中身をコピーする (#357)。
+# 同時に走る 2 つが同じディレクトリへ重ねてコピーすると、子のディレクトリの中に
+# 同じ名前のディレクトリがもう 1 つ残る。
 devbase_seed_entry() {
-    local src="$1" dest="$2"
+    local src="$1" dest="$2" rc=0
     shift 2
 
     if [ -e "$dest" ]; then
@@ -363,12 +422,23 @@ devbase_seed_entry() {
 
     mkdir -p "$(dirname "$dest")"
     if [ ! -d "$src" ]; then
+        devbase_create_entry file "$dest" || rc=$?
+        case "$rc" in
+            0) ;;
+            1) return 0 ;;
+            *) return 1 ;;
+        esac
         cp -a "$src" "$dest"
         echo "  seeded: $dest"
         return 0
     fi
 
-    mkdir -p "$dest"
+    devbase_create_entry dir "$dest" || rc=$?
+    case "$rc" in
+        0) ;;
+        1) return 0 ;;
+        *) return 1 ;;
+    esac
     local child name excluded skip
     # `.[!.]*` と `..?*` で隠しファイルも拾う (`.credentials.json` 等)。
     for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
@@ -412,13 +482,34 @@ devbase_seed_image_claude_settings() {
 # 第 4 引数はアカウントグループ名 (呼び出しの形を保つために受け取るが使わない)。
 # グループ側は /persistent/ai から取り込まない (#315 I13)。取り込み元は PLAN39 より前の
 # 置き場で、グループの実名化と合わせて初回シードを無くした。
+#
+# 同じボリュームを共有するコンテナは同時に起動する (#357)。共通のボリュームの
+# ルートのディレクトリそのものに flock を掛け、リンクの段どうしを 1 つずつ順に
+# 走らせる。ロックのためのファイルは作らない。ロックはサブシェルの fd でだけ持ち、
+# サブシェルを抜ければ (成功でも失敗でも) 外れ、最後に exec するコマンドへ
+# 引き継がない。flock が無い・待ち切れないときはロックなしで進む。
 devbase_setup_ai_settings() {
     local home_root="$1" ai_root="$2" group_root="$3"
     local owner="${5:-${USERNAME:-ubuntu}}"
-    local entry
 
     devbase_ensure_persistent_root "$ai_root" "$owner"
     devbase_ensure_persistent_root "$group_root" "$owner"
+
+    (
+        if command -v flock >/dev/null 2>&1; then
+            exec 9<"$ai_root"
+            if ! flock -w "$DEVBASE_LINK_LOCK_WAIT" 9; then
+                echo "WARNING: リンクの段のロックを ${DEVBASE_LINK_LOCK_WAIT} 秒待っても取れないため、ロックなしで進める: ${ai_root}" >&2
+            fi
+        fi
+        devbase_apply_ai_settings "$home_root" "$ai_root" "$group_root" "$owner"
+    )
+}
+
+# リンクの段の本体。退避・ホームのリンク・共有のリンクをこの順で行う。
+devbase_apply_ai_settings() {
+    local home_root="$1" ai_root="$2" group_root="$3" owner="$4"
+    local entry
 
     # symlink を張る**前**にシードする。張ったあとに走らせると、共通側を指す
     # symlink の中身へコピーしてしまう。
