@@ -65,7 +65,7 @@ TUI（`lib/devbase/tui/`）は独自の語を持たず、CLI のハンドラへ�
 | 要素 | 責務 | 変更 |
 | --- | --- | --- |
 | `actions_env_openbao.run` | 欄の入力 → 保存 → 対象のグループの決定 → 確認 → 結果の表示。グループの選択で戻ったら確認をせずに終える | 変える |
-| `actions_env_openbao._check_group_attrs`（新規） | 確認に渡す引数を決める。プロジェクトの中なら `{}`、外なら `actions_env._group_attrs` の結果 | 作る |
+| `actions_env_openbao._check_group_attrs`（新規） | 確認に渡す引数を決める。プロジェクトの中なら `{}`、外なら `actions_env._group_attrs` の結果。選んだ名前を置き場の `storage_group` でも検証し、通らなければ検証の文を出して選び直させる（決定 5） | 作る |
 | `actions_env._group_attrs` | レイアウトが `group` なら対象のグループを選ばせ `{"group": 名前}` を返す。それ以外は `{}`。使えない名前は検証の文を出して選び直させる | 変えない（呼び出し元が 1 つ増える） |
 | `runtime.current_project_name` | 現在地（`PWD`）からプロジェクト名を決める | 変えない |
 | `cmd_env_backend_test` | `group` を受けて対象のグループを決め、参照を読む | 変えない（I4） |
@@ -89,6 +89,7 @@ graph LR
     RUN --> CGA
     CGA -->|現在地| CPN
     CGA -->|プロジェクトの外| GA
+    CGA -->|予約語の検証| SG["OpenBaoSettings.storage_group"]
     GA --> SEL
     RUN -->|"確認（group）"| TEST
     TEST --> TG
@@ -102,6 +103,7 @@ graph LR
 | `run` | `_check_group_attrs` | 足す |
 | `_check_group_attrs` | `runtime.current_project_name` | 足す |
 | `_check_group_attrs` | `actions_env._group_attrs` | 足す |
+| `_check_group_attrs` | `SecretStore(root).config.openbao.storage_group` | 足す |
 | `actions_env._group_attrs` | `actions_env_keys._select_group` | 変えない |
 | `run` | `cmd_env_backend_test`（`_dispatch_backend(root, "test", **attrs)`） | 引数を足す |
 | `cmd_env_backend_test` | `env._target_group` | 変えない |
@@ -114,7 +116,9 @@ graph LR
 | --- | --- | --- |
 | `_check_group_attrs(devbase_root)` | DEVBASE_ROOT | `{}` / `{"group": 名前}`。グループの選択の Esc・← は `flow.BackOut`、Ctrl-C は `flow.CancelAll` を投げる（`_select_group` の `flow.need` がそのまま投げる） |
 
-`_check_group_attrs` は終了コードを持たず、出力もしない。使えない名前の文は `_group_attrs` が出す。
+`_check_group_attrs` は終了コードを持たない。`validate_account_group` で使えない名前の文は `_group_attrs` が出す。
+`storage_group` で使えない名前（予約語の `global` / `projects`）の文は `_check_group_attrs` が `_group_attrs` と同じ形
+（「--group に使えない名前です: ...」）で出し、`_group_attrs` を呼び直して選択へ戻る。
 
 ## 入出力の契約
 
@@ -147,7 +151,7 @@ graph TD
 
 | 項目 | 規則 |
 | --- | --- |
-| グループの名前（「名前を入力」） | `validate_account_group` で検証する。通らなければ「--group に使えない名前です: ...」を出して選択へ戻る（`_group_attrs` の今の振る舞い） |
+| グループの名前（「名前を入力」） | `validate_account_group` で検証する。通らなければ「--group に使えない名前です: ...」を出して選択へ戻る（`_group_attrs` の今の振る舞い）。通った名前は `storage_group` でも検証し、名前が予約語の `global` / `projects` なら同じ文を出して選択へ戻る（`_check_group_attrs`。決定 5） |
 | グループの選択で戻ったときの文 | 「接続を確かめずに戻ります。保存した設定は残っています」（INFO ではなく `print`。入れ直しの問いは出さない） |
 
 ## 処理の流れ
@@ -237,15 +241,22 @@ sequenceDiagram
 
 根拠: Value 3（MVV 版 1）
 
-### 決定 5: グループの名前の検証は `_group_attrs` の今の検証に任せる
+### 決定 5: グループの名前は `_check_group_attrs` が置き場の `storage_group` でも検証する
 
-要求の前提 5 は sync / init と同じ検証の文を求めている。`_group_attrs` は `validate_account_group` で検証して選択へ戻す。
-読み替え後の予約語など、`_target_group` だけが見る誤りは `env backend test` が終了コード 2 で返し、今の確認の失敗と
-同じく警告と入れ直しの問いになる（未確認のまま残ること）。
+要求の前提 5・AC5 は、使えない名前を入れたら `--group` と同じ検証の文を出して選択へ戻ることを求めている。
+`_group_attrs` は `validate_account_group` で検証して選択へ戻すが、`global` / `projects`（予約語。`RESERVED_STORAGE_GROUPS`）は
+この規則を通る。そのまま渡すと `_target_group` の `storage_group` が `BackendConfigError` を投げ、`env backend test` が
+終了コード 2 で返して、確認の失敗（警告と入れ直しの問い）になる。これは AC5 に反する。
 
-TUI の側で `_target_group` と同じ検証を重ねる形は、sync / init と検証がずれるため採らない。
+そこで `_check_group_attrs` が、`_group_attrs` から受けた名前を `SecretStore(root).config.openbao.storage_group(名前)` に
+通す。`BackendConfigError` なら「--group に使えない名前です: ...」を `logger.error` で出し、`_group_attrs` を呼び直して
+選択へ戻る。`_target_group` と同じ関数を呼ぶため、TUI と CLI で使えない名前の範囲がそろう。読み替え先が予約語の
+`group_aliases` は設定を読む時点で拒まれる（`OpenBaoSettings` の検証）ため、ここで落ちるのは予約語そのものの名前である。
 
-根拠: 根拠なし（MVV 版 1）
+`_group_attrs` に `storage_group` の検証を足す形は、sync / init の振る舞いを変え、要求の対象範囲（sync / init の
+グループの選択を変えない）を外れるため採らない。検証を `env backend test` に任せる形は、AC5 を満たさないため採らない。
+
+根拠: Mission（MVV 版 1）
 
 ## テスト設計
 
@@ -255,7 +266,7 @@ TUI の側で `_target_group` と同じ検証を重ねる形は、sync / init �
 | AC2・I1 | 確認が受け取る `group` が、選択で選んだ名前と一致する（選んだグループの参照を読む） | 候補の先頭を黙って渡すように壊すと、選んだ名前と違う値で落ちる。選択を出さずに渡すと、台本の select が残って落ちる |
 | AC3・I3 | レイアウトが `group` で、誤った secret_id を保存してグループを選ぶと、警告と入れ直しの問いが出る。保存した secret_id は残る | 確認の失敗を成功として扱うように壊すと、問いが出ずに落ちる |
 | AC4・I3 | グループの選択で戻ると、`env backend test` が呼ばれずに戻る。保存した設定は残り、入れ直しの問いは出ない | 戻った後に確認を呼ぶ・入れ直しの問いを出す・`ARG_CANCEL` を返すように壊すと落ちる |
-| AC5 | 「名前を入力」に使えない名前を入れると、`--group` と同じ検証の文が出てグループの選択へ戻る | 検証を外すと、使えない名前で確認が呼ばれて落ちる |
+| AC5 | 「名前を入力」に使えない名前（`validate_account_group` で落ちる名前と、予約語の `global`）を入れると、`--group` と同じ検証の文が出てグループの選択へ戻る。どちらの場合も `env backend test` は呼ばれず、入れ直しの問いは出ない | 検証を外すと、使えない名前で確認が呼ばれて落ちる。`_check_group_attrs` の `storage_group` の検証を外すと、`global` で終了コード 2 と入れ直しの問いが出て落ちる |
 | AC6・I2 | レイアウトが `flat` では、グループの選択が出ず、確認は `group` なしで呼ばれる。既存のテストが変更なしで通る | レイアウトを見ずに選択を出すと、台本に無い select で落ちる |
 | AC7・I2 | レイアウトが `group` で、現在地が宣言のあるプロジェクトの中なら、グループの選択が出ず、確認は宣言のグループで成功する | プロジェクトの中でも選択を出すように壊すと、台本に無い select で落ちる |
 | AC8 | `uv run --locked pytest tests/ -q` が通る | — |
@@ -271,5 +282,4 @@ TUI の側で `_target_group` と同じ検証を重ねる形は、sync / init �
 
 | 項目 | 内容 |
 | --- | --- |
-| 読み替え後の予約語の名前 | `validate_account_group` を通り `_target_group` の `storage_group` で落ちる名前は、選択へ戻らずに確認の失敗（警告と入れ直しの問い）になる。sync / init も同じであり、この変更では揃えたままにする。実装のテストで実際の文を見て、要求の AC5 を満たさないと分かれば人へ戻す |
 | 実機での確認 | `version: 2` の端末で `DEVBASE_ROOT` から TUI を開いて保存し、グループを選ぶと「読めた参照」が出ることは、リリース後テストで確かめる |
