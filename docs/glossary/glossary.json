@@ -55,6 +55,16 @@
       "id": "image-lineage",
       "name": "イメージの継承",
       "meaning": "base の設定が派生イメージと lfm へ届く道筋（containers/*/Dockerfile）"
+    },
+    {
+      "id": "container-start",
+      "name": "コンテナの起動",
+      "meaning": "base イメージの entrypoint が起動のたびに行う用意（containers/base/entrypoint.sh）"
+    },
+    {
+      "id": "post-start",
+      "name": "起動の後の処理",
+      "meaning": "devbase up / scale がコンテナを起動して待ち、その後にホストの側から行う処理（lib/devbase/commands/container.py）"
     }
   ],
   "terms": [
@@ -680,6 +690,132 @@
       "meaning": "~/gcp-credentials/ の *.json を読み、正規化したプロファイル名から鍵ファイルへの対応を作ること。出力を持たない",
       "source": "",
       "pending_source": "issues/issue-334-design.md"
+    },
+    {
+      "term": "起動の後の処理",
+      "context": "post-start",
+      "meaning": "up と scale が、起動の待ちの後にホストの側から行う処理の並び。不足リポジトリの報告・./deploy の実行・token の配布・窓のタイトルの設定・エディタの自動オープンの 5 つ",
+      "pending_source": "issues/issue-224-requirements.md"
+    },
+    {
+      "term": "インスタンスごとの処理",
+      "context": "post-start",
+      "meaning": "起動の後の処理のうち、インスタンスの 1 つ 1 つに行う 4 つ（エディタの自動オープンを除いたもの）",
+      "pending_source": "issues/issue-224-requirements.md"
+    },
+    {
+      "term": "起動の待ち",
+      "context": "post-start",
+      "meaning": "up と scale が、起動したインスタンスの entrypoint の完了を、制限時間まで待つ段",
+      "pending_source": "issues/issue-224-requirements.md"
+    },
+    {
+      "term": "起動できたインスタンス",
+      "context": "post-start",
+      "meaning": "起動の待ちで、entrypoint の完了を確かめられたインスタンス",
+      "pending_source": "issues/issue-224-requirements.md"
+    },
+    {
+      "term": "起動できなかったインスタンス",
+      "context": "post-start",
+      "meaning": "起動の待ちの間に終了した・見つからない・制限時間までに entrypoint の完了を確かめられなかった、のどれかに当たるインスタンス",
+      "pending_source": "issues/issue-224-requirements.md"
+    },
+    {
+      "term": "増やしたインスタンス",
+      "context": "post-start",
+      "meaning": "devbase scale が足した番号のインスタンス（前の scale の値 + 1 から、新しい scale の値まで）",
+      "pending_source": "issues/issue-224-requirements.md"
+    },
+    {
+      "term": "後処理の対象",
+      "context": "post-start",
+      "meaning": "インスタンスごとの処理を行うインスタンスの集合。up は起動できたインスタンス、scale は増やしたインスタンスのうち起動できたもの、やり直しは動いていて entrypoint の完了の印を確かめられたインスタンス",
+      "pending_source": "issues/issue-224-requirements.md"
+    },
+    {
+      "term": "起動の結果",
+      "context": "post-start",
+      "meaning": "起動の待ちが決めた、インスタンスごとの「起動できた」「起動できなかった（理由つき）」の内訳",
+      "pending_source": "issues/issue-224-design.md"
+    },
+    {
+      "term": "起動できなかった理由",
+      "context": "post-start",
+      "meaning": "起動できなかったインスタンスに 1 つ付く区分。終了した・見つからない・時間切れの 3 つ",
+      "pending_source": "issues/issue-224-design.md"
+    },
+    {
+      "term": "起動の後の処理の段",
+      "context": "post-start",
+      "meaning": "後処理の対象を受けて、インスタンスごとの処理を決まった順に行う 1 つの関数",
+      "pending_source": "issues/issue-224-design.md"
+    },
+    {
+      "term": "起動の後の処理のやり直し",
+      "context": "post-start",
+      "meaning": "動いていて entrypoint の完了の印を確かめられたインスタンスへ、インスタンスごとの処理から ./deploy を除いた 3 つを行い直すコマンド（devbase project post-start）",
+      "pending_source": "issues/issue-224-design.md"
+    },
+    {
+      "term": "共通のボリューム",
+      "context": "container-start",
+      "meaning": "すべてのコンテナが /persistent/ai にマウントする 1 つのボリューム。グループをまたいで共有する",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "共有のリンク",
+      "context": "container-start",
+      "meaning": "グループのボリュームの .claude の下にあり、共通のボリュームの同じ名前のエントリを指す symlink。plugins / skills / commands / CLAUDE.md / settings.json の 5 本。同じグループのすべてのコンテナが同じ 1 本を使う",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "リンクの段",
+      "context": "container-start",
+      "meaning": "entrypoint が AI 設定のリンクを張る処理（devbase_setup_ai_settings の 1 回の実行）",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "同時起動",
+      "context": "container-start",
+      "meaning": "2 つ以上のコンテナのリンクの段が、時間の上で重なって走ること",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "修正前の手順",
+      "context": "container-start",
+      "meaning": "#357 より前のリンクの張り方。「正しいかを見る → 違えば消す → ln -s」を、ほかのコンテナを待たずに行う",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "リンクの段のロック",
+      "context": "container-start",
+      "meaning": "共通のボリュームのルートのディレクトリに対して取る排他のロック。修正後のリンクの段どうしを 1 つずつ順に走らせる。ボリュームにファイルを作らない",
+      "pending_source": "issues/issue-357-design.md"
+    },
+    {
+      "term": "ロックの待ち時間の上限",
+      "context": "container-start",
+      "meaning": "リンクの段のロックを待つ秒数の上限（10 秒）。超えたら警告を出してロックなしで進む",
+      "pending_source": "issues/issue-357-design.md"
+    },
+    {
+      "term": "張り替えの試行",
+      "context": "container-start",
+      "meaning": "リンクを「消す → 張る → 読み直して確かめる」1 回ぶん。正しくなるまで試行の上限（20 回）まで繰り返し、張る操作の成否ではなく読み直した結果で成功を決める",
+      "pending_source": "issues/issue-357-design.md"
+    },
+    {
+      "term": "入れ子のリンク",
+      "context": "container-start",
+      "meaning": "リンクの位置がディレクトリを指すリンクになっているときに、張る操作がその先のディレクトリの中へ作るリンク（例: 共通のボリュームの plugins/plugins）。修正前の手順が同時起動で作ることがある",
+      "pending_source": "issues/issue-357-design.md"
+    },
+    {
+      "term": "排他の作成",
+      "context": "container-start",
+      "meaning": "エントリを「無いときだけ作る」操作。同時に呼んでも作れるのは 1 つのプロセスだけで、作れたプロセスだけがそのエントリの中身を書く。退避とプレースホルダが使う",
+      "pending_source": "issues/issue-357-design.md"
     }
   ]
 }
