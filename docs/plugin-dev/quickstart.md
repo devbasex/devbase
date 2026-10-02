@@ -57,7 +57,7 @@ my-plugin/
     └── my-project/
         ├── compose.yml
         ├── project.yml
-        └── env          # 中身は任意だが、ファイルは必須
+        └── env          # 必須。DEVBASE_ACCOUNT_GROUP の宣言を書く
 ```
 
 ### 2.2 compose.yml の作成
@@ -138,19 +138,19 @@ repos:
 | `scale` | 起動するコンテナ数（既定: 2） |
 | `open_editor` | `devbase up` 後に VS Code を自動で開くか |
 
-### 2.3.1 env ファイル（ファイルは必須・中身は任意）
+### 2.3.1 env ファイル（必須・アカウントグループの宣言を書く）
 
-`projects/my-project/env` には、**コンテナへ渡す環境変数**だけを書きます（`ENABLE_SSH` など）。devbase 自身の設定は `project.yml` にあります。
+`projects/my-project/env` には、**アカウントグループの宣言**（`DEVBASE_ACCOUNT_GROUP`）と、**コンテナへ渡す環境変数**（`ENABLE_SSH` など）を書きます。devbase 自身のそれ以外の設定は `project.yml` にあります。
 
 ```bash
+# projects/my-project/env
+DEVBASE_ACCOUNT_GROUP=personal
 ENABLE_SSH=true
 ```
 
-2.2 の `compose.yml` が `env_file: - env` で参照するため、**ファイルは必ず作成してください**（実在しないと `devbase up` が compose の起動時に失敗します）。渡したい環境変数が無ければ空ファイルで構いません。
-
-```bash
-touch projects/my-project/env
-```
+- **`DEVBASE_ACCOUNT_GROUP` の宣言は必須です。** 宣言が無い・空のとき、`devbase up` / `scale` は何も作らずに止まります。既定の値は無く、`default` は予約語のため使えません。会社の機密を使わない個人・OSS のプロジェクトは `personal` を、それ以外は使うアカウントの単位（`acme` など）を書きます。詳しくは [環境変数の説明のアカウントグループ](../user/environment-variables.md#アカウントグループ-devbase_account_group) を参照してください
+- 2.2 の `compose.yml` が `env_file: - env` で参照するため、ファイルが無いと `devbase up` が compose の起動時にも失敗します
+- この宣言を求めるのは devbase 4.0.0 からです。devbase の機能を使い始めたときに Plugin の側ですること（`requires.devbase` を上げるなど）は [`requires` の契機の表](plugin-yml-reference.md#更新時の警告) にあります
 
 ### 2.4 .env ファイル（任意）
 
@@ -324,7 +324,7 @@ flowchart LR
 | 作業ディレクトリ | `${COMPOSE_PROJECT_NAME}_work_${CONTAINER_INDEX:-1}` | `/work` | コンテナ専用 |
 
 - `devbase_home_ubuntu`（`/persistent/ai`）は SSH 鍵・共有ファイル・`~/.claude/plugins` など、契約に紐づかずコンテナ横断で共有したい資産の永続化に使用（entrypoint が symlink。旧 `/home/ubuntu` 直接マウントは廃止）
-- `devbase_home_<group>`（`/persistent/group`）は認証情報と会話ログ。`<group>` は `DEVBASE_ACCOUNT_GROUP`（未設定なら `default`）で決まり、devbase が生成 compose へ自動注入する
+- `devbase_home_<group>`（`/persistent/group`）は認証情報と会話ログ。`<group>` は `projects/<name>/env` に宣言した `DEVBASE_ACCOUNT_GROUP` で決まり、devbase が生成 compose へ自動注入する（宣言は必須で、`default` は予約語のため使えない。[2.3.1](#231-env-ファイル必須アカウントグループの宣言を書く)）
 - 作業ディレクトリボリュームはプロジェクトごと・コンテナインデックスごとに独立
 
 ### 5.4 コンテナイメージの選択
