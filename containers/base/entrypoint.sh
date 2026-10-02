@@ -580,7 +580,14 @@ devbase_keep_replaced_link() {
     fi
 
     copy="${link_path}.replaced-$(date -u +%Y%m%dT%H%M%SZ)"
-    if err=$(ln "$link_path" "$copy" 2>&1); then
+    # -P: symlink をたどらない (GNU と BSD で既定が違う)
+    if err=$(ln -P "$link_path" "$copy" 2>&1); then
+        # 見た後に相手が位置を張り直していると、symlink そのもののハードリンクが残る。
+        # 中身を持たない控えなので消す
+        if [ -L "$copy" ]; then
+            rm -f "$copy"
+            return 0
+        fi
         echo "WARNING: 共有のリンクが通常のファイルに置き換わっていたため、中身を控えに残して張り直す: ${copy}" >&2
         return 0
     fi

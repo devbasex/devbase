@@ -202,3 +202,22 @@ def test_failed_hard_link_is_judged_by_reading_again(tmp_path, partner):
     assert r.returncode == 0, r.stderr
     _assert_linked(v, "settings.json")
     assert _warnings(r.stderr) == []
+
+
+def test_position_relinked_before_the_hard_link_leaves_no_copy(tmp_path):
+    """決定 2 の読み直し: 通常のファイルと見た後、ハードリンクの前に相手が張り直したときは控えを残さない
+
+    ロックなしで同時に走ると、相手が位置を symlink に張り直した直後に ``ln`` が走り、symlink そのものの
+    ハードリンクが控えの名前で残る。控えは中身を持たないため消し、警告も出さない。
+    """
+    v = Volumes(tmp_path)
+    p = _prepare(v, "settings.json", LOCAL_CONTENT["settings.json"])
+    target = v.ai / ".claude" / "settings.json"
+    act = f'command rm -f "{p}"; command ln -s "{target}" "{p}"'
+    pre = ('date() { echo 20261002T000000Z; }\n'
+           f'ln() {{ if [ "$1" != "-sn" ]; then {act}; fi; command ln "$@"; }}')
+    r = _stage(v, pre=pre)
+    assert r.returncode == 0, r.stderr
+    _assert_linked(v, "settings.json")
+    assert _copies(v, "settings.json") == []
+    assert _warnings(r.stderr) == []
