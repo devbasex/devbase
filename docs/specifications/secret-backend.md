@@ -94,7 +94,7 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | AWS のプロファイルの切り出し | `lib/devbase/env/aws_profiles.py` | `~/.aws/config` の節の読み取り、連なりの解決と含めた理由、選んだ節だけの tar（時刻を固定）、切り出した中身のハッシュ、`AWS_CONFIG_BASE64` の値に入っているプロファイルの読み取り。出力も終了コードも持たない |
 | collector の契約 | `lib/devbase/env/collector.py` | `Collector.host_import` でホストのファイルを読むことを宣言する。`source_files` があるのに宣言しない定義は生成時に `ValueError` で、登録簿は警告を出して飛ばす。宣言した collector は `collect_fn(env_file, *, host)` で呼ばれ、`host` に既定の値は無い |
 | コンテナへの token の配送 | `lib/devbase/env/container_token.py` | 受け取った token を `docker exec` の stdin で各コンテナの `~/.vault-token` へ書く。token の取得と届け先の解決は持たない |
-| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | backend を問わず、起動の先頭でグループの宣言を読み、ボリュームのグループ（プロセスの環境変数）と揃える（`_require_group_declaration`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に token を書く |
+| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | backend を問わず、起動の先頭でグループの宣言を読み、ボリュームのグループ（プロセスの環境変数）と揃える（`_require_group_declaration`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に起動の後の処理の段（`_run_post_start`）で後処理の対象へ token を書く。`devbase project post-start` も同じ段で token を書き直す |
 | base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
 | `env backend` コマンド | `lib/devbase/commands/env_backend.py` | `status` / `use` / `test` / `migrate` |
 | `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token`。`env set` は `DEVBASE_ACCOUNT_GROUP` を置き場を開く前に拒む。`env sync` の同期の書き込み先（`SyncTargets`） |
@@ -929,8 +929,12 @@ backend が `openbao` のとき、`up` と `scale` は dev コンテナへ次を
 | 名前 | 形 | いつ |
 | --- | --- | --- |
 | `BAO_ADDR` | dev サービスの `environment` にリテラル（`openbao.url`）。機密ではない | 構成の生成時 |
-| `~/.vault-token` | ファイル `0600`、token 1 行（改行なし） | `up` の [5/6] の後（`scale` は増やしたインスタンスだけ）と `env token` |
+| `~/.vault-token` | ファイル `0600`、token 1 行（改行なし） | `up` / `scale` の起動の待ちの後（後処理の対象だけ）、`project post-start`、`env token` |
 
+- `up` / `scale` が token を書くのは後処理の対象だけである。`up` は起動できたインスタンス、`scale` は
+  増やしたインスタンスのうち起動できたものに書き、起動できなかったインスタンスには書かない。
+  `devbase project post-start` は、動いていて entrypoint の完了（`/tmp/entrypoint-ready`）を確かめられた
+  インスタンスに書き直す
 - コンテナに置く資格情報は 1 時間で切れる token だけで、`secret_id` はホストから出ない。
   `role_id` / `secret_id` をコンテナへ渡す形は、コンテナの中の CLI や npm パッケージが長期の
   資格情報を持つことになるため採らない
@@ -941,7 +945,7 @@ backend が `openbao` のとき、`up` と `scale` は dev コンテナへ次を
   argv に載せない。コンテナの中では `mktemp "$HOME/.vault-token.XXXXXX"` に書き、
   `chmod 0600` の後 `mv -f` で置き換える（固定名の一時ファイルは既存の inode へ書いて
   `umask` が効かない。途中で切れても空の `~/.vault-token` を残さない）
-- 書けなくても `up` / `scale` は失敗にしない（起動は済んでおり、`env token` でやり直せる）。
+- 書けなくても `up` / `scale` / `project post-start` は失敗にしない（起動は済んでおり、`env token` でやり直せる）。
   警告を出す
 - コンテナの `bao` で書いた値は、ホストの控え（`secrets/cache/`）へ反映しない。控えは
   読み取りにだけ使い、ホストの `set` / `delete` / `edit` は現物を読むため、到達できる限り
@@ -1457,6 +1461,8 @@ groups:
   （`tests/env/test_container_token.py`）
 - `up` / `scale` が `BAO_ADDR` を足し token を書くこと、ファイル backend で何も足さないこと、
   書けなくても `up` が失敗しないこと（`tests/commands/test_container_bao.py`）
+- `up` / `scale` / `project post-start` が token を後処理の対象のコンテナにだけ書き、値を出力に
+  載せないこと（`tests/commands/test_container_post_start.py`）
 - `env token` の処理の順、dev サービスの絞り込み、下位ディレクトリからの dev サービス名、
   接続先の適用、`--print`（`tests/commands/test_env_token.py`）
 - base イメージの `bao` の版・両アーキテクチャ・チェックサムの検証の文言

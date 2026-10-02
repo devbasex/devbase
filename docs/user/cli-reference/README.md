@@ -5,7 +5,7 @@ devbase の全コマンドの構文、オプション、使用例をまとめた
 | ファイル | 内容 |
 |---------|------|
 | [トップレベルコマンド](01-toplevel.md) | `init` / `status` / `bin/rc` |
-| [project グループ](02-project.md) | コンテナのライフサイクル管理・一覧（`up` / `down` / `login` / `ps` / `logs` / `scale` / `build` / `rebuild` / `open` / `profile` / `list`）と非推奨の `container` グループ |
+| [project グループ](02-project.md) | コンテナのライフサイクル管理・一覧（`up` / `down` / `login` / `ps` / `logs` / `scale` / `build` / `rebuild` / `open` / `post-start` / `profile` / `list`）と非推奨の `container` グループ |
 | [env グループ](03-env.md) | 環境変数の管理（`init` / `sync` / `list` / `set` / `get` / `delete` / `edit` / `project` / `keygen` / `encrypt` / `decrypt` / `exec` / `token` / `rekey` / `doctor` / `export` / `import`） |
 | [plugin グループ](04-plugin.md) | プラグインの管理（`list` / `install` / `uninstall` / `update` / `info` / `sync` / `migrate` / `repo *`） |
 | [snapshot グループ](05-snapshot.md) | スナップショットの管理（`create` / `list` / `restore` / `copy` / `delete` / `rotate`） |
@@ -22,7 +22,7 @@ graph TD
     A --> E[env]
     A --> F[plugin / pl]
     A --> G[snapshot / ss]
-    D --> D1["up / down / ps / logs / scale / open [name]"]
+    D --> D1["up / down / ps / logs / scale / open / post-start [name]"]
     D --> D3["login [index]"]
     D --> D4["build [image] / rebuild [name]"]
     D --> D5["profile up / down / list [name]"]
