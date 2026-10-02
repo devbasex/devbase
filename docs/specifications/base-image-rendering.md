@@ -191,8 +191,9 @@ zh-cn / ko の `<match>` は、**総称ファミリを名指ししたときだ�
 
 `RUN sudo fc-cache -f` は、`COPY` の直後かつ**Playwright がフォントを入れる `RUN` より後**に
 置く。その `RUN` の `npx playwright install --with-deps chromium` が `fonts-wqy-zenhei` /
-`fonts-ipafont-gothic` / `fonts-liberation` などを入れ、直後に `~/.cache` を消す。前で走らせる
-と、後から入った書体を知らないキャッシュが残る。
+`fonts-ipafont-gothic` / `fonts-liberation` などを入れ、直後に `~/.cache` を消す（Chromium 自体は
+`PLAYWRIGHT_BROWSERS_PATH` の `/opt/ms-playwright` に置き、消さない）。前で走らせると、後から
+入った書体を知らないキャッシュが残る。
 
 **`fc-cache` は設定を反映するためのものではない**（設定は照合のたびに読まれる）。走らせる
 のは、`~/.cache` を消した後に `/var/cache/fontconfig` を作り直し、コンテナの初回起動時の
@@ -254,10 +255,11 @@ metric 互換の 2 つは、`30-metric-aliases.conf` が既に持っている対
   base の設定を変えたときは base を建て直した後に lfm も建て直す。取り込みが保たれていることは
   `tests/containers/test_lfm_base_settings.py` が固定する。lfm での解決先は [lfm が base の設定を取り込む経路](lfm-base-settings.md) の
   「lfm のフォントの解決先」にある
-- 確かめてあるのは `fc-match` の水準までで、LibreOffice と Chromium での実際の描画は未検証
-  である。どちらも base に無く、LibreOffice は fontconfig とは別の照合も持つ
-- 解決先の表は arm64 で採ったものである。amd64 では `google-chrome-stable` が追加で入るため
-  `--with-deps` が入れるフォントの顔ぶれが違いうる。同じ表になるかは amd64 の端末で建てるまで
+- 確かめてあるのは `fc-match` の水準までで、LibreOffice での実際の描画は未検証である。
+  LibreOffice は base に無く、fontconfig とは別の照合も持つ。Chromium は Playwright のものが
+  `/opt/ms-playwright` にあり、base の中で PDF を作って埋め込まれた書体を `pdffonts` で見られる
+- 解決先の表は arm64 で採ったものである。amd64 ではシステムの Chrome（`google-chrome-stable`）が
+  追加で入るため（arm64 には入らない）、apt の依存で入るフォントの顔ぶれが違いうる。同じ表になるかは amd64 の端末で建てるまで
   分からない
 
 ## テスト観点

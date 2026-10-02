@@ -19,6 +19,13 @@
   GPU を使うホストの NVIDIA ドライバは CUDA 13.4 以上に対応している必要があります（`nvidia-smi` の
   `CUDA Version` で確かめられます）。足りないと `--gpus all` の起動が requirement error で止まるので、
   ドライバを最新に上げてから `devbase build lfm` で建て直してください。
+- **base イメージに Playwright の Chromium を残すようにしました（#220）。** これまではビルドで取得した
+  ブラウザを直後の片付けで捨てており、arm64（Apple Silicon）のコンテナには起動できる Chromium が
+  ありませんでした。ブラウザの置き場は `/opt/ms-playwright` で、環境変数 `PLAYWRIGHT_BROWSERS_PATH` が
+  指します。実行時に `playwright install` で取得するブラウザも `~/.cache/ms-playwright` ではなくここへ
+  入ります。起動できなかった `chromium-browser`（Ubuntu の snap スタブ）は外しました。システムの Chrome
+  （`google-chrome-stable`）は今までどおり amd64 だけに入ります。base の後に派生イメージと lfm を建て直すと
+  届きます。
 
 ### Fixed
 - **スナップショットの差分バックアップが、毎回ボリューム全体を控えていたのを直しました。**
