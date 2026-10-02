@@ -20,6 +20,7 @@ from devbase.volume.compose import (
     get_dev_service_name,
 )
 from devbase.utils.docker import (
+    ENTRYPOINT_READY_FILE,
     ContainerStartupError,
     compose_env,
     docker_compose,
@@ -1514,9 +1515,6 @@ def cmd_login(index: str = '1', context: Optional[str] = None) -> int:
 # cmd_post_start
 # ---------------------------------------------------------------------------
 
-_ENTRYPOINT_READY_FILE = '/tmp/entrypoint-ready'
-
-
 def _entrypoint_ready(container_name: str) -> bool:
     """動いているコンテナの entrypoint の完了の印を 1 回だけ確かめる (待たない)。
 
@@ -1524,7 +1522,7 @@ def _entrypoint_ready(container_name: str) -> bool:
     """
     try:
         result = subprocess.run(
-            ['docker', 'exec', container_name, 'test', '-f', _ENTRYPOINT_READY_FILE],
+            ['docker', 'exec', container_name, 'test', '-f', ENTRYPOINT_READY_FILE],
             capture_output=True, text=True, check=False)
     except (OSError, subprocess.SubprocessError):
         return False

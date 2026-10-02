@@ -17,6 +17,9 @@ logger = get_logger("devbase.utils.docker")
 #: ``.env`` の値をどちらも無効にする。有効なプロファイルは経路ごとに ``--profile`` で決める。
 NO_PROFILE = '__devbase_none__'
 
+#: entrypoint が処理を終えたときにコンテナ内へ置く完了の印。起動の待ちと post-start が確かめる。
+ENTRYPOINT_READY_FILE = '/tmp/entrypoint-ready'
+
 
 def compose_env(environ: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
     """devbase が ``docker compose`` を呼ぶときの子プロセスの環境を返す。
@@ -234,7 +237,7 @@ def _is_ready(service_name: str, ready_file: str, compose_file: Optional[Path]) 
 def wait_for_containers_ready(
     container_prefix: str,
     scale: int,
-    ready_file: str = '/tmp/entrypoint-ready',
+    ready_file: str = ENTRYPOINT_READY_FILE,
     timeout: int = 60,
     compose_file: Optional[Path] = None
 ) -> bool:
