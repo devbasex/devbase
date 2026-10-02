@@ -704,6 +704,12 @@
       "context": "container-start",
       "meaning": "リンクの位置がディレクトリを指すリンクになっているときに、張る操作がその先のディレクトリの中へ作るリンク（例: 共通のボリュームの plugins/plugins）。修正前の手順が同時起動で作ることがある",
       "pending_source": "issues/issue-357-design.md"
+    },
+    {
+      "term": "排他の作成",
+      "context": "container-start",
+      "meaning": "エントリを「無いときだけ作る」操作。同時に呼んでも作れるのは 1 つのプロセスだけで、作れたプロセスだけがそのエントリの中身を書く。退避とプレースホルダが使う",
+      "pending_source": "issues/issue-357-design.md"
     }
   ]
 }
