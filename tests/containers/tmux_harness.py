@@ -44,6 +44,12 @@ def wait(predicate, timeout: float = 10.0, interval: float = 0.05):
         time.sleep(interval)
 
 
+def process_name(pid: str) -> str:
+    """``pid`` のプロセスの名前 (``ps`` の ``comm``)。プロセスが無ければ空。"""
+    done = subprocess.run(["ps", "-o", "comm=", "-p", pid], capture_output=True, text=True)
+    return done.stdout.strip()
+
+
 class Client:
     """pty に繋いだ 1 つのプロセス (tmux のクライアント)。出力を読み続ける。"""
 
@@ -114,10 +120,28 @@ class TmuxEnv:
         return done
 
     def new(self, name: str, *cmd: str) -> str:
-        """セッションを作り、その ID を返す。最初の 1 つがサーバーを起動する。"""
+        """セッションを作り、その ID を返す。最初の 1 つがサーバーを起動する。
+
+        pane のプロセスが exec を終えるまで待ってから返す。``new-session`` は、サーバーが
+        fork した子がシェル (または ``cmd``) を exec する前に返る。その間の
+        ``pane_current_command`` は ``tmux`` に見えるため、すぐ後に走らせたスクリプトが
+        「シェル以外が動いている」と読む (負荷のある Linux で 3000 回に 64 回)。
+        """
         self.tmux("-f", str(self.conf), "new-session", "-d", "-s", name,
                   "-x", "120", "-y", "40", *cmd)
-        return self.sid(name)
+        sid = self.sid(name)
+        wait(lambda: self.panes_started(sid))
+        return sid
+
+    def panes_started(self, sid: str) -> bool:
+        """``sid`` の pane のプロセスが、すべて exec を終えているか。
+
+        exec の前の子はサーバーの複製で、プロセスの名前がサーバーと同じである。
+        """
+        shown = self.tmux("list-panes", "-s", "-t", sid, "-F", "#{pid} #{pane_pid}",
+                          check=False)
+        pairs = [line.split() for line in shown.stdout.splitlines()]
+        return all(process_name(pane) != process_name(server) for server, pane in pairs)
 
     def sessions(self) -> dict[str, str]:
         """``{名前: ID}``。サーバーが無ければ空。"""
