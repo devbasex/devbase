@@ -90,9 +90,11 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | 機密の合成 | `lib/devbase/env/runtime.py` | 4 層の機密を対象のプロジェクトのグループで重ねてコンテナへ渡す。読み取りの直後に `DEVBASE_ACCOUNT_GROUP` を外して警告する（`_without_account_group` / `_warned_account_group_refs`）。`SecretStore` をライフサイクル操作 1 回の間持ち回る（`store_for` / `release_store`） |
 | dispatch 前の注入 | `lib/devbase/cli.py` | `_load_secret_env`。注入を行わないコマンドと、`version: 2` で注入に使うプロジェクトを決める。`--group` / `--layout` / `--group-alias` / `--exclude-project` の引数 |
 | 同期済みハッシュの控え | `lib/devbase/env/sources.py` | `SourcesManager` と `sources_path`。`version: 2` では置き場のグループごとに控えを分ける。AWS の選んだ取り込み（`aws_profiles`）のハッシュは切り出した中身から求める |
-| 取り込みの方針 | `lib/devbase/env/host_import.py` | `secrets/host-import.yml` の読み込みと検査（`load`・`HostImportConfigError`）、対象のグループの方針の決定（`resolve`。端末でない `ask` は `skip` へ落とす）、取り込みの場 `HostImport`（番号の選択 `choose`・y/N の `confirm`・選択の記録 `record`） |
+| 取り込みの方針 | `lib/devbase/env/host_import.py` | `secrets/host-import.yml` の読み込みと検査（`load`・`HostImportConfigError`）、対象のグループの方針の決定（`resolve`。端末でない `ask` は `skip` へ落とす）、取り込みの場 `HostImport`（番号の選択 `choose`・y/N の `confirm`・選択の記録 `record`・方針のために飛ばしたことの知らせ `notify_skipped`） |
 | AWS のプロファイルの切り出し | `lib/devbase/env/aws_profiles.py` | `~/.aws/config` の節の読み取り、連なりの解決と含めた理由、選んだ節だけの tar（時刻を固定）、切り出した中身のハッシュ、`AWS_CONFIG_BASE64` の値に入っているプロファイルの読み取り。出力も終了コードも持たない |
 | collector の契約 | `lib/devbase/env/collector.py` | `Collector.host_import` でホストのファイルを読むことを宣言する。`source_files` があるのに宣言しない定義は生成時に `ValueError` で、登録簿は警告を出して飛ばす。宣言した collector は `collect_fn(env_file, *, host)` で呼ばれ、`host` に既定の値は無い |
+| AWS の collector | `lib/devbase/env/collectors/aws.py` | 認証方法ごとの収集。方法 `2`・`3` の `AWS_DEFAULT_REGION` は region の出所の判定（`_collect_region`）の 1 か所で決める。方法 `3` は鍵の確認の結果を `KeyDecision`（`ACCEPTED` / `DECLINED` / `NOT_ASKED`）にして渡し、参照の region を残すか（`keep_existing`）は呼び元が渡す（`3` は残す、`2` は決め直す）。節の名前と region は `AWSConfigParser.find_profile_region` で読む |
+| GCP の collector | `lib/devbase/env/collectors/google.py` | 鍵ファイルの発見（`find_credential_files`。JSON を読まず、何も出力しない）と、その結果 `CredentialFiles`（名前 → 鍵ファイル・正規化で変わった名前・衝突で外した鍵ファイル。`lookup` で名前から鍵ファイルを引く）。正規化と衝突の警告は、取り込むと決めた名前についてだけ `_warn_for_chosen` が出す。`env sync` と控えの更新（`commands/env.py`）も同じ発見の `lookup` で鍵ファイルを引く |
 | コンテナへの token の配送 | `lib/devbase/env/container_token.py` | 受け取った token を `docker exec` の stdin で各コンテナの `~/.vault-token` へ書く。token の取得と届け先の解決は持たない |
 | `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | backend を問わず、起動の先頭でグループの宣言を読み、ボリュームのグループ（プロセスの環境変数）と揃える（`_require_group_declaration`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に起動の後の処理の段（`_run_post_start`）で後処理の対象へ token を書く。`devbase project post-start` も同じ段で token を書き直す |
 | base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
@@ -739,10 +741,16 @@ AWS は取り込みの選択の範囲だけで比べて入れ直す。控えの 
   見ずに、上の規則で決め直す（前の認証方法の region を新しいプロファイルへ持ち越さない）
 - AWS `2`・`3` の `skip` の知らせ（`AWS認証: 取り込まない設定のため飛ばしました`）は 1 回の選択で 1 行である。
   `3` で鍵の確認が知らせたときは region のために足さない
+- ホストの region は、機密の値でなくてもホストの資格情報ファイルから読む値のため、取り込みに数える。`ask` で
+  鍵の確認を出さない経路（`3` でホストに鍵が無い・`2`）は y/N を足さず、値と出所の節を入力の既定の値として見せ、
+  利用者が見たうえで Enter を押すことを確認とする。`3` で鍵の確認に答えたときはその答えを region にも当て、
+  断った利用者に断ったプロファイルの region を既定の値として見せない
 - GCP の鍵ファイル名の拡張子を除いた部分は、`[A-Za-z0-9_]` 以外を `_` へ置き換えてプロファイル名にする
   （プロファイル名の正規化）。ファイル名の昇順に読み、正規化した名前が衝突したら先のファイルを採る。
   `プロファイル名 '<元>' を '<名前>' に正規化しました` と衝突の警告は、取り込むと決めた名前についてだけ、
   アクティブプロファイルを尋ねる前に 1 回出す。`env sync` と控えの更新は同じ規則で鍵ファイルを引き、警告を出さない
+- 鍵ファイルの発見はプロジェクト ID を読まない。プロジェクト ID は GCP の collector が候補を表示するときに読む
+  （発見を `env sync` でも使うため、読めない JSON の警告を `sync` へ持ち込まない）
 
 `env sync` はソースファイルのハッシュを控えに記録して変更を検出する。`version: 2` では控えを
 置き場のグループごとに `$DEVBASE_ROOT/.env.sources.<g>.yml` へ分け、それ以外は
@@ -1186,6 +1194,11 @@ flowchart TD
 - `env sync` は、控えに項目があっても、個人共通とチーム共通のどちらにも無い資格情報のキーを書かない
 - `env init` はホストの資格情報を、`import` と名指ししたグループ以外では利用者が選んだものだけ書く。
   collector はグループ名を比べず、方針は `init` から必須の引数で渡る
+- `env init` の AWS `2`・`3` は、方針が `skip`（端末でない `ask` を含む）のときと、`3` の鍵の確認で断ったとき、
+  ホストの `~/.aws/config` を region のために読まず、参照へホストの region を書かない
+- GCP の鍵ファイルの発見はログも標準出力も出さない。`env init` が登録する鍵ファイルと、`env sync`・控えの更新が
+  プロファイル名から引く鍵ファイルは、同じ発見の規則（ファイル名の昇順・衝突は先勝ち・`default` は
+  `~/google_credential.json` も引く）で決まる
 
 ## データ・設定
 
@@ -1504,6 +1517,11 @@ groups:
   頃と同じ質問の並びとキーを書くこと、設定の誤りで参照を開く前に 1 で止まること、`sync` が選んだ範囲だけを
   比べて参照に無いキーを書かないこと、collector の契約（`tests/commands/test_env_host_import.py`）。
   設定の読み込み・番号の読み取り・AWS の節の切り出し（`tests/env/test_host_import.py`）
+- AWS `2`・`3` の region の方針ごとの書く値・入力の既定の値と出所の節・知らせの行数、`3` で参照の region を残し
+  `2` で決め直すこと、`find_profile_region` が返す節の名前（`tests/env/test_aws_region_policy.py`）。鍵ファイルの
+  発見が何も出力しないこと・`lookup("default")` の受け皿・警告が取り込むと決めた名前にだけ出ること
+  （`tests/env/test_gcp_credential_files.py`）。1 回の `env init` での正規化と衝突の警告の回数と、`env sync` が
+  警告なしに正規化した名前で鍵ファイルを引くこと（`tests/commands/test_env_host_import.py`）
 - キーの行の持ち主・適用範囲・グループ、プロジェクトの範囲で共通の行を出さないこと、値を持たないこと、認証 1 回と取得 2 回、
   キャッシュへ落ちないこと、ファイル backend の行、プロジェクトごとのキーの数（`tests/commands/test_env_rows.py`）
 - TUI のキーの一覧と編集の委譲の属性・伏せ字・入力の検査・削除の確認・版の食い違い・`SecretStore` へ
