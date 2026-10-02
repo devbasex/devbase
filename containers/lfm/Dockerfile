@@ -107,6 +107,9 @@ ENV PATH="/usr/local/share/npm-global/bin:/home/ubuntu/.local/bin:/opt/google-cl
 # シェルの設定の読み込み先。base の ENV と同じ値にする (ENV は COPY --from で運べない)。
 # docker exec の非対話の処理 (Claude Code の Bash など) が置き場所を見つけるのに使う
 ENV DEVBASE_SHELLRC_DIR=/home/ubuntu/.shellrc.d
+# Playwright のブラウザの置き場。base の ENV と同じ値にする (#220)。上の COPY /opt で
+# base が取得した Chromium が所有者ごと届き、下の npx playwright install は同じ版なら取得し直さない
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
 # 確認
 RUN gh --version && node --version && npm --version && aws --version && gcloud --version
@@ -150,7 +153,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
     echo 'source $HOME/.cargo/env' >> ~/.bashrc
 ENV PATH="/home/ubuntu/.cargo/bin:${PATH}"
 
-# Playwright インストール（ブラウザはdevbase-baseからコピーされないため個別にインストール）
+# Playwright のブラウザの依存パッケージ (共有ライブラリと書体)。lfm は base を FROM で継がないため
+# 自前で入れる。ブラウザ自体は COPY /opt で届いた置き場にあり、版が同じなら取得し直さない (#220)
 RUN npx playwright install --with-deps chromium
 
 # フォントのキャッシュを作り直す。上の Playwright が --with-deps で fonts-wqy-zenhei などを
