@@ -131,7 +131,7 @@ GCP のプロファイル名の正規化。`~/gcp-credentials/` に `my-proj.jso
 退行しないこと:
 
 - [ ] AWS の方法 3 で、#314 の鍵の扱い（`skip` で鍵を書かない・`ask` で断ると鍵を書かない・`import` で鍵を書く）が変わらない
-- [ ] 方法 2・方法 3 で `AWS_DEFAULT_REGION` が既に参照にあれば、今と同じくその値を残し、ホストを読まない
+- [ ] 方法 3 で `AWS_DEFAULT_REGION` が既に参照にあれば、今と同じくその値を残し、ホストを読まない（方法 2 は方針に従って決め直す。設計の承認で決めた）
 - [ ] 方法 1 の region の振る舞いと出力が変わらない
 - [ ] GCP の取り込みで参照へ書くキーと値（`GCP_CREDENTIALS_BASE64_<名前>`・`GCP_ACTIVE_PROFILE` ほか）が、どの方針でも今と同じになる
 - [ ] 既存のテスト（`tests/env/test_host_import.py`・`tests/env/test_collector_host.py`・`tests/commands/test_env_host_import.py` ほか）がすべて通る
