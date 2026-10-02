@@ -87,12 +87,14 @@ def test_the_cleanup_does_not_remove_the_browsers_path():
         assert not target.startswith(f"{BROWSERS_PATH}"), target
 
 
-def test_the_browsers_path_is_made_for_the_user_before_the_install():
-    """実行時に別の版のブラウザを取得できるよう、利用者が書き込める置き場を先に作る"""
-    run = _base_install_run()
-    made = re.search(r"install -d [^;]*-o \"\$\(id -u\)\"[^;]*\$\{?PLAYWRIGHT_BROWSERS_PATH", run)
-    assert made, "利用者の持ち物でブラウザの置き場を作っていない"
-    assert made.start() < run.index("npx playwright install")
+def test_the_browsers_path_is_made_like_the_npm_prefix_before_the_install():
+    """決定 1: 置き場は npm のグローバル領域と同じ root の RUN で、$USERNAME:npm・2775 で作る"""
+    instructions = _instructions(BASE)
+    made = re.compile(r'install -d -m 2775 -o "\$USERNAME" -g npm "\$PLAYWRIGHT_BROWSERS_PATH"')
+    runs = [i for i, ins in enumerate(instructions) if ins.keyword == "RUN" and made.search(ins.args)]
+    assert len(runs) == 1, "ブラウザの置き場を $USERNAME:npm・2775 で作る RUN が 1 つでない"
+    assert "NPM_CONFIG_PREFIX" in instructions[runs[0]].args, "npm のグローバル領域と同じ RUN で作っていない"
+    assert _env_indexes(instructions)[0] < runs[0] < _install_indexes(instructions)[0]
 
 
 def test_base_does_not_install_chromium_browser():
