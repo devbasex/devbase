@@ -90,8 +90,8 @@ def test_all_ready_returns_true(run):
 
 def test_exited_instances_are_all_reported_with_logs(run):
     """受け入れ条件 12・11: 最初の巡で 2 台が終了していれば、両方の名前・理由・ログが入る"""
-    script, error = run({1: ready_at(0), 2: exited_at(0), 3: exited_at(0)},
-                        logs={2: 'ln: Already exists', 3: 'boom'})
+    _script, error = run({1: ready_at(0), 2: exited_at(0), 3: exited_at(0)},
+                         logs={2: 'ln: Already exists', 3: 'boom'})
 
     assert isinstance(error, DockerError) and isinstance(error, DevbaseError)
     assert error.ready == (1,)
@@ -126,7 +126,7 @@ def test_timeout_names_the_instances_not_ready(run):
 
 
 def test_missing_container_is_not_found(run):
-    script, error = run({1: missing, 2: ready_at(0)})
+    _script, error = run({1: missing, 2: ready_at(0)})
 
     assert error.ready == (2,)
     assert [(f.index, f.reason) for f in error.failures] == [(1, 'not_found')]
@@ -136,8 +136,8 @@ def test_missing_container_is_not_found(run):
 
 def test_every_index_lands_on_exactly_one_side(run):
     """I1: 待った番号は、起動できた側とできなかった側のどちらか一方にだけ現れる"""
-    script, error = run({1: ready_at(0), 2: exited_at(1), 3: never_ready, 4: missing,
-                         5: ready_at(2)}, timeout=4)
+    _script, error = run({1: ready_at(0), 2: exited_at(1), 3: never_ready, 4: missing,
+                          5: ready_at(2)}, timeout=4)
 
     failed = [f.index for f in error.failures]
     assert sorted(list(error.ready) + failed) == [1, 2, 3, 4, 5]
@@ -146,8 +146,8 @@ def test_every_index_lands_on_exactly_one_side(run):
 
 def test_decided_instances_are_not_asked_again(run):
     """I3: 1 巡の呼び出しは番号あたり状態 1 回と完了 1 回まで。決まった番号は問い合わせない"""
-    script, error = run({1: ready_at(0), 2: exited_at(0), 3: ready_at(3)},
-                        logs={2: 'x'})
+    script, _error = run({1: ready_at(0), 2: exited_at(0), 3: ready_at(3)},
+                         logs={2: 'x'})
 
     per_round: dict = {}
     for rnd, kind, index in script.calls:
@@ -159,7 +159,7 @@ def test_decided_instances_are_not_asked_again(run):
 
 
 def test_rounds_do_not_exceed_the_limit(run):
-    script, error = run({1: never_ready}, timeout=7)
+    script, _error = run({1: never_ready}, timeout=7)
 
     assert script.round == 7
     assert max(rnd for rnd, _k, _i in script.calls) == 6

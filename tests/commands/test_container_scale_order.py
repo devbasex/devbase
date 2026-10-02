@@ -265,17 +265,23 @@ def _step(name, payload):
     return 'run:' + ' '.join(cmd[2:])
 
 
-def test_scale_runs_the_steps_in_order(scale_harness):
+def test_scale_runs_the_steps_in_order(scale_harness, monkeypatch):
     """C-1: グループの検査 → write_scale → ボリューム → network → 生成 → 既定のサービス → 起動
-    → ready 待ち → bao → ./deploy。"""
+    → ready 待ち → 起動の後の処理 (不足リポジトリの報告 → ./deploy → bao → 窓のタイトル。
+    up と同じ順。#224)。"""
     (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
+    calls = scale_harness['calls']
+    monkeypatch.setattr(container, '_report_missing_repos',
+                        lambda *a, **k: calls.append(('repos', k['indices'])))
+    monkeypatch.setattr(container, '_apply_window_titles',
+                        lambda *a, **k: calls.append(('titles', k['indices'])))
 
     assert container.cmd_scale(3) == 0
 
     steps = [_step(name, payload) for name, payload in scale_harness['calls']]
     assert [s for s in steps if s != 'config'] == [
         'group', 'write_scale', 'volumes', 'network', 'generate', 'default_services',
-        'up', 'wait', 'bao', 'deploy']
+        'up', 'wait', 'repos', 'deploy', 'bao', 'titles']
     # 既定のサービスの解決 (config --services) は生成の後、起動の前に行う
     assert steps.index('generate') < steps.index('config') < steps.index('up')
     up = _up_calls(scale_harness['calls'])[0]
@@ -299,14 +305,16 @@ def test_scale_passes_the_generated_compose_and_new_scale(scale_harness):
 
 
 def test_scale_hooks_cover_only_the_new_instances(scale_harness):
-    """C-2: bao の token と ./deploy は current + 1 から new まで。既存のインスタンスを含めない。"""
+    """C-2: bao の token と ./deploy は current + 1 から new まで。既存のインスタンスを含めない。
+
+    対象は番号の並びで渡す (起動の後の処理の段。#224)。"""
     (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
 
     assert container.cmd_scale(4) == 0
 
     calls = dict((name, payload) for name, payload in scale_harness['calls'] if name != 'run')
     assert calls['bao'] == {'args': ('proj', 4, 'dev'),
-                            'compose_file': scale_harness['override'], 'start': 2}
+                            'compose_file': scale_harness['override'], 'indices': [2, 3, 4]}
     assert calls['deploy'] == [2, 3, 4]
 
 
