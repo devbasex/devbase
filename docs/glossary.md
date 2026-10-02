@@ -84,11 +84,11 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | AWS の丸ごとの取り込み | — | ~/.aws/config と ~/.aws/credentials を切り出さずにそのまま 1 つの tar にして AWS_CONFIG_BASE64 へ書くこと。#314 より前の振る舞い | — | — | `docs/specifications/secret-backend.md` |
 | AWS のプロファイルの連なり | — | 選んだ AWS のプロファイルが動くのに要る節。sso_session が指す [sso-session <名前>] と、source_profile が指すプロファイル（たどれる限り） | — | — | `docs/specifications/secret-backend.md` |
 | グループ名の例 | — | エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す | — | — | `docs/specifications/secret-backend.md` |
-| プロファイル名の正規化 | — | GCP の鍵ファイル名の拡張子を除いた部分のうち [A-Za-z0-9_] 以外を _ へ置き換え、GCP のプロファイル名（GCP_CREDENTIALS_BASE64_<名前> の <名前>）にすること | — | — | — |
-| ホストの region | — | ホストの ~/.aws/config の、選んだ AWS のプロファイルの節にある region の値。方法 3（Access Key）は [default]、方法 2（SSO Profile）は利用者が入れたプロファイル | — | — | — |
-| region の出所 | — | 参照の AWS_DEFAULT_REGION へ書く値をどこから得たか。参照に既にある・ホストの region・利用者の入力・既定の値（ap-northeast-1）の 4 つ | — | — | — |
-| 鍵の確認の結果 | — | AWS の方法 3 で、ホストの [default] の鍵を取り込むかを決めた結果。受け入れた・断った・確認しなかった（ホストに鍵が無い）の 3 つ。方針が import なら受け入れた。skip ならホストに鍵があれば断った、無ければ確認しなかったになる | — | — | — |
-| 鍵ファイルの発見 | — | ~/gcp-credentials/ の *.json を読み、正規化したプロファイル名から鍵ファイルへの対応を作ること。出力を持たない | — | — | — |
+| プロファイル名の正規化 | — | GCP の鍵ファイル名の拡張子を除いた部分のうち [A-Za-z0-9_] 以外を _ へ置き換え、GCP のプロファイル名（GCP_CREDENTIALS_BASE64_<名前> の <名前>）にすること | — | — | `docs/specifications/secret-backend.md` |
+| ホストの region | — | ホストの ~/.aws/config の、選んだ AWS のプロファイルの節にある region の値。方法 3（Access Key）は [default]、方法 2（SSO Profile）は利用者が入れたプロファイル | — | — | `docs/specifications/secret-backend.md` |
+| region の出所 | — | 参照の AWS_DEFAULT_REGION へ書く値をどこから得たか。参照に既にある・ホストの region・利用者の入力・既定の値（ap-northeast-1）の 4 つ | — | — | `docs/specifications/secret-backend.md` |
+| 鍵の確認の結果 | — | AWS の方法 3 で、ホストの [default] の鍵を取り込むかを決めた結果。受け入れた・断った・確認しなかった（ホストに鍵が無い）の 3 つ。方針が import なら受け入れた。skip ならホストに鍵があれば断った、無ければ確認しなかったになる | — | — | `docs/specifications/secret-backend.md` |
+| 鍵ファイルの発見 | — | ~/gcp-credentials/ の *.json を読み、正規化したプロファイル名から鍵ファイルへの対応を作ること。出力を持たない | — | — | `docs/specifications/secret-backend.md` |
 
 ## スナップショット（`snapshot`）
 
@@ -188,16 +188,16 @@ base イメージの entrypoint が起動のたびに行う用意（containers/b
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| 共通のボリューム | — | すべてのコンテナが /persistent/ai にマウントする 1 つのボリューム。グループをまたいで共有する | — | — | — |
-| 共有のリンク | — | グループのボリュームの .claude の下にあり、共通のボリュームの同じ名前のエントリを指す symlink。plugins / skills / commands / CLAUDE.md / settings.json の 5 本。同じグループのすべてのコンテナが同じ 1 本を使う | — | — | — |
-| リンクの段 | — | entrypoint が AI 設定のリンクを張る処理（devbase_setup_ai_settings の 1 回の実行） | — | — | — |
-| 同時起動 | — | 2 つ以上のコンテナのリンクの段が、時間の上で重なって走ること | — | — | — |
-| 修正前の手順 | — | #357 より前のリンクの張り方。「正しいかを見る → 違えば消す → ln -s」を、ほかのコンテナを待たずに行う | — | — | — |
-| リンクの段のロック | — | 共通のボリュームのルートのディレクトリに対して取る排他のロック。修正後のリンクの段どうしを 1 つずつ順に走らせる。ボリュームにファイルを作らない | — | — | — |
-| ロックの待ち時間の上限 | — | リンクの段のロックを待つ秒数の上限（10 秒）。超えたら警告を出してロックなしで進む | — | — | — |
-| 張り替えの試行 | — | リンクを「消す → 張る → 読み直して確かめる」1 回ぶん。正しくなるまで試行の上限（20 回）まで繰り返し、張る操作の成否ではなく読み直した結果で成功を決める | — | — | — |
-| 入れ子のリンク | — | リンクの位置がディレクトリを指すリンクになっているときに、張る操作がその先のディレクトリの中へ作るリンク（例: 共通のボリュームの plugins/plugins）。修正前の手順が同時起動で作ることがある | — | — | — |
-| 排他の作成 | — | エントリを「無いときだけ作る」操作。同時に呼んでも作れるのは 1 つのプロセスだけで、作れたプロセスだけがそのエントリの中身を書く。退避とプレースホルダが使う | — | — | — |
+| 共通のボリューム | — | すべてのコンテナが /persistent/ai にマウントする 1 つのボリューム。グループをまたいで共有する | — | — | `docs/specifications/container-link-stage.md` |
+| 共有のリンク | — | グループのボリュームの .claude の下にあり、共通のボリュームの同じ名前のエントリを指す symlink。plugins / skills / commands / CLAUDE.md / settings.json の 5 本。同じグループのすべてのコンテナが同じ 1 本を使う | — | — | `docs/specifications/container-link-stage.md` |
+| リンクの段 | — | entrypoint が AI 設定のリンクを張る処理（devbase_setup_ai_settings の 1 回の実行） | — | — | `docs/specifications/container-link-stage.md` |
+| 同時起動 | — | 2 つ以上のコンテナのリンクの段が、時間の上で重なって走ること | — | — | `docs/specifications/container-link-stage.md` |
+| 修正前の手順 | — | #357 より前のリンクの張り方。「正しいかを見る → 違えば消す → ln -s」を、ほかのコンテナを待たずに行う | — | — | `docs/specifications/container-link-stage.md` |
+| リンクの段のロック | — | 共通のボリュームのルートのディレクトリに対して取る排他のロック。修正後のリンクの段どうしを 1 つずつ順に走らせる。ボリュームにファイルを作らない | — | — | `docs/specifications/container-link-stage.md` |
+| ロックの待ち時間の上限 | — | リンクの段のロックを待つ秒数の上限（10 秒）。超えたら警告を出してロックなしで進む | — | — | `docs/specifications/container-link-stage.md` |
+| 張り替えの試行 | — | リンクを「消す → 張る → 読み直して確かめる」1 回ぶん。正しくなるまで試行の上限（20 回）まで繰り返し、張る操作の成否ではなく読み直した結果で成功を決める | — | — | `docs/specifications/container-link-stage.md` |
+| 入れ子のリンク | — | リンクの位置がディレクトリを指すリンクになっているときに、張る操作がその先のディレクトリの中へ作るリンク（例: 共通のボリュームの plugins/plugins）。修正前の手順が同時起動で作ることがある | — | — | `docs/specifications/container-link-stage.md` |
+| 排他の作成 | — | エントリを「無いときだけ作る」操作。同時に呼んでも作れるのは 1 つのプロセスだけで、作れたプロセスだけがそのエントリの中身を書く。退避とプレースホルダが使う | — | — | `docs/specifications/container-link-stage.md` |
 
 ## 起動の後の処理（`post-start`）
 
@@ -205,14 +205,14 @@ devbase up / scale がコンテナを起動して待ち、その後にホスト�
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| 起動の後の処理 | — | up と scale が、起動の待ちの後にホストの側から行う処理の並び。不足リポジトリの報告・./deploy の実行・token の配布・窓のタイトルの設定・エディタの自動オープンの 5 つ | — | — | — |
-| インスタンスごとの処理 | — | 起動の後の処理のうち、インスタンスの 1 つ 1 つに行う 4 つ（エディタの自動オープンを除いたもの） | — | — | — |
-| 起動の待ち | — | up と scale が、起動したインスタンスの entrypoint の完了を、制限時間まで待つ段 | — | — | — |
-| 起動できたインスタンス | — | 起動の待ちで、entrypoint の完了を確かめられたインスタンス | — | — | — |
-| 起動できなかったインスタンス | — | 起動の待ちの間に終了した・見つからない・制限時間までに entrypoint の完了を確かめられなかった、のどれかに当たるインスタンス | — | — | — |
-| 増やしたインスタンス | — | devbase scale が足した番号のインスタンス（前の scale の値 + 1 から、新しい scale の値まで） | — | — | — |
-| 後処理の対象 | — | インスタンスごとの処理を行うインスタンスの集合。up は起動できたインスタンス、scale は増やしたインスタンスのうち起動できたもの、やり直しは動いていて entrypoint の完了の印を確かめられたインスタンス | — | — | — |
-| 起動の結果 | — | 起動の待ちが決めた、インスタンスごとの「起動できた」「起動できなかった（理由つき）」の内訳 | — | — | — |
-| 起動できなかった理由 | — | 起動できなかったインスタンスに 1 つ付く区分。終了した・見つからない・時間切れの 3 つ | — | — | — |
-| 起動の後の処理の段 | — | 後処理の対象を受けて、インスタンスごとの処理を決まった順に行う 1 つの関数 | — | — | — |
-| 起動の後の処理のやり直し | — | 動いていて entrypoint の完了の印を確かめられたインスタンスへ、インスタンスごとの処理から ./deploy を除いた 3 つを行い直すコマンド（devbase project post-start） | — | — | — |
+| 起動の後の処理 | — | up と scale が、起動の待ちの後にホストの側から行う処理の並び。不足リポジトリの報告・./deploy の実行・token の配布・窓のタイトルの設定・エディタの自動オープンの 5 つ | — | — | `docs/specifications/post-start.md` |
+| インスタンスごとの処理 | — | 起動の後の処理のうち、インスタンスの 1 つ 1 つに行う 4 つ（エディタの自動オープンを除いたもの） | — | — | `docs/specifications/post-start.md` |
+| 起動の待ち | — | up と scale が、起動したインスタンスの entrypoint の完了を、制限時間まで待つ段 | — | — | `docs/specifications/post-start.md` |
+| 起動できたインスタンス | — | 起動の待ちで、entrypoint の完了を確かめられたインスタンス | — | — | `docs/specifications/post-start.md` |
+| 起動できなかったインスタンス | — | 起動の待ちの間に終了した・見つからない・制限時間までに entrypoint の完了を確かめられなかった、のどれかに当たるインスタンス | — | — | `docs/specifications/post-start.md` |
+| 増やしたインスタンス | — | devbase scale が足した番号のインスタンス（前の scale の値 + 1 から、新しい scale の値まで） | — | — | `docs/specifications/post-start.md` |
+| 後処理の対象 | — | インスタンスごとの処理を行うインスタンスの集合。up は起動できたインスタンス、scale は増やしたインスタンスのうち起動できたもの、やり直しは動いていて entrypoint の完了の印を確かめられたインスタンス | — | — | `docs/specifications/post-start.md` |
+| 起動の結果 | — | 起動の待ちが決めた、インスタンスごとの「起動できた」「起動できなかった（理由つき）」の内訳 | — | — | `docs/specifications/post-start.md` |
+| 起動できなかった理由 | — | 起動できなかったインスタンスに 1 つ付く区分。終了した・見つからない・時間切れの 3 つ | — | — | `docs/specifications/post-start.md` |
+| 起動の後の処理の段 | — | 後処理の対象を受けて、インスタンスごとの処理を決まった順に行う 1 つの関数 | — | — | `docs/specifications/post-start.md` |
+| 起動の後の処理のやり直し | — | 動いていて entrypoint の完了の印を確かめられたインスタンスへ、インスタンスごとの処理から ./deploy を除いた 3 つを行い直すコマンド（devbase project post-start） | — | — | `docs/specifications/post-start.md` |
