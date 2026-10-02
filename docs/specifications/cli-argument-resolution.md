@@ -10,7 +10,7 @@
 | 入口 | 名前の位置 | 解決するもの |
 | --- | --- | --- |
 | `devbase <sub> <name>`（ショートカット） | 2 番目 | `up` `down` `ps` `scale` `login` `build` `rebuild` `open` |
-| `devbase project <sub> <name>` | 3 番目 | `up` `down` `ps` `logs` `scale` `rebuild` `open` |
+| `devbase project <sub> <name>` | 3 番目 | `up` `down` `ps` `logs` `scale` `rebuild` `open` `post-start` |
 | `devbase container <sub> …` / `ct`（非推奨） | — | 解決しない（`[name]` を受け付けない） |
 | `python -m devbase.cli project <sub> <name>` | 3 番目 | Python 側のフォールバック（`_resolve_project_name`） |
 

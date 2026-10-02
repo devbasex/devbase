@@ -389,7 +389,7 @@ Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP 
 
 ### ウィンドウタイトル（どの窓がどのプロジェクトか）
 
-VS Code の既定タイトルは編集中ファイル名が先頭に来るため、複数プロジェクトの窓を並べるとどれがどれか判別できません。devbase は `up` のたびに各 dev コンテナへ **コンテナ名始まりのタイトル**を設定します。
+VS Code の既定タイトルは編集中ファイル名が先頭に来るため、複数プロジェクトの窓を並べるとどれがどれか判別できません。devbase は `up` のたびに起動できた各 dev コンテナへ、`scale` では増やして起動できた dev コンテナへ **コンテナ名始まりのタイトル**を設定します。起動できなかったコンテナを起こし直した後は、`devbase project post-start [name]` で設定し直せます（[CLI リファレンス](cli-reference/02-project.md#devbase-project-post-start)）。
 
 ```
 myapp-dev-1 - main.py

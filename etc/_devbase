@@ -84,6 +84,7 @@ _devbase() {
         'list:List projects (NAME / PLUGIN / STATUS)'
         'profile:Start / stop compose profile services'
         'open:Open the editor attached to the dev container'
+        'post-start:Redo the post-start steps on running instances'
     )
 
     container_subcommands=(
@@ -220,6 +221,11 @@ _devbase() {
                 open)
                     _arguments \
                         '--open-index[Container index to open]:index:' \
+                        '--context[Docker context]:context:' \
+                        '1:name:_devbase_project_names'
+                    ;;
+                post-start)
+                    _arguments \
                         '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
                     ;;
