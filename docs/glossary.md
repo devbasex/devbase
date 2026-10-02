@@ -176,3 +176,17 @@ base の設定が派生イメージと lfm へ届く道筋（containers/*/Docker
 | 取り込み | — | lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと | — | — | `docs/specifications/lfm-base-settings.md` |
 | 到達の検査 | — | base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py） | — | — | `docs/specifications/lfm-base-settings.md` |
 | 除外表 | — | 到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧 | — | — | `docs/specifications/lfm-base-settings.md` |
+
+## 起動の後の処理（`post-start`）
+
+devbase up / scale がコンテナを起動して待ち、その後にホストの側から行う処理（lib/devbase/commands/container.py）
+
+| 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
+| --- | --- | --- | --- | --- | --- |
+| 起動の後の処理 | — | up と scale が、起動の待ちの後にホストの側から行う処理の並び。不足リポジトリの報告・./deploy の実行・token の配布・窓のタイトルの設定・エディタの自動オープンの 5 つ | — | — | — |
+| インスタンスごとの処理 | — | 起動の後の処理のうち、インスタンスの 1 つ 1 つに行う 4 つ（エディタの自動オープンを除いたもの） | — | — | — |
+| 起動の待ち | — | up と scale が、起動したインスタンスの entrypoint の完了を、制限時間まで待つ段 | — | — | — |
+| 起動できたインスタンス | — | 起動の待ちで、entrypoint の完了を確かめられたインスタンス | — | — | — |
+| 起動できなかったインスタンス | — | 起動の待ちの間に終了した・見つからない・制限時間までに entrypoint の完了を確かめられなかった、のどれかに当たるインスタンス | — | — | — |
+| 増やしたインスタンス | — | devbase scale が足した番号のインスタンス（前の scale の値 + 1 から、新しい scale の値まで） | — | — | — |
+| 後処理の対象 | — | インスタンスごとの処理を行うインスタンスの集合。up は起動できたインスタンス、scale は増やしたインスタンスのうち起動できたもの | — | — | — |
