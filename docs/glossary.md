@@ -176,3 +176,15 @@ base の設定が派生イメージと lfm へ届く道筋（containers/*/Docker
 | 取り込み | — | lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと | — | — | `docs/specifications/lfm-base-settings.md` |
 | 到達の検査 | — | base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py） | — | — | `docs/specifications/lfm-base-settings.md` |
 | 除外表 | — | 到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧 | — | — | `docs/specifications/lfm-base-settings.md` |
+
+## コンテナの起動（`container-start`）
+
+base イメージの entrypoint が起動のたびに行う用意（containers/base/entrypoint.sh）
+
+| 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
+| --- | --- | --- | --- | --- | --- |
+| 共通のボリューム | — | すべてのコンテナが /persistent/ai にマウントする 1 つのボリューム。グループをまたいで共有する | — | — | — |
+| 共有のリンク | — | グループのボリュームの .claude の下にあり、共通のボリュームの同じ名前のエントリを指す symlink。plugins / skills / commands / CLAUDE.md / settings.json の 5 本。同じグループのすべてのコンテナが同じ 1 本を使う | — | — | — |
+| リンクの段 | — | entrypoint が AI 設定のリンクを張る処理（devbase_setup_ai_settings の 1 回の実行） | — | — | — |
+| 同時起動 | — | 2 つ以上のコンテナのリンクの段が、時間の上で重なって走ること | — | — | — |
+| 修正前の手順 | — | #357 より前のリンクの張り方。「正しいかを見る → 違えば消す → ln -s」を、ほかのコンテナを待たずに行う | — | — | — |

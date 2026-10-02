@@ -55,6 +55,11 @@
       "id": "image-lineage",
       "name": "イメージの継承",
       "meaning": "base の設定が派生イメージと lfm へ届く道筋（containers/*/Dockerfile）"
+    },
+    {
+      "id": "container-start",
+      "name": "コンテナの起動",
+      "meaning": "base イメージの entrypoint が起動のたびに行う用意（containers/base/entrypoint.sh）"
     }
   ],
   "terms": [
@@ -645,6 +650,36 @@
       "context": "ci",
       "meaning": "固有の語の検査が当たりにしない行。パスと行の形の組で定め、語を含まない",
       "source": "docs/specifications/ci-checks.md"
+    },
+    {
+      "term": "共通のボリューム",
+      "context": "container-start",
+      "meaning": "すべてのコンテナが /persistent/ai にマウントする 1 つのボリューム。グループをまたいで共有する",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "共有のリンク",
+      "context": "container-start",
+      "meaning": "グループのボリュームの .claude の下にあり、共通のボリュームの同じ名前のエントリを指す symlink。plugins / skills / commands / CLAUDE.md / settings.json の 5 本。同じグループのすべてのコンテナが同じ 1 本を使う",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "リンクの段",
+      "context": "container-start",
+      "meaning": "entrypoint が AI 設定のリンクを張る処理（devbase_setup_ai_settings の 1 回の実行）",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "同時起動",
+      "context": "container-start",
+      "meaning": "2 つ以上のコンテナのリンクの段が、時間の上で重なって走ること",
+      "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "修正前の手順",
+      "context": "container-start",
+      "meaning": "#357 より前のリンクの張り方。「正しいかを見る → 違えば消す → ln -s」を、ほかのコンテナを待たずに行う",
+      "pending_source": "issues/issue-357-requirements.md"
     }
   ]
 }
