@@ -217,3 +217,41 @@ def test_zsh_completion_mentions_open():
     text = ZSH_COMPLETION.read_text()
     assert text.count("'open:") == 3   # トップレベル / project / container
     assert "--open-index" in text
+
+
+# 「- で始まれば旗、そうでなければプロジェクト名」の分岐の現状固定（I-004）
+_NAMES = {"web", "api", "linked"}
+
+
+@pytest.mark.parametrize("words, cword, expected", [
+    ("devbase open ''", 2, _NAMES),
+    ("devbase open '-'", 2, {"--open-index", "--context"}),
+    ("devbase ps ''", 2, _NAMES),
+    ("devbase ps '-'", 2, {"--all", "-a"}),
+    ("devbase project ps ''", 3, _NAMES),
+    ("devbase project ps '-'", 3, {"--all", "-a"}),
+    ("devbase project logs ''", 3, _NAMES),
+    ("devbase project logs '-'", 3, {"--follow", "-f", "--tail"}),
+    ("devbase project open ''", 3, _NAMES),
+    ("devbase project open '-'", 3, {"--open-index", "--context"}),
+    ("devbase project post-start ''", 3, _NAMES),
+    ("devbase project post-start '-'", 3, {"--context"}),
+    ("devbase project scale ''", 3, _NAMES),
+    ("devbase project up ''", 3, _NAMES),
+    ("devbase project down ''", 3, _NAMES),
+])
+def test_bash_flag_or_project_name_branch(fake_root, words, cword, expected):
+    assert set(_bash_complete(words, cword, fake_root)) == expected
+
+
+@pytest.mark.parametrize("words, cword, expected", [
+    ("devbase container open '-'", 3, {"--open-index", "--context"}),
+    ("devbase container ps '-'", 3, {"--all", "-a"}),
+    ("devbase ct logs '-'", 3, {"--follow", "-f", "--tail"}),
+    ("devbase container open ''", 3, set()),
+    ("devbase container ps ''", 3, set()),
+    ("devbase ct logs ''", 3, set()),
+    ("devbase ps web ''", 3, set()),
+])
+def test_bash_container_flags_only_without_names(fake_root, words, cword, expected):
+    assert set(_bash_complete(words, cword, fake_root)) == expected
