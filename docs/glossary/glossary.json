@@ -652,6 +652,34 @@
       "meaning": "GCP の鍵ファイル名の拡張子を除いた部分のうち [A-Za-z0-9_] 以外を _ へ置き換え、GCP のプロファイル名（GCP_CREDENTIALS_BASE64_<名前> の <名前>）にすること",
       "source": "",
       "pending_source": "issues/issue-334-requirements.md"
+    },
+    {
+      "term": "ホストの region",
+      "context": "secret",
+      "meaning": "ホストの ~/.aws/config の、選んだ AWS のプロファイルの節にある region の値。方法 3（Access Key）は [default]、方法 2（SSO Profile）は利用者が入れたプロファイル",
+      "source": "",
+      "pending_source": "issues/issue-334-design.md"
+    },
+    {
+      "term": "region の出所",
+      "context": "secret",
+      "meaning": "参照の AWS_DEFAULT_REGION へ書く値をどこから得たか。参照に既にある・ホストの region・利用者の入力・既定の値（ap-northeast-1）の 4 つ",
+      "source": "",
+      "pending_source": "issues/issue-334-design.md"
+    },
+    {
+      "term": "鍵の確認の結果",
+      "context": "secret",
+      "meaning": "AWS の方法 3 で、ホストの [default] の鍵を取り込むかを決めた結果。受け入れた・断った・確認しなかった（ホストに鍵が無い）の 3 つ。方針が import なら受け入れた、skip なら断ったになる",
+      "source": "",
+      "pending_source": "issues/issue-334-design.md"
+    },
+    {
+      "term": "鍵ファイルの発見",
+      "context": "secret",
+      "meaning": "~/gcp-credentials/ の *.json を読み、正規化したプロファイル名から鍵ファイルへの対応を作ること。出力を持たない",
+      "source": "",
+      "pending_source": "issues/issue-334-design.md"
     }
   ]
 }

@@ -85,6 +85,10 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | AWS のプロファイルの連なり | — | 選んだ AWS のプロファイルが動くのに要る節。sso_session が指す [sso-session <名前>] と、source_profile が指すプロファイル（たどれる限り） | — | — | `docs/specifications/secret-backend.md` |
 | グループ名の例 | — | エラー文・使い方の文言がグループ名の書き方として示す名前。lib/devbase/env/groups.py の定義 1 か所から出す | — | — | `docs/specifications/secret-backend.md` |
 | プロファイル名の正規化 | — | GCP の鍵ファイル名の拡張子を除いた部分のうち [A-Za-z0-9_] 以外を _ へ置き換え、GCP のプロファイル名（GCP_CREDENTIALS_BASE64_<名前> の <名前>）にすること | — | — | — |
+| ホストの region | — | ホストの ~/.aws/config の、選んだ AWS のプロファイルの節にある region の値。方法 3（Access Key）は [default]、方法 2（SSO Profile）は利用者が入れたプロファイル | — | — | — |
+| region の出所 | — | 参照の AWS_DEFAULT_REGION へ書く値をどこから得たか。参照に既にある・ホストの region・利用者の入力・既定の値（ap-northeast-1）の 4 つ | — | — | — |
+| 鍵の確認の結果 | — | AWS の方法 3 で、ホストの [default] の鍵を取り込むかを決めた結果。受け入れた・断った・確認しなかった（ホストに鍵が無い）の 3 つ。方針が import なら受け入れた、skip なら断ったになる | — | — | — |
+| 鍵ファイルの発見 | — | ~/gcp-credentials/ の *.json を読み、正規化したプロファイル名から鍵ファイルへの対応を作ること。出力を持たない | — | — | — |
 
 ## スナップショット（`snapshot`）
 
