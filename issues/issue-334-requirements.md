@@ -11,8 +11,8 @@
 >
 > ## 再現（1）
 >
-> 1. `$DEVBASE_ROOT/secrets/host-import.yml` に `groups: {kkg: skip}` を書く
-> 2. kkg のプロジェクトで端末から `devbase env init` → 方法に 3 → 鍵の 2 問は空で答える
+> 1. `$DEVBASE_ROOT/secrets/host-import.yml` に `groups: {<グループ>: skip}` を書く
+> 2. そのグループのプロジェクトで端末から `devbase env init` → 方法に 3 → 鍵の 2 問は空で答える
 > 3. `AWS_DEFAULT_REGION: 自動取得完了 (ap-northeast-1)` と出て書かれる
 >
 > `bf2b929` でも再現する（`HostImport(policy=SKIP)` で `_collect_access_keys` を直接呼び、`REGION written: ap-northeast-1`。2026-09-29）。
