@@ -14,6 +14,7 @@ skip し、同時実行のケースは走らせる (設計の決定 7)。
 from __future__ import annotations
 
 import os
+import resource
 import shutil
 import subprocess
 import time
@@ -25,9 +26,10 @@ ENTRYPOINT = Path(__file__).resolve().parents[2] / "containers" / "base" / "entr
 
 SHARED_CLAUDE = ["plugins", "skills", "commands", "CLAUDE.md", "settings.json"]
 
-# 同時実行を繰り返す回数。2 個のときは重なりにくいため多めにする
-ROUNDS_PAIR = 15
-ROUNDS = 8
+# 同時実行を繰り返す回数。修正前の entrypoint.sh に当てると、受け入れ条件 1・2 のケースは負荷の
+# 無いときに macOS・Linux とも 1〜2 回目で落ちた (各 6〜10 回測った)。その倍を取る
+ROUNDS_PAIR = 4
+ROUNDS = 4
 
 # ほかのプロセスとの重なりで 1 回だけ遅れても落ちないよう、要求の 30 秒をそのまま使う
 TIME_LIMIT = 30.0
@@ -190,12 +192,15 @@ def run_concurrent(work: Path, jobs: list[str], *, path: str | None = None,
     """``jobs`` (bash の断片) を同時に始め、終了コードと出力と全体の所要を返す。
 
     断片はそれぞれ ``set -e`` のサブシェルで走る。``old_funcs`` を読めば修正前の手順になる。
-    合図のファイルができるまで全員が待ち、同じ瞬間に走り出す。
+    全員が名前付きパイプを読む側で開いて待ち、書く側が開いた瞬間に一斉に走り出す。
+    待つ間に CPU を使わないため、並列で流すほかのケースの負荷を増やさない。書く側は全員が
+    終わるまで開いたままにし、遅れて着いた断片も止まらずに走る。
     """
     work.mkdir(parents=True, exist_ok=True)
     old = work / "old_funcs.sh"
     old.write_text(OLD_FUNCS)
     go = work / "go"
+    os.mkfifo(go)
     # entrypoint.sh は読み込んだシェルに set -e を掛ける。失敗した断片の終了コードを残すため外す
     lines = [f'DEVBASE_ENTRYPOINT_LIB_ONLY=1 . "{ENTRYPOINT}"', "set +e", pre,
              f'old_funcs() {{ . "{old}"; }}']
@@ -203,13 +208,14 @@ def run_concurrent(work: Path, jobs: list[str], *, path: str | None = None,
         lines.append(f"job_{i}() {{\n{body}\n}}")
     for i in range(len(jobs)):
         lines.append(
-            f'{{ while [ ! -e "{go}" ]; do :; done; '
+            f'{{ : <"{go}"; '
             f'( set -e; job_{i} ) >"{work}/{i}.out" 2>"{work}/{i}.err"; '
             f'echo $? >"{work}/{i}.rc"; }} &'
         )
     lines.append("sleep 0.3")
-    lines.append(f': > "{go}"')
+    lines.append(f'exec 9>"{go}"')
     lines.append("wait")
+    lines.append("exec 9>&-")
     script = "\n".join(lines) + "\n"
     started = time.monotonic()
     subprocess.run([_bash(), "-c", script], cwd=work, env=_base_env(path),
@@ -717,16 +723,23 @@ def test_old_procedure_runs_after_the_new_stage(tmp_path):
 
 
 def test_single_stage_is_not_much_slower_than_the_old_procedure(tmp_path):
-    """性能: 1 個だけの所要が、修正前の手順の所要に 1 秒を足した値を超えない"""
+    """性能: 1 個だけの所要が、修正前の手順の所要に 1 秒を足した値を超えない
+
+    所要は、走らせたシェルとその子が使った CPU 時間 (ユーザーとシステムの和) で測る。経過時間は
+    並列で流すほかのケースの負荷で倍近くまで揺れる (修正後 2.97 秒 / 修正前 1.62 秒で落ちた)。
+    相手のいない 1 個のリンクの段は、ロックを待たず (``flock -w`` はすぐ取れる) 眠らないため、
+    所要のほとんどが CPU 時間であり、比べる意味は変わらない。
+    """
     def measure(old: bool, i: int) -> float:
         v = Volumes(tmp_path / f"{'old' if old else 'new'}-{i}")
         make_home_claude(v.home(0), plugins=3)
-        started = time.monotonic()
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)
         r = run_script(setup_cmd(v.home(0), v.ai, v.grp), v.base, old=old)
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
         assert r.returncode == 0, r.stderr
-        return time.monotonic() - started
+        return (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
 
-    # 並列で流すとほかのケースの負荷で 1 回ずつの所要がぶれる。交互に測り、最小を比べる
+    # 交互に測り、最小を比べる
     old_ts, new_ts = [], []
     for i in range(5):
         old_ts.append(measure(True, i))

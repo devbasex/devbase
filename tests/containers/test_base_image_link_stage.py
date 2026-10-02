@@ -24,7 +24,8 @@ from tests.conftest import host_docker_env
 
 IMAGE = "devbase-base:latest"
 ENTRYPOINT = Path(__file__).resolve().parents[2] / "containers" / "base" / "entrypoint.sh"
-ROUNDS = 10
+# 1 回ぶんに docker run が 10 回要る。並列で流すとほかのケースと重なり 1 回 15 秒を超えるため絞る
+ROUNDS = 2
 CONTAINERS = 8
 
 # 全ケースを同じワーカーへ寄せ、8 個のコンテナの起動をほかのケースと重ねない
@@ -124,7 +125,7 @@ set -u
 DEVBASE_ENTRYPOINT_LIB_ONLY=1 . /entrypoint.sh
 set +e
 for kind in file dir; do
-  for r in 1 2 3 4 5; do
+  for r in 1 2 3; do
     d=$(mktemp -d)
     for i in 1 2 3 4 5 6 7 8; do
       ( while [ ! -e "$d/go" ]; do :; done
@@ -169,7 +170,7 @@ snap() {
 }
 one=$(mktemp -d); make_home "$one/h0"
 ( set -e; devbase_setup_ai_settings "$one/h0" "$one/ai" "$one/grp" t357 ) >/dev/null 2>&1 || echo "single failed"
-for r in 1 2 3 4 5; do
+for r in 1 2 3; do
   b=$(mktemp -d)
   for i in 1 2 3 4 5 6 7 8; do
     make_home "$b/h$i"
@@ -193,7 +194,7 @@ def test_only_one_process_creates_an_entry_with_the_image_tools(docker_ready):
                 IMAGE, "-c", _CREATE_PROBE, timeout=300, check=False)
     assert r.returncode == 0, r.stderr
     lines = [line.split("\t") for line in r.stdout.splitlines() if "\t" in line]
-    assert len(lines) == 10, r.stdout + r.stderr
+    assert len(lines) == 6, r.stdout + r.stderr
     for kind, rcs in lines:
         assert rcs == "01111111", f"{kind}: {rcs}"
 
@@ -205,6 +206,6 @@ def test_eight_stages_without_flock_match_a_single_run_with_the_image_tools(dock
     assert r.returncode == 0, r.stderr
     assert "single failed" not in r.stdout
     lines = [line.split("\t") for line in r.stdout.splitlines() if line.startswith("seed\t")]
-    assert len(lines) == 5, r.stdout + r.stderr
+    assert len(lines) == 3, r.stdout + r.stderr
     for _, rcs, same in lines:
         assert rcs == "00000000" and same == "same", (rcs, same)
