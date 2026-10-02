@@ -53,7 +53,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     > /etc/apt/sources.list.d/github-cli.list; \
     # NodeSource リポジトリ (Active LTS を追従。バージョン固定しない)
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -; \
-    # ブラウザ: amd64はChrome+Chromium、arm64はChromium
+    # システムの Chrome は amd64 だけに入れる。Chromium は両アーキとも Playwright のものを使う
+    # (下の利用者の RUN が /opt/ms-playwright へ取得する)。Ubuntu の chromium-browser は
+    # snap スタブでコンテナの中では起動しないため入れない (#220)
     arch="$(dpkg --print-architecture)"; \
     BROWSER_PKG=""; \
     if [ "$arch" = "amd64" ]; then \
@@ -68,7 +70,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin \
-    terraform gh nodejs chromium-browser $BROWSER_PKG; \
+    terraform gh nodejs $BROWSER_PKG; \
     # クリーンアップ
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
@@ -106,12 +108,20 @@ RUN set -eux; \
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH="/usr/local/share/npm-global/bin:${PATH}"
 
+# Playwright のブラウザの置き場。~/.cache の既定の置き場は下の片付けで消えるため、
+# 片付けの対象外の /opt に置いてイメージに残す (#220)。ENV にするのは docker exec の
+# 非対話の処理からも同じ置き場を使うため。/opt は lfm が取り込むため、lfm も同じ値で宣言する。
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+
 # AWS CLI + gcloud SDK + uv + npm globals（1レイヤーにまとめる）
 RUN set -eux; \
     # 所有を $USERNAME:npm、ディレクトリへ setgid を付けて作る。
     # 後から誰が入れてもグループが npm のまま揃う
     # (UID/GID を振り直しても壊れない Dev Containers 方式)。
     install -d -m 2775 -o "$USERNAME" -g npm "$NPM_CONFIG_PREFIX"; \
+    # Playwright のブラウザの置き場も同じ形で作る。下の利用者の RUN が取得し、
+    # playwright-kit などが実行時に別の版を同じ置き場へ取得する (#220)
+    install -d -m 2775 -o "$USERNAME" -g npm "$PLAYWRIGHT_BROWSERS_PATH"; \
     # AWS CLI v2
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip; \
     unzip -q /tmp/awscliv2.zip -d /tmp; \
@@ -221,11 +231,12 @@ RUN set -eux; \
     else \
     echo "Unsupported architecture: $ARCH, skipping Kiro CLI installation"; \
     fi; \
-    # Playwright browsers
+    # Playwright の Chromium。置き場 ($PLAYWRIGHT_BROWSERS_PATH) は上の root の RUN が作る (#220)
     npx playwright install --with-deps chromium; \
     # クリーンアップ。--with-deps の sudo apt や Node24/npm11 の
     # /tmp/node-compile-cache が root 所有ファイルを残すため sudo で削除する
     # (非 root の rm では Permission denied になりビルドが失敗する)。
+    # ブラウザの置き場 ($PLAYWRIGHT_BROWSERS_PATH) は消さない。
     sudo rm -rf /tmp/* \
     ~/.cache \
     ~/.npm \

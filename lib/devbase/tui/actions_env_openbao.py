@@ -7,6 +7,8 @@ token は入力させず、保存もしない (前提 1・決定 9)。backend �
 - 空のまま確定した欄は変えない (I6。``use`` の「引数が無ければ既存を引き継ぐ」で保つ)
 - ``role_id`` / ``secret_id`` は伏せ字の欄で受け、同じプロセスの属性で渡す (I9・決定 8)
 - 保存の後に接続を確かめる。失敗しても保存した設定は残し、欄の入力へ戻れる (E11)
+- グループ別の置き場でプロジェクトの外なら、確かめる前に対象のグループを選ばせる (#386)。
+  ``env backend test`` はそこで ``--group`` を求めるため (#315)。選択で戻ると確かめずに戻る
 """
 
 from __future__ import annotations
@@ -69,6 +71,21 @@ def _use(devbase_root: Path, url: str, role_id: str, secret_id: str) -> int:
         cache=None, layout=None, group_aliases=None)
 
 
+def _check_group_attrs(devbase_root: Path) -> dict:
+    """確認 (``env backend test``) に渡すグループ。選ばせるのはプロジェクトの外のときだけ。
+
+    プロジェクトの中では ``{}`` を返し、``env backend test`` がグループの宣言から決める。
+    外では sync / init と同じ部品 (``actions_env._group_attrs``) で選ばせる。グループ別の
+    置き場でなければ、そこで ``{}`` が返る。戻る (Esc・←) と ``flow.BackOut`` が上がる。
+    """
+    from devbase.commands.env import _current_project_name
+    from devbase.tui import actions_env
+
+    if _current_project_name(devbase_root) is not None:
+        return {}
+    return actions_env._group_attrs(devbase_root)
+
+
 @flow.collect_args
 def run(devbase_root: Path):
     """env メニューの「OpenBao の接続設定」。
@@ -101,7 +118,12 @@ def run(devbase_root: Path):
             return 0
         if _use(devbase_root, url, role_id, secret_id) != 0:
             continue                    # use の文言が出ている。test を呼ばずに欄へ戻る
-        rc = _dispatch_backend(devbase_root, "test")
+        try:
+            group_attrs = _check_group_attrs(devbase_root)
+        except flow.BackOut:
+            print("接続を確かめずに戻ります。保存した設定は残っています。")
+            return flow.ARG_CANCEL
+        rc = _dispatch_backend(devbase_root, "test", **group_attrs)
         if rc == 0:
             return 0
         logger.warning("接続を確かめられませんでした。保存した設定は残っています")

@@ -15,10 +15,23 @@
   entrypoint が起動のたびに印を消してから作り直します（base イメージを建て直した後のコンテナから効きます）。
 
 ### Changed
+- **グループの `~/.claude/settings.json` と `~/.claude/CLAUDE.md` が通常のファイルに置き換わっていたとき、
+  中身を控えに残してから張り直すようにしました（#372）。** これまでは次の起動で黙って消していました。
+  中身が共通の設定と違えば、同じ `.claude` の下に `<名前>.replaced-<UTC の時刻>` を残し、起動の記録
+  （`docker logs`）に `WARNING:` の行でパスを知らせます。控えは共通の設定へ自動では取り込まず、自動では
+  消しません。戻し方は `docs/user/container-operations.md` にあります。反映には `devbase build base` で
+  base イメージを建て直してください。
 - **`containers/lfm` のもとのイメージを `nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04` に上げました（#337）。**
   GPU を使うホストの NVIDIA ドライバは CUDA 13.4 以上に対応している必要があります（`nvidia-smi` の
   `CUDA Version` で確かめられます）。足りないと `--gpus all` の起動が requirement error で止まるので、
   ドライバを最新に上げてから `devbase build lfm` で建て直してください。
+- **base イメージに Playwright の Chromium を残すようにしました（#220）。** これまではビルドで取得した
+  ブラウザを直後の片付けで捨てており、arm64（Apple Silicon）のコンテナには起動できる Chromium が
+  ありませんでした。ブラウザの置き場は `/opt/ms-playwright` で、環境変数 `PLAYWRIGHT_BROWSERS_PATH` が
+  指します。実行時に `playwright install` で取得するブラウザも `~/.cache/ms-playwright` ではなくここへ
+  入ります。起動できなかった `chromium-browser`（Ubuntu の snap スタブ）は外しました。システムの Chrome
+  （`google-chrome-stable`）は今までどおり amd64 だけに入ります。base の後に派生イメージと lfm を建て直すと
+  届きます。
 
 ### Fixed
 - **スナップショットの差分バックアップが、毎回ボリューム全体を控えていたのを直しました。**

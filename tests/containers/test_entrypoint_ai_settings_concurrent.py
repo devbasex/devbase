@@ -314,8 +314,10 @@ def assert_no_ln_lines(jobs: list[Job]) -> None:
 
 
 def assert_no_leftovers(v: Volumes) -> None:
-    """受け入れ条件 11・I8: 一時的な名前のエントリもロックのためのエントリも無い"""
-    assert sorted(os.listdir(v.grp / ".claude")) == sorted(SHARED_CLAUDE)
+    """受け入れ条件 11・I8: 一時的な名前のエントリもロックのためのエントリも無い
+    (置き換わった共有のリンクの控えは #372 で残すものなので除く)"""
+    names = [n for n in os.listdir(v.grp / ".claude") if ".replaced-" not in n]
+    assert sorted(names) == sorted(SHARED_CLAUDE)
     assert set(os.listdir(v.ai)) <= {".codex", ".serena", ".ssh", ".kiro", "share", ".claude"}
     assert set(os.listdir(v.grp)) <= {".claude.json", ".claude", ".gemini", ".local",
                                       ".shellrc.d"}

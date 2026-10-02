@@ -122,45 +122,59 @@ class Summary:
     apt: set[str]
 
 
+def _on_arg(ins: Instruction, variables: dict[str, str], summary: Summary) -> None:
+    name, _, default = ins.args.partition("=")
+    variables.setdefault(name.strip(), default.strip().strip('"'))
+
+
+def _on_env(ins: Instruction, variables: dict[str, str], summary: Summary) -> None:
+    for name, value in _env_pairs(ins.args):
+        value = _expand(value, variables) if name != "PATH" else value
+        if name == "PATH":
+            for element in value.split(":"):
+                if element not in ("${PATH}", "$PATH") and element not in summary.path:
+                    summary.path.append(element)
+        else:
+            summary.env[name] = value
+            variables[name] = value
+
+
+def _on_copy(ins: Instruction, variables: dict[str, str], summary: Summary) -> None:
+    flags, rest = _split_flags(ins.args)
+    if len(rest) < 2:
+        return
+    sources, dest = rest[:-1], _expand(rest[-1], variables)
+    if "from" not in flags:
+        summary.placed_files.append(dest)
+        return
+    if flags["from"] != BASE_IMAGE:
+        return
+    for src in sources:
+        placed = posixpath.join(dest, posixpath.basename(src)) \
+            if len(sources) > 1 or dest.endswith("/") else dest
+        if placed.rstrip("/") == src.rstrip("/"):
+            summary.imports.append(src.rstrip("/") or "/")
+
+
+def _on_run(ins: Instruction, variables: dict[str, str], summary: Summary) -> None:
+    for target in re.findall(r">>?\s*((?:~|\$HOME)/[^\s;&|'\"]+)", ins.args):
+        path = HOME + "/" + target.split("/", 1)[1]
+        if path not in summary.written_files:
+            summary.written_files.append(path)
+    for chunk in re.findall(r"apt-get install\s+(.*?)(?:;|&&|$)", ins.args, re.DOTALL):
+        summary.apt.update(t for t in chunk.split() if not t.startswith("-") and "$" not in t)
+
+
+_HANDLERS = {"ARG": _on_arg, "ENV": _on_env, "COPY": _on_copy, "RUN": _on_run}
+
+
 def summarize(text: str) -> Summary:
     variables: dict[str, str] = {}
     summary = Summary([], [], {}, [], [], set())
     for ins in parse(text):
-        if ins.keyword == "ARG":
-            name, _, default = ins.args.partition("=")
-            variables.setdefault(name.strip(), default.strip().strip('"'))
-        elif ins.keyword == "ENV":
-            for name, value in _env_pairs(ins.args):
-                value = _expand(value, variables) if name != "PATH" else value
-                if name == "PATH":
-                    for element in value.split(":"):
-                        if element not in ("${PATH}", "$PATH") and element not in summary.path:
-                            summary.path.append(element)
-                else:
-                    summary.env[name] = value
-                    variables[name] = value
-        elif ins.keyword == "COPY":
-            flags, rest = _split_flags(ins.args)
-            if len(rest) < 2:
-                continue
-            sources, dest = rest[:-1], _expand(rest[-1], variables)
-            if "from" not in flags:
-                summary.placed_files.append(dest)
-                continue
-            if flags["from"] != BASE_IMAGE:
-                continue
-            for src in sources:
-                placed = posixpath.join(dest, posixpath.basename(src)) \
-                    if len(sources) > 1 or dest.endswith("/") else dest
-                if placed.rstrip("/") == src.rstrip("/"):
-                    summary.imports.append(src.rstrip("/") or "/")
-        elif ins.keyword == "RUN":
-            for target in re.findall(r">>?\s*((?:~|\$HOME)/[^\s;&|'\"]+)", ins.args):
-                path = HOME + "/" + target.split("/", 1)[1]
-                if path not in summary.written_files:
-                    summary.written_files.append(path)
-            for chunk in re.findall(r"apt-get install\s+(.*?)(?:;|&&|$)", ins.args, re.DOTALL):
-                summary.apt.update(t for t in chunk.split() if not t.startswith("-") and "$" not in t)
+        handler = _HANDLERS.get(ins.keyword)
+        if handler:
+            handler(ins, variables, summary)
     return summary
 
 

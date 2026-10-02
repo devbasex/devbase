@@ -198,8 +198,8 @@ base イメージの entrypoint が起動のたびに行う用意（containers/b
 | 張り替えの試行 | — | リンクを「消す → 張る → 読み直して確かめる」1 回ぶん。正しくなるまで試行の上限（20 回）まで繰り返し、張る操作の成否ではなく読み直した結果で成功を決める | — | — | `docs/specifications/container-link-stage.md` |
 | 入れ子のリンク | — | リンクの位置がディレクトリを指すリンクになっているときに、張る操作がその先のディレクトリの中へ作るリンク（例: 共通のボリュームの plugins/plugins）。修正前の手順が同時起動で作ることがある | — | — | `docs/specifications/container-link-stage.md` |
 | 排他の作成 | — | エントリを「無いときだけ作る」操作。同時に呼んでも作れるのは 1 つのプロセスだけで、作れたプロセスだけがそのエントリの中身を書く。退避とプレースホルダが使う | — | — | `docs/specifications/container-link-stage.md` |
-| 置き換わった共有のリンク | — | 共有のリンクの位置にある、symlink ではない通常のファイル。コンテナの中のツールが一時ファイルの rename で settings.json へ書くと、共有のリンクがこれに置き換わる | — | — | — |
-| 共有のリンクの控え | — | 置き換わった共有のリンクの中身が共通のボリュームの実体と違うとき、リンクの段が張り直す前にグループのボリュームの同じ .claude の下へ別の名前で残したファイル。自動では消さず、共通のボリュームへも取り込まない | — | — | — |
+| 置き換わった共有のリンク | — | 共有のリンクの位置にある、symlink ではない通常のファイル。コンテナの中のツールが一時ファイルの rename で settings.json へ書くと、共有のリンクがこれに置き換わる | — | — | `docs/specifications/container-link-stage.md` |
+| 共有のリンクの控え | — | 置き換わった共有のリンクの中身が共通のボリュームの実体と違うとき、リンクの段が張り直す前にグループのボリュームの同じ .claude の下へ別の名前で残したファイル。自動では消さず、共通のボリュームへも取り込まない | — | — | `docs/specifications/container-link-stage.md` |
 
 ## 起動の後の処理（`post-start`）
 
@@ -225,8 +225,8 @@ base と lfm のイメージに入るブラウザと、その置き場（contain
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| ブラウザの置き場 | — | Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す。この変更で /opt/ms-playwright にする（変更前は既定の ~/.cache/ms-playwright） | — | — | — |
+| ブラウザの置き場 | — | Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す。base と lfm では /opt/ms-playwright で、コンテナの利用者が書き込める | — | — | — |
 | Playwright の Chromium | — | playwright install chromium がブラウザの置き場へ取得する Chromium（版ごとのディレクトリ）。amd64 と arm64 の両方で取れる | — | — | — |
-| システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ | — | — | — |
+| システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base には amd64 だけで入る | — | — | — |
 | snap スタブ | — | Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない | — | — | — |
 | ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む | — | — | — |

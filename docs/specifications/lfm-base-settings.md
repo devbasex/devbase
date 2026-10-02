@@ -27,7 +27,7 @@ base に設定を足したとき、それが lfm へ届かない形なら、Dock
 - 各機能の振る舞いそのものは、それぞれの確定仕様が持つ（「関連リンク」）。この仕様は、それが lfm
   へ届く道筋だけを扱う
 - 対象に含まないもの:
-  - base の apt の道具（`shellcheck`・`poppler-utils`・`python3-pil`・Chromium など）。設定では
+  - base の apt の道具（`shellcheck`・`poppler-utils`・`python3-pil` など）。設定では
     ないため取り込まない。例外は `tmux` 本体だけである（「届かないもの」）
   - lfm の固有の中身（CUDA・cuDNN・Rust・gfortran・MeCab・NVIDIA Container Toolkit の設定・
     `/etc/docker/daemon.json`・`LD_LIBRARY_PATH`）
@@ -111,7 +111,7 @@ lfm の Dockerfile の最終段は次の順に並ぶ。順序の制約は到達�
 2. ユーザー設定（`npm` グループ・sudoers）と `install -d -o ubuntu -g ubuntu /home/ubuntu/.claude`
 3. base の設定の取り込み（上の表の 5 つ）
 4. `USER ubuntu` で rustup を入れ、`~/.bashrc` へ `source $HOME/.cargo/env` を追記する
-5. `npx playwright install --with-deps chromium`
+5. `npx playwright install --with-deps chromium`（ブラウザの依存パッケージ。`ENV PLAYWRIGHT_BROWSERS_PATH` は 1 で宣言する）
 6. `RUN sudo fc-cache -f`
 7. `git config`、`entrypoint.sh` と `dind` の取り込み、NVIDIA の設定・`daemon.json`・
    `LD_LIBRARY_PATH`
@@ -155,8 +155,13 @@ base の apt の道具は取り込まない。`/usr/bin` の実行ファイル�
 | --- | --- | --- |
 | `shellcheck` | base の apt | 入っていない |
 | `poppler-utils`・`python3-pil` など文書を扱う道具 | base の apt | 入っていない |
-| `chromium-browser` | base の apt | 入っていない。lfm は Playwright の Chromium を `~/.cache` に持つ |
 | `tmux` | base の apt | **lfm の apt で入れる**（下） |
+
+**Playwright の Chromium は `/opt` の取り込みで届く。** base はブラウザの置き場を
+`/opt/ms-playwright`（`ENV PLAYWRIGHT_BROWSERS_PATH`）に持つ。lfm は同じ値の `ENV` を宣言し、
+ブラウザの依存パッケージ（共有ライブラリと書体）を自前の `npx playwright install --with-deps chromium`
+で入れる。ブラウザ自体は、取り込んだものと版が同じなら取得し直さない。lfm にも `chromium-browser`
+（snap スタブ）は無い。
 
 **例外は `tmux` 本体である。** `tmux` は base の設定（`/etc/tmux.conf` と
 `/usr/local/bin/tmux-*`）を動かす本体のため、lfm の 1 つ目の `apt-get install` の一覧に置く。
