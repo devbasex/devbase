@@ -1,0 +1,110 @@
+"""base と lfm の Playwright の Chromium の置き場 (#220)
+
+Docker を起動せず、``containers/base/Dockerfile`` と ``containers/lfm/Dockerfile`` の形だけを固定する。
+
+- ブラウザの置き場は ``/opt/ms-playwright``。``ENV PLAYWRIGHT_BROWSERS_PATH`` で示し、
+  ``npx playwright install`` より前に宣言する
+- base の片付けはブラウザの置き場もその親の ``/opt`` も消さない
+- base は ``chromium-browser`` (snap スタブ) を入れない
+- システムの Chrome は今のまま amd64 だけ
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+from .test_lfm_base_settings import Instruction, parse
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BASE = REPO_ROOT / "containers" / "base" / "Dockerfile"
+LFM = REPO_ROOT / "containers" / "lfm" / "Dockerfile"
+BROWSERS_PATH = "/opt/ms-playwright"
+ENV_LINE = f"PLAYWRIGHT_BROWSERS_PATH={BROWSERS_PATH}"
+
+
+def _instructions(path: Path) -> list[Instruction]:
+    return parse(path.read_text())
+
+
+def _env_indexes(instructions: list[Instruction]) -> list[int]:
+    return [i for i, ins in enumerate(instructions)
+            if ins.keyword == "ENV" and ins.args.startswith("PLAYWRIGHT_BROWSERS_PATH")]
+
+
+def _install_indexes(instructions: list[Instruction]) -> list[int]:
+    return [i for i, ins in enumerate(instructions)
+            if ins.keyword == "RUN" and "npx playwright install" in ins.args]
+
+
+@pytest.mark.parametrize("path", [BASE, LFM], ids=["base", "lfm"])
+def test_browsers_path_is_declared_once_before_the_install(path):
+    instructions = _instructions(path)
+    envs = _env_indexes(instructions)
+    installs = _install_indexes(instructions)
+    assert len(envs) == 1 and installs
+    assert instructions[envs[0]].args == ENV_LINE
+    assert envs[0] < min(installs)
+
+
+def test_lfm_keeps_its_own_install_with_deps():
+    """lfm は base を FROM で継がないため、依存パッケージは自前で入れる"""
+    installs = [ins.args for ins in _instructions(LFM)
+                if ins.keyword == "RUN" and "npx playwright install --with-deps chromium" in ins.args]
+    assert len(installs) == 1
+
+
+def _base_install_run() -> str:
+    instructions = _instructions(BASE)
+    installs = _install_indexes(instructions)
+    assert len(installs) == 1
+    return instructions[installs[0]].args
+
+
+def _rm_targets(run: str) -> list[str]:
+    targets: list[str] = []
+    for command in re.split(r";|&&", run):
+        words = command.split()
+        if "rm" not in words:
+            continue
+        targets += [w for w in words[words.index("rm") + 1:] if not w.startswith("-")]
+    return targets
+
+
+def test_base_install_keeps_with_deps():
+    assert "npx playwright install --with-deps chromium" in _base_install_run()
+
+
+def test_the_cleanup_does_not_remove_the_browsers_path():
+    targets = _rm_targets(_base_install_run())
+    assert targets, "片付けの rm -rf が見つからない"
+    for target in targets:
+        cleaned = target.rstrip("/*").rstrip("/")
+        assert cleaned not in {"/opt", BROWSERS_PATH, "$PLAYWRIGHT_BROWSERS_PATH",
+                               "${PLAYWRIGHT_BROWSERS_PATH}"}, target
+        assert not target.startswith(f"{BROWSERS_PATH}"), target
+
+
+def test_the_browsers_path_is_made_for_the_user_before_the_install():
+    """実行時に別の版のブラウザを取得できるよう、利用者が書き込める置き場を先に作る"""
+    run = _base_install_run()
+    made = re.search(r"install -d [^;]*-o \"\$\(id -u\)\"[^;]*\$\{?PLAYWRIGHT_BROWSERS_PATH", run)
+    assert made, "利用者の持ち物でブラウザの置き場を作っていない"
+    assert made.start() < run.index("npx playwright install")
+
+
+def test_base_does_not_install_chromium_browser():
+    installs = [ins.args for ins in _instructions(BASE)
+                if ins.keyword == "RUN" and "apt-get install" in ins.args]
+    assert installs
+    for run in installs:
+        assert not re.search(r"(?<![\w-])chromium-browser(?![\w-])", run)
+
+
+def test_system_chrome_stays_amd64_only():
+    """未決 U1。arm64 へ広げるまでは取得元を amd64 に限る"""
+    text = BASE.read_text()
+    sources = re.findall(r"deb \[([^\]]*)\] http://dl\.google\.com/linux/chrome/deb/", text)
+    assert sources == ["arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg"]
