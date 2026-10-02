@@ -11,6 +11,8 @@
 - **`devbase project post-start [name]` を足しました（#371）。** 動いているコンテナへ、起動の後の処理
   （clone できなかったリポジトリの報告・OpenBao の token の配布・VS Code の窓のタイトルの設定）を、
   コンテナを作り直さずにやり直します。`./deploy` は走らせず、エディタも開きません。
+  `docker start` で再起動したコンテナの初期化の途中に前回の完了の印を読んで先へ進まないよう、
+  entrypoint が起動のたびに印を消してから作り直します（base イメージを建て直した後のコンテナから効きます）。
 
 ### Changed
 - **`containers/lfm` のもとのイメージを `nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04` に上げました（#337）。**

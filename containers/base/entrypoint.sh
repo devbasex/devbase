@@ -682,6 +682,13 @@ if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
+# 完了の印は起動 1 回ごとの寿命にする。docker start で再起動したコンテナには前回の印が
+# /tmp に残るため、消さないとホスト側 (post-start / wait_for_containers_ready) が
+# 今回の初期化の途中でも完了と読んでしまう。値は lib/devbase/utils/docker.py の
+# ENTRYPOINT_READY_FILE と揃える。
+ENTRYPOINT_READY_FILE=/tmp/entrypoint-ready
+rm -f "$ENTRYPOINT_READY_FILE"
+
 # Setup authentication credentials from environment variables
 USERNAME="${USERNAME:-ubuntu}"
 
@@ -876,6 +883,6 @@ devbase_write_workspace "$DEVBASE_WORK_ROOT"
 devbase_enter_primary_dir "$DEVBASE_WORK_ROOT"
 
 # Signal that entrypoint setup is complete
-touch /tmp/entrypoint-ready
+touch "$ENTRYPOINT_READY_FILE"
 
 exec "$@"
