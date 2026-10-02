@@ -680,6 +680,30 @@
       "context": "container-start",
       "meaning": "#357 より前のリンクの張り方。「正しいかを見る → 違えば消す → ln -s」を、ほかのコンテナを待たずに行う",
       "pending_source": "issues/issue-357-requirements.md"
+    },
+    {
+      "term": "リンクの段のロック",
+      "context": "container-start",
+      "meaning": "共通のボリュームのルートのディレクトリに対して取る排他のロック。修正後のリンクの段どうしを 1 つずつ順に走らせる。ボリュームにファイルを作らない",
+      "pending_source": "issues/issue-357-design.md"
+    },
+    {
+      "term": "ロックの待ち時間の上限",
+      "context": "container-start",
+      "meaning": "リンクの段のロックを待つ秒数の上限（10 秒）。超えたら警告を出してロックなしで進む",
+      "pending_source": "issues/issue-357-design.md"
+    },
+    {
+      "term": "張り替えの試行",
+      "context": "container-start",
+      "meaning": "リンクを「消す → 張る → 読み直して確かめる」1 回ぶん。正しくなるまで試行の上限（20 回）まで繰り返し、張る操作の成否ではなく読み直した結果で成功を決める",
+      "pending_source": "issues/issue-357-design.md"
+    },
+    {
+      "term": "入れ子のリンク",
+      "context": "container-start",
+      "meaning": "リンクの位置がディレクトリを指すリンクになっているときに、張る操作がその先のディレクトリの中へ作るリンク（例: 共通のボリュームの plugins/plugins）。修正前の手順が同時起動で作ることがある",
+      "pending_source": "issues/issue-357-design.md"
     }
   ]
 }
