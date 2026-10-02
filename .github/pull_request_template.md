@@ -19,6 +19,7 @@
 - [ ] 影響を受けるコマンドの主要シナリオを手動で確認した
 - [ ] 必要に応じてドキュメント (`docs/`, `README.md`) を更新した
 - [ ] 利用者に見える変更なら `CHANGELOG.md` の `[Unreleased]` を更新した
+- [ ] Plugin から使える機能を足したら、`docs/plugin-dev/plugin-yml-reference.md` の `requires` 契機表へ 1 行足した
 - [ ] CI が green である
 
 ## スクリーンショット・ログ（任意）

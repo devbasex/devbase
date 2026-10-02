@@ -94,7 +94,7 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | AWS のプロファイルの切り出し | `lib/devbase/env/aws_profiles.py` | `~/.aws/config` の節の読み取り、連なりの解決と含めた理由、選んだ節だけの tar（時刻を固定）、切り出した中身のハッシュ、`AWS_CONFIG_BASE64` の値に入っているプロファイルの読み取り。出力も終了コードも持たない |
 | collector の契約 | `lib/devbase/env/collector.py` | `Collector.host_import` でホストのファイルを読むことを宣言する。`source_files` があるのに宣言しない定義は生成時に `ValueError` で、登録簿は警告を出して飛ばす。宣言した collector は `collect_fn(env_file, *, host)` で呼ばれ、`host` に既定の値は無い |
 | コンテナへの token の配送 | `lib/devbase/env/container_token.py` | 受け取った token を `docker exec` の stdin で各コンテナの `~/.vault-token` へ書く。token の取得と届け先の解決は持たない |
-| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | backend を問わず、起動の先頭でグループの宣言を読み、ボリュームのグループ（プロセスの環境変数）と揃える（`_require_group_declaration`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に token を書く |
+| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | backend を問わず、起動の先頭でグループの宣言を読み、ボリュームのグループ（プロセスの環境変数）と揃える（`_require_group_declaration`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に起動の後の処理の段（`_run_post_start`）で後処理の対象へ token を書く。`devbase project post-start` も同じ段で token を書き直す |
 | base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
 | `env backend` コマンド | `lib/devbase/commands/env_backend.py` | `status` / `use` / `test` / `migrate` |
 | `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token`。`env set` は `DEVBASE_ACCOUNT_GROUP` を置き場を開く前に拒む。`env sync` の同期の書き込み先（`SyncTargets`） |
@@ -710,8 +710,8 @@ AWS は取り込みの選択の範囲だけで比べて入れ直す。控えの 
 | GCP（候補なし） | 鍵ファイルのパスを手で入れる（空で飛ばす） | 同左 | 同左 |
 | AWS の認証方法の既定 | `4`（スキップ） | `4` | `1` |
 | AWS `1` Config Files | `~/.aws/config` のプロファイルの一覧 → 番号の選択（`all` で丸ごと、空は取り込まない）→ 含めた連なりを 1 行ずつ出す → `AWS_PROFILE` | 何も書かない | 丸ごと |
-| AWS `2` SSO Profile | プロファイル名を手で入れる | 同左 | 同左 |
-| AWS `3` Access Key | `~/.aws/credentials` の `[default]` の鍵があれば y/N（既定 N）。N なら手入力 | 手入力 | 自動で拾う |
+| AWS `2` SSO Profile | プロファイル名を手で入れる → region の入力（既定の値はそのプロファイルのホストの region） | プロファイル名を手で入れる → region の入力（既定 `ap-northeast-1`） | プロファイル名を手で入れる → ホストの region を自動で拾う |
+| AWS `3` Access Key | `~/.aws/credentials` の `[default]` の鍵があれば y/N（既定 N）。y なら鍵と `[default]` の region を拾い、N なら鍵を手入力して region の入力（既定 `ap-northeast-1`）。鍵が無ければ鍵を手入力して region の入力（既定の値は `[default]` のホストの region） | 鍵を手入力 → region の入力（既定 `ap-northeast-1`） | 鍵と `[default]` の region を自動で拾う |
 | Git（取り込める値あり） | 取り込めるキーの名前を並べて y/N（既定 N）。N なら Git の値を 1 つも書かず、手入力へも進まない | 何も書かない | 自動で拾う |
 | Git（取り込める値なし） | 手入力 | 同左 | 同左 |
 
@@ -730,6 +730,19 @@ AWS は取り込みの選択の範囲だけで比べて入れ直す。控えの 
   無ければ `含めません: [<節>] が ~/.aws にありません` を出して続ける
 - `import` の質問の並びと、同じ入力に対して書くキーと値は、方針を持たなかった頃と同じである（アクティブ
   プロファイルの文に `none` の案内が加わる）
+- AWS `2`・`3` の region（`AWS_DEFAULT_REGION`）も取り込みの方針に従う。ホストの region は `~/.aws/config` の
+  選んだプロファイルの節（`3` は `[default]`、`2` は `[profile <名前>]`、無ければ `[<名前>]`）の `region` である。
+  `skip` と、`3` の鍵の確認で断ったときはホストの region を読まない。`ask` でホストの region を既定の値として
+  見せる入力は `AWS_DEFAULT_REGION (デフォルト: <値>、~/.aws/config の [<節>] から): ` で、空の答えはその値、
+  入れた値はその値を書く。ホストに region が無ければ既定の値は `ap-northeast-1` である
+- AWS `3` は参照に `AWS_DEFAULT_REGION` が既にあればその値を残し、ホストを読まない。`2` は参照の region を
+  見ずに、上の規則で決め直す（前の認証方法の region を新しいプロファイルへ持ち越さない）
+- AWS `2`・`3` の `skip` の知らせ（`AWS認証: 取り込まない設定のため飛ばしました`）は 1 回の選択で 1 行である。
+  `3` で鍵の確認が知らせたときは region のために足さない
+- GCP の鍵ファイル名の拡張子を除いた部分は、`[A-Za-z0-9_]` 以外を `_` へ置き換えてプロファイル名にする
+  （プロファイル名の正規化）。ファイル名の昇順に読み、正規化した名前が衝突したら先のファイルを採る。
+  `プロファイル名 '<元>' を '<名前>' に正規化しました` と衝突の警告は、取り込むと決めた名前についてだけ、
+  アクティブプロファイルを尋ねる前に 1 回出す。`env sync` と控えの更新は同じ規則で鍵ファイルを引き、警告を出さない
 
 `env sync` はソースファイルのハッシュを控えに記録して変更を検出する。`version: 2` では控えを
 置き場のグループごとに `$DEVBASE_ROOT/.env.sources.<g>.yml` へ分け、それ以外は
@@ -929,8 +942,12 @@ backend が `openbao` のとき、`up` と `scale` は dev コンテナへ次を
 | 名前 | 形 | いつ |
 | --- | --- | --- |
 | `BAO_ADDR` | dev サービスの `environment` にリテラル（`openbao.url`）。機密ではない | 構成の生成時 |
-| `~/.vault-token` | ファイル `0600`、token 1 行（改行なし） | `up` の [5/6] の後（`scale` は増やしたインスタンスだけ）と `env token` |
+| `~/.vault-token` | ファイル `0600`、token 1 行（改行なし） | `up` / `scale` の起動の待ちの後（後処理の対象だけ）、`project post-start`、`env token` |
 
+- `up` / `scale` が token を書くのは後処理の対象だけである。`up` は起動できたインスタンス、`scale` は
+  増やしたインスタンスのうち起動できたものに書き、起動できなかったインスタンスには書かない。
+  `devbase project post-start` は、動いていて entrypoint の完了（`/tmp/entrypoint-ready`）を確かめられた
+  インスタンスに書き直す
 - コンテナに置く資格情報は 1 時間で切れる token だけで、`secret_id` はホストから出ない。
   `role_id` / `secret_id` をコンテナへ渡す形は、コンテナの中の CLI や npm パッケージが長期の
   資格情報を持つことになるため採らない
@@ -941,7 +958,7 @@ backend が `openbao` のとき、`up` と `scale` は dev コンテナへ次を
   argv に載せない。コンテナの中では `mktemp "$HOME/.vault-token.XXXXXX"` に書き、
   `chmod 0600` の後 `mv -f` で置き換える（固定名の一時ファイルは既存の inode へ書いて
   `umask` が効かない。途中で切れても空の `~/.vault-token` を残さない）
-- 書けなくても `up` / `scale` は失敗にしない（起動は済んでおり、`env token` でやり直せる）。
+- 書けなくても `up` / `scale` / `project post-start` は失敗にしない（起動は済んでおり、`env token` でやり直せる）。
   警告を出す
 - コンテナの `bao` で書いた値は、ホストの控え（`secrets/cache/`）へ反映しない。控えは
   読み取りにだけ使い、ホストの `set` / `delete` / `edit` は現物を読むため、到達できる限り
@@ -1457,6 +1474,8 @@ groups:
   （`tests/env/test_container_token.py`）
 - `up` / `scale` が `BAO_ADDR` を足し token を書くこと、ファイル backend で何も足さないこと、
   書けなくても `up` が失敗しないこと（`tests/commands/test_container_bao.py`）
+- `up` / `scale` / `project post-start` が token を後処理の対象のコンテナにだけ書き、値を出力に
+  載せないこと（`tests/commands/test_container_post_start.py`）
 - `env token` の処理の順、dev サービスの絞り込み、下位ディレクトリからの dev サービス名、
   接続先の適用、`--print`（`tests/commands/test_env_token.py`）
 - base イメージの `bao` の版・両アーキテクチャ・チェックサムの検証の文言

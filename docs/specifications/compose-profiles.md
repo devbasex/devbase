@@ -157,6 +157,14 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
 `scale` には停止の段が無いので旧構成で停止する必要が無く、入れると失敗したときに生成物だけが
 巻き戻り、`[1/5]` で既に書き換わった `project.yml` の `scale` と食い違うためである。
 
+起動の待ちの後、`cmd_scale` は増やしたインスタンス（`current + 1` から `new`）のうち起動できたものを
+後処理の対象にして、`up` と共有する起動の後の処理の段（`_run_post_start`）を呼ぶ。順は
+不足リポジトリの報告 → `./deploy` → bao の token → 窓のタイトルの設定で、`up` と同じである。
+起動できなかったインスタンスがあると、起動の待ちは `ContainerStartupError`（起動できた番号と、
+起動できなかった番号ごとの理由）を投げる。`cmd_scale` はそれを受け、対象へ後処理を行った後に
+`Scale failed` と起動できなかった全部の名前・理由・補う手順（`devbase project post-start <name>`）を
+出して 1 を返す。停止は呼ばない。
+
 プロファイルを持たないプロジェクトでは、`up` / `down` / `scale` が扱うコンテナの集合と順序は
 変わらない。プロファイルのサービスは scale の対象にせず、複製されるのは開発サービスだけである。
 
@@ -213,7 +221,7 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
   `cli._dispatch` が `project profile list` を `project list`（プロジェクト一覧）へ流すためである
 - 前方一致の省略は `project p` / `container p` を従来どおり `ps` に解決し（`SUBCMD_PREFIX_PREFERENCES`）、
   `project pr` は `profile` に解決する
-- `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS`（`up down ps logs scale rebuild open`）に `profile` は
+- `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS`（`up down ps logs scale rebuild open post-start`）に `profile` は
   入れない。wrapper は 3 番目の引数をプロジェクト名として解決するが、`profile` ではそこに
   `up` / `down` / `list` が来るため、同名のプロジェクトが実在すると誤って移動する。名前の解決は
   Python 側の `_dispatch_lifecycle` が行う
@@ -295,7 +303,7 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
 | フック | 呼ぶ経路 | `DEVBASE_ACTIVE_PROFILES` |
 | --- | --- | --- |
 | `./pre-up` | `devbase up` のみ | 常に空 |
-| `./deploy` | `devbase up` / `devbase scale` | 空 |
+| `./deploy` | `devbase up` / `devbase scale`（起動の後の処理の対象のインスタンス） | 空 |
 | `./deploy` | `devbase project profile up X` | `X` |
 
 - `profile up` の後に新しいフックを作らず `./deploy` を呼び直す。`./deploy` は既にインスタンス
@@ -431,8 +439,10 @@ TUI では、復元境界が機密の注入履歴も戻すため、別プロジ�
   `os.environ` を変えないこと。起動の非 0 で `Failed to start new containers` と 1 になり例外を
   出さないこと。プロファイルのサービスを起動の対象に入れないこと。正常系の順序
   （グループの検査 → `write_scale` → ボリューム → network → 生成 → `default_services` → 起動 →
-  ready 待ち → bao の token → `./deploy`）、bao と `./deploy` の範囲が `current + 1` から `new` まで
-  であること、停止を呼ばないこと（`tests/commands/test_container_scale_order.py`）
+  ready 待ち → 不足リポジトリの報告 → `./deploy` → bao の token → 窓のタイトル）、bao と `./deploy` の
+  範囲が `current + 1` から `new` までであること、停止を呼ばないこと
+  （`tests/commands/test_container_scale_order.py`）。起動できなかったインスタンスがあるときの
+  後処理の対象と出力（`tests/commands/test_container_post_start.py`）
 - `default_services` が打ち消し用の名前で `config --services` を呼ぶこと、`profile_services` が
   既定のサービスを差し引き、Compose が展開した名前を使い、プロファイルが無ければ空、解決の失敗で
   `DevbaseError` になること。生成物が無いときに Compose を呼ばずに 1、未知の名前で起動・停止を呼ばずに

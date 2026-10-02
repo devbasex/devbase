@@ -170,14 +170,21 @@ devbase 本体を更新してください (この警告を止める場合は DEV
 ```
 
 > **`requires.devbase` は本体の版数と一緒に自動では上がりません。** 上げるのは、**Plugin が
-> devbase の新しい機能に依存しはじめたタイミング**です。契機は次のとおりです。
+> devbase の新しい機能に依存しはじめたタイミング**です。契機は次の表のとおりで、この表が正本です。
 >
-> | 契機 | 上げる版数 |
+> | 契機 | Plugin の側ですること |
 > | --- | --- |
-> | Plugin が `project.yml` 形式へ移行した | その形式を読める版 |
-> | Plugin のプロジェクトが `compose.yml` に `profiles:` を使う | `">=3.5.0"`（[テスト用サーバを後から起動・停止する](compose-profiles.md#plugin-として配るなら-requiresdevbase-を-350-以上へ上げる)） |
+> | Plugin が `project.yml` 形式へ移行した | `requires.devbase` を `">=3.0.0"` へ上げる |
+> | Plugin のプロジェクトが `compose.yml` に `profiles:` を使う | `requires.devbase` を `">=3.5.0"` へ上げる（[テスト用サーバを後から起動・停止する](compose-profiles.md#plugin-として配るなら-requiresdevbase-を-350-以上へ上げる)） |
+> | Plugin のプロジェクトが、base イメージに後から足された道具を前提にする（`pdftoppm` などの `poppler-utils`・`python3-lxml` は 3.7.0、`shellcheck`・`tmux-go` などの tmux のセッションのコマンドは 3.8.0） | `requires.devbase` を、その道具を足した版以上へ上げる（どの版で足されたかは `CHANGELOG.md` の Added を見る） |
+> | Plugin のプロジェクトが、コンテナの中で `~/.shellrc.d/`（環境変数 `DEVBASE_SHELLRC_DIR`）へシェルの設定を置く | `requires.devbase` を `">=3.8.0"` へ上げる |
+> | devbase 4.0.0 以降で使われる Plugin のプロジェクト（アカウントグループの宣言が必須） | `requires.devbase` の下限ではなく、Plugin のプロジェクトの `env` に `DEVBASE_ACCOUNT_GROUP=<グループ>` を書く（`default` は予約語で使えない。[クイックスタート 2.3.1](quickstart.md#231-env-ファイル必須アカウントグループの宣言を書く)）。宣言が無いと `devbase up` / `scale` が止まる |
 >
-> どちらも、その機能を使い始めた Pull Request で一緒に上げます。
+> どれも、その機能を使い始めた Pull Request で一緒に行います。base イメージの道具とシェルの設定の置き場所は、
+> 利用者がイメージを建て直すまで効きません。
+>
+> devbase の側で Plugin から使える機能（Plugin が書く設定・compose の書き方・イメージの道具・コンテナの中の置き場所など）を
+> 足した Pull Request は、この表へ 1 行足します（Pull Request のテンプレートの「動作確認」に項目があります）。
 
 ### `priority`
 

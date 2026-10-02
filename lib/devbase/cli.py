@@ -59,7 +59,7 @@ GROUP_ALIASES = {
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
     ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list',
-                          'profile', 'open'],
+                          'profile', 'open', 'post-start'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild',
                           'profile', 'open'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
@@ -284,7 +284,8 @@ def _add_project_parser(subparsers):
     ため name を受け付けない。両者は project / container で定義が完全に一致するので
     `_add_login_subparser` / `_add_build_subparser` に共通化している。
 
-    同期注意: ここで `name` positional を持つサブコマンド集合 (up/down/ps/logs/scale/rebuild/open)
+    同期注意: ここで `name` positional を持つサブコマンド集合 (up/down/ps/logs/scale/rebuild/open/
+    post-start)
     は bin/devbase の `_PROJECT_NAME_SUBCOMMANDS` と一致させる必要がある。追加/削除時は
     wrapper 側リストの更新漏れに注意すること。wrapper がこの集合で name を解決するのは
     `project` グループだけで、`container` / `ct` は `[name]` を持たず解決も通らない
@@ -333,6 +334,14 @@ def _add_project_parser(subparsers):
 
     # `open` の `[name]` は up と同じく wrapper の _PROJECT_NAME_SUBCOMMANDS で cd する (PLAN59)。
     _add_open_subparser(pj_sub, with_name=True)
+
+    # `post-start` は動いているインスタンスへ起動の後の処理をやり直す (#371)。`[name]` は
+    # up と同じく wrapper の _PROJECT_NAME_SUBCOMMANDS で cd する。失敗の後にだけ打つ
+    # コマンドのため、トップレベルの短縮形と `container` グループには足さない (決定 2)。
+    _add_context_arg(_add_name_arg(pj_sub.add_parser(
+        'post-start',
+        help='Redo the post-start steps (missing repos, bao token, window title) '
+             'on running instances without restarting them')))
 
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
