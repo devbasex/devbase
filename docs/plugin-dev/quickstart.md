@@ -150,7 +150,7 @@ ENABLE_SSH=true
 
 - **`DEVBASE_ACCOUNT_GROUP` の宣言は必須です。** 宣言が無い・空のとき、`devbase up` / `scale` は何も作らずに止まります。既定の値は無く、`default` は予約語のため使えません。会社の機密を使わない個人・OSS のプロジェクトは `personal` を、それ以外は使うアカウントの単位（`acme` など）を書きます。詳しくは [環境変数の説明のアカウントグループ](../user/environment-variables.md#アカウントグループ-devbase_account_group) を参照してください
 - 2.2 の `compose.yml` が `env_file: - env` で参照するため、ファイルが無いと `devbase up` が compose の起動時にも失敗します
-- この宣言を求めるのは devbase 4.0.0 からです。`plugin.yml` の `requires.devbase` は [契機の表](plugin-yml-reference.md#更新時の警告) に従って上げてください
+- この宣言を求めるのは devbase 4.0.0 からです。devbase の機能を使い始めたときに Plugin の側ですること（`requires.devbase` を上げるなど）は [`requires` の契機の表](plugin-yml-reference.md#更新時の警告) にあります
 
 ### 2.4 .env ファイル（任意）
 
