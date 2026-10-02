@@ -326,6 +326,13 @@ python3 .github/scripts/proper_term_check.py --terms /path/to/terms.txt  # 別�
 `LICENSE` の著作権表示の行と `.ndf/mvv.json` の `approved_by` の行は当たりにしない。UTF-8 で読めないファイルと
 symlink は対象から外し、外した数を要約の行に出す。
 
+実機の確認の記録やリリース後テストの結果をリポジトリへ書くときは、プロジェクト名・アカウントグループ名・
+利用者名を書き始めから中立の呼び名（`proj-a`・`team-a`・`<user>` など）にする。commit の前に
+`python3 .github/scripts/proper_term_check.py` を打つ。一覧が無いと検査は飛ばされて終了コード 0 で終わり、
+`固有の語の検査: 語の一覧が無いため飛ばした（見た出所: …）` の 1 行だけが出る。この行が出たら、当たりが無いのではなく
+検査をしていないため、既定の置き場に一覧を置いてから打ち直す。一覧の中身は secret `PROPER_TERMS` と同じで、
+置くのは人が行う。
+
 ### 手動テストの手順
 
 1. **変更したコマンドを直接実行する**
