@@ -339,7 +339,6 @@ flowchart LR
 | `php` | general | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
 | `php85` | general | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
 | `latex` | general | LaTeX | 文書・論文作成 |
-| `lfm` | general | Rust、gfortran、MeCab | 数値計算・自然言語処理 |
 | `snapshot` | Ubuntu 26.04 | zstd | スナップショット専用 |
 
 ### 5.5 Git管理のガイドライン
