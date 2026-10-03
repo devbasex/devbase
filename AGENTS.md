@@ -66,6 +66,9 @@ python3 .github/scripts/proper_term_check.py           # 固有の語の検査
 | --- | --- | --- |
 | `containers/base/entrypoint.sh` などイメージに入るファイルを変えた | `devbase up` だけでは反映されない | base を建て直してから確かめる |
 | base を建てて比べる | base は 1 本で数 GB ある。並べて残すとディスクが埋まり Docker が止まる | 建てる前に `docker system df` を見る。作業用のタグは記録を書いたら消す |
+| イメージの大きさを受け入れ条件に書く | `docker images` の `.Size` は、containerd のイメージストア（Docker Desktop）では圧縮後、classic のストアでは展開後に近い値を出す。同じ条件が端末で二通りに読める（#402 は 611MB と 1.29GB に分かれた） | 用語集の「展開後の大きさ」（`du -sbx /`）で書き、測った端末とストアを記録に残す |
+| base から道具を外す前に、使う者を探す | `repos/*/` のプラグインだけを探すと、プロジェクトのコード（`projects/*/repo`）の `.mcp.json`・`package.json` が `npx` などで実行時に使う道具を見落とす（#401 で `chrome-devtools-mcp`・`@playwright/mcp` を承認ゲートで人が見つけた） | `projects/*/repo` も探す範囲に入れ、探した場所と探していない場所を要求に書く |
+| 非対話のセッション（`claude -p` の担当）で base を建てる | macOS の Docker Desktop がキーチェーンを開けず、`ubuntu` などの取得が `error getting credentials` で止まる（#400 の担当は建てられないまま PR を出した） | 担当は建てられなかったことを「判断が要る」で返す。建てる確認は対話できるセッションか、取得済みのイメージを `docker load` してから行う |
 | `projects/*` の `compose.yml` やフックを直したい | `projects/*` はプラグインのリポジトリ（`repos/` の下）への symlink で、このリポジトリの管理外 | Pull Request はプラグインのリポジトリへ出す |
 | `projects/*` へ `cd` してから `../../` を書く | symlink の先から解決され、devbase の外を指す | 絶対パスで書く |
 | macOS で検査が通る | CI（Linux）と `ln` などの既定の振る舞いが違う。同時実行の競合が CI でだけ出た例がある | 振る舞いが分かれるオプションは明示する（例: `ln -P`） |
