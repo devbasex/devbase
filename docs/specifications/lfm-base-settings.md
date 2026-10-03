@@ -94,6 +94,7 @@ lfm が壊れる。`~/.claude` もディレクトリごとは取り込まない�
 | `DEBIAN_FRONTEND` | `noninteractive` |
 | `NPM_CONFIG_PREFIX` | `/usr/local/share/npm-global` |
 | `DEVBASE_SHELLRC_DIR` | `/home/ubuntu/.shellrc.d` |
+| `PLAYWRIGHT_BROWSERS_PATH` | `/opt/ms-playwright` |
 
 `PATH` は lfm が cargo（`/home/ubuntu/.cargo/bin`）と `~/.local/bin` を足すため値の一致では
 比べず、base の `PATH` の各要素が lfm の `PATH` に含まれることで揃える。base の `/root/.local/bin`
@@ -243,7 +244,7 @@ base の `RUN` が作る symlink（`/usr/local/bin/tmux-go` など）は `/usr/l
 | 置き場所 | 中身 |
 | --- | --- |
 | `containers/lfm/Dockerfile` の「base の設定の取り込み」 | 5 つの `COPY --from=devbase-base:latest` |
-| `containers/lfm/Dockerfile` の `ENV` | `NPM_CONFIG_PREFIX`・`PATH`・`DEVBASE_SHELLRC_DIR`（と cudabase の段の `DEBIAN_FRONTEND`） |
+| `containers/lfm/Dockerfile` の `ENV` | `NPM_CONFIG_PREFIX`・`PATH`・`DEVBASE_SHELLRC_DIR`・`PLAYWRIGHT_BROWSERS_PATH`（と cudabase の段の `DEBIAN_FRONTEND`） |
 | `tests/containers/test_lfm_base_settings.py` の `REQUIRED_APT` | 要る apt のパッケージと理由 |
 | `tests/containers/test_lfm_base_settings.py` の `EXCLUDED` | 除外表 |
 | `tests/containers/test_lfm_image.py` の `UNCHANGED_SHA256` | lfm の固有の設定（`/etc/nvidia-container-runtime/config.toml`・`/etc/docker/daemon.json`）の sha256。取り込みで上書きされていないことを見る |
