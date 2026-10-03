@@ -16,7 +16,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 ## 対象範囲
 
 - base イメージへの `shellcheck` の導入と、入れ損ないをビルドで止める仕組み
-- base から派生するイメージ（`general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
+- base から派生するイメージ（`browser` / `general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
   `trygroup`）への伝播の規則
 - `containers/snapshot` は base を継がないため対象に含まない
 - bash-language-server 自体は同梱しない
@@ -39,7 +39,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 
 `shellcheck` は Ubuntu の標準のアーカイブ（`universe`）にあり、外部のリポジトリを要さない。
 そのため 1 つ目の `RUN` の**1 回目**の `apt-get install` の一覧に置く。2 回目の一覧は後から
-足したリポジトリのパッケージ（`docker-ce-cli` / `terraform` / `gh` / `nodejs`）
+足したリポジトリのパッケージ（`docker-ce-cli` / `docker-buildx-plugin` / `docker-compose-plugin` / `gh` / `nodejs`）
 のためにあり、標準のアーカイブのパッケージを混ぜない。
 
 shellcheck のための `RUN` は立てない。立てると派生イメージ 7 つが積む層が 1 つ増え、
