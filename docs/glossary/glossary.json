@@ -828,7 +828,7 @@
     {
       "term": "システムの Chrome",
       "context": "browser",
-      "meaning": "apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base には amd64 だけで入る",
+      "meaning": "apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base にはどちらのアーキにも入れない（#401）",
       "source": "docs/specifications/base-image-rendering.md"
     },
     {

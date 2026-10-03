@@ -29,9 +29,8 @@
   ブラウザを直後の片付けで捨てており、arm64（Apple Silicon）のコンテナには起動できる Chromium が
   ありませんでした。ブラウザの置き場は `/opt/ms-playwright` で、環境変数 `PLAYWRIGHT_BROWSERS_PATH` が
   指します。実行時に `playwright install` で取得するブラウザも `~/.cache/ms-playwright` ではなくここへ
-  入ります。起動できなかった `chromium-browser`（Ubuntu の snap スタブ）は外しました。システムの Chrome
-  （`google-chrome-stable`）は今までどおり amd64 だけに入ります。base の後に派生イメージと lfm を建て直すと
-  届きます。
+  入ります。起動できなかった `chromium-browser`（Ubuntu の snap スタブ）は外しました。base の後に
+  派生イメージを建て直すと届きます。
 
 ### Removed
 - **派生イメージ `containers/lfm` を廃止しました（#403、破壊的変更）。** 使うプロジェクトが無く、
@@ -52,6 +51,13 @@
   しなくなりました。この設定は base を `FROM` で継ぐ派生イメージにも効きます。ネイティブアドオンの
   ビルドでは node-gyp がヘッダを取得します（ネットワークが要ります）。反映には `devbase build base` で
   base を建て直し、派生イメージも建て直してください。
+- **amd64 の base イメージからシステムの Chrome（`google-chrome-stable`）を外しました（#401、破壊的変更）。**
+  Google の apt の取得元も足しません。arm64 にはもともと無く、ブラウザは両アーキとも Playwright の
+  Chromium（`/opt/ms-playwright`）にそろいます。amd64 の base は Chrome と依存を合わせて約 540MB
+  小さくなります。Playwright から使う処理はそのまま動きます。`/usr/bin/google-chrome` を呼んでいた
+  道具には、`NODE_PATH="$(npm root -g)" node -e "console.log(require('@playwright/test').chromium.executablePath())"`
+  で得られる Playwright の Chromium のパスを渡してください。反映には `devbase build base` で base を
+  建て直し、派生イメージも建て直してください。
 
 ### Fixed
 - **スナップショットの差分バックアップが、毎回ボリューム全体を控えていたのを直しました。**

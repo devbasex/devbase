@@ -6,7 +6,7 @@ Docker を起動せず、``containers/base/Dockerfile`` の形だけを固定す
   ``npx playwright install`` より前に宣言する
 - base の片付けはブラウザの置き場もその親の ``/opt`` も消さない
 - base は ``chromium-browser`` (snap スタブ) を入れない
-- システムの Chrome は今のまま amd64 だけ
+- システムの Chrome は両アーキとも入れない (#401)
 """
 
 from __future__ import annotations
@@ -95,7 +95,11 @@ def test_base_does_not_install_chromium_browser():
 
 
 def test_system_chrome_stays_amd64_only():
-    """未決 U1。arm64 へ広げるまでは取得元を amd64 に限る"""
+    """#401。システムの Chrome は両アーキとも入れない (Google の apt の取得元も足さない)"""
     text = BASE.read_text()
-    sources = re.findall(r"deb \[([^\]]*)\] http://dl\.google\.com/linux/chrome/deb/", text)
-    assert sources == ["arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg"]
+    assert not re.search(r"dl\.google\.com/linux", text), "Google の apt の取得元を足している"
+    installs = [ins.args for ins in _instructions(BASE)
+                if ins.keyword == "RUN" and "apt-get install" in ins.args]
+    assert installs
+    for run in installs:
+        assert not re.search(r"google-chrome", run), "google-chrome を入れている"
