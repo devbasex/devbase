@@ -66,7 +66,7 @@
 | I9 | ブラウザの派生イメージ | Dockerfile の最初の `FROM` が `devbase-base:latest` である | Dockerfile の形の検査と、`devbase build` の経路の検査が落ちる |
 | I10 | ブラウザの派生イメージ | `npx playwright install --with-deps chromium` を利用者の `RUN` で 1 回打ち、その片付けの `rm -rf` が `/opt` と置き場を対象にせず、`/var/lib/apt/lists` を消す | Dockerfile の形の検査が落ちる |
 | I11 | ブラウザの派生イメージ | `fonts-noto-cjk-extra` を apt で入れ、`fc-cache -f` が 1 度だけ、Playwright と apt の `RUN` より後にある | Dockerfile の形の検査が落ちる |
-| I12 | ブラウザの派生イメージ | 建てたイメージで、#220 の受け入れ条件 5〜9 が成り立つ（ネットワーク無しの PDF・置き場への書き込み・`NotoSansCJKjp`・依存パッケージと `chromium-browser` の不在・環境変数） | 建てたブラウザの派生イメージの検査が落ちる |
+| I12 | ブラウザの派生イメージ | 建てたイメージで、#220 の受け入れ条件 5〜9 が成り立つ（ネットワーク無しの PDF・置き場への書き込み・`NotoSansCJKjp`・ブラウザの依存パッケージの存在と `chromium-browser` の不在・環境変数） | 建てたブラウザの派生イメージの検査が落ちる |
 | I13 | ブラウザの派生イメージ | 建てたイメージに `fonts-noto-cjk-extra` があり、`Noto Sans CJK JP` の `Thin` と `Black` のフェイスがある | 建てたブラウザの派生イメージの検査が落ちる |
 | I14 | lfm のブラウザ | lfm の `ENV PLAYWRIGHT_BROWSERS_PATH` が base と同じ値で、lfm が自分の `npx playwright install --with-deps chromium` を持つ | 到達の検査と Dockerfile の形の検査が落ちる |
 | I15 | lfm のブラウザ | 建てた lfm の置き場に Chromium の版のディレクトリがあり、`fonts-noto-cjk-extra` と `terraform` がある | 建てた lfm の検査が落ちる |
