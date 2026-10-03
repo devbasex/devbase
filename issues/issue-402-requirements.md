@@ -73,7 +73,7 @@
 - 前提 6: 派生イメージ lfm は #403 で先に廃止されている（F4）。この変更は lfm を扱わない
 - 前提 7: ブラウザを使うプロジェクトの洗い出しは、手元にある 3 つのプラグインのリポジトリと `projects/*/repo` に限る。手元に無いプロジェクトは、CHANGELOG と利用者向けの文書の移り方で知らせる
 - 前提 8: 派生イメージの名前・数（ブラウザと文書のフォントを 1 つにまとめるか分けるか）・base に `ENV PLAYWRIGHT_BROWSERS_PATH` とブラウザの置き場を残すか・HashiCorp の apt の取得元を残すかは設計で決める。受け入れ条件はどの切り方でも判定できる形で書く
-- 前提 9: 大きさは同じ arm64 の端末で、変更前の base と変更後の base を `docker image inspect --format '{{.Size}}'` で測り、差を PR に記録する。base を 2 本並べるため、建てる前に `docker system df` で空きを見て、作業用のタグは記録の後に消す（`AGENTS.md` の落とし穴）
+- 前提 9: 大きさは同じ arm64 の端末で、変更前の base と変更後の base を、展開後のファイルの大きさ（コンテナで `du -sxb /`）で測り、差を PR に記録する。`docker image inspect --format '{{.Size}}'`（containerd のイメージストアでは圧縮後の大きさ）の値も並べて残す。base を 2 本並べるため、建てる前に `docker system df` で空きを見て、作業用のタグは記録の後に消す（`AGENTS.md` の落とし穴）
 
 ## 対象範囲
 
@@ -140,7 +140,7 @@ Dockerfile の形（Docker を起動しないテストで確かめる）:
 - [ ] 4. `tests/containers/test_base_image_font_matching.py` が、`EXPECTED_MATCHES` を書き換えずに変更後の base で通る（標準の太さの日本語・中国語・韓国語と欧文の metric 互換の解決先が変わらない）
 - [ ] 5. 変更後の base を `--network none` で起動し、利用者 `ubuntu` の非対話の `bash -c` で Playwright の Chromium を headless で起動しようとすると、終了コードが非 0 で、出力にブラウザの派生イメージの名前か取得のコマンド（`playwright install`）が含まれる
 - [ ] 6. 変更後の base で `dpkg -s fonts-noto-cjk-extra` が非 0、`command -v terraform` が非 0 で終わり、`/opt/ms-playwright` の下に Chromium の版のディレクトリ（`chromium-*`・`chromium_headless_shell-*`）が無い
-- [ ] 7. 変更前の base と変更後の base の `docker image inspect --format '{{.Size}}'` の差が、arm64 で 1.2GB（1,200,000,000 バイト）以上ある。両方の値と差を PR に記録する（前提 3）
+- [ ] 7. 変更前の base と変更後の base の展開後のファイルの大きさ（`du -sxb /`）の差が、arm64 で 1.2GB（1,200,000,000 バイト）以上ある。両方の値と差を、`.Size`（圧縮後）の値と差とともに PR に記録する（前提 3・前提 9）
 
 ブラウザの派生イメージ（arm64）:
 
