@@ -112,6 +112,7 @@ base イメージのフォントの解決（docs/specifications/base-image-rende
 | 総称ファミリ | — | sans-serif / sans / serif / monospace。具体の書体名ではなく様式を指す指定 | — | — | `docs/specifications/base-image-rendering.md` |
 | metric 互換 | — | 字幅・行送りが元の書体と一致する代替の書体 | — | — | `docs/specifications/base-image-rendering.md` |
 | 受け皿 | — | イメージに実在しない書体名を指定されたときに末尾へ足すフェイス | — | — | `docs/specifications/base-image-rendering.md` |
+| 追加の太さのフォント | — | fonts-noto-cjk-extra が入れる Noto CJK の Thin・Light・Medium・Black などのフェイス。標準の太さ（Regular・Bold）は fonts-noto-cjk にある | — | — | — |
 
 ## base イメージの tmux のコマンド（`tmux`）
 
@@ -181,6 +182,7 @@ base の設定が派生イメージと lfm へ届く道筋（containers/*/Docker
 | 取り込み | — | lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと | — | — | `docs/specifications/lfm-base-settings.md` |
 | 到達の検査 | — | base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py） | — | — | `docs/specifications/lfm-base-settings.md` |
 | 除外表 | — | 到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧 | — | — | `docs/specifications/lfm-base-settings.md` |
+| 派生イメージ | — | FROM devbase-base:latest で base を継ぎ、道具を足すイメージ（containers/ の general・php など）。lfm は base を継がないため含めない | — | — | — |
 
 ## コンテナの起動（`container-start`）
 

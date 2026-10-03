@@ -362,6 +362,13 @@
       "source": "docs/specifications/base-image-rendering.md"
     },
     {
+      "term": "追加の太さのフォント",
+      "context": "base-image",
+      "meaning": "fonts-noto-cjk-extra が入れる Noto CJK の Thin・Light・Medium・Black などのフェイス。標準の太さ（Regular・Bold）は fonts-noto-cjk にある",
+      "source": "",
+      "pending_source": "issues/issue-402-requirements.md"
+    },
+    {
       "term": "検査ジョブ",
       "context": "ci",
       "meaning": "ci.yml の jobs の 1 つ（Python syntax check・Ruff lint・ShellCheck・Pytest の各版・まとめたチェックのジョブ pytest-all・CHANGELOG check・Proper term check）",
@@ -606,6 +613,13 @@
       "context": "image-lineage",
       "meaning": "到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧",
       "source": "docs/specifications/lfm-base-settings.md"
+    },
+    {
+      "term": "派生イメージ",
+      "context": "image-lineage",
+      "meaning": "FROM devbase-base:latest で base を継ぎ、道具を足すイメージ（containers/ の general・php など）。lfm は base を継がないため含めない",
+      "source": "",
+      "pending_source": "issues/issue-402-requirements.md"
     },
     {
       "term": "利用者に見える変更",
