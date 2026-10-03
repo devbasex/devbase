@@ -1,0 +1,14 @@
+# devbase の文書の除外 (#400)。/etc/dpkg/dpkg.cfg.d/excludes-devbase として置く。
+# Ubuntu の excludes より後に読まれ、dpkg は後に読んだ規則を優先する。
+# base を FROM で継ぐ派生イメージが apt で入れるパッケージにも効く。
+
+# 文書を外し直し、copyright だけを残す (Ubuntu が残す changelog も外す)
+path-exclude=/usr/share/doc/*
+path-include=/usr/share/doc/*/copyright
+
+# man と info
+path-exclude=/usr/share/man/*
+path-exclude=/usr/share/info/*
+
+# Node.js のヘッダ (ネイティブアドオンのビルドでは node-gyp が取得する)
+path-exclude=/usr/include/node/*

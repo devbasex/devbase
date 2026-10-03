@@ -59,7 +59,7 @@ def _first_apt_install(block: str) -> str:
     """1 つ目の RUN の**1 回目**の apt-get install の一覧だけを取り出す
 
     1 つ目の RUN は apt-get install を 2 回呼ぶ。RUN の本文全体で探すと、2 回目の一覧
-    (後から足したリポジトリの docker-ce / gh / nodejs など) にあっても通ってしまう。
+    (後から足したリポジトリの docker-ce-cli / gh / nodejs など) にあっても通ってしまう。
     範囲は 1 回目の apt-get install から最初の ``;`` まで。2 回目の直前までにすると、
     間にある locale-gen やリポジトリの設定の語でも通ってしまう。
     """

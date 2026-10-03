@@ -125,7 +125,7 @@ def ci() -> dict:
 
 def test_base_scripts_are_counted():
     scripts = base_shell_scripts(BASE_DIR)
-    for name in ["ai-cli-aliases.sh", "dind", "entrypoint.sh", "shellrc-dir.sh",
+    for name in ["ai-cli-aliases.sh", "entrypoint.sh", "shellrc-dir.sh",
                  "tmux-clean", "tmux-first", "tmux-session"]:
         assert name in scripts
     for name in ["Dockerfile", "fonts-local.conf", "tmux.conf"]:
