@@ -479,7 +479,8 @@ base は、すべての利用者が使う道具だけを持ちます。次のも
 
 **`browser` のイメージを選ぶ。** プロジェクトの `compose.yml` の dev サービスで、`build.context` を
 `containers/browser` にします。ほかの派生イメージと同じく、`devbase build` は base を先に建ててから
-このイメージを建てます。
+このイメージを建てます。プロジェクトの Dockerfile が派生イメージを `FROM` に取るときも、`devbase build` は
+`containers/<名前>/Dockerfile` の `FROM devbase-*` をたどり、下の段から順に建てます。
 
 ```yaml
 services:
@@ -506,7 +507,7 @@ services:
 | 道筋 | すること | 気をつけること |
 |------|----------|----------------|
 | `browser` のイメージを選ぶ | 上の `build.context` に替える | 元の派生イメージの道具が無くなる |
-| プロジェクトの Dockerfile で足す | `FROM devbase-php:latest` などの上で、利用者 `ubuntu` が `npx playwright install --with-deps chromium` を打つ | `devbase build` は `devbase-php` を建てるが、その下の base が無いときに先に建てない。先に `devbase build base` を打つ |
+| プロジェクトの Dockerfile で足す | `FROM devbase-php:latest` などの上で、利用者 `ubuntu` が `npx playwright install --with-deps chromium` を打つ | `devbase build` は継承の連なりを下の段から建てる（`devbase-base` → `devbase-php` → プロジェクト）。たどる途中の `containers/<名前>/` が無いときは、何も建てずに止まる |
 | 道具の起動引数でブラウザの場所を渡す | MCP の起動引数などで、上の 2 つのどちらかで用意した Chromium の実行ファイルを指させる | ブラウザと依存パッケージは、ほかの 2 つの道筋で用意する |
 
 `@playwright/mcp` や `chrome-devtools-mcp` は、既定でシステムの Chrome を探すことがあります。
