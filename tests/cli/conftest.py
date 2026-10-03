@@ -1,10 +1,8 @@
 """`bin/devbase` を実プロセスで起動するハーネス (PLAN61 決定 11)。
 
-既存の `sed` ハーネス (`test_wrapper_dispatch.py` など) は wrapper の本文を削って `eval`
-する。その形では `DEVBASE_ROOT=` の行を削って環境変数の値を使わせるため、pytest が継承した
-実環境の `DEVBASE_ROOT` を渡し忘れると実環境の `projects/` を見る。また `run_python` と
-`cmd_build` を関数ごと置き換えるため、`=== Building devbase images ===` が出ないことを
-確かめられない。
+wrapper の本文を `sed` で削って `eval` する形にはしない。その形では関数の表記に依存して
+削る範囲が黙って外れ、`DEVBASE_ROOT=` の行を削って環境変数の値を使わせるため、pytest が
+継承した実環境の `DEVBASE_ROOT` を渡し忘れると実環境の `projects/` を見る (#339)。
 
 ここでは `bin/devbase` を `<tmp>/bin/devbase` へ複製する。wrapper は自身の場所から
 `DEVBASE_ROOT` を `<tmp>` に決め、継承した環境変数は wrapper の代入で上書きされる。外へ
@@ -98,3 +96,15 @@ def stdout_field(result: subprocess.CompletedProcess, prefix: str) -> str | None
         if line.startswith(prefix):
             return line[len(prefix):]
     return None
+
+
+def python_args(result: subprocess.CompletedProcess) -> str | None:
+    """`UV:` 行から Python (`python -m devbase.cli`) へ渡った引数を返す。
+
+    `run_python` を通らなかった (`UV:` 行が無い、または `devbase.cli` を起動していない) ときは None。
+    """
+    uv = stdout_field(result, "UV:")
+    if uv is None:
+        return None
+    head, sep, tail = (uv + " ").partition(" devbase.cli ")
+    return tail.rstrip() if sep else None

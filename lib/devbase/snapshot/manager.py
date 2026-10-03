@@ -263,6 +263,27 @@ class SnapshotManager:
             raise SnapshotError(f"無効なスナップショットパス: '{name}'")
         return snap_dir
 
+    def _entry_dir(self, snap: dict) -> Path:
+        """``snapshot.yml`` のエントリから世代のディレクトリを検証して返す。
+
+        ``list()`` と ``rotate()`` が共有する検証の段 (#269 / #332)。次のエントリを
+        ``SnapshotError`` で止める。
+
+        - ``name`` が無い・文字列でない
+        - :meth:`_safe_snap_dir` が拒否する (名前が不正・リンク・``backups/`` の外)
+        - ディレクトリの場所にディレクトリ以外が置かれている
+
+        ディレクトリがまだ無いエントリは通す (呼び出し側が「中身なし」として扱う)。
+        """
+        name = snap.get('name') if isinstance(snap, dict) else None
+        if not isinstance(name, str) or not name:
+            raise SnapshotError("名前 (name) がありません")
+        snap_dir = self._safe_snap_dir(name)
+        if snap_dir.exists() and not snap_dir.is_dir():
+            raise SnapshotError(
+                f"スナップショット '{name}' の場所がディレクトリではありません: {snap_dir}")
+        return snap_dir
+
     def create(self, name: Optional[str] = None, full: bool = False) -> str:
         """スナップショットを作成する。
 
@@ -292,18 +313,31 @@ class SnapshotManager:
         return name
 
     def list(self) -> list[dict]:
-        """スナップショット一覧を返す"""
+        """スナップショット一覧を返す。
+
+        各エントリは :meth:`_entry_dir` で検証し、場所が不正なエントリ (名前が不正・
+        リンク・``backups/`` の外・``name`` が無い・ディレクトリでない) は警告して
+        一覧から外す。中は読まず、``snapshot.yml`` も書き換えない。
+        """
         meta = self._load_metadata()
-        snapshots = meta.get('snapshots', [])
-        # ディレクトリの実サイズも取得
-        for snap in snapshots:
-            snap_dir = self.backups_dir / snap['name']
-            if snap_dir.exists():
+        snapshots = []
+        for snap in meta.get('snapshots', []) or []:
+            try:
+                snap_dir = self._entry_dir(snap)
+            except SnapshotError as e:
+                name = snap.get('name', '') if isinstance(snap, dict) else ''
+                logger.warning(
+                    "snapshot.yml の世代 '%s' は場所が不正なため、一覧から外します: %s",
+                    name, e)
+                continue
+            # ディレクトリの実サイズも取得
+            if snap_dir.is_dir():
                 snap['size_bytes'] = sum(
                     f.stat().st_size for f in snap_dir.iterdir() if f.is_file()
                 )
             else:
                 snap['size_bytes'] = 0
+            snapshots.append(snap)
         return snapshots
 
     def entry_count(self) -> int:
@@ -598,7 +632,7 @@ class SnapshotManager:
         系列 (対象ボリュームの組) ごとに ``keep`` 世代を残し、残りの総数が
         ``max_total`` (省けば ``keep × 3``) を超えたら、系列をまたいで最も古い
         世代から消す。**各系列の最新の世代は消さない** (次の差分の積み先のため)。
-        消す前に :meth:`_safe_snap_dir` で名前を検証し、拒否されたエントリは
+        消す前に :meth:`_entry_dir` (``list()`` と共有) で検証し、拒否されたエントリは
         ディレクトリを消さずに一覧からだけ外す。
 
         Args:
@@ -624,6 +658,16 @@ class SnapshotManager:
         if not plan:
             return 0
 
+        deleted_ids, removed_ids = self._apply_rotation_plan(
+            snapshots, plan, keep, max_total)
+        meta['snapshots'] = self._rebuild_remaining(snapshots, removed_ids)
+        meta['max_generations'] = keep
+        self._save_metadata(meta)
+        return len(deleted_ids)
+
+    def _apply_rotation_plan(self, snapshots: list, plan: list, keep: int,
+                             max_total: int) -> tuple:
+        """ローテーションの計画どおりに世代を消し、(消した添字, 一覧から外す添字) を返す。"""
         removed_ids = set()
         deleted_ids = set()
         for index, reason in plan:
@@ -631,7 +675,7 @@ class SnapshotManager:
             name = snap.get('name', '')
             removed_ids.add(index)
             try:
-                snap_dir = self._safe_snap_dir(name)
+                snap_dir = self._entry_dir(snap)
             except SnapshotError as e:
                 logger.warning(
                     "snapshot.yml の世代 '%s' は場所が不正なため、ディレクトリを消さずに"
@@ -654,14 +698,14 @@ class SnapshotManager:
             logger.info(
                 "ローテーション: %s の %d 世代を削除しました（グループごとに %d 世代保持）",
                 label, count, keep)
+        return deleted_ids, removed_ids
 
+    def _rebuild_remaining(self, snapshots: list, removed_ids: set) -> list:
+        """一覧から外さない世代を、古い順に並べ直して返す。"""
         remaining = [s for i, s in enumerate(snapshots) if i not in removed_ids]
         order = {id(s): i for i, s in enumerate(snapshots)}
         remaining.sort(key=lambda s: self._entry_age(s, order[id(s)]))
-        meta['snapshots'] = remaining
-        meta['max_generations'] = keep
-        self._save_metadata(meta)
-        return len(deleted_ids)
+        return remaining
 
     def _rotation_plan(self, snapshots: list, keep: int, max_total: int) -> list:
         """ローテーションで消すエントリを決める (副作用なし)。
@@ -1115,33 +1159,41 @@ class SnapshotManager:
                 reject(f"'{sub}' のボリューム名が文字列ではありません: {name!r}")
 
             if sub in ('', SHARED_MOUNT):
-                if name != HOME_UBUNTU_VOLUME:
-                    reject(f"共通ボリュームに使えるのは {HOME_UBUNTU_VOLUME} だけです"
-                           f" (指定: {name!r})")
-                continue
-
-            # group: devbase_home_<group> の形で、<group> が妥当であること
-            if not name.startswith(SHARED_VOLUME_PREFIX):
-                reject(f"グループボリュームは {SHARED_VOLUME_PREFIX}<group> の形で"
-                       f"なければなりません (指定: {name!r})")
-            if name == LEGACY_GROUP_VOLUME:
-                # 旧既定のボリュームの系列 (#315 決定 8)。ロールバックの経路として一覧・
-                # 復元 (元のボリュームへだけ)・コピー・削除・ローテーションを許す。
-                # default は予約語で検証を通らないため、名前を明示して許す
-                continue
-            group = name[len(SHARED_VOLUME_PREFIX):]
-            try:
-                # 正規化した結果が元の名前と**一致**することまで見る。
-                # 検証は前後空白を落とした名前に正規化するので、通るかどうかだけでは
-                # `devbase_home_  globex  ` を弾けない。
-                # 実際にマウントされるのは正規化前の生の名前である。
-                if get_group_volume(group) != name:
-                    reject(f"グループボリューム {name!r} は正規化された名前では"
-                           f"ありません (期待: {get_group_volume(group)!r})")
-            except DevbaseError as e:
-                reject(f"グループボリューム {name!r} のグループ名が不正です: {e}")
+                SnapshotManager._reject_invalid_shared(name, reject)
+            else:
+                SnapshotManager._reject_invalid_group(name, reject)
 
         return dict(volumes)
+
+    @staticmethod
+    def _reject_invalid_shared(name: str, reject) -> None:
+        """共通側 (``''`` / ``ai``) のボリューム名が ``devbase_home_ubuntu`` でなければ拒否する。"""
+        if name != HOME_UBUNTU_VOLUME:
+            reject(f"共通ボリュームに使えるのは {HOME_UBUNTU_VOLUME} だけです"
+                   f" (指定: {name!r})")
+
+    @staticmethod
+    def _reject_invalid_group(name: str, reject) -> None:
+        """グループ側のボリューム名が ``devbase_home_<group>`` の妥当な形でなければ拒否する。"""
+        if not name.startswith(SHARED_VOLUME_PREFIX):
+            reject(f"グループボリュームは {SHARED_VOLUME_PREFIX}<group> の形で"
+                   f"なければなりません (指定: {name!r})")
+        if name == LEGACY_GROUP_VOLUME:
+            # 旧既定のボリュームの系列 (#315 決定 8)。ロールバックの経路として一覧・
+            # 復元 (元のボリュームへだけ)・コピー・削除・ローテーションを許す。
+            # default は予約語で検証を通らないため、名前を明示して許す
+            return
+        group = name[len(SHARED_VOLUME_PREFIX):]
+        try:
+            # 正規化した結果が元の名前と**一致**することまで見る。
+            # 検証は前後空白を落とした名前に正規化するので、通るかどうかだけでは
+            # `devbase_home_  globex  ` を弾けない。
+            # 実際にマウントされるのは正規化前の生の名前である。
+            if get_group_volume(group) != name:
+                reject(f"グループボリューム {name!r} は正規化された名前では"
+                       f"ありません (期待: {get_group_volume(group)!r})")
+        except DevbaseError as e:
+            reject(f"グループボリューム {name!r} のグループ名が不正です: {e}")
 
     def _load_snap_meta(self, snap_dir: Path) -> dict:
         """個別スナップショットのmeta.ymlを読み込む"""

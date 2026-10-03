@@ -58,11 +58,20 @@ def test_a_file_backend_only_shows_the_guidance(file_root, monkeypatch, prepare)
     assert snapshot(file_root) == before
 
 
-def test_changing_only_the_url_keeps_everything_else(openbao_root, openbao, monkeypatch):
+@pytest.mark.parametrize('layout', ['flat', 'group'])
+def test_changing_only_the_url_keeps_everything_else(openbao_root, openbao, monkeypatch, layout):
+    """version: 1 (flat) でも version: 2 (group・group_aliases あり) でも url 以外を保つ (#382)"""
+    select = []
+    if layout == 'group':
+        from tests.conftest import configure_openbao
+
+        configure_openbao(openbao_root, openbao, layout='group',
+                          group_aliases={'umbrella': 'acme'})
+        select = ['acme']               # version: 2 の確認はグループを選んで通す (#386)
     before = bc.load(openbao_root)
     creds = (openbao_root / 'secrets' / 'bootstrap.env.age').read_bytes()
     url = f'http://localhost:{openbao.port}'
-    Script(monkeypatch, text=[url], secret=['', ''])
+    Script(monkeypatch, text=[url], secret=['', ''], select=select)
 
     rc, out = run(openbao_root)
 
@@ -71,6 +80,10 @@ def test_changing_only_the_url_keeps_everything_else(openbao_root, openbao, monk
     assert after.openbao.url == url
     assert dataclasses.replace(after.openbao, url=before.openbao.url) == before.openbao
     assert (after.version, after.cache_enabled) == (before.version, before.cache_enabled)
+    if layout == 'group':
+        assert after.version == 2
+        assert after.openbao.layout == bc.LAYOUT_GROUP
+        assert after.openbao.group_aliases == {'umbrella': 'acme'}
     assert (openbao_root / 'secrets' / 'bootstrap.env.age').read_bytes() == creds
     assert '読めた参照' in out          # 保存の後に接続を確かめる
 

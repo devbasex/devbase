@@ -66,6 +66,20 @@
   `devbase down` → `devbase up` でコンテナを作り直してください。
 
 ### Fixed
+- **`devbase snapshot list` が、`snapshot.yml` の場所の不正なエントリの中を読まないようにしました（#332）。**
+  名前が `../outside` のように `backups/` の外を指すもの・シンボリックリンク・ディレクトリでないもの・
+  `name` の無いものは、`rotate` と同じ判定で警告して一覧から外します。これまでは `backups/` の外の
+  ディレクトリのサイズを表示したり、`NotADirectoryError` や `KeyError` で止まったりしていました。
+  `devbase status` のスナップショットの節と TUI のスナップショットの選択も、外した後の一覧を使います。
+  `list` は `snapshot.yml` を書き換えません。
+- **派生イメージを `FROM` に取るプロジェクトの `devbase build` が、base の無い端末で止まるのを直しました（#404）。**
+  プロジェクトの Dockerfile が `FROM devbase-php:latest` のように派生イメージを継ぐとき、`devbase build`
+  （と、それを呼ぶ `devbase up`・`devbase rebuild`）は `containers/<名前>/Dockerfile` の `FROM devbase-*` を
+  たどり、`devbase-base` → `devbase-php` → プロジェクトのように下の段から建てます。先に `devbase build base` を
+  打つ必要はありません。`--no-cache` では全段をキャッシュなしで建て直します。たどる途中の段の
+  `containers/<名前>/` が無いときと、たどりが循環するときは、何も建てずに理由を出して止まります。
+  あわせて、`FROM --platform=...` と小文字の `from` の Dockerfile でも、通常のビルドが直の親イメージを
+  先に建てます（`--expires` の判定と同じ読み方になりました）。
 - **スナップショットの差分バックアップが、毎回ボリューム全体を控えていたのを直しました。**
   差分が前回からの変更分だけになり、1 回の時間とディスクの使い方が大きく減ります（手元の測定で
   フル 2.2GB・40 秒に対し、差分 1.5MB・2 秒）。直した後の最初の `devbase up` では、既存の世代へ
