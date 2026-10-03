@@ -21,10 +21,6 @@
   （`docker logs`）に `WARNING:` の行でパスを知らせます。控えは共通の設定へ自動では取り込まず、自動では
   消しません。戻し方は `docs/user/container-operations.md` にあります。反映には `devbase build base` で
   base イメージを建て直してください。
-- **`containers/lfm` のもとのイメージを `nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04` に上げました（#337）。**
-  GPU を使うホストの NVIDIA ドライバは CUDA 13.4 以上に対応している必要があります（`nvidia-smi` の
-  `CUDA Version` で確かめられます）。足りないと `--gpus all` の起動が requirement error で止まるので、
-  ドライバを最新に上げてから `devbase build lfm` で建て直してください。
 - **Playwright のブラウザの置き場を `/opt/ms-playwright` にしました（#220）。** 環境変数
   `PLAYWRIGHT_BROWSERS_PATH` が指し、実行時に `playwright install` で取得するブラウザも
   `~/.cache/ms-playwright` ではなくここへ入ります。ビルドで取得した Chromium は片付けで消えず、
