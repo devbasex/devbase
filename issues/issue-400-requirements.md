@@ -35,26 +35,25 @@
 
 | 事実 | 出所 |
 | --- | --- |
-| lfm は base を `FROM` で継がず、`/entrypoint.sh` と `/usr/local/bin/dind` を base のイメージから `COPY --from` で取り込む。lfm は自分で `docker-ce`・`containerd.io` を入れ、`/etc/docker/daemon.json` に NVIDIA の runtime を書く（DinD を前提にした作り） | `containers/lfm/Dockerfile:55-60`・`:169-173`・`:175-200` |
 | entrypoint の DinD の分岐は `ENABLE_DIND` が `true` / `1` のときだけ動き、最初に `/var/run/docker.sock` を消してから `dind dockerd` を起こし、`docker info` を最大 30 秒待つ | `containers/base/entrypoint.sh:862-` |
 | `ENABLE_DIND` を設定している compose・env は、このリポジトリと手元のプラグイン（`repos/` の下）に見当たらない。利用者向けの文書（`docs/`・`README`・`CHANGELOG.md`）にも DinD の案内は無い | `grep -rn "ENABLE_DIND\|DinD" docs README* CHANGELOG.md lib` と `grep -rln "ENABLE_DIND\|dockerd" repos/ projects/`（当たりはプラグインの 1 つ（proj-a）の compose の注記だけで、ホストの dockerd を指す） |
 | base を `FROM` で継ぐ派生イメージは bi-tools・general・go・latex・php・php85・trygroup。dpkg の設定（`/etc/dpkg/dpkg.cfg.d/`）は継がれ、latex・php・php85 は自分で `apt-get install` する | `containers/*/Dockerfile` |
 | 派生イメージに root で uv を使う手順は無い（bi-tools の `uv tool install` は `USER ubuntu` の下） | `containers/bi-tools/Dockerfile:29-47` |
-| `PATH` の `/root/.local/bin` は、lfm の設定の取り込みの試験が「lfm へ届けない要素」として名前で除外している | `tests/containers/test_lfm_base_settings.py:40`・`docs/specifications/lfm-base-settings.md:225` |
 | CI はイメージを建てない。イメージの確かめは手元で行う | `.github/workflows/ci.yml` |
-| dockerd を自分で入れ `ENABLE_DIND` で DinD を起こせる lfm は、使うプロジェクトが無く、同じマイルストーンの #403 で廃止が決まった | #403 の本文 |
+| DinD を前提に作られた唯一の派生 lfm（自分で dockerd を入れ、base から `dind` を `COPY --from` で取り込む）は、使うプロジェクトが無く、同じスプリント m7c の #403 で #400 より先に廃止する | #403 の本文・#400 への利用者のコメント（2026-10-03） |
 | `ENABLE_DIND` を設定している compose・env は、手元のプラグイン（`repos/*/`）と `projects/*/` に 0 件である（設計で再び確かめた） | `grep -rIl ENABLE_DIND repos/*/ projects/*/ --include=compose.yml --include=env --include=.env` |
 
 ## 前提
 
-- 前提 1（DinD の扱い）: DinD を廃止する。base から dockerd と containerd を外し、`containers/base/dind` と entrypoint の `ENABLE_DIND` の分岐（dockerd を起こす手順）を消す。根拠: `ENABLE_DIND` を設定する者がリポジトリ・手元のプラグイン・手元のプロジェクトに無く、DinD を前提に作られた lfm は使う者が無く #403 で廃止が決まった。起票時の選択肢「消す」「使う派生へ移す」のうち、移す先を使う者がいないため前者を採る（設計で前提を改めた。「変更の記録」）
-- 前提 2: base とその派生・lfm で `ENABLE_DIND=true` を設定している利用者はいない（上の調べ）。設定していた利用者は、base を建て直した後に DinD が起きなくなる。entrypoint はこの設定を見つけたら廃止を 1 行で知らせて起動を続け、CHANGELOG でホストの docker.sock を使うよう案内する
+- 前提 1（DinD の扱い）: DinD を廃止する。base から dockerd と containerd を外し、`containers/base/dind` と entrypoint の `ENABLE_DIND` の分岐（dockerd を起こす手順）を消す。根拠: `ENABLE_DIND` を設定する者がリポジトリ・手元のプラグイン・手元のプロジェクトに無く、DinD を前提に作られた lfm は使う者が無く、#400 より先に #403 で廃止する。起票時の選択肢「消す」「使う派生へ移す」のうち、移す先を使う者がいないため前者を採る（設計で前提を改めた。「変更の記録」）
+- 前提 2: base とその派生で `ENABLE_DIND=true` を設定している利用者はいない（上の調べ）。設定していた利用者は、base を建て直した後に DinD が起きなくなる。entrypoint はこの設定を見つけたら廃止を 1 行で知らせて起動を続け、CHANGELOG でホストの docker.sock を使うよう案内する
 - 前提 3: root で uv を使う利用者・処理は無い。base の root の uv を外した後、`sudo uv` は「コマンドが無い」で失敗してよい
 - 前提 4: グローバルの `aws-cdk-lib` を `require` する利用者は無い。CDK のアプリは自分の `package.json` に `aws-cdk-lib` を持ち、`cdk synth` はそれを使う
-- 前提 5: dpkg の除外設定は base を `FROM` で継ぐ派生イメージにも効き、派生が後から apt で入れるパッケージの文書も入らなくてよい（copyright は残る）。lfm は `/etc/dpkg` を取り込まないため対象外
+- 前提 5: dpkg の除外設定は base を `FROM` で継ぐ派生イメージにも効き、派生が後から apt で入れるパッケージの文書も入らなくてよい（copyright は残る）
 - 前提 6: `/usr/include/node` を外すと、npm のネイティブアドオンのビルドでは node-gyp がヘッダを取得する（ネットワークが要る）。これを許す
 - 前提 7: amd64 の確かめは、amd64 の Docker が動く端末（WSL2 の端末など）か、`docker buildx build --platform linux/amd64` で行う。どちらで行ったかを PR に書く
 - 前提 8: 大きさは、建てた base から作ったコンテナで `du -sbx /` を測った値で比べる。前は main の Dockerfile で建てた base、後はこの変更の Dockerfile で建てた base とし、同じ端末・同じ日に建てる（apt と npm の取得する版の差を小さくする）
+- 前提 9: #403（lfm の廃止）が #400 より先にスプリントの統合先へ入る。#400 の起点には `containers/lfm`・`tests/containers/test_lfm_base_settings.py`・`docs/specifications/lfm-base-settings.md` が無く、Dockerfile を読む試験の部品（`Instruction` / `parse`）は #403 が移した共通の置き場にある。#400 は lfm への影響を考えない（利用者のコメント、2026-10-03）
 
 ## 対象範囲
 
@@ -63,13 +62,12 @@
 - base の最後の利用者の層で残る `/var/lib/apt/lists` を消す
 - dpkg の除外設定で、`/usr/share/doc`（copyright を除く）・`/usr/share/man` などの文書と `/usr/include/node` を入れない
 - `containers/base/dind` と entrypoint の DinD の分岐を消し、`ENABLE_DIND` を設定したときは廃止の知らせを 1 行出す
-- lfm が base から `dind` を取り込む行を消す（lfm が建ち続けるための最小の変更）
 - 外した中身に触れる試験（`tests/containers/`）と仕様（`docs/specifications/`）の追従
 - `CHANGELOG.md` の `[Unreleased]` への記入
 
 含まない:
 - 段階 2・3 の削減（重い道具を派生イメージへ移す・版の固定の見直し）。別の課題
-- lfm の廃止（#403）と、lfm の中身の削減（lfm が自分で入れる `docker-ce`・`daemon.json` などは触らない）
+- lfm の廃止（#403。#400 より先に入るため、#400 は lfm に触れない）
 - base の他の道具の追加・版の変更
 - イメージを建てる CI の追加
 - 利用者の環境で `devbase up` を実行して確かめること（P3。リリース後テストで利用者が行う）
@@ -83,8 +81,8 @@
 | E3 | 変更後の base を amd64 で建てた | E2 の成功 | 建たなければ変更を直す（アーキの差は `case` の分岐で起きやすい） | E2 |
 | E4 | 建てた base の中身を確かめた（外した物が無く、残す道具が動く） | E2・E3 の成功 | 残す道具が動かなければ変更を直す | E2・E3 |
 | E5 | 展開後の大きさを測り、減った量を PR に記録した | E4 の成功 | 450MB に届かなければ、届かない理由と内訳を PR に書いて人へ戻す | E1・E4 |
-| E6 | 変更後の base から lfm と、`FROM` で継ぐ派生イメージを建てた | E2 の成功 | 建たなければ、外した物を前提にした取り込みや手順を直す | E2 |
-| E7 | lfm に `/usr/local/bin/dind` が無いことを確かめた | E6 の成功 | 残っていれば lfm の取り込みの行を直す | E6 |
+| E6 | 変更後の base から、`FROM` で継ぐ派生イメージを建てた | E2 の成功 | 建たなければ、外した物を前提にした取り込みや手順を直す | E2 |
+| E7 | （#403 で対象が無くなったため削除） | — | — | — |
 | E8 | base で `ENABLE_DIND=true` のコンテナを起こし、entrypoint が DinD の廃止を知らせて起動を続けた | E2 の成功 | 起動が止まる・dockerd を起こそうとする・ホストの docker.sock が消えるなら entrypoint を直す | E2 |
 | E9 | 利用者が base を建て直した | main へのマージ（配布） | 建たなければ利用者は前のイメージで動き続ける。リリース後テストで見つける | E2〜E8・マージ |
 
@@ -104,7 +102,7 @@
 - [ ] 4. 変更後の base で、`/var/lib/apt/lists` の下に `lock` と `partial` のほかのファイルが無い
 - [ ] 5. 変更後の base で、`/usr/share/man` の下と `/usr/include/node` にファイルが無く、`/usr/share/doc` の下には `copyright` のほかのファイルが無い。`/usr/share/doc/<パッケージ>/copyright` は apt で入れたパッケージについて残る
 - [ ] 6. arm64 で、変更前の base と変更後の base の展開後の大きさの差が 450MB（450,000,000 バイト）以上ある。前後の値と差を PR に記録する
-- [ ] 7. 変更後の base から lfm が建ち、lfm に `/usr/local/bin/dind` が無い
+- 7. （#403 で lfm が #400 より先に無くなるため削除。番号は参照を保つため詰めない）
 - [ ] 8. 変更後の base から、`FROM devbase-base:latest` で継ぐ派生イメージ（bi-tools・general・go・latex・php・php85・trygroup）が建つ
 - [ ] 9. `ENABLE_DIND` に `true` か `1` を設定して base のコンテナを起こすと、entrypoint は DinD を廃止したことを 1 行出して起動を続ける。`/var/run/docker.sock` を消さず、dockerd を起こさず、`docker info` を待たない
 - [ ] 10. `ENABLE_DIND` を設定しない base のコンテナの起動は、変更の前と同じ順で同じ用意を行う（entrypoint の既存の試験が通る）
@@ -125,7 +123,7 @@
 
 | 対象 | 影響 |
 | --- | --- |
-| 公開インタフェース | devbase の CLI は変わらない。base のイメージから `dockerd`・`containerd`・グローバルの `aws-cdk-lib`・root の uv・文書が消える。base とその派生・lfm での `ENABLE_DIND=true` は DinD を起こさなくなり、廃止の知らせを 1 行出す |
+| 公開インタフェース | devbase の CLI は変わらない。base のイメージから `dockerd`・`containerd`・グローバルの `aws-cdk-lib`・root の uv・文書が消える。base とその派生での `ENABLE_DIND=true` は DinD を起こさなくなり、廃止の知らせを 1 行出す |
 | データ | 変わらない |
 | 既存の振る舞い | entrypoint の DinD の分岐が無くなる。派生イメージで apt が入れるパッケージの文書が入らなくなる |
 
@@ -133,10 +131,10 @@
 
 | 項目 | 手段 |
 | --- | --- |
-| 起動 | `devbase build` で base と lfm・派生を建てる（建て方は設計で決める） |
+| 起動 | `devbase build` で base と派生を建てる（建て方は設計で決める） |
 | テスト | `env -u DEVBASE_ROOT uv run --locked pytest tests/ -q` |
 | 静的解析・型検査 | `uvx ruff check --select=E9,F63,F7,F82 lib`・`python3 .github/scripts/proper_term_check.py`・base のシェルスクリプトの ShellCheck（開発参加ガイドの「CI が実行するもの」） |
-| 手動確認（マージ前） | arm64 で建てた base と lfm で受け入れ条件 1〜7・9 を確かめ、出力と大きさを PR に記録する。amd64 で建てた base で受け入れ条件 1〜5 を確かめ、どの端末・どの方法で建てたかを PR に記録する |
+| 手動確認（マージ前） | arm64 で建てた base と派生で受け入れ条件 1〜6・8・9 を確かめ、出力と大きさを PR に記録する。amd64 で建てた base で受け入れ条件 1〜5 を確かめ、どの端末・どの方法で建てたかを PR に記録する |
 | 手動確認 | 利用者が自分の環境で base を建て直し、普段のプロジェクトで docker・`cdk`・uv が使えることを確かめる（リリース後テスト。P3 のため利用者が行う） |
 
 ## 前提とする取り決め
@@ -153,14 +151,14 @@
 | --- | --- |
 | 常に行う | 全体のテスト・lint・固有の語の検査を push の前に打つ。base を建てる前に `docker system df` で空きを見て、作業用のタグは記録の後に消す（`AGENTS.md` の落とし穴） |
 | 確認してから行う | 対象範囲の外の道具を base から外す・足す・版を変える（P1） |
-| 行わない | 利用者の環境で `devbase up` を実行する（P3）。タグ・Release を作る（P2）。lfm を廃止する・lfm の中身を削る（#403）。プラグインのリポジトリの compose を直す |
+| 行わない | 利用者の環境で `devbase up` を実行する（P3）。タグ・Release を作る（P2）。lfm に触れる（#403 で #400 より先に廃止される）。プラグインのリポジトリの compose を直す |
 
 ## 未決
 
 | 項目 | 誰が決めるか | 期限 |
 | --- | --- | --- |
 | dpkg の除外設定で外す置き場の一覧（`/usr/share/doc`・`man`・`info`・`locale`・`/usr/include/node` のどこまでか）と、除外設定を置く位置（最初の `apt-get install` より前） | 設計（`design`） | 設計 PR |
-| 外した後の `PATH` の `/root/.local/bin` を残すか消すか（lfm の設定の取り込みの試験の除外表に影響する） | 設計（`design`） | 設計 PR |
+| 外した後の `PATH` の `/root/.local/bin` を残すか消すか | 設計（`design`） | 設計 PR |
 | amd64 を建てる端末と方法（前提 7） | 実装の担当 | 手動確認（マージ前） |
 
 ## 変更の記録
@@ -168,3 +166,4 @@
 | 日 | 工程 | 変えたこと | 理由 |
 | --- | --- | --- | --- |
 | 2026-10-03 | 設計 | 前提 1 を「DinD を lfm に残す」から「DinD を廃止する」へ改め、前提 2・対象範囲・E6〜E8・受け入れ条件 7・9・11・13・影響・境界・未決を合わせて直した | 要求を書いた後に #403 で lfm の廃止が決まり、DinD を使える唯一の派生が無くなる。`ENABLE_DIND` を設定する者も 0 件である |
+| 2026-10-03 | 設計 | #403 が #400 より先に入る前提へ改めた。前提 9 を足し、lfm の事実の 2 行・前提 2・5 の lfm・対象範囲の lfm の取り込み・E6・E7・受け入れ条件 7・影響・検証手段・境界・未決の lfm を消すか直した。E7 と受け入れ条件 7 は番号を詰めずに削除と書いた | 利用者が #403 → #400 → #401 → #402 の順に入れると決め、#400 で lfm への影響を考えなくてよいとコメントした |
