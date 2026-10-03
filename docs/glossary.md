@@ -112,7 +112,7 @@ base イメージのフォントの解決（docs/specifications/base-image-rende
 | 総称ファミリ | — | sans-serif / sans / serif / monospace。具体の書体名ではなく様式を指す指定 | — | — | `docs/specifications/base-image-rendering.md` |
 | metric 互換 | — | 字幅・行送りが元の書体と一致する代替の書体 | — | — | `docs/specifications/base-image-rendering.md` |
 | 受け皿 | — | イメージに実在しない書体名を指定されたときに末尾へ足すフェイス | — | — | `docs/specifications/base-image-rendering.md` |
-| 追加の太さのフォント | — | fonts-noto-cjk-extra が入れる Noto CJK の Thin・Light・Medium・Black などのフェイス。標準の太さ（Regular・Bold）は fonts-noto-cjk にある | — | — | — |
+| 追加の太さのフォント | — | fonts-noto-cjk-extra が入れる Noto CJK の Thin・Light・Medium・Black などのフェイス。標準の太さ（Regular・Bold）は fonts-noto-cjk にある | — | — | `docs/specifications/base-image-rendering.md` |
 
 ## base イメージの tmux のコマンド（`tmux`）
 
@@ -177,7 +177,7 @@ base の設定が派生イメージへ届く道筋（containers/*/Dockerfile）
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| 派生イメージ | — | FROM devbase-base:latest で base を継ぎ、道具を足すイメージ（containers/ の general・php など） | — | — | — |
+| 派生イメージ | — | FROM devbase-base:latest で base を継ぎ、道具を足すイメージ（containers/ の general・php など） | — | — | `docs/specifications/base-image-contents.md` |
 | DinD | — | コンテナの中で dockerd を起こし、そのコンテナの中だけの docker を使う形。#400 で廃止し、ENABLE_DIND は知らせを 1 行出すだけになった。ホストの docker.sock を mount して使う形と区別する | — | — | `docs/specifications/base-image-contents.md` |
 | 展開後の大きさ | — | 建てたイメージから作ったコンテナで du -sbx / を測ったバイト数。docker images の圧縮後の大きさとは違う | — | — | `docs/specifications/base-image-contents.md` |
 | 文書の除外 | — | dpkg の path-exclude の設定で、apt が入れるパッケージから文書などの置き場を展開しないこと。base は Ubuntu の excludes に加え、changelog・info・/usr/include/node を外す（copyright は残す）。base を FROM で継ぐ派生イメージにも効く | — | — | `docs/specifications/base-image-contents.md` |
@@ -230,4 +230,4 @@ devbase up / scale がコンテナを起動して待ち、その後にホスト�
 | システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base にはどちらのアーキにも入れない（#401） | — | — | `docs/specifications/base-image-rendering.md` |
 | snap スタブ | — | Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない | — | — | `docs/specifications/base-image-rendering.md` |
 | ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む。base は、このうち fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei・libnss3 などを明示して持つ | — | — | `docs/specifications/base-image-rendering.md` |
-| ブラウザの派生イメージ | — | containers/browser（タグ devbase-browser:latest）。base を継ぎ、Playwright の Chromium・ブラウザの依存パッケージ・追加の太さのフォントを足す | — | — | — |
+| ブラウザの派生イメージ | — | containers/browser（タグ devbase-browser:latest）。base を継ぎ、Playwright の Chromium・ブラウザの依存パッケージ・追加の太さのフォントを足す | — | — | `docs/specifications/base-image-rendering.md` |

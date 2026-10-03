@@ -365,8 +365,7 @@
       "term": "追加の太さのフォント",
       "context": "base-image",
       "meaning": "fonts-noto-cjk-extra が入れる Noto CJK の Thin・Light・Medium・Black などのフェイス。標準の太さ（Regular・Bold）は fonts-noto-cjk にある",
-      "source": "",
-      "pending_source": "issues/issue-402-requirements.md"
+      "source": "docs/specifications/base-image-rendering.md"
     },
     {
       "term": "検査ジョブ",
@@ -588,8 +587,7 @@
       "term": "派生イメージ",
       "context": "image-lineage",
       "meaning": "FROM devbase-base:latest で base を継ぎ、道具を足すイメージ（containers/ の general・php など）",
-      "source": "",
-      "pending_source": "issues/issue-402-requirements.md"
+      "source": "docs/specifications/base-image-contents.md"
     },
     {
       "term": "利用者に見える変更",
@@ -847,8 +845,7 @@
       "term": "ブラウザの派生イメージ",
       "context": "browser",
       "meaning": "containers/browser（タグ devbase-browser:latest）。base を継ぎ、Playwright の Chromium・ブラウザの依存パッケージ・追加の太さのフォントを足す",
-      "source": "",
-      "pending_source": "issues/issue-402-design.md"
+      "source": "docs/specifications/base-image-rendering.md"
     },
     {
       "term": "DinD",
