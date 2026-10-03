@@ -447,6 +447,17 @@ fontconfig は Chromium / Playwright のスクリーンショット、PDF の生
 > **LibreOffice と `pip` は入っていません。** LibreOffice は展開 372〜459MB で base の規律に
 > 見合わないため入れていません。Python パッケージが要るときは `uv` / `uvx` を使ってください。
 
+ブラウザは Playwright の Chromium が amd64 と arm64 の両方に入っています。置き場は
+`/opt/ms-playwright`（環境変数 `PLAYWRIGHT_BROWSERS_PATH`）で、ネットワーク無しで起動できます。
+
+> **システムの Chrome（`google-chrome-stable`、`/usr/bin/google-chrome`）は入っていません。**
+> Playwright から使うときは何も変えずに Chromium が起動します。Playwright を介さずにブラウザの
+> 実行ファイルを渡す道具には、次で得られる Playwright の Chromium のパスを渡してください。
+>
+> ```bash
+> NODE_PATH="$(npm root -g)" node -e "console.log(require('@playwright/test').chromium.executablePath())"
+> ```
+
 > **これらは `devbase build base --no-cache` で base を建て直すと反映されます。**
 > `devbase up` だけでは反映されません。派生イメージ（`general` など）を使っている
 > プロジェクトは、その派生イメージも建て直してください。

@@ -16,8 +16,8 @@ fontconfig は Chromium / Playwright のスクリーンショット、PDF の生
 
 ブラウザは Playwright の Chromium をイメージに持つ。置き場は `/opt/ms-playwright`
 （`ENV PLAYWRIGHT_BROWSERS_PATH`）で、amd64 と arm64 のどちらでも、建て直した直後から
-ネットワーク無しで起動してスクリーンショットや PDF を作れる。システムの Chrome は amd64 だけに入り、
-Ubuntu の `chromium-browser`（snap スタブ）は入れない。
+ネットワーク無しで起動してスクリーンショットや PDF を作れる。システムの Chrome（`google-chrome-stable`）と
+Ubuntu の `chromium-browser`（snap スタブ）は、どちらのアーキにも入れない。
 
 利用者向けの読み方は
 [コンテナ操作ガイド: 文字の描画と、文書を扱う道具](../user/container-operations.md#文字の描画と文書を扱う道具base-以降)
@@ -27,7 +27,7 @@ Ubuntu の `chromium-browser`（snap スタブ）は入れない。
 
 - base イメージの fontconfig の設定の置き場所と内容、フォントキャッシュの作り直し
 - base イメージに同梱する、文書を扱う道具のパッケージ
-- base イメージのブラウザ（Playwright の Chromium の置き場と、システムの Chrome）
+- base イメージのブラウザ（Playwright の Chromium の置き場。システムの Chrome を入れないこと）
 - base から派生するイメージ（`general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
   `trygroup`）への伝播の規則
 - `ENV LANG` は設定しない。LibreOffice と `pip` は同梱しない
@@ -57,7 +57,6 @@ Ubuntu の `chromium-browser`（snap スタブ）は入れない。
 | ブラウザの置き場の宣言 | `containers/base/Dockerfile` の `ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` | 置き場の値を 1 か所で決め、以降の `RUN` と `docker exec` の非対話の処理へ届ける |
 | ブラウザの置き場の作成 | `containers/base/Dockerfile` の npm のグローバル領域を作る root の `RUN` | `install -d -m 2775 -o "$USERNAME" -g npm "$PLAYWRIGHT_BROWSERS_PATH"` |
 | Chromium の取得 | `containers/base/Dockerfile` の利用者の `RUN` | `npx playwright install --with-deps chromium` で依存パッケージを入れ、Chromium を置き場へ取得する。末尾の片付けは置き場を消さない |
-| システムの Chrome | `containers/base/Dockerfile` の 1 つ目の `RUN` の 2 回目の `apt-get install` | amd64 のときだけ Google の apt（`arch=amd64`）を足し、`google-chrome-stable` を入れる |
 | ブラウザの形の検査 | `tests/containers/test_base_dockerfile_playwright.py` | Docker を起動せずに、base の置き場の宣言・置き場の作り方・片付け・apt の一覧を固定する |
 | ブラウザの検査 | `tests/containers/test_base_image_browser.py` | 建てたイメージで Chromium が起動し、日本語のページを PDF にできることを固定する |
 
@@ -245,16 +244,18 @@ shell の両方を置くと、本体を要する使い方（`channel: 'chromium'
 依存パッケージ（`fonts-liberation`・`fonts-ipafont-gothic`・`fonts-wqy-zenhei`・`libnss3` など）も
 そのまま入る。
 
-**システムの Chrome（`google-chrome-stable`）は amd64 だけに入れる。** Google の apt の取得元を
-`arch=amd64` に限り、amd64 のときだけ 2 回目の `apt-get install` の一覧へ足す（`BROWSER_PKG`）。
-arm64 で Chromium を使う手段は Playwright の Chromium で足りるためである。Playwright を介さずに
-Chrome を呼ぶ道具は arm64 では使えない。
+**システムの Chrome（`google-chrome-stable`）はどちらのアーキにも入れない。** Google の apt の
+取得元も足さない。Chromium を使う手段は両アーキとも Playwright の Chromium で足り、システムの Chrome
+（`/usr/bin/google-chrome`）を呼ぶ処理はリポジトリにもプラグインにも無いためである。amd64 だけに
+入れると、amd64 の base が Chrome と依存（systemd・gtk3 など）で約 540MB 大きくなり、アーキで
+道具もそろわない。Playwright を介さずにブラウザを呼ぶ道具には、Playwright の Chromium の実行ファイル
+（`NODE_PATH="$(npm root -g)" node -e "console.log(require('@playwright/test').chromium.executablePath())"` で得るパス）を渡す。
 
 | 場面 | 振る舞い |
 | --- | --- |
 | イメージの Playwright を使う | `/opt/ms-playwright` の Chromium を起動する。取得は起きない |
 | 道具が別の版の Playwright で `playwright install chromium` を打つ | `/opt/ms-playwright` へ別の版を足す。イメージの外の変更なので、コンテナを作り直すと消える |
-| Playwright を介さずに Chrome を呼ぶ | amd64 はシステムの Chrome。arm64 には無い |
+| Playwright を介さずにブラウザを呼ぶ | システムの Chrome は無い。Playwright の Chromium の実行ファイルのパスを渡す |
 
 base を `FROM` で継ぐ派生イメージには `ENV` と置き場がそのまま届く。
 
@@ -266,7 +267,7 @@ base を `FROM` で継ぐ派生イメージには `ENV` と置き場がそのま
 | `pip` / `pip3` | 既にある `uv` / `uvx` で賄う |
 | `ENV LANG` | 設定するとコンテナの中のすべてのコマンドの出力・ソート順・日付の書式が変わり、影響がフォントの外へ出る。総称ファミリの解決先そのものを日本語にすれば `lang` のヒントは要らない |
 | `chromium-browser` | Ubuntu の snap スタブで、コンテナの中では Chromium として起動しない。Chromium は Playwright のものを使う |
-| arm64 のシステムの Chrome | arm64 の Chromium は Playwright のもので足りる。入れるとイメージが大きくなる |
+| システムの Chrome（`google-chrome-stable`） | Chromium は両アーキとも Playwright のもので足り、呼ぶ処理も無い。amd64 では依存と合わせて約 540MB ある |
 | `fonts-wqy-zenhei` の削除 | 削除しても OS 既定の `65-nonlatin.conf` が `sans-serif` の prefer 一覧にこの書体を含むため日本語にはならず、中国語のページを豆腐にするだけになる。Dockerfile に導入の行は無く、Playwright が依存として入れる |
 
 Dockerfile は `fonts-wqy-zenhei` を対象とする `apt-get remove` / `apt-get purge` / `dpkg -r` を
@@ -313,9 +314,8 @@ metric 互換の 2 つは、`30-metric-aliases.conf` が既に持っている対
 - 実行時に道具がブラウザの置き場へ取得したブラウザは、コンテナを作り直すと消える
   （`/home/ubuntu` もボリュームではないため、以前の `~/.cache/ms-playwright` と同じである）。
   イメージが持つ Chromium は消えない
-- 解決先の表は arm64 で採ったものである。amd64 ではシステムの Chrome（`google-chrome-stable`）が
-  追加で入るため（arm64 には入らない）、apt の依存で入るフォントの顔ぶれが違いうる。同じ表になるかは amd64 の端末で建てるまで
-  分からない
+- 解決先の表は arm64 で採ったものである。apt で入れるパッケージは両アーキで同じだが、同じ表になるかは
+  amd64 の端末で建てるまで分からない
 
 ## テスト観点
 
@@ -365,7 +365,7 @@ CI はイメージを建てるジョブを持たないため、このテスト�
 - base の `npx playwright install` を含む `RUN` が 1 つで `--with-deps chromium` を持ち、その片付けの
   `rm -rf` が `/opt`・`/opt/ms-playwright`・`$PLAYWRIGHT_BROWSERS_PATH` を対象にしないこと。
 - base のどの `apt-get install` にも `chromium-browser` が無いこと。
-- Google の apt の取得元が `arch=amd64` の 1 行だけであること。
+- Google の apt の取得元（`dl.google.com/linux`）が無く、どの `apt-get install` にも `google-chrome` が無いこと。
 
 `fc-cache -f` が Playwright の `RUN` より後にあることは
 `tests/containers/test_base_dockerfile_fonts.py` が見る。

@@ -39,7 +39,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 
 `shellcheck` は Ubuntu の標準のアーカイブ（`universe`）にあり、外部のリポジトリを要さない。
 そのため 1 つ目の `RUN` の**1 回目**の `apt-get install` の一覧に置く。2 回目の一覧は後から
-足したリポジトリのパッケージ（`docker-ce-cli` / `terraform` / `gh` / `nodejs`。amd64 では `google-chrome-stable` も）
+足したリポジトリのパッケージ（`docker-ce-cli` / `terraform` / `gh` / `nodejs`）
 のためにあり、標準のアーカイブのパッケージを混ぜない。
 
 shellcheck のための `RUN` は立てない。立てると派生イメージ 7 つが積む層が 1 つ増え、
