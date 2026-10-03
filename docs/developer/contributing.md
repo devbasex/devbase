@@ -369,6 +369,8 @@ devbase ss c     # → snapshot create
 - `devbase plugin install` は Git clone を実行するため、ネットワーク接続が必要である
 - `devbase container up` / `down` は Docker コンテナを操作するため、Docker デーモンが起動していることを確認する
 - スナップショット関連のテストは `backups/` ディレクトリにデータを書き込むため、ディスク容量に注意する
+- base を建てる確認の前に `docker system df` で空きを見る。base は 1 本で数 GB あり、比較用に複数のタグを並べるとディスクが埋まって Docker が止まる（スプリント m7b で 3 本並べて止まった）
+- 確認のために建てたイメージのタグ（`m7b-220` のような作業用の名前）は、記録を書いたらその場で `docker image rm` で消す。ビルドキャッシュが膨らんでいれば `docker builder prune` も打つ
 
 ### Python モジュールの単体確認
 
