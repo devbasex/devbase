@@ -225,8 +225,8 @@ base と lfm のイメージに入るブラウザと、その置き場（contain
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| ブラウザの置き場 | — | Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す。base と lfm では /opt/ms-playwright で、コンテナの利用者が書き込める | — | — | — |
-| Playwright の Chromium | — | playwright install chromium がブラウザの置き場へ取得する Chromium（版ごとのディレクトリ）。amd64 と arm64 の両方で取れる | — | — | — |
-| システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base には amd64 だけで入る | — | — | — |
-| snap スタブ | — | Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない | — | — | — |
-| ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む | — | — | — |
+| ブラウザの置き場 | — | Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す。base と lfm では /opt/ms-playwright で、コンテナの利用者が書き込める | — | — | `docs/specifications/base-image-rendering.md` |
+| Playwright の Chromium | — | playwright install chromium がブラウザの置き場へ取得する Chromium（版ごとのディレクトリ）。amd64 と arm64 の両方で取れる | — | — | `docs/specifications/base-image-rendering.md` |
+| システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base には amd64 だけで入る | — | — | `docs/specifications/base-image-rendering.md` |
+| snap スタブ | — | Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない | — | — | `docs/specifications/base-image-rendering.md` |
+| ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む | — | — | `docs/specifications/base-image-rendering.md` |
