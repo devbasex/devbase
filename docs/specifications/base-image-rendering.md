@@ -45,7 +45,7 @@ Ubuntu の `chromium-browser`（snap スタブ）は入れない。
 
 ブラウザの語（ブラウザの置き場・Playwright の Chromium・システムの Chrome・snap スタブ・
 ブラウザの依存パッケージ）の定義は
-[用語集: base イメージのブラウザ（`browser`）](../glossary.md#base-イメージのブラウザbrowser) にある。
+[用語集: ブラウザ（`browser`）](../glossary.md#ブラウザbrowser) にある。
 
 ## 構成要素
 
@@ -407,7 +407,7 @@ CI はイメージを建てるジョブを持たないため、このテスト�
 ## 関連リンク
 
 - [lfm が base の設定を取り込む経路](lfm-base-settings.md)
-- [用語集: base イメージのブラウザ（`browser`）](../glossary.md#base-イメージのブラウザbrowser)
+- [用語集: ブラウザ（`browser`）](../glossary.md#ブラウザbrowser)
 - [コンテナ操作ガイド: 文字の描画と、文書を扱う道具](../user/container-operations.md#文字の描画と文書を扱う道具base-以降)
 - [AI CLI alias の読み込み](ai-cli-alias-loading.md)
 - [Kiro CLI 認証永続化と tmux コピー操作](kiro-auth-persistence-and-tmux-copy.md)

@@ -221,14 +221,15 @@ devbase up / scale がコンテナを起動して待ち、その後にホスト�
 | 起動の後の処理の段 | — | 後処理の対象を受けて、インスタンスごとの処理を決まった順に行う 1 つの関数 | — | — | `docs/specifications/post-start.md` |
 | 起動の後の処理のやり直し | — | 動いていて entrypoint の完了の印を確かめられたインスタンスへ、インスタンスごとの処理から ./deploy を除いた 3 つを行い直すコマンド（devbase project post-start） | — | — | `docs/specifications/post-start.md` |
 
-## base イメージのブラウザ（`browser`）
+## ブラウザ（`browser`）
 
-base と lfm のイメージに入るブラウザと、その置き場（containers/base/Dockerfile / containers/lfm/Dockerfile）
+ブラウザの派生イメージと lfm に入るブラウザと、base が作るその置き場（containers/base/Dockerfile / containers/browser/Dockerfile / containers/lfm/Dockerfile）
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| ブラウザの置き場 | — | Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す。base と lfm では /opt/ms-playwright で、コンテナの利用者が書き込める | — | — | `docs/specifications/base-image-rendering.md` |
-| Playwright の Chromium | — | playwright install chromium がブラウザの置き場へ取得する Chromium（版ごとのディレクトリ）。amd64 と arm64 の両方で取れる | — | — | `docs/specifications/base-image-rendering.md` |
+| ブラウザの置き場 | — | Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す /opt/ms-playwright。base は空のまま作り、ブラウザの派生イメージと lfm が中身を持つ。コンテナの利用者が書き込める | — | — | `docs/specifications/base-image-rendering.md` |
+| Playwright の Chromium | — | playwright install chromium がブラウザの置き場へ取得する Chromium（版ごとのディレクトリ）。ブラウザの派生イメージと lfm に入る。amd64 と arm64 の両方で取れる | — | — | `docs/specifications/base-image-rendering.md` |
 | システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base には amd64 だけで入る | — | — | `docs/specifications/base-image-rendering.md` |
 | snap スタブ | — | Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない | — | — | `docs/specifications/base-image-rendering.md` |
-| ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む | — | — | `docs/specifications/base-image-rendering.md` |
+| ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む。base は、このうち fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei・libnss3 などを明示して持つ | — | — | `docs/specifications/base-image-rendering.md` |
+| ブラウザの派生イメージ | — | containers/browser（タグ devbase-browser:latest）。base を継ぎ、Playwright の Chromium・ブラウザの依存パッケージ・追加の太さのフォントを足す | — | — | — |
