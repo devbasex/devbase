@@ -30,7 +30,8 @@
 
 - 自動スナップショットの積み先・新しい世代を作る条件・最小間隔の判定
 - `devbase up` / `devbase down` / `devbase snapshot rotate` / TUI のローテーションの規則
-- 世代の場所の検証（`_safe_snap_dir`）。`create` / `restore` / `copy` / `delete` / `rotate` が共有する
+- 世代の場所の検証（`_safe_snap_dir`）。`create` / `restore` / `copy` / `delete` / `rotate` が共有する。
+  `list` は `rotate` と同じ判定で不正なエントリを一覧から外す
 - ログの文言
 
 含まない:
@@ -40,7 +41,7 @@
   復元した世代と同じ系列に入り、その系列の最新の世代になる（次の自動スナップショットはそこへ差分を積む）。
   名前付きの世代・`copy` の世代を守る仕組みは持たない。長く残す世代は `backups/` の外へ複製する
 - 復元の対象・順序・失敗時の案内（変えていない）
-- `devbase snapshot list` / `devbase status` の表示。`status` の「最新」は `snapshot.yml` の最後の
+- `devbase snapshot list` / `devbase status` の表示（場所が不正なエントリを外すことを除く）。`status` の「最新」は `snapshot.yml` の最後の
   エントリ（最も新しく**作られた**世代）で、直前に差分を積んだ世代とは一致しないことがある
 - 保持をバイト数で制限すること
 - リモート扱いの `up`（自動スナップショットを作らない。[別ホストの Docker への dev コンテナ起動](remote-docker-context.md#自動スナップショット)）
@@ -236,6 +237,9 @@ classDiagram
 - `create` / `restore` / `copy` / `delete` はこの検証で止まり、ボリュームへの書き込みもディレクトリの
   作成・削除も起こさない。`rotate` だけは止まらず、そのエントリを一覧から外して警告する。不正な
   エントリ 1 つで `devbase down` のたびにローテーション全体が止まるのを避けるためである
+- `list()`（`devbase snapshot list`・`devbase status`・TUI の選択）は `rotate` と同じ検証の段 `_entry_dir`
+  （`name` が無い・上の 3 つ・場所にディレクトリ以外がある）で不正なエントリを判定し、中を読まずに警告して
+  一覧から外す。`snapshot.yml` は書き換えない
 
 ## データ・設定
 

@@ -52,7 +52,7 @@ base に Chromium を残して依存パッケージだけを外す形は、依�
 | HashiCorp の apt の取得元を base から外す（#402 の決定 5） | 残すと、base を継ぐイメージの `apt-get update` が、使う者の見当たらない道具のために外部の配布元に頼り続ける |
 | `fonts-liberation`・`fonts-ipafont-gothic`・`fonts-wqy-zenhei` を 1 回目の一覧で明示する（#402 の決定 6） | 以前は `--with-deps` の副作用で入っていた。「解決先」の表を変えないため、表に現れる 3 つだけを明示する。`--with-deps` が入れていたほかのフォント（絵文字など）は残さない |
 | 派生イメージとそのほかの道具を組み合わせる派生（例 `php-browser`）は devbase に足さない（#402 の決定 7） | 組み合わせの数だけ派生イメージが増える。プロジェクトの道具立てに合う道筋は、利用者向けの文書の移り方から選ぶ |
-| ブラウザの派生イメージの単体ビルド（`devbase build browser`）は base を先に建てない（#402 の決定 8） | 既存の派生イメージと同じ扱いにする。base を先に建てるのは、プロジェクトの `devbase build` が dev の Dockerfile の `FROM devbase-*` を見る経路である |
+| ブラウザの派生イメージの単体ビルド（`devbase build browser`）は base を先に建てない（#402 の決定 8） | 既存の派生イメージと同じ扱いにする。base を先に建てるのは、プロジェクトの `devbase build` が Dockerfile の `FROM devbase-*` から継承の連なりをたどる経路である（[継承の連なりのビルド](base-image-chain-build.md)） |
 
 ## 対象範囲
 
