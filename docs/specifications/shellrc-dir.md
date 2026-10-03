@@ -19,7 +19,7 @@ ai-plugins の中継（devbasex/ai-plugins#928）である。
 
 - 置き場所の永続化（`entrypoint.sh` の分類 B のエントリ）と、置き場所を読む読み込み器
 - 環境変数 `DEVBASE_SHELLRC_DIR`
-- base から派生するイメージ（`general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
+- base から派生するイメージ（`browser` / `general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
   `trygroup`）への伝播の規則
 - 対象に含まないもの:
   - zsh。base に zsh は入っておらず、`~/.zshrc` を読むシェルがいない。zsh を入れる変更の
