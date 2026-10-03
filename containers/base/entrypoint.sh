@@ -744,6 +744,20 @@ devbase_install_git_credentials() {
     rm -f "$tmp_cred"
 }
 
+# DinD (ENABLE_DIND) の廃止を知らせる (#400)。
+#
+# base は dockerd を入れなくなった。ENABLE_DIND が true か 1 なら廃止を 1 行出し、それ以外は
+# 何も出さない。どちらも 0 を返し、docker.sock・dockerd・docker info には触れない。
+# 設定の残りのためにコンテナを使えなくしないよう、起動は止めない。
+devbase_notice_dind_removed() {
+    case "${ENABLE_DIND:-}" in
+        true|1)
+            echo "NOTICE: ENABLE_DIND は廃止しました (DinD は起動しません)。ホストの docker.sock を mount して docker を使ってください"
+            ;;
+    esac
+    return 0
+}
+
 # テストは関数定義だけを使う (source 時のみ有効な return で以降を読み飛ばす)。
 if [ -n "${DEVBASE_ENTRYPOINT_LIB_ONLY:-}" ]; then
     # 実行したときは return が失敗して exit へ進む。shellcheck は source を想定せず exit を届かないと読む
@@ -859,72 +873,8 @@ EOF
     fi
 fi
 
-# 5. Docker-in-Docker (DinD) Setup - enabled by ENABLE_DIND=true
-if [ "$ENABLE_DIND" = "true" ] || [ "$ENABLE_DIND" = "1" ]; then
-    echo "Starting Docker-in-Docker..."
-    # Docker公式パターンに準拠したDinD起動スクリプト
-    # 参考: https://github.com/docker-library/docker/blob/master/dockerd-entrypoint.sh
-
-    # 1. 古いPIDファイルのクリーンアップ
-    echo "Cleaning up stale PID files..."
-    find /run /var/run -iname 'docker*.pid' -delete 2>/dev/null || true
-    find /run /var/run -iname 'containerd*.pid' -delete 2>/dev/null || true
-
-    # 2. Stale socketのクリーンアップ
-    echo "Cleaning up stale socket files..."
-    rm -f /var/run/docker.sock 2>/dev/null || true
-    rm -rf /var/run/docker/containerd/*.sock 2>/dev/null || true
-
-    # 3. dockerdプロセスチェック
-    if pgrep -x dockerd > /dev/null; then
-        echo "Docker daemon already running (PID: $(pgrep -x dockerd))"
-    else
-        echo "Starting Docker daemon..."
-
-        # dind wrapper script使用（mount操作にroot権限が必要）
-        if [ -x '/usr/local/bin/dind' ]; then
-            echo "Using dind wrapper script"
-            # tini (docker-init) が利用可能ならPID 1問題を解決
-            if command -v docker-init >/dev/null 2>&1; then
-                echo "Using docker-init (tini) for proper signal handling"
-                sudo docker-init /usr/local/bin/dind dockerd &
-            else
-                sudo /usr/local/bin/dind dockerd &
-            fi
-        else
-            echo "Using dockerd directly"
-            if command -v docker-init >/dev/null 2>&1; then
-                sudo docker-init dockerd &
-            else
-                sudo dockerd &
-            fi
-        fi
-
-        echo "Docker daemon started (PID: $!)"
-
-        # 起動確認（最大30秒待機）
-        echo "Waiting for Docker daemon to be ready..."
-        for _ in {1..30}; do
-            if docker info > /dev/null 2>&1; then
-                echo "Docker daemon is ready"
-                break
-            fi
-            sleep 1
-        done
-
-        # 起動失敗チェック
-        if ! docker info > /dev/null 2>&1; then
-            echo "ERROR: Docker daemon failed to start within 30 seconds"
-            echo "Dockerd process:"
-            # 診断として利用者と起動の引数を含む全列を出したい。pgrep は PID (-a でも別の列) だけを出す
-            # shellcheck disable=SC2009
-            ps aux | grep dockerd || echo "  No dockerd process found"
-            echo "Docker socket:"
-            ls -la /var/run/docker.sock 2>/dev/null || echo "  Docker socket not found"
-            exit 1
-        fi
-    fi
-fi
+# 5. DinD は廃止した (#400)。ENABLE_DIND を残した利用者へ 1 行で知らせ、起動は続ける
+devbase_notice_dind_removed
 
 # ========================================
 # AI Agent Settings Symlink Setup (PLAN39: 共通 / グループの 2 層)
