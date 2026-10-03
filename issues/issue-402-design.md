@@ -244,12 +244,12 @@ docs/
 
 | 対象 | 今 | 移る先 | 出す Pull Request |
 | --- | --- | --- | --- |
-| `proj-a`（dev サービスは `devbase-php`。`.mcp.json` で `npx chrome-devtools-mcp@latest` と `npx -y @playwright/mcp@latest` を起動） | base の依存パッケージと、実行時に `@playwright/mcp` が取得するブラウザで動く。`chrome-devtools-mcp` はシステムの Chrome を探すと見込む | 3 つの道筋（`devbase-browser` を選ぶ・プロジェクトの Dockerfile で足す・MCP の起動引数でブラウザの場所を渡す）から、プラグインのリポジトリの Pull Request で決める（決定 7） | プラグインのリポジトリへ 1 本（C5。出す前に人の確認を取る） |
+| `proj-a`（dev サービスは `devbase-php`。`.mcp.json` で `npx chrome-devtools-mcp@latest` と `npx -y @playwright/mcp@latest` を起動） | base のシステムの Chrome か Playwright の Chromium で動いていると見込む（どちらを使っているかは確かめていない。「未確認のまま残ること」） | 3 つの道筋（`devbase-browser` を選ぶ・プロジェクトの Dockerfile で足す・MCP の起動引数でブラウザの場所を渡す）から、プラグインのリポジトリの Pull Request で決める（決定 7） | プラグインのリポジトリへ 1 本（C5。出す前に人の確認を取る） |
 | `proj-a` のアプリの `docker-compose.dev.yml` の `seleniarm/standalone-chromium` | アプリ自身のテスト用の別イメージ | 変えない（base を使わない） | 無し |
 | 設定の上でブラウザの当たりが無いプロジェクト（プラグインのリポジトリ 3 つの全プロジェクト） | — | 変えない。コードがボリュームの中で見えない範囲は未確認（「未確認のまま残ること」） | 無し |
 | 手元に無いプロジェクト | — | CHANGELOG と利用者向けの文書の移り方で知らせる（前提 7） | 無し |
 
-#401 とこの変更の後は、`devbase-php` を含む base 系のイメージに、システムの Chrome も Playwright の Chromium とその依存パッケージも無い。`proj-a` の 2 つの MCP は、どちらもそのままでは動くブラウザを持たない。`@playwright/mcp` は `@latest` で起動して自分の版のブラウザを実行時に取得するため、依存パッケージがあれば動く（F6）。`chrome-devtools-mcp` はシステムの Chrome を探すと見込まれ、依存パッケージだけでは足りない（「未確認のまま残ること」）。
+#401 とこの変更の後は、`devbase-php` を含む base 系のイメージに、システムの Chrome も Playwright の Chromium とその依存パッケージも無い。`proj-a` の 2 つの MCP は、どちらもそのままでは動くブラウザを持たない。`@playwright/mcp` は既定でシステムの Chrome（channel `chrome`）を探すとされ、`chrome-devtools-mcp` もシステムの Chrome を探すと見込まれる。どちらも、依存パッケージを足すだけで動くとは言えない。起動引数でブラウザ（`--browser chromium` など）や実行ファイルの場所を渡して動くかは確かめていない（「未確認のまま残ること」）。
 
 ### 同じ層を触る課題との境目
 
@@ -384,12 +384,12 @@ base で Playwright の Chromium を起動すると、Playwright は置き場に
 | 道筋 | 何をするか | 気をつけること |
 | --- | --- | --- |
 | `devbase-browser` を選ぶ | `compose.yml` の dev の `build.context` を `containers/browser` へ替える | PHP の道具が無くなる。`proj-a` はそのままでは選べない |
-| プロジェクトの Dockerfile で足す | `FROM devbase-php:latest` の上に、ブラウザの依存パッケージ（`npx playwright install-deps chromium`）や Chromium を足す | 2 段の継承になる（下の段落）。`chrome-devtools-mcp` が探すブラウザも用意する |
+| プロジェクトの Dockerfile で足す | `FROM devbase-php:latest` の上に、ブラウザの依存パッケージ（`npx playwright install-deps chromium`）や Chromium を足す | 2 段の継承になる（下の段落）。依存パッケージだけでは足りず、2 つの MCP が探すブラウザも用意する |
 | MCP の起動引数でブラウザの場所を渡す | `.mcp.json` の起動引数で、2 つの MCP に同じブラウザの実行ファイルを指させる | ブラウザと依存パッケージは、ほかの 2 つの道筋のどちらかで用意する |
 
 どれを採るかは、`proj-a` の Pull Request の中で 2 つの MCP が動くことを確かめて決める（C5。出す前に人の確認を取る）。この変更が受け持つのは、3 つの道筋を利用者向けの文書の移り方に書くことと、その Pull Request を出すこと（受け入れ条件 13）である。
 
-設計の初版は「プロジェクトの Dockerfile で依存パッケージだけを足す」に決めていた。`@playwright/mcp` は実行時に自分の版のブラウザを取得するため依存パッケージだけで足りるが、`chrome-devtools-mcp` はシステムの Chrome を探すと見込まれ、#401 で Chrome が両アーキとも外れると依存パッケージだけでは動かない。このため道筋を 1 つに決めず、`proj-a` の側で確かめて選ぶ形に改めた。
+設計の初版は「プロジェクトの Dockerfile で依存パッケージだけを足す」に決めていた。しかし `@playwright/mcp` は既定でシステムの Chrome（channel `chrome`）を探すとされ、`chrome-devtools-mcp` もシステムの Chrome を探すと見込まれる。#401 で Chrome が両アーキとも外れると、どちらも依存パッケージだけで動くとは言えない（確かめていない）。このため道筋を 1 つに決めず、`proj-a` の側で確かめて選ぶ形に改めた。
 
 ブラウザの派生イメージを `FROM` に取る `php` 用の派生（例 `php-browser`）を devbase に足す案は、組み合わせの数だけ派生イメージが増えるため採らない。`./deploy` フックで起動のたびに入れる案は、作り直すたびに約 300MB を取り直すため採らない。`containers/php` に足す案は、`php` を使う 47 のプロジェクトの大半が使わない重さを配るため採らない。
 
@@ -455,7 +455,7 @@ base を先に建てるのは、プロジェクトの dev サービスの Docker
 | `latex` の文書の書体 | `containers/latex` を使う 1 つのプロジェクトが、文書で Noto CJK の追加の太さを名指ししているかは見えない。名指ししていれば、base を建て直した後に別の太さへ置き換わる。`latex` は変えない |
 | base から消えるほかのフォント | 絵文字（`fonts-noto-color-emoji`）・`fonts-unifont` などは base から消える（決定 6）。base でブラウザ以外の道具がこれらに頼って描いているかは確かめていない |
 | Playwright の失敗の文言 | 決定 4 は、置き場に実行ファイルが無いときの Playwright の出力に `npx playwright install` が含まれることを前提にする。変更後の base を建てて受け入れ条件 5 の検査で確かめる |
-| `proj-a` の 2 つの MCP | `chrome-devtools-mcp` は Playwright ではなくシステムの Chrome を探すと見込む（確かめていない）。#401 とこの変更の後は、`devbase-php` を含む base 系のイメージにシステムの Chrome も Playwright の Chromium も無く、`npx chrome-devtools-mcp@latest` と `npx -y @playwright/mcp@latest` はどちらもブラウザを見つけられない。移り方（`devbase-browser` を選ぶ・プロジェクトの Dockerfile で足す・MCP の起動引数でブラウザの場所を渡す）はプラグインのリポジトリの Pull Request で決め、そこで 2 つの MCP が動くことを確かめる（決定 7）。その Pull Request がマージされるまで、`proj-a` で base を建て直すと 2 つの MCP は動かない |
+| `proj-a` の 2 つの MCP | `chrome-devtools-mcp` は Playwright ではなくシステムの Chrome を探すと見込み、`@playwright/mcp` も既定でシステムの Chrome（channel `chrome`）を探すとされる（どちらも確かめていない。起動引数で `--browser chromium` などを渡して動くかも確かめていない）。#401 とこの変更の後は、`devbase-php` を含む base 系のイメージにシステムの Chrome も Playwright の Chromium も無く、`npx chrome-devtools-mcp@latest` と `npx -y @playwright/mcp@latest` はどちらもブラウザを見つけられない。移り方（`devbase-browser` を選ぶ・プロジェクトの Dockerfile で足す・MCP の起動引数でブラウザの場所を渡す）はプラグインのリポジトリの Pull Request で決め、そこで 2 つの MCP が動くことを確かめる（決定 7）。その Pull Request がマージされるまで、`proj-a` で base を建て直すと 2 つの MCP は動かない |
 | 2 段の継承の先行ビルド | `proj-a` がプロジェクトの Dockerfile の道筋を選ぶなど、派生イメージを `FROM` に取る Dockerfile では、`devbase build` は base が無いときに先に建てない（決定 7・決定 8）。今の利用者の端末には base があるため移行は止まらない。新しい端末での扱いは #404 で扱う |
 | 減る量 | 3 つのフォントを残し、#400 の文書の除外が先に入るため、減る量は依頼の表の合計より小さい。1.2GB に届くかは建てて測るまで分からない（前提 3） |
 | amd64 | amd64 で受け入れ条件 4〜11 が成り立つかは、リリース後テストで確かめる |
