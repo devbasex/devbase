@@ -40,6 +40,18 @@
   プロジェクトは、GPU を使うものも含めて `containers/general` へ移すか、`FROM devbase-general:latest`
   で Rust・gfortran・MeCab など要る道具を足す自前の Dockerfile をプロジェクトに置いてください。
   手元に残った `devbase-lfm` のイメージは `docker image rm devbase-lfm:latest` で消せます。
+- **DinD（`ENABLE_DIND`）を廃止しました（#400、破壊的変更）。** base イメージは dockerd と containerd
+  （`docker-ce`・`containerd.io`）を入れず、コンテナの中で dockerd を起こす手順と `/usr/local/bin/dind` を
+  外しました。`ENABLE_DIND` に `true` か `1` を設定していても DinD は起きず、起動の記録（`docker logs`）に
+  廃止を知らせる `NOTICE:` の行を 1 行出して起動を続けます。docker はホストの docker.sock を mount して
+  使ってください。docker CLI・`docker buildx`・`docker compose` は今までどおり使えます。
+- **base イメージから、使う者の無い中身を外しました（#400）。** グローバルの `aws-cdk-lib`（CDK のアプリは
+  自分の `package.json` に持ちます。CLI の `cdk` は残ります）・root の uv（ubuntu の uv は残ります。
+  `sudo uv` は使えなくなります）・ビルドで残っていた apt の一覧です。また apt で入れるパッケージの文書
+  （`/usr/share/doc` の copyright のほか・man・info）と Node.js のヘッダ（`/usr/include/node`）を展開
+  しなくなりました。この設定は base を `FROM` で継ぐ派生イメージにも効きます。ネイティブアドオンの
+  ビルドでは node-gyp がヘッダを取得します（ネットワークが要ります）。反映には `devbase build base` で
+  base を建て直し、派生イメージも建て直してください。
 
 ### Fixed
 - **スナップショットの差分バックアップが、毎回ボリューム全体を控えていたのを直しました。**

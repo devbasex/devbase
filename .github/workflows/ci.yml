@@ -64,7 +64,6 @@ jobs:
         run: |
           shellcheck --version | sed -n 2p && shellcheck \
             containers/base/ai-cli-aliases.sh \
-            containers/base/dind \
             containers/base/entrypoint.sh \
             containers/base/shellrc-dir.sh \
             containers/base/tmux-clean \

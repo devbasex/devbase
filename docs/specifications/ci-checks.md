@@ -161,7 +161,7 @@ on:
 - **`bin/` は glob（`bin/*`）で渡す。** 足したファイルも自動で検査に入り、シェルでないファイルが入れば
   その手順が失敗して気づける。`bin/` の中身は `devbase` と `rc` の 2 本で、どちらも Bash である
 - **`containers/base/` はファイル名を並べて渡す。** 何を検査したかが `ci.yml` とジョブのログだけで読める。
-  `*.sh` の glob では拡張子の無い `dind` と `tmux-*` を拾えないため使わない。並べ忘れは pytest が止める
+  `*.sh` の glob では拡張子の無い `tmux-*` を拾えないため使わない。並べ忘れは pytest が止める
   （下の「検査の対象の漏れ」）
 - `ludeeus/action-shellcheck` は使わない
 
@@ -171,7 +171,7 @@ on:
 | --- | --- |
 | `Run ShellCheck on bin/` | `bin/devbase`・`bin/rc` |
 | `Run ShellCheck on install.sh` | `install.sh` |
-| `Run ShellCheck on containers/base/` | `containers/base/ai-cli-aliases.sh`・`dind`・`entrypoint.sh`・`shellrc-dir.sh`・`tmux-clean`・`tmux-first`・`tmux-session` |
+| `Run ShellCheck on containers/base/` | `containers/base/ai-cli-aliases.sh`・`entrypoint.sh`・`shellrc-dir.sh`・`tmux-clean`・`tmux-first`・`tmux-session` |
 
 base のシェルスクリプトは、`containers/base/` の直下の項目のうち次のすべてを満たすものである。
 
@@ -206,7 +206,6 @@ base のシェルスクリプトは、`containers/base/` の直下の項目の�
 | `bin/rc` | `source=/dev/null` | 補完の定義の読み込み | 補完の定義は `DEVBASE_ROOT` の下にあり、場所は実行時にしか決まらない |
 | `containers/base/entrypoint.sh` | `disable=SC2046` | `devbase_install_git_credentials` の `sudo install -m 600 -o $(id -u) -g $(id -g) ...` | `id` が失敗して空を出したとき、引用があると uutils の `install` が空の持ち主を「変えない」と読み root の持ち主で書くため、引用しない |
 | `containers/base/entrypoint.sh` | `disable=SC2317` | `DEVBASE_ENTRYPOINT_LIB_ONLY` のときの `return 0 2>/dev/null \|\| exit 0` | source したときは `return` で抜け、実行したときは `exit` へ進む。shellcheck は source を想定せず `exit` を届かないと読む |
-| `containers/base/entrypoint.sh` | `disable=SC2009` | dockerd が起動しなかったときの `ps aux \| grep dockerd` | 診断として利用者と起動の引数を含む全列を出す。`pgrep` は PID（`-a` でも別の列）だけを出す |
 | `containers/base/shellrc-dir.sh` | `source=/dev/null` | 置き場所のファイルを `.` で読む行 | 読むのは利用者が置くファイルで、検査の時点では存在しない |
 | `containers/base/ai-cli-aliases.sh`・`shellrc-dir.sh` | `shell=bash` | 先頭 | 抑止ではない。bash が source するファイルで shebang を置かないため |
 

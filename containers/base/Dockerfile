@@ -9,6 +9,10 @@ FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 文書の除外 (#400)。Ubuntu の excludes より後に読まれ、copyright を残して changelog・info・man・
+# Node.js のヘッダを展開しない。最初の apt-get install より前に置き、派生イメージにも効かせる
+COPY --chmod=0644 dpkg-excludes /etc/dpkg/dpkg.cfg.d/excludes-devbase
+
 # APT パッケージ + Node.js + ロケール（1レイヤーにまとめる）
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -68,11 +72,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update; \
     # パッケージインストール
     apt-get install -y --no-install-recommends \
-    docker-ce docker-ce-cli containerd.io \
+    docker-ce-cli \
     docker-buildx-plugin docker-compose-plugin \
     terraform gh nodejs $BROWSER_PKG; \
-    # クリーンアップ
+    # クリーンアップ。/usr/share/doc は copyright とディレクトリを指す symlink
+    # (copyright への経路) だけを残す。除外の設定より前から ubuntu:26.04 にある物も消す (#400)
     apt-get clean; \
+    find /usr/share/doc -mindepth 1 ! -type d ! -xtype d ! -name copyright -delete; \
+    rm -rf /usr/share/info/*; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
 
 # ユーザー設定
@@ -112,7 +119,7 @@ ENV PATH="/usr/local/share/npm-global/bin:${PATH}"
 # 非対話の処理からも同じ置き場を使うため。
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
-# AWS CLI + gcloud SDK + uv + npm globals（1レイヤーにまとめる）
+# AWS CLI + gcloud SDK + npm globals（1レイヤーにまとめる）
 RUN set -eux; \
     # 所有を $USERNAME:npm、ディレクトリへ setgid を付けて作る。
     # 後から誰が入れてもグループが npm のまま揃う
@@ -151,11 +158,9 @@ RUN set -eux; \
     cloud-datastore-emulator pubsub-emulator \
     kubectl kustomize skaffold minikube \
     docker-credential-gcr cloud-run-proxy 2>&1 || true; \
-    # uv (Python パッケージマネージャー)
-    curl -LsSf https://astral.sh/uv/install.sh | sh; \
     # npm グローバルパッケージ（umask 0002 で npm グループにも書き込み権を残す）
     umask 0002; \
-    npm i -g yarn @playwright/test aws-cdk aws-cdk-lib typescript @google/gemini-cli @openai/codex @googleworkspace/cli; \
+    npm i -g yarn @playwright/test aws-cdk typescript @google/gemini-cli @openai/codex @googleworkspace/cli; \
     # root が作ったファイルも ubuntu が上書きできるように揃える。
     # install レイヤーと同じ RUN なのでレイヤーの複製は発生しない。
     chown -R "$USERNAME":npm "$NPM_CONFIG_PREFIX"; \
@@ -173,7 +178,7 @@ RUN set -eux; \
     /var/cache/* \
     /var/log/*
 
-ENV PATH="/root/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
+ENV PATH="/opt/google-cloud-sdk/bin:${PATH}"
 
 # OpenBao CLI (bao)。devbase の機密のサーバ backend と同じ 2.6 系に固定する (PLAN54)。
 # 起動中のコンテナから自分の機密を読み書きし、管理者は管理スクリプトをここから実行する。
@@ -235,8 +240,11 @@ RUN set -eux; \
     # クリーンアップ。--with-deps の sudo apt や Node24/npm11 の
     # /tmp/node-compile-cache が root 所有ファイルを残すため sudo で削除する
     # (非 root の rm では Permission denied になりビルドが失敗する)。
+    # --with-deps の apt-get update が残す apt の一覧と、/usr/share/doc の copyright でない物も消す (#400)。
     # ブラウザの置き場 ($PLAYWRIGHT_BROWSERS_PATH) は消さない。
+    sudo find /usr/share/doc -mindepth 1 ! -type d ! -xtype d ! -name copyright -delete; \
     sudo rm -rf /tmp/* \
+    /var/lib/apt/lists/* \
     ~/.cache \
     ~/.npm \
     ~/.config/yarn \
@@ -302,9 +310,8 @@ COPY --chmod=0644 fonts-local.conf /etc/fonts/local.conf
 # ここで /var/cache/fontconfig を作り直してコンテナ初回起動時の生成を避ける。
 RUN sudo fc-cache -f
 
-# entrypoint と dind
+# entrypoint
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
-COPY --chmod=755 dind /usr/local/bin/dind
 
 WORKDIR /work
 ENTRYPOINT ["/entrypoint.sh"]

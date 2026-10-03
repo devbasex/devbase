@@ -97,7 +97,7 @@ def _first_apt_install(block: str) -> str:
     """1 つ目の RUN の**1 回目**の apt-get install の一覧だけを取り出す
 
     1 つ目の RUN は apt-get install を 2 回呼ぶ。1 回目は Ubuntu の標準のアーカイブから、
-    2 回目は後から足したリポジトリ (docker-ce / terraform / gh / nodejs) からである。
+    2 回目は後から足したリポジトリ (docker-ce-cli / terraform / gh / nodejs) からである。
     """
     calls = [m.start() for m in re.finditer(r"apt-get install", block)]
     assert len(calls) >= 2, "1 つ目の RUN に apt-get install が 2 回無い"
