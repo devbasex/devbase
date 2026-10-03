@@ -114,17 +114,99 @@ cmd_build() {
     done
     set -- "${build_args[@]}"
 
-    # Helper: Check if Dockerfile uses devbase-* base images
-    check_base_image_dependency() {
+    # Helper: Dockerfile の直の親イメージの参照 (devbase-<名前>:<タグ>) を出す (#404)。
+    # 最初に _DEVBASE_FROM_RE に当たった行を読み、タグが無ければ latest を補う。当たる行が
+    # 無い・ファイルが無いときは 1 (「devbase-* を使わない」の判定で、失敗ではない)。
+    # 行末の CR は除いてから当てる (CRLF の Dockerfile)。
+    read_devbase_parent() {
         local dockerfile_path="$1"
-        if [ -f "$dockerfile_path" ]; then
-            if grep -q "^FROM devbase-" "$dockerfile_path"; then
-                # Extract base image name (e.g., "devbase-base", "devbase-general")
-                grep "^FROM devbase-" "$dockerfile_path" | head -1 | awk '{print $2}' | cut -d: -f1
+        [ -f "$dockerfile_path" ] || return 1
+        local LC_ALL=C
+        local line ref
+        while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            if [[ $line =~ $_DEVBASE_FROM_RE ]]; then
+                ref="${BASH_REMATCH[2]}"
+                case "$ref" in
+                    *:*) ;;
+                    *) ref="${ref}:latest" ;;
+                esac
+                printf '%s\n' "$ref"
                 return 0
             fi
-        fi
+        done < "$dockerfile_path"
         return 1
+    }
+
+    # Helper: 直の親イメージから containers/<名前>/Dockerfile の直の親をたどり、継承の連なりを
+    # 下の段からの順で _BASE_CHAIN に置く (#404)。$1 は始まりの参照、$2 はそれを読んだ Dockerfile。
+    # 最初の段を建てる前に終わりまで解決し、段の名前が名前の形に合わない・段の Dockerfile が無い・
+    # 循環するときは理由を 1 行出して 1 を返す。✗ の行を利用者へ届けるため、コマンド置換で呼ばない。
+    resolve_base_chain() {
+        local ref="$1" source="$2"
+        local -a visited=()
+        local image name dir dockerfile next v loop
+        _BASE_CHAIN=()
+        while :; do
+            image="${ref%%@*}"
+            image="${image%%:*}"
+            name="${image#devbase-}"
+            # containers/ へ連結する前に名前の形で弾き、$DEVBASE_ROOT の外を指させない
+            if [ "$image" = "$name" ] || ! is_single_segment_name "$name"; then
+                echo "✗ Invalid base image reference in ${source}: ${ref}"
+                return 1
+            fi
+            for v in "${visited[@]}"; do
+                if [ "$v" = "$image" ]; then
+                    loop=""
+                    for v in "${visited[@]}"; do
+                        loop="${loop}${v} -> "
+                    done
+                    echo "✗ Base image chain loops: ${loop}${image}"
+                    return 1
+                fi
+            done
+            dir="${DEVBASE_ROOT}/containers/${name}"
+            dockerfile="${dir}/Dockerfile"
+            if [ ! -d "$dir" ]; then
+                echo "✗ Container directory not found: $dir"
+                return 1
+            fi
+            if [ ! -f "$dockerfile" ]; then
+                echo "✗ Dockerfile not found: $dockerfile"
+                return 1
+            fi
+            visited+=("$image")
+            next=$(read_devbase_parent "$dockerfile") || break
+            source="$dockerfile"
+            ref="$next"
+        done
+        local i
+        for (( i = ${#visited[@]} - 1; i >= 0; i-- )); do
+            _BASE_CHAIN+=("${visited[$i]}")
+        done
+    }
+
+    # Helper: _BASE_CHAIN の段を下から順に建てる (#404)。失敗した段で止まって 1 を返す。
+    # $1 は連なりが 1 段のときの行 (今の行をそのまま出す)、$2 は 2 段以上のときの段の行の後ろに
+    # 付ける語。残りは docker buildx build への引数 (経路が決めたキャッシュの扱い)。
+    build_base_chain() {
+        local single_line="$1" suffix="$2"
+        shift 2
+        if [ "${#_BASE_CHAIN[@]}" -eq 1 ]; then
+            echo ""
+            echo "$single_line"
+            build_base_image "${_BASE_CHAIN[0]}" "$@"
+            return
+        fi
+        local total=$(( ${#_BASE_CHAIN[@]} + 1 ))
+        local k=0 stage
+        for stage in "${_BASE_CHAIN[@]}"; do
+            k=$((k + 1))
+            echo ""
+            echo "[${k}/${total}] Building ${stage}${suffix}..."
+            build_base_image "$stage" "$@" || return 1
+        done
     }
 
     # Helper: Build base image
@@ -183,84 +265,91 @@ cmd_build() {
     local dockerfile_path
     dockerfile_path=$(resolve_project_dockerfile) || return
 
-    # check_base_image_dependency の非 0 は「devbase-* を使わない」の判定で、失敗ではない (#247)
-    local base_image_name
-    base_image_name=$(check_base_image_dependency "$dockerfile_path") || true
-    local base_image_to_build="${base_image_name:-devbase-base}"
+    # read_devbase_parent の非 0 は「devbase-* を使わない」の判定で、失敗ではない (#247)
+    local parent_ref
+    parent_ref=$(read_devbase_parent "$dockerfile_path") || true
 
+    # 経路: 通常 / --no-cache (base も project もキャッシュなし) /
+    # --project-no-cache (base はキャッシュあり、project だけキャッシュなし)
+    local mode=normal
     if [ "$project_no_cache" = "1" ]; then
-        echo ""
-        local -a base_cached_args=()
-        local _ba
-        for _ba in "$@"; do
-            if [ "$_ba" = "--no-cache" ]; then
-                continue
-            fi
-            base_cached_args+=("$_ba")
-        done
-        echo "[1/2] Building ${base_image_to_build} (using cache)..."
-        if ! build_base_image "$base_image_to_build" "${base_cached_args[@]}"; then
-            exit 1
-        fi
-
-        echo ""
-        echo "[2/2] Building project image without cache..."
-        if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" --no-cache "$@"; then
-            echo ""
-            echo "✓ All images built successfully"
-        else
-            echo ""
-            echo "✗ Failed to build project image"
-            exit 1
-        fi
-        return
+        mode=project_no_cache
+    elif [[ "$*" == *"--no-cache"* ]]; then
+        mode=no_cache
     fi
 
-    # --no-cache specified: rebuild base first without cache, then rebuild
-    # project without cache.
-    if [[ "$*" == *"--no-cache"* ]]; then
-        echo ""
-        echo "[1/2] Building ${base_image_to_build}..."
-        if ! build_base_image "$base_image_to_build" "$@"; then
-            exit 1
-        fi
-
-        echo ""
-        echo "[2/2] Building project image..."
-        if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
-            echo ""
-            echo "✓ All images built successfully"
-        else
-            echo ""
-            echo "✗ Failed to build project image"
-            exit 1
-        fi
-        return
-    fi
-
-    # Normal build: check if project uses devbase-* base image
-    if [ -n "$base_image_name" ]; then
-        echo ""
-        echo "[1/2] Project uses ${base_image_name}, building base image..."
-        if ! build_base_image "$base_image_name" "$@"; then
-            exit 1
-        fi
-    else
-        # Fallback: check if devbase-base exists
-        if ! compose_with_secrets docker image inspect devbase-base:latest >/dev/null 2>&1; then
-            echo ""
-            echo "[1/2] Building devbase-base..."
-            if ! build_base_image "devbase-base" "$@"; then
-                exit 1
-            fi
-        else
+    # 連なりの始まり。devbase-* を使わないプロジェクトは devbase-base から建てるが、
+    # 通常のビルドでは devbase-base が既にあれば建てない
+    local start_ref="$parent_ref"
+    if [ -z "$start_ref" ]; then
+        if [ "$mode" = normal ] && compose_with_secrets docker image inspect devbase-base:latest >/dev/null 2>&1; then
             echo "[1/2] devbase-base already exists (use --no-cache to rebuild)"
+        else
+            start_ref="devbase-base"
+        fi
+    fi
+
+    local total=2
+    _BASE_CHAIN=()
+    if [ -n "$start_ref" ]; then
+        if ! resolve_base_chain "$start_ref" "$dockerfile_path"; then
+            exit 1
+        fi
+        total=$(( ${#_BASE_CHAIN[@]} + 1 ))
+        local direct="${_BASE_CHAIN[$(( ${#_BASE_CHAIN[@]} - 1 ))]}"
+        local -a base_args=("$@")
+        local single_line="[1/2] Building ${direct}..."
+        local suffix=""
+        case "$mode" in
+            project_no_cache)
+                base_args=()
+                local _ba
+                for _ba in "$@"; do
+                    if [ "$_ba" = "--no-cache" ]; then
+                        continue
+                    fi
+                    base_args+=("$_ba")
+                done
+                single_line="[1/2] Building ${direct} (using cache)..."
+                suffix=" (using cache)"
+                ;;
+            normal)
+                if [ -n "$parent_ref" ]; then
+                    single_line="[1/2] Project uses ${direct}, building base image..."
+                    if [ "$total" -gt 2 ]; then
+                        local listed="" stage
+                        for stage in "${_BASE_CHAIN[@]}"; do
+                            listed="${listed:+$listed -> }${stage}"
+                        done
+                        echo ""
+                        echo "Project uses ${direct}, building its base images: ${listed}"
+                    fi
+                fi
+                ;;
+        esac
+        if ! build_base_chain "$single_line" "$suffix" "${base_args[@]}"; then
+            exit 1
         fi
     fi
 
     echo ""
-    echo "[2/2] Building project image..."
-    if compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@"; then
+    local project_rc=0
+    case "$mode" in
+        project_no_cache)
+            echo "[${total}/${total}] Building project image without cache..."
+            compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" --no-cache "$@" || project_rc=$?
+            ;;
+        no_cache)
+            # "$@" が --no-cache を含む
+            echo "[${total}/${total}] Building project image..."
+            compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@" || project_rc=$?
+            ;;
+        *)
+            echo "[${total}/${total}] Building project image..."
+            compose_with_secrets docker compose build "${DEV_SERVICE_NAME:-dev}" "$@" || project_rc=$?
+            ;;
+    esac
+    if [ "$project_rc" = 0 ]; then
         echo ""
         echo "✓ All images built successfully"
     else
@@ -360,6 +449,16 @@ resolve_command() {
 # 持つ。片方を変えたらもう片方も変える (tests/cli/test_project_name_resolution.py の
 # 同期テストが一致を見る)。
 _SINGLE_SEGMENT_NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+
+# 直の親の読み方 (#404)。Dockerfile の行が devbase-* を FROM に取るかを読み、2 番目の組が
+# イメージの参照になる。FROM の語だけ大文字小文字を区別せず、--platform=... の前置と行頭の
+# 空白を許す。$'...' でタブ文字を入れ、ERE と Python の re で同じ意味になる部分だけで書く。
+#
+# 同期注意: lib/devbase/utils/dockerfile.py の DEVBASE_FROM_PATTERN と同じ正規表現。
+# 通常のビルド (read_devbase_parent) と --expires の判定が同じ Dockerfile から同じ直の親を
+# 読むために、片方を変えたらもう片方も変える (tests/cli/test_devbase_from_contract.py が
+# 値と振る舞いの一致を見る)。
+_DEVBASE_FROM_RE=$'^[ \t]*[Ff][Rr][Oo][Mm][ \t]+(--platform=[^ \t]+[ \t]+)?(devbase-[^ \t]+)'
 
 # $1 が名前の形なら 0。bash 3.2 の `[[ =~ ]]` は引用した右辺を文字列として比べるため、
 # 正規表現は変数で渡す。`[A-Za-z]` の範囲はロケールで変わりうるので、Python の定義

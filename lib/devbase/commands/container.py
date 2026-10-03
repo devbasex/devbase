@@ -33,6 +33,7 @@ from devbase.utils.docker import (
 from devbase.utils.config import get_project_name
 from devbase.utils import names
 from devbase.utils import docker_context
+from devbase.utils.dockerfile import devbase_parent_ref
 from devbase.project import runtime as project_runtime
 from devbase.project.local_config import load_project_local_config
 
@@ -2368,7 +2369,7 @@ def _base_image_is_fresh(dev_service: dict, max_age: int) -> bool:
 
 
 def _get_base_image_ref(dev_service: dict) -> Optional[str]:
-    """dev サービスの Dockerfile の ``FROM devbase-*`` からベースイメージ参照を得る。
+    """dev サービスの Dockerfile の ``FROM devbase-*`` から直の親イメージの参照を得る。
 
     例: ``FROM devbase-base:latest`` -> ``devbase-base:latest``
         ``FROM devbase-base``        -> ``devbase-base:latest`` (tag 補完)
@@ -2389,16 +2390,8 @@ def _get_base_image_ref(dev_service: dict) -> Optional[str]:
         text = df_path.read_text(encoding='utf-8', errors='replace')
     except OSError:
         return None
-    for line in text.splitlines():
-        # FROM は小文字 (`from`) も許容され、`--platform=...` が前置されることがある。
-        m = re.match(r'\s*FROM\s+(?:--platform=\S+\s+)?(devbase-\S+)',
-                     line, re.IGNORECASE)
-        if m:
-            ref = m.group(1)
-            if ':' not in ref:
-                ref += ':latest'
-            return ref
-    return None
+    # 本文の読み (小文字の `from`・`--platform=...` を含む) は通常のビルドと同じ規則に任せる (#404)。
+    return devbase_parent_ref(text)
 
 
 def _pull_and_mark(image_name: str) -> bool:
