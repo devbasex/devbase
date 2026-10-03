@@ -181,9 +181,9 @@ base の設定が派生イメージへ届く道筋（containers/*/Dockerfile）
 | DinD | — | コンテナの中で dockerd を起こし、そのコンテナの中だけの docker を使う形。#400 で廃止し、ENABLE_DIND は知らせを 1 行出すだけになった。ホストの docker.sock を mount して使う形と区別する | — | — | `docs/specifications/base-image-contents.md` |
 | 展開後の大きさ | — | 建てたイメージから作ったコンテナで du -sbx / を測ったバイト数。docker images の圧縮後の大きさとは違う | — | — | `docs/specifications/base-image-contents.md` |
 | 文書の除外 | — | dpkg の path-exclude の設定で、apt が入れるパッケージから文書などの置き場を展開しないこと。base は Ubuntu の excludes に加え、changelog・info・/usr/include/node を外す（copyright は残す）。base を FROM で継ぐ派生イメージにも効く | — | — | `docs/specifications/base-image-contents.md` |
-| 継承の連なり | — | プロジェクトの Dockerfile が FROM に取る devbase-* から、containers/<名前>/Dockerfile の FROM devbase-* を順にたどり、devbase-* を FROM に取らない段（今は devbase-base）で終わるイメージの並び | — | — | — |
-| 直の親イメージ | — | プロジェクトか containers/<名前> の Dockerfile の中で、最初に devbase-* を指す FROM の行が名指すイメージ。devbase-<名前>:<タグ> の形で、タグが無ければ latest を補う | — | — | — |
-| 直の親の読み方 | — | Dockerfile の 1 行から直の親イメージを読む規則。正規表現の値を lib/devbase/utils/dockerfile.py が正本として持ち、bin/devbase が同じ値を写す | — | — | — |
+| 継承の連なり | — | プロジェクトの Dockerfile が FROM に取る devbase-* から、containers/<名前>/Dockerfile の FROM devbase-* を順にたどり、devbase-* を FROM に取らない段（今は devbase-base）で終わるイメージの並び | — | — | `docs/specifications/base-image-chain-build.md` |
+| 直の親イメージ | — | プロジェクトか containers/<名前> の Dockerfile の中で、最初に devbase-* を指す FROM の行が名指すイメージ。devbase-<名前>:<タグ> の形で、タグが無ければ latest を補う | — | — | `docs/specifications/base-image-chain-build.md` |
+| 直の親の読み方 | — | Dockerfile の 1 行から直の親イメージを読む規則。正規表現の値を lib/devbase/utils/dockerfile.py が正本として持ち、bin/devbase が同じ値を写す | — | — | `docs/specifications/base-image-chain-build.md` |
 
 ## コンテナの起動（`container-start`）
 
