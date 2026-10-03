@@ -145,7 +145,7 @@ cmd_build() {
     resolve_base_chain() {
         local ref="$1" source="$2"
         local -a visited=()
-        local image name dir dockerfile next v loop
+        local image name dir dockerfile next v w loop
         _BASE_CHAIN=()
         while :; do
             image="${ref%%@*}"
@@ -159,8 +159,8 @@ cmd_build() {
             for v in "${visited[@]}"; do
                 if [ "$v" = "$image" ]; then
                     loop=""
-                    for v in "${visited[@]}"; do
-                        loop="${loop}${v} -> "
+                    for w in "${visited[@]}"; do
+                        loop="${loop}${w} -> "
                     done
                     echo "✗ Base image chain loops: ${loop}${image}"
                     return 1
