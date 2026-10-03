@@ -292,7 +292,7 @@ def test_cli_project_build_rejects_traversal_image(devbase_root, captured_run, m
 def test_single_build_accepts_real_container_directory_names(devbase_root, captured_run):
     """`containers/` 配下の実在ディレクトリ名は検証を通る。"""
     names = ["base", "bi-tools", "general", "go", "latex",
-             "lfm", "php", "php85", "snapshot", "trygroup"]
+             "php", "php85", "snapshot", "trygroup"]
     for name in names:
         d = devbase_root / "containers" / name
         d.mkdir(exist_ok=True)

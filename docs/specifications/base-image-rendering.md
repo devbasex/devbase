@@ -30,8 +30,6 @@ Ubuntu の `chromium-browser`（snap スタブ）は入れない。
 - base イメージのブラウザ（Playwright の Chromium の置き場と、システムの Chrome）
 - base から派生するイメージ（`general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
   `trygroup`）への伝播の規則
-- `containers/lfm` は base を `FROM` で継がないが、`/etc/fonts/local.conf` を base から取り込むため
-  対象に含む（「運用」と [lfm が base の設定を取り込む経路](lfm-base-settings.md)）
 - `ENV LANG` は設定しない。LibreOffice と `pip` は同梱しない
 
 ## 用語
@@ -60,7 +58,7 @@ Ubuntu の `chromium-browser`（snap スタブ）は入れない。
 | ブラウザの置き場の作成 | `containers/base/Dockerfile` の npm のグローバル領域を作る root の `RUN` | `install -d -m 2775 -o "$USERNAME" -g npm "$PLAYWRIGHT_BROWSERS_PATH"` |
 | Chromium の取得 | `containers/base/Dockerfile` の利用者の `RUN` | `npx playwright install --with-deps chromium` で依存パッケージを入れ、Chromium を置き場へ取得する。末尾の片付けは置き場を消さない |
 | システムの Chrome | `containers/base/Dockerfile` の 1 つ目の `RUN` の 2 回目の `apt-get install` | amd64 のときだけ Google の apt（`arch=amd64`）を足し、`google-chrome-stable` を入れる |
-| ブラウザの形の検査 | `tests/containers/test_base_dockerfile_playwright.py` | Docker を起動せずに、base と lfm の置き場の宣言・置き場の作り方・片付け・apt の一覧を固定する |
+| ブラウザの形の検査 | `tests/containers/test_base_dockerfile_playwright.py` | Docker を起動せずに、base の置き場の宣言・置き場の作り方・片付け・apt の一覧を固定する |
 | ブラウザの検査 | `tests/containers/test_base_image_browser.py` | 建てたイメージで Chromium が起動し、日本語のページを PDF にできることを固定する |
 
 型（クラス）は持たない。設定ファイルと Dockerfile の命令だけで構成する。
@@ -239,12 +237,11 @@ zh-cn / ko の `<match>` は、**総称ファミリを名指ししたときだ�
 
 **置き場は利用者 `ubuntu` が書き込める（`ubuntu:npm`・`2775`）。** `playwright-kit` などの道具が
 実行時に別の版の Playwright で `playwright install chromium` を打つと、同じ環境変数に従って
-この置き場へ版ごとのディレクトリを足すためである。npm のグローバル領域と同じ作り方にすると、
-lfm でも `COPY --from` が数値の所有者を保ち、lfm が同じ GID で作る `npm` グループにそのまま当たる。
+この置き場へ版ごとのディレクトリを足すためである。npm のグローバル領域と同じ作り方にして、
+所有者とパーミッションの決まりを 1 つにそろえる。
 
 **取得の命令は `--with-deps chromium` で、headless の shell だけに絞らない。** 本体と headless の
-shell の両方を置くと、lfm の同じ命令と取得の対象が一致して lfm が取得し直さずに済み、本体を要する
-使い方（`channel: 'chromium'` の起動など）も arm64 で使える。`--with-deps` を残すため、ブラウザの
+shell の両方を置くと、本体を要する使い方（`channel: 'chromium'` の起動など）も arm64 で使える。`--with-deps` を残すため、ブラウザの
 依存パッケージ（`fonts-liberation`・`fonts-ipafont-gothic`・`fonts-wqy-zenhei`・`libnss3` など）も
 そのまま入る。
 
@@ -259,8 +256,7 @@ Chrome を呼ぶ道具は arm64 では使えない。
 | 道具が別の版の Playwright で `playwright install chromium` を打つ | `/opt/ms-playwright` へ別の版を足す。イメージの外の変更なので、コンテナを作り直すと消える |
 | Playwright を介さずに Chrome を呼ぶ | amd64 はシステムの Chrome。arm64 には無い |
 
-base を `FROM` で継ぐ派生イメージには `ENV` と置き場がそのまま届く。lfm への届き方は
-[lfm が base の設定を取り込む経路](lfm-base-settings.md) にある。
+base を `FROM` で継ぐ派生イメージには `ENV` と置き場がそのまま届く。
 
 ### 入れないもの
 
@@ -311,12 +307,6 @@ metric 互換の 2 つは、`30-metric-aliases.conf` が既に持っている対
   コンテナを作り直さないうえ、期限内ならビルドそのものを飛ばす
 - 既定を戻したい利用者は、コンテナの中の `~/.config/fontconfig/fonts.conf`（スロット 50）で
   上書きできる。イメージを触る必要は無い
-- `containers/lfm` は `FROM nvidia/cuda:...` で base を継がず、`/etc/fonts/local.conf` を
-  `COPY --from=devbase-base:latest` で取り込む。書体（`fonts-noto-cjk`）は lfm が自前で入れ、
-  Playwright の `--with-deps` の後に `fc-cache -f` を 1 度走らせる（`containers/lfm/Dockerfile`）。
-  base の設定を変えたときは base を建て直した後に lfm も建て直す。取り込みが保たれていることは
-  `tests/containers/test_lfm_base_settings.py` が固定する。lfm での解決先は [lfm が base の設定を取り込む経路](lfm-base-settings.md) の
-  「lfm のフォントの解決先」にある
 - LibreOffice での実際の描画は未検証である。LibreOffice は base に無く、fontconfig とは別の照合も
   持つ。Chromium での描画は、建てたイメージの中で日本語のページを PDF にし、埋め込まれた書体を
   `pdffonts` で見る検査が確かめる（「テスト観点」）
@@ -368,20 +358,17 @@ CI はイメージを建てるジョブを持たないため、このテスト�
 
 `tests/containers/test_base_dockerfile_playwright.py`（Docker を要さない）:
 
-- base と lfm のそれぞれに `ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` が 1 つだけあり、
+- base に `ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` が 1 つだけあり、
   `npx playwright install` を含む `RUN` より前にあること。
 - base の置き場を、npm のグローバル領域と同じ root の `RUN` で `$USERNAME:npm`・`2775` で作り、
   その `RUN` が `ENV` より後かつ `npx playwright install` より前にあること。
 - base の `npx playwright install` を含む `RUN` が 1 つで `--with-deps chromium` を持ち、その片付けの
   `rm -rf` が `/opt`・`/opt/ms-playwright`・`$PLAYWRIGHT_BROWSERS_PATH` を対象にしないこと。
-- lfm が自前の `npx playwright install --with-deps chromium` を 1 つ持つこと。
 - base のどの `apt-get install` にも `chromium-browser` が無いこと。
 - Google の apt の取得元が `arch=amd64` の 1 行だけであること。
 
-`fc-cache -f` が Playwright の `RUN` より後にあることは、base は
-`tests/containers/test_base_dockerfile_fonts.py`、lfm は `tests/containers/test_lfm_base_settings.py`
-が見る。lfm の `ENV PLAYWRIGHT_BROWSERS_PATH` が base と同じ値であることは、
-`test_lfm_base_settings.py` の到達の検査が見る。
+`fc-cache -f` が Playwright の `RUN` より後にあることは
+`tests/containers/test_base_dockerfile_fonts.py` が見る。
 
 `tests/containers/test_base_image_browser.py`（Docker を要する）:
 
@@ -406,7 +393,6 @@ CI はイメージを建てるジョブを持たないため、このテスト�
 
 ## 関連リンク
 
-- [lfm が base の設定を取り込む経路](lfm-base-settings.md)
 - [用語集: ブラウザ（`browser`）](../glossary.md#ブラウザbrowser)
 - [コンテナ操作ガイド: 文字の描画と、文書を扱う道具](../user/container-operations.md#文字の描画と文書を扱う道具base-以降)
 - [AI CLI alias の読み込み](ai-cli-alias-loading.md)

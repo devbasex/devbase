@@ -1,7 +1,0 @@
-services:
-
-  dev:
-    image: devbase-lfm:latest
-    build:
-      context: .
-      dockerfile: Dockerfile

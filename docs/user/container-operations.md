@@ -390,7 +390,6 @@ graph TD
     C --> D[php]
     C --> I[php85]
     C --> E[latex]
-    C --> F[lfm]
     A --> H[snapshot]
 
     style A fill:#f0f0f0
@@ -409,7 +408,6 @@ graph TD
 | **php** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **php85** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **latex** | general | LaTeX | 文書作成 |
-| **lfm** | general | Rust、gfortran、MeCab | 数値計算・自然言語処理 |
 | **go** | base | Go 開発環境 | Go 開発 |
 | **snapshot** | Ubuntu 26.04 | zstd のみ（約 80MB） | スナップショット専用 |
 
@@ -473,7 +471,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 コンテナの中で言語サーバを動かすときもこれが使われます（言語サーバ自体は base に入っていません）。
 
 版は固定しておらず、base を建てた時点の Ubuntu のアーカイブの版が入ります。
-`containers/lfm` と `containers/snapshot` は base を継がないため入っていません。
+`containers/snapshot` は base を継がないため入っていません。
 置き場所・入れ損ないの止め方・版の扱いの仕様は
 [base イメージの Bash の静的検査（shellcheck）](../specifications/base-image-shellcheck.md)
 にあります。
@@ -581,8 +579,7 @@ SH
 **反映には `devbase build base --no-cache` が要ります。** `devbase up` だけでは反映されません
 （読み込みの 1 行と `DEVBASE_SHELLRC_DIR` はイメージの中にあります）。派生イメージを使う
 プロジェクトはその派生イメージも建て直し、稼働中のコンテナは `devbase down` → `devbase up` で
-作り直してください。`lfm` イメージは読み込みの 1 行と `DEVBASE_SHELLRC_DIR` を base と同じに持つので、
-base の後に lfm も建て直してください。zsh（base には入っていません）は対象外です。
+作り直してください。zsh（base には入っていません）は対象外です。
 
 読む先の決め方・読み込みの前後で保つ条件・エラーの扱いの仕様は
 [作り直しても残るシェルの設定（`~/.shellrc.d`）](../specifications/shellrc-dir.md)にあります。

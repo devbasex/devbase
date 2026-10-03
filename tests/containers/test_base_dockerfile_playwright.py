@@ -1,6 +1,6 @@
-"""base と lfm の Playwright の Chromium の置き場 (#220)
+"""base の Playwright の Chromium の置き場 (#220)
 
-Docker を起動せず、``containers/base/Dockerfile`` と ``containers/lfm/Dockerfile`` の形だけを固定する。
+Docker を起動せず、``containers/base/Dockerfile`` の形だけを固定する。
 
 - ブラウザの置き場は ``/opt/ms-playwright``。``ENV PLAYWRIGHT_BROWSERS_PATH`` で示し、
   ``npx playwright install`` より前に宣言する
@@ -14,13 +14,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
-from .test_lfm_base_settings import Instruction, parse
+from .dockerfile_parse import Instruction, parse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE = REPO_ROOT / "containers" / "base" / "Dockerfile"
-LFM = REPO_ROOT / "containers" / "lfm" / "Dockerfile"
 BROWSERS_PATH = "/opt/ms-playwright"
 ENV_LINE = f"PLAYWRIGHT_BROWSERS_PATH={BROWSERS_PATH}"
 
@@ -39,21 +36,13 @@ def _install_indexes(instructions: list[Instruction]) -> list[int]:
             if ins.keyword == "RUN" and "npx playwright install" in ins.args]
 
 
-@pytest.mark.parametrize("path", [BASE, LFM], ids=["base", "lfm"])
-def test_browsers_path_is_declared_once_before_the_install(path):
-    instructions = _instructions(path)
+def test_browsers_path_is_declared_once_before_the_install():
+    instructions = _instructions(BASE)
     envs = _env_indexes(instructions)
     installs = _install_indexes(instructions)
     assert len(envs) == 1 and installs
     assert instructions[envs[0]].args == ENV_LINE
     assert envs[0] < min(installs)
-
-
-def test_lfm_keeps_its_own_install_with_deps():
-    """lfm は base を FROM で継がないため、依存パッケージは自前で入れる"""
-    installs = [ins.args for ins in _instructions(LFM)
-                if ins.keyword == "RUN" and "npx playwright install --with-deps chromium" in ins.args]
-    assert len(installs) == 1
 
 
 def _base_install_run() -> str:

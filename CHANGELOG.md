@@ -33,6 +33,14 @@
   （`google-chrome-stable`）は今までどおり amd64 だけに入ります。base の後に派生イメージと lfm を建て直すと
   届きます。
 
+### Removed
+- **派生イメージ `containers/lfm` を廃止しました（#403、破壊的変更）。** 使うプロジェクトが無く、
+  base を `COPY --from` で取り込むため base の約 3GB を重ねて持っていました。`devbase build lfm` は
+  知らないイメージとして `Image directory not found` で止まります。`devbase-lfm` を使っていた
+  プロジェクトは、GPU を使うものも含めて `containers/general` へ移すか、`FROM devbase-general:latest`
+  で Rust・gfortran・MeCab など要る道具を足す自前の Dockerfile をプロジェクトに置いてください。
+  手元に残った `devbase-lfm` のイメージは `docker image rm devbase-lfm:latest` で消せます。
+
 ### Fixed
 - **スナップショットの差分バックアップが、毎回ボリューム全体を控えていたのを直しました。**
   差分が前回からの変更分だけになり、1 回の時間とディスクの使い方が大きく減ります（手元の測定で
