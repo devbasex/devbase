@@ -24,8 +24,7 @@ ai-plugins の中継（devbasex/ai-plugins#928）である。
 - 対象に含まないもの:
   - zsh。base に zsh は入っておらず、`~/.zshrc` を読むシェルがいない。zsh を入れる変更の
     ときに起動定義と一緒に読み込みを足す（置き場所の名前はシェルに依らないので変えずに済む）
-  - `containers/snapshot`。base を継がない（「伝播の規則」）。`containers/lfm` は base を継がないが、
-    読み込みの 1 行・読み込み器・`ENV` を base と同じにしており対象に含む（「運用」と [lfm が base の設定を取り込む経路](lfm-base-settings.md)）
+  - `containers/snapshot`。base を継がない（「伝播の規則」）
   - 全コンテナ共通（分類 A）の置き場所。グループをまたいで効かせたい設定の置き場所は作らない
   - 置き場所へ最初から入れておくファイル。devbase は置き場所へ何も書かない
 
@@ -180,12 +179,7 @@ entrypoint（開発ユーザーで走る）が既存の `devbase_ensure_entry` �
   作り直す
 - `ENV` は派生イメージへ継がれ、`~/.bashrc` も base の層を継ぐので、派生イメージ側の変更は
   要らない
-- `containers/lfm` は base を `FROM` で継がず、`/etc/devbase`（起動定義と読み込み器）と
-  `~/.bashrc`（読み込みの 2 行とその順序）を `COPY --from=devbase-base:latest` で取り込み、
-  `ENV DEVBASE_SHELLRC_DIR` を base と同じ値で宣言する。`/entrypoint.sh` も base から取り込むので
-  `~/.shellrc.d` の symlink も張られる。base を建て直した後に lfm も建て直す。`ENV` の値の一致と
-  取り込みは `tests/containers/test_lfm_base_settings.py` が固定する（[lfm が base の設定を取り込む経路](lfm-base-settings.md)）。`containers/snapshot` は
-  base を継がない
+- `containers/snapshot` は base を継がない
 - 切り戻しはコミットの revert と base の建て直しで足りる。グループのボリュームに残る
   `.shellrc.d/` は読まれなくなるだけで、消さなくても害はない
 - 建てて確かめてあるのは arm64 である。変更はシェルの断片・symlink の一覧・`ENV` で、
@@ -242,7 +236,6 @@ entrypoint（開発ユーザーで走る）が既存の `devbase_ensure_entry` �
 
 ## 関連リンク
 
-- [lfm が base の設定を取り込む経路](lfm-base-settings.md)
 - [コンテナ操作ガイド: 作り直しても残るシェルの設定](../user/container-operations.md#作り直しても残るシェルの設定)
 - [AI CLI alias の読み込み](ai-cli-alias-loading.md)
 - [Issue #253](https://github.com/devbasex/devbase/issues/253)
