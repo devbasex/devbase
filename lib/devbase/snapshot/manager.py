@@ -1159,33 +1159,41 @@ class SnapshotManager:
                 reject(f"'{sub}' のボリューム名が文字列ではありません: {name!r}")
 
             if sub in ('', SHARED_MOUNT):
-                if name != HOME_UBUNTU_VOLUME:
-                    reject(f"共通ボリュームに使えるのは {HOME_UBUNTU_VOLUME} だけです"
-                           f" (指定: {name!r})")
-                continue
-
-            # group: devbase_home_<group> の形で、<group> が妥当であること
-            if not name.startswith(SHARED_VOLUME_PREFIX):
-                reject(f"グループボリュームは {SHARED_VOLUME_PREFIX}<group> の形で"
-                       f"なければなりません (指定: {name!r})")
-            if name == LEGACY_GROUP_VOLUME:
-                # 旧既定のボリュームの系列 (#315 決定 8)。ロールバックの経路として一覧・
-                # 復元 (元のボリュームへだけ)・コピー・削除・ローテーションを許す。
-                # default は予約語で検証を通らないため、名前を明示して許す
-                continue
-            group = name[len(SHARED_VOLUME_PREFIX):]
-            try:
-                # 正規化した結果が元の名前と**一致**することまで見る。
-                # 検証は前後空白を落とした名前に正規化するので、通るかどうかだけでは
-                # `devbase_home_  globex  ` を弾けない。
-                # 実際にマウントされるのは正規化前の生の名前である。
-                if get_group_volume(group) != name:
-                    reject(f"グループボリューム {name!r} は正規化された名前では"
-                           f"ありません (期待: {get_group_volume(group)!r})")
-            except DevbaseError as e:
-                reject(f"グループボリューム {name!r} のグループ名が不正です: {e}")
+                SnapshotManager._reject_invalid_shared(name, reject)
+            else:
+                SnapshotManager._reject_invalid_group(name, reject)
 
         return dict(volumes)
+
+    @staticmethod
+    def _reject_invalid_shared(name: str, reject) -> None:
+        """共通側 (``''`` / ``ai``) のボリューム名が ``devbase_home_ubuntu`` でなければ拒否する。"""
+        if name != HOME_UBUNTU_VOLUME:
+            reject(f"共通ボリュームに使えるのは {HOME_UBUNTU_VOLUME} だけです"
+                   f" (指定: {name!r})")
+
+    @staticmethod
+    def _reject_invalid_group(name: str, reject) -> None:
+        """グループ側のボリューム名が ``devbase_home_<group>`` の妥当な形でなければ拒否する。"""
+        if not name.startswith(SHARED_VOLUME_PREFIX):
+            reject(f"グループボリュームは {SHARED_VOLUME_PREFIX}<group> の形で"
+                   f"なければなりません (指定: {name!r})")
+        if name == LEGACY_GROUP_VOLUME:
+            # 旧既定のボリュームの系列 (#315 決定 8)。ロールバックの経路として一覧・
+            # 復元 (元のボリュームへだけ)・コピー・削除・ローテーションを許す。
+            # default は予約語で検証を通らないため、名前を明示して許す
+            return
+        group = name[len(SHARED_VOLUME_PREFIX):]
+        try:
+            # 正規化した結果が元の名前と**一致**することまで見る。
+            # 検証は前後空白を落とした名前に正規化するので、通るかどうかだけでは
+            # `devbase_home_  globex  ` を弾けない。
+            # 実際にマウントされるのは正規化前の生の名前である。
+            if get_group_volume(group) != name:
+                reject(f"グループボリューム {name!r} は正規化された名前では"
+                       f"ありません (期待: {get_group_volume(group)!r})")
+        except DevbaseError as e:
+            reject(f"グループボリューム {name!r} のグループ名が不正です: {e}")
 
     def _load_snap_meta(self, snap_dir: Path) -> dict:
         """個別スナップショットのmeta.ymlを読み込む"""
