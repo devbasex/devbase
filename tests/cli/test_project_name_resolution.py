@@ -7,22 +7,21 @@
     実在するプロジェクト名のみ cd + argv strip し、login <index> / build <image> /
     scale <N> の既存 positional と曖昧にならないこと (存在性ベースの判定)。
 
-wrapper テストは実際の `uv run` を避けるため run_python / cmd_build をスタブに
-差し替え、DEVBASE_ROOT を一時ディレクトリへ向けた薄いハーネスで dispatch のみ
-実行する (wrapper 末尾の DEVBASE_ROOT 自動解決行も sed で除去する)。
+wrapper テストは `exec_wrapper` (conftest.py) で本物の bin/devbase を tmp へ複製して
+起動し、外への呼び出しの境界の `uv` だけを差し替える。
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from devbase.commands import container
+from tests.cli.conftest import python_args, stdout_field
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = REPO_ROOT / "bin" / "devbase"
@@ -359,194 +358,135 @@ def test_load_project_env_escaped_dollar_and_undefined(tmp_path, monkeypatch):
 # wrapper: cd + argv strip + 存在性ベースの曖昧性回避
 # ===========================================================================
 
-def _run_wrapper(args, devbase_root):
-    """run_python / cmd_build をスタブ化し wrapper の dispatch だけを実行する。
+# `exec_wrapper` (conftest.py) は bin/devbase を tmp へ複製して起動し、`uv` だけを PATH で
+# 差し替える。`maybe_cd_project` と `cmd_build` は本物のまま動く。Python の経路は
+# ` devbase.cli <args>` で終わる `UV:` 行、shell の経路は `cmd_build` が `compose_with_secrets`
+# 経由で起こす `env exec` の `UV:` 行で確かめる。`PWD:` は `uv` を起動した時点の CWD。
 
-    - run_python  -> "PWD:<cwd>" と "PYTHON:<args>" を出力
-    - cmd_build   -> "PWD:<cwd>" と "BUILD:<args>" を出力
-    実際の wrapper が DEVBASE_ROOT を自身のパスから再計算してしまうため、その
-    代入行 (`DEVBASE_ROOT=...`) も sed で除去し、環境変数で渡した値を使わせる。
-    """
-    harness = (
-        'run_python() { echo "PWD:$PWD"; echo "PYTHON:$*"; exit 0; }\n'
-        'cmd_build() { echo "PWD:$PWD"; echo "BUILD:$*"; exit 0; }\n'
-        'ensure_uv() { :; }\n'
-        'eval "$(sed -e \'/^run_python()/,/^}/d\' '
-        '            -e \'/^ensure_uv()/,/^}/d\' '
-        '            -e \'/^cmd_build()/,/^}/d\' '
-        '            -e \'/^DEVBASE_ROOT=/d\' "$WRAPPER_PATH")"\n'
-    )
-    env = {
-        **os.environ,
-        "DEVBASE_ROOT": str(devbase_root),
-        "WRAPPER_PATH": str(WRAPPER),
-    }
-    return subprocess.run(
-        ["bash", "-c", harness, "devbase", *args],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(REPO_ROOT),
-    )
+SHELL_BUILD = "=== Building devbase images ==="
 
 
 @pytest.fixture
-def wrapper_root(tmp_path):
-    (tmp_path / "projects" / "myapp").mkdir(parents=True)
-    return tmp_path
+def wrapper_root(exec_wrapper):
+    exec_wrapper.project("myapp")
+    return exec_wrapper
 
 
 def _pwd(result):
-    for line in result.stdout.splitlines():
-        if line.startswith("PWD:"):
-            return line[len("PWD:"):]
-    return None
+    return stdout_field(result, "PWD:")
 
 
-def _python_args(result):
-    for line in result.stdout.splitlines():
-        if line.startswith("PYTHON:"):
-            return line[len("PYTHON:"):]
-    return None
+def _env_exec_lines(result):
+    """`compose_with_secrets` が起こした `env exec` の `UV:` 行の、`env exec` から後ろ。"""
+    return [line.split(" devbase.cli ", 1)[1] for line in result.stdout.splitlines()
+            if line.startswith("UV:") and " devbase.cli env exec " in line]
 
 
-def _build_args(result):
-    for line in result.stdout.splitlines():
-        if line.startswith("BUILD:"):
-            return line[len("BUILD:"):]
-    return None
+_FAKE_UV_WITH_ENV = """\
+#!/bin/bash
+echo "PWD:$PWD"
+echo "UV:$*"
+echo "DEV_SERVICE_NAME:${DEV_SERVICE_NAME:-<unset>}"
+echo "SHARED:${SHARED:-<unset>}"
+exit 0
+"""
 
 
-def _run_wrapper_from(args, devbase_root, cwd):
-    """`_run_wrapper` と同じだが任意の CWD から起動し env 残留を検証できる版。
-
-    run_python スタブが ``DEV_SERVICE_NAME`` の値も出力するため、呼び出し元 env の
-    残留有無を判定できる。
-    """
-    harness = (
-        'run_python() { echo "PWD:$PWD"; echo "PYTHON:$*"; '
-        'echo "DEV_SERVICE_NAME:${DEV_SERVICE_NAME:-<unset>}"; '
-        'echo "SHARED:${SHARED:-<unset>}"; exit 0; }\n'
-        'cmd_build() { echo "PWD:$PWD"; echo "BUILD:$*"; exit 0; }\n'
-        'ensure_uv() { :; }\n'
-        'eval "$(sed -e \'/^run_python()/,/^}/d\' '
-        '            -e \'/^ensure_uv()/,/^}/d\' '
-        '            -e \'/^cmd_build()/,/^}/d\' '
-        '            -e \'/^DEVBASE_ROOT=/d\' "$WRAPPER_PATH")"\n'
-    )
-    env = {
-        **os.environ,
-        "DEVBASE_ROOT": str(devbase_root),
-        "WRAPPER_PATH": str(WRAPPER),
-    }
-    env.pop("DEV_SERVICE_NAME", None)
-    env.pop("SHARED", None)
-    return subprocess.run(
-        ["bash", "-c", harness, "devbase", *args],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(cwd),
-    )
-
-
-def _stdout_field(result, prefix):
-    for line in result.stdout.splitlines():
-        if line.startswith(prefix):
-            return line[len(prefix):]
-    return None
-
-
-def test_wrapper_clears_caller_only_env_on_project_switch(tmp_path):
+def test_wrapper_clears_caller_only_env_on_project_switch(exec_wrapper, monkeypatch):
     """別プロジェクト内から `up <name>` した際、呼び出し元固有 env が残らない。
 
     codex 指摘 (bin/devbase:235) の回帰テスト。呼び出し元 caller の env にしか無い
     ``DEV_SERVICE_NAME`` が対象 myapp へ引き継がれず、共通キー ``SHARED`` は対象側の
-    値が勝つことを wrapper 経路で固定する。
+    値が勝つことを wrapper 経路で固定する。偽の `uv` は両方の値も出す。
     """
-    root = tmp_path
-    myapp = root / "projects" / "myapp"
-    myapp.mkdir(parents=True)
-    (myapp / "env").write_text("SHARED=myapp_shared\n")
-    caller = root / "projects" / "caller"
-    caller.mkdir(parents=True)
-    (caller / "env").write_text("DEV_SERVICE_NAME=caller_svc\nSHARED=caller_shared\n")
+    monkeypatch.delenv("DEV_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("SHARED", raising=False)
+    (exec_wrapper.root / "fakebin" / "uv").write_text(_FAKE_UV_WITH_ENV)
+    exec_wrapper.project("myapp", env="SHARED=myapp_shared\n")
+    caller = exec_wrapper.project("caller", env="DEV_SERVICE_NAME=caller_svc\nSHARED=caller_shared\n")
 
-    r = _run_wrapper_from(["up", "myapp"], root, caller)
+    r = exec_wrapper(["up", "myapp"], cwd=caller)
     assert _pwd(r).endswith("/projects/myapp"), r.stdout
+    assert python_args(r) == "up", r.stdout
     # 呼び出し元固有キーは残留しない
-    assert _stdout_field(r, "DEV_SERVICE_NAME:") == "<unset>", r.stdout
+    assert stdout_field(r, "DEV_SERVICE_NAME:") == "<unset>", r.stdout
     # 共通キーは対象プロジェクトの値が勝つ
-    assert _stdout_field(r, "SHARED:") == "myapp_shared", r.stdout
+    assert stdout_field(r, "SHARED:") == "myapp_shared", r.stdout
 
 
 def test_wrapper_project_up_name_cds_and_strips(wrapper_root):
-    r = _run_wrapper(["project", "up", "myapp"], wrapper_root)
+    r = wrapper_root(["project", "up", "myapp"])
     assert "unknown command" not in r.stderr.lower(), r.stderr
     assert _pwd(r).endswith("/projects/myapp"), r.stdout
     # name は strip され Python へは渡らない
-    assert _python_args(r) == "project up", r.stdout
+    assert python_args(r) == "project up", r.stdout
 
 
 def test_wrapper_shortcut_up_name_cds_and_strips(wrapper_root):
-    r = _run_wrapper(["up", "myapp"], wrapper_root)
+    r = wrapper_root(["up", "myapp"])
     assert _pwd(r).endswith("/projects/myapp"), r.stdout
-    assert _python_args(r) == "up", r.stdout
+    assert python_args(r) == "up", r.stdout
 
 
 def test_wrapper_unknown_name_not_stripped_no_cd(wrapper_root):
     """存在しない name は cd せず素通し (Python 側でエラー処理させる)。"""
-    r = _run_wrapper(["up", "bogus"], wrapper_root)
-    assert not _pwd(r).endswith("/projects/bogus"), r.stdout
-    assert _python_args(r) == "up bogus", r.stdout
+    r = wrapper_root(["up", "bogus"])
+    assert _pwd(r) == str(wrapper_root.work), r.stdout
+    assert python_args(r) == "up bogus", r.stdout
 
 
 def test_wrapper_build_name_cds_via_shell(wrapper_root):
     """build は shell cmd_build 経路。wrapper cd で対象プロジェクトへ移動する。"""
-    r = _run_wrapper(["build", "myapp"], wrapper_root)
+    r = wrapper_root(["build", "myapp"])
+    assert SHELL_BUILD in r.stdout, r.stdout
     assert _pwd(r).endswith("/projects/myapp"), r.stdout
-    assert _build_args(r) == "", r.stdout  # name は strip
+    # name は strip され、cmd_build へは引数が渡らない
+    assert _env_exec_lines(r) == ["env exec -- docker compose build dev"], r.stdout
 
 
 def test_wrapper_build_flag_not_treated_as_name(wrapper_root):
     """`build --no-cache` のフラグは name とみなさず CWD でビルド。"""
-    r = _run_wrapper(["build", "--no-cache"], wrapper_root)
-    assert not _pwd(r).endswith("/projects/"), r.stdout
-    assert _build_args(r) == "--no-cache", r.stdout
+    wrapper_root.container("base")
+    r = wrapper_root(["build", "--no-cache"])
+    assert SHELL_BUILD in r.stdout, r.stdout
+    assert _pwd(r) == str(wrapper_root.work), r.stdout
+    lines = _env_exec_lines(r)
+    assert lines and lines[-1] == "env exec -- docker compose build dev --no-cache", r.stdout
 
 
 def test_wrapper_scale_name_disambiguation(wrapper_root):
     """`scale myapp 3` は name+N、`scale 3` は N のみ (存在性で判定)。"""
-    r1 = _run_wrapper(["scale", "myapp", "3"], wrapper_root)
+    r1 = wrapper_root(["scale", "myapp", "3"])
     assert _pwd(r1).endswith("/projects/myapp"), r1.stdout
-    assert _python_args(r1) == "scale 3", r1.stdout
+    assert python_args(r1) == "scale 3", r1.stdout
 
-    r2 = _run_wrapper(["scale", "3"], wrapper_root)
-    assert not _pwd(r2).endswith("/projects/3"), r2.stdout
-    assert _python_args(r2) == "scale 3", r2.stdout
+    r2 = wrapper_root(["scale", "3"])
+    assert _pwd(r2) == str(wrapper_root.work), r2.stdout
+    assert python_args(r2) == "scale 3", r2.stdout
 
 
 def test_wrapper_login_index_not_treated_as_name(wrapper_root):
     """`login 2` の 2 は index。projects/2 が無いので cd せず素通し。"""
-    r = _run_wrapper(["login", "2"], wrapper_root)
-    assert _python_args(r) == "login 2", r.stdout
+    r = wrapper_root(["login", "2"])
+    assert python_args(r) == "login 2", r.stdout
 
     # 一方 `login myapp` は実在プロジェクトなので cd + strip (index=1 既定)
-    r2 = _run_wrapper(["login", "myapp"], wrapper_root)
+    r2 = wrapper_root(["login", "myapp"])
     assert _pwd(r2).endswith("/projects/myapp"), r2.stdout
-    assert _python_args(r2) == "login", r2.stdout
+    assert python_args(r2) == "login", r2.stdout
 
 
 def test_wrapper_project_scale_name_strips_keeps_subcommand(wrapper_root):
-    r = _run_wrapper(["project", "scale", "myapp", "3"], wrapper_root)
+    r = wrapper_root(["project", "scale", "myapp", "3"])
     assert _pwd(r).endswith("/projects/myapp"), r.stdout
-    assert _python_args(r) == "project scale 3", r.stdout
+    assert python_args(r) == "project scale 3", r.stdout
 
 
 def test_wrapper_no_name_uses_cwd(wrapper_root):
     """name を渡さなければ cd せず従来通り (引数素通し)。"""
-    r = _run_wrapper(["project", "up"], wrapper_root)
-    assert _python_args(r) == "project up", r.stdout
+    r = wrapper_root(["project", "up"])
+    assert _pwd(r) == str(wrapper_root.work), r.stdout
+    assert python_args(r) == "project up", r.stdout
 
 
 def test_wrapper_project_build_keeps_image_positional(wrapper_root):
@@ -556,10 +496,10 @@ def test_wrapper_project_build_keeps_image_positional(wrapper_root):
     プロジェクト名 myapp が image と衝突しても name strip せず素通しし、Python
     側で image=myapp として解釈させる (codex 指摘の衝突回避)。
     """
-    r = _run_wrapper(["project", "build", "myapp"], wrapper_root)
+    r = wrapper_root(["project", "build", "myapp"])
     # cd せず (image 解決は Python 側)、myapp を strip しない
-    assert not _pwd(r).endswith("/projects/myapp"), r.stdout
-    assert _python_args(r) == "project build myapp", r.stdout
+    assert _pwd(r) == str(wrapper_root.work), r.stdout
+    assert python_args(r) == "project build myapp", r.stdout
 
 
 def test_wrapper_project_login_keeps_index_positional(wrapper_root):
@@ -568,9 +508,9 @@ def test_wrapper_project_login_keeps_index_positional(wrapper_root):
     `project login` parser は name を持たず index を取る。実在プロジェクト名と
     一致しても name strip せず、Python パーサに委ねる (codex 指摘の衝突回避)。
     """
-    r = _run_wrapper(["project", "login", "myapp"], wrapper_root)
-    assert not _pwd(r).endswith("/projects/myapp"), r.stdout
-    assert _python_args(r) == "project login myapp", r.stdout
+    r = wrapper_root(["project", "login", "myapp"])
+    assert _pwd(r) == str(wrapper_root.work), r.stdout
+    assert python_args(r) == "project login myapp", r.stdout
 
 
 # ===========================================================================
@@ -579,8 +519,6 @@ def test_wrapper_project_login_keeps_index_positional(wrapper_root):
 # `exec_wrapper` (conftest.py) は bin/devbase を tmp へ複製して起動し、`uv` だけを PATH で
 # 差し替える。maybe_cd_project は本物のまま動く (受け入れ条件 15)。
 # ===========================================================================
-
-from tests.cli.conftest import stdout_field  # noqa: E402
 
 TOP_LEVEL_NAME_COMMANDS = ["up", "down", "ps", "scale", "login", "rebuild", "open"]
 PROJECT_NAME_SUBCOMMANDS = ["up", "down", "ps", "logs", "scale", "rebuild", "open"]
