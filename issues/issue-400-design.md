@@ -17,7 +17,7 @@
 | 根拠 | 種類 | 何を示すか |
 | --- | --- | --- |
 | `docker run --rm --entrypoint bash devbase-base:latest` で測った値（2026-10-03・arm64）: `/usr/include/node` 67MB・`/usr/share/doc` 8.0MB・`/usr/share/info` 940KB・`/var/lib/apt/lists` 42MB・グローバルの `aws-cdk-lib` 181MB | 実測 | 外す中身の大きさ。docker-ce 106MB・containerd 81MB・root の uv 40MB は課題の本文の実測 |
-| 同じコンテナの `/etc/dpkg/dpkg.cfg.d/excludes` が既に `man`・翻訳の `.mo`・`doc`（copyright と changelog を除く）を外している。`/usr/share/doc` に残るのは `changelog*` の 257 ファイルだけで、`/usr/share/man` の下のファイルは 0 | 実測 | 文書の除外で足すのは changelog・info・`/usr/include/node` の 3 つで足りる |
+| 同じコンテナの `/etc/dpkg/dpkg.cfg.d/excludes` が既に `man`・翻訳の `.mo`・`doc`（copyright と changelog を除く）を外している。`/usr/share/man` の下のファイルは 0。`/usr/share/doc` には copyright と `changelog*` のほかに 40 個のファイルと symlink が残る（`apt/NEWS.Debian.gz`・`gnupg/TODO`・`gnupg/examples/*`・`base-files/FAQ`・`libavahi-common3/README`・`python3/README.Debian`・`fonts-dejavu-core/*` などのファイルと、`libgcc-s1`・`libpython3.14` などの symlink）（2026-10-03・arm64 で `find /usr/share/doc ! -type d ! -name copyright ! -name 'changelog*'` を数えた） | 実測 | 文書の除外で足すのは changelog・info・`/usr/include/node` の 3 つ。dpkg の規則だけでは既に残る物が消えないため、最初の `RUN` と利用者の層で `/usr/share/doc` の下の copyright でないファイルと symlink を消す（決定 4） |
 | `grep -rIl ENABLE_DIND` を `repos/*/`・`projects/*/` の compose.yml・env・.env にかけて 0 件。当たった compose の注記 1 件はホストの dockerd を指す | 実測 | `ENABLE_DIND` を設定する者がいない |
 | #403 の本文: lfm を使うプロジェクトは無く、利用者が 2026-10-03 に lfm の廃止を決めた。Dockerfile を読む試験の部品（`Instruction` / `parse`）をテストの共通の置き場へ移す | 利用者の指示 | DinD を前提に作られた唯一の派生が無くなる。#400 の試験は移した先の部品を使える |
 | #400 への利用者のコメント（2026-10-03）: lfm は #403 で先に廃止する。lfm への影響は考えなくてよい | 利用者の指示 | #400 は lfm のファイル・試験・仕様が無い状態から始める |
@@ -53,7 +53,7 @@ base が dockerd を入れなくなるため、entrypoint は dockerd を起こ�
 | I2 | base の中身 | npm のグローバルに `aws-cdk-lib` を入れず、`aws-cdk` を入れる | 同上 |
 | I3 | base の中身 | uv のインストーラを呼ぶのは `USER ubuntu` の後の `RUN` だけで、`ENV PATH` に `/root/.local/bin` が無い | 同上 |
 | I4 | base の中身 | apt の一覧を取得する `RUN`（`apt-get update` か `--with-deps` を含み、`/var/lib/apt` を cache mount しないもの）は、同じ `RUN` で `/var/lib/apt/lists` を消す | 同上。どの `RUN` かを挙げて落ちる |
-| I5 | base の中身 | 文書の除外の設定が、最初の `RUN` より前に Ubuntu の `excludes` より後に読まれる名前で置かれ、copyright を残して changelog・info・man・`/usr/include/node` を外す | 同上 |
+| I5 | base の中身 | 文書の除外の設定が、最初の `RUN` より前に Ubuntu の `excludes` より後に読まれる名前で置かれ、copyright を残して changelog・info・man・`/usr/include/node` を外す。最初の `RUN` と利用者の層の `RUN` は、`/usr/share/doc` の下の copyright でないファイルと symlink を消す | 同上 |
 | I6 | base の中身 | `containers/base/dind` が無く、Dockerfile は `/usr/local/bin/dind` を置かない | 同上 |
 | I7 | 起動の用意 | `ENABLE_DIND` が `true` か `1` のとき、DinD の廃止を 1 行出して起動を続ける。dockerd を起こさず、`/var/run/docker.sock` を消さず、`docker info` を待たない | 実装の誤り。entrypoint の試験で落とす |
 | I8 | 起動の用意 | `ENABLE_DIND` が無い・`true` と `1` 以外のとき、何も出さず、起動の手順と順序は変わらない | 同上 |
@@ -78,7 +78,9 @@ base が dockerd を入れなくなるため、entrypoint は dockerd を起こ�
 | --- | --- | --- |
 | DinD | コンテナの中で dockerd を起こし、そのコンテナの中だけの docker を使う形。#400 で廃止し、`ENABLE_DIND` は知らせを 1 行出すだけになった。ホストの docker.sock を mount して使う形と区別する | 意味の変更（`image-lineage`） |
 | 文書の除外 | dpkg の `path-exclude` の設定で、apt が入れるパッケージから文書などの置き場を展開しないこと。base は Ubuntu の `excludes` に加え、changelog・info・`/usr/include/node` を外す（copyright は残す）。base を `FROM` で継ぐ派生イメージにも効く | 意味の変更（`image-lineage`） |
-| 展開後の大きさ | 建てたイメージから作ったコンテナで `du -sbx /` を測ったバイト数 | 既存（意味は変えない） |
+| 展開後の大きさ | 建てたイメージから作ったコンテナで `du -sbx /` を測ったバイト数。`docker images` の圧縮後の大きさとは違う | 新規（`image-lineage`） |
+
+意味の文はこの表が正本で、`docs/glossary/glossary.json` の `meaning` はこの表の文と同じ文にする（コードの印の backtick だけを除く）。
 
 ## 機能一覧
 
@@ -97,10 +99,10 @@ base が dockerd を入れなくなるため、entrypoint は dockerd を起こ�
 | 要素 | 責務 | 変更 |
 | --- | --- | --- |
 | 文書の除外の設定（`containers/base/dpkg-excludes`、新規） | `/etc/dpkg/dpkg.cfg.d/excludes-devbase` として置かれ、Ubuntu の `excludes` の後に読まれて changelog・info・man・`/usr/include/node` を外し、copyright を残す（決定 4） | 作る |
-| base の Dockerfile の apt の層（最初の `RUN`） | 文書の除外の設定を `COPY` で先に置き、`docker-ce`・`containerd.io` を一覧から外す。`FROM` の層に既にある changelog・info を同じ `RUN` で消す | 変える |
+| base の Dockerfile の apt の層（最初の `RUN`） | 文書の除外の設定を `COPY` で先に置き、`docker-ce`・`containerd.io` を一覧から外す。同じ `RUN` の最後で `/usr/share/doc` の下の copyright でないファイルと symlink（changelog を含む）と `/usr/share/info` の中身を消す（決定 4） | 変える |
 | base の Dockerfile の root の道具の層（2 つ目の大きな `RUN`） | root の uv のインストーラの呼び出しと、npm の `aws-cdk-lib` を外す | 変える |
 | base の Dockerfile の `ENV PATH` | `/root/.local/bin` を外す（決定 6） | 変える |
-| base の Dockerfile の利用者の層 | 片付けに `/var/lib/apt/lists/*` を足す（決定 7） | 変える |
+| base の Dockerfile の利用者の層 | 片付けに `/var/lib/apt/lists/*` を足す（決定 7）。同じ片付けで `/usr/share/doc` の下の copyright でないファイルと symlink を消す（決定 4） | 変える |
 | base の Dockerfile の最後の `COPY` | `dind` の `COPY` を外し、`entrypoint.sh` だけを置く | 変える |
 | `containers/base/dind` | — | 消す |
 | entrypoint の DinD の知らせ（`devbase_notice_dind_removed`、新規） | `ENABLE_DIND` が `true` か `1` なら廃止を 1 行出して 0 で返る。それ以外は何も出さずに 0 で返る。`DEVBASE_ENTRYPOINT_LIB_ONLY` で source した試験から呼べる（決定 2） | 作る |
@@ -109,7 +111,7 @@ base が dockerd を入れなくなるため、entrypoint は dockerd を起こ�
 | DinD の知らせの試験（`tests/containers/test_entrypoint_dind_removed.py`、新規） | I7・I8 を固定する | 作る |
 | base のシェルスクリプトの数え上げ（`tests/containers/test_base_shellcheck_ci.py`・`.github/workflows/ci.yml`・`docs/developer/contributing.md`） | ShellCheck の対象の並びから `dind` を外す | 変える |
 | 確定仕様（`docs/specifications/base-image-shellcheck.md`・`ci-checks.md`） | 2 回目の apt の一覧・`dind` の ShellCheck・`SC2009` の抑止の記述を今の形へ直す | 変える |
-| 用語集（`docs/glossary/glossary.json`） | DinD・文書の除外の意味を直し、`glossary.py render` で `docs/glossary.md` を作り直す | 変える |
+| 用語集（`docs/glossary/glossary.json`） | DinD・文書の除外の意味を直し、展開後の大きさを `image-lineage` に新しく載せ（意味は用語の表の文のまま）、`glossary.py render` で `docs/glossary.md` を作り直す | 変える |
 | `CHANGELOG.md` の `[Unreleased]` | 外した中身と、DinD の廃止（破壊的変更・ホストの docker.sock を使う）を書く | 変える |
 
 ```mermaid
@@ -156,12 +158,12 @@ tests/containers/
 ```mermaid
 graph TD
     F[FROM ubuntu:26.04] --> C1["COPY dpkg-excludes<br/>/etc/dpkg/dpkg.cfg.d/excludes-devbase"]
-    C1 --> R1["RUN apt の層<br/>docker-ce-cli・buildx・compose を入れる<br/>FROM の層の changelog・info を消す"]
+    C1 --> R1["RUN apt の層<br/>docker-ce-cli・buildx・compose を入れる<br/>doc の copyright でない物と info を消す"]
     R1 --> R2[RUN 利用者とグループ]
     R2 --> R3["RUN root の道具<br/>aws・gcloud・npm（aws-cdk-lib なし）<br/>root の uv なし"]
     R3 --> P["ENV PATH<br/>/opt/google-cloud-sdk/bin を足す"]
     P --> R4[RUN bao・確認]
-    R4 --> R5["USER ubuntu の RUN<br/>uv・claude・agy・kiro・playwright<br/>片付けで apt の一覧も消す"]
+    R4 --> R5["USER ubuntu の RUN<br/>uv・claude・agy・kiro・playwright<br/>片付けで apt の一覧と doc の copyright でない物も消す"]
     R5 --> R6[設定の COPY と fc-cache]
     R6 --> C2[COPY entrypoint.sh]
 ```
@@ -240,13 +242,13 @@ graph LR
 | 71 | `docker-ce`・`containerd.io` | #400（`docker-ce-cli` は残す） |
 | 73 | `terraform` | #402 |
 | 73 | `$BROWSER_PKG` | #401 |
-| 75〜76 の後 | `FROM` の層の changelog・info の削除 | #400 |
+| 75〜76 の後 | `/usr/share/doc` の下の copyright でないファイルと symlink・`/usr/share/info` の中身の削除 | #400 |
 | 84〜89・111〜113・247〜251・259 | lfm を前提にした注記と `NPM_GID` | #403（先に入る。#400 は触らない） |
 | 155〜156 | root の uv | #400 |
 | 159 | `aws-cdk-lib` | #400 |
 | 177 | `/root/.local/bin` | #400 |
 | 234〜235 | Playwright の Chromium と `--with-deps` | #402 |
-| 236〜245 | 片付け（`/var/lib/apt/lists/*` を足す） | #400。注記の `--with-deps` の語は #402 |
+| 236〜245 | 片付け（`/var/lib/apt/lists/*` と `/usr/share/doc` の下の copyright でない物の削除を足す） | #400。注記の `--with-deps` の語は #402 |
 | 304〜308 | `fc-cache` の注記 | #402 |
 | 310〜312 | `dind` の `COPY` | #400 |
 
@@ -300,8 +302,15 @@ dockerd を入れた新しい派生へ DinD を移す形は採らない。移す
 ファイルで doc を外し直し、copyright だけを入れ直せば changelog が外れる。
 
 同じファイルで `/usr/share/info/*`・`/usr/share/man/*`・`/usr/include/node/*` を外す。ファイルは
-`containers/base/dpkg-excludes` に置き、最初の `RUN` の前に `COPY` する。`FROM` の層に既にある changelog と info は、
-最初の `RUN` の中で消す。層の大きさは減らないが、受け入れ条件 5 の「copyright のほかのファイルが無い」を満たす。
+`containers/base/dpkg-excludes` に置き、最初の `RUN` の前に `COPY` する。
+
+dpkg の規則だけでは受け入れ条件 5 の「copyright のほかのファイルが無い」を満たせない。今の base には changelog のほかに
+`NEWS.Debian.gz`・`README`・`examples/*` などのファイルと、別のパッケージの置き場を指す symlink（`libgcc-s1` など）が
+40 個残る（根拠の表の実測）。そのため最初の `RUN` の最後と利用者の層の片付けの両方で、
+`find /usr/share/doc -mindepth 1 ! -type d ! -name copyright -delete` を実行し、`/usr/share/doc` の下の copyright でない
+ファイルと symlink をすべて消す（`! -type d` は symlink も含み、指す先をたどらない）。最初の `RUN` では
+`/usr/share/info` の中身も消す。利用者の層で消すのは、`playwright install --with-deps` の `apt-get` が入れる物を
+同じ規則で片付けるためである。`FROM` の層にある分は層の大きさが減らないが、条件 5 を満たす。
 
 翻訳（`/usr/share/locale`）は外さない。`.mo` は Ubuntu が既に外しており、残る `locale.alias` は glibc が読む。
 
@@ -362,10 +371,11 @@ root の uv を外すと `/root/.local/bin` に入る物が無くなる。`PATH`
 | I3（受け入れ条件 2・3） | uv のインストーラを呼ぶ `RUN` が `USER ubuntu` の後にだけあり、`ENV PATH` に `/root/.local/bin` が無い | root の `RUN` に uv のインストーラを戻す・利用者の `RUN` から消す・`PATH` に戻すと落ちる |
 | I4（受け入れ条件 4） | cache mount の無い apt の一覧の取得を持つ `RUN` は、同じ `RUN` で `/var/lib/apt/lists` を消す | 利用者の層の片付けから一覧を外すと、その `RUN` を挙げて落ちる。`--with-deps` を消した Dockerfile では当たる `RUN` が無く通る |
 | I5（受け入れ条件 5） | 文書の除外の設定が `excludes` より後に並ぶ名前で、最初の `RUN` より前に置かれ、doc の除外の後に copyright の取り込みがあり、changelog・info・man・`/usr/include/node` を外す | 名前を `devbase-excludes`（`excludes` より前）にする・`COPY` を最初の `RUN` の後へ動かす・copyright の取り込みを消す・`/usr/include/node` の行を消すと落ちる |
+| I5（受け入れ条件 5・残る文書の削除） | 最初の `RUN` と利用者の層の `RUN` は、どちらも `/usr/share/doc` の下の copyright でないファイルと symlink を消す（`find /usr/share/doc` に `! -type d` と `! -name copyright` と `-delete` がある） | どちらかの `RUN` から削除を消す・`! -name copyright` を外す・`! -type d` を `-type f` に変える（symlink が残る）と、その `RUN` を挙げて落ちる |
 | I6（受け入れ条件 11） | `containers/base/dind` が無く、Dockerfile に `/usr/local/bin/dind` が無い | `dind` を戻す・`COPY` を戻すと落ちる |
 | I7（受け入れ条件 9） | `ENABLE_DIND` が `true`・`1` のとき、DinD の知らせが 1 行だけ出て 0 で返り、`sudo`・`dockerd`・`docker`・`rm` を呼ばない | 知らせの後に `docker info` を待つ・docker.sock を消す・dockerd を起こす・0 以外で返るように壊すと落ちる |
 | I8（受け入れ条件 10） | `ENABLE_DIND` が無い・`false`・空のとき、何も出さずに 0 で返る。既存の entrypoint の試験が変わらず通る | 未設定でも知らせを出すように壊すと落ちる |
-| 受け入れ条件 1〜5（建てた base） | arm64 と amd64 で建てた base で `command -v dockerd`・`command -v containerd` が失敗し、`docker --version` などの 5 つが 0 で終わり、`npm ls -g aws-cdk-lib` が空で、`/var/lib/apt/lists`・`/usr/share/man`・`/usr/include/node`・`/usr/share/doc` が条件どおりである | 手動確認（マージ前）。出力を PR に記録する |
+| 受け入れ条件 1〜5（建てた base） | arm64 と amd64 で建てた base で、ubuntu の利用者のログインシェル（`docker run --rm --entrypoint bash devbase-base:latest -lc '<コマンド>'`）で確かめる。`/home/ubuntu/.local/bin` は `ENV PATH` に無く `~/.profile` が足すため、`-lc` でない `bash -c` では変更の前後どちらでも `uv` が見つからない。`ENV PATH` に足して通すと受け入れ条件 14 を破る。`command -v dockerd`・`command -v containerd` が失敗し、`docker --version` などの 5 つが 0 で終わり、`npm ls -g aws-cdk-lib` が空で、`/var/lib/apt/lists`・`/usr/share/man`・`/usr/include/node`・`/usr/share/doc` が条件どおりである（`find /usr/share/doc ! -type d ! -name copyright` が 0 件） | 手動確認（マージ前）。出力を PR に記録する |
 | 受け入れ条件 6 | 前提 8 の形で前後の展開後の大きさの差が 450,000,000 バイト以上 | 手動確認。届かなければ内訳を PR に書いて人へ戻す |
 | 受け入れ条件 8 | 変更後の base から派生 7 つが建つ | 手動確認。建たなければ外した物を前提にした手順を直す |
 | 受け入れ条件 9（建てた base） | `ENABLE_DIND=true` で起こしたコンテナの起動の出力に知らせが 1 行あり、完了の印ができる | 手動確認。出力を PR に記録する |
