@@ -17,7 +17,7 @@
 | 根拠 | 種類 | 何を示すか |
 | --- | --- | --- |
 | `docs/user/container-operations.md:509` の「先に `devbase build base` を打つ」 | 実測（文書に残した回避） | 利用者に先の手順を求めている今の制約 |
-| プラグインのリポジトリの作業ツリー（devbase-ext#36）の `projects/proj-a/dev/Dockerfile` が `FROM devbase-php:latest` | 実測（grep。下の「2 段の継承の実例」） | 2 段の継承が実際に使われ始めている |
+| プラグインのリポジトリの作業ツリー（#402 の受け入れ条件 13 で出した PR）の `projects/proj-a/dev/Dockerfile` が `FROM devbase-php:latest` | 実測（grep。下の「2 段の継承の実例」） | 2 段の継承が実際に使われ始めている |
 | `bin/devbase` の `_SINGLE_SEGMENT_NAME_RE` と `lib/devbase/utils/names.py` の同期（PLAN61 決定 2） | 既存の形 | Bash と Python が同じ規則を持つとき、正規表現の値を両方に置き、同期のテストで一致を見る前例 |
 | `tests/cli/test_build_browser_image.py` | 既存の形 | `bin/devbase` を実プロセスで起動し、外への呼び出しを偽の `uv` で受けて、建てる順を固定するテストの形 |
 
@@ -34,7 +34,7 @@ grep -rhoE 'context:\s*\S*containers/[a-z0-9._-]+' projects/*/compose.yml | sort
 
 | 置き場 | 当たり | 段の数 |
 | --- | --- | --- |
-| プラグインのリポジトリの作業ツリー（devbase-ext#36 のブランチ）の `projects/proj-a/dev/Dockerfile` | `FROM devbase-php:latest`。`compose.yml` の最初の `build:` が dev で、`context: ./dev` | 2 段（proj-a → `devbase-php` → `devbase-base`） |
+| プラグインのリポジトリの作業ツリー（#402 の受け入れ条件 13 で出した PR のブランチ）の `projects/proj-a/dev/Dockerfile` | `FROM devbase-php:latest`。`compose.yml` の最初の `build:` が dev で、`context: ./dev` | 2 段（proj-a → `devbase-php` → `devbase-base`） |
 | `containers/` の派生イメージ 8 つ（`go`・`bi-tools`・`general`・`latex`・`php`・`php85`・`browser`・`trygroup`） | すべて `FROM devbase-base:latest` | 1 段 |
 | `containers/base`・`containers/snapshot` | `FROM ubuntu:26.04` | 連なりの終わり |
 | `projects/*/compose.yml` の `build.context`（36 ファイル） | `containers/<名前>` を直に指す行が 36（`general` 23・`php` 9・`bi-tools`・`latex`・`php85`・`trygroup` 各 1）。残る 1 つは `./repo`（proj-a の `app` のサービス。`FROM` は `devbase-*` でない） | 1 段（プロジェクトの Dockerfile が `containers/<名前>/Dockerfile` そのもの） |
@@ -416,7 +416,7 @@ Dockerfile を読み、建てることになる。単体ビルドと name 解決
 
 | 項目 | 内容 |
 | --- | --- |
-| 実機での順 | base の無い端末で proj-a（devbase-ext#36 のブランチ）の `devbase build` が base → `devbase-php` → プロジェクトの順に建って通ることは、非対話のセッションで base を建てられないため確かめていない。リリース後テストで利用者が見る（要求の検証手段） |
+| 実機での順 | base の無い端末で proj-a（プラグインのリポジトリの PR のブランチ）の `devbase build` が base → `devbase-php` → プロジェクトの順に建って通ることは、非対話のセッションで base を建てられないため確かめていない。リリース後テストで利用者が見る（要求の検証手段） |
 | `devbase-*` の非 `latest` のタグ | `FROM devbase-php:8.3` のような参照でも、段は今と同じく `devbase-php:latest` として建てる。`--expires` の判定は `devbase-php:8.3` の作成日を見る。今の Dockerfile に例は無い（上の grep）ため、この食い違いは扱わない |
 | Dockerfile の場所の決め方 | 通常のビルドは `compose.yml` の最初の `build:` から、`--expires` の判定は dev のサービスの `build` から Dockerfile を決め、食い違いうる。#404 の範囲外として #415 に起票した |
 | 「建て直さない」の読み | 決定 5 は「base が既にあるときは層を作り直さない（キャッシュで建てる）」と読んだ。段の有無で建て自体を飛ばす意味なら、要求の前提 3 と受け入れ条件 1 を変えることになるため、ゲート 1 で確かめる |

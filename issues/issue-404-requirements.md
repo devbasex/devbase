@@ -58,7 +58,7 @@
 
 コメント（2026-10-03）:
 
-> 実例が増えました。#402 の受け入れ条件 13 で出した volareinc/devbase-ext#36 は、proj-a の dev を `FROM devbase-php:latest` のプロジェクトの Dockerfile に変えます。`cmd_build`（`bin/devbase` の `check_base_image_dependency` → `build_base_image`）は devbase-php を先に建てますが、その下の devbase-base はたどりません。そのため、devbase-base:latest の無い端末では devbase-php の段で止まり、`--no-cache` で建て直しても devbase-base は建て直されません。回避策は `devbase build base` を先に打つことです（devbase-ext#36 の本文にも書きました）。
+> 実例が増えました。#402 の受け入れ条件 13 で出したプラグインのリポジトリの PR は、proj-a の dev を `FROM devbase-php:latest` のプロジェクトの Dockerfile に変えます。`cmd_build`（`bin/devbase` の `check_base_image_dependency` → `build_base_image`）は devbase-php を先に建てますが、その下の devbase-base はたどりません。そのため、devbase-base:latest の無い端末では devbase-php の段で止まり、`--no-cache` で建て直しても devbase-base は建て直されません。回避策は `devbase build base` を先に打つことです（その PR の本文にも書きました）。
 
 ## 目的
 
