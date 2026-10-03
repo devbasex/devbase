@@ -181,6 +181,7 @@ base の設定が派生イメージへ届く道筋（containers/*/Dockerfile）
 | DinD | — | コンテナの中で dockerd を起こし、そのコンテナの中だけの docker を使う形。#400 で廃止し、ENABLE_DIND は知らせを 1 行出すだけになった。ホストの docker.sock を mount して使う形と区別する | — | — | `docs/specifications/base-image-contents.md` |
 | 展開後の大きさ | — | 建てたイメージから作ったコンテナで du -sbx / を測ったバイト数。docker images の圧縮後の大きさとは違う | — | — | `docs/specifications/base-image-contents.md` |
 | 文書の除外 | — | dpkg の path-exclude の設定で、apt が入れるパッケージから文書などの置き場を展開しないこと。base は Ubuntu の excludes に加え、changelog・info・/usr/include/node を外す（copyright は残す）。base を FROM で継ぐ派生イメージにも効く | — | — | `docs/specifications/base-image-contents.md` |
+| 継承の連なり | — | プロジェクトの Dockerfile が FROM に取る devbase-* から、containers/<名前>/Dockerfile の FROM devbase-* を順にたどり、devbase-* を FROM に取らない段（今は devbase-base）で終わるイメージの並び | — | — | — |
 
 ## コンテナの起動（`container-start`）
 

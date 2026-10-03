@@ -864,6 +864,13 @@
       "context": "image-lineage",
       "meaning": "dpkg の path-exclude の設定で、apt が入れるパッケージから文書などの置き場を展開しないこと。base は Ubuntu の excludes に加え、changelog・info・/usr/include/node を外す（copyright は残す）。base を FROM で継ぐ派生イメージにも効く",
       "source": "docs/specifications/base-image-contents.md"
+    },
+    {
+      "term": "継承の連なり",
+      "context": "image-lineage",
+      "meaning": "プロジェクトの Dockerfile が FROM に取る devbase-* から、containers/<名前>/Dockerfile の FROM devbase-* を順にたどり、devbase-* を FROM に取らない段（今は devbase-base）で終わるイメージの並び",
+      "source": "",
+      "pending_source": "issues/issue-404-requirements.md"
     }
   ]
 }
