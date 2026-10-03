@@ -291,7 +291,7 @@ SHA-256 で照合して入れ、既定の水準（style まで）で走らせる
 ```bash
 docker run --rm -v "$PWD":/w -w /w --entrypoint shellcheck devbase-base:latest bin/devbase bin/rc install.sh
 docker run --rm -v "$PWD":/w -w /w --entrypoint shellcheck devbase-base:latest containers/base/ai-cli-aliases.sh \
-  containers/base/dind containers/base/entrypoint.sh containers/base/shellrc-dir.sh \
+  containers/base/entrypoint.sh containers/base/shellrc-dir.sh \
   containers/base/tmux-clean containers/base/tmux-first containers/base/tmux-session
 ```
 
