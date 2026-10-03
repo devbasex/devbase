@@ -552,6 +552,99 @@ def test_cli_rotate_removes_entries_that_list_cannot_open(tmp_path, caplog, bad)
     assert not any("ローテーション不要です" in r.getMessage() for r in caplog.records)
 
 
+def _add_bad_entry(tmp_path: Path, backups: Path, bad: str) -> None:
+    """場所が不正なエントリを snapshot.yml の先頭に足す (#332)。"""
+    data = yaml.safe_load((backups / "snapshot.yml").read_text())
+    entry = {"created_at": "2026-08-01T00:00:00", "incremental_count": 0,
+             "volumes": vols("acme")}
+    if bad == "traversal":
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "big.bin").write_bytes(b"x" * 12345)
+        entry["name"] = "../outside"
+    elif bad == "dir-link":
+        _link_outside(tmp_path)
+        entry["name"] = "old"
+    elif bad == "file-link":
+        target = tmp_path / "plain.txt"
+        target.write_text("keep")
+        (backups / "link").symlink_to(target)
+        entry["name"] = "link"
+    elif bad == "plain-file":
+        (backups / "flat").write_text("not a dir")
+        entry["name"] = "flat"
+    data["snapshots"].insert(0, entry)
+    (backups / "snapshot.yml").write_text(yaml.safe_dump(data))
+
+
+BAD_ENTRIES = ["traversal", "dir-link", "file-link", "plain-file", "no-name"]
+
+
+@pytest.mark.parametrize("bad", BAD_ENTRIES)
+def test_list_skips_entries_with_invalid_location(tmp_path, caplog, bad):
+    """#332: list は場所の不正なエントリの中を読まず、警告して一覧から外す。"""
+    backups = write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0)])
+    _add_bad_entry(tmp_path, backups, bad)
+    before = (backups / "snapshot.yml").read_text()
+
+    with caplog.at_level(logging.WARNING, logger="devbase"):
+        snapshots = SnapshotManager(tmp_path).list()
+
+    assert [s["name"] for s in snapshots] == ["D1", "D2"]
+    assert all(s["size_bytes"] > 0 for s in snapshots)
+    assert any("場所が不正" in r.getMessage() for r in caplog.records)
+    # 読むだけで snapshot.yml は書き換えない
+    assert (backups / "snapshot.yml").read_text() == before
+
+
+def test_list_keeps_entry_whose_directory_is_missing(tmp_path):
+    """#332: ディレクトリがまだ無いだけのエントリはサイズ 0 で残す。"""
+    backups = write_state(tmp_path, [("D1", "acme", 0)])
+    data = yaml.safe_load((backups / "snapshot.yml").read_text())
+    data["snapshots"].append({"name": "gone", "created_at": "2026-09-02T00:00:00"})
+    (backups / "snapshot.yml").write_text(yaml.safe_dump(data))
+
+    snapshots = SnapshotManager(tmp_path).list()
+    assert [(s["name"], s["size_bytes"] == 0) for s in snapshots] == \
+        [("D1", False), ("gone", True)]
+
+
+@pytest.mark.parametrize("bad", BAD_ENTRIES)
+def test_cli_list_prints_only_valid_entries(tmp_path, capsys, bad):
+    """#332: devbase snapshot list は止まらず、不正なエントリの行を出さない。"""
+    backups = write_state(tmp_path, [("D1", "acme", 0)])
+    _add_bad_entry(tmp_path, backups, bad)
+
+    assert cmd_snapshot(tmp_path, types.SimpleNamespace(subcommand="list")) == 0
+    out = capsys.readouterr().out
+    assert "D1" in out
+    assert "outside" not in out and "link" not in out and "flat" not in out
+    assert "12.1" not in out
+
+
+@pytest.mark.parametrize("bad", BAD_ENTRIES)
+def test_status_and_tui_use_filtered_list(tmp_path, monkeypatch, bad):
+    """#332: devbase status と TUI の選択も、不正なエントリを外した一覧を使う。"""
+    from devbase.commands import status
+    from devbase.tui import actions_snapshot, menu
+
+    backups = write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0)])
+    _add_bad_entry(tmp_path, backups, bad)
+
+    assert status._get_snapshot_info(tmp_path) == {"latest": "D2", "count": 2}
+
+    seen = {}
+
+    def fake_select(message, choices, **kwargs):
+        seen["values"] = [value for _, value in choices]
+        return "D1"
+
+    monkeypatch.setattr(menu, "select", fake_select)
+    monkeypatch.setattr(menu, "text", lambda *a, **k: pytest.fail("自由入力へ縮退した"))
+    assert actions_snapshot._select_snapshot_name(tmp_path, "選ぶ") == "D1"
+    assert seen["values"] == ["D1", "D2"]
+
+
 def test_safe_snap_dir_uses_path_components(tmp_path):
     """決定 7: 兄弟の backups-outside/ は文字列の前方一致でも通さない。"""
     _link_outside(tmp_path)

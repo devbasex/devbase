@@ -263,6 +263,27 @@ class SnapshotManager:
             raise SnapshotError(f"無効なスナップショットパス: '{name}'")
         return snap_dir
 
+    def _entry_dir(self, snap: dict) -> Path:
+        """``snapshot.yml`` のエントリから世代のディレクトリを検証して返す。
+
+        ``list()`` と ``rotate()`` が共有する検証の段 (#269 / #332)。次のエントリを
+        ``SnapshotError`` で止める。
+
+        - ``name`` が無い・文字列でない
+        - :meth:`_safe_snap_dir` が拒否する (名前が不正・リンク・``backups/`` の外)
+        - ディレクトリの場所にディレクトリ以外が置かれている
+
+        ディレクトリがまだ無いエントリは通す (呼び出し側が「中身なし」として扱う)。
+        """
+        name = snap.get('name') if isinstance(snap, dict) else None
+        if not isinstance(name, str) or not name:
+            raise SnapshotError("名前 (name) がありません")
+        snap_dir = self._safe_snap_dir(name)
+        if snap_dir.exists() and not snap_dir.is_dir():
+            raise SnapshotError(
+                f"スナップショット '{name}' の場所がディレクトリではありません: {snap_dir}")
+        return snap_dir
+
     def create(self, name: Optional[str] = None, full: bool = False) -> str:
         """スナップショットを作成する。
 
@@ -292,18 +313,31 @@ class SnapshotManager:
         return name
 
     def list(self) -> list[dict]:
-        """スナップショット一覧を返す"""
+        """スナップショット一覧を返す。
+
+        各エントリは :meth:`_entry_dir` で検証し、場所が不正なエントリ (名前が不正・
+        リンク・``backups/`` の外・``name`` が無い・ディレクトリでない) は警告して
+        一覧から外す。中は読まず、``snapshot.yml`` も書き換えない。
+        """
         meta = self._load_metadata()
-        snapshots = meta.get('snapshots', [])
-        # ディレクトリの実サイズも取得
-        for snap in snapshots:
-            snap_dir = self.backups_dir / snap['name']
-            if snap_dir.exists():
+        snapshots = []
+        for snap in meta.get('snapshots', []) or []:
+            try:
+                snap_dir = self._entry_dir(snap)
+            except SnapshotError as e:
+                name = snap.get('name', '') if isinstance(snap, dict) else ''
+                logger.warning(
+                    "snapshot.yml の世代 '%s' は場所が不正なため、一覧から外します: %s",
+                    name, e)
+                continue
+            # ディレクトリの実サイズも取得
+            if snap_dir.is_dir():
                 snap['size_bytes'] = sum(
                     f.stat().st_size for f in snap_dir.iterdir() if f.is_file()
                 )
             else:
                 snap['size_bytes'] = 0
+            snapshots.append(snap)
         return snapshots
 
     def entry_count(self) -> int:
@@ -598,7 +632,7 @@ class SnapshotManager:
         系列 (対象ボリュームの組) ごとに ``keep`` 世代を残し、残りの総数が
         ``max_total`` (省けば ``keep × 3``) を超えたら、系列をまたいで最も古い
         世代から消す。**各系列の最新の世代は消さない** (次の差分の積み先のため)。
-        消す前に :meth:`_safe_snap_dir` で名前を検証し、拒否されたエントリは
+        消す前に :meth:`_entry_dir` (``list()`` と共有) で検証し、拒否されたエントリは
         ディレクトリを消さずに一覧からだけ外す。
 
         Args:
@@ -631,7 +665,7 @@ class SnapshotManager:
             name = snap.get('name', '')
             removed_ids.add(index)
             try:
-                snap_dir = self._safe_snap_dir(name)
+                snap_dir = self._entry_dir(snap)
             except SnapshotError as e:
                 logger.warning(
                     "snapshot.yml の世代 '%s' は場所が不正なため、ディレクトリを消さずに"

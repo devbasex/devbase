@@ -66,6 +66,12 @@
   `devbase down` → `devbase up` でコンテナを作り直してください。
 
 ### Fixed
+- **`devbase snapshot list` が、`snapshot.yml` の場所の不正なエントリの中を読まないようにしました（#332）。**
+  名前が `../outside` のように `backups/` の外を指すもの・シンボリックリンク・ディレクトリでないもの・
+  `name` の無いものは、`rotate` と同じ判定で警告して一覧から外します。これまでは `backups/` の外の
+  ディレクトリのサイズを表示したり、`NotADirectoryError` や `KeyError` で止まったりしていました。
+  `devbase status` のスナップショットの節と TUI のスナップショットの選択も、外した後の一覧を使います。
+  `list` は `snapshot.yml` を書き換えません。
 - **派生イメージを `FROM` に取るプロジェクトの `devbase build` が、base の無い端末で止まるのを直しました（#404）。**
   プロジェクトの Dockerfile が `FROM devbase-php:latest` のように派生イメージを継ぐとき、`devbase build`
   （と、それを呼ぶ `devbase up`・`devbase rebuild`）は `containers/<名前>/Dockerfile` の `FROM devbase-*` を
