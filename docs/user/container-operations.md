@@ -387,10 +387,10 @@ graph TD
     A[Ubuntu 26.04] --> B[base]
     B --> C[general]
     B --> G[go]
+    B --> J[browser]
     C --> D[php]
     C --> I[php85]
     C --> E[latex]
-    C --> F[lfm]
     A --> H[snapshot]
 
     style A fill:#f0f0f0
@@ -405,12 +405,12 @@ graph TD
 | イメージ | ベース | 主な内容 | 用途 |
 |---------|-------|---------|------|
 | **base** | Ubuntu 26.04 | Docker CLI、Python 3、日本語フォント、PDF / OOXML の道具、shellcheck | 最小限の開発環境 |
-| **general** | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | 汎用開発環境 |
+| **general** | base | AWS CLI、gcloud、Node.js 20、AI CLI | 汎用開発環境 |
 | **php** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **php85** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
 | **latex** | general | LaTeX | 文書作成 |
-| **lfm** | general | Rust、gfortran、MeCab | 数値計算・自然言語処理 |
 | **go** | base | Go 開発環境 | Go 開発 |
+| **browser** | base | Playwright の Chromium とその依存パッケージ、Noto CJK の追加の太さ（Thin〜Black） | ブラウザの操作、HTML の PDF・スクリーンショット |
 | **snapshot** | Ubuntu 26.04 | zstd のみ（約 80MB） | スナップショット専用 |
 
 ### 文字の描画と、文書を扱う道具（base 以降）
@@ -419,7 +419,9 @@ base イメージは、文字を描くときの既定を**日本語**にして�
 `sans` / `serif` / `monospace`）と、イメージに無い書体名（`Meiryo` / `Yu Gothic` /
 `MS PGothic` / `Noto Sans JP` など）は、いずれも Noto CJK の **JP** フェイスへ解決されます。
 fontconfig は Chromium / Playwright のスクリーンショット、PDF の生成、画像の生成がすべて
-参照するため、日本語を含むページを撮っても日本語の字形で写ります。
+参照するため、日本語を含むページを撮っても日本語の字形で写ります。base が持つ Noto CJK は
+標準の太さ（Regular・Bold）です。追加の太さ（Thin・Light・Medium・Black など）は `browser` の
+イメージにあります。
 
 | 指定 | 解決先 |
 |------|--------|
@@ -449,15 +451,83 @@ fontconfig は Chromium / Playwright のスクリーンショット、PDF の生
 > **LibreOffice と `pip` は入っていません。** LibreOffice は展開 372〜459MB で base の規律に
 > 見合わないため入れていません。Python パッケージが要るときは `uv` / `uvx` を使ってください。
 
+base にはブラウザが入っていません。Playwright（`@playwright/test`）は入っていますが、
+Chromium とその依存パッケージは `browser` のイメージにあります。base 系のイメージ（base・
+`general`・`php` など）で Playwright の Chromium を起動すると、`npx playwright install` を
+打つよう示して止まります。使い方は次の節を見てください。
+
 > **これらは `devbase build base --no-cache` で base を建て直すと反映されます。**
-> `devbase up` だけでは反映されません。派生イメージ（`general` など）を使っている
-> プロジェクトは、その派生イメージも建て直してください。
+> `devbase up` だけでは反映されません。派生イメージ（`general`・`browser` など）を使っている
+> プロジェクトは、その派生イメージも建て直し、`devbase down` → `devbase up` でコンテナを
+> 作り直してください。
 > **`devbase rebuild` では建て直りません。** `devbase build --expires=7` のシノニムのため、
 > 期限内はビルドそのものを飛ばします。
 
 規則の中身と、その置き場所を動かせない理由は
 [base イメージの文字の描画と、文書を扱う道具](../specifications/base-image-rendering.md)
 にあります。
+
+### ブラウザ・追加の太さのフォント・terraform を使う
+
+base は、すべての利用者が使う道具だけを持ちます。次のものは base にありません。
+
+| 要るもの | 使い方 |
+|----------|--------|
+| ブラウザ（Playwright の Chromium とその依存パッケージ） | `browser` のイメージを選ぶ |
+| Noto CJK の追加の太さ（`fonts-noto-cjk-extra`） | `browser` のイメージを選ぶ |
+| `terraform` | プロジェクトの Dockerfile かフックで入れる |
+
+**`browser` のイメージを選ぶ。** プロジェクトの `compose.yml` の dev サービスで、`build.context` を
+`containers/browser` にします。ほかの派生イメージと同じく、`devbase build` は base を先に建ててから
+このイメージを建てます。
+
+```yaml
+services:
+  dev:
+    build:
+      context: ${DEVBASE_ROOT}/containers/browser/
+```
+
+建て直した直後から、ネットワーク無しで Chromium を起動し、日本語のページを PDF や
+スクリーンショットにできます。置き場は `/opt/ms-playwright`（環境変数 `PLAYWRIGHT_BROWSERS_PATH`）です。
+
+> **システムの Chrome（`google-chrome-stable`、`/usr/bin/google-chrome`）はどのイメージにも入っていません。**
+> Playwright から使うときは何も変えずに Chromium が起動します。Playwright を介さずにブラウザの
+> 実行ファイルを渡す道具には、`browser` のイメージで次のコマンドが出す Playwright の Chromium の
+> パスを渡してください。
+>
+> ```bash
+> NODE_PATH="$(npm root -g)" node -e "console.log(require('@playwright/test').chromium.executablePath())"
+> ```
+
+**`php` などほかの派生イメージの道具も要るとき。** `browser` のイメージには PHP などの道具が
+ありません。次の道筋から、プロジェクトの道具立てに合うものを選びます。
+
+| 道筋 | すること | 気をつけること |
+|------|----------|----------------|
+| `browser` のイメージを選ぶ | 上の `build.context` に替える | 元の派生イメージの道具が無くなる |
+| プロジェクトの Dockerfile で足す | `FROM devbase-php:latest` などの上で、利用者 `ubuntu` が `npx playwright install --with-deps chromium` を打つ | `devbase build` は `devbase-php` を建てるが、その下の base が無いときに先に建てない。先に `devbase build base` を打つ |
+| 道具の起動引数でブラウザの場所を渡す | MCP の起動引数などで、上の 2 つのどちらかで用意した Chromium の実行ファイルを指させる | ブラウザと依存パッケージは、ほかの 2 つの道筋で用意する |
+
+`@playwright/mcp` や `chrome-devtools-mcp` は、既定でシステムの Chrome を探すことがあります。
+選んだ道筋で、実際に起動できることを確かめてください。
+
+**コンテナの中で一時的に取得する。** base 系のコンテナでも、次のコマンドで Chromium と依存
+パッケージを取得できます。コンテナを作り直すと消え、取得のたびに数百 MB をネットワークから取ります。
+
+```bash
+npx playwright install --with-deps chromium
+```
+
+**`terraform` を入れる。** プロジェクトの Dockerfile（root の `RUN`）か、コンテナ起動時のフックで
+HashiCorp の apt の取得元を足して入れます。
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update && sudo apt-get install -y terraform
+```
 
 ### Bash の静的検査（base 以降）
 
@@ -473,7 +543,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 コンテナの中で言語サーバを動かすときもこれが使われます（言語サーバ自体は base に入っていません）。
 
 版は固定しておらず、base を建てた時点の Ubuntu のアーカイブの版が入ります。
-`containers/lfm` と `containers/snapshot` は base を継がないため入っていません。
+`containers/snapshot` は base を継がないため入っていません。
 置き場所・入れ損ないの止め方・版の扱いの仕様は
 [base イメージの Bash の静的検査（shellcheck）](../specifications/base-image-shellcheck.md)
 にあります。
@@ -581,8 +651,7 @@ SH
 **反映には `devbase build base --no-cache` が要ります。** `devbase up` だけでは反映されません
 （読み込みの 1 行と `DEVBASE_SHELLRC_DIR` はイメージの中にあります）。派生イメージを使う
 プロジェクトはその派生イメージも建て直し、稼働中のコンテナは `devbase down` → `devbase up` で
-作り直してください。`lfm` イメージは読み込みの 1 行と `DEVBASE_SHELLRC_DIR` を base と同じに持つので、
-base の後に lfm も建て直してください。zsh（base には入っていません）は対象外です。
+作り直してください。zsh（base には入っていません）は対象外です。
 
 読む先の決め方・読み込みの前後で保つ条件・エラーの扱いの仕様は
 [作り直しても残るシェルの設定（`~/.shellrc.d`）](../specifications/shellrc-dir.md)にあります。

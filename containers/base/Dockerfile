@@ -9,6 +9,10 @@ FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 文書の除外 (#400)。Ubuntu の excludes より後に読まれ、copyright を残して changelog・info・man・
+# Node.js のヘッダを展開しない。最初の apt-get install より前に置き、派生イメージにも効かせる
+COPY --chmod=0644 dpkg-excludes /etc/dpkg/dpkg.cfg.d/excludes-devbase
+
 # APT パッケージ + Node.js + ロケール（1レイヤーにまとめる）
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -19,7 +23,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     openssh-client \
     curl ca-certificates gnupg lsb-release \
     libnss3 libxrandr2 libxss1 \
-    fonts-noto-cjk fonts-noto-cjk-extra \
+    fonts-noto-cjk \
+    # fc-match の解決先 (Arial -> Liberation Sans、WenQuanYi Zen Hei・IPAPGothic の名指し) を保つ。
+    # Playwright の --with-deps に頼らず明示する。追加の太さの fonts-noto-cjk-extra と
+    # Chromium はブラウザの派生イメージ (containers/browser) に置く (#402)
+    fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei \
     # 欧文の metric 互換 (Calibri -> Carlito / Cambria -> Caladea)。
     # 30-metric-aliases.conf が既に対応を持っており、実体が無いと中国語フォントへ落ちる。
     fonts-crosextra-carlito fonts-crosextra-caladea \
@@ -41,11 +49,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     chmod a+r /etc/apt/keyrings/docker.gpg; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     > /etc/apt/sources.list.d/docker.list; \
-    # HashiCorp（Terraform）
-    curl -fsSL https://apt.releases.hashicorp.com/gpg \
-    | gpg --dearmor -o /etc/apt/keyrings/hashicorp-archive-keyring.gpg; \
-    echo "deb [signed-by=/etc/apt/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-    > /etc/apt/sources.list.d/hashicorp.list; \
+    # terraform と HashiCorp の取得元は入れない。要るプロジェクトは自分の Dockerfile かフックで入れる (#402)
     # GitHub CLI リポジトリ
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg; \
@@ -53,26 +57,21 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     > /etc/apt/sources.list.d/github-cli.list; \
     # NodeSource リポジトリ (Active LTS を追従。バージョン固定しない)
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -; \
-    # システムの Chrome は amd64 だけに入れる。Chromium は両アーキとも Playwright のものを使う
-    # (下の利用者の RUN が /opt/ms-playwright へ取得する)。Ubuntu の chromium-browser は
-    # snap スタブでコンテナの中では起動しないため入れない (#220)
-    arch="$(dpkg --print-architecture)"; \
-    BROWSER_PKG=""; \
-    if [ "$arch" = "amd64" ]; then \
-    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-    | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg; \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
-    > /etc/apt/sources.list.d/google-chrome.list; \
-    BROWSER_PKG="google-chrome-stable"; \
-    fi; \
+    # base はブラウザを入れない。Playwright の Chromium とその依存パッケージはブラウザの派生イメージ
+    # (containers/browser) が /opt/ms-playwright へ取得する (#402)。システムの Chrome
+    # (google-chrome-stable) は入れない (#401)。Ubuntu の chromium-browser は snap スタブで
+    # コンテナの中では起動しないため入れない (#220)
     apt-get update; \
     # パッケージインストール
     apt-get install -y --no-install-recommends \
-    docker-ce docker-ce-cli containerd.io \
+    docker-ce-cli \
     docker-buildx-plugin docker-compose-plugin \
-    terraform gh nodejs $BROWSER_PKG; \
-    # クリーンアップ
+    gh nodejs; \
+    # クリーンアップ。/usr/share/doc は copyright とディレクトリを指す symlink
+    # (copyright への経路) だけを残す。除外の設定より前から ubuntu:26.04 にある物も消す (#400)
     apt-get clean; \
+    find /usr/share/doc -mindepth 1 ! -type d ! -xtype d ! -name copyright -delete; \
+    rm -rf /usr/share/info/*; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
 
 # ユーザー設定
@@ -82,9 +81,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # 数百MBの node_modules がメタデータ変更だけのために新しいレイヤーへ
 # 丸ごと複製されるのを避けられる。
 ARG USERNAME="ubuntu"
-# npm グループの GID は派生イメージ (containers/lfm) と揃える必要があるため固定する。
-# lfm は base を FROM で継がず COPY --from で取り込むだけで、base のグループ定義を引き継がないため、
-# GID が動的だと COPY されたファイルの GID が派生側で未定義になる。
+# npm グループの GID は、建て直しても npm のグローバル領域とブラウザの置き場の数値の所有者が
+# 変わらないよう固定する。
 # 2000 は Ubuntu の system group (<1000) とも既定ユーザー ubuntu (1000) とも衝突しない。
 ARG NPM_GID="2000"
 RUN set -eux; \
@@ -108,19 +106,20 @@ RUN set -eux; \
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH="/usr/local/share/npm-global/bin:${PATH}"
 
-# Playwright のブラウザの置き場。~/.cache の既定の置き場は下の片付けで消えるため、
-# 片付けの対象外の /opt に置いてイメージに残す (#220)。ENV にするのは docker exec の
-# 非対話の処理からも同じ置き場を使うため。/opt は lfm が取り込むため、lfm も同じ値で宣言する。
+# Playwright のブラウザの置き場。base では空のまま作り、中身 (Chromium) はブラウザの派生
+# イメージ (containers/browser) が持つ (#402)。~/.cache の既定の置き場は片付けで消えるため、
+# 片付けの対象外の /opt に置く (#220)。ENV にするのは docker exec の非対話の処理と、
+# 実行時に取得する道具からも同じ置き場を使うため。
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
-# AWS CLI + gcloud SDK + uv + npm globals（1レイヤーにまとめる）
+# AWS CLI + gcloud SDK + npm globals（1レイヤーにまとめる）
 RUN set -eux; \
     # 所有を $USERNAME:npm、ディレクトリへ setgid を付けて作る。
     # 後から誰が入れてもグループが npm のまま揃う
     # (UID/GID を振り直しても壊れない Dev Containers 方式)。
     install -d -m 2775 -o "$USERNAME" -g npm "$NPM_CONFIG_PREFIX"; \
-    # Playwright のブラウザの置き場も同じ形で作る。下の利用者の RUN が取得し、
-    # playwright-kit などが実行時に別の版を同じ置き場へ取得する (#220)
+    # Playwright のブラウザの置き場も同じ形で作る。ブラウザの派生イメージが取得し、
+    # playwright-kit などが実行時に別の版を同じ置き場へ取得する (#220, #402)
     install -d -m 2775 -o "$USERNAME" -g npm "$PLAYWRIGHT_BROWSERS_PATH"; \
     # AWS CLI v2
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip; \
@@ -152,11 +151,9 @@ RUN set -eux; \
     cloud-datastore-emulator pubsub-emulator \
     kubectl kustomize skaffold minikube \
     docker-credential-gcr cloud-run-proxy 2>&1 || true; \
-    # uv (Python パッケージマネージャー)
-    curl -LsSf https://astral.sh/uv/install.sh | sh; \
     # npm グローバルパッケージ（umask 0002 で npm グループにも書き込み権を残す）
     umask 0002; \
-    npm i -g yarn @playwright/test aws-cdk aws-cdk-lib typescript @google/gemini-cli @openai/codex @googleworkspace/cli; \
+    npm i -g yarn @playwright/test aws-cdk typescript @google/gemini-cli @openai/codex @googleworkspace/cli; \
     # root が作ったファイルも ubuntu が上書きできるように揃える。
     # install レイヤーと同じ RUN なのでレイヤーの複製は発生しない。
     chown -R "$USERNAME":npm "$NPM_CONFIG_PREFIX"; \
@@ -174,7 +171,7 @@ RUN set -eux; \
     /var/cache/* \
     /var/log/*
 
-ENV PATH="/root/.local/bin:/opt/google-cloud-sdk/bin:${PATH}"
+ENV PATH="/opt/google-cloud-sdk/bin:${PATH}"
 
 # OpenBao CLI (bao)。devbase の機密のサーバ backend と同じ 2.6 系に固定する (PLAN54)。
 # 起動中のコンテナから自分の機密を読み書きし、管理者は管理スクリプトをここから実行する。
@@ -205,7 +202,7 @@ RUN gh --version && node --version && npm --version && aws --version && gcloud -
 USER ${USERNAME}
 WORKDIR /tmp
 
-# ユーザー用ツール（uv, claude, kiro, playwright）
+# ユーザー用ツール（uv, claude, agy, kiro）
 RUN set -eux; \
     # uv for user
     curl -LsSf https://astral.sh/uv/install.sh | sh; \
@@ -231,13 +228,13 @@ RUN set -eux; \
     else \
     echo "Unsupported architecture: $ARCH, skipping Kiro CLI installation"; \
     fi; \
-    # Playwright の Chromium。置き場 ($PLAYWRIGHT_BROWSERS_PATH) は上の root の RUN が作る (#220)
-    npx playwright install --with-deps chromium; \
-    # クリーンアップ。--with-deps の sudo apt や Node24/npm11 の
-    # /tmp/node-compile-cache が root 所有ファイルを残すため sudo で削除する
-    # (非 root の rm では Permission denied になりビルドが失敗する)。
+    # クリーンアップ。Node24/npm11 の /tmp/node-compile-cache などが root 所有ファイルを
+    # 残すため sudo で削除する (非 root の rm では Permission denied になりビルドが失敗する)。
+    # apt の一覧と、/usr/share/doc の copyright でない物も消す (#400)。
     # ブラウザの置き場 ($PLAYWRIGHT_BROWSERS_PATH) は消さない。
+    sudo find /usr/share/doc -mindepth 1 ! -type d ! -xtype d ! -name copyright -delete; \
     sudo rm -rf /tmp/* \
+    /var/lib/apt/lists/* \
     ~/.cache \
     ~/.npm \
     ~/.config/yarn \
@@ -246,9 +243,6 @@ RUN set -eux; \
 
 # AI CLI の起動定義。~/.bashrc へ直接書かずファイルにしているのは、Docker を
 # 起動せずに tests/containers/test_ai_cli_aliases.py で振る舞いを固定するため。
-# /etc/devbase は lfm がディレクトリごと取り込むため、この下へ足した設定は lfm へも届く。
-# ここより外 (/etc の別の場所・~ の別のファイル) へ置く設定と ENV は、lfm の Dockerfile に
-# 取り込みか同じ値の宣言を足すまで tests/containers/test_lfm_base_settings.py が落ちる (#275)。
 RUN sudo install -d -m 0755 /etc/devbase
 COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh
 
@@ -256,7 +250,6 @@ COPY --chmod=0644 ai-cli-aliases.sh /etc/devbase/ai-cli-aliases.sh
 # グループのボリュームにあり、entrypoint.sh が ~/.shellrc.d を張る。パスを ENV で
 # 示すのは、docker exec の非対話の処理 (Claude Code の Bash など) からも置き場所を
 # 見つけられるようにするため。~/.bashrc の export では非対話の処理に届かない。
-# ENV は COPY --from で運べないため、lfm も同じ値で宣言している。
 ENV DEVBASE_SHELLRC_DIR=/home/${USERNAME}/.shellrc.d
 COPY --chmod=0644 shellrc-dir.sh /etc/devbase/shellrc-dir.sh
 
@@ -301,15 +294,14 @@ RUN sudo ln -sf tmux-first /usr/local/bin/tmux1 \
 # 先頭のコメントにある。利用者は ~/.config/fontconfig/fonts.conf (スロット 50) で上書きできる。
 COPY --chmod=0644 fonts-local.conf /etc/fonts/local.conf
 
-# フォントのキャッシュを作り直す。上の Playwright の RUN が --with-deps で
-# fonts-wqy-zenhei / fonts-ipafont-gothic / fonts-liberation を入れた「後」でなければ、
-# 後から入った書体を知らないキャッシュが残る。直後に ~/.cache を消しているため、
-# ここで /var/cache/fontconfig を作り直してコンテナ初回起動時の生成を避ける。
+# フォントのキャッシュを作り直す。上の local.conf の COPY の「後」に置き、利用者の RUN が
+# ~/.cache を消した後でもキャッシュが残るよう、ここで /var/cache/fontconfig を作り直して
+# コンテナ初回起動時の生成を避ける。ブラウザの派生イメージは足したフォントのために
+# 自分でもう一度作り直す (#402)。
 RUN sudo fc-cache -f
 
-# entrypoint と dind
+# entrypoint
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
-COPY --chmod=755 dind /usr/local/bin/dind
 
 WORKDIR /work
 ENTRYPOINT ["/entrypoint.sh"]

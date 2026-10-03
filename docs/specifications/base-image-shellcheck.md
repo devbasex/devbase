@@ -18,8 +18,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 - base イメージへの `shellcheck` の導入と、入れ損ないをビルドで止める仕組み
 - base から派生するイメージ（`general` / `go` / `php` / `php85` / `bi-tools` / `latex` /
   `trygroup`）への伝播の規則
-- `containers/lfm` と `containers/snapshot` は base を継がないため対象に含まない（lfm が base から
-  取り込むのは設定の置き場所で、apt の道具は取り込まない。[lfm が base の設定を取り込む経路](lfm-base-settings.md)）
+- `containers/snapshot` は base を継がないため対象に含まない
 - bash-language-server 自体は同梱しない
 - CI の ShellCheck ジョブは base の shellcheck を使わず、base と同じ版（基準の版）の公式の配布物を
   入れて使う。入れ方は `.github/workflows/ci.yml` の `shellcheck` ジョブが持つ
@@ -40,7 +39,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 
 `shellcheck` は Ubuntu の標準のアーカイブ（`universe`）にあり、外部のリポジトリを要さない。
 そのため 1 つ目の `RUN` の**1 回目**の `apt-get install` の一覧に置く。2 回目の一覧は後から
-足したリポジトリのパッケージ（`docker-ce` / `terraform` / `gh` / `nodejs`。amd64 では `google-chrome-stable` も）
+足したリポジトリのパッケージ（`docker-ce-cli` / `terraform` / `gh` / `nodejs`）
 のためにあり、標準のアーカイブのパッケージを混ぜない。
 
 shellcheck のための `RUN` は立てない。立てると派生イメージ 7 つが積む層が 1 つ増え、
@@ -89,11 +88,8 @@ Dockerfile の `apt-get update` は 2 回である。
 - **`devbase rebuild` はここでは使えない。** `devbase build --expires=7` のシノニム
   （`lib/devbase/commands/container.py` の `cmd_rebuild`）で、期限内ならビルドを飛ばし、
   コンテナも作り直さない
-- `containers/lfm` は `FROM nvidia/cuda:...` で base を継がず、base からは `/usr/local` /
-  `/usr/bin/gh` / `/usr/bin/node` / `/opt` などのツールと、base の設定の置き場所（`/etc/devbase`・
-  `/etc/tmux.conf` など）を選んで `COPY` するだけのため、`/usr/bin/shellcheck` は届かない。`containers/snapshot` は `FROM ubuntu:26.04` で base を
-  継がない。どちらかで要るようになったときは、そのイメージの `apt-get install` か `COPY` の
-  一覧へ足す（lfm の手順は [lfm が base の設定を取り込む経路](lfm-base-settings.md) の「届かないもの」）
+- `containers/snapshot` は `FROM ubuntu:26.04` で base を継がないため、`/usr/bin/shellcheck` は
+  届かない。要るようになったときは、そのイメージの `apt-get install` の一覧へ足す
 - 建てて確かめてあるのは arm64 である。amd64 はアーカイブに同じ版があり、依存も同じである
   ことまで確かめている
 
@@ -132,7 +128,6 @@ CI はイメージを建てるジョブを持たないため、イメージの�
 
 ## 関連リンク
 
-- [lfm が base の設定を取り込む経路](lfm-base-settings.md)
 - [コンテナ操作ガイド: Bash の静的検査](../user/container-operations.md#bash-の静的検査base-以降)
 - [base イメージの文字の描画と、文書を扱う道具](base-image-rendering.md)
 - [CI の検査（トリガー・ShellCheck・CHANGELOG・固有の語）](ci-checks.md)（CI の ShellCheck の検査ジョブ）

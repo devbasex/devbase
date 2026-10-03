@@ -173,15 +173,10 @@ pytest が走るプロセスの環境と、テストが起動する外部のプ�
 
 ## イメージの継承（`image-lineage`）
 
-base の設定が派生イメージと lfm へ届く道筋（containers/*/Dockerfile）
+base の設定が派生イメージへ届く道筋（containers/*/Dockerfile）
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| base の設定 | — | base の Dockerfile が /etc 配下・ENV・~/.bashrc・~/.claude/settings.json に置く、利用者の操作に効く設定 | — | — | `docs/specifications/lfm-base-settings.md` |
-| 届く経路 | — | base の設定が lfm のイメージへ入る道筋。lfm の Dockerfile の取り込みと、取り込めない ENV を同じ値で宣言すること | — | — | `docs/specifications/lfm-base-settings.md` |
-| 取り込み | — | lfm の Dockerfile が COPY --from=devbase-base:latest で base のイメージからファイルやディレクトリを同じパスへ持ち込むこと | — | — | `docs/specifications/lfm-base-settings.md` |
-| 到達の検査 | — | base の Dockerfile から base の設定を集め、それぞれが lfm へ届くかを Docker を起動せずに判定するテスト（tests/containers/test_lfm_base_settings.py） | — | — | `docs/specifications/lfm-base-settings.md` |
-| 除外表 | — | 到達の検査が、lfm へ届かなくてよいとする base の項目と、その理由の一覧 | — | — | `docs/specifications/lfm-base-settings.md` |
 | 派生イメージ | — | FROM devbase-base:latest で base を継ぎ、道具を足すイメージ（containers/ の general・php など） | — | — | — |
 | DinD | — | コンテナの中で dockerd を起こし、そのコンテナの中だけの docker を使う形。#400 で廃止し、ENABLE_DIND は知らせを 1 行出すだけになった。ホストの docker.sock を mount して使う形と区別する | — | — | — |
 | 展開後の大きさ | — | 建てたイメージから作ったコンテナで du -sbx / を測ったバイト数。docker images の圧縮後の大きさとは違う | — | — | — |
@@ -232,7 +227,7 @@ devbase up / scale がコンテナを起動して待ち、その後にホスト�
 | --- | --- | --- | --- | --- | --- |
 | ブラウザの置き場 | — | Playwright がブラウザを取得して置くディレクトリ。環境変数 PLAYWRIGHT_BROWSERS_PATH が指す /opt/ms-playwright。base は空のまま作り、ブラウザの派生イメージが中身を持つ。コンテナの利用者が書き込める | — | — | `docs/specifications/base-image-rendering.md` |
 | Playwright の Chromium | — | playwright install chromium がブラウザの置き場へ取得する Chromium（版ごとのディレクトリ）。ブラウザの派生イメージに入る。amd64 と arm64 の両方で取れる | — | — | `docs/specifications/base-image-rendering.md` |
-| システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base には amd64 だけで入る | — | — | `docs/specifications/base-image-rendering.md` |
+| システムの Chrome | — | apt で入る google-chrome-stable。/usr/bin/google-chrome にあり、Playwright を介さずに使う道具が呼ぶ。base にはどちらのアーキにも入れない（#401） | — | — | `docs/specifications/base-image-rendering.md` |
 | snap スタブ | — | Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない | — | — | `docs/specifications/base-image-rendering.md` |
 | ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む。base は、このうち fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei・libnss3 などを明示して持つ | — | — | `docs/specifications/base-image-rendering.md` |
 | ブラウザの派生イメージ | — | containers/browser（タグ devbase-browser:latest）。base を継ぎ、Playwright の Chromium・ブラウザの依存パッケージ・追加の太さのフォントを足す | — | — | — |

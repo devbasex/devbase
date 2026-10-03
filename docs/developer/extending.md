@@ -246,7 +246,6 @@ flowchart TB
     Base --> Go["devbase-go<br/>Go 開発環境"]
     General --> PHP["devbase-php<br/>PHP 8.5, Composer"]
     General --> LaTeX["devbase-latex<br/>LaTeX"]
-    General --> LFM["devbase-lfm<br/>Rust, gfortran, MeCab"]
 
     Ubuntu2["ubuntu:26.04"] --> Snapshot["devbase-snapshot<br/>zstd のみ（軽量）"]
 ```

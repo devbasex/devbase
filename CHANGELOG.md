@@ -21,17 +21,49 @@
   （`docker logs`）に `WARNING:` の行でパスを知らせます。控えは共通の設定へ自動では取り込まず、自動では
   消しません。戻し方は `docs/user/container-operations.md` にあります。反映には `devbase build base` で
   base イメージを建て直してください。
-- **`containers/lfm` のもとのイメージを `nvidia/cuda:13.4.1-cudnn-devel-ubuntu26.04` に上げました（#337）。**
-  GPU を使うホストの NVIDIA ドライバは CUDA 13.4 以上に対応している必要があります（`nvidia-smi` の
-  `CUDA Version` で確かめられます）。足りないと `--gpus all` の起動が requirement error で止まるので、
-  ドライバを最新に上げてから `devbase build lfm` で建て直してください。
-- **base イメージに Playwright の Chromium を残すようにしました（#220）。** これまではビルドで取得した
-  ブラウザを直後の片付けで捨てており、arm64（Apple Silicon）のコンテナには起動できる Chromium が
-  ありませんでした。ブラウザの置き場は `/opt/ms-playwright` で、環境変数 `PLAYWRIGHT_BROWSERS_PATH` が
-  指します。実行時に `playwright install` で取得するブラウザも `~/.cache/ms-playwright` ではなくここへ
-  入ります。起動できなかった `chromium-browser`（Ubuntu の snap スタブ）は外しました。システムの Chrome
-  （`google-chrome-stable`）は今までどおり amd64 だけに入ります。base の後に派生イメージと lfm を建て直すと
-  届きます。
+- **Playwright のブラウザの置き場を `/opt/ms-playwright` にしました（#220）。** 環境変数
+  `PLAYWRIGHT_BROWSERS_PATH` が指し、実行時に `playwright install` で取得するブラウザも
+  `~/.cache/ms-playwright` ではなくここへ入ります。ビルドで取得した Chromium は片付けで消えず、
+  arm64（Apple Silicon）でも起動できます。Chromium はブラウザの派生イメージ `devbase-browser` が持ちます
+  （#402）。起動できなかった `chromium-browser`（Ubuntu の snap スタブ）は外しました。
+
+### Removed
+- **派生イメージ `containers/lfm` を廃止しました（#403、破壊的変更）。** 使うプロジェクトが無く、
+  base を `COPY --from` で取り込むため base の約 3GB を重ねて持っていました。`devbase build lfm` は
+  知らないイメージとして `Image directory not found` で止まります。`devbase-lfm` を使っていた
+  プロジェクトは、GPU を使うものも含めて `containers/general` へ移すか、`FROM devbase-general:latest`
+  で Rust・gfortran・MeCab など要る道具を足す自前の Dockerfile をプロジェクトに置いてください。
+  手元に残った `devbase-lfm` のイメージは `docker image rm devbase-lfm:latest` で消せます。
+- **DinD（`ENABLE_DIND`）を廃止しました（#400、破壊的変更）。** base イメージは dockerd と containerd
+  （`docker-ce`・`containerd.io`）を入れず、コンテナの中で dockerd を起こす手順と `/usr/local/bin/dind` を
+  外しました。`ENABLE_DIND` に `true` か `1` を設定していても DinD は起きず、起動の記録（`docker logs`）に
+  廃止を知らせる `NOTICE:` の行を 1 行出して起動を続けます。docker はホストの docker.sock を mount して
+  使ってください。docker CLI・`docker buildx`・`docker compose` は今までどおり使えます。
+- **base イメージから、使う者の無い中身を外しました（#400）。** グローバルの `aws-cdk-lib`（CDK のアプリは
+  自分の `package.json` に持ちます。CLI の `cdk` は残ります）・root の uv（ubuntu の uv は残ります。
+  `sudo uv` は使えなくなります）・ビルドで残っていた apt の一覧です。また apt で入れるパッケージの文書
+  （`/usr/share/doc` の copyright のほか・man・info）と Node.js のヘッダ（`/usr/include/node`）を展開
+  しなくなりました。この設定は base を `FROM` で継ぐ派生イメージにも効きます。ネイティブアドオンの
+  ビルドでは node-gyp がヘッダを取得します（ネットワークが要ります）。反映には `devbase build base` で
+  base を建て直し、派生イメージも建て直してください。
+- **amd64 の base イメージからシステムの Chrome（`google-chrome-stable`）を外しました（#401、破壊的変更）。**
+  Google の apt の取得元も足しません。arm64 にはもともと無く、ブラウザは両アーキとも Playwright の
+  Chromium（`/opt/ms-playwright`。#402 からはブラウザの派生イメージ `devbase-browser` にあります）にそろいます。amd64 の base は Chrome と依存を合わせて約 540MB
+  小さくなります。Playwright から使う処理はそのまま動きます。`/usr/bin/google-chrome` を呼んでいた
+  道具には、`NODE_PATH="$(npm root -g)" node -e "console.log(require('@playwright/test').chromium.executablePath())"`
+  で得られる Playwright の Chromium のパスを渡してください。反映には `devbase build base` で base を
+  建て直し、派生イメージも建て直してください。
+- **base イメージから Playwright の Chromium とその依存パッケージ・Noto CJK の追加の太さ
+  （`fonts-noto-cjk-extra`）・`terraform` を外しました（#402、破壊的変更）。** すべての利用者が使う道具では
+  なく、arm64 で合わせて 1GB を超えていました。HashiCorp の apt の取得元も足しません。`@playwright/test` と
+  ブラウザの置き場 `/opt/ms-playwright`（空）は base に残り、標準の太さの日本語・中国語・韓国語と欧文の
+  metric 互換の描画は変わりません。ブラウザと追加の太さのフォントは、新しい派生イメージ
+  `devbase-browser`（`containers/browser`）にあります。要るプロジェクトは dev サービスの `build.context` を
+  `${DEVBASE_ROOT}/containers/browser/` にしてください。`php` など別の派生イメージの道具も要るとき、
+  `terraform` を入れるときの手順は
+  [コンテナ操作ガイド: ブラウザ・追加の太さのフォント・terraform を使う](docs/user/container-operations.md#ブラウザ追加の太さのフォントterraform-を使う)
+  にあります。反映には `devbase build base` で base を、続けて使っている派生イメージを建て直し、
+  `devbase down` → `devbase up` でコンテナを作り直してください。
 
 ### Fixed
 - **スナップショットの差分バックアップが、毎回ボリューム全体を控えていたのを直しました。**

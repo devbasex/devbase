@@ -6,9 +6,11 @@ Docker を起動せず、``containers/base/Dockerfile`` と ``containers/base/fo
 
 ここで固定するのは次の 5 つである。
 
-- 6 パッケージが **1 つ目の RUN の 1 回目の** ``apt-get install`` の一覧にある (設計の決定 4)
+- 6 パッケージと、解決先を保つ 3 つのフォント (#402) が **1 つ目の RUN の 1 回目の**
+  ``apt-get install`` の一覧にある (設計の決定 4)
 - ``COPY`` の宛先が ``/etc/fonts/local.conf`` であり ``conf.d/`` ではない (決定 1)
-- ``fc-cache -f`` が 1 度だけ、``COPY`` より後、かつ Playwright の ``RUN`` より後にある (決定 5)
+- ``fc-cache -f`` が 1 度だけ、``COPY`` より後にある (決定 5。base は Playwright の ``RUN`` を
+  持たない。Playwright の後の順は ``test_browser_dockerfile.py`` が固定する)
 - ``fonts-local.conf`` が 4 つの ``<alias>`` と 9 つの ``<match>`` を持ち、言語の規則が
   総称ファミリの ``<test>`` を必ず伴う (決定 2。この ``<test>`` を省くと欧文の指定を奪う)
 - 入れないもの (LibreOffice / pip) と、消さないもの (``fonts-wqy-zenhei``) が守られている
@@ -52,6 +54,13 @@ NEW_PACKAGES = (
     "python3-lxml",
     "fonts-crosextra-carlito",
     "fonts-crosextra-caladea",
+)
+# fc-match の解決先 (Arial -> Liberation Sans、WenQuanYi Zen Hei・IPAPGothic の名指し) を保つ 3 つ。
+# Playwright の --with-deps に頼らず base が明示して入れる (#402)
+RESOLVED_FONT_PACKAGES = (
+    "fonts-liberation",
+    "fonts-ipafont-gothic",
+    "fonts-wqy-zenhei",
 )
 
 
@@ -97,7 +106,7 @@ def _first_apt_install(block: str) -> str:
     """1 つ目の RUN の**1 回目**の apt-get install の一覧だけを取り出す
 
     1 つ目の RUN は apt-get install を 2 回呼ぶ。1 回目は Ubuntu の標準のアーカイブから、
-    2 回目は後から足したリポジトリ (docker-ce / terraform / gh / nodejs) からである。
+    2 回目は後から足したリポジトリ (docker-ce-cli / gh / nodejs) からである。
     """
     calls = [m.start() for m in re.finditer(r"apt-get install", block)]
     assert len(calls) >= 2, "1 つ目の RUN に apt-get install が 2 回無い"
@@ -111,6 +120,12 @@ def _first_apt_install(block: str) -> str:
 @pytest.mark.parametrize("package", NEW_PACKAGES)
 def test_the_six_packages_are_in_the_first_apt_install(package):
     """6 つとも標準のアーカイブにあるので、1 回目の一覧へ置く (決定 4)"""
+    assert re.search(rf"(?<![\w-]){re.escape(package)}(?![\w-])", _first_apt_install(_first_run_block()))
+
+
+@pytest.mark.parametrize("package", RESOLVED_FONT_PACKAGES)
+def test_the_resolved_font_packages_are_in_the_first_apt_install(package):
+    """#402。fc-match の解決先の表に現れる 3 つは、1 回目の一覧で明示して入れる"""
     assert re.search(rf"(?<![\w-]){re.escape(package)}(?![\w-])", _first_apt_install(_first_run_block()))
 
 
@@ -170,12 +185,6 @@ def test_fc_cache_runs_once_and_after_the_copy():
     text = _statements()
     assert len(re.findall(r"fc-cache -f", text)) == 1
     assert text.index("COPY --chmod=0644 fonts-local.conf") < text.index("fc-cache -f")
-
-
-def test_fc_cache_runs_after_playwright_installs_its_fonts():
-    """決定 5。--with-deps が後から入れる書体を知らないキャッシュを残さない"""
-    text = _statements()
-    assert text.index("npx playwright install") < text.index("fc-cache -f")
 
 
 # ---------------------------------------------------------------------------

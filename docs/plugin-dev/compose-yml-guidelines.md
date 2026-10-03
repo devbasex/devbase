@@ -146,7 +146,6 @@ flowchart TD
     Q1 -->|PHP| IMG_PHP["php"]
     Q1 -->|Python/Node.js/汎用| Q2{クラウドCLIは必要?}
     Q1 -->|LaTeX/文書作成| IMG_LATEX["latex"]
-    Q1 -->|Rust/Fortran/MeCab| IMG_LFM["lfm"]
     Q2 -->|Yes| IMG_GENERAL["general"]
     Q2 -->|No| IMG_BASE["base"]
 ```
@@ -158,7 +157,6 @@ flowchart TD
 | `go` | base | Go開発環境 | APIサーバー、CLIツール |
 | `php` | general | PHP 8.5、Composer | Laravel、WordPress |
 | `latex` | general | LaTeX | 論文、技術文書、レポート |
-| `lfm` | general | Rust、gfortran、MeCab | 数値計算、自然言語処理 |
 | `snapshot` | Ubuntu 26.04 | zstd | スナップショットの取得・復元 |
 
 ### 4.2 標準イメージの使用

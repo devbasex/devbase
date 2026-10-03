@@ -318,7 +318,7 @@ sequenceDiagram
 
 | 大項目 | 要求の条件 | 実現方式 | 確かめ方 |
 | --- | --- | --- | --- |
-| 性能・拡張性 | base が arm64 で 1.2GB 以上減る。ブラウザの派生イメージの大きさを変更前の base と比べて記録する | 外す 4 つは base の層から命令ごと消す。3 つのフォントだけを残す。ブラウザの派生イメージは今の base の取得と同じ命令を足すだけにし、層を増やしすぎない | 同じ arm64 の端末で、変更前の base・変更後の base・ブラウザの派生イメージを作業用のタグで建て、`docker image inspect --format '{{.Size}}'` の値と差を PR に残す。建てる前に `docker system df` で空きを見る。1.2GB に届かなければフォントを外さず人へ戻す（前提 3） |
+| 性能・拡張性 | base が arm64 で 1.2GB 以上減る。ブラウザの派生イメージの大きさを変更前の base と比べて記録する | 外す 4 つは base の層から命令ごと消す。3 つのフォントだけを残す。ブラウザの派生イメージは今の base の取得と同じ命令を足すだけにし、層を増やしすぎない | 同じ arm64 の端末で、変更前の base・変更後の base・ブラウザの派生イメージを作業用のタグで建て、展開後のファイルの大きさ（`du -sxb /`）と `.Size`（圧縮後）の値と差を PR に残す。建てる前に `docker system df` で空きを見る。1.2GB に届かなければフォントを外さず人へ戻す（前提 3） |
 | 移行性 | 移る作業は `compose.yml` の 1 か所か Dockerfile の追記で済む。ボリュームとデータに触れない | イメージの選択だけで移れるよう、ブラウザの派生イメージを `containers/` に置き、`build.context: ${DEVBASE_ROOT}/containers/browser/` で選べるようにする。置き場の値は base と同じにする | 利用者向けの文書の移り方の節を、`proj-a` の Pull Request の差分と突き合わせる |
 | 運用・保守性 | 建て直しの順（base → 派生イメージ → `devbase down` / `up`）を文書と CHANGELOG に書く | 確定仕様の「運用」と利用者向けの文書の注記に、3 段とも省けないことを書く。`devbase rebuild` では建て直らないことも書く | PR で文書の記述を `grep` した出力を残す（#220 の決定 4 と同じ） |
 | システム環境 | 受け入れ条件は arm64 で確かめ、amd64 はリリース後テスト | アーキで分ける命令を新しく足さない。Playwright の CLI がアーキに合う Chromium を選ぶ | arm64 は手元で建てて検査を通す。amd64 は #242 と同じくリリース後テストで同じ検査を通す |
@@ -415,6 +415,12 @@ base を先に建てるのは、プロジェクトの dev サービスの Docker
 
 根拠: Value 1 / P1（MVV 版 1）
 
+### 決定 10: 依頼の 1.2GB と同じ物差しで測るため、受け入れ条件 7 は展開後のファイルの大きさで判定する
+
+実装で測ると、containerd のイメージストアの `docker image inspect` の `.Size` は圧縮後の大きさを返した。差は 611,133,492 バイトで、展開後のファイル（`du -sxb /`）の差は 1,291,660,733 バイトだった。依頼の表の大きさ（Chromium 662MB など）と課題の本文の「展開後の大きさが 1.2GB 以上減る」は展開後の物差しであり、受け入れ条件 7 が `.Size` を指したのは測り方の取り違えだった。前提 3 のとおり人へ戻し、利用者が展開後の大きさで判定すると決めた（2026-10-03）。`.Size` の値も PR に並べて残す。取得の量（圧縮後）の減りは約 611MB である。
+
+根拠: 課題の本文の受け入れ条件 1 / 前提 3
+
 ## テスト設計
 
 | 受け入れ条件・不変条件 | どの振る舞いで縛るか | どう壊したら落ちるべきか |
@@ -427,7 +433,7 @@ base を先に建てるのは、プロジェクトの dev サービスの Docker
 | 受け入れ条件 4・I6 | 建てた変更後の base で `test_base_image_font_matching.py` が `EXPECTED_MATCHES` を書き換えずに通る | 3 つのフォントの 1 つを外して建てると、`Arial` / `WenQuanYi Zen Hei` / `IPAPGothic` のどれかの行が落ちる |
 | 受け入れ条件 5・I8 | `--network none` の変更後の base で、利用者 `ubuntu` の非対話の `bash -c` から Chromium を起動すると非 0 で、出力に `playwright install` か `devbase-browser` が含まれる | base に Chromium を戻して建てると、起動が 0 で終わって落ちる |
 | 受け入れ条件 6・I7 | 変更後の base で `dpkg -s fonts-noto-cjk-extra` と `command -v terraform` が非 0、置き場に `chromium-*`・`chromium_headless_shell-*` が無い | どれかを戻して建てると、その項目が落ちる |
-| 受け入れ条件 7 | 変更前と変更後の base の `.Size` の差が 1,200,000,000 以上（手動。PR に値を残す） | — |
+| 受け入れ条件 7 | 変更前と変更後の base の展開後のファイルの大きさ（`du -sxb /`）の差が 1,200,000,000 以上（手動。`.Size` の値とともに PR に残す） | — |
 | 受け入れ条件 8・I12 | 移したテストが、`DEVBASE_TEST_BROWSER_IMAGE`（既定 `devbase-browser:latest`）のイメージで #220 の受け入れ条件 5〜9 を確かめる。明示したイメージに置き場の中身が無ければ skip せず落とす | ブラウザの派生イメージの片付けに置き場を足して建てると、PDF の作成と置き場の項目が落ちる |
 | 受け入れ条件 9・I13 | 建てたブラウザの派生イメージで `dpkg -s fonts-noto-cjk-extra` が 0、`fc-list` に `Noto Sans CJK JP` の `Thin` と `Black` がある | 派生イメージの apt から `fonts-noto-cjk-extra` を外して建てると落ちる |
 | 受け入れ条件 10・I9 | ブラウザの派生イメージの最初の `FROM` が `devbase-base:latest`。dev の `build.context` が `containers/browser` のプロジェクトで `bin/devbase build` を起動すると、`devbase-base` を建ててから `docker compose build dev` を打つ | `FROM` を別の名前にすると、形の検査と経路の検査の両方が落ちる |

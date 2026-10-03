@@ -28,8 +28,7 @@ tmux の中では `prefix S` でセッションの一覧（`choose-tree`）を�
 - コマンド `tmux-session` と短縮名 `tmux-go` / `tmux-peek` / `tmux-kill` / `tmux-menu`
 - `/etc/tmux.conf` の `prefix S` の割り当て
 - base と、base を継ぐ派生イメージへの伝播の規則
-- `containers/lfm` は base を継がないが、`tmux` を apt で入れ、`/usr/local/bin` と `/etc/tmux.conf` を
-  base から取り込むため対象に含む（[lfm が base の設定を取り込む経路](lfm-base-settings.md)）。`containers/snapshot` は base を継がないため対象に含まない
+- `containers/snapshot` は base を継がないため対象に含まない
 - ホストの `~/.local/bin` と `~/.tmux.conf` へ配る仕組みは持たない。devbase はホストの利用者の
   ファイルへ書かず（`~/.tmux.conf` を書き換えると、消したつもりの行が戻るなどの食い違いを
   生む）、手順を利用者向け文書に書いて利用者が置く
@@ -326,9 +325,7 @@ sequenceDiagram
   コンテナは `devbase down` → `devbase up` で作り直す。`devbase up` だけでは反映されない
 - 稼働中の tmux サーバへ `prefix S` だけを先に効かせるには `tmux source-file /etc/tmux.conf` を使う
   （コマンドが `PATH` に無ければメニューは動かない）
-- `containers/lfm` は `tmux` を自前の apt で入れ、`tmux-session` と短縮名（`/usr/local` の取り込み）と
-  `/etc/tmux.conf` を `COPY --from=devbase-base:latest` で受け取る（[lfm が base の設定を取り込む経路](lfm-base-settings.md)）。base を建て直した後に lfm も
-  建て直す。`containers/snapshot` は base を継がないため入らない
+- `containers/snapshot` は base を継がないため入らない
 - ホストの tmux で使うときは、利用者が devbase の checkout の `containers/base/tmux-session` を
   指す symlink を `~/.local/bin` へ 5 つ（`tmux-session` と短縮名 4 つ）張り、`~/.tmux.conf` へ上の
   1 行を足す。複写ではなく symlink にすると `git pull` で更新が届く
@@ -425,7 +422,6 @@ CI の ShellCheck ジョブは基準の版（base と同じ版）の shellcheck 
 
 ## 関連リンク
 
-- [lfm が base の設定を取り込む経路](lfm-base-settings.md)
 - [環境変数ガイド: セッションを名指しで扱う](../user/environment-variables.md#セッションを名指しで扱う)
 - [コンテナ操作ガイド: tmux（ターミナル）の既定設定](../user/container-operations.md#tmuxターミナルの既定設定)
 - [Kiro CLI 認証永続化と tmux コピー操作](kiro-auth-persistence-and-tmux-copy.md)（`/etc/tmux.conf` の他の既定）

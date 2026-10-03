@@ -1,7 +1,7 @@
 services:
 
   dev:
-    image: devbase-lfm:latest
+    image: devbase-browser:latest
     build:
       context: .
       dockerfile: Dockerfile

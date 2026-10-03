@@ -7,7 +7,7 @@
 #   - Python パッケージマネージャ uv（ubuntu ユーザにインストール済み）
 #   - gcloud SDK（`bq` / `gcloud` を含む）
 #   - Node.js LTS（`node` / `npm` / `npx` / `yarn`）
-#   - Docker（DooD）, gh, terraform, aws-cli, git 等
+#   - Docker（DooD）, gh, aws-cli, git 等
 #
 # BIツール（tools/{evidence,lightdash,superset}）の起動形態と CLI の扱い:
 #   - Lightdash : サーバは tools/lightdash の docker-compose で起動。ただし
