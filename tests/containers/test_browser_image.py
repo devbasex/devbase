@@ -1,21 +1,23 @@
-"""建てた base イメージのブラウザの置き場 (#220 の受け入れ条件 5〜9)
+"""建てたブラウザの派生イメージ (#220 の受け入れ条件 5〜9、#402 の受け入れ条件 8・9)
 
-Dockerfile の形の検査 (``test_base_dockerfile_playwright.py`` など) では足りない。固定したいのは
+base はブラウザを持たない (#402)。Playwright の Chromium・ブラウザの依存パッケージ・追加の太さの
+フォントはブラウザの派生イメージ ``devbase-browser`` が持つ。
+
+Dockerfile の形の検査 (``test_browser_dockerfile.py`` など) では足りない。固定したいのは
 「``ENV`` の行があること」ではなく「建てたイメージで Playwright の Chromium がネットワーク無しで
 起動し、日本語のページを Noto Sans CJK JP で PDF にできること」で、後者は文字列からは分からない。
 
-**検査するイメージは ``DEVBASE_TEST_BASE_IMAGE`` で差し替える (設計の決定 3)。** 既定は
-``devbase-base:latest``。マージ前の確認は ``devbase-base:latest`` を上書きしない別のタグを渡し、
+**検査するイメージは ``DEVBASE_TEST_BROWSER_IMAGE`` で差し替える (#220 の決定 3)。** 既定は
+``devbase-browser:latest``。マージ前の確認は ``devbase-browser:latest`` を上書きしない別のタグを渡し、
 リリース後テストでは既定のまま同じ検査を走らせる。
 
 **skip するのは次の 3 つだけ。**
 
 - Docker が無い・daemon へ繋がらない
 - 検査するイメージが無い
-- 既定の ``devbase-base:latest`` を見ていて、ブラウザの置き場 (``/opt/ms-playwright``) が無い
-  (この変更より前に建てたイメージ)
+- 既定の ``devbase-browser:latest`` を見ていて、ブラウザの置き場 (``/opt/ms-playwright``) が無い
 
-``DEVBASE_TEST_BASE_IMAGE`` を明示したときは、置き場が無くても skip せず落とす。置き場を
+``DEVBASE_TEST_BROWSER_IMAGE`` を明示したときは、置き場が無くても skip せず落とす。置き場を
 片付けで消して建てたイメージは、置き場の無い古いイメージと見分けられないため、明示したタグまで
 skip すると、テスト設計の「片付けに置き場を足して建てる」壊し方が skip で通ってしまう。
 
@@ -34,21 +36,24 @@ import pytest
 
 from tests.conftest import host_docker_env
 
-DEFAULT_IMAGE = "devbase-base:latest"
+DEFAULT_IMAGE = "devbase-browser:latest"
 # 隔離の fixture より前 (読み込み時) に読む。隔離の一覧に入っていないが、入っても効くように
-_IMAGE_FROM_ENV = os.environ.get("DEVBASE_TEST_BASE_IMAGE", "").strip()
+_IMAGE_FROM_ENV = os.environ.get("DEVBASE_TEST_BROWSER_IMAGE", "").strip()
 IMAGE = _IMAGE_FROM_ENV or DEFAULT_IMAGE
 IMAGE_IS_EXPLICIT = bool(_IMAGE_FROM_ENV)
-BUILD_HINT = f"`devbase build base --no-cache` で {DEFAULT_IMAGE} を建て直すと、この検査が効く"
+BUILD_HINT = f"`devbase build base` の後に `devbase build browser` で {DEFAULT_IMAGE} を建てると、この検査が効く"
 
 BROWSERS_PATH = "/opt/ms-playwright"
 USERNAME = "ubuntu"
 
 # 受け入れ条件 8。ブラウザの依存パッケージは減らない
 DEPENDENCY_PACKAGES = ("fonts-liberation", "fonts-ipafont-gothic", "fonts-wqy-zenhei", "libnss3")
+# #402 の受け入れ条件 9。追加の太さのフォント
+EXTRA_WEIGHTS_PACKAGE = "fonts-noto-cjk-extra"
+EXTRA_WEIGHTS = ("Thin", "Black")
 
 # 並列でも probe (docker run) を 1 回で済ませるため、全ケースを同じワーカーへ割り当てる
-pytestmark = pytest.mark.xdist_group("base_image_browser_probe")
+pytestmark = pytest.mark.xdist_group("browser_image_probe")
 
 # 1 行 1 項目の `<kind>\t<key>\t<value>` を出す。失敗しても止めずに全項目を採る
 # (どの受け入れ条件が落ちたかをケースごとに分けて見せるため)。
@@ -96,6 +101,11 @@ for pkg in __PACKAGES__; do
   emit dpkg "$pkg" "$?"
 done
 
+# #402 の受け入れ条件 9。追加の太さのフォントのパッケージと、Noto Sans CJK JP の太さ
+dpkg -s __EXTRA_PACKAGE__ >/dev/null 2>&1
+emit extra package "$?"
+emit extra styles "$(fc-list ':family=Noto Sans CJK JP' style | tr '\n' ',')"
+
 # 受け入れ条件 9 (後半)。Chromium を起動した後でも ~/.cache の置き場が無い
 if [ -e "$HOME/.cache/ms-playwright" ]; then emit home-cache '' present; else emit home-cache '' absent; fi
 exit 0
@@ -129,7 +139,8 @@ def probe() -> dict[str, dict[str, str]]:
     if reason:
         pytest.skip(reason)
     script = (_PROBE.replace("__PATH__", BROWSERS_PATH)
-              .replace("__PACKAGES__", " ".join(DEPENDENCY_PACKAGES)))
+              .replace("__PACKAGES__", " ".join(DEPENDENCY_PACKAGES))
+              .replace("__EXTRA_PACKAGE__", EXTRA_WEIGHTS_PACKAGE))
     # ここは包まない。Docker もイメージもある状態で probe がタイムアウトした・起動に失敗したのは
     # 「壊れている」ため、例外のまま失敗として知らせる
     out = subprocess.run(
@@ -146,7 +157,7 @@ def probe() -> dict[str, dict[str, str]]:
         collected.setdefault(kind, {})[key] = value
 
     if collected["browsers-dir"][""] == "absent" and not IMAGE_IS_EXPLICIT:
-        pytest.skip(f"{IMAGE} に {BROWSERS_PATH} が無い (#220 より前のイメージ)。{BUILD_HINT}")
+        pytest.skip(f"{IMAGE} に {BROWSERS_PATH} が無い。{BUILD_HINT}")
     return collected
 
 
@@ -193,3 +204,15 @@ def test_the_env_points_at_the_browsers_path(probe):
 def test_the_home_cache_has_no_browsers(probe):
     """受け入れ条件 9 (後半)。置き場が ~/.cache に戻っていない"""
     assert probe["home-cache"][""] == "absent"
+
+
+def test_the_extra_weights_package_is_installed(probe):
+    """#402 の受け入れ条件 9 (前半)"""
+    assert probe["extra"]["package"] == "0", f"{EXTRA_WEIGHTS_PACKAGE} が入っていない"
+
+
+@pytest.mark.parametrize("weight", EXTRA_WEIGHTS)
+def test_noto_sans_cjk_jp_has_the_extra_weight(probe, weight):
+    """#402 の受け入れ条件 9 (後半)。fc-list の style は別名をコンマで連ねるため、語で見る"""
+    styles = {s.strip() for s in probe["extra"]["styles"].replace(":style=", ",").split(",")}
+    assert weight in styles, f"Noto Sans CJK JP の style: {probe['extra']['styles']!r}"
