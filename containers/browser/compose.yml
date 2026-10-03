@@ -1,0 +1,7 @@
+services:
+
+  dev:
+    image: devbase-browser:latest
+    build:
+      context: .
+      dockerfile: Dockerfile

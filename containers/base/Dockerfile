@@ -23,7 +23,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     openssh-client \
     curl ca-certificates gnupg lsb-release \
     libnss3 libxrandr2 libxss1 \
-    fonts-noto-cjk fonts-noto-cjk-extra \
+    fonts-noto-cjk \
+    # fc-match の解決先 (Arial -> Liberation Sans、WenQuanYi Zen Hei・IPAPGothic の名指し) を保つ。
+    # Playwright の --with-deps に頼らず明示する。追加の太さの fonts-noto-cjk-extra と
+    # Chromium はブラウザの派生イメージ (containers/browser) に置く (#402)
+    fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei \
     # 欧文の metric 互換 (Calibri -> Carlito / Cambria -> Caladea)。
     # 30-metric-aliases.conf が既に対応を持っており、実体が無いと中国語フォントへ落ちる。
     fonts-crosextra-carlito fonts-crosextra-caladea \
@@ -45,11 +49,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     chmod a+r /etc/apt/keyrings/docker.gpg; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
     > /etc/apt/sources.list.d/docker.list; \
-    # HashiCorp（Terraform）
-    curl -fsSL https://apt.releases.hashicorp.com/gpg \
-    | gpg --dearmor -o /etc/apt/keyrings/hashicorp-archive-keyring.gpg; \
-    echo "deb [signed-by=/etc/apt/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-    > /etc/apt/sources.list.d/hashicorp.list; \
+    # terraform と HashiCorp の取得元は入れない。要るプロジェクトは自分の Dockerfile かフックで入れる (#402)
     # GitHub CLI リポジトリ
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg; \
@@ -57,15 +57,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     > /etc/apt/sources.list.d/github-cli.list; \
     # NodeSource リポジトリ (Active LTS を追従。バージョン固定しない)
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -; \
-    # ブラウザは両アーキとも Playwright の Chromium だけを入れる (下の利用者の RUN が
-    # /opt/ms-playwright へ取得する)。システムの Chrome (google-chrome-stable) は入れない (#401)。
-    # Ubuntu の chromium-browser は snap スタブでコンテナの中では起動しないため入れない (#220)
+    # base はブラウザを入れない。Playwright の Chromium とその依存パッケージはブラウザの派生イメージ
+    # (containers/browser) が /opt/ms-playwright へ取得する (#402)。システムの Chrome
+    # (google-chrome-stable) は入れない (#401)。Ubuntu の chromium-browser は snap スタブで
+    # コンテナの中では起動しないため入れない (#220)
     apt-get update; \
     # パッケージインストール
     apt-get install -y --no-install-recommends \
     docker-ce-cli \
     docker-buildx-plugin docker-compose-plugin \
-    terraform gh nodejs; \
+    gh nodejs; \
     # クリーンアップ。/usr/share/doc は copyright とディレクトリを指す symlink
     # (copyright への経路) だけを残す。除外の設定より前から ubuntu:26.04 にある物も消す (#400)
     apt-get clean; \
@@ -105,9 +106,10 @@ RUN set -eux; \
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH="/usr/local/share/npm-global/bin:${PATH}"
 
-# Playwright のブラウザの置き場。~/.cache の既定の置き場は下の片付けで消えるため、
-# 片付けの対象外の /opt に置いてイメージに残す (#220)。ENV にするのは docker exec の
-# 非対話の処理からも同じ置き場を使うため。
+# Playwright のブラウザの置き場。base では空のまま作り、中身 (Chromium) はブラウザの派生
+# イメージ (containers/browser) が持つ (#402)。~/.cache の既定の置き場は片付けで消えるため、
+# 片付けの対象外の /opt に置く (#220)。ENV にするのは docker exec の非対話の処理と、
+# 実行時に取得する道具からも同じ置き場を使うため。
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
 # AWS CLI + gcloud SDK + npm globals（1レイヤーにまとめる）
@@ -116,8 +118,8 @@ RUN set -eux; \
     # 後から誰が入れてもグループが npm のまま揃う
     # (UID/GID を振り直しても壊れない Dev Containers 方式)。
     install -d -m 2775 -o "$USERNAME" -g npm "$NPM_CONFIG_PREFIX"; \
-    # Playwright のブラウザの置き場も同じ形で作る。下の利用者の RUN が取得し、
-    # playwright-kit などが実行時に別の版を同じ置き場へ取得する (#220)
+    # Playwright のブラウザの置き場も同じ形で作る。ブラウザの派生イメージが取得し、
+    # playwright-kit などが実行時に別の版を同じ置き場へ取得する (#220, #402)
     install -d -m 2775 -o "$USERNAME" -g npm "$PLAYWRIGHT_BROWSERS_PATH"; \
     # AWS CLI v2
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip; \
@@ -200,7 +202,7 @@ RUN gh --version && node --version && npm --version && aws --version && gcloud -
 USER ${USERNAME}
 WORKDIR /tmp
 
-# ユーザー用ツール（uv, claude, kiro, playwright）
+# ユーザー用ツール（uv, claude, agy, kiro）
 RUN set -eux; \
     # uv for user
     curl -LsSf https://astral.sh/uv/install.sh | sh; \
@@ -226,12 +228,9 @@ RUN set -eux; \
     else \
     echo "Unsupported architecture: $ARCH, skipping Kiro CLI installation"; \
     fi; \
-    # Playwright の Chromium。置き場 ($PLAYWRIGHT_BROWSERS_PATH) は上の root の RUN が作る (#220)
-    npx playwright install --with-deps chromium; \
-    # クリーンアップ。--with-deps の sudo apt や Node24/npm11 の
-    # /tmp/node-compile-cache が root 所有ファイルを残すため sudo で削除する
-    # (非 root の rm では Permission denied になりビルドが失敗する)。
-    # --with-deps の apt-get update が残す apt の一覧と、/usr/share/doc の copyright でない物も消す (#400)。
+    # クリーンアップ。Node24/npm11 の /tmp/node-compile-cache などが root 所有ファイルを
+    # 残すため sudo で削除する (非 root の rm では Permission denied になりビルドが失敗する)。
+    # apt の一覧と、/usr/share/doc の copyright でない物も消す (#400)。
     # ブラウザの置き場 ($PLAYWRIGHT_BROWSERS_PATH) は消さない。
     sudo find /usr/share/doc -mindepth 1 ! -type d ! -xtype d ! -name copyright -delete; \
     sudo rm -rf /tmp/* \
@@ -295,10 +294,10 @@ RUN sudo ln -sf tmux-first /usr/local/bin/tmux1 \
 # 先頭のコメントにある。利用者は ~/.config/fontconfig/fonts.conf (スロット 50) で上書きできる。
 COPY --chmod=0644 fonts-local.conf /etc/fonts/local.conf
 
-# フォントのキャッシュを作り直す。上の Playwright の RUN が --with-deps で
-# fonts-wqy-zenhei / fonts-ipafont-gothic / fonts-liberation を入れた「後」でなければ、
-# 後から入った書体を知らないキャッシュが残る。直後に ~/.cache を消しているため、
-# ここで /var/cache/fontconfig を作り直してコンテナ初回起動時の生成を避ける。
+# フォントのキャッシュを作り直す。上の local.conf の COPY の「後」に置き、利用者の RUN が
+# ~/.cache を消した後でもキャッシュが残るよう、ここで /var/cache/fontconfig を作り直して
+# コンテナ初回起動時の生成を避ける。ブラウザの派生イメージは足したフォントのために
+# 自分でもう一度作り直す (#402)。
 RUN sudo fc-cache -f
 
 # entrypoint
