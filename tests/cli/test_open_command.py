@@ -7,17 +7,12 @@ name が Python へ渡って別の意味に読まれる。
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
 from devbase import cli
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-WRAPPER = REPO_ROOT / "bin" / "devbase"
+from tests.cli.conftest import python_args, stdout_field
 
 
 def _parse(*argv):
@@ -118,47 +113,26 @@ def test_prefix_resolution(monkeypatch, argv, expected):
 
 # --- bin/devbase -------------------------------------------------------------
 
-def _run_wrapper(args, devbase_root):
-    harness = (
-        'run_python() { echo "PWD:$PWD"; echo "PYTHON:$*"; exit 0; }\n'
-        'cmd_build() { echo "BUILD:$*"; exit 0; }\n'
-        'ensure_uv() { :; }\n'
-        'eval "$(sed -e \'/^run_python()/,/^}/d\' '
-        '            -e \'/^ensure_uv()/,/^}/d\' '
-        '            -e \'/^cmd_build()/,/^}/d\' '
-        '            -e \'/^DEVBASE_ROOT=/d\' "$WRAPPER_PATH")"\n'
-    )
-    env = {**os.environ, "DEVBASE_ROOT": str(devbase_root), "WRAPPER_PATH": str(WRAPPER)}
-    return subprocess.run(["bash", "-c", harness, "devbase", *args],
-                          capture_output=True, text=True, env=env, cwd=str(REPO_ROOT))
-
-
-def _field(result, prefix):
-    for line in result.stdout.splitlines():
-        if line.startswith(prefix):
-            return line[len(prefix):]
-    return None
-
-
 @pytest.fixture
-def wrapper_root(tmp_path):
-    (tmp_path / "projects" / "myapp").mkdir(parents=True)
-    return tmp_path
+def wrapper_root(exec_wrapper):
+    """`exec_wrapper` (conftest.py) で本物の bin/devbase を tmp から起動する。`uv` だけを差し替える。"""
+    exec_wrapper.project("myapp")
+    return exec_wrapper
 
 
 def test_wrapper_top_level_open_name_cds_and_strips(wrapper_root):
-    r = _run_wrapper(["open", "myapp", "--open-index", "2"], wrapper_root)
+    r = wrapper_root(["open", "myapp", "--open-index", "2"])
     assert "unknown command" not in r.stderr.lower(), r.stderr
-    assert _field(r, "PWD:").endswith("/projects/myapp"), r.stdout
-    assert _field(r, "PYTHON:") == "open --open-index 2", r.stdout
+    assert stdout_field(r, "PWD:").endswith("/projects/myapp"), r.stdout
+    assert python_args(r) == "open --open-index 2", r.stdout
 
 
 def test_wrapper_project_open_name_cds_and_strips(wrapper_root):
-    r = _run_wrapper(["project", "open", "myapp"], wrapper_root)
-    assert _field(r, "PWD:").endswith("/projects/myapp"), r.stdout
-    assert _field(r, "PYTHON:") == "project open", r.stdout
+    r = wrapper_root(["project", "open", "myapp"])
+    assert stdout_field(r, "PWD:").endswith("/projects/myapp"), r.stdout
+    assert python_args(r) == "project open", r.stdout
 
 
 def test_wrapper_open_prefix_resolves(wrapper_root):
-    r = _run_wrapper(["o"], wrapper_root)
-    assert _field(r, "PYTHON:") == "open", (r.stdout, r.stderr)
+    r = wrapper_root(["o"])
+    assert python_args(r) == "open", (r.stdout, r.stderr)

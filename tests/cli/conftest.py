@@ -98,3 +98,15 @@ def stdout_field(result: subprocess.CompletedProcess, prefix: str) -> str | None
         if line.startswith(prefix):
             return line[len(prefix):]
     return None
+
+
+def python_args(result: subprocess.CompletedProcess) -> str | None:
+    """`UV:` 行から Python (`python -m devbase.cli`) へ渡った引数を返す。
+
+    `run_python` を通らなかった (`UV:` 行が無い、または `devbase.cli` を起動していない) ときは None。
+    """
+    uv = stdout_field(result, "UV:")
+    if uv is None:
+        return None
+    head, sep, tail = (uv + " ").partition(" devbase.cli ")
+    return tail.rstrip() if sep else None
