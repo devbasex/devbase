@@ -57,24 +57,15 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     > /etc/apt/sources.list.d/github-cli.list; \
     # NodeSource リポジトリ (Active LTS を追従。バージョン固定しない)
     curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -; \
-    # システムの Chrome は amd64 だけに入れる。Chromium は両アーキとも Playwright のものを使う
-    # (下の利用者の RUN が /opt/ms-playwright へ取得する)。Ubuntu の chromium-browser は
-    # snap スタブでコンテナの中では起動しないため入れない (#220)
-    arch="$(dpkg --print-architecture)"; \
-    BROWSER_PKG=""; \
-    if [ "$arch" = "amd64" ]; then \
-    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-    | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg; \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
-    > /etc/apt/sources.list.d/google-chrome.list; \
-    BROWSER_PKG="google-chrome-stable"; \
-    fi; \
+    # ブラウザは両アーキとも Playwright の Chromium だけを入れる (下の利用者の RUN が
+    # /opt/ms-playwright へ取得する)。システムの Chrome (google-chrome-stable) は入れない (#401)。
+    # Ubuntu の chromium-browser は snap スタブでコンテナの中では起動しないため入れない (#220)
     apt-get update; \
     # パッケージインストール
     apt-get install -y --no-install-recommends \
     docker-ce-cli \
     docker-buildx-plugin docker-compose-plugin \
-    terraform gh nodejs $BROWSER_PKG; \
+    terraform gh nodejs; \
     # クリーンアップ。/usr/share/doc は copyright とディレクトリを指す symlink
     # (copyright への経路) だけを残す。除外の設定より前から ubuntu:26.04 にある物も消す (#400)
     apt-get clean; \
