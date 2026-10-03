@@ -658,6 +658,16 @@ class SnapshotManager:
         if not plan:
             return 0
 
+        deleted_ids, removed_ids = self._apply_rotation_plan(
+            snapshots, plan, keep, max_total)
+        meta['snapshots'] = self._rebuild_remaining(snapshots, removed_ids)
+        meta['max_generations'] = keep
+        self._save_metadata(meta)
+        return len(deleted_ids)
+
+    def _apply_rotation_plan(self, snapshots: list, plan: list, keep: int,
+                             max_total: int) -> tuple:
+        """ローテーションの計画どおりに世代を消し、(消した添字, 一覧から外す添字) を返す。"""
         removed_ids = set()
         deleted_ids = set()
         for index, reason in plan:
@@ -688,14 +698,14 @@ class SnapshotManager:
             logger.info(
                 "ローテーション: %s の %d 世代を削除しました（グループごとに %d 世代保持）",
                 label, count, keep)
+        return deleted_ids, removed_ids
 
+    def _rebuild_remaining(self, snapshots: list, removed_ids: set) -> list:
+        """一覧から外さない世代を、古い順に並べ直して返す。"""
         remaining = [s for i, s in enumerate(snapshots) if i not in removed_ids]
         order = {id(s): i for i, s in enumerate(snapshots)}
         remaining.sort(key=lambda s: self._entry_age(s, order[id(s)]))
-        meta['snapshots'] = remaining
-        meta['max_generations'] = keep
-        self._save_metadata(meta)
-        return len(deleted_ids)
+        return remaining
 
     def _rotation_plan(self, snapshots: list, keep: int, max_total: int) -> list:
         """ローテーションで消すエントリを決める (副作用なし)。
