@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 from devbase import cli
+from tests.cli.conftest import python_args, stdout_field
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WRAPPER = REPO_ROOT / "bin" / "devbase"
 BASH_COMPLETION = REPO_ROOT / "etc" / "devbase-completion.bash"
 ZSH_COMPLETION = REPO_ROOT / "etc" / "_devbase"
 
@@ -68,29 +68,14 @@ def test_prefix_resolution(monkeypatch, argv, expected):
     assert sys.argv == expected
 
 
-def _run_wrapper(args, devbase_root):
-    harness = (
-        'run_python() { echo "PWD:$PWD"; echo "PYTHON:$*"; exit 0; }\n'
-        'cmd_build() { echo "BUILD:$*"; exit 0; }\n'
-        'ensure_uv() { :; }\n'
-        'eval "$(sed -e \'/^run_python()/,/^}/d\' '
-        '            -e \'/^ensure_uv()/,/^}/d\' '
-        '            -e \'/^cmd_build()/,/^}/d\' '
-        '            -e \'/^DEVBASE_ROOT=/d\' "$WRAPPER_PATH")"\n'
-    )
-    env = {**os.environ, "DEVBASE_ROOT": str(devbase_root), "WRAPPER_PATH": str(WRAPPER)}
-    return subprocess.run(["bash", "-c", harness, "devbase", *args],
-                          capture_output=True, text=True, env=env, cwd=str(REPO_ROOT))
+def test_wrapper_project_post_start_name_cds_and_strips(exec_wrapper):
+    """`exec_wrapper` (conftest.py) で本物の bin/devbase を tmp から起動する。`uv` だけを差し替える。"""
+    exec_wrapper.project("myapp")
 
+    r = exec_wrapper(["project", "post-start", "myapp"])
 
-def test_wrapper_project_post_start_name_cds_and_strips(tmp_path):
-    (tmp_path / "projects" / "myapp").mkdir(parents=True)
-
-    r = _run_wrapper(["project", "post-start", "myapp"], tmp_path)
-
-    lines = dict(line.split(':', 1) for line in r.stdout.splitlines() if ':' in line)
-    assert lines['PWD'].endswith('/projects/myapp'), r.stdout
-    assert lines['PYTHON'] == 'project post-start', r.stdout
+    assert stdout_field(r, "PWD:").endswith("/projects/myapp"), r.stdout
+    assert python_args(r) == "project post-start", r.stdout
 
 
 def _bash_complete(words, cword, devbase_root):
