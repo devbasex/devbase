@@ -6,7 +6,8 @@
     python -m devbase.commands.project_dockerfile --service NAME [--context NAME]
 
 カレントディレクトリはプロジェクトのディレクトリ。接続先を決めて機密を載せてから、compose の構成を
-1 回だけ読み (``_compose_config_services``)、``--service`` のサービスの ``build`` から
+1 回だけ読み (``_compose_config_services``。``docker compose build`` と同じくサービスの ``env_file``
+は読まない)、``--service`` のサービスの ``build`` から
 :func:`~devbase.utils.dockerfile.project_dockerfile_path` でパスを決める。``--expires`` の判定と同じ
 決め方である。
 
@@ -46,7 +47,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stderr.write(f"{e}\n")
         return 1
     try:
-        returncode, services = container._compose_config_services(show_errors=True)
+        returncode, services = container._compose_config_services(
+            show_errors=True, resolve_env_files=False)
     except json.JSONDecodeError:
         sys.stderr.write("Unable to read the compose configuration as JSON\n")
         return 1

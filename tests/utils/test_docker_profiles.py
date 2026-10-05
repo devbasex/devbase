@@ -195,6 +195,20 @@ def test_compose_config_services_contract(container_run, returncode, stdout, exp
     assert container._compose_config_services() == expected
 
 
+@pytest.mark.parametrize('kwargs, expected_cmd', [
+    ({}, ['docker', 'compose', 'config', '--format', 'json']),
+    ({'resolve_env_files': False},
+     ['docker', 'compose', 'config', '--no-env-resolution', '--format', 'json']),
+])
+def test_compose_config_services_env_resolution(container_run, kwargs, expected_cmd):
+    """``resolve_env_files=False`` のときだけ ``env_file`` を読まない (``docker compose build`` と同じ。#432)。"""
+    container, run = container_run
+
+    container._compose_config_services(**kwargs)
+
+    assert run.calls[0]['cmd'] == expected_cmd
+
+
 def test_compose_config_services_propagates_unreadable_json(container_run):
     import json
     container, run = container_run

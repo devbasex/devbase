@@ -2181,16 +2181,22 @@ def _image_max_age_days() -> int:
     )
 
 
-def _compose_config_services(*, show_errors: bool = False) -> tuple[int, dict]:
+def _compose_config_services(*, show_errors: bool = False,
+                             resolve_env_files: bool = True) -> tuple[int, dict]:
     """``docker compose config --format json`` の (終了コード, services) を返す。
 
     ``config --format json`` を起動する唯一の関数 (PLAN65 決定 9)。非 0 なら services は空。
     JSON として読めなければ :class:`json.JSONDecodeError` を伝播する。
     ``show_errors=True`` なら、非 0 のとき compose の標準エラーをそのまま自分の標準エラーへ書く
     (構成を読めない理由を利用者へ届ける。#415)。既定では書かない。
+    ``resolve_env_files=False`` なら ``--no-env-resolution`` を付け、サービスの ``env_file`` を
+    読まない。``docker compose build`` と同じく、実行時用の ``.env`` がまだ無くても構成を読める
+    (ビルドの前に Dockerfile の場所だけを得る入口が使う。#432)。
     """
-    result = docker_compose(['config', '--format', 'json'],
-                            check=False, capture_output=True)
+    args = ['config', '--format', 'json']
+    if not resolve_env_files:
+        args.insert(1, '--no-env-resolution')
+    result = docker_compose(args, check=False, capture_output=True)
     if result.returncode != 0:
         if show_errors and result.stderr:
             sys.stderr.write(result.stderr)

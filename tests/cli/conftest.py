@@ -140,7 +140,7 @@ _FAKE_DOCKER = """\
 echo "$*" >> "__ROOT__/docker.log"
 echo "${DOCKER_CONTEXT-<unset>}" >> "__ROOT__/docker_context.log"
 case "$*" in
-    "compose config --format json")
+    "compose config --no-env-resolution --format json")
         if [ -f "__ROOT__/compose_error.txt" ]; then
             cat "__ROOT__/compose_error.txt" >&2
             exit 1

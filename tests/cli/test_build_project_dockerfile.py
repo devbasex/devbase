@@ -169,7 +169,7 @@ def test_build_reads_compose_config_once(compose_wrapper, args):
     result = compose_wrapper.run(args, cwd=project)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert compose_wrapper.docker_calls() == ["compose config --format json"]
+    assert compose_wrapper.docker_calls() == ["compose config --no-env-resolution --format json"]
 
 
 def test_build_passes_the_context_to_the_entry(compose_wrapper):
@@ -181,7 +181,7 @@ def test_build_passes_the_context_to_the_entry(compose_wrapper):
     result = compose_wrapper.run(["build", "--context", "remote-a"], cwd=project)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert compose_wrapper.docker_calls() == ["compose config --format json"]
+    assert compose_wrapper.docker_calls() == ["compose config --no-env-resolution --format json"]
     assert compose_wrapper.docker_contexts() == ["remote-a"]
 
 
