@@ -29,6 +29,8 @@ bin/devbase の位置引数の解決とビルドの入口（docs/specifications/
 | 名前の形の説明 | — | 名前の形を利用者へ説明する文（utils/names.py の NAME_FORM_HINT） | — | — | `docs/specifications/cli-argument-resolution.md` |
 | 列挙の正本 | — | [name] と --context を受け付けるサブコマンドの集合を決める唯一の場所。argparse の _create_parser()（トップレベルの build の --context だけはラッパー） | — | — | — |
 | 一致テスト | — | 列挙の正本を走査して得た集合と、写し（ラッパーのリスト・補完・確定仕様の表）を比べ、差があれば写しの場所と差を挙げて落ちるテスト | — | — | — |
+| 写し | — | 列挙の正本から手で写した集合（ラッパーの 2 つのリスト・bash と zsh の補完・確定仕様の 2 つの表） | — | — | — |
+| 補完の例外 | — | 列挙の正本では [name] を取るが、補完がプロジェクト名を出さないと決めたコマンドの道と理由の組。一致テストが一覧として持つ | — | — | — |
 
 ## Compose の構成（`compose`）
 
