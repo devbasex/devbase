@@ -144,20 +144,24 @@ flowchart TD
     Q1{主な開発言語は?}
     Q1 -->|Go| IMG_GO["go"]
     Q1 -->|PHP| IMG_PHP["php"]
-    Q1 -->|Python/Node.js/汎用| Q2{クラウドCLIは必要?}
+    Q1 -->|Python/Node.js/汎用| IMG_GENERAL["general"]
     Q1 -->|LaTeX/文書作成| IMG_LATEX["latex"]
-    Q2 -->|Yes| IMG_GENERAL["general"]
-    Q2 -->|No| IMG_BASE["base"]
+    Q1 -->|ブラウザの操作・HTML の PDF 化| IMG_BROWSER["browser"]
 ```
 
 | イメージ | ベース | 主要ツール | 典型的な用途 |
 |---------|--------|-----------|-------------|
-| `base` | Ubuntu 26.04 | Docker CLI、Python 3 | 軽量な自動化・スクリプト |
-| `general` | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | Webアプリ、インフラ管理 |
+| `base` | Ubuntu 26.04 | Docker CLI、Python 3、AWS CLI、gcloud、Node.js（LTS）、AI CLI | 派生イメージの土台 |
+| `general` | base | base のまま（道具を足さない） | Webアプリ、インフラ管理 |
 | `go` | base | Go開発環境 | APIサーバー、CLIツール |
-| `php` | general | PHP 8.5、Composer | Laravel、WordPress |
-| `latex` | general | LaTeX | 論文、技術文書、レポート |
+| `php` | base | PHP 8.5、Composer | Laravel、WordPress |
+| `latex` | base | LaTeX | 論文、技術文書、レポート |
+| `browser` | base | Playwright の Chromium、追加の太さのフォント | ブラウザの操作、HTML の PDF・スクリーンショット |
 | `snapshot` | Ubuntu 26.04 | zstd | スナップショットの取得・復元 |
+
+どの派生イメージも base を継ぐため、AWS CLI・gcloud・AI CLI はどれを選んでも使えます。
+terraform はどの標準イメージにも入っていません（入れ方は
+[コンテナ操作ガイド](../user/container-operations.md#ブラウザ追加の太さのフォントterraform-を使う)）。
 
 ### 4.2 標準イメージの使用
 
