@@ -29,11 +29,10 @@ logger = get_logger("devbase.cli")
 #   - <image> 指定 / --expires               -> Python の project build
 # project build / container build サブコマンド自体は引き続き利用可能。
 #
-# 同期注意 (メンテナンス性): SHORTCUTS のキー集合と _add_project_parser の
-# `name` positional 付きサブコマンドは bin/devbase の _NAME_RESOLVABLE_SHORTCUTS /
-# _PROJECT_NAME_SUBCOMMANDS と対応している。サブコマンドを追加/削除する際は
-# wrapper 側 (bin/devbase の該当リスト) の更新漏れに注意すること。
-# _PROJECT_NAME_SUBCOMMANDS の対象は `project` グループだけで、`container` / `ct` は
+# SHORTCUTS のキー集合と、parser の `name` positional / `--context` を持つサブコマンドが
+# 列挙の正本である。写し (bin/devbase の _NAME_RESOLVABLE_SHORTCUTS / _PROJECT_NAME_SUBCOMMANDS・
+# 補完 2 ファイル・docs/specifications/cli-argument-resolution.md の表) との一致は
+# tests/cli/test_name_context_consistency.py が固定する。`container` / `ct` は
 # wrapper の name 解決を通らない (PLAN61 決定 10)。
 SHORTCUTS = {
     'up': 'up',
@@ -284,12 +283,11 @@ def _add_project_parser(subparsers):
     ため name を受け付けない。両者は project / container で定義が完全に一致するので
     `_add_login_subparser` / `_add_build_subparser` に共通化している。
 
-    同期注意: ここで `name` positional を持つサブコマンド集合 (up/down/ps/logs/scale/rebuild/open/
-    post-start)
-    は bin/devbase の `_PROJECT_NAME_SUBCOMMANDS` と一致させる必要がある。追加/削除時は
-    wrapper 側リストの更新漏れに注意すること。wrapper がこの集合で name を解決するのは
-    `project` グループだけで、`container` / `ct` は `[name]` を持たず解決も通らない
-    (PLAN61 決定 10)。
+    ここで `name` positional / `--context` を持つサブコマンドの集合が列挙の正本で、
+    bin/devbase の `_PROJECT_NAME_SUBCOMMANDS`・補完・確定仕様の表との一致は
+    tests/cli/test_name_context_consistency.py が固定する。wrapper がこの集合で name を
+    解決するのは `project` グループだけで、`container` / `ct` は `[name]` を持たず解決も
+    通らない (PLAN61 決定 10)。
     """
     pj_parser = subparsers.add_parser('project', help='Manage projects (CWD-independent)')
     pj_sub = pj_parser.add_subparsers(dest='subcommand')

@@ -558,16 +558,13 @@ fi
 # `login myapp` を「そのプロジェクトを操作」と解釈する設計 (存在性ベース判定)。
 # `build` は containers/ との衝突をイメージ優先で分ける (下の `build)` 分岐)。
 _DEVBASE_ARGS=("${@:2}")
-# 同期注意 (メンテナンス性): 下記 2 リストは cli.py の parser 定義に対応する。
-#   _PROJECT_NAME_SUBCOMMANDS = `project` で `name` positional を受け付けるサブコマンド
-#       集合。cli.py の _add_project_parser で `add_argument('name', ...)` を持つもの
-#       (up/down/ps/logs/scale/rebuild/open/post-start) と一致させる。login/build は index/image
-#       互換のため意図的に除外 (上のコメント参照)。
-#   _NAME_RESOLVABLE_SHORTCUTS = トップレベルシノニムのうち「実在 project なら cd」
-#       を許すもの。cli.py の SHORTCUTS 経由で project サブコマンドへ写像される
-#       集合 + shell 実装の build を含む。
-# cli.py 側でサブコマンドを追加/削除した際は両リストの更新漏れに注意すること
-# (cli.py の _add_project_parser / SHORTCUTS にも対の注記あり)。
+# 下記 2 リストは cli.py の parser 定義 (正本) の写し。一致は
+# tests/cli/test_name_context_consistency.py が固定し、ずれると欠けた・余分なサブコマンドを挙げて落ちる。
+#   _PROJECT_NAME_SUBCOMMANDS = `project` の直下で `name` positional を受け付けるサブコマンド。
+#       login/build は index/image 互換のため parser が name を持たない (上のコメント参照)。
+#   _NAME_RESOLVABLE_SHORTCUTS = cli.py の SHORTCUTS のキー + shell 実装の build。
+#       「実在 project なら cd」を許すトップレベルシノニム。
+# shell に文字列で持つのは、name 解決のたびに Python を起こさないため。
 _PROJECT_NAME_SUBCOMMANDS=" up down ps logs scale rebuild open post-start "
 _NAME_RESOLVABLE_SHORTCUTS=" up down ps scale login build rebuild open "
 case "$_resolved_cmd" in
