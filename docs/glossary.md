@@ -188,6 +188,8 @@ base の設定が派生イメージへ届く道筋（containers/*/Dockerfile）
 | 継承の連なり | — | プロジェクトの Dockerfile が FROM に取る devbase-* から、containers/<名前>/Dockerfile の FROM devbase-* を順にたどり、devbase-* を FROM に取らない段（今は devbase-base）で終わるイメージの並び | — | — | `docs/specifications/base-image-chain-build.md` |
 | 直の親イメージ | — | プロジェクトか containers/<名前> の Dockerfile の中で、最初に devbase-* を指す FROM の行が名指すイメージ。devbase-<名前>:<タグ> の形で、タグが無ければ latest を補う | — | — | `docs/specifications/base-image-chain-build.md` |
 | 直の親の読み方 | — | Dockerfile の 1 行から直の親イメージを読む規則。正規表現の値を lib/devbase/utils/dockerfile.py が正本として持ち、bin/devbase が同じ値を写す | — | — | `docs/specifications/base-image-chain-build.md` |
+| プロジェクトの Dockerfile | — | プロジェクトの compose の構成で、開発サービス名のサービスの build（context と dockerfile。文字列の形は context だけ）が指す Dockerfile。開発サービスが build を持たないときは無い | — | — | — |
+| Dockerfile の場所の決め方 | — | compose の構成からプロジェクトの Dockerfile のパスを決める規則。通常のビルドと --expires の判定が同じ規則を使う | — | — | — |
 
 ## コンテナの起動（`container-start`）
 

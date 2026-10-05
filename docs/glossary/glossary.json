@@ -884,6 +884,20 @@
       "source": "docs/specifications/base-image-chain-build.md"
     },
     {
+      "term": "プロジェクトの Dockerfile",
+      "context": "image-lineage",
+      "meaning": "プロジェクトの compose の構成で、開発サービス名のサービスの build（context と dockerfile。文字列の形は context だけ）が指す Dockerfile。開発サービスが build を持たないときは無い",
+      "source": "",
+      "pending_source": "issues/issue-415-requirements.md"
+    },
+    {
+      "term": "Dockerfile の場所の決め方",
+      "context": "image-lineage",
+      "meaning": "compose の構成からプロジェクトの Dockerfile のパスを決める規則。通常のビルドと --expires の判定が同じ規則を使う",
+      "source": "",
+      "pending_source": "issues/issue-415-requirements.md"
+    },
+    {
       "term": "列挙の正本",
       "context": "cli",
       "meaning": "[name] と --context を受け付けるサブコマンドの集合を決める唯一の場所。argparse の _create_parser()（トップレベルの build の --context だけはラッパー）",
