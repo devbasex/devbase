@@ -98,7 +98,7 @@ E1 の失敗（構成を読めない）は通常のビルドを止める（I12�
 | 通常のビルドの入口（変更） | `bin/devbase` の `cmd_build` | `compose_build_field` と `resolve_project_dockerfile` を消す。`compose.yml` があれば新しい補助関数 `project_dockerfile` で入口を 1 回起動してパスを受け、無ければ今と同じく `Dockerfile` を読む。入口が 0 以外で終われば `✗` の行を出して終了コード 1 |
 | 確定仕様（変更） | `docs/specifications/base-image-chain-build.md` | 「含まない」の #415 の行と、構成要素の表の「最初の `build:`」の行を消し、I9〜I13・入口の契約・流れの図を足す |
 | 変更履歴（変更） | `CHANGELOG.md` の `[Unreleased]` の `Fixed` | 通常のビルドが開発サービスの Dockerfile から継承の連なりを決めるようになったこと、構成を読めないときに建てずに止まること |
-| テスト（新設・変更） | `tests/cli/`・`tests/utils/` | 下の「テスト設計」。`compose.yml` を置いて偽の `uv` で通常のビルドを打つ既存のテスト 4 件（`test_build_browser_image.py` の 1 件、`test_wrapper_shellcheck_fixes.py` の 3 件）は、偽の `uv` が場所を出す入口へ答える形に書き換える |
+| テスト（新設・変更） | `tests/cli/`・`tests/utils/` | 下の「テスト設計」。`compose.yml` を置いて偽の `uv` で通常のビルドを打つ既存のテスト 4 件（`test_build_browser_image.py` の 1 件、`test_wrapper_shellcheck_fixes.py` の 3 件）は、場所を出す入口を本物で動かし偽の `docker` が構成の JSON を返す形（「テスト設計」のハーネス）に書き換える |
 
 変えないもの: `read_devbase_parent`・`resolve_base_chain`・`build_base_chain`・`build_base_image`・`_DEVBASE_FROM_RE`・
 `devbase_parent_ref`、`cli.py` のパーサーと `SUBCMD_MAP`、`bin/devbase` の振り分けと `_PROJECT_NAME_SUBCOMMANDS`。
@@ -389,6 +389,19 @@ devbase が言い換えると情報が減る。`_compose_config_services` は標
 
 ## テスト設計
 
+通常のビルドの経路を確かめるハーネス（受け入れ条件 1〜6・8、I9〜I13 の通常のビルドの側）は、場所を出す入口を
+本物で動かす。今の `exec_wrapper` の偽の `uv`（`UV:$*` を出して 0 で終わる）のままでは入口が動かず、偽の `uv` が
+答えるパスをテストの側が決めるため、下の表の「どう壊したら落ちるべきか」が成り立たない。
+
+- 偽の `uv` は、`python -m devbase.commands.project_dockerfile` の起動だけを本物の Python へ渡す
+  （`PYTHONPATH` にリポジトリの `lib` を入れて、受けた引数のまま実行する）。それ以外の起動は今のまま `UV:$*` を出す
+- `PATH` の先頭に偽の `docker` を置く。`compose config --format json` にはテストが置いた構成の JSON を返し、
+  起動した引数と回数をファイルへ記録する。`buildx build`・`compose build`・`image inspect` なども引数を記録し、
+  テストが決めた終了コードで終わる。構成を読めない場合（受け入れ条件 6）は、偽の `docker` が compose の理由を
+  標準エラーへ出して 0 以外で終わる
+- 入口は tmp の `DEVBASE_ROOT` を見て、実環境の機密・OpenBao・daemon に触れない
+- 受け入れ条件 8 の回数は、偽の `docker` の記録の `compose config` の行で数える
+
 | 受け入れ条件・不変条件 | どの振る舞いで縛るか | どう壊したら落ちるべきか |
 | --- | --- | --- |
 | 受け入れ条件 1・I10 | 構成で開発サービスより前に別のサービス（`FROM devbase-other`）があり、開発サービスが `FROM devbase-base` のとき、通常のビルドは `devbase-base` を建て、`devbase-other` を建てず、出力に `devbase-other` が無い | 決め方が最初の `build` を持つサービスを選ぶと落ちる |
@@ -404,8 +417,8 @@ devbase が言い換えると情報が減る。`_compose_config_services` は標
 | 入口の契約 | 成功で標準出力が 1 行（パスか空）だけ、構成を読めないと終了コード 1 で標準出力が空、`show_errors=True` で compose の標準エラーが出て既定では出ない | 入口がログを標準出力へ書く・`show_errors` の既定を `True` にすると落ちる |
 | 決め方の表 | 「構造」の `project_dockerfile_path` の表の各行の返り値 | 表のどれかの行の規則を変えると落ちる |
 
-`compose.yml` を置いて偽の `uv` で通常のビルドを打つ既存のテスト 4 件は、場所を出す入口へ答える偽の `uv` に
-書き換え、確かめる振る舞い（`context` と `dockerfile` から連なりを建てる・`dockerfile` が無くても進む・構成を
+`compose.yml` を置いて偽の `uv` で通常のビルドを打つ既存のテスト 4 件は、上のハーネス（入口を本物で動かし、
+偽の `docker` が構成の JSON を返す）に書き換え、確かめる振る舞い（`context` と `dockerfile` から連なりを建てる・`dockerfile` が無くても進む・構成を
 読めないと何も起動せず止まる・ブラウザの派生イメージの順）は変えない。
 
 ## 設計の結果
