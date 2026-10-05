@@ -27,6 +27,8 @@ bin/devbase の位置引数の解決とビルドの入口（docs/specifications/
 | 単体ビルド | — | $DEVBASE_ROOT/containers/<image> を devbase-<image>:latest として 1 つだけ作るビルド | — | — | `docs/specifications/cli-argument-resolution.md` |
 | プロジェクトとして数える名前 | — | projects/ の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。空でなく . で始まらない名前（utils/names.py の counts_as_project） | — | — | `docs/specifications/cli-argument-resolution.md` |
 | 名前の形の説明 | — | 名前の形を利用者へ説明する文（utils/names.py の NAME_FORM_HINT） | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 列挙の正本 | — | [name] と --context を受け付けるサブコマンドの集合を決める唯一の場所。argparse の _create_parser()（トップレベルの build の --context だけはラッパー） | — | — | — |
+| 一致テスト | — | 列挙の正本を走査して得た集合と、写し（ラッパーのリスト・補完・確定仕様の表）を比べ、差があれば写しの場所と差を挙げて落ちるテスト | — | — | — |
 
 ## Compose の構成（`compose`）
 

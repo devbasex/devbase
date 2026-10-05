@@ -882,6 +882,20 @@
       "context": "image-lineage",
       "meaning": "Dockerfile の 1 行から直の親イメージを読む規則。正規表現の値を lib/devbase/utils/dockerfile.py が正本として持ち、bin/devbase が同じ値を写す",
       "source": "docs/specifications/base-image-chain-build.md"
+    },
+    {
+      "term": "列挙の正本",
+      "context": "cli",
+      "meaning": "[name] と --context を受け付けるサブコマンドの集合を決める唯一の場所。argparse の _create_parser()（トップレベルの build の --context だけはラッパー）",
+      "source": "",
+      "pending_source": "issues/issue-214-requirements.md"
+    },
+    {
+      "term": "一致テスト",
+      "context": "cli",
+      "meaning": "列挙の正本を走査して得た集合と、写し（ラッパーのリスト・補完・確定仕様の表）を比べ、差があれば写しの場所と差を挙げて落ちるテスト",
+      "source": "",
+      "pending_source": "issues/issue-214-requirements.md"
     }
   ]
 }
