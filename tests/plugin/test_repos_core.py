@@ -32,7 +32,7 @@ from devbase.plugin.installer import (
     uninstall_plugin,
 )
 from devbase.plugin.syncer import (
-    _extract_owner,
+    _collision_suffix,
     _make_relative_target,
     sync_projects,
 )
@@ -911,14 +911,14 @@ class TestExtractOwner:
             name="p1", version="1.0.0", source="url",
             installed_at="", path="repos/github.com--orgA--repo1/p1",
         )
-        assert _extract_owner(plugin) == "github.com--orgA--repo1"
+        assert _collision_suffix(plugin) == "github.com--orgA--repo1"
 
     def test_linked(self):
         plugin = InstalledPlugin(
             name="p1", version="1.0.0", source="/path/to/my-local-repo",
             installed_at="", path="plugins/p1", linked=True,
         )
-        assert _extract_owner(plugin) == "my-local-repo"
+        assert _collision_suffix(plugin) == "my-local-repo"
 
 
 class TestMakeRelativeTarget:

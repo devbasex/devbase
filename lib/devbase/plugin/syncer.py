@@ -55,7 +55,7 @@ def discover_projects(plugin_dir: Path) -> list[str]:
     return [d.name for d in names.project_dirs(plugin_dir / 'projects')]
 
 
-def _extract_owner(plugin: InstalledPlugin) -> str:
+def _collision_suffix(plugin: InstalledPlugin) -> str:
     """Extract a unique suffix identifier from a plugin for collision resolution.
 
     For repos/-based plugins: full dirname from repos/<host>--<owner>--<repo>/...
@@ -153,8 +153,8 @@ def _link_loser_projects(
     """
     created = 0
     for loser_plugin, _ in losers:
-        owner = _extract_owner(loser_plugin)
-        suffix_name = f"{proj_name}.{owner}"
+        suffix = _collision_suffix(loser_plugin)
+        suffix_name = f"{proj_name}.{suffix}"
 
         if suffix_name in real_projects:
             if verbose:
@@ -230,7 +230,7 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
             for loser_plugin, _ in losers:
                 logger.info(
                     "  Also available as: projects/%s.%s",
-                    proj_name, _extract_owner(loser_plugin),
+                    proj_name, _collision_suffix(loser_plugin),
                 )
 
         _warn_unusable_name(proj_name, winner_plugin.name)
