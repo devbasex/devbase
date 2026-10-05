@@ -117,7 +117,7 @@ def test_scan_finds_both_sets():
 # ---------------------------------------------------------------------------
 
 def _wrapper_list(var):
-    m = re.search(rf'^{var}=" (.*) "$', WRAPPER.read_text(), re.M)
+    m = re.search(rf'^{var}=" (.*) "$', WRAPPER.read_text(), re.MULTILINE)
     assert m, f"bin/devbase に {var}=\" ... \" の行が見つからない"
     return set(m.group(1).split())
 
@@ -170,7 +170,7 @@ _devbase_completions
 printf '%s\\n' "${{COMPREPLY[@]}}"
 """
     env = {**os.environ, "DEVBASE_ROOT": str(devbase_root)}
-    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, check=False)
     assert proc.returncode == 0, f"etc/devbase-completion.bash の実行に失敗: {words} {proc.stderr}"
     return {line for line in proc.stdout.splitlines() if line}
 
@@ -249,7 +249,7 @@ def test_bash_completion_lists_subcommands(group, fake_root):
 @pytest.mark.parametrize("group", ["project", "container"])
 def test_zsh_completion_lists_subcommands(group):
     expected = _group_subcommands(group)
-    m = re.search(rf"^\s*{group}_subcommands=\((.*?)^\s*\)", ZSH_COMPLETION.read_text(), re.M | re.S)
+    m = re.search(rf"^\s*{group}_subcommands=\((.*?)^\s*\)", ZSH_COMPLETION.read_text(), re.MULTILINE | re.DOTALL)
     assert m, f"etc/_devbase に {group}_subcommands=( ... ) が見つからない"
     offered = set(re.findall(r"'([^':]+):", m.group(1)))
     missing = expected - offered
