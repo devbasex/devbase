@@ -172,6 +172,19 @@ def test_build_reads_compose_config_once(compose_wrapper, args):
     assert compose_wrapper.docker_calls() == ["compose config --format json"]
 
 
+def test_build_passes_the_context_to_the_entry(compose_wrapper):
+    """`devbase build --context NAME` の接続先で構成を読む (`docker compose build` と同じ接続先)。"""
+    project = _project(compose_wrapper, "base")
+    _write(project / "Dockerfile", "FROM devbase-base\n")
+    compose_wrapper.compose_config({"dev": {"build": {"context": str(project)}}})
+
+    result = compose_wrapper.run(["build", "--context", "remote-a"], cwd=project)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert compose_wrapper.docker_calls() == ["compose config --format json"]
+    assert compose_wrapper.docker_contexts() == ["remote-a"]
+
+
 def test_build_without_compose_yml_does_not_read_compose_config(compose_wrapper):
     compose_wrapper.container("base")
     project = compose_wrapper.work / "myproj"

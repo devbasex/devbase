@@ -138,6 +138,7 @@ _FAKE_DOCKER = """\
 #!/bin/bash
 # 起動した引数を記録する。compose config には置いた構成を返す (理由があれば標準エラーへ出して 1)
 echo "$*" >> "__ROOT__/docker.log"
+echo "${DOCKER_CONTEXT-<unset>}" >> "__ROOT__/docker_context.log"
 case "$*" in
     "compose config --format json")
         if [ -f "__ROOT__/compose_error.txt" ]; then
@@ -167,6 +168,11 @@ class ComposeWrapperRoot(WrapperRoot):
     def docker_calls(self) -> list[str]:
         """偽の `docker` が受けた引数の行 (入口が起動した `compose config` だけが並ぶ)。"""
         log = self.root / "docker.log"
+        return log.read_text().splitlines() if log.exists() else []
+
+    def docker_contexts(self) -> list[str]:
+        """偽の `docker` が起動したときの `DOCKER_CONTEXT` (無ければ `<unset>`)。"""
+        log = self.root / "docker_context.log"
         return log.read_text().splitlines() if log.exists() else []
 
     def run(self, args, cwd: Path | None = None) -> subprocess.CompletedProcess:
