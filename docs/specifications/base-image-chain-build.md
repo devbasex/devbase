@@ -11,6 +11,10 @@
 Dockerfile から直の親イメージを読む規則（直の親の読み方）は 1 つの正規表現で決め、通常のビルド
 （`bin/devbase`）と `--expires` の判定（`lib/devbase`）が同じ Dockerfile から同じ直の親を読む。
 
+読む Dockerfile（プロジェクトの Dockerfile）は、`docker compose build` が建てる開発サービス
+（`DEV_SERVICE_NAME`、既定 `dev`）の `build` から決める。compose の構成は `docker compose config` で読み、
+通常のビルドと `--expires` の判定が同じ決め方（Dockerfile の場所の決め方）を使う。
+
 利用者向けの説明は
 [コンテナ操作ガイド](../user/container-operations.md) の「プロジェクトの Dockerfile で足す」の行にある。
 
@@ -41,19 +45,26 @@ Dockerfile の `FROM` を書かれたとおりに読み、連なりの形（何�
 | 段の名前は `containers/` へ連結する前に名前の形（`is_single_segment_name`）で検証し、合わなければ止まる | `FROM devbase-../x` のような参照で `$DEVBASE_ROOT` の外の Dockerfile を読ませない。読み飛ばすと書き損じが黙って `devbase-base` の分岐へ流れる |
 | 連なりの段は手元にあっても飛ばさず、経路のキャッシュの扱いで毎回建てる | `containers/<名前>` が変わっていなければ層はキャッシュから来る。有無で飛ばすと、`containers/base` を直した後も古い base の上に上の段が建つ |
 | 1 段の連なりでは以前の出力の行をそのまま出す | 既存のテストと利用者の目が頼る行を変えない |
+| プロジェクトの Dockerfile の場所は、`docker compose config` の開発サービスの `build` から、Python の 1 つの関数（`project_dockerfile_path`）で決める。通常のビルドは Python の入口を 1 回起動してパスを受ける | 構成の正しい読み（`build: ./dev` の文字列の形・変数の展開・上書きのファイル・`COMPOSE_FILE`）は compose 自身にしかできない。`compose.yml` を行の並びとして読むと、開発サービスより前の別のサービスの `build:` や文字列の形で、`--expires` の判定と別の Dockerfile を読んだ（#415） |
+| 場所を出す入口は CLI のサブコマンドにせず `python -m devbase.commands.project_dockerfile` にする | help の一覧と前方一致の集合に値を増やさない |
+| 開発サービス名は `bin/devbase` が `${DEV_SERVICE_NAME:-dev}` を入口へ渡す | `docker compose build` に渡す名前と、場所を決めるサービスの名前が常に同じになる |
 
 ## 対象範囲
 
 - `bin/devbase` の `cmd_build` の 3 つの経路（通常・`--no-cache`・`--project-no-cache`）での連なりの解決と建て
 - `lib/devbase/commands/container.py` の `--expires` の判定が直の親を読む規則
+- 通常のビルドと `--expires` の判定が、compose の構成からプロジェクトの Dockerfile の場所を決める規則
 
 含まない:
 
 - 単体ビルド（`devbase build <image>`）。名前を挙げた 1 つのイメージだけを建て、連なりをたどらない
 - `--expires` の鮮度の判定で、連なりの下の段の作成日を見ること。判定は直の親イメージの作成日だけで行う
 - `COPY --from=devbase-*`・`ARG` で名前を組み立てる `FROM ${BASE}`・最初に `devbase-*` を指す `FROM` より後の `FROM`
-- プロジェクトの Dockerfile の場所の決め方（通常のビルドは `compose.yml` の最初の `build:`、`--expires` の判定は
-  dev のサービスの `build` から決め、食い違いうる。#415）
+- `build.dockerfile_inline`（Dockerfile を compose の中に書く形）の読み方。2 つの経路は同じパス
+  （`<context>/Dockerfile`）を受ける
+- `build.target`（多段の Dockerfile の段の指定）による直の親の選び分け。Dockerfile の中で最初に `devbase-*` を
+  指す `FROM` を読む
+- 開発サービス以外のサービスの Dockerfile が `devbase-*` を継ぐときに、その連なりを建てること
 
 ## 構成要素
 
@@ -61,17 +72,21 @@ Dockerfile の `FROM` を書かれたとおりに読み、連なりの形（何�
 | --- | --- | --- |
 | 直の親の読み方の正本 | `lib/devbase/utils/dockerfile.py` の `DEVBASE_FROM_PATTERN` | 正規表現の値 |
 | 直の親を読む関数 | 同 `devbase_parent_ref(text)` | Dockerfile の本文から直の親イメージの参照を返す。副作用を持たない |
-| `--expires` の判定 | `lib/devbase/commands/container.py` の `_get_base_image_ref` | dev のサービスの `build` から Dockerfile の場所を決め、本文の読みを `devbase_parent_ref` に任せる。`_base_image_is_fresh` がその作成日を見る |
+| Dockerfile の場所の決め方 | `lib/devbase/utils/dockerfile.py` の `project_dockerfile_path(dev_service)` | 開発サービスの定義から Dockerfile のパスを返す。`build` が無ければ `None`。ファイルを読まず、副作用を持たない |
+| 構成の読み取り | `lib/devbase/commands/container.py` の `_compose_config_services` | `docker compose config --format json` を起動する唯一の関数。`show_errors=True` なら、0 以外のとき compose の標準エラーをそのまま書く |
+| `--expires` の判定 | 同 `_get_base_image_ref` | 開発サービスの Dockerfile の場所を `project_dockerfile_path` から受け、本文の読みを `devbase_parent_ref` に任せる。`_base_image_is_fresh` がその作成日を見る |
+| 場所を出す入口 | `lib/devbase/commands/project_dockerfile.py`（`python -m` で起動する。CLI のサブコマンドではない） | 接続先と機密を載せてから構成を 1 回読み、開発サービスの Dockerfile のパスを標準出力へ 1 行で出す |
 | 読み方の写し | `bin/devbase` のトップレベルの `_DEVBASE_FROM_RE`（`_SINGLE_SEGMENT_NAME_RE` の隣） | 正本と同じ文字列。`$'...'` でタブ文字を入れる |
 | 直の親を読む | `cmd_build` の `read_devbase_parent` | Dockerfile を 1 行ずつ読み、最初に当たった行の参照を出す。当たらない・ファイルが無いときは 1（失敗ではない） |
 | 連なりの解決 | `cmd_build` の `resolve_base_chain` | 直の親から `containers/<名前>/Dockerfile` をたどり、下の段からの並びを配列 `_BASE_CHAIN` に置く。決められないときは理由を 1 行出して 1 |
 | 連なりの建て | `cmd_build` の `build_base_chain` | `_BASE_CHAIN` の段を下から `build_base_image` へ渡す。失敗した段で止まって 1 |
 | 1 段の建て | `cmd_build` の `build_base_image` | `docker buildx build --load -t <段>:latest containers/<名前>` |
-| プロジェクトの Dockerfile の場所 | `cmd_build` の `resolve_project_dockerfile` | `compose.yml` の最初の `build:` の `context`・`dockerfile` から決める（既定は `Dockerfile`） |
+| プロジェクトの Dockerfile の場所を受け取る | `cmd_build` の `project_dockerfile` | `compose.yml` があれば場所を出す入口を 1 回起動してパスを受ける（開発サービスが `build` を持たなければ空）。無ければ `Dockerfile` |
 
 ```mermaid
 graph TD
     subgraph 入口["bin/devbase の cmd_build"]
+        PD[場所を受け取る<br/>project_dockerfile]
         R[直の親を読む<br/>read_devbase_parent]
         C[連なりを解決する<br/>resolve_base_chain]
         B[連なりを建てる<br/>build_base_chain]
@@ -79,11 +94,19 @@ graph TD
         P[プロジェクトを建てる<br/>docker compose build]
         F[base の有無を確かめる<br/>docker image inspect]
     end
-    subgraph 判定["lib/devbase の --expires の判定"]
-        E[_get_base_image_ref]
+    subgraph 判定["lib/devbase"]
+        M[場所を出す入口<br/>project_dockerfile モジュール]
+        CS[構成の読み取り<br/>_compose_config_services]
+        PP[Dockerfile の場所の決め方<br/>project_dockerfile_path]
+        E[--expires の判定<br/>_get_base_image_ref]
         D[devbase_parent_ref<br/>読み方の正本]
     end
     RE[_DEVBASE_FROM_RE<br/>読み方の写し]
+    PD -->|uv run python -m| M
+    M --> CS
+    M --> PP
+    E --> PP
+    PD --> R
     R --> RE
     C --> R
     B --> I
@@ -107,6 +130,38 @@ graph TD
 | I6 | 連なりのすべての段は、経路が決めた同じキャッシュの扱いで建つ | テストが落ちる |
 | I7 | 1 段の連なりでは、建てるイメージ・順・出力の行が 2 段の対応の前と同じである | 既存のテストが落ちる |
 | I8 | プロジェクトの Dockerfile が `devbase-*` を `FROM` に取らないとき、通常のビルドは `devbase-base:latest` があれば建てず、無ければ建てる | 既存のテストが落ちる |
+| I9 | 同じ compose の構成と同じ開発サービス名から、通常のビルドと `--expires` の判定は同じプロジェクトの Dockerfile のパスを決める | 入力の表を両方の経路に通す契約のテストが落ちる |
+| I10 | パスは開発サービス名のサービスの `build` だけから決まり、ほかのサービスの `build`・サービスの並び・`build` の書き方（文字列か辞書か）に左右されない | テストが落ちる |
+| I11 | 開発サービスが構成に無い・`build` を持たないとき、プロジェクトの Dockerfile は無い。通常のビルドはどの Dockerfile も読まず I8 の分岐へ進む | テストが落ちる |
+| I12 | compose の構成を読めないとき、通常のビルドはどの段の `docker buildx build` も `docker compose build` も起動せず、理由を出して終了コード 1 で止まる | テストが落ちる |
+| I13 | 通常のビルド 1 回で `docker compose config` を起動するのは 1 回以下である（`compose.yml` が無ければ 0 回） | テストが落ちる |
+
+### プロジェクトの Dockerfile の場所の決め方
+
+compose の構成は `docker compose config --format json` の出力で、`build` はいつも辞書、`context` は変数を展開した
+絶対パスで出る。`project_dockerfile_path` は開発サービスの定義を次のとおりに読む。
+
+| 開発サービスの定義 | 返すパス |
+| --- | --- |
+| `build` が無い・空 / 開発サービスが無い | 無し（`None`） |
+| `build` が文字列 `X` | `X/Dockerfile` |
+| `build` が辞書で `context` だけ | `<context>/Dockerfile` |
+| `build` が辞書で `dockerfile` だけ（相対） | `<dockerfile>`（`context` の既定 `.` からの相対） |
+| `build` が辞書で両方（`dockerfile` が相対） | `<context>/<dockerfile>` |
+| `dockerfile` が絶対パス | `<dockerfile>`（`context` を連結しない） |
+| `dockerfile_inline` だけ | `<context>/Dockerfile` |
+
+通常のビルドは場所を出す入口を次の形で起動する（`bin/devbase` だけが呼ぶ内部の約束）。
+
+| 項目 | 内容 |
+| --- | --- |
+| 起動 | `uv run --project "$DEVBASE_ROOT" python -m devbase.commands.project_dockerfile --service <開発サービス名> [--context <名前>]`。`--context` は `devbase build --context` の値があるときだけ渡す。カレントディレクトリはプロジェクト |
+| 前処理 | 接続先を決め（`--context` とプロジェクトの設定）、今のプロジェクトの機密を載せる（読めなくても警告で続ける）。構成の読み取りは daemon に繋がない |
+| 成功 | 終了コード 0。標準出力に 1 行だけ（パス。プロジェクトの Dockerfile が無ければ空の行） |
+| 構成を読めない | 終了コード 1。compose の標準エラー（JSON として読めなければ `Unable to read the compose configuration as JSON`）を標準エラーへ書き、標準出力には何も書かない |
+| 引数の誤り | 終了コード 2 |
+
+`compose.yml` が無いときは入口を起動せず、カレントディレクトリの `Dockerfile` を読む。
 
 ### 直の親の読み方
 
@@ -169,8 +224,9 @@ graph TD
 
 ```mermaid
 graph TD
-    S[cmd_build] --> DF[プロジェクトの Dockerfile の場所を決める<br/>resolve_project_dockerfile]
-    DF --> RD{直の親を読めたか}
+    S[cmd_build] --> DF[プロジェクトの Dockerfile の場所を決める<br/>project_dockerfile]
+    DF -->|構成を読めない| E0[✗ Failed to read the compose configuration<br/>終了コード 1・何も建てない]
+    DF -->|パスか空| RD{直の親を読めたか}
     RD -->|読めた| T1[連なりの始まり = 直の親]
     RD -->|読めない| M{経路}
     M -->|通常| X{devbase-base:latest があるか}
@@ -212,7 +268,7 @@ sequenceDiagram
     else 期限を過ぎ、直の親が古い・読めない
         PY->>SH: build --no-cache
     end
-    SH->>SH: read_devbase_parent → resolve_base_chain
+    SH->>SH: project_dockerfile（docker compose config を 1 回）→ read_devbase_parent → resolve_base_chain
     alt 連なりを決められない
         SH-->>PY: 終了コード 1（何も建てない）
     else 決めた
@@ -241,6 +297,10 @@ N は連なりの段の数 + 1（プロジェクト）である。
 成功すれば最後に `✓ All images built successfully`、プロジェクトの建てが失敗すれば `✗ Failed to build project image`。
 
 ## エラー処理
+
+compose の構成を読めないとき（必須の環境変数が無い・YAML が壊れている など）は、compose の理由を標準エラーへ、
+`✗ Failed to read the compose configuration; no image was built` を標準出力へ出し、どのイメージも建てずに
+終了コード 1 で止まる。続く `docker compose build` も同じ構成を読んで失敗するため、先に止まる。
 
 連なりを決められないときは、次の行を標準出力に出し、どのイメージも建てずに終了コード 1 で止まる。
 
@@ -293,6 +353,23 @@ Docker を起動しない）:
 - I1: 「直の親の読み方」の表の全行を、通常のビルドの経路（建つ `-t` のイメージ、または `devbase-base` の有無の
   分岐へ進むこと）と `_get_base_image_ref` の両方に通し、表の答えと一致すること
 - I1: `bin/devbase` から抜き出した `_DEVBASE_FROM_RE` の値が `DEVBASE_FROM_PATTERN` と同じ文字列であること
+
+`tests/cli/test_build_project_dockerfile.py`（場所を出す入口を本物で動かし、偽の `docker` が構成の JSON を返す）:
+
+- I10: 開発サービスより前に `FROM devbase-other` の別のサービスがあっても、開発サービスの `devbase-base` を建て、
+  `devbase-other` を建てず名前も出さないこと。`build: ./dev` の文字列の形で `./dev/Dockerfile` を読むこと。
+  `DEV_SERVICE_NAME` の名前のサービスから決めること
+- I11: 開発サービスが `image:` だけのとき、カレントの `Dockerfile` を読まず I8 の分岐へ進むこと
+- I12: 構成を読めないとき、何も起動せず、compose の理由と `✗` の行を出して終了コード 1 で終わること
+- I13: 通常・`--no-cache`・`--project-no-cache` で `docker compose config` の起動が 1 回、`compose.yml` が無ければ 0 回であること
+- 入口の契約: 標準出力が 1 行（パスか空）だけ、構成を読めないと終了コード 1 で標準出力が空であること
+
+`tests/cli/test_project_dockerfile_contract.py`:
+
+- I9: 文字列の形 / `context` だけ / `dockerfile` だけ / 両方 / `dockerfile` が絶対パス / `context` に環境変数 /
+  開発サービスより前に別のサービス / 開発サービスが `build` を持たない、の表の各行を、通常のビルドの経路と
+  `_get_base_image_ref` の両方に通し、同じ Dockerfile を読むこと
+- 「プロジェクトの Dockerfile の場所の決め方」の表の各行の返り値
 
 既存のテスト（I7・I8 の退行の検査）: `tests/cli/test_build_browser_image.py`・`tests/cli/test_wrapper_shellcheck_fixes.py`・
 `tests/cli/test_base_image_staleness.py`。
