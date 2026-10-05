@@ -19,14 +19,15 @@ from devbase.utils import docker
 class FakeRun:
     """``subprocess.run`` の代わりに呼び出しを記録する。"""
 
-    def __init__(self, returncode: int = 0, stdout: str = ''):
+    def __init__(self, returncode: int = 0, stdout: str = '', stderr: str = ''):
         self.calls: list[dict] = []
         self.returncode = returncode
         self.stdout = stdout
+        self.stderr = stderr
 
     def __call__(self, cmd, **kwargs):
         self.calls.append({'cmd': list(cmd), **kwargs})
-        return subprocess.CompletedProcess(cmd, self.returncode, self.stdout, '')
+        return subprocess.CompletedProcess(cmd, self.returncode, self.stdout, self.stderr)
 
 
 @pytest.fixture
@@ -214,3 +215,27 @@ def test_resolve_dev_service_contract(container_run, monkeypatch, returncode, st
     run.returncode, run.stdout = returncode, stdout
 
     assert container._resolve_dev_service() == expected
+
+
+@pytest.mark.parametrize('show_errors, expected_stderr', [
+    (False, ''),
+    (True, 'required variable MISSING is missing a value: need it\n'),
+])
+def test_compose_config_services_show_errors(container_run, capsys, show_errors, expected_stderr):
+    """``show_errors=True`` のときだけ、非 0 の compose の標準エラーをそのまま書く (#415)。"""
+    container, run = container_run
+    run.returncode, run.stdout = 1, ''
+    run.stderr = 'required variable MISSING is missing a value: need it\n'
+
+    assert container._compose_config_services(show_errors=show_errors) == (1, {})
+    captured = capsys.readouterr()
+    assert captured.err == expected_stderr
+    assert captured.out == ''
+
+
+def test_compose_config_services_show_errors_is_silent_on_success(container_run, capsys):
+    container, run = container_run
+    run.stdout, run.stderr = '{"services": {}}', 'warning: something\n'
+
+    assert container._compose_config_services(show_errors=True) == (0, {})
+    assert capsys.readouterr().err == ''
