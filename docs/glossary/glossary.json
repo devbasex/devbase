@@ -869,22 +869,19 @@
       "term": "継承の連なり",
       "context": "image-lineage",
       "meaning": "プロジェクトの Dockerfile が FROM に取る devbase-* から、containers/<名前>/Dockerfile の FROM devbase-* を順にたどり、devbase-* を FROM に取らない段（今は devbase-base）で終わるイメージの並び",
-      "source": "",
-      "pending_source": "issues/issue-404-requirements.md"
+      "source": "docs/specifications/base-image-chain-build.md"
     },
     {
       "term": "直の親イメージ",
       "context": "image-lineage",
       "meaning": "プロジェクトか containers/<名前> の Dockerfile の中で、最初に devbase-* を指す FROM の行が名指すイメージ。devbase-<名前>:<タグ> の形で、タグが無ければ latest を補う",
-      "source": "",
-      "pending_source": "issues/issue-404-design.md"
+      "source": "docs/specifications/base-image-chain-build.md"
     },
     {
       "term": "直の親の読み方",
       "context": "image-lineage",
       "meaning": "Dockerfile の 1 行から直の親イメージを読む規則。正規表現の値を lib/devbase/utils/dockerfile.py が正本として持ち、bin/devbase が同じ値を写す",
-      "source": "",
-      "pending_source": "issues/issue-404-design.md"
+      "source": "docs/specifications/base-image-chain-build.md"
     }
   ]
 }
