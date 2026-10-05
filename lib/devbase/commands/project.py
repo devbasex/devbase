@@ -32,12 +32,12 @@ def _resolve_plugin_name(entry: Path) -> str | None:
     """projects/ 配下の entry が属する plugin 名を解決する。
 
     entry が symlink の場合、その **リンク先** (``../<plugin.path>/projects/<proj>``)
-    から plugin 名を解決する。PLAN04 の同名衝突 suffix (例 ``myapp.alice--myapp``)
+    から plugin 名を解決する。PLAN04 の同名衝突 suffix (例 ``myapp.github.com--example-org--devbase-plugins``)
     は **リンク名のみ** に付与され、リンク先 dir 名は素の ``<proj>`` のままであるため、
     リンク名でなくリンク先を辿ることで suffix の有無に関わらず正しく解決できる。
 
     plugin 名はリンク先パスの ``projects`` セグメント直前の要素:
-      - repos ベース: ``../repos/<owner>--<repo>/<plugin>/projects/<proj>`` → ``<plugin>``
+      - repos ベース: ``../repos/<host>--<owner>--<repo>/<plugin>/projects/<proj>`` → ``<plugin>``
       - --link ベース: ``../plugins/<name>/projects/<proj>``               → ``<name>``
 
     symlink でない実ディレクトリ (plugin に属さない) や解決不能な場合は ``None``。

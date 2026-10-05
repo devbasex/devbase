@@ -190,7 +190,9 @@ devbase 本体を更新してください (この警告を止める場合は DEV
 
 同じ名前のプロジェクトを複数のPluginが提供したときに、どちらが `projects/<name>` の
 シンボリックリンクを取るかを決める整数です（既定 `0`、大きいほうが勝ち）。
-負けた側は `projects/<name>.<owner>--<repo>` の形でリンクされ、どちらも利用できます。
+負けた側は `projects/<name>.<host>--<owner>--<repo>` の形でリンクされ、どちらも利用できます
+（例: `projects/myapp.github.com--example-org--devbase-plugins`）。
+`--link` で入れた Plugin では、`<name>.` の後ろがリンク元のパスの basename になります。
 
 ```yaml
 priority: 10
