@@ -92,7 +92,7 @@ def _ask_value(key: str) -> str:
 
 def row_title(row, *, grouped: bool) -> str:
     """一覧の 1 行 (キー・持ち主・適用範囲・グループ・伏せ字の値)"""
-    key = row.key if len(row.key) >= KEY_WIDTH else row.key.ljust(KEY_WIDTH)
+    key = row.key.ljust(KEY_WIDTH)
     parts = [key, pad(row.owner_label, 6), pad(row.scope_label, 18)]
     if grouped:
         parts.append(pad(row.group_label or "", 10))
