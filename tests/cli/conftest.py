@@ -127,6 +127,10 @@ esac
 echo "PWD:$PWD"
 echo "UV:$*"
 echo "MARKER:${MARKER:-<unset>}"
+# UV_FAIL_ON に含む語の起動だけを失敗させる (例: "image inspect" で devbase-base が無い形)
+if [ -n "${UV_FAIL_ON:-}" ] && [[ "$*" == *"$UV_FAIL_ON"* ]]; then
+    exit 1
+fi
 exit 0
 """
 
@@ -171,7 +175,7 @@ class ComposeWrapperRoot(WrapperRoot):
         # 入口が実環境の機密の置き場・docker の接続先を見ないようにする
         env["HOME"] = str(self.root / "home")
         for key in ("DOCKER_CONTEXT", "DOCKER_HOST", "DEVBASE_DOCKER_CONTEXT", "COMPOSE_FILE",
-                    "DEV_SERVICE_NAME"):
+                    "DEV_SERVICE_NAME", "UV_FAIL_ON"):
             env.pop(key, None)
         env.update(self.extra_env)
         return subprocess.run(
@@ -180,6 +184,7 @@ class ComposeWrapperRoot(WrapperRoot):
             text=True,
             env=env,
             cwd=str(cwd or self.work),
+            check=False,
         )
 
     __call__ = run

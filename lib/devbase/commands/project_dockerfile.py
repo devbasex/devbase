@@ -23,7 +23,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 from devbase import log
 from devbase.errors import DevbaseError
