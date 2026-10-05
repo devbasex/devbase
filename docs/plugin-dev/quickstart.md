@@ -333,13 +333,17 @@ flowchart LR
 
 | イメージ | ベース | 主要ツール | 推奨用途 |
 |---------|--------|-----------|---------|
-| `base` | Ubuntu 26.04 | Docker CLI、Python 3 | 軽量な開発環境 |
-| `general` | base | AWS CLI、gcloud、Terraform、Node.js 20、AI CLI | 汎用開発 |
+| `base` | Ubuntu 26.04 | Docker CLI、Python 3、AWS CLI、gcloud、Node.js（LTS）、AI CLI | 派生イメージの土台 |
+| `general` | base | base のまま（道具を足さない） | 汎用開発 |
 | `go` | base | Go開発環境 | Go言語プロジェクト |
-| `php` | general | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
-| `php85` | general | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
-| `latex` | general | LaTeX | 文書・論文作成 |
+| `php` | base | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
+| `php85` | base | PHP 8.5、Composer | PHP 8.5 系プロジェクト |
+| `latex` | base | LaTeX | 文書・論文作成 |
+| `browser` | base | Playwright の Chromium、追加の太さのフォント | ブラウザの操作、HTML の PDF・スクリーンショット |
 | `snapshot` | Ubuntu 26.04 | zstd | スナップショット専用 |
+
+terraform はどの標準イメージにも入っていません（入れ方は
+[コンテナ操作ガイド](../user/container-operations.md#ブラウザ追加の太さのフォントterraform-を使う)）。
 
 ### 5.5 Git管理のガイドライン
 
