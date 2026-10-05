@@ -230,44 +230,32 @@ cmd_build() {
         fi
     }
 
-    # compose.yml の build: 直後 3 行から <key>: の値を取る (無ければ空文字。パイプの最後の awk が 0 を返す)
-    compose_build_field() {
-        grep -A 3 "build:" compose.yml | grep "$1:" | head -1 | awk '{print $2}'
-    }
-
-    # compose.yml の build: の dockerfile/context からプロジェクトの Dockerfile のパスを出す (既定は Dockerfile)
-    resolve_project_dockerfile() {
-        local dockerfile_path="Dockerfile"
-        if [ -f "compose.yml" ]; then
-            # Try to extract dockerfile path from compose.yml (simple grep approach)
-            local dockerfile_line
-            dockerfile_line=$(compose_build_field dockerfile)
-            if [ -n "$dockerfile_line" ]; then
-                dockerfile_path="$dockerfile_line"
-            fi
-
-            # If dockerfile is relative, combine with context path
-            local context_line
-            context_line=$(compose_build_field context)
-            if [ -n "$context_line" ]; then
-                # Expand environment variables in context path
-                # コマンド置換の中では set -e が効かないため、展開の失敗 (${VAR:?} など) は明示的に返す
-                context_line=$(eval echo "$context_line") || return
-                if [[ "$dockerfile_path" != /* ]]; then
-                    dockerfile_path="${context_line}/${dockerfile_path}"
-                fi
-            fi
+    # Helper: プロジェクトの Dockerfile のパスを出す (#415)。compose.yml があれば、`docker compose build`
+    # と同じ構成 (docker compose config) の開発サービスの build から Python の入口が決める
+    # (--expires の判定と同じ決め方)。開発サービスが build を持たなければ空。compose.yml が無ければ
+    # Dockerfile。構成を読めなければ入口が理由を標準エラーへ出し、ここは 1 を返す。
+    project_dockerfile() {
+        if [ ! -f "compose.yml" ]; then
+            printf '%s\n' "Dockerfile"
+            return 0
         fi
-        printf '%s\n' "$dockerfile_path"
+        ensure_uv
+        PYTHONPATH="${DEVBASE_ROOT}/lib:$PYTHONPATH" \
+            uv run --project "$DEVBASE_ROOT" python -m devbase.commands.project_dockerfile \
+            --service "${DEV_SERVICE_NAME:-dev}" ${_BUILD_CONTEXT:+--context "$_BUILD_CONTEXT"}
     }
 
-    # Detect Dockerfile path from compose.yml
     local dockerfile_path
-    dockerfile_path=$(resolve_project_dockerfile) || return
+    if ! dockerfile_path=$(project_dockerfile); then
+        echo "✗ Failed to read the compose configuration; no image was built"
+        exit 1
+    fi
 
     # read_devbase_parent の非 0 は「devbase-* を使わない」の判定で、失敗ではない (#247)
-    local parent_ref
-    parent_ref=$(read_devbase_parent "$dockerfile_path") || true
+    local parent_ref=""
+    if [ -n "$dockerfile_path" ]; then
+        parent_ref=$(read_devbase_parent "$dockerfile_path") || true
+    fi
 
     # 経路: 通常 / --no-cache (base も project もキャッシュなし) /
     # --project-no-cache (base はキャッシュあり、project だけキャッシュなし)

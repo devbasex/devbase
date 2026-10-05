@@ -33,7 +33,7 @@ from devbase.utils.docker import (
 from devbase.utils.config import get_project_name
 from devbase.utils import names
 from devbase.utils import docker_context
-from devbase.utils.dockerfile import devbase_parent_ref
+from devbase.utils.dockerfile import devbase_parent_ref, project_dockerfile_path
 from devbase.project import runtime as project_runtime
 from devbase.project.local_config import load_project_local_config
 
@@ -2181,15 +2181,22 @@ def _image_max_age_days() -> int:
     )
 
 
-def _compose_config_services() -> tuple[int, dict]:
+def _compose_config_services(*, show_errors: bool = False) -> tuple[int, dict]:
     """``docker compose config --format json`` の (終了コード, services) を返す。
 
     ``config --format json`` を起動する唯一の関数 (PLAN65 決定 9)。非 0 なら services は空。
     JSON として読めなければ :class:`json.JSONDecodeError` を伝播する。
+    ``show_errors=True`` なら、非 0 のとき compose の標準エラーをそのまま自分の標準エラーへ書く
+    (構成を読めない理由を利用者へ届ける。#415)。既定では書かない。
     """
     result = docker_compose(['config', '--format', 'json'],
                             check=False, capture_output=True)
     if result.returncode != 0:
+        if show_errors and result.stderr:
+            sys.stderr.write(result.stderr)
+            if not result.stderr.endswith('\n'):
+                sys.stderr.write('\n')
+            sys.stderr.flush()
         return result.returncode, {}
     config = json.loads(result.stdout)
     return result.returncode, config.get('services', {})
@@ -2375,17 +2382,10 @@ def _get_base_image_ref(dev_service: dict) -> Optional[str]:
         ``FROM devbase-base``        -> ``devbase-base:latest`` (tag 補完)
     見つからない / 読めない場合は None。
     """
-    build = dev_service.get('build')
-    if not build:
+    # 場所は通常のビルドと同じ決め方に任せる (#415)
+    df_path = project_dockerfile_path(dev_service)
+    if df_path is None:
         return None
-    if isinstance(build, str):
-        context, dockerfile = build, 'Dockerfile'
-    else:
-        context = build.get('context', '.')
-        dockerfile = build.get('dockerfile', 'Dockerfile')
-    df_path = Path(dockerfile)
-    if not df_path.is_absolute():
-        df_path = Path(context) / dockerfile
     try:
         text = df_path.read_text(encoding='utf-8', errors='replace')
     except OSError:
