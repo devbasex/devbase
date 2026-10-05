@@ -73,7 +73,7 @@ Dockerfile の `FROM` を書かれたとおりに読み、連なりの形（何�
 | 直の親の読み方の正本 | `lib/devbase/utils/dockerfile.py` の `DEVBASE_FROM_PATTERN` | 正規表現の値 |
 | 直の親を読む関数 | 同 `devbase_parent_ref(text)` | Dockerfile の本文から直の親イメージの参照を返す。副作用を持たない |
 | Dockerfile の場所の決め方 | `lib/devbase/utils/dockerfile.py` の `project_dockerfile_path(dev_service)` | 開発サービスの定義から Dockerfile のパスを返す。`build` が無ければ `None`。ファイルを読まず、副作用を持たない |
-| 構成の読み取り | `lib/devbase/commands/container.py` の `_compose_config_services` | `docker compose config --format json` を起動する唯一の関数。`show_errors=True` なら、0 以外のとき compose の標準エラーをそのまま書く。`resolve_env_files=False` なら `--no-env-resolution` を付け、サービスの `env_file` を読まない |
+| 構成の読み取り | `lib/devbase/commands/container.py` の `_compose_config_services` | `docker compose config --format json` を起動する唯一の関数。`show_errors=True` なら、0 以外のとき compose の標準エラーをそのまま書く。`resolve_env_files=False` なら `--no-env-resolution` を付け、サービスの `env_file` を読まない。このオプションを知らない Docker Compose（v2.35 より前）が未知のオプションとして退けたときは、外して 1 回だけ読み直す |
 | `--expires` の判定 | 同 `_get_base_image_ref` | 開発サービスの Dockerfile の場所を `project_dockerfile_path` から受け、本文の読みを `devbase_parent_ref` に任せる。`_base_image_is_fresh` がその作成日を見る |
 | 場所を出す入口 | `lib/devbase/commands/project_dockerfile.py`（`python -m` で起動する。CLI のサブコマンドではない） | 接続先と機密を載せてから構成を 1 回読み、開発サービスの Dockerfile のパスを標準出力へ 1 行で出す。`docker compose build` と同じくサービスの `env_file` を読まない（`--no-env-resolution`。実行時用の `.env` がまだ無くても建てられる） |
 | 読み方の写し | `bin/devbase` のトップレベルの `_DEVBASE_FROM_RE`（`_SINGLE_SEGMENT_NAME_RE` の隣） | 正本と同じ文字列。`$'...'` でタブ文字を入れる |

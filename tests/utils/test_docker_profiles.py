@@ -209,6 +209,43 @@ def test_compose_config_services_env_resolution(container_run, kwargs, expected_
     assert run.calls[0]['cmd'] == expected_cmd
 
 
+class _OldComposeRun(FakeRun):
+    """``--no-env-resolution`` を知らない compose (v2.35 より前) の代わり。"""
+
+    def __call__(self, cmd, **kwargs):
+        self.calls.append({'cmd': list(cmd), **kwargs})
+        if '--no-env-resolution' in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 16, '', 'unknown flag: --no-env-resolution\n')
+        return subprocess.CompletedProcess(cmd, 0, '{"services": {"dev": {"image": "x"}}}', '')
+
+
+def test_compose_config_services_retries_without_unknown_flag(monkeypatch, tmp_path, capsys):
+    """古い compose が ``--no-env-resolution`` を退けたら、外して 1 回だけ読み直す (#432)。"""
+    from devbase.commands import container
+    monkeypatch.chdir(tmp_path)
+    run = _OldComposeRun()
+    monkeypatch.setattr(container.subprocess, 'run', run)
+    monkeypatch.setattr(container, '_prepare_compose', lambda context: None)
+
+    assert container._compose_config_services(
+        show_errors=True, resolve_env_files=False) == (0, {'dev': {'image': 'x'}})
+    assert [c['cmd'] for c in run.calls] == [
+        ['docker', 'compose', 'config', '--no-env-resolution', '--format', 'json'],
+        ['docker', 'compose', 'config', '--format', 'json'],
+    ]
+    assert capsys.readouterr().err == ''
+
+
+def test_compose_config_services_does_not_retry_other_errors(container_run):
+    """未知のオプション以外の失敗は読み直さない (#432)。"""
+    container, run = container_run
+    run.returncode, run.stderr = 1, 'required variable MISSING is missing a value\n'
+
+    assert container._compose_config_services(resolve_env_files=False) == (1, {})
+    assert len(run.calls) == 1
+
+
 def test_compose_config_services_propagates_unreadable_json(container_run):
     import json
     container, run = container_run

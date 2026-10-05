@@ -2181,6 +2181,12 @@ def _image_max_age_days() -> int:
     )
 
 
+def _is_unknown_no_env_resolution(stderr: str | None) -> bool:
+    """compose が ``--no-env-resolution`` を未知のオプションとして退けたかを返す。"""
+    text = (stderr or '').lower()
+    return 'unknown flag' in text and 'no-env-resolution' in text
+
+
 def _compose_config_services(*, show_errors: bool = False,
                              resolve_env_files: bool = True) -> tuple[int, dict]:
     """``docker compose config --format json`` の (終了コード, services) を返す。
@@ -2192,11 +2198,17 @@ def _compose_config_services(*, show_errors: bool = False,
     ``resolve_env_files=False`` なら ``--no-env-resolution`` を付け、サービスの ``env_file`` を
     読まない。``docker compose build`` と同じく、実行時用の ``.env`` がまだ無くても構成を読める
     (ビルドの前に Dockerfile の場所だけを得る入口が使う。#432)。
+    このオプションは Docker Compose v2.35 からで、それより古い compose が未知のオプションとして
+    退けたときは、オプションを外して 1 回だけ読み直す (#432)。
     """
     args = ['config', '--format', 'json']
     if not resolve_env_files:
         args.insert(1, '--no-env-resolution')
     result = docker_compose(args, check=False, capture_output=True)
+    if (not resolve_env_files and result.returncode != 0
+            and _is_unknown_no_env_resolution(result.stderr)):
+        result = docker_compose(['config', '--format', 'json'],
+                                check=False, capture_output=True)
     if result.returncode != 0:
         if show_errors and result.stderr:
             sys.stderr.write(result.stderr)
