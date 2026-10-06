@@ -45,9 +45,10 @@ Dockerfile の `FROM` を書かれたとおりに読み、連なりの形（何�
 | 段の名前は `containers/` へ連結する前に名前の形（`is_single_segment_name`）で検証し、合わなければ止まる | `FROM devbase-../x` のような参照で `$DEVBASE_ROOT` の外の Dockerfile を読ませない。読み飛ばすと書き損じが黙って `devbase-base` の分岐へ流れる |
 | 連なりの段は手元にあっても飛ばさず、経路のキャッシュの扱いで毎回建てる | `containers/<名前>` が変わっていなければ層はキャッシュから来る。有無で飛ばすと、`containers/base` を直した後も古い base の上に上の段が建つ |
 | 1 段の連なりでは以前の出力の行をそのまま出す | 既存のテストと利用者の目が頼る行を変えない |
-| プロジェクトの Dockerfile の場所は、`docker compose config` の開発サービスの `build` から、Python の 1 つの関数（`project_dockerfile_path`）で決める。通常のビルドは Python の入口を 1 回起動してパスを受ける | 構成の正しい読み（`build: ./dev` の文字列の形・変数の展開・上書きのファイル・`COMPOSE_FILE`）は compose 自身にしかできない。`compose.yml` を行の並びとして読むと、開発サービスより前の別のサービスの `build:` や文字列の形で、`--expires` の判定と別の Dockerfile を読んだ（#415） |
-| 場所を出す入口は CLI のサブコマンドにせず `python -m devbase.commands.project_dockerfile` にする | help の一覧と前方一致の集合に値を増やさない |
-| 開発サービス名は `bin/devbase` が `${DEV_SERVICE_NAME:-dev}` を入口へ渡す | `docker compose build` に渡す名前と、場所を決めるサービスの名前が常に同じになる |
+
+また、通常のビルドは Dockerfile の場所を `compose.yml` の最初の `build:` の直後の行から決めており、開発サービスより前に
+別のサービスの `build:` がある・`build: ./dev` と書いたプロジェクトで、`--expires` の判定と別の Dockerfile を読んだ（#415）。
+プロジェクトの Dockerfile の場所の決め方に関する判断は[決定の記録](#決定の記録)にある。
 
 ## 対象範囲
 
@@ -156,12 +157,17 @@ compose の構成は `docker compose config --format json` の出力で、`build
 | 項目 | 内容 |
 | --- | --- |
 | 起動 | `uv run --project "$DEVBASE_ROOT" python -m devbase.commands.project_dockerfile --service <開発サービス名> [--context <名前>]`。`--context` は `devbase build --context` の値があるときだけ渡す。カレントディレクトリはプロジェクト |
-| 前処理 | 接続先を決め（`--context` とプロジェクトの設定）、今のプロジェクトの機密を載せる（読めなくても警告で続ける）。構成の読み取りは daemon に繋がない |
+| 前処理 | 接続先を決め（`--context` とプロジェクトの設定）、今のプロジェクトの機密を載せる（`_prepare_compose`。機密は読めなくても警告で続ける）。構成の読み取りは daemon に繋がない |
+| 構成の読み方 | `_compose_config_services(show_errors=True, resolve_env_files=False)` を 1 回呼ぶ。`--no-env-resolution` を付け、サービスの `env_file` を読まない（`docker compose build` と同じく、実行時用の `.env` がまだ無くても読める）。Docker Compose が v2.35 より前でこのオプションを未知として退けたら、外して 1 回だけ読み直す |
 | 成功 | 終了コード 0。標準出力に 1 行だけ（パス。プロジェクトの Dockerfile が無ければ空の行） |
+| 接続先を決められない | 終了コード 1。理由（`DevbaseError` の文）を標準エラーへ書き、標準出力には何も書かない |
 | 構成を読めない | 終了コード 1。compose の標準エラー（JSON として読めなければ `Unable to read the compose configuration as JSON`）を標準エラーへ書き、標準出力には何も書かない |
 | 引数の誤り | 終了コード 2 |
 
 `compose.yml` が無いときは入口を起動せず、カレントディレクトリの `Dockerfile` を読む。
+
+`bin/devbase` は入口を `PYTHONPATH` にリポジトリの `lib` を入れて起動し、0 以外で終われば
+`✗ Failed to read the compose configuration; no image was built` を出して終了コード 1 で止まる（「エラー処理」）。
 
 ### 直の親の読み方
 
@@ -371,8 +377,70 @@ Docker を起動しない）:
   `_get_base_image_ref` の両方に通し、同じ Dockerfile を読むこと
 - 「プロジェクトの Dockerfile の場所の決め方」の表の各行の返り値
 
+`tests/utils/test_docker_profiles.py`（構成の読み取り）:
+
+- `show_errors=True` で 0 以外のとき compose の標準エラーが出て、既定と成功のときは出ないこと
+- `resolve_env_files=False` で `--no-env-resolution` が付き、compose がこのオプションを未知として退けたときだけ
+  外して 1 回読み直し、ほかの失敗では読み直さないこと
+
 既存のテスト（I7・I8 の退行の検査）: `tests/cli/test_build_browser_image.py`・`tests/cli/test_wrapper_shellcheck_fixes.py`・
 `tests/cli/test_base_image_staleness.py`。
+
+## 決定の記録
+
+プロジェクトの Dockerfile の場所の決め方（#415）の決定である。直の親の読み方と連なりの建て方の判断は
+[背景](#背景)の表にある。
+
+### 決定 1: 2 つの経路が同じパスを読むよう、Dockerfile の場所の決め方を `project_dockerfile_path` 1 つにし、通常のビルドも `--expires` の判定もこれを呼ぶ
+
+決め方を 2 か所に持つと、片方だけが別の規則へずれる。`--expires` の判定が持っていた規則（文字列の形・
+`context` の既定 `.`・`dockerfile` の既定と絶対パス）をそのまま関数へ移し、判定の結果を変えていない。
+`dockerfile_inline` の読み方は決めず、今の規則が返すパスを両方の経路が受ける。Bash に同じ規則を写して同期の
+テストで縛る形（直の親の読み方と同じ形）は採らない。場所の決め方は JSON の読みとパスの連結を含み、Bash へ
+写すと同じ文字列にならない。
+
+### 決定 2: `docker compose build` と同じ構成を読むため、通常のビルドは Python の入口を 1 回起動して `docker compose config` の結果から場所を決める
+
+構成の正しい読み（文字列の形・変数の展開・上書きのファイル・`COMPOSE_FILE`）は compose 自身にしかできず、
+`docker compose config` の JSON を Bash で読む手段（`jq`・端末の `python3`）は前提にできない。入口は
+`_compose_config_services`（構成を読む唯一の関数）を通るため、`--expires` の判定と同じ読み方になる。
+`compose.yml` を `grep`・`awk` で行の並びとして読む形は採らない。変数の展開に機密が要るため、入口は機密を
+載せてから読む。
+
+### 決定 3: 公開のコマンドと引数を増やさないため、入口を CLI のサブコマンドにせず `python -m devbase.commands.project_dockerfile` にする
+
+`devbase.cli` のサブコマンドにすると、help の一覧と前方一致（`SUBCMD_MAP`）の集合に値が増える。argparse は
+`help=argparse.SUPPRESS` のサブコマンドも一覧に `==SUPPRESS==` として出し、`project` の集合に足すと
+`devbase project d` が `down` に決まらなくなる。`project build` に隠しの引数を足す形と、`env exec -- python -m ...`
+で子を起動する形も採らない。前者は「Python の `project build` を呼ぶか」で 2 つの経路を分ける既存の確かめ方を
+崩し、後者は子の `python` が `PATH` と `VIRTUAL_ENV` に左右され、Python の起動が 2 回になる。
+
+### 決定 4: compose の無い起動と既存のハーネスを変えないため、`compose.yml` が無ければ入口を起動せず、カレントの `Dockerfile` を読む
+
+devbase のプロジェクトはどれも `compose.yml` を持ち、無いときは続く `docker compose build` が別の理由で落ちる。
+`compose.yml` を置かずに `Dockerfile` だけで通常のビルドを打つ既存のテスト（`tests/cli/test_build_base_chain.py`）
+を書き換えずに通す。`compose.yaml` などの別の名前は、devbase のほかの経路も `compose.yml` だけを前提にして
+おり、読まない。
+
+### 決定 5: 構成を読めない理由を利用者へ届けるため、compose の標準エラーをそのまま出し、`bin/devbase` は `✗` の行を出して終了コード 1 で止まる
+
+compose の理由（`required variable MISSING is missing a value: need it` など）は 1 行で原因と変数の名前を示し、
+言い換えると情報が減る。`_compose_config_services` に `show_errors`（既定 `False`）を足し、ほかの呼び出し元の
+出力は変えない。入口が `docker compose config` を直に起動する形は、構成を読む関数を 1 つに寄せた決定
+（PLAN65 決定 9。予約のプロファイルを付ける）を崩すため採らない。
+
+### 決定 6: `docker compose build` が建てるサービスと同じサービスを見るため、開発サービス名は `bin/devbase` が `--service` で渡す
+
+`bin/devbase` は `${DEV_SERVICE_NAME:-dev}`（空なら `dev`）を `docker compose build` に渡すが、Python の
+`get_dev_service_name()` は空の値をそのまま返す。入口が自分で名前を決めると、`DEV_SERVICE_NAME=` と空で書いた
+プロジェクトで、建てるサービスと場所を決めるサービスが分かれる。`--expires` の判定が空の値で開発サービスを
+見失う件は #425 にある。
+
+### 決定 7: 実行時用の `.env` がまだ無いプロジェクトでも建てられるよう、入口は `--no-env-resolution` で構成を読む
+
+`docker compose build` はサービスの `env_file` を読まずに建てる。入口が `env_file` まで解決すると、実行時に
+作る `.env` が無いプロジェクトで、建てる前に構成を読めないとして止まる。Docker Compose v2.35 より前は
+このオプションを知らないため、未知のオプションとして退けられたときだけ外して 1 回読み直す（#432）。
 
 ## 関連リンク
 
@@ -381,3 +449,4 @@ Docker を起動しない）:
 - [位置引数の解決（プロジェクト名・イメージ名）](cli-argument-resolution.md)（名前の形 `is_single_segment_name`）
 - [用語集: イメージの継承（`image-lineage`）](../glossary.md#イメージの継承image-lineage)
 - [コンテナ操作ガイド](../user/container-operations.md)
+- 実装 PR: devbasex/devbase#427（#415）・devbasex/devbase#432（`--no-env-resolution`）

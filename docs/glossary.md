@@ -27,10 +27,10 @@ bin/devbase の位置引数の解決とビルドの入口（docs/specifications/
 | 単体ビルド | — | $DEVBASE_ROOT/containers/<image> を devbase-<image>:latest として 1 つだけ作るビルド | — | — | `docs/specifications/cli-argument-resolution.md` |
 | プロジェクトとして数える名前 | — | projects/ の直下の名前のうち、同期・一覧・状態・機密の操作がプロジェクトとして扱うもの。空でなく . で始まらない名前（utils/names.py の counts_as_project） | — | — | `docs/specifications/cli-argument-resolution.md` |
 | 名前の形の説明 | — | 名前の形を利用者へ説明する文（utils/names.py の NAME_FORM_HINT） | — | — | `docs/specifications/cli-argument-resolution.md` |
-| 列挙の正本 | — | [name] と --context を受け付けるサブコマンドの集合を決める唯一の場所。argparse の _create_parser()（トップレベルの build の --context だけはラッパー） | — | — | — |
-| 一致テスト | — | 列挙の正本を走査して得た集合と、写し（ラッパーのリスト・補完・確定仕様の表）を比べ、差があれば写しの場所と差を挙げて落ちるテスト | — | — | — |
-| 写し | — | 列挙の正本から手で写した集合（ラッパーの 2 つのリスト・bash と zsh の補完・確定仕様の 2 つの表） | — | — | — |
-| 補完の例外 | — | 列挙の正本では [name] を取るが、補完がプロジェクト名を出さないと決めたコマンドの道と理由の組。一致テストが一覧として持つ | — | — | — |
+| 列挙の正本 | — | [name] と --context を受け付けるサブコマンドの集合を決める唯一の場所。argparse の _create_parser()（トップレベルの build の --context だけはラッパー） | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 一致テスト | — | 列挙の正本を走査して得た集合と、写し（ラッパーのリスト・補完・確定仕様の表）を比べ、差があれば写しの場所と差を挙げて落ちるテスト | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 写し | — | 列挙の正本から手で写した集合（ラッパーの 2 つのリスト・bash と zsh の補完・確定仕様の 2 つの表） | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 補完の例外 | — | 列挙の正本では [name] を取るが、補完がプロジェクト名を出さないと決めたコマンドの道と理由の組。一致テストが一覧として持つ | — | — | `docs/specifications/cli-argument-resolution.md` |
 
 ## Compose の構成（`compose`）
 
@@ -188,8 +188,8 @@ base の設定が派生イメージへ届く道筋（containers/*/Dockerfile）
 | 継承の連なり | — | プロジェクトの Dockerfile が FROM に取る devbase-* から、containers/<名前>/Dockerfile の FROM devbase-* を順にたどり、devbase-* を FROM に取らない段（今は devbase-base）で終わるイメージの並び | — | — | `docs/specifications/base-image-chain-build.md` |
 | 直の親イメージ | — | プロジェクトか containers/<名前> の Dockerfile の中で、最初に devbase-* を指す FROM の行が名指すイメージ。devbase-<名前>:<タグ> の形で、タグが無ければ latest を補う | — | — | `docs/specifications/base-image-chain-build.md` |
 | 直の親の読み方 | — | Dockerfile の 1 行から直の親イメージを読む規則。正規表現の値を lib/devbase/utils/dockerfile.py が正本として持ち、bin/devbase が同じ値を写す | — | — | `docs/specifications/base-image-chain-build.md` |
-| プロジェクトの Dockerfile | — | プロジェクトの compose の構成で、開発サービス名のサービスの build（context と dockerfile。文字列の形は context だけ）が指す Dockerfile。開発サービスが build を持たないときは無い | — | — | — |
-| Dockerfile の場所の決め方 | — | compose の構成からプロジェクトの Dockerfile のパスを決める規則。通常のビルドと --expires の判定が同じ規則を使う | — | — | — |
+| プロジェクトの Dockerfile | — | プロジェクトの compose の構成で、開発サービス名のサービスの build（context と dockerfile。文字列の形は context だけ）が指す Dockerfile。開発サービスが build を持たないときは無い | — | — | `docs/specifications/base-image-chain-build.md` |
+| Dockerfile の場所の決め方 | — | compose の構成からプロジェクトの Dockerfile のパスを決める規則。通常のビルドと --expires の判定が同じ規則を使う | — | — | `docs/specifications/base-image-chain-build.md` |
 
 ## コンテナの起動（`container-start`）
 
