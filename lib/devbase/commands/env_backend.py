@@ -25,6 +25,7 @@ from devbase.env.secret_store import MODE_ABSENT, SecretRef, SecretStore
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.utils import names
+from devbase.utils.text_width import column_width, pad
 
 logger = get_logger(__name__)
 
@@ -516,8 +517,12 @@ def cmd_env_backend_test(devbase_root: Path, group: Optional[str] = None) -> int
     if skipped:
         print(f"対象のグループと違う置き場のプロジェクトは調べていません: {', '.join(skipped)}")
     print(f"読めた参照: {len(results)} 件")
-    for ref, count in results:
-        print(f"  {store.display_label(ref):<28} {backend.display_path(ref):<40} {count} 変数")
+    rows = [(store.display_label(ref), backend.display_path(ref), count)
+            for ref, count in results]
+    label_width = column_width((label for label, _, _ in rows), 28)
+    path_width = column_width((path for _, path, _ in rows), 40)
+    for label, path, count in rows:
+        print(f"  {pad(label, label_width)} {pad(path, path_width)} {count} 変数")
     return 0
 
 
@@ -684,9 +689,10 @@ def _print_migration_result(plan: '_MigrationPlan', backup_dir) -> None:
         server = plan.server
         print("サーバ上の機密はそのまま残っています (devbase は消しません):")
         print(f"  接続先: {server.url}")
-        for unit, _ in plan.moves:
-            print(f"  {plan.server_store.display_label(unit.server_ref):<24} "
-                  f"{server.display_path(unit.server_ref)}")
+        labels = [plan.server_store.display_label(unit.server_ref) for unit, _ in plan.moves]
+        width = column_width(labels, 24)
+        for label, (unit, _) in zip(labels, plan.moves):
+            print(f"  {pad(label, width)} {server.display_path(unit.server_ref)}")
         _print_left_on_server(plan)
 
 
@@ -895,9 +901,15 @@ class _MigrationPlan:
 
 # 移行の計画の表示。計画 (_MigrationPlan) の状態は変えない。
 
-def _plan_heading(plan: _MigrationPlan, unit: _MoveUnit) -> str:
+def _heading_width(plan: _MigrationPlan) -> int:
+    """要約の見出しの列の幅。移行する参照と衝突する参照の両方の一覧でそろえる"""
+    units = [unit for unit, _ in plan.moves] + list(plan.conflicts)
+    return column_width((plan.server_store.display_label(u.server_ref) for u in units), 24)
+
+
+def _plan_heading(plan: _MigrationPlan, unit: _MoveUnit, width: int) -> str:
     """参照の見出し。グループ別の置き場ではサーバ上のパスを添える (値は出さない)"""
-    label = f"{plan.server_store.display_label(unit.server_ref):<24}"
+    label = pad(plan.server_store.display_label(unit.server_ref), width)
     if plan._grouped:
         label += f" {plan.server.display_path(unit.server_ref)}"
     return label
@@ -907,12 +919,13 @@ def _print_plan_summary(plan: _MigrationPlan) -> None:
     direction = ('age / 平文 → openbao' if plan.to == _bc.BACKEND_OPENBAO
                  else 'openbao → age')
     print(f"\n=== 移行する機密 ({direction}) ===")
+    width = _heading_width(plan)
     for unit, keys in plan.moves:
-        print(f"  {_plan_heading(plan, unit)} {len(keys)} 件: {', '.join(keys)}")
+        print(f"  {_plan_heading(plan, unit, width)} {len(keys)} 件: {', '.join(keys)}")
     if plan.conflicts:
         print("\n移行先に同じキーがあります:")
         for unit, keys in plan.conflicts.items():
-            print(f"  {_plan_heading(plan, unit)} {', '.join(keys)}")
+            print(f"  {_plan_heading(plan, unit, width)} {', '.join(keys)}")
     _print_left_on_server(plan)
 
 
@@ -923,6 +936,7 @@ def _print_left_on_server(plan: _MigrationPlan) -> None:
     settings = plan.server_store.config.openbao
     print("\n次のグループの共通の参照は age へ移さず、サーバ上に残します "
           "(ファイル backend の共通は 1 つだけのため。読み取りの要求も出していません):")
-    for ref in plan.left_on_server:
-        print(f"  グループ {settings.display_group(ref.group):<16} "
-              f"{plan.server.display_path(ref)}")
+    groups = [settings.display_group(ref.group) for ref in plan.left_on_server]
+    width = column_width(groups, 16)
+    for group, ref in zip(groups, plan.left_on_server):
+        print(f"  グループ {pad(group, width)} {plan.server.display_path(ref)}")

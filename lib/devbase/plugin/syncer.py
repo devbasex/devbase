@@ -55,10 +55,11 @@ def discover_projects(plugin_dir: Path) -> list[str]:
     return [d.name for d in names.project_dirs(plugin_dir / 'projects')]
 
 
-def _extract_owner(plugin: InstalledPlugin) -> str:
+def _collision_suffix(plugin: InstalledPlugin) -> str:
     """Extract a unique suffix identifier from a plugin for collision resolution.
 
-    For repos/-based plugins: full owner--repo dirname from repos/<owner>--<repo>/...
+    For repos/-based plugins: full dirname from repos/<host>--<owner>--<repo>/...
+      (e.g. github.com--example-org--devbase-plugins)
       This ensures uniqueness when the same owner has multiple repos.
     For --link plugins: basename of the source path
     """
@@ -67,7 +68,7 @@ def _extract_owner(plugin: InstalledPlugin) -> str:
 
     parts = Path(plugin.path).parts
     if len(parts) >= 2 and parts[0] == 'repos':
-        # Return full dir_name (owner--repo) to avoid collision
+        # Return full dir_name (host--owner--repo) to avoid collision
         # between repos from the same owner
         return parts[1]
     return plugin.name
@@ -152,8 +153,8 @@ def _link_loser_projects(
     """
     created = 0
     for loser_plugin, _ in losers:
-        owner = _extract_owner(loser_plugin)
-        suffix_name = f"{proj_name}.{owner}"
+        suffix = _collision_suffix(loser_plugin)
+        suffix_name = f"{proj_name}.{suffix}"
 
         if suffix_name in real_projects:
             if verbose:
@@ -175,7 +176,7 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
     """Synchronize project symlinks from all installed plugins.
 
     Creates symlinks in projects/ pointing to plugin directories:
-    - repos/-based plugins: projects/<proj> -> ../repos/<owner>--<repo>/<plugin>/projects/<proj>
+    - repos/-based plugins: projects/<proj> -> ../repos/<host>--<owner>--<repo>/<plugin>/projects/<proj>
     - --link plugins: projects/<proj> -> ../plugins/<name>/projects/<proj>
 
     On name collision, the winner (highest priority) gets the bare name,
@@ -229,7 +230,7 @@ def sync_projects(registry: PluginRegistry, verbose: bool = True) -> int:
             for loser_plugin, _ in losers:
                 logger.info(
                     "  Also available as: projects/%s.%s",
-                    proj_name, _extract_owner(loser_plugin),
+                    proj_name, _collision_suffix(loser_plugin),
                 )
 
         _warn_unusable_name(proj_name, winner_plugin.name)

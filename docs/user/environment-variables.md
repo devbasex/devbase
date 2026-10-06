@@ -380,7 +380,7 @@ Warning: 機密の置き場（グローバル）にある DEVBASE_ACCOUNT_GROUP 
 | `DEVBASE_OPEN_INDEX` | scale 時に開く dev インスタンス番号（既定: `1`） |
 | `DEVBASE_EDITOR_SSH_HOST` | Remote-SSH 跨ホスト構成での ssh-remote ホスト名（例 `mac2`）。**通常は `~/.vscode-server` から自動検出**され不要。検出が外れる場合のみ明示。**空文字（`DEVBASE_EDITOR_SSH_HOST=`）はネストのオプトアウト**で、フラット URI を強制する。下記「リモート Docker」参照 |
 | `DEVBASE_EDITOR_DOCKER_CONTEXT` | attach に使う docker context を手で決めたいときだけ明示する。未設定なら devbase が解決した context（`--context` / `DEVBASE_DOCKER_CONTEXT` / `project.local.yml`）、それも無ければ跨ホスト時にホストの `docker context show` |
-| `DEVBASE_DOCKER_CONTEXT` | `devbase up/down/ps/logs/login/scale/build/rebuild/open` が向ける docker context。`project.local.yml` の `docker.context` より優先し、CLI `--context` に負ける。グローバル `.env` に書くと全プロジェクトが同じホストへ向くため、通常は `project.local.yml` に書く。下記「リモート Docker」参照 |
+| `DEVBASE_DOCKER_CONTEXT` | `--context` を受け付けるコマンド（[一覧](../specifications/cli-argument-resolution.md#--context-を受け付けるサブコマンド)）が向ける docker context。`project.local.yml` の `docker.context` より優先し、CLI `--context` に負ける。グローバル `.env` に書くと全プロジェクトが同じホストへ向くため、通常は `project.local.yml` に書く。下記「リモート Docker」参照 |
 | `DEVBASE_WINDOW_TITLE` | attach 先 VS Code の `window.title` テンプレート。`{container}` が実コンテナ名（例 `myapp-dev-1`）に置換される。既定は `{container}${separator}${dirty}${activeEditorShort}`。`0` / `false` / `off` / 空文字で無効化。下記「ウィンドウタイトル」参照 |
 
 都度の上書きは CLI フラグで行います: `devbase up --open` / `--no-open` / `--open-index N`（env より優先）。
@@ -434,8 +434,8 @@ DEVBASE_WINDOW_TITLE=0
 #### リモート Docker（別ホストの daemon にコンテナを立てる）
 
 `devbase up` は既定で **コマンドを実行した環境の Docker** にコンテナを立てます。
-`projects/<name>/project.local.yml` に docker context の名前を書くと、そのプロジェクトの
-`up` / `down` / `ps` / `logs` / `login` / `scale` / `build` / `rebuild` / `open` を
+`projects/<name>/project.local.yml` に docker context の名前を書くと、そのプロジェクトで
+`--context` を受け付けるコマンド（[一覧](../specifications/cli-argument-resolution.md#--context-を受け付けるサブコマンド)）を
 **別ホストの daemon** へ向けられます。用途は、CUDA が使える Windows（WSL2）の GPU、負荷分散のための 3 台目の PC、
 AWS EC2 の計算資源などです。
 

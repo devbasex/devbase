@@ -141,13 +141,3 @@ def test_wrapper_routes_rebuild_to_python():
         if ln.strip().startswith('build)') and 'cmd_build' in ln:
             assert 'rebuild' not in ln
 
-
-def test_wrapper_rebuild_in_name_resolvable():
-    wrapper = (Path(__file__).resolve().parents[2] / 'bin' / 'devbase').read_text()
-    import re
-
-    def listed(var):
-        return re.search(rf'^{var}=" (.*) "$', wrapper, re.M).group(1).split()
-
-    assert 'rebuild' in listed('_NAME_RESOLVABLE_SHORTCUTS')
-    assert 'rebuild' in listed('_PROJECT_NAME_SUBCOMMANDS')

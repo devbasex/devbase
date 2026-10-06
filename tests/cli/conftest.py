@@ -108,3 +108,108 @@ def python_args(result: subprocess.CompletedProcess) -> str | None:
         return None
     head, sep, tail = (uv + " ").partition(" devbase.cli ")
     return tail.rstrip() if sep else None
+
+
+# ---------------------------------------------------------------------------
+# 場所を出す入口を本物で動かすハーネス (#415)
+# ---------------------------------------------------------------------------
+
+_PASS_UV = """\
+#!/bin/bash
+# python -m devbase.commands.project_dockerfile の起動だけを本物の Python へ渡す
+case " $* " in
+    *" -m devbase.commands.project_dockerfile "*)
+        while [ "$#" -gt 0 ] && [ "$1" != "python" ]; do shift; done
+        shift
+        PYTHONPATH="__LIB__${PYTHONPATH:+:$PYTHONPATH}" exec "__PYTHON__" "$@"
+        ;;
+esac
+echo "PWD:$PWD"
+echo "UV:$*"
+echo "MARKER:${MARKER:-<unset>}"
+# UV_FAIL_ON に含む語の起動だけを失敗させる (例: "image inspect" で devbase-base が無い形)
+if [ -n "${UV_FAIL_ON:-}" ] && [[ "$*" == *"$UV_FAIL_ON"* ]]; then
+    exit 1
+fi
+exit 0
+"""
+
+_FAKE_DOCKER = """\
+#!/bin/bash
+# 起動した引数を記録する。compose config には置いた構成を返す (理由があれば標準エラーへ出して 1)
+echo "$*" >> "__ROOT__/docker.log"
+echo "${DOCKER_CONTEXT-<unset>}" >> "__ROOT__/docker_context.log"
+case "$*" in
+    "compose config --no-env-resolution --format json")
+        if [ -f "__ROOT__/compose_error.txt" ]; then
+            cat "__ROOT__/compose_error.txt" >&2
+            exit 1
+        fi
+        cat "__ROOT__/compose_config.json"
+        exit 0
+        ;;
+esac
+exit 0
+"""
+
+
+class ComposeWrapperRoot(WrapperRoot):
+    """`WrapperRoot` に、構成の JSON を返す偽の `docker` と入口を本物で動かす偽の `uv` を足したもの。"""
+
+    def compose_config(self, services: dict) -> None:
+        """偽の `docker compose config --format json` が返す構成を置く。"""
+        import json
+        (self.root / "compose_config.json").write_text(json.dumps({"services": services}))
+
+    def compose_error(self, text: str) -> None:
+        """偽の `docker compose config` が理由を出して 1 で終わるようにする。"""
+        (self.root / "compose_error.txt").write_text(text)
+
+    def docker_calls(self) -> list[str]:
+        """偽の `docker` が受けた引数の行 (入口が起動した `compose config` だけが並ぶ)。"""
+        log = self.root / "docker.log"
+        return log.read_text().splitlines() if log.exists() else []
+
+    def docker_contexts(self) -> list[str]:
+        """偽の `docker` が起動したときの `DOCKER_CONTEXT` (無ければ `<unset>`)。"""
+        log = self.root / "docker_context.log"
+        return log.read_text().splitlines() if log.exists() else []
+
+    def run(self, args, cwd: Path | None = None) -> subprocess.CompletedProcess:
+        env = {k: v for k, v in os.environ.items() if k != "MARKER"}
+        env["PATH"] = f"{self.root / 'fakebin'}{os.pathsep}{env.get('PATH', '')}"
+        # 入口が実環境の機密の置き場・docker の接続先を見ないようにする
+        env["HOME"] = str(self.root / "home")
+        for key in ("DOCKER_CONTEXT", "DOCKER_HOST", "DEVBASE_DOCKER_CONTEXT", "COMPOSE_FILE",
+                    "DEV_SERVICE_NAME", "UV_FAIL_ON"):
+            env.pop(key, None)
+        env.update(self.extra_env)
+        return subprocess.run(
+            ["bash", str(self.root / "bin" / "devbase"), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(cwd or self.work),
+            check=False,
+        )
+
+    __call__ = run
+
+
+@pytest.fixture
+def compose_wrapper(exec_wrapper) -> ComposeWrapperRoot:
+    """`exec_wrapper` の tmp の `DEVBASE_ROOT` に、入口を本物で動かす偽の `uv` と偽の `docker` を置く。"""
+    import sys
+
+    root = exec_wrapper.root
+    (root / "home").mkdir()
+    fakebin = root / "fakebin"
+    uv = fakebin / "uv"
+    uv.write_text(_PASS_UV.replace("__LIB__", str(REPO_ROOT / "lib")).replace("__PYTHON__", sys.executable))
+    uv.chmod(0o755)
+    docker = fakebin / "docker"
+    docker.write_text(_FAKE_DOCKER.replace("__ROOT__", str(root)))
+    docker.chmod(0o755)
+    wrapper = ComposeWrapperRoot(root)
+    wrapper.extra_env = {}
+    return wrapper

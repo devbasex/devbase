@@ -75,6 +75,40 @@ graph TD
 
 ## 仕様
 
+### `[name]` と `--context` を受け付けるサブコマンド
+
+どのサブコマンドが `[name]`（プロジェクト名）と `--context NAME` を受け付けるかの正本は argparse
+（`lib/devbase/cli.py` の `_create_parser()`）である。ほかの文書は列挙を持たず、この節の表へリンクする。
+`ct` は `container` の別名で、受け付けるものは同じである。
+
+#### `[name]` を受け付けるサブコマンド
+
+| 入口 | サブコマンド |
+| --- | --- |
+| `devbase <sub>` | `up` `down` `ps` `scale` `rebuild` `open` |
+| `devbase project <sub>` | `up` `down` `ps` `logs` `scale` `rebuild` `open` `post-start` |
+| `devbase project profile <sub>` | `up` `down` `list` |
+
+`container` / `ct` は `[name]` を受け付けない（PLAN61 決定 10）。`plugin` / `snapshot` / `env backend use`
+の `name` はプラグイン・スナップショット・backend の名前で、この表に入れない。ラッパーが名前を解決する
+対象（[概要](#概要)の表）は、この表から次の規則で決まる。`_PROJECT_NAME_SUBCOMMANDS` は `project` の
+直下の行（入れ子の `profile` は 3 番目の引数が `up` / `down` / `list` になるため除く）。
+`_NAME_RESOLVABLE_SHORTCUTS` は `cli.SHORTCUTS` のキーと `build`（`login` は parser が `[name]` を
+持たないが、ラッパーの name 解決だけが名前の指定の手段になる）。
+
+#### `--context` を受け付けるサブコマンド
+
+| 入口 | サブコマンド |
+| --- | --- |
+| `devbase <sub>` | `up` `down` `ps` `login` `scale` `build` `rebuild` `open` |
+| `devbase project <sub>` | `up` `down` `ps` `logs` `login` `scale` `build` `rebuild` `open` `post-start` |
+| `devbase project profile <sub>` | `up` `down` `list` |
+| `devbase container <sub>` | `up` `down` `ps` `logs` `login` `scale` `build` `rebuild` `open` |
+| `devbase container profile <sub>` | `up` `down` `list` |
+| `devbase env <sub>` | `exec` `token` |
+
+トップレベルの `build` だけは argparse に parser が無く、シェルの `cmd_build` が `--context` を受け付ける。
+
 ### 名前の形
 
 | 項目 | 内容 |
@@ -447,8 +481,10 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
   広がるため、受理と拒否を `tests/snapshot/test_manager_name.py` で固定している
 - shell 側は macOS 既定の bash 3.2 で動くこと。`[[ =~ ]]` の右辺は変数で渡す（引用した右辺は
   文字列として比べられる）。連想配列・`${var,,}`・`mapfile` を使わない
-- `cli.py` でサブコマンドを足し引きしたら、`bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` /
-  `_NAME_RESOLVABLE_SHORTCUTS` も合わせる（両側にコメントの対がある）
+- `cli.py` で `[name]` か `--context` を取るサブコマンドを足し引きすると、
+  `tests/cli/test_name_context_consistency.py` が、写しを取り残した場所（`bin/devbase` の 2 つの
+  リスト・補完 2 ファイル・[この仕様の表](#name-と---context-を受け付けるサブコマンド)）と、欠けた・
+  余分なサブコマンドを挙げて落ちる。挙がった場所を直す
 
 ## テスト観点
 
@@ -468,6 +504,10 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 - 書庫の名前の規則が末尾の改行を持つ名前を export でも import でも通さないこと（`tests/env/test_bundle.py`）
 - shell の `_SINGLE_SEGMENT_NAME_RE` が Python の `SINGLE_SEGMENT_NAME_PATTERN` と一致すること
   （`tests/cli/test_project_name_resolution.py` の同期テスト）
+- `[name]` と `--context` を受け付けるサブコマンドの集合を argparse の走査（入れ子の `profile` を
+  含む）で得て、`bin/devbase` の 2 つのリスト・bash の補完（実行する）・zsh の補完（内容を読む）・
+  この仕様の 2 つの表と一致すること。補完がプロジェクト名を出さない `project profile` の `[name]` は、
+  理由つきの例外の一覧で外す（`tests/cli/test_name_context_consistency.py`）
 - 形に合わない名前で、トップレベルの 7 コマンドと `project` の 7 サブコマンドが `projects/` の外へ
   `cd` せず、そこの `env` を読まないこと。形に合う実在の名前は `cd` して引数から取り除かれること
   （`tests/cli/test_project_name_resolution.py`）

@@ -5,10 +5,9 @@ devbase のコンテナ管理機能について、ライフサイクル、並行
 > **コマンド体系について:** コンテナ操作は `devbase project <sub>` グループ（および
 > トップレベルショートカット `devbase up` 等）で行います。旧 `devbase container <sub>` は
 > 非推奨となり、`project` へのエイリアスとして警告付きで当面動作します。`project` では
-> `up` / `down` / `ps` / `logs` / `scale` / `rebuild` / `open` / `post-start` に `[name]` を指定することで
-> **任意のディレクトリから** 対象プロジェクトを操作できます。`profile up` / `profile down` /
-> `profile list` も `[name]` を取りますが、ラッパーでは位置で解決できず Python 側が解決する
-> 点が違います。プロジェクト一覧は `devbase project list` を参照
+> `[name]` を指定することで **任意のディレクトリから** 対象プロジェクトを操作できます。`[name]` を
+> 取るサブコマンドは[位置引数の解決の「`[name]` を受け付けるサブコマンド」](../specifications/cli-argument-resolution.md#name-を受け付けるサブコマンド)
+> の表を参照してください。プロジェクト一覧は `devbase project list` を参照
 > してください。詳細は [CLI リファレンス: project グループ](cli-reference/02-project.md) を参照。
 
 ## コンテナライフサイクル
@@ -388,9 +387,9 @@ graph TD
     B --> C[general]
     B --> G[go]
     B --> J[browser]
-    C --> D[php]
-    C --> I[php85]
-    C --> E[latex]
+    B --> D[php]
+    B --> I[php85]
+    B --> E[latex]
     A --> H[snapshot]
 
     style A fill:#f0f0f0
@@ -404,14 +403,20 @@ graph TD
 
 | イメージ | ベース | 主な内容 | 用途 |
 |---------|-------|---------|------|
-| **base** | Ubuntu 26.04 | Docker CLI、Python 3、日本語フォント、PDF / OOXML の道具、shellcheck | 最小限の開発環境 |
-| **general** | base | AWS CLI、gcloud、Node.js 20、AI CLI | 汎用開発環境 |
-| **php** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
-| **php85** | general | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
-| **latex** | general | LaTeX | 文書作成 |
+| **base** | Ubuntu 26.04 | Docker CLI、Python 3、AWS CLI、gcloud、Node.js（LTS）、AI CLI、日本語フォント、PDF / OOXML の道具、shellcheck | 汎用開発環境の土台 |
+| **general** | base | base のまま（道具を足さない） | 汎用開発環境 |
+| **php** | base | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
+| **php85** | base | PHP 8.5、Composer、MySQL Shell | PHP 8.5 系 開発 |
+| **latex** | base | LaTeX | 文書作成 |
 | **go** | base | Go 開発環境 | Go 開発 |
 | **browser** | base | Playwright の Chromium とその依存パッケージ、Noto CJK の追加の太さ（Thin〜Black） | ブラウザの操作、HTML の PDF・スクリーンショット |
 | **snapshot** | Ubuntu 26.04 | zstd のみ（約 80MB） | スナップショット専用 |
+
+派生イメージはどれも base を継ぐため、AWS CLI・gcloud・Node.js・AI CLI はどの派生イメージでも
+使えます。terraform はどの標準イメージにも入っていません（入れ方は
+[ブラウザ・追加の太さのフォント・terraform を使う](#ブラウザ追加の太さのフォントterraform-を使う)）。
+`containers/` にはこのほか、特定のプロジェクト用のイメージ（`bi-tools` / `trygroup`）があり、
+どちらも base を継ぎます。
 
 ### 文字の描画と、文書を扱う道具（base 以降）
 
@@ -556,7 +561,7 @@ bash-language-server などの言語サーバは Bash の診断を `shellcheck` 
 
 ### AI CLI エイリアス
 
-general イメージ以降のコンテナ内では、以下の AI CLI ツールがエイリアスとして利用可能です。
+base イメージ以降（snapshot を除くすべての標準イメージ）のコンテナ内では、以下の AI CLI ツールがエイリアスとして利用可能です。
 
 | エイリアス | ツール | モード | 説明 |
 |-----------|-------|--------|------|

@@ -1,7 +1,12 @@
-"""直の親の読み方 (#404)。
+"""プロジェクトの Dockerfile の場所の決め方 (#415) と直の親の読み方 (#404)。
 
-Dockerfile の本文から、最初に ``devbase-*`` を指す ``FROM`` の行が名指すイメージ (直の親イメージ) を読む
-規則を 1 か所で決める。``--expires`` の判定 (``container._get_base_image_ref``) がここを使う。
+場所の決め方 (:func:`project_dockerfile_path`) は、compose の構成の開発サービスの ``build`` から
+プロジェクトの Dockerfile のパスを決める規則を 1 か所で持つ。通常のビルド (``bin/devbase`` が
+``devbase.commands.project_dockerfile`` を通して呼ぶ) と ``--expires`` の判定
+(``container._get_base_image_ref``) の両方がここを使う。
+
+直の親の読み方は、Dockerfile の本文から、最初に ``devbase-*`` を指す ``FROM`` の行が名指すイメージ
+(直の親イメージ) を読む規則を 1 か所で決める。``--expires`` の判定がここを使う。
 
 同期注意: ``bin/devbase`` の ``_DEVBASE_FROM_RE`` は同じ正規表現を文字列で持つ (通常のビルドの
 ``read_devbase_parent`` が使う。Bash から Python を呼ぶと偽の ``uv`` のテストで連なりが決まらず、
@@ -18,6 +23,7 @@ Dockerfile の本文から、最初に ``devbase-*`` を指す ``FROM`` の行�
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Optional
 
 #: 直の親の読み方の正本。空白はスペースとタブ (実際のタブ文字) だけを数える。
@@ -41,3 +47,24 @@ def devbase_parent_ref(text: str) -> Optional[str]:
                 ref += ':latest'
             return ref
     return None
+
+
+def project_dockerfile_path(dev_service: dict) -> Optional[Path]:
+    """開発サービスの定義 (compose の構成の 1 サービス) からプロジェクトの Dockerfile のパスを返す。
+
+    ``build`` が無い・空なら None (プロジェクトの Dockerfile は無い)。文字列の形は ``context`` とし、
+    ``dockerfile`` の既定は ``Dockerfile``、``context`` の既定は ``.``。``dockerfile`` が絶対パスなら
+    そのまま返し、相対なら ``context`` に連結する。ファイルを読まず、副作用を持たない。
+    """
+    build = dev_service.get('build')
+    if not build:
+        return None
+    if isinstance(build, str):
+        context, dockerfile = build, 'Dockerfile'
+    else:
+        context = build.get('context', '.')
+        dockerfile = build.get('dockerfile', 'Dockerfile')
+    path = Path(dockerfile)
+    if path.is_absolute():
+        return path
+    return Path(context) / dockerfile

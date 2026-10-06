@@ -196,7 +196,9 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
 | `devbase project profile list [name]` | プロジェクト名（省略可） | 表を標準出力へ出して 0 | 下表 |
 | `devbase container profile up <profile>` / `down <profile>` / `list`（`ct` も同じ） | プロファイル名のみ | `project profile` と同じ | 同じ |
 
-どれも `--context NAME` を受け付ける（[別ホストの Docker への dev コンテナ起動](remote-docker-context.md)）。
+`--context NAME` を受け付けるものは
+[位置引数の解決の「`--context` を受け付けるサブコマンド」](cli-argument-resolution.md#--context-を受け付けるサブコマンド)の表のとおりである
+（動作は[別ホストの Docker への dev コンテナ起動](remote-docker-context.md)）。
 
 | 状態 | `up` / `down` | `list` |
 | --- | --- | --- |
@@ -221,7 +223,8 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
   `cli._dispatch` が `project profile list` を `project list`（プロジェクト一覧）へ流すためである
 - 前方一致の省略は `project p` / `container p` を従来どおり `ps` に解決し（`SUBCMD_PREFIX_PREFERENCES`）、
   `project pr` は `profile` に解決する
-- `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS`（`up down ps logs scale rebuild open post-start`）に `profile` は
+- `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS`（`project` の直下で `[name]` を取るもの。
+  [位置引数の解決の「`[name]` を受け付けるサブコマンド」](cli-argument-resolution.md#name-を受け付けるサブコマンド)）に `profile` は
   入れない。wrapper は 3 番目の引数をプロジェクト名として解決するが、`profile` ではそこに
   `up` / `down` / `list` が来るため、同名のプロジェクトが実在すると誤って移動する。名前の解決は
   Python 側の `_dispatch_lifecycle` が行う

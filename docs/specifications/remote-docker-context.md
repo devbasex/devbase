@@ -3,8 +3,8 @@
 ## 概要
 
 devbase は、プロジェクトごとの個人設定 `projects/<name>/project.local.yml` に docker context の
-名前を書くと、そのプロジェクトの `up` / `down` / `ps` / `logs` / `login` / `scale` / `build` /
-`rebuild` / `open` を別ホストの docker daemon へ向ける。compose クライアントと機密の復号は手元で行い、
+名前を書くと、そのプロジェクトで `--context` を受け付けるコマンド（[一覧](cli-argument-resolution.md#--context-を受け付けるサブコマンド)）を
+別ホストの docker daemon へ向ける。compose クライアントと機密の復号は手元で行い、
 daemon だけがリモートにある。リモートに要るのは docker CLI・dockerd・sshd で、devbase・
 `projects/`・機密鍵をリモートへ複製しない。`devbase up` が開く VS Code は、attach URI の
 `settings.context` でそのホストのコンテナへ接続する。
@@ -39,11 +39,9 @@ daemon だけがリモートにある。リモートに要るのは docker CLI�
 `docker.context` > 未指定** である。環境変数の空文字（空白のみを含む）は未指定として扱う。
 この段階では docker を呼ばない。
 
-`--context` は `project` / `container` 配下の `up` / `down` / `ps` / `logs` / `login` / `scale` /
-`build` / `rebuild` / `open` / `profile up` / `profile down` / `profile list`、トップレベルの
-ショートカット `up` / `down` / `ps` / `login` / `scale` / `build` / `rebuild` / `open`、および
-`env exec` / `env token` が受け付ける。空文字と空白のみは終了コード 2 で拒む
-（Python の parser と `bin/devbase` の両方）。
+`--context` を受け付けるサブコマンドは
+[位置引数の解決の「`--context` を受け付けるサブコマンド」](cli-argument-resolution.md#--context-を受け付けるサブコマンド)の表のとおりである。
+空文字と空白のみは終了コード 2 で拒む（Python の parser と `bin/devbase` の両方）。
 
 ### リモート扱いの判定
 

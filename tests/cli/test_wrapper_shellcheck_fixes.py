@@ -47,10 +47,10 @@ def test_build_without_devbase_base_image_reaches_project_build(exec_wrapper):
     assert any(line.endswith("docker compose build dev") for line in _uv_lines(result)), result.stdout
 
 
-def test_build_resolves_dockerfile_from_compose_context(exec_wrapper):
-    """compose.yml の context と dockerfile から Dockerfile を解き、devbase-* のベースを建てる。"""
-    exec_wrapper.container("general")
-    project = exec_wrapper.work / "myproj"
+def test_build_resolves_dockerfile_from_compose_context(compose_wrapper):
+    """compose の構成の context と dockerfile から Dockerfile を解き、devbase-* のベースを建てる。"""
+    compose_wrapper.container("general")
+    project = compose_wrapper.work / "myproj"
     project.mkdir()
     (project / "compose.yml").write_text(
         "services:\n"
@@ -59,9 +59,11 @@ def test_build_resolves_dockerfile_from_compose_context(exec_wrapper):
         "      context: .\n"
         "      dockerfile: Dockerfile.dev\n"
     )
+    compose_wrapper.compose_config(
+        {"dev": {"build": {"context": str(project), "dockerfile": "Dockerfile.dev"}}})
     (project / "Dockerfile.dev").write_text("FROM devbase-general:latest\n")
 
-    result = exec_wrapper.run(["build"], cwd=project)
+    result = compose_wrapper.run(["build"], cwd=project)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Project uses devbase-general" in result.stdout
@@ -70,9 +72,9 @@ def test_build_resolves_dockerfile_from_compose_context(exec_wrapper):
     assert any(line.endswith("docker compose build dev") for line in uv), result.stdout
 
 
-def test_build_with_compose_build_but_no_dockerfile_key(exec_wrapper):
+def test_build_with_compose_build_but_no_dockerfile_key(compose_wrapper):
     """`build:` に `dockerfile:` が無くても止まらずプロジェクトのビルドへ進む。"""
-    project = exec_wrapper.work / "myproj"
+    project = compose_wrapper.work / "myproj"
     project.mkdir()
     (project / "compose.yml").write_text(
         "services:\n"
@@ -80,18 +82,18 @@ def test_build_with_compose_build_but_no_dockerfile_key(exec_wrapper):
         "    build:\n"
         "      context: .\n"
     )
+    compose_wrapper.compose_config({"dev": {"build": {"context": str(project)}}})
     (project / "Dockerfile").write_text("FROM ubuntu:26.04\n")
 
-    result = exec_wrapper.run(["build"], cwd=project)
+    result = compose_wrapper.run(["build"], cwd=project)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert any(line.endswith("docker compose build dev") for line in _uv_lines(result)), result.stdout
 
 
-def test_build_stops_when_context_expansion_fails(exec_wrapper, monkeypatch):
-    """context の展開が失敗したら (`${VAR:?}` の未設定)、置換の中でも止まりビルドへ進まない。"""
-    monkeypatch.delenv("BUILD_CONTEXT", raising=False)
-    project = exec_wrapper.work / "myproj"
+def test_build_stops_when_context_expansion_fails(compose_wrapper):
+    """構成を読めないとき (`${VAR:?}` の未設定)、何も起動せず止まりビルドへ進まない。"""
+    project = compose_wrapper.work / "myproj"
     project.mkdir()
     (project / "compose.yml").write_text(
         "services:\n"
@@ -99,9 +101,10 @@ def test_build_stops_when_context_expansion_fails(exec_wrapper, monkeypatch):
         "    build:\n"
         "      context: ${BUILD_CONTEXT:?required}\n"
     )
+    compose_wrapper.compose_error("required variable BUILD_CONTEXT is missing a value: required\n")
     (project / "Dockerfile").write_text("FROM ubuntu:26.04\n")
 
-    result = exec_wrapper.run(["build"], cwd=project)
+    result = compose_wrapper.run(["build"], cwd=project)
 
     assert result.returncode != 0, result.stdout + result.stderr
     assert "BUILD_CONTEXT" in result.stderr

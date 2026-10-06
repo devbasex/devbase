@@ -91,6 +91,30 @@ def test_backend_test_only_reads_the_current_group_and_labels_skipped_projects(
         assert path in rows[0]
 
 
+def test_backend_test_aligns_paths_by_display_width(aliased, openbao, monkeypatch, capsys):
+    """全角の見出しと 28 桁を超える見出しがあっても、パスの開始の桁がそろう (#244)"""
+    from devbase.utils.text_width import display_width
+
+    (aliased / 'projects' / 'proj-b-long-service-name').mkdir()
+    (aliased / 'projects' / 'proj-b-long-service-name' / 'env').write_text(
+        'DEVBASE_ACCOUNT_GROUP=umbrella\n')
+    openbao.put('team/acme/global', {'A': '1'})
+    openbao.put('users/member01/acme/global', {'B': '2'})
+    openbao.put('team/acme/projects/web', {'C': '3'})
+    openbao.put('users/member01/acme/projects/proj-b-long-service-name', {'D': '4'})
+    at(monkeypatch, aliased)
+
+    assert env_backend.cmd_env_backend_test(aliased, group='umbrella') == 0
+
+    read = capsys.readouterr().out.split('読めた参照:', 1)[1]
+    rows = [line for line in read.splitlines() if 'devbase/' in line]
+    assert len(rows) >= 3
+    starts = {display_width(row[:row.index('devbase/')]) for row in rows}
+    assert len(starts) == 1, rows
+    counts = {display_width(row[:row.rindex(' 変数')].rsplit(' ', 1)[0]) for row in rows}
+    assert len(counts) == 1, rows
+
+
 # ---------------------------------------------------------------------------
 # 受け入れ条件 2: env list
 # ---------------------------------------------------------------------------
@@ -141,6 +165,27 @@ def test_migration_plan_listing_shows_both_names_for_project(aliased, openbao, c
     out = capsys.readouterr().out
     assert f"プロジェクト 'web'（グループ {BOTH}）" in out
     assert 'devbase/team/acme/projects/web' in out
+
+
+def test_migration_plan_and_completion_listings_align_paths_by_display_width(aliased, openbao,
+                                                                            capsys):
+    """移行の要約と ``--to age`` の完了後の一覧で、パスの開始の桁がそろう (#244)"""
+    from devbase.utils.text_width import display_width
+
+    openbao.put('team/acme/global', {'A': '1'})
+    openbao.put('team/acme/projects/web', {'B': '2'})
+
+    assert env_backend.cmd_env_backend_migrate(aliased, to='age', assume_yes=True,
+                                               group='umbrella') == 0
+
+    out = capsys.readouterr().out
+    plan, done = out.split('=== 完了 ===', 1)
+    for part in (plan, done):
+        rows = [line for line in part.splitlines()
+                if 'devbase/team/acme/' in line and '（グループ' in line]
+        assert len(rows) == 2, part
+        starts = {display_width(row[:row.index('devbase/')]) for row in rows}
+        assert len(starts) == 1, rows
 
 
 @pytest.fixture

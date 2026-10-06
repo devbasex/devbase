@@ -80,6 +80,15 @@
   `containers/<名前>/` が無いときと、たどりが循環するときは、何も建てずに理由を出して止まります。
   あわせて、`FROM --platform=...` と小文字の `from` の Dockerfile でも、通常のビルドが直の親イメージを
   先に建てます（`--expires` の判定と同じ読み方になりました）。
+- **`devbase build` が、開発サービスの Dockerfile から継承の連なりを決めるようにしました（#415）。**
+  これまでの通常のビルドは `compose.yml` の最初の `build:` から Dockerfile を決めていたため、開発サービスより
+  前に `build:` を持つ別のサービスがあるプロジェクトや、`build: ./dev` の形で書いたプロジェクトでは、開発サービスが
+  継ぐイメージと違う段を建てていました。`docker compose build` と同じ構成（`docker compose config`）の
+  開発サービス（`DEV_SERVICE_NAME`、既定 `dev`）の `build` から Dockerfile を決め、`--expires` の判定と
+  同じ Dockerfile を読みます。開発サービスが `image:` だけのときは Dockerfile を読まず、`devbase-*` を継がない
+  プロジェクトと同じに扱います。compose の構成を読めないとき（必須の環境変数が無い など）は、compose の理由と
+  `✗ Failed to read the compose configuration; no image was built` を出し、どのイメージも建てずに止まります。
+  開発サービスの `build:` が最初の `build:` で辞書の形のプロジェクトでは、建てる段は変わりません。
 - **スナップショットの差分バックアップが、毎回ボリューム全体を控えていたのを直しました。**
   差分が前回からの変更分だけになり、1 回の時間とディスクの使い方が大きく減ります（手元の測定で
   フル 2.2GB・40 秒に対し、差分 1.5MB・2 秒）。直した後の最初の `devbase up` では、既存の世代へ

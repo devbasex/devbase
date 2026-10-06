@@ -15,13 +15,13 @@ Esc は 1 つ前へ戻り (キーの一覧の Esc は env メニューへ)、Ctr
 from __future__ import annotations
 
 import re
-import unicodedata
 from pathlib import Path
 
 from devbase.env import keys
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.tui import flow, menu
+from devbase.utils.text_width import pad
 
 logger = get_logger(__name__)
 
@@ -90,20 +90,12 @@ def _ask_value(key: str) -> str:
 # 表示
 # ---------------------------------------------------------------------------
 
-def _width(text: str) -> int:
-    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
-
-
-def _pad(text: str, width: int) -> str:
-    return text + " " * max(0, width - _width(text))
-
-
 def row_title(row, *, grouped: bool) -> str:
     """一覧の 1 行 (キー・持ち主・適用範囲・グループ・伏せ字の値)"""
-    key = row.key if len(row.key) >= KEY_WIDTH else row.key.ljust(KEY_WIDTH)
-    parts = [key, _pad(row.owner_label, 6), _pad(row.scope_label, 18)]
+    key = row.key.ljust(KEY_WIDTH)
+    parts = [key, pad(row.owner_label, 6), pad(row.scope_label, 18)]
     if grouped:
-        parts.append(_pad(row.group_label or "", 10))
+        parts.append(pad(row.group_label or "", 10))
     parts.append(MASK)
     return " ".join(parts)
 
