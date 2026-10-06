@@ -9,8 +9,8 @@
 
 | 入口 | 名前の位置 | 解決するもの |
 | --- | --- | --- |
-| `devbase <sub> <name>`（ショートカット） | 2 番目 | `up` `down` `ps` `scale` `login` `build` `rebuild` `open` |
-| `devbase project <sub> <name>` | 3 番目 | `up` `down` `ps` `logs` `scale` `rebuild` `open` `post-start` |
+| `devbase <sub> <name>`（ショートカット） | 2 番目 | [`[name]` の表](#name-を受け付けるサブコマンド)の `devbase <sub>` の行に `login` と `build` を足したもの |
+| `devbase project <sub> <name>` | 3 番目 | [`[name]` の表](#name-を受け付けるサブコマンド)の `devbase project <sub>` の行 |
 | `devbase container <sub> …` / `ct`（非推奨） | — | 解決しない（`[name]` を受け付けない） |
 | `python -m devbase.cli project <sub> <name>` | 3 番目 | Python 側のフォールバック（`_resolve_project_name`） |
 
@@ -28,7 +28,8 @@
 | ショートカット | `devbase up` のように `project` を省いたトップレベルの同義語（`cli.SHORTCUTS` と shell の `_NAME_RESOLVABLE_SHORTCUTS`） |
 | 単体ビルド | `$DEVBASE_ROOT/containers/<image>` を `devbase-<image>:latest` として 1 つだけ作るビルド |
 
-「プロジェクトとして数える名前」「名前の形の説明」「機密の書き込みの知らせ」の定義は[用語集](../glossary.md)にある。
+「プロジェクトとして数える名前」「名前の形の説明」「機密の書き込みの知らせ」「列挙の正本」「一致テスト」「写し」
+「補完の例外」の定義は[用語集](../glossary.md)にある。
 
 ## 構成要素
 
@@ -108,6 +109,32 @@ graph TD
 | `devbase env <sub>` | `exec` `token` |
 
 トップレベルの `build` だけは argparse に parser が無く、シェルの `cmd_build` が `--context` を受け付ける。
+
+#### 一致テストが比べる写し
+
+`tests/cli/test_name_context_consistency.py`（一致テスト）は、列挙の正本を走査して 2 つの集合を得て、
+写しと比べる。写しの場所ごとに別のテストにし、差があれば場所（ファイルと箇所）と、欠けた・余分な
+サブコマンドを挙げて落ちる。1 回の実行で、取り残した写しがすべて並ぶ。
+
+| 項目 | 規則 |
+| --- | --- |
+| 走査 | `_create_parser()` の木を入れ子の parser まで辿る。別名のグループ（`ct`）は `cli.GROUP_ALIASES` で正式の名前に直して数える |
+| `[name]` の集合 | 位置引数 `name` を持つ parser のうち、トップレベルと `project` グループ（入れ子の `profile` を含む）の道。`plugin` / `snapshot` / `env backend use` の `name` は含めない |
+| `--context` の集合 | `--context` を持つすべての parser の道に、トップレベルの `build`（ラッパーだけが受け付ける）を名指しで足したもの |
+| 走査の健全性 | どちらの集合も空でなく、入れ子の道（3 語）を含み、`[name]` の集合が `plugin` / `snapshot` / `env` の道を含まない |
+
+| 写し | 比べ方 |
+| --- | --- |
+| `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` | `project` の直下で `[name]` を取る parser の名前の集合に等しい |
+| `bin/devbase` の `_NAME_RESOLVABLE_SHORTCUTS` | `cli.SHORTCUTS` のキーと `build` の和に等しい。あわせて、トップレベルで `[name]` を取る parser がすべて `cli.SHORTCUTS` にあること |
+| `etc/devbase-completion.bash` | 一時ディレクトリの `projects/` を `DEVBASE_ROOT` にして補完を実行し、`[name]` の集合から補完の例外を引いたすべての道の名前の位置でプロジェクト名が候補に出る。`project` / `container` の直下で `[name]` か `--context` を取るサブコマンド（入れ子は親の `profile` として数える）が、そのグループのサブコマンドの候補に含まれる |
+| `etc/_devbase` | zsh を起動せず内容を読む。`case "$words[2]"` から字下げの深さで道の分岐（`up\|down)` のような `\|` 区切りの見出し）を辿り、その本体に `_devbase_project_names` がある。`project_subcommands` / `container_subcommands` の一覧に bash と同じサブコマンドが含まれる |
+| この節の 2 つの表 | 見出し `` #### `[name]` を受け付けるサブコマンド `` と `` #### `--context` を受け付けるサブコマンド `` の直後の表を読む。1 列目は `devbase <グループ...> <sub>` の形で、間の語が道の頭になる。2 列目にバッククォートで並べた語を `<sub>` に入れる。表は `[name]` の集合・`--context` の集合にそれぞれ等しい |
+
+補完の例外は `project profile up` / `down` / `list` の 3 つで、理由は「1 つ目の位置引数は、値が 1 個なら
+プロファイル名、2 個ならプロジェクト名になり、補完の時点ではどちらか決まらない」。一致テストは例外を
+理由つきの一覧として持ち、例外の道が `[name]` の集合に実在すること・理由が空でないことも確かめる。
+補完が `--context` の値を補完するかどうか（今は `open` と `post-start` だけ）は比べない。
 
 ### 名前の形
 
@@ -544,6 +571,71 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 - macOS の `/bin/bash`（3.2）で `tests/cli` を流すことと `shellcheck --severity=error bin/devbase`
   は手元で行う（CI の bash は Linux 版）
 
+## 決定の記録
+
+`[name]` と `--context` を受け付けるサブコマンドの列挙の正本と一致テスト（#214）の決定である。
+
+### 決定 1: 取り残した写しを 1 回の実行で全部挙げるため、写しの場所ごとに別のテストにする
+
+1 つのテストで全部の写しを順に確かめると、最初の差で止まり、2 つ目以降の取り残しが直した後の実行まで
+見えない。場所ごとのテストにすれば、サブコマンドを 1 つ足したときに取り残した写しがすべて一度に並び、
+どの写しが落ちたかがテスト名から読める。
+
+### 決定 2: 写しを増やさないため、期待の集合をテストに書き写さず走査で得る
+
+期待の集合をテストの定数に持つと、それ自体が新しい写しになり、サブコマンドを足すたびに直す場所が増える。
+走査で得た集合を正とし、走査が壊れていないことは健全性の確かめ（空でない・入れ子を含む・プロジェクト名で
+ない `name` を含まない）だけで見る。人が書く確定仕様の表を走査と比べるため、集合の中身は表を通して
+人の目に触れる。
+
+### 決定 3: プロジェクト名の `[name]` は、トップレベルと `project` グループの道に限って集める
+
+プロジェクト名を表す `name` はトップレベルと `project` グループ（入れ子の `profile` を含む）にしか無い。
+`plugin` / `snapshot` / `env backend use` の `name` は別のものの名前である。`container` / `ct` は `[name]` を
+持たない（PLAN61 決定 10）。含める側を名指しする形にし、ほかのグループの `name` は走査の健全性の確かめで
+入っていないことを見る。
+
+### 決定 4: 確定仕様の表を人のリンク先と機械の読み口に兼ねるため、見出しの文字列で表を探す
+
+`[name]` の表と `--context` の表は、共通の節の下に別の見出しで隣り合わせに置く。見出しがリンクの錨にもなり、
+ほかの文書からどちらの表へも直接辿れる。一致テストは見出しの文字列で節を探し、その直後の表を読む。表の
+手前に見えない印を置く形は、消されても気づきにくく、見出しと印の 2 つを保つことになるため採らない。
+
+### 決定 5: 読み手が集合を見渡せるよう、表は 1 行に 1 つの入口を置きサブコマンドを並べる
+
+入口ごとの違い（`container` に `post-start` が無いなど）が並べて読める。1 行に 1 つのコマンドの道を置く形は、
+`--context` の表が 40 行を超えて違いが読めなくなるため採らない。別名の `ct` は表に行を置かず、一致テストが
+`cli.GROUP_ALIASES` で `container` に直して数える。
+
+### 決定 6: 確定仕様の中にテストで縛らない列挙を残さないため、概要の表は `[name]` の表へのリンクと規則で書く
+
+概要の表の「解決するもの」はラッパーの 2 つのリストを表す。一致テストはラッパーのリストを規則で縛るため、
+概要の表は「`[name]` の表のトップレベルの行に `login` と `build` を足したもの」のように、リンクと規則で
+書けば写しを持たずに済む。
+
+### 決定 7: 同じことを 2 か所で縛らないため、`rebuild` がラッパーの 2 つのリストにあることだけを見るテストは持たない
+
+一致テストは 2 つのリストが argparse と `SHORTCUTS` から導いた集合に等しいことを見ており、`rebuild` を
+含むことはその一部である。`tests/cli/test_rebuild.py` は、一致テストが見ない振る舞い（`build)` の分岐の
+`cmd_build` への委譲）だけを縛る。
+
+### 決定 8: トップレベルの `build` の `--context` は、名指しの一覧で `--context` の集合に足す
+
+argparse にトップレベルの `build` の parser は無く、`--context` はラッパーの `build` の分岐が抜き取る。
+受け付けること自体は `tests/cli/test_wrapper_build_context.py` がラッパーを実行して確かめている。
+`bin/devbase` の分岐を文字列で探す形は、コメントや使い方の文に `--context` があるだけで通るため採らない。
+
+### 決定 9: 別の分岐の記述で通ってしまわないよう、zsh の補完は道の分岐ごとに読む
+
+`etc/_devbase` の全体で `_devbase_project_names` を探すと、ほかのサブコマンドの分岐にあるだけで通る。
+一致テストは `case "$words[2]"` から字下げの深さで道の分岐を辿り、その本体だけを見る。zsh を起動する形は、
+CI のランナーに zsh があることを前提にするため採らない。
+
+### 決定 10: 例外が黙って広がらないよう、補完の例外は理由を持ち、実在する道だけを指す
+
+例外の道が `[name]` の集合から消えたのに例外が残ると、次に別の理由で同じ道を外したいときに古い理由のまま
+通る。例外を足すことは一致テストのファイルの差分として現れ、レビューで人が見る。
+
 ## 関連リンク
 
 - [CLI リファレンス: project](../user/cli-reference/02-project.md)
@@ -552,3 +644,4 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 - [エディタの窓の開き直し（`devbase open`）](editor-open.md)
 - 実装 PR: devbasex/devbase#207（#146・#142・#196・#200）
 - 実装 PR: devbasex/devbase#301（#276・#226・#229・#245・#227）
+- 実装 PR: devbasex/devbase#428（#214。列挙の正本と一致テスト）
