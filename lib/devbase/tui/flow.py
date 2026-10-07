@@ -133,18 +133,22 @@ def optional_int(message: str, *, min_value: int = 0):
         return value
 
 
-def pause_for_review() -> bool:
+PROMPT_BACK_TO_MENU = "Enter キーで操作メニューへ戻ります..."
+
+
+def pause_for_review(prompt: str = PROMPT_BACK_TO_MENU) -> bool:
     """操作出力を読めるよう、メニュー再表示の前に Enter を待つ。
 
     操作実行直後にメニューを再描画すると、list 等の表示系操作の出力が一瞬で
     流れて読めない。questionary 系プロンプトは画面を書き換えるため、stdlib の
-    ``input()`` で素朴に待ち、出力をそのまま画面に残す。
+    ``input()`` で素朴に待ち、出力をそのまま画面に残す。``prompt`` は戻り先を示す文言
+    (既定はサブメニュー。トップ一覧へ戻る ``app`` は自分の文言を渡す)。
 
     戻り値: ``True`` = 続行 (メニュー再表示) / ``False`` = Ctrl-C (全体中止)。
     非 TTY 等で stdin を読めない場合 (EOFError/OSError) は待たずに続行する。
     """
     try:
-        input("Enter キーで操作メニューへ戻ります...")
+        input(prompt)
     except KeyboardInterrupt:
         print()
         return False

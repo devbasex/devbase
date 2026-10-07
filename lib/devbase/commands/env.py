@@ -13,6 +13,7 @@ from devbase.env import keys
 from devbase.env.store import EnvFile, safe_input
 from devbase.env.sources import SourcesManager, file_hash, dir_hash
 from devbase.env.collector import CollectorRegistry
+from devbase.commands.subcommands import run_subcommand
 
 logger = get_logger(__name__)
 
@@ -282,12 +283,7 @@ def cmd_env(devbase_root: Path, args) -> int:
                                           assume_yes=getattr(args, 'assume_yes', False)),
     }
 
-    handler = handlers.get(subcmd)
-    if handler:
-        return handler()
-
-    logger.error("サブコマンドを指定してください: %s", ', '.join(handlers))
-    return 1
+    return run_subcommand(handlers, subcmd, missing_rc=1, logger=logger)
 
 
 def _ops():
@@ -1112,14 +1108,27 @@ def _mode_suffix(env_file) -> str:
     return f' [{mode}]'
 
 
+#: キー名にこれらを含む値は ``--reveal`` が無ければ伏せる
+_SENSITIVE_KEY_PARTS = ('KEY', 'SECRET', 'TOKEN', 'PASSWORD', 'CREDENTIALS', 'BASE64')
+_MASK = "██████"
+#: 伏せた値でも長さを添える文字数の下限 (これを超えたら添える)
+_MASK_LENGTH_SHOWN_OVER = 100
+#: 平文で出す値の上限の文字数。超えたら先頭を切り出して ``...`` を足す
+_VALUE_DISPLAY_MAX = 60
+_ELLIPSIS = "..."
+
+
 def _format_value(key: str, value: str, reveal: bool) -> str:
     """表示用に値をフォーマットする"""
-    sensitive_patterns = ('KEY', 'SECRET', 'TOKEN', 'PASSWORD', 'CREDENTIALS', 'BASE64')
-    is_sensitive = any(p in key.upper() for p in sensitive_patterns)
+    is_sensitive = any(p in key.upper() for p in _SENSITIVE_KEY_PARTS)
 
     if is_sensitive and not reveal:
-        return f"██████ ({len(value)}文字)" if len(value) > 100 else "██████"
-    return f"{value[:57]}..." if len(value) > 60 else value
+        if len(value) > _MASK_LENGTH_SHOWN_OVER:
+            return f"{_MASK} ({len(value)}文字)"
+        return _MASK
+    if len(value) > _VALUE_DISPLAY_MAX:
+        return value[:_VALUE_DISPLAY_MAX - len(_ELLIPSIS)] + _ELLIPSIS
+    return value
 
 
 def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,

@@ -161,10 +161,9 @@ def _select_scope(devbase_root: Path):
 
 
 def _grouped(devbase_root: Path) -> bool:
-    from devbase.commands import env_rows
     from devbase.env.secret_store import SecretStore
 
-    return env_rows.is_grouped(SecretStore(devbase_root))
+    return SecretStore(devbase_root).grouped
 
 
 def _select_group(devbase_root: Path) -> str:
