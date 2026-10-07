@@ -2,8 +2,9 @@
 
 import os
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import yaml
 
@@ -632,8 +633,46 @@ class SyncTargets:
         return saved
 
 
-def _open_sync_targets(devbase_root: Path, user: bool, group: Optional[str]):
-    """``sync`` の書き込み先を開く。``(SyncTargets, store, None)`` か ``(None, None, 終了コード)``。
+class _SyncAborted(Exception):
+    """``sync`` の書き込み先を開けなかった (理由は出力済み)。``exit_code`` で終える"""
+
+    def __init__(self, exit_code: int):
+        super().__init__(exit_code)
+        self.exit_code = exit_code
+
+
+class _SyncCounts:
+    """``sync`` の集計 (更新した件数・控えへ新たに登録するソースがあったか)"""
+
+    def __init__(self):
+        self.updated = 0
+        self.registered = False
+        #: AWS の取り込みの選択 (控えの更新へ渡す。#314)
+        self.aws_selection = _KEEP_SELECTION
+
+
+@dataclass
+class _SyncContext:
+    """1 回の ``sync`` で同期の関数が共に使うもの (控え・書き込み先・置き場・集計)。
+
+    更新件数は同期の関数がそれぞれ :meth:`write` を通して ``counts`` へ足す。
+    """
+
+    sources: SourcesManager
+    targets: SyncTargets
+    store: Any
+    counts: _SyncCounts = field(default_factory=_SyncCounts)
+
+    def write(self, key: str, encoded: str, head: str) -> None:
+        """値を書き、``<head>更新しました<接尾辞>`` を出して更新件数を 1 足す"""
+        tail = self.targets.suffix(key)
+        self.targets.set(key, encoded)
+        logger.info("%s更新しました%s", head, tail)
+        self.counts.updated += 1
+
+
+def _open_sync_targets(devbase_root: Path, user: bool, group: Optional[str]) -> _SyncContext:
+    """``sync`` の書き込み先と控えを開く。開けなければ理由を出して :class:`_SyncAborted` を送る。
 
     2 つの参照は ``fresh`` で読み、控えへ落ちない (書き込みを伴うため)。
     """
@@ -648,17 +687,17 @@ def _open_sync_targets(devbase_root: Path, user: bool, group: Optional[str]):
         has_user = team.has_user_refs()
     except GroupOptionError as e:
         logger.error("%s", e)
-        return None, None, e.exit_code
+        raise _SyncAborted(e.exit_code) from e
     except DevbaseError as e:
         logger.error("%s", e)
-        return None, None, 1
+        raise _SyncAborted(1) from e
     if user and not has_user:
         # 決定 11: チーム共通へ落とさない。引数の誤りとして 2
         logger.error(
             "%s backend は個人単位の機密を扱えません (--user)。"
             "個人単位の機密を置くにはサーバ backend を設定してください: "
             "devbase env backend use openbao ...", team.mode_name())
-        return None, None, EXIT_USAGE
+        raise _SyncAborted(EXIT_USAGE)
     user_file = (_global_env(devbase_root, user=True, store=store, fresh=True, group=target_group)
                  if has_user else None)
     targets = SyncTargets(team, user_file, forced_user=user)
@@ -668,8 +707,10 @@ def _open_sync_targets(devbase_root: Path, user: bool, group: Optional[str]):
         except DevbaseError as e:
             logger.error("%sを読めないため、同期しません: %s",
                          store.display_label(env_file.ref), e)
-            return None, None, 1
-    return targets, store, None
+            raise _SyncAborted(1) from e
+    sources = SourcesManager(devbase_root, store.storage_group(team.ref.group))
+    sources.load()
+    return _SyncContext(sources, targets, store)
 
 
 def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = None) -> int:
@@ -679,18 +720,16 @@ def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = 
     同期済みのハッシュは対象のグループの控えを使う (PLAN56 決定 13)。
     ``user`` (``--user``) は全てのキーの宛先を個人共通にする。``group`` は ``--group``。
     """
-    targets, store, rc = _open_sync_targets(devbase_root, user, group)
-    if targets is None:
-        return rc
+    try:
+        ctx = _open_sync_targets(devbase_root, user, group)
+    except _SyncAborted as e:
+        return e.exit_code
+    counts, targets = ctx.counts, ctx.targets
 
-    sources = SourcesManager(devbase_root, store.storage_group(targets.team.ref.group))
-    sources.load()
-
-    counts = _SyncCounts()
-    _sync_credential_sources(sources, targets, store, counts)
+    _sync_credential_sources(ctx)
 
     # GCP（プロファイル管理があるため個別処理）
-    counts.updated += _sync_gcp(sources, targets, store=store, counts=counts)
+    _sync_gcp(ctx)
 
     # Host 接続情報（ソースファイルを持たないため hash 比較せず欠落キーを補完）
     counts.updated += _sync_host(targets)
@@ -703,23 +742,22 @@ def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = 
             return 1
         _update_source_metadata(devbase_root, *targets.files,
                                 aws_selection=counts.aws_selection)
-    _report_sync_result(counts, sources)
+    _report_sync_result(counts, ctx.sources)
 
     return 0
 
 
-def _sync_credential_sources(sources, targets, store, counts) -> None:
-    """AWS と Git の認証情報をソースから同期する (``counts`` に集計する)"""
+def _sync_credential_sources(ctx: _SyncContext) -> None:
+    """AWS と Git の認証情報をソースから同期する (``ctx.counts`` に集計する)"""
     # AWS: 取り込みの選択の範囲だけで入れ直す (#314 I7)
-    plan = _aws_sync_plan(sources, targets, store)
+    plan = _aws_sync_plan(ctx.sources, ctx.targets, ctx.store)
     if plan is None:
         # 書き込みを見送ったら控えの登録も見送る (丸ごとで登録すると次の変更で選択外まで送るため)
-        counts.aws_selection = _SKIP_SELECTION
+        ctx.counts.aws_selection = _SKIP_SELECTION
     else:
-        encode_aws, counts.aws_selection = plan
-        _sync_source(sources, targets, 'aws', 'AWS認証', encode_aws,
-                     env_key=keys.AWS_CONFIG_BASE64, store=store, counts=counts,
-                     same=_same_aws_payload)
+        encode_aws, ctx.counts.aws_selection = plan
+        _sync_source(ctx, 'aws', 'AWS認証', encode_aws,
+                     env_key=keys.AWS_CONFIG_BASE64, same=_same_aws_payload)
 
     # Git
     def _encode_git():
@@ -730,8 +768,8 @@ def _sync_credential_sources(sources, targets, store, counts) -> None:
             return base64.b64encode(content.encode('utf-8')).decode('ascii')
         return None
 
-    _sync_source(sources, targets, 'git_credentials', 'Git認証', _encode_git,
-                 env_key=keys.GIT_CREDENTIALS_BASE64, store=store, counts=counts)
+    _sync_source(ctx, 'git_credentials', 'Git認証', _encode_git,
+                 env_key=keys.GIT_CREDENTIALS_BASE64)
 
 
 def _report_sync_result(counts, sources) -> None:
@@ -743,16 +781,6 @@ def _report_sync_result(counts, sources) -> None:
         logger.info("ソース情報がありません。先に devbase env init を実行してください")
     else:
         logger.info("同期完了 (変更なし)")
-
-
-class _SyncCounts:
-    """``sync`` の集計 (更新した件数・控えへ新たに登録するソースがあったか)"""
-
-    def __init__(self):
-        self.updated = 0
-        self.registered = False
-        #: AWS の取り込みの選択 (控えの更新へ渡す。#314)
-        self.aws_selection = _KEEP_SELECTION
 
 
 def _sync_host(target):
@@ -895,53 +923,45 @@ def _aws_selection_covers(targets, key, payload) -> bool:
     return set(in_dest) <= set(in_payload or [])
 
 
-def _sync_unregistered(targets, store, counts, key, label, encode_fn, same=None):
-    """控えに項目の無いソースのキーが参照にあるとき (I10・決定 2)。更新件数 (0 or 1) を返す。
+def _sync_unregistered(ctx: _SyncContext, key, label, encode_fn, same=None) -> None:
+    """控えに項目の無いソースのキーが参照にあるとき (I10・決定 2)。``ctx.counts`` に集計する。
 
     黙って飛ばさず 1 行を出し、今のファイルの値と比べて違えば書く。比べた後は控えに
     登録する (以後はハッシュで検出する)。
     """
+    targets = ctx.targets
     holder = targets.holder(key)
     if holder is None:
-        return 0
-    head = f"{label}: ソース未登録（{store.display_label(holder.ref)}にキーがあります）。"
+        return
+    head = f"{label}: ソース未登録（{ctx.store.display_label(holder.ref)}にキーがあります）。"
     encoded = encode_fn()
     if not encoded:
         logger.info("%s元のファイルがありません", head)
-        return 0
-    counts.registered = True
+        return
+    ctx.counts.registered = True
     same = same or (lambda a, b: a == b)
     if same(targets.get(key), encoded):
         logger.info("%s今のファイルと比べて変更なし", head)
-        return 0
-    tail = targets.suffix(key)
-    targets.set(key, encoded)
-    logger.info("%s今のファイルと比べて更新しました%s", head, tail)
-    return 1
-
-
-def _sync_source(sources, targets, name, label, encode_fn, *, env_key, store, counts,
-                 same=None):
-    """AWS/Gitなどの単一ソース同期の共通処理。``counts`` へ更新件数を足す。"""
-    source = sources.get_source(name)
-    if not source:
-        counts.updated += _sync_unregistered(targets, store, counts, env_key, label,
-                                             encode_fn, same)
         return
-    if targets.holder(source.get('env_key') or env_key) is None:
+    ctx.write(key, encoded, f"{head}今のファイルと比べて")
+
+
+def _sync_source(ctx: _SyncContext, name, label, encode_fn, *, env_key, same=None) -> None:
+    """AWS/Gitなどの単一ソース同期の共通処理。``ctx.counts`` に集計する。"""
+    source = ctx.sources.get_source(name)
+    if not source:
+        _sync_unregistered(ctx, env_key, label, encode_fn, same)
+        return
+    if ctx.targets.holder(source.get('env_key') or env_key) is None:
         # I5: 控えに項目があっても、参照に無いキーは書かない (取り込むかは init が決める)
         logger.info("%s: %s", label, _NO_KEY_HINT)
         return
 
-    changed = sources.check_changed(name)
+    changed = ctx.sources.check_changed(name)
     if changed:
         encoded = encode_fn()
         if encoded:
-            key = source['env_key']
-            tail = targets.suffix(key)
-            targets.set(key, encoded)
-            logger.info("%s: 更新しました%s", label, tail)
-            counts.updated += 1
+            ctx.write(source['env_key'], encoded, f"{label}: ")
         else:
             logger.warning("%s: エンコードに失敗", label)
     elif changed is False:
@@ -950,56 +970,73 @@ def _sync_source(sources, targets, name, label, encode_fn, *, env_key, store, co
         logger.info("%s: 控えと比べられません（ハッシュか元のファイルがありません）", label)
 
 
-def _sync_gcp(sources, targets, *, store, counts):
-    """GCPプロファイルの同期処理。更新件数を返す。
+def _gcp_credentials(files) -> dict:
+    """参照に GCP の認証のキーがあるプロファイル → その認証ファイル (見つからなければ ``None``)。
+
+    キー ``GCP_CREDENTIALS_BASE64_<名前>`` から名前を取り出し、``~/gcp-credentials/`` で引く
+    (同期と控えの登録が同じ求め方を使う)。並びは後に渡した参照のキーが先。
+    """
+    from devbase.env.collectors.google import find_credential_files
+
+    prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
+    resolve = find_credential_files().lookup
+    names = dict.fromkeys(key[len(prefix):] for f in reversed(files) for key in f.get_all()
+                          if key.startswith(prefix))
+    return {name: resolve(name) for name in names}
+
+
+def _encode_file(path: Optional[Path]) -> Optional[str]:
+    """ファイルの中身の base64。``path`` が無ければ ``None``"""
+    import base64
+
+    return base64.b64encode(path.read_bytes()).decode('ascii') if path else None
+
+
+def _registered_gcp_file(profile_info: dict) -> Optional[Path]:
+    """控えのプロファイルの項目が指す認証ファイル。項目に無い・ファイルが無ければ ``None``"""
+    file_str = profile_info.get('file', '')
+    if not file_str:
+        return None
+    path = Path(file_str).expanduser()
+    return path if path.exists() else None
+
+
+def _sync_gcp(ctx: _SyncContext) -> None:
+    """GCPプロファイルの同期処理。``ctx.counts`` に集計する。
 
     控えへの登録はプロファイル単位で見る。参照にあって控えに無いプロファイルは、
     今のファイルと比べてから控えへ登録する (I10)。
     """
-    import base64
-
-    gcp_source = sources.get_source('gcp') or {}
+    gcp_source = ctx.sources.get_source('gcp') or {}
     registered = gcp_source.get('profiles', {})
-    prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
-    from devbase.env.collectors.google import find_credential_files
-    resolve = find_credential_files().lookup
-    names = sorted({k[len(prefix):] for f in targets.files for k in f.get_all()
-                    if k.startswith(prefix)} - set(registered))
-    updated = 0
-    for profile_name in names:
-        def encode(profile_name=profile_name):
-            path = resolve(profile_name)
-            return base64.b64encode(path.read_bytes()).decode('ascii') if path else None
+    _sync_unregistered_gcp(ctx, registered)
+    if gcp_source:
+        _sync_registered_gcp(ctx, registered)
 
-        updated += _sync_unregistered(targets, store, counts,
-                                      keys.gcp_credentials_key(profile_name),
-                                      f"GCP認証 ({profile_name})", encode)
-    if not gcp_source:
-        return updated
 
-    gcp_changes = sources.check_gcp_changed()
-    for profile_name, changed in gcp_changes.items():
-        if targets.holder(keys.gcp_credentials_key(profile_name)) is None:
+def _sync_unregistered_gcp(ctx: _SyncContext, registered) -> None:
+    """参照にあって控えに無いプロファイル (I10)"""
+    found = _gcp_credentials(ctx.targets.files)
+    for name in sorted(set(found) - set(registered)):
+        _sync_unregistered(ctx, keys.gcp_credentials_key(name), f"GCP認証 ({name})",
+                           lambda path=found[name]: _encode_file(path))
+
+
+def _sync_registered_gcp(ctx: _SyncContext, registered) -> None:
+    """控えにあるプロファイルを、控えのハッシュと比べて入れ直す"""
+    for name, changed in ctx.sources.check_gcp_changed().items():
+        label = f"GCP認証 ({name})"
+        key = keys.gcp_credentials_key(name)
+        if ctx.targets.holder(key) is None:
             # I5: 参照から消したプロファイルの鍵は書き戻さない
-            logger.info("GCP認証 (%s): %s", profile_name, _NO_KEY_HINT)
+            logger.info("%s: %s", label, _NO_KEY_HINT)
             continue
-        if changed:
-            profile_info = registered.get(profile_name, {})
-            file_str = profile_info.get('file', '')
-            if not file_str:
-                continue
-            file_path = Path(file_str).expanduser()
-            if file_path.exists():
-                encoded = base64.b64encode(file_path.read_bytes()).decode('ascii')
-                key = keys.gcp_credentials_key(profile_name)
-                tail = targets.suffix(key)
-                targets.set(key, encoded)
-                updated += 1
-                logger.info("GCP認証 (%s): 更新しました%s", profile_name, tail)
-        else:
-            logger.info("GCP認証 (%s): 変更なし", profile_name)
-
-    return updated
+        if not changed:
+            logger.info("%s: 変更なし", label)
+            continue
+        path = _registered_gcp_file(registered.get(name, {}))
+        if path is not None:
+            ctx.write(key, _encode_file(path), f"{label}: ")
 
 
 def _print_env_vars(vars_dict, keys_only, reveal):
@@ -1633,18 +1670,9 @@ def _record_git_source(sources: SourcesManager) -> None:
 
 def _record_gcp_source(sources: SourcesManager, files, get) -> None:
     """GCP の認証情報をプロファイルごとにソースとして登録する"""
-    all_vars = {}
-    for f in reversed(files):
-        all_vars.update(f.get_all())
-    prefix = keys.GCP_CREDENTIALS_BASE64_PREFIX
-    from devbase.env.collectors.google import find_credential_files
-    _resolve_gcp_path = find_credential_files().lookup
-
     gcp_profiles = {
         name: {'file': str(path), 'hash': file_hash(path)}
-        for key in all_vars if key.startswith(prefix)
-        for name in [key[len(prefix):]]
-        for path in [_resolve_gcp_path(name)]
+        for name, path in _gcp_credentials(files).items()
         if path and path.exists()
     }
 
