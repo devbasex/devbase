@@ -53,7 +53,7 @@
 | I4 | bash の補完の写し | `--context` の集合に無い道（`list`・`env set`・`project list` など）では、道の直後の `-` で始まる語の候補に `--context` が入らない | 一致テストが「余分」として道を挙げて落ちる |
 | I5 | zsh の補完の写し | `--context` の集合のすべての道の分岐の本体に、値の補完を持たない `--context` の指定がある | 一致テストが「`etc/_devbase` の分岐に `--context` の指定が無い」と欠けた道を挙げて落ちる |
 | I6 | zsh の補完の写し | `--context` の集合に無い末端の道の分岐の本体に `--context` の指定が無い | 一致テストが「余分」として道を挙げて落ちる |
-| I7 | bash の補完の写し | `-` で始まらない語の候補は変わらない。`-` で始まる語の候補は、今の旗の候補に `--context` を足した集合で、ほかの旗は増えない | `tests/cli/test_completion.py` の今の期待値が落ちる |
+| I7 | bash の補完の写し | `-` で始まらない語の候補は変わらない。`-` で始まる語の候補は、今の旗の候補に `--context` を足した集合で、ほかの旗は増えない。`--context` は補完する語で始まるときだけ足し、`--a` のように始まらない語の候補は今と変わらない | `tests/cli/test_completion.py` の今の期待値が落ちる |
 
 ### ドメインイベント
 
@@ -90,10 +90,10 @@
 | 要素 | 責務 | 変え方 |
 | --- | --- | --- |
 | `etc/devbase-completion.bash` の `_devbase_completions` | 語の位置ごとの候補を出す | 冒頭に「直前の語が `--context` なら候補を空にして終える」段を足す。末尾で `_devbase_offer_context` を呼ぶ。`open_flags` から `--context` を外し、`project post-start` の分岐は `-` で始まる語に旗を入れない（共通の段が足す） |
-| `etc/devbase-completion.bash` の `_devbase_offer_context`（新規） | 補完する語が `-` で始まり、カーソルが `--context` を出す位置にあれば、候補に `--context` を足す | 新しく作る。道の一覧 2 つ（下の「入出力の契約」）を持ち、`words[1..3]` から道を組んで引く。`ct` は `container` に畳む |
+| `etc/devbase-completion.bash` の `_devbase_offer_context`（新規） | 補完する語が `-` で始まり、カーソルが `--context` を出す位置にあれば、候補に `compgen -W --context -- "$cur"` の結果を足す（`--context` が補完する語で始まるときだけ足す。`devbase ps --a` の候補は `--all` のまま） | 新しく作る。道の一覧 2 つ（下の「入出力の契約」）を持ち、`words[1..3]` から道を組んで引く。`ct` は `container` に畳む |
 | `etc/_devbase` の道の分岐 | 道ごとに `_arguments` などで候補を出す | `--context` の集合の各道の分岐に `'--context[Docker context]:context:'` を足す。分岐の無い道（トップレベルの `build`・`container up\|down\|rebuild`・`env token`・入れ子の `profile up\|down\|list`）には分岐を足す |
 | `tests/cli/test_name_context_consistency.py` | 列挙の正本と写しを比べる | bash（実行）と zsh（読む）の `--context` を比べるテストを足す（I1・I2・I4・I5・I6）。`_bash_complete` が最後の語を受け取れるようにする |
-| `tests/cli/test_completion.py` | 補完の個々の振る舞いを固定する | `-` で始まる語の期待値に `--context` を足す（I7）。値の位置で候補が 0 件のテストを足す（I3） |
+| `tests/cli/test_completion.py` | 補完の個々の振る舞いを固定する | `-` で始まる語の期待値に `--context` を足す（I7）。`devbase ps --a` → `{"--all"}`・`devbase open --o` → `{"--open-index"}` のテストを足す（I7 の前方一致）。値の位置で候補が 0 件のテストを足す（I3） |
 | `docs/specifications/cli-argument-resolution.md` | 確定仕様 | 「一致テストが比べる写し」の表の bash と zsh の行に `--context` の比べ方を足し、「補完が `--context` の値を補完するかどうか（今は `open` と `post-start` だけ）は比べない」の文を新しい比べ方に書き換える |
 | `CHANGELOG.md` | 利用者に見える変更の記録 | `[Unreleased]` に補完の変更を書く |
 
@@ -180,7 +180,7 @@ sequenceDiagram
     end
 ```
 
-`_devbase_offer_context` は `i = 1..3` について `words[1..i]` から道を組み、`cword == i + 1` で 1 つ目の一覧に、`cword == i + 2` で 2 つ目の一覧にあれば `--context` を足して終える。道の頭が `-` で始まる語でも照合は外れるだけで、誤って足さない。
+`_devbase_offer_context` は `i = 1..3` について `words[1..i]` から道を組み、`cword == i + 1` で 1 つ目の一覧に、`cword == i + 2` で 2 つ目の一覧にあれば `compgen -W --context -- "$cur"` の結果を候補に足して終える（補完する語が `--context` の頭でなければ何も足さない）。道の頭が `-` で始まる語でも照合は外れるだけで、誤って足さない。
 
 図は補完を実行する流れだけを描き、テスト 2 本・確定仕様・`CHANGELOG.md` を含めない（どれも補完の実行の経路に乗らない。テストと写しの関係は構成要素図にある）。
 
@@ -246,7 +246,7 @@ zsh は `_arguments` が `--context` の指定から、`-` で始まる語には
 | 受け入れ条件 4・I5 | `etc/_devbase` で `CONTEXT_PATHS` のすべての道の分岐の本体に、`:context:` の直後で指定が閉じる `--context` の指定がある | 分岐 1 つから `--context` の指定を消すと、その道を挙げて落ちる。`:context:_files` のように値の補完を足しても落ちる |
 | I6 | 末端の道のうち `CONTEXT_PATHS` に無いものの分岐の本体に、`--context` の指定が無い | `env set` の分岐に `--context` の指定を足すと「余分」として落ちる |
 | 受け入れ条件 5 | 上の bash と zsh のテストが別のテストで、落ちた文に `etc/devbase-completion.bash` か `etc/_devbase` と道が出る | bash から外したのに zsh のテストが落ちる（または逆）形に組むと、手動確認で外したファイルとテストの名前が合わない |
-| 受け入れ条件 6・I7 | `tests/cli/test_completion.py` の `-` で始まる語の期待値（`ps` の `{"--all", "-a"}` など 9 か所）を `--context` を足した集合にし、ほかの期待値を変えずに通る | 共通の段がプロジェクト名や別の旗を足すように壊すと、`-` で始まらない語の期待値か旗の集合が落ちる |
+| 受け入れ条件 6・I7 | `tests/cli/test_completion.py` の `-` で始まる語の期待値（`ps` の `{"--all", "-a"}` など 9 か所）を `--context` を足した集合にし、ほかの期待値を変えずに通る。前方一致の絞り込みを縛る例として `devbase ps --a` → `{"--all"}`・`devbase open --o` → `{"--open-index"}` を足す | 共通の段がプロジェクト名や別の旗を足すように壊すと、`-` で始まらない語の期待値か旗の集合が落ちる。補完する語で絞らずに `--context` を足すと、`--a`・`--o` の期待値が落ちる |
 | 受け入れ条件 7 | 確定仕様の表の bash と zsh の行が `--context` の比べ方を書いている | 検査では縛らない。レビューで確定仕様と一致テストを並べて読む |
 | 受け入れ条件 8 | 全体のテスト・CI と同じ lint・固有の語の検査・`bash -n`・`zsh -n` が通る | 補完 2 ファイルの構文を壊すと `test_completion.py` の構文の検査が落ちる |
 
