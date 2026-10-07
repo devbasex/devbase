@@ -109,6 +109,8 @@ Python 側のエントリーポイント。以下の責務を持つ。
 | `dispatch.py` | 収集した属性を Namespace に詰めて `cmd_*` ハンドラを呼ぶ薄い委譲層 |
 | `actions_project.py` | プロジェクト行の処理（up / 起動中は操作サブメニュー） |
 | `actions_env.py` / `actions_plugin.py` / `actions_snapshot.py` / `actions_status.py` | 各カテゴリの操作フロー |
+| `actions_env_keys.py` / `actions_env_openbao.py` | env カテゴリの画面（キーの一覧と編集・OpenBao の接続設定） |
+| `env_delegate.py` | env の画面が `cmd_env` へ委譲する部品（委譲と、プロジェクトの置き場へ書くときの chdir + `PWD` の差し替え）。env メニューと各画面がここを使い、画面からメニューのモジュールを読まない |
 
 ### env/ -- 環境変数管理システム
 

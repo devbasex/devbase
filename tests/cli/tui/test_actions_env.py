@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-from devbase.tui import actions_env, flow, menu
+from devbase.tui import actions_env, env_delegate, flow, menu
 
 
 @pytest.fixture(autouse=True)
@@ -180,7 +180,7 @@ def test_run_operation_init_runs_without_confirm(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _run_in_project (プロジェクトの置き場への委譲の chdir + 復帰)
+# env_delegate.run_in_project (プロジェクトの置き場への委譲の chdir + 復帰)
 # ---------------------------------------------------------------------------
 
 def test_run_in_project_restores_cwd_on_exception(monkeypatch, tmp_path):
@@ -194,7 +194,7 @@ def test_run_in_project_restores_cwd_on_exception(monkeypatch, tmp_path):
 
     before = os.getcwd()
     with pytest.raises(RuntimeError):
-        actions_env._run_in_project(tmp_path, "myapp", _boom)
+        env_delegate.run_in_project(tmp_path, "myapp", _boom)
     assert os.getcwd() == before
     assert os.environ["PWD"] == "/original/pwd"
 
@@ -211,7 +211,7 @@ def test_run_in_project_restores_unset_pwd(monkeypatch, tmp_path):
         seen["pwd"] = os.environ.get("PWD")
         return 0
 
-    assert actions_env._run_in_project(tmp_path, "myapp", _probe) == 0
+    assert env_delegate.run_in_project(tmp_path, "myapp", _probe) == 0
     assert seen["pwd"] == str(target)
     assert "PWD" not in os.environ
 
@@ -219,8 +219,8 @@ def test_run_in_project_restores_unset_pwd(monkeypatch, tmp_path):
 def test_run_in_project_missing_dir_cancels(monkeypatch, tmp_path):
     """対象ディレクトリへ移動できない場合は実行せず _ARG_CANCEL (メニューへ戻る)。"""
     called = []
-    result = actions_env._run_in_project(tmp_path, "ghost",
-                                         lambda: called.append(1) or 0)
+    result = env_delegate.run_in_project(tmp_path, "ghost",
+                                          lambda: called.append(1) or 0)
     assert result is actions_env._ARG_CANCEL
     assert called == []
 

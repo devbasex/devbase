@@ -20,7 +20,8 @@ from pathlib import Path
 from devbase.env import keys
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
-from devbase.tui import flow, menu
+from devbase.env.secret_store import KIND_GLOBAL
+from devbase.tui import env_delegate, flow, menu
 from devbase.utils.text_width import pad
 
 logger = get_logger(__name__)
@@ -118,19 +119,17 @@ def delegate_attrs(ref) -> dict:
     プロジェクトは ``project=True``・``group=None`` で、実行時のディレクトリを ``projects/<name>``
     にして呼ぶ (``-p`` はそのプロジェクトのグループの置き場だけを読み書きするため)。
     """
-    if ref.kind == "global":
+    if ref.kind == KIND_GLOBAL:
         return {"project": False, "user": ref.is_user, "group": ref.group}
     return {"project": True, "user": ref.is_user, "group": None}
 
 
 def _dispatch(devbase_root: Path, subcommand: str, ref, **attrs):
-    from devbase.tui import actions_env
-
     attrs.update(delegate_attrs(ref))
-    call = lambda: actions_env._dispatch(devbase_root, subcommand, **attrs)  # noqa: E731
-    if ref.kind == "global":
+    call = lambda: env_delegate.dispatch(devbase_root, subcommand, **attrs)  # noqa: E731
+    if ref.kind == KIND_GLOBAL:
         return call()
-    rc = actions_env._run_in_project(devbase_root, ref.name, call)
+    rc = env_delegate.run_in_project(devbase_root, ref.name, call)
     return 1 if rc is flow.ARG_CANCEL else rc
 
 
@@ -178,6 +177,36 @@ def _select_group(devbase_root: Path) -> str:
     if picked is TYPE_GROUP:
         return flow.need(menu.text(f"グループ名 {menu.HINT_BACK}:", allow_empty=False)).strip()
     return picked
+
+
+def group_attrs(devbase_root: Path) -> dict:
+    """グループ別の置き場なら対象のグループを選ばせ、``{"group": 名前}`` を返す。
+
+    env メニューの sync / init と、OpenBao の接続設定の確認が使う。
+    それ以外の設定では ``{}`` (グループの選択を出さずに今どおり実行する)。設定が読めない
+    ときも ``{}`` で委譲し、委譲先のコマンドが誤りを出す。使えない名前を入れたら、
+    ``--group`` と同じ検証の文を出して選択へ戻る。名前の規則に加えて、``--group`` と同じく
+    置き場のグループ名の検査 (``storage_group``: 予約語 ``global`` / ``projects`` と
+    ``group_aliases`` の読み替え先) も通し、通らない名前は委譲先へ渡さない。
+    """
+    from devbase.env.secret_store import SecretStore
+    from devbase.volume.manager import validate_account_group
+
+    try:
+        grouped = _grouped(devbase_root)
+        settings = SecretStore(devbase_root).config.openbao if grouped else None
+    except DevbaseError:
+        return {}
+    if not grouped:
+        return {}
+    while True:
+        name = _select_group(devbase_root)
+        try:
+            name = validate_account_group(name)
+            settings.storage_group(name)
+            return {"group": name}
+        except DevbaseError as e:
+            logger.error("--group に使えない名前です: %s", e)
 
 
 def project_title(name: str, count, width: int) -> str:

@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import inspect
 import io
 import logging
 import os
@@ -313,13 +312,25 @@ def test_a_version_conflict_does_not_overwrite_and_asks_to_reload(grouped, openb
 
 
 def test_the_tui_never_writes_the_store_itself(grouped, openbao, monkeypatch):
-    real = SecretStore.save
+    """置き場への書き込みは、委譲した cmd_env の実行中にだけ起きる (TUI は自分で書かない)"""
+    real_save = SecretStore.save
+    real_cmd_env = env_cmd.cmd_env
+    delegated = []          # 実行中の cmd_env の入れ子
+    saves = []
+
+    def cmd_env(devbase_root, args):
+        delegated.append(args.subcommand)
+        try:
+            return real_cmd_env(devbase_root, args)
+        finally:
+            delegated.pop()
 
     def guarded(self, ref, data):
-        caller = inspect.stack()[1].frame.f_globals.get('__name__', '')
-        assert not caller.startswith('devbase.tui'), caller
-        return real(self, ref, data)
+        assert delegated, 'cmd_env の外で置き場へ書いた'
+        saves.append(delegated[-1])
+        return real_save(self, ref, data)
 
+    monkeypatch.setattr(env_cmd, 'cmd_env', cmd_env)
     monkeypatch.setattr(SecretStore, 'save', guarded)
     Script(monkeypatch, select=['global', 'team-a', keys_ui.ADD, 'team', menu.MENU_BACK],
            text=['K'], secret=['v'])
@@ -327,6 +338,7 @@ def test_the_tui_never_writes_the_store_itself(grouped, openbao, monkeypatch):
     run(grouped)
 
     assert openbao.get(TEAM) == {'K': 'v'}
+    assert saves == ['set']
 
 
 # ---------------------------------------------------------------------------
