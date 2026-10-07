@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-07
+
+base イメージの削減に伴い、使う者の無い道具を外す変更を含みます（lfm・DinD・amd64 の Chrome・Playwright のブラウザなど、
+下の Removed）。使っていたプロジェクトは、項目ごとの移し方に従ってプロジェクトの Dockerfile へ足してください。
+
 ### Added
 - **base イメージに `python3-psutil` を入れました。** コンテナの中のシステムの `python3` で
   `import psutil` が使えます（NDF のスクリプトがプロセスの一覧と資源の量を読むのに使います）。
@@ -1022,7 +1027,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v4.0.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v4.1.0...HEAD
+[4.1.0]: https://github.com/devbasex/devbase/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/devbasex/devbase/compare/v3.10.0...v4.0.0
 [3.10.0]: https://github.com/devbasex/devbase/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/devbasex/devbase/compare/v3.8.0...v3.9.0
