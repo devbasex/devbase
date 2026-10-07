@@ -10,7 +10,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
@@ -630,7 +630,7 @@ def _resolve_project_name(project_name: str) -> bool:
         # :func:`devbase.env.runtime.current_project_name`) は wrapper の cd を前提に
         # ``os.environ['PWD']`` を先に見るため、os.chdir だけだと切替前の PWD が残り、
         # 切替先ではなく呼び出し元プロジェクトの機密を読んでしまう
-        # (TUI の ``_run_in_project`` が PWD を差し替えているのと同じ理由)。
+        # (TUI の ``env_delegate.run_in_project`` が PWD を差し替えているのと同じ理由)。
         os.environ['PWD'] = str(target)
         _unset_caller_only_env_keys(caller_env_keys, target)
 
@@ -1558,21 +1558,8 @@ def cmd_post_start(project_name: Optional[str] = None, context: Optional[str] = 
                      dev_service_name)
         return 1
 
-    targets = []
-    not_ready = []
-    for index, name in running:
-        (targets if _entrypoint_ready(name) else not_ready).append(index)
-
     scale = config.scale if config.scale is not None else project_runtime.DEFAULT_SCALE
-    running_indices = {index for index, _name in running}
-    stopped = [i for i in range(1, scale + 1) if i not in running_indices]
-    if stopped:
-        logger.warning("動いていないため処理しません: %s",
-                       ', '.join(f"{dev_service_name}-{i}" for i in stopped))
-    if not_ready:
-        logger.warning("entrypoint の完了を確かめられないため処理しません: %s "
-                       "(起動が終わってから、もう一度打ちます)",
-                       ', '.join(f"{dev_service_name}-{i}" for i in not_ready))
+    targets = _select_post_start_targets(running, scale, dev_service_name)
     if not targets:
         logger.error("起動の後の処理を行えるインスタンスがありません")
         return 1
@@ -1582,6 +1569,28 @@ def cmd_post_start(project_name: Optional[str] = None, context: Optional[str] = 
                     run_deploy=False)
     logger.info("=== Post-start completed ===")
     return 0
+
+
+def _select_post_start_targets(running, scale: int, dev_service_name: str) -> List[int]:
+    """動いているインスタンスから、完了の印を確かめられた番号を返す。
+
+    動いていない番号と完了の印を確かめられない番号は警告で出す。
+    """
+    targets = []
+    not_ready = []
+    for index, name in running:
+        (targets if _entrypoint_ready(name) else not_ready).append(index)
+
+    running_indices = {index for index, _name in running}
+    stopped = [i for i in range(1, scale + 1) if i not in running_indices]
+    if stopped:
+        logger.warning("動いていないため処理しません: %s",
+                       ', '.join(f"{dev_service_name}-{i}" for i in stopped))
+    if not_ready:
+        logger.warning("entrypoint の完了を確かめられないため処理しません: %s "
+                       "(起動が終わってから、もう一度打ちます)",
+                       ', '.join(f"{dev_service_name}-{i}" for i in not_ready))
+    return targets
 
 
 # ---------------------------------------------------------------------------

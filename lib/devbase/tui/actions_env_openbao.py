@@ -17,7 +17,7 @@ from pathlib import Path
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
-from devbase.tui import flow, menu
+from devbase.tui import actions_env_keys, env_delegate, flow, menu
 
 logger = get_logger(__name__)
 
@@ -28,9 +28,7 @@ MSG_ROLE_NEEDS_SECRET = "role_id を変えるときは secret_id も入れてく
 
 
 def _dispatch_backend(devbase_root: Path, action: str, **attrs) -> int:
-    from devbase.tui import actions_env
-
-    return actions_env._dispatch(devbase_root, "backend", backend_action=action, **attrs)
+    return env_delegate.dispatch(devbase_root, "backend", backend_action=action, **attrs)
 
 
 def _backend_name(store) -> str:
@@ -75,15 +73,14 @@ def _check_group_attrs(devbase_root: Path) -> dict:
     """確認 (``env backend test``) に渡すグループ。選ばせるのはプロジェクトの外のときだけ。
 
     プロジェクトの中では ``{}`` を返し、``env backend test`` がグループの宣言から決める。
-    外では sync / init と同じ部品 (``actions_env._group_attrs``) で選ばせる。グループ別の
+    外では sync / init と同じ部品 (``actions_env_keys.group_attrs``) で選ばせる。グループ別の
     置き場でなければ、そこで ``{}`` が返る。戻る (Esc・←) と ``flow.BackOut`` が上がる。
     """
     from devbase.commands.env import _current_project_name
-    from devbase.tui import actions_env
 
     if _current_project_name(devbase_root) is not None:
         return {}
-    return actions_env._group_attrs(devbase_root)
+    return actions_env_keys.group_attrs(devbase_root)
 
 
 @flow.collect_args

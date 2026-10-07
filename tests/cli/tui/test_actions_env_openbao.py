@@ -281,3 +281,30 @@ def test_a_flat_layout_checks_without_a_group(openbao_root, openbao, monkeypatch
     assert rc == 0
     assert seen == [None]
     assert not script.messages('select')
+
+
+@pytest.mark.parametrize('reserved', ['global', 'projects'])
+def test_a_reserved_storage_group_returns_to_the_selection(grouped, openbao, monkeypatch, caplog,
+                                                          reserved):
+    """#397: 置き場の予約語は test へ渡さず、--group と同じ検証の文を出して選択へ戻る"""
+    from devbase.tui.actions_env_keys import TYPE_GROUP
+
+    groups = []
+    real_test = env_backend.cmd_env_backend_test
+
+    def spy(root, *, group=None):
+        groups.append(group)
+        return real_test(root, group=group)
+
+    monkeypatch.setattr(env_backend, 'cmd_env_backend_test', spy)
+    script = Script(monkeypatch, text=[local_url(openbao), reserved], secret=['', ''],
+                    select=[TYPE_GROUP, 'acme'])
+
+    rc, out = run(grouped)
+
+    assert rc == 0
+    assert '--group に使えない名前です' in logs(caplog)
+    assert f"'{reserved}' は置き場のグループ名に使えません" in logs(caplog)
+    assert len(script.messages('select')) == 2
+    assert reserved not in groups
+    assert '読めた参照' in out

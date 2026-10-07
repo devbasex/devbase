@@ -88,6 +88,11 @@ def _validate_project_name(name: str) -> str:
 
 OWNER_TEAM = 'team'
 OWNER_USER = 'user'
+
+#: 参照の適用範囲 (:attr:`SecretRef.kind`)
+KIND_GLOBAL = 'global'
+KIND_PROJECT = 'project'
+
 _OWNERS = (OWNER_TEAM, OWNER_USER)
 
 
@@ -129,20 +134,20 @@ class SecretRef:
     1 つの ``SecretStore`` の中でグループが変わっても控え (``_seen``) を取り違えない。
     読み替え (``group_aliases``) の前の名前を持ち、読み替えはパスを組むときに行う。
     """
-    kind: str                      # 'global' | 'project'
+    kind: str                      # KIND_GLOBAL | KIND_PROJECT
     name: Optional[str] = None
     owner: str = OWNER_TEAM        # 'team' | 'user'
     group: Optional[str] = None
 
     @staticmethod
     def for_global(*, owner: str = OWNER_TEAM, group: Optional[str] = None) -> 'SecretRef':
-        return SecretRef(kind='global', owner=_validate_owner(owner),
+        return SecretRef(kind=KIND_GLOBAL, owner=_validate_owner(owner),
                          group=_validate_group(group))
 
     @staticmethod
     def for_project(name: str, *, owner: str = OWNER_TEAM,
                     group: Optional[str] = None) -> 'SecretRef':
-        return SecretRef(kind='project', name=_validate_project_name(name),
+        return SecretRef(kind=KIND_PROJECT, name=_validate_project_name(name),
                          owner=_validate_owner(owner), group=_validate_group(group))
 
     @property
@@ -160,7 +165,7 @@ class SecretRef:
         """
         # チーム単位の文字列は変えない。誤りの伝達や桁揃えに埋め込まれており、
         # 変えると既存の表示とテストが一斉に動く。
-        base = 'グローバル' if self.kind == 'global' else f"プロジェクト '{self.name}'"
+        base = 'グローバル' if self.kind == KIND_GLOBAL else f"プロジェクト '{self.name}'"
         text = f'個人の{base}' if self.is_user else base
         if not self.group:
             return text
@@ -191,7 +196,7 @@ def warn_unusable_project_name(ref: SecretRef) -> None:
     この関数の結果で分岐しないため戻り値を持たない。ファイルの backend の ``save_bytes`` が
     ``path(ref)`` の検査の後で呼ぶ。読み取りの経路 (``path``・``exists``・``load``) では呼ばない。
     """
-    if ref.kind != 'project' or names.is_single_segment_name(ref.name or ''):
+    if ref.kind != KIND_PROJECT or names.is_single_segment_name(ref.name or ''):
         return
     # 改行・ESC などは名前の検証を通るため、そのまま埋め込むと警告が複数行に割れ、
     # 端末の表示も操作できてしまう。表示できない文字だけをエスケープして見せる。
@@ -225,7 +230,7 @@ class PlaintextBackend:
         self._root = Path(devbase_root)
 
     def path(self, ref: SecretRef) -> Path:
-        if ref.kind == 'global':
+        if ref.kind == KIND_GLOBAL:
             return self._root / '.env'
         return self._root / 'projects' / _validate_project_name(ref.name or '') / '.env'
 
@@ -325,7 +330,7 @@ class AgeBackend:
 
     def path(self, ref: SecretRef) -> Path:
         base = self._root / SECRETS_DIRNAME
-        if ref.kind == 'global':
+        if ref.kind == KIND_GLOBAL:
             return base / GLOBAL_ENCRYPTED_FILENAME
         name = _validate_project_name(ref.name or '')
         return base / 'projects' / f'{name}.env.age'

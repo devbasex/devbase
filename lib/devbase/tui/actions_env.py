@@ -13,26 +13,19 @@ TUI では次の 4 つだけを扱い、メニュー階層を浅くする:
 - export/import は TUI から除外する (CLI で実行)。
 
 引数収集は ``tui.menu`` のヘルパで CLI parser (cli.py ``_add_env_parser``) と
-同じ属性値を集め、``tui.dispatch.dispatch_group`` 経由で既存ハンドラ
-``cmd_env`` へ委譲する (ロジック二重実装なし)。
-
-プロジェクトの置き場への書き込みは、CWD (環境変数 ``PWD``) のプロジェクトディレクトリで
-動く ``set -p`` / ``delete -p`` へ委譲するため、chdir + ``PWD`` 差し替えしてからハンドラを
-呼び、実行後は必ず元へ復帰する (``_run_in_project``)。``cmd_env_*`` は
-``os.environ.get('PWD', os.getcwd())`` で現在地を判定するため、``os.chdir`` だけでなく
-``PWD`` も併せて切り替える。
+同じ属性値を集め、``tui.env_delegate`` 経由で既存ハンドラ ``cmd_env`` へ委譲する
+(ロジック二重実装なし)。プロジェクトの置き場への書き込みの chdir + ``PWD`` 差し替えも
+``env_delegate.run_in_project`` が行う。
 
 中止系の伝搬 (Ctrl-C / Esc / ``_ARG_CANCEL``) は ``tui.flow`` のナビ規約に従う。
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from devbase.log import get_logger
-from devbase.tui import flow, menu
-from devbase.tui.dispatch import dispatch_group
+from devbase.tui import actions_env_keys, actions_env_openbao, env_delegate, flow, menu
 
 logger = get_logger(__name__)
 
@@ -49,17 +42,6 @@ _ENV_OPS: list[tuple[str, str]] = [
 _ARG_CANCEL = flow.ARG_CANCEL
 
 
-def _dispatch(devbase_root: Path, subcommand: str, **attrs):
-    """``cmd_env`` への委譲 (dispatch_group の薄いラッパ)。
-
-    import を関数内で行うのは actions_project (dispatch_lifecycle) と同様、
-    テストで ``devbase.commands.env.cmd_env`` を monkeypatch できるようにするため。
-    """
-    from devbase.commands import env as env_mod
-
-    return dispatch_group(env_mod.cmd_env, devbase_root, subcommand, **attrs)
-
-
 def _select_action():
     """env 操作を選ぶサブメニュー。
 
@@ -70,84 +52,23 @@ def _select_action():
                        list(_ENV_OPS), back=True, search=False)
 
 
-def _run_in_project(devbase_root: Path, project_name: str, fn):
-    """``projects/<name>`` へ chdir + ``PWD`` を切り替えて fn を実行し、必ず復帰する。
-
-    ``cmd_env_set --project`` / ``cmd_env_project`` は
-    ``os.environ.get('PWD', os.getcwd())`` で現在地を判定する (wrapper の cd を
-    前提とした PLAN06 機構) ため、``os.chdir`` だけでは不十分で ``PWD`` も
-    プロジェクトパスへ差し替える。``PWD`` は symlink を解決しない
-    ``projects/<name>`` を指す (projects/ 配下判定を成立させるため)。
-
-    戻り値: fn の rc / ``_ARG_CANCEL`` (対象ディレクトリへ移動できない場合)。
-    """
-    target = Path(devbase_root) / "projects" / project_name
-    old_cwd = Path.cwd()
-    old_pwd = os.environ.get("PWD")
-    try:
-        os.chdir(target)
-    except OSError as exc:
-        logger.error("プロジェクトディレクトリへ移動できません: %s (%s)", target, exc)
-        return _ARG_CANCEL
-    os.environ["PWD"] = str(target)
-    try:
-        return fn()
-    finally:
-        # 実行結果に関わらず必ず元の CWD / PWD へ復帰する (plan 3.3)。
-        os.chdir(old_cwd)
-        if old_pwd is None:
-            os.environ.pop("PWD", None)
-        else:
-            os.environ["PWD"] = old_pwd
-
-
 # ---------------------------------------------------------------------------
 # 各操作の引数収集 + dispatch (plan 2.3 契約)
 # ---------------------------------------------------------------------------
-
-def _group_attrs(devbase_root: Path) -> dict:
-    """グループ別の置き場なら対象のグループを選ばせ、``{"group": 名前}`` を返す。
-
-    それ以外の設定では ``{}`` (グループの選択を出さずに今どおり実行する)。設定が読めない
-    ときも ``{}`` で委譲し、委譲先のコマンドが誤りを出す。使えない名前を入れたら、
-    ``--group`` と同じ検証の文を出して選択へ戻る。
-    """
-    from devbase.errors import DevbaseError
-    from devbase.volume.manager import validate_account_group
-
-    keys_screen = _screen("actions_env_keys")
-    try:
-        grouped = keys_screen._grouped(devbase_root)
-    except DevbaseError:
-        return {}
-    if not grouped:
-        return {}
-    while True:
-        name = keys_screen._select_group(devbase_root)
-        try:
-            return {"group": validate_account_group(name)}
-        except DevbaseError as e:
-            logger.error("--group に使えない名前です: %s", e)
-
 
 _OP_HANDLERS = {
     # sync は引数なしで即実行 (ソースファイルから認証情報を再同期する)。
     # init は --reset なし (CLI 既定) で即実行。セットアップ済みなら
     # cmd_env_init が案内を出して安全に終了し、やり直しは CLI --reset を使う。
-    # どちらもグループ別の置き場では先にグループを選ぶ (_group_attrs)。
-    "sync": lambda root: _dispatch(root, "sync", **_group_attrs(root)),
-    "init": lambda root: _dispatch(root, "init", reset=False, **_group_attrs(root)),
-    # 2 つの画面は自分の中で引数を集め、cmd_env へ委譲する (#273)。関数内で import するのは
-    # 画面のモジュールが本モジュールの _dispatch / _run_in_project を使うため (循環を避ける)。
-    "keys": lambda root: _screen("actions_env_keys").run(root),
-    "openbao": lambda root: _screen("actions_env_openbao").run(root),
+    # どちらもグループ別の置き場では先にグループを選ぶ (actions_env_keys.group_attrs)。
+    "sync": lambda root: env_delegate.dispatch(root, "sync",
+                                               **actions_env_keys.group_attrs(root)),
+    "init": lambda root: env_delegate.dispatch(root, "init", reset=False,
+                                               **actions_env_keys.group_attrs(root)),
+    # 2 つの画面は自分の中で引数を集め、cmd_env へ委譲する (#273)
+    "keys": lambda root: actions_env_keys.run(root),
+    "openbao": lambda root: actions_env_openbao.run(root),
 }
-
-
-def _screen(name: str):
-    import importlib
-
-    return importlib.import_module(f"devbase.tui.{name}")
 
 
 @flow.collect_args

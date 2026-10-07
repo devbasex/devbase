@@ -19,9 +19,10 @@ from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import List, Optional, Sequence
 
+from devbase.commands.subcommands import run_subcommand
 from devbase.env import backend_config as _bc
 from devbase.env import bootstrap as _bootstrap
-from devbase.env.secret_store import MODE_ABSENT, SecretRef, SecretStore
+from devbase.env.secret_store import KIND_GLOBAL, MODE_ABSENT, SecretRef, SecretStore
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.utils import names
@@ -46,11 +47,7 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
             exclude_projects=getattr(args, 'exclude_projects', None) or (),
             group=getattr(args, 'group', None)),
     }
-    handler = handlers.get(action)
-    if handler is None:
-        logger.error("サブコマンドを指定してください: %s", ', '.join(handlers))
-        return EXIT_USAGE
-    return handler()
+    return run_subcommand(handlers, action, missing_rc=EXIT_USAGE, logger=logger)
 
 
 # ---------------------------------------------------------------------------
@@ -550,11 +547,49 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
     ``group`` は ``--group`` で、共通の参照のグループ。グループ別の置き場では、プロジェクトの外なら
     必須で、宣言の無いプロジェクトが 1 つでもあれば書き込みの前に止める (#315 I11)。
     """
-    from devbase.commands.env import GroupOptionError, _target_group
-    from devbase.env import groups as _groups
-    from devbase.env.openbao import OpenBaoBackend
-
     root = Path(devbase_root)
+    rc = _validate_migrate_args(root, to, exclude_projects)
+    if rc is not None:
+        return rc
+
+    config = _load_migrate_config(root)
+    if isinstance(config, int):
+        return config
+
+    stores = _build_migration_stores(root, config, group, exclude_projects)
+    if isinstance(stores, int):
+        return stores
+    file_store, server_store, server, common_group = stores
+
+    plan = _MigrationPlan(root, file_store, server_store, server, to,
+                          exclude_projects=exclude_projects, common_group=common_group)
+    try:
+        plan.prepare()
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+    if not plan.moves:
+        print("移す機密はありません")
+        _print_left_on_server(plan)
+        return 0
+
+    rc = _confirm_migration(plan, dry_run, assume_yes)
+    if rc is not None:
+        return rc
+
+    try:
+        plan.apply()
+    except DevbaseError as e:
+        logger.error("移行を中止しました: %s", e)
+        return 1
+
+    return _switch_backend_after_migration(root, config, plan)
+
+
+def _validate_migrate_args(root: Path, to: Optional[str],
+                           exclude_projects: Sequence[str]) -> Optional[int]:
+    """``--to`` と ``--exclude-project`` を確かめる。正しくなければ終了コードを返す。"""
     if to not in MIGRATE_TARGETS:
         logger.error("--to には %s のいずれかを指定してください: %r",
                      ' / '.join(MIGRATE_TARGETS), to)
@@ -564,10 +599,18 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         logger.error("--exclude-project に指定したプロジェクトが $DEVBASE_ROOT/projects/ に"
                      "ありません: %s", ', '.join(unknown))
         return EXIT_USAGE
+    return None
 
-    config = _load_migrate_config(root)
-    if isinstance(config, int):
-        return config
+
+def _build_migration_stores(root: Path, config, group: Optional[str],
+                            exclude_projects: Sequence[str]):
+    """移行元と移行先の置き場、OpenBao の backend、共通の参照のグループを組み立てる。
+
+    返り値は ``(file_store, server_store, server, common_group)``。止めるときは終了コード。
+    """
+    from devbase.commands.env import GroupOptionError, _target_group
+    from devbase.env import groups as _groups
+    from devbase.env.openbao import OpenBaoBackend
 
     # 移行元と移行先は設定ファイルの backend とは無関係に組み立てる。移行の途中で
     # 設定を変えず、成功したときだけ書き換えるため。
@@ -592,20 +635,11 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         except DevbaseError as e:
             logger.error("%s", e)
             return 1
+    return file_store, server_store, server, common_group
 
-    plan = _MigrationPlan(root, file_store, server_store, server, to,
-                          exclude_projects=exclude_projects, common_group=common_group)
-    try:
-        plan.prepare()
-    except DevbaseError as e:
-        logger.error("%s", e)
-        return 1
 
-    if not plan.moves:
-        print("移す機密はありません")
-        _print_left_on_server(plan)
-        return 0
-
+def _confirm_migration(plan, dry_run: bool, assume_yes: bool) -> Optional[int]:
+    """要約を出し、書き込みへ進まないときは終了コードを返す。進むときは None。"""
     _print_plan_summary(plan)
     if plan.conflicts:
         print("\n移行先に同じキーがあるため、1 件も書き込まずに中止しました。"
@@ -620,14 +654,7 @@ def cmd_env_backend_migrate(devbase_root: Path, *, to: Optional[str],
         if safe_input("続行しますか? (yes と入力): ") != 'yes':
             print("中止しました")
             return 1
-
-    try:
-        plan.apply()
-    except DevbaseError as e:
-        logger.error("移行を中止しました: %s", e)
-        return 1
-
-    return _switch_backend_after_migration(root, config, plan)
+    return None
 
 
 def _load_migrate_config(root: Path):
@@ -734,10 +761,6 @@ class _MigrationPlan:
         self.conflicts: dict = {}
         #: ``--to age`` で移さずサーバ上に残す、他のグループの共通の参照
         self.left_on_server: List[SecretRef] = []
-
-    @property
-    def _grouped(self) -> bool:
-        return self.server_store.config.openbao.grouped
 
     def _units(self) -> List[_MoveUnit]:
         """移す単位を組み、``--to age`` で移さない他のグループの共通の参照を控える。
@@ -886,7 +909,7 @@ class _MigrationPlan:
             source = backend.path(ref)
             if not source.is_file():
                 continue
-            if ref.kind == 'global':
+            if ref.kind == KIND_GLOBAL:
                 target = backup_dir / source.name
             else:
                 target = backup_dir / 'projects' / (
@@ -910,7 +933,7 @@ def _heading_width(plan: _MigrationPlan) -> int:
 def _plan_heading(plan: _MigrationPlan, unit: _MoveUnit, width: int) -> str:
     """参照の見出し。グループ別の置き場ではサーバ上のパスを添える (値は出さない)"""
     label = pad(plan.server_store.display_label(unit.server_ref), width)
-    if plan._grouped:
+    if plan.server_store.grouped:
         label += f" {plan.server.display_path(unit.server_ref)}"
     return label
 

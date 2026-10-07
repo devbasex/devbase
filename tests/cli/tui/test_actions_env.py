@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-from devbase.tui import actions_env, flow, menu
+from devbase.tui import actions_env, env_delegate, flow, menu
 
 
 @pytest.fixture(autouse=True)
@@ -180,7 +180,7 @@ def test_run_operation_init_runs_without_confirm(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _run_in_project (プロジェクトの置き場への委譲の chdir + 復帰)
+# env_delegate.run_in_project (プロジェクトの置き場への委譲の chdir + 復帰)
 # ---------------------------------------------------------------------------
 
 def test_run_in_project_restores_cwd_on_exception(monkeypatch, tmp_path):
@@ -194,7 +194,7 @@ def test_run_in_project_restores_cwd_on_exception(monkeypatch, tmp_path):
 
     before = os.getcwd()
     with pytest.raises(RuntimeError):
-        actions_env._run_in_project(tmp_path, "myapp", _boom)
+        env_delegate.run_in_project(tmp_path, "myapp", _boom)
     assert os.getcwd() == before
     assert os.environ["PWD"] == "/original/pwd"
 
@@ -211,7 +211,7 @@ def test_run_in_project_restores_unset_pwd(monkeypatch, tmp_path):
         seen["pwd"] = os.environ.get("PWD")
         return 0
 
-    assert actions_env._run_in_project(tmp_path, "myapp", _probe) == 0
+    assert env_delegate.run_in_project(tmp_path, "myapp", _probe) == 0
     assert seen["pwd"] == str(target)
     assert "PWD" not in os.environ
 
@@ -219,8 +219,8 @@ def test_run_in_project_restores_unset_pwd(monkeypatch, tmp_path):
 def test_run_in_project_missing_dir_cancels(monkeypatch, tmp_path):
     """対象ディレクトリへ移動できない場合は実行せず _ARG_CANCEL (メニューへ戻る)。"""
     called = []
-    result = actions_env._run_in_project(tmp_path, "ghost",
-                                         lambda: called.append(1) or 0)
+    result = env_delegate.run_in_project(tmp_path, "ghost",
+                                          lambda: called.append(1) or 0)
     assert result is actions_env._ARG_CANCEL
     assert called == []
 
@@ -300,3 +300,23 @@ def test_grouped_sync_reasks_for_an_unusable_typed_name(monkeypatch, tmp_path, c
 
     assert captured['attrs'] == {'subcommand': 'sync', 'group': 'personal'}
     assert 'default' in caplog.text
+
+
+@pytest.mark.parametrize('op', ['sync', 'init'])
+@pytest.mark.parametrize('reserved', ['global', 'projects'])
+def test_grouped_sync_and_init_reask_for_a_reserved_storage_group(monkeypatch, tmp_path, caplog,
+                                                                   op, reserved):
+    """#397: 置き場の予約語は --group と同じ検証の文を出して選択へ戻り、委譲先へ渡さない"""
+    from devbase.tui import actions_env_keys
+
+    _grouped_root(tmp_path)
+    captured = _capture_dispatch(monkeypatch)
+    picks = iter([actions_env_keys.TYPE_GROUP, 'acme'])
+    monkeypatch.setattr(menu, 'select', lambda *a, **k: next(picks))
+    monkeypatch.setattr(menu, 'text', lambda *a, **k: reserved)
+
+    assert actions_env._run_operation(tmp_path, op) == 0
+
+    assert captured['attrs']['group'] == 'acme'
+    assert '--group に使えない名前です' in caplog.text
+    assert f"'{reserved}' は置き場のグループ名に使えません" in caplog.text

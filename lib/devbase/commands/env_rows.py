@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from devbase.env.secret_store import OWNER_TEAM, OWNER_USER, SecretRef, SecretStore
+from devbase.env.secret_store import KIND_GLOBAL, OWNER_TEAM, OWNER_USER, SecretRef, SecretStore
 
 OWNER_LABELS = {OWNER_TEAM: 'チーム', OWNER_USER: '個人'}
 
@@ -39,10 +39,6 @@ class KeyListing:
     backend: str = ''
 
 
-def is_grouped(store: SecretStore) -> bool:
-    return store.grouped
-
-
 def _project_group(store: SecretStore, devbase_root: Path, project: str) -> Optional[str]:
     """プロジェクトの参照に持たせるグループ。読む前に backend を問わず宣言を検査する
     (#315 決定 2。CLI の ``_target_group`` と同じ)。
@@ -57,7 +53,7 @@ def _project_group(store: SecretStore, devbase_root: Path, project: str) -> Opti
 
 
 def scope_label(ref: SecretRef) -> str:
-    return '共通' if ref.kind == 'global' else f'プロジェクト {ref.name}'
+    return '共通' if ref.kind == KIND_GLOBAL else f'プロジェクト {ref.name}'
 
 
 def _scope_refs(store: SecretStore, project: Optional[str],
@@ -116,7 +112,7 @@ def collect_key_rows(devbase_root: Path, project: Optional[str] = None,
     接続・403・復号の失敗は ``DevbaseError`` のまま送る。
     """
     store = SecretStore(devbase_root)
-    grouped = is_grouped(store)
+    grouped = store.grouped
     target, option_group = _resolve_target(store, devbase_root, project, group)
 
     refs, has_user = _scope_refs(store, project, target)
