@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import yaml
 
@@ -107,6 +107,17 @@ _CHECK_COMMAND_BUDGET = 60_000
 # ローテーションで世代を消す理由。系列ごとの保持数を超えた分か、全体の上限を超えた分か。
 _REASON_PER_SERIES = 'series'
 _REASON_TOTAL = 'total'
+
+
+class RotateResult(NamedTuple):
+    """:meth:`SnapshotManager.rotate` の結果 (#333)。
+
+    ``deleted`` は検証を通って消した世代の数 (ディレクトリが既に無かったものを含む)。
+    ``removed`` は場所が不正なため、ディレクトリを消さずに一覧からだけ外したエントリの数。
+    """
+
+    deleted: int = 0
+    removed: int = 0
 
 
 def chunk_paths(paths: list, budget: int = _CHECK_COMMAND_BUDGET) -> list:
@@ -339,10 +350,6 @@ class SnapshotManager:
                 snap['size_bytes'] = 0
             snapshots.append(snap)
         return snapshots
-
-    def entry_count(self) -> int:
-        """``snapshot.yml`` のエントリの数。世代のディレクトリは開かない"""
-        return len(self._load_metadata().get('snapshots', []))
 
     def last_snapshot_time(self, volumes: Optional[dict] = None) -> Optional[datetime]:
         """直近のスナップショット取得 (フル/差分) 日時を返す。
@@ -626,7 +633,7 @@ class SnapshotManager:
         logger.info("削除完了: %s", name)
 
     def rotate(self, keep: int = DEFAULT_MAX_GENERATIONS,
-               max_total: Optional[int] = None) -> int:
+               max_total: Optional[int] = None) -> RotateResult:
         """古い世代を削除する (PLAN68 決定 1・6・7)。
 
         系列 (対象ボリュームの組) ごとに ``keep`` 世代を残し、残りの総数が
@@ -640,7 +647,7 @@ class SnapshotManager:
             max_total: 全体で残す世代の上限。省けば ``keep × 3``
 
         Returns:
-            削除された世代数
+            消した世代の数と、一覧からだけ外したエントリの数 (:class:`RotateResult`)
 
         Raises:
             SnapshotError: ``keep`` か ``max_total`` が 1 未満の場合 (何も消さない)
@@ -656,14 +663,15 @@ class SnapshotManager:
         snapshots = meta.get('snapshots', []) or []
         plan = self._rotation_plan(snapshots, keep, max_total)
         if not plan:
-            return 0
+            return RotateResult()
 
         deleted_ids, removed_ids = self._apply_rotation_plan(
             snapshots, plan, keep, max_total)
         meta['snapshots'] = self._rebuild_remaining(snapshots, removed_ids)
         meta['max_generations'] = keep
         self._save_metadata(meta)
-        return len(deleted_ids)
+        return RotateResult(deleted=len(deleted_ids),
+                            removed=len(removed_ids - deleted_ids))
 
     def _apply_rotation_plan(self, snapshots: list, plan: list, keep: int,
                              max_total: int) -> tuple:

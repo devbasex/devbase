@@ -20,7 +20,7 @@ import yaml
 
 from devbase.commands.snapshot import cmd_snapshot
 from devbase.errors import SnapshotError
-from devbase.snapshot.manager import SnapshotManager
+from devbase.snapshot.manager import RotateResult, SnapshotManager
 
 
 @pytest.fixture(autouse=True)
@@ -185,7 +185,7 @@ def test_rotate_accepts_yaml_timestamp(tmp_path):
         ("D1", "acme", 0), ("D2", "acme", 0), ("D3", "acme", 0),
         ("D4", "acme", 0)])
     _unquote_created_at(backups, "D2", "D4")
-    assert SnapshotManager(tmp_path).rotate() == 1
+    assert SnapshotManager(tmp_path).rotate().deleted == 1
     assert names(tmp_path) == ["D2", "D3", "D4"]
 
 
@@ -293,7 +293,7 @@ def test_rotate_keeps_per_series(tmp_path, caplog):
         ("D3", "acme", 0), ("D4", "acme", 0)])
 
     with caplog.at_level(logging.INFO, logger="devbase"):
-        assert SnapshotManager(tmp_path).rotate() == 1
+        assert SnapshotManager(tmp_path).rotate().deleted == 1
     assert names(tmp_path) == ["D2", "W1", "D3", "D4"]
     assert not (backups / "D1").exists()
     assert (backups / "W1").exists()
@@ -308,7 +308,7 @@ def test_alternating_groups_keep_three_each(tmp_path):
         entries += [(f"D{i}", "acme", 0), (f"W{i}", "initech", 0)]
     write_state(tmp_path, entries)
 
-    assert SnapshotManager(tmp_path).rotate() == 2
+    assert SnapshotManager(tmp_path).rotate().deleted == 2
     assert names(tmp_path) == ["D1", "W1", "D2", "W2", "D3", "W3"]
 
 
@@ -321,7 +321,7 @@ def test_total_limit_removes_oldest_across_series(tmp_path, caplog):
     write_state(tmp_path, entries)
 
     with caplog.at_level(logging.INFO, logger="devbase"):
-        assert SnapshotManager(tmp_path).rotate() == 3
+        assert SnapshotManager(tmp_path).rotate().deleted == 3
     remaining = names(tmp_path)
     assert len(remaining) == 9
     assert not {"A1", "B1", "C1"} & set(remaining)
@@ -337,7 +337,7 @@ def test_total_limit_keeps_latest_of_each_series(tmp_path):
             entries.append((f"{g.upper()}{i}", f"g{g}", 0))
     write_state(tmp_path, entries)
 
-    assert SnapshotManager(tmp_path).rotate() == 3
+    assert SnapshotManager(tmp_path).rotate().deleted == 3
     remaining = names(tmp_path)
     assert "A3" in remaining
     assert not {"A1", "A2", "B1"} & set(remaining)
@@ -349,7 +349,7 @@ def test_total_limit_cannot_remove_series_latest(tmp_path, caplog):
     before = (tmp_path / "backups" / "snapshot.yml").read_bytes()
 
     with caplog.at_level(logging.INFO, logger="devbase"):
-        assert SnapshotManager(tmp_path).rotate(keep=3, max_total=9) == 0
+        assert SnapshotManager(tmp_path).rotate(keep=3, max_total=9).deleted == 0
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "全体の上限 9 世代" in warnings[0].getMessage()
@@ -361,7 +361,7 @@ def test_legacy_series_is_counted_separately(tmp_path):
     """13: 旧レイアウト 3 と acme 3 は、どちらも消さない。"""
     write_state(tmp_path, [("L1", None, 0), ("L2", None, 0), ("L3", None, 0),
                            ("D1", "acme", 0), ("D2", "acme", 0), ("D3", "acme", 0)])
-    assert SnapshotManager(tmp_path).rotate() == 0
+    assert SnapshotManager(tmp_path).rotate().deleted == 0
 
 
 @pytest.mark.parametrize("kwargs", [{"keep": 0}, {"max_total": 0}, {"keep": -1}])
@@ -420,7 +420,7 @@ def test_existing_state_is_left_untouched(tmp_path):
     (backups / "snapshot.yml").write_text(yaml.safe_dump(real))
     before = (backups / "snapshot.yml").read_bytes()
 
-    assert SnapshotManager(tmp_path).rotate() == 0
+    assert SnapshotManager(tmp_path).rotate().deleted == 0
     assert (backups / "snapshot.yml").read_bytes() == before
 
 
@@ -528,6 +528,49 @@ def test_cli_rotate_deleted_and_removed_prints_no_idle_message(tmp_path, caplog)
     messages = [r.getMessage() for r in caplog.records]
     assert not any("ローテーション不要です" in m for m in messages)
     assert not any("削除した世代はありません" in m for m in messages)
+
+
+def _write_mixed_state(tmp_path: Path) -> None:
+    """場所が不正な 2 件と本物の 3 世代を同じグループに置く (#333 の再現)。"""
+    backups = write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0),
+                                     ("D3", "acme", 0)])
+    _add_bad_entry(tmp_path, backups, "traversal")
+    _add_bad_entry(tmp_path, backups, "dir-link")
+
+
+def test_rotate_returns_deleted_and_removed_counts(tmp_path):
+    """#333: rotate() は消した数と、一覧からだけ外した数を分けて返す。"""
+    _write_mixed_state(tmp_path)
+
+    result = SnapshotManager(tmp_path).rotate(keep=2)
+
+    assert result == RotateResult(deleted=1, removed=2)
+    assert names(tmp_path) == ["D2", "D3"]
+
+
+def test_rotate_returns_zero_counts_without_candidates(tmp_path):
+    """#333: 候補が無ければ、消した数も外した数も 0。"""
+    write_state(tmp_path, [("D1", "acme", 0), ("D2", "acme", 0)])
+
+    assert SnapshotManager(tmp_path).rotate(keep=3) == RotateResult(0, 0)
+
+
+def test_cli_rotate_reports_both_deleted_and_removed(tmp_path, caplog):
+    """#333: 消した世代と外しただけのエントリが混ざるとき、要約に両方の数が出る。"""
+    outside = tmp_path / "backups-outside"
+    _write_mixed_state(tmp_path)
+    ns = types.SimpleNamespace(subcommand="rotate", keep=2)
+
+    with caplog.at_level(logging.INFO, logger="devbase"):
+        assert cmd_snapshot(tmp_path, ns) == 0
+    assert (outside / "keep.txt").read_text() == "keep"
+    assert names(tmp_path) == ["D2", "D3"]
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("1 世代を削除しました" in m for m in infos)
+    removed = [m for m in infos if "2 世代を一覧から外しました" in m]
+    assert len(removed) == 1
+    assert "削除した世代はありません" not in removed[0]
+    assert not any("ローテーション不要です" in m for m in infos)
 
 
 @pytest.mark.parametrize("bad", ["file-link", "no-name"])
