@@ -12,7 +12,7 @@ Dockerfile から直の親イメージを読む規則（直の親の読み方）
 （`bin/devbase`）と `--expires` の判定（`lib/devbase`）が同じ Dockerfile から同じ直の親を読む。
 
 読む Dockerfile（プロジェクトの Dockerfile）は、`docker compose build` が建てる開発サービス
-（`DEV_SERVICE_NAME`、既定 `dev`）の `build` から決める。compose の構成は `docker compose config` で読み、
+（`DEV_SERVICE_NAME`。未設定か空なら `dev`）の `build` から決める。compose の構成は `docker compose config` で読み、
 通常のビルドと `--expires` の判定が同じ決め方（Dockerfile の場所の決め方）を使う。
 
 利用者向けの説明は
@@ -431,10 +431,11 @@ compose の理由（`required variable MISSING is missing a value: need it` な�
 
 ### 決定 6: `docker compose build` が建てるサービスと同じサービスを見るため、開発サービス名は `bin/devbase` が `--service` で渡す
 
-`bin/devbase` は `${DEV_SERVICE_NAME:-dev}`（空なら `dev`）を `docker compose build` に渡すが、Python の
-`get_dev_service_name()` は空の値をそのまま返す。入口が自分で名前を決めると、`DEV_SERVICE_NAME=` と空で書いた
-プロジェクトで、建てるサービスと場所を決めるサービスが分かれる。`--expires` の判定が空の値で開発サービスを
-見失う件は #425 にある。
+`bin/devbase` は `${DEV_SERVICE_NAME:-dev}`（未設定か空なら `dev`）を `docker compose build` に渡し、同じ値を
+`--service` で入口へ渡す。建てるサービスと場所を決めるサービスが、1 つの値から決まる。入口が自分で名前を決めると、
+2 つが揃うかは Bash と Python の 2 つの読み方が同じ規則であることに頼る。Python の `get_dev_service_name()` も
+未設定か空なら `dev` と読み、今は 2 つの読み方は揃っている（[開発サービス名の読み方](dev-service-name.md)、#425）が、
+読み方が将来分かれても建てるサービスと場所を決めるサービスが分かれないよう、`--service` で渡す形を保つ。
 
 ### 決定 7: 実行時用の `.env` がまだ無いプロジェクトでも建てられるよう、入口は `--no-env-resolution` で構成を読む
 
@@ -447,6 +448,7 @@ compose の理由（`required variable MISSING is missing a value: need it` な�
 - [base イメージの中身の絞り込み](base-image-contents.md)（派生イメージの一覧）
 - [base イメージの文字の描画と、文書を扱う道具](base-image-rendering.md)（ブラウザの派生イメージ）
 - [位置引数の解決（プロジェクト名・イメージ名）](cli-argument-resolution.md)（名前の形 `is_single_segment_name`）
+- [開発サービス名の読み方（`DEV_SERVICE_NAME`）](dev-service-name.md)（`--service` で渡す名前の決め方）
 - [用語集: イメージの継承（`image-lineage`）](../glossary.md#イメージの継承image-lineage)
 - [コンテナ操作ガイド](../user/container-operations.md)
 - 実装 PR: devbasex/devbase#427（#415）・devbasex/devbase#432（`--no-env-resolution`）
