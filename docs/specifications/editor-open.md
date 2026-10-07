@@ -23,7 +23,7 @@ dev コンテナが 1 つ以上動いていれば、コンテナ・ボリュー�
 | 窓 | dev コンテナへ Dev Containers 拡張で接続した VS Code のウィンドウ |
 | 動いているインスタンス | `docker ps`（`-a` なし）に現れ、Compose のプロジェクトのラベルが対象のプロジェクトで、サービスのラベルが `<開発サービス名>-<1 以上の数字>` のコンテナ |
 | 番号（index） | 開くインスタンスの番号（`dev-1` の `1`）。`--open-index N`、無ければ環境変数 `DEVBASE_OPEN_INDEX`、それも無ければ 1 |
-| 開発サービス名 | `get_dev_service_name()` が返す名前（`DEV_SERVICE_NAME`、既定 `dev`） |
+| 開発サービス名 | `get_dev_service_name()` が返す名前（`DEV_SERVICE_NAME`。未設定か空なら `dev`） |
 
 ## 構成要素
 

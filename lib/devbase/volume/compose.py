@@ -33,8 +33,12 @@ VSCODE_SERVER_TARGET = '/home/ubuntu/.vscode-server'
 
 
 def get_dev_service_name() -> str:
-    """Get development service name from environment variable or default to 'dev'"""
-    return os.environ.get('DEV_SERVICE_NAME', 'dev')
+    """開発サービス名を返す。``DEV_SERVICE_NAME`` が未設定か空なら ``dev``
+
+    ``bin/devbase`` の ``${DEV_SERVICE_NAME:-dev}`` と同じ読み方にする。空白だけの値は
+    空として扱わず、そのまま返す。
+    """
+    return os.environ.get('DEV_SERVICE_NAME') or 'dev'
 
 
 def _rewrite_depends_on(

@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- **プロジェクトの `env` に `DEV_SERVICE_NAME=` と空で書いたとき、開発サービス名を `dev` として扱うようにしました（#425）。**
+  これまで `devbase build` は `dev` を建てる一方、`up`・`login`・`open`・`post-start`・`scale`・`--expires` の判定・
+  token の配布は空の名前のサービスを探して開発サービスを見失っていました。未設定や空でない値のプロジェクトは変わりません。
+
 ## [4.1.0] - 2026-10-07
 
 base イメージの削減に伴い、使う者の無い道具を外す変更を含みます（lfm・DinD・amd64 の Chrome・Playwright のブラウザなど、
