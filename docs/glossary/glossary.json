@@ -178,7 +178,7 @@
     {
       "term": "開発サービス名",
       "context": "compose",
-      "meaning": "get_dev_service_name() が返す名前（DEV_SERVICE_NAME、既定 dev）。生成物では <開発サービス名>-1..-N へ複製される",
+      "meaning": "get_dev_service_name() が返す名前（DEV_SERVICE_NAME。未設定か空なら dev）。生成物では <開発サービス名>-1..-N へ複製される",
       "source": "docs/specifications/compose-profiles.md"
     },
     {

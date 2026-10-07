@@ -43,7 +43,7 @@ devbase up が作る compose の生成物とプロファイル（docs/specificat
 | プロファイルのサービス | — | そのプロファイルに属し、既定のサービスに含まれないサービス | — | — | `docs/specifications/compose-profiles.md` |
 | 打ち消し用のプロファイル名 | — | __devbase_none__（定数 NO_PROFILE）。devbase が子プロセスの COMPOSE_PROFILES へ入れて利用者の指定を無効にする | — | — | `docs/specifications/compose-profiles.md` |
 | 生成物 | — | devbase up がプロジェクト直下に作る .docker-compose.scale.yml | — | — | `docs/specifications/compose-profiles.md` |
-| 開発サービス名 | — | get_dev_service_name() が返す名前（DEV_SERVICE_NAME、既定 dev）。生成物では <開発サービス名>-1..-N へ複製される | — | — | `docs/specifications/compose-profiles.md` |
+| 開発サービス名 | — | get_dev_service_name() が返す名前（DEV_SERVICE_NAME。未設定か空なら dev）。生成物では <開発サービス名>-1..-N へ複製される | — | — | `docs/specifications/compose-profiles.md` |
 
 ## エディタで開く（`editor`）
 
