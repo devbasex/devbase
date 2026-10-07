@@ -82,7 +82,7 @@ classDiagram
         +series_latest(volumes) dict|None
         +auto_snapshot_target(max_incrementals) str|None
         +last_snapshot_time(volumes) datetime|None
-        +rotate(keep, max_total) int
+        +rotate(keep, max_total) RotateResult
         -_rotation_plan(snapshots, keep, max_total) list
         -_safe_snap_dir(name) Path
         -_series_entries(volumes) list
