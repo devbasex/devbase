@@ -22,7 +22,7 @@ from typing import List, Optional, Sequence
 from devbase.commands.subcommands import run_subcommand
 from devbase.env import backend_config as _bc
 from devbase.env import bootstrap as _bootstrap
-from devbase.env.secret_store import MODE_ABSENT, SecretRef, SecretStore
+from devbase.env.secret_store import KIND_GLOBAL, MODE_ABSENT, SecretRef, SecretStore
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.utils import names
@@ -879,7 +879,7 @@ class _MigrationPlan:
             source = backend.path(ref)
             if not source.is_file():
                 continue
-            if ref.kind == 'global':
+            if ref.kind == KIND_GLOBAL:
                 target = backup_dir / source.name
             else:
                 target = backup_dir / 'projects' / (

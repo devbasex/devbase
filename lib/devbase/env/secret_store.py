@@ -165,7 +165,7 @@ class SecretRef:
         """
         # チーム単位の文字列は変えない。誤りの伝達や桁揃えに埋め込まれており、
         # 変えると既存の表示とテストが一斉に動く。
-        base = 'グローバル' if self.kind == 'global' else f"プロジェクト '{self.name}'"
+        base = 'グローバル' if self.kind == KIND_GLOBAL else f"プロジェクト '{self.name}'"
         text = f'個人の{base}' if self.is_user else base
         if not self.group:
             return text
@@ -196,7 +196,7 @@ def warn_unusable_project_name(ref: SecretRef) -> None:
     この関数の結果で分岐しないため戻り値を持たない。ファイルの backend の ``save_bytes`` が
     ``path(ref)`` の検査の後で呼ぶ。読み取りの経路 (``path``・``exists``・``load``) では呼ばない。
     """
-    if ref.kind != 'project' or names.is_single_segment_name(ref.name or ''):
+    if ref.kind != KIND_PROJECT or names.is_single_segment_name(ref.name or ''):
         return
     # 改行・ESC などは名前の検証を通るため、そのまま埋め込むと警告が複数行に割れ、
     # 端末の表示も操作できてしまう。表示できない文字だけをエスケープして見せる。
@@ -230,7 +230,7 @@ class PlaintextBackend:
         self._root = Path(devbase_root)
 
     def path(self, ref: SecretRef) -> Path:
-        if ref.kind == 'global':
+        if ref.kind == KIND_GLOBAL:
             return self._root / '.env'
         return self._root / 'projects' / _validate_project_name(ref.name or '') / '.env'
 
@@ -330,7 +330,7 @@ class AgeBackend:
 
     def path(self, ref: SecretRef) -> Path:
         base = self._root / SECRETS_DIRNAME
-        if ref.kind == 'global':
+        if ref.kind == KIND_GLOBAL:
             return base / GLOBAL_ENCRYPTED_FILENAME
         name = _validate_project_name(ref.name or '')
         return base / 'projects' / f'{name}.env.age'

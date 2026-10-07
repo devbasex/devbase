@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from devbase.env.secret_store import OWNER_TEAM, OWNER_USER, SecretRef, SecretStore
+from devbase.env.secret_store import KIND_GLOBAL, OWNER_TEAM, OWNER_USER, SecretRef, SecretStore
 
 OWNER_LABELS = {OWNER_TEAM: 'チーム', OWNER_USER: '個人'}
 
@@ -53,7 +53,7 @@ def _project_group(store: SecretStore, devbase_root: Path, project: str) -> Opti
 
 
 def scope_label(ref: SecretRef) -> str:
-    return '共通' if ref.kind == 'global' else f'プロジェクト {ref.name}'
+    return '共通' if ref.kind == KIND_GLOBAL else f'プロジェクト {ref.name}'
 
 
 def _scope_refs(store: SecretStore, project: Optional[str],
