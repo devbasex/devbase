@@ -37,7 +37,7 @@ from devbase.commands.project import (
 )
 from devbase.log import get_logger
 from devbase.tui import (actions_env, actions_plugin, actions_project,
-                         actions_snapshot, actions_status, menu)
+                         actions_snapshot, actions_status, flow, menu)
 
 logger = get_logger(__name__)
 
@@ -79,23 +79,11 @@ def _clear_screen() -> None:
 
 
 def _pause_for_review() -> bool:
-    """操作出力を読めるよう、一覧の再表示前に Enter を待つ。
-
-    操作実行直後にトップ一覧を再描画すると、plugin list 等の表示系操作の出力が
-    一瞬で流れて読めない。questionary 系プロンプトは画面を書き換えるため、
-    stdlib の ``input()`` で素朴に待ち、出力をそのまま画面に残す。
+    """操作出力を読めるよう、一覧の再表示前に Enter を待つ (``flow.pause_for_review``)。
 
     戻り値: ``True`` = 一覧へ戻る / ``False`` = Ctrl-C (全体中止)。
-    非 TTY 等で stdin を読めない場合 (EOFError/OSError) は待たずに戻る。
     """
-    try:
-        input("Enter キーで一覧へ戻ります...")
-    except KeyboardInterrupt:
-        print()
-        return False
-    except (EOFError, OSError):
-        pass
-    return True
+    return flow.pause_for_review("Enter キーで一覧へ戻ります...")
 
 
 # プロジェクト 0 件時に一覧へ置くプレースホルダの value 番兵。questionary の

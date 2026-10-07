@@ -88,6 +88,11 @@ def _validate_project_name(name: str) -> str:
 
 OWNER_TEAM = 'team'
 OWNER_USER = 'user'
+
+#: 参照の適用範囲 (:attr:`SecretRef.kind`)
+KIND_GLOBAL = 'global'
+KIND_PROJECT = 'project'
+
 _OWNERS = (OWNER_TEAM, OWNER_USER)
 
 
@@ -129,20 +134,20 @@ class SecretRef:
     1 つの ``SecretStore`` の中でグループが変わっても控え (``_seen``) を取り違えない。
     読み替え (``group_aliases``) の前の名前を持ち、読み替えはパスを組むときに行う。
     """
-    kind: str                      # 'global' | 'project'
+    kind: str                      # KIND_GLOBAL | KIND_PROJECT
     name: Optional[str] = None
     owner: str = OWNER_TEAM        # 'team' | 'user'
     group: Optional[str] = None
 
     @staticmethod
     def for_global(*, owner: str = OWNER_TEAM, group: Optional[str] = None) -> 'SecretRef':
-        return SecretRef(kind='global', owner=_validate_owner(owner),
+        return SecretRef(kind=KIND_GLOBAL, owner=_validate_owner(owner),
                          group=_validate_group(group))
 
     @staticmethod
     def for_project(name: str, *, owner: str = OWNER_TEAM,
                     group: Optional[str] = None) -> 'SecretRef':
-        return SecretRef(kind='project', name=_validate_project_name(name),
+        return SecretRef(kind=KIND_PROJECT, name=_validate_project_name(name),
                          owner=_validate_owner(owner), group=_validate_group(group))
 
     @property

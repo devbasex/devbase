@@ -813,7 +813,7 @@ TUI の「OpenBao の接続設定」は同じプロセスの中から `use openb
 | 見出し | 今の `url` と、ブートストラップ機密が `設定済み` / `未設定` か。`role_id` / `secret_id` の値は出さない |
 | 欄 | 接続先（`url`、1 行）、`role_id` と `secret_id`（伏せ字）。空の欄は変えない（`use` の引き継ぎ）。`role_id` を変えるときは `secret_id` も要る。`mount` / `user` / `layout` / `group_aliases` / キャッシュの設定は変えない |
 | 保存の後 | `test` と同じ確認を自動で行う。失敗しても保存した設定は残し、欄を入れ直せる。`use` が失敗したら `test` を呼ばずに欄へ戻る |
-| 確認のグループ | グループ別の置き場（`version: 2`・`layout: group`）で、TUI の現在地（`PWD`）がプロジェクトの外のときだけ、保存の後・確認の直前に対象のグループを選ばせ、`test` へ属性 `group`（CLI の `--group` と同じ）で渡す。選択は sync / init と同じ部品（`actions_env._group_attrs`。候補は宣言済みのグループと「名前を入力」）。プロジェクトの中では選ばせず、`test` がグループの宣言から決める。`version: 1` では選ばせず `group` を渡さない |
+| 確認のグループ | グループ別の置き場（`version: 2`・`layout: group`）で、TUI の現在地（`PWD`）がプロジェクトの外のときだけ、保存の後・確認の直前に対象のグループを選ばせ、`test` へ属性 `group`（CLI の `--group` と同じ）で渡す。選択は sync / init と同じ部品（`actions_env_keys.group_attrs`。候補は宣言済みのグループと「名前を入力」）。プロジェクトの中では選ばせず、`test` がグループの宣言から決める。`version: 1` では選ばせず `group` を渡さない |
 | 使えないグループ名 | 「名前を入力」の名前は `validate_account_group` で検証し、続けて CLI の `--group` と同じ `storage_group` の検査（置き場の予約語 `global` / `projects`、`group_aliases` の読み替え先）を通す。どちらかで落ちれば「--group に使えない名前です: ...」を出してグループの選択へ戻る（`test` を呼ばない）。sync / init の選択も同じ部品を通る |
 | グループの選択で戻る | Esc・← で「接続を確かめずに戻ります。保存した設定は残っています。」を出し、`test` を呼ばず、入れ直しの問いも出さずに env メニューへ戻る（`ARG_CANCEL`。一時停止しない）。Ctrl-C は TUI 全体を終える |
 | 入れ直した後 | 入れ直しの問いで「はい」を選ぶと欄へ戻り、次に保存した後でもう一度グループを選ぶ |
@@ -839,7 +839,7 @@ graph TD
 失敗した経路や変更の無い経路で使わない入力を求めないためである。入れ直すたびに選び直させるのは、確認の
 失敗の原因が選んだグループの参照の 403（グループ単位のポリシー）である場合に、別のグループを選べるように
 するためである。プロジェクトの中かどうかの判定（CLI の `_target_group` と同じ `_current_project_name`）は
-接続設定の画面の側（`_check_group_attrs`）に置き、sync / init と共有する `_group_attrs` の振る舞いを変えない。
+接続設定の画面の側（`_check_group_attrs`）に置き、sync / init と共有する `group_attrs` の振る舞いを変えない。
 `test` の `--group` の規則（`_target_group`）は TUI のために変えない。対象のグループ・グループの宣言・
 レイアウトの定義は [用語集](../glossary.md)、利用者向けの説明は
 [機密の保存先を選ぶ](../user/env-backend.md#3-接続を確かめる) にある。

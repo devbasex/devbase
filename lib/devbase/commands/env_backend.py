@@ -19,6 +19,7 @@ from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import List, Optional, Sequence
 
+from devbase.commands.subcommands import run_subcommand
 from devbase.env import backend_config as _bc
 from devbase.env import bootstrap as _bootstrap
 from devbase.env.secret_store import MODE_ABSENT, SecretRef, SecretStore
@@ -46,11 +47,7 @@ def cmd_env_backend(devbase_root: Path, args) -> int:
             exclude_projects=getattr(args, 'exclude_projects', None) or (),
             group=getattr(args, 'group', None)),
     }
-    handler = handlers.get(action)
-    if handler is None:
-        logger.error("サブコマンドを指定してください: %s", ', '.join(handlers))
-        return EXIT_USAGE
-    return handler()
+    return run_subcommand(handlers, action, missing_rc=EXIT_USAGE, logger=logger)
 
 
 # ---------------------------------------------------------------------------
@@ -735,10 +732,6 @@ class _MigrationPlan:
         #: ``--to age`` で移さずサーバ上に残す、他のグループの共通の参照
         self.left_on_server: List[SecretRef] = []
 
-    @property
-    def _grouped(self) -> bool:
-        return self.server_store.config.openbao.grouped
-
     def _units(self) -> List[_MoveUnit]:
         """移す単位を組み、``--to age`` で移さない他のグループの共通の参照を控える。
 
@@ -910,7 +903,7 @@ def _heading_width(plan: _MigrationPlan) -> int:
 def _plan_heading(plan: _MigrationPlan, unit: _MoveUnit, width: int) -> str:
     """参照の見出し。グループ別の置き場ではサーバ上のパスを添える (値は出さない)"""
     label = pad(plan.server_store.display_label(unit.server_ref), width)
-    if plan._grouped:
+    if plan.server_store.grouped:
         label += f" {plan.server.display_path(unit.server_ref)}"
     return label
 

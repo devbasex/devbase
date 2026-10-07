@@ -140,7 +140,7 @@ sequenceDiagram
   の `options` など）より前に立つ。function scope の段だけでは、これらの fixture が継承した値を読む
   （偽の `DOCKER_HOST` へ `docker info` を打つなど）
 - **テストごとの段でも同じ一覧を消す。** `lib/devbase` は `os.environ` へ直接書く箇所を持つ
-  （`commands/container.py` の `PWD`・`COMPOSE_PROJECT_NAME` など、`tui/actions_env.py` の `PWD`）。
+  （`commands/container.py` の `PWD`・`COMPOSE_PROJECT_NAME` など、`tui/env_delegate.py` の `PWD`）。
   `monkeypatch` を通らない書き込みは、次のテストの開始で消える
 - **テストの側の設定は後勝ちになる。** root の `conftest.py` の function scope の autouse は、テストが明示に
   求める fixture とテストの本体より先に立つ。テストの側の `monkeypatch.setenv` / `delenv` は同じ

@@ -630,7 +630,7 @@ def _resolve_project_name(project_name: str) -> bool:
         # :func:`devbase.env.runtime.current_project_name`) は wrapper の cd を前提に
         # ``os.environ['PWD']`` を先に見るため、os.chdir だけだと切替前の PWD が残り、
         # 切替先ではなく呼び出し元プロジェクトの機密を読んでしまう
-        # (TUI の ``_run_in_project`` が PWD を差し替えているのと同じ理由)。
+        # (TUI の ``env_delegate.run_in_project`` が PWD を差し替えているのと同じ理由)。
         os.environ['PWD'] = str(target)
         _unset_caller_only_env_keys(caller_env_keys, target)
 
