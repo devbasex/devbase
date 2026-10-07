@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 
+from devbase.commands.subcommands import run_subcommand
 from devbase.errors import DevbaseError, SnapshotError
 from devbase.log import get_logger
 from devbase.snapshot.manager import SnapshotManager
@@ -79,13 +80,8 @@ def cmd_snapshot(devbase_root: Path, args) -> int:
                                             max_total=getattr(args, 'max_total', None)),
     }
 
-    handler = handlers.get(subcmd)
-    if not handler:
-        logger.error("サブコマンドを指定してください: %s", ', '.join(handlers))
-        return 1
-
     try:
-        return handler()
+        return run_subcommand(handlers, subcmd, missing_rc=1, logger=logger)
     except SnapshotError as e:
         logger.error("スナップショット操作に失敗: %s", e)
         return 1
