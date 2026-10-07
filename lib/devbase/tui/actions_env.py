@@ -110,14 +110,18 @@ def _group_attrs(devbase_root: Path) -> dict:
 
     それ以外の設定では ``{}`` (グループの選択を出さずに今どおり実行する)。設定が読めない
     ときも ``{}`` で委譲し、委譲先のコマンドが誤りを出す。使えない名前を入れたら、
-    ``--group`` と同じ検証の文を出して選択へ戻る。
+    ``--group`` と同じ検証の文を出して選択へ戻る。名前の規則に加えて、``--group`` と同じく
+    置き場のグループ名の検査 (``storage_group``: 予約語 ``global`` / ``projects`` と
+    ``group_aliases`` の読み替え先) も通し、通らない名前は委譲先へ渡さない。
     """
+    from devbase.env.secret_store import SecretStore
     from devbase.errors import DevbaseError
     from devbase.volume.manager import validate_account_group
 
     keys_screen = _screen("actions_env_keys")
     try:
         grouped = keys_screen._grouped(devbase_root)
+        settings = SecretStore(devbase_root).config.openbao if grouped else None
     except DevbaseError:
         return {}
     if not grouped:
@@ -125,7 +129,9 @@ def _group_attrs(devbase_root: Path) -> dict:
     while True:
         name = keys_screen._select_group(devbase_root)
         try:
-            return {"group": validate_account_group(name)}
+            name = validate_account_group(name)
+            settings.storage_group(name)
+            return {"group": name}
         except DevbaseError as e:
             logger.error("--group に使えない名前です: %s", e)
 

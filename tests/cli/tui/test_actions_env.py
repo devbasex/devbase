@@ -300,3 +300,23 @@ def test_grouped_sync_reasks_for_an_unusable_typed_name(monkeypatch, tmp_path, c
 
     assert captured['attrs'] == {'subcommand': 'sync', 'group': 'personal'}
     assert 'default' in caplog.text
+
+
+@pytest.mark.parametrize('op', ['sync', 'init'])
+@pytest.mark.parametrize('reserved', ['global', 'projects'])
+def test_grouped_sync_and_init_reask_for_a_reserved_storage_group(monkeypatch, tmp_path, caplog,
+                                                                   op, reserved):
+    """#397: 置き場の予約語は --group と同じ検証の文を出して選択へ戻り、委譲先へ渡さない"""
+    from devbase.tui import actions_env_keys
+
+    _grouped_root(tmp_path)
+    captured = _capture_dispatch(monkeypatch)
+    picks = iter([actions_env_keys.TYPE_GROUP, 'acme'])
+    monkeypatch.setattr(menu, 'select', lambda *a, **k: next(picks))
+    monkeypatch.setattr(menu, 'text', lambda *a, **k: reserved)
+
+    assert actions_env._run_operation(tmp_path, op) == 0
+
+    assert captured['attrs']['group'] == 'acme'
+    assert '--group に使えない名前です' in caplog.text
+    assert f"'{reserved}' は置き場のグループ名に使えません" in caplog.text
