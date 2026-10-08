@@ -22,13 +22,16 @@ _devbase_project_names() {
 }
 
 # cur が `-` で始まるときはフラグ候補 ($1) を COMPREPLY に入れる。
-# 第 3 引数に names を渡すと、それ以外のときにプロジェクト名を補完する。
+# それ以外のときは、第 3 引数が names ならプロジェクト名を、ほかの空でない値なら
+# その語の並び (例: login の "1 2") を補完する。
 _devbase_complete_flags() {
     local flags="$1" cur="$2" fallback="${3:-}"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
     elif [ "$fallback" = "names" ]; then
         COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+    elif [ -n "$fallback" ]; then
+        COMPREPLY=($(compgen -W "$fallback" -- "$cur"))
     fi
 }
 
@@ -50,10 +53,18 @@ _devbase_completions() {
     local plugin_subcommands="list install uninstall update info sync repo"
     local repo_subcommands="add remove list refresh"
     local snapshot_subcommands="create list restore copy delete rotate"
-    # ps / logs / open のフラグ候補 (トップレベル・project・container で共通)。
-    local ps_flags="--all -a"
-    local logs_flags="--follow -f --tail"
+    # --context NAME を取るサブコマンドのフラグ候補 (トップレベル・project・container で共通)。
+    # 道の直後と、[name] を取るものはプロジェクト名の直後で出す (#435)。
+    local ctx_flags="--context"
+    local ps_flags="--all -a --context"
+    local logs_flags="--follow -f --tail --context"
     local open_flags="--open-index --context"
+
+    # --context の値 (docker context の名前) は補完しない。
+    if [ "$prev" = "--context" ]; then
+        COMPREPLY=()
+        return 0
+    fi
 
     case "$cword" in
         1)
@@ -62,12 +73,16 @@ _devbase_completions() {
         2)
             case "$prev" in
                 login)
-                    COMPREPLY=($(compgen -W "1 2" -- "$cur"))
+                    _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
+                    ;;
+                # build は image を取る (候補は出さない)。
+                build)
+                    _devbase_complete_flags "$ctx_flags" "$cur"
                     ;;
                 # トップレベルシノニム: up/down/scale/rebuild は [name] を取るため
                 # プロジェクト名を補完する (login=index / build=image は対象外)。
                 up|down|scale|rebuild)
-                    COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                    _devbase_complete_flags "$ctx_flags" "$cur" names
                     ;;
                 # open は [name] と --open-index / --context を取る (PLAN59)。
                 open)
@@ -101,24 +116,35 @@ _devbase_completions() {
             ;;
         3)
             local group="${words[1]}"
-            # トップレベルシノニム ps: `devbase ps web -<TAB>` (group=ps, cword=3)
-            # でも name 位置が埋まった後にフラグを補完する。project ps と対称化。
-            if [ "$group" = "ps" ]; then
-                _devbase_complete_flags "$ps_flags" "$cur"
-            fi
+            # トップレベルシノニム: `devbase ps web -<TAB>` (group=ps, cword=3)
+            # のように name 位置が埋まった後でもフラグを補完する。project と対称化。
+            case "$group" in
+                ps)
+                    _devbase_complete_flags "$ps_flags" "$cur"
+                    ;;
+                open)
+                    _devbase_complete_flags "$open_flags" "$cur"
+                    ;;
+                up|down|scale|rebuild)
+                    _devbase_complete_flags "$ctx_flags" "$cur"
+                    ;;
+            esac
             # project subcommand arguments (推奨グループ)
             if [ "$group" = "project" ]; then
                 case "$prev" in
                     up|down|rebuild)
-                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        _devbase_complete_flags "$ctx_flags" "$cur" names
                         ;;
                     login)
-                        COMPREPLY=($(compgen -W "1 2" -- "$cur"))
+                        _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
                         ;;
                     scale)
                         # `project scale <name> N` / `project scale N` の両形。
                         # name 補完を提示する (数値はユーザが直接入力)。
-                        COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
+                        _devbase_complete_flags "$ctx_flags" "$cur" names
+                        ;;
+                    build)
+                        _devbase_complete_flags "$ctx_flags" "$cur"
                         ;;
                     ps)
                         _devbase_complete_flags "$ps_flags" "$cur" names
@@ -139,22 +165,21 @@ _devbase_completions() {
                         ;;
                     # post-start は [name] と --context を取る (#371)
                     post-start)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--context" -- "$cur"))
-                        else
-                            COMPREPLY=($(compgen -W "$(_devbase_project_names)" -- "$cur"))
-                        fi
+                        _devbase_complete_flags "$ctx_flags" "$cur" names
                         ;;
                 esac
             fi
             # container subcommand arguments (非推奨: project へ移行してください)
             if [ "$group" = "container" ] || [ "$group" = "ct" ]; then
                 case "$prev" in
+                    up|down|build|rebuild)
+                        _devbase_complete_flags "$ctx_flags" "$cur"
+                        ;;
                     login)
-                        COMPREPLY=($(compgen -W "1 2" -- "$cur"))
+                        _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
                         ;;
                     scale)
-                        COMPREPLY=($(compgen -W "1 2 3 4 5" -- "$cur"))
+                        _devbase_complete_flags "$ctx_flags" "$cur" "1 2 3 4 5"
                         ;;
                     profile)
                         COMPREPLY=($(compgen -W "up down list" -- "$cur"))
@@ -173,6 +198,10 @@ _devbase_completions() {
             # env subcommand arguments
             if [ "$group" = "env" ]; then
                 case "$prev" in
+                    # exec / token は --context を取る (exec は `--` より前だけ)
+                    exec|token)
+                        _devbase_complete_flags "$ctx_flags" "$cur"
+                        ;;
                     init)
                         if [[ "$cur" == -* ]]; then
                             COMPREPLY=($(compgen -W "--reset" -- "$cur"))
@@ -249,7 +278,7 @@ _devbase_completions() {
             ;;
         4)
             local group="${words[1]}"
-            # project ps/logs: name 位置が埋まった後 (例: `project ps web -<TAB>`)
+            # project: name 位置が埋まった後 (例: `project ps web -<TAB>`)
             # でもフラグを補完する。subcommand は words[2]。
             if [ "$group" = "project" ]; then
                 case "${words[2]}" in
@@ -259,7 +288,23 @@ _devbase_completions() {
                     logs)
                         _devbase_complete_flags "$logs_flags" "$cur"
                         ;;
+                    open)
+                        _devbase_complete_flags "$open_flags" "$cur"
+                        ;;
+                    up|down|rebuild|scale|post-start)
+                        _devbase_complete_flags "$ctx_flags" "$cur"
+                        ;;
                 esac
+            fi
+            # project / container の profile up|down|list の直後 (例: `project profile up -<TAB>`)
+            if [ "$group" = "project" ] || [ "$group" = "container" ] || [ "$group" = "ct" ]; then
+                if [ "${words[2]}" = "profile" ]; then
+                    case "$prev" in
+                        up|down|list)
+                            _devbase_complete_flags "$ctx_flags" "$cur"
+                            ;;
+                    esac
+                fi
             fi
             # plugin install flags after source argument
             if [ "$group" = "plugin" ] || [ "$group" = "pl" ]; then
