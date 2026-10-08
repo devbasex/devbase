@@ -143,8 +143,10 @@ Container startup failed: 2 of 3 instances did not become ready.
 
 ### 起動の後の処理の段
 
-`_run_post_start(project_name, scale, indices, dev_service_name, config, compose_file, run_deploy=True)` は、
+`_run_post_start(deployment, indices, config, run_deploy=True)` は、
 後処理の対象 `indices` へ次の順で処理を行う。対象が空なら何も行わない（token も発行しない）。
+`deployment` は起動した構成（`_ComposeDeployment`。`project_name`・`scale`・`dev_service_name`・`compose_file` の組）で、
+`up` / `scale` / `project post-start` が組んで渡す。
 
 | 順 | 処理 | 条件 | 失敗したとき |
 | --- | --- | --- | --- |

@@ -221,50 +221,79 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         rec = self._record('POST')
-        state = self.server_state
         if rec.path == '/v1/auth/approle/login':
-            state.logins += 1
-            if state.disable_entity:
-                return self._send(403, {'errors': ['permission denied']})
-            if (state.reject_login or rec.body.get('role_id') != state.role_id
-                    or rec.body.get('secret_id') != state.secret_id):
-                return self._send(400, {'errors': ['invalid role or secret']})
-            state.token = f'token-{state.logins}'
-            return self._send(200, {'auth': {'client_token': state.token,
-                                             'lease_duration': 3600,
-                                             'renewable': True}})
-        path = rec.kv_path
-        if path is None or not self._mount_ok(rec):
-            return self._send(404, {'errors': []})
-        if not self._authorized(rec):
+            return self._login(rec)
+        return self._write_secret(rec)
+
+    def _login(self, rec: Received) -> None:
+        """AppRole のログイン。通れば新しい token を出す"""
+        state = self.server_state
+        state.logins += 1
+        if state.disable_entity:
             return self._send(403, {'errors': ['permission denied']})
-        if self._forbidden(path) or (not state.team_writable and path.startswith('team/')):
-            return self._send(403, {'errors': ['1 error occurred:\n\t* permission denied\n\n']})
-        state.write_attempts += 1
-        if state.write_attempts in state.fail_write_attempts:
-            return self._send(500, {'errors': ['boom']}, truncate=state.truncate_write_error_body)
-        if state.write_status is not None:
-            return self._send(state.write_status, {'errors': ['refused']})
+        if (state.reject_login or rec.body.get('role_id') != state.role_id
+                or rec.body.get('secret_id') != state.secret_id):
+            return self._send(400, {'errors': ['invalid role or secret']})
+        state.token = f'token-{state.logins}'
+        return self._send(200, {'auth': {'client_token': state.token,
+                                         'lease_duration': 3600,
+                                         'renewable': True}})
+
+    def _write_secret(self, rec: Received) -> None:
+        """KV v2 の書き込み (拒否 → 失敗の注入 → ``data`` の検査 → CAS の更新 → 応答の注入)"""
+        state = self.server_state
+        path = rec.kv_path
+        if self._refuse_write(rec, path):
+            return None
         data = rec.body.get('data')
         if not isinstance(data, dict):
             return self._send(400, {'errors': ['data must be a map']})
-        with state._lock:
-            current = state.versions.get(path, 0)
-            cas = rec.cas
-            if cas is None or cas != current:
-                return self._send(400, {'errors': [
-                    'check-and-set parameter did not match the current version']})
-            state.versions[path] = current + 1
-            state.secrets[path] = {str(k): v for k, v in data.items()}
-            state.soft_deleted.discard(path)
-            state.writes += 1
-            new_version = state.versions[path]
+        new_version = self._apply_cas(rec, path, data)
+        if new_version is None:
+            return None
         if state.drop_write_response:
             return self._drop()
         if state.garble_write_response:
             return self._send(200, raw=b'<html>gateway</html>')
         return self._send(200, {'data': {'version': new_version, 'destroyed': False,
                                          'created_time': '2026-09-14T00:00:00Z'}})
+
+    def _refuse_write(self, rec: Received, path: Optional[str]) -> bool:
+        """書き込みの前の拒否 (mount・認可・禁止) と失敗の注入。応答を返したら真"""
+        state = self.server_state
+        if path is None or not self._mount_ok(rec):
+            self._send(404, {'errors': []})
+            return True
+        if not self._authorized(rec):
+            self._send(403, {'errors': ['permission denied']})
+            return True
+        if self._forbidden(path) or (not state.team_writable and path.startswith('team/')):
+            self._send(403, {'errors': ['1 error occurred:\n\t* permission denied\n\n']})
+            return True
+        state.write_attempts += 1
+        if state.write_attempts in state.fail_write_attempts:
+            self._send(500, {'errors': ['boom']}, truncate=state.truncate_write_error_body)
+            return True
+        if state.write_status is not None:
+            self._send(state.write_status, {'errors': ['refused']})
+            return True
+        return False
+
+    def _apply_cas(self, rec: Received, path: str, data: dict) -> Optional[int]:
+        """CAS が合えば版を上げて書き、新しい版を返す。合わなければ 400 を返して ``None``"""
+        state = self.server_state
+        with state._lock:
+            current = state.versions.get(path, 0)
+            cas = rec.cas
+            if cas is None or cas != current:
+                self._send(400, {'errors': [
+                    'check-and-set parameter did not match the current version']})
+                return None
+            state.versions[path] = current + 1
+            state.secrets[path] = {str(k): v for k, v in data.items()}
+            state.soft_deleted.discard(path)
+            state.writes += 1
+            return state.versions[path]
 
     def do_DELETE(self):
         rec = self._record('DELETE')

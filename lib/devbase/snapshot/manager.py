@@ -413,15 +413,7 @@ class SnapshotManager:
             point: 差分の適用上限（例: 3なら incr-003 まで適用）。
                    Noneなら全差分を適用。
         """
-        if point is not None and point <= 0:
-            raise SnapshotError(f"--point は正の整数である必要があります: {point}")
-        snap_dir = self._safe_snap_dir(name)
-        if not snap_dir.exists():
-            raise SnapshotError(f"スナップショット '{name}' が見つかりません")
-
-        full_archive = snap_dir / FULL_ARCHIVE
-        if not full_archive.exists():
-            raise SnapshotError(f"フルバックアップが見つかりません: {full_archive}")
+        snap_dir = self._restore_source(name, point)
 
         # 控える組を決めるため、組は控えより先に読む。検証を通らない世代では
         # 控えも復元も行わない。
@@ -443,8 +435,31 @@ class SnapshotManager:
             self.clear_command(volumes) + self.restore_command(FULL_ARCHIVE),
             volumes, pre_restore_name, skipped_renames,
         )
+        self._apply_incrementals(snap_dir, point, volumes, pre_restore_name, skipped_renames)
 
-        # 差分バックアップを順番に適用（pointが指定されていればそこまで）
+        self._warn_about_lost_renames(snap_dir, volumes, skipped_renames)
+
+        if point is not None:
+            logger.info("復元完了: %s (incr-%03d まで)", name, point)
+        else:
+            logger.info("復元完了: %s", name)
+
+    def _restore_source(self, name: str, point: int | None) -> Path:
+        """復元の前の検査 (``point``・世代・full)。通れば世代のディレクトリを返す。"""
+        if point is not None and point <= 0:
+            raise SnapshotError(f"--point は正の整数である必要があります: {point}")
+        snap_dir = self._safe_snap_dir(name)
+        if not snap_dir.exists():
+            raise SnapshotError(f"スナップショット '{name}' が見つかりません")
+
+        full_archive = snap_dir / FULL_ARCHIVE
+        if not full_archive.exists():
+            raise SnapshotError(f"フルバックアップが見つかりません: {full_archive}")
+        return snap_dir
+
+    def _apply_incrementals(self, snap_dir: Path, point: int | None, volumes: dict,
+                            pre_restore_name: Optional[str], skipped_renames: list) -> None:
+        """差分バックアップを順番に適用する（``point`` が指定されていればそこまで）"""
         incr_files = sorted(snap_dir.glob(INCR_ARCHIVE_GLOB))
         for incr in incr_files:
             if point is not None:
@@ -458,13 +473,6 @@ class SnapshotManager:
                 snap_dir, incr.name, self.restore_command(incr.name),
                 volumes, pre_restore_name, skipped_renames,
             )
-
-        self._warn_about_lost_renames(snap_dir, volumes, skipped_renames)
-
-        if point is not None:
-            logger.info("復元完了: %s (incr-%03d まで)", name, point)
-        else:
-            logger.info("復元完了: %s", name)
 
     def _backup_before_restore(self, volumes: dict) -> Optional[str]:
         """復元前バックアップ ``pre-restore-<時刻>`` を、渡された組で作る。

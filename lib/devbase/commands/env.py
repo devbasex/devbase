@@ -64,6 +64,26 @@ class GroupOptionError(DevbaseError):
         self.exit_code = exit_code
 
 
+def check_group_option(settings, group: str, *, account_rule: bool = False) -> str:
+    """``--group`` の名前を置き場のグループ名の検査 (``storage_group``) に通し、通った名前を返す。
+
+    通らなければ「``--group に使えない名前です: …``」の :class:`GroupOptionError` (終了コード 2)。
+    ``account_rule`` が真なら先に ``DEVBASE_ACCOUNT_GROUP`` の規則 (``validate_account_group``) を
+    通し、その結果 (前後の空白を外した名前) を検査して返す。CLI は ``storage_group`` の中で同じ
+    規則を通すため前段を持たず、名前の規則の誤りの文に「グループ名: 」が付く。TUI の選択は前段を
+    通し、接頭の無い文を出す。
+    """
+    from devbase.volume.manager import validate_account_group
+
+    try:
+        if account_rule:
+            group = validate_account_group(group)
+        settings.storage_group(group)
+    except DevbaseError as e:
+        raise GroupOptionError(f"--group に使えない名前です: {e}") from None
+    return group
+
+
 def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[str]:
     """コマンドが相手にするグループ (PLAN56「対象のグループ」・#315)。
 
@@ -97,13 +117,7 @@ def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[s
         raise GroupOptionError(
             "--group はグループ別の置き場 (backend: openbao、version: 2) を選んだ設定で"
             "だけ使えます")
-    from devbase.env.backend_config import BackendConfigError
-
-    try:
-        store.config.openbao.storage_group(group)
-    except BackendConfigError as e:
-        raise GroupOptionError(f"--group に使えない名前です: {e}") from None
-    return group
+    return check_group_option(store.config.openbao, group)
 
 
 def _project_group_mismatch(devbase_root: Path, store, group: Optional[str],
@@ -750,7 +764,7 @@ def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = 
 def _sync_credential_sources(ctx: _SyncContext) -> None:
     """AWS と Git の認証情報をソースから同期する (``ctx.counts`` に集計する)"""
     # AWS: 取り込みの選択の範囲だけで入れ直す (#314 I7)
-    plan = _aws_sync_plan(ctx.sources, ctx.targets, ctx.store)
+    plan = _aws_sync_plan(ctx)
     if plan is None:
         # 書き込みを見送ったら控えの登録も見送る (丸ごとで登録すると次の変更で選択外まで送るため)
         ctx.counts.aws_selection = _SKIP_SELECTION
@@ -835,7 +849,24 @@ def _same_aws_payload(stored: Optional[str], encoded: str) -> bool:
     return current is not None and current == _aws_payload(stored)
 
 
-def _aws_sync_plan(sources, targets, store):
+_AWS_LABEL = 'AWS認証'
+
+
+def _report_unknown_profiles(payload) -> None:
+    """選んだのに ``~/.aws/config`` に無いプロファイルを 1 行ずつ知らせる"""
+    for name in payload.unknown:
+        logger.info("%s: 選んだプロファイル %s が ~/.aws/config にありません", _AWS_LABEL, name)
+
+
+def _report_profile_conflicts(payload) -> bool:
+    """空白だけが違う見出しの節を警告する。あれば真 (書かない)"""
+    for name in payload.conflicts:
+        logger.warning("%s: [%s] と空白だけが違う見出しの節が ~/.aws にあるため書きません",
+                       _AWS_LABEL, name)
+    return bool(payload.conflicts)
+
+
+def _aws_sync_plan(ctx: _SyncContext):
     """AWS の入れ直しの作り方と取り込みの選択 ``(encode_fn, selection)``。書かないなら ``None``。
 
     - 控えの項目が ``aws_profiles`` なら、控えの ``profiles`` とその連なりだけを切り出す (I7)
@@ -844,49 +875,54 @@ def _aws_sync_plan(sources, targets, store):
       プロファイルの集合が値のプロファイルの集合と一致すれば丸ごと。値が読めない、または値にあって
       今のファイルに無いプロファイルがあれば書かない (決定 10)
     """
+    from devbase.env.collectors.aws import _encode_aws_config_files
+    from devbase.env.host_import import ALL
+
+    source = ctx.sources.get_source('aws')
+    if source and source.get('type') == 'aws_profiles':
+        return _aws_plan_for_selection(ctx, list(source.get('profiles') or []))
+    if source:
+        return _encode_aws_config_files, ALL
+    return _aws_plan_for_unregistered(ctx)
+
+
+def _aws_plan_for_selection(ctx: _SyncContext, profiles):
+    """控えが ``aws_profiles`` のとき、選んだプロファイルとその連なりだけを切り出す計画 (I7)"""
+    from devbase.env import aws_profiles
+
+    key = keys.AWS_CONFIG_BASE64
+    targets = ctx.targets
+    if targets.holder(key) is None:
+        return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+    payload = aws_profiles.build_from_home(profiles)
+    _report_unknown_profiles(payload)
+    if _report_profile_conflicts(payload):
+        return None
+    # 選んだプロファイルが消えていれば控えと比べられず書かない (_sync_source が知らせる)
+    if not payload.unknown and not _aws_selection_covers(targets, key, payload):
+        dest = targets.target_for(key)
+        logger.info("%s: %sの値に選択外のプロファイルがあるため書きません"
+                    "（選択はグループの控えのもの。入れ直すなら devbase env init --reset）",
+                    _AWS_LABEL, ctx.store.display_label(dest.ref))
+        return None
+    return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+
+
+def _aws_plan_for_unregistered(ctx: _SyncContext):
+    """控えに項目が無いとき、参照の値のプロファイルを選択とみなす計画 (決定 10)"""
     from devbase.env import aws_profiles
     from devbase.env.collectors.aws import _encode_aws_config_files
     from devbase.env.host_import import ALL
 
     key = keys.AWS_CONFIG_BASE64
-    label = 'AWS認証'
-
-    def report_unknown(payload) -> None:
-        for name in payload.unknown:
-            logger.info("%s: 選んだプロファイル %s が ~/.aws/config にありません", label, name)
-
-    def report_conflicts(payload) -> bool:
-        for name in payload.conflicts:
-            logger.warning("%s: [%s] と空白だけが違う見出しの節が ~/.aws にあるため書きません",
-                           label, name)
-        return bool(payload.conflicts)
-
-    source = sources.get_source('aws')
-    if source and source.get('type') == 'aws_profiles':
-        profiles = list(source.get('profiles') or [])
-        if targets.holder(key) is None:
-            return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
-        payload = aws_profiles.build_from_home(profiles)
-        report_unknown(payload)
-        if report_conflicts(payload):
-            return None
-        # 選んだプロファイルが消えていれば控えと比べられず書かない (_sync_source が知らせる)
-        if not payload.unknown and not _aws_selection_covers(targets, key, payload):
-            dest = targets.target_for(key)
-            logger.info("%s: %sの値に選択外のプロファイルがあるため書きません"
-                        "（選択はグループの控えのもの。入れ直すなら devbase env init --reset）",
-                        label, store.display_label(dest.ref))
-            return None
-        return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
-    if source:
-        return _encode_aws_config_files, ALL
+    targets = ctx.targets
     holder = targets.holder(key)
     if holder is None:
         return _encode_aws_config_files, _KEEP_SELECTION
     in_value = aws_profiles.profiles_in_value(targets.get(key))
     if in_value is None:
         logger.info("%s: ソース未登録（%sにキーがあります）。値を読めないため書きません",
-                    label, store.display_label(holder.ref))
+                    _AWS_LABEL, ctx.store.display_label(holder.ref))
         return None
     config_text, credentials_text = aws_profiles.read_home()
     # 丸ごとの判定は credentials にだけあるプロファイルも含める (値の側の名前と同じ数え方)。
@@ -898,9 +934,9 @@ def _aws_sync_plan(sources, targets, store):
         return _encode_aws_config_files, ALL
     payload = aws_profiles.build(config_text, credentials_text, in_value)
     if payload.unknown:
-        report_unknown(payload)
+        _report_unknown_profiles(payload)
         return None
-    if report_conflicts(payload):
+    if _report_profile_conflicts(payload):
         return None
     # 控えに残すのは選んだプロファイルだけで、連なりで入った節は含めない (sync の時点で求め直す)
     return payload.encode, aws_profiles.chosen_in_value(targets.get(key)) or in_value
@@ -1072,31 +1108,43 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
         return e.exit_code
 
     if not project_only:
-        for as_user in owners:
-            env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
-            if as_user and not env_file.file_exists():
-                continue
-            all_vars = env_file.get_all()
-            label = store.display_label(env_file.ref)
-
-            print(f"\n=== {label} ({env_file.path}{_mode_suffix(env_file)}) ===")
-            _print_env_vars(all_vars, keys_only, reveal)
-            print(f"\n{label}: {len(all_vars)}変数")
-
+        _list_global_sections(devbase_root, store, owners, target, keys_only, reveal)
     if include_project:
-        for as_user in owners:
-            proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
-            if proj_env is not None and proj_env.file_exists():
-                proj_vars = proj_env.get_all()
-                label = '個人のプロジェクト' if as_user else 'プロジェクト'
-                suffix = _group_suffix(store, proj_env.ref)
-
-                print(f"\n=== {label}: {proj_env.ref.name}{suffix} "
-                      f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
-                _print_env_vars(proj_vars, keys_only, reveal)
-                print(f"\n{label}{suffix}: {len(proj_vars)}変数")
-
+        _list_project_sections(devbase_root, store, owners, target, keys_only, reveal)
     return 0
+
+
+def _print_env_section(title: str, count_label: str, env_vars, keys_only, reveal) -> None:
+    """``env list`` の節の 1 つ分 (見出し → 変数 → 件数の行)"""
+    print(f"\n=== {title} ===")
+    _print_env_vars(env_vars, keys_only, reveal)
+    print(f"\n{count_label}: {len(env_vars)}変数")
+
+
+def _list_global_sections(devbase_root: Path, store, owners, target, keys_only, reveal) -> None:
+    """共通の節を持ち主ごとに出す。チーム共通は 0 件でも出し、個人共通は在るときだけ"""
+    for as_user in owners:
+        env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
+        if as_user and not env_file.file_exists():
+            continue
+        all_vars = env_file.get_all()
+        label = store.display_label(env_file.ref)
+        _print_env_section(f"{label} ({env_file.path}{_mode_suffix(env_file)})", label,
+                           all_vars, keys_only, reveal)
+
+
+def _list_project_sections(devbase_root: Path, store, owners, target, keys_only, reveal) -> None:
+    """プロジェクトの節を持ち主ごとに、参照が在るときだけ出す"""
+    for as_user in owners:
+        proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
+        if proj_env is None or not proj_env.file_exists():
+            continue
+        proj_vars = proj_env.get_all()
+        label = '個人のプロジェクト' if as_user else 'プロジェクト'
+        suffix = _group_suffix(store, proj_env.ref)
+        _print_env_section(
+            f"{label}: {proj_env.ref.name}{suffix} ({proj_env.path}{_mode_suffix(proj_env)})",
+            f"{label}{suffix}", proj_vars, keys_only, reveal)
 
 
 def _group_suffix(store, ref) -> str:
@@ -1368,13 +1416,37 @@ def _edit_via_tempfile(env_file, editor: str) -> int:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def _generated_secret(spec: str) -> str:
+    """``generate`` の指定 (``token`` か ``token:<長さ>``) から自動生成の値を作る (既定 64 文字)"""
+    import secrets
+    length = 64
+    if ':' in spec:
+        _, length_str = spec.split(':', 1)
+        length = int(length_str)
+    return secrets.token_hex(length // 2)
+
+
+def _prompt_env_var(env_file, var: dict) -> bool:
+    """1 つの変数の値を入力で求めて書く。必須なのに空なら誤りを出して False を返す。"""
+    name = var.get('name', '')
+    prompt = var.get('prompt', name)
+    default = var.get('default', '')
+    required = var.get('required', False)
+    suffix = f" (デフォルト: {default})" if default else ""
+    suffix += " (必須)" if required else " (空でスキップ)"
+    value = safe_input(f"{prompt}{suffix}: ", default)
+    if value:
+        env_file.set(name, value)
+    elif required:
+        logger.error("必須変数 '%s' が設定されていません", name)
+        return False
+    return True
+
+
 def _collect_from_env_yml(env_file, variables: list) -> bool:
     """env.yml の変数定義に従って設定値を収集する。必須値未入力なら False を返す。"""
     for var in variables:
         name = var.get('name', '')
-        prompt = var.get('prompt', name)
-        default = var.get('default', '')
-        required = var.get('required', False)
         generate = var.get('generate', '')
 
         existing = env_file.get(name)
@@ -1383,23 +1455,10 @@ def _collect_from_env_yml(env_file, variables: list) -> bool:
             continue
 
         if generate:
-            import secrets
-            length = 64
-            if ':' in generate:
-                _, length_str = generate.split(':', 1)
-                length = int(length_str)
-            value = secrets.token_hex(length // 2)
-            env_file.set(name, value)
+            env_file.set(name, _generated_secret(generate))
             print(f"{name}: (自動生成)")
-        else:
-            suffix = f" (デフォルト: {default})" if default else ""
-            suffix += " (必須)" if required else " (空でスキップ)"
-            value = safe_input(f"{prompt}{suffix}: ", default)
-            if value:
-                env_file.set(name, value)
-            elif required:
-                logger.error("必須変数 '%s' が設定されていません", name)
-                return False
+        elif not _prompt_env_var(env_file, var):
+            return False
     return True
 
 
@@ -1541,41 +1600,23 @@ def _print_key_backup_notice(path, public: str) -> None:
     print("=" * 60)
 
 
-def cmd_env_keygen(devbase_root: Path, force: bool = False,
-                   assume_yes: bool = False) -> int:
-    """devbase 専用の age 鍵を生成する
-
-    生成先は必ず ``agekeys.key_file_path()`` (= ``DEVBASE_AGE_KEY_FILE`` があれば
-    それ、無ければ ``~/.config/devbase/age/keys.txt``) にする。生成先を CLI 引数で
-    自由に選べるようにすると、復号側の ``agekeys.resolve_identities()`` はそのパスを
-    探索しないため「生成した鍵で保存した機密を復号できない」状態を作れてしまう。
-    場所を変えたい場合は ``DEVBASE_AGE_KEY_FILE`` を設定してから実行してもらい、
-    生成先と探索先が構造的に一致する契約を保つ。
-    """
+def _show_existing_key(path: Path) -> int:
+    """既に在る鍵の公開鍵と作り直し方を出す (``--force`` が無いとき)。読めなければ 1"""
     from devbase.env import agekeys
-    from devbase.errors import DevbaseError
 
-    path = agekeys.key_file_path()
+    try:
+        public = agekeys.read_public_key(path)
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    print(f"鍵は既に存在します: {path}")
+    print(f"  公開鍵: {public}")
+    print("  作り直す場合: devbase env keygen --force")
+    return 0
 
-    if path.exists() and not force:
-        try:
-            public = agekeys.read_public_key(path)
-        except DevbaseError as e:
-            logger.error("%s", e)
-            return 1
-        print(f"鍵は既に存在します: {path}")
-        print(f"  公開鍵: {public}")
-        print("  作り直す場合: devbase env keygen --force")
-        return 0
 
-    # keygen はワークスペース固有の受信者リスト (secrets/recipients.txt) を触らない。
-    # 鍵はグローバル (~/.config/devbase/age/keys.txt) なのに受信者リストは
-    # ワークスペースごとに存在するため、ここで書き込むと別ワークスペースには旧公開鍵が
-    # 取り残され、既に失われた秘密鍵に対応する公開鍵で暗号化してしまう。
-    # agekeys.resolve_recipients() は recipients.txt が無ければ鍵ファイルの公開鍵へ
-    # フォールバックするので、単独利用ではリストを作る必要がない。チーム運用で明示的に
-    # 受信者を足す経路 (rekey) だけが recipients.txt を作る。
-    #
+def _refuse_unreadable_key(path: Path) -> bool:
+    """既存の鍵が在るのに読めなければ、上書きを中止する旨を出して真を返す。"""
     # 書き込みの原子性は agekeys.generate_key_file →
     # io_common.write_secure_bytes_atomic (一時ファイル + fsync + os.replace) が
     # 担保しており、生成が途中で失敗しても既存の鍵ファイルは元のまま残る。
@@ -1594,29 +1635,65 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
         logger.error(
             "権限を確認するか、不要と判断できる場合は手動で退避してから"
             "再実行してください")
-        return 1
+        return True
+    return False
 
-    # ここへ来るのは「鍵が無い」か「--force で作り直す」場合だけ。後者は既存鍵を
-    # 捨てる操作なので、常に明示的な同意を取る。
+
+def _confirm_key_regeneration(devbase_root: Path, path: Path) -> bool:
+    """既存の鍵を作り直す同意を求める。``yes`` と入力されなければ中止を出して偽を返す。"""
+    # ここへ来るのは「--force で作り直す」場合だけ。既存鍵を捨てる操作なので、常に
+    # 明示的な同意を取る。
     #
     # 鍵は ~/.config/devbase/age/keys.txt = 全ワークスペース共通のグローバル資産
     # なのに対し、暗号化された機密はワークスペースごとに散らばっている。同意の要否を
     # カレントの DEVBASE_ROOT に機密があるか (_has_encrypted_secrets) で決めると、
     # まだ機密の無い別プロジェクトで --force した瞬間に無警告で鍵が消え、他プロジェクトの
     # 機密が復旧不能になる。カレントの状況は「文言をどれだけ強くするか」にだけ使う。
-    if path.exists() and not assume_yes:
-        print("鍵ファイルを作り直します。この鍵は全プロジェクト共通です。")
-        print(f"  鍵ファイル: {path}")
-        if _has_encrypted_secrets(devbase_root):
-            print("  このワークスペースには暗号化済みの機密があり、"
-                  "旧鍵でしか復号できないものは失われます。")
-        print("  他のワークスペースで暗号化した機密も、"
-              "旧鍵を失うと復号できなくなります。")
-        print("  続行前に旧鍵のバックアップがあるか確認してください。")
-        answer = safe_input("続行しますか? (yes と入力): ")
-        if answer != 'yes':
-            print("中止しました")
-            return 1
+    print("鍵ファイルを作り直します。この鍵は全プロジェクト共通です。")
+    print(f"  鍵ファイル: {path}")
+    if _has_encrypted_secrets(devbase_root):
+        print("  このワークスペースには暗号化済みの機密があり、"
+              "旧鍵でしか復号できないものは失われます。")
+    print("  他のワークスペースで暗号化した機密も、"
+          "旧鍵を失うと復号できなくなります。")
+    print("  続行前に旧鍵のバックアップがあるか確認してください。")
+    answer = safe_input("続行しますか? (yes と入力): ")
+    if answer != 'yes':
+        print("中止しました")
+        return False
+    return True
+
+
+def cmd_env_keygen(devbase_root: Path, force: bool = False,
+                   assume_yes: bool = False) -> int:
+    """devbase 専用の age 鍵を生成する
+
+    生成先は必ず ``agekeys.key_file_path()`` (= ``DEVBASE_AGE_KEY_FILE`` があれば
+    それ、無ければ ``~/.config/devbase/age/keys.txt``) にする。生成先を CLI 引数で
+    自由に選べるようにすると、復号側の ``agekeys.resolve_identities()`` はそのパスを
+    探索しないため「生成した鍵で保存した機密を復号できない」状態を作れてしまう。
+    場所を変えたい場合は ``DEVBASE_AGE_KEY_FILE`` を設定してから実行してもらい、
+    生成先と探索先が構造的に一致する契約を保つ。
+    """
+    from devbase.env import agekeys
+    from devbase.errors import DevbaseError
+
+    path = agekeys.key_file_path()
+
+    if path.exists() and not force:
+        return _show_existing_key(path)
+
+    # keygen はワークスペース固有の受信者リスト (secrets/recipients.txt) を触らない。
+    # 鍵はグローバル (~/.config/devbase/age/keys.txt) なのに受信者リストは
+    # ワークスペースごとに存在するため、ここで書き込むと別ワークスペースには旧公開鍵が
+    # 取り残され、既に失われた秘密鍵に対応する公開鍵で暗号化してしまう。
+    # agekeys.resolve_recipients() は recipients.txt が無ければ鍵ファイルの公開鍵へ
+    # フォールバックするので、単独利用ではリストを作る必要がない。チーム運用で明示的に
+    # 受信者を足す経路 (rekey) だけが recipients.txt を作る。
+    if _refuse_unreadable_key(path):
+        return 1
+    if path.exists() and not assume_yes and not _confirm_key_regeneration(devbase_root, path):
+        return 1
 
     # force はコマンドの --force をそのまま渡す。ここで無条件に force=True に
     # すると、上の path.exists() 判定から実際の書き込みまでの隙間に他プロセスが

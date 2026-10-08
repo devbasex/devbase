@@ -123,3 +123,20 @@ def test_project_writes_the_projects_group(grouped, openbao, monkeypatch):
 
     assert set(openbao.get('team/initech/projects/web')) == {'GENERATED'}
     assert kv_paths(openbao) == {'team/initech/projects/web'}
+
+
+_GROUP_OPTION_ERRORS = {
+    'global': ("--group に使えない名前です: グループ名 'global' は置き場のグループ名に使えません"
+               " (global / projects は version: 1 のパスと重なります)"),
+    '1234': ("--group に使えない名前です: グループ名: DEVBASE_ACCOUNT_GROUP に数字だけの名前は"
+             "使えません: '1234'。インスタンス番号のボリューム devbase_home_<index> と同じ名前に"
+             "なります"),
+}
+
+
+@pytest.mark.parametrize('name', sorted(_GROUP_OPTION_ERRORS))
+def test_an_unusable_group_option_prints_the_whole_message(grouped, openbao, caplog, name):
+    """#444 R2: --group の誤りの文を丸ごと固定する (予約語と数字だけ)"""
+    assert env_cmd.cmd_env_sync(grouped, group=name) == 2
+    errors = [r.getMessage() for r in caplog.records if r.levelname == 'ERROR']
+    assert errors == [_GROUP_OPTION_ERRORS[name]]

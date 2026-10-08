@@ -690,3 +690,36 @@ def test_file_backend_outside_projects_is_unchanged(file_root, monkeypatch, caps
 
     assert run_env(file_root, 'get', 'KEY') == 0
     assert capsys.readouterr().out == 'x\n'
+
+
+def _list_lines(keys_only: bool, key: str, value: str) -> str:
+    return f"  {key}" if keys_only else f"  {key:<35} {value}"
+
+
+@pytest.mark.parametrize('keys_only', [False, True])
+def test_list_prints_the_whole_sections(in_web, openbao, capsys, keys_only):
+    """#444 R8・R9: 節の見出し・変数・件数の行を丸ごと固定する (変数の無い節を含む)"""
+    openbao.put(USER_GLOBAL_PATH, {'B': '2'})
+    openbao.put(TEAM_WEB, {'C': '3', 'A': 'x'})
+
+    assert env_cmd.cmd_env_list(in_web, keys_only=keys_only) == 0
+
+    assert capsys.readouterr().out == '\n'.join([
+        '',
+        '=== グローバル (devbase/team/global) ===',
+        '  (変数なし)',
+        '',
+        'グローバル: 0変数',
+        '',
+        '=== 個人のグローバル (devbase/users/member01/global [openbao]) ===',
+        _list_lines(keys_only, 'B', '2'),
+        '',
+        '個人のグローバル: 1変数',
+        '',
+        '=== プロジェクト: web (devbase/team/projects/web [openbao]) ===',
+        _list_lines(keys_only, 'A', 'x'),
+        _list_lines(keys_only, 'C', '3'),
+        '',
+        'プロジェクト: 2変数',
+        '',
+    ])
