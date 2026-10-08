@@ -44,6 +44,20 @@ except Exception:
     fi
 }
 
+# 選んだサブコマンドの語を先頭 (コマンド名の位置) に置いてから _arguments を呼ぶ。
+# _arguments は words[1] だけをコマンド名として飛ばすため、そのまま呼ぶと
+# `devbase up <TAB>` の `up` が 1 番目の引数に数えられ、'1:name' が利用者の
+# 引数を指さない (#450)。$1 はサブコマンドの語の位置 (devbase up → 2、
+# devbase project up → 3)。words と CURRENT は補完の特別な変数で、関数を
+# 抜けると元の値に戻る。
+_devbase_arguments() {
+    local depth=$1
+    shift
+    words=("${(@)words[depth,-1]}")
+    (( CURRENT -= depth - 1 ))
+    _arguments "$@"
+}
+
 _devbase() {
     local -a commands project_subcommands container_subcommands env_subcommands
     local -a plugin_subcommands repo_subcommands snapshot_subcommands
@@ -148,41 +162,41 @@ _devbase() {
     # --context NAME を取るサブコマンドは、どれも値を補完しない --context を出す (#435)。
     case "$words[2]" in
         login)
-            _arguments \
+            _devbase_arguments 2 \
                 '--context[Docker context]:context:' \
                 '1:index:(1 2)'
             ;;
         build)
-            _arguments \
+            _devbase_arguments 2 \
                 '--context[Docker context]:context:' \
                 '1:image:'
             ;;
         # トップレベルシノニム: up/down/ps/scale/rebuild は [name] を取るためプロジェクト名を補完。
         up|down|rebuild)
-            _arguments \
+            _devbase_arguments 2 \
                 '--context[Docker context]:context:' \
                 '1:name:_devbase_project_names'
             ;;
         ps)
-            _arguments \
+            _devbase_arguments 2 \
                 '--all[Show all containers]' \
                 '-a[Show all containers]' \
                 '--context[Docker context]:context:' \
                 '1:name:_devbase_project_names'
             ;;
         scale)
-            _arguments \
+            _devbase_arguments 2 \
                 '--context[Docker context]:context:' \
                 '1:name:_devbase_project_names'
             ;;
         open)
-            _arguments \
+            _devbase_arguments 2 \
                 '--open-index[Container index to open]:index:' \
                 '--context[Docker context]:context:' \
                 '1:name:_devbase_project_names'
             ;;
         list)
-            _arguments \
+            _devbase_arguments 2 \
                 '--no-interactive[Just print the table without interactive selection]' \
                 '--plain[Just print the table without interactive selection]' \
                 '-P[Just print the table without interactive selection]' \
@@ -192,17 +206,17 @@ _devbase() {
         project)
             case "$words[3]" in
                 up|down|rebuild)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
                     ;;
                 login)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:index:(1 2)'
                     ;;
                 scale)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
                     ;;
@@ -210,14 +224,14 @@ _devbase() {
                     # name (positional) と -a フラグを _arguments に統合。
                     # name 入力済みなら positional は補完されず、フラグのみ残る
                     # (bash 側の排他分岐と挙動を揃える)。
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--all[Show all containers]' \
                         '-a[Show all containers]' \
                         '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
                     ;;
                 logs)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--follow[Follow log output]' \
                         '-f[Follow log output]' \
                         '--tail[Number of lines]:lines:' \
@@ -225,12 +239,12 @@ _devbase() {
                         '1:name:_devbase_project_names'
                     ;;
                 build)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:image:'
                     ;;
                 list)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--no-interactive[Just print the table without interactive selection]' \
                         '--plain[Just print the table without interactive selection]' \
                         '-P[Just print the table without interactive selection]' \
@@ -240,7 +254,7 @@ _devbase() {
                 profile)
                     case "$words[4]" in
                         up|down|list)
-                            _arguments \
+                            _devbase_arguments 3 \
                                 '--context[Docker context]:context:' \
                                 '*:profile:'
                             ;;
@@ -250,13 +264,13 @@ _devbase() {
                     esac
                     ;;
                 open)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--open-index[Container index to open]:index:' \
                         '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
                     ;;
                 post-start)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
                     ;;
@@ -268,40 +282,40 @@ _devbase() {
         container|ct)
             case "$words[3]" in
                 up|down|rebuild)
-                    _arguments '--context[Docker context]:context:'
+                    _devbase_arguments 3 '--context[Docker context]:context:'
                     ;;
                 login)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:index:(1 2)'
                     ;;
                 scale)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:new_scale:(1 2 3 4 5)'
                     ;;
                 ps)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--all[Show all containers]' \
                         '-a[Show all containers]' \
                         '--context[Docker context]:context:'
                     ;;
                 logs)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--follow[Follow log output]' \
                         '-f[Follow log output]' \
                         '--tail[Number of lines]:lines:' \
                         '--context[Docker context]:context:'
                     ;;
                 build)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:image:'
                     ;;
                 profile)
                     case "$words[4]" in
                         up|down|list)
-                            _arguments \
+                            _devbase_arguments 3 \
                                 '--context[Docker context]:context:' \
                                 '*:profile:'
                             ;;
@@ -311,7 +325,7 @@ _devbase() {
                     esac
                     ;;
                 open)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--open-index[Container index to open]:index:' \
                         '--context[Docker context]:context:'
                     ;;
@@ -323,34 +337,34 @@ _devbase() {
         env)
             case "$words[3]" in
                 init)
-                    _arguments '--reset[Reset existing config]'
+                    _devbase_arguments 3 '--reset[Reset existing config]'
                     ;;
                 list)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--global[Show global only]' '-g[Show global only]' \
                         '--project[Show project only]' '-p[Show project only]' \
                         '--reveal[Reveal sensitive values]' '-r[Reveal sensitive values]' \
                         '--keys[Show keys only]' '-k[Show keys only]'
                     ;;
                 set)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '1:assignment:' \
                         '--project[Set in project .env]' '-p[Set in project .env]'
                     ;;
                 get)
-                    _arguments '1:key:'
+                    _devbase_arguments 3 '1:key:'
                     ;;
                 delete)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '1:key:' \
                         '--project[Delete from project .env]' '-p[Delete from project .env]'
                     ;;
                 edit)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--project[Edit project .env]' '-p[Edit project .env]'
                     ;;
                 export)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '1:dest:_files' \
                         '*--include-project[Limit to specified project (repeatable)]:name:' \
                         '*--exclude-project[Exclude project (repeatable)]:name:' \
@@ -363,7 +377,7 @@ _devbase() {
                         '--unsafe-allow-unencrypted-bucket[Allow uploading unencrypted tar.gz to S3 (off by default)]'
                     ;;
                 import)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '1:source:_files' \
                         '--merge[Merge strategy]:mode:(keep-existing prefer-incoming)' \
                         '--replace-keys[Replace only these keys (comma-separated)]:keys:' \
@@ -381,28 +395,28 @@ _devbase() {
                         '--keep-last[Keep only the last N backup directories]:n:'
                     ;;
                 exec)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '*:command:_command_names -e'
                     ;;
                 token)
-                    _arguments '--context[Docker context]:context:'
+                    _devbase_arguments 3 '--context[Docker context]:context:'
                     ;;
                 encrypt|decrypt)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '*--project[Limit to the specified project (repeatable)]:name:' \
                         '--dry-run[Show what would change without writing]' \
                         '--yes[Skip the confirmation prompt]' '-y[Skip the confirmation prompt]'
                     ;;
                 rekey)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '*--add-recipient[Public key to add (repeatable)]:key:' \
                         '*--remove-recipient[Public key to remove (repeatable)]:key:' \
                         '--dry-run[Show what would change without writing]' \
                         '--yes[Skip the confirmation prompt]' '-y[Skip the confirmation prompt]'
                     ;;
                 keygen)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--force[Overwrite an existing key]' \
                         '--yes[Skip the confirmation prompt for --force]' '-y[Skip the confirmation prompt for --force]'
                     ;;
@@ -414,10 +428,10 @@ _devbase() {
         plugin|pl)
             case "$words[3]" in
                 list)
-                    _arguments '--available[Show available plugins from registered repositories]'
+                    _devbase_arguments 3 '--available[Show available plugins from registered repositories]'
                     ;;
                 install)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '1:source:_files' \
                         '--link[Install as symlink for local development]' \
                         '--all[Install all plugins from repository]'
@@ -428,7 +442,7 @@ _devbase() {
                 repo)
                     case "$words[4]" in
                         add)
-                            _arguments \
+                            _devbase_arguments 4 \
                                 '1:url:_urls' \
                                 '--name[Custom name for the repository]:name:'
                             ;;
@@ -450,23 +464,23 @@ _devbase() {
         snapshot|ss)
             case "$words[3]" in
                 create)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '--name[Snapshot name]:name:' \
                         '--full[Force full backup]'
                     ;;
                 restore)
-                    _arguments \
+                    _devbase_arguments 3 \
                         '1:name:' \
                         '--point[Restore up to incr-N only]:n:'
                     ;;
                 copy)
-                    _arguments '1:name:' '2:new_name:'
+                    _devbase_arguments 3 '1:name:' '2:new_name:'
                     ;;
                 delete)
-                    _arguments '1:name:'
+                    _devbase_arguments 3 '1:name:'
                     ;;
                 rotate)
-                    _arguments '--keep[Generations to keep]:n:'
+                    _devbase_arguments 3 '--keep[Generations to keep]:n:'
                     ;;
                 *)
                     _describe -t snapshot-commands 'snapshot command' snapshot_subcommands

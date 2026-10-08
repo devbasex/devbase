@@ -170,6 +170,20 @@ def test_zsh_completion_marks_container_deprecated():
     assert "deprecated" in text.lower()
 
 
+def test_zsh_subcommand_arguments_shift_words():
+    """#450: サブコマンドの _arguments は words を詰める入口を通す。
+
+    _arguments は words[1] だけを飛ばすため、素のまま呼ぶと `devbase up` の
+    `up` が 1 番目の引数に数えられ、'1:name' がプロジェクト名を補完しない。
+    """
+    lines = ZSH_COMPLETION.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("_devbase() {"))
+    bare = [line.strip() for line in lines[start:]
+            if line.strip().startswith("_arguments")]
+    assert bare == []
+    assert "words=(\"${(@)words[depth,-1]}\")" in ZSH_COMPLETION.read_text()
+
+
 @pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh 未インストール")
 def test_zsh_completion_syntax_ok():
     proc = subprocess.run(["zsh", "-n", str(ZSH_COMPLETION)],
