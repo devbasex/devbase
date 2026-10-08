@@ -5,7 +5,7 @@ import os
 import yaml
 from pathlib import Path
 from typing import (
-    Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set,
+    Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple,
 )
 
 from devbase.env import compose_migrate, gcp_auth, keys
@@ -665,6 +665,66 @@ def _prepare_remote_mounts(
                 "\n  ".join(unresolved))
 
 
+def _drop_missing_env_files_for_all(services: dict, base_dir: Path) -> None:
+    """すべてのサービスの ``env_file`` から、実在しないファイルを取り除く。"""
+    for service_name, service_config in services.items():
+        if isinstance(service_config, dict):
+            _drop_missing_env_files(service_config, base_dir, service_name)
+
+
+def _resolve_group_environment(
+    dev_environment: Optional[Mapping[str, str]],
+) -> Tuple[str, Dict[str, str]]:
+    """アカウントグループを解決し、``(group_volume, dev_environment)`` を返す。
+
+    アカウントグループはここで 1 度だけ解決し、マウント・ボリューム宣言・
+    環境変数の 3 か所へ同じ値を配る。コンテナ側で解決し直させると、マウント
+    されているボリュームと entrypoint が見ているグループ名がずれうる。
+    不正な名前はここで DevbaseError になり、構成生成の時点で起動が止まる。
+    """
+    account_group = resolve_account_group()
+    group_volume = get_group_volume(account_group)
+    return group_volume, {
+        **(dev_environment or {}),
+        keys.DEVBASE_ACCOUNT_GROUP: account_group,
+        # gcloud / gws の設定ディレクトリと解決済みの認証モード (PLAN39)
+        **gcp_auth.container_env(os.environ),
+    }
+
+
+def _compute_dev_excluded(
+    dev_service: dict, dev_environment: Mapping[str, str],
+    secret_env_names: Sequence[str],
+    global_env_names: Optional[Sequence[str]],
+    project_env_names: Optional[Sequence[str]],
+) -> Sequence[str]:
+    """dev の列挙と生成物から外す GCP の変数名を返す。
+
+    コンテナ内で使われない GCP の変数を **dev の列挙から外す**。名前が載ら
+    なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
+    から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
+
+    外すのは 2 種類ある。ADC モードでの鍵ファイルのパス 2 変数
+    (DefaultCredentialsError を避けるため) と、アクティブプロファイル以外の
+    GCP_CREDENTIALS_BASE64__* および使われない後方互換キー (鍵の実体が他社の
+    コンテナへ渡るのを防ぐため / issue #134)。判定は gcp_auth に集約する。
+
+    除外は dev だけに効かせる。元々これらを env_file から受け取っていた
+    非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
+    同じようにそのサービスを壊す。
+    """
+    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
+    # 候補は 3 か所から集める。機密の列挙・ホストの環境変数・元 compose.yml の
+    # dev への直書きである。どれか 1 つでも欠けると、そこに書かれた別プロファイル
+    # の鍵を外し損ねる。
+    enumerated = [*secret_env_names,
+                  *(global_env_names or ()),
+                  *(project_env_names or ()),
+                  *_service_env_names(dev_service)]
+    return gcp_auth.dev_excluded_env_names(
+        os.environ, auth_mode, enumerated)
+
+
 def generate_scaled_compose(
     scale: int,
     compose_file: Path = None,
@@ -710,52 +770,17 @@ def generate_scaled_compose(
 
     # Extract dev service (configurable via DEV_SERVICE_NAME)
     services = config.get('services', {})
-    base_dir = compose_file.resolve().parent
-    for service_name, service_config in services.items():
-        if isinstance(service_config, dict):
-            _drop_missing_env_files(service_config, base_dir, service_name)
+    _drop_missing_env_files_for_all(services, compose_file.resolve().parent)
     dev_service = services.get(dev_service_name)
     if not dev_service:
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
 
     secret_services = _services_receiving_secrets(compose_file, dev_service_name)
 
-    # アカウントグループはここで 1 度だけ解決し、マウント・ボリューム宣言・
-    # 環境変数の 3 か所へ同じ値を配る。コンテナ側で解決し直させると、マウント
-    # されているボリュームと entrypoint が見ているグループ名がずれうる。
-    # 不正な名前はここで DevbaseError になり、構成生成の時点で起動が止まる。
-    account_group = resolve_account_group()
-    group_volume = get_group_volume(account_group)
-    dev_environment = {
-        **(dev_environment or {}),
-        keys.DEVBASE_ACCOUNT_GROUP: account_group,
-        # gcloud / gws の設定ディレクトリと解決済みの認証モード (PLAN39)
-        **gcp_auth.container_env(os.environ),
-    }
-
-    # コンテナ内で使われない GCP の変数を **dev の列挙から外す**。名前が載ら
-    # なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
-    # から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
-    #
-    # 外すのは 2 種類ある。ADC モードでの鍵ファイルのパス 2 変数
-    # (DefaultCredentialsError を避けるため) と、アクティブプロファイル以外の
-    # GCP_CREDENTIALS_BASE64__* および使われない後方互換キー (鍵の実体が他社の
-    # コンテナへ渡るのを防ぐため / issue #134)。判定は gcp_auth に集約する。
-    #
-    # 除外は dev だけに効かせる。元々これらを env_file から受け取っていた
-    # 非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
-    # 同じようにそのサービスを壊す。
-    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
-    #
-    # 候補は 3 か所から集める。機密の列挙・ホストの環境変数・元 compose.yml の
-    # dev への直書きである。どれか 1 つでも欠けると、そこに書かれた別プロファイル
-    # の鍵を外し損ねる。
-    enumerated = [*secret_env_names,
-                  *(global_env_names or ()),
-                  *(project_env_names or ()),
-                  *_service_env_names(dev_service)]
-    dev_excluded = gcp_auth.dev_excluded_env_names(
-        os.environ, auth_mode, enumerated)
+    group_volume, dev_environment = _resolve_group_environment(dev_environment)
+    dev_excluded = _compute_dev_excluded(
+        dev_service, dev_environment, secret_env_names,
+        global_env_names, project_env_names)
     secret_names = _SecretNames(
         secret_env_names, global_env_names, project_env_names,
         dev_excluded=dev_excluded)
