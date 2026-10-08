@@ -4,7 +4,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 import yaml
 
@@ -1260,6 +1260,24 @@ def cmd_env_set(devbase_root: Path, assignment: str, project: bool = False,
     return 0
 
 
+def _lookup_and_print(make_env_file: Callable[[bool], Any], owners, key: str,
+                      must_exist: Callable[[bool], bool]) -> bool:
+    """``owners`` の順に env を開いて ``key`` を探し、見つかれば値を出して真を返す。
+
+    ``make_env_file`` が ``None`` を返した単位は飛ばす。``must_exist`` が真の単位は、
+    ファイルが無ければ読まずに飛ばす。
+    """
+    for as_user in owners:
+        env_file = make_env_file(as_user)
+        if env_file is None or (must_exist(as_user) and not env_file.file_exists()):
+            continue
+        value = env_file.get(key)
+        if value is not None:
+            print(value)
+            return True
+    return False
+
+
 def cmd_env_get(devbase_root: Path, key: str, user: bool = False,
                 group: Optional[str] = None) -> int:
     """変数の値を取得する
@@ -1280,22 +1298,15 @@ def cmd_env_get(devbase_root: Path, key: str, user: bool = False,
         logger.error("%s", e)
         return e.exit_code
 
-    for as_user in owners:
-        env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
-        if as_user and not env_file.file_exists():
-            continue
-        value = env_file.get(key)
-        if value is not None:
-            print(value)
-            return 0
-
-    for as_user in owners if include_project else ():
-        proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
-        if proj_env is not None and proj_env.file_exists():
-            value = proj_env.get(key)
-            if value is not None:
-                print(value)
-                return 0
+    # 共通はチーム単位の参照だけ、ファイルの有無を確かめずに読む。
+    if _lookup_and_print(
+            lambda as_user: _global_env(devbase_root, user=as_user, store=store, group=target),
+            owners, key, must_exist=lambda as_user: as_user):
+        return 0
+    if include_project and _lookup_and_print(
+            lambda as_user: _project_env(devbase_root, user=as_user, store=store, group=target),
+            owners, key, must_exist=lambda as_user: True):
+        return 0
 
     logger.error("変数 '%s' は設定されていません", key)
     return 1
