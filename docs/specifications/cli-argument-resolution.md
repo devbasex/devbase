@@ -127,14 +127,16 @@ graph TD
 | --- | --- |
 | `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` | `project` の直下で `[name]` を取る parser の名前の集合に等しい |
 | `bin/devbase` の `_NAME_RESOLVABLE_SHORTCUTS` | `cli.SHORTCUTS` のキーと `build` の和に等しい。あわせて、トップレベルで `[name]` を取る parser がすべて `cli.SHORTCUTS` にあること |
-| `etc/devbase-completion.bash` | 一時ディレクトリの `projects/` を `DEVBASE_ROOT` にして補完を実行し、`[name]` の集合から補完の例外を引いたすべての道の名前の位置でプロジェクト名が候補に出る。`project` / `container` の直下で `[name]` か `--context` を取るサブコマンド（入れ子は親の `profile` として数える）が、そのグループのサブコマンドの候補に含まれる |
-| `etc/_devbase` | zsh を起動せず内容を読む。`case "$words[2]"` から字下げの深さで道の分岐（`up\|down)` のような `\|` 区切りの見出し）を辿り、その本体に `_devbase_project_names` がある。`project_subcommands` / `container_subcommands` の一覧に bash と同じサブコマンドが含まれる |
+| `etc/devbase-completion.bash` | 一時ディレクトリの `projects/` を `DEVBASE_ROOT` にして補完を実行し、`[name]` の集合から補完の例外を引いたすべての道の名前の位置でプロジェクト名が候補に出る。`--context` の集合のすべての道（`container` の道は `ct` で始めても）で `devbase <道> -` の候補に `--context` が出る。`[name]` の集合から補完の例外を引いた道では、`devbase <道> web -` の候補にも `--context` が出る。`project` / `container` の直下で `[name]` か `--context` を取るサブコマンド（入れ子は親の `profile` として数える）が、そのグループのサブコマンドの候補に含まれる |
+| `etc/_devbase` | zsh を起動せず内容を読む。`case "$words[2]"` から字下げの深さで道の分岐（`up\|down)` のような `\|` 区切りの見出し）を辿り、`[name]` の集合から補完の例外を引いた道の本体に `_devbase_project_names` がある。`--context` の集合のすべての道の本体に、値の補完を持たない `'--context[...]:context:'`（`:context:` の後ろに補完の関数を置かない形）がある。`project_subcommands` / `container_subcommands` の一覧に bash と同じサブコマンドが含まれる |
 | この節の 2 つの表 | 見出し `` #### `[name]` を受け付けるサブコマンド `` と `` #### `--context` を受け付けるサブコマンド `` の直後の表を読む。1 列目は `devbase <グループ...> <sub>` の形で、間の語が道の頭になる。2 列目にバッククォートで並べた語を `<sub>` に入れる。表は `[name]` の集合・`--context` の集合にそれぞれ等しい |
 
 補完の例外は `project profile up` / `down` / `list` の 3 つで、理由は「1 つ目の位置引数は、値が 1 個なら
 プロファイル名、2 個ならプロジェクト名になり、補完の時点ではどちらか決まらない」。一致テストは例外を
 理由つきの一覧として持ち、例外の道が `[name]` の集合に実在すること・理由が空でないことも確かめる。
-補完が `--context` の値を補完するかどうか（今は `open` と `post-start` だけ）は比べない。
+補完は `--context` の値（docker context の名前）を bash でも zsh でも補完しない。zsh は一致テストが上の
+`--context` の指定の形で確かめ、bash は `tests/cli/test_completion.py` が `--context` の直後の候補が
+0 件であることを代表の道で確かめる。
 
 ### 名前の形
 

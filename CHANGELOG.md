@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Changed
+- **シェル補完（bash・zsh）が、`--context NAME` を受け付けるすべてのサブコマンドで `--context` を出すようにしました（#435）。**
+  これまでは `open` と `project post-start` だけでした。`up`・`down`・`ps`・`login`・`scale`・`build`・`rebuild`、
+  `project` / `container` の配下（`logs`・`profile up|down|list` を含む）、`env exec`・`env token` で、`-` を打って補完すると
+  `--context` が候補に出ます（`devbase up web -<TAB>` のようにプロジェクト名の後でも出ます）。値（docker context の名前）は補完しません。
+  `-` で始まらない語の候補は変わりません。
+
 ### Fixed
 - **プロジェクトの `env` に `DEV_SERVICE_NAME=` と空で書いたとき、開発サービス名を `dev` として扱うようにしました（#425）。**
   これまで `devbase build` は `dev` を建てる一方、`up`・`login`・`open`・`post-start`・`scale`・`--expires` の判定・
