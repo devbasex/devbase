@@ -1108,31 +1108,43 @@ def cmd_env_list(devbase_root: Path, global_only: bool = False,
         return e.exit_code
 
     if not project_only:
-        for as_user in owners:
-            env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
-            if as_user and not env_file.file_exists():
-                continue
-            all_vars = env_file.get_all()
-            label = store.display_label(env_file.ref)
-
-            print(f"\n=== {label} ({env_file.path}{_mode_suffix(env_file)}) ===")
-            _print_env_vars(all_vars, keys_only, reveal)
-            print(f"\n{label}: {len(all_vars)}変数")
-
+        _list_global_sections(devbase_root, store, owners, target, keys_only, reveal)
     if include_project:
-        for as_user in owners:
-            proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
-            if proj_env is not None and proj_env.file_exists():
-                proj_vars = proj_env.get_all()
-                label = '個人のプロジェクト' if as_user else 'プロジェクト'
-                suffix = _group_suffix(store, proj_env.ref)
-
-                print(f"\n=== {label}: {proj_env.ref.name}{suffix} "
-                      f"({proj_env.path}{_mode_suffix(proj_env)}) ===")
-                _print_env_vars(proj_vars, keys_only, reveal)
-                print(f"\n{label}{suffix}: {len(proj_vars)}変数")
-
+        _list_project_sections(devbase_root, store, owners, target, keys_only, reveal)
     return 0
+
+
+def _print_env_section(title: str, count_label: str, env_vars, keys_only, reveal) -> None:
+    """``env list`` の節の 1 つ分 (見出し → 変数 → 件数の行)"""
+    print(f"\n=== {title} ===")
+    _print_env_vars(env_vars, keys_only, reveal)
+    print(f"\n{count_label}: {len(env_vars)}変数")
+
+
+def _list_global_sections(devbase_root: Path, store, owners, target, keys_only, reveal) -> None:
+    """共通の節を持ち主ごとに出す。チーム共通は 0 件でも出し、個人共通は在るときだけ"""
+    for as_user in owners:
+        env_file = _global_env(devbase_root, user=as_user, store=store, group=target)
+        if as_user and not env_file.file_exists():
+            continue
+        all_vars = env_file.get_all()
+        label = store.display_label(env_file.ref)
+        _print_env_section(f"{label} ({env_file.path}{_mode_suffix(env_file)})", label,
+                           all_vars, keys_only, reveal)
+
+
+def _list_project_sections(devbase_root: Path, store, owners, target, keys_only, reveal) -> None:
+    """プロジェクトの節を持ち主ごとに、参照が在るときだけ出す"""
+    for as_user in owners:
+        proj_env = _project_env(devbase_root, user=as_user, store=store, group=target)
+        if proj_env is None or not proj_env.file_exists():
+            continue
+        proj_vars = proj_env.get_all()
+        label = '個人のプロジェクト' if as_user else 'プロジェクト'
+        suffix = _group_suffix(store, proj_env.ref)
+        _print_env_section(
+            f"{label}: {proj_env.ref.name}{suffix} ({proj_env.path}{_mode_suffix(proj_env)})",
+            f"{label}{suffix}", proj_vars, keys_only, reveal)
 
 
 def _group_suffix(store, ref) -> str:
