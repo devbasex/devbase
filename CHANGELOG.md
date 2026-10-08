@@ -12,7 +12,8 @@
 - **SSH から立てた tmux のセッションに手元の Mac の端末から attach し直したとき、`devbase editor open` と `devbase up --open` が
   VS Code を開かず「SSH セッションを検出しました」とコマンドを提示するだけになっていたのを直しました。**
   tmux 内では、SSH かどうかをペインのシェルに残った `SSH_CONNECTION` ではなく、tmux のセッション環境（attach のたびに
-  更新される）で判定します。あわせて、接続できない `VSCODE_IPC_HOOK_CLI` は起動する `code` に渡さないようにしました。
+  更新される）で判定します。あわせて、接続できない `VSCODE_IPC_HOOK_CLI` と、手元から attach し直したペインに残る以前の Remote-SSH の
+  `VSCODE_IPC_HOOK_CLI`（ウィンドウが開いたままで接続できても）は、起動する `code` に渡さないようにしました。
 
 ## [4.1.0] - 2026-10-07
 

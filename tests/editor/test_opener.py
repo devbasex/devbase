@@ -355,6 +355,59 @@ def test_open_editor_reattached_tmux_on_local_launches(monkeypatch, tmp_path):
     assert seen["cmd"][1] == "--folder-uri"
 
 
+def test_open_editor_reattached_tmux_ignores_live_remote_ipc(
+        monkeypatch, listening_ipc_socket):
+    """Remote-SSH のウィンドウを開いたまま手元から attach し直した状態。
+
+    ペインの ``VSCODE_IPC_HOOK_CLI`` は以前の Remote-SSH クライアントへ繋がって生きて
+    いるが、いまのクライアントは手元なので採らない。採るとネスト authority の無い URI
+    がリモートのクライアントへ届き、ホスト上のコンテナを開けない。
+    """
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/local/bin/code")
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "adminer-dev-1")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv({
+        "SSH_CONNECTION": "-SSH_CONNECTION\n",
+        "VSCODE_IPC_HOOK_CLI": "-VSCODE_IPC_HOOK_CLI\n",
+    }))
+    environ = {"TMUX": "x", "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 22",
+               "VSCODE_IPC_HOOK_CLI": listening_ipc_socket}
+    ctx = opener.detect_context(environ=environ, isatty=True, system="Darwin")
+    assert ctx.is_ssh is False
+    assert ctx.in_vscode is False
+    assert ctx.ipc_foreign is True
+    seen = {}
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ=environ, isatty=True, system="Darwin",
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert "VSCODE_IPC_HOOK_CLI" not in seen["env"]
+
+
+def test_open_editor_reattached_tmux_uses_session_ipc_of_local_client(
+        monkeypatch, tmp_path, listening_ipc_socket):
+    """手元の VS Code の端末から attach し直したなら、セッション環境の IPC を使う。"""
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/local/bin/code")
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "adminer-dev-1")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv({
+        "SSH_CONNECTION": "-SSH_CONNECTION\n",
+        "VSCODE_IPC_HOOK_CLI": f"VSCODE_IPC_HOOK_CLI={listening_ipc_socket}\n",
+    }))
+    seen = {}
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ={"TMUX": "x", "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 22",
+                 "VSCODE_IPC_HOOK_CLI": str(tmp_path / "remote.sock")},
+        isatty=True, system="Darwin",
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert seen["env"]["VSCODE_IPC_HOOK_CLI"] == listening_ipc_socket
+
+
 def test_detect_context_ipc_alive_override():
     """``ipc_alive`` 明示時は実在チェックを行わない (テスト用差し替え口)。"""
     ctx = opener.detect_context(environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock"},
