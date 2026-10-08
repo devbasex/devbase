@@ -408,6 +408,8 @@ ISOLATED_ENV_PREFIXES = ('GCP_CREDENTIALS_BASE64__',)
 # 隔離しない一覧: lib/devbase が読むが未設定へ戻さない変数と、その理由
 NOT_ISOLATED_ENV = {
     'DEVBASE_ROOT': '_isolate_devbase_root がテストごとの tmp の root へ固定する (#209)',
+    'PATH': 'テストが外部コマンドを探すのに要る。editor/opener.py は渡された env の値を読むだけで、'
+            'テストは env を自前で渡す',
 }
 
 

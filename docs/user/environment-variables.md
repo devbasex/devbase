@@ -563,6 +563,10 @@ devbase は**実際にソケットへ接続できるかを確認**してから V
 
 死んでいた場合、**tmux 内なら `tmux show-environment` を見に行きます**。`update-environment`（後述）を設定していれば、tmux のセッション環境は attach のたびに更新されるので、**ペインのシェルが古くても tmux 側には生きた値が入っています**。拾えた場合はその値を使い、起動する `code` にも渡します（変数を差し替えないと `code` 自身が古いソケットへ繋ぎに行って失敗するため）。
 
+SSH 越しかどうかの判定も、tmux 内ではセッション環境の `SSH_CONNECTION` を見ます。SSH から立てた tmux サーバーに手元の端末から attach し直すと、ペインのシェルには `SSH_CONNECTION` が残りますが、セッション環境は `-SSH_CONNECTION`（いまのクライアントは SSH でない）に更新されます。`SSH_CONNECTION` は tmux の `update-environment` に既定で入っているので、設定は要りません。セッション環境から分からないとき（tmux 外・tmux の失敗）は、ペインのシェルの `SSH_CONNECTION` / `SSH_CLIENT` / `SSH_TTY` で判定します。
+
+セッション環境から分かるいまのクライアントの SSH 状態が、ペインのシェルの SSH 状態（`SSH_*` の有無）と食い違うときは、向きによらず、ペインのシェルに残る `VSCODE_IPC_HOOK_CLI` はペインを作った以前のクライアントのものとみなし、そのウィンドウが開いたままで接続できても使いません。SSH から立てた tmux に手元から attach し直したときは、ホスト上のコンテナを開く URI がリモートのクライアントへ届いて開けず、手元で立てた tmux に Remote-SSH から attach し直したときは、SSH 先を経由する URI が Remote-SSH の接続を持たない手元の VS Code へ届いて開けないためです。tmux のセッション環境にいまのクライアントの生きた値が入っていれば、そちらを使います。入っていなければ IPC 無しとして扱い、SSH なら手元で実行するコマンドを示し、手元なら手元の `code` を起動します。食い違わないとき・セッション環境から分からないときは、ペインの値をこれまでどおり使います。死んだソケットを指す `VSCODE_IPC_HOOK_CLI` も、起動する `code` に渡しません。`VSCODE_IPC_HOOK_CLI` を外すときは、`PATH` から Remote-SSH などの `remote-cli`（`~/.vscode-server/bin/<commit>/bin/remote-cli`・`~/.cursor-server/...` など）を除いて手元の `code` を探します。`remote-cli` の `code` は `VSCODE_IPC_HOOK_CLI` が無いと何も開かずに終わるためです。手元の `code` が見つからなければ、起動せずにスキップします。
+
 拾えなかった場合は警告を出したうえで「手元で実行するコマンドの提示」へ degrade するので、**黙って何も起きないという状態にはなりません**。提示されたコマンドを手元で実行すれば開けます。
 
 ソケットの死に方は 2 通りあります。

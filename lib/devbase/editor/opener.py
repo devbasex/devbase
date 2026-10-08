@@ -87,6 +87,10 @@ class EditorContext:
     # 実際に使う IPC ソケット。env の VSCODE_IPC_HOOK_CLI が死んでいて tmux の
     # セッション環境から拾い直した場合、env の値とは異なる (None は未解決)。
     ipc_socket: Optional[str] = None
+    # ペインの VSCODE_IPC_HOOK_CLI が、いま attach しているクライアントではなく
+    # ペインを作った以前のクライアントのものと分かったので採らなかった
+    # (:func:`_client_changed`)。
+    ipc_from_previous_client: bool = False
 
 
 @dataclass(frozen=True)
@@ -170,16 +174,16 @@ def _socket_connectable(sock: Optional[str]) -> bool:
         return False
 
 
-def _tmux_env(name: str, environ) -> Optional[str]:
-    """tmux の **セッション環境** から変数を 1 つ読む。tmux 外なら None。
+# tmux のセッション環境で変数が消されている (``-NAME``) ことを表す印。
+_TMUX_REMOVED = object()
 
-    tmux サーバーはセッション作成時の環境変数を保持し続けるが、``update-environment``
-    に登録された変数は **attach のたびに**接続してきたクライアントの値へ更新される。
-    そのため「すでに動いているペインのシェルは古い値、tmux のセッション環境は新しい値」
-    という状態が普通に起きる。ここはその新しい方を読むための口。
 
-    ``tmux show-environment <NAME>`` は未設定の変数を ``-NAME`` の形で返すため、
-    値として扱わないようにする。
+def _tmux_show_env(name: str, environ):
+    """tmux の **セッション環境** での変数の状態を返す。
+
+    戻り値は 3 通り。値があればその文字列、``-NAME`` (attach してきたクライアントが
+    持っていなかったので消された) なら :data:`_TMUX_REMOVED`、tmux 外・tmux の失敗・
+    想定外の出力・空の値なら None (わからない)。
     """
     if not environ.get("TMUX"):
         return None
@@ -196,14 +200,73 @@ def _tmux_env(name: str, environ) -> Optional[str]:
     if out.returncode != 0:
         return None
     line = out.stdout.strip()
+    if line == f"-{name}":
+        return _TMUX_REMOVED
     prefix = f"{name}="
     if not line.startswith(prefix):
-        # "-NAME" (削除済み) や想定外の出力
         return None
     return line[len(prefix):] or None
 
 
-def resolve_ipc_socket(environ) -> Optional[str]:
+def _tmux_env(name: str, environ) -> Optional[str]:
+    """tmux の **セッション環境** から変数を 1 つ読む。tmux 外なら None。
+
+    tmux サーバーはセッション作成時の環境変数を保持し続けるが、``update-environment``
+    に登録された変数は **attach のたびに**接続してきたクライアントの値へ更新される。
+    そのため「すでに動いているペインのシェルは古い値、tmux のセッション環境は新しい値」
+    という状態が普通に起きる。ここはその新しい方を読むための口。
+
+    ``tmux show-environment <NAME>`` は未設定の変数を ``-NAME`` の形で返すため、
+    値として扱わないようにする。
+    """
+    value = _tmux_show_env(name, environ)
+    return None if value is _TMUX_REMOVED else value
+
+
+_SSH_ENV_KEYS = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
+
+
+def _detect_ssh(environ, tmux_value=None) -> bool:
+    """いまの端末が SSH 越しか。
+
+    tmux 内では、ペインのシェルの ``SSH_*`` はペインを作ったときのクライアントの値で、
+    いま attach しているクライアントとは限らない (SSH から立てた tmux サーバーに手元の
+    端末から attach し直すと、シェルには ``SSH_CONNECTION`` が残る)。``SSH_CONNECTION``
+    は tmux の ``update-environment`` に既定で入っており、セッション環境は attach の
+    たびに更新されるので、そちらで分かればそれに従う。分からなければ (tmux 外・tmux の
+    失敗) ペインのシェルの変数で判定する。
+
+    ``tmux_value`` は :func:`_tmux_show_env` で読んだ ``SSH_CONNECTION`` の状態
+    (呼び出し側で読み済みなら渡す。None なら読みに行く)。
+    """
+    if tmux_value is None:
+        tmux_value = _tmux_show_env("SSH_CONNECTION", environ)
+    if tmux_value is _TMUX_REMOVED:
+        return False
+    if tmux_value is not None:
+        return True
+    return any(environ.get(k) for k in _SSH_ENV_KEYS)
+
+
+def _client_changed(environ, tmux_ssh) -> bool:
+    """ペインを作ったクライアントと、いま attach しているクライアントの SSH 状態が食い違うか。
+
+    セッション環境の ``SSH_CONNECTION`` (値あり / ``-SSH_CONNECTION``) から分かる
+    いまのクライアントの SSH 状態が、ペインのシェルの ``SSH_*`` の有無と違うとき True。
+    向きは問わない (SSH から作ったペインに手元から attach し直した、手元で作ったペインに
+    SSH から attach し直した)。どちらでも、ペインの ``VSCODE_IPC_HOOK_CLI`` は以前の
+    クライアントのウィンドウを指しており、そのウィンドウが開いたままだと接続できてしまう。
+    そこへ委譲すると、いまの判定 (``is_ssh``) で組んだ URI が別のクライアントへ届いて
+    開けない。セッション環境から分からないとき (tmux 外・tmux の失敗) は False。
+    """
+    if tmux_ssh is None:
+        return False
+    current_is_ssh = tmux_ssh is not _TMUX_REMOVED
+    pane_is_ssh = any(environ.get(k) for k in _SSH_ENV_KEYS)
+    return current_is_ssh != pane_is_ssh
+
+
+def resolve_ipc_socket(environ, trust_current: bool = True) -> Optional[str]:
     """実際に使える VS Code IPC ソケットのパスを返す (無ければ None)。
 
     1. ``VSCODE_IPC_HOOK_CLI`` が生きていればそれを使う
@@ -213,9 +276,12 @@ def resolve_ipc_socket(environ) -> Optional[str]:
     抱えたままという状態が頻繁に起きるため (:func:`_tmux_env` 参照)。シェル側の
     プロンプトフックで追随させる運用もあるが、それが入っていない環境でも
     ``devbase up --open`` が自動で開けるように devbase 側でも拾いにいく。
+
+    ``trust_current`` が False のときは 1 を飛ばす (ペインの値が以前のクライアントの
+    もので、生きていても使えない場合。:func:`_client_changed`)。
     """
     current = environ.get("VSCODE_IPC_HOOK_CLI")
-    if current and _socket_connectable(current):
+    if trust_current and current and _socket_connectable(current):
         return current
     candidate = _tmux_env("VSCODE_IPC_HOOK_CLI", environ)
     if candidate and candidate != current and _socket_connectable(candidate):
@@ -239,8 +305,13 @@ def detect_context(environ=None, isatty: Optional[bool] = None,
         isatty = _stdout_isatty()
     if system is None:
         system = platform.system()
+    # SSH の判定と IPC の採用元は同じセッション環境の読みで揃える。いまの
+    # クライアントの SSH 状態がペインのそれと食い違うなら、ペインに残る以前の
+    # クライアントの IPC へ委譲すると、いまの判定で組んだ URI が別のクライアントへ届く。
+    tmux_ssh = _tmux_show_env("SSH_CONNECTION", env)
+    changed = _client_changed(env, tmux_ssh)
     if ipc_alive is None:
-        sock = resolve_ipc_socket(env)
+        sock = resolve_ipc_socket(env, trust_current=not changed)
         ipc_alive = sock is not None
     else:
         sock = env.get("VSCODE_IPC_HOOK_CLI") if ipc_alive else None
@@ -248,9 +319,10 @@ def detect_context(environ=None, isatty: Optional[bool] = None,
         is_tty=bool(isatty),
         in_vscode=bool(ipc_alive),
         is_wsl=_detect_wsl(env),
-        is_ssh=any(env.get(k) for k in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")),
+        is_ssh=_detect_ssh(env, tmux_ssh),
         is_darwin=(system == "Darwin"),
         ipc_socket=sock,
+        ipc_from_previous_client=changed and bool(env.get("VSCODE_IPC_HOOK_CLI")),
     )
 
 
@@ -270,21 +342,31 @@ def is_open_enabled(environ=None, config=None) -> bool:
     return value.strip().lower() in _TRUTHY
 
 
-def resolve_editor_cmd(environ=None) -> Optional[list]:
+def _which(name: str, path: Optional[str]) -> Optional[str]:
+    """``shutil.which`` の薄い包み。``path`` が None なら既定の PATH で探す。"""
+    if path is None:
+        return shutil.which(name)
+    return shutil.which(name, path=path)
+
+
+def resolve_editor_cmd(environ=None, path: Optional[str] = None) -> Optional[list]:
     """起動に使うエディタコマンド (argv list) を解決する。
 
     ``DEVBASE_EDITOR`` があればそれを (シェル風に分割して) 優先。なければ既定の
     ``code``。attach URI は VS Code 系 CLI でのみ解釈できるため、``$EDITOR``
     (vi 等) へのフォールバックは意図的に行わない。実在しなければ None。
+
+    ``path`` を渡すとその PATH で探す (Remote-SSH の remote-cli を除いた PATH。
+    :func:`_drop_vscode_ipc`)。
     """
     env = os.environ if environ is None else environ
     explicit = env.get("DEVBASE_EDITOR")
     if explicit:
         parts = shlex.split(explicit)
-        if parts and shutil.which(parts[0]):
+        if parts and _which(parts[0], path):
             return parts
         return None
-    if shutil.which("code"):
+    if _which("code", path):
         return ["code"]
     return None
 
@@ -626,6 +708,26 @@ def _launch(cmd: list, env: dict) -> None:
     )
 
 
+def _is_remote_cli_dir(entry: str) -> bool:
+    """PATH の要素が VS Code 系サーバーの ``remote-cli`` (``~/.vscode-server/bin/<commit>/bin/remote-cli``
+    ・``~/.cursor-server/...`` など) か。"""
+    return os.path.basename(entry.rstrip("/")) == "remote-cli"
+
+
+def _drop_vscode_ipc(env):
+    """``VSCODE_IPC_HOOK_CLI`` を外し、PATH から remote-cli を除いた env を返す。
+
+    remote-cli の ``code`` は IPC が無いと「Command is only available in WSL or
+    inside a Visual Studio Code terminal.」を stdout に出して終わるだけなので、
+    IPC を外すときは手元の ``code`` を探せるよう PATH からも除く。
+    """
+    env = {k: v for k, v in env.items() if k != "VSCODE_IPC_HOOK_CLI"}
+    if "PATH" in env:
+        env["PATH"] = os.pathsep.join(
+            e for e in env["PATH"].split(os.pathsep) if not _is_remote_cli_dir(e))
+    return env
+
+
 def _prepare_ipc_env(env, ctx: EditorContext):
     """拾い直した IPC ソケットを env へ反映し、必要な警告ログを出す。
 
@@ -646,7 +748,20 @@ def _prepare_ipc_env(env, ctx: EditorContext):
             "tmux 設定を参照してください。",
             stale_ipc or "(未設定)", ctx.ipc_socket,
         )
-    if stale_ipc and not ctx.in_vscode:
+    if ctx.ipc_from_previous_client:
+        # ペインを作った以前のクライアントの IPC。生きていても code に渡すとそちらへ
+        # 委譲してしまうので外す (セッション環境の IPC を拾えていれば上で差し替え済み)。
+        if ctx.ipc_socket is None:
+            env = _drop_vscode_ipc(env)
+        logger.info(
+            "VSCODE_IPC_HOOK_CLI (%s) はこのペインを作った以前のクライアントのもので、"
+            "いま attach しているクライアントのものではないため使いません。",
+            stale_ipc,
+        )
+    elif stale_ipc and not ctx.in_vscode:
+        # 死んだソケットは code に渡さない。PATH に Remote-SSH の remote-cli が
+        # 残っていると、その code は IPC 無しでは何も開かずに終わるので PATH からも除く。
+        env = _drop_vscode_ipc(env)
         logger.warning(
             "VSCODE_IPC_HOOK_CLI が指すソケットに接続できません (%s)。VS Code 統合"
             "ターミナルとしては扱いません。tmux/screen のセッションを再利用している"
@@ -741,8 +856,13 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
     # tmux のセッション環境から拾い直せた場合は env を差し替え、死んだ IPC ソケット
     # の警告も出す。
+    had_ipc = bool(env.get("VSCODE_IPC_HOOK_CLI"))
     env = _prepare_ipc_env(env, ctx)
-    editor = resolve_editor_cmd(env)        # launch 用 (which 込み・None あり得る)
+    # IPC を外したときは remote-cli を除いた PATH で手元の code を探す
+    # (見つからなければ skip / print_command へ落ちる)。
+    dropped_ipc = had_ipc and "VSCODE_IPC_HOOK_CLI" not in env
+    editor = resolve_editor_cmd(            # launch 用 (which 込み・None あり得る)
+        env, path=env.get("PATH") if dropped_ipc else None)
     display = resolve_editor_display(env)   # print 用 (必ず非 None)
     plan = decide_action(ctx, editor_available=bool(editor))
 
