@@ -233,6 +233,16 @@ def _iter_env_names(existing: Any) -> Iterator[str]:
                 yield name
 
 
+def _without_env_names(existing: Any, names: Set[str]) -> Any:
+    """dict / list 形式の environment から ``names`` のキーを除いた写しを返す。
+
+    元の形を保つ。list 形式でキー名を取り出せない項目 (非文字列) は残す。
+    """
+    if _env_shape(existing) == 'dict':
+        return {k: v for k, v in existing.items() if k not in names}
+    return [item for item in existing if _env_item_name(item) not in names]
+
+
 def _mask_env_none(existing: Any, secrets: List[str], secret_set: Set[str]) -> Optional[list]:
     """元から environment が無ければ、機密が無い限り作らない (``None`` = 作らない)。"""
     return list(secrets) if secrets else None
@@ -337,18 +347,10 @@ def _drop_env_names(service: dict, names: Iterable[str]) -> None:
     if not drop:
         return
     existing = service.get('environment')
-    shape = _env_shape(existing)
-
-    if shape == 'dict':
-        kept = {k: v for k, v in existing.items() if k not in drop}
-    elif shape == 'list':
-        kept = [
-            item for item in existing
-            if _env_item_name(item) not in drop
-        ]
-    else:
+    if _env_shape(existing) not in ('dict', 'list'):
         # None や解釈できない形式には触らない (警告は mask 側で出している)
         return
+    kept = _without_env_names(existing, drop)
 
     if kept:
         service['environment'] = kept
@@ -437,11 +439,7 @@ def _apply_dev_environment(service: dict, extra: Mapping[str, str]) -> None:
         existing.update(extra)
         return
     if shape == 'list':
-        names = set(extra)
-        kept = [
-            entry for entry in existing
-            if _env_item_name(entry) not in names
-        ]
+        kept = _without_env_names(existing, set(extra))
         service['environment'] = kept + [f"{k}={v}" for k, v in extra.items()]
         return
     if shape == 'none':
