@@ -189,8 +189,8 @@ def group_attrs(devbase_root: Path) -> dict:
     置き場のグループ名の検査 (``storage_group``: 予約語 ``global`` / ``projects`` と
     ``group_aliases`` の読み替え先) も通し、通らない名前は委譲先へ渡さない。
     """
+    from devbase.commands.env import GroupOptionError, check_group_option
     from devbase.env.secret_store import SecretStore
-    from devbase.volume.manager import validate_account_group
 
     try:
         grouped = _grouped(devbase_root)
@@ -202,11 +202,9 @@ def group_attrs(devbase_root: Path) -> dict:
     while True:
         name = _select_group(devbase_root)
         try:
-            name = validate_account_group(name)
-            settings.storage_group(name)
-            return {"group": name}
-        except DevbaseError as e:
-            logger.error("--group に使えない名前です: %s", e)
+            return {"group": check_group_option(settings, name, account_rule=True)}
+        except GroupOptionError as e:
+            logger.error("%s", e)
 
 
 def project_title(name: str, count, width: int) -> str:

@@ -466,3 +466,23 @@ def test_an_age_backend_writes_the_encrypted_global(file_root, monkeypatch):
     assert (file_root / 'secrets' / 'global.env.age').is_file()
     assert not (file_root / '.env').exists()
     assert SecretStore(file_root).load(SecretRef.for_global()) == {'A': '1', 'K': 'v'}
+
+
+_TYPED_GROUP_ERRORS = {
+    '1234': ("--group に使えない名前です: DEVBASE_ACCOUNT_GROUP に数字だけの名前は使えません: '1234'。"
+             "インスタンス番号のボリューム devbase_home_<index> と同じ名前になります"),
+    'projects': ("--group に使えない名前です: グループ名 'projects' は置き場のグループ名に使えません"
+                 " (global / projects は version: 1 のパスと重なります)"),
+}
+
+
+@pytest.mark.parametrize('name', sorted(_TYPED_GROUP_ERRORS))
+def test_an_unusable_typed_group_prints_the_whole_error_line(grouped, monkeypatch, caplog, name):
+    """#444 R2: TUI で入れた名前の誤りの行を丸ごと固定する (CLI と違い「グループ名: 」が付かない)"""
+    Script(monkeypatch, select=[keys_ui.TYPE_GROUP, menu.MENU_BACK], text=[name])
+
+    with pytest.raises(flow.BackOut):
+        keys_ui.group_attrs(grouped)
+
+    errors = [r.getMessage() for r in caplog.records if r.levelname == 'ERROR']
+    assert errors == [_TYPED_GROUP_ERRORS[name]]

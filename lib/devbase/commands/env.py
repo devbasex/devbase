@@ -64,6 +64,26 @@ class GroupOptionError(DevbaseError):
         self.exit_code = exit_code
 
 
+def check_group_option(settings, group: str, *, account_rule: bool = False) -> str:
+    """``--group`` の名前を置き場のグループ名の検査 (``storage_group``) に通し、通った名前を返す。
+
+    通らなければ「``--group に使えない名前です: …``」の :class:`GroupOptionError` (終了コード 2)。
+    ``account_rule`` が真なら先に ``DEVBASE_ACCOUNT_GROUP`` の規則 (``validate_account_group``) を
+    通し、その結果 (前後の空白を外した名前) を検査して返す。CLI は ``storage_group`` の中で同じ
+    規則を通すため前段を持たず、名前の規則の誤りの文に「グループ名: 」が付く。TUI の選択は前段を
+    通し、接頭の無い文を出す。
+    """
+    from devbase.volume.manager import validate_account_group
+
+    try:
+        if account_rule:
+            group = validate_account_group(group)
+        settings.storage_group(group)
+    except DevbaseError as e:
+        raise GroupOptionError(f"--group に使えない名前です: {e}") from None
+    return group
+
+
 def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[str]:
     """コマンドが相手にするグループ (PLAN56「対象のグループ」・#315)。
 
@@ -97,13 +117,7 @@ def _target_group(devbase_root: Path, store, group: Optional[str]) -> Optional[s
         raise GroupOptionError(
             "--group はグループ別の置き場 (backend: openbao、version: 2) を選んだ設定で"
             "だけ使えます")
-    from devbase.env.backend_config import BackendConfigError
-
-    try:
-        store.config.openbao.storage_group(group)
-    except BackendConfigError as e:
-        raise GroupOptionError(f"--group に使えない名前です: {e}") from None
-    return group
+    return check_group_option(store.config.openbao, group)
 
 
 def _project_group_mismatch(devbase_root: Path, store, group: Optional[str],
