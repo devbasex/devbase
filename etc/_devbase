@@ -145,23 +145,35 @@ _devbase() {
         'rotate:Rotate old snapshots'
     )
 
+    # --context NAME を取るサブコマンドは、どれも値を補完しない --context を出す (#435)。
     case "$words[2]" in
         login)
-            _values 'index' 1 2
+            _arguments \
+                '--context[Docker context]:context:' \
+                '1:index:(1 2)'
+            ;;
+        build)
+            _arguments \
+                '--context[Docker context]:context:' \
+                '1:image:'
             ;;
         # トップレベルシノニム: up/down/ps/scale/rebuild は [name] を取るためプロジェクト名を補完。
         up|down|rebuild)
-            _devbase_project_names
+            _arguments \
+                '--context[Docker context]:context:' \
+                '1:name:_devbase_project_names'
             ;;
         ps)
-            if [[ "$words[3]" == -* || -n "$words[3]" ]]; then
-                _arguments '--all[Show all containers]' '-a[Show all containers]'
-            else
-                _devbase_project_names
-            fi
+            _arguments \
+                '--all[Show all containers]' \
+                '-a[Show all containers]' \
+                '--context[Docker context]:context:' \
+                '1:name:_devbase_project_names'
             ;;
         scale)
-            _devbase_project_names
+            _arguments \
+                '--context[Docker context]:context:' \
+                '1:name:_devbase_project_names'
             ;;
         open)
             _arguments \
@@ -180,13 +192,19 @@ _devbase() {
         project)
             case "$words[3]" in
                 up|down|rebuild)
-                    _devbase_project_names
+                    _arguments \
+                        '--context[Docker context]:context:' \
+                        '1:name:_devbase_project_names'
                     ;;
                 login)
-                    _values 'index' 1 2
+                    _arguments \
+                        '--context[Docker context]:context:' \
+                        '1:index:(1 2)'
                     ;;
                 scale)
-                    _devbase_project_names
+                    _arguments \
+                        '--context[Docker context]:context:' \
+                        '1:name:_devbase_project_names'
                     ;;
                 ps)
                     # name (positional) と -a フラグを _arguments に統合。
@@ -195,6 +213,7 @@ _devbase() {
                     _arguments \
                         '--all[Show all containers]' \
                         '-a[Show all containers]' \
+                        '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
                     ;;
                 logs)
@@ -202,10 +221,13 @@ _devbase() {
                         '--follow[Follow log output]' \
                         '-f[Follow log output]' \
                         '--tail[Number of lines]:lines:' \
+                        '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
                     ;;
                 build)
-                    _arguments '1:image:'
+                    _arguments \
+                        '--context[Docker context]:context:' \
+                        '1:image:'
                     ;;
                 list)
                     _arguments \
@@ -216,7 +238,16 @@ _devbase() {
                         '-i[(compat) interactive selection, default]'
                     ;;
                 profile)
-                    _values 'operation' up down list
+                    case "$words[4]" in
+                        up|down|list)
+                            _arguments \
+                                '--context[Docker context]:context:' \
+                                '*:profile:'
+                            ;;
+                        *)
+                            _values 'operation' up down list
+                            ;;
+                    esac
                     ;;
                 open)
                     _arguments \
@@ -236,26 +267,48 @@ _devbase() {
             ;;
         container|ct)
             case "$words[3]" in
+                up|down|rebuild)
+                    _arguments '--context[Docker context]:context:'
+                    ;;
                 login)
-                    _values 'index' 1 2
+                    _arguments \
+                        '--context[Docker context]:context:' \
+                        '1:index:(1 2)'
                     ;;
                 scale)
-                    _values 'new_scale' 1 2 3 4 5
+                    _arguments \
+                        '--context[Docker context]:context:' \
+                        '1:new_scale:(1 2 3 4 5)'
                     ;;
                 ps)
-                    _arguments '--all[Show all containers]' '-a[Show all containers]'
+                    _arguments \
+                        '--all[Show all containers]' \
+                        '-a[Show all containers]' \
+                        '--context[Docker context]:context:'
                     ;;
                 logs)
                     _arguments \
                         '--follow[Follow log output]' \
                         '-f[Follow log output]' \
-                        '--tail[Number of lines]:lines:'
+                        '--tail[Number of lines]:lines:' \
+                        '--context[Docker context]:context:'
                     ;;
                 build)
-                    _arguments '1:image:'
+                    _arguments \
+                        '--context[Docker context]:context:' \
+                        '1:image:'
                     ;;
                 profile)
-                    _values 'operation' up down list
+                    case "$words[4]" in
+                        up|down|list)
+                            _arguments \
+                                '--context[Docker context]:context:' \
+                                '*:profile:'
+                            ;;
+                        *)
+                            _values 'operation' up down list
+                            ;;
+                    esac
                     ;;
                 open)
                     _arguments \
@@ -328,7 +381,12 @@ _devbase() {
                         '--keep-last[Keep only the last N backup directories]:n:'
                     ;;
                 exec)
-                    _arguments '*:command:_command_names -e'
+                    _arguments \
+                        '--context[Docker context]:context:' \
+                        '*:command:_command_names -e'
+                    ;;
+                token)
+                    _arguments '--context[Docker context]:context:'
                     ;;
                 encrypt|decrypt)
                     _arguments \
