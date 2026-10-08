@@ -9,6 +9,15 @@
   これまで `devbase build` は `dev` を建てる一方、`up`・`login`・`open`・`post-start`・`scale`・`--expires` の判定・
   token の配布は空の名前のサービスを探して開発サービスを見失っていました。未設定や空でない値のプロジェクトは変わりません。
 
+- **SSH から立てた tmux のセッションに手元の Mac の端末から attach し直したとき、`devbase editor open` と `devbase up --open` が
+  VS Code を開かず「SSH セッションを検出しました」とコマンドを提示するだけになっていたのを直しました。**
+  tmux 内では、SSH かどうかをペインのシェルに残った `SSH_CONNECTION` ではなく、tmux のセッション環境（attach のたびに
+  更新される）で判定します。あわせて、接続できない `VSCODE_IPC_HOOK_CLI` と、ペインを作ったクライアントと attach し直したクライアントの SSH 状態が
+  食い違う（SSH から立てた tmux に手元から、手元で立てた tmux に Remote-SSH から attach し直した）ペインに残る以前の
+  `VSCODE_IPC_HOOK_CLI`（ウィンドウが開いたままで接続できても）は使わないようにしました。tmux のセッション環境にいまの
+  クライアントの値があればそれを使い、無ければ SSH ではコマンドの提示、手元では手元の `code` の起動になります。
+  このとき `PATH` に残る Remote-SSH の `remote-cli` の `code` は使わず、手元の `code` を起動します（見つからなければスキップします）。
+
 ## [4.1.0] - 2026-10-07
 
 base イメージの削減に伴い、使う者の無い道具を外す変更を含みます（lfm・DinD・amd64 の Chrome・Playwright のブラウザなど、
