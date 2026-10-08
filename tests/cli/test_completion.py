@@ -109,9 +109,9 @@ def test_bash_top_level_ps_name_completion(fake_root):
 
 
 def test_bash_top_level_ps_flag_completion(fake_root):
-    """`devbase ps -<TAB>` は -a / --all を補完する (project ps と対称)。"""
+    """`devbase ps -<TAB>` は -a / --all / --context を補完する (project ps と対称)。"""
     out = _bash_complete("devbase ps '-'", 2, fake_root)
-    assert set(out) == {"--all", "-a"}
+    assert set(out) == {"--all", "-a", "--context"}
 
 
 def test_bash_project_name_excludes_bad_symlinks(fake_root_with_bad_links):
@@ -126,19 +126,19 @@ def test_bash_project_name_excludes_bad_symlinks(fake_root_with_bad_links):
 def test_bash_project_ps_flag_after_name(fake_root):
     """`devbase project ps web -<TAB>` (cword 4) で -a / --all を補完する。"""
     out = _bash_complete("devbase project ps web '-'", 4, fake_root)
-    assert set(out) == {"--all", "-a"}
+    assert set(out) == {"--all", "-a", "--context"}
 
 
 def test_bash_project_logs_flag_after_name(fake_root):
     """`devbase project logs web -<TAB>` (cword 4) で -f/--follow/--tail を補完する。"""
     out = _bash_complete("devbase project logs web '-'", 4, fake_root)
-    assert set(out) == {"--follow", "-f", "--tail"}
+    assert set(out) == {"--follow", "-f", "--tail", "--context"}
 
 
 def test_bash_top_level_ps_flag_after_name(fake_root):
     """`devbase ps web -<TAB>` (cword 3) で -a / --all を補完する (project ps と対称)。"""
     out = _bash_complete("devbase ps web '-'", 3, fake_root)
-    assert set(out) == {"--all", "-a"}
+    assert set(out) == {"--all", "-a", "--context"}
 
 
 def test_bash_project_list_flags(fake_root):
@@ -168,6 +168,20 @@ def test_zsh_completion_mentions_project_and_list():
 def test_zsh_completion_marks_container_deprecated():
     text = ZSH_COMPLETION.read_text()
     assert "deprecated" in text.lower()
+
+
+def test_zsh_subcommand_arguments_shift_words():
+    """#450: サブコマンドの _arguments は words を詰める入口を通す。
+
+    _arguments は words[1] だけを飛ばすため、素のまま呼ぶと `devbase up` の
+    `up` が 1 番目の引数に数えられ、'1:name' がプロジェクト名を補完しない。
+    """
+    lines = ZSH_COMPLETION.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("_devbase() {"))
+    bare = [line.strip() for line in lines[start:]
+            if line.strip().startswith("_arguments")]
+    assert bare == []
+    assert "words=(\"${(@)words[depth,-1]}\")" in ZSH_COMPLETION.read_text()
 
 
 @pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh 未インストール")
@@ -227,11 +241,11 @@ _NAMES = {"web", "api", "linked"}
     ("devbase open ''", 2, _NAMES),
     ("devbase open '-'", 2, {"--open-index", "--context"}),
     ("devbase ps ''", 2, _NAMES),
-    ("devbase ps '-'", 2, {"--all", "-a"}),
+    ("devbase ps '-'", 2, {"--all", "-a", "--context"}),
     ("devbase project ps ''", 3, _NAMES),
-    ("devbase project ps '-'", 3, {"--all", "-a"}),
+    ("devbase project ps '-'", 3, {"--all", "-a", "--context"}),
     ("devbase project logs ''", 3, _NAMES),
-    ("devbase project logs '-'", 3, {"--follow", "-f", "--tail"}),
+    ("devbase project logs '-'", 3, {"--follow", "-f", "--tail", "--context"}),
     ("devbase project open ''", 3, _NAMES),
     ("devbase project open '-'", 3, {"--open-index", "--context"}),
     ("devbase project post-start ''", 3, _NAMES),
@@ -246,8 +260,8 @@ def test_bash_flag_or_project_name_branch(fake_root, words, cword, expected):
 
 @pytest.mark.parametrize("words, cword, expected", [
     ("devbase container open '-'", 3, {"--open-index", "--context"}),
-    ("devbase container ps '-'", 3, {"--all", "-a"}),
-    ("devbase ct logs '-'", 3, {"--follow", "-f", "--tail"}),
+    ("devbase container ps '-'", 3, {"--all", "-a", "--context"}),
+    ("devbase ct logs '-'", 3, {"--follow", "-f", "--tail", "--context"}),
     ("devbase container open ''", 3, set()),
     ("devbase container ps ''", 3, set()),
     ("devbase ct logs ''", 3, set()),
@@ -255,3 +269,14 @@ def test_bash_flag_or_project_name_branch(fake_root, words, cword, expected):
 ])
 def test_bash_container_flags_only_without_names(fake_root, words, cword, expected):
     assert set(_bash_complete(words, cword, fake_root)) == expected
+
+
+# #435: --context の値 (docker context の名前) は補完しない
+@pytest.mark.parametrize("words, cword", [
+    ("devbase up --context ''", 3),
+    ("devbase project up web --context ''", 5),
+    ("devbase container ps --context ''", 4),
+    ("devbase env exec --context ''", 4),
+])
+def test_bash_context_value_is_not_completed(fake_root, words, cword):
+    assert _bash_complete(words, cword, fake_root) == []

@@ -5,7 +5,8 @@
 写しを取り残すと、取り残した場所（ファイル）と欠けた・余分なサブコマンドを挙げて落ちる。
 
 - `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` / `_NAME_RESOLVABLE_SHORTCUTS`
-- 補完 2 ファイル（`etc/devbase-completion.bash` は実行して、`etc/_devbase` は静的に読む）
+- 補完 2 ファイル（`etc/devbase-completion.bash` は実行して、`etc/_devbase` は静的に読む）。
+  `[name]` の位置のプロジェクト名と、`--context` の旗（値は補完しない）を比べる
 - 確定仕様 `docs/specifications/cli-argument-resolution.md` の 2 つの表
 
 集合の要素は「サブコマンドへの道筋」のタプルで表す（例: `("project", "profile", "up")`、
@@ -158,9 +159,9 @@ def fake_root(tmp_path):
     return tmp_path
 
 
-def _bash_complete(words, devbase_root):
-    """`devbase <words...> ""` の最後の位置で bash 補完を実行し、候補を返す。"""
-    quoted = " ".join(f'"{w}"' for w in ("devbase",) + tuple(words) + ("",))
+def _bash_complete(words, devbase_root, cur=""):
+    """`devbase <words...> <cur>` の最後の位置で bash 補完を実行し、候補を返す。"""
+    quoted = " ".join(f'"{w}"' for w in ("devbase",) + tuple(words) + (cur,))
     script = f"""
 set -e
 source "{BASH_COMPLETION}"
@@ -225,6 +226,44 @@ def test_zsh_completion_offers_project_names():
         if body is None or "_devbase_project_names" not in body:
             missing.append(path)
     assert not missing, f"etc/_devbase が `[name]` の位置でプロジェクト名（_devbase_project_names）を補完しない: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# 補完: `--context` の旗
+# ---------------------------------------------------------------------------
+
+def _with_alias(paths):
+    # `ct` で始めても `container` と同じ候補が出ること
+    return sorted(paths | {("ct",) + p[1:] for p in paths if p[0] == "container"})
+
+
+def test_bash_completion_offers_context_after_path(fake_root):
+    missing = [path for path in _with_alias(CONTEXT_PATHS)
+               if "--context" not in _bash_complete(path, fake_root, "-")]
+    assert not missing, f"etc/devbase-completion.bash が `devbase <道> -` で --context を補完しない: {missing}"
+
+
+def test_bash_completion_offers_context_after_name(fake_root):
+    paths = (NAME_PATHS - set(COMPLETION_NAME_EXCEPTIONS)) & CONTEXT_PATHS
+    assert paths, "`[name]` と `--context` の両方を取るサブコマンドが無い"
+    missing = [path for path in sorted(paths)
+               if "--context" not in _bash_complete(path + ("web",), fake_root, "-")]
+    assert not missing, (f"etc/devbase-completion.bash が `devbase <道> web -` で --context を補完しない: "
+                         f"{missing}")
+
+
+# 値の補完を持たない `--context` の指定（`:context:` の後ろに補完の関数を置かない）
+_ZSH_CONTEXT_SPEC = re.compile(r"'--context\[[^\]']*\]:context:'")
+
+
+def test_zsh_completion_offers_context():
+    missing = []
+    for path in sorted(CONTEXT_PATHS):
+        body = _zsh_branch(path)
+        if body is None or not _ZSH_CONTEXT_SPEC.search(body):
+            missing.append(path)
+    assert not missing, (f"etc/_devbase が道の分岐で値を補完しない --context"
+                         f"（'--context[...]:context:'）を出さない: {missing}")
 
 
 # ---------------------------------------------------------------------------

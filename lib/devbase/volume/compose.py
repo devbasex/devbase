@@ -5,7 +5,7 @@ import os
 import yaml
 from pathlib import Path
 from typing import (
-    Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set,
+    Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple,
 )
 
 from devbase.env import compose_migrate, gcp_auth, keys
@@ -89,6 +89,22 @@ def _declares_target(service: Mapping[str, Any], target: str) -> bool:
     )
 
 
+def _replace_volume_source(vol: Any, source: str, target: str) -> Any:
+    """1 つのマウントの source を ``source`` へ差し替えた項目を返す。
+
+    文字列の形はオプションを残して作り直し、dict の形はその場で書き換えて同じものを返す。
+    """
+    if isinstance(vol, str):
+        # String format: "source:target" or "source:target:options"
+        parts = vol.split(':')
+        options = f":{parts[2]}" if len(parts) >= 3 else ""
+        return f"{source}:{target}{options}"
+    # Dict format: {type, source, target}
+    vol['source'] = source
+    vol['type'] = 'volume'
+    return vol
+
+
 def _replace_volumes_for_instance(
     volumes: list, ai_volume: str, work_volume: str, group_volume: str,
     vscode_volume: Optional[str] = None,
@@ -121,16 +137,7 @@ def _replace_volumes_for_instance(
             new_volumes.append(vol)
             continue
         replaced_targets.add(target)
-        if isinstance(vol, str):
-            # String format: "source:target" or "source:target:options"
-            parts = vol.split(':')
-            options = f":{parts[2]}" if len(parts) >= 3 else ""
-            new_volumes.append(f"{source}:{target}{options}")
-        else:
-            # Dict format: {type, source, target}
-            vol['source'] = source
-            vol['type'] = 'volume'
-            new_volumes.append(vol)
+        new_volumes.append(_replace_volume_source(vol, source, target))
 
     # Add missing mounts
     new_volumes.extend(
@@ -226,6 +233,68 @@ def _iter_env_names(existing: Any) -> Iterator[str]:
                 yield name
 
 
+def _without_env_names(existing: Any, names: Set[str]) -> Any:
+    """dict / list 形式の environment から ``names`` のキーを除いた写しを返す。
+
+    元の形を保つ。list 形式でキー名を取り出せない項目 (非文字列) は残す。
+    """
+    if _env_shape(existing) == 'dict':
+        return {k: v for k, v in existing.items() if k not in names}
+    return [item for item in existing if _env_item_name(item) not in names]
+
+
+def _mask_env_none(existing: Any, secrets: List[str], secret_set: Set[str]) -> Optional[list]:
+    """元から environment が無ければ、機密が無い限り作らない (``None`` = 作らない)。"""
+    return list(secrets) if secrets else None
+
+
+def _mask_env_dict(existing: dict, secrets: List[str], secret_set: Set[str]) -> dict:
+    """map 形式: 機密キーの値を ``None`` にし、無い機密キーを足す。"""
+    masked = {
+        key: (None if key in secret_set else value)
+        for key, value in existing.items()
+    }
+    for name in secrets:
+        masked.setdefault(name, None)
+    return masked
+
+
+def _mask_env_list(existing: list, secrets: List[str], secret_set: Set[str]) -> list:
+    """list 形式: 機密キーを裸のキー名にし、無い機密キーを末尾へ足す。"""
+    masked_list = []
+    listed = set()
+    for item in existing:
+        name = _env_item_name(item)
+        if name is None:
+            masked_list.append(item)
+            continue
+        listed.add(name)
+        # 機密キーは `KEY=value` でも `KEY` でも、値なし参照に揃える
+        masked_list.append(name if name in secret_set else item)
+    masked_list.extend(name for name in secrets if name not in listed)
+    return masked_list
+
+
+def _mask_env_other(existing: Any, secrets: List[str], secret_set: Set[str]) -> list:
+    """map / list 以外は Compose が受け付けない書き方。
+
+    手掛かりを残しつつ、機密が渡らない事故を避けるため名前の列挙で置き換える。
+    """
+    logger.warning(
+        "environment の形式 (%s) を解釈できないため、機密の変数名の列挙で"
+        "置き換えます", type(existing).__name__)
+    return list(secrets)
+
+
+#: ``_env_shape`` の形 → 伏せた environment を返す関数
+_ENV_MASKERS = {
+    'none': _mask_env_none,
+    'dict': _mask_env_dict,
+    'list': _mask_env_list,
+    'other': _mask_env_other,
+}
+
+
 def _mask_secret_environment(
     service: dict, secret_env_names: Sequence[str],
 ) -> None:
@@ -239,51 +308,14 @@ def _mask_secret_environment(
 
     元の記法は尊重する。map 形式なら値を ``None`` にした map (Compose は ``KEY:``
     を「実行プロセスの環境変数から解決」と解釈する)、list 形式なら裸のキー名を
-    並べた list として出力する。
+    並べた list として出力する。形ごとの処理は ``_ENV_MASKERS`` にある。
     """
     # 重複を除きつつ、指定された順序は保つ
     secrets = list(dict.fromkeys(secret_env_names))
-    secret_set = set(secrets)
     existing = service.get('environment')
-    shape = _env_shape(existing)
-
-    if shape == 'none':
-        # 元から environment が無ければ、機密が無い限り作らない
-        if secrets:
-            service['environment'] = list(secrets)
-        return
-
-    if shape == 'dict':
-        masked = {
-            key: (None if key in secret_set else value)
-            for key, value in existing.items()
-        }
-        for name in secrets:
-            masked.setdefault(name, None)
+    masked = _ENV_MASKERS[_env_shape(existing)](existing, secrets, set(secrets))
+    if masked is not None:
         service['environment'] = masked
-        return
-
-    if shape == 'list':
-        masked_list = []
-        listed = set()
-        for item in existing:
-            name = _env_item_name(item)
-            if name is None:
-                masked_list.append(item)
-                continue
-            listed.add(name)
-            # 機密キーは `KEY=value` でも `KEY` でも、値なし参照に揃える
-            masked_list.append(name if name in secret_set else item)
-        masked_list.extend(name for name in secrets if name not in listed)
-        service['environment'] = masked_list
-        return
-
-    # map / list 以外は Compose が受け付けない書き方。手掛かりを残しつつ、
-    # 機密が渡らない事故を避けるため名前の列挙で置き換える。
-    logger.warning(
-        "environment の形式 (%s) を解釈できないため、機密の変数名の列挙で"
-        "置き換えます", type(existing).__name__)
-    service['environment'] = list(secrets)
 
 
 def _service_env_names(service: dict) -> List[str]:
@@ -315,18 +347,10 @@ def _drop_env_names(service: dict, names: Iterable[str]) -> None:
     if not drop:
         return
     existing = service.get('environment')
-    shape = _env_shape(existing)
-
-    if shape == 'dict':
-        kept = {k: v for k, v in existing.items() if k not in drop}
-    elif shape == 'list':
-        kept = [
-            item for item in existing
-            if _env_item_name(item) not in drop
-        ]
-    else:
+    if _env_shape(existing) not in ('dict', 'list'):
         # None や解釈できない形式には触らない (警告は mask 側で出している)
         return
+    kept = _without_env_names(existing, drop)
 
     if kept:
         service['environment'] = kept
@@ -415,11 +439,7 @@ def _apply_dev_environment(service: dict, extra: Mapping[str, str]) -> None:
         existing.update(extra)
         return
     if shape == 'list':
-        names = set(extra)
-        kept = [
-            entry for entry in existing
-            if _env_item_name(entry) not in names
-        ]
+        kept = _without_env_names(existing, set(extra))
         service['environment'] = kept + [f"{k}={v}" for k, v in extra.items()]
         return
     if shape == 'none':
@@ -645,6 +665,66 @@ def _prepare_remote_mounts(
                 "\n  ".join(unresolved))
 
 
+def _drop_missing_env_files_for_all(services: dict, base_dir: Path) -> None:
+    """すべてのサービスの ``env_file`` から、実在しないファイルを取り除く。"""
+    for service_name, service_config in services.items():
+        if isinstance(service_config, dict):
+            _drop_missing_env_files(service_config, base_dir, service_name)
+
+
+def _resolve_group_environment(
+    dev_environment: Optional[Mapping[str, str]],
+) -> Tuple[str, Dict[str, str]]:
+    """アカウントグループを解決し、``(group_volume, dev_environment)`` を返す。
+
+    アカウントグループはここで 1 度だけ解決し、マウント・ボリューム宣言・
+    環境変数の 3 か所へ同じ値を配る。コンテナ側で解決し直させると、マウント
+    されているボリュームと entrypoint が見ているグループ名がずれうる。
+    不正な名前はここで DevbaseError になり、構成生成の時点で起動が止まる。
+    """
+    account_group = resolve_account_group()
+    group_volume = get_group_volume(account_group)
+    return group_volume, {
+        **(dev_environment or {}),
+        keys.DEVBASE_ACCOUNT_GROUP: account_group,
+        # gcloud / gws の設定ディレクトリと解決済みの認証モード (PLAN39)
+        **gcp_auth.container_env(os.environ),
+    }
+
+
+def _compute_dev_excluded(
+    dev_service: dict, dev_environment: Mapping[str, str],
+    secret_env_names: Sequence[str],
+    global_env_names: Optional[Sequence[str]],
+    project_env_names: Optional[Sequence[str]],
+) -> Sequence[str]:
+    """dev の列挙と生成物から外す GCP の変数名を返す。
+
+    コンテナ内で使われない GCP の変数を **dev の列挙から外す**。名前が載ら
+    なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
+    から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
+
+    外すのは 2 種類ある。ADC モードでの鍵ファイルのパス 2 変数
+    (DefaultCredentialsError を避けるため) と、アクティブプロファイル以外の
+    GCP_CREDENTIALS_BASE64__* および使われない後方互換キー (鍵の実体が他社の
+    コンテナへ渡るのを防ぐため / issue #134)。判定は gcp_auth に集約する。
+
+    除外は dev だけに効かせる。元々これらを env_file から受け取っていた
+    非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
+    同じようにそのサービスを壊す。
+    """
+    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
+    # 候補は 3 か所から集める。機密の列挙・ホストの環境変数・元 compose.yml の
+    # dev への直書きである。どれか 1 つでも欠けると、そこに書かれた別プロファイル
+    # の鍵を外し損ねる。
+    enumerated = [*secret_env_names,
+                  *(global_env_names or ()),
+                  *(project_env_names or ()),
+                  *_service_env_names(dev_service)]
+    return gcp_auth.dev_excluded_env_names(
+        os.environ, auth_mode, enumerated)
+
+
 def generate_scaled_compose(
     scale: int,
     compose_file: Path = None,
@@ -690,52 +770,17 @@ def generate_scaled_compose(
 
     # Extract dev service (configurable via DEV_SERVICE_NAME)
     services = config.get('services', {})
-    base_dir = compose_file.resolve().parent
-    for service_name, service_config in services.items():
-        if isinstance(service_config, dict):
-            _drop_missing_env_files(service_config, base_dir, service_name)
+    _drop_missing_env_files_for_all(services, compose_file.resolve().parent)
     dev_service = services.get(dev_service_name)
     if not dev_service:
         raise DockerError(f"No '{dev_service_name}' service found in compose file")
 
     secret_services = _services_receiving_secrets(compose_file, dev_service_name)
 
-    # アカウントグループはここで 1 度だけ解決し、マウント・ボリューム宣言・
-    # 環境変数の 3 か所へ同じ値を配る。コンテナ側で解決し直させると、マウント
-    # されているボリュームと entrypoint が見ているグループ名がずれうる。
-    # 不正な名前はここで DevbaseError になり、構成生成の時点で起動が止まる。
-    account_group = resolve_account_group()
-    group_volume = get_group_volume(account_group)
-    dev_environment = {
-        **(dev_environment or {}),
-        keys.DEVBASE_ACCOUNT_GROUP: account_group,
-        # gcloud / gws の設定ディレクトリと解決済みの認証モード (PLAN39)
-        **gcp_auth.container_env(os.environ),
-    }
-
-    # コンテナ内で使われない GCP の変数を **dev の列挙から外す**。名前が載ら
-    # なければ Compose はその変数をコンテナへ渡さないので、docker exec のシェル
-    # から見ても未設定になる。値を空にするだけでは entrypoint の外に効かない。
-    #
-    # 外すのは 2 種類ある。ADC モードでの鍵ファイルのパス 2 変数
-    # (DefaultCredentialsError を避けるため) と、アクティブプロファイル以外の
-    # GCP_CREDENTIALS_BASE64__* および使われない後方互換キー (鍵の実体が他社の
-    # コンテナへ渡るのを防ぐため / issue #134)。判定は gcp_auth に集約する。
-    #
-    # 除外は dev だけに効かせる。元々これらを env_file から受け取っていた
-    # 非 dev サービス (独自に鍵を持つ batch 等) から値を奪うと、直書きを消すのと
-    # 同じようにそのサービスを壊す。
-    auth_mode = dev_environment[keys.GCP_AUTH_MODE]
-    #
-    # 候補は 3 か所から集める。機密の列挙・ホストの環境変数・元 compose.yml の
-    # dev への直書きである。どれか 1 つでも欠けると、そこに書かれた別プロファイル
-    # の鍵を外し損ねる。
-    enumerated = [*secret_env_names,
-                  *(global_env_names or ()),
-                  *(project_env_names or ()),
-                  *_service_env_names(dev_service)]
-    dev_excluded = gcp_auth.dev_excluded_env_names(
-        os.environ, auth_mode, enumerated)
+    group_volume, dev_environment = _resolve_group_environment(dev_environment)
+    dev_excluded = _compute_dev_excluded(
+        dev_service, dev_environment, secret_env_names,
+        global_env_names, project_env_names)
     secret_names = _SecretNames(
         secret_env_names, global_env_names, project_env_names,
         dev_excluded=dev_excluded)

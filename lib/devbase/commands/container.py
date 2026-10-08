@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -1273,8 +1274,21 @@ def _run_pre_up_checks(config) -> bool:
     return True
 
 
-def _run_post_start(project_name: str, scale: int, indices, dev_service_name: str,
-                    config, compose_file, run_deploy: bool = True) -> None:
+@dataclass(frozen=True)
+class _ComposeDeployment:
+    """起動した構成。``up`` / ``scale`` / ``project post-start`` が起動の後の処理の段へ渡す組。
+
+    ``compose_file`` は ``-f`` で渡すファイル (スケールのファイルが無ければ ``None``)。
+    """
+
+    project_name: str
+    scale: int
+    dev_service_name: str
+    compose_file: Optional[Path]
+
+
+def _run_post_start(deployment: _ComposeDeployment, indices, config,
+                    run_deploy: bool = True) -> None:
     """起動の後の処理の段。後処理の対象の番号へ、インスタンスごとの処理を決まった順に行う。
 
     順は、不足リポジトリの報告 → ``./deploy`` → token の配布 → 窓のタイトルの設定で、
@@ -1289,8 +1303,9 @@ def _run_post_start(project_name: str, scale: int, indices, dev_service_name: st
         return
 
     # clone できなかった repo があれば伝える (揃っていれば何も出さない)。
-    _report_missing_repos(config, scale, dev_service_name, project_name,
-                          compose_file=compose_file, indices=indices)
+    _report_missing_repos(config, deployment.scale, deployment.dev_service_name,
+                          deployment.project_name,
+                          compose_file=deployment.compose_file, indices=indices)
 
     deploy_script = Path('./deploy')
     if run_deploy and deploy_script.exists() and deploy_script.is_file():
@@ -1298,13 +1313,14 @@ def _run_post_start(project_name: str, scale: int, indices, dev_service_name: st
 
     # 起動中のコンテナの bao が使う token を書く (PLAN54)。backend が openbao の
     # ときだけ。書けなくても起動は済んでいるので倒さない。
-    _push_bao_token(project_name, scale, dev_service_name, compose_file=compose_file,
-                    indices=indices)
+    _push_bao_token(deployment.project_name, deployment.scale, deployment.dev_service_name,
+                    compose_file=deployment.compose_file, indices=indices)
 
     # VS Code のウィンドウタイトルをコンテナ名始まりに固定する
     # (自動オープンの有無に関わらず、手動アタッチにも効かせるため)。
-    _apply_window_titles(project_name, scale, dev_service_name,
-                         compose_file=compose_file, indices=indices)
+    _apply_window_titles(deployment.project_name, deployment.scale,
+                         deployment.dev_service_name,
+                         compose_file=deployment.compose_file, indices=indices)
 
 
 def _warn_partial_start(error: ContainerStartupError, targets, dev_service_name: str) -> None:
@@ -1450,8 +1466,9 @@ def cmd_up(project_name: str = None, scale: int = None,
         if startup_error is not None:
             _warn_partial_start(startup_error, started, dev_service_name)
 
-        _run_post_start(project_name, scale, started, dev_service_name, config,
-                        override_file)
+        _run_post_start(
+            _ComposeDeployment(project_name, scale, dev_service_name, override_file),
+            started, config)
 
         _maybe_open_editor(project_name, open_editor, open_index, scale,
                            config, compose_file=override_file,
@@ -1565,8 +1582,8 @@ def cmd_post_start(project_name: Optional[str] = None, context: Optional[str] = 
         return 1
 
     compose_file = _SCALE_COMPOSE_FILE if _SCALE_COMPOSE_FILE.exists() else None
-    _run_post_start(project_name, scale, targets, dev_service_name, config, compose_file,
-                    run_deploy=False)
+    _run_post_start(_ComposeDeployment(project_name, scale, dev_service_name, compose_file),
+                    targets, config, run_deploy=False)
     logger.info("=== Post-start completed ===")
     return 0
 
@@ -1882,8 +1899,9 @@ def cmd_scale(new_scale: int, project_name: str = None,
         if startup_error is not None:
             _warn_partial_start(startup_error, targets, dev_service_name)
 
-        _run_post_start(project_name, new_scale, targets, dev_service_name, config,
-                        override_file)
+        _run_post_start(
+            _ComposeDeployment(project_name, new_scale, dev_service_name, override_file),
+            targets, config)
 
         if _finish_partial('Scale', startup_error, project_name):
             return 1
