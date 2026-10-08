@@ -814,7 +814,7 @@ TUI の「OpenBao の接続設定」は同じプロセスの中から `use openb
 | 欄 | 接続先（`url`、1 行）、`role_id` と `secret_id`（伏せ字）。空の欄は変えない（`use` の引き継ぎ）。`role_id` を変えるときは `secret_id` も要る。`mount` / `user` / `layout` / `group_aliases` / キャッシュの設定は変えない |
 | 保存の後 | `test` と同じ確認を自動で行う。失敗しても保存した設定は残し、欄を入れ直せる。`use` が失敗したら `test` を呼ばずに欄へ戻る |
 | 確認のグループ | グループ別の置き場（`version: 2`・`layout: group`）で、TUI の現在地（`PWD`）がプロジェクトの外のときだけ、保存の後・確認の直前に対象のグループを選ばせ、`test` へ属性 `group`（CLI の `--group` と同じ）で渡す。選択は sync / init と同じ部品（`actions_env_keys.group_attrs`。候補は宣言済みのグループと「名前を入力」）。プロジェクトの中では選ばせず、`test` がグループの宣言から決める。`version: 1` では選ばせず `group` を渡さない |
-| 使えないグループ名 | 「名前を入力」の名前は `validate_account_group` で検証し、続けて CLI の `--group` と同じ `storage_group` の検査（置き場の予約語 `global` / `projects`、`group_aliases` の読み替え先）を通す。どちらかで落ちれば「--group に使えない名前です: ...」を出してグループの選択へ戻る（`test` を呼ばない）。sync / init の選択も同じ部品を通る |
+| 使えないグループ名 | 「名前を入力」の名前は `validate_account_group` で検証し、続けて CLI の `--group` と同じ `storage_group` の検査（置き場の予約語 `global` / `projects`、`group_aliases` の読み替え先）を通す。どちらかで落ちれば「--group に使えない名前です: ...」を出してグループの選択へ戻る（`test` を呼ばない）。sync / init の選択も同じ部品を通る。検証は CLI の `--group`（`_target_group`）と共通の `commands/env.py` の `check_group_option(settings, group, *, account_rule=False)` 1 か所で行い、TUI は `account_rule=True` で前段の `validate_account_group` も通す。そのため名前の規則で落ちた文は、TUI では接頭が無く、CLI では `storage_group` の中の同じ規則の文で「グループ名: 」が付く |
 | グループの選択で戻る | Esc・← で「接続を確かめずに戻ります。保存した設定は残っています。」を出し、`test` を呼ばず、入れ直しの問いも出さずに env メニューへ戻る（`ARG_CANCEL`。一時停止しない）。Ctrl-C は TUI 全体を終える |
 | 入れ直した後 | 入れ直しの問いで「はい」を選ぶと欄へ戻り、次に保存した後でもう一度グループを選ぶ |
 | token | 入力させず、保存しない（実行のたびにブートストラップ機密で取り直す） |

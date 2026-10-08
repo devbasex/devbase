@@ -138,6 +138,30 @@ graph TD
 `--context` の指定の形で確かめ、bash は `tests/cli/test_completion.py` が `--context` の直後の候補が
 0 件であることを代表の道で確かめる。
 
+#### 補完が `--context` を出す位置
+
+| 位置 | 例 | bash | zsh |
+| --- | --- | --- | --- |
+| (a) 道の直後 | `devbase up -`・`devbase env exec -`・`devbase ct profile up -` | `--context` の集合のすべての道で出す | `--context` の集合のすべての道の分岐で出す |
+| (b) プロジェクト名の直後 | `devbase up web -`・`devbase project open web -` | `[name]` の集合から補完の例外を引いた道で出す | `_arguments` が位置を問わず出す |
+| (c) `--context` の直後（値） | `devbase up --context <TAB>` | 候補は 0 件 | 説明だけを出し、候補は 0 件 |
+| (a)・(b) より後ろ | `devbase scale web 3 -`・`devbase env exec -- ls -` | 出すことを求めない | 出し得る（argparse では、`env exec` のコマンドの後の `--context` はそのコマンドへ渡る） |
+
+bash（`etc/devbase-completion.bash`）は、道ごとの分岐が `_devbase_complete_flags <旗の候補> "$cur" [names | 語の並び]`
+を呼ぶ。補完する語が `-` で始まれば旗の候補（`ctx_flags`・`ps_flags`・`logs_flags`・`open_flags`。どれも
+`--context` を含む）を `compgen -W` で補完する語に前方一致するものへ絞って出し（`devbase ps --a` は `--all` だけ）、
+始まらなければ `names` でプロジェクト名を、語の並びならその語（`login` の `1 2` など）を出す。`-` で始まらない語の
+候補は旗の有無に依らない。直前の語が `--context` なら、どの分岐にも入る前に候補を空にして終える。
+連想配列を使わず、macOS の bash 3.2 で動く。
+
+zsh（`etc/_devbase`）は、サブコマンドの分岐から `_arguments` を直接呼ばず、`_devbase_arguments <深さ>` を通す。
+`_arguments` は `words[1]` だけをコマンド名として飛ばすため、そのまま呼ぶと `devbase up <TAB>` の `up` が 1 番目の
+引数に数えられ、`'1:name:_devbase_project_names'` が利用者の引数を指さない。`_devbase_arguments` は `words` と
+`CURRENT` をサブコマンドの語の位置（`devbase up` は 2、`devbase project up` は 3）まで詰めてから `_arguments` を
+呼ぶ。`--context` の指定は値の補完を持たない `'--context[Docker context]:context:'` で、`--context` の集合の
+すべての道に分岐を置く（トップレベルの `build`・`container up|down|rebuild`・`env token`・入れ子の
+`profile up|down|list` も `*)` に落とさない）。
+
 ### 名前の形
 
 | 項目 | 内容 |
@@ -572,10 +596,21 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
   が決まるので、実環境の `DEVBASE_ROOT` を継承しない）
 - macOS の `/bin/bash`（3.2）で `tests/cli` を流すことと `shellcheck --severity=error bin/devbase`
   は手元で行う（CI の bash は Linux 版）
+- `--context` の集合のすべての道（`container` の道は `ct` で始めても）で、bash の `devbase <道> -` の候補に
+  `--context` が出ること。`[name]` の集合から補完の例外を引いた道では `devbase <道> web -` でも出ること。zsh の
+  道の分岐の本体に値の補完を持たない `'--context[...]:context:'` があること。bash から道 1 つの `--context` を
+  外すと bash のテストが、zsh から外すと zsh のテストが、ファイルと道を挙げて落ちること
+  （`tests/cli/test_name_context_consistency.py`）
+- bash の `-` で始まる語の候補が、旗の候補に `--context` を足した集合であること。`--context` の直後の候補が
+  0 件であること（`devbase up --context`・`devbase project up web --context`・`devbase container ps --context`・
+  `devbase env exec --context`）。`etc/_devbase` の `_devbase()` の中に `_devbase_arguments` を通らない
+  `_arguments` の呼び出しが無いこと（`tests/cli/test_completion.py`）
+- zsh の補完が実際に出す候補（`devbase up <TAB>` のプロジェクト名・`devbase up -<TAB>` の `--context`・
+  `devbase up --context <TAB>` の候補なし）は、zsh を起動するテストが無いため手元の zsh で確かめる
 
 ## 決定の記録
 
-`[name]` と `--context` を受け付けるサブコマンドの列挙の正本と一致テスト（#214）の決定である。
+`[name]` と `--context` を受け付けるサブコマンドの列挙の正本と一致テスト（#214）、補完の `--context`（#435）の決定である。
 
 ### 決定 1: 取り残した写しを 1 回の実行で全部挙げるため、写しの場所ごとに別のテストにする
 
@@ -638,6 +673,27 @@ CI のランナーに zsh があることを前提にするため採らない。
 例外の道が `[name]` の集合から消えたのに例外が残ると、次に別の理由で同じ道を外したいときに古い理由のまま
 通る。例外を足すことは一致テストのファイルの差分として現れ、レビューで人が見る。
 
+### 決定 11: `--context` は値を補完せず、旗の名前だけを補完で出す
+
+`--context` を取るサブコマンドを補完から見つけられるようにする一方、値（docker context の名前）は利用者が打つ。
+bash は直前の語が `--context` なら分岐に入る前に候補を空にして終える。後から分岐を足しても、値の位置へ
+プロジェクト名などの候補が漏れない。zsh は action を空にした `'--context[...]:context:'` で、値の位置では
+説明だけを出す。
+
+### 決定 12: bash は「名前の後でも出す道」を `[name]` の集合から補完の例外を引いた道に限る
+
+`devbase up web -` の `web` がプロジェクト名かは、道が `[name]` を取るかで決まる。`login` の番号・`build` の
+イメージ名・`profile` のプロファイル名の後ろでは出すことを求めない。`env exec` の引数は `REMAINDER` で、
+コマンドの後の `--context` はそのコマンドへ渡るため、道の 2 つ後ろまで一律に出す形は誤った位置で候補を出す。
+
+### 決定 13: zsh はサブコマンドの位置まで `words` を詰めてから `_arguments` を呼ぶ
+
+`_arguments` の位置引数の番号は `words[1]` の次から数える。サブコマンドの分岐でそのまま呼ぶと、`'1:name:…'` が
+サブコマンドの語自身を指し、プロジェクト名と番号が補完されない（`--context` を足すために分岐を `_arguments` へ
+揃えたときに起きた）。分岐ごとに `2:`・`3:` と番号を数える形は、zsh を起動する検査が無く番号の誤りを拾えないため
+採らず、深さだけを渡す `_devbase_arguments` の 1 か所で詰める。素の `_arguments` が分岐に残らないことは
+`tests/cli/test_completion.py` が見る。
+
 ## 関連リンク
 
 - [CLI リファレンス: project](../user/cli-reference/02-project.md)
@@ -647,3 +703,4 @@ CI のランナーに zsh があることを前提にするため採らない。
 - 実装 PR: devbasex/devbase#207（#146・#142・#196・#200）
 - 実装 PR: devbasex/devbase#301（#276・#226・#229・#245・#227）
 - 実装 PR: devbasex/devbase#428（#214。列挙の正本と一致テスト）
+- 実装 PR: devbasex/devbase#450（#435。補完の `--context`）
