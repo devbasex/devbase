@@ -180,6 +180,13 @@ def test_tmux_env_reads_value(monkeypatch):
     assert "PATH" in env          # os.environ 由来のキーは失わない
 
 
+def test_tmux_show_env_distinguishes_removed(monkeypatch):
+    """``-NAME`` は「わからない (None)」ではなく「消されている」として返す。"""
+    monkeypatch.setattr(opener.subprocess, "run",
+                        _FakeRun(stdout="-SSH_CONNECTION\n"))
+    assert opener._tmux_show_env("SSH_CONNECTION", {"TMUX": "x"}) is opener._TMUX_REMOVED
+
+
 def test_tmux_env_treats_removed_marker_as_unset(monkeypatch):
     """未設定の変数は ``-NAME`` で返るので値として扱わない。"""
     monkeypatch.setattr(opener.subprocess, "run",
@@ -273,8 +280,79 @@ def test_open_editor_without_tmux_does_not_recover(monkeypatch, tmp_path, caplog
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "接続できません" in text
     assert "拾い直しました" not in text
-    # env の VSCODE_IPC_HOOK_CLI は書き換えられていない
-    assert calls[0][1]["VSCODE_IPC_HOOK_CLI"].endswith("gone.sock")
+    # 死んだソケットは code に渡さない (remote-cli へ委譲して失敗するため)
+    assert "VSCODE_IPC_HOOK_CLI" not in calls[0][1]
+
+
+class _FakeTmuxEnv:
+    """``tmux show-environment <NAME>`` を変数ごとの出力で返すスタブ。"""
+
+    def __init__(self, lines):
+        self.lines = lines
+        self.calls = []
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        return SimpleNamespace(stdout=self.lines.get(cmd[-1], ""), returncode=0)
+
+
+def test_detect_context_tmux_removed_ssh_is_local(monkeypatch):
+    """SSH から立てた tmux に手元の端末から attach し直した状態。
+
+    ペインのシェルには ``SSH_*`` が残っているが、セッション環境の ``SSH_CONNECTION``
+    は ``-SSH_CONNECTION`` (いまのクライアントは SSH でない) なので SSH と扱わない。
+    """
+    monkeypatch.setattr(opener.subprocess, "run",
+                        _FakeTmuxEnv({"SSH_CONNECTION": "-SSH_CONNECTION\n"}))
+    ctx = opener.detect_context(
+        environ={"TMUX": "x", "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 22",
+                 "SSH_CLIENT": "192.0.2.1 1 22"},
+        isatty=True, system="Darwin", ipc_alive=False)
+    assert ctx.is_ssh is False
+
+
+def test_detect_context_tmux_ssh_value_is_ssh(monkeypatch):
+    """セッション環境に ``SSH_CONNECTION`` があれば、ペインのシェルに無くても SSH。"""
+    monkeypatch.setattr(
+        opener.subprocess, "run",
+        _FakeTmuxEnv({"SSH_CONNECTION": "SSH_CONNECTION=192.0.2.1 1 192.0.2.2 22\n"}))
+    ctx = opener.detect_context(environ={"TMUX": "x"}, isatty=True,
+                                system="Linux", ipc_alive=False)
+    assert ctx.is_ssh is True
+
+
+@pytest.mark.parametrize("env_has_ssh", [True, False])
+def test_detect_context_tmux_unknown_falls_back_to_shell_env(monkeypatch, env_has_ssh):
+    """tmux が失敗したときはペインのシェルの変数で判定する (従来どおり)。"""
+    monkeypatch.setattr(opener.subprocess, "run", _FakeRun(returncode=1))
+    environ = {"TMUX": "x"}
+    if env_has_ssh:
+        environ["SSH_TTY"] = "/dev/ttys001"
+    ctx = opener.detect_context(environ=environ, isatty=True,
+                                system="Linux", ipc_alive=False)
+    assert ctx.is_ssh is env_has_ssh
+
+
+def test_open_editor_reattached_tmux_on_local_launches(monkeypatch, tmp_path):
+    """SSH の名残と死んだ IPC ソケットを抱えたペインでも、手元の端末なら開く。"""
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/local/bin/code")
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "adminer-dev-1")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv({
+        "SSH_CONNECTION": "-SSH_CONNECTION\n",
+        "VSCODE_IPC_HOOK_CLI": "-VSCODE_IPC_HOOK_CLI\n",
+    }))
+    seen = {}
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ={"TMUX": "x", "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 22",
+                 "VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock")},
+        isatty=True, system="Darwin",
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert "VSCODE_IPC_HOOK_CLI" not in seen["env"]
+    assert seen["cmd"][1] == "--folder-uri"
 
 
 def test_detect_context_ipc_alive_override():

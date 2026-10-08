@@ -170,16 +170,16 @@ def _socket_connectable(sock: Optional[str]) -> bool:
         return False
 
 
-def _tmux_env(name: str, environ) -> Optional[str]:
-    """tmux の **セッション環境** から変数を 1 つ読む。tmux 外なら None。
+# tmux のセッション環境で変数が消されている (``-NAME``) ことを表す印。
+_TMUX_REMOVED = object()
 
-    tmux サーバーはセッション作成時の環境変数を保持し続けるが、``update-environment``
-    に登録された変数は **attach のたびに**接続してきたクライアントの値へ更新される。
-    そのため「すでに動いているペインのシェルは古い値、tmux のセッション環境は新しい値」
-    という状態が普通に起きる。ここはその新しい方を読むための口。
 
-    ``tmux show-environment <NAME>`` は未設定の変数を ``-NAME`` の形で返すため、
-    値として扱わないようにする。
+def _tmux_show_env(name: str, environ):
+    """tmux の **セッション環境** での変数の状態を返す。
+
+    戻り値は 3 通り。値があればその文字列、``-NAME`` (attach してきたクライアントが
+    持っていなかったので消された) なら :data:`_TMUX_REMOVED`、tmux 外・tmux の失敗・
+    想定外の出力・空の値なら None (わからない)。
     """
     if not environ.get("TMUX"):
         return None
@@ -196,11 +196,48 @@ def _tmux_env(name: str, environ) -> Optional[str]:
     if out.returncode != 0:
         return None
     line = out.stdout.strip()
+    if line == f"-{name}":
+        return _TMUX_REMOVED
     prefix = f"{name}="
     if not line.startswith(prefix):
-        # "-NAME" (削除済み) や想定外の出力
         return None
     return line[len(prefix):] or None
+
+
+def _tmux_env(name: str, environ) -> Optional[str]:
+    """tmux の **セッション環境** から変数を 1 つ読む。tmux 外なら None。
+
+    tmux サーバーはセッション作成時の環境変数を保持し続けるが、``update-environment``
+    に登録された変数は **attach のたびに**接続してきたクライアントの値へ更新される。
+    そのため「すでに動いているペインのシェルは古い値、tmux のセッション環境は新しい値」
+    という状態が普通に起きる。ここはその新しい方を読むための口。
+
+    ``tmux show-environment <NAME>`` は未設定の変数を ``-NAME`` の形で返すため、
+    値として扱わないようにする。
+    """
+    value = _tmux_show_env(name, environ)
+    return None if value is _TMUX_REMOVED else value
+
+
+_SSH_ENV_KEYS = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
+
+
+def _detect_ssh(environ) -> bool:
+    """いまの端末が SSH 越しか。
+
+    tmux 内では、ペインのシェルの ``SSH_*`` はペインを作ったときのクライアントの値で、
+    いま attach しているクライアントとは限らない (SSH から立てた tmux サーバーに手元の
+    端末から attach し直すと、シェルには ``SSH_CONNECTION`` が残る)。``SSH_CONNECTION``
+    は tmux の ``update-environment`` に既定で入っており、セッション環境は attach の
+    たびに更新されるので、そちらで分かればそれに従う。分からなければ (tmux 外・tmux の
+    失敗) ペインのシェルの変数で判定する。
+    """
+    tmux_value = _tmux_show_env("SSH_CONNECTION", environ)
+    if tmux_value is _TMUX_REMOVED:
+        return False
+    if tmux_value is not None:
+        return True
+    return any(environ.get(k) for k in _SSH_ENV_KEYS)
 
 
 def resolve_ipc_socket(environ) -> Optional[str]:
@@ -248,7 +285,7 @@ def detect_context(environ=None, isatty: Optional[bool] = None,
         is_tty=bool(isatty),
         in_vscode=bool(ipc_alive),
         is_wsl=_detect_wsl(env),
-        is_ssh=any(env.get(k) for k in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")),
+        is_ssh=_detect_ssh(env),
         is_darwin=(system == "Darwin"),
         ipc_socket=sock,
     )
@@ -647,6 +684,9 @@ def _prepare_ipc_env(env, ctx: EditorContext):
             stale_ipc or "(未設定)", ctx.ipc_socket,
         )
     if stale_ipc and not ctx.in_vscode:
+        # 死んだソケットを指したまま code を起動すると、PATH に Remote-SSH の
+        # remote-cli が残っている端末では code がそちらへ委譲して失敗する。
+        env = {k: v for k, v in env.items() if k != "VSCODE_IPC_HOOK_CLI"}
         logger.warning(
             "VSCODE_IPC_HOOK_CLI が指すソケットに接続できません (%s)。VS Code 統合"
             "ターミナルとしては扱いません。tmux/screen のセッションを再利用している"
