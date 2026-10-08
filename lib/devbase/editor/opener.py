@@ -88,8 +88,9 @@ class EditorContext:
     # セッション環境から拾い直した場合、env の値とは異なる (None は未解決)。
     ipc_socket: Optional[str] = None
     # ペインの VSCODE_IPC_HOOK_CLI が、いま attach しているクライアントではなく
-    # ペインを作った SSH クライアント (Remote-SSH) のものと分かったので採らなかった。
-    ipc_foreign: bool = False
+    # ペインを作った以前のクライアントのものと分かったので採らなかった
+    # (:func:`_client_changed`)。
+    ipc_from_previous_client: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,18 +248,22 @@ def _detect_ssh(environ, tmux_value=None) -> bool:
     return any(environ.get(k) for k in _SSH_ENV_KEYS)
 
 
-def _pane_ipc_is_foreign(environ, tmux_ssh) -> bool:
-    """ペインの ``VSCODE_IPC_HOOK_CLI`` が、いまのクライアントのものでないと分かるか。
+def _client_changed(environ, tmux_ssh) -> bool:
+    """ペインを作ったクライアントと、いま attach しているクライアントの SSH 状態が食い違うか。
 
-    ペインのシェルに ``SSH_*`` が残る (ペインは SSH クライアントから作られた) のに、
-    セッション環境の ``SSH_CONNECTION`` が ``-SSH_CONNECTION`` (いま attach している
-    クライアントは SSH でない) のとき。ペインの IPC は以前の Remote-SSH のウィンドウを
-    指しており、そのウィンドウが開いたままだと接続できてしまう。そこへ委譲すると、
-    ネスト authority の無い URI がリモートのクライアントへ届き、ホスト上のコンテナを
-    開けない。
+    セッション環境の ``SSH_CONNECTION`` (値あり / ``-SSH_CONNECTION``) から分かる
+    いまのクライアントの SSH 状態が、ペインのシェルの ``SSH_*`` の有無と違うとき True。
+    向きは問わない (SSH から作ったペインに手元から attach し直した、手元で作ったペインに
+    SSH から attach し直した)。どちらでも、ペインの ``VSCODE_IPC_HOOK_CLI`` は以前の
+    クライアントのウィンドウを指しており、そのウィンドウが開いたままだと接続できてしまう。
+    そこへ委譲すると、いまの判定 (``is_ssh``) で組んだ URI が別のクライアントへ届いて
+    開けない。セッション環境から分からないとき (tmux 外・tmux の失敗) は False。
     """
-    return (tmux_ssh is _TMUX_REMOVED
-            and any(environ.get(k) for k in _SSH_ENV_KEYS))
+    if tmux_ssh is None:
+        return False
+    current_is_ssh = tmux_ssh is not _TMUX_REMOVED
+    pane_is_ssh = any(environ.get(k) for k in _SSH_ENV_KEYS)
+    return current_is_ssh != pane_is_ssh
 
 
 def resolve_ipc_socket(environ, trust_current: bool = True) -> Optional[str]:
@@ -273,7 +278,7 @@ def resolve_ipc_socket(environ, trust_current: bool = True) -> Optional[str]:
     ``devbase up --open`` が自動で開けるように devbase 側でも拾いにいく。
 
     ``trust_current`` が False のときは 1 を飛ばす (ペインの値が以前のクライアントの
-    もので、生きていても使えない場合。:func:`_pane_ipc_is_foreign`)。
+    もので、生きていても使えない場合。:func:`_client_changed`)。
     """
     current = environ.get("VSCODE_IPC_HOOK_CLI")
     if trust_current and current and _socket_connectable(current):
@@ -300,13 +305,13 @@ def detect_context(environ=None, isatty: Optional[bool] = None,
         isatty = _stdout_isatty()
     if system is None:
         system = platform.system()
-    # SSH の判定と IPC の採用元は同じセッション環境の読みで揃える。手元から
-    # attach し直したと判定したのに、ペインに残る以前の Remote-SSH の IPC へ
-    # 委譲すると、ネスト authority の無い URI がリモートのクライアントへ届く。
+    # SSH の判定と IPC の採用元は同じセッション環境の読みで揃える。いまの
+    # クライアントの SSH 状態がペインのそれと食い違うなら、ペインに残る以前の
+    # クライアントの IPC へ委譲すると、いまの判定で組んだ URI が別のクライアントへ届く。
     tmux_ssh = _tmux_show_env("SSH_CONNECTION", env)
-    foreign = _pane_ipc_is_foreign(env, tmux_ssh)
+    changed = _client_changed(env, tmux_ssh)
     if ipc_alive is None:
-        sock = resolve_ipc_socket(env, trust_current=not foreign)
+        sock = resolve_ipc_socket(env, trust_current=not changed)
         ipc_alive = sock is not None
     else:
         sock = env.get("VSCODE_IPC_HOOK_CLI") if ipc_alive else None
@@ -317,7 +322,7 @@ def detect_context(environ=None, isatty: Optional[bool] = None,
         is_ssh=_detect_ssh(env, tmux_ssh),
         is_darwin=(system == "Darwin"),
         ipc_socket=sock,
-        ipc_foreign=foreign and bool(env.get("VSCODE_IPC_HOOK_CLI")),
+        ipc_from_previous_client=changed and bool(env.get("VSCODE_IPC_HOOK_CLI")),
     )
 
 
@@ -743,14 +748,14 @@ def _prepare_ipc_env(env, ctx: EditorContext):
             "tmux 設定を参照してください。",
             stale_ipc or "(未設定)", ctx.ipc_socket,
         )
-    if ctx.ipc_foreign:
-        # 以前の Remote-SSH クライアントの IPC。生きていても code に渡すとそちらへ
-        # 委譲してしまうので外す。
+    if ctx.ipc_from_previous_client:
+        # ペインを作った以前のクライアントの IPC。生きていても code に渡すとそちらへ
+        # 委譲してしまうので外す (セッション環境の IPC を拾えていれば上で差し替え済み)。
         if ctx.ipc_socket is None:
             env = _drop_vscode_ipc(env)
         logger.info(
-            "VSCODE_IPC_HOOK_CLI (%s) はこのペインを作った SSH クライアントのもので、"
-            "いま attach している手元の端末のものではないため使いません。",
+            "VSCODE_IPC_HOOK_CLI (%s) はこのペインを作った以前のクライアントのもので、"
+            "いま attach しているクライアントのものではないため使いません。",
             stale_ipc,
         )
     elif stale_ipc and not ctx.in_vscode:

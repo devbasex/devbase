@@ -375,7 +375,7 @@ def test_open_editor_reattached_tmux_ignores_live_remote_ipc(
     ctx = opener.detect_context(environ=environ, isatty=True, system="Darwin")
     assert ctx.is_ssh is False
     assert ctx.in_vscode is False
-    assert ctx.ipc_foreign is True
+    assert ctx.ipc_from_previous_client is True
     seen = {}
     result = opener.open_editor(
         project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
@@ -475,6 +475,94 @@ def test_open_editor_reattached_tmux_uses_session_ipc_of_local_client(
     )
     assert result == "launch"
     assert seen["env"]["VSCODE_IPC_HOOK_CLI"] == listening_ipc_socket
+
+
+@pytest.fixture
+def second_ipc_socket():
+    """``listening_ipc_socket`` とは別の、listen 中の AF_UNIX ソケット。"""
+    import socket as _socket
+    import tempfile
+    d = tempfile.mkdtemp(dir="/tmp", prefix="dbipc")
+    path = os.path.join(d, "s.sock")
+    srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    srv.bind(path)
+    srv.listen(1)
+    try:
+        yield path
+    finally:
+        srv.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _ssh_reattached_environ(monkeypatch, session_ipc_line, ipc):
+    """手元の VS Code で作った tmux に Remote-SSH から attach し直した状態。
+
+    ペインのシェルには ``SSH_*`` が無く、手元の VS Code の IPC が残る。セッション環境の
+    ``SSH_CONNECTION`` は、いまのクライアント (SSH) の値に更新されている。
+    """
+    monkeypatch.setattr(opener.shutil, "which", lambda c: "/usr/local/bin/code")
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "adminer-dev-1")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv({
+        "SSH_CONNECTION": "SSH_CONNECTION=192.0.2.1 1 192.0.2.2 22\n",
+        "VSCODE_IPC_HOOK_CLI": session_ipc_line,
+    }))
+    return {"TMUX": "x", "VSCODE_IPC_HOOK_CLI": ipc}
+
+
+def test_open_editor_ssh_reattached_tmux_ignores_live_local_ipc(
+        monkeypatch, listening_ipc_socket):
+    """手元で作った tmux に SSH から attach し直したなら、生きた手元の IPC を使わない。
+
+    使うと、SSH と判定して組んだネスト URI が Remote-SSH の接続を持たない手元の
+    VS Code へ届いて開けない。セッション環境に IPC が無ければ手元で叩くコマンドを示す。
+    """
+    environ = _ssh_reattached_environ(
+        monkeypatch, "-VSCODE_IPC_HOOK_CLI\n", listening_ipc_socket)
+    ctx = opener.detect_context(environ=environ, isatty=True, system="Linux")
+    assert ctx.is_ssh is True
+    assert ctx.in_vscode is False
+    assert ctx.ipc_from_previous_client is True
+    calls = []
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ=environ, isatty=True, system="Linux",
+        launcher=lambda cmd, env: calls.append(cmd),
+    )
+    assert result == "print_command"
+    assert calls == []
+
+
+def test_open_editor_ssh_reattached_tmux_uses_session_ipc(
+        monkeypatch, listening_ipc_socket, second_ipc_socket):
+    """手元で作った tmux に Remote-SSH の端末から attach し直したなら、セッション環境の IPC を使う。"""
+    environ = _ssh_reattached_environ(
+        monkeypatch, f"VSCODE_IPC_HOOK_CLI={second_ipc_socket}\n",
+        listening_ipc_socket)
+    seen = {}
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ=environ, isatty=True, system="Linux",
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert seen["env"]["VSCODE_IPC_HOOK_CLI"] == second_ipc_socket
+
+
+def test_detect_context_same_client_keeps_pane_ipc(monkeypatch, listening_ipc_socket):
+    """SSH 状態が食い違わなければ、ペインの生きた IPC をそのまま使う (従来どおり)。"""
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv({
+        "SSH_CONNECTION": "SSH_CONNECTION=192.0.2.1 1 192.0.2.2 22\n",
+        "VSCODE_IPC_HOOK_CLI": "-VSCODE_IPC_HOOK_CLI\n",
+    }))
+    ctx = opener.detect_context(
+        environ={"TMUX": "x", "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 22",
+                 "VSCODE_IPC_HOOK_CLI": listening_ipc_socket},
+        isatty=True, system="Linux")
+    assert ctx.is_ssh is True
+    assert ctx.in_vscode is True
+    assert ctx.ipc_socket == listening_ipc_socket
+    assert ctx.ipc_from_previous_client is False
 
 
 def test_detect_context_ipc_alive_override():
