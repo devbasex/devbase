@@ -89,6 +89,22 @@ def _declares_target(service: Mapping[str, Any], target: str) -> bool:
     )
 
 
+def _replace_volume_source(vol: Any, source: str, target: str) -> Any:
+    """1 つのマウントの source を ``source`` へ差し替えた項目を返す。
+
+    文字列の形はオプションを残して作り直し、dict の形はその場で書き換えて同じものを返す。
+    """
+    if isinstance(vol, str):
+        # String format: "source:target" or "source:target:options"
+        parts = vol.split(':')
+        options = f":{parts[2]}" if len(parts) >= 3 else ""
+        return f"{source}:{target}{options}"
+    # Dict format: {type, source, target}
+    vol['source'] = source
+    vol['type'] = 'volume'
+    return vol
+
+
 def _replace_volumes_for_instance(
     volumes: list, ai_volume: str, work_volume: str, group_volume: str,
     vscode_volume: Optional[str] = None,
@@ -121,16 +137,7 @@ def _replace_volumes_for_instance(
             new_volumes.append(vol)
             continue
         replaced_targets.add(target)
-        if isinstance(vol, str):
-            # String format: "source:target" or "source:target:options"
-            parts = vol.split(':')
-            options = f":{parts[2]}" if len(parts) >= 3 else ""
-            new_volumes.append(f"{source}:{target}{options}")
-        else:
-            # Dict format: {type, source, target}
-            vol['source'] = source
-            vol['type'] = 'volume'
-            new_volumes.append(vol)
+        new_volumes.append(_replace_volume_source(vol, source, target))
 
     # Add missing mounts
     new_volumes.extend(
