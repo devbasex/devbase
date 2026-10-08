@@ -226,6 +226,58 @@ def _iter_env_names(existing: Any) -> Iterator[str]:
                 yield name
 
 
+def _mask_env_none(existing: Any, secrets: List[str], secret_set: Set[str]) -> Optional[list]:
+    """元から environment が無ければ、機密が無い限り作らない (``None`` = 作らない)。"""
+    return list(secrets) if secrets else None
+
+
+def _mask_env_dict(existing: dict, secrets: List[str], secret_set: Set[str]) -> dict:
+    """map 形式: 機密キーの値を ``None`` にし、無い機密キーを足す。"""
+    masked = {
+        key: (None if key in secret_set else value)
+        for key, value in existing.items()
+    }
+    for name in secrets:
+        masked.setdefault(name, None)
+    return masked
+
+
+def _mask_env_list(existing: list, secrets: List[str], secret_set: Set[str]) -> list:
+    """list 形式: 機密キーを裸のキー名にし、無い機密キーを末尾へ足す。"""
+    masked_list = []
+    listed = set()
+    for item in existing:
+        name = _env_item_name(item)
+        if name is None:
+            masked_list.append(item)
+            continue
+        listed.add(name)
+        # 機密キーは `KEY=value` でも `KEY` でも、値なし参照に揃える
+        masked_list.append(name if name in secret_set else item)
+    masked_list.extend(name for name in secrets if name not in listed)
+    return masked_list
+
+
+def _mask_env_other(existing: Any, secrets: List[str], secret_set: Set[str]) -> list:
+    """map / list 以外は Compose が受け付けない書き方。
+
+    手掛かりを残しつつ、機密が渡らない事故を避けるため名前の列挙で置き換える。
+    """
+    logger.warning(
+        "environment の形式 (%s) を解釈できないため、機密の変数名の列挙で"
+        "置き換えます", type(existing).__name__)
+    return list(secrets)
+
+
+#: ``_env_shape`` の形 → 伏せた environment を返す関数
+_ENV_MASKERS = {
+    'none': _mask_env_none,
+    'dict': _mask_env_dict,
+    'list': _mask_env_list,
+    'other': _mask_env_other,
+}
+
+
 def _mask_secret_environment(
     service: dict, secret_env_names: Sequence[str],
 ) -> None:
@@ -239,51 +291,14 @@ def _mask_secret_environment(
 
     元の記法は尊重する。map 形式なら値を ``None`` にした map (Compose は ``KEY:``
     を「実行プロセスの環境変数から解決」と解釈する)、list 形式なら裸のキー名を
-    並べた list として出力する。
+    並べた list として出力する。形ごとの処理は ``_ENV_MASKERS`` にある。
     """
     # 重複を除きつつ、指定された順序は保つ
     secrets = list(dict.fromkeys(secret_env_names))
-    secret_set = set(secrets)
     existing = service.get('environment')
-    shape = _env_shape(existing)
-
-    if shape == 'none':
-        # 元から environment が無ければ、機密が無い限り作らない
-        if secrets:
-            service['environment'] = list(secrets)
-        return
-
-    if shape == 'dict':
-        masked = {
-            key: (None if key in secret_set else value)
-            for key, value in existing.items()
-        }
-        for name in secrets:
-            masked.setdefault(name, None)
+    masked = _ENV_MASKERS[_env_shape(existing)](existing, secrets, set(secrets))
+    if masked is not None:
         service['environment'] = masked
-        return
-
-    if shape == 'list':
-        masked_list = []
-        listed = set()
-        for item in existing:
-            name = _env_item_name(item)
-            if name is None:
-                masked_list.append(item)
-                continue
-            listed.add(name)
-            # 機密キーは `KEY=value` でも `KEY` でも、値なし参照に揃える
-            masked_list.append(name if name in secret_set else item)
-        masked_list.extend(name for name in secrets if name not in listed)
-        service['environment'] = masked_list
-        return
-
-    # map / list 以外は Compose が受け付けない書き方。手掛かりを残しつつ、
-    # 機密が渡らない事故を避けるため名前の列挙で置き換える。
-    logger.warning(
-        "environment の形式 (%s) を解釈できないため、機密の変数名の列挙で"
-        "置き換えます", type(existing).__name__)
-    service['environment'] = list(secrets)
 
 
 def _service_env_names(service: dict) -> List[str]:
