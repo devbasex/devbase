@@ -1404,13 +1404,37 @@ def _edit_via_tempfile(env_file, editor: str) -> int:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def _generated_secret(spec: str) -> str:
+    """``generate`` の指定 (``token`` か ``token:<長さ>``) から自動生成の値を作る (既定 64 文字)"""
+    import secrets
+    length = 64
+    if ':' in spec:
+        _, length_str = spec.split(':', 1)
+        length = int(length_str)
+    return secrets.token_hex(length // 2)
+
+
+def _prompt_env_var(env_file, var: dict) -> bool:
+    """1 つの変数の値を入力で求めて書く。必須なのに空なら誤りを出して False を返す。"""
+    name = var.get('name', '')
+    prompt = var.get('prompt', name)
+    default = var.get('default', '')
+    required = var.get('required', False)
+    suffix = f" (デフォルト: {default})" if default else ""
+    suffix += " (必須)" if required else " (空でスキップ)"
+    value = safe_input(f"{prompt}{suffix}: ", default)
+    if value:
+        env_file.set(name, value)
+    elif required:
+        logger.error("必須変数 '%s' が設定されていません", name)
+        return False
+    return True
+
+
 def _collect_from_env_yml(env_file, variables: list) -> bool:
     """env.yml の変数定義に従って設定値を収集する。必須値未入力なら False を返す。"""
     for var in variables:
         name = var.get('name', '')
-        prompt = var.get('prompt', name)
-        default = var.get('default', '')
-        required = var.get('required', False)
         generate = var.get('generate', '')
 
         existing = env_file.get(name)
@@ -1419,23 +1443,10 @@ def _collect_from_env_yml(env_file, variables: list) -> bool:
             continue
 
         if generate:
-            import secrets
-            length = 64
-            if ':' in generate:
-                _, length_str = generate.split(':', 1)
-                length = int(length_str)
-            value = secrets.token_hex(length // 2)
-            env_file.set(name, value)
+            env_file.set(name, _generated_secret(generate))
             print(f"{name}: (自動生成)")
-        else:
-            suffix = f" (デフォルト: {default})" if default else ""
-            suffix += " (必須)" if required else " (空でスキップ)"
-            value = safe_input(f"{prompt}{suffix}: ", default)
-            if value:
-                env_file.set(name, value)
-            elif required:
-                logger.error("必須変数 '%s' が設定されていません", name)
-                return False
+        elif not _prompt_env_var(env_file, var):
+            return False
     return True
 
 
