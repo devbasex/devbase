@@ -337,21 +337,31 @@ def is_open_enabled(environ=None, config=None) -> bool:
     return value.strip().lower() in _TRUTHY
 
 
-def resolve_editor_cmd(environ=None) -> Optional[list]:
+def _which(name: str, path: Optional[str]) -> Optional[str]:
+    """``shutil.which`` の薄い包み。``path`` が None なら既定の PATH で探す。"""
+    if path is None:
+        return shutil.which(name)
+    return shutil.which(name, path=path)
+
+
+def resolve_editor_cmd(environ=None, path: Optional[str] = None) -> Optional[list]:
     """起動に使うエディタコマンド (argv list) を解決する。
 
     ``DEVBASE_EDITOR`` があればそれを (シェル風に分割して) 優先。なければ既定の
     ``code``。attach URI は VS Code 系 CLI でのみ解釈できるため、``$EDITOR``
     (vi 等) へのフォールバックは意図的に行わない。実在しなければ None。
+
+    ``path`` を渡すとその PATH で探す (Remote-SSH の remote-cli を除いた PATH。
+    :func:`_drop_vscode_ipc`)。
     """
     env = os.environ if environ is None else environ
     explicit = env.get("DEVBASE_EDITOR")
     if explicit:
         parts = shlex.split(explicit)
-        if parts and shutil.which(parts[0]):
+        if parts and _which(parts[0], path):
             return parts
         return None
-    if shutil.which("code"):
+    if _which("code", path):
         return ["code"]
     return None
 
@@ -693,6 +703,26 @@ def _launch(cmd: list, env: dict) -> None:
     )
 
 
+def _is_remote_cli_dir(entry: str) -> bool:
+    """PATH の要素が VS Code 系サーバーの ``remote-cli`` (``~/.vscode-server/bin/<commit>/bin/remote-cli``
+    ・``~/.cursor-server/...`` など) か。"""
+    return os.path.basename(entry.rstrip("/")) == "remote-cli"
+
+
+def _drop_vscode_ipc(env):
+    """``VSCODE_IPC_HOOK_CLI`` を外し、PATH から remote-cli を除いた env を返す。
+
+    remote-cli の ``code`` は IPC が無いと「Command is only available in WSL or
+    inside a Visual Studio Code terminal.」を stdout に出して終わるだけなので、
+    IPC を外すときは手元の ``code`` を探せるよう PATH からも除く。
+    """
+    env = {k: v for k, v in env.items() if k != "VSCODE_IPC_HOOK_CLI"}
+    if "PATH" in env:
+        env["PATH"] = os.pathsep.join(
+            e for e in env["PATH"].split(os.pathsep) if not _is_remote_cli_dir(e))
+    return env
+
+
 def _prepare_ipc_env(env, ctx: EditorContext):
     """拾い直した IPC ソケットを env へ反映し、必要な警告ログを出す。
 
@@ -717,16 +747,16 @@ def _prepare_ipc_env(env, ctx: EditorContext):
         # 以前の Remote-SSH クライアントの IPC。生きていても code に渡すとそちらへ
         # 委譲してしまうので外す。
         if ctx.ipc_socket is None:
-            env = {k: v for k, v in env.items() if k != "VSCODE_IPC_HOOK_CLI"}
+            env = _drop_vscode_ipc(env)
         logger.info(
             "VSCODE_IPC_HOOK_CLI (%s) はこのペインを作った SSH クライアントのもので、"
             "いま attach している手元の端末のものではないため使いません。",
             stale_ipc,
         )
     elif stale_ipc and not ctx.in_vscode:
-        # 死んだソケットを指したまま code を起動すると、PATH に Remote-SSH の
-        # remote-cli が残っている端末では code がそちらへ委譲して失敗する。
-        env = {k: v for k, v in env.items() if k != "VSCODE_IPC_HOOK_CLI"}
+        # 死んだソケットは code に渡さない。PATH に Remote-SSH の remote-cli が
+        # 残っていると、その code は IPC 無しでは何も開かずに終わるので PATH からも除く。
+        env = _drop_vscode_ipc(env)
         logger.warning(
             "VSCODE_IPC_HOOK_CLI が指すソケットに接続できません (%s)。VS Code 統合"
             "ターミナルとしては扱いません。tmux/screen のセッションを再利用している"
@@ -821,8 +851,13 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     ctx = detect_context(env, isatty=isatty, system=system, ipc_alive=ipc_alive)
     # tmux のセッション環境から拾い直せた場合は env を差し替え、死んだ IPC ソケット
     # の警告も出す。
+    had_ipc = bool(env.get("VSCODE_IPC_HOOK_CLI"))
     env = _prepare_ipc_env(env, ctx)
-    editor = resolve_editor_cmd(env)        # launch 用 (which 込み・None あり得る)
+    # IPC を外したときは remote-cli を除いた PATH で手元の code を探す
+    # (見つからなければ skip / print_command へ落ちる)。
+    dropped_ipc = had_ipc and "VSCODE_IPC_HOOK_CLI" not in env
+    editor = resolve_editor_cmd(            # launch 用 (which 込み・None あり得る)
+        env, path=env.get("PATH") if dropped_ipc else None)
     display = resolve_editor_display(env)   # print 用 (必ず非 None)
     plan = decide_action(ctx, editor_available=bool(editor))
 

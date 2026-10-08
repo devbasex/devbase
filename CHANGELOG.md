@@ -14,6 +14,7 @@
   tmux 内では、SSH かどうかをペインのシェルに残った `SSH_CONNECTION` ではなく、tmux のセッション環境（attach のたびに
   更新される）で判定します。あわせて、接続できない `VSCODE_IPC_HOOK_CLI` と、手元から attach し直したペインに残る以前の Remote-SSH の
   `VSCODE_IPC_HOOK_CLI`（ウィンドウが開いたままで接続できても）は、起動する `code` に渡さないようにしました。
+  このとき `PATH` に残る Remote-SSH の `remote-cli` の `code` は使わず、手元の `code` を起動します（見つからなければスキップします）。
 
 ## [4.1.0] - 2026-10-07
 

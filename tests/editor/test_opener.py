@@ -386,6 +386,75 @@ def test_open_editor_reattached_tmux_ignores_live_remote_ipc(
     assert "VSCODE_IPC_HOOK_CLI" not in seen["env"]
 
 
+def _make_code(dir_path):
+    """``dir_path/code`` に実行できる空のスクリプトを置く。"""
+    dir_path.mkdir(parents=True)
+    code = dir_path / "code"
+    code.write_text("#!/bin/sh\n")
+    code.chmod(0o755)
+    return str(dir_path)
+
+
+def _reattached_environ(monkeypatch, ipc, path):
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "adminer-dev-1")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv({
+        "SSH_CONNECTION": "-SSH_CONNECTION\n",
+        "VSCODE_IPC_HOOK_CLI": "-VSCODE_IPC_HOOK_CLI\n",
+    }))
+    return {"TMUX": "x", "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 22",
+            "VSCODE_IPC_HOOK_CLI": ipc, "PATH": path}
+
+
+def test_open_editor_reattached_tmux_skips_remote_cli_code(
+        monkeypatch, tmp_path, listening_ipc_socket):
+    """IPC を外すときは PATH の先頭に残る remote-cli の code を選ばず、手元の code を使う。
+
+    remote-cli の code は IPC が無いと何も開かずに終わるため。起動する code の env の
+    PATH からも remote-cli を除く。
+    """
+    remote = _make_code(
+        tmp_path / ".vscode-server" / "bin" / "abc123" / "bin" / "remote-cli")
+    local = _make_code(tmp_path / "local" / "bin")
+    environ = _reattached_environ(
+        monkeypatch, listening_ipc_socket, os.pathsep.join([remote, local]))
+    seen = {}
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ=environ, isatty=True, system="Darwin",
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert seen["env"]["PATH"] == local
+    assert "VSCODE_IPC_HOOK_CLI" not in seen["env"]
+
+
+@pytest.mark.parametrize("dead", [False, True])
+def test_open_editor_dropped_ipc_with_only_remote_cli_skips(
+        monkeypatch, tmp_path, listening_ipc_socket, dead):
+    """IPC を外したのに PATH に remote-cli の code しか無ければ、起動せずにスキップする。
+
+    以前の Remote-SSH の IPC (生きている) と、死んだソケットの両方。
+    """
+    remote = _make_code(
+        tmp_path / ".cursor-server" / "bin" / "abc123" / "bin" / "remote-cli")
+    ipc = str(tmp_path / "gone.sock") if dead else listening_ipc_socket
+    if dead:
+        monkeypatch.setattr(opener, "resolve_container_name",
+                            lambda *a, **kw: "adminer-dev-1")
+        environ = {"VSCODE_IPC_HOOK_CLI": ipc, "PATH": remote}
+    else:
+        environ = _reattached_environ(monkeypatch, ipc, remote)
+    calls = []
+    result = opener.open_editor(
+        project_name="adminer", dev_service_name="dev", workdir="/work/adminer",
+        environ=environ, isatty=True, system="Darwin",
+        launcher=lambda cmd, env: calls.append(cmd),
+    )
+    assert result == "skip"
+    assert calls == []
+
+
 def test_open_editor_reattached_tmux_uses_session_ipc_of_local_client(
         monkeypatch, tmp_path, listening_ipc_socket):
     """手元の VS Code の端末から attach し直したなら、セッション環境の IPC を使う。"""
@@ -768,7 +837,8 @@ def test_resolve_workspace_returns_path():
 def test_open_editor_opens_the_given_workspace_as_a_file(monkeypatch, tmp_path):
     """複数 repo 構成では workspace ファイルを --file-uri で開く"""
     calls = []
-    monkeypatch.setattr(opener, "resolve_editor_cmd", lambda env=None: ["code"])
+    monkeypatch.setattr(opener, "resolve_editor_cmd",
+                        lambda env=None, path=None: ["code"])
     monkeypatch.setattr(opener, "resolve_container_name",
                         lambda *a, **kw: "myapp-dev-1")
 
@@ -786,7 +856,8 @@ def test_open_editor_opens_the_given_workspace_as_a_file(monkeypatch, tmp_path):
 
 def test_open_editor_opens_the_folder_without_a_workspace(monkeypatch):
     calls = []
-    monkeypatch.setattr(opener, "resolve_editor_cmd", lambda env=None: ["code"])
+    monkeypatch.setattr(opener, "resolve_editor_cmd",
+                        lambda env=None, path=None: ["code"])
     monkeypatch.setattr(opener, "resolve_container_name",
                         lambda *a, **kw: "myapp-dev-1")
 
