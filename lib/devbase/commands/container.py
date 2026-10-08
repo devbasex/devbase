@@ -1301,14 +1301,11 @@ def _run_post_start(deployment: _ComposeDeployment, indices, config,
     indices = list(indices)
     if not indices:
         return
-    project_name = deployment.project_name
-    scale = deployment.scale
-    dev_service_name = deployment.dev_service_name
-    compose_file = deployment.compose_file
 
     # clone できなかった repo があれば伝える (揃っていれば何も出さない)。
-    _report_missing_repos(config, scale, dev_service_name, project_name,
-                          compose_file=compose_file, indices=indices)
+    _report_missing_repos(config, deployment.scale, deployment.dev_service_name,
+                          deployment.project_name,
+                          compose_file=deployment.compose_file, indices=indices)
 
     deploy_script = Path('./deploy')
     if run_deploy and deploy_script.exists() and deploy_script.is_file():
@@ -1316,13 +1313,14 @@ def _run_post_start(deployment: _ComposeDeployment, indices, config,
 
     # 起動中のコンテナの bao が使う token を書く (PLAN54)。backend が openbao の
     # ときだけ。書けなくても起動は済んでいるので倒さない。
-    _push_bao_token(project_name, scale, dev_service_name, compose_file=compose_file,
-                    indices=indices)
+    _push_bao_token(deployment.project_name, deployment.scale, deployment.dev_service_name,
+                    compose_file=deployment.compose_file, indices=indices)
 
     # VS Code のウィンドウタイトルをコンテナ名始まりに固定する
     # (自動オープンの有無に関わらず、手動アタッチにも効かせるため)。
-    _apply_window_titles(project_name, scale, dev_service_name,
-                         compose_file=compose_file, indices=indices)
+    _apply_window_titles(deployment.project_name, deployment.scale,
+                         deployment.dev_service_name,
+                         compose_file=deployment.compose_file, indices=indices)
 
 
 def _warn_partial_start(error: ContainerStartupError, targets, dev_service_name: str) -> None:
