@@ -750,7 +750,7 @@ def cmd_env_sync(devbase_root: Path, user: bool = False, group: Optional[str] = 
 def _sync_credential_sources(ctx: _SyncContext) -> None:
     """AWS と Git の認証情報をソースから同期する (``ctx.counts`` に集計する)"""
     # AWS: 取り込みの選択の範囲だけで入れ直す (#314 I7)
-    plan = _aws_sync_plan(ctx.sources, ctx.targets, ctx.store)
+    plan = _aws_sync_plan(ctx)
     if plan is None:
         # 書き込みを見送ったら控えの登録も見送る (丸ごとで登録すると次の変更で選択外まで送るため)
         ctx.counts.aws_selection = _SKIP_SELECTION
@@ -835,7 +835,24 @@ def _same_aws_payload(stored: Optional[str], encoded: str) -> bool:
     return current is not None and current == _aws_payload(stored)
 
 
-def _aws_sync_plan(sources, targets, store):
+_AWS_LABEL = 'AWS認証'
+
+
+def _report_unknown_profiles(payload) -> None:
+    """選んだのに ``~/.aws/config`` に無いプロファイルを 1 行ずつ知らせる"""
+    for name in payload.unknown:
+        logger.info("%s: 選んだプロファイル %s が ~/.aws/config にありません", _AWS_LABEL, name)
+
+
+def _report_profile_conflicts(payload) -> bool:
+    """空白だけが違う見出しの節を警告する。あれば真 (書かない)"""
+    for name in payload.conflicts:
+        logger.warning("%s: [%s] と空白だけが違う見出しの節が ~/.aws にあるため書きません",
+                       _AWS_LABEL, name)
+    return bool(payload.conflicts)
+
+
+def _aws_sync_plan(ctx: _SyncContext):
     """AWS の入れ直しの作り方と取り込みの選択 ``(encode_fn, selection)``。書かないなら ``None``。
 
     - 控えの項目が ``aws_profiles`` なら、控えの ``profiles`` とその連なりだけを切り出す (I7)
@@ -844,49 +861,54 @@ def _aws_sync_plan(sources, targets, store):
       プロファイルの集合が値のプロファイルの集合と一致すれば丸ごと。値が読めない、または値にあって
       今のファイルに無いプロファイルがあれば書かない (決定 10)
     """
+    from devbase.env.collectors.aws import _encode_aws_config_files
+    from devbase.env.host_import import ALL
+
+    source = ctx.sources.get_source('aws')
+    if source and source.get('type') == 'aws_profiles':
+        return _aws_plan_for_selection(ctx, list(source.get('profiles') or []))
+    if source:
+        return _encode_aws_config_files, ALL
+    return _aws_plan_for_unregistered(ctx)
+
+
+def _aws_plan_for_selection(ctx: _SyncContext, profiles):
+    """控えが ``aws_profiles`` のとき、選んだプロファイルとその連なりだけを切り出す計画 (I7)"""
+    from devbase.env import aws_profiles
+
+    key = keys.AWS_CONFIG_BASE64
+    targets = ctx.targets
+    if targets.holder(key) is None:
+        return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+    payload = aws_profiles.build_from_home(profiles)
+    _report_unknown_profiles(payload)
+    if _report_profile_conflicts(payload):
+        return None
+    # 選んだプロファイルが消えていれば控えと比べられず書かない (_sync_source が知らせる)
+    if not payload.unknown and not _aws_selection_covers(targets, key, payload):
+        dest = targets.target_for(key)
+        logger.info("%s: %sの値に選択外のプロファイルがあるため書きません"
+                    "（選択はグループの控えのもの。入れ直すなら devbase env init --reset）",
+                    _AWS_LABEL, ctx.store.display_label(dest.ref))
+        return None
+    return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+
+
+def _aws_plan_for_unregistered(ctx: _SyncContext):
+    """控えに項目が無いとき、参照の値のプロファイルを選択とみなす計画 (決定 10)"""
     from devbase.env import aws_profiles
     from devbase.env.collectors.aws import _encode_aws_config_files
     from devbase.env.host_import import ALL
 
     key = keys.AWS_CONFIG_BASE64
-    label = 'AWS認証'
-
-    def report_unknown(payload) -> None:
-        for name in payload.unknown:
-            logger.info("%s: 選んだプロファイル %s が ~/.aws/config にありません", label, name)
-
-    def report_conflicts(payload) -> bool:
-        for name in payload.conflicts:
-            logger.warning("%s: [%s] と空白だけが違う見出しの節が ~/.aws にあるため書きません",
-                           label, name)
-        return bool(payload.conflicts)
-
-    source = sources.get_source('aws')
-    if source and source.get('type') == 'aws_profiles':
-        profiles = list(source.get('profiles') or [])
-        if targets.holder(key) is None:
-            return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
-        payload = aws_profiles.build_from_home(profiles)
-        report_unknown(payload)
-        if report_conflicts(payload):
-            return None
-        # 選んだプロファイルが消えていれば控えと比べられず書かない (_sync_source が知らせる)
-        if not payload.unknown and not _aws_selection_covers(targets, key, payload):
-            dest = targets.target_for(key)
-            logger.info("%s: %sの値に選択外のプロファイルがあるため書きません"
-                        "（選択はグループの控えのもの。入れ直すなら devbase env init --reset）",
-                        label, store.display_label(dest.ref))
-            return None
-        return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
-    if source:
-        return _encode_aws_config_files, ALL
+    targets = ctx.targets
     holder = targets.holder(key)
     if holder is None:
         return _encode_aws_config_files, _KEEP_SELECTION
     in_value = aws_profiles.profiles_in_value(targets.get(key))
     if in_value is None:
         logger.info("%s: ソース未登録（%sにキーがあります）。値を読めないため書きません",
-                    label, store.display_label(holder.ref))
+                    _AWS_LABEL, ctx.store.display_label(holder.ref))
         return None
     config_text, credentials_text = aws_profiles.read_home()
     # 丸ごとの判定は credentials にだけあるプロファイルも含める (値の側の名前と同じ数え方)。
@@ -898,9 +920,9 @@ def _aws_sync_plan(sources, targets, store):
         return _encode_aws_config_files, ALL
     payload = aws_profiles.build(config_text, credentials_text, in_value)
     if payload.unknown:
-        report_unknown(payload)
+        _report_unknown_profiles(payload)
         return None
-    if report_conflicts(payload):
+    if _report_profile_conflicts(payload):
         return None
     # 控えに残すのは選んだプロファイルだけで、連なりで入った節は含めない (sync の時点で求め直す)
     return payload.encode, aws_profiles.chosen_in_value(targets.get(key)) or in_value
