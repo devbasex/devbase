@@ -58,6 +58,8 @@ python3 .github/scripts/proper_term_check.py           # 固有の語の検査
   1 本ずつ `main` を取り込み、CI を待ってからマージする
 - 並行する Pull Request は `CHANGELOG.md` の `[Unreleased]` と `docs/glossary/glossary.json` でぶつかりやすい。
   両側の記入を残して解く。`docs/glossary.md` は `glossary.json` から `glossary.py render`（NDF の道具）で作り直し、手で直さない
+- 実装の Pull Request は、設計の決定と違えたところを、決定の番号と理由で本文に書く。違えたところが無ければ「無し」と書く。
+  書かないと、確定仕様化で初めて差に気づく（#435 は決定 1・4・5 が実装で変わり、本文に無かった）
 - 作業は `.worktrees/<ブランチ名>` の worktree で行う。メインディレクトリに差分を残さない
 
 ## 落とし穴
