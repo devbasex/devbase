@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 from datetime import date, datetime, timezone
+from functools import cached_property
 from pathlib import Path
 from typing import NamedTuple, Optional
 
@@ -12,6 +13,7 @@ import yaml
 
 from devbase.errors import DevbaseError, SnapshotCommandError, SnapshotError
 from devbase.log import get_logger
+from devbase.snapshot.exclude import canonical, resolve_excludes, tar_exclude_args
 from devbase.utils.names import is_single_segment_name
 from devbase.volume.manager import (
     HOME_UBUNTU_VOLUME,
@@ -55,6 +57,12 @@ ARCHIVE_MOUNT = '/backup'
 # ``group``) を起点に控えている。持たない世代は ``/source`` を起点に控えており、その snar へ
 # 差分を積むとボリューム全体が入るため、新しい世代へ倒す。
 ARCHIVE_ROOT_MEMBERS = 'members'
+
+# 世代へ差分を積めない理由 (``SnapshotManager._incremental_block_reason``)。
+# 自動の積み先の選択は新しい世代へ倒し、名前を指定した作成は止める。
+_BLOCK_VOLUMES = 'volumes'
+_BLOCK_ARCHIVE_ROOT = 'archive_root'
+_BLOCK_EXCLUDES = 'excludes'
 
 
 def incr_archive_name(num: int) -> str:
@@ -214,6 +222,77 @@ class SnapshotManager:
         self._metadata_path = self.backups_dir / METADATA_FILE
         self._group = group
         self._volumes: Optional[dict] = None
+
+    @cached_property
+    def _exclude_resolution(self) -> tuple:
+        # 同じ実行で警告を 2 度出さないよう、初回の参照で 1 回だけ組み立てる
+        return resolve_excludes(self.backups_dir)
+
+    @property
+    def excludes(self) -> tuple:
+        """今の除外の一覧 (既定の除外と ``backups/exclude.yml`` の除外。並べ替え済み)。"""
+        return self._exclude_resolution[0]
+
+    @property
+    def exclude_config_readable(self) -> bool:
+        """``backups/exclude.yml`` を読めたか (無いときは真)。"""
+        return self._exclude_resolution[1]
+
+    def _recorded_excludes(self, snap_dir: Path) -> Optional[tuple]:
+        """世代の ``meta.yml`` の ``exclude`` を返す。
+
+        無い (この変更より前の世代)・リストでない・文字列でない要素を含むときは ``None``
+        で、今の除外の一覧と違うものとして扱う。
+        """
+        try:
+            value = self._load_snap_meta(snap_dir).get('exclude')
+        except (OSError, yaml.YAMLError, AttributeError):
+            return None
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            return None
+        return canonical(value)
+
+    def _excludes_differ(self, snap_dir: Path) -> bool:
+        """世代の除外の記録が今の一覧と違うか。
+
+        記録が無ければ違う。設定を読めない間は、記録を持つ世代を違うとみなさない。
+        """
+        recorded = self._recorded_excludes(snap_dir)
+        if recorded is None:
+            return True
+        if not self.exclude_config_readable:
+            return False
+        return recorded != self.excludes
+
+    def _excludes_for(self, snap_dir: Path, volumes: dict) -> tuple:
+        """控えに使う除外の一覧を決める。
+
+        設定を読めたら今の一覧。読めなければ、作り直す世代の記録 → 系列の最新の世代の
+        記録の順に最初にある記録を使い、どちらも無ければ今の一覧 (既定の除外だけ)。
+        読めない設定のために除外の一覧が変わって新しい世代ができ、古い世代が消えるのを防ぐ。
+        """
+        if self.exclude_config_readable:
+            return self.excludes
+        recorded = self._recorded_excludes(snap_dir)
+        if recorded is not None:
+            return recorded
+        recorded = self._latest_recorded_excludes(volumes)
+        if recorded is not None:
+            return recorded
+        return self.excludes
+
+    def _latest_recorded_excludes(self, volumes: dict) -> Optional[tuple]:
+        """系列の最新の世代の除外の記録を返す。世代・記録が無い、扱えない名前なら ``None``。"""
+        latest = self.series_latest(volumes)
+        if latest is None:
+            return None
+        try:
+            latest_dir = self._safe_snap_dir(latest['name'])
+        except SnapshotError:
+            return None
+        if not latest_dir.is_dir():
+            return None
+        return self._recorded_excludes(latest_dir)
 
     @property
     def volumes(self) -> dict:
@@ -822,6 +901,23 @@ class SnapshotManager:
                 latest, latest_age = snap, age
         return latest
 
+    def _incremental_block_reason(self, snap_dir: Path) -> tuple:
+        """世代へ差分を積めない理由を調べる。
+
+        対象ボリューム → 控えの起点 → 除外の一覧の順に調べ、最初に当たった 1 件で止める。
+
+        Returns:
+            ``(理由, 世代の対象ボリューム)``。理由は ``_BLOCK_*`` のどれかで、積めるなら ``None``
+        """
+        recorded = self.snapshot_volumes(snap_dir)
+        if recorded != self.volumes:
+            return _BLOCK_VOLUMES, recorded
+        if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+            return _BLOCK_ARCHIVE_ROOT, recorded
+        if self._excludes_differ(snap_dir):
+            return _BLOCK_EXCLUDES, recorded
+        return None, recorded
+
     def auto_snapshot_target(
         self, max_incrementals: int = DEFAULT_MAX_INCREMENTALS,
     ) -> Optional[str]:
@@ -849,15 +945,22 @@ class SnapshotManager:
                 label, name, e)
             return None
         if snap_dir.is_dir():
-            recorded = self.snapshot_volumes(snap_dir)
-            if recorded != self.volumes:
+            reason, recorded = self._incremental_block_reason(snap_dir)
+            if reason == _BLOCK_VOLUMES:
                 logger.info(
                     "世代 %s の meta.yml の対象ボリューム (%s) が %s と一致しないため、"
                     "新しい世代を作成します", name, ', '.join(recorded.values()), label)
                 return None
-            if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+            if reason == _BLOCK_ARCHIVE_ROOT:
                 logger.info(
                     "世代 %s は控えの起点が古い形 (/source) のため、新しい世代を作成します",
+                    name)
+                return None
+            if reason == _BLOCK_EXCLUDES:
+                # 1 つの世代は同じ除外の一覧で作る。違う一覧の差分を積むと、外したパスが
+                # full の時点の中身で復元され、除外の一覧と食い違う (#368)
+                logger.info(
+                    "世代 %s は今と違う除外の一覧で作られているため、新しい世代を作成します",
                     name)
                 return None
 
@@ -877,7 +980,7 @@ class SnapshotManager:
         return ensure_snapshot_image(self.devbase_root)
 
     @staticmethod
-    def backup_command(archive: str, volumes: dict) -> str:
+    def backup_command(archive: str, volumes: dict, excludes=()) -> str:
         """対象を 1 本のアーカイブへ書き出すコマンドを組み立てる。
 
         full も差分も同じ形で、``snapshot.snar`` に前回の状態を積み上げる。
@@ -886,10 +989,16 @@ class SnapshotManager:
         起点は各ボリュームのマウント先 (``ai`` / ``group``) で、``/source`` そのものではない。
         ``/source`` はコンテナを起動するたびに作られ inode が変わるため、GNU tar が毎回
         新しいディレクトリとみなし、差分がボリューム全体になる。
+
+        ``excludes`` (除外の一覧) の引数は ``-C`` とメンバーより前に置く。後ろに置くと
+        GNU tar は除外を効かせず失敗する。
         """
-        members = ' '.join(sub or '.' for sub in volumes)
+        member_list = [sub or '.' for sub in volumes]
+        members = ' '.join(member_list)
+        exclude_args = tar_exclude_args(excludes, member_list)
+        exclude_part = f"{exclude_args} " if exclude_args else ''
         return (
-            f"tar --listed-incremental={ARCHIVE_MOUNT}/{SNAR_FILE} "
+            f"tar --listed-incremental={ARCHIVE_MOUNT}/{SNAR_FILE} {exclude_part}"
             f"-cf - -C {BACKUP_ROOT} {members} | zstd -1 -T0 -o {ARCHIVE_MOUNT}/{archive}"
         )
 
@@ -992,9 +1101,10 @@ class SnapshotManager:
         """
         if volumes is None:
             volumes = self.volumes
+        excludes = self._excludes_for(snap_dir, volumes)
         logger.info("フルバックアップを作成中: %s", name)
         self._run_docker_tar(
-            snap_dir, 'backup', self.backup_command(FULL_ARCHIVE, volumes), volumes,
+            snap_dir, 'backup', self.backup_command(FULL_ARCHIVE, volumes, excludes), volumes,
         )
 
         # meta.yml を作成
@@ -1005,6 +1115,8 @@ class SnapshotManager:
             'volumes': dict(volumes),
             'files': [FULL_ARCHIVE],
             'incremental_count': 0,
+            # 作ったときの除外の一覧。差分では書き換えない (#368)
+            'exclude': sorted(excludes),
         }
         if '' not in volumes:
             # 旧レイアウト (ルートへ直接マウント) の起点は ``.`` のままなので書かない
@@ -1013,8 +1125,8 @@ class SnapshotManager:
 
     def _create_incremental(self, name: str, snap_dir: Path) -> None:
         """差分バックアップを作成"""
-        recorded = self.snapshot_volumes(snap_dir)
-        if recorded != self.volumes:
+        reason, recorded = self._incremental_block_reason(snap_dir)
+        if reason == _BLOCK_VOLUMES:
             # 通常はここへ来ない (auto_snapshot_target が新世代へ倒す)。
             # 明示的に古い世代を指定されたときだけ到達する。黙って壊れた差分を
             # 積むより、理由を出して止める方がよい。
@@ -1025,13 +1137,23 @@ class SnapshotManager:
                 "新しい世代を作成してください (devbase snapshot create)"
             )
 
-        if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+        if reason == _BLOCK_ARCHIVE_ROOT:
             # 通常はここへ来ない (auto_snapshot_target が新世代へ倒す)。snar が起点を ``.`` で
             # 記録しているため、積むと差分がボリューム全体になる。
             raise SnapshotError(
                 f"スナップショット '{name}' は控えの起点が古い形 (/source) で作られています。"
                 "新しい世代を作成してください (devbase snapshot create)"
             )
+
+        if reason == _BLOCK_EXCLUDES:
+            # snar に触る前に止める。違う除外の一覧の差分を積むと、外したパスが full の
+            # 時点の中身で復元され、除外の一覧と食い違う (#368)
+            raise SnapshotError(
+                f"スナップショット '{name}' は今と違う除外の一覧で作られています。"
+                "新しい世代を作成してください (devbase snapshot create)"
+            )
+        # 設定を読めない間は記録の一覧で積む (記録と同じなら今の一覧と同じ)
+        excludes = self._excludes_for(snap_dir, self.volumes)
 
         snar_file = snap_dir / SNAR_FILE
         if not snar_file.exists():
@@ -1051,7 +1173,7 @@ class SnapshotManager:
         self._run_docker_tar(
             snap_dir, 'backup',
             f"cp {ARCHIVE_MOUNT}/{SNAR_FILE} {ARCHIVE_MOUNT}/{SNAR_FILE}.bak && "
-            + self.backup_command(incr_name, self.volumes)
+            + self.backup_command(incr_name, self.volumes, excludes)
         )
 
         # meta.yml を更新

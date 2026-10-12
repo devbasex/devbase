@@ -2,7 +2,8 @@
 
 - bash 補完を実際に source して `project` サブコマンド補完 / プロジェクト名補完 /
   トップレベルシノニム補完が機能することを検証する (test_wrapper_dispatch と同方式)。
-- zsh 補完はランナー非依存にするため静的内容チェックのみ。
+- zsh 補完はここでは静的内容チェックのみ（zsh の無い環境でも分岐の記述を確かめる）。
+  zsh が実際に出す候補は、zsh を起動する補完の実行テスト（test_zsh_completion_run.py）が見る。
 """
 
 from __future__ import annotations

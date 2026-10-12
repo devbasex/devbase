@@ -135,6 +135,7 @@ classDiagram
 | 2 | 系列の最新の世代が `_safe_snap_dir` を通らない（不正な名前・シンボリックリンク・`backups/` の外） | `None` | WARNING `{系列} の最新の世代 '{名前}' は扱えないため、新しい世代を作成します: {理由}` |
 | 3 | 最新の世代のディレクトリがあり、その `meta.yml` の組が `self.volumes` と違う | `None` | INFO `世代 {名前} の meta.yml の対象ボリューム ({組}) が {系列} と一致しないため、新しい世代を作成します` |
 | 4 | 最新の世代のディレクトリがあり、その `meta.yml` の `archive_root` が `members` でない | `None` | INFO `世代 {名前} は控えの起点が古い形 (/source) のため、新しい世代を作成します` |
+| 4a | 最新の世代のディレクトリがあり、その `meta.yml` の `exclude` が無い（除外を持たない世代）か、`backups/exclude.yml` を読めて今の除外の一覧と集合として違う | `None` | INFO `世代 {名前} は今と違う除外の一覧で作られているため、新しい世代を作成します` |
 | 5 | 最新の世代の `incremental_count` が上限以上 | `None` | INFO `世代 {名前}（{系列}）の差分が上限 ({上限}) に達したため、新しい世代を作成します` |
 | 6 | それ以外 | 最新の世代の名前 | 出さない |
 
@@ -151,6 +152,12 @@ classDiagram
   止める。旧レイアウト（ルートへ直接マウント）の `full` は起点が `.` のままなので `archive_root` を書かない
 - 名前を明示して組の違う世代へ差分を作ろうとすると、`_create_incremental` が理由を示して
   `SnapshotError` で止める（旧レイアウトの世代へは差分を積まない）
+- 順 4a は除外の一覧（既定の除外と `backups/exclude.yml`。#368）の違いを見る。1 つの世代は full を
+  作ったときの一覧で差分も積む。違う一覧の差分を積むと、外したパスが full の時点の中身で復元されるためである。
+  `backups/exclude.yml` を読めない間は、記録を持つ世代を違うと判定せず順 5 へ進み、その記録の一覧で積む
+  （読めない設定で新しい世代ができ、ローテーションで古い世代が消えるのを防ぐ）。名前を明示して除外の一覧の
+  違う世代（記録の無い世代を含む）へ差分を作ろうとすると、`_create_incremental` が snar に触る前に
+  `SnapshotError` で止める。比べる順は組 → `archive_root` → 除外の一覧で、snar 無しのフォールバックより前に置く
 
 **間に別グループの起動を挟んでも、系列の最新の世代へ積む。** `snapshot.snar` は世代ごとにあり、
 系列が同じならアーカイブのレイアウト（`/source/ai` と `/source/group`）もマウントするボリュームも
@@ -244,7 +251,8 @@ classDiagram
 
 ## データ・設定
 
-**形は変えていない。** 移行は無く、変更前の devbase も同じファイルを読める。
+**形は変えていない。** 移行は無く、変更前の devbase も同じファイルを読める。各世代の `meta.yml` に
+足した `exclude`（#368）は、変更前の devbase が読み捨てる。
 
 | 保存先 | 系列の規則での扱い |
 | --- | --- |
@@ -253,6 +261,7 @@ classDiagram
 | 同 `snapshots[].incremental_count` | 差分の上限の判定 |
 | 同 `max_generations` | `rotate` が消したときに `keep` を書く。読む側は無い |
 | 各世代の `meta.yml` の `volumes` | 系列の判定には使わない。積む直前の検証（`auto_snapshot_target` の順 3 と `_create_incremental`）でだけ読む |
+| 各世代の `meta.yml` の `exclude` | full を作ったときの除外の一覧（並べ替え済み）。差分では書き換えない。積む直前の検証（順 4a と `_create_incremental`）でだけ読む |
 | アーカイブの mtime | 最小間隔の判定 |
 
 | 設定 | 値 |
@@ -357,7 +366,8 @@ CLI と TUI:
 - `cmd_down` の `rotate()` の失敗で終了コード 0（`tests/commands/test_container_down_snapshot.py`）
 
 復元のテスト（`tests/snapshot/test_restore_incremental.py`、`test_manager_volumes.py` の復元）は
-変えずに通ること。
+変えずに通ること。ただし `test_restore_incremental.py` の実の Docker で入れ替える場所は、既定の除外
+（#368）に入らない `data/cache` に置く。
 
 実機で確かめる観点: 2 つのグループのプロジェクトを `DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES=0` で
 交互に `devbase up` し、それぞれの系列の最新の世代に `incr-001` が積まれ、世代の数が変わらないことを

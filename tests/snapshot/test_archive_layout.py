@@ -151,9 +151,10 @@ def test_create_and_restore_go_through_the_helpers(tmp_path: Path):
     mgr.create(name="snap1")
     mgr.create(name="snap1")  # 差分
     backup_cmds = [c["command"] for c in mgr.calls if c["mode"] == "backup"]
-    assert backup_cmds[0] == SnapshotManager.backup_command(FULL_ARCHIVE, mgr.volumes)
+    assert backup_cmds[0] == SnapshotManager.backup_command(
+        FULL_ARCHIVE, mgr.volumes, mgr.excludes)
     assert backup_cmds[1].endswith(
-        SnapshotManager.backup_command(incr_archive_name(1), mgr.volumes))
+        SnapshotManager.backup_command(incr_archive_name(1), mgr.volumes, mgr.excludes))
     assert backup_cmds[1].startswith(
         f"cp {ARCHIVE_MOUNT}/{SNAR_FILE} {ARCHIVE_MOUNT}/{SNAR_FILE}.bak && ")
 
