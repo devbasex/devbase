@@ -29,6 +29,7 @@ from tests.cli.test_name_context_consistency import (
     COMPLETION_NAME_EXCEPTIONS,
     CONTEXT_PATHS,
     NAME_PATHS,
+    NO_CONTEXT_LEAF_PATHS,
 )
 
 pytestmark = pytest.mark.xdist_group("zsh_completion_run")
@@ -43,16 +44,26 @@ PROJECTS = frozenset({"proj-a", "proj-b"})
 
 @dataclass(frozen=True)
 class Request:
-    invariant: str           # どの不変条件の行か（I1〜I5）
+    invariant: str           # どの不変条件の行か（I1〜I5、余分は X1）
     line: str                # 打つ行（この後で Tab を押す）
     include: frozenset[str]  # 候補に含まれるべき語。empty が真なら使わない
     empty: bool = False      # 候補が 0 件であるべき
+    exclude: frozenset[str] = frozenset()  # 候補に含まれてはならない語
 
     def expected(self) -> str:
-        return "0 件" if self.empty else f"{', '.join(sorted(self.include))} を含む"
+        if self.empty:
+            return "0 件"
+        parts = []
+        if self.include:
+            parts.append(f"{', '.join(sorted(self.include))} を含む")
+        if self.exclude:
+            parts.append(f"{', '.join(sorted(self.exclude))} を含まない")
+        return "・".join(parts)
 
     def met_by(self, candidates: frozenset[str]) -> bool:
-        return not candidates if self.empty else self.include <= candidates
+        if self.empty:
+            return not candidates
+        return self.include <= candidates and not self.exclude & candidates
 
 
 def _with_alias(paths):
@@ -74,6 +85,9 @@ def _requests() -> list[Request]:
              for p in sorted(named & CONTEXT_PATHS)]
     reqs += [Request("I5", _line(p, "--context", ""), frozenset(), empty=True)
              for p in _with_alias(CONTEXT_PATHS)]
+    # 余分: `--context` を取らない末端の道の後の `-` で `--context` を勧めない（#453）
+    reqs += [Request("X1", _line(p, "-"), frozenset(), exclude=frozenset({"--context"}))
+             for p in sorted(NO_CONTEXT_LEAF_PATHS)]
     return reqs
 
 
@@ -165,13 +179,19 @@ def test_context_value_has_no_candidates(completion_run):
     _check(completion_run, "I5")
 
 
+def test_no_extra_context_on_leaf_without_it(completion_run):
+    """X1: `--context` を取らない末端の道の後の `-` で `--context` を出さない。"""
+    _check(completion_run, "X1")
+
+
 def test_requests_cover_acceptance_lines():
     # 要求の受け入れ条件 2〜5 の代表の行が一覧に入っていること（走査の変化で黙って抜けない）
     lines = {(r.invariant, r.line) for r in REQUESTS}
     for item in [("I1", "devbase up "), ("I1", "devbase project up "), ("I2", "devbase login "),
                  ("I3", "devbase up -"), ("I3", "devbase env exec -"), ("I3", "devbase ct profile up -"),
                  ("I3", "devbase project post-start -"), ("I4", "devbase up proj-a -"),
-                 ("I5", "devbase up --context "), ("I5", "devbase env exec --context ")]:
+                 ("I5", "devbase up --context "), ("I5", "devbase env exec --context "),
+                 ("X1", "devbase env set -")]:
         assert item in lines, f"打つ行の一覧に {item} が無い"
 
 

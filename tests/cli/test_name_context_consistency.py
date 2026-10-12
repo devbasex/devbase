@@ -6,7 +6,9 @@
 
 - `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` / `_NAME_RESOLVABLE_SHORTCUTS`
 - 補完 2 ファイル（`etc/devbase-completion.bash` は実行して、`etc/_devbase` は静的に読む）。
-  `[name]` の位置のプロジェクト名と、`--context` の旗（値は補完しない）を比べる
+  `[name]` の位置のプロジェクト名と、`--context` の旗（値は補完しない）を比べる。`--context` の
+  余分（取らない道で勧める）は、子の parser を持たない末端の道に限って比べる。zsh の余分は
+  実際の候補で比べる（test_zsh_completion_run.py）
 - 確定仕様 `docs/specifications/cli-argument-resolution.md` の 2 つの表
 
 集合の要素は「サブコマンドへの道筋」のタプルで表す（例: `("project", "profile", "up")`、
@@ -95,6 +97,17 @@ def _scan():
 NAME_PATHS, CONTEXT_PATHS = _scan()
 
 
+def _scan_leaves():
+    """子の parser を持たない末端の道（`ct` は畳む）。"""
+    return {_canonical(path) for path, parser in _walk(cli._create_parser())
+            if path and not any(isinstance(a, argparse._SubParsersAction) for a in parser._actions)}
+
+
+# 補完が `--context` を出してはならない道。余分を比べるのは末端の道に限る。親の道（`project
+# profile` など）は、補完の本体が子の分岐を含み、子の `--context` を拾って誤って落ちるため外す。
+NO_CONTEXT_LEAF_PATHS = _scan_leaves() - CONTEXT_PATHS
+
+
 def _diff_message(where, expected, actual):
     missing = sorted(expected - actual)
     extra = sorted(actual - expected)
@@ -111,6 +124,9 @@ def test_scan_finds_both_sets():
     assert any(len(p) == 3 for p in CONTEXT_PATHS)
     # プロジェクト名でない `name`（plugin / snapshot / env backend use）を含めないこと
     assert not any(p[0] in ("plugin", "snapshot", "env") for p in NAME_PATHS)
+    # 余分を比べる末端の道を拾えていること（`env set` は `--context` を取らない末端の道）
+    assert ("env", "set") in NO_CONTEXT_LEAF_PATHS
+    assert not NO_CONTEXT_LEAF_PATHS & CONTEXT_PATHS
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +266,14 @@ def test_bash_completion_offers_context_after_name(fake_root):
                if "--context" not in _bash_complete(path + ("web",), fake_root, "-")]
     assert not missing, (f"etc/devbase-completion.bash が `devbase <道> web -` で --context を補完しない: "
                          f"{missing}")
+
+
+def test_bash_completion_has_no_extra_context(fake_root):
+    # `--context` を取らない末端の道で補完が `--context` を勧めると、argparse が退ける
+    extra = [path for path in sorted(NO_CONTEXT_LEAF_PATHS)
+             if "--context" in _bash_complete(path, fake_root, "-")]
+    assert not extra, (f"etc/devbase-completion.bash が `--context` を取らない道の `devbase <道> -` で "
+                       f"--context を補完する（余分）: {extra}")
 
 
 # 値の補完を持たない `--context` の指定（`:context:` の後ろに補完の関数を置かない）
