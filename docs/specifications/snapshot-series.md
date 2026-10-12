@@ -261,7 +261,11 @@ classDiagram
 
 1. 前の中断の残りの仮の名前のファイル（`full.tar.zst.new`・`snapshot.snar.new`・`meta.yml.new`）を消す
 2. 前の `snapshot.snar` を tar に渡さず、空から始まる `snapshot.snar.new` と `full.tar.zst.new` へ控える
-   （tar はレベル 0 でボリュームの全体を控える）。除外の一覧は新しい世代と同じ規則（`_excludes_for`）で決める
+   （tar はレベル 0 でボリュームの全体を控える）。除外の一覧は新しい世代と同じ規則（`_excludes_for`）で決める。
+   控えのコマンドは `checked_backup_command` で包み、tar の終了コードが 2 以上、または zstd の終了コードが
+   0 以外のときに失敗とする。パイプ全体の終了コード（zstd のもの）だけでは判定しない。tar が読み取りで
+   止まっても zstd は成功するため、パイプの終了コードだけで判定すると、壊れた控えで前の full と差分を消してしまう。
+   tar の 1（読む間にファイルが変わった）は、新しい世代へ直接控えるときと同じく通す
 3. 控えが成功したら `_install_rebuilt_full` が次の順に 1 つずつ入れ替える。改名は同じディレクトリの中の
    `os.replace` で、ファイルを写さない
    1. `snapshot.snar.bak` と `snapshot.snar` を消す
@@ -279,7 +283,7 @@ classDiagram
 
 常に成り立つ条件:
 
-- 控えのコマンドが失敗したら、仮の名前のファイルを消して `SnapshotError` を投げ直す。世代の既存のファイルは
+- 控えのコマンドが失敗したら（手順 2 の定義: tar が 2 以上、または zstd が 0 以外）、仮の名前のファイルを消して `SnapshotError` を投げ直す。世代の既存のファイルは
   1 バイトも変わらず、ファイルは増えない
 - 入れ替え（手順 3）の途中で止まった世代は `snapshot.snar` を持たない。次の `create`（名前の指定・自動
   スナップショット）は snar の無い世代の経路で作り直す
@@ -342,7 +346,7 @@ classDiagram
 | `rotate` の `keep` / `max_total` が 1 未満 | `SnapshotError`。何も消さず `snapshot.yml` も書かない |
 | `rotate` の候補が `_safe_snap_dir` を通らない | ディレクトリを消さず、一覧から外して警告。他の候補の削除は続ける |
 | `create` / `restore` / `copy` / `delete` の世代が `_safe_snap_dir` を通らない | `SnapshotError` → CLI は終了コード 1 |
-| 世代の作り直しの控えのコマンドが失敗 | 仮の名前のファイルを消して `SnapshotError`（`Dockerでのtar操作に失敗しました: {stderr}`）→ CLI は終了コード 1。世代は打つ前のまま |
+| 世代の作り直しの控えのコマンドが失敗（tar の終了コードが 2 以上、または zstd が 0 以外。`checked_backup_command`） | 仮の名前のファイルを消して `SnapshotError`（`Dockerでのtar操作に失敗しました: {stderr}`）→ CLI は終了コード 1。世代は打つ前のまま |
 | 世代の作り直しの入れ替えが失敗 | 仮の名前のファイルを消して `SnapshotError`（`世代 '{名前}' の作り直しを終えられませんでした: {理由}。もう一度 devbase snapshot create --name {名前} --full を打ってください`）→ CLI は終了コード 1 |
 | `meta.yml` に `rebuilding: true` を持つ世代の `restore` | 復元前バックアップを作らず、ボリュームを消さずに `SnapshotError`（`世代 '{名前}' は作り直しの途中で止まっているため復元できません。devbase snapshot create --name {名前} --full を打って作り直してください`）→ CLI は終了コード 1 |
 | 仮の名前のファイルを消せない | 警告 1 行で続ける。次の作り直しが控えの前に消す |
@@ -416,7 +420,9 @@ CLI と TUI:
 
 - 差分を持つ世代へ `--full` を打つと、`full.tar.zst`・`snapshot.snar`・`meta.yml` だけが残り、`meta.yml` が
   full の形で今の除外の一覧を持ち、`snapshot.yml` のエントリが 1 件のまま `created_at` を変えないこと。
-  控えのコマンドが前の snar を受け取らないこと
+  控えのコマンドが前の snar を受け取らないこと。控えのコマンドが tar の終了コード（`PIPESTATUS`）も見ること
+- 実の GNU tar と zstd で、tar が読み取りで止まり（終了コード 2）zstd が成功しても、作り直しが `SnapshotError` で
+  止まり、世代のファイル（前の full と差分）のバイト列が変わらないこと
 - 控えのコマンドの失敗で世代のファイルのバイト列と `snapshot.yml` が変わらないこと。入れ替えの各段で
   止めると `SnapshotError` になり、snar と仮の名前のファイルが残らず、次の差分の指定が作り直すこと
 - 別のボリュームの組で作り直して止めた世代は、印があれば `restore` が docker を 1 回も呼ばずに止まり、

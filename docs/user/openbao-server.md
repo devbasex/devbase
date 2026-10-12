@@ -372,11 +372,12 @@ token には発行に使った `secret_id` の metadata（`terminal`）とロー
 その 2 つで選びます。
 
 ```bash
-t=laptop01   # 失効させる端末の名前 (secret_id の metadata の terminal)
+t=desktop02   # 失効させる端末の名前 (secret_id の metadata の terminal。上の u の端末)
 for a in $(bao_admin list -format=json auth/token/accessors | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)))'); do
   m=$(bao_admin write -format=json auth/token/lookup-accessor accessor="$a" \
     | python3 -c 'import json,sys; m=json.load(sys.stdin)["data"].get("meta") or {}; print(m.get("role_name", ""), m.get("terminal", ""))')
   if [ "$m" = "$u $t" ]; then
+    echo "revoke $a"
     bao_admin write auth/token/revoke-accessor accessor="$a"
   fi
 done
@@ -384,8 +385,12 @@ done
 
 `secret_id` を失効させた端末では、`devbase env backend test` が「認証が拒まれました」で止まります。
 このコマンドは毎回 `secret_id` で新しくログインするため、確かめられるのは新しいログインが止まったこと
-だけです。発行済みの token が残っていないことは、上の手順をもう一度打って `revoke-accessor` が 1 度も
-走らないことで確かめます。
+だけです。発行済みの token は次の 2 つで確かめます。
+
+1. 1 回目に打ったとき、失効させた token の accessor が `revoke <accessor>` の行で出ること。
+   1 行も出なければ、`u` と `t` が端末の `secret_id` の metadata と合っていません（その端末へ
+   発行済みの token が無いときも 1 行も出ません）。上の `secret-id` の一覧で端末の名前を確かめ直します
+2. もう一度打って、`revoke` の行が 1 行も出ないこと（残っている token が無いこと）
 
 利用者ごと外すときは、ロールと entity を消します（`bao_admin delete auth/approle/role/<u>` と
 `bao_admin delete identity/entity/name/<u>`）。その利用者の全端末が止まります。
