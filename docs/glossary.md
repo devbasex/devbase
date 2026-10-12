@@ -202,6 +202,10 @@ base の設定が派生イメージへ届く道筋（containers/*/Dockerfile）
 | 直の親の読み方 | — | Dockerfile の 1 行から直の親イメージを読む規則。正規表現の値を lib/devbase/utils/dockerfile.py が正本として持ち、bin/devbase が同じ値を写す | — | — | `docs/specifications/base-image-chain-build.md` |
 | プロジェクトの Dockerfile | — | プロジェクトの compose の構成で、開発サービス名のサービスの build（context と dockerfile。文字列の形は context だけ）が指す Dockerfile。開発サービスが build を持たないときは無い | — | — | `docs/specifications/base-image-chain-build.md` |
 | Dockerfile の場所の決め方 | — | compose の構成からプロジェクトの Dockerfile のパスを決める規則。通常のビルドと --expires の判定が同じ規則を使う | — | — | `docs/specifications/base-image-chain-build.md` |
+| 言語サーバ | — | エディタや AI の道具へ、定義・参照・診断を Language Server Protocol で返すプログラム。#236 では pyright-langserver・typescript-language-server・intelephense を general・php・php85 の派生イメージの言語サーバの置き場に置く | — | — | — |
+| uv のキャッシュ | — | uv / uvx が取得したパッケージと作った環境を置く場所。置き場は UV_CACHE_DIR、既定は ~/.cache/uv。base の片付けが消し、コンテナの層にあるため作り直しでも消える。#236 では派生イメージで温めない | — | — | — |
+| 言語サーバの置き場 | — | 派生イメージが言語サーバとその依存（typescript 5 を含む）を入れる /opt/language-servers。持ち主は root で利用者は書けない。PATH に出すのは bin の 3 つのコマンドだけ | — | — | — |
+| 言語サーバの組 | — | 言語サーバの置き場へ入れる npm のパッケージの名前と厳密な版の 4 組。対象の派生イメージのすべてで同じ | — | — | — |
 
 ## コンテナの起動（`container-start`）
 
