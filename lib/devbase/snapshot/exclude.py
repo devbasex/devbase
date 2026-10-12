@@ -64,23 +64,29 @@ def normalize(value) -> str:
     return '/'.join(parts)
 
 
+def _read_exclude_values(path: Path) -> list:
+    """設定ファイルの ``exclude`` の値を正規化せずに返す。形が違えば ``ValueError``。"""
+    with open(path, encoding='utf-8') as f:
+        data = yaml.safe_load(f)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError('最上位が辞書ではありません')
+    values = data.get('exclude')
+    if values is None:
+        values = []
+    if not isinstance(values, list):
+        raise ValueError('exclude がリストではありません')
+    return values
+
+
 def _load_user_excludes(backups_dir: Path) -> tuple:
     """利用者の除外を読む。``(パターンのリスト, 設定を読めたか)`` を返す。"""
     path = backups_dir / USER_CONFIG
     if not path.exists():
         return [], True
     try:
-        with open(path, encoding='utf-8') as f:
-            data = yaml.safe_load(f)
-        if data is None:
-            data = {}
-        if not isinstance(data, dict):
-            raise ValueError('最上位が辞書ではありません')
-        values = data.get('exclude')
-        if values is None:
-            values = []
-        if not isinstance(values, list):
-            raise ValueError('exclude がリストではありません')
+        values = _read_exclude_values(path)
     except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as e:
         logger.warning(
             "backups/%s を読めないため、今の世代の除外の一覧のまま控えます"
