@@ -33,18 +33,27 @@ age の鍵は必要です。** 先に `devbase env keygen` を済ませてくだ
 
 ### 1. OpenBao 側で用意するもの
 
-サーバの構築と運用は devbase の範囲外です。管理者から次の値を受け取ってください。
+サーバの持ち方（利用の形）は 3 つあります。サーバの用意の手順とポリシーの雛形は
+[OpenBao サーバを用意する](openbao-server.md)にあります。
+
+| 利用の形 | 次の値をどう得るか |
+|---|---|
+| 個人の形（自分で 1 台立てて 1 人で使う） | 自分でサーバを立てて作る（[個人の形](openbao-server.md#個人の形)。手元で試すなら[試用の構成](openbao-server.md#試用の構成で試す)） |
+| チームの形（チームで 1 台立てる） | チームでサーバを管理する人から受け取る（[チームの形](openbao-server.md#チームの形)） |
+| 既存のサーバの形（組織が運用しているサーバ） | 管理者から受け取る（[既存のサーバの形](openbao-server.md#既存のサーバの形)） |
+
+接続に使う値は次のとおりです。
 
 | 値 | 例 |
 |---|---|
-| 接続先 URL（`https`。ホストとポートまで） | `https://openbao.example.com` |
+| 接続先 URL（`https`。ホストとポートまで。手元のサーバなら `http` の loopback も可） | `https://openbao.example.com` |
 | KV v2 のマウント名（既定 `devbase`） | `devbase` |
-| あなたの識別子（個人単位の機密の置き場に使う。社内メールアドレスの `@` より前） | `member01` |
+| あなたの識別子（個人単位の機密の置き場に使う。サーバの entity 名と同じ値） | `member01` |
 | あなたの AppRole の `role_id` | — |
 | **この端末用**の `secret_id` | — |
 
 `secret_id` は端末ごとに発行されます。端末を増やすときは、その端末用の `secret_id` を
-新しく受け取ってください（1 台の失効が他の端末に及ばないようにするためです）。
+新しく発行してください（1 台の失効が他の端末に及ばないようにするためです）。
 
 ### 2. backend を切り替える
 
@@ -131,7 +140,7 @@ devbase env backend migrate --to openbao --group acme --exclude-project myapp-co
 移すのはチーム単位の機密（共通とプロジェクト）だけです。個人単位の機密は
 `devbase env set --user` で入れ直してください。チーム単位のパスへ書けるのは、サーバ側で
 書き込みの権限を付けられた人だけです。権限が無いと「書き込み権限が無い」と表示されて
-止まるので、管理者に移行を依頼してください。
+止まるので、書き込みの権限を持つ人に移行を依頼してください。
 
 ## 日々の操作
 
@@ -440,8 +449,15 @@ base イメージには OpenBao の CLI `bao`（サーバと同じ 2.6 系）が
 
 | 渡るもの | 形 |
 |---|---|
-| 接続先 | 環境変数 `BAO_ADDR`（`backend.yml` の `openbao.url`） |
+| 接続先 | 環境変数 `BAO_ADDR`（`backend.yml` の `openbao.url`。`http` の loopback でローカル扱いのときはホストを `host.docker.internal` に置き換えた値。下の注を参照） |
 | token | ファイル `~/.vault-token`（`0600`）。`bao` が既定で読む |
+
+`openbao.url` が `http://127.0.0.1:8200` のような手元のサーバのとき、コンテナの中の `127.0.0.1` は
+コンテナ自身を指すため、そのままでは届きません。Docker が手元の端末のもの（ローカル扱い）なら、
+devbase はコンテナへ渡す `BAO_ADDR` を `http://host.docker.internal:8200` にし、dev コンテナへ
+`host.docker.internal:host-gateway` の行を足します。`https` の URL・`docker.context` で別の端末の
+Docker を使うとき（リモート扱い）・`network_mode: host` の dev サービスは `openbao.url` のままです。確かめた環境と Linux の Docker での
+扱いは [コンテナの中の `bao`](openbao-server.md#コンテナの中の-bao) を参照してください。
 
 コンテナに置くのは 1 時間で切れる token だけで、`secret_id` はホストから出ません。token を
 環境変数にしないのは、`docker inspect` や子プロセスの環境に残るためです。
@@ -575,7 +591,7 @@ devbase env backend use auto       # 設定なしと同じ (ファイルの存�
 version: 1
 backend: openbao              # auto / plaintext / age / openbao
 openbao:
-  url: https://openbao.example.com     # https のみ (http は localhost 宛てだけ可)
+  url: https://openbao.example.com     # https のみ (http は localhost / 127.0.0.1 / ::1 宛てだけ可)
   mount: devbase                       # KV v2 のマウント名
   user: member01                       # 個人単位の置き場に使う識別子 (必須)
   path_team_global: team/global        # 先頭に / を付けない
@@ -604,8 +620,9 @@ cache:
   `bootstrap.env.age` / `cache/` の権限、Git の除外設定を点検します。`version: 2` では、
   対象のグループの同期済みハッシュの控え（`.env.sources.<g>.yml`）とキャッシュが Git から
   除外されているかも確かめます
-- 端末を手放すときは、管理者にその端末の `secret_id` の失効を依頼してください。他の端末の
-  `secret_id` はそのまま使えます
+- 端末を手放すときは、その端末の `secret_id` を失効させてください（サーバを管理する人の作業です。
+  手順は [端末の `secret_id` を失効させる](openbao-server.md#端末の-secret_id-を失効させる)）。
+  他の端末の `secret_id` はそのまま使えます
 
 ## コマンド一覧
 
@@ -616,4 +633,4 @@ cache:
 | `devbase env backend test` | サーバへ接続し、参照ごとに読めるかを確かめる（`version: 2` では対象のグループの置き場だけ） |
 | `devbase env backend migrate --to age\|openbao [--exclude-project NAME]... [--dry-run] [--yes]` | チーム単位の機密を別の backend へ写す |
 
-関連: [環境変数の暗号化](env-encryption.md) / [環境変数ガイド](environment-variables.md)
+関連: [OpenBao サーバを用意する](openbao-server.md) / [環境変数の暗号化](env-encryption.md) / [環境変数ガイド](environment-variables.md)

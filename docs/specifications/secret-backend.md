@@ -390,7 +390,8 @@ DEVBASE_ACCOUNT_GROUP{付ける引数}{実行場所}
 付け、無ければ空で作る（`VolumeManager.ensure_volumes` → `create_volume`）。規則を満たす名前はどれも
 同じ経路で動き、devbase はグループ名ごとの分岐を持たない（`personal` などの新しいグループは、宣言と
 サーバのポリシーだけで使える。新しいグループのボリュームは空で作られ、ログインを取り直す）。
-グループの機密の置き場のポリシーは運用側のリポジトリが持ち、無ければ取得が 403 の今の形で止まる。
+グループの機密の置き場のポリシーは利用者のサーバが持ち（雛形は「サーバに求める条件」）、無ければ取得が
+403 の今の形で止まる。
 
 base イメージの entrypoint は、`DEVBASE_ACCOUNT_GROUP` が空なら設定のリンクを張る前に
 `ERROR: DEVBASE_ACCOUNT_GROUP が渡っていません。…` を標準エラーへ出して 1 で終わり、コンテナは
@@ -919,16 +920,38 @@ token をホストのディスクへ置かない決まりを守るためであ�
 `<name>` と `<user>` はパス区切りと `..` を含まない検査を通っており、`<g>` は
 `DEVBASE_ACCOUNT_GROUP` と同じ名前の検査を通っているため、組み立てたパスが設定した親の外へ
 出ることはない。URL へ埋め込む前に各要素を符号化する（`/` は区切りとして
-残す）。`<user>` は社内メールアドレスの `@` より前の部分で、サーバ側の entity 名と同じ値に
-する。サーバのポリシーは entity 名で個人単位のパスを絞るため、設定の `user` が本人と違えば
+残す）。`<user>` は利用者の識別子（`openbao.user`）で、サーバの entity 名と同じ値にする。
+サーバのポリシーは entity 名で個人単位のパスを絞るため、設定の `user` が本人と違えば
 `users/<user>/...` の取得が 403 になる。
 
-サーバ側の構成（KV v2 のマウント、ポリシー、AppRole、token の期限）は devbase の範囲外で、
-運用側のリポジトリが持つ。devbase が前提にするのは、上の 4 経路と
-「本人のパスは読み書きでき、チームのパスは読め、他人のパスは拒まれる」ことだけである。
-ポリシーを `version: 2` のグループ単位に絞る変更も運用側のリポジトリの課題が
-扱う。devbase は 1 回の操作で対象のグループのパスだけを要求するため、グループ単位に絞った
-サーバでも対象のグループの操作は通る。
+#### サーバに求める条件
+
+サーバは利用者が個人またはチームで立てる（利用の形は個人・チーム・既存のサーバの 3 つ。手順は
+[OpenBao サーバを用意する](../user/openbao-server.md)）。devbase はサーバの構成を書き換えず、次を前提にする。
+
+| 項目 | 条件 |
+| --- | --- |
+| マウント | KV v2 を `openbao.mount`（既定 `devbase`）にマウントしてある |
+| パス | 上の 4 経路（チーム共通・チームのプロジェクト・個人共通・個人のプロジェクト）を、上の対応表のパスで読み書きする |
+| 認証 | AppRole（既定のマウント `approle`）の `role_id` と端末ごとの `secret_id` でログインできる。token の認証は持たない |
+| 利用者の識別子 | AppRole のロールの entity alias（名前は `role_id`）が、名前を利用者の識別子にした entity に付いている |
+| 本人のパス | `users/<本人>/` の下を読み書き（作成・読み取り・更新と、参照ごとの削除）できる |
+| チームのパス | 対象のグループのチーム共通とチームのプロジェクトを読める |
+| チーム共通への書き込み | 書き込みのポリシーを付けた利用者だけが書ける。ほかの利用者は 403 |
+| 拒否 | 他人の `users/<名前>/` と、`users/` 直下の一覧は 403 |
+| `version: 2` | 権限はグループ単位で、ポリシーを付けていないグループの `team/<group>/` は 403 |
+| token の期限 | ログインで得る token は 1 時間で切れる（ロールの `token_ttl`）。devbase は期限の前に取り直す |
+
+ポリシーの雛形は `docs/user/openbao/policies/` にある（個人 `devbase-user.hcl` は `version: 1` / `2` 共通、
+チームは `v1/` と `v2/` の `team-read.hcl` / `team-write.hcl`）。雛形は entity に付け、ロールの
+`token_policies` は `default` だけにする。`version: 2` の雛形はグループの置き換え語 `__GROUP__` を
+グループ名に置き換えて使う。雛形はマウント `devbase` の `data/` と `metadata/` の下だけを書き、
+`sys/`・`auth/`・`identity/` の経路を含まない。devbase は 1 回の操作で対象のグループのパスだけを
+要求するため、グループ単位に絞ったサーバでも対象のグループの操作は通る。
+
+試用の構成は `docs/user/openbao/compose.yml` で、開発モードの OpenBao をホストの `127.0.0.1:8200` に
+だけ公開して立てる。OpenBao の版はこのファイルの `image` の 1 行だけに書き、base イメージの
+`BAO_VERSION` と同じ 2.6 系に揃える。開発モードのサーバは機密を記憶にだけ置き、止めると消える。
 
 ### `SecretStore` の持ち回り
 
@@ -971,16 +994,33 @@ token をホストのディスクへ置かない決まりを守るためであ�
 base イメージは OpenBao CLI `bao`（`ARG BAO_VERSION`、サーバと同じ 2.6 系）を含む。amd64 /
 arm64 の tar.gz を同じリリースの `checksums.txt` と突き合わせ、対象の行が無い・値が合わない
 ときはビルドを止める。`.deb` は systemd ユニットやシステムユーザーを伴うため使わない。
-backend によらず全端末のイメージに入れる（管理スクリプトが `bao` に依存し、管理者の端末の
-backend 設定とは関係しない）。
+backend によらず全端末のイメージに入れる（サーバを管理する人の操作も `bao` で打ち、管理する人の
+端末の backend 設定とは関係しない）。
 
 backend が `openbao` のとき、`up` と `scale` は dev コンテナへ次を渡す。
 
 | 名前 | 形 | いつ |
 | --- | --- | --- |
-| `BAO_ADDR` | dev サービスの `environment` にリテラル（`openbao.url`）。機密ではない | 構成の生成時 |
+| `BAO_ADDR` | dev サービスの `environment` にリテラル（コンテナから見た接続先。下の表）。機密ではない | 構成の生成時 |
 | `~/.vault-token` | ファイル `0600`、token 1 行（改行なし） | `up` / `scale` の起動の待ちの後（後処理の対象だけ）、`project post-start`、`env token` |
 
+コンテナから見た接続先は `openbao.url` と docker の接続先で決まる（`commands/container.py` の
+`container_bao_address`）。コンテナの中の `127.0.0.1` はコンテナ自身を指すためである。
+
+| `openbao.url` | docker の接続先 | `BAO_ADDR` | dev のインスタンスへ足す `extra_hosts` |
+| --- | --- | --- | --- |
+| `http` で、ホストが `localhost` / `127.0.0.1` / `::1` | ローカル扱い | ホストを `host.docker.internal` に置き換えた値（スキームとポートは保つ） | `host.docker.internal:host-gateway` |
+| 同上 | リモート扱い | `openbao.url` のまま | 足さない |
+| `https`（loopback を含む） | どちらでも | `openbao.url` のまま（証明書の名前が合わなくなるため置き換えない） | 足さない |
+
+- 置き換えた値は `generate_scaled_compose` の `host_gateway_environment` で渡し、dev のインスタンスにだけ
+  当てる。元の dev サービスの `extra_hosts` はリストの形と辞書の形の両方を受けて元の形で足し、
+  `host.docker.internal` の行が既にあれば足さない。`network_mode: host` の dev サービスには当てず、
+  `openbao.url` のままにする（loopback がそのまま届き、`extra_hosts` も使えない）
+- ホストの devbase が使う URL（`openbao.url`）・URL の検査・`backend.yml` の形は変わらない。
+  コンテナから見た接続先は `up` / `scale` のたびに組み直す
+- 確かめた環境は macOS の Docker Desktop である。Linux の Docker で、ホストの `127.0.0.1` にだけ
+  公開したポートへ `host-gateway` から届くかは確かめていない
 - `up` / `scale` が token を書くのは後処理の対象だけである。`up` は起動できたインスタンス、`scale` は
   増やしたインスタンスのうち起動できたものに書き、起動できなかったインスタンスには書かない。
   `devbase project post-start` は、動いていて entrypoint の完了（`/tmp/entrypoint-ready`）を確かめられた
@@ -1385,6 +1425,11 @@ groups:
   TTY の伏せ字入力だけを経路にする
 - `http` はループバック宛てだけ受け付ける。環境変数やテスト専用のオプションで例外を開ける
   手段は置かない（実サーバを使う端末でも開けられる抜け道になる）
+- devbase は root token を受け取らず、AppRole の `role_id` と端末ごとの `secret_id` だけで接続する。
+  試用の構成も root token を決めず、管理の操作はサーバのコンテナの中の `bao` で打つ。ポリシーの雛形は
+  本人以外の個人の置き場と `sys/` の管理の経路を許さない
+- コンテナから見た接続先の置き換えは `http` の loopback に限る。`https` の URL は置き換えず、TLS の
+  検証の相手を変えない
 - `scope` を SHA-256 にするのは、`role_id` とパスを平文で残さないためである
 - 個人単位の機密はパスで分け、他人のパスを読む権限が無ければサーバが 403 を返す。宛先を
   指すのは設定、渡してよいかを決めるのはサーバ（entity 名で絞るポリシー）という分担である
@@ -1415,9 +1460,12 @@ groups:
 - 設定が無ければ挙動は変わらない。`backend.yml` を消せば `auto` に戻る
 - OpenBao を使う場合も age の鍵が要る（ブートストラップとキャッシュの暗号化に使う）。
   受信者の入れ替えは `rekey` が担い、外した受信者は資格情報も控えも復号できなくなる
-- サーバの構築・運用は devbase の範囲外で、devbase は既存のサーバへ接続するだけである。
-  利用者は管理者から接続先 URL・`mount`・自分の識別子・`role_id`・端末ごとの `secret_id` を
-  受け取る
+- サーバは利用者が個人またはチームで立てる。devbasex は共通のサーバを運用しない。サーバの用意
+  （マウント・AppRole・ポリシー・entity と alias・ロール・端末ごとの `secret_id`）の手順と雛形は
+  [OpenBao サーバを用意する](../user/openbao-server.md) にあり、devbase のコードはサーバの構成を
+  書き換えない。サーバの冗長化・バックアップ・監査ログ・TLS の証明書は OpenBao の文書に従う
+- 利用者は接続先 URL・`mount`・自分の識別子・`role_id`・端末ごとの `secret_id` で接続する。
+  個人の形では自分で作り、チームの形と既存のサーバの形ではサーバを管理する人から受け取る
 - 1 台の端末が同時に使う backend は 1 つ、扱う個人単位の機密は 1 人分である
 - 複数人の同時編集は版の不一致として後から書いた側で止まる。黙って上書きせず、読み直して
   やり直す。不達のときに書き込みを控えへ溜める経路は無い
@@ -1635,7 +1683,15 @@ groups:
   パスの読み書きと、プロジェクトのコンテナに別グループの機密が無いことも同じ。コンテナの中の
   `bao kv get` / `patch`、チーム共通への書き込みの 403、`env token` での取り直しも同じ。ポリシーによる
   他人のパスと `users/` 直下の一覧の拒否、端末 1 台の `secret_id` の失効も同じ（開発モードの
-  サーバでの確認結果は #166。本番のサーバでは配布後に確かめる）
+  サーバでの確認結果は #166 と #295。本番のサーバでは配布後に確かめる）
+- ポリシーの雛形（`version: 1` / `2`）を OpenBao 2.6 系の `bao policy write` で書き込めること、2 人の
+  利用者で他人の個人の置き場の 403・権限の無い者のチーム共通への書き込みの 403 になること、試用の構成で
+  接続から `devbase up` とコンテナの中の `bao kv get` まで通ることは手動確認（#295）
+- コンテナから見た接続先の表の各行、`extra_hosts` のリストと辞書の形、既にある
+  `host.docker.internal` の行、`network_mode: host` は pytest（`tests/commands/test_container_bao.py`・
+  `tests/volume/test_compose_host_gateway.py`）
+- 雛形と試用の構成の形（パスの接頭辞・管理の経路を含まない・版が `BAO_VERSION` と同じ 2.6 系・ポートが
+  loopback だけ）は pytest（`tests/docs/test_openbao_templates.py`）
 
 ## 関連リンク
 
@@ -1649,9 +1705,10 @@ groups:
   #317 / #318（アカウントグループの宣言の必須化と `default` の廃止、#315。設計は #316）、
   #391（TUI の接続設定の確認でグループを選ばせる、#386）
 - Infisical から OpenBao への切り替えの経緯: devbasex/devbase#166
-- サーバのポリシーをグループ単位に絞る課題: 運用側のリポジトリ
+- [OpenBao サーバを用意する](../user/openbao-server.md)（利用の形・管理の手順・ポリシーの雛形・試用の構成。#295）
 - [環境変数ガイド: アカウントグループ](../user/environment-variables.md#アカウントグループ-devbase_account_group)
 - [OpenBao: KV v2 API](https://openbao.org/api-docs/secret/kv/kv-v2/)
 - [OpenBao: AppRole auth](https://openbao.org/docs/auth/approle/)
 - [OpenBao: Policies](https://openbao.org/docs/concepts/policies/)
+- [OpenBao: Identity](https://openbao.org/docs/concepts/identity/)
 - [OpenBao: releases](https://github.com/openbao/openbao/releases)
