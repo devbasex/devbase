@@ -765,4 +765,4 @@ zsh を必須にし、何のための値かが `ci.yml` から読めないため
 - 実装 PR: devbasex/devbase#301（#276・#226・#229・#245・#227）
 - 実装 PR: devbasex/devbase#428（#214。列挙の正本と一致テスト）
 - 実装 PR: devbasex/devbase#450（#435。補完の `--context`）
-- 課題: devbasex/devbase#455（zsh の補完の実行テスト）
+- 実装 PR: devbasex/devbase#460（#455。zsh の補完の実行テスト）
