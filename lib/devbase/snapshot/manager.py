@@ -1380,7 +1380,7 @@ class SnapshotManager:
         - グループ側 (``group``) は ``devbase_home_<group>`` の形で、``<group>``
           がアカウントグループ名として妥当なものに限る
         """
-        meta_path = snap_dir / 'meta.yml'
+        meta_path = snap_dir / SNAP_META_FILE
 
         def reject(reason: str) -> None:
             raise SnapshotError(
@@ -1433,7 +1433,7 @@ class SnapshotManager:
 
     def _load_snap_meta(self, snap_dir: Path) -> dict:
         """個別スナップショットのmeta.ymlを読み込む"""
-        meta_path = snap_dir / 'meta.yml'
+        meta_path = snap_dir / SNAP_META_FILE
         if meta_path.exists():
             with open(meta_path) as f:
                 return yaml.safe_load(f) or {}
@@ -1441,6 +1441,6 @@ class SnapshotManager:
 
     def _save_snap_meta(self, snap_dir: Path, meta: dict) -> None:
         """個別スナップショットのmeta.ymlを保存する"""
-        meta_path = snap_dir / 'meta.yml'
+        meta_path = snap_dir / SNAP_META_FILE
         with open(meta_path, 'w') as f:
             yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
