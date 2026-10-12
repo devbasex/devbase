@@ -1289,8 +1289,8 @@ class SnapshotManager:
                 logger.warning("差分の作成の仮のファイル %s を消せませんでした: %s",
                                snap_dir / tmp, e)
 
-    def _create_incremental(self, name: str, snap_dir: Path) -> None:
-        """差分バックアップを作成"""
+    def _reject_blocked_incremental(self, name: str, snap_dir: Path) -> None:
+        """世代に差分を積めない理由があれば ``SnapshotError`` で止める。"""
         reason, recorded = self._incremental_block_reason(snap_dir)
         if reason == _BLOCK_VOLUMES:
             # 通常はここへ来ない (auto_snapshot_target が新世代へ倒す)。
@@ -1318,6 +1318,18 @@ class SnapshotManager:
                 f"スナップショット '{name}' は今と違う除外の一覧で作られています。"
                 "新しい世代を作成してください (devbase snapshot create)"
             )
+
+    def _record_incremental(self, snap_dir: Path, incr_name: str, next_num: int) -> None:
+        """置いた差分を世代の ``meta.yml`` に記録する。"""
+        snap_meta = self._load_snap_meta(snap_dir)
+        snap_meta['type'] = 'incremental'
+        snap_meta['files'].append(incr_name)
+        snap_meta['incremental_count'] = next_num
+        self._save_snap_meta(snap_dir, snap_meta)
+
+    def _create_incremental(self, name: str, snap_dir: Path) -> None:
+        """差分バックアップを作成"""
+        self._reject_blocked_incremental(name, snap_dir)
         # 設定を読めない間は記録の一覧で積む (記録と同じなら今の一覧と同じ)
         excludes = self._excludes_for(snap_dir, self.volumes)
 
@@ -1356,11 +1368,7 @@ class SnapshotManager:
             raise SnapshotError(f"世代 '{name}' に差分を作れませんでした: {e}") from e
 
         # meta.yml を更新
-        snap_meta = self._load_snap_meta(snap_dir)
-        snap_meta['type'] = 'incremental'
-        snap_meta['files'].append(incr_name)
-        snap_meta['incremental_count'] = next_num
-        self._save_snap_meta(snap_dir, snap_meta)
+        self._record_incremental(snap_dir, incr_name, next_num)
 
     def _update_global_metadata(self, name: str, snap_dir: Path) -> None:
         """グローバルメタデータ(snapshot.yml)を更新"""
