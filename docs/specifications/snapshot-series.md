@@ -152,7 +152,7 @@ classDiagram
   止める。旧レイアウト（ルートへ直接マウント）の `full` は起点が `.` のままなので `archive_root` を書かない
 - 名前を明示して組の違う世代へ差分を作ろうとすると、`_create_incremental` が理由を示して
   `SnapshotError` で止める（旧レイアウトの世代へは差分を積まない）
-- 順 4a は除外の一覧（既定の除外と `backups/exclude.yml`。#368）の違いを見る。1 つの世代は full を
+- 順 4a は除外の一覧（既定の除外と `backups/exclude.yml`。[スナップショットの除外の一覧](snapshot-exclude.md)）の違いを見る。1 つの世代は full を
   作ったときの一覧で差分も積む。違う一覧の差分を積むと、外したパスが full の時点の中身で復元されるためである。
   `backups/exclude.yml` を読めない間は、記録を持つ世代を違うと判定せず順 5 へ進み、その記録の一覧で積む
   （読めない設定で新しい世代ができ、ローテーションで古い世代が消えるのを防ぐ）。名前を明示して除外の一覧の
@@ -380,3 +380,4 @@ CLI と TUI:
 - [コンテナ運用ガイド](../user/container-operations.md)
 - [別ホストの Docker への dev コンテナ起動（docker context）](remote-docker-context.md)
 - [位置引数の解決（プロジェクト名・イメージ名）](cli-argument-resolution.md)（スナップショットの名前の規則）
+- [スナップショットの除外の一覧](snapshot-exclude.md)
