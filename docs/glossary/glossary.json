@@ -980,7 +980,7 @@
     {
       "term": "コンテナから見た接続先",
       "context": "secret",
-      "meaning": "dev コンテナへ BAO_ADDR として渡す OpenBao の接続先。openbao.url が loopback でローカル扱いのときはホストを host.docker.internal に置き換えた値、それ以外は openbao.url のまま",
+      "meaning": "dev コンテナへ BAO_ADDR として渡す OpenBao の接続先。openbao.url が http の loopback でローカル扱いのときはホストを host.docker.internal に置き換えた値、それ以外（https を含む）は openbao.url のまま",
       "source": "",
       "pending_source": "issues/issue-295-design.md"
     },

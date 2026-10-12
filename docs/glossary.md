@@ -98,7 +98,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | ポリシーの雛形 | — | devbase が前提にする権限を OpenBao のポリシー（HCL）として書いた、docs/user/openbao/policies/ のファイル。管理する人が自分のサーバへ書き込んで使う | — | — | — |
 | 試用の構成 | — | docs/user/openbao/compose.yml で開発モードの OpenBao を手元に立て、devbase の接続を試して片付けるまでの最小の構成 | — | — | — |
 | 利用者の識別子 | — | secrets/backend.yml の openbao.user。サーバの entity 名と同じ値にし、個人単位の置き場のパスに使う | — | — | — |
-| コンテナから見た接続先 | — | dev コンテナへ BAO_ADDR として渡す OpenBao の接続先。openbao.url が loopback でローカル扱いのときはホストを host.docker.internal に置き換えた値、それ以外は openbao.url のまま | — | — | — |
+| コンテナから見た接続先 | — | dev コンテナへ BAO_ADDR として渡す OpenBao の接続先。openbao.url が http の loopback でローカル扱いのときはホストを host.docker.internal に置き換えた値、それ以外（https を含む）は openbao.url のまま | — | — | — |
 | 管理する人 | — | 利用者の OpenBao サーバで、マウント・AppRole・ポリシー・entity を作る人。個人の形では利用者本人 | — | — | — |
 
 ## スナップショット（`snapshot`）

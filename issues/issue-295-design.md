@@ -56,7 +56,7 @@
 | I4 | ポリシーの雛形 | どの雛形も `sys/` と `auth/` と `identity/` の経路を含まず、KV v2 のマウント `devbase` の `data/` と `metadata/` の下だけを書く。特定の組織の名前を含まない | 雛形の検査（テスト設計）で落ちる |
 | I5 | 試用の構成 | OpenBao の版は `compose.yml` の `image` の 1 行だけにあり、base イメージの `BAO_VERSION` と同じ 2.6 系である | 雛形の検査で落ちる |
 | I6 | 試用の構成 | サーバのポートはホストの loopback（`127.0.0.1`）にだけ公開する | 雛形の検査で落ちる |
-| I7 | dev コンテナの接続先 | `openbao.url` のホストが loopback で、docker の接続先がローカル扱いのときだけ、コンテナから見た接続先のホストを `host.docker.internal` に置き換える。スキーム・ポートは保つ。それ以外は `openbao.url` のまま | pytest で落ちる |
+| I7 | dev コンテナの接続先 | `openbao.url` のスキームが `http` でホストが loopback で、docker の接続先がローカル扱いのときだけ、コンテナから見た接続先のホストを `host.docker.internal` に置き換える。スキーム・ポートは保つ。それ以外（`https` を含む）は `openbao.url` のまま | pytest で落ちる |
 | I8 | dev コンテナの接続先 | 置き換えたときだけ、dev のインスタンスへ `host.docker.internal:host-gateway` の 1 行を足す。元の dev サービスが `host.docker.internal` の行を持っていれば足さない | pytest で落ちる |
 | I9 | dev コンテナの接続先 | ホストの devbase が使う URL（`openbao.url`）・URL の検査・`secrets/backend.yml` の形は変わらない | pytest で落ちる（既存のテストが変わらず通る） |
 | I10 | 試用の構成・文書 | 文書の例に実の token・`secret_id`・root token の値を書かず、`secret_id` をコマンド引数で渡す手順と、devbase の接続に root token を使う手順を書かない | 文書の検査（テスト設計）で落ちる |
@@ -87,7 +87,7 @@
 | ポリシーの雛形 | devbase が前提にする権限を OpenBao のポリシー（HCL）として書いた、`docs/user/openbao/policies/` のファイル | 意味の変更（置き場と出所を確定する） |
 | 試用の構成 | `docs/user/openbao/compose.yml` で開発モードの OpenBao を手元に立て、接続を試して片付けるまでの最小の構成 | 意味の変更（置き場と出所を確定する） |
 | 利用者の識別子 | `secrets/backend.yml` の `openbao.user`。サーバの entity 名と同じ値にし、個人単位の置き場のパスに使う | 追加 |
-| コンテナから見た接続先 | dev コンテナへ `BAO_ADDR` として渡す接続先。`openbao.url` が loopback でローカル扱いのときはホストを `host.docker.internal` に置き換えた値、それ以外は `openbao.url` のまま | 追加 |
+| コンテナから見た接続先 | dev コンテナへ `BAO_ADDR` として渡す接続先。`openbao.url` が `http` の loopback でローカル扱いのときはホストを `host.docker.internal` に置き換えた値、それ以外（`https` を含む）は `openbao.url` のまま | 追加 |
 | 管理する人 | 利用者のサーバで、マウント・AppRole・ポリシー・entity を作る人。個人の形では利用者本人 | 追加 |
 
 ## 機能一覧
@@ -227,6 +227,7 @@ classDiagram
 | `http://localhost:8200` / `http://[::1]:8200` | ローカル扱い | `http://host.docker.internal:8200` | 同上 |
 | `http://localhost`（ポートなし） | ローカル扱い | `http://host.docker.internal` | 同上 |
 | loopback のどれか | リモート扱い | `openbao.url` のまま | 足さない |
+| `https://localhost:8200` など `https` の loopback | どちらでも | `openbao.url` のまま | 足さない |
 | `https://openbao.example.com` | どちらでも | `openbao.url` のまま | 足さない |
 | backend が `openbao` でない | — | 渡さない（今と同じ） | 足さない |
 
@@ -277,7 +278,7 @@ sequenceDiagram
 graph TD
     subgraph dev 環境の組み立て
         A[backend が openbao か] -->|いいえ| N[何も足さない]
-        A -->|はい| B[openbao.url のホストが loopback か]
+        A -->|はい| B[openbao.url が http でホストが loopback か]
         B -->|いいえ| K[BAO_ADDR = openbao.url]
         B -->|はい| R[docker の接続先がリモート扱いか]
         R -->|はい| K
@@ -328,9 +329,9 @@ graph TD
 
 根拠: Mission / Value 1（MVV 版 1）
 
-### 決定 4: 手元のサーバでもコンテナの中の `bao` を使えるようにするため、loopback の `openbao.url` はローカル扱いのときだけ、コンテナへ渡す `BAO_ADDR` のホストを `host.docker.internal` に置き換え、`host-gateway` の行を足す
+### 決定 4: 手元のサーバでもコンテナの中の `bao` を使えるようにするため、`http` の loopback の `openbao.url` はローカル扱いのときだけ、コンテナへ渡す `BAO_ADDR` のホストを `host.docker.internal` に置き換え、`host-gateway` の行を足す
 
-コンテナの中の `127.0.0.1` はコンテナ自身を指し、loopback の `openbao.url` をそのまま渡すと届かない。Docker Desktop で `host.docker.internal` がホストの loopback のサーバへ届くことを実測した（あるべき姿の根拠）。`host-gateway` の行は Linux の Docker で `host.docker.internal` を引けるようにするためで、Docker Desktop でも行の有無によらず届いた。リモート扱いでは loopback がホストの端末を指し、コンテナのある端末から届かないため置き換えない。ホストの devbase の URL と検査は変えない（I9）。
+コンテナの中の `127.0.0.1` はコンテナ自身を指し、loopback の `openbao.url` をそのまま渡すと届かない。Docker Desktop で `host.docker.internal` がホストの loopback のサーバへ届くことを実測した（あるべき姿の根拠）。`host-gateway` の行は Linux の Docker で `host.docker.internal` を引けるようにするためで、Docker Desktop でも行の有無によらず届いた。リモート扱いでは loopback がホストの端末を指し、コンテナのある端末から届かないため置き換えない。`https` の loopback は置き換えない。証明書の名前が `host.docker.internal` と合わず、TLS の検証で落ちるためである（受け入れ条件 16）。ホストの devbase の URL と検査は変えない（I9）。
 
 文書で「コンテナの中では `export BAO_ADDR=…` を打つ」と案内する形は、シェルを開くたびに打つことになり、`devbase up` だけで使える今の形と揃わない。「使えない」と書く形は、試用の構成で dev コンテナの `bao` を確かめられない。
 
