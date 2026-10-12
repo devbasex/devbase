@@ -459,7 +459,7 @@ HOST_GATEWAY_ENTRY = f'{HOST_GATEWAY_NAME}:host-gateway'
 
 def _extra_host_names(existing: Any) -> Set[str]:
     """``extra_hosts`` (リスト形 ``name:ip`` / ``name=ip`` と辞書形) に書かれた名前。"""
-    if isinstance(existing, Mapping):
+    if isinstance(existing, dict):
         return {str(name) for name in existing}
     names: Set[str] = set()
     if isinstance(existing, list):
