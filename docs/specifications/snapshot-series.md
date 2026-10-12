@@ -66,6 +66,7 @@
 | 積み先の判定 | 同 `auto_snapshot_target` | 積み先の世代の名前か、新しい世代を作るべきこと（`None`）を返し、理由をログへ出す |
 | 最小間隔の元 | 同 `last_snapshot_time(volumes=None)` | 渡された組の系列の世代のアーカイブの mtime の最大を返す |
 | 保持 | 同 `rotate(keep, max_total)` と、副作用の無い `_rotation_plan` | 削除候補を決め、場所を検証してから消す |
+| 世代の作り直し | 同 `_create_full` / `_install_rebuilt_full` / `_discard_rebuild_temps` | 前のファイルを持つ世代へ full を作るとき、仮の名前へ控えてから決まった順で入れ替える（下の「世代の作り直し」） |
 | 世代の場所の検証 | 同 `_safe_snap_dir` | 名前・シンボリックリンク・`backups/` の外を `SnapshotError` で止める |
 | 自動スナップショット | `lib/devbase/commands/container.py` の `_auto_snapshot` / `_should_skip_by_interval` | 最小間隔を系列で判定し、判定の結果に従って `create` と `rotate()` を呼ぶ |
 | 自動ローテーション | 同 `cmd_down` | `mgr.rotate()` を既定の引数で呼ぶ |
