@@ -994,16 +994,30 @@
     {
       "term": "言語サーバ",
       "context": "image-lineage",
-      "meaning": "エディタや AI の道具へ、定義・参照・診断を Language Server Protocol で返すプログラム。#236 では pyright-langserver・typescript-language-server・intelephense を派生イメージに置く",
+      "meaning": "エディタや AI の道具へ、定義・参照・診断を Language Server Protocol で返すプログラム。#236 では pyright-langserver・typescript-language-server・intelephense を general・php・php85 の派生イメージの言語サーバの置き場に置く",
       "source": "",
-      "pending_source": "issues/issue-236-requirements.md"
+      "pending_source": "issues/issue-236-design.md"
     },
     {
       "term": "uv のキャッシュ",
       "context": "image-lineage",
-      "meaning": "uv / uvx が取得したパッケージと作った環境を置く場所。置き場は UV_CACHE_DIR、既定は ~/.cache/uv で、base の片付けが消す",
+      "meaning": "uv / uvx が取得したパッケージと作った環境を置く場所。置き場は UV_CACHE_DIR、既定は ~/.cache/uv。base の片付けが消し、コンテナの層にあるため作り直しでも消える。#236 では派生イメージで温めない",
       "source": "",
-      "pending_source": "issues/issue-236-requirements.md"
+      "pending_source": "issues/issue-236-design.md"
+    },
+    {
+      "term": "言語サーバの置き場",
+      "context": "image-lineage",
+      "meaning": "派生イメージが言語サーバとその依存（typescript 5 を含む）を入れる /opt/language-servers。持ち主は root で利用者は書けない。PATH に出すのは bin の 3 つのコマンドだけ",
+      "source": "",
+      "pending_source": "issues/issue-236-design.md"
+    },
+    {
+      "term": "言語サーバの組",
+      "context": "image-lineage",
+      "meaning": "言語サーバの置き場へ入れる npm のパッケージの名前と厳密な版の 4 組。対象の派生イメージのすべてで同じ",
+      "source": "",
+      "pending_source": "issues/issue-236-design.md"
     }
   ]
 }
