@@ -10,6 +10,16 @@
   `project` / `container` の配下（`logs`・`profile up|down|list` を含む）、`env exec`・`env token` で、`-` を打って補完すると
   `--context` が候補に出ます（`devbase up web -<TAB>` のようにプロジェクト名の後でも出ます）。値（docker context の名前）は補完しません。
   `-` で始まらない語の候補は変わりません。
+- **スナップショットが、作り直せる一時ファイル・ログ・取り直せる取得物を控えないようにしました（#368）。**
+  既定で `.codex/logs_2.sqlite`（`-wal`・`-shm` を含む）・`.codex/.tmp`・`.codex/cache`・`.claude/plugins/cache`・
+  `.claude/plugins/marketplaces`・`.serena/logs`・`.gemini/tmp/*/logs.json`・`.gemini/tmp/*/logs` を、フル・差分・
+  復元前バックアップから外します。会話の記録（`.gemini/tmp/<プロジェクト>/chats/` を含む）・入れたプラグインの一覧と
+  データ・`.serena/language_servers` はこれまでどおり控えます。外したパスは復元後のボリュームに無く、各 CLI が作り直します。
+  `backups/exclude.yml` の `exclude` にボリュームの中の相対のパスを並べると、除外を足せます。
+  世代の `meta.yml` に作ったときの除外の一覧（`exclude`）を残し、今と違う除外の一覧の世代へは差分を積みません。
+  **更新後の最初の `devbase up` の自動スナップショットは、系列ごとに新しい世代（フル）を作ります。**
+  除外の一覧が違う世代を `devbase snapshot create --name` で指定すると、差分を作らずに終了コード 1 で止まります。
+  既存の世代はそのまま一覧・復元できます。
 
 ### Fixed
 - **プロジェクトの `env` に `DEV_SERVICE_NAME=` と空で書いたとき、開発サービス名を `dev` として扱うようにしました（#425）。**
