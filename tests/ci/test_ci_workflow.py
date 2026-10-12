@@ -139,3 +139,22 @@ def test_aggregate_passes_only_on_success(result: str, passes: bool):
         text=True,
     )
     assert (proc.returncode == 0) is passes, proc.stdout + proc.stderr
+
+
+def _pytest_job() -> dict:
+    return _workflow()["jobs"]["pytest"]
+
+
+def test_pytest_job_requires_zsh():
+    """I9: pytest のジョブは zsh を必須とする印を立てる（無ければ zsh の補完の実行テストが飛ぶ）。"""
+    env = _pytest_job().get("env") or {}
+    assert str(env.get("DEVBASE_TEST_REQUIRE_ZSH")) == "1", f"pytest のジョブの env に印が無い: {env}"
+
+
+def test_pytest_job_installs_zsh_before_pytest():
+    """I9: pytest を走らせる前に zsh を入れる手順がある。"""
+    runs = [str(step.get("run", "")) for step in _pytest_job()["steps"]]
+    install = next((i for i, run in enumerate(runs) if re.search(r"apt-get install\b.*\bzsh\b", run)), None)
+    test = next((i for i, run in enumerate(runs) if "pytest" in run), None)
+    assert install is not None, "pytest のジョブに zsh を入れる手順が無い"
+    assert test is not None and install < test, "zsh を入れる手順が pytest より後にある"

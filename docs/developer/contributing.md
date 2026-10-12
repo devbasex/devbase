@@ -269,6 +269,11 @@ tmux のサーバー・環境変数を共有しない前提で書く。
 `bin/*`・`install.sh`・`containers/base/` のシェルスクリプトの ShellCheck・`uv sync --locked` の後の `pytest tests/`
 （Python 3.10 / 3.13）を実行する。CI に `DEVBASE_ROOT` と Docker は無いため、テストは
 自前の一時ディレクトリを `DEVBASE_ROOT` に向け、実機を要するものは理由を添えて skip する。
+
+pytest のジョブは、pytest の前に zsh を apt で入れ、`DEVBASE_TEST_REQUIRE_ZSH=1` を立てる。zsh の補完の
+実行テスト（`tests/cli/test_zsh_completion_run.py`）は zsh を起動して `etc/_devbase` が出す候補を比べ、CI では
+zsh か `zsh/zpty` が無ければ落ちる。手元で zsh か `zsh/zpty` が無ければ、欠けたものを警告に出して飛ばす
+（[zsh の補完の実行テスト](../specifications/cli-argument-resolution.md#zsh-の補完の実行テスト)）。
 `main` 宛ての Pull Request では、あわせて CHANGELOG の検査（`CHANGELOG check`）が走る
 （[CHANGELOG の更新](#changelog-の更新)）。
 すべてのトリガーで、固有の語の検査（`Proper term check`）も走る（[固有の語の検査](#固有の語の検査)）。
