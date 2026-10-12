@@ -90,6 +90,14 @@ def test_an_existing_host_line_is_not_duplicated(project, extra_hosts):
     assert _env(services['dev-1'])['BAO_ADDR'] == 'http://host.docker.internal:8200'
 
 
+def test_unknown_extra_hosts_shape_is_left_untouched(project):
+    dev = {'image': 'alpine', 'extra_hosts': 'db.local:10.0.0.5'}
+
+    services = _generate(project, dev, scale=1, host_gateway_environment=GATEWAY)
+
+    assert services['dev-1']['extra_hosts'] == 'db.local:10.0.0.5'
+
+
 def test_host_network_dev_service_keeps_the_loopback_address(project):
     dev = {'image': 'alpine', 'network_mode': 'host'}
 
