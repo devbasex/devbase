@@ -64,6 +64,11 @@ def normalize(value) -> str:
     return '/'.join(parts)
 
 
+def canonical(patterns) -> tuple:
+    """除外の一覧を比べられる形 (重複を除いて並べ替えたタプル) にする。"""
+    return tuple(sorted(set(patterns)))
+
+
 def _read_exclude_values(path: Path) -> list:
     """設定ファイルの ``exclude`` の値を正規化せずに返す。形が違えば ``ValueError``。"""
     with open(path, encoding='utf-8') as f:
@@ -110,7 +115,7 @@ def resolve_excludes(backups_dir: Path) -> tuple:
         設定ファイルが無いときは読めたとみなす。
     """
     user, readable = _load_user_excludes(backups_dir)
-    return tuple(sorted(set(DEFAULT_EXCLUDES) | set(user))), readable
+    return canonical(DEFAULT_EXCLUDES + tuple(user)), readable
 
 
 def tar_exclude_args(excludes, members) -> str:

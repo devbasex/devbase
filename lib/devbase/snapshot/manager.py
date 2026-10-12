@@ -12,7 +12,7 @@ import yaml
 
 from devbase.errors import DevbaseError, SnapshotCommandError, SnapshotError
 from devbase.log import get_logger
-from devbase.snapshot.exclude import resolve_excludes, tar_exclude_args
+from devbase.snapshot.exclude import canonical, resolve_excludes, tar_exclude_args
 from devbase.utils.names import is_single_segment_name
 from devbase.volume.manager import (
     HOME_UBUNTU_VOLUME,
@@ -254,7 +254,7 @@ class SnapshotManager:
             return None
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             return None
-        return tuple(sorted(set(value)))
+        return canonical(value)
 
     def _excludes_differ(self, snap_dir: Path) -> bool:
         """世代の除外の記録が今の一覧と違うか。
@@ -266,7 +266,7 @@ class SnapshotManager:
             return True
         if not self.exclude_config_readable:
             return False
-        return set(recorded) != set(self.excludes)
+        return recorded != self.excludes
 
     def _excludes_for(self, snap_dir: Path, volumes: dict) -> tuple:
         """控えに使う除外の一覧を決める。
