@@ -31,9 +31,11 @@ from devbase.snapshot.manager import (
     INCR_ARCHIVE_TMP,
     SNAR_FILE,
     SNAR_FILE_TMP,
+    SNAR_PENDING_GLOB,
     SnapshotManager,
     incr_archive_name,
     is_archive_file,
+    snar_pending_name,
 )
 
 from .test_backup_real_tar import LocalTarManager, _has_gnu_tar, _members
@@ -187,8 +189,8 @@ def test_failed_incremental_rename_leaves_the_generation_as_before(tmp_path, mon
     assert _state(tmp_path) == state_before
 
 
-def test_failed_snar_rename_leaves_the_new_incremental_and_the_old_snar(tmp_path, monkeypatch):
-    """(b): snar の改名で止まると、新しい差分が置かれ snar は打つ前のまま。"""
+def test_failed_snar_rename_leaves_the_new_incremental_and_its_snar(tmp_path, monkeypatch):
+    """(b): snar の改名で止まると、新しい差分が置かれ snar は打つ前のまま。組の snar が残る。"""
     mgr = _with_incrementals(tmp_path, 1)
     snap_dir = _snap_dir(tmp_path)
     before = _snapshot(snap_dir)
@@ -198,13 +200,96 @@ def test_failed_snar_rename_leaves_the_new_incremental_and_the_old_snar(tmp_path
         mgr.create(name="g")
 
     after = _snapshot(snap_dir)
-    assert set(after) == set(before) | {incr_archive_name(2)}
+    added = {incr_archive_name(2), snar_pending_name(2)}
+    assert set(after) == set(before) | added
     assert after[incr_archive_name(2)] == f"archive-{mgr.runs}".encode()
-    assert {k: v for k, v in after.items() if k != incr_archive_name(2)} == before
+    assert after[snar_pending_name(2)] == f"snar-{mgr.runs}".encode()
+    assert {k: v for k, v in after.items() if k not in added} == before
 
 
 def test_next_incremental_after_a_stop_gets_the_next_number(tmp_path, monkeypatch):
-    """(b) の世代へ次の差分を作ると、番号は重ならず snar が進む (受け入れ条件 5 のファイルの側)。"""
+    """(b) の世代へ次の差分を作ると、組の snar を置いてから控え、番号は重ならない (受け入れ条件 5)。"""
+    mgr = _with_incrementals(tmp_path, 1)
+    snap_dir = _snap_dir(tmp_path)
+    with monkeypatch.context() as m:
+        _fail_replace_to(m, SNAR_FILE)
+        with pytest.raises(SnapshotError):
+            mgr.create(name="g")
+    stopped_run = mgr.runs
+
+    seen = []
+    real_copy = shutil.copyfile
+
+    def copy(src, dst):
+        seen.append(Path(src).read_text())
+        return real_copy(src, dst)
+
+    monkeypatch.setattr(manager_mod.shutil, "copyfile", copy)
+    mgr.create(name="g")
+    # 次の控えは置き終えなかった差分の snar から始まる (古い snar から重ねて控えない)
+    assert seen == [f"snar-{stopped_run}"]
+    assert sorted(p.name for p in snap_dir.glob(INCR_ARCHIVE_GLOB)) == [
+        incr_archive_name(1), incr_archive_name(2), incr_archive_name(3)]
+    assert (snap_dir / incr_archive_name(3)).read_text() == f"archive-{mgr.runs}"
+    assert (snap_dir / SNAR_FILE).read_text() == f"snar-{mgr.runs}"
+    assert not (snap_dir / INCR_ARCHIVE_TMP).exists()
+    assert not (snap_dir / SNAR_FILE_TMP).exists()
+    assert not list(snap_dir.glob(SNAR_PENDING_GLOB))
+
+
+def test_failed_incremental_rename_leaves_no_pending_snar(tmp_path, monkeypatch):
+    """差分の改名で止まると組の snar も消え、次の差分は打つ前の snar から控える。"""
+    mgr = _with_incrementals(tmp_path, 1)
+    snap_dir = _snap_dir(tmp_path)
+    snar_before = (snap_dir / SNAR_FILE).read_text()
+    with monkeypatch.context() as m:
+        _fail_replace_to(m, incr_archive_name(2))
+        with pytest.raises(SnapshotError):
+            mgr.create(name="g")
+    assert not list(snap_dir.glob(SNAR_PENDING_GLOB))
+    assert (snap_dir / SNAR_FILE).read_text() == snar_before
+
+
+def test_pending_snar_without_its_incremental_is_discarded(tmp_path, monkeypatch):
+    """組の差分が置かれていない組の snar は使わずに消す。"""
+    mgr = _with_incrementals(tmp_path, 1)
+    snap_dir = _snap_dir(tmp_path)
+    snar_before = (snap_dir / SNAR_FILE).read_text()
+    (snap_dir / snar_pending_name(2)).write_text("stale")
+
+    seen = []
+    real_copy = shutil.copyfile
+
+    def copy(src, dst):
+        seen.append(Path(src).read_text())
+        return real_copy(src, dst)
+
+    monkeypatch.setattr(manager_mod.shutil, "copyfile", copy)
+    mgr.create(name="g")
+    assert seen == [snar_before]
+    assert not list(snap_dir.glob(SNAR_PENDING_GLOB))
+
+
+def test_pending_snar_that_cannot_be_placed_stops_the_incremental(tmp_path, monkeypatch):
+    """組の snar を置けなければ、古い snar から次の差分を作らずに止める。"""
+    mgr = _with_incrementals(tmp_path, 1)
+    snap_dir = _snap_dir(tmp_path)
+    with monkeypatch.context() as m:
+        _fail_replace_to(m, SNAR_FILE)
+        with pytest.raises(SnapshotError):
+            mgr.create(name="g")
+    before = _snapshot(snap_dir)
+    runs = mgr.runs
+
+    _fail_replace_to(monkeypatch, SNAR_FILE)
+    with pytest.raises(SnapshotError, match=snar_pending_name(2)):
+        mgr.create(name="g")
+    assert mgr.runs == runs
+    assert _snapshot(snap_dir) == before
+
+
+def test_rebuild_discards_the_pending_snar(tmp_path, monkeypatch):
+    """作り直しは置き終えなかった差分の組の snar も消す。"""
     mgr = _with_incrementals(tmp_path, 1)
     snap_dir = _snap_dir(tmp_path)
     with monkeypatch.context() as m:
@@ -212,13 +297,9 @@ def test_next_incremental_after_a_stop_gets_the_next_number(tmp_path, monkeypatc
         with pytest.raises(SnapshotError):
             mgr.create(name="g")
 
-    mgr.create(name="g")
-    assert sorted(p.name for p in snap_dir.glob(INCR_ARCHIVE_GLOB)) == [
-        incr_archive_name(1), incr_archive_name(2), incr_archive_name(3)]
-    assert (snap_dir / incr_archive_name(3)).read_text() == f"archive-{mgr.runs}"
-    assert (snap_dir / SNAR_FILE).read_text() == f"snar-{mgr.runs}"
-    assert not (snap_dir / INCR_ARCHIVE_TMP).exists()
-    assert not (snap_dir / SNAR_FILE_TMP).exists()
+    mgr.create(name="g", full=True)
+    assert not list(snap_dir.glob(SNAR_PENDING_GLOB))
+    assert not list(snap_dir.glob(INCR_ARCHIVE_GLOB))
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +307,7 @@ def test_next_incremental_after_a_stop_gets_the_next_number(tmp_path, monkeypatc
 # ---------------------------------------------------------------------------
 
 def test_temp_names_are_not_archives(tmp_path):
-    for tmp in (INCR_ARCHIVE_TMP, SNAR_FILE_TMP):
+    for tmp in (INCR_ARCHIVE_TMP, SNAR_FILE_TMP, snar_pending_name(2)):
         assert not is_archive_file(tmp)
         (tmp_path / tmp).write_text("stale")
     assert not list(tmp_path.glob(INCR_ARCHIVE_GLOB))
@@ -439,6 +520,30 @@ def test_restore_after_a_stop_between_renames_has_the_latest_tree(tmp_path, monk
 
     mgr.restore("g")
     assert _tree(tmp_path / "target") == _tree(tmp_path / "source")
+
+
+@real_tar
+def test_restore_after_a_stop_keeps_a_twice_renamed_directory(tmp_path, monkeypatch):
+    """(b) の差分でディレクトリを A→B と改名し、次の差分で B→C と改名しても、復元は C を持つ。
+
+    古い snar から次の差分を控えると、2 本目が A→C の改名を持ち、A の無い復元で失敗して C が欠ける。
+    """
+    mgr, ai = _real_setup(tmp_path)
+    (ai / "A").mkdir()
+    (ai / "A" / "file").write_text("data")
+    mgr.create(name="g")
+    (ai / "A").rename(ai / "B")
+    with monkeypatch.context() as m:
+        _fail_replace_to(m, SNAR_FILE)
+        with pytest.raises(SnapshotError):
+            mgr.create(name="g")
+
+    (ai / "B").rename(ai / "C")
+    mgr.create(name="g")
+
+    mgr.restore("g")
+    assert _tree(tmp_path / "target") == _tree(tmp_path / "source")
+    assert (tmp_path / "target" / "ai" / "C" / "file").read_text() == "data"
 
 
 # ---------------------------------------------------------------------------
