@@ -990,6 +990,20 @@
       "context": "secret",
       "meaning": "利用者の OpenBao サーバで、マウント・AppRole・ポリシー・entity を作る人。個人の形では利用者本人",
       "source": "docs/specifications/secret-backend.md"
+    },
+    {
+      "term": "言語サーバ",
+      "context": "image-lineage",
+      "meaning": "エディタや AI の道具へ、定義・参照・診断を Language Server Protocol で返すプログラム。#236 では pyright-langserver・typescript-language-server・intelephense を派生イメージに置く",
+      "source": "",
+      "pending_source": "issues/issue-236-requirements.md"
+    },
+    {
+      "term": "uv のキャッシュ",
+      "context": "image-lineage",
+      "meaning": "uv / uvx が取得したパッケージと作った環境を置く場所。置き場は UV_CACHE_DIR、既定は ~/.cache/uv で、base の片付けが消す",
+      "source": "",
+      "pending_source": "issues/issue-236-requirements.md"
     }
   ]
 }
