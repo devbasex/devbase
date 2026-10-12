@@ -457,13 +457,17 @@ def _in_volume(volume: str, script: str) -> subprocess.CompletedProcess:
 
 
 def _swap_directories(volume: str, generation: str) -> None:
-    """ディレクトリを総入れ替えして inode を再利用させる。"""
+    """ディレクトリを総入れ替えして inode を再利用させる。
+
+    入れ替える場所は既定の除外 (``.claude/plugins/cache`` など) の外に置く。除外の中だと
+    控えに入らず、入れ替えた中身の復元を確かめられない (#368)。
+    """
     _in_volume(
         volume,
-        'rm -rf /work/.claude/plugins/cache; '
-        'mkdir -p /work/.claude/plugins/cache; '
+        'rm -rf /work/data/cache; '
+        'mkdir -p /work/data/cache; '
         f'for i in $(seq 1 40); do '
-        f'  d=/work/.claude/plugins/cache/{generation}$i/unknown/commands; '
+        f'  d=/work/data/cache/{generation}$i/unknown/commands; '
         f'  mkdir -p $d; echo {generation}$i > $d/file.txt; '
         f'done; '
         f'echo {generation} > /work/marker.txt')
