@@ -20,7 +20,7 @@ from devbase.errors import SnapshotError
 from devbase.snapshot.exclude import DEFAULT_EXCLUDES, USER_CONFIG
 from devbase.snapshot.manager import SNAR_FILE, SnapshotManager
 
-from .test_manager_series import write_state
+from .test_manager_series import vols, write_state
 
 DEFAULTS = sorted(DEFAULT_EXCLUDES)
 OTHER = sorted(set(DEFAULT_EXCLUDES) | {"recorded/only"})
@@ -180,6 +180,48 @@ def test_named_incremental_into_different_excludes_stops(tmp_path, recorded, wit
 
     assert mgr.calls == []
     assert {p.name: p.read_bytes() for p in (backups / "A").iterdir()} == before
+
+
+# ---------------------------------------------------------------------------
+# 積めない理由が重なるとき (現状固定): 対象ボリューム → 控えの起点 → 除外の一覧の順に
+# 最初の 1 件だけを理由にする。自動の積み先と名前を指定した差分で同じ順
+# ---------------------------------------------------------------------------
+
+def _break_generation(backups, name, *, volumes: bool) -> None:
+    """除外の記録を今と違えたうえで、控えの起点を古い形にし、``volumes`` なら対象ボリュームも違える。"""
+    path = backups / name / "meta.yml"
+    meta = yaml.safe_load(path.read_text())
+    meta["exclude"] = OTHER
+    del meta["archive_root"]
+    if volumes:
+        meta["volumes"] = vols("other")
+    path.write_text(yaml.safe_dump(meta))
+
+
+@pytest.mark.parametrize("volumes, reason", [
+    (True, "世代 A の meta.yml の対象ボリューム (devbase_home_ubuntu, devbase_home_other) が"
+           " グループ acme と一致しないため、新しい世代を作成します"),
+    (False, "世代 A は控えの起点が古い形 (/source) のため、新しい世代を作成します"),
+])
+def test_auto_target_reports_only_the_first_blocking_reason(tmp_path, caplog, volumes, reason):
+    backups = write_state(tmp_path, [("A", "acme", 0)])
+    _break_generation(backups, "A", volumes=volumes)
+    with caplog.at_level(logging.INFO, logger="devbase"):
+        assert RecordingManager(tmp_path).auto_snapshot_target() is None
+    assert _info(caplog) == [reason]
+
+
+@pytest.mark.parametrize("volumes, reason", [
+    (True, "別のボリューム構成"),
+    (False, "控えの起点が古い形"),
+])
+def test_named_incremental_stops_on_the_first_blocking_reason(tmp_path, volumes, reason):
+    backups = write_state(tmp_path, [("A", "acme", 0)])
+    _break_generation(backups, "A", volumes=volumes)
+    mgr = RecordingManager(tmp_path)
+    with pytest.raises(SnapshotError, match=reason):
+        mgr.create(name="A")
+    assert mgr.calls == []
 
 
 def test_cli_named_incremental_into_different_excludes_exits_1(tmp_path, caplog):
