@@ -69,6 +69,7 @@
 | I6 | 世代 | 既定の除外は常に効く。利用者の除外の設定は足すだけで、既定の除外を外せない | — （設定に「外す」書き方を持たない） |
 | I7 | 世代 | 既定の除外は、会話の記録・プラグインの状態のファイル・`.serena/language_servers` に当たらない | — （既定の一覧を変えたときにテストで落ちる） |
 | I8 | 世代 | 復元は除外の一覧を読まない。除外を持たない世代も持つ世代も同じ手順で戻す | — |
+| I9 | 世代 | 利用者の除外の設定が読めない間は、除外の一覧の違いを理由に新しい世代を作らない。`exclude` の記録を持つ世代へは、その記録の一覧で差分を積む（決定 4） | — （読めない設定で I1 の比較を飛ばし、積み先の記録を使う。記録の無い世代は I3 のとおり新しい世代になり、既定の除外だけで控える） |
 
 ### ドメインイベント
 
@@ -104,13 +105,13 @@
 
 | 要素 | 責務 |
 | --- | --- |
-| `lib/devbase/snapshot/exclude.py`（新しく作る） | 既定の除外（`DEFAULT_EXCLUDES`）を持つ。利用者の除外の設定を読み、パターンを正規化・検査し、使えない値と読めない設定を WARNING にする（`resolve_excludes`）。除外の一覧から tar の引数を組み立てる（`tar_exclude_args`）。Docker を呼ばない |
-| `SnapshotManager.excludes`（`manager.py`、足す） | 除外の一覧を初回の参照で 1 回だけ組み立てて持つ。同じ実行で警告を 2 度出さない |
+| `lib/devbase/snapshot/exclude.py`（新しく作る） | 既定の除外（`DEFAULT_EXCLUDES`）を持つ。利用者の除外の設定を読み、パターンを正規化・検査し、使えない値と読めない設定を WARNING にし、除外の一覧と設定を読めたかを返す（`resolve_excludes`）。除外の一覧から tar の引数を組み立てる（`tar_exclude_args`）。Docker を呼ばない |
+| `SnapshotManager.excludes`（`manager.py`、足す） | 除外の一覧と設定を読めたか（`exclude_config_readable`）を初回の参照で 1 回だけ組み立てて持つ。同じ実行で警告を 2 度出さない |
 | `SnapshotManager.backup_command`（変える） | 引数に除外の一覧を足し、`tar_exclude_args` の結果を `-C` とメンバーより前に置く |
 | `SnapshotManager._create_full`（変える） | 除外を適用して控え、`meta.yml` に `exclude` を書く。復元前バックアップもこの経路を通る |
-| `SnapshotManager._create_incremental`（変える） | `snapshot.snar` を触る前に、世代の `exclude` と今の一覧を比べ、違えば `SnapshotError` |
-| `SnapshotManager.auto_snapshot_target`（変える） | 順 4 の後に除外の一覧の比較を足し、違えば理由の INFO 1 行と `None` |
-| `docs/user/snapshot-guide.md`・`docs/user/cli-reference/05-snapshot.md`・`CHANGELOG.md` | 既定の除外の一覧・`backups/exclude.yml` の書き方・更新後の最初の自動スナップショットが新しい世代を作ること |
+| `SnapshotManager._create_incremental`（変える） | `snapshot.snar` を触る前に、世代の `exclude` と今の一覧を比べ、違えば `SnapshotError`。設定が読めず世代に記録があれば、比べずに記録の一覧で差分を積む（I9） |
+| `SnapshotManager.auto_snapshot_target`（変える） | 順 4 の後に除外の一覧の比較を足し、違えば理由の INFO 1 行と `None`。設定が読めず世代に記録があれば比べない（I9） |
+| `docs/user/snapshot-guide.md`・`docs/user/cli-reference/05-snapshot.md`・`CHANGELOG.md` | 既定の除外の一覧・`backups/exclude.yml` の書き方・更新後の最初の自動スナップショットが新しい世代を作ること。`snapshot-guide.md` には、`backups/exclude.yml` で除外の一覧を変えるたびに次の自動スナップショットが新しい世代を作り、系列ごとの保持数（3）を超えた最も古い世代がローテーションで消えること、読めない設定の間は今の世代の除外のまま差分を積むことを書く |
 
 変えないもの: `restore`・`_apply_incrementals`・`restore_command`・`clear_command`（I8）、`copy`（`meta.yml` ごと写すため `exclude` も写る）、`list`・`rotate`・系列の規則、`commands/snapshot.py` と CLI の引数、`devbase-snapshot` イメージ（GNU tar 1.35 の既存の機能だけを使う）。
 
@@ -152,6 +153,7 @@ tests/snapshot/
 classDiagram
     class SnapshotManager {
         +excludes: tuple~str~
+        +exclude_config_readable: bool
         +backup_command(archive, volumes, excludes)$ str
         +auto_snapshot_target(max_incrementals) str|None
         -_create_full(name, snap_dir, volumes)
@@ -162,7 +164,7 @@ classDiagram
         +DEFAULT_EXCLUDES: tuple~str~
         +USER_CONFIG: str
         +normalize(value) str
-        +resolve_excludes(backups_dir) tuple~str~
+        +resolve_excludes(backups_dir) tuple~tuple~str~, bool~
         +tar_exclude_args(excludes, members) str
     }
     class 世代のmeta {
@@ -175,7 +177,7 @@ classDiagram
 ```
 
 - `normalize(value)` は使えない値で `ValueError`（理由つき）を投げる純粋な関数。WARNING は `resolve_excludes` が出す
-- `resolve_excludes` は既定の除外と利用者の除外を合わせ、重複を除いて並べ替えたタプルを返す。比較は並びに依らない（I1）
+- `resolve_excludes` は既定の除外と利用者の除外を合わせ、重複を除いて並べ替えたタプルと、設定を読めたか（ファイルが無いときは `True`、下の表の「読めない」の行に当たるときだけ `False`）を返す。比較は並びに依らない（I1）
 - `_recorded_excludes` は `meta.yml` の `exclude` を読み、無ければ `None`（I3）。リストでない・文字列でない要素を含むときも `None`（違うものとして扱う）
 
 ## データ構造
@@ -214,7 +216,7 @@ exclude:
 | 置き場 | `$DEVBASE_ROOT/backups/exclude.yml`。devbase は作らず書かない |
 | 形 | 最上位が辞書で、`exclude` が文字列のリスト |
 | ファイルが無い | 既定の除外だけ。警告を出さない（受け入れ条件 12） |
-| YAML として読めない・最上位が辞書でない・`exclude` がリストでない | WARNING `backups/exclude.yml を読めないため、既定の除外だけで控えます: {理由}` を 1 行。既定の除外だけで続ける |
+| YAML として読めない・最上位が辞書でない・`exclude` がリストでない | WARNING `backups/exclude.yml を読めないため、今の世代の除外の一覧のまま控えます（新しい世代は既定の除外だけで作ります）: {理由}` を 1 行。設定を読めなかったことを返し、控えは続ける。記録を持つ世代へ積む差分はその記録の一覧で作り、新しい世代のフルは既定の除外だけで作る（I9） |
 | `exclude` のキーが無い・`null`・空のリスト | 既定の除外だけ。警告を出さない |
 | 要素が文字列でない・空・使えない値 | WARNING `backups/exclude.yml の除外 {値!r} を採りません: {理由}` を要素ごとに 1 行。残りで続ける（受け入れ条件 11） |
 
@@ -253,7 +255,7 @@ CLI の引数・終了コードの体系は変えない。変わる約束は次�
 
 | 名前 | 入力 | 出力 | 失敗の形 | 互換性 |
 | --- | --- | --- | --- | --- |
-| `backups/exclude.yml` | 上の「利用者の除外の設定」の形 | 次に作る控えから外れる | 読めない・使えない値は WARNING で、控えは続ける（終了コードを変えない） | 新しい設定。無ければこれまでと同じく既定の除外だけ |
+| `backups/exclude.yml` | 上の「利用者の除外の設定」の形 | 次に作る控えから外れる | 読めない・使えない値は WARNING で、控えは続ける（終了コードを変えない）。読めない間は除外の違いで新しい世代を作らない（I9） | 新しい設定。無ければこれまでと同じく既定の除外だけ |
 | `devbase snapshot create --name <除外の一覧が違う世代>`（`--full` なし） | 既存の世代の名前 | — | `SnapshotError` `スナップショット '{名前}' は今と違う除外の一覧で作られています。新しい世代を作成してください (devbase snapshot create)` → 終了コード 1。アーカイブ・`snapshot.snar`・`meta.yml` は変わらない | 変更前は積めた。この変更より前の世代へ名前で積むと止まるようになる |
 | `devbase up` の自動スナップショットのログ | — | INFO `世代 {名前} は今と違う除外の一覧で作られているため、新しい世代を作成します`（`exclude` の無い世代も同じ文） | — | 更新後の最初の 1 回は系列ごとにこの行が出る |
 
@@ -274,10 +276,10 @@ CLI の引数・終了コードの体系は変えない。変わる約束は次�
 | 順 | 条件 | 結果 | ログ |
 | --- | --- | --- | --- |
 | 1〜4 | 既存どおり | 既存どおり | 既存どおり |
-| 4a（足す） | 最新の世代のディレクトリがあり、`_recorded_excludes` が `None` か `set(self.excludes)` と違う | `None` | INFO `世代 {名前} は今と違う除外の一覧で作られているため、新しい世代を作成します` |
+| 4a（足す） | 最新の世代のディレクトリがあり、`_recorded_excludes` が `None` か、`exclude_config_readable` が真で `set(self.excludes)` と違う | `None` | INFO `世代 {名前} は今と違う除外の一覧で作られているため、新しい世代を作成します` |
 | 5〜6 | 既存どおり | 既存どおり | 既存どおり |
 
-順 4 の後に置くのは、`archive_root` の古い世代は除外の記録も持たず、既存の理由の行を変えないためである。
+順 4 の後に置くのは、`archive_root` の古い世代は除外の記録も持たず、既存の理由の行を変えないためである。設定が読めないとき（`exclude_config_readable` が偽）は、記録を持つ世代を違うと判定せず、順 5 以降へ進む（I9）。設定を直した次の `up` では、直した一覧が記録と同じなら同じ世代へ積み続ける。
 
 ```mermaid
 sequenceDiagram
@@ -305,6 +307,7 @@ sequenceDiagram
 ```
 
 - 比べる順は `volumes` の照合 → `archive_root` → 除外の一覧で、`_create_incremental` も同じ順に止める。snar が無いときのフルへの切り替えは、除外の比較より後に置く（記録の違う世代へ名前で積もうとしたら、snar の有無に関わらず止める）
+- 設定が読めないときは、`_create_incremental` は記録を持つ世代と比べずに、その記録の一覧を tar の除外の引数に使う（I1 と I9 を同時に守る）。記録の無い世代へ名前で積むときは、読めない設定でも I3 のとおり `SnapshotError` で止める
 - 復元前バックアップは `_backup_before_restore` → `_create_full(name, snap_dir, volumes)` を通るため、同じ除外が効き `exclude` も書かれる。旧レイアウトの世代の復元前バックアップはメンバーが `.` なので、パターンの頭は `./` になる
 
 ## 非機能の実現方式
@@ -341,11 +344,13 @@ GNU tar の除外は既定でアンカーが無く、`--exclude=.codex/cache` �
 
 根拠: Value 2 / Value 3（MVV 版 1）
 
-### 決定 4: 使えない値や読めない設定で控えが止まらないよう、警告して既定の除外だけで続ける
+### 決定 4: 使えない値や読めない設定で控えが止まらず古い世代も消えないよう、警告して続け、読めない間は今の世代の除外の一覧のまま差分を積む
 
-除外を採らないと、控えに入るものが増えるだけで、失うものは無い。止めると `devbase up` の自動スナップショットが無くなり、利用者が設定を直すまで控えが取れない。値ごとに警告するのは、どの行を直せばよいかを示すためである。
+使えない値は、その値を採らずに残りで続ける。値ごとに警告するのは、どの行を直せばよいかを示すためである。止めると `devbase up` の自動スナップショットが無くなり、利用者が設定を直すまで控えが取れない。
 
-読めない設定で止める形は採らない。控えの無い期間を作るほうが、控えが一時的に大きくなるより戻す費用が高い。
+読めない設定を「既定の除外だけ」として比べると、除外の一覧が変わったと判定して I1 で新しいフルの世代ができ、`_auto_snapshot` の直後の `rotate()`（系列ごとに 3 世代）が最も古い世代を消す。設定を直した次の `up` でも一覧が戻ってもう 1 世代消え、編集の誤り 1 回で復元点を 2 つ失う。そこで読めない間は除外の違いを理由に新しい世代を作らず、記録を持つ世代へはその記録の一覧で差分を積む（I9）。I1（1 つの世代は同じ除外の一覧）はそのまま守られ、直した設定が前と同じなら同じ世代へ積み続ける。記録を持たない世代（この変更より前の世代）は読めるかどうかによらず I3 で新しい世代になるため、そのフルは既定の除外だけで作る。
+
+読めない設定で止める形は採らない。控えの無い期間を作るほうが、控えが一時的に大きくなるより戻す費用が高い。読めない設定を「既定の除外だけ」として比べる形も上の理由で採らない。利用者が読める設定で除外の一覧を変えたときに新しい世代ができ古い世代がローテーションで消えるのは、I1 から外せないため、`snapshot-guide.md` に書いて利用者が変える前に知れるようにする。
 
 根拠: Value 2（MVV 版 1）
 
@@ -386,7 +391,8 @@ SQLite は WAL モードで `<名前>-wal`・`<名前>-shm` を本体の横に�
 | 受け入れ条件 9 | マージ前の手動確認（下の「未確認のまま残ること」） | — |
 | 受け入れ条件 10・I8 | 既存の復元のテスト（`test_restore_incremental.py`・`test_manager_volumes.py`）を変えずに通る。`exclude` の無い世代の復元のコマンドが変更前と同じ | 復元で `exclude` を読む・無いと止める |
 | 受け入れ条件 11・I4 | 絶対パス・`..` を含む値・空・`null`・数・`?[]\` を含む値をそれぞれ書くと、値ごとに WARNING 1 行で採らず、残りの値は効く。`./a//b/` は `a/b` になる | 検査を外す。1 つの不正な値で設定全体を捨てる |
-| 受け入れ条件 11（読めない設定） | YAML として壊れた設定・最上位がリスト・`exclude` が文字列で、WARNING 1 行と既定の除外だけ | 例外で控えを止める |
+| 受け入れ条件 11（読めない設定） | YAML として壊れた設定・最上位がリスト・`exclude` が文字列で、WARNING 1 行、`resolve_excludes` の一覧は既定の除外だけで、設定を読めたかが偽 | 例外で控えを止める。読めない設定を「読めた」と返す |
+| 受け入れ条件 11（読めない設定）・I9・I1 | 最新の世代の `meta.yml` に既定の除外と違う `exclude` があり設定が読めないとき、`auto_snapshot_target` は INFO を出さずにその世代の名前を返し、`_create_incremental` の tar の除外の引数は記録の一覧で、`meta.yml` の `exclude` は変わらない。直した設定（記録と同じ一覧）の次の判定も同じ名前を返す。記録の無い世代では読めない設定でも `None` | 順 4a で読めない設定を既定の除外だけとして比べる。差分の tar に既定の除外だけを渡す。記録の無い世代を引き継ぐ |
 | 受け入れ条件 12 | `backups/exclude.yml` が無い・`exclude` が無い・空のリストで、既定の除外だけで警告が出ない | 無いときに警告を出す |
 | 受け入れ条件 13 | 実の tar で既定の除外のパスが 1 つも無い木を控えて、終了コード 0 で警告が無い | 除外の対象の有無を事前に確かめて止める |
 | 受け入れ条件 14・I2 | full の `meta.yml` の `exclude` が並べ替えた一覧で、差分を積んでも変わらない | 差分で `exclude` を上書きする。記録を書かない |
