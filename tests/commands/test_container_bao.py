@@ -4,6 +4,8 @@
   [5/6] の後に各 dev コンテナの ``~/.vault-token`` へ token を書く
 - それ以外の backend では何も足さず、``docker exec`` を呼ばない (生成する構成は変わらない)
 - token を書けなくても ``up`` は倒さない
+- ``openbao.url`` が ``http`` の loopback でローカル扱いなら、コンテナから見た接続先
+  (ホストを ``host.docker.internal`` にした値) を構成生成へ別に渡す (#295)
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ def _harness(monkeypatch, root: Path, seen: dict):
 
     def fake_generate(scale, secrets, dev_environment=None, **kw):
         seen['dev_environment'] = dict(dev_environment or {})
+        seen['generate_kwargs'] = dict(kw)
         compose = Path.cwd() / '.docker-compose.scale.yml'
         compose.write_text("services:\n  dev-1: {}\n")
         return compose
@@ -141,3 +144,67 @@ def test_push_bao_token_starts_from_the_added_instance(openbao_root, openbao, mo
 
     (names, _token), = seen['pushes']
     assert names == ['web-dev-3']
+
+
+REMOTE = docker_context.DockerTarget(context='far', source='cli', remote=True,
+                                     home='/home/far', gid=999)
+
+
+@pytest.mark.parametrize('url, expected', [
+    ('http://127.0.0.1:8200', 'http://host.docker.internal:8200'),
+    ('http://localhost:8200', 'http://host.docker.internal:8200'),
+    ('http://[::1]:8200', 'http://host.docker.internal:8200'),
+    ('http://localhost', 'http://host.docker.internal'),
+    ('https://localhost:8200', None),
+    ('https://127.0.0.1:8200', None),
+    ('https://openbao.example.com', None),
+    (None, None),
+])
+def test_container_address_rewrites_only_http_loopback(url, expected):
+    assert container.container_bao_address(url, remote=False) == expected
+
+
+@pytest.mark.parametrize('url', ['http://127.0.0.1:8200', 'http://localhost:8200',
+                                 'https://openbao.example.com'])
+def test_container_address_is_kept_for_remote_targets(url):
+    """リモート扱いでは loopback はホストの端末を指すため置き換えない"""
+    assert container.container_bao_address(url, remote=True) is None
+
+
+def test_host_gateway_kwargs_are_empty_unless_rewritten():
+    assert container._host_gateway_kwargs({}, LOCAL) == {}
+    assert container._host_gateway_kwargs(
+        {'BAO_ADDR': 'https://openbao.example.com'}, LOCAL) == {}
+    assert container._host_gateway_kwargs(
+        {'BAO_ADDR': 'http://127.0.0.1:8200'}, REMOTE) == {}
+    assert container._host_gateway_kwargs({'BAO_ADDR': 'http://127.0.0.1:8200'}, LOCAL) == {
+        'host_gateway_environment': {'BAO_ADDR': 'http://host.docker.internal:8200'}}
+
+
+def test_loopback_openbao_up_passes_the_container_address(openbao_root, openbao, monkeypatch):
+    """手元のサーバ (loopback) では、dev_environment は openbao.url のまま、
+    コンテナから見た接続先を別に渡す (ホストの devbase の URL は変えない)"""
+    seen: dict = {}
+    web = _project(openbao_root)
+    _harness(monkeypatch, openbao_root, seen)
+
+    assert _up(web, monkeypatch) == 0
+
+    assert seen['dev_environment']['BAO_ADDR'] == openbao.url
+    assert seen['generate_kwargs']['host_gateway_environment'] == {
+        'BAO_ADDR': f'http://host.docker.internal:{openbao.port}'}
+
+
+def test_age_up_passes_no_container_address(tmp_path, monkeypatch):
+    from devbase.env import agekeys
+
+    seen: dict = {}
+    monkeypatch.setenv(agekeys.KEY_FILE_ENV, str(tmp_path / 'age' / 'keys.txt'))
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    agekeys.generate_key_file()
+    web = _project(tmp_path)
+    _harness(monkeypatch, tmp_path, seen)
+
+    assert _up(web, monkeypatch) == 0
+
+    assert 'host_gateway_environment' not in seen['generate_kwargs']
