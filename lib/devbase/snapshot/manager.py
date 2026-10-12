@@ -1259,14 +1259,20 @@ class SnapshotManager:
         os.replace(tmp, snap_dir / SNAP_META_FILE)
 
     @staticmethod
-    def _discard_rebuild_temps(snap_dir: Path) -> None:
-        """作り直しの仮の名前のファイルを消す。消せなければ警告して続ける。"""
-        for tmp in (FULL_ARCHIVE_TMP, SNAR_FILE_TMP, META_FILE_TMP):
+    def _discard_temps(snap_dir: Path, names: tuple, what: str) -> None:
+        """世代の仮の名前のファイルを消す。消せなければ ``what`` を添えて警告し続ける。"""
+        for tmp in names:
             try:
                 (snap_dir / tmp).unlink(missing_ok=True)
             except OSError as e:
-                logger.warning("作り直しの仮のファイル %s を消せませんでした: %s",
-                               snap_dir / tmp, e)
+                logger.warning("%sの仮のファイル %s を消せませんでした: %s",
+                               what, snap_dir / tmp, e)
+
+    @staticmethod
+    def _discard_rebuild_temps(snap_dir: Path) -> None:
+        """作り直しの仮の名前のファイルを消す。消せなければ警告して続ける。"""
+        SnapshotManager._discard_temps(
+            snap_dir, (FULL_ARCHIVE_TMP, SNAR_FILE_TMP, META_FILE_TMP), '作り直し')
 
     @staticmethod
     def _install_incremental(snap_dir: Path, incr_name: str) -> None:
@@ -1282,12 +1288,8 @@ class SnapshotManager:
     @staticmethod
     def _discard_incremental_temps(snap_dir: Path) -> None:
         """差分の作成の仮のファイルを消す。消せなければ警告して続ける (#466 決定 6)。"""
-        for tmp in (INCR_ARCHIVE_TMP, SNAR_FILE_TMP):
-            try:
-                (snap_dir / tmp).unlink(missing_ok=True)
-            except OSError as e:
-                logger.warning("差分の作成の仮のファイル %s を消せませんでした: %s",
-                               snap_dir / tmp, e)
+        SnapshotManager._discard_temps(
+            snap_dir, (INCR_ARCHIVE_TMP, SNAR_FILE_TMP), '差分の作成')
 
     def _reject_blocked_incremental(self, name: str, snap_dir: Path) -> None:
         """世代に差分を積めない理由があれば ``SnapshotError`` で止める。"""
