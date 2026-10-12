@@ -25,7 +25,12 @@ OpenBao の置き場の並び（レイアウト）は `backend.yml` の版で選
 backend が `openbao` の端末では、dev コンテナの中の OpenBao CLI（`bao`、base イメージに同梱）が
 接続先 `BAO_ADDR` と `~/.vault-token` を受け取り、再起動せずに自分の機密を読み書きできる。
 コンテナに置く資格情報は 1 時間で切れる token だけで、切れたらホストの `devbase env token` で
-置き換える。
+置き換える。手元の loopback で待つサーバ（`http://127.0.0.1:8200` など）へも、コンテナから
+届くように接続先を置き換えて渡す（「コンテナの中の `bao`」）。
+
+OpenBao サーバは利用者が個人またはチームで立てる（セルフホスト）。devbasex は共通のサーバを
+運用しない。devbase がサーバに求める条件は「サーバに求める条件」に、サーバの用意の手順と
+ポリシーの雛形・試用の構成は [OpenBao サーバを用意する](../user/openbao-server.md) にある。
 
 ### サーバ backend に OpenBao を採る理由
 
@@ -74,6 +79,9 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | AWS の丸ごとの取り込み | `~/.aws/config` と `~/.aws/credentials` を切り出さずに 1 つの tar にして `AWS_CONFIG_BASE64` へ書くこと |
 | AWS のプロファイルの連なり | 選んだ AWS のプロファイルが動くのに要る節。`sso_session` が指す `[sso-session <名前>]` と、`source_profile` が指すプロファイル（たどれる限り） |
 
+OpenBao サーバの持ち方に関わる語（利用の形・ポリシーの雛形・試用の構成・利用者の識別子・
+コンテナから見た接続先・管理する人）は [用語集](../glossary.md) の定義に従う。
+
 ## 構成要素
 
 | 要素 | 置き場所 | 責務 |
@@ -96,7 +104,9 @@ Infisical で個人単位の機密を守るには利用者ごとに project を�
 | AWS の collector | `lib/devbase/env/collectors/aws.py` | 認証方法ごとの収集。方法 `2`・`3` の `AWS_DEFAULT_REGION` は region の出所の判定（`_collect_region`）の 1 か所で決める。方法 `3` は鍵の確認の結果を `KeyDecision`（`ACCEPTED` / `DECLINED` / `NOT_ASKED`）にして渡し、参照の region を残すか（`keep_existing`）は呼び元が渡す（`3` は残す、`2` は決め直す）。節の名前と region は `AWSConfigParser.find_profile_region` で読む |
 | GCP の collector | `lib/devbase/env/collectors/google.py` | 鍵ファイルの発見（`find_credential_files`。JSON を読まず、何も出力しない）と、その結果 `CredentialFiles`（名前 → 鍵ファイル・正規化で変わった名前・衝突で外した鍵ファイル。`lookup` で名前から鍵ファイルを引く）。正規化と衝突の警告は、取り込むと決めた名前についてだけ `_warn_for_chosen` が出す。`env sync` と控えの更新（`commands/env.py`）も同じ発見の `lookup` で鍵ファイルを引く |
 | コンテナへの token の配送 | `lib/devbase/env/container_token.py` | 受け取った token を `docker exec` の stdin で各コンテナの `~/.vault-token` へ書く。token の取得と届け先の解決は持たない |
-| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | backend を問わず、起動の先頭でグループの宣言を読み、ボリュームのグループ（プロセスの環境変数）と揃える（`_require_group_declaration`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し、起動後に起動の後の処理の段（`_run_post_start`）で後処理の対象へ token を書く。`devbase project post-start` も同じ段で token を書き直す |
+| `up` / `scale` の前処理と後処理 | `lib/devbase/commands/container.py` | backend を問わず、起動の先頭でグループの宣言を読み、ボリュームのグループ（プロセスの環境変数）と揃える（`_require_group_declaration`）。`_ensure_env_files` の子プロセスの `env init` へグループを渡す。backend が `openbao` のとき dev サービスへ `BAO_ADDR` を足し（`_bao_environment`）、コンテナから見た接続先へ置き換えるかを決める（`container_bao_address` / `_host_gateway_kwargs`）。起動後に起動の後の処理の段（`_run_post_start`）で後処理の対象へ token を書く。`devbase project post-start` も同じ段で token を書き直す |
+| スケール構成の生成 | `lib/devbase/volume/compose.py` | `generate_scaled_compose` が受けた `host_gateway_environment` を dev のインスタンスにだけ当て、`host.docker.internal:host-gateway` の行を元の `extra_hosts` の形を保って足す（`_apply_host_gateway` / `_add_host_gateway`）。`network_mode: host` の dev サービスには当てない |
+| ポリシーの雛形と試用の構成 | `docs/user/openbao/` | サーバの側で管理する人が使うファイル。`policies/` の HCL の雛形 5 つと、試用の構成 `compose.yml`。devbase は実行時に読まない |
 | base イメージ | `containers/base/Dockerfile` | OpenBao CLI `bao` を `checksums.txt` で検証して `/usr/local/bin` へ置く |
 | `env backend` コマンド | `lib/devbase/commands/env_backend.py` | `status` / `use` / `test` / `migrate` |
 | `env` コマンド | `lib/devbase/commands/env.py` | `--user` と `--group` の受け取り、`-p` とプロジェクトのグループの照合、`edit` の分岐、一覧の保存形式表示、`env token`。`env set` は `DEVBASE_ACCOUNT_GROUP` を置き場を開く前に拒む。`env sync` の同期の書き込み先（`SyncTargets`） |
@@ -942,16 +952,52 @@ token をホストのディスクへ置かない決まりを守るためであ�
 | `version: 2` | 権限はグループ単位で、ポリシーを付けていないグループの `team/<group>/` は 403 |
 | token の期限 | ログインで得る token は 1 時間で切れる（ロールの `token_ttl`）。devbase は期限の前に取り直す |
 
-ポリシーの雛形は `docs/user/openbao/policies/` にある（個人 `devbase-user.hcl` は `version: 1` / `2` 共通、
-チームは `v1/` と `v2/` の `team-read.hcl` / `team-write.hcl`）。雛形は entity に付け、ロールの
-`token_policies` は `default` だけにする。`version: 2` の雛形はグループの置き換え語 `__GROUP__` を
-グループ名に置き換えて使う。雛形はマウント `devbase` の `data/` と `metadata/` の下だけを書き、
-`sys/`・`auth/`・`identity/` の経路を含まない。devbase は 1 回の操作で対象のグループのパスだけを
-要求するため、グループ単位に絞ったサーバでも対象のグループの操作は通る。
+認証を AppRole だけにするのは、token の認証を足すと token の保存先と期限切れの扱いを持ち込むため
+である。個人の形も `version: 2` を使い、プロジェクトはアカウントグループ `personal` を宣言する
+（`group_aliases` は使わない）。形を 1 つにし、後からチームの形へ移りやすくするためである。
 
-試用の構成は `docs/user/openbao/compose.yml` で、開発モードの OpenBao をホストの `127.0.0.1:8200` に
-だけ公開して立てる。OpenBao の版はこのファイルの `image` の 1 行だけに書き、base イメージの
-`BAO_VERSION` と同じ 2.6 系に揃える。開発モードのサーバは機密を記憶にだけ置き、止めると消える。
+ポリシーの雛形は `docs/user/openbao/policies/` にある。
+
+| ファイル | 書き込むポリシーの名前（文書の手順） | 許すこと |
+| --- | --- | --- |
+| `devbase-user.hcl`（`version: 1` / `2` 共通） | `devbase-user` | `devbase/data/users/{{identity.entity.name}}/*` の作成・読み取り・更新と、`devbase/metadata/users/{{identity.entity.name}}/*` の読み取り・一覧・削除 |
+| `v1/team-read.hcl` | `devbase-team-read` | `team/global` と `team/projects/*` の読み取り |
+| `v1/team-write.hcl` | `devbase-team-write` | 同じパスの作成・読み取り・更新 |
+| `v2/team-read.hcl` | `devbase-team-read-<group>` | `team/<group>/global` と `team/<group>/projects/*` の読み取り |
+| `v2/team-write.hcl` | `devbase-team-write-<group>` | 同じパスの作成・読み取り・更新 |
+
+- 雛形はマウント `devbase` の `data/` と `metadata/` の下だけを書き、`sys/`・`auth/`・`identity/` の
+  経路を含まない。ほかのマウント名を使うときは、管理する人が `sed` で `devbase/` を置き換えてから書き込む
+- `version: 2` の雛形はグループの置き換え語 `__GROUP__` を持ち、`sed 's/__GROUP__/<group>/g'` の 1 回で
+  そのグループだけの雛形になる。OpenBao のポリシーのテンプレートは entity の属するグループをパスへ
+  列挙できず、entity の metadata にグループを持たせる形では 1 人が複数のグループに属せないためである
+- 雛形は利用者の entity の `policies` に直に付け、ロールの `token_policies` は `default` だけにする。
+  identity group は使わない。メンバーの一覧の書き直しで他の利用者の権限を巻き込まず、誰に何を許したかを
+  entity の一覧だけで読めるようにするためである。チーム共通への書き込みを許すのは、その利用者の entity に
+  書き込みの雛形を足すことである
+- 個人の雛形は本人の entity 名でパスを絞るため、entity 名と設定の `user` が違えば本人の置き場が 403 になる
+- devbase は 1 回の操作で対象のグループのパスだけを要求するため、グループ単位に絞ったサーバでも
+  対象のグループの操作は通る
+
+雛形と試用の構成を `docs/user/openbao/` に置くのは、devbase が実行時に読まず、`install.sh` の
+`git clone` で利用者の `$DEVBASE_ROOT` に届き、文書から相対リンクで開けるためである（`etc/` は devbase が
+実行時に使うファイルの置き場で、混ぜない）。雛形を書き出す副命令は持たない。副命令にできるのは
+ファイルの写しだけで、公開インタフェースと「雛形の版と devbase の版の組み合わせ」を増やすためである。
+
+試用の構成は `docs/user/openbao/compose.yml`（compose のプロジェクト名 `devbase-openbao-trial`、
+サービス名 `openbao`）で、公式イメージの開発モードの OpenBao をホストの `127.0.0.1:8200` にだけ公開して
+立てる。OpenBao の版はこのファイルの `image` の 1 行だけに書き、base イメージの `BAO_VERSION` と同じ
+2.6 系に揃える。root token を決めず、管理の操作はサーバのコンテナの中の `bao`（開発モードのサーバが
+コンテナの中の `~/.vault-token` に置く root token）で打つ。ホストに `bao` を入れず、root token を画面に
+出さずに試せるためである。開発モードのサーバは機密を記憶にだけ置き、止めると消える。
+
+端末の失効はサーバの操作で、devbase のコマンドは持たない。文書の手順は次の形をとる。
+
+- `secret_id` は発行のときに端末の名前を metadata（`terminal`）に入れ、失効は `secret-id` の一覧の
+  accessor と `secret-id-accessor/lookup` で端末を選んで `secret-id-accessor/destroy` で行う。管理する人が
+  `secret_id` の値を控えずに済み、漏れたときの範囲を広げないためである
+- `secret_id` を消しても止まるのは新しいログインだけである。その端末へ発行済みの token は、token の
+  metadata に載る `role_name` と `terminal` で選び、`auth/token/revoke-accessor` で失効させる
 
 ### `SecretStore` の持ち回り
 
@@ -1015,7 +1061,8 @@ backend が `openbao` のとき、`up` と `scale` は dev コンテナへ次を
 
 - 置き換えた値は `generate_scaled_compose` の `host_gateway_environment` で渡し、dev のインスタンスにだけ
   当てる。元の dev サービスの `extra_hosts` はリストの形と辞書の形の両方を受けて元の形で足し、
-  `host.docker.internal` の行が既にあれば足さない。`network_mode: host` の dev サービスには当てず、
+  `host.docker.internal` の行が既にあれば足さない（リストの `name=ip` の形も同じ名前として見る）。
+  リストでも辞書でもない形は触らず、行を足せなかった旨を警告する。`network_mode: host` の dev サービスには当てず、
   `openbao.url` のままにする（loopback がそのまま届き、`extra_hosts` も使えない）
 - ホストの devbase が使う URL（`openbao.url`）・URL の検査・`backend.yml` の形は変わらない。
   コンテナから見た接続先は `up` / `scale` のたびに組み直す
@@ -1271,6 +1318,24 @@ flowchart TD
 - GCP の鍵ファイルの発見はログも標準出力も出さない。`env init` が登録する鍵ファイルと、`env sync`・控えの更新が
   プロファイル名から引く鍵ファイルは、同じ発見の規則（ファイル名の昇順・衝突は先勝ち・`default` は
   `~/google_credential.json` も引く）で決まる
+- コンテナから見た接続先を置き換えるのは、`openbao.url` が `http` でホストが loopback、かつ docker の
+  接続先がローカル扱いのときだけである。スキームとポートは保ち、それ以外（`https` を含む）は
+  `openbao.url` のまま渡す。破れれば `tests/commands/test_container_bao.py` が落ちる
+- `host.docker.internal:host-gateway` の行は、置き換えたときだけ dev のインスタンスに足し、元の dev
+  サービスが `host.docker.internal` の行を持てば足さない。`network_mode: host` の dev サービスには
+  置き換えも行も当てない。破れれば `tests/volume/test_compose_host_gateway.py` が落ちる
+- コンテナから見た接続先を置き換えても、ホストの devbase が使う URL（`openbao.url`）・URL の検査・
+  `backend.yml` の形は変わらない。破れれば `tests/env/test_backend_config.py`（URL の検査）と
+  `tests/commands/test_container_bao.py`（`BAO_ADDR` は `openbao.url` を元にする）が落ちる
+- ポリシーの雛形はマウント `devbase` の `data/` と `metadata/` の下だけを書き、`sys/`・`auth/`・
+  `identity/` の経路を含まない。個人の雛形は本人の entity 名の `users/<本人>/` の下だけ、チームの読み取りの
+  雛形は読み取りだけを許し、`version: 2` の雛形は置き換えたグループの `team/<group>/` の下だけに効く。
+  破れれば `tests/docs/test_openbao_templates.py` が落ちる（サーバが実際に 403 を返すかは手動確認で見る）
+- 試用の構成の OpenBao の版は `compose.yml` の `image` の 1 行だけにあり、base イメージの
+  `BAO_VERSION` と同じ 2.6 系である。ポートはホストの loopback にだけ公開し、root token を決めない。
+  破れれば `tests/docs/test_openbao_templates.py` が落ちる
+- 雛形と文書に特定の組織の名前を書かない。破れれば固有の語の検査（`.github/scripts/proper_term_check.py`）が
+  当たる。文書の例に実の token・`secret_id`・root token の値を書かないことは、テストを持たずレビューで見る
 
 ## データ・設定
 
@@ -1428,13 +1493,18 @@ groups:
 - devbase は root token を受け取らず、AppRole の `role_id` と端末ごとの `secret_id` だけで接続する。
   試用の構成も root token を決めず、管理の操作はサーバのコンテナの中の `bao` で打つ。ポリシーの雛形は
   本人以外の個人の置き場と `sys/` の管理の経路を許さない
+- サーバの用意の文書は、例に実の token・`secret_id`・root token の値を書かず、`secret_id` をコマンド
+  引数で渡す手順を示さない。接続する端末で発行できるとき（個人の形）は、発行のコマンドの出力を
+  `--secret-id-stdin` へパイプで渡し、画面にも出さない
 - コンテナから見た接続先の置き換えは `http` の loopback に限る。`https` の URL は置き換えず、TLS の
   検証の相手を変えない
 - `scope` を SHA-256 にするのは、`role_id` とパスを平文で残さないためである
 - 個人単位の機密はパスで分け、他人のパスを読む権限が無ければサーバが 403 を返す。宛先を
   指すのは設定、渡してよいかを決めるのはサーバ（entity 名で絞るポリシー）という分担である
-- 端末ごとに `secret_id` を分けるため、1 台の失効が他の端末に及ばない。失効前に発行済みの
-  token は期限まで使えるため、期限はサーバ側で短く保つ
+- 端末ごとに `secret_id` を分けるため、1 台の失効が他の端末に及ばない。`secret_id` の失効は
+  新しいログインだけを止め、発行済みの token は期限まで使える。そのため期限はサーバ側で短く保ち
+  （1 時間）、端末を失効させるときはその端末の発行済みの token も accessor で失効させる
+  （「サーバに求める条件」）
 - `secrets/` は Git の除外対象で、`doctor` が実際に除外されることを確かめる
 - コンテナの `~/.vault-token` を読める者は、その token の期限（1 時間）まで本人として読み書き
   できる。長期の資格情報はコンテナへ置かない
@@ -1466,6 +1536,12 @@ groups:
   書き換えない。サーバの冗長化・バックアップ・監査ログ・TLS の証明書は OpenBao の文書に従う
 - 利用者は接続先 URL・`mount`・自分の識別子・`role_id`・端末ごとの `secret_id` で接続する。
   個人の形では自分で作り、チームの形と既存のサーバの形ではサーバを管理する人から受け取る
+- 試用の構成を試す前に `secrets/backend.yml` と `secrets/bootstrap.env.age` を退避し、片付けで戻す
+  （`devbase env backend use openbao` が 2 つを上書きし、既存の接続設定と資格情報を失うため）。退避が
+  無ければ `devbase env backend use auto` で設定なしへ戻し、試用の `bootstrap.env.age` と `secrets/cache/` を
+  消す。退避を戻すときは `secrets/cache/` を消さない（元の接続の控えを含み、試用の控えは scope が違うため
+  元の接続では使われない）。どちらも最後に `devbase env backend status` が試用のサーバを指していないことを
+  確かめる
 - 1 台の端末が同時に使う backend は 1 つ、扱う個人単位の機密は 1 人分である
 - 複数人の同時編集は版の不一致として後から書いた側で止まる。黙って上書きせず、読み直して
   やり直す。不達のときに書き込みを控えへ溜める経路は無い
@@ -1684,14 +1760,38 @@ groups:
   `bao kv get` / `patch`、チーム共通への書き込みの 403、`env token` での取り直しも同じ。ポリシーによる
   他人のパスと `users/` 直下の一覧の拒否、端末 1 台の `secret_id` の失効も同じ（開発モードの
   サーバでの確認結果は #166 と #295。本番のサーバでは配布後に確かめる）
-- ポリシーの雛形（`version: 1` / `2`）を OpenBao 2.6 系の `bao policy write` で書き込めること、2 人の
-  利用者で他人の個人の置き場の 403・権限の無い者のチーム共通への書き込みの 403 になること、試用の構成で
-  接続から `devbase up` とコンテナの中の `bao kv get` まで通ることは手動確認（#295）
-- コンテナから見た接続先の表の各行、`extra_hosts` のリストと辞書の形、既にある
-  `host.docker.internal` の行、`network_mode: host` は pytest（`tests/commands/test_container_bao.py`・
-  `tests/volume/test_compose_host_gateway.py`）
-- 雛形と試用の構成の形（パスの接頭辞・管理の経路を含まない・版が `BAO_VERSION` と同じ 2.6 系・ポートが
-  loopback だけ）は pytest（`tests/docs/test_openbao_templates.py`）
+- コンテナから見た接続先が、表の各行（`http` の `localhost` / `127.0.0.1` / `[::1]`、ポートの有無、
+  リモート扱い、`https` の loopback と loopback 以外）のとおりになり、置き換えないときは構成の生成へ何も
+  渡さないこと（`tests/commands/test_container_bao.py`）
+- 置き換えた値が dev のインスタンスにだけ当たり、`extra_hosts` のリストと辞書の形を保って 1 行足し、既に
+  ある `host.docker.internal` の行を重ねず、解釈できない形の `extra_hosts` は触らず、`network_mode: host` の
+  dev サービスには置き換えも行も当てないこと。置き換えないときの生成の結果が今までと同じであること（`tests/volume/test_compose_host_gateway.py`）
+- 5 つのポリシーの雛形があり、どの `path` もマウント `devbase` の `data/` か `metadata/` の下で管理の経路と
+  管理の操作を含まないこと、個人の雛形が本人の entity 名のパスだけ、読み取りの雛形が読み取りだけ、
+  `version: 2` の雛形が `__GROUP__` の置き換えで 1 つのグループの `team/<group>/` だけを指すこと。試用の
+  構成の版が `BAO_VERSION` と同じ 2.6 系で、ポートが loopback だけで、root token を決めないこと
+  （`tests/docs/test_openbao_templates.py`）
+- 次は OpenBao 2.6 系の開発モードのサーバと作業用のプロジェクトでの手動確認（#295。確かめた環境は
+  macOS の Docker Desktop）
+  - 5 つの雛形が `bao policy write` で拒まれないこと（`version: 2` は `__GROUP__` を置き換えて）
+  - `version: 2` の雛形で、チーム共通への書き込みを 1 人（`member01`）にだけ許したとき、他人の個人の
+    置き場の読み取り・`users/` 直下の一覧・`member02` のチーム共通への書き込み・ポリシーを付けていない
+    グループの `team/<group>/`・`sys/` の経路が 403 になり、本人の置き場の読み書き・`member01` の
+    チーム共通への書き込み・両者のチーム共通の読み取りが通ること。`version: 1` の雛形でも、他人の個人の
+    置き場の 403 とチーム共通への書き込みの制限が同じく効くこと
+  - 1 人の端末 1 台の `secret_id` を accessor で失効させると、その端末の `devbase env backend test` が
+    ログインの失敗で止まり、同じ利用者の別の端末では通ること
+  - 試用の構成で、文書と雛形だけを見て接続し、`DEVBASE_ACCOUNT_GROUP=personal` を宣言したプロジェクトで
+    `env set` → `env get` が書いた値を返し、`devbase up` のコンテナの環境変数にその値があり、コンテナの
+    中の `bao kv get` が本人の個人共通の置き場を読めること
+  - 試用の構成の片付けの後に `devbase env backend status` が試用のサーバを指していないこと
+- 既存のサーバの形の利用者が、`backend.yml` と `bootstrap.env.age` を変えずに、これまでと同じコマンドで
+  機密を読み書きできること。`https` の `openbao.url` で生成の結果が変わらないことは pytest（上の 2 つ）で
+  見て、実のサーバへの接続は配布後の手動確認で見る
+- Linux の Docker で、ホストの `127.0.0.1` にだけ公開したポートへコンテナから `host-gateway` で届くかは
+  確かめていない（「コンテナの中の `bao`」）
+- `docs/user/` と確定仕様に、特定の組織のサーバや運用の決まりを前提にした記述（利用者の識別子を組織の
+  メールアドレスとする説明・非公開のリポジトリへの参照）が無いことはレビューと固有の語の検査で見る
 
 ## 関連リンク
 
