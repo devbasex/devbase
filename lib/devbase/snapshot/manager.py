@@ -92,6 +92,13 @@ def is_archive_file(name: str) -> bool:
     """アーカイブ実体 (full / incr-NNN) の名前か。meta.yml・snar・.bak は含めない。"""
     return name == FULL_ARCHIVE or incr_archive_number(name) is not None
 
+
+def _dump_yaml(path: Path, data: dict) -> None:
+    """``data`` を YAML で ``path`` へ書く (メタデータ・``meta.yml`` の共通の書式)。"""
+    with open(path, 'w') as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+
+
 # GNU tar の incremental はディレクトリを (dev, ino) で追跡して rename を検出する。
 # ディレクトリが削除され作り直されると **inode 番号が再利用される**ため、tar は無関係な
 # ディレクトリを rename されたものと誤判定し、dumpdir に偽の R/T レコードを書く。
@@ -1207,8 +1214,7 @@ class SnapshotManager:
     def _replace_snap_meta(self, snap_dir: Path, meta: dict) -> None:
         """``meta.yml`` を仮の名前へ書いてから改名で置き換える (途中まで書いた形を残さない)。"""
         tmp = snap_dir / META_FILE_TMP
-        with open(tmp, 'w') as f:
-            yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
+        _dump_yaml(tmp, meta)
         os.replace(tmp, snap_dir / SNAP_META_FILE)
 
     @staticmethod
@@ -1340,8 +1346,7 @@ class SnapshotManager:
 
     def _save_metadata(self, meta: dict) -> None:
         """グローバルメタデータを保存する"""
-        with open(self._metadata_path, 'w') as f:
-            yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
+        _dump_yaml(self._metadata_path, meta)
 
     def snapshot_volumes(self, snap_dir: Path) -> dict:
         """スナップショットの対象ボリュームを、そのメタデータから解決する。
@@ -1441,6 +1446,4 @@ class SnapshotManager:
 
     def _save_snap_meta(self, snap_dir: Path, meta: dict) -> None:
         """個別スナップショットのmeta.ymlを保存する"""
-        meta_path = snap_dir / SNAP_META_FILE
-        with open(meta_path, 'w') as f:
-            yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
+        _dump_yaml(snap_dir / SNAP_META_FILE, meta)
