@@ -347,29 +347,25 @@
       "term": "除外の一覧",
       "context": "snapshot",
       "meaning": "スナップショットのアーカイブに入れないパスの一覧。既定の除外と利用者の除外を合わせたもの",
-      "source": "",
-      "pending_source": "issues/issue-368-requirements.md"
+      "source": "docs/specifications/snapshot-exclude.md"
     },
     {
       "term": "既定の除外",
       "context": "snapshot",
       "meaning": "devbase の本体が持つ除外の一覧。作り直せる一時ファイル・ログ・取り直せる取得物を挙げる",
-      "source": "",
-      "pending_source": "issues/issue-368-requirements.md"
+      "source": "docs/specifications/snapshot-exclude.md"
     },
     {
       "term": "利用者の除外",
       "context": "snapshot",
       "meaning": "利用者が backups/exclude.yml で既定の除外に足すパス",
-      "source": "",
-      "pending_source": "issues/issue-368-design.md"
+      "source": "docs/specifications/snapshot-exclude.md"
     },
     {
       "term": "除外のパターン",
       "context": "snapshot",
       "meaning": "除外の一覧の 1 項目。ボリュームの中の相対のパスで、* は 1 つの要素の中の任意の文字列に当たる。当たったパスとその下を控えない",
-      "source": "",
-      "pending_source": "issues/issue-368-design.md"
+      "source": "docs/specifications/snapshot-exclude.md"
     },
     {
       "term": "総称ファミリ",
