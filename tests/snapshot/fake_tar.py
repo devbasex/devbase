@@ -10,8 +10,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_ARCHIVE_RE = re.compile(r"-o /backup/(\S+)")
-_SNAR_RE = re.compile(r"--listed-incremental=/backup/(\S+)")
+_ARCHIVE_RE = re.compile(r"-o /backup/([^\s;]+)")
+_SNAR_RE = re.compile(r"--listed-incremental=/backup/([^\s;]+)")
 
 
 def write_backup_outputs(snap_dir: Path, command: str) -> None:

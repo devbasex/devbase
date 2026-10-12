@@ -126,7 +126,9 @@ def test_rebuild_leaves_only_the_new_full(tmp_path, caplog):
     # 前の snar を tar に渡さず、仮の名前へ控える
     [call] = mgr.calls
     assert f"--listed-incremental=/backup/{SNAR_FILE_TMP} " in call["command"]
-    assert call["command"].endswith(f"-o /backup/{FULL_ARCHIVE_TMP}")
+    assert f"-o /backup/{FULL_ARCHIVE_TMP};" in call["command"]
+    # 入れ替えの前に tar の失敗も拾う (パイプの終了コードは zstd のもの)
+    assert "PIPESTATUS" in call["command"]
 
     rebuilt = [r.getMessage() for r in caplog.records
                if r.levelno == logging.INFO and "作り直しました" in r.getMessage()]

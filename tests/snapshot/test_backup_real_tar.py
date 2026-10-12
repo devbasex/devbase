@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from devbase.errors import SnapshotCommandError, SnapshotError
 from devbase.snapshot.exclude import DEFAULT_EXCLUDES
 from devbase.snapshot.manager import (
     ARCHIVE_MOUNT,
@@ -224,8 +225,12 @@ class LocalTarManager(SnapshotManager):
         paths = {"backup": str(snap_dir), "source": str(self.source),
                  "target": str(self.target)}
         command = _MOUNT_RE.sub(lambda m: paths[m.group(1)], command)
-        return subprocess.run(["bash", "-c", command], check=True,
-                              capture_output=True, text=True)
+        try:
+            return subprocess.run(["bash", "-c", command], check=True,
+                                  capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            raise SnapshotCommandError(f"tar の操作に失敗しました: {e.stderr}",
+                                       stderr=e.stderr or "") from e
 
 
 def _rebuild_setup(tmp_path: Path) -> tuple:
@@ -272,3 +277,19 @@ def test_incremental_after_rebuild_holds_only_later_changes(tmp_path):
     mgr.create(name="g")
     snap_dir = tmp_path / "backups" / "g"
     assert _members(snap_dir / incr_archive_name(1)) == ["ai/d"]
+
+
+def test_rebuild_stops_when_tar_fails_even_if_zstd_succeeds(tmp_path):
+    """tar が読み取りで止まっても zstd は成功する。前の full と差分を消さずに止める。"""
+    mgr, ai = _rebuild_setup(tmp_path)
+    (ai / "e").write_text("e1")
+    mgr.create(name="g")
+    snap_dir = tmp_path / "backups" / "g"
+    before = {p.name: p.read_bytes() for p in snap_dir.iterdir()}
+    assert incr_archive_name(1) in before
+    shutil.rmtree(tmp_path / "source" / "group")  # tar は Cannot stat で 2 を返す
+
+    with pytest.raises(SnapshotError):
+        mgr.create(name="g", full=True)
+
+    assert {p.name: p.read_bytes() for p in snap_dir.iterdir()} == before

@@ -1029,6 +1029,20 @@ class SnapshotManager:
         )
 
     @staticmethod
+    def checked_backup_command(command: str) -> str:
+        """``backup_command`` の終了コードに tar の失敗も載せる (世代の作り直し用)。
+
+        パイプの終了コードは zstd のものなので、tar が読み取りで止まっても成功に見える。
+        作り直しはこの後で前の full と差分を消すため、tar の致命的な失敗 (2 以上) と
+        zstd の失敗のどちらでも止める。tar の 1 (読む間にファイルが変わった) は、
+        新しい世代へ直接控えるときと同じく通す。
+        """
+        return (
+            f"{command}; s=(\"${{PIPESTATUS[@]}}\"); "
+            f"[ \"${{s[0]}}\" -le 1 ] && [ \"${{s[1]}}\" -eq 0 ]"
+        )
+
+    @staticmethod
     def restore_command(archive: str) -> str:
         """アーカイブ 1 本を復元先へ展開するコマンドを組み立てる。
 
@@ -1145,7 +1159,8 @@ class SnapshotManager:
         try:
             self._run_docker_tar(
                 snap_dir, 'backup',
-                self.backup_command(FULL_ARCHIVE_TMP, volumes, excludes, snar=SNAR_FILE_TMP),
+                self.checked_backup_command(self.backup_command(
+                    FULL_ARCHIVE_TMP, volumes, excludes, snar=SNAR_FILE_TMP)),
                 volumes,
             )
         except SnapshotError:

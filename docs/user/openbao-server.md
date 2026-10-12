@@ -366,7 +366,26 @@ done
 bao_admin write "auth/approle/role/$u/secret-id-accessor/destroy" secret_id_accessor=<accessor>
 ```
 
-失効させた端末では `devbase env backend test` が「認証が拒まれました」で止まります。
+`secret_id` を消しても止まるのは新しいログインだけで、その端末へ発行済みの token（コンテナの
+`~/.vault-token`）は期限（最大 1 時間）まで読み書きできます。続けて、その端末の token も失効させます。
+token には発行に使った `secret_id` の metadata（`terminal`）とロールの名前（`role_name`）が載るため、
+その 2 つで選びます。
+
+```bash
+t=laptop01   # 失効させる端末の名前 (secret_id の metadata の terminal)
+for a in $(bao_admin list -format=json auth/token/accessors | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)))'); do
+  m=$(bao_admin write -format=json auth/token/lookup-accessor accessor="$a" \
+    | python3 -c 'import json,sys; m=json.load(sys.stdin)["data"].get("meta") or {}; print(m.get("role_name", ""), m.get("terminal", ""))')
+  if [ "$m" = "$u $t" ]; then
+    bao_admin write auth/token/revoke-accessor accessor="$a"
+  fi
+done
+```
+
+`secret_id` を失効させた端末では、`devbase env backend test` が「認証が拒まれました」で止まります。
+このコマンドは毎回 `secret_id` で新しくログインするため、確かめられるのは新しいログインが止まったこと
+だけです。発行済みの token が残っていないことは、上の手順をもう一度打って `revoke-accessor` が 1 度も
+走らないことで確かめます。
 
 利用者ごと外すときは、ロールと entity を消します（`bao_admin delete auth/approle/role/<u>` と
 `bao_admin delete identity/entity/name/<u>`）。その利用者の全端末が止まります。
