@@ -918,6 +918,12 @@
       "context": "cli",
       "meaning": "列挙の正本では [name] を取るが、補完がプロジェクト名を出さないと決めたコマンドの道と理由の組。一致テストが一覧として持つ",
       "source": "docs/specifications/cli-argument-resolution.md"
+    },
+    {
+      "term": "補完の実行テスト",
+      "context": "cli",
+      "meaning": "zsh を起動して補完のファイルを読み込み、行を打って補完が実際に出した候補を期待と比べるテスト。一致テストが内容を読んで比べるのに対し、候補そのものを見る",
+      "source": "docs/specifications/cli-argument-resolution.md"
     }
   ]
 }

@@ -31,6 +31,7 @@ bin/devbase の位置引数の解決とビルドの入口（docs/specifications/
 | 一致テスト | — | 列挙の正本を走査して得た集合と、写し（ラッパーのリスト・補完・確定仕様の表）を比べ、差があれば写しの場所と差を挙げて落ちるテスト | — | — | `docs/specifications/cli-argument-resolution.md` |
 | 写し | — | 列挙の正本から手で写した集合（ラッパーの 2 つのリスト・bash と zsh の補完・確定仕様の 2 つの表） | — | — | `docs/specifications/cli-argument-resolution.md` |
 | 補完の例外 | — | 列挙の正本では [name] を取るが、補完がプロジェクト名を出さないと決めたコマンドの道と理由の組。一致テストが一覧として持つ | — | — | `docs/specifications/cli-argument-resolution.md` |
+| 補完の実行テスト | — | zsh を起動して補完のファイルを読み込み、行を打って補完が実際に出した候補を期待と比べるテスト。一致テストが内容を読んで比べるのに対し、候補そのものを見る | — | — | `docs/specifications/cli-argument-resolution.md` |
 
 ## Compose の構成（`compose`）
 
