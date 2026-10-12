@@ -586,28 +586,25 @@ class SnapshotManager:
         """復元前バックアップ ``pre-restore-<時刻>`` を、渡された組で作る。
 
         組は復元する世代の検証済みの組 (``snapshot_volumes`` の戻り値) で、実行時の
-        グループ (``self.volumes``) は読まない。失敗しても例外を外へ出さず、警告を
-        出してこの呼び出しで作ったディレクトリを消し、``None`` を返す。
+        グループ (``self.volumes``) は読まない。名前が既にある世代と重なれば、その世代を
+        作り直さず、末尾に通し番号を付けた名前で新しい世代を作る (#473)。失敗しても例外を
+        外へ出さず、警告を出してこの呼び出しで作ったディレクトリを消し、``None`` を返す。
 
         Returns:
             作った世代の名前。失敗したら None
         """
         name = f"pre-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         snap_dir: Optional[Path] = None
-        created = False
-        logger.info("復元前に復元先のボリュームの状態をバックアップします: %s (%s)",
-                    name, ', '.join(volumes.values()))
         try:
-            snap_dir = self._safe_snap_dir(name)
-            if not snap_dir.exists():
-                snap_dir.mkdir(parents=True)
-                created = True
+            name, snap_dir = self._claim_pre_restore_dir(name)
+            logger.info("復元前に復元先のボリュームの状態をバックアップします: %s (%s)",
+                        name, ', '.join(volumes.values()))
             self._create_full(name, snap_dir, volumes)
             self._update_global_metadata(name, snap_dir)
         except Exception as e:
             logger.warning("復元前バックアップに失敗しましたが続行します: %s", e)
-            # 既にあった同名のディレクトリは前の控えなので消さない
-            if created and snap_dir is not None:
+            # 消すのはこの呼び出しで作ったディレクトリだけ。既にあった世代には触らない
+            if snap_dir is not None:
                 try:
                     shutil.rmtree(snap_dir)
                 except OSError as rm_error:
@@ -615,6 +612,31 @@ class SnapshotManager:
                                    snap_dir, rm_error)
             return None
         return name
+
+    def _claim_pre_restore_dir(self, base: str) -> tuple[str, Path]:
+        """復元前バックアップの名前を決め、その世代のディレクトリを新しく作って返す。
+
+        ``base`` が既にある世代 (ディレクトリ・リンク・``snapshot.yml`` のエントリ) と
+        重なれば ``<base>-2``・``<base>-3`` … と進める。ディレクトリは ``mkdir`` で
+        排他的に作るため、同じ秒に並んだ復元が同じ世代を取り合わない。
+        """
+        taken = {
+            snap.get('name') for snap in self._load_metadata().get('snapshots') or []
+            if isinstance(snap, dict)
+        }
+        number = 1
+        while True:
+            name = base if number == 1 else f"{base}-{number}"
+            number += 1
+            raw = self.backups_dir / name
+            if name in taken or raw.is_symlink() or raw.exists():
+                continue
+            snap_dir = self._safe_snap_dir(name)
+            try:
+                snap_dir.mkdir()
+            except FileExistsError:
+                continue
+            return name, snap_dir
 
     def _extract_archive(self, snap_dir: Path, archive: str, command: str,
                          volumes: dict, pre_restore_name: Optional[str],

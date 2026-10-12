@@ -1,7 +1,8 @@
 """世代の作り直し (#458)
 
-既にある世代へ full を作るとき (``create --name <既存> --full``・snar の無い世代への差分の指定・
-同じ秒の復元前バックアップ)、前の snar を引き継がずに仮の名前で控えてから入れ替える。
+既にある世代へ full を作るとき (``create --name <既存> --full``・snar の無い世代への差分の指定)、
+前の snar を引き継がずに仮の名前で控えてから入れ替える。
+同じ秒に重なった復元前バックアップは作り直さず、通し番号の名前で新しく作る (#473)。
 ``DEVBASE_ROOT`` を使わず ``tmp_path`` に閉じ、``_run_docker_tar`` を差し替えて Docker を起動しない。
 """
 
@@ -343,20 +344,95 @@ def test_marked_generation_is_not_restored(tmp_path, monkeypatch, stop, marked):
 
 
 # ---------------------------------------------------------------------------
-# 同じ秒の復元前バックアップ (F3)
+# 同じ秒の復元前バックアップ (#473)
 # ---------------------------------------------------------------------------
 
-def test_pre_restore_backup_rebuilds_an_existing_generation(tmp_path, monkeypatch):
+PRE_RESTORE = "pre-restore-20261012-120000"
+
+
+@pytest.fixture
+def fixed_now(monkeypatch):
     class FixedNow(datetime):
         @classmethod
         def now(cls, tz=None):
             return datetime(2026, 10, 12, 12, 0, 0)
 
     monkeypatch.setattr(manager_mod, "datetime", FixedNow)
-    mgr = FakeManager(tmp_path)
-    name = "pre-restore-20261012-120000"
-    mgr.create(name=name)
-    (_backups(tmp_path) / name / "incr-001.tar.zst").write_text("old")
 
-    assert mgr._backup_before_restore(mgr.volumes) == name
-    assert _listing(_backups(tmp_path) / name) == {FULL_ARCHIVE, SNAR_FILE, "meta.yml"}
+
+def _existing_pre_restore(root: Path, name: str = PRE_RESTORE) -> FakeManager:
+    """同じ秒の名前の世代を、full と差分 1 本で作る。full の中身は ``before`` にする。"""
+    mgr = FakeManager(root)
+    mgr.create(name=name)
+    snap_dir = _backups(root) / name
+    (snap_dir / FULL_ARCHIVE).write_text("before")
+    (snap_dir / "incr-001.tar.zst").write_text("old")
+    mgr.calls.clear()
+    return mgr
+
+
+def test_pre_restore_backup_does_not_rebuild_an_existing_generation(tmp_path, fixed_now):
+    """重なったら通し番号の名前で作り、既にある世代とそのエントリは 1 バイトも変えない。"""
+    mgr = _existing_pre_restore(tmp_path)
+    existing = _backups(tmp_path) / PRE_RESTORE
+    before_files = _snapshot(existing)
+    before_entry = [e for e in _entries(tmp_path) if e["name"] == PRE_RESTORE]
+
+    assert mgr._backup_before_restore(mgr.volumes) == f"{PRE_RESTORE}-2"
+
+    assert _snapshot(existing) == before_files
+    assert [e for e in _entries(tmp_path) if e["name"] == PRE_RESTORE] == before_entry
+    second = _backups(tmp_path) / f"{PRE_RESTORE}-2"
+    assert _listing(second) == {FULL_ARCHIVE, SNAR_FILE, "meta.yml"}
+    assert _meta(second)["type"] == "full"
+    assert f"{PRE_RESTORE}-2" in [e["name"] for e in _entries(tmp_path)]
+
+
+def test_pre_restore_backup_skips_every_taken_number(tmp_path, fixed_now):
+    """``-2`` も重なれば ``-3`` で作る。エントリだけが残る名前も重なりとして避ける。"""
+    mgr = _existing_pre_restore(tmp_path)
+    (_backups(tmp_path) / f"{PRE_RESTORE}-2").mkdir()
+    meta = yaml.safe_load((_backups(tmp_path) / "snapshot.yml").read_text())
+    meta["snapshots"].append({"name": f"{PRE_RESTORE}-3", "created_at": "2026-10-12T00:00:00"})
+    (_backups(tmp_path) / "snapshot.yml").write_text(yaml.safe_dump(meta))
+
+    assert mgr._backup_before_restore(mgr.volumes) == f"{PRE_RESTORE}-4"
+    assert _listing(_backups(tmp_path) / f"{PRE_RESTORE}-2") == set()
+
+
+def test_restoring_the_same_second_pre_restore_extracts_its_own_content(tmp_path, fixed_now):
+    """復元元が同じ秒の ``pre-restore-*`` でも、展開するのは打つ前のその世代の中身である。"""
+    mgr = _existing_pre_restore(tmp_path)
+    source = _backups(tmp_path) / PRE_RESTORE
+    seen: list = []
+    record = mgr._run_docker_tar
+
+    def run(snap_dir, mode, command, volumes=None):
+        if mode == "restore":
+            seen.append((snap_dir, (snap_dir / FULL_ARCHIVE).read_text()))
+        return record(snap_dir, mode, command, volumes)
+
+    mgr._run_docker_tar = run
+    mgr.restore(PRE_RESTORE)
+
+    assert seen
+    assert seen[0] == (source, "before")
+    assert (source / "incr-001.tar.zst").read_text() == "old"
+
+
+def test_two_restores_in_the_same_second_keep_both_backups(tmp_path, fixed_now):
+    """同じ秒に復元を 2 回打つと、復元前バックアップが 2 つ残る。"""
+    mgr = FakeManager(tmp_path)
+    mgr.create(name="g")
+
+    mgr.restore("g")
+    first = _backups(tmp_path) / PRE_RESTORE
+    (first / FULL_ARCHIVE).write_text("state-before-first")
+    first_files = _snapshot(first)
+    mgr.restore("g")
+
+    assert _snapshot(first) == first_files
+    names = [e["name"] for e in _entries(tmp_path)]
+    assert names.count(PRE_RESTORE) == 1
+    assert names.count(f"{PRE_RESTORE}-2") == 1
+    assert (_backups(tmp_path) / f"{PRE_RESTORE}-2" / FULL_ARCHIVE).is_file()
