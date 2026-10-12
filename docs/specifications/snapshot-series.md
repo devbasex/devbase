@@ -69,7 +69,7 @@
 | 保持 | 同 `rotate(keep, max_total)` と、副作用の無い `_rotation_plan` | 削除候補を決め、場所を検証してから消す |
 | 世代の作り直し | 同 `_create_full` / `_has_previous_files` / `checked_backup_command` / `_install_rebuilt_full` / `_replace_snap_meta` / `_discard_rebuild_temps`、`restore`（印の検査）。仮の名前は定数 `FULL_ARCHIVE_TMP`・`SNAR_FILE_TMP`・`META_FILE_TMP`、印は `REBUILDING_KEY` | 前のファイルを持つ世代へ full を作るとき、仮の名前へ控えてから決まった順で入れ替える。作り直しの途中の印を持つ世代の復元を止める（下の「世代の作り直し」） |
 | 世代の場所の検証 | 同 `_safe_snap_dir` | 名前・シンボリックリンク・`backups/` の外を `SnapshotError` で止める |
-| 差分の作成 | 同 `_create_incremental` / `checked_backup_command` / `_install_incremental` / `_complete_pending_incremental` / `_discard_incremental_temps`。仮の名前は定数 `INCR_ARCHIVE_TMP`・`SNAR_FILE_TMP`、組の snar は `snar_pending_name`・`SNAR_PENDING_GLOB` | 既存の世代へ差分を積むとき、世代の snar の写しと仮の名前の差分へ控え、成功してから差分 → snar の順に改名で置く。置き終えなかった組は次の差分の作成が先に揃える（下の「差分の作成」） |
+| 差分の作成 | 同 `_create_incremental` / `_reject_blocked_incremental` / `checked_backup_command` / `_install_incremental` / `_complete_pending_incremental` / `_discard_incremental_temps` / `_record_incremental`。仮のファイルの削除は作り直しと共有の `_discard_temps`。仮の名前は定数 `INCR_ARCHIVE_TMP`・`SNAR_FILE_TMP`、組の snar は `snar_pending_name`・`SNAR_PENDING_GLOB` | 既存の世代へ差分を積むとき、世代の snar の写しと仮の名前の差分へ控え、成功してから差分 → snar の順に改名で置く。置き終えなかった組は次の差分の作成が先に揃える（下の「差分の作成」） |
 | 自動スナップショット | `lib/devbase/commands/container.py` の `_auto_snapshot` / `_should_skip_by_interval` | 最小間隔を系列で判定し、判定の結果に従って `create` と `rotate()` を呼ぶ |
 | 自動ローテーション | 同 `cmd_down` | `mgr.rotate()` を既定の引数で呼ぶ |
 | 手動ローテーション | `lib/devbase/cli.py`（`--keep` / `--max-total`）、`lib/devbase/commands/snapshot.py` の `cmd_snapshot` / `_snapshot_rotate` | 引数を `rotate` へ渡す。`max_total` は `getattr(args, 'max_total', None)` で受ける |
@@ -203,6 +203,79 @@ classDiagram
 - 組の snar の名前は `incr-*.tar.zst` の glob・`is_archive_file`・`_has_previous_files` に当たらない。世代の作り直しは `snapshot.snar` と一緒に消す
 - 仮のファイルの名前は `incr-*.tar.zst` の glob・`is_archive_file`・`_has_previous_files` に当たらず、番号の決め方・最小間隔・復元の差分の列に入らない
 - 成功した差分の作成の結果（アーカイブの一覧・`snapshot.snar`・`meta.yml`・`snapshot.yml` のエントリ）は、この規則の前と同じである
+
+`_create_incremental` を呼ぶのは `create` だけで、`devbase up` の自動スナップショットは `create(name=…, full=False)` を通る。
+`create` は世代を書き終えてから `_update_global_metadata` で `snapshot.yml` を更新するため、差分の作成が例外で止まると一覧は更新されない。
+
+```mermaid
+sequenceDiagram
+    participant CR as create
+    participant CI as _create_incremental
+    participant G as backups/名前/
+    participant D as docker の tar・zstd
+    participant IN as _install_incremental
+    CR->>CI: 差分を積む(名前)
+    CI->>CI: 組・控えの起点・除外の一覧の検査（_reject_blocked_incremental。止まれば SnapshotError）
+    CI->>G: 置き終えなかった組を揃える（_complete_pending_incremental。できなければ SnapshotError）
+    CI->>G: 前の中断の仮のファイルを消す（_discard_incremental_temps）
+    alt snapshot.snar が無い
+        CI->>CR: _create_full へ切り替える（世代の作り直し）
+    end
+    CI->>G: snapshot.snar を snapshot.snar.new へ写す
+    CI->>D: checked(tar --listed-incremental=snapshot.snar.new | zstd -o incr.tar.zst.new)
+    CI->>IN: 置く(NNN)
+    IN->>G: snapshot.snar.new → snapshot.snar.pending-NNN
+    IN->>G: incr.tar.zst.new → incr-NNN.tar.zst（失敗なら組の snar を消す）
+    IN->>G: snapshot.snar.pending-NNN → snapshot.snar
+    alt 写し・控え・改名のどれかが失敗
+        CI->>G: 仮のファイルを消す（組の snar は残す）
+        CI-->>CR: SnapshotError
+    end
+    CI->>G: meta.yml を更新（_record_incremental）
+    CR->>CR: _update_global_metadata
+```
+
+差分の作成の間の世代の状態（(a)〜(c) は上の常に成り立つ条件のもの）:
+
+```mermaid
+stateDiagram-v2
+    [*] --> 打つ前: 検査を通り、組を揃え、仮のファイルを消した
+    打つ前 --> 打つ前: 写しか控えが失敗し仮のファイルを消した（a）
+    打つ前 --> 控えた: 写しと控えが成功
+    控えた --> 打つ前: snar の組の名前への改名か差分の改名が失敗し、組の snar と仮のファイルを消した（a）
+    控えた --> 差分を置いた: 差分を改名した
+    差分を置いた --> 差分を置いた: snar の改名が失敗し、組の snar が残った（b）
+    差分を置いた --> snarを進めた: 組の snar を snapshot.snar へ改名した（c）
+    snarを進めた --> [*]: meta.yml と snapshot.yml を更新
+```
+
+「打つ前」「控えた」の間、世代の本来の名前のファイルは 1 つも変わらない。描いていない遷移（「打つ前」から snar だけが進む、
+「控えた」から snar が先に進む）は起こらない。「snar を進めた」の後で `meta.yml` か `snapshot.yml` の書き込みに失敗したときの扱いは
+この規則の外である。
+
+**仮の名前へ控える理由**: tar は zstd の成否に関わらず `--listed-incremental` に渡した snar を書き換える。世代の `snapshot.snar` を渡さず
+写した仮の snar を渡せば、控えが失敗してもプロセスが止められても世代の本来の名前のファイルは変わらない。`snapshot.snar.bak` から戻す形は、
+戻す操作そのものが失敗し得て、プロセスが止められたときは走らないため採らない。
+
+**差分を先に置き、間の snar を組の名前で残す理由**: snar を先に進めると、間で止まった世代は「snar が進み新しい差分が無い」になり、
+次の差分が失敗の前の変更を欠く。差分を先に置いて止まった世代へ打つ前の snar から次の差分を控えると、置いた差分の分を重ねて含み、
+ディレクトリの改名が復元で当てられない（常に成り立つ条件の 3 つ目）。組の snar を残せば、次の差分の作成が先に組を揃えてから控えられる。
+
+**snar をホストで写す理由**: 控えのコマンドが作り直しと同じ `checked_backup_command(backup_command(…))` の形のままになり、写しの失敗が
+docker の前の `OSError` として分かれる。コンテナの中で `cp … &&` を前に付けると、`cp` の失敗が `PIPESTATUS` の判定を読みにくい経路で
+偽にする。写すのは KB の桁の snar 1 本だけである。
+
+**仮の名前を番号の無い固定の名前にする理由**: 前の中断の残りが名前 1 つを消すだけで片づき、番号が変わった後の残りを探す処理が要らない。
+状態ファイルの仮の名前は作り直しと同じ `snapshot.snar.new` を使い、どちらの経路も控えの前に消すため、互いの残りを取り違えない。
+名前を指定した `--full` の作り直しは `incr.tar.zst.new` を消さない。残っても世代のどの読み手にも当たらず、次の差分の作成が消す。
+
+**`snapshot.snar.bak` を作らない理由**: 差分の作成が失敗で snar を変えなくなり、`.bak` から戻す場面が無い。作り続けると、読む処理の無い
+ファイルが差分のたびに書き換わり、戻す手がかりと読み違える。前の devbase も `.bak` を読まないため、作らなくなっても戻した devbase で困らない。
+
+**仮のファイルを消せないときに続け、改名の失敗を `SnapshotError` に包む理由**: 仮のファイルの削除は本来の名前のファイルに触らないため、
+消せなくても世代は (a)〜(c) のどれかのままである。消せない残りは次の控えの前に消し直し、それでも消せなければ zstd が既にある出力を拒んで
+控えが失敗するため、残りが差分として使われない。`cmd_snapshot` は `SnapshotError` しか受けないため、`OSError` のまま出すと `create --name` が
+終了コード 1 でなく異常終了になる。
 
 ### 最小間隔
 
@@ -360,7 +433,7 @@ zstd は既にある `full.tar.zst` を上書きしない。仮の名前と空�
 - 控えのコマンドが失敗したら（手順 2 の定義: tar が 2 以上、または zstd が 0 以外）、仮の名前のファイルを消して `SnapshotError` を投げ直す。世代の既存のファイルは
   1 バイトも変わらず、ファイルは増えない。`snapshot.yml` も変わらない
 - 作り直しに成功した世代は、`full.tar.zst` と `snapshot.snar` が同じ 1 回の控えから作られ、`incr-*.tar.zst`・
-  `snapshot.snar.bak`・作り直しの仮の名前のファイル（`full.tar.zst.new`・`snapshot.snar.new`・`meta.yml.new`）を持たない。
+  `snapshot.snar.bak`・差分の組の snar（`snapshot.snar.pending-NNN`）・作り直しの仮の名前のファイル（`full.tar.zst.new`・`snapshot.snar.new`・`meta.yml.new`）を持たない。
   前の中断で残った差分の作成の `incr.tar.zst.new` は作り直しが消さず、次の差分の作成が消す
 - 入れ替え（手順 3）の途中で止まった世代は `snapshot.snar` を持たない。次の `create`（名前の指定・自動
   スナップショット）は snar の無い世代の経路で作り直す
@@ -401,6 +474,7 @@ zstd は既にある `full.tar.zst` を上書きしない。仮の名前と空�
 | 各世代の `meta.yml` の `exclude` | full を作ったときの除外の一覧（並べ替え済み）。差分では書き換えない。積む直前の検証（順 4a と `_create_incremental`）でだけ読む |
 | アーカイブの mtime | 最小間隔の判定 |
 | 各世代の `incr.tar.zst.new`・`snapshot.snar.new` | 差分の作成の間だけある仮のファイル。成功でも失敗でも残さず、プロセスが止められたときだけ残って次の差分の作成が控えの前に消す。アーカイブとして数えない |
+| 各世代の `snapshot.snar.pending-NNN` | 差分 `incr-NNN.tar.zst` と組の snar。差分を置く間だけあり、差分を置いた後の snar の改名で止まったときだけ残る。次の差分の作成が控えの前に `snapshot.snar` へ置くか消し、世代の作り直しが消す。アーカイブとして数えない |
 
 | 設定 | 値 |
 | --- | --- |
@@ -421,6 +495,7 @@ zstd は既にある `full.tar.zst` を上書きしない。仮の名前と空�
 | 全体の上限を満たせない | WARNING | `全体の上限 {max_total} 世代を超えていますが、各グループの最新の世代は消さないため {残り} 世代を残します` |
 | 場所が不正なエントリ | WARNING | `snapshot.yml の世代 '{名前}' は場所が不正なため、ディレクトリを消さずに一覧からだけ外します: {理由}` |
 | 世代を作り直した | INFO | `世代 {名前} を今のボリュームの全体で作り直しました（前の差分 {本数} 本を除きました）` |
+| 差分の作成が置き終えなかった組を揃えた | INFO | `前回置き終えなかった差分 {名前}/incr-NNN.tar.zst の状態ファイルを置きました`（`_complete_pending_incremental`） |
 | `snapshot rotate` で消す候補が無い | INFO | `ローテーション不要です`（`_snapshot_rotate`。消した数も外した数も 0 のときだけ） |
 | `snapshot rotate` で一覧から外しただけ | INFO | `ローテーション: 場所が不正な {数} 世代を一覧から外しました（削除した世代はありません）`（`_snapshot_rotate`） |
 | `snapshot rotate` で世代を消し、一覧からも外した | INFO | `ローテーション: 場所が不正な {数} 世代を一覧から外しました`（`_snapshot_rotate`。`rotate` の削除の INFO の後） |
@@ -445,6 +520,7 @@ zstd は既にある `full.tar.zst` を上書きしない。仮の名前と空�
 | 差分の作成の控えのコマンドが失敗（tar の終了コードが 2 以上、または zstd が 0 以外。`checked_backup_command`） | 差分の作成の仮のファイルを消して `SnapshotError`（`Dockerでのtar操作に失敗しました: {stderr}`）→ `create` は終了コード 1、`devbase up` は警告 1 行で起動を続ける。世代と `snapshot.yml` は打つ前のまま |
 | 差分の作成の snar の写し・差分の改名・snar の改名が失敗（`OSError`） | 差分の作成の仮のファイルを消して `SnapshotError`（`世代 '{名前}' に差分を作れませんでした: {理由}`）→ 同上。snar の改名で止まったときだけ新しい差分が置かれ、snar は打つ前のまま |
 | 差分の作成の仮のファイルを消せない | 警告 1 行（`差分の作成の仮のファイル {パス} を消せませんでした: {理由}`）で続ける。次の差分の作成が控えの前に消す |
+| 置き終えなかった組の snar を `snapshot.snar` へ置けない・消せない（`OSError`） | docker を呼ばずに `SnapshotError`（`世代 '{名前}' の前回の差分の状態ファイル snapshot.snar.pending-NNN を片付けられませんでした: {理由}`）→ `create` は終了コード 1、`devbase up` は警告 1 行で起動を続ける。古い snar から次の差分を作らない |
 
 ## 運用
 
@@ -580,6 +656,13 @@ CLI と TUI:
 - 実の GNU tar と zstd で、`c` を足して控えを失敗させ（tar が 2・zstd が 1 のそれぞれ）、`e` を足して次の差分を作ると、
   `incr-002.tar.zst` の中身が `ai/c` と `ai/e` の両方であること
 - 実の GNU tar と zstd で、snar の改名で止めた世代へ追加・書き換え・削除の後に次の差分を積んで復元すると、復元先が元のツリーと同じであること
+- 実の GNU tar と zstd で、snar の改名で止めた差分がディレクトリを A→B と改名し、次の差分が B→C と改名しても、復元先が C を持つこと
+- snar の改名で止めた世代へ次の差分を作ると、控えが組の snar から始まり（打つ前の snar から重ねて控えない）、番号が重ならず、
+  終わった後に仮のファイルと組の snar が残らないこと
+- 差分の改名で止めると組の snar が残らないこと。組の差分が置かれていない組の snar は使わずに消えること
+- 組の snar を `snapshot.snar` へ置けなければ、docker を呼ばずに組の名前を含む `SnapshotError` で止まり、世代が変わらないこと
+- 世代の作り直しが組の snar も消すこと。組の snar の名前が `incr-*.tar.zst` の glob・`is_archive_file`・`_has_previous_files` に当たらないこと
+- 仮のファイルを消せないときに警告 1 行で続き、控えの失敗はその失敗の `SnapshotError` のまま返ること
 
 ## 関連リンク
 
