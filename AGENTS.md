@@ -79,6 +79,7 @@ python3 .github/scripts/proper_term_check.py           # 固有の語の検査
 | `projects/*` へ `cd` してから `../../` を書く | symlink の先から解決され、devbase の外を指す | 絶対パスで書く |
 | macOS で検査が通る | CI（Linux）と `ln` などの既定の振る舞いが違う。同時実行の競合が CI でだけ出た例がある | 振る舞いが分かれるオプションは明示する（例: `ln -P`） |
 | tmux を使うテストを書く | `$TMUX` があると `TMUX_TMPDIR` は無視され、`kill-server` が実のサーバーを落とす | `env -u TMUX` で起動するか、`-S` / `-L` で別のソケットを使う |
+| 受け入れ条件や手動確認に「作業用のプロジェクトで `devbase up`」がある | 作業用のプロジェクトでも、共通のホーム（`devbase_home_ubuntu`）・グループのホーム・作業ボリュームの実物を付けて起動する。非対話の担当は P3 を聞けずにそのまま打つ（m8b で #470 の担当が打ち、利用者のボリュームを付けたコンテナが立った。痕跡は無かった） | 実装のプロンプトで担当に `devbase up` を禁じる。`up` の確認は conductor が P3 の承認を取ってから打つか、`up` を使わない確かめ方（構成の生成・`SnapshotManager` を一時のルートで組むなど）へ置き換える |
 | 社内向けの引き渡しや手順を書く | 社内のホスト名やアカウント ID が公開される | `issues/internal/` か `issues/*.internal.md`・`issues/*-handover.md` に置く（git の管理外） |
 
 ## 書き方
