@@ -344,6 +344,27 @@
       "source": "docs/specifications/snapshot-series.md"
     },
     {
+      "term": "除外の一覧",
+      "context": "snapshot",
+      "meaning": "スナップショットのアーカイブに入れないパスの一覧。既定の除外と利用者の除外を合わせたもの",
+      "source": "",
+      "pending_source": "issues/issue-368-requirements.md"
+    },
+    {
+      "term": "既定の除外",
+      "context": "snapshot",
+      "meaning": "devbase の本体が持つ除外の一覧。作り直せる一時ファイル・ログ・取り直せる取得物を挙げる",
+      "source": "",
+      "pending_source": "issues/issue-368-requirements.md"
+    },
+    {
+      "term": "利用者の除外",
+      "context": "snapshot",
+      "meaning": "利用者が設定で既定の除外に足すパス",
+      "source": "",
+      "pending_source": "issues/issue-368-requirements.md"
+    },
+    {
       "term": "総称ファミリ",
       "context": "base-image",
       "meaning": "sans-serif / sans / serif / monospace。具体の書体名ではなく様式を指す指定",
