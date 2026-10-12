@@ -58,6 +58,10 @@ META_FILE_TMP = f'{SNAP_META_FILE}.new'
 # 作り直しの途中で full と meta.yml の組が合わない間だけ meta.yml に立てる印。
 # 印のある世代は復元しない。
 REBUILDING_KEY = 'rebuilding'
+# 既存の世代へ差分を積むときの差分の仮の名前 (#466)。状態ファイルは作り直しと同じ
+# ``SNAR_FILE_TMP`` へ写して控え、成功してから差分 → 状態ファイルの順に改名で置く。
+# 番号を含めず、``is_archive_file`` と ``INCR_ARCHIVE_GLOB`` に当たらない名前にする。
+INCR_ARCHIVE_TMP = 'incr.tar.zst.new'
 
 # コンテナ内のマウント先。作成時は対象ボリュームを /source の下へ読み取り専用で、
 # 復元時は /target の下へ書き込み可で並べる。世代ディレクトリは /backup。
@@ -1030,12 +1034,12 @@ class SnapshotManager:
 
     @staticmethod
     def checked_backup_command(command: str) -> str:
-        """``backup_command`` の終了コードに tar の失敗も載せる (世代の作り直し用)。
+        """``backup_command`` の終了コードに tar の失敗も載せる (世代の作り直しと差分の作成用)。
 
         パイプの終了コードは zstd のものなので、tar が読み取りで止まっても成功に見える。
-        作り直しはこの後で前の full と差分を消すため、tar の致命的な失敗 (2 以上) と
-        zstd の失敗のどちらでも止める。tar の 1 (読む間にファイルが変わった) は、
-        新しい世代へ直接控えるときと同じく通す。
+        作り直しはこの後で前の full と差分を消し、差分の作成はこの後で差分と snar を
+        世代へ置くため、tar の致命的な失敗 (2 以上) と zstd の失敗のどちらでも止める。
+        tar の 1 (読む間にファイルが変わった) は、新しい世代へ直接控えるときと同じく通す。
         """
         return (
             f"{command}; s=(\"${{PIPESTATUS[@]}}\"); "
@@ -1242,6 +1246,27 @@ class SnapshotManager:
                 logger.warning("作り直しの仮のファイル %s を消せませんでした: %s",
                                snap_dir / tmp, e)
 
+    @staticmethod
+    def _install_incremental(snap_dir: Path, incr_name: str) -> None:
+        """仮の名前で控えた差分と snar を世代へ置く (#466 決定 2)。
+
+        差分 → snar の順に改名する。間で止まっても世代は「新しい差分が置かれ snar は
+        打つ前と同じ」になり、「snar が進み新しい差分が無い」にはならない。
+        途中の失敗は ``OSError`` のまま外へ出す。
+        """
+        os.replace(snap_dir / INCR_ARCHIVE_TMP, snap_dir / incr_name)
+        os.replace(snap_dir / SNAR_FILE_TMP, snap_dir / SNAR_FILE)
+
+    @staticmethod
+    def _discard_incremental_temps(snap_dir: Path) -> None:
+        """差分の作成の仮のファイルを消す。消せなければ警告して続ける (#466 決定 6)。"""
+        for tmp in (INCR_ARCHIVE_TMP, SNAR_FILE_TMP):
+            try:
+                (snap_dir / tmp).unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("差分の作成の仮のファイル %s を消せませんでした: %s",
+                               snap_dir / tmp, e)
+
     def _create_incremental(self, name: str, snap_dir: Path) -> None:
         """差分バックアップを作成"""
         reason, recorded = self._incremental_block_reason(snap_dir)
@@ -1274,6 +1299,9 @@ class SnapshotManager:
         # 設定を読めない間は記録の一覧で積む (記録と同じなら今の一覧と同じ)
         excludes = self._excludes_for(snap_dir, self.volumes)
 
+        # 前の中断の残りは、snar の有無の判定より前に消す (#466 決定 4)
+        self._discard_incremental_temps(snap_dir)
+
         snar_file = snap_dir / SNAR_FILE
         if not snar_file.exists():
             # snarファイルがなければフルバックアップにフォールバック
@@ -1288,12 +1316,22 @@ class SnapshotManager:
 
         logger.info("差分バックアップを作成中: %s/%s", name, incr_name)
 
-        # 差分の作成が途中で失敗しても snar を戻せるよう、先に控えを取る。
-        self._run_docker_tar(
-            snap_dir, 'backup',
-            f"cp {ARCHIVE_MOUNT}/{SNAR_FILE} {ARCHIVE_MOUNT}/{SNAR_FILE}.bak && "
-            + self.backup_command(incr_name, self.volumes, excludes)
-        )
+        # 世代の snar を tar に渡さず、写した仮の snar と仮の名前の差分へ控える。控えが
+        # 失敗しても世代の本来の名前のファイルは 1 バイトも変わらない (#466 決定 1・3)
+        try:
+            shutil.copyfile(snar_file, snap_dir / SNAR_FILE_TMP)
+            self._run_docker_tar(
+                snap_dir, 'backup',
+                self.checked_backup_command(self.backup_command(
+                    INCR_ARCHIVE_TMP, self.volumes, excludes, snar=SNAR_FILE_TMP)),
+            )
+            self._install_incremental(snap_dir, incr_name)
+        except SnapshotError:
+            self._discard_incremental_temps(snap_dir)
+            raise
+        except OSError as e:
+            self._discard_incremental_temps(snap_dir)
+            raise SnapshotError(f"世代 '{name}' に差分を作れませんでした: {e}") from e
 
         # meta.yml を更新
         snap_meta = self._load_snap_meta(snap_dir)

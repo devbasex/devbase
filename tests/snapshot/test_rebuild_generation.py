@@ -151,7 +151,8 @@ def test_incremental_after_rebuild_starts_from_one(tmp_path):
     mgr.create(name="g")
     snap_dir = _backups(tmp_path) / "g"
     assert _meta(snap_dir)["files"] == [FULL_ARCHIVE, "incr-001.tar.zst"]
-    assert f"--listed-incremental=/backup/{SNAR_FILE} " in mgr.calls[-1]["command"]
+    # 差分は世代の snar を写した仮の snar へ積む (#466)
+    assert f"--listed-incremental=/backup/{SNAR_FILE_TMP} " in mgr.calls[-1]["command"]
 
 
 # ---------------------------------------------------------------------------

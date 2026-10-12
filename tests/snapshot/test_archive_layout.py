@@ -18,8 +18,10 @@ from devbase.snapshot.manager import (
     BACKUP_ROOT,
     FULL_ARCHIVE,
     INCR_ARCHIVE_GLOB,
+    INCR_ARCHIVE_TMP,
     RESTORE_ROOT,
     SNAR_FILE,
+    SNAR_FILE_TMP,
     SnapshotManager,
     incr_archive_name,
     incr_archive_number,
@@ -153,10 +155,10 @@ def test_create_and_restore_go_through_the_helpers(tmp_path: Path):
     backup_cmds = [c["command"] for c in mgr.calls if c["mode"] == "backup"]
     assert backup_cmds[0] == SnapshotManager.backup_command(
         FULL_ARCHIVE, mgr.volumes, mgr.excludes)
-    assert backup_cmds[1].endswith(
-        SnapshotManager.backup_command(incr_archive_name(1), mgr.volumes, mgr.excludes))
-    assert backup_cmds[1].startswith(
-        f"cp {ARCHIVE_MOUNT}/{SNAR_FILE} {ARCHIVE_MOUNT}/{SNAR_FILE}.bak && ")
+    # 差分は写した仮の snar と仮の名前の差分へ控え、成功してから改名で置く (#466)
+    assert backup_cmds[1] == SnapshotManager.checked_backup_command(
+        SnapshotManager.backup_command(
+            INCR_ARCHIVE_TMP, mgr.volumes, mgr.excludes, snar=SNAR_FILE_TMP))
 
     mgr.calls.clear()
     mgr.restore("snap1")
