@@ -53,7 +53,7 @@ zstd が上書きを拒み、上の実測の形になる。直す向きと受け
 | --- | --- | --- | --- |
 | I1 | 世代 | 作り直しが成功した世代は、`full.tar.zst` と `snapshot.snar` が同じ 1 回の控えから作られ、`incr-*.tar.zst` と `snapshot.snar.bak` を持たない | 成功として返さない（I3） |
 | I2 | 世代 | 作り直しの控えのコマンドが失敗したら、世代の既存のファイルはバイト列が打つ前と同じで、ファイルが増えない | `SnapshotError`。仮の名前のファイルを消してから返す |
-| I3 | 世代 | 控えに成功した後、前の差分を除く・入れ替えるのに失敗したら `SnapshotError` を返す。途中のどの状態でも、世代は「ある時点へ順に戻せる組」で `snapshot.snar` を持たない | 次の `create`（自動スナップショットを含む）が snar 無しの経路で full を作り直す |
+| I3 | 世代 | 控えに成功した後、前の差分を除く・入れ替えるのに失敗したら `SnapshotError` を返す。途中のどの状態でも、世代は `snapshot.snar` を持たず、次のどちらかである: (a) `meta.yml` に作り直しの途中の印（`rebuilding: true`）が無く、`full.tar.zst` と `meta.yml` の対象ボリューム（`volumes`）・アーカイブの起点（`archive_root`）・除外の一覧（`exclude`）が同じ 1 回の控えのもので、ある時点へ順に戻せる組である。(b) `meta.yml` が印を持ち、`restore` はその世代を復元しない | 次の `create`（自動スナップショットを含む）が snar 無しの経路で full を作り直す。印のある世代の `restore` は、復元前バックアップとボリュームの消去の前に `SnapshotError` で止まる |
 | I4 | 世代の一覧 | 作り直してもエントリは 1 件のままで、`created_at` は変わらない | 今の `_update_global_metadata` の既存エントリの更新で守る（この変更で触らない） |
 | I5 | 世代 | 前のファイルを持たない世代の full の作成（新しい名前・`devbase up` の新しい世代・新しい復元前バックアップ）は、コマンド・アーカイブ・`meta.yml` が今と同じ | 退行。今のテストが落ちる |
 
@@ -63,8 +63,8 @@ zstd が上書きを拒み、上の実測の形になる。直す向きと受け
 | --- | --- | --- | --- |
 | E1 | 利用者が既存の世代の名前で `snapshot create --full` を打った | 利用者（`devbase snapshot create`） | `SnapshotManager.create` |
 | E2 | 前の `snapshot.snar` を引き継がずに、ボリュームの全体を新しい full として仮の名前で控えた | `_create_full`（docker の中の tar・zstd） | `_create_full`（入れ替えへ進む） |
-| E3 | 前の差分アーカイブと前の状態の控えを世代から除き、仮の名前のファイルを本来の名前へ入れ替えた | `_install_rebuilt_full` | `_create_full`（`meta.yml` を書く） |
-| E4 | 世代の `meta.yml` を full の形で書いた | `_create_full` | `create`（一覧の更新へ進む） |
+| E3 | 前の差分アーカイブと前の状態の控えを世代から除き、仮の名前のファイルを本来の名前へ入れ替えた | `_install_rebuilt_full` | `_create_full`（INFO を出す） |
+| E4 | 世代の `meta.yml` を full の形で書いた（作り直しでは E3 の中で、印付き → 印無しの 2 回に分けて書く） | `_create_full`（新しい世代）・`_install_rebuilt_full`（作り直し） | `create`（一覧の更新へ進む） |
 | E5 | `snapshot.yml` のその世代の `incremental_count` と `updated_at` を更新した | `_update_global_metadata` | `restore`・`auto_snapshot_target`・`rotate`（読む側） |
 | E6 | 利用者がその世代を復元し、ボリュームが E2 の時点の中身になった | 利用者（`devbase snapshot restore`） | 利用者 |
 | E7 | 次の `devbase up` の自動スナップショットが、その世代へ `incr-001` を積んだ | `_auto_snapshot` → `create(name)` | `_create_incremental` |
@@ -95,11 +95,12 @@ E3 は要求の E3（差分を除く）に、仮の名前からの入れ替え�
 
 | 要素 | 責務 |
 | --- | --- |
-| `SnapshotManager._create_full`（変更） | 世代に前のファイル（`full.tar.zst`・`snapshot.snar`・`incr-*.tar.zst` のどれか）があれば仮の名前で控え、`_install_rebuilt_full` を呼ぶ。無ければ今のとおり本来の名前で控える。最後に今と同じ形の `meta.yml` を書く |
+| `SnapshotManager._create_full`（変更） | 世代に前のファイル（`full.tar.zst`・`snapshot.snar`・`incr-*.tar.zst` のどれか）があれば仮の名前で控え、新しい控えの `meta.yml` の内容を組んで `_install_rebuilt_full` へ渡す。無ければ今のとおり本来の名前で控え、最後に今と同じ形の `meta.yml` を書く |
 | `SnapshotManager.backup_command`（変更） | 状態ファイルの名前を引数 `snar`（既定 `snapshot.snar`）で受ける。既定のままなら今と同じ文字列を返す |
-| `SnapshotManager._install_rebuilt_full`（追加） | 控えの成功の後に、前の状態ファイルと差分を除き、仮の名前のファイルを本来の名前へ入れ替える。除いた差分の本数を返す。途中で失敗したら `SnapshotError` |
-| `SnapshotManager._discard_rebuild_temps`（追加） | 仮の名前のファイルを消す。控えの前（前の中断の残り）と失敗の後に呼ぶ。消せなければ警告して続ける |
-| 定数 `FULL_ARCHIVE_TMP`・`SNAR_FILE_TMP`（追加） | 仮の名前 `full.tar.zst.new`・`snapshot.snar.new`。`is_archive_file` と `incr-*.tar.zst` の glob に当たらない |
+| `SnapshotManager._install_rebuilt_full`（追加） | 控えの成功の後に、前の状態ファイルと差分を除き、`meta.yml` を印付きの新しい内容へ置き換え、仮の名前の full を本来の名前へ入れ替え、`meta.yml` を印無しへ置き換え、最後に仮の名前の状態ファイルを入れ替える（決定 2）。`meta.yml` の置き換えは仮の名前 `meta.yml.new` へ書いて `os.replace` する。除いた差分の本数を返す。途中で失敗したら `SnapshotError` |
+| `SnapshotManager.restore`（変更） | 書き戻す組を読む前に、世代の `meta.yml` が印（`rebuilding: true`）を持てば `SnapshotError` で止める。復元前バックアップもボリュームの消去も行わない |
+| `SnapshotManager._discard_rebuild_temps`（追加） | 仮の名前のファイル（3 本）を消す。控えの前（前の中断の残り）と失敗の後に呼ぶ。消せなければ警告して続ける |
+| 定数 `FULL_ARCHIVE_TMP`・`SNAR_FILE_TMP`・`META_FILE_TMP`（追加） | 仮の名前 `full.tar.zst.new`・`snapshot.snar.new`・`meta.yml.new`。`is_archive_file` と `incr-*.tar.zst` の glob に当たらない |
 | `create`・`_create_incremental`・`_backup_before_restore`・`_update_global_metadata`（変更なし） | 今のとおり `_create_full` を呼び、その後に一覧を更新する。作り直しは `_create_full` の中で決まる |
 | `docs/user/cli-reference/05-snapshot.md`・`docs/user/snapshot-guide.md` | 既存の名前への `--full` の結果（作り直し、前の差分は消え前の時点へは戻せない） |
 | `docs/specifications/snapshot-series.md` | 「世代の作り直し」の節（手順・失敗の扱い・ログ）。`snapshot-exclude.md` の運用の節の #458 の行を書き換える |
@@ -116,6 +117,7 @@ graph LR
         CR[create]
         CI[_create_incremental]
         BR[_backup_before_restore]
+        RS[restore]
         CF[_create_full]
         BC[backup_command]
         IN[_install_rebuilt_full]
@@ -127,7 +129,9 @@ graph LR
     Y[(backups/snapshot.yml)]
     C --> CR
     U --> CR
-    R --> BR
+    R --> RS
+    RS --> BR
+    RS -->|印を見る| G
     CR --> CF
     CR --> CI
     CI --> CF
@@ -155,9 +159,10 @@ graph LR
 classDiagram
     class SnapshotManager {
         +create(name, full) str
+        +restore(name, point)
         +backup_command(archive, volumes, excludes, snar)$ str
         -_create_full(name, snap_dir, volumes)
-        -_install_rebuilt_full(snap_dir) int
+        -_install_rebuilt_full(snap_dir, meta) int
         -_discard_rebuild_temps(snap_dir)
         -_update_global_metadata(name, snap_dir)
     }
@@ -167,7 +172,8 @@ classDiagram
 
 ## データ構造
 
-`meta.yml` と `snapshot.yml` の形は変えない。移行は無い。世代のディレクトリに置くファイルの扱いだけが変わる。
+`snapshot.yml` の形は変えない。`meta.yml` は作り直しの途中だけ真偽値のキー `rebuilding: true` を持ち得る（作り直しを終えた世代と新しい世代は持たない）。
+キーを持たない今の世代は今のとおり読めるため、移行は無い。ほかは世代のディレクトリに置くファイルの扱いだけが変わる。
 
 | ファイル | 今 | 作り直しの後 |
 | --- | --- | --- |
@@ -176,7 +182,8 @@ classDiagram
 | `incr-*.tar.zst` | 残る | 無い |
 | `snapshot.snar.bak` | 残る | 無い |
 | `meta.yml` | 前のまま（失敗のため） | `type: full`・`files: [full.tar.zst]`・`incremental_count: 0`・今の `exclude`・`volumes`・`created_at`（作り直した時刻） |
-| `full.tar.zst.new`・`snapshot.snar.new` | 無い | 作り直しの間だけある。成功でも失敗でも残さない |
+| `meta.yml` の `rebuilding` | 無い | 作り直しの途中（新しい控えの内容を書いてから印を外すまで）だけ `true`。作り直した後は無い |
+| `full.tar.zst.new`・`snapshot.snar.new`・`meta.yml.new` | 無い | 作り直しの間だけある。成功でも失敗でも残さない |
 | `snapshot.yml` のエントリ | 前のまま | `incremental_count: 0`・`updated_at` を更新、`created_at` は前のまま |
 
 `meta.yml` の `created_at` は今の `_create_full` のとおり作り直した時刻を書く。系列の新旧とローテーションは `snapshot.yml` の `created_at`
@@ -186,7 +193,7 @@ classDiagram
 | --- | --- | --- | --- | --- | --- | --- |
 | F1〜F3 の成功 | 更新 | 削除 | 更新（`.bak` は削除） | 作成 → 改名 | 更新 | 更新 |
 | F4（控えの失敗） | — | — | — | 作成 → 削除 | — | — |
-| F4（除く・入れ替えの失敗） | 止まった所により更新 | 削除（止まった所まで） | 削除 | 削除 | — | — |
+| F4（除く・入れ替えの失敗） | 止まった所により更新 | 削除（止まった所まで） | 削除 | 削除 | 止まった所により印付き・印無しで更新 | — |
 
 ## 入出力の契約
 
@@ -198,6 +205,7 @@ classDiagram
 | 控えのコマンドが失敗 | `SnapshotError` → 終了コード 1 | 今の `Dockerでのtar操作に失敗しました: {stderr}`。世代は打つ前のまま |
 | 除く・入れ替えに失敗 | `SnapshotError` → 終了コード 1 | `世代 '{名前}' の作り直しを終えられませんでした: {理由}。もう一度 devbase snapshot create --name {名前} --full を打ってください` |
 | 前のファイルを持たない世代の full | 今と同じ | 今と同じ（作り直しの行を出さない） |
+| 作り直しの途中の印を持つ世代の `restore` | `SnapshotError` → 終了コード 1。復元前バックアップを作らず、ボリュームを消さない | `世代 '{名前}' は作り直しの途中で止まっているため復元できません。devbase snapshot create --name {名前} --full を打って作り直してください` |
 
 復元前バックアップ（F3）の失敗は、今のとおり `_backup_before_restore` が警告 1 行に変えて復元を続ける。既にあった同名のディレクトリは消さない（今の振る舞い）。
 
@@ -220,7 +228,7 @@ sequenceDiagram
             M->>F: _discard_rebuild_temps
             M-->>M: SnapshotError を投げ直す（世代は前のまま）
         else 控えが成功
-            M->>F: _install_rebuilt_full
+            M->>F: _install_rebuilt_full（meta.yml も書く）
             alt 除く・入れ替えが失敗
                 M->>F: _discard_rebuild_temps
                 M-->>M: SnapshotError（作り直しを終えられなかった）
@@ -229,10 +237,13 @@ sequenceDiagram
             end
         end
     end
-    M->>F: meta.yml を full の形で書く
+    opt 前のファイルが無い
+        M->>F: meta.yml を full の形で書く（今と同じ）
+    end
 ```
 
-`_install_rebuilt_full` は次の順で 1 つずつ行う。どこで止まっても、世代は「ある時点へ順に戻せる組」で `snapshot.snar` を持たない（決定 2）。
+`_install_rebuilt_full` は次の順で 1 つずつ行う。どこで止まっても、世代は `snapshot.snar` を持たず、「印が無く、`full.tar.zst` と `meta.yml` が同じ控えのもので、
+ある時点へ順に戻せる組」か「`meta.yml` が印を持ち、復元しない組」のどちらかである（I3・決定 2）。
 
 ```mermaid
 stateDiagram-v2
@@ -240,17 +251,21 @@ stateDiagram-v2
     前の世代 --> snar無し: snapshot.snar.bak と snapshot.snar を消す
     snar無し --> 差分を減らした: incr を番号の大きい順に消す
     差分を減らした --> 差分を減らした: 次の incr を消す
-    差分を減らした --> 新しいfull: full.tar.zst.new を full.tar.zst へ改名
-    snar無し --> 新しいfull: incr が無い
-    新しいfull --> 作り直した: snapshot.snar.new を snapshot.snar へ改名
+    差分を減らした --> 印付き: meta.yml を新しい控えの内容と rebuilding true へ置き換える
+    snar無し --> 印付き: incr が無い
+    印付き --> 新しいfull: full.tar.zst.new を full.tar.zst へ改名
+    新しいfull --> 印無し: meta.yml を新しい控えの内容（印無し）へ置き換える
+    印無し --> 作り直した: snapshot.snar.new を snapshot.snar へ改名
     作り直した --> [*]
 ```
 
 | 止まった状態 | 復元で戻る時点 | 次の `create`（名前の指定・自動スナップショット） |
 | --- | --- | --- |
-| snar 無し | 前の世代と同じ（前の full と全部の差分） | snar 無しの経路で作り直す（F2） |
-| 差分を減らした | 前の full と残った番号の小さい差分の時点 | 同上 |
-| 新しい full | 新しい full の時点 | 同上 |
+| snar 無し | 前の世代と同じ（前の full と全部の差分。`meta.yml` は前のまま） | snar 無しの経路で作り直す（F2） |
+| 差分を減らした | 前の full と残った番号の小さい差分の時点（`meta.yml` は前のまま） | 同上 |
+| 印付き | 復元しない（`meta.yml` は新しい組、`full.tar.zst` は前の組で、合わない） | 同上 |
+| 新しい full | 復元しない（両方とも新しい組だが、印を外す前に止まった） | 同上 |
+| 印無し | 新しい full の時点 | 同上 |
 
 ## 非機能の実現方式
 
@@ -274,14 +289,23 @@ stateDiagram-v2
 
 根拠: Value 2（MVV 版 1）
 
-### 決定 2: 入れ替えの途中で止まっても誤った中身を復元しないため、状態ファイル → 差分（番号の大きい順）→ full → 状態ファイルの順で入れ替える
+### 決定 2: 入れ替えの途中で止まっても誤った中身を復元しないため、状態ファイル → 差分（番号の大きい順）→ 印付きの meta.yml → full → 印無しの meta.yml → 状態ファイルの順で入れ替える
 
 前の差分が新しい full の上に当たると、変わっていないファイルが前の中身へ戻り、差分の削除の記録で新しいファイルが消える。最初に
 `snapshot.snar` を消すと、以後どこで止まっても世代は snar を持たず、次の `create` が今ある snar 無しの経路で作り直す。差分を番号の
 大きい順に消すと、残るのは前の full から番号の小さい順に続く差分で、ある時点へ順に戻せる組になる。
 
+`restore` は消すボリュームと書き戻す起点を `meta.yml` の `volumes`・`archive_root` から読む。別のボリュームの組で作り直すと、`full.tar.zst` と
+`meta.yml` の入れ替えの間は 2 つが別の組を指し、そこで止まった世代を復元すると、前の組のボリュームを消して新しい組のデータを書き戻す。
+2 つのファイルを 1 回の改名で同時に入れ替える手段は無いため、合わない間は `meta.yml` に印 `rebuilding: true` を立て、`restore` が
+消去の前に拒む。印を立てる前は前の full と前の `meta.yml`、印を外した後は新しい full と新しい `meta.yml` が揃う。`meta.yml` の書き換えは
+仮の名前へ書いてから改名し、途中まで書いた `meta.yml` を残さない。状態ファイルを最後に入れ替えるのは、印を外せずに止まった世代へ
+次の `create` が差分を積まず、snar 無しの経路で作り直して印を外すためである。
+
 採らなかった形: full を先に入れ替える形は、差分を除けなかったときに前の差分が新しい full へ当たる。差分を番号の小さい順に消す形は、
-残った大きい番号の差分が飛んだ番号の差分を前提にして当たる。
+残った大きい番号の差分が飛んだ番号の差分を前提にして当たる。`meta.yml` を最後に 1 回だけ書く形は、full の入れ替えの後に止まると
+新しい full と前の `meta.yml` が残り、前の組のボリュームを消して別の組のデータを書き戻す。`meta.yml` を先に消して印の代わりにする形は、
+`meta.yml` の無い世代を `snapshot_volumes` が旧レイアウト（`devbase_home_ubuntu` をルートへ）として読み、同じ取り違えが起きる。
 
 根拠: Value 2（MVV 版 1）
 
@@ -327,7 +351,8 @@ stateDiagram-v2
 | 受け入れ条件 3・I1 | 作り直した後の世代に `incr-*`・`snapshot.snar.bak`・仮の名前のファイルが無く、`meta.yml` が full の形で今の除外の一覧を持つ | 差分を消さない・`.bak` を残す・`meta.yml` の `exclude` を前の記録から取る、と落ちる |
 | 受け入れ条件 4・I4 | `snapshot.yml` の `g` が 1 件で、`incremental_count` が 0、`created_at` が作り直す前と同じ | エントリを足し直す・`created_at` を書き換える、と落ちる |
 | 受け入れ条件 5・I2 | 控えのコマンドが失敗すると `SnapshotError` になり、4 ファイルのバイト列とディレクトリの一覧と `snapshot.yml` が打つ前と同じ | 前の snar を tar に渡す・失敗の後に仮の名前のファイルを消さない・先に差分を消す、と落ちる |
-| 受け入れ条件 6・I3 | 控えは成功し、差分を消す・改名するところで失敗させると `SnapshotError` になる。止まった世代は snar を持たず、次の `create(name='g')` が full を作り直す | 消す失敗を握りつぶす・snar を最初に消さない・番号の小さい順に消す、と落ちる |
+| 受け入れ条件 6・I3 | 控えは成功し、差分を消す・`meta.yml` を書く・改名するところで失敗させると `SnapshotError` になる。止まった世代は snar を持たず、次の `create(name='g')` が full を作り直して印を外す | 消す失敗を握りつぶす・snar を最初に消さない・番号の小さい順に消す・snar を印を外す前に入れ替える、と落ちる |
+| I3（組の整合） | 前の世代と別のボリュームの組で作り直し、full の改名の前後・印を外す前で止めると、`meta.yml` が印を持ち、`restore('g')` が `SnapshotError` になって docker（復元前バックアップ・消去・展開）を 1 回も呼ばない。印を外した後に止めた世代は新しい組で復元する | 印を立てない・full の後で `meta.yml` を 1 回だけ書く・`restore` が印を見ずに消去へ進む、と落ちる |
 | 受け入れ条件 7 | 実の tar で、作り直した後に `d` を足して `create(name='g')` を打つと `incr-001.tar.zst` ができ、中身は `d` だけ | 新しい snar を本来の名前へ入れ替えない・前の snar を残す、と落ちる |
 | 受け入れ条件 8 | snar の無い世代（`incr-*` を持つ）へ `create(name='g')` を打つと full へ切り替わり、`incr-*` が残らない | 作り直しの判定を `full=True` の経路だけに置く、と落ちる |
 | 受け入れ条件 9・I5 | 新しい名前の `create`（`--full` の有無）・自動スナップショット・新しい復元前バックアップの控えのコマンドと `meta.yml` と `snapshot.yml` が今と同じ。`tests/snapshot/`・`tests/commands/` が通る | すべての full を仮の名前で作る・作り直しの INFO を新しい世代でも出す、と落ちる |
