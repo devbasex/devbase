@@ -57,6 +57,12 @@ ARCHIVE_MOUNT = '/backup'
 # 差分を積むとボリューム全体が入るため、新しい世代へ倒す。
 ARCHIVE_ROOT_MEMBERS = 'members'
 
+# 世代へ差分を積めない理由 (``SnapshotManager._incremental_block_reason``)。
+# 自動の積み先の選択は新しい世代へ倒し、名前を指定した作成は止める。
+_BLOCK_VOLUMES = 'volumes'
+_BLOCK_ARCHIVE_ROOT = 'archive_root'
+_BLOCK_EXCLUDES = 'excludes'
+
 
 def incr_archive_name(num: int) -> str:
     """``num`` 本目の差分アーカイブ名 (``incr-001.tar.zst`` の形) を返す。"""
@@ -899,6 +905,23 @@ class SnapshotManager:
                 latest, latest_age = snap, age
         return latest
 
+    def _incremental_block_reason(self, snap_dir: Path) -> tuple:
+        """世代へ差分を積めない理由を調べる。
+
+        対象ボリューム → 控えの起点 → 除外の一覧の順に調べ、最初に当たった 1 件で止める。
+
+        Returns:
+            ``(理由, 世代の対象ボリューム)``。理由は ``_BLOCK_*`` のどれかで、積めるなら ``None``
+        """
+        recorded = self.snapshot_volumes(snap_dir)
+        if recorded != self.volumes:
+            return _BLOCK_VOLUMES, recorded
+        if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+            return _BLOCK_ARCHIVE_ROOT, recorded
+        if self._excludes_differ(snap_dir):
+            return _BLOCK_EXCLUDES, recorded
+        return None, recorded
+
     def auto_snapshot_target(
         self, max_incrementals: int = DEFAULT_MAX_INCREMENTALS,
     ) -> Optional[str]:
@@ -926,18 +949,18 @@ class SnapshotManager:
                 label, name, e)
             return None
         if snap_dir.is_dir():
-            recorded = self.snapshot_volumes(snap_dir)
-            if recorded != self.volumes:
+            reason, recorded = self._incremental_block_reason(snap_dir)
+            if reason == _BLOCK_VOLUMES:
                 logger.info(
                     "世代 %s の meta.yml の対象ボリューム (%s) が %s と一致しないため、"
                     "新しい世代を作成します", name, ', '.join(recorded.values()), label)
                 return None
-            if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+            if reason == _BLOCK_ARCHIVE_ROOT:
                 logger.info(
                     "世代 %s は控えの起点が古い形 (/source) のため、新しい世代を作成します",
                     name)
                 return None
-            if self._excludes_differ(snap_dir):
+            if reason == _BLOCK_EXCLUDES:
                 # 1 つの世代は同じ除外の一覧で作る。違う一覧の差分を積むと、外したパスが
                 # full の時点の中身で復元され、除外の一覧と食い違う (#368)
                 logger.info(
@@ -1106,8 +1129,8 @@ class SnapshotManager:
 
     def _create_incremental(self, name: str, snap_dir: Path) -> None:
         """差分バックアップを作成"""
-        recorded = self.snapshot_volumes(snap_dir)
-        if recorded != self.volumes:
+        reason, recorded = self._incremental_block_reason(snap_dir)
+        if reason == _BLOCK_VOLUMES:
             # 通常はここへ来ない (auto_snapshot_target が新世代へ倒す)。
             # 明示的に古い世代を指定されたときだけ到達する。黙って壊れた差分を
             # 積むより、理由を出して止める方がよい。
@@ -1118,7 +1141,7 @@ class SnapshotManager:
                 "新しい世代を作成してください (devbase snapshot create)"
             )
 
-        if self._load_snap_meta(snap_dir).get('archive_root') != ARCHIVE_ROOT_MEMBERS:
+        if reason == _BLOCK_ARCHIVE_ROOT:
             # 通常はここへ来ない (auto_snapshot_target が新世代へ倒す)。snar が起点を ``.`` で
             # 記録しているため、積むと差分がボリューム全体になる。
             raise SnapshotError(
@@ -1126,7 +1149,7 @@ class SnapshotManager:
                 "新しい世代を作成してください (devbase snapshot create)"
             )
 
-        if self._excludes_differ(snap_dir):
+        if reason == _BLOCK_EXCLUDES:
             # snar に触る前に止める。違う除外の一覧の差分を積むと、外したパスが full の
             # 時点の中身で復元され、除外の一覧と食い違う (#368)
             raise SnapshotError(
