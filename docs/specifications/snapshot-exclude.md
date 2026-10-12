@@ -261,8 +261,9 @@ exclude:
   Claude Code は最初のセッションが始まるまで `claude plugin list` がプラグインを `cache-miss` と出し、最初の
   セッションでマーケットプレイスとプラグインを取り直して `installed_plugins.json` の一覧のまま読み込む。
   Codex は消した `logs_2.sqlite` と `cache` を作り直す
-- 既存の世代の名前へ `--full` を打つと full が変更分だけになる不具合は #458 にある。除外の一覧が違う世代への
-  案内は「新しい世代を作成してください (devbase snapshot create)」とし、`--name` に既存の名前を勧めない
+- 既存の世代の名前へ `--full` を打つと、その世代を作り直した時点の除外の一覧で作り直す（世代の作り直し。
+  [スナップショットの系列](snapshot-series.md#世代の作り直し)）。前の差分は消え、前の時点へは戻せない。除外の一覧が
+  違う世代への案内は「新しい世代を作成してください (devbase snapshot create)」とし、`--name` に既存の名前を勧めない
 
 ## テスト観点
 
