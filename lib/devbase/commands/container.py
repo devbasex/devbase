@@ -17,6 +17,7 @@ from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.volume.manager import ensure_volumes
 from devbase.volume.compose import (
+    HOST_GATEWAY_NAME,
     generate_scaled_compose,
     get_dev_service_name,
 )
@@ -938,15 +939,11 @@ def _bao_environment() -> dict:
     return {'BAO_ADDR': store.config.openbao.url}
 
 
-#: コンテナからホストを指す名前 (#295)。Linux の Docker では ``host-gateway`` の行で引ける
-CONTAINER_HOST_NAME = 'host.docker.internal'
-
-
 def container_bao_address(url: Optional[str], *, remote: bool) -> Optional[str]:
     """コンテナから見た接続先 (#295)。置き換えないときは ``None``。
 
     ``openbao.url`` が ``http`` でホストが loopback、かつ docker の接続先がローカル扱いの
-    ときだけ、ホストを :data:`CONTAINER_HOST_NAME` に置き換える。コンテナの中の
+    ときだけ、ホストを :data:`~devbase.volume.compose.HOST_GATEWAY_NAME` に置き換える。コンテナの中の
     ``127.0.0.1`` はコンテナ自身を指し、ホストのサーバへ届かないため。スキームと
     ポートは保つ。
 
@@ -964,7 +961,7 @@ def container_bao_address(url: Optional[str], *, remote: bool) -> Optional[str]:
     parts = urlsplit(url)
     if parts.scheme != 'http' or parts.hostname not in _LOOPBACK_HOSTS:
         return None
-    netloc = CONTAINER_HOST_NAME
+    netloc = HOST_GATEWAY_NAME
     if parts.port is not None:
         netloc = f'{netloc}:{parts.port}'
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
