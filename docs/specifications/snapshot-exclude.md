@@ -47,7 +47,7 @@
 | 世代の記録 | 同 `_recorded_excludes` | 世代の `meta.yml` の `exclude` を読む。無い・リストでない・文字列でない要素を含むなら `None` |
 | 比較 | 同 `_excludes_differ`・`_incremental_block_reason` | 世代の記録が今の一覧と違うかを決める。差分を積めない理由（対象ボリューム → 控えの起点 → 除外の一覧の順）の最後に当てる |
 | 控えに使う一覧 | 同 `_excludes_for`・`_latest_recorded_excludes` | 設定を読めたら今の一覧、読めなければ記録の一覧を返す（下の「読めない設定の間」） |
-| tar のコマンド | 同 `backup_command(archive, volumes, excludes, snar)` | 除外の引数を `-C` とメンバーより前に置く。`snar` は既定で `snapshot.snar`、世代の作り直しは `snapshot.snar.new` |
+| tar のコマンド | 同 `backup_command(archive, volumes, excludes, snar)` | 除外の引数を `-C` とメンバーより前に置く。`snar` は既定で `snapshot.snar`、世代の作り直しと既存の世代への差分の作成は `snapshot.snar.new`（#466） |
 | 作成 | 同 `_create_full`・`_create_incremental` | `_excludes_for` の一覧で控える。full は `meta.yml` に `exclude` を書き、差分は書き換えない |
 
 世代に関わる判断（記録・比較・積み先）は `manager.py` に置き、`exclude.py` は世代の状態に依らない処理だけを
