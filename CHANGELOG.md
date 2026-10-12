@@ -12,6 +12,13 @@
   開発モードの OpenBao を手元に立てる試用の構成（`compose.yml`）は `docs/user/openbao/` にあります。
   個人の形もアカウントグループごとの置き場（`version: 2`）を使い、プロジェクトで `DEVBASE_ACCOUNT_GROUP=personal` を
   宣言します。接続のコマンドと引数、既存のサーバへの接続の手順は変わりません。
+- **`general`・`php`・`php85` の派生イメージに、Python・TypeScript・PHP の言語サーバを入れました（#236）。**
+  `pyright-langserver`（pyright 1.1.414）・`typescript-language-server`（6.0.2、TypeScript 5.9.3 を使う）・
+  `intelephense`（1.18.5）が PATH の上にあり、コンテナに入った時点で Claude Code の公式 LSP プラグインから起動できます
+  （プラグインは利用者が入れます）。言語サーバは `/opt/language-servers` に root で入り、利用者の `npm i -g` の領域とは
+  分かれます。`tsc` は base と同じ 7.0.2 のままです。イメージの展開後の大きさは約 148MB 増えます。
+  base とほかの派生イメージは変わりません。届くのはイメージを建て直した後です（`devbase build`）。
+  Serena の MCP は今までどおり、初回の起動で `serena-agent` と自分の言語サーバを取得します（ネットワークが要ります）。
 
 ### Changed
 - **シェル補完（bash・zsh）が、`--context NAME` を受け付けるすべてのサブコマンドで `--context` を出すようにしました（#435）。**
