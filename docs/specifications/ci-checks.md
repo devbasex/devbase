@@ -93,7 +93,7 @@ ShellCheck のジョブが成功していても水準が絞られていれば検
 | `python-syntax` | `Python syntax check`（matrix 3.10 / 3.11 / 3.12 で `Python syntax check (3.10)` などになる） | `python -m compileall -q lib bin` |
 | `lint` | `Ruff lint` | `astral-sh/ruff-action@v3`、`check --select=E9,F63,F7,F82 lib` |
 | `shellcheck` | `ShellCheck` | 下の「ShellCheck の検査ジョブ」 |
-| `pytest` | `Pytest (Python ${{ matrix.python-version }})`（3.10 / 3.13） | `uv sync --locked` の後に `uv run --locked pytest tests/ -q`。`timeout-minutes: 15`、`fail-fast: false` |
+| `pytest` | `Pytest (Python ${{ matrix.python-version }})`（3.10 / 3.13） | zsh を apt で入れて `zsh --version` をログへ出し、`uv sync --locked` の後に `uv run --locked pytest tests/ -q`。ジョブの `env` に `DEVBASE_TEST_REQUIRE_ZSH: "1"` を置き、zsh の補完の実行テスト（[位置引数の解決](cli-argument-resolution.md#zsh-の補完の実行テスト)）を、zsh か `zsh/zpty` が欠けたときに飛ばさず落とす。`timeout-minutes: 15`、`fail-fast: false` |
 | `pytest-all` | `Pytest`（固定の文字列。matrix を持たない） | pytest の全版をまとめたチェック。`needs: pytest` と `if: always()` で全版を待ち、`needs.pytest.result` を `env` の `RESULT` で受けて `test "${RESULT}" = success` で判定する。`timeout-minutes: 5` |
 | `changelog` | `CHANGELOG check` | 下の「CHANGELOG の検査」。`main` 宛ての Pull Request でだけ走る |
 | `proper-terms` | `Proper term check` | 下の「固有の語の検査」。すべてのトリガーで走る |
@@ -298,6 +298,7 @@ proper-terms:
 | `pytest-all` の `name` は固定の文字列 `Pytest` で、`strategy` を持たない | `tests/ci/test_ci_workflow.py` の `test_aggregate_name_does_not_depend_on_matrix` |
 | `pytest-all` は `needs` に `pytest` を持ち、`if` が `always()` である | `tests/ci/test_ci_workflow.py` の `test_aggregate_waits_for_pytest` と `test_aggregate_always_runs` |
 | `pytest-all` の判定は `needs.pytest.result` を受け、`success` のときだけ 0 で終わる | `tests/ci/test_ci_workflow.py` の `test_aggregate_result_comes_from_pytest` と `test_aggregate_passes_only_on_success` |
+| `pytest` ジョブは `env` に `DEVBASE_TEST_REQUIRE_ZSH: "1"` を持ち、pytest を走らせる手順より前に zsh を apt で入れる手順を持つ | `tests/ci/test_ci_workflow.py` の `test_pytest_job_requires_zsh` と `test_pytest_job_installs_zsh_before_pytest` |
 | `shellcheck` ジョブの `SHELLCHECK_VERSION` は `v0.11.0`、`SHELLCHECK_SHA256` は 64 桁の 16 進 | `tests/ci/test_shellcheck_job.py` |
 | 導入の手順は 1 つで、`sha256sum -c` を展開（`tar`）より前に打ち、`GITHUB_PATH` へ書く | 照合が合わなければ導入の手順でジョブが失敗する。形が崩れれば `tests/ci/test_shellcheck_job.py` |
 | 導入の後の手順に `grep -Fx "version: ${SHELLCHECK_VERSION#v}"` の版の確認がある | 版が違えば `Check ShellCheck version` でジョブが失敗する。確認が消えれば `tests/ci/test_shellcheck_job.py` |
@@ -469,6 +470,8 @@ base のシェルスクリプトの振る舞いは、`entrypoint.sh` を `DEVBAS
 - `pytest-all` の `needs` が `pytest` を含み、`if` が `always()` であること
 - `pytest-all` の判定の手順の `env.RESULT` が `${{ needs.pytest.result }}` で、その `run` を bash で
   `RESULT` = `success`・`failure`・`cancelled`・`skipped` の 4 通りに走らせると、`success` だけが 0 で終わること
+- `pytest` ジョブの `env.DEVBASE_TEST_REQUIRE_ZSH` が `1` で、`apt-get install` で zsh を入れる手順が pytest を
+  走らせる手順より前にあること
 
 pytest で確かめないもの:
 
