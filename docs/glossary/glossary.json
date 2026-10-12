@@ -350,6 +350,12 @@
       "source": "docs/specifications/snapshot-exclude.md"
     },
     {
+      "term": "世代の作り直し",
+      "context": "snapshot",
+      "meaning": "既にある世代のディレクトリへ、前の snapshot.snar を引き継がずに新しい full を作り、前の差分と状態のファイルを除くこと",
+      "source": "docs/specifications/snapshot-series.md"
+    },
+    {
       "term": "既定の除外",
       "context": "snapshot",
       "meaning": "devbase の本体が持つ除外の一覧。作り直せる一時ファイル・ログ・取り直せる取得物を挙げる",

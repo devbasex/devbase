@@ -114,6 +114,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | 全体の上限 | — | 系列をまたいで数えた世代の数の上限（max_total） | — | — | `docs/specifications/snapshot-series.md` |
 | 復元前バックアップ | — | restore が書き戻す前に自動で作るフルの世代 pre-restore-<時刻>。復元する世代の対象ボリュームの組を控える | — | — | `docs/specifications/snapshot-series.md` |
 | 除外の一覧 | — | スナップショットのアーカイブに入れないパスの一覧。既定の除外と利用者の除外を合わせたもの | — | — | `docs/specifications/snapshot-exclude.md` |
+| 世代の作り直し | — | 既にある世代のディレクトリへ、前の snapshot.snar を引き継がずに新しい full を作り、前の差分と状態のファイルを除くこと | — | — | `docs/specifications/snapshot-series.md` |
 | 既定の除外 | — | devbase の本体が持つ除外の一覧。作り直せる一時ファイル・ログ・取り直せる取得物を挙げる | — | — | `docs/specifications/snapshot-exclude.md` |
 | 利用者の除外 | — | 利用者が backups/exclude.yml で既定の除外に足すパス | — | — | `docs/specifications/snapshot-exclude.md` |
 | 除外のパターン | — | 除外の一覧の 1 項目。ボリュームの中の相対のパスで、* は 1 つの要素の中の任意の文字列に当たる。当たったパスとその下を控えない | — | — | `docs/specifications/snapshot-exclude.md` |
