@@ -74,6 +74,9 @@ jobs:
     name: Pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # zsh の補完の実行テスト (#455) は、この印があると zsh か zsh/zpty が無いときに飛ばさず落ちる
+      DEVBASE_TEST_REQUIRE_ZSH: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -84,6 +87,12 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install zsh
+        # ubuntu ランナーには zsh が無い。zsh の補完の実行テストが起動する (#455)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh
+          zsh --version
       - name: Install dependencies from uv.lock
         run: uv sync --locked
       - name: Run pytest
