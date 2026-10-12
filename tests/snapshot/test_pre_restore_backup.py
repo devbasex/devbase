@@ -211,6 +211,56 @@ def test_a_failed_backup_keeps_an_existing_directory_of_the_same_name(
     assert (existing / "full.tar.zst").read_text() == "earlier"
 
 
+def _fix_now(monkeypatch) -> None:
+    import devbase.snapshot.manager as manager_module
+
+    class FixedDatetime(manager_module.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 28, 12, 0, 0)
+
+    monkeypatch.setattr(manager_module, "datetime", FixedDatetime)
+
+
+def test_a_failed_numbered_backup_removes_only_what_it_made(tmp_path, monkeypatch, caplog):
+    """重なって通し番号の名前で作るときに失敗しても、作った方だけを消す (#473)。"""
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
+    existing = _write_generation(tmp_path, "pre-restore-20260928-120000",
+                                 {"volumes": INITECH_VOLUMES})
+    before = {p.name: p.read_bytes() for p in existing.iterdir()}
+    _fix_now(monkeypatch)
+    mgr = RecordingManager(tmp_path, fail_backup=True)
+
+    with caplog.at_level("WARNING"):
+        mgr.restore("X")
+
+    assert len(_warnings(caplog)) == 1
+    assert len(mgr.restore_calls()) >= 1
+    assert _pre_restore_dirs(tmp_path) == [existing]
+    assert {p.name: p.read_bytes() for p in existing.iterdir()} == before
+    assert not any(e["name"].startswith("pre-restore-") for e in _entries(tmp_path))
+
+
+def test_a_numbered_backup_joins_the_same_series(tmp_path, monkeypatch):
+    """通し番号の名前も名前の検証を通り、ほかの ``pre-restore-*`` と同じ系列に入る (#473)。"""
+    _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
+    _fix_now(monkeypatch)
+    mgr = RecordingManager(tmp_path)
+
+    mgr.restore("X")
+    mgr.restore("X")
+
+    names = [p.name for p in _pre_restore_dirs(tmp_path)]
+    assert names == ["pre-restore-20260928-120000", "pre-restore-20260928-120000-2"]
+    assert mgr._safe_snap_dir(names[1]) == (tmp_path / "backups" / names[1]).resolve()
+    listed = {s["name"]: s for s in mgr.list()}
+    assert listed[names[1]]["volumes"] == listed[names[0]]["volumes"] == INITECH_VOLUMES
+
+    mgr.rotate(keep=1)
+
+    assert len(_pre_restore_dirs(tmp_path)) == 1
+
+
 def test_without_a_backup_the_failure_message_does_not_point_to_one(tmp_path):
     """控えも展開も失敗したら、別の世代から戻す案内になる (受け入れ条件 7)。"""
     _write_generation(tmp_path, "X", {"volumes": INITECH_VOLUMES})
