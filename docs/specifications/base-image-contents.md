@@ -161,6 +161,9 @@ base を継ぐ派生イメージは `browser` / `general` / `go` / `php` / `php8
 いずれも `FROM devbase-base:latest` である。派生イメージは dpkg の設定（`/etc/dpkg/dpkg.cfg.d/`）を継ぐ
 ため、派生が自分で `apt-get install` するパッケージの文書も展開されない。
 
+言語サーバ（Python・TypeScript・PHP）は base に入れず、`general`・`php`・`php85` の派生イメージが持つ
+（[派生イメージの言語サーバ](derived-image-language-servers.md)）。
+
 npm グループの GID は `ARG NPM_GID="2000"` で固定する。建て直しても、npm のグローバル領域とブラウザの
 置き場の数値の所有者が変わらないようにするためである。
 
@@ -241,6 +244,7 @@ npm グループの GID は `ARG NPM_GID="2000"` で固定する。建て直し�
 ## 関連リンク
 
 - [base イメージの文字の描画と、文書を扱う道具](base-image-rendering.md)（ブラウザ・追加の太さのフォント・`terraform`）
+- [派生イメージの言語サーバ（Python・TypeScript・PHP）](derived-image-language-servers.md)
 - [base イメージの Bash の静的検査（shellcheck）](base-image-shellcheck.md)
 - [CI の検査](ci-checks.md)
 - [用語集: イメージの継承（`image-lineage`）](../glossary.md#イメージの継承image-lineage)
