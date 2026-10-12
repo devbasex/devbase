@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 from datetime import date, datetime, timezone
+from functools import cached_property
 from pathlib import Path
 from typing import NamedTuple, Optional
 
@@ -221,26 +222,21 @@ class SnapshotManager:
         self._metadata_path = self.backups_dir / METADATA_FILE
         self._group = group
         self._volumes: Optional[dict] = None
-        self._excludes: Optional[tuple] = None
-        self._exclude_config_readable = True
 
-    def _resolve_excludes(self) -> None:
+    @cached_property
+    def _exclude_resolution(self) -> tuple:
         # 同じ実行で警告を 2 度出さないよう、初回の参照で 1 回だけ組み立てる
-        if self._excludes is None:
-            self._excludes, self._exclude_config_readable = resolve_excludes(
-                self.backups_dir)
+        return resolve_excludes(self.backups_dir)
 
     @property
     def excludes(self) -> tuple:
         """今の除外の一覧 (既定の除外と ``backups/exclude.yml`` の除外。並べ替え済み)。"""
-        self._resolve_excludes()
-        return self._excludes
+        return self._exclude_resolution[0]
 
     @property
     def exclude_config_readable(self) -> bool:
         """``backups/exclude.yml`` を読めたか (無いときは真)。"""
-        self._resolve_excludes()
-        return self._exclude_config_readable
+        return self._exclude_resolution[1]
 
     def _recorded_excludes(self, snap_dir: Path) -> Optional[tuple]:
         """世代の ``meta.yml`` の ``exclude`` を返す。
