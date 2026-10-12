@@ -633,12 +633,16 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
   道の分岐の本体に値の補完を持たない `'--context[...]:context:'` があること。bash から道 1 つの `--context` を
   外すと bash のテストが、zsh から外すと zsh のテストが、ファイルと道を挙げて落ちること
   （`tests/cli/test_name_context_consistency.py`）
+- `--context` を取らない末端の道で、bash の `devbase <道> -` の候補に `--context` が出ないこと。末端の道の
+  集合が `env set` を含み、`--context` の集合と重ならないこと。bash の末端の道（例 `env set`）の分岐へ
+  `--context` を足すと、その道を挙げて落ちること（`tests/cli/test_name_context_consistency.py`）
 - bash の `-` で始まる語の候補が、旗の候補に `--context` を足した集合であること。`--context` の直後の候補が
   0 件であること（`devbase up --context`・`devbase project up web --context`・`devbase container ps --context`・
   `devbase env exec --context`）。`etc/_devbase` の `_devbase()` の中に `_devbase_arguments` を通らない
   `_arguments` の呼び出しが無いこと（`tests/cli/test_completion.py`）
-- zsh の補完が実際に出す候補が I1〜I5 のとおりであること。期待に合わない行を、打った行・期待・実際の候補を
-  並べて挙げること。補完を読み込めなければ行ごとに並べる前に落ちること。応答しない補完を 10 秒（テストでは
+- zsh の補完が実際に出す候補が I1〜I5・X1 のとおりであること。打つ行の一覧に `devbase env set -`（X1）が
+  入ること。zsh の末端の道の分岐へ `--context` を足すと、X1 がその行を挙げて落ちること。期待に合わない行を、
+  打った行・期待・実際の候補を並べて挙げること。補完を読み込めなければ行ごとに並べる前に落ちること。応答しない補完を 10 秒（テストでは
   短く渡す）で打ち切り、時間切れの行と流さなかった行を返し、起動したプロセスを残さないこと。利用者の rc を
   読まないこと。zsh か `zsh/zpty` が無ければ、印が無ければ欠けたものの名前を出して飛ばし、印があれば落ちること
   （`tests/cli/test_zsh_completion_run.py`）
@@ -646,7 +650,7 @@ Python 側の `_resolve_project_name` は同じ結果になるよう、`chdir` �
 ## 決定の記録
 
 `[name]` と `--context` を受け付けるサブコマンドの列挙の正本と一致テスト（#214）、補完の `--context`（#435）、
-zsh の補完の実行テスト（#455）の決定である。
+zsh の補完の実行テスト（#455）、補完の `--context` の余分の比べ方（#453）の決定である。
 
 ### 決定 1: 取り残した写しを 1 回の実行で全部挙げるため、写しの場所ごとに別のテストにする
 
@@ -758,6 +762,14 @@ zsh を必須にし、何のための値かが `ci.yml` から読めないため
 静的な検査と、飛ばす範囲の境目を関数ごとに持つことになる。zsh を操作する部品は `tests/cli/zsh_completion_harness.py`
 に分け、テストのファイルには打つ行の一覧と比べ方だけを置く。
 
+### 決定 18: 補完の `--context` は欠けと余分の両方を比べ、余分は子の parser を持たない末端の道に限る
+
+補完が `--context` を取らない道で `--context` を勧めると、利用者が補完に従って打ったコマンドを argparse が
+退け、終了コード 2 で止まる。欠けだけを比べる形では、写しが列挙の正本より広がっても検査で拾えない。余分を
+比べる道を子の parser を持たない末端の道に限るのは、親の道（`project profile` など）の zsh の分岐の本体が
+子の分岐を含み、子の `--context` を拾って誤って落ちるためである。zsh の余分は分岐の文字列でなく、補完の
+実行テストの実際の候補で比べる（X1）。文字列で探すと、分岐の外の記述や子の分岐の記述で結果が変わる。
+
 ## 関連リンク
 
 - [CLI リファレンス: project](../user/cli-reference/02-project.md)
@@ -769,3 +781,4 @@ zsh を必須にし、何のための値かが `ci.yml` から読めないため
 - 実装 PR: devbasex/devbase#428（#214。列挙の正本と一致テスト）
 - 実装 PR: devbasex/devbase#450（#435。補完の `--context`）
 - 実装 PR: devbasex/devbase#460（#455。zsh の補完の実行テスト）
+- 実装 PR: devbasex/devbase#471（#453。補完の `--context` の余分の比べ方）
