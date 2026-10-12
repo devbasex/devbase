@@ -455,8 +455,8 @@ base イメージには OpenBao の CLI `bao`（サーバと同じ 2.6 系）が
 `openbao.url` が `http://127.0.0.1:8200` のような手元のサーバのとき、コンテナの中の `127.0.0.1` は
 コンテナ自身を指すため、そのままでは届きません。Docker が手元の端末のもの（ローカル扱い）なら、
 devbase はコンテナへ渡す `BAO_ADDR` を `http://host.docker.internal:8200` にし、dev コンテナへ
-`host.docker.internal:host-gateway` の行を足します。`https` の URL と、`docker.context` で別の端末の
-Docker を使うとき（リモート扱い）は `openbao.url` のままです。確かめた環境と Linux の Docker での
+`host.docker.internal:host-gateway` の行を足します。`https` の URL・`docker.context` で別の端末の
+Docker を使うとき（リモート扱い）・`network_mode: host` の dev サービスは `openbao.url` のままです。確かめた環境と Linux の Docker での
 扱いは [コンテナの中の `bao`](openbao-server.md#コンテナの中の-bao) を参照してください。
 
 コンテナに置くのは 1 時間で切れる token だけで、`secret_id` はホストから出ません。token を
