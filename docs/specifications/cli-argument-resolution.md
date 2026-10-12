@@ -121,13 +121,14 @@ graph TD
 | 走査 | `_create_parser()` の木を入れ子の parser まで辿る。別名のグループ（`ct`）は `cli.GROUP_ALIASES` で正式の名前に直して数える |
 | `[name]` の集合 | 位置引数 `name` を持つ parser のうち、トップレベルと `project` グループ（入れ子の `profile` を含む）の道。`plugin` / `snapshot` / `env backend use` の `name` は含めない |
 | `--context` の集合 | `--context` を持つすべての parser の道に、トップレベルの `build`（ラッパーだけが受け付ける）を名指しで足したもの |
+| `--context` を取らない末端の道 | 子の parser を持たない parser の道から `--context` の集合を引いたもの。補完の `--context` の余分を比べる道で、親の道（`project profile` など）は含めない。親の道の zsh の分岐は子の分岐を含み、子の `--context` を拾うため |
 | 走査の健全性 | どちらの集合も空でなく、入れ子の道（3 語）を含み、`[name]` の集合が `plugin` / `snapshot` / `env` の道を含まない |
 
 | 写し | 比べ方 |
 | --- | --- |
 | `bin/devbase` の `_PROJECT_NAME_SUBCOMMANDS` | `project` の直下で `[name]` を取る parser の名前の集合に等しい |
 | `bin/devbase` の `_NAME_RESOLVABLE_SHORTCUTS` | `cli.SHORTCUTS` のキーと `build` の和に等しい。あわせて、トップレベルで `[name]` を取る parser がすべて `cli.SHORTCUTS` にあること |
-| `etc/devbase-completion.bash` | 一時ディレクトリの `projects/` を `DEVBASE_ROOT` にして補完を実行し、`[name]` の集合から補完の例外を引いたすべての道の名前の位置でプロジェクト名が候補に出る。`--context` の集合のすべての道（`container` の道は `ct` で始めても）で `devbase <道> -` の候補に `--context` が出る。`[name]` の集合から補完の例外を引いた道では、`devbase <道> web -` の候補にも `--context` が出る。`project` / `container` の直下で `[name]` か `--context` を取るサブコマンド（入れ子は親の `profile` として数える）が、そのグループのサブコマンドの候補に含まれる |
+| `etc/devbase-completion.bash` | 一時ディレクトリの `projects/` を `DEVBASE_ROOT` にして補完を実行し、`[name]` の集合から補完の例外を引いたすべての道の名前の位置でプロジェクト名が候補に出る。`--context` の集合のすべての道（`container` の道は `ct` で始めても）で `devbase <道> -` の候補に `--context` が出る。`[name]` の集合から補完の例外を引いた道では、`devbase <道> web -` の候補にも `--context` が出る。`--context` を取らない末端の道では、`devbase <道> -` の候補に `--context` が出ない。`project` / `container` の直下で `[name]` か `--context` を取るサブコマンド（入れ子は親の `profile` として数える）が、そのグループのサブコマンドの候補に含まれる |
 | `etc/_devbase` | zsh を起動せず内容を読む。`case "$words[2]"` から字下げの深さで道の分岐（`up\|down)` のような `\|` 区切りの見出し）を辿り、`[name]` の集合から補完の例外を引いた道の本体に `_devbase_project_names` がある。`--context` の集合のすべての道の本体に、値の補完を持たない `'--context[...]:context:'`（`:context:` の後ろに補完の関数を置かない形）がある。`project_subcommands` / `container_subcommands` の一覧に bash と同じサブコマンドが含まれる |
 | この節の 2 つの表 | 見出し `` #### `[name]` を受け付けるサブコマンド `` と `` #### `--context` を受け付けるサブコマンド `` の直後の表を読む。1 列目は `devbase <グループ...> <sub>` の形で、間の語が道の頭になる。2 列目にバッククォートで並べた語を `<sub>` に入れる。表は `[name]` の集合・`--context` の集合にそれぞれ等しい |
 
@@ -139,13 +140,14 @@ graph TD
 `tests/cli/test_completion.py` が `--context` の直後の候補が 0 件であることを代表の道で確かめる。
 
 一致テストは zsh の補完を内容で読む。zsh が実際に出す候補そのものは、補完の実行テストが見る
-（[zsh の補完の実行テスト](#zsh-の補完の実行テスト)）。
+（[zsh の補完の実行テスト](#zsh-の補完の実行テスト)）。zsh の `--context` の余分（取らない道で出す）は、
+分岐の文字列でなく実行テストの候補で比べる（X1）。
 
 #### 補完が `--context` を出す位置
 
 | 位置 | 例 | bash | zsh |
 | --- | --- | --- | --- |
-| (a) 道の直後 | `devbase up -`・`devbase env exec -`・`devbase ct profile up -` | `--context` の集合のすべての道で出す | `--context` の集合のすべての道の分岐で出す |
+| (a) 道の直後 | `devbase up -`・`devbase env exec -`・`devbase ct profile up -` | `--context` の集合のすべての道で出し、`--context` を取らない末端の道では出さない | 同じ（`--context` の集合のすべての道の分岐で出し、取らない末端の道では出さない） |
 | (b) プロジェクト名の直後 | `devbase up web -`・`devbase project open web -` | `[name]` の集合から補完の例外を引いた道で出す | `_arguments` が位置を問わず出す |
 | (c) `--context` の直後（値） | `devbase up --context <TAB>` | 候補は 0 件 | 説明だけを出し、候補は 0 件 |
 | (a)・(b) より後ろ | `devbase scale web 3 -`・`devbase env exec -- ls -` | 出すことを求めない | 出し得る（argparse では、`env exec` のコマンドの後の `--context` はそのコマンドへ渡る） |
@@ -179,6 +181,7 @@ zsh（`etc/_devbase`）は、サブコマンドの分岐から `_arguments` を�
 | I3 | `--context` の集合のすべての道（`container` の道は `ct` で始めても）の `devbase <道> -` | 候補に `--context` が入る |
 | I4 | `[name]` の集合から補完の例外を引いた道のうち `--context` の集合にもある道の `devbase <道> proj-a -` | 候補に `--context` が入る |
 | I5 | `--context` の集合のすべての道（`ct` で始めても）の `devbase <道> --context ` | 候補が 0 件 |
+| X1 | `--context` を取らない末端の道の `devbase <道> -` | 候補に `--context` が入らない |
 
 | 項目 | 規則 |
 | --- | --- |

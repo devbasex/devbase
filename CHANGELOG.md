@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added
+- **自分で OpenBao サーバを立てて使うための文書とポリシーの雛形・試用の構成を足しました（#295）。**
+  [OpenBao サーバを用意する](docs/user/openbao-server.md)が、個人の形（自分で 1 台）・チームの形（チームで 1 台）・
+  既存のサーバの形（組織のサーバへ接続）の 3 つを分け、KV v2 のマウント・AppRole・ポリシー・entity と alias・
+  ロール・端末ごとの `secret_id` の発行と失効を `bao` のコマンドで示します。ポリシーの雛形（`version: 1` / `2`）と、
+  開発モードの OpenBao を手元に立てる試用の構成（`compose.yml`）は `docs/user/openbao/` にあります。
+  個人の形もアカウントグループごとの置き場（`version: 2`）を使い、プロジェクトで `DEVBASE_ACCOUNT_GROUP=personal` を
+  宣言します。接続のコマンドと引数、既存のサーバへの接続の手順は変わりません。
+
 ### Changed
 - **シェル補完（bash・zsh）が、`--context NAME` を受け付けるすべてのサブコマンドで `--context` を出すようにしました（#435）。**
   これまでは `open` と `project post-start` だけでした。`up`・`down`・`ps`・`login`・`scale`・`build`・`rebuild`、
@@ -22,6 +31,21 @@
   既存の世代はそのまま一覧・復元できます。
 
 ### Fixed
+- **接続先 URL が手元のサーバ（`http://127.0.0.1:8200` など `http` の loopback）のとき、`devbase up` したコンテナの中の
+  `bao` がサーバへ届くようにしました（#295）。** これまではコンテナへ渡す `BAO_ADDR` がそのまま `127.0.0.1` を指し、
+  コンテナ自身へつながっていました。Docker が手元の端末のものなら、コンテナの `BAO_ADDR` のホストを
+  `host.docker.internal` にし、dev コンテナへ `host.docker.internal:host-gateway` の行を足します。`https` の URL・
+  別の端末の Docker（`docker.context`）・`network_mode: host` の dev サービスでは今のままです。手元の devbase が使う
+  URL は変わりません。次の `devbase up` から効きます。確かめた環境は macOS の Docker Desktop です。
+- **既にある世代の名前で `devbase snapshot create --name <名前> --full` を打つと、その世代を今のボリュームの全体で
+  作り直すようにしました（#458）。** これまでは `full.tar.zst` を作り直せずに終了コード 1 で止まり、そのとき
+  `snapshot.snar` だけが進んでいました。作り直した世代は前のフルと差分を持たず、その世代から前の時点へは戻せません。
+  前の時点を残したいときは別の名前で作るか、先に `devbase snapshot copy` で写してください。控えに失敗したときは
+  世代が打つ前のまま残ります。入れ替えの途中で止まった世代は `restore` がボリュームを消す前に止まり、同じ名前で
+  もう一度 `--full` を打つと作り直せます。
+  **これまでに既存の世代の名前へ `--full` を打って失敗したことがあり、その後に同じ世代へ差分が積まれていれば、
+  その世代の差分は失敗の前の変更を欠いていることがあります。** 世代のファイルからは見分けられないため、
+  心当たりがあれば新しい世代を作ってください（`devbase snapshot create`）。
 - **プロジェクトの `env` に `DEV_SERVICE_NAME=` と空で書いたとき、開発サービス名を `dev` として扱うようにしました（#425）。**
   これまで `devbase build` は `dev` を建てる一方、`up`・`login`・`open`・`post-start`・`scale`・`--expires` の判定・
   token の配布は空の名前のサービスを探して開発サービスを見失っていました。未設定や空でない値のプロジェクトは変わりません。

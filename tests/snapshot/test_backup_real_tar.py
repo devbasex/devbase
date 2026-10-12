@@ -7,12 +7,14 @@ GNU tar が毎回「新しいディレクトリ」とみなし、差分がボリ
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from devbase.errors import SnapshotCommandError, SnapshotError
 from devbase.snapshot.exclude import DEFAULT_EXCLUDES
 from devbase.snapshot.manager import (
     ARCHIVE_MOUNT,
@@ -199,3 +201,95 @@ def test_missing_excluded_paths_do_not_fail_or_warn(tmp_path):
     result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
     assert result.returncode == 0
     assert "tar:" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# 世代の作り直し (#458)
+# ---------------------------------------------------------------------------
+
+_MOUNT_RE = re.compile(r"/(backup|source|target)(?=[/ ;]|$)")
+
+
+class LocalTarManager(SnapshotManager):
+    """控え・復元のコマンドを Docker でなく手元の bash で走らせる。
+
+    マウント先 (``/backup``・``/source``・``/target``) は 1 回の置き換えで手元のディレクトリへ写す。
+    """
+
+    def __init__(self, root: Path, source: Path, target: Path):
+        super().__init__(root, group="acme")
+        self.source = source
+        self.target = target
+
+    def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
+        paths = {"backup": str(snap_dir), "source": str(self.source),
+                 "target": str(self.target)}
+        command = _MOUNT_RE.sub(lambda m: paths[m.group(1)], command)
+        try:
+            return subprocess.run(["bash", "-c", command], check=True,
+                                  capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            raise SnapshotCommandError(f"tar の操作に失敗しました: {e.stderr}",
+                                       stderr=e.stderr or "") from e
+
+
+def _rebuild_setup(tmp_path: Path) -> tuple:
+    source, target = tmp_path / "source", tmp_path / "target"
+    for sub in VOLUMES:
+        (source / sub).mkdir(parents=True)
+        (target / sub).mkdir(parents=True)
+    ai = source / "ai"
+    (ai / "a").write_text("a1")
+    (ai / "b").write_text("b1")
+    mgr = LocalTarManager(tmp_path, source, target)
+    mgr.create(name="g")
+    (ai / "a").write_text("a2 changed")
+    mgr.create(name="g")
+    assert _members(tmp_path / "backups" / "g" / incr_archive_name(1)) == ["ai/a"]
+    (ai / "c").write_text("c1")
+    (ai / "b").write_text("b3 rebuilt")
+    mgr.create(name="g", full=True)
+    return mgr, ai
+
+
+def test_rebuilt_full_holds_the_whole_volume(tmp_path):
+    """受け入れ条件 1"""
+    _rebuild_setup(tmp_path)
+    snap_dir = tmp_path / "backups" / "g"
+    assert {"ai/a", "ai/b", "ai/c"} <= set(_members(snap_dir / FULL_ARCHIVE))
+    assert not list(snap_dir.glob("incr-*"))
+
+
+def test_restore_after_rebuild_brings_back_every_file(tmp_path):
+    """受け入れ条件 2"""
+    mgr, _ = _rebuild_setup(tmp_path)
+    mgr.restore("g")
+    restored = tmp_path / "target" / "ai"
+    assert (restored / "a").read_text() == "a2 changed"
+    assert (restored / "b").read_text() == "b3 rebuilt"
+    assert (restored / "c").read_text() == "c1"
+
+
+def test_incremental_after_rebuild_holds_only_later_changes(tmp_path):
+    """受け入れ条件 7"""
+    mgr, ai = _rebuild_setup(tmp_path)
+    (ai / "d").write_text("d1")
+    mgr.create(name="g")
+    snap_dir = tmp_path / "backups" / "g"
+    assert _members(snap_dir / incr_archive_name(1)) == ["ai/d"]
+
+
+def test_rebuild_stops_when_tar_fails_even_if_zstd_succeeds(tmp_path):
+    """tar が読み取りで止まっても zstd は成功する。前の full と差分を消さずに止める。"""
+    mgr, ai = _rebuild_setup(tmp_path)
+    (ai / "e").write_text("e1")
+    mgr.create(name="g")
+    snap_dir = tmp_path / "backups" / "g"
+    before = {p.name: p.read_bytes() for p in snap_dir.iterdir()}
+    assert incr_archive_name(1) in before
+    shutil.rmtree(tmp_path / "source" / "group")  # tar は Cannot stat で 2 を返す
+
+    with pytest.raises(SnapshotError):
+        mgr.create(name="g", full=True)
+
+    assert {p.name: p.read_bytes() for p in snap_dir.iterdir()} == before

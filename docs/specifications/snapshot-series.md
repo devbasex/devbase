@@ -56,6 +56,7 @@
 | 系列の最新の世代 | 系列の中で `created_at` が最も新しい世代。同じ値なら `snapshot.yml` で後ろのもの |
 | 全体の上限 | 系列をまたいで数えた世代の数の上限（`max_total`） |
 | 復元前バックアップ | `restore` が書き戻す前に自動で作るフルの世代 `pre-restore-<時刻>`。復元する世代の対象ボリュームの組を控える。実行時の `DEVBASE_ACCOUNT_GROUP` には依らない。控えに失敗したら警告を出してそのディレクトリを消し、控え無しで復元を続ける |
+| 世代の作り直し | 既にある世代のディレクトリへ、前の `snapshot.snar` を引き継がずに新しい full を作り、前の差分と状態のファイルを除くこと。`--full` を既存の名前へ打ったとき・snar の無い世代への差分の指定・同じ秒に重なった復元前バックアップで起きる |
 
 ## 構成要素
 
@@ -65,6 +66,7 @@
 | 積み先の判定 | 同 `auto_snapshot_target` | 積み先の世代の名前か、新しい世代を作るべきこと（`None`）を返し、理由をログへ出す |
 | 最小間隔の元 | 同 `last_snapshot_time(volumes=None)` | 渡された組の系列の世代のアーカイブの mtime の最大を返す |
 | 保持 | 同 `rotate(keep, max_total)` と、副作用の無い `_rotation_plan` | 削除候補を決め、場所を検証してから消す |
+| 世代の作り直し | 同 `_create_full` / `_install_rebuilt_full` / `_discard_rebuild_temps` | 前のファイルを持つ世代へ full を作るとき、仮の名前へ控えてから決まった順で入れ替える（下の「世代の作り直し」） |
 | 世代の場所の検証 | 同 `_safe_snap_dir` | 名前・シンボリックリンク・`backups/` の外を `SnapshotError` で止める |
 | 自動スナップショット | `lib/devbase/commands/container.py` の `_auto_snapshot` / `_should_skip_by_interval` | 最小間隔を系列で判定し、判定の結果に従って `create` と `rotate()` を呼ぶ |
 | 自動ローテーション | 同 `cmd_down` | `mgr.rotate()` を既定の引数で呼ぶ |
@@ -249,6 +251,49 @@ classDiagram
   （`name` が無い・上の 3 つ・場所にディレクトリ以外がある）で不正なエントリを判定し、中を読まずに警告して
   一覧から外す。`snapshot.yml` は書き換えない
 
+### 世代の作り直し
+
+`_create_full` は、世代に前のファイル（`full.tar.zst`・`snapshot.snar`・`incr-*.tar.zst` のどれか）があれば
+世代の作り直しとして控える。無ければ本来の名前（`full.tar.zst`・`snapshot.snar`）へ直接控え、最後に
+`meta.yml` を書く（新しい世代の控えのコマンドと `meta.yml` はこの規則の前と同じ）。
+
+作り直しの手順:
+
+1. 前の中断の残りの仮の名前のファイル（`full.tar.zst.new`・`snapshot.snar.new`・`meta.yml.new`）を消す
+2. 前の `snapshot.snar` を tar に渡さず、空から始まる `snapshot.snar.new` と `full.tar.zst.new` へ控える
+   （tar はレベル 0 でボリュームの全体を控える）。除外の一覧は新しい世代と同じ規則（`_excludes_for`）で決める。
+   控えのコマンドは `checked_backup_command` で包み、tar の終了コードが 2 以上、または zstd の終了コードが
+   0 以外のときに失敗とする。パイプ全体の終了コード（zstd のもの）だけでは判定しない。tar が読み取りで
+   止まっても zstd は成功するため、パイプの終了コードだけで判定すると、壊れた控えで前の full と差分を消してしまう。
+   tar の 1（読む間にファイルが変わった）は、新しい世代へ直接控えるときと同じく通す
+3. 控えが成功したら `_install_rebuilt_full` が次の順に 1 つずつ入れ替える。改名は同じディレクトリの中の
+   `os.replace` で、ファイルを写さない
+   1. `snapshot.snar.bak` と `snapshot.snar` を消す
+   2. `incr-*.tar.zst` を番号の大きい順に消す
+   3. `meta.yml` を新しい控えの内容に `rebuilding: true` を足した形へ置き換える
+   4. `full.tar.zst.new` を `full.tar.zst` へ改名する
+   5. `meta.yml` を新しい控えの内容（印無し）へ置き換える
+   6. `snapshot.snar.new` を `snapshot.snar` へ改名する
+4. INFO を 1 行出す。`snapshot.yml` のエントリは `create` / `_backup_before_restore` が今の規則で更新する
+   （`incremental_count` と `updated_at`。`created_at` は変えない）
+
+`meta.yml` の置き換えは `meta.yml.new` へ書いてから改名し、途中まで書いた `meta.yml` を残さない。
+作り直した `meta.yml` は `type: full`・`files: [full.tar.zst]`・`incremental_count: 0`・作り直した時点の
+`volumes`・`exclude`・`created_at` を持つ。
+
+常に成り立つ条件:
+
+- 控えのコマンドが失敗したら（手順 2 の定義: tar が 2 以上、または zstd が 0 以外）、仮の名前のファイルを消して `SnapshotError` を投げ直す。世代の既存のファイルは
+  1 バイトも変わらず、ファイルは増えない
+- 入れ替え（手順 3）の途中で止まった世代は `snapshot.snar` を持たない。次の `create`（名前の指定・自動
+  スナップショット）は snar の無い世代の経路で作り直す
+- 入れ替えの途中で止まった世代は、次のどちらかである
+  - `meta.yml` に印が無く、`full.tar.zst` と `meta.yml` が同じ 1 回の控えのもので、前の full から番号の
+    小さい順に続く差分とともにある時点へ戻せる
+  - `meta.yml` が `rebuilding: true` を持つ。`restore` はこの世代を、復元前バックアップとボリュームの消去の前に
+    `SnapshotError` で止める
+- 作り直した後は、その世代から前の時点へ戻す手段は無い
+
 ## データ・設定
 
 **形は変えていない。** 移行は無く、変更前の devbase も同じファイルを読める。各世代の `meta.yml` に
@@ -261,6 +306,7 @@ classDiagram
 | 同 `snapshots[].incremental_count` | 差分の上限の判定 |
 | 同 `max_generations` | `rotate` が消したときに `keep` を書く。読む側は無い |
 | 各世代の `meta.yml` の `volumes` | 系列の判定には使わない。積む直前の検証（`auto_snapshot_target` の順 3 と `_create_incremental`）でだけ読む |
+| 各世代の `meta.yml` の `rebuilding` | 世代の作り直しの入れ替えの途中だけ `true`。持つ世代は `restore` が止める。作り直しを終えた世代と新しい世代は持たない |
 | 各世代の `meta.yml` の `exclude` | full を作ったときの除外の一覧（並べ替え済み）。差分では書き換えない。積む直前の検証（順 4a と `_create_incremental`）でだけ読む |
 | アーカイブの mtime | 最小間隔の判定 |
 
@@ -282,6 +328,7 @@ classDiagram
 | 全体の上限で消した | INFO | `ローテーション: 全体の上限 {max_total} 世代を超えたため、{系列} の {名前} を削除しました` |
 | 全体の上限を満たせない | WARNING | `全体の上限 {max_total} 世代を超えていますが、各グループの最新の世代は消さないため {残り} 世代を残します` |
 | 場所が不正なエントリ | WARNING | `snapshot.yml の世代 '{名前}' は場所が不正なため、ディレクトリを消さずに一覧からだけ外します: {理由}` |
+| 世代を作り直した | INFO | `世代 {名前} を今のボリュームの全体で作り直しました（前の差分 {本数} 本を除きました）` |
 | `snapshot rotate` で消す候補が無い | INFO | `ローテーション不要です`（`_snapshot_rotate`。消した数も外した数も 0 のときだけ） |
 | `snapshot rotate` で一覧から外しただけ | INFO | `ローテーション: 場所が不正な {数} 世代を一覧から外しました（削除した世代はありません）`（`_snapshot_rotate`） |
 | `snapshot rotate` で世代を消し、一覧からも外した | INFO | `ローテーション: 場所が不正な {数} 世代を一覧から外しました`（`_snapshot_rotate`。`rotate` の削除の INFO の後） |
@@ -299,6 +346,10 @@ classDiagram
 | `rotate` の `keep` / `max_total` が 1 未満 | `SnapshotError`。何も消さず `snapshot.yml` も書かない |
 | `rotate` の候補が `_safe_snap_dir` を通らない | ディレクトリを消さず、一覧から外して警告。他の候補の削除は続ける |
 | `create` / `restore` / `copy` / `delete` の世代が `_safe_snap_dir` を通らない | `SnapshotError` → CLI は終了コード 1 |
+| 世代の作り直しの控えのコマンドが失敗（tar の終了コードが 2 以上、または zstd が 0 以外。`checked_backup_command`） | 仮の名前のファイルを消して `SnapshotError`（`Dockerでのtar操作に失敗しました: {stderr}`）→ CLI は終了コード 1。世代は打つ前のまま |
+| 世代の作り直しの入れ替えが失敗 | 仮の名前のファイルを消して `SnapshotError`（`世代 '{名前}' の作り直しを終えられませんでした: {理由}。もう一度 devbase snapshot create --name {名前} --full を打ってください`）→ CLI は終了コード 1 |
+| `meta.yml` に `rebuilding: true` を持つ世代の `restore` | 復元前バックアップを作らず、ボリュームを消さずに `SnapshotError`（`世代 '{名前}' は作り直しの途中で止まっているため復元できません。devbase snapshot create --name {名前} --full を打って作り直してください`）→ CLI は終了コード 1 |
+| 仮の名前のファイルを消せない | 警告 1 行で続ける。次の作り直しが控えの前に消す |
 
 ## 運用
 
@@ -364,6 +415,22 @@ CLI と TUI:
   `keep × 3` になること。0 以下で終了コード 1（`tests/snapshot/test_manager_series.py`）
 - TUI の問いの文言と、`max_total` を渡さないこと（`tests/cli/tui/test_actions_snapshot.py`）
 - `cmd_down` の `rotate()` の失敗で終了コード 0（`tests/commands/test_container_down_snapshot.py`）
+
+世代の作り直し（`tests/snapshot/test_rebuild_generation.py`、`tests/snapshot/test_backup_real_tar.py`）:
+
+- 差分を持つ世代へ `--full` を打つと、`full.tar.zst`・`snapshot.snar`・`meta.yml` だけが残り、`meta.yml` が
+  full の形で今の除外の一覧を持ち、`snapshot.yml` のエントリが 1 件のまま `created_at` を変えないこと。
+  控えのコマンドが前の snar を受け取らないこと。控えのコマンドが tar の終了コード（`PIPESTATUS`）も見ること
+- 実の GNU tar と zstd で、tar が読み取りで止まり（終了コード 2）zstd が成功しても、作り直しが `SnapshotError` で
+  止まり、世代のファイル（前の full と差分）のバイト列が変わらないこと
+- 控えのコマンドの失敗で世代のファイルのバイト列と `snapshot.yml` が変わらないこと。入れ替えの各段で
+  止めると `SnapshotError` になり、snar と仮の名前のファイルが残らず、次の差分の指定が作り直すこと
+- 別のボリュームの組で作り直して止めた世代は、印があれば `restore` が docker を 1 回も呼ばずに止まり、
+  印が無ければ `full.tar.zst` と `meta.yml` の組が合うこと。差分が番号の大きい順に消えること
+- snar の無い世代への差分の指定と、同じ秒の復元前バックアップが作り直しになること。新しい世代の控えの
+  コマンドがこの規則の前と同じであること
+- 実の GNU tar と zstd で、作り直した full がボリュームの全体を持ち、復元で全ファイルが作り直した時点の
+  中身で戻り、その後の差分が後の変更だけを持つこと（GNU tar と zstd が無ければ飛ぶ）
 
 復元のテスト（`tests/snapshot/test_restore_incremental.py`、`test_manager_volumes.py` の復元）は
 変えずに通ること。ただし `test_restore_incremental.py` の実の Docker で入れ替える場所は、既定の除外

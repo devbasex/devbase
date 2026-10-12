@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import time
 
 import pytest
@@ -17,6 +16,7 @@ import yaml
 from devbase.commands import container
 from devbase.snapshot.manager import SnapshotManager
 
+from .fake_tar import write_backup_outputs
 from .test_manager_series import names, write_state
 
 
@@ -27,9 +27,7 @@ def root(tmp_path, monkeypatch):
     monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")  # up が宣言から置いた後 (#315)
     def fake(self, snap_dir, mode, command, volumes=None):
         if mode == "backup":
-            archive = re.search(r"/backup/(full\.tar\.zst|incr-\d+\.tar\.zst)", command)
-            (snap_dir / archive.group(1)).write_text("archive")
-            (snap_dir / "snapshot.snar").write_text("snar")
+            write_backup_outputs(snap_dir, command)
 
     monkeypatch.setattr(SnapshotManager, "_run_docker_tar", fake)
     return tmp_path

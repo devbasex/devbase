@@ -26,6 +26,8 @@ from devbase.snapshot.manager import (
     is_archive_file,
 )
 
+from .fake_tar import write_backup_outputs
+
 
 @pytest.fixture(autouse=True)
 def _group_env(monkeypatch):
@@ -42,9 +44,7 @@ class RecordingManager(SnapshotManager):
     def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
         self.calls.append({"mode": mode, "command": command})
         if mode == "backup":
-            archive = re.search(r"-o /backup/(\S+)", command).group(1)
-            (snap_dir / archive).write_text("archive")
-            (snap_dir / SNAR_FILE).write_text("snar")
+            write_backup_outputs(snap_dir, command)
 
 
 # ---------------------------------------------------------------------------

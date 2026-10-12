@@ -15,6 +15,8 @@ import yaml
 from devbase.errors import SnapshotCommandError, SnapshotError
 from devbase.snapshot.manager import SnapshotManager
 
+from .fake_tar import write_backup_outputs
+
 INITECH_VOLUMES = {"ai": "devbase_home_ubuntu", "group": "devbase_home_initech"}
 REAL_ERROR_STDERR = "tar: ./ai/x: Cannot write: No space left on device\n"
 
@@ -46,8 +48,7 @@ class RecordingManager(SnapshotManager):
                 raise SnapshotCommandError(
                     f"Dockerでのtar操作に失敗しました: {REAL_ERROR_STDERR}",
                     stderr=REAL_ERROR_STDERR)
-            (snap_dir / "full.tar.zst").write_text("archive")
-            (snap_dir / "snapshot.snar").write_text("snar")
+            write_backup_outputs(snap_dir, command)
             return None
         if self._fail_restore:
             raise SnapshotCommandError(

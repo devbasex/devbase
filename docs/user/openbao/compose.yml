@@ -1,0 +1,21 @@
+# devbase の試用の構成: 開発モードの OpenBao を手元に 1 台立てる
+#
+#   docker compose -f "$DEVBASE_ROOT/docs/user/openbao/compose.yml" up -d
+#
+# 開発モードのサーバは機密を記憶にだけ置き、止めると消える。本物の機密は置かない。
+# root token はサーバのコンテナの中（~/.vault-token）にだけあり、管理の操作は
+# docker compose exec で同じコンテナの中の bao から打つ。
+# 手順は docs/user/openbao-server.md の「試用の構成」を見る。
+name: devbase-openbao-trial
+
+services:
+  openbao:
+    # OpenBao の版はこの 1 行だけに書く（base イメージの BAO_VERSION と同じ 2.6 系）
+    image: openbao/openbao:2.6.2
+    command: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200"]
+    environment:
+      # コンテナの中の bao（管理の操作）が自分のサーバを指すように
+      BAO_ADDR: http://127.0.0.1:8200
+    ports:
+      # ホストの loopback にだけ公開する（同じ LAN の他の端末からは届かない）
+      - "127.0.0.1:8200:8200"

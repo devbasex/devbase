@@ -2,6 +2,7 @@
 
 import copy
 import os
+import re
 import yaml
 from pathlib import Path
 from typing import (
@@ -451,12 +452,65 @@ def _apply_dev_environment(service: dict, extra: Mapping[str, str]) -> None:
         "追記できませんでした", type(existing).__name__)
 
 
+#: コンテナからホストを指す名前と、Linux の Docker でそれを引けるようにする行 (#295)
+HOST_GATEWAY_NAME = 'host.docker.internal'
+HOST_GATEWAY_ENTRY = f'{HOST_GATEWAY_NAME}:host-gateway'
+
+
+def _extra_host_names(existing: Any) -> Set[str]:
+    """``extra_hosts`` (リスト形 ``name:ip`` / ``name=ip`` と辞書形) に書かれた名前。"""
+    if isinstance(existing, dict):
+        return {str(name) for name in existing}
+    names: Set[str] = set()
+    if isinstance(existing, list):
+        for item in existing:
+            if isinstance(item, str):
+                names.add(re.split(r'[:=]', item, maxsplit=1)[0].strip())
+    return names
+
+
+def _add_host_gateway(service: dict) -> None:
+    """dev のインスタンスへ ``host.docker.internal:host-gateway`` を、元の形を保って足す。
+
+    元の ``extra_hosts`` が既に ``host.docker.internal`` を持てば足さない (利用者の指定を
+    尊重する)。解釈できない形なら触らない。
+    """
+    existing = service.get('extra_hosts')
+    if HOST_GATEWAY_NAME in _extra_host_names(existing):
+        return
+    if existing is None:
+        service['extra_hosts'] = [HOST_GATEWAY_ENTRY]
+    elif isinstance(existing, list):
+        existing.append(HOST_GATEWAY_ENTRY)
+    elif isinstance(existing, dict):
+        existing[HOST_GATEWAY_NAME] = 'host-gateway'
+    else:
+        logger.warning(
+            "extra_hosts の形式 (%s) を解釈できないため、%s を足せませんでした",
+            type(existing).__name__, HOST_GATEWAY_ENTRY)
+
+
+def _apply_host_gateway(service: dict, environment: Mapping[str, str]) -> None:
+    """コンテナからホストの loopback へ届かせる設定を dev のインスタンスへ当てる (#295)。
+
+    ``network_mode: host`` の dev サービスは loopback がそのまま届き、``extra_hosts`` も
+    使えないため、何もしない (``dev_environment`` の元の値が残る)。
+    """
+    if not environment:
+        return
+    if service.get('network_mode') == 'host':
+        return
+    _apply_dev_environment(service, environment)
+    _add_host_gateway(service)
+
+
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int,
     group_volume: str,
     secret_env_names: Sequence[str] = (),
     dev_environment: Optional[Mapping[str, str]] = None,
     vscode_volume: Optional[str] = None,
+    host_gateway_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build the service definition for one scaled dev instance (dev-<index>)."""
     service = copy.deepcopy(dev_service)
@@ -470,6 +524,7 @@ def _build_dev_instance(
     # 機密の伏せ字化のあとに載せる。devbase 由来の値 (clone プラン等) は機密では
     # なく、そのままコンテナへ渡す必要があるため。
     _apply_dev_environment(service, dev_environment or {})
+    _apply_host_gateway(service, host_gateway_environment or {})
 
     # Update volume mounts for /persistent/ai and /work
     ai_volume = get_ai_volume_for_index(index)
@@ -489,6 +544,7 @@ def _build_scaled_services(
     secret_services: Optional[Mapping[str, Set[str]]] = None,
     dev_environment: Optional[Mapping[str, str]] = None,
     vscode_volumes: Sequence[str] = (),
+    host_gateway_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances.
 
@@ -536,6 +592,7 @@ def _build_scaled_services(
             secret_names.for_dev,
             dev_environment=dev_environment,
             vscode_volume=vscode_by_index.get(i),
+            host_gateway_environment=host_gateway_environment,
         )
     return scaled_services
 
@@ -735,6 +792,7 @@ def generate_scaled_compose(
     dev_environment: Optional[Mapping[str, str]] = None,
     docker_home: Optional[str] = None,
     remote: bool = False,
+    host_gateway_environment: Optional[Mapping[str, str]] = None,
 ) -> Path:
     """
     Generate scaled docker-compose file with per-instance volumes
@@ -753,6 +811,11 @@ def generate_scaled_compose(
             展開に委ねる)
         remote: リモート扱いか。``docker_home`` が無いときに、リモートに存在しない
             パスを指す mount を警告する
+        host_gateway_environment: コンテナからホストの loopback へ届かせるときに dev の
+            インスタンスで上書きする環境変数 (#295。``BAO_ADDR`` のホストを
+            ``host.docker.internal`` にした値)。与えると dev のインスタンスへ
+            ``host.docker.internal:host-gateway`` の行も足す。``network_mode: host`` の
+            dev サービスには当てない
 
     非 dev サービスへは、そのサービスが元々 ``env_file`` で参照していた由来の
     キーだけを列挙する。由来の内訳が渡されない場合 (両方 ``None``) は全キーを
@@ -793,6 +856,7 @@ def generate_scaled_compose(
         secret_services=secret_services,
         dev_environment=dev_environment,
         vscode_volumes=vscode_volumes,
+        host_gateway_environment=host_gateway_environment,
     )
 
     # 列挙を絞るだけでは、元の compose.yml が environment に**直書き**している

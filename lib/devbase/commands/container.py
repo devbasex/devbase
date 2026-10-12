@@ -17,6 +17,7 @@ from devbase.errors import DevbaseError
 from devbase.log import get_logger
 from devbase.volume.manager import ensure_volumes
 from devbase.volume.compose import (
+    HOST_GATEWAY_NAME,
     generate_scaled_compose,
     get_dev_service_name,
 )
@@ -188,7 +189,8 @@ _SOURCE_LABELS = {
 
 def _generate_compose_for(scale: int, secrets, dev_environment=None,
                           docker_home: Optional[str] = None,
-                          remote: bool = False) -> Path:
+                          remote: bool = False,
+                          host_gateway_environment=None) -> Path:
     """機密の内訳と devbase 由来の環境変数を渡してスケール構成を生成する。
 
     ``dev_environment`` は ``project.yml`` から作った clone プラン等
@@ -197,6 +199,9 @@ def _generate_compose_for(scale: int, secrets, dev_environment=None,
 
     ``docker_home`` / ``remote`` はリモート扱いのときの bind mount の書き換えと警告
     (PLAN52)。ローカル扱いでは両方とも既定値のまま渡す。
+
+    ``host_gateway_environment`` はコンテナからホストの loopback へ届かせるときに
+    上書きする環境変数 (#295。:func:`_host_gateway_kwargs`)。
     """
     return generate_scaled_compose(
         scale,
@@ -206,6 +211,7 @@ def _generate_compose_for(scale: int, secrets, dev_environment=None,
         dev_environment=dev_environment,
         docker_home=docker_home,
         remote=remote,
+        host_gateway_environment=host_gateway_environment,
     )
 
 
@@ -219,11 +225,13 @@ def _build_scaled_override(scale: int, config, project_name: str,
     ため、1 箇所へ寄せる。
     """
     secrets = _inject_secrets(required=True)
+    bao_environment = _bao_environment()
     dev_environment = {**project_runtime.container_env(config, project_name),
-                       **_bao_environment()}
+                       **bao_environment}
     return _generate_compose_for(
         scale, secrets, dev_environment=dev_environment,
-        **_remote_generate_kwargs(target))
+        **_remote_generate_kwargs(target),
+        **_host_gateway_kwargs(bao_environment, target))
 
 
 @contextmanager
@@ -929,6 +937,49 @@ def _bao_environment() -> dict:
     if store is None:
         return {}
     return {'BAO_ADDR': store.config.openbao.url}
+
+
+def container_bao_address(url: Optional[str], *, remote: bool) -> Optional[str]:
+    """コンテナから見た接続先 (#295)。置き換えないときは ``None``。
+
+    ``openbao.url`` が ``http`` でホストが loopback、かつ docker の接続先がローカル扱いの
+    ときだけ、ホストを :data:`~devbase.volume.compose.HOST_GATEWAY_NAME` に置き換える。コンテナの中の
+    ``127.0.0.1`` はコンテナ自身を指し、ホストのサーバへ届かないため。スキームと
+    ポートは保つ。
+
+    置き換えないもの:
+
+    - リモート扱い: loopback はホストの端末を指し、コンテナのある端末からは届かない
+    - ``https``: 証明書の名前が置き換えた名前と合わず、TLS の検証で落ちる
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    from devbase.env.backend_config import _LOOPBACK_HOSTS
+
+    if not url or remote:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme != 'http' or parts.hostname not in _LOOPBACK_HOSTS:
+        return None
+    netloc = HOST_GATEWAY_NAME
+    if parts.port is not None:
+        netloc = f'{netloc}:{parts.port}'
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _host_gateway_kwargs(bao_environment: dict,
+                         target: docker_context.DockerTarget) -> dict:
+    """コンテナから見た接続先を置き換えるときだけ構成生成へ渡す引数 (#295)。
+
+    置き換えないときは空 (従来の呼び出しの形)。``BAO_ADDR`` を ``dev_environment``
+    で直に書き換えず別に渡すのは、dev サービスが ``network_mode: host`` のとき
+    (loopback がそのまま届き、``extra_hosts`` も使えない) に生成の側が元の値を残せる
+    ようにするため。
+    """
+    address = container_bao_address(bao_environment.get('BAO_ADDR'), remote=target.remote)
+    if address is None:
+        return {}
+    return {'host_gateway_environment': {'BAO_ADDR': address}}
 
 
 def _target_indices(indices, scale: int, start: int = 1) -> list[int]:

@@ -94,12 +94,12 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | region の出所 | — | 参照の AWS_DEFAULT_REGION へ書く値をどこから得たか。参照に既にある・ホストの region・利用者の入力・既定の値（ap-northeast-1）の 4 つ | — | — | `docs/specifications/secret-backend.md` |
 | 鍵の確認の結果 | — | AWS の方法 3 で、ホストの [default] の鍵を取り込むかを決めた結果。受け入れた・断った・確認しなかった（ホストに鍵が無い）の 3 つ。方針が import なら受け入れた。skip ならホストに鍵があれば断った、無ければ確認しなかったになる | — | — | `docs/specifications/secret-backend.md` |
 | 鍵ファイルの発見 | — | ~/gcp-credentials/ の *.json を読み、正規化したプロファイル名から鍵ファイルへの対応を作ること。出力を持たない | — | — | `docs/specifications/secret-backend.md` |
-| 利用の形 | — | OpenBao サーバの持ち方の 3 つの区分。個人の形（1 人で 1 台）・チームの形（チームで 1 台、チーム共通と個人の置き場を分ける）・既存のサーバの形（組織が運用するサーバへ接続する） | — | — | — |
-| ポリシーの雛形 | — | devbase が前提にする権限を OpenBao のポリシー（HCL）として書いた、docs/user/openbao/policies/ のファイル。管理する人が自分のサーバへ書き込んで使う | — | — | — |
-| 試用の構成 | — | docs/user/openbao/compose.yml で開発モードの OpenBao を手元に立て、devbase の接続を試して片付けるまでの最小の構成 | — | — | — |
-| 利用者の識別子 | — | secrets/backend.yml の openbao.user。サーバの entity 名と同じ値にし、個人単位の置き場のパスに使う | — | — | — |
-| コンテナから見た接続先 | — | dev コンテナへ BAO_ADDR として渡す OpenBao の接続先。openbao.url が http の loopback でローカル扱いのときはホストを host.docker.internal に置き換えた値、それ以外（https を含む）は openbao.url のまま | — | — | — |
-| 管理する人 | — | 利用者の OpenBao サーバで、マウント・AppRole・ポリシー・entity を作る人。個人の形では利用者本人 | — | — | — |
+| 利用の形 | — | OpenBao サーバの持ち方の 3 つの区分。個人の形（1 人で 1 台）・チームの形（チームで 1 台、チーム共通と個人の置き場を分ける）・既存のサーバの形（組織が運用するサーバへ接続する） | — | — | `docs/specifications/secret-backend.md` |
+| ポリシーの雛形 | — | devbase が前提にする権限を OpenBao のポリシー（HCL）として書いた、docs/user/openbao/policies/ のファイル。管理する人が自分のサーバへ書き込んで使う | — | — | `docs/specifications/secret-backend.md` |
+| 試用の構成 | — | docs/user/openbao/compose.yml で開発モードの OpenBao を手元に立て、devbase の接続を試して片付けるまでの最小の構成 | — | — | `docs/specifications/secret-backend.md` |
+| 利用者の識別子 | — | secrets/backend.yml の openbao.user。サーバの entity 名と同じ値にし、個人単位の置き場のパスに使う | — | — | `docs/specifications/secret-backend.md` |
+| コンテナから見た接続先 | — | dev コンテナへ BAO_ADDR として渡す OpenBao の接続先。openbao.url が http の loopback でローカル扱いのときはホストを host.docker.internal に置き換えた値、それ以外（https を含む）は openbao.url のまま | — | — | `docs/specifications/secret-backend.md` |
+| 管理する人 | — | 利用者の OpenBao サーバで、マウント・AppRole・ポリシー・entity を作る人。個人の形では利用者本人 | — | — | `docs/specifications/secret-backend.md` |
 
 ## スナップショット（`snapshot`）
 

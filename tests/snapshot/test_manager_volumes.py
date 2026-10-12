@@ -15,6 +15,8 @@ import yaml
 from devbase.errors import SnapshotError
 from devbase.snapshot.manager import SnapshotManager
 
+from .fake_tar import write_backup_outputs
+
 
 @pytest.fixture(autouse=True)
 def _clean_group_env(monkeypatch):
@@ -42,8 +44,7 @@ class RecordingManager(SnapshotManager):
         })
         # フルバックアップの実体が無いと restore が止まるので、印だけ作る
         if mode == "backup":
-            (snap_dir / "full.tar.zst").write_text("archive")
-            (snap_dir / "snapshot.snar").write_text("snar")
+            write_backup_outputs(snap_dir, command)
 
 
 # ---------------------------------------------------------------------------

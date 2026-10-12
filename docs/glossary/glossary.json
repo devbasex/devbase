@@ -959,43 +959,37 @@
       "term": "利用の形",
       "context": "secret",
       "meaning": "OpenBao サーバの持ち方の 3 つの区分。個人の形（1 人で 1 台）・チームの形（チームで 1 台、チーム共通と個人の置き場を分ける）・既存のサーバの形（組織が運用するサーバへ接続する）",
-      "source": "",
-      "pending_source": "issues/issue-295-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "ポリシーの雛形",
       "context": "secret",
       "meaning": "devbase が前提にする権限を OpenBao のポリシー（HCL）として書いた、docs/user/openbao/policies/ のファイル。管理する人が自分のサーバへ書き込んで使う",
-      "source": "",
-      "pending_source": "issues/issue-295-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "試用の構成",
       "context": "secret",
       "meaning": "docs/user/openbao/compose.yml で開発モードの OpenBao を手元に立て、devbase の接続を試して片付けるまでの最小の構成",
-      "source": "",
-      "pending_source": "issues/issue-295-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "利用者の識別子",
       "context": "secret",
       "meaning": "secrets/backend.yml の openbao.user。サーバの entity 名と同じ値にし、個人単位の置き場のパスに使う",
-      "source": "",
-      "pending_source": "issues/issue-295-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "コンテナから見た接続先",
       "context": "secret",
       "meaning": "dev コンテナへ BAO_ADDR として渡す OpenBao の接続先。openbao.url が http の loopback でローカル扱いのときはホストを host.docker.internal に置き換えた値、それ以外（https を含む）は openbao.url のまま",
-      "source": "",
-      "pending_source": "issues/issue-295-design.md"
+      "source": "docs/specifications/secret-backend.md"
     },
     {
       "term": "管理する人",
       "context": "secret",
       "meaning": "利用者の OpenBao サーバで、マウント・AppRole・ポリシー・entity を作る人。個人の形では利用者本人",
-      "source": "",
-      "pending_source": "issues/issue-295-design.md"
+      "source": "docs/specifications/secret-backend.md"
     }
   ]
 }
