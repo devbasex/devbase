@@ -29,6 +29,8 @@ from devbase.snapshot.manager import (
 )
 from tests.conftest import HOST_DOCKER_ENV
 
+from .fake_tar import write_backup_outputs
+
 @pytest.fixture(autouse=True)
 def _clean_group_env(monkeypatch):
     """復元前の自動バックアップがグループを解決するので、環境で揺らさない (宣言済みの acme)。"""
@@ -132,8 +134,7 @@ class StubManager(SnapshotManager):
 
     def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
         if mode == 'backup':
-            (snap_dir / 'full.tar.zst').write_text('archive')
-            (snap_dir / 'snapshot.snar').write_text('snar')
+            write_backup_outputs(snap_dir, command)
             return
         archive = self._archive_in(command)
         if archive is None:
