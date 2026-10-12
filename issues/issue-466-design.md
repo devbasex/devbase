@@ -166,7 +166,7 @@ graph LR
 | --- | --- | --- |
 | `manager.py` の関数 | `_create_incremental`、追加する `_install_incremental`・`_discard_incremental_temps`、定数 `INCR_ARCHIVE_TMP`（作り直しの仮の名前の定数の下に足す）、`checked_backup_command` の docstring | `_backup_before_restore` と、名前を決める関数（足すなら `_backup_before_restore` の近くに置く） |
 | `manager.py` で両方が触らない | `_create_full`・`_install_rebuilt_full`・`_discard_rebuild_temps`・`backup_command`・`restore`・`_apply_incrementals`・`create`・`_update_global_metadata` | 同左 |
-| `snapshot-series.md` | 「構成要素」の表に「差分の作成」の行（「世代の場所の検証」の行の下）、「仕様」に `### 差分の作成` の節（「差分の積み先」の節の末尾の段落の後、「最小間隔」の前）、「データ・設定」の保存先の表の末尾（「アーカイブの mtime」の行の後）に仮のファイルの行、「エラー処理」の表の末尾に差分の経路の行、「運用」の #466 の行（今の 422〜424 行）の置き換え、「テスト観点」の末尾（「関連リンク」の前）に差分の作成の項 | 「用語」の表の「復元前バックアップ」の行、「世代の作り直し」の場面の表の復元前バックアップの行、節の末尾の重なりの段落（今の 346〜348 行）、「テスト観点」の作り直しの項のうち重なった復元前バックアップの行（今の 498 行） |
+| `snapshot-series.md` | 「構成要素」の表に「差分の作成」の行（「世代の場所の検証」の行の下）、「仕様」に `### 差分の作成` の節（「差分の積み先」の節の末尾の段落の後、「最小間隔」の前）、「データ・設定」の保存先の表の末尾（「アーカイブの mtime」の行の後）に仮のファイルの行、「エラー処理」の表の末尾に差分の経路の行、「運用」の #466 の行（今の 422〜424 行）の置き換え、「テスト観点」の末尾（「関連リンク」の前）に差分の作成の項、「世代の作り直し」の常に成り立つ条件の仮の名前のファイルの文言（今の 326〜327 行）と「テスト観点」の作り直しの項の残るファイルの文言（今の 484 行）を作り直しの仮の名前のファイルへ絞る（決定 4） | 「用語」の表の「復元前バックアップ」の行、「世代の作り直し」の場面の表の復元前バックアップの行、節の末尾の重なりの段落（今の 346〜348 行）、「テスト観点」の作り直しの項のうち重なった復元前バックアップの行（今の 498 行） |
 | テスト | 新しいファイル `tests/snapshot/test_incremental_failure.py`、`test_archive_layout.py` の `test_create_and_restore_go_through_the_helpers` の差分の控えのコマンドの行 | `test_rebuild_generation.py` の `test_pre_restore_backup_rebuilds_an_existing_generation`（と #473 が足すテスト） |
 | `CHANGELOG.md` の `[Unreleased]` | `### Fixed` に 1 項 | 同じく 1 項。並行してぶつかったら両方の記入を残す |
 | `docs/glossary/glossary.json` | 触らない（新しい語を足さない） | 「復元前バックアップ」の意味を変えるなら触る |
@@ -337,7 +337,15 @@ snar 1 本で、ホストの利用者が書ける世代のディレクトリの�
 
 前の中断の残りは、snar の有無の判定（無ければ full へ切り替える）より前に消す。snar の無い世代の作り直しにも、差分の作成の残りを
 持ち込まないためである。名前を指定した `--full` で作り直す経路（`create` → `_create_full`）は `incr.tar.zst.new` を消さない。作り直しの経路を
-変えない前提（要求の前提 3）による。残っても世代のどの読み手にも当たらず、次の差分の作成が消す。
+変えない前提（要求の前提 3）による。残っても世代のどの読み手にも当たらず、次の差分の作成が消す。`_discard_rebuild_temps` へ
+`incr.tar.zst.new` を足さない。
+
+このため、作り直しに成功した世代にも `incr.tar.zst.new` が残り得る。`snapshot-series.md` の「世代の作り直し」の常に成り立つ条件
+（今の 326〜327 行「…`snapshot.snar.bak`・仮の名前のファイルを持たない」）と、「テスト観点」の作り直しの項（今の 484 行「…`meta.yml` だけを持ち
+（…仮の名前のファイルが無い）」）は、この残りを含めると偽になる。2 か所とも、持たないファイルを「作り直しの仮の名前のファイル（`full.tar.zst.new`・
+`snapshot.snar.new`・`meta.yml.new`）」へ絞り、前の中断で残った `incr.tar.zst.new` は作り直しが消さず次の差分の作成が消すと書き足す
+（484 行は「`full.tar.zst`・`snapshot.snar`・`meta.yml` だけを持ち」を、前の中断の `incr.tar.zst.new` を除く形にする）。
+`snapshot.snar.new` は作り直しが控えの前に消すため、差分の作成の残りでも作り直しの後には残らず、絞った条件に入れたままでよい。
 
 番号付きの仮の名前（`incr-NNN.tar.zst.new`）は採らない。前の中断の番号と今回の番号が違い得て、消すのに glob が要る。
 
