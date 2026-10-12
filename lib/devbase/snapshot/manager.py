@@ -274,17 +274,23 @@ class SnapshotManager:
         recorded = self._recorded_excludes(snap_dir)
         if recorded is not None:
             return recorded
-        latest = self.series_latest(volumes)
-        if latest is not None:
-            try:
-                latest_dir = self._safe_snap_dir(latest['name'])
-            except SnapshotError:
-                latest_dir = None
-            if latest_dir is not None and latest_dir.is_dir():
-                recorded = self._recorded_excludes(latest_dir)
-                if recorded is not None:
-                    return recorded
+        recorded = self._latest_recorded_excludes(volumes)
+        if recorded is not None:
+            return recorded
         return self.excludes
+
+    def _latest_recorded_excludes(self, volumes: dict) -> Optional[tuple]:
+        """系列の最新の世代の除外の記録を返す。世代・記録が無い、扱えない名前なら ``None``。"""
+        latest = self.series_latest(volumes)
+        if latest is None:
+            return None
+        try:
+            latest_dir = self._safe_snap_dir(latest['name'])
+        except SnapshotError:
+            return None
+        if not latest_dir.is_dir():
+            return None
+        return self._recorded_excludes(latest_dir)
 
     @property
     def volumes(self) -> dict:
