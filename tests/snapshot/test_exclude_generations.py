@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import shlex
 import types
 
@@ -20,6 +19,7 @@ from devbase.errors import SnapshotError
 from devbase.snapshot.exclude import DEFAULT_EXCLUDES, USER_CONFIG
 from devbase.snapshot.manager import SNAR_FILE, SnapshotManager
 
+from .fake_tar import write_backup_outputs
 from .test_manager_series import vols, write_state
 
 DEFAULTS = sorted(DEFAULT_EXCLUDES)
@@ -41,9 +41,7 @@ class RecordingManager(SnapshotManager):
     def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
         self.calls.append({"mode": mode, "command": command})
         if mode == "backup":
-            archive = re.search(r"-o /backup/(\S+)", command).group(1)
-            (snap_dir / archive).write_text("archive")
-            (snap_dir / SNAR_FILE).write_text("snar")
+            write_backup_outputs(snap_dir, command)
 
     def backup_excludes(self) -> list:
         """記録した控えのコマンドごとに、``--exclude=`` の値の並びを返す。"""

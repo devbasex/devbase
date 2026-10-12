@@ -1,5 +1,6 @@
 """スナップショット管理のコアロジック"""
 
+import os
 import re
 import shlex
 import shutil
@@ -46,6 +47,17 @@ FULL_ARCHIVE = 'full.tar.zst'
 SNAR_FILE = 'snapshot.snar'
 INCR_ARCHIVE_GLOB = 'incr-*.tar.zst'
 _INCR_ARCHIVE_RE = re.compile(r'^incr-(\d+)\.tar\.zst$')
+
+# 世代の作り直し (既にある世代へ full を作る) で使う仮の名前 (#458)。新しい控えをここへ
+# 書いてから改名で入れ替え、控えが失敗しても前のファイルに触らない。``is_archive_file`` と
+# ``INCR_ARCHIVE_GLOB`` に当たらない名前にする。
+FULL_ARCHIVE_TMP = f'{FULL_ARCHIVE}.new'
+SNAR_FILE_TMP = f'{SNAR_FILE}.new'
+SNAP_META_FILE = 'meta.yml'
+META_FILE_TMP = f'{SNAP_META_FILE}.new'
+# 作り直しの途中で full と meta.yml の組が合わない間だけ meta.yml に立てる印。
+# 印のある世代は復元しない。
+REBUILDING_KEY = 'rebuilding'
 
 # コンテナ内のマウント先。作成時は対象ボリュームを /source の下へ読み取り専用で、
 # 復元時は /target の下へ書き込み可で並べる。世代ディレクトリは /backup。
@@ -493,6 +505,12 @@ class SnapshotManager:
                    Noneなら全差分を適用。
         """
         snap_dir = self._restore_source(name, point)
+        if self._load_snap_meta(snap_dir).get(REBUILDING_KEY):
+            # full と meta.yml の組が合わない。復元前バックアップも消去も行わない (#458)
+            raise SnapshotError(
+                f"世代 '{name}' は作り直しの途中で止まっているため復元できません。"
+                f"devbase snapshot create --name {name} --full を打って作り直してください"
+            )
 
         # 控える組を決めるため、組は控えより先に読む。検証を通らない世代では
         # 控えも復元も行わない。
@@ -980,11 +998,12 @@ class SnapshotManager:
         return ensure_snapshot_image(self.devbase_root)
 
     @staticmethod
-    def backup_command(archive: str, volumes: dict, excludes=()) -> str:
+    def backup_command(archive: str, volumes: dict, excludes=(), snar: str = SNAR_FILE) -> str:
         """対象を 1 本のアーカイブへ書き出すコマンドを組み立てる。
 
-        full も差分も同じ形で、``snapshot.snar`` に前回の状態を積み上げる。
-        差分は ``archive`` に ``incr-NNN.tar.zst`` を渡す。
+        full も差分も同じ形で、``snar`` (既定 ``snapshot.snar``) に前回の状態を積み上げる。
+        差分は ``archive`` に ``incr-NNN.tar.zst`` を渡す。世代の作り直しは、空から始まる
+        仮の名前の ``snar`` を渡して全体 (レベル 0) を控える (#458)。
 
         起点は各ボリュームのマウント先 (``ai`` / ``group``) で、``/source`` そのものではない。
         ``/source`` はコンテナを起動するたびに作られ inode が変わるため、GNU tar が毎回
@@ -998,7 +1017,7 @@ class SnapshotManager:
         exclude_args = tar_exclude_args(excludes, member_list)
         exclude_part = f"{exclude_args} " if exclude_args else ''
         return (
-            f"tar --listed-incremental={ARCHIVE_MOUNT}/{SNAR_FILE} {exclude_part}"
+            f"tar --listed-incremental={ARCHIVE_MOUNT}/{snar} {exclude_part}"
             f"-cf - -C {BACKUP_ROOT} {members} | zstd -1 -T0 -o {ARCHIVE_MOUNT}/{archive}"
         )
 
@@ -1096,6 +1115,9 @@ class SnapshotManager:
                      volumes: Optional[dict] = None) -> None:
         """フルバックアップを作成する。
 
+        世代に前のファイル (full・snar・差分のどれか) があれば、世代の作り直しとして
+        仮の名前へ控えてから入れ替える (#458)。無ければ本来の名前へ直接控える。
+
         Args:
             volumes: 控える組。省けば作成時の対象 (``self.volumes``)
         """
@@ -1103,11 +1125,41 @@ class SnapshotManager:
             volumes = self.volumes
         excludes = self._excludes_for(snap_dir, volumes)
         logger.info("フルバックアップを作成中: %s", name)
-        self._run_docker_tar(
-            snap_dir, 'backup', self.backup_command(FULL_ARCHIVE, volumes, excludes), volumes,
-        )
+        if not self._has_previous_files(snap_dir):
+            self._run_docker_tar(
+                snap_dir, 'backup', self.backup_command(FULL_ARCHIVE, volumes, excludes), volumes,
+            )
+            self._save_snap_meta(snap_dir, self._full_meta(name, volumes, excludes))
+            return
 
-        # meta.yml を作成
+        # 前の中断の残りを消してから、前の snar を引き継がずに仮の名前で控える。
+        # 控えが失敗しても前のファイルは 1 バイトも変わらない (決定 1)
+        self._discard_rebuild_temps(snap_dir)
+        try:
+            self._run_docker_tar(
+                snap_dir, 'backup',
+                self.backup_command(FULL_ARCHIVE_TMP, volumes, excludes, snar=SNAR_FILE_TMP),
+                volumes,
+            )
+        except SnapshotError:
+            self._discard_rebuild_temps(snap_dir)
+            raise
+
+        try:
+            removed = self._install_rebuilt_full(
+                snap_dir, self._full_meta(name, volumes, excludes))
+        except (OSError, SnapshotError) as e:
+            self._discard_rebuild_temps(snap_dir)
+            raise SnapshotError(
+                f"世代 '{name}' の作り直しを終えられませんでした: {e}。"
+                f"もう一度 devbase snapshot create --name {name} --full を打ってください"
+            ) from e
+        logger.info("世代 %s を今のボリュームの全体で作り直しました（前の差分 %d 本を除きました）",
+                    name, removed)
+
+    @staticmethod
+    def _full_meta(name: str, volumes: dict, excludes) -> dict:
+        """full を作った直後の ``meta.yml`` の内容を組む。"""
         meta = {
             'name': name,
             'created_at': datetime.now().isoformat(),
@@ -1121,7 +1173,53 @@ class SnapshotManager:
         if '' not in volumes:
             # 旧レイアウト (ルートへ直接マウント) の起点は ``.`` のままなので書かない
             meta['archive_root'] = ARCHIVE_ROOT_MEMBERS
-        self._save_snap_meta(snap_dir, meta)
+        return meta
+
+    @staticmethod
+    def _has_previous_files(snap_dir: Path) -> bool:
+        """世代が前の控え (full・snar・差分のどれか) を持つか。持てば作り直しになる。"""
+        return ((snap_dir / FULL_ARCHIVE).exists() or (snap_dir / SNAR_FILE).exists()
+                or any(snap_dir.glob(INCR_ARCHIVE_GLOB)))
+
+    def _install_rebuilt_full(self, snap_dir: Path, meta: dict) -> int:
+        """仮の名前で控えた full を世代へ入れ替え、除いた差分の本数を返す (#458・決定 2)。
+
+        状態ファイル → 差分 (番号の大きい順) → 印付きの meta.yml → full → 印無しの
+        meta.yml → 状態ファイルの順に 1 つずつ行う。どこで止まっても世代は snar を持たず、
+        「印が無く full と meta.yml が同じ控えの組」か「印があり復元しない組」のどちらかになる。
+        途中の失敗は ``OSError`` のまま外へ出す。
+        """
+        for stale in (f'{SNAR_FILE}.bak', SNAR_FILE):
+            (snap_dir / stale).unlink(missing_ok=True)
+
+        incrs = sorted(snap_dir.glob(INCR_ARCHIVE_GLOB),
+                       key=lambda p: (incr_archive_number(p.name) or 0, p.name),
+                       reverse=True)
+        for incr in incrs:
+            incr.unlink()
+
+        self._replace_snap_meta(snap_dir, {**meta, REBUILDING_KEY: True})
+        os.replace(snap_dir / FULL_ARCHIVE_TMP, snap_dir / FULL_ARCHIVE)
+        self._replace_snap_meta(snap_dir, meta)
+        os.replace(snap_dir / SNAR_FILE_TMP, snap_dir / SNAR_FILE)
+        return len(incrs)
+
+    def _replace_snap_meta(self, snap_dir: Path, meta: dict) -> None:
+        """``meta.yml`` を仮の名前へ書いてから改名で置き換える (途中まで書いた形を残さない)。"""
+        tmp = snap_dir / META_FILE_TMP
+        with open(tmp, 'w') as f:
+            yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
+        os.replace(tmp, snap_dir / SNAP_META_FILE)
+
+    @staticmethod
+    def _discard_rebuild_temps(snap_dir: Path) -> None:
+        """作り直しの仮の名前のファイルを消す。消せなければ警告して続ける。"""
+        for tmp in (FULL_ARCHIVE_TMP, SNAR_FILE_TMP, META_FILE_TMP):
+            try:
+                (snap_dir / tmp).unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("作り直しの仮のファイル %s を消せませんでした: %s",
+                               snap_dir / tmp, e)
 
     def _create_incremental(self, name: str, snap_dir: Path) -> None:
         """差分バックアップを作成"""

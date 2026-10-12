@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import time
 import types
 from datetime import datetime
@@ -22,6 +21,8 @@ from devbase.commands.snapshot import cmd_snapshot
 from devbase.errors import SnapshotError
 from devbase.snapshot.exclude import DEFAULT_EXCLUDES
 from devbase.snapshot.manager import RotateResult, SnapshotManager
+
+from .fake_tar import write_backup_outputs
 
 
 @pytest.fixture(autouse=True)
@@ -39,8 +40,7 @@ class RecordingManager(SnapshotManager):
     def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
         self.calls.append({"mode": mode, "command": command})
         if mode == "backup":
-            (snap_dir / "full.tar.zst").write_text("archive")
-            (snap_dir / "snapshot.snar").write_text("snar")
+            write_backup_outputs(snap_dir, command)
 
 
 def vols(group: str) -> dict:
@@ -217,9 +217,7 @@ class ArchiveRecordingManager(RecordingManager):
     def _run_docker_tar(self, snap_dir, mode, command, volumes=None):
         self.calls.append({"mode": mode, "command": command})
         if mode == "backup":
-            archive = re.search(r"/backup/(full\.tar\.zst|incr-\d+\.tar\.zst)", command)
-            (snap_dir / archive.group(1)).write_text("archive")
-            (snap_dir / "snapshot.snar").write_text("snar")
+            write_backup_outputs(snap_dir, command)
 
 
 def _entry(root: Path, name: str) -> dict:
