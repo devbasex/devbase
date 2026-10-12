@@ -20,6 +20,7 @@ import yaml
 
 from devbase.commands.snapshot import cmd_snapshot
 from devbase.errors import SnapshotError
+from devbase.snapshot.exclude import DEFAULT_EXCLUDES
 from devbase.snapshot.manager import RotateResult, SnapshotManager
 
 
@@ -69,6 +70,7 @@ def write_state(root: Path, entries: list) -> Path:
             else:
                 meta["volumes"] = vols(group)
                 meta["archive_root"] = "members"
+                meta["exclude"] = sorted(DEFAULT_EXCLUDES)
             (snap_dir / "meta.yml").write_text(yaml.safe_dump(meta))
         entry = {"name": name, "created_at": created, "updated_at": created,
                  "incremental_count": incr}
