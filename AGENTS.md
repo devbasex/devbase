@@ -80,6 +80,7 @@ python3 .github/scripts/proper_term_check.py           # 固有の語の検査
 | macOS で検査が通る | CI（Linux）と `ln` などの既定の振る舞いが違う。同時実行の競合が CI でだけ出た例がある | 振る舞いが分かれるオプションは明示する（例: `ln -P`） |
 | tmux を使うテストを書く | `$TMUX` があると `TMUX_TMPDIR` は無視され、`kill-server` が実のサーバーを落とす | `env -u TMUX` で起動するか、`-S` / `-L` で別のソケットを使う |
 | 受け入れ条件や手動確認に「作業用のプロジェクトで `devbase up`」がある | 作業用のプロジェクトでも、共通のホーム（`devbase_home_ubuntu`）・グループのホーム・作業ボリュームの実物を付けて起動する。非対話の担当は P3 を聞けずにそのまま打つ（m8b で #470 の担当が打ち、利用者のボリュームを付けたコンテナが立った。痕跡は無かった） | 実装のプロンプトで担当に `devbase up` を禁じる。`up` の確認は conductor が P3 の承認を取ってから打つか、`up` を使わない確かめ方（構成の生成・`SnapshotManager` を一時のルートで組むなど）へ置き換える |
+| スナップショットの差分（tar の `--listed-incremental`）の失敗や中断の扱いを設計する | 中断した差分を「次の差分が重ねて含むので置いておく」とすると、ディレクトリの改名が A→B・B→C と続いたとき復元で A→C を求め、C の中身が欠ける。ファイルの追加・変更だけの例では正しく見える（#466 の決定 2 がレビューで major になり、f509cf5 で組の snar `snapshot.snar.pending-NNN` へ直した） | 設計で、中断の後の世代を復元する場面を、追加・変更に加えて削除とディレクトリの改名で並べる。`snar` と差分を同じ組として進めるか戻すかで決める（[snapshot-series.md](docs/specifications/snapshot-series.md)） |
 | 社内向けの引き渡しや手順を書く | 社内のホスト名やアカウント ID が公開される | `issues/internal/` か `issues/*.internal.md`・`issues/*-handover.md` に置く（git の管理外） |
 
 ## 書き方
