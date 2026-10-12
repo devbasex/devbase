@@ -439,3 +439,63 @@ def test_restore_after_a_stop_between_renames_has_the_latest_tree(tmp_path, monk
 
     mgr.restore("g")
     assert _tree(tmp_path / "target") == _tree(tmp_path / "source")
+
+
+# ---------------------------------------------------------------------------
+# 仮のファイルを消せないとき (現状固定: #466 決定 6)
+# ---------------------------------------------------------------------------
+
+def _fail_unlink_of(monkeypatch, name: str) -> None:
+    """``Path.unlink`` のうち、``name`` を消す回を失敗させる。"""
+    real = Path.unlink
+
+    def fake(self, *args, **kwargs):
+        if self.name == name:
+            raise OSError("injected")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fake)
+
+
+def test_discard_incremental_temps_removes_only_the_temps(tmp_path):
+    for name in (INCR_ARCHIVE_TMP, SNAR_FILE_TMP, SNAR_FILE, FULL_ARCHIVE):
+        (tmp_path / name).write_text("x")
+    SnapshotManager._discard_incremental_temps(tmp_path)
+    assert {p.name for p in tmp_path.iterdir()} == {SNAR_FILE, FULL_ARCHIVE}
+
+
+def test_discard_incremental_temps_without_temps_does_nothing(tmp_path):
+    SnapshotManager._discard_incremental_temps(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("stuck", [INCR_ARCHIVE_TMP, SNAR_FILE_TMP])
+def test_discard_incremental_temps_warns_and_goes_on(tmp_path, monkeypatch, caplog, stuck):
+    for name in (INCR_ARCHIVE_TMP, SNAR_FILE_TMP):
+        (tmp_path / name).write_text("x")
+    _fail_unlink_of(monkeypatch, stuck)
+
+    with caplog.at_level(logging.WARNING, logger="devbase"):
+        SnapshotManager._discard_incremental_temps(tmp_path)
+
+    assert {p.name for p in tmp_path.iterdir()} == {stuck}
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [f"差分の作成の仮のファイル {tmp_path / stuck} を消せませんでした: injected"]
+
+
+def test_failed_backup_with_stuck_temp_still_raises_the_backup_error(tmp_path, monkeypatch,
+                                                                      caplog):
+    mgr = _with_incrementals(tmp_path, 1)
+    snap_dir = _snap_dir(tmp_path)
+    mgr.exit_codes = (2, 0)
+    _fail_unlink_of(monkeypatch, INCR_ARCHIVE_TMP)
+
+    with caplog.at_level(logging.WARNING, logger="devbase"):
+        with pytest.raises(SnapshotError, match="tar=2 zstd=0"):
+            mgr.create(name="g")
+
+    assert (snap_dir / INCR_ARCHIVE_TMP).exists()
+    assert not (snap_dir / SNAR_FILE_TMP).exists()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert f"差分の作成の仮のファイル {snap_dir / INCR_ARCHIVE_TMP} を消せませんでした: injected" \
+        in warnings

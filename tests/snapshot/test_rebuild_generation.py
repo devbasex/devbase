@@ -436,3 +436,66 @@ def test_two_restores_in_the_same_second_keep_both_backups(tmp_path, fixed_now):
     assert names.count(PRE_RESTORE) == 1
     assert names.count(f"{PRE_RESTORE}-2") == 1
     assert (_backups(tmp_path) / f"{PRE_RESTORE}-2" / FULL_ARCHIVE).is_file()
+
+
+# ---------------------------------------------------------------------------
+# 仮のファイルを消せないとき (現状固定)
+# ---------------------------------------------------------------------------
+
+REBUILD_TEMPS = (FULL_ARCHIVE_TMP, SNAR_FILE_TMP, META_FILE_TMP)
+
+
+def _fail_unlink_of(monkeypatch, name: str) -> None:
+    """``Path.unlink`` のうち、``name`` を消す回を失敗させる。"""
+    real = Path.unlink
+
+    def fake(self, *args, **kwargs):
+        if self.name == name:
+            raise OSError("injected")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fake)
+
+
+def test_discard_rebuild_temps_removes_only_the_temps(tmp_path):
+    for name in (*REBUILD_TEMPS, SNAR_FILE, FULL_ARCHIVE, "meta.yml"):
+        (tmp_path / name).write_text("x")
+    SnapshotManager._discard_rebuild_temps(tmp_path)
+    assert _listing(tmp_path) == {SNAR_FILE, FULL_ARCHIVE, "meta.yml"}
+
+
+def test_discard_rebuild_temps_without_temps_does_nothing(tmp_path):
+    SnapshotManager._discard_rebuild_temps(tmp_path)
+    assert _listing(tmp_path) == set()
+
+
+@pytest.mark.parametrize("stuck", REBUILD_TEMPS)
+def test_discard_rebuild_temps_warns_and_goes_on(tmp_path, monkeypatch, caplog, stuck):
+    for name in REBUILD_TEMPS:
+        (tmp_path / name).write_text("x")
+    _fail_unlink_of(monkeypatch, stuck)
+
+    with caplog.at_level(logging.WARNING, logger="devbase"):
+        SnapshotManager._discard_rebuild_temps(tmp_path)
+
+    assert _listing(tmp_path) == {stuck}
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [f"作り直しの仮のファイル {tmp_path / stuck} を消せませんでした: injected"]
+
+
+def test_failed_rebuild_with_stuck_temp_still_raises_the_backup_error(tmp_path, monkeypatch,
+                                                                      caplog):
+    mgr = _with_incrementals(tmp_path)
+    snap_dir = _backups(tmp_path) / "g"
+    mgr.fail_backup = True
+    _fail_unlink_of(monkeypatch, FULL_ARCHIVE_TMP)
+
+    with caplog.at_level(logging.WARNING, logger="devbase"):
+        with pytest.raises(SnapshotError, match="boom"):
+            mgr.create(name="g", full=True)
+
+    assert (snap_dir / FULL_ARCHIVE_TMP).exists()
+    assert not (snap_dir / SNAR_FILE_TMP).exists()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert f"作り直しの仮のファイル {snap_dir / FULL_ARCHIVE_TMP} を消せませんでした: injected" \
+        in warnings
