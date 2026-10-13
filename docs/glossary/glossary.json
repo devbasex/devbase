@@ -1014,6 +1014,27 @@
       "context": "image-lineage",
       "meaning": "言語サーバの置き場へ入れる npm のパッケージの名前と厳密な版の 4 組。対象の派生イメージのすべてで同じ",
       "source": "docs/specifications/derived-image-language-servers.md"
+    },
+    {
+      "term": "共通の VS Code Server ボリューム",
+      "context": "editor",
+      "meaning": "すべての dev コンテナが ~/.vscode-server に付ける 1 本のボリューム。サーバーの本体（bin/）と拡張（extensions/・extensionsCache/）を持ち、data/ を持たない",
+      "source": "",
+      "pending_source": "issues/issue-463-requirements.md"
+    },
+    {
+      "term": "コンテナごとの VS Code Server の状態",
+      "context": "editor",
+      "meaning": "~/.vscode-server/data。接続トークン・.devport・マシンの設定（window.title を含む）・ログ・User/ の状態を持ち、dev コンテナ 1 つに 1 本のボリュームを付ける",
+      "source": "",
+      "pending_source": "issues/issue-463-requirements.md"
+    },
+    {
+      "term": "旧形式の VS Code Server ボリューム",
+      "context": "editor",
+      "meaning": "#463 より前の devbase が dev コンテナ 1 つに 1 本付けていた devbase_vscode_<project>_<index>。~/.vscode-server を丸ごと持つ。#463 の後は付けず、devbase は消さない",
+      "source": "",
+      "pending_source": "issues/issue-463-requirements.md"
     }
   ]
 }

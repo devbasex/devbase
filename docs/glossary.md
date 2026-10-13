@@ -54,6 +54,9 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | --- | --- | --- | --- | --- | --- |
 | 窓 | — | dev コンテナへ Dev Containers 拡張で接続した VS Code のウィンドウ | — | — | `docs/specifications/editor-open.md` |
 | 動いているインスタンス | — | docker ps に現れ、Compose のプロジェクトのラベルが対象のプロジェクトで、サービスのラベルが <開発サービス名>-<1 以上の数字> のコンテナ | — | — | `docs/specifications/editor-open.md` |
+| 共通の VS Code Server ボリューム | — | すべての dev コンテナが ~/.vscode-server に付ける 1 本のボリューム。サーバーの本体（bin/）と拡張（extensions/・extensionsCache/）を持ち、data/ を持たない | — | — | — |
+| コンテナごとの VS Code Server の状態 | — | ~/.vscode-server/data。接続トークン・.devport・マシンの設定（window.title を含む）・ログ・User/ の状態を持ち、dev コンテナ 1 つに 1 本のボリュームを付ける | — | — | — |
+| 旧形式の VS Code Server ボリューム | — | #463 より前の devbase が dev コンテナ 1 つに 1 本付けていた devbase_vscode_<project>_<index>。~/.vscode-server を丸ごと持つ。#463 の後は付けず、devbase は消さない | — | — | — |
 
 ## 機密の置き場（`secret`）
 
