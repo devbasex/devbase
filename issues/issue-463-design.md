@@ -73,7 +73,7 @@ VS Code Server と Dev Containers 拡張（外部の系）に対して devbase �
 
 | # | 集約 | 条件 | 破れたときの扱い |
 | --- | --- | --- | --- |
-| I1 | dev インスタンスのボリュームの構成 | devbase が VS Code Server のマウントを足すときは、共通の VS Code Server ボリュームを `~/.vscode-server` に、そのインスタンスのコンテナごとの VS Code Server の状態のボリュームを `~/.vscode-server/data` に、必ず 2 つ組で足す。片方だけを足さない | 片方だけだと `data/` が共通のボリュームに入り、`.devport` と `window.title` が後勝ちになる。compose の生成のテストが落ちる |
+| I1 | dev インスタンスのボリュームの構成 | プロジェクトの指定と devbase が足したマウントを合わせた最終の構成で、`~/.vscode-server` と `~/.vscode-server/data` のどちらにもマウントは 1 つまでで、`~/.vscode-server/data` にマウントがあれば `~/.vscode-server` にもある。devbase が足すのは、共通の VS Code Server ボリュームを `~/.vscode-server` に、そのインスタンスのコンテナごとの VS Code Server の状態のボリュームを `~/.vscode-server/data` にだけで、プロジェクトが既に付けたパスには足さない。プロジェクトがどちらも付けていなければ 2 つ組で足し、`~/.vscode-server/data` だけを付けていれば共通だけを足す（I2）。共通を付けずに状態だけを足すことは無い | 共通だけが付いて `data/` に何も付かないと `data/` が共通のボリュームに入り、`.devport` と `window.title` が後勝ちになる。同じパスに 2 つ付くと compose が弾くか、プロジェクトの指定を奪う。compose の生成のテストが落ちる |
 | I2 | dev インスタンスのボリュームの構成 | プロジェクトの dev サービスが `~/.vscode-server` を付けていれば、devbase はどちらのマウントも足さない。`~/.vscode-server/data` だけを付けていれば、そのインスタンスには共通の VS Code Server ボリュームだけを足す | プロジェクトの指定を奪う。compose の生成のテストが落ちる |
 | I3 | dev インスタンスのボリュームの構成 | 生成した compose のマウントと `volumes:` の節に、旧形式の VS Code Server ボリュームが現れない | 旧形式を付け続け、移らない。compose の生成のテストが落ちる |
 | I4 | VS Code Server のボリュームの実体 | コンテナごとの VS Code Server の状態のボリュームの名前は (プロジェクト, インスタンス番号) で決まり、違う組では違う名前になる。どの名前も旧形式の VS Code Server ボリュームの名前の形（`devbase_vscode_` で始まる）にならず、共通の VS Code Server ボリュームの名前とも重ならない | 2 つのコンテナが同じ `data/` を付けるか、旧形式の案内が新しいボリュームを消すよう勧める。名前のテストが落ちる |
