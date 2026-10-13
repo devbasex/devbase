@@ -1018,14 +1018,14 @@
     {
       "term": "共通の VS Code Server ボリューム",
       "context": "editor",
-      "meaning": "すべての dev コンテナが ~/.vscode-server に付ける 1 本のボリューム devbase_vscode-server。サーバーの本体（bin/）と拡張（extensions/・extensionsCache/）を持ち、data/ を持たない",
+      "meaning": "すべての dev コンテナが ~/.vscode-server/bin に付ける 1 本のボリューム devbase_vscode-server-bin。サーバーの本体の版（bin/<commit>）だけを持ち、拡張と data/ を持たない",
       "source": "",
       "pending_source": "issues/issue-463-design.md"
     },
     {
       "term": "コンテナごとの VS Code Server の状態",
       "context": "editor",
-      "meaning": "~/.vscode-server/data。接続トークン・.devport・マシンの設定（window.title を含む）・ログ・User/ の状態を持ち、dev コンテナ 1 つに 1 本のボリューム devbase_vscode-data_<project>_<index> を入れ子で付ける",
+      "meaning": "~/.vscode-server のうち bin/ 以外（extensions/・extensionsCache/・data/）。拡張・接続トークン・.devport・マシンの設定（window.title を含む）・ログ・User/ の状態を持つ。どのボリュームにも置かず、コンテナの書き込みレイヤーに残る。devbase up の作り直しで消え、docker restart では残る",
       "source": "",
       "pending_source": "issues/issue-463-design.md"
     },
