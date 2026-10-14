@@ -1100,6 +1100,9 @@ def _report_legacy_vscode_volumes() -> None:
         f"使わなくなった VS Code Server のボリュームが {len(legacy)} 本あります"
         "（VS Code Server の本体は共通のボリュームへ移りました）:",
         *(f"  {name}" for name in legacy),
+        "これらは以前の ~/.vscode-server 全体を持っています。消すと VS Code Server の本体と"
+        "拡張機能に加え、リモートの設定・ローカル履歴・拡張機能の保存した状態も戻せなくなります。"
+        "要るものは消す前に退避してください（docs/user/container-operations.md）",
         "不要なら次で消せます:",
         f"  docker volume rm {' '.join(legacy)}",
         "コンテナが付けているボリュームは docker volume rm が断ります。"

@@ -231,6 +231,43 @@ def test_nested_server_is_removed(home: Path, bin_dir: Path):
     assert (version / "node_modules").is_dir()
 
 
+def test_symlinked_version_is_not_followed(home: Path, bin_dir: Path):
+    """bin/<commit> が bin の外へのリンクなら、版に数えず、リンク先の中を消さない。"""
+    outside = home / "outside"
+    nested = outside / "vscode-server-linux-arm64"
+    (nested / "bin").mkdir(parents=True)
+    (nested / "product.json").write_text("{}")
+    (outside / "product.json").write_text("{}")
+    (bin_dir / commit(0)).symlink_to(outside)
+    for n in range(1, KEEP + 2):
+        make_version(bin_dir, n, age_days=n)
+
+    prune(home)
+
+    assert (nested / "product.json").is_file()
+    assert (outside / "product.json").is_file()
+    assert (bin_dir / commit(0)).is_symlink()
+    assert versions(bin_dir) - {commit(0)} == {commit(n) for n in range(1, KEEP + 1)}
+
+
+def test_symlinked_bin_is_not_followed(home: Path):
+    """bin/ 自身がリンクなら何もしない (リンク先の版も入れ子も消さない)。"""
+    outside = home / "outside-bin"
+    outside.mkdir()
+    for n in range(KEEP + 2):
+        make_version(outside, n, age_days=n)
+    nested = outside / commit(0) / "vscode-server-linux-arm64"
+    nested.mkdir()
+    (nested / "product.json").write_text("{}")
+    (home / ".vscode-server").mkdir()
+    (home / ".vscode-server" / "bin").symlink_to(outside)
+
+    prune(home)
+
+    assert versions(outside) == {commit(n) for n in range(KEEP + 2)}
+    assert (nested / "product.json").is_file()
+
+
 def test_nested_is_kept_when_version_has_no_product_json(home: Path, bin_dir: Path):
     """bin/<commit>/ 自身に product.json が無いときは入れ子を消さない。"""
     version = bin_dir / commit(0)

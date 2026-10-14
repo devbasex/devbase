@@ -662,16 +662,20 @@ devbase_remove_vscode_server_path() {
 # 2. 残った版の直下の入れ子の本体 (product.json を持つディレクトリ)。本体の同時の
 #    展開で、遅れた側の中身が bin/<commit>/vscode-server-linux-<arch>/ に残ったもの
 # 3. 60 分より古い展開の途中のディレクトリ bin/<commit>_<数字>
+#
+# シンボリックリンクは辿らない。bin/ 自身・bin/<commit>・入れ子がリンクなら、版にも
+# 片付けの対象にも数えない。リンク先の bin の外のものを消さないためである
 devbase_prune_vscode_server_bin() {
     local bin="$1" keep="${2:-$DEVBASE_VSCODE_SERVER_KEEP}"
     local entry name mtime listing="" count=0 kept=() nested
 
-    [ -d "$bin" ] || return 0
+    [ -d "$bin" ] && [ ! -L "$bin" ] || return 0
 
     for entry in "$bin"/*; do
         name="${entry##*/}"
         [[ "$name" =~ ^[0-9a-f]{40}$ ]] || continue
-        [ -d "$entry" ] && [ -f "$entry/product.json" ] || continue
+        [ -d "$entry" ] && [ ! -L "$entry" ] || continue
+        [ -f "$entry/product.json" ] || continue
         mtime=$(devbase_file_mtime "$entry/product.json") || continue
         listing+="${mtime} ${name}"$'\n'
     done
@@ -687,6 +691,8 @@ devbase_prune_vscode_server_bin() {
     done < <(printf '%s' "$listing" | LC_ALL=C sort -k1,1nr -k2,2)
 
     for name in "${kept[@]}"; do
+        # 数えた後にリンクへ置き換わっていれば、リンク先を辿らない
+        [ ! -L "$bin" ] && [ ! -L "${bin}/${name}" ] || continue
         for nested in "${bin}/${name}"/*/; do
             nested="${nested%/}"
             [ -d "$nested" ] && [ ! -L "$nested" ] || continue

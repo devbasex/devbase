@@ -279,14 +279,28 @@ docker volume inspect devbase_home_ubuntu
 docker volume ls --filter name=devbase_vscode_ --format '{{.Name}}'
 docker system df -v | grep devbase_vscode_
 
+# 要るデータを退避する（下の注意を参照。カレントディレクトリへ tar で書き出す）
+docker run --rm -v devbase_vscode_<project>_1:/from:ro -v "$PWD":/to alpine \
+  tar czf /to/vscode_<project>_1.tgz -C /from .
+
 # 使用中のコンテナが無いことを確認してから削除する
 docker ps -a --filter volume=devbase_vscode_<project>_1
 docker volume rm devbase_vscode_<project>_1
 ```
 
-`devbase up` の案内に出る `docker volume rm …` の行をそのまま打っても構いません。削除しても
-失われるのは以前の VS Code Server の本体と拡張機能だけで、設定（`~/.claude` などの AI 設定）には
-影響しません。以前の devbase で作ったコンテナが付けているボリュームは `docker volume rm` が
+> **Warning:** 以前の形式のボリュームは `~/.vscode-server` **全体**を持っています。削除すると、
+> 以前の VS Code Server の本体と拡張機能（`extensions/`）に加え、次のものも**戻せなくなります**。
+>
+> - リモートの設定（`data/Machine/settings.json`）
+> - ローカル履歴（`data/User/History/`）
+> - 拡張機能が保存した状態（`data/User/globalStorage/`・`data/User/workspaceStorage/`）
+>
+> 要るものがあれば、削除の前に上の `tar` の行で退避してください。戻すときは、展開した中の要る
+> ファイルだけを `docker cp` でコンテナの `~/.vscode-server/` の同じ場所へ写します。AI 設定
+> （`~/.claude` など）は別のボリュームにあるため、この削除では消えません。
+
+`devbase up` の案内に出る `docker volume rm …` の行は、退避が要らないと確かめた後に打ってください。
+以前の devbase で作ったコンテナが付けているボリュームは `docker volume rm` が
 拒否します。そのプロジェクトで `devbase up` を打ってコンテナを作り直した後に消してください。
 
 共通の `devbase_vscode-server-bin` は消さなくて構いません。消したときは、次の attach で本体を
