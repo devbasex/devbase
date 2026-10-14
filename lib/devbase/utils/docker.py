@@ -238,6 +238,32 @@ def _is_ready(service_name: str, ready_file: str, compose_file: Optional[Path]) 
     return True
 
 
+def _classify_instance(
+    index: int,
+    container_prefix: str,
+    ready_file: str,
+    compose_file: Optional[Path],
+) -> Tuple[str, Optional[StartupFailure]]:
+    """1 つの番号の状態を 1 回確かめて分類する。
+
+    Returns:
+        ``('ready' | 'exited' | 'not_found' | 'pending', 失敗)``。失敗は
+        ``exited`` と ``not_found`` のときだけ持ち、ほかは ``None``
+    """
+    service_name = f"{container_prefix}-{index}"
+    status = get_container_status(service_name, compose_file)
+    if status is None:
+        return 'not_found', StartupFailure(index, service_name, 'not_found')
+    status_lower = status.lower()
+    if 'exited' in status_lower or 'dead' in status_lower:
+        return 'exited', StartupFailure(
+            index, service_name, 'exited',
+            _container_logs_tail(service_name, compose_file))
+    if _is_ready(service_name, ready_file, compose_file):
+        return 'ready', None
+    return 'pending', None
+
+
 def wait_for_containers_ready(
     container_prefix: str,
     scale: int,
@@ -279,18 +305,11 @@ def wait_for_containers_ready(
     while pending and rounds < timeout:
         still_pending = []
         for i in pending:
-            service_name = f"{container_prefix}-{i}"
-            status = get_container_status(service_name, compose_file)
-            if status is None:
-                failures.append(StartupFailure(i, service_name, 'not_found'))
-                continue
-            status_lower = status.lower()
-            if 'exited' in status_lower or 'dead' in status_lower:
-                failures.append(StartupFailure(
-                    i, service_name, 'exited',
-                    _container_logs_tail(service_name, compose_file)))
-                continue
-            if _is_ready(service_name, ready_file, compose_file):
+            state, failure = _classify_instance(
+                i, container_prefix, ready_file, compose_file)
+            if failure is not None:
+                failures.append(failure)
+            elif state == 'ready':
                 ready.append(i)
             else:
                 still_pending.append(i)
