@@ -1,15 +1,15 @@
-"""VS Code Server ボリュームの名前解決と作成 (PLAN36 Task 1)
+"""共通の VS Code Server ボリュームの名前・作成・旧形式の一覧 (#463)
 
-``~/.vscode-server`` はコンテナの書き込みレイヤ上にあり、``devbase up`` の
-``down`` → ``up`` で消える。再作成をまたいで保つため、**コンテナ 1 つにつき 1 本**の
-named volume ``devbase_vscode_<project>_<index>`` を割り当てる。
-
-VS Code Server は 1 マシン 1 セットの状態 (接続トークン・marker・ログ) を持つため、
-名前にプロジェクト名とインスタンス番号の両方を含めて、scale > 1 の同時 attach
-(AC3) と別プロジェクトとの同時起動 (AC4) で状態を共有させない。
+VS Code Server の本体 (``~/.vscode-server/bin/<commit>``) だけを、全コンテナで 1 本の
+ボリューム ``devbase_vscode-server-bin`` に置く。プロジェクト・インスタンス・
+アカウントグループで分けない。#463 より前の ``devbase_vscode_<project>_<index>``
+(旧形式) は、名前を読んで案内するだけで、作らない・消さない・付けない。
 """
 
 from __future__ import annotations
+
+import re
+import subprocess
 
 import pytest
 
@@ -24,112 +24,130 @@ def _clean_env(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 名前の組み立て (AC3 / AC4)
+# 名前 (受け入れ条件 3・I4)
 # ---------------------------------------------------------------------------
 
-def test_volume_name_contains_project_and_index():
-    """名前は devbase_vscode_<project>_<index>。"""
-    assert manager.get_vscode_volume_for("myapp-ai", 1) == \
-        "devbase_vscode_myapp-ai_1"
+def test_shared_name_does_not_look_like_legacy():
+    """共通の名前は旧形式の接頭辞でも形でもない (旧形式の案内が選ばない)。"""
+    name = manager.VSCODE_SERVER_VOLUME
 
-
-def test_each_instance_gets_its_own_volume():
-    """scale > 1 でインスタンスごとに別のボリュームになる (AC3)。"""
-    names = {manager.get_vscode_volume_for("myapp-ai", i) for i in (1, 2, 3)}
-    assert len(names) == 3
-
-
-def test_each_project_gets_its_own_volume():
-    """プロジェクトが違えば別のボリュームになる (AC4)。"""
-    assert manager.get_vscode_volume_for("myapp-ai", 1) != \
-        manager.get_vscode_volume_for("bi-tools", 1)
-
-
-def test_project_name_falls_back_to_environment(monkeypatch):
-    """省略時は COMPOSE_PROJECT_NAME を読む。
-
-    ボリュームを作る ``ensure_volumes`` と、マウントを書く生成 compose が
-    別々にプロジェクト名を決めると、作った名前とマウントする名前がずれる。
-    ``devbase up`` と同じ ``get_project_name`` へ委ねて経路を 1 つにする。
-    """
-    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "myapp-ai")
-    assert manager.get_vscode_volume_for(None, 1) == "devbase_vscode_myapp-ai_1"
-
-
-def test_project_name_falls_back_to_current_directory(monkeypatch, tmp_path):
-    """COMPOSE_PROJECT_NAME が無ければカレントディレクトリ名 (``devbase up`` と同じ)。"""
-    project = tmp_path / "myapp-ai"
-    project.mkdir()
-    monkeypatch.chdir(project)
-
-    assert manager.get_vscode_volume_for(None, 1) == "devbase_vscode_myapp-ai_1"
+    assert not name.startswith(manager.LEGACY_VSCODE_VOLUME_PREFIX)
+    assert not re.match(r"^devbase_vscode_.+_[0-9]+$", name)
 
 
 # ---------------------------------------------------------------------------
-# 正規化 (リスク: Docker のボリューム名に使えない文字)
+# 作成 (受け入れ条件 1)
 # ---------------------------------------------------------------------------
 
-def test_unusable_characters_are_replaced():
-    """``/`` のような使えない文字は ``_`` へ置き換える。"""
-    assert manager.get_vscode_volume_for("group/project", 1) == \
-        "devbase_vscode_group_project_1"
-
-
-def test_usable_characters_are_kept():
-    """英数字・ドット・ハイフン・アンダースコアはそのまま残す。"""
-    assert manager.get_vscode_volume_for("a.b-c_D9", 2) == \
-        "devbase_vscode_a.b-c_D9_2"
-
-
-def test_empty_project_name_does_not_break_the_volume_name():
-    """名前として使えるものが残らない場合も壊れた名前を作らない。"""
-    assert manager.normalize_volume_component("") == "default"
-    assert manager.normalize_volume_component("//") == "__"
-
-
-# ---------------------------------------------------------------------------
-# 作成 (AC5: 空ボリュームでも attach できるよう、先に作っておく)
-# ---------------------------------------------------------------------------
-
-def _record_docker(monkeypatch) -> list[str]:
+def _record_docker(monkeypatch, existing: set[str] = frozenset()) -> list[str]:
     created: list[str] = []
     monkeypatch.setattr(
-        manager.VolumeManager, "_volume_exists", lambda self, name: False)
+        manager.VolumeManager, "_volume_exists",
+        lambda self, name: name in existing or name in created)
     monkeypatch.setattr(
         manager.VolumeManager, "create_volume",
         lambda self, name: created.append(name) or True)
     return created
 
 
-def test_ensure_volumes_creates_one_per_instance(monkeypatch):
-    """scale の数だけ VS Code Server ボリュームを作る。"""
+def test_shared_volume_is_created_once_for_any_project_group_and_scale(monkeypatch):
+    """プロジェクト・グループ・scale が違っても、作るのは同じ名前の 1 本だけ。"""
     created = _record_docker(monkeypatch)
 
-    manager.ensure_volumes(2, project_name="myapp-ai")
+    manager.ensure_volumes(2, project_name="proj-a")
+    manager.ensure_volumes(1, project_name="proj-b", group="team-b")
 
-    assert "devbase_vscode_myapp-ai_1" in created
-    assert "devbase_vscode_myapp-ai_2" in created
+    vscode = [n for n in created if "vscode" in n]
+    assert vscode == [manager.VSCODE_SERVER_VOLUME]
 
 
-def test_ensure_volumes_keeps_existing_volumes(monkeypatch):
-    """既にあるボリュームは作り直さない (中身を失わない)。"""
-    created: list[str] = []
+def test_existing_shared_volume_is_not_recreated(monkeypatch):
+    """あれば作らない (本体を取り直さない)。"""
+    created = _record_docker(
+        monkeypatch, existing={manager.VSCODE_SERVER_VOLUME})
+
+    manager.ensure_volumes(1, project_name="proj-a")
+
+    assert manager.VSCODE_SERVER_VOLUME not in created
+
+
+def test_no_per_instance_vscode_volume_is_created(monkeypatch):
+    """インスタンスごとの VS Code Server のボリュームと旧形式を作らない。"""
+    created = _record_docker(monkeypatch)
+
+    manager.ensure_volumes(3, project_name="proj-a")
+
+    assert not [n for n in created
+                if n.startswith(manager.LEGACY_VSCODE_VOLUME_PREFIX)]
+
+
+def test_failure_to_create_shared_volume_raises(monkeypatch):
+    """作れなければ今のボリュームと同じく DockerError で止まる。"""
     monkeypatch.setattr(
-        manager.VolumeManager, "_volume_exists",
-        lambda self, name: name == "devbase_vscode_myapp-ai_1")
+        manager.VolumeManager, "_volume_exists", lambda self, name: False)
     monkeypatch.setattr(
         manager.VolumeManager, "create_volume",
-        lambda self, name: created.append(name) or True)
+        lambda self, name: name != manager.VSCODE_SERVER_VOLUME)
 
-    manager.ensure_volumes(1, project_name="myapp-ai")
+    with pytest.raises(manager.DockerError):
+        manager.ensure_volumes(1, project_name="proj-a")
 
-    assert "devbase_vscode_myapp-ai_1" not in created
+
+# ---------------------------------------------------------------------------
+# 旧形式の一覧 (受け入れ条件 3・11・12、I5)
+# ---------------------------------------------------------------------------
+
+def _fake_volume_ls(monkeypatch, stdout: str = "", returncode: int = 0,
+                    raises: Exception | None = None) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if raises is not None:
+            raise raises
+        return subprocess.CompletedProcess(cmd, returncode, stdout, "error")
+
+    monkeypatch.setattr(manager.subprocess, "run", fake_run)
+    return calls
 
 
-def test_ensure_volumes_does_not_create_volumes_beyond_scale(monkeypatch):
-    """scale を超えるインスタンスのボリュームは作らない。"""
-    created = _record_docker(monkeypatch)
+def test_find_legacy_returns_only_legacy_names_sorted(monkeypatch):
+    """共通の名前やほかのボリュームが混ざっても、旧形式だけを名前の順で返す。"""
+    calls = _fake_volume_ls(monkeypatch, "\n".join([
+        "devbase_vscode_proj-b_1",
+        manager.VSCODE_SERVER_VOLUME,
+        "devbase_home_ubuntu",
+        "devbase_vscode_proj-a_2",
+        "devbase_vscode_proj-a_1",
+        "devbase_vscode_notanindex",
+    ]) + "\n")
 
-    manager.ensure_volumes(1, project_name="myapp-ai")
+    assert manager.find_legacy_vscode_volumes() == [
+        "devbase_vscode_proj-a_1",
+        "devbase_vscode_proj-a_2",
+        "devbase_vscode_proj-b_1",
+    ]
+    # 名前の一覧を読むだけ (消す・作る・付ける呼び出しが無い)
+    assert calls == [["docker", "volume", "ls", "--format", "{{.Name}}"]]
 
-    assert "devbase_vscode_myapp-ai_2" not in created
+
+def test_find_legacy_returns_empty_when_listing_fails(monkeypatch):
+    """一覧が取れなければ空を返し、例外を出さない。"""
+    _fake_volume_ls(monkeypatch, returncode=1)
+    assert manager.find_legacy_vscode_volumes() == []
+
+    _fake_volume_ls(monkeypatch, raises=FileNotFoundError("docker"))
+    assert manager.find_legacy_vscode_volumes() == []
+
+
+# ---------------------------------------------------------------------------
+# スナップショットの対象 (受け入れ条件 13・I11)
+# ---------------------------------------------------------------------------
+
+def test_snapshot_targets_exclude_shared_vscode_volume(tmp_path):
+    """スナップショットの対象に共通の VS Code Server ボリュームが入らない。"""
+    from devbase.snapshot.manager import SnapshotManager
+
+    volumes = SnapshotManager(tmp_path, group="acme").volumes
+
+    assert manager.VSCODE_SERVER_VOLUME not in volumes.values()

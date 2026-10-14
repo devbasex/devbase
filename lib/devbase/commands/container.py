@@ -1021,6 +1021,24 @@ def _push_bao_token(project_name: str, scale: int, dev_service_name: str,
         logger.info("bao の token を書きました: %s", ', '.join(written))
 
 
+def _for_each_dev_container(project_name: str, scale: int, dev_service_name: str,
+                            compose_file, indices, action, what: str) -> None:
+    """対象の番号の dev コンテナごとに名前を引き、``action(コンテナ名)`` を呼ぶ。
+
+    起動の後の付随処理の共通の回し方。1 台の失敗は ``what`` を添えて debug に
+    記録して飛ばし、残りの番号と起動の後の処理を倒さない。
+    """
+    from devbase.editor import opener
+
+    for index in _target_indices(indices, scale):
+        try:
+            container_name = opener.resolve_container_name(
+                dev_service_name, project_name, index, compose_file=compose_file)
+            action(container_name)
+        except Exception as e:  # noqa: BLE001 - 付随処理で起動の後の処理を倒さない
+            logger.debug("%s をスキップしました (index=%d): %s", what, index, e)
+
+
 def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
                          compose_file=None, *, indices=None) -> None:
     """各 dev コンテナの VS Code ウィンドウタイトルをコンテナ名始まりにする。
@@ -1037,18 +1055,60 @@ def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
 
     ``indices`` を渡すとその番号にだけ行う (起動の後の処理の対象)。渡さなければ 1 から ``scale``。
     """
-    from devbase.editor import opener, window_title
+    from devbase.editor import window_title
 
     template = window_title.resolve_template()
     if template is None:
         return
-    for index in _target_indices(indices, scale):
-        try:
-            container_name = opener.resolve_container_name(
-                dev_service_name, project_name, index, compose_file=compose_file)
-            window_title.apply_to_container(container_name, template=template)
-        except Exception as e:  # noqa: BLE001 - 付随処理で up を倒さない
-            logger.debug("window.title の設定をスキップしました (index=%d): %s", index, e)
+    _for_each_dev_container(
+        project_name, scale, dev_service_name, compose_file, indices,
+        lambda name: window_title.apply_to_container(name, template=template),
+        "window.title の設定")
+
+
+def _prepare_vscode_server_bin(project_name: str, scale: int, dev_service_name: str,
+                               compose_file=None, *, indices=None) -> None:
+    """各 dev コンテナの ``~/.vscode-server/bin`` を開発ユーザーが書ける形にする (#463)。
+
+    ``bin`` には全コンテナ共通のボリュームが付き、空のボリュームは root の所有で付く。
+    #463 より前の entrypoint を持つイメージ (建て直す前の base と派生イメージ) では
+    ``bin`` が root のままで attach が失敗するため、窓を開く前にここで揃える
+    (詳細は :mod:`devbase.editor.vscode_server`)。
+
+    失敗しても起動の後の処理は倒さない (debug の記録にとどめる)。
+    ``indices`` を渡すとその番号にだけ行う。渡さなければ 1 から ``scale``。
+    """
+    from devbase.editor import vscode_server
+
+    _for_each_dev_container(
+        project_name, scale, dev_service_name, compose_file, indices,
+        vscode_server.prepare_bin_dir, "VS Code Server の bin の用意")
+
+
+def _report_legacy_vscode_volumes() -> None:
+    """旧形式の VS Code Server ボリュームが残っていれば、名前と消し方を案内する (#463)。
+
+    名前の一覧を読むだけで、消す・付ける・中身を読むことはしない (C4)。消すのは
+    利用者である。旧形式が無い・一覧が取れないときは何も出さない。
+    """
+    from devbase.volume.manager import find_legacy_vscode_volumes
+
+    legacy = find_legacy_vscode_volumes()
+    if not legacy:
+        return
+    lines = [
+        f"使わなくなった VS Code Server のボリュームが {len(legacy)} 本あります"
+        "（VS Code Server の本体は共通のボリュームへ移りました）:",
+        *(f"  {name}" for name in legacy),
+        "これらは以前の ~/.vscode-server 全体を持っています。消すと VS Code Server の本体と"
+        "拡張機能に加え、リモートの設定・ローカル履歴・拡張機能の保存した状態も戻せなくなります。"
+        "要るものは消す前に退避してください（docs/user/container-operations.md）",
+        "不要なら次で消せます:",
+        f"  docker volume rm {' '.join(legacy)}",
+        "コンテナが付けているボリュームは docker volume rm が断ります。"
+        "そのプロジェクトで devbase up を打った後に消せます",
+    ]
+    logger.warning("\n".join(lines))
 
 
 def _maybe_open_editor(project_name: str, open_flag: Optional[bool],
@@ -1342,7 +1402,8 @@ def _run_post_start(deployment: _ComposeDeployment, indices, config,
                     run_deploy: bool = True) -> None:
     """起動の後の処理の段。後処理の対象の番号へ、インスタンスごとの処理を決まった順に行う。
 
-    順は、不足リポジトリの報告 → ``./deploy`` → token の配布 → 窓のタイトルの設定で、
+    順は、不足リポジトリの報告 → ``./deploy`` → token の配布 → VS Code Server の ``bin`` の
+    所有者の直し → 窓のタイトルの設定で、
     ``up`` / ``scale`` / ``project post-start`` が共有する (#224・#371)。対象は呼び出し元が
     決め、この段は番号を足しも引きもしない。対象が空なら何も行わない (token も発行しない)。
     ``run_deploy`` が偽なら ``./deploy`` を走らせない (``project post-start``)。
@@ -1366,6 +1427,12 @@ def _run_post_start(deployment: _ComposeDeployment, indices, config,
     # ときだけ。書けなくても起動は済んでいるので倒さない。
     _push_bao_token(deployment.project_name, deployment.scale, deployment.dev_service_name,
                     compose_file=deployment.compose_file, indices=indices)
+
+    # 共通の VS Code Server ボリュームの bin を開発ユーザーが書ける形にする (#463)。
+    # 建て直す前のイメージの entrypoint は bin を直さないため、窓を開く前に揃える。
+    _prepare_vscode_server_bin(deployment.project_name, deployment.scale,
+                               deployment.dev_service_name,
+                               compose_file=deployment.compose_file, indices=indices)
 
     # VS Code のウィンドウタイトルをコンテナ名始まりに固定する
     # (自動オープンの有無に関わらず、手動アタッチにも効かせるため)。
@@ -1524,6 +1591,9 @@ def cmd_up(project_name: str = None, scale: int = None,
         _maybe_open_editor(project_name, open_editor, open_index, scale,
                            config, compose_file=override_file,
                            docker_context_name=target.context, started=started)
+
+        # 移った後の後片付けを忘れないよう、旧形式が残る限り毎回最後に案内する (#463)
+        _report_legacy_vscode_volumes()
 
         if _finish_partial('Deploy', startup_error, project_name):
             return 1

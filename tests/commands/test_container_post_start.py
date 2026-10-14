@@ -54,6 +54,7 @@ class FakeDocker:
         self.ps_returncode = 0
         self.not_ready: set = set()     # 完了の印が無いコンテナ名
         self.services = ['dev-1']
+        self.volumes: list = []         # docker volume ls の名前 (#463)
 
     def __call__(self, cmd, **kwargs):
         cmd = list(cmd)
@@ -63,6 +64,8 @@ class FakeDocker:
             return subprocess.CompletedProcess(cmd, 0, '', '')
         if 'config' in cmd and '--services' in cmd:
             return subprocess.CompletedProcess(cmd, 0, '\n'.join(self.services) + '\n', '')
+        if cmd[:3] == ['docker', 'volume', 'ls']:
+            return subprocess.CompletedProcess(cmd, 0, ''.join(f'{n}\n' for n in self.volumes), '')
         if cmd[:2] == ['docker', 'ps']:
             out = ''.join(f'proj-dev-{i}\tdev-{i}\n' for i, _name in self.running)
             return subprocess.CompletedProcess(cmd, self.ps_returncode, out, 'daemon down')
@@ -546,3 +549,100 @@ def test_post_start_uses_the_scale_compose_file(harness):
     ls = [e[1] for e in harness['events'] if e[0] == 'run' and 'ls' in e[1]]
     assert ls and all(str(container._SCALE_COMPOSE_FILE) in cmd for cmd in ls)
 
+
+
+# ---------------------------------------------------------------------------
+# #463: VS Code Server の bin の所有者の直しと、旧形式のボリュームの案内
+# ---------------------------------------------------------------------------
+
+LEGACY = ['devbase_vscode_proj-a_2', 'devbase_vscode_proj-a_1']
+
+
+def _bin_fixes(events):
+    """``docker exec -u 0 <名前> sh -c …`` (bin の所有者の直し) を打ったコンテナ名"""
+    return [e[1][4] for e in events
+            if e[0] == 'run' and e[1][:4] == ['docker', 'exec', '-u', '0']]
+
+
+def test_up_prepares_vscode_bin_before_the_title(harness):
+    """受け入れ条件 10・E12: 番号ごとに bin を直してから窓のタイトルを書く"""
+    harness['setup'](scale=2)
+
+    assert container.cmd_up() == 0
+
+    events = harness['events']
+    assert _bin_fixes(events) == ['real-dev-1', 'real-dev-2']
+    order = [e[1][4] if e[0] == 'run' else e[1] for e in events
+             if e[0] == 'title' or (e[0] == 'run' and e[1][:4] == ['docker', 'exec', '-u', '0'])]
+    assert order.index('real-dev-1') < order.index('real-dev-2')
+    first_title = next(i for i, e in enumerate(events) if e[0] == 'title')
+    last_fix = max(i for i, e in enumerate(events)
+                   if e[0] == 'run' and e[1][:4] == ['docker', 'exec', '-u', '0'])
+    assert last_fix < first_title
+
+
+def test_scale_and_post_start_prepare_vscode_bin_on_the_targets(harness):
+    """scale は増やしたインスタンスだけ、post-start は動いているインスタンスへ"""
+    harness['setup'](scale=1)
+    assert container.cmd_scale(3) == 0
+    assert _bin_fixes(harness['events']) == ['real-dev-2', 'real-dev-3']
+
+    harness['events'].clear()
+    _running(harness, 1, 2)
+    assert container.cmd_post_start() == 0
+    assert _bin_fixes(harness['events']) == ['real-dev-1', 'real-dev-2']
+
+
+def test_vscode_bin_failure_does_not_stop_post_start(harness, monkeypatch):
+    """直せなくても起動の後の処理は続き、タイトルは書かれる"""
+    from devbase.editor import vscode_server
+
+    def boom(name, runner=None):
+        raise RuntimeError('docker down')
+
+    monkeypatch.setattr(vscode_server, 'prepare_bin_dir', boom)
+    harness['setup'](scale=1)
+
+    assert container.cmd_up() == 0
+    assert _indices(harness['events'], 'title') == [1]
+
+
+def test_up_reports_legacy_vscode_volumes(harness, caplog):
+    """受け入れ条件 11・I5: 名前と消すコマンドを出し、消す・作る・付ける呼び出しは無い"""
+    harness['setup'](scale=1)
+    harness['fake'].volumes = ['devbase_vscode-server-bin', 'devbase_home_ubuntu', *LEGACY]
+
+    assert container.cmd_up() == 0
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == 'WARNING']
+    notice = next(m for m in warnings if 'VS Code Server' in m)
+    assert 'devbase_vscode_proj-a_1' in notice and 'devbase_vscode_proj-a_2' in notice
+    assert 'docker volume rm devbase_vscode_proj-a_1 devbase_vscode_proj-a_2' in notice
+    assert 'devbase_vscode-server-bin' not in notice
+    docker_calls = [e[1] for e in harness['events'] if e[0] == 'run']
+    assert not [c for c in docker_calls
+                if c[:3] in (['docker', 'volume', 'rm'], ['docker', 'volume', 'create'])
+                or (c[:2] == ['docker', 'run'])
+                or any(name in ' '.join(c) for name in LEGACY)]
+
+
+def test_up_without_legacy_volumes_says_nothing(harness, caplog):
+    """受け入れ条件 12"""
+    harness['setup'](scale=1)
+    harness['fake'].volumes = ['devbase_vscode-server-bin']
+
+    assert container.cmd_up() == 0
+
+    assert not any('VS Code Server のボリューム' in m for m in _messages(caplog))
+
+
+def test_scale_and_post_start_do_not_report_legacy_volumes(harness, caplog):
+    """決定 6: 案内は up だけ"""
+    harness['setup'](scale=1)
+    harness['fake'].volumes = list(LEGACY)
+
+    assert container.cmd_scale(2) == 0
+    _running(harness, 1, 2)
+    assert container.cmd_post_start() == 0
+
+    assert not any('VS Code Server のボリューム' in m for m in _messages(caplog))

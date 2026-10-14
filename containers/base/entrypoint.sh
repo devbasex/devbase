@@ -603,17 +603,112 @@ devbase_keep_replaced_link() {
 }
 
 # ===================================================================
-# PLAN36: VS Code Server の永続ディレクトリ
+# PLAN36 / #463: VS Code Server の本体の置き場
 # ===================================================================
-# ~/.vscode-server にはコンテナ 1 つにつき 1 本の named volume が割り当てられる
-# (devbase_vscode_<project>_<index>)。空のボリュームは root 所有で作られるため、
-# そのままでは開発ユーザーが VS Code Server をインストールできない。
+# ~/.vscode-server/bin には全コンテナ共通の named volume (devbase_vscode-server-bin)
+# が付く。本体の版 (bin/<commit>) だけを持ち、extensions/・data/ などはコンテナの
+# 書き込みレイヤーに残る。空のボリュームは root 所有で付き、マウント先の親
+# ~/.vscode-server も Docker が root 所有で作るため、そのままでは開発ユーザーが
+# VS Code Server を置けない。
 #
 # マウントが無い構成でもディレクトリを作るだけで済み、VS Code の動作は変わらない。
+
+# bin/ に残す本体の版の数 (#463)。1 版は約 0.6GB。VS Code はおおむね月に 1 版のため、
+# 別の端末の VS Code が数か月更新されずに古い版で attach していても消しにくい数にする
+DEVBASE_VSCODE_SERVER_KEEP=5
+
+# 展開の途中のディレクトリ (bin/<commit>_<ミリ秒>) を残りと見なすまでの分数。
+# 展開に 60 分かかることは無いため、動いている展開を消さない
+DEVBASE_VSCODE_SERVER_STALE_MINUTES=60
+
 devbase_setup_vscode_server_dir() {
     local home_root="$1" owner="${2:-${USERNAME:-ubuntu}}"
 
     devbase_ensure_persistent_root "${home_root}/.vscode-server" "$owner"
+    devbase_ensure_persistent_root "${home_root}/.vscode-server/bin" "$owner"
+    devbase_prune_vscode_server_bin "${home_root}/.vscode-server/bin"
+}
+
+# ファイルの更新時刻 (UNIX 秒)。GNU / uutils の stat と BSD の stat の両方で読む。
+devbase_file_mtime() {
+    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
+# 片付けの 1 つのパスを消す。消せずに残ったときだけ WARNING を出す。
+#
+# ほかのコンテナの片付けが同時に同じパスを消すことがある。そのとき rm が途中で
+# 失敗しても、パスが無くなっていれば WARNING を出さない。終了コードは常に 0。
+devbase_remove_vscode_server_path() {
+    local path="$1" err
+
+    err=$(rm -rf -- "$path" 2>&1) && return 0
+    # ほかのコンテナが消している途中なら、もう一度で消え切る
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        err=$(rm -rf -- "$path" 2>&1) && return 0
+    fi
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        echo "WARNING: VS Code Server の片付けで消せなかった: ${path} (${err%%$'\n'*})" >&2
+    fi
+    return 0
+}
+
+# 共通のボリュームの bin/ を片付ける (#463)。消すのは次の 3 種だけで、bin/ のほかの
+# もの・~/.vscode-server の bin 以外には触らない。終了コードは常に 0。
+#
+# 1. 残す版の数を超えた古い版。版は 40 桁の 16 進の名前で product.json を持つ
+#    ディレクトリ。product.json の更新時刻の新しい順 (同じなら名前の順) に並べる。
+#    product.json は片付けが書き換えないため、同時に走る片付けどうしで並びが同じに
+#    なり、残る版が残す数より減らない (ディレクトリの更新時刻では減った)
+# 2. 残った版の直下の入れ子の本体 (product.json を持つディレクトリ)。本体の同時の
+#    展開で、遅れた側の中身が bin/<commit>/vscode-server-linux-<arch>/ に残ったもの
+# 3. 60 分より古い展開の途中のディレクトリ bin/<commit>_<数字>
+#
+# シンボリックリンクは辿らない。bin/ 自身・bin/<commit>・入れ子がリンクなら、版にも
+# 片付けの対象にも数えない。リンク先の bin の外のものを消さないためである
+devbase_prune_vscode_server_bin() {
+    local bin="$1" keep="${2:-$DEVBASE_VSCODE_SERVER_KEEP}"
+    local entry name mtime listing="" count=0 kept=() nested
+
+    [ -d "$bin" ] && [ ! -L "$bin" ] || return 0
+
+    for entry in "$bin"/*; do
+        name="${entry##*/}"
+        [[ "$name" =~ ^[0-9a-f]{40}$ ]] || continue
+        [ -d "$entry" ] && [ ! -L "$entry" ] || continue
+        [ -f "$entry/product.json" ] || continue
+        mtime=$(devbase_file_mtime "$entry/product.json") || continue
+        listing+="${mtime} ${name}"$'\n'
+    done
+
+    while read -r mtime name; do
+        [ -n "$name" ] || continue
+        count=$((count + 1))
+        if [ "$count" -le "$keep" ]; then
+            kept+=("$name")
+        else
+            devbase_remove_vscode_server_path "${bin}/${name}"
+        fi
+    done < <(printf '%s' "$listing" | LC_ALL=C sort -k1,1nr -k2,2)
+
+    for name in "${kept[@]}"; do
+        # 数えた後にリンクへ置き換わっていれば、リンク先を辿らない
+        [ ! -L "$bin" ] && [ ! -L "${bin}/${name}" ] || continue
+        for nested in "${bin}/${name}"/*/; do
+            nested="${nested%/}"
+            [ -d "$nested" ] && [ ! -L "$nested" ] || continue
+            [ -f "${nested}/product.json" ] || continue
+            devbase_remove_vscode_server_path "$nested"
+        done
+    done
+
+    while IFS= read -r entry; do
+        name="${entry##*/}"
+        [[ "$name" =~ ^[0-9a-f]{40}_[0-9]+$ ]] || continue
+        devbase_remove_vscode_server_path "$entry"
+    done < <(find "$bin" -mindepth 1 -maxdepth 1 -type d \
+        -mmin "+${DEVBASE_VSCODE_SERVER_STALE_MINUTES}" 2>/dev/null)
+
+    return 0
 }
 
 # ===================================================================
@@ -781,7 +876,7 @@ USERNAME="${USERNAME:-ubuntu}"
 devbase_setup_cloud_config_dirs "$USERNAME"
 devbase_setup_gcp_credentials "/home/${USERNAME}"
 
-# 1.5. VS Code Server の永続ディレクトリ (PLAN36)
+# 1.5. VS Code Server の本体の置き場と片付け (PLAN36 / #463)
 devbase_setup_vscode_server_dir "/home/${USERNAME}" "$USERNAME"
 
 # 2. Setup Git configuration

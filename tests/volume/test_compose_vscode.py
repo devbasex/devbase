@@ -1,12 +1,15 @@
-"""VS Code Server ボリュームのマウントと宣言 (PLAN36 Task 2)
+"""共通の VS Code Server ボリュームのマウントと宣言 (#463)
 
 生成 compose に対して次を固定する。
 
-1. dev インスタンスごとに ``/home/ubuntu/.vscode-server`` が
-   ``devbase_vscode_<project>_<index>`` としてマウントされる (AC1 / AC2)
-2. インスタンスごとに別のボリュームになる (AC3)
-3. そのボリュームが ``volumes:`` セクションへ ``external: true`` で宣言される
-4. プロジェクトが同じマウント先を書いている場合は上書きしない
+1. どの dev インスタンスも、共通の VS Code Server ボリューム 1 本を
+   ``/home/ubuntu/.vscode-server/bin`` に付ける (受け入れ条件 2・I1)
+2. ``/home/ubuntu/.vscode-server`` と ``/home/ubuntu/.vscode-server/data`` には
+   ボリュームを付けない (拡張と状態はコンテナの書き込みレイヤーに残す)
+3. そのボリュームを ``volumes:`` に ``external: true`` で 1 回だけ宣言する
+4. プロジェクトが ``~/.vscode-server`` か ``~/.vscode-server/bin`` を自分で付けて
+   いれば何も足さない (受け入れ条件 5・I2)
+5. 旧形式 (``devbase_vscode_<project>_<index>``) が現れない (受け入れ条件 6・I3)
 """
 
 from __future__ import annotations
@@ -14,9 +17,12 @@ from __future__ import annotations
 import pytest
 
 from devbase.volume import compose
+from devbase.volume.manager import VSCODE_SERVER_VOLUME
 from tests.volume.conftest import load_scaled, mount_source, write_compose
 
-VSCODE_TARGET = "/home/ubuntu/.vscode-server"
+SERVER_TARGET = "/home/ubuntu/.vscode-server"
+BIN_TARGET = "/home/ubuntu/.vscode-server/bin"
+DATA_TARGET = "/home/ubuntu/.vscode-server/data"
 
 
 @pytest.fixture
@@ -24,46 +30,48 @@ def in_tmp_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DEV_SERVICE_NAME", raising=False)
     monkeypatch.setenv("DEVBASE_ACCOUNT_GROUP", "acme")  # up が宣言から置いた後 (#315)
-    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "myapp-ai")
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "proj-a")
     return tmp_path
 
 
+def _sources(service: dict) -> list[str]:
+    result = []
+    for vol in service.get("volumes", []):
+        if isinstance(vol, str):
+            result.append(vol.split(":")[0])
+        elif isinstance(vol, dict):
+            result.append(str(vol.get("source")))
+    return result
+
+
 # ---------------------------------------------------------------------------
-# マウント (AC1 / AC2 / AC3)
+# マウント (受け入れ条件 2・I1)
 # ---------------------------------------------------------------------------
 
-def test_vscode_mount_is_added_when_absent(in_tmp_cwd):
-    """プロジェクト compose が書いていなくても自動で足される。"""
-    write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
-
-    compose.generate_scaled_compose(scale=1)
-
-    dev = load_scaled(in_tmp_cwd)["services"]["dev-1"]
-    assert mount_source(dev, VSCODE_TARGET) == "devbase_vscode_myapp-ai_1"
-
-
-def test_each_instance_mounts_its_own_volume(in_tmp_cwd):
-    """scale > 1 でインスタンスごとに別のボリュームを掴む (AC3)。"""
+def test_every_instance_mounts_the_shared_volume_on_bin(in_tmp_cwd):
+    """scale 2 でも、どのインスタンスも同じ共通のボリュームを bin に 1 つ付ける。"""
     write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
 
     compose.generate_scaled_compose(scale=2)
 
     services = load_scaled(in_tmp_cwd)["services"]
-    assert mount_source(services["dev-1"], VSCODE_TARGET) == \
-        "devbase_vscode_myapp-ai_1"
-    assert mount_source(services["dev-2"], VSCODE_TARGET) == \
-        "devbase_vscode_myapp-ai_2"
+    for name in ("dev-1", "dev-2"):
+        dev = services[name]
+        assert mount_source(dev, BIN_TARGET) == VSCODE_SERVER_VOLUME
+        assert mount_source(dev, SERVER_TARGET) is None
+        assert mount_source(dev, DATA_TARGET) is None
+        assert _sources(dev).count(VSCODE_SERVER_VOLUME) == 1
 
 
-def test_mount_follows_project_name(in_tmp_cwd, monkeypatch):
-    """別プロジェクトでは別のボリュームになる (AC4)。"""
-    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "bi-tools")
+def test_mount_does_not_depend_on_project_name(in_tmp_cwd, monkeypatch):
+    """別のプロジェクトでも同じ 1 本を付ける (受け入れ条件 4 の前提)。"""
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "proj-b")
     write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
 
     compose.generate_scaled_compose(scale=1)
 
     dev = load_scaled(in_tmp_cwd)["services"]["dev-1"]
-    assert mount_source(dev, VSCODE_TARGET) == "devbase_vscode_bi-tools_1"
+    assert mount_source(dev, BIN_TARGET) == VSCODE_SERVER_VOLUME
 
 
 def test_existing_mounts_are_kept(in_tmp_cwd):
@@ -89,22 +97,34 @@ def test_non_dev_services_do_not_get_the_mount(in_tmp_cwd):
     compose.generate_scaled_compose(scale=1)
 
     db = load_scaled(in_tmp_cwd)["services"]["db"]
-    assert mount_source(db, VSCODE_TARGET) is None
+    assert mount_source(db, BIN_TARGET) is None
 
 
 # ---------------------------------------------------------------------------
-# 宣言 (external)
+# 宣言 (external) と旧形式 (受け入れ条件 6・I3)
 # ---------------------------------------------------------------------------
 
-def test_vscode_volumes_are_declared_external(in_tmp_cwd):
-    """devbase が作るボリュームなので external: true で宣言する。"""
+def test_shared_volume_is_declared_external_once(in_tmp_cwd):
+    """devbase が作るボリュームなので external: true で 1 回だけ宣言する。"""
     write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
 
     compose.generate_scaled_compose(scale=2)
 
     volumes = load_scaled(in_tmp_cwd)["volumes"]
-    assert volumes["devbase_vscode_myapp-ai_1"] == {"external": True}
-    assert volumes["devbase_vscode_myapp-ai_2"] == {"external": True}
+    assert volumes[VSCODE_SERVER_VOLUME] == {"external": True}
+
+
+def test_legacy_volumes_do_not_appear(in_tmp_cwd):
+    """生成物のマウントと volumes: に旧形式の名前が無い。"""
+    write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=2)
+
+    scaled = load_scaled(in_tmp_cwd)
+    assert not [n for n in scaled["volumes"] if n.startswith("devbase_vscode_")]
+    for name in ("dev-1", "dev-2"):
+        assert not [s for s in _sources(scaled["services"][name])
+                    if s.startswith("devbase_vscode_")]
 
 
 def test_project_volumes_are_kept(in_tmp_cwd):
@@ -118,23 +138,36 @@ def test_project_volumes_are_kept(in_tmp_cwd):
 
 
 # ---------------------------------------------------------------------------
-# プロジェクトの指定を尊重する
+# プロジェクトの指定を尊重する (受け入れ条件 5・I2)
 # ---------------------------------------------------------------------------
 
-def test_declared_vscode_mount_is_not_overridden(in_tmp_cwd):
-    """プロジェクトが同じマウント先を書いていたらそのまま残す。
-
-    ホストのディレクトリを bind したい構成を devbase が奪わないため。
-    """
+@pytest.mark.parametrize("target", [SERVER_TARGET, BIN_TARGET])
+def test_declared_vscode_mount_is_not_overridden(in_tmp_cwd, target):
+    """~/.vscode-server か bin を書いていたら、マウントも宣言も足さない。"""
     write_compose(in_tmp_cwd, {
         "dev": {"image": "dev:latest",
-                "volumes": [f"./vscode-server:{VSCODE_TARGET}"]},
+                "volumes": [f"./vscode-server:{target}"]},
     })
 
     compose.generate_scaled_compose(scale=1)
 
     scaled = load_scaled(in_tmp_cwd)
     dev = scaled["services"]["dev-1"]
-    assert mount_source(dev, VSCODE_TARGET) == "./vscode-server"
+    assert mount_source(dev, target) == "./vscode-server"
+    assert VSCODE_SERVER_VOLUME not in _sources(dev)
     # 使わないボリュームを宣言しない (external は実体を要求する)
-    assert "devbase_vscode_myapp-ai_1" not in scaled["volumes"]
+    assert VSCODE_SERVER_VOLUME not in scaled["volumes"]
+
+
+def test_data_only_declaration_still_gets_shared_bin(in_tmp_cwd):
+    """~/.vscode-server/data だけの指定なら、共通のボリュームを bin に足す。"""
+    write_compose(in_tmp_cwd, {
+        "dev": {"image": "dev:latest",
+                "volumes": [f"./vscode-data:{DATA_TARGET}"]},
+    })
+
+    compose.generate_scaled_compose(scale=1)
+
+    dev = load_scaled(in_tmp_cwd)["services"]["dev-1"]
+    assert mount_source(dev, DATA_TARGET) == "./vscode-data"
+    assert mount_source(dev, BIN_TARGET) == VSCODE_SERVER_VOLUME

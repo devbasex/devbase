@@ -166,7 +166,9 @@ class StartupFailure:
     """起動の待ちで起動できなかった 1 インスタンス。
 
     ``reason`` は ``exited``・``not_found``・``timeout`` のどれかで、``logs`` は
-    ``exited`` のときだけ中身を持つ (ログの末尾。取れなければ空)。
+    ``exited`` のときだけ中身を持つ (ログの末尾。取れなければ空)。``timeout`` は巡の回数の
+    制限で、``elapsed`` は待ちを始めてから時間切れが決まるまでに実際にかかった秒数 (整数)。
+    どちらも ``timeout`` のときだけ意味を持つ。
     """
 
     index: int
@@ -174,11 +176,13 @@ class StartupFailure:
     reason: str
     logs: str = ''
     timeout: int = 0
+    elapsed: int = 0
 
     def describe(self) -> str:
         """利用者へ出す 1 インスタンス分の文言 (ログの末尾を含む)。"""
         if self.reason == 'timeout':
-            text = f"timeout ({self.timeout}s) waiting for the entrypoint to complete"
+            text = (f"timeout after {self.timeout} rounds ({self.elapsed}s elapsed) "
+                    "waiting for the entrypoint to complete")
         else:
             text = _STARTUP_REASON_TEXT.get(self.reason, self.reason)
         lines = [f"  - {self.service}: {text}"]
@@ -234,6 +238,32 @@ def _is_ready(service_name: str, ready_file: str, compose_file: Optional[Path]) 
     return True
 
 
+def _classify_instance(
+    index: int,
+    container_prefix: str,
+    ready_file: str,
+    compose_file: Optional[Path],
+) -> Tuple[str, Optional[StartupFailure]]:
+    """1 つの番号の状態を 1 回確かめて分類する。
+
+    Returns:
+        ``('ready' | 'exited' | 'not_found' | 'pending', 失敗)``。失敗は
+        ``exited`` と ``not_found`` のときだけ持ち、ほかは ``None``
+    """
+    service_name = f"{container_prefix}-{index}"
+    status = get_container_status(service_name, compose_file)
+    if status is None:
+        return 'not_found', StartupFailure(index, service_name, 'not_found')
+    status_lower = status.lower()
+    if 'exited' in status_lower or 'dead' in status_lower:
+        return 'exited', StartupFailure(
+            index, service_name, 'exited',
+            _container_logs_tail(service_name, compose_file))
+    if _is_ready(service_name, ready_file, compose_file):
+        return 'ready', None
+    return 'pending', None
+
+
 def wait_for_containers_ready(
     container_prefix: str,
     scale: int,
@@ -247,7 +277,9 @@ def wait_for_containers_ready(
     1 から ``scale`` までの番号を巡ごとに確かめる。1 巡では、まだ決まっていない番号ごとに
     状態を 1 回、動いていれば完了の印を 1 回確かめる。決まった番号 (起動できた・終了した・
     見つからない) へは、その後の巡で問い合わせない。1 台が起動できなくても、残りの番号は
-    制限まで待つ。巡の数は ``timeout`` を超えない (1 巡ごとに 1 秒休む)。
+    制限まで待つ。巡の数は ``timeout`` を超えない (1 巡ごとに 1 秒休む)。制限は巡の回数で
+    数え、docker の呼び出しにかかる時間は含まない。時間切れの文言には、巡の回数と、単調な
+    時計で測った実際の経過の秒数を出す。
 
     Args:
         container_prefix: Container name prefix (e.g., "dev")
@@ -268,22 +300,16 @@ def wait_for_containers_ready(
     pending = list(range(1, scale + 1))
     ready: List[int] = []
     failures: List[StartupFailure] = []
+    started = time.monotonic()
     rounds = 0
     while pending and rounds < timeout:
         still_pending = []
         for i in pending:
-            service_name = f"{container_prefix}-{i}"
-            status = get_container_status(service_name, compose_file)
-            if status is None:
-                failures.append(StartupFailure(i, service_name, 'not_found'))
-                continue
-            status_lower = status.lower()
-            if 'exited' in status_lower or 'dead' in status_lower:
-                failures.append(StartupFailure(
-                    i, service_name, 'exited',
-                    _container_logs_tail(service_name, compose_file)))
-                continue
-            if _is_ready(service_name, ready_file, compose_file):
+            state, failure = _classify_instance(
+                i, container_prefix, ready_file, compose_file)
+            if failure is not None:
+                failures.append(failure)
+            elif state == 'ready':
                 ready.append(i)
             else:
                 still_pending.append(i)
@@ -293,8 +319,10 @@ def wait_for_containers_ready(
         time.sleep(1)
         rounds += 1
 
+    elapsed = int(time.monotonic() - started)
     failures.extend(
-        StartupFailure(i, f"{container_prefix}-{i}", 'timeout', timeout=timeout)
+        StartupFailure(i, f"{container_prefix}-{i}", 'timeout', timeout=timeout,
+                       elapsed=elapsed)
         for i in pending)
     if failures:
         raise ContainerStartupError(ready, failures)

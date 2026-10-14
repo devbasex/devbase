@@ -291,25 +291,31 @@ def test_zsh_completion_offers_context():
 
 
 # ---------------------------------------------------------------------------
-# 補完: project / container のサブコマンドの一覧
+# 補完: project / container / env のサブコマンドの一覧
 # ---------------------------------------------------------------------------
 
+# サブコマンドの全部を比べるグループ（`[name]`・`--context` を取るかによらない）
+_ALL_SUBCOMMAND_GROUPS = ("env",)
+
+
 def _group_subcommands(group):
+    if group in _ALL_SUBCOMMAND_GROUPS:
+        return {p[1] for p, _ in _walk(cli._create_parser()) if len(p) == 2 and _canonical(p)[0] == group}
     # 入れ子の `profile` は親の `profile` として数える
     return {p[1] for p in NAME_PATHS | CONTEXT_PATHS if len(p) >= 2 and p[0] == group}
 
 
-@pytest.mark.parametrize("group", ["project", "container"])
+@pytest.mark.parametrize("group", ["project", "container", "env"])
 def test_bash_completion_lists_subcommands(group, fake_root):
     expected = _group_subcommands(group)
-    assert expected, f"argparse の {group} に `[name]` / `--context` を取るサブコマンドが無い"
+    assert expected, f"argparse の {group} に比べるサブコマンドが無い"
     offered = _bash_complete((group,), fake_root)
     missing = expected - offered
     assert not missing, (f"etc/devbase-completion.bash の {group} のサブコマンドの一覧に無い: "
                          f"{sorted(missing)}")
 
 
-@pytest.mark.parametrize("group", ["project", "container"])
+@pytest.mark.parametrize("group", ["project", "container", "env"])
 def test_zsh_completion_lists_subcommands(group):
     expected = _group_subcommands(group)
     m = re.search(rf"^\s*{group}_subcommands=\((.*?)^\s*\)", ZSH_COMPLETION.read_text(), re.MULTILINE | re.DOTALL)

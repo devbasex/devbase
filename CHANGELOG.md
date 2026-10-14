@@ -36,8 +36,30 @@
   **更新後の最初の `devbase up` の自動スナップショットは、系列ごとに新しい世代（フル）を作ります。**
   除外の一覧が違う世代を `devbase snapshot create --name` で指定すると、差分を作らずに終了コード 1 で止まります。
   既存の世代はそのまま一覧・復元できます。
+- **VS Code Server の本体（`~/.vscode-server/bin`）だけを全コンテナ共通の 1 本のボリューム `devbase_vscode-server-bin` に
+  置くようにしました（#463）。** これまではコンテナ 1 つに 1 本の `devbase_vscode_<プロジェクト>_<番号>` が
+  `~/.vscode-server` を丸ごと持ち、VS Code の更新のたびに約 0.6GB の版が各ボリュームへ溜まっていました。
+  今は本体の版をプロジェクトとインスタンスの数だけ重ねて持たず、コンテナの起動が `bin/` の版を新しい順に 5 つまで残し、
+  同時の展開で残った入れ子の本体と古い展開の途中のディレクトリも消します（この片付けは base と派生イメージを
+  建て直した後から効きます）。
+  **拡張機能・リモート側の設定（`data/Machine/settings.json`）・ローカル履歴・拡張機能がリモート側に保存する状態は、
+  ボリュームに置かずコンテナの書き込みレイヤーに残るため、`devbase up` でコンテナを作り直すたびに消えるようになります。**
+  手で入れた拡張機能は入れ直しになり、Dev Containers の既定の拡張機能は作り直しの後の attach で入り直します。
+  `window.title` は `devbase up` が毎回書き直します。`docker restart` と端末の再起動では消えません。
+  移った後の最初の attach で本体（約 215MB）を取り直します。以前の `devbase_vscode_<プロジェクト>_<番号>` は付けず、
+  中身も引き継がず、devbase は消しません。残っている間は `devbase up` の最後に名前と消すコマンドが出るので、
+  利用者が `docker volume rm` で消してください（[使わなくなった VS Code Server ボリュームを消す](docs/user/container-operations.md#使わなくなった-vs-code-server-ボリュームを消す)）。
+  建て直す前のイメージでも attach できるよう、`devbase up` / `scale` / `project post-start` の起動の後の処理が
+  `~/.vscode-server/bin` を開発ユーザーが書ける形に揃えます。
 
 ### Fixed
+- **`devbase up` / `devbase scale` の起動の待ちの時間切れの文言が、巡の回数と実際に待った秒数を出すようにしました（#374）。**
+  制限は 1 秒休む巡の回数（60 巡）で数え、docker の呼び出しにかかる時間を含まないため、実際に待つ時間は 60 秒より
+  長くなります。これまでの `timeout (60s) ...` は 60 秒で止まったと読めました。今は
+  `timeout after 60 rounds (73s elapsed) waiting for the entrypoint to complete` の形で出ます。数え方と制限は変わりません。
+- **`devbase env <TAB>` の候補に `token` と `backend` が出るようにしました（#454）。** bash と zsh の補完の
+  サブコマンドの一覧に 2 つが無く、名前を手で打たないと使えませんでした。一致テストが `env` のサブコマンドの
+  全部を bash と zsh の一覧と比べるようになり、`env` のサブコマンドを足したときの取り残しで落ちます。
 - **接続先 URL が手元のサーバ（`http://127.0.0.1:8200` など `http` の loopback）のとき、`devbase up` したコンテナの中の
   `bao` がサーバへ届くようにしました（#295）。** これまではコンテナへ渡す `BAO_ADDR` がそのまま `127.0.0.1` を指し、
   コンテナ自身へつながっていました。Docker が手元の端末のものなら、コンテナの `BAO_ADDR` のホストを

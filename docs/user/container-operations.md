@@ -147,7 +147,7 @@ devbase のコンテナは 4 種類のボリュームを使用します。
 | `devbase_home_ubuntu` | `/persistent/ai` | 全コンテナで共有 | 契約やテナントに紐づかない共通資産（`~/.claude/plugins` / `skills` / `commands` / `CLAUDE.md` / `settings.json`、`.codex` / `.serena` / `.kiro`、SSH 鍵、共有ファイル置き場 `share`）|
 | `devbase_home_{group}` | `/persistent/group` | 同じアカウントグループのコンテナで共有 | 企業テナントに紐づくもの（Claude Code の認証と会話ログ、`.gemini`、Kiro CLI の `.local/share/kiro-cli`、gcloud / gws の設定ディレクトリ、[作り直しても残るシェルの設定](#作り直しても残るシェルの設定)の置き場所 `.shellrc.d`）|
 | `devbase_work_{index}` | `/work` | 同じ index のコンテナで共有（プロジェクト間も共有） | プロジェクトのソースコード、作業ファイル |
-| `devbase_vscode_{project}_{index}` | `/home/ubuntu/.vscode-server` | 共有しない（コンテナ 1 つに 1 本）| VS Code Server 本体・拡張機能・接続トークン |
+| `devbase_vscode-server-bin` | `/home/ubuntu/.vscode-server/bin` | 全コンテナで共有（プロジェクト・グループを問わず 1 本） | VS Code Server の本体（`bin/<commit>`）だけ。拡張機能・接続トークン・リモート側の設定は持たない |
 
 > **Note:** `devbase_home_ubuntu` は **`/persistent/ai`** にマウントされます（`/home/ubuntu` への直接マウントは廃止）。`/home/ubuntu` 直下はコンテナ層（揮発）で、永続化されるのは entrypoint が `/persistent/ai` / `/persistent/group` 配下へ symlink する設定ファイルのみです。シェル履歴など symlink 対象外のファイルは再生成で失われます。
 
@@ -192,23 +192,64 @@ Google 認証の具体的な手順は [Google 認証ガイド](google-auth.md) �
 
 ### VS Code Server の永続化
 
-VS Code を attach すると、コンテナ内に VS Code Server（本体 `bin/<commit>`・拡張機能・
-接続トークン）が入ります。ここは `~/.vscode-server` で、以前はコンテナ層（揮発）にあったため
-`devbase up` でコンテナを作り直すたびに **215MB の再ダウンロード**（約 55 秒）が走っていました。
+VS Code を attach すると、コンテナ内の `~/.vscode-server` に VS Code Server が入ります。
+ボリュームに置くのは本体（`bin/<commit>`、1 版で約 0.6GB）だけで、全コンテナ共通の 1 本
+`devbase_vscode-server-bin` を `~/.vscode-server/bin` にマウントします。
 
-現在は `devbase_vscode_{project}_{index}` を `~/.vscode-server` にマウントするため、
-コンテナを作り直しても本体と拡張機能が残ります。
+本体を共有するのは、版ごとに中身が変わらず、プロジェクトとインスタンスの数だけ同じ版を
+重ねて持つ理由が無いためです。どれか 1 つのコンテナで一度取れば、ほかのコンテナの attach は本体を
+取り直しません。
 
-このボリュームだけは**共有しません**。VS Code Server は「1 マシン 1 セット」の状態
-（`data/Machine/.connection-token-<commit>` など）を持ち、複数のコンテナが同時に書くと
-接続トークンを奪い合うためです。名前にプロジェクト名とインスタンス番号の両方を含めることで、
-`scale > 1` の同時 attach でも、別プロジェクトの同時起動でも状態が混ざりません。
+| 置き場 | どこにあるか | 消えるとき |
+|---|---|---|
+| `bin/`（本体） | 共通のボリューム `devbase_vscode-server-bin` | コンテナの起動の片付けが古い版を消す（下記） |
+| `extensions/`・`extensionsCache/`・`data/` など `bin/` 以外 | コンテナの書き込みレイヤー（ボリュームではない） | `devbase up` の作り直し（down → up）。`docker restart` と端末の再起動では残る |
 
-- 初回 attach と VS Code 本体のバージョン更新時（`commit` ハッシュが変わるとき）は
-  ダウンロードが走ります。減るのは**コンテナ再作成のたびの再取得**です
-- プロジェクトが `compose.yml` で `~/.vscode-server` を自分でマウントしている場合、
-  devbase は上書きしません
+`devbase up` でコンテナを作り直すたびに、次のものが消えます。
+
+- 手で入れた拡張機能。Dev Containers の既定の拡張機能は、
+  作り直しの後の最初の attach で入り直します
+- リモート側の設定（`data/Machine/settings.json`）のうち、手で入れたもの。`window.title` は
+  `devbase up` が毎回書き直します
+- ローカル履歴（`data/User/History`）と、拡張機能がリモート側に保存する状態
+  （`data/User/globalStorage`・`data/User/workspaceStorage`。Copilot Chat など）
+- ログ（`data/logs`）。消えるため溜まりません
+- 接続トークンと `.devport`。次のサーバーの起動で作り直されます
+
+`bin/` 以外がコンテナごとに分かれているため、窓のタイトルと窓の再接続（ウィンドウの再読み込み）は
+コンテナごとに働きます。
+
+#### 本体の旧版の片付け
+
+VS Code を更新するたびに `bin/` へ新しい版が足されます。コンテナの起動（entrypoint）が毎回
+`bin/` を片付け、次のものを消します。
+
+- 新しい順に **5 版**を残し、それより古い版。順は各版の `product.json` の更新時刻で決めます
+- 複数の窓が同じ版を同時に展開したときに、版のディレクトリの中に入れ子で残った本体
+  （`bin/<commit>/vscode-server-linux-<arch>/`）
+- 60 分より前に始まって終わらなかった展開の途中のディレクトリ（`bin/<commit>_<数字>`）
+
+消せないものがあっても起動は止まらず、`WARNING: VS Code Server の片付けで消せなかった: <パス>`
+の行が出ます。片付けは base と派生イメージを建て直した後から効きます。それまでは `bin/` に
+版が溜まりますが、共通の 1 本なので、プロジェクトとインスタンスの数だけ重なりません。
+
+- プロジェクトが `compose.yml` で `~/.vscode-server` か `~/.vscode-server/bin` を自分で
+  マウントしている場合、devbase は何も足しません。`~/.vscode-server/data` など下の別のパス
+  だけをマウントしているときは、共通のボリュームを `bin` に足します
 - スナップショット（`devbase snapshot`）の対象外です。失っても attach し直せば再取得されます
+- 空のボリュームは root の所有で付きます。コンテナの起動と、`devbase up` / `scale` /
+  `project post-start` の起動の後の処理が、`~/.vscode-server/bin` を開発ユーザーが書ける形に
+  揃えます（建て直す前のイメージでも attach できます）
+
+#### 以前の VS Code Server ボリュームから移る
+
+以前の devbase は `~/.vscode-server` を丸ごと、コンテナ 1 つに 1 本のボリューム
+`devbase_vscode_{project}_{index}` に置いていました。今の devbase はこれを付けず、中身も
+引き継ぎません。移った後の最初の attach で本体（約 215MB、約 55 秒）を取り直し、拡張機能は
+入れ直しになります。
+
+以前のボリュームが残っている間、`devbase up` の最後に名前と消すコマンドが出ます。devbase は
+消しません。下の「使わなくなった VS Code Server ボリュームを消す」の手順で消してください。
 
 ### ボリュームの永続性
 
@@ -230,22 +271,40 @@ docker volume inspect devbase_home_ubuntu
 
 #### 使わなくなった VS Code Server ボリュームを消す
 
-`devbase_vscode_*` はプロジェクトを削除しても自動では消えません。attach したコンテナ 1 つ
-あたり **約 1.6GB** を使うため、使わなくなったプロジェクトの分は手で削除します。
+以前の形式の `devbase_vscode_{project}_{index}` は、今の devbase では使いません。自動では
+消えないため、手で削除します。1 本で数 GB を使うことがあります。
 
 ```bash
-# 一覧（サイズ付き）
+# 一覧（共通の devbase_vscode-server-bin は出ない）
 docker volume ls --filter name=devbase_vscode_ --format '{{.Name}}'
 docker system df -v | grep devbase_vscode_
+
+# 要るデータを退避する（下の注意を参照。カレントディレクトリへ tar で書き出す）
+docker run --rm -v devbase_vscode_<project>_1:/from:ro -v "$PWD":/to alpine \
+  tar czf /to/vscode_<project>_1.tgz -C /from .
 
 # 使用中のコンテナが無いことを確認してから削除する
 docker ps -a --filter volume=devbase_vscode_<project>_1
 docker volume rm devbase_vscode_<project>_1
 ```
 
-削除しても失われるのは VS Code Server のキャッシュだけです。次の attach で再取得され、
-設定（`~/.claude` などの AI 設定）には影響しません。稼働中のコンテナが掴んでいるボリュームは
-`docker volume rm` が拒否するので、先に `devbase down` してください。
+> **Warning:** 以前の形式のボリュームは `~/.vscode-server` **全体**を持っています。削除すると、
+> 以前の VS Code Server の本体と拡張機能（`extensions/`）に加え、次のものも**戻せなくなります**。
+>
+> - リモートの設定（`data/Machine/settings.json`）
+> - ローカル履歴（`data/User/History/`）
+> - 拡張機能が保存した状態（`data/User/globalStorage/`・`data/User/workspaceStorage/`）
+>
+> 要るものがあれば、削除の前に上の `tar` の行で退避してください。戻すときは、展開した中の要る
+> ファイルだけを `docker cp` でコンテナの `~/.vscode-server/` の同じ場所へ写します。AI 設定
+> （`~/.claude` など）は別のボリュームにあるため、この削除では消えません。
+
+`devbase up` の案内に出る `docker volume rm …` の行は、退避が要らないと確かめた後に打ってください。
+以前の devbase で作ったコンテナが付けているボリュームは `docker volume rm` が
+拒否します。そのプロジェクトで `devbase up` を打ってコンテナを作り直した後に消してください。
+
+共通の `devbase_vscode-server-bin` は消さなくて構いません。消したときは、次の attach で本体を
+取り直します。
 
 > **Warning:** `devbase_home_ubuntu` ボリューム（`/persistent/ai`、および symlink 経由でアクセスする `~/.claude/plugins` / `~/share` 等）は全プロジェクトで共有されます。ここにプロジェクト固有のファイルを置くと、他のプロジェクトにも影響します。プロジェクト固有のファイルは `/work` に配置してください。
 
