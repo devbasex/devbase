@@ -127,10 +127,12 @@ _devbase() {
         'import:Import .env bundle (age decrypt + merge)'
         'keygen:Generate the devbase age key used by the secret store'
         'exec:Run a command with the decrypted secrets in its environment'
+        'token:Refresh the OpenBao token in running dev containers'
         'encrypt:Move plaintext settings into the encrypted store'
         'decrypt:Move encrypted settings back to plaintext'
         'rekey:Change who can decrypt the secrets and re-encrypt them'
         'doctor:Check for leftover plaintext secrets and ignore-rule gaps'
+        'backend:Choose where secrets are stored (age / plaintext / openbao)'
     )
 
     plugin_subcommands=(
