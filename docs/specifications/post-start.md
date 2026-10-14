@@ -85,6 +85,7 @@ classDiagram
         +reason: str
         +logs: str
         +timeout: int
+        +elapsed: int
         +describe() str
     }
     DockerError <|-- ContainerStartupError
@@ -92,7 +93,8 @@ classDiagram
 ```
 
 `ready` と `failures` は番号の昇順で、合わせると待った番号の全部になる。`reason` は `exited`・`not_found`・
-`timeout` のどれかで、`logs` は `exited` のときだけ中身を持つ。
+`timeout` のどれかで、`logs` は `exited` のときだけ中身を持つ。`timeout`（巡の回数の制限）と `elapsed`（待ちを
+始めてから時間切れが決まるまでに実際にかかった秒数）は、`reason` が `timeout` のときだけ意味を持ち、既定は 0 である。
 
 ### 起動の待ち
 
@@ -118,12 +120,14 @@ stateDiagram-v2
 | --- | --- | --- |
 | 終了した（`exited`） | 状態が `exited` か `dead` を含む | `exited unexpectedly` と、続く `Last logs:` とログの末尾（10 行まで。決まったときに 1 回だけ取る） |
 | 見つからない（`not_found`） | 状態を取れない | `container not found` |
-| 時間切れ（`timeout`） | 巡の数が制限に達した時点で、完了の印を確かめられていない | `timeout (<制限>s) waiting for the entrypoint to complete` |
+| 時間切れ（`timeout`） | 巡の数が制限に達した時点で、完了の印を確かめられていない | `timeout after <制限> rounds (<経過>s elapsed) waiting for the entrypoint to complete` |
 
 1 台が起動できなくても、残りの番号は制限まで待つ。番号の小さい 1 台が落ちたときにも、後から起動を終える
 インスタンスへ後処理を届けるためである。そのため 1 台が落ちた `up` / `scale` が終わるまでの時間は、最長で
 制限まで延びる。制限は 1 秒の休みを挟む巡の回数で数えるため、docker の呼び出しにかかる分だけ実際の時間は
-60 秒を超える。
+60 秒を超える。時間切れの文言は、この食い違いを利用者が読めるように、巡の回数（`<制限>`）と、待ちを始めてから
+時間切れが決まるまでに実際にかかった秒数（`<経過>`）の両方を出す。経過は単調な時計（`time.monotonic`）で測り、
+端数を切り捨てた整数の秒で出す。
 
 起動できなかった番号が 1 つ以上あれば `ContainerStartupError` を投げる。引数と成功時の戻り値は変えず、例外は
 `DockerError`（`DevbaseError` の派生）なので、受けない呼び出し元は失敗のまま終わる。内訳を戻り値で返さないのは、
@@ -134,7 +138,7 @@ Container startup failed: 2 of 3 instances did not become ready.
   - dev-2: exited unexpectedly
     Last logs:
     <そのコンテナのログの末尾。10 行まで>
-  - dev-3: timeout (60s) waiting for the entrypoint to complete
+  - dev-3: timeout after 60 rounds (73s elapsed) waiting for the entrypoint to complete
 ```
 
 完了の印（`/tmp/entrypoint-ready`）は、entrypoint が起動のはじめに消し、最後に置く。`docker start` で起こし直した
@@ -329,7 +333,7 @@ Deploy failed: Container startup failed: 1 of 2 instances did not become ready.
 - 起動の待ちが、最初の巡で終了した 2 台の名前・理由・ログの末尾を内訳と文言に入れること、制限まで完了の印が無い
   番号を時間切れとして入れること、待った番号が起動できた側とできなかった側のどちらか一方にだけ現れること、
   番号の小さい 1 台が終了しても後から完了した番号を起動できた側へ入れること、1 巡の docker の呼び出しの回数と
-  巡の上限を満たすこと（`tests/utils/test_wait_for_containers.py`）
+  巡の上限を満たすこと、時間切れの文言が巡の回数と、時計を差し替えて進めた実際の経過の秒数（整数）を出すこと（`tests/utils/test_wait_for_containers.py`）
 - `scale`（1 から 3）が `dev-2`・`dev-3` にだけ、実コンテナ名で始まる窓のタイトルを設定し、`DEVBASE_WINDOW_TITLE=off`
   で設定しないこと、増やしたインスタンスの不足リポジトリを `up` と同じ文言で報告し、揃っていれば何も出さないこと、
   処理の順が `up` と同じであること（`tests/commands/test_container_post_start.py`・`tests/commands/test_container_scale_order.py`）
