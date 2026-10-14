@@ -20,24 +20,29 @@ import subprocess
 from typing import Callable, Optional
 
 from devbase.log import get_logger
+from devbase.volume.manager import VSCODE_BIN_TARGET, VSCODE_SERVER_TARGET
 
 logger = get_logger(__name__)
-
-#: 開発ユーザーのホーム。生成する compose のマウント先と同じ
-HOME_ROOT = "/home/ubuntu"
 
 # docker exec の待ち時間上限 (秒)。ローカルの docker への 1 コマンドなので即答する。
 _EXEC_TIMEOUT = 10
 
 
-def bin_fix_script(home_root: str = HOME_ROOT) -> str:
+def bin_fix_script(home_root: Optional[str] = None) -> str:
     """``bin`` の所有者を ``~/.vscode-server`` の所有者へ揃えるシェルの手順。
 
     ``bin`` が無ければ何もしない。所有者は GNU の ``stat -c`` で読み、使えなければ
     BSD の ``stat -f`` で読む (コンテナは Linux。テストは手元でも走らせる)。
+    パスの既定は compose のマウント先と同じ定数から組む。``home_root`` はテストが
+    手元のディレクトリで試すためだけに渡す。
     """
-    server = shlex.quote(f"{home_root}/.vscode-server")
-    bin_dir = shlex.quote(f"{home_root}/.vscode-server/bin")
+    if home_root is None:
+        server_path, bin_path = VSCODE_SERVER_TARGET, VSCODE_BIN_TARGET
+    else:
+        server_path = f"{home_root}/.vscode-server"
+        bin_path = f"{home_root}/.vscode-server/bin"
+    server = shlex.quote(server_path)
+    bin_dir = shlex.quote(bin_path)
     return (
         "owner_of() { stat -c %u:%g \"$1\" 2>/dev/null || stat -f %u:%g \"$1\"; }; "
         f"[ -d {bin_dir} ] || exit 0; "

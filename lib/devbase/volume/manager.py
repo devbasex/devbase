@@ -44,6 +44,11 @@ LEGACY_GROUP_NAME = "default"
 # 名前は旧形式 (devbase_vscode_<project>_<index>) の接頭辞 devbase_vscode_ と
 # 15 文字目の "-" で必ず違い、旧形式の案内が共通のボリュームを選ばない。
 VSCODE_SERVER_VOLUME = "devbase_vscode-server-bin"
+#: VS Code Server の置き場。生成する compose のマウント先と、起動の後の処理が
+#: 所有者を直す先の両方がこれを使う
+VSCODE_SERVER_TARGET = '/home/ubuntu/.vscode-server'
+#: 本体の置き場。:data:`VSCODE_SERVER_VOLUME` を付ける先
+VSCODE_BIN_TARGET = '/home/ubuntu/.vscode-server/bin'
 #: #463 より前の、~/.vscode-server を丸ごと持つコンテナごとのボリュームの接頭辞
 LEGACY_VSCODE_VOLUME_PREFIX = "devbase_vscode_"
 _LEGACY_VSCODE_VOLUME_RE = re.compile(r"^devbase_vscode_.+_[0-9]+$")

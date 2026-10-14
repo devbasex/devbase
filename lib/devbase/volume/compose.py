@@ -15,6 +15,8 @@ from devbase.log import get_logger
 
 from . import bind_mounts
 from .manager import (
+    VSCODE_BIN_TARGET,
+    VSCODE_SERVER_TARGET,
     VSCODE_SERVER_VOLUME,
     get_ai_volume_for_index,
     get_group_volume,
@@ -30,8 +32,7 @@ _DEPRECATED_TARGET = '/home/ubuntu'
 # VS Code Server の置き場 (PLAN36 / #463)。本体 (bin/) だけを全コンテナ共通の
 # named volume に置く。コンテナの書き込みレイヤに置くと devbase up のたびに
 # 215MB の再ダウンロードが走る。extensions/・data/ などは書き込みレイヤに残す。
-VSCODE_SERVER_TARGET = '/home/ubuntu/.vscode-server'
-VSCODE_BIN_TARGET = '/home/ubuntu/.vscode-server/bin'
+# パス (VSCODE_SERVER_TARGET・VSCODE_BIN_TARGET) は manager に置く。
 
 
 def get_dev_service_name() -> str:
