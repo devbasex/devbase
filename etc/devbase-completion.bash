@@ -49,7 +49,7 @@ _devbase_completions() {
     # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
     local project_subcommands="up down ps login logs scale build rebuild list profile open post-start"
     local container_subcommands="up down ps login logs scale build rebuild profile open"
-    local env_subcommands="init sync list set get delete edit project export import keygen exec encrypt decrypt rekey doctor"
+    local env_subcommands="init sync list set get delete edit project export import keygen exec token encrypt decrypt rekey doctor backend"
     local plugin_subcommands="list install uninstall update info sync repo"
     local repo_subcommands="add remove list refresh"
     local snapshot_subcommands="create list restore copy delete rotate"
