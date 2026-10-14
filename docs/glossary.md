@@ -54,6 +54,9 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | --- | --- | --- | --- | --- | --- |
 | 窓 | — | dev コンテナへ Dev Containers 拡張で接続した VS Code のウィンドウ | — | — | `docs/specifications/editor-open.md` |
 | 動いているインスタンス | — | docker ps に現れ、Compose のプロジェクトのラベルが対象のプロジェクトで、サービスのラベルが <開発サービス名>-<1 以上の数字> のコンテナ | — | — | `docs/specifications/editor-open.md` |
+| 共通の VS Code Server ボリューム | — | すべての dev コンテナが ~/.vscode-server/bin に付ける 1 本のボリューム devbase_vscode-server-bin。サーバーの本体の版（bin/<commit>）だけを持ち、拡張と data/ を持たない | — | — | — |
+| コンテナごとの VS Code Server の状態 | — | ~/.vscode-server のうち bin/ 以外（extensions/・extensionsCache/・data/）。拡張・接続トークン・.devport・マシンの設定（window.title を含む）・ログ・User/ の状態を持つ。どのボリュームにも置かず、コンテナの書き込みレイヤーに残る。devbase up の作り直しで消え、docker restart では残る | — | — | — |
+| 旧形式の VS Code Server ボリューム | — | #463 より前の devbase が dev コンテナ 1 つに 1 本付けていた devbase_vscode_<project>_<index>。~/.vscode-server を丸ごと持つ。#463 の後は付けず、devbase は消さない | — | — | — |
 
 ## 機密の置き場（`secret`）
 
@@ -225,6 +228,8 @@ base イメージの entrypoint が起動のたびに行う用意（containers/b
 | 排他の作成 | — | エントリを「無いときだけ作る」操作。同時に呼んでも作れるのは 1 つのプロセスだけで、作れたプロセスだけがそのエントリの中身を書く。退避とプレースホルダが使う | — | — | `docs/specifications/container-link-stage.md` |
 | 置き換わった共有のリンク | — | 共有のリンクの位置にある、symlink ではない通常のファイル。コンテナの中のツールが一時ファイルの rename で settings.json へ書くと、共有のリンクがこれに置き換わる | — | — | `docs/specifications/container-link-stage.md` |
 | 共有のリンクの控え | — | 置き換わった共有のリンクの中身が共通のボリュームの実体と違うとき、リンクの段が張り直す前にグループのボリュームの同じ .claude の下へ別の名前で残したファイル。自動では消さず、共通のボリュームへも取り込まない | — | — | `docs/specifications/container-link-stage.md` |
+| 入れ子の本体 | — | VS Code Server の本体の同時の展開で、遅れた側の中身が bin/<commit>/vscode-server-linux-<arch>/ に入れ子で残ったもの。product.json を持ち、コンテナの起動の片付けが消す | — | — | — |
+| 残す版の数 | — | コンテナの起動の片付けが共通の VS Code Server ボリュームの bin/ に残す本体の版の数。5。版は product.json の更新時刻の新しい順に数える | — | — | — |
 
 ## 起動の後の処理（`post-start`）
 
