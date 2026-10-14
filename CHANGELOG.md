@@ -53,6 +53,10 @@
   `~/.vscode-server/bin` を開発ユーザーが書ける形に揃えます。
 
 ### Fixed
+- **`devbase up` / `devbase scale` の起動の待ちの時間切れの文言が、巡の回数と実際に待った秒数を出すようにしました（#374）。**
+  制限は 1 秒休む巡の回数（60 巡）で数え、docker の呼び出しにかかる時間を含まないため、実際に待つ時間は 60 秒より
+  長くなります。これまでの `timeout (60s) ...` は 60 秒で止まったと読めました。今は
+  `timeout after 60 rounds (73s elapsed) waiting for the entrypoint to complete` の形で出ます。数え方と制限は変わりません。
 - **`devbase env <TAB>` の候補に `token` と `backend` が出るようにしました（#454）。** bash と zsh の補完の
   サブコマンドの一覧に 2 つが無く、名前を手で打たないと使えませんでした。一致テストが `env` のサブコマンドの
   全部を bash と zsh の一覧と比べるようになり、`env` のサブコマンドを足したときの取り残しで落ちます。

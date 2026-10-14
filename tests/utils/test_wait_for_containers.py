@@ -3,6 +3,7 @@
 1 台が起動できなくても残りを制限まで待ち、起動できた番号と、起動できなかった番号ごとの
 理由 (終了した・見つからない・時間切れ) を例外で返す。実 docker には触れない。
 ``docker_compose`` を差し替え、巡 (``time.sleep`` の回数) ごとの状態を台本で返す。
+時計 (``time.monotonic``) も差し替え、休みと docker の呼び出しにかかる秒数を台本で進める。
 """
 
 from __future__ import annotations
@@ -22,14 +23,20 @@ class Script:
     ``states[n](round)`` は ``(状態, 完了の印があるか)``。状態が ``None`` なら見つからない。
     """
 
-    def __init__(self, states, logs=None):
+    def __init__(self, states, logs=None, call_seconds=0.0):
         self.states = states
         self.logs = logs or {}
+        self.call_seconds = call_seconds
+        self.clock = 1000.0
         self.round = 0
         self.calls: list = []
 
-    def sleep(self, _seconds):
+    def sleep(self, seconds):
+        self.clock += seconds
         self.round += 1
+
+    def monotonic(self):
+        return self.clock
 
     def __call__(self, command, compose_file=None, check=True, capture_output=False,
                  silent_error=False):
@@ -37,6 +44,7 @@ class Script:
         service = command[-1] if command[0] in ('ps', 'logs') else command[2]
         index = int(service.rsplit('-', 1)[1])
         self.calls.append((self.round, command[0], index))
+        self.clock += self.call_seconds
         state, ready = self.states[index](self.round)
         if command[0] == 'ps':
             stdout = '' if state is None else json.dumps({'State': state})
@@ -68,10 +76,11 @@ def missing(_r):
 
 @pytest.fixture
 def run(monkeypatch):
-    def _run(states, scale=None, timeout=60, logs=None):
-        script = Script(states, logs)
+    def _run(states, scale=None, timeout=60, logs=None, call_seconds=0.0):
+        script = Script(states, logs, call_seconds)
         monkeypatch.setattr(docker, 'docker_compose', script)
         monkeypatch.setattr(docker.time, 'sleep', script.sleep)
+        monkeypatch.setattr(docker.time, 'monotonic', script.monotonic)
         scale = scale or len(states)
         try:
             result = docker.wait_for_containers_ready('dev', scale, timeout=timeout)
@@ -121,8 +130,32 @@ def test_timeout_names_the_instances_not_ready(run):
     assert error.ready == (1,)
     (failure,) = error.failures
     assert (failure.index, failure.reason) == (2, 'timeout')
-    assert '  - dev-2: timeout (5s) waiting for the entrypoint to complete' in str(error)
+    assert ('  - dev-2: timeout after 5 rounds (5s elapsed) '
+            'waiting for the entrypoint to complete') in str(error)
     assert script.round == 5
+
+
+def test_timeout_reports_rounds_and_real_elapsed_seconds(run):
+    """#374: 時間切れの文言は巡の回数と、docker の呼び出しを含む実際の経過の秒数 (整数) を出す"""
+    # 1 巡に ps と exec が 1 回ずつ、各 0.65 秒。60 巡で 60 + 60 * 1.3 = 138 秒
+    script, error = run({1: never_ready}, call_seconds=0.65)
+
+    assert script.round == 60
+    (failure,) = error.failures
+    assert (failure.timeout, failure.elapsed) == (60, 138)
+    assert ('  - dev-1: timeout after 60 rounds (138s elapsed) '
+            'waiting for the entrypoint to complete') in str(error)
+    assert 'timeout (60s)' not in str(error)
+
+
+def test_elapsed_seconds_are_truncated_to_an_integer(run):
+    """#374: 経過の秒数は整数の秒で出す (端数は切り捨てる)"""
+    # 3 巡 + 3 巡 * (ps + exec) * 0.3 = 3 + 1.8 = 4.8 秒
+    _script, error = run({1: never_ready}, timeout=3, call_seconds=0.3)
+
+    (failure,) = error.failures
+    assert failure.elapsed == 4
+    assert 'timeout after 3 rounds (4s elapsed)' in str(error)
 
 
 def test_missing_container_is_not_found(run):
