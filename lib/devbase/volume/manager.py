@@ -253,41 +253,37 @@ class VolumeManager:
         group_volume = get_group_volume(group)
 
         # Ensure shared home directory volume (once for all containers)
-        if self._volume_exists(HOME_UBUNTU_VOLUME):
-            logger.info("  %s (shared home, exists)", HOME_UBUNTU_VOLUME)
-        else:
-            logger.info("  Creating %s (shared home)...", HOME_UBUNTU_VOLUME)
-            if not self.create_volume(HOME_UBUNTU_VOLUME):
-                raise DockerError(f"Failed to create volume {HOME_UBUNTU_VOLUME}")
+        self._ensure_volume(HOME_UBUNTU_VOLUME, "shared home")
 
         # Ensure account group volume (shared by all containers of the group)
-        if self._volume_exists(group_volume):
-            logger.info("  %s (account group, exists)", group_volume)
-        else:
-            logger.info("  Creating %s (account group)...", group_volume)
-            if not self.create_volume(group_volume):
-                raise DockerError(f"Failed to create volume {group_volume}")
+        self._ensure_volume(group_volume, "account group")
 
         # Ensure VS Code Server binary volume (once for all containers, #463)
-        if self._volume_exists(VSCODE_SERVER_VOLUME):
-            logger.info("  %s (VS Code Server, exists)", VSCODE_SERVER_VOLUME)
-        else:
-            logger.info("  Creating %s (VS Code Server)...", VSCODE_SERVER_VOLUME)
-            if not self.create_volume(VSCODE_SERVER_VOLUME):
-                raise DockerError(
-                    f"Failed to create volume {VSCODE_SERVER_VOLUME}")
+        self._ensure_volume(VSCODE_SERVER_VOLUME, "VS Code Server")
 
         # Create or verify work volumes for each instance
         for i in range(1, scale + 1):
-            work_volume = self.get_work_volume_for_index(i)
+            self._ensure_volume(self.get_work_volume_for_index(i))
 
-            # Ensure work volume
-            if self._volume_exists(work_volume):
-                logger.info("  %s (exists)", work_volume)
+    def _ensure_volume(self, volume_name: str,
+                       label: Optional[str] = None) -> None:
+        """ボリュームが無ければ作る。label はログで名前の後ろに添える種類
+
+        Raises:
+            DockerError: ボリュームを作れなかった場合
+        """
+        if self._volume_exists(volume_name):
+            if label:
+                logger.info("  %s (%s, exists)", volume_name, label)
             else:
-                logger.info("  Creating %s...", work_volume)
-                if not self.create_volume(work_volume):
-                    raise DockerError(f"Failed to create volume {work_volume}")
+                logger.info("  %s (exists)", volume_name)
+            return
+        if label:
+            logger.info("  Creating %s (%s)...", volume_name, label)
+        else:
+            logger.info("  Creating %s...", volume_name)
+        if not self.create_volume(volume_name):
+            raise DockerError(f"Failed to create volume {volume_name}")
 
 
 def ensure_volumes(scale: int, project_name: str = None,
