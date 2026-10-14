@@ -159,7 +159,8 @@ subcommand より前に置く。`<サービス...>` はプロファイル X に�
 
 起動の待ちの後、`cmd_scale` は増やしたインスタンス（`current + 1` から `new`）のうち起動できたものを
 後処理の対象にして、`up` と共有する起動の後の処理の段（`_run_post_start`）を呼ぶ。順は
-不足リポジトリの報告 → `./deploy` → bao の token → 窓のタイトルの設定で、`up` と同じである。
+不足リポジトリの報告 → `./deploy` → bao の token → VS Code Server の `bin` の所有者の直し（#463）→
+窓のタイトルの設定で、`up` と同じである。
 起動できなかったインスタンスがあると、起動の待ちは `ContainerStartupError`（起動できた番号と、
 起動できなかった番号ごとの理由）を投げる。`cmd_scale` はそれを受け、対象へ後処理を行った後に
 `Scale failed` と起動できなかった全部の名前・理由・補う手順（`devbase project post-start <name>`）を
@@ -442,7 +443,7 @@ TUI では、復元境界が機密の注入履歴も戻すため、別プロジ�
   `os.environ` を変えないこと。起動の非 0 で `Failed to start new containers` と 1 になり例外を
   出さないこと。プロファイルのサービスを起動の対象に入れないこと。正常系の順序
   （グループの検査 → `write_scale` → ボリューム → network → 生成 → `default_services` → 起動 →
-  ready 待ち → 不足リポジトリの報告 → `./deploy` → bao の token → 窓のタイトル）、bao と `./deploy` の
+  ready 待ち → 不足リポジトリの報告 → `./deploy` → bao の token → VS Code Server の `bin` → 窓のタイトル）、bao と `./deploy` の
   範囲が `current + 1` から `new` までであること、停止を呼ばないこと
   （`tests/commands/test_container_scale_order.py`）。起動できなかったインスタンスがあるときの
   後処理の対象と出力（`tests/commands/test_container_post_start.py`）
