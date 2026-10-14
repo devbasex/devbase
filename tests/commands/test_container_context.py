@@ -97,6 +97,9 @@ def up_harness(project, monkeypatch):
     monkeypatch.setattr(container, 'wait_for_containers_ready', record('wait'))
     monkeypatch.setattr(container, '_apply_window_titles', record('titles'))
     monkeypatch.setattr(container, '_report_missing_repos', lambda *a, **k: None)
+    # bin の所有者の直しと旧形式の案内 (#463) は docker を呼ぶ付随処理。数えない
+    monkeypatch.setattr(container, '_prepare_vscode_server_bin', lambda *a, **k: None)
+    monkeypatch.setattr(container, '_report_legacy_vscode_volumes', lambda: None)
     monkeypatch.setattr(container, '_maybe_open_editor',
                         lambda *a, **k: seen.__setitem__('editor', k))
     seen['_real_inject'] = container._inject_secrets
