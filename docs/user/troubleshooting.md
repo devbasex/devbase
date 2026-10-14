@@ -434,19 +434,20 @@ docker volume rm <volume_name>
 
 **症状:**
 
-`devbase_vscode_*` のボリュームが増え、`docker system df` のボリューム使用量が大きい。
-使わなくなったプロジェクトの分も残っている。
+`devbase_vscode_*` のボリュームが残り、`docker system df` のボリューム使用量が大きい。
+`devbase up` の最後に「使わなくなった VS Code Server のボリュームが N 本あります」と出る。
 
 **原因:**
 
-`~/.vscode-server`（VS Code Server 本体・拡張機能）はコンテナ 1 つにつき 1 本の
-`devbase_vscode_{project}_{index}` へ永続化されます。attach したコンテナ 1 つあたり
-**約 1.6GB** で、プロジェクトを削除してもボリュームは自動では消えません。
+以前の devbase は `~/.vscode-server` を丸ごと、コンテナ 1 つにつき 1 本の
+`devbase_vscode_{project}_{index}` に置いていました（1 本で数 GB を使うことがあります）。
+今の devbase は VS Code Server の本体だけを全コンテナ共通の 1 本 `devbase_vscode-server-bin` に置き、
+以前のボリュームを付けません。以前のボリュームは自動では消えません。
 
 **解決策:**
 
 ```bash
-# VS Code Server ボリュームの一覧
+# 以前の VS Code Server ボリュームの一覧（共通の devbase_vscode-server-bin は出ません）
 docker volume ls --filter name=devbase_vscode_ --format '{{.Name}}'
 
 # サイズを確認
@@ -457,8 +458,11 @@ docker ps -a --filter volume=devbase_vscode_<project>_1
 docker volume rm devbase_vscode_<project>_1
 ```
 
-失われるのは VS Code Server のキャッシュだけで、次に attach すると再取得されます
-（その 1 回だけダウンロードが走ります）。AI 設定や作業ファイルには影響しません。
+コンテナが付けているボリュームは `docker volume rm` が断ります。そのプロジェクトで `devbase up` を
+打った後に消せます。AI 設定や作業ファイルには影響しません。
+
+共通の `devbase_vscode-server-bin` は、コンテナの起動が新しい順に 5 版を残して古い版を片付けます
+（[VS Code Server の永続化](container-operations.md#vs-code-server-の永続化)）。
 
 > **Note:** `docker volume prune` は稼働中でないコンテナが参照するボリュームも消します。
 > 対象を絞りたい場合は上のように名前を指定して削除してください。
@@ -472,11 +476,9 @@ docker volume rm devbase_vscode_<project>_1
 
 **原因と解決策:**
 
-1. **entrypoint が古い** — VS Code Server の永続化にはベースイメージの再ビルドが要ります。
-   `devbase container build --no-cache` を実行してから `devbase up` してください。
-2. **VS Code 本体が更新された** — `bin/<commit>` は VS Code クライアントのビルドごとに
+1. **VS Code 本体が更新された** — `bin/<commit>` は VS Code クライアントのビルドごとに
    分かれます。クライアントを更新した直後の 1 回はダウンロードが走ります（仕様）。
-3. **ボリュームがマウントされていない** — 次で確認できます。
+2. **ボリュームがマウントされていない** — 次で確認できます。
 
 ```bash
 docker inspect <project>-dev-1 \
@@ -484,8 +486,12 @@ docker inspect <project>-dev-1 \
   | grep vscode
 ```
 
-`devbase_vscode_<project>_1 -> /home/ubuntu/.vscode-server` が出ない場合は、
+`devbase_vscode-server-bin -> /home/ubuntu/.vscode-server/bin` が出ない場合は、
 `.docker-compose.scale.yml` が古いままです。`devbase up` で再生成されます。
+プロジェクトが `compose.yml` で `~/.vscode-server` か `~/.vscode-server/bin` を自分でマウントしている
+場合は、devbase は足しません。
+
+拡張機能は `devbase up` の作り直しで消え、作り直しの後の最初の attach で入り直します（仕様）。
 
 ## 問題が解決しない場合
 

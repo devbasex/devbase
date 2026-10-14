@@ -3,7 +3,7 @@
 ## 概要
 
 `devbase up` と `devbase scale` は、コンテナを起動して entrypoint の完了を待った後、ホストの側から
-決まった処理を行う。不足リポジトリの報告・`./deploy` の実行・token の配布・窓のタイトルの設定の 4 つを
+決まった処理を行う。不足リポジトリの報告・`./deploy` の実行・token の配布・VS Code Server の `bin` の所有者の直し・窓のタイトルの設定の 5 つを
 インスタンスごとに同じ順で行い、`up` だけがその後でエディタを自動で開く。
 
 処理を行うインスタンスの集合（後処理の対象）は、`up` / `scale` の本体が起動の結果から決め、1 つの段
@@ -19,7 +19,7 @@
 開発サービス名は [Compose の構成（`compose`）](../glossary.md#compose-の構成compose)、窓と動いているインスタンスは
 [エディタで開く（`editor`）](../glossary.md#エディタで開くeditor) の語である。
 
-この仕様の変更は `post-start` のコンテキストで閉じる。`editor`（窓のタイトルの設定・動いているインスタンスの調べ方）、
+この仕様の変更は `post-start` のコンテキストで閉じる。`editor`（窓のタイトルの設定・VS Code Server の `bin` の所有者の直し・動いているインスタンスの調べ方）、
 `secret`（token の発行とコンテナへの書き込み）、`compose`（開発サービス名と生成物 `.docker-compose.scale.yml`）には
 順応者として接し、それらのモデルを変えない。
 
@@ -30,7 +30,7 @@
 | 起動の待ち | `lib/devbase/utils/docker.py` の `wait_for_containers_ready` | 1 から台数までの番号を、巡ごとに状態と完了の印で確かめる。全部が起動できたら `True` を返し、起動できなかった番号があれば、残りを制限まで待った後に `ContainerStartupError` を投げる |
 | 起動の結果の型 | 同ファイルの `StartupFailure`・`ContainerStartupError` | 起動できた番号と、起動できなかった番号ごとの理由・ログの末尾を運び、利用者へ出す文言を組み立てる |
 | 起動の後の処理の段 | `lib/devbase/commands/container.py` の `_run_post_start` | 後処理の対象を受け、インスタンスごとの処理を決まった順に呼ぶ。対象を自分で決めず、番号を足しも引きもしない。`./deploy` を走らせるかを `run_deploy` で受ける |
-| 個々の処理 | 同ファイルの `_report_missing_repos`・`_run_deploy_script_for_instances`・`_push_bao_token`・`_apply_window_titles` | キーワード引数 `indices`（対象の番号の並び）を受ける。渡されなければ番号 1 から台数まで（token の配布は開始の番号から）に行う |
+| 個々の処理 | 同ファイルの `_report_missing_repos`・`_run_deploy_script_for_instances`・`_push_bao_token`・`_prepare_vscode_server_bin`・`_apply_window_titles` | キーワード引数 `indices`（対象の番号の並び）を受ける。渡されなければ番号 1 から台数まで（token の配布は開始の番号から）に行う |
 | エディタの自動オープン | 同ファイルの `_maybe_open_editor` | キーワード引数 `started`（起動できた番号の並び）を受け、開く番号がそこに無ければ警告して開かない |
 | `up` の本体 | 同ファイルの `cmd_up` | 起動の待ちの例外を受けて後処理の対象を決め、段とエディタの自動オープンを呼ぶ |
 | `scale` の本体 | 同ファイルの `cmd_scale` | 同じく例外を受け、増やしたインスタンスのうち起動できたものを対象に段を呼ぶ |
@@ -147,7 +147,7 @@ Container startup failed: 2 of 3 instances did not become ready.
 後処理の対象 `indices` へ次の順で処理を行う。対象が空なら何も行わない（token も発行しない）。
 `deployment` は起動した構成（`_ComposeDeployment`。`project_name`・`scale`・`dev_service_name`・`compose_file` の組）で、
 `up` / `scale` / `project post-start` が組んで渡す。4 つの値は 3 つの呼び出し元で常に組で渡り、個々の処理
-（不足リポジトリの報告・token の配布・窓のタイトル）も同じ組を受けるため、凍結した 1 つの値にまとめる。
+（不足リポジトリの報告・token の配布・VS Code Server の `bin` の所有者の直し・窓のタイトル）も同じ組を受けるため、凍結した 1 つの値にまとめる。
 `indices`・`config`・`run_deploy` は呼び出しごとに意味が違い（`config` は構成ではなくプロジェクトの設定）、組に入れない。
 段は組をほどき、個々の処理へは今までと同じ引数で渡す。
 
@@ -156,7 +156,8 @@ Container startup failed: 2 of 3 instances did not become ready.
 | 1 | 不足リポジトリの報告（`Repositories missing in /work of <コンテナ>`） | 常に | 問い合わせに失敗すれば何も出さずに続ける |
 | 2 | `./deploy` の実行（番号ごとに `DEVBASE_INSTANCE_INDEX` を渡す） | `run_deploy` が真で、`./deploy` があるとき | 非 0 は警告して次の番号へ続ける |
 | 3 | token の配布（`~/.vault-token`） | backend が `openbao` のとき | 取れない・書けないときは警告して続ける |
-| 4 | 窓のタイトルの設定 | `DEVBASE_WINDOW_TITLE` で止めていないとき | 書けないときは debug のログに出して続ける |
+| 4 | VS Code Server の `bin` の所有者の直し（`docker exec -u 0` で `~/.vscode-server/bin` の所有者を `~/.vscode-server` の所有者へ揃える。再帰しない。#463） | 常に（揃っていれば何も変えない） | 直せないときは debug のログに出して続ける |
+| 5 | 窓のタイトルの設定 | `DEVBASE_WINDOW_TITLE` で止めていないとき | 書けないときは debug のログに出して続ける |
 
 個々の処理の失敗は終了コードへ反映しない。段は例外を投げない。`up` と `scale` は同じ順で処理し、やり直しは
 同じ順から `./deploy` を除く。`scale` の順を `up` に合わせたのは、`up` の振る舞いを変えないためである（同じ
@@ -184,7 +185,7 @@ sequenceDiagram
     end
     C->>C: 後処理の対象を決める
     C->>P: 対象の番号
-    P->>P: 不足リポジトリの報告 → ./deploy → token の配布 → 窓のタイトルの設定
+    P->>P: 不足リポジトリの報告 → ./deploy → token の配布 → VS Code Server の bin の所有者 → 窓のタイトルの設定
     C->>C: エディタの自動オープン（up だけ。開く番号が起動できたとき）
     alt 起動できなかったものがある
         C-->>U: 起動できなかったときの報告・終了コード 1
@@ -253,7 +254,7 @@ Deploy failed: Container startup failed: 1 of 2 instances did not become ready.
 | --- | --- |
 | 形 | `devbase project post-start [name] [--context NAME]` |
 | 入力 | `name`: 対象のプロジェクト（省略時は実行時のディレクトリ）。`--context`: 接続先（ほかの `project` のサブコマンドと同じ） |
-| 処理 | 後処理の対象へ、不足リポジトリの報告 → token の配布 → 窓のタイトルの設定。`./deploy` は走らせず、エディタも開かない |
+| 処理 | 後処理の対象へ、不足リポジトリの報告 → token の配布 → VS Code Server の `bin` の所有者の直し → 窓のタイトルの設定。`./deploy` は走らせず、エディタも開かない |
 | 出力 | 個々の処理の出力、処理しなかった番号の警告、完了の行 `=== Post-start completed ===` |
 | 前方一致 | `project po` で解決する。`project p`（`ps`）と `project pr`（`profile`）は変わらない |
 
@@ -285,7 +286,7 @@ Deploy failed: Container startup failed: 1 of 2 instances did not become ready.
   `re` で始まる名前は `project r` / `project re`（`rebuild`）の前方一致を曖昧にするため使わない。トップレベルの
   短縮形・非推奨の `container` グループ・TUI の操作の一覧には置かない
 - やり直しは `./deploy` を走らせない。役目を devbase が自分で行う処理（不足リポジトリの報告・token の配布・
-  窓のタイトルの設定）の補いに限る。起動できたインスタンスの `./deploy` は `up` / `scale` の中で済んでいる
+  VS Code Server の `bin` の所有者の直し・窓のタイトルの設定）の補いに限る。起動できたインスタンスの `./deploy` は `up` / `scale` の中で済んでいる
 - やり直しは完了の印が置かれるまで待たない。起動の途中で止まったインスタンスが 1 つあるだけで、やり直しが
   終わらなくなるためである。起動が終わってから打ち直せば足りる
 
@@ -297,7 +298,8 @@ Deploy failed: Container startup failed: 1 of 2 instances did not become ready.
 - 待ちの巡の数は制限（60）を超えない。決まったインスタンスへはその後の巡で問い合わせず、1 巡の docker の
   呼び出しはインスタンスあたり 2 回まで（状態と完了の印）である
 - インスタンスごとの処理は、後処理の対象の番号にだけ行う
-- インスタンスごとの処理の順は、不足リポジトリの報告 → `./deploy` → token の配布 → 窓のタイトルの設定で、
+- インスタンスごとの処理の順は、不足リポジトリの報告 → `./deploy` → token の配布 → VS Code Server の `bin` の
+  所有者の直し → 窓のタイトルの設定で、
   `up` と `scale` で同じである。やり直しは同じ順から `./deploy` を除く
 - 後処理の対象が空なら、処理を 1 つも行わない
 - 起動できなかったインスタンスが 1 つでもあれば、`up` / `scale` は終了コード 1 で終わり、完了の行を出さず、
@@ -332,7 +334,7 @@ Deploy failed: Container startup failed: 1 of 2 instances did not become ready.
   で設定しないこと、増やしたインスタンスの不足リポジトリを `up` と同じ文言で報告し、揃っていれば何も出さないこと、
   処理の順が `up` と同じであること（`tests/commands/test_container_post_start.py`・`tests/commands/test_container_scale_order.py`）
 - 1 台が起動できなかった `up` / `scale`（`up` の `dev-2`、`scale` の増やした `dev-3`、`scale` の既存の `dev-1`）が、
-  起動できた後処理の対象へ 4 つの処理を行い、1 で終わり、`Deploy failed` / `Scale failed` と全部の名前、
+  起動できた後処理の対象へ 5 つの処理を行い、1 で終わり、`Deploy failed` / `Scale failed` と全部の名前、
   `devbase project post-start <プロジェクト名>` だけの行、`docker start` では行われない旨の文を出し、完了の行を
   出さないこと。1 行目の処理先の名前が後処理の対象と一致し、対象が空なら処理を 1 つも呼ばないこと。起動の待ちより
   後に `down`・`stop`・`rm` を呼ばないこと（`tests/commands/test_container_post_start.py`）

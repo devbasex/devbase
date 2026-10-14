@@ -267,12 +267,14 @@ def _step(name, payload):
 
 def test_scale_runs_the_steps_in_order(scale_harness, monkeypatch):
     """C-1: グループの検査 → write_scale → ボリューム → network → 生成 → 既定のサービス → 起動
-    → ready 待ち → 起動の後の処理 (不足リポジトリの報告 → ./deploy → bao → 窓のタイトル。
-    up と同じ順。#224)。"""
+    → ready 待ち → 起動の後の処理 (不足リポジトリの報告 → ./deploy → bao → VS Code Server の
+    bin の所有者の直し (#463) → 窓のタイトル。up と同じ順。#224)。"""
     (scale_harness['root'] / 'deploy').write_text('#!/bin/sh\n')
     calls = scale_harness['calls']
     monkeypatch.setattr(container, '_report_missing_repos',
                         lambda *a, **k: calls.append(('repos', k['indices'])))
+    monkeypatch.setattr(container, '_prepare_vscode_server_bin',
+                        lambda *a, **k: calls.append(('vscode_bin', k['indices'])))
     monkeypatch.setattr(container, '_apply_window_titles',
                         lambda *a, **k: calls.append(('titles', k['indices'])))
 
@@ -281,7 +283,7 @@ def test_scale_runs_the_steps_in_order(scale_harness, monkeypatch):
     steps = [_step(name, payload) for name, payload in scale_harness['calls']]
     assert [s for s in steps if s != 'config'] == [
         'group', 'write_scale', 'volumes', 'network', 'generate', 'default_services',
-        'up', 'wait', 'repos', 'deploy', 'bao', 'titles']
+        'up', 'wait', 'repos', 'deploy', 'bao', 'vscode_bin', 'titles']
     # 既定のサービスの解決 (config --services) は生成の後、起動の前に行う
     assert steps.index('generate') < steps.index('config') < steps.index('up')
     up = _up_calls(scale_harness['calls'])[0]
