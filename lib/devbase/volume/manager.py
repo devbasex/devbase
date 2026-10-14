@@ -8,7 +8,6 @@ from typing import Optional
 from devbase.env import keys
 from devbase.errors import DevbaseError, DockerError
 from devbase.log import get_logger
-from devbase.utils.config import get_project_name
 
 logger = get_logger("devbase.volume.manager")
 
@@ -35,19 +34,19 @@ _SHARED_RESERVED_GROUP = "ubuntu"
 #: 旧既定のグループ名。予約語で、グループ名にも置き場の読み替えにも使えない (#315)
 LEGACY_GROUP_NAME = "default"
 
-# --- VS Code Server (PLAN36) -------------------------------------------------
-# ~/.vscode-server はコンテナの書き込みレイヤ上にあり、devbase up の down → up で
-# 消える。本体 (bin/<commit>) だけで 644MB あり、attach のたびに再取得が走る。
-# コンテナ 1 つにつき 1 本の named volume を割り当てて再作成をまたいで保つ。
+# --- VS Code Server (PLAN36 / #463) -----------------------------------------
+# 本体 (~/.vscode-server/bin/<commit>) だけを全コンテナで 1 本のボリュームに置く。
+# 版ごとに中身が変わらないため共有して壊れず、プロジェクトとインスタンスの数だけ
+# 同じ版を重ねて持たずに済む。版の数の上限はコンテナの起動 (entrypoint) が保つ。
+# extensions/・extensionsCache/・data/ はボリュームに置かず、コンテナの書き込み
+# レイヤーに残す (#463 の利用者の決定)。
 #
-# 共有せずコンテナ単位にするのは、VS Code Server が「1 マシン 1 セット」の状態
-# (data/Machine/.connection-token-<commit>・各種 marker・ログ) を持つため。
-# 複数コンテナが同時に書くと接続トークンを奪い合う。
-VSCODE_VOLUME_PREFIX = "devbase_vscode_"
-# プロジェクト名のうち Docker のボリューム名に使えない文字
-_VOLUME_UNSAFE_RE = re.compile(r"[^a-zA-Z0-9._-]")
-# プロジェクト名が決まらないときの VS Code Server のボリューム名の一部。グループではない
-_FALLBACK_PROJECT_NAME = "default"
+# 名前は旧形式 (devbase_vscode_<project>_<index>) の接頭辞 devbase_vscode_ と
+# 15 文字目の "-" で必ず違い、旧形式の案内が共通のボリュームを選ばない。
+VSCODE_SERVER_VOLUME = "devbase_vscode-server-bin"
+#: #463 より前の、~/.vscode-server を丸ごと持つコンテナごとのボリュームの接頭辞
+LEGACY_VSCODE_VOLUME_PREFIX = "devbase_vscode_"
+_LEGACY_VSCODE_VOLUME_RE = re.compile(r"^devbase_vscode_.+_[0-9]+$")
 
 
 def validate_account_group(name: str) -> str:
@@ -128,42 +127,27 @@ def get_group_volume(group: Optional[str] = None) -> str:
     return f"{SHARED_VOLUME_PREFIX}{resolve_account_group(group)}"
 
 
-def resolve_project_name(project_name: Optional[str] = None) -> str:
-    """VS Code Server ボリュームに使うプロジェクト名を解決する。
+def find_legacy_vscode_volumes() -> list[str]:
+    """旧形式の VS Code Server ボリュームの名前を名前の順で返す (#463)。
 
-    省略時は :func:`devbase.utils.config.get_project_name` (
-    ``COMPOSE_PROJECT_NAME`` → カレントディレクトリ名) に委ねる。``devbase up``
-    は同じ関数でプロジェクト名を決めてからボリュームを作る (``commands/container.py``)
-    ため、ボリュームを作る側と生成 compose の双方がここを通れば必ず同じ名前になる。
-    解決経路が 2 つあると、作った名前とマウントする名前がずれる。
+    ``docker volume ls`` の名前を読むだけで、消す・付ける・中身を読むことはしない
+    (C4)。一覧が取れなければ空を返す (案内のためだけに使い、起動を止めない)。
     """
-    name = (project_name or get_project_name() or "").strip()
-    return name or _FALLBACK_PROJECT_NAME
-
-
-def normalize_volume_component(name: str) -> str:
-    """ボリューム名の一部として使えるようにプロジェクト名を正規化する。
-
-    ``group/project`` のようにディレクトリ名由来の ``/`` が混じると
-    ``docker volume create`` が弾く。使えない文字は ``_`` へ置き換える。
-
-    置き換えの結果 ``a/b`` と ``a_b`` は同じ名前になるが、プロジェクト名は
-    Compose のプロジェクト名としても使われる (``COMPOSE_PROJECT_NAME``) ため、
-    実際にこの衝突が起きる名前は Docker 側で先に弾かれる。
-    """
-    normalized = _VOLUME_UNSAFE_RE.sub("_", name)
-    return normalized or _FALLBACK_PROJECT_NAME
-
-
-def get_vscode_volume_for(project_name: Optional[str], index: int) -> str:
-    """VS Code Server ボリューム名 (``devbase_vscode_<project>_<index>``) を返す。
-
-    Args:
-        project_name: プロジェクト名 (省略時は ``COMPOSE_PROJECT_NAME``)
-        index: インスタンス番号 (1 始まり)
-    """
-    project = normalize_volume_component(resolve_project_name(project_name))
-    return f"{VSCODE_VOLUME_PREFIX}{project}_{index}"
+    try:
+        result = subprocess.run(
+            ['docker', 'volume', 'ls', '--format', '{{.Name}}'],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as e:  # noqa: BLE001 - 案内のためだけの一覧。失敗は空として扱う
+        logger.debug("Failed to list volumes: %s", e)
+        return []
+    if result.returncode != 0:
+        logger.debug("Failed to list volumes: %s", result.stderr)
+        return []
+    names = {line.strip() for line in result.stdout.splitlines()}
+    return sorted(n for n in names if _LEGACY_VSCODE_VOLUME_RE.match(n))
 
 
 class VolumeManager:
@@ -174,8 +158,8 @@ class VolumeManager:
         Initialize VolumeManager
 
         Args:
-            project_name: Project name. VS Code Server ボリュームの名前にだけ
-                使う (PLAN36)。省略時は ``COMPOSE_PROJECT_NAME`` から解決する
+            project_name: Project name. ボリュームの名前には使わない
+                (#463 より前は VS Code Server ボリュームの名前に使った)
         """
         self.project_name = project_name
 
@@ -254,7 +238,8 @@ class VolumeManager:
         - devbase_home_ubuntu: Shared home directory for all containers
         - devbase_home_{group}: Per-account-group directory (PLAN39)
         - devbase_work_{i}: Project work directory per instance
-        - devbase_vscode_{project}_{i}: VS Code Server state per instance (PLAN36)
+        - devbase_vscode-server-bin: VS Code Server の本体, shared by all
+          containers (#463)
 
         Args:
             scale: Number of container instances
@@ -283,6 +268,15 @@ class VolumeManager:
             if not self.create_volume(group_volume):
                 raise DockerError(f"Failed to create volume {group_volume}")
 
+        # Ensure VS Code Server binary volume (once for all containers, #463)
+        if self._volume_exists(VSCODE_SERVER_VOLUME):
+            logger.info("  %s (VS Code Server, exists)", VSCODE_SERVER_VOLUME)
+        else:
+            logger.info("  Creating %s (VS Code Server)...", VSCODE_SERVER_VOLUME)
+            if not self.create_volume(VSCODE_SERVER_VOLUME):
+                raise DockerError(
+                    f"Failed to create volume {VSCODE_SERVER_VOLUME}")
+
         # Create or verify work volumes for each instance
         for i in range(1, scale + 1):
             work_volume = self.get_work_volume_for_index(i)
@@ -295,16 +289,6 @@ class VolumeManager:
                 if not self.create_volume(work_volume):
                     raise DockerError(f"Failed to create volume {work_volume}")
 
-            # Ensure VS Code Server volume (PLAN36)
-            vscode_volume = get_vscode_volume_for(self.project_name, i)
-            if self._volume_exists(vscode_volume):
-                logger.info("  %s (VS Code Server, exists)", vscode_volume)
-            else:
-                logger.info("  Creating %s (VS Code Server)...", vscode_volume)
-                if not self.create_volume(vscode_volume):
-                    raise DockerError(
-                        f"Failed to create volume {vscode_volume}")
-
 
 def ensure_volumes(scale: int, project_name: str = None,
                    group: Optional[str] = None) -> None:
@@ -313,12 +297,12 @@ def ensure_volumes(scale: int, project_name: str = None,
 
     All projects share the same home volume (devbase_home_ubuntu) and the
     volume of their account group (devbase_home_<group>); work volumes are
-    per container index. VS Code Server volumes are per project and index
-    (PLAN36).
+    per container index. The VS Code Server binary volume is shared by all
+    containers (#463).
 
     Args:
         scale: Number of container instances
-        project_name: Project name (default: resolved from COMPOSE_PROJECT_NAME)
+        project_name: Project name (unused for volume names since #463)
         group: Account group name (省略時は DEVBASE_ACCOUNT_GROUP。既定の値は無い)
     """
     manager = VolumeManager(project_name)

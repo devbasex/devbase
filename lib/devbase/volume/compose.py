@@ -15,12 +15,11 @@ from devbase.log import get_logger
 
 from . import bind_mounts
 from .manager import (
+    VSCODE_SERVER_VOLUME,
     get_ai_volume_for_index,
     get_group_volume,
-    get_vscode_volume_for,
     get_work_volume_for_index,
     resolve_account_group,
-    resolve_project_name,
 )
 
 logger = get_logger(__name__)
@@ -28,9 +27,11 @@ logger = get_logger(__name__)
 # 旧 /home/ubuntu マウントは非推奨のため scale 生成時に除去する
 _DEPRECATED_TARGET = '/home/ubuntu'
 
-# VS Code Server の状態ディレクトリ (PLAN36)。コンテナの書き込みレイヤに置くと
-# devbase up のたびに 215MB の再ダウンロードが走るため、named volume を宛てる。
+# VS Code Server の置き場 (PLAN36 / #463)。本体 (bin/) だけを全コンテナ共通の
+# named volume に置く。コンテナの書き込みレイヤに置くと devbase up のたびに
+# 215MB の再ダウンロードが走る。extensions/・data/ などは書き込みレイヤに残す。
 VSCODE_SERVER_TARGET = '/home/ubuntu/.vscode-server'
+VSCODE_BIN_TARGET = '/home/ubuntu/.vscode-server/bin'
 
 
 def get_dev_service_name() -> str:
@@ -117,7 +118,7 @@ def _replace_volumes_for_instance(
     /persistent/group is mapped to group_volume (shared within the account group).
     /work is mapped to work_volume.
 
-    ``vscode_volume`` は ``~/.vscode-server`` へ足すボリューム (PLAN36)。
+    ``vscode_volume`` は ``~/.vscode-server/bin`` へ足すボリューム (#463)。
     上の 3 つと違って**差し替えではなく追加**で、プロジェクトが同じマウント先を
     書いている場合は呼び出し側が ``None`` を渡して手を出さない。
     """
@@ -147,13 +148,13 @@ def _replace_volumes_for_instance(
         if target not in replaced_targets
     )
     if vscode_volume:
-        new_volumes.append(f"{vscode_volume}:{VSCODE_SERVER_TARGET}")
+        new_volumes.append(f"{vscode_volume}:{VSCODE_BIN_TARGET}")
     return new_volumes
 
 
 def _build_volumes_section(
     config: dict, scale: int, group_volume: str,
-    vscode_volumes: Sequence[str] = (),
+    vscode_volume: Optional[str] = None,
 ) -> dict:
     """Build the volumes section for a scaled compose file."""
     # Copy original volumes (mysql, valkey, etc.) from config
@@ -173,10 +174,10 @@ def _build_volumes_section(
     for i in range(1, scale + 1):
         volumes[get_work_volume_for_index(i)] = {'external': True}
 
-    # Add VS Code Server volumes (PLAN36). 実際にマウントする分だけ宣言する。
-    # external は実体の存在を要求するため、使わない名前を書くと起動が落ちる。
-    for name in vscode_volumes:
-        volumes[name] = {'external': True}
+    # Add the VS Code Server binary volume (#463). 実際にマウントするときだけ
+    # 宣言する。external は実体の存在を要求するため、使わない名前を書くと起動が落ちる。
+    if vscode_volume:
+        volumes[vscode_volume] = {'external': True}
 
     return volumes
 
@@ -543,7 +544,7 @@ def _build_scaled_services(
     secret_names: Optional[_SecretNames] = None,
     secret_services: Optional[Mapping[str, Set[str]]] = None,
     dev_environment: Optional[Mapping[str, str]] = None,
-    vscode_volumes: Sequence[str] = (),
+    vscode_volume: Optional[str] = None,
     host_gateway_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances.
@@ -554,9 +555,6 @@ def _build_scaled_services(
     scaled_services = {}
     secret_names = secret_names if secret_names is not None else _SecretNames()
     receivers = dict(secret_services or {})
-    # インスタンス番号 → VS Code Server ボリューム。マウントしない構成 (空列) では
-    # 引けず None になる。
-    vscode_by_index = dict(enumerate(vscode_volumes, start=1))
 
     # Copy non-dev services (mysql, valkey, etc.) — rewriting any
     # `depends_on: <dev>` reference to the scaled instances (dev-1..N) so
@@ -591,7 +589,7 @@ def _build_scaled_services(
             dev_service, dev_service_name, i, group_volume,
             secret_names.for_dev,
             dev_environment=dev_environment,
-            vscode_volume=vscode_by_index.get(i),
+            vscode_volume=vscode_volume,
             host_gateway_environment=host_gateway_environment,
         )
     return scaled_services
@@ -848,14 +846,14 @@ def generate_scaled_compose(
         secret_env_names, global_env_names, project_env_names,
         dev_excluded=dev_excluded)
 
-    vscode_volumes = _vscode_volumes(dev_service, scale)
+    vscode_volume = _vscode_volume(dev_service)
 
     scaled_services = _build_scaled_services(
         services, dev_service, dev_service_name, scale, group_volume,
         secret_names=secret_names,
         secret_services=secret_services,
         dev_environment=dev_environment,
-        vscode_volumes=vscode_volumes,
+        vscode_volume=vscode_volume,
         host_gateway_environment=host_gateway_environment,
     )
 
@@ -880,7 +878,7 @@ def generate_scaled_compose(
     scaled_config = {
         'services': scaled_services,
         'volumes': _build_volumes_section(
-            config, scale, group_volume, vscode_volumes),
+            config, scale, group_volume, vscode_volume),
         'networks': _build_networks_section(config),
     }
 
@@ -888,20 +886,19 @@ def generate_scaled_compose(
     return override_file
 
 
-def _vscode_volumes(dev_service: dict, scale: int) -> List[str]:
-    """dev インスタンスごとの VS Code Server ボリューム名 (PLAN36)。
+def _vscode_volume(dev_service: dict) -> Optional[str]:
+    """dev インスタンスの ``~/.vscode-server/bin`` へ足すボリューム名 (#463)。
 
-    VS Code Server は再作成をまたいで保つためコンテナ 1 つに 1 本の named
-    volume を宛てる。プロジェクトが自分で ~/.vscode-server を
-    マウントしている場合は、その指定を奪わないよう devbase 側は何もしない。
+    共通の VS Code Server ボリューム 1 本を、インスタンスの数に依らずどの dev
+    インスタンスにも付ける。プロジェクトが自分で ``~/.vscode-server`` か
+    ``~/.vscode-server/bin`` をマウントしている場合は、その指定を奪わず同じパスへ
+    2 つ付けないよう ``None`` を返す。``~/.vscode-server/data`` など下の別のパス
+    だけの指定は、``bin`` と重ならないので足す。
     """
-    if _declares_target(dev_service, VSCODE_SERVER_TARGET):
-        return []
-    project_name = resolve_project_name()
-    return [
-        get_vscode_volume_for(project_name, i)
-        for i in range(1, scale + 1)
-    ]
+    if (_declares_target(dev_service, VSCODE_SERVER_TARGET)
+            or _declares_target(dev_service, VSCODE_BIN_TARGET)):
+        return None
+    return VSCODE_SERVER_VOLUME
 
 
 def _drop_dev_excluded(scaled_services: dict, dev_service_name: str, scale: int,
