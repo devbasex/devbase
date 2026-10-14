@@ -1021,6 +1021,24 @@ def _push_bao_token(project_name: str, scale: int, dev_service_name: str,
         logger.info("bao の token を書きました: %s", ', '.join(written))
 
 
+def _for_each_dev_container(project_name: str, scale: int, dev_service_name: str,
+                            compose_file, indices, action, what: str) -> None:
+    """対象の番号の dev コンテナごとに名前を引き、``action(コンテナ名)`` を呼ぶ。
+
+    起動の後の付随処理の共通の回し方。1 台の失敗は ``what`` を添えて debug に
+    記録して飛ばし、残りの番号と起動の後の処理を倒さない。
+    """
+    from devbase.editor import opener
+
+    for index in _target_indices(indices, scale):
+        try:
+            container_name = opener.resolve_container_name(
+                dev_service_name, project_name, index, compose_file=compose_file)
+            action(container_name)
+        except Exception as e:  # noqa: BLE001 - 付随処理で起動の後の処理を倒さない
+            logger.debug("%s をスキップしました (index=%d): %s", what, index, e)
+
+
 def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
                          compose_file=None, *, indices=None) -> None:
     """各 dev コンテナの VS Code ウィンドウタイトルをコンテナ名始まりにする。
@@ -1037,18 +1055,15 @@ def _apply_window_titles(project_name: str, scale: int, dev_service_name: str,
 
     ``indices`` を渡すとその番号にだけ行う (起動の後の処理の対象)。渡さなければ 1 から ``scale``。
     """
-    from devbase.editor import opener, window_title
+    from devbase.editor import window_title
 
     template = window_title.resolve_template()
     if template is None:
         return
-    for index in _target_indices(indices, scale):
-        try:
-            container_name = opener.resolve_container_name(
-                dev_service_name, project_name, index, compose_file=compose_file)
-            window_title.apply_to_container(container_name, template=template)
-        except Exception as e:  # noqa: BLE001 - 付随処理で up を倒さない
-            logger.debug("window.title の設定をスキップしました (index=%d): %s", index, e)
+    _for_each_dev_container(
+        project_name, scale, dev_service_name, compose_file, indices,
+        lambda name: window_title.apply_to_container(name, template=template),
+        "window.title の設定")
 
 
 def _prepare_vscode_server_bin(project_name: str, scale: int, dev_service_name: str,
@@ -1063,16 +1078,11 @@ def _prepare_vscode_server_bin(project_name: str, scale: int, dev_service_name: 
     失敗しても起動の後の処理は倒さない (debug の記録にとどめる)。
     ``indices`` を渡すとその番号にだけ行う。渡さなければ 1 から ``scale``。
     """
-    from devbase.editor import opener, vscode_server
+    from devbase.editor import vscode_server
 
-    for index in _target_indices(indices, scale):
-        try:
-            container_name = opener.resolve_container_name(
-                dev_service_name, project_name, index, compose_file=compose_file)
-            vscode_server.prepare_bin_dir(container_name)
-        except Exception as e:  # noqa: BLE001 - 付随処理で起動の後の処理を倒さない
-            logger.debug("VS Code Server の bin の用意をスキップしました (index=%d): %s",
-                         index, e)
+    _for_each_dev_container(
+        project_name, scale, dev_service_name, compose_file, indices,
+        vscode_server.prepare_bin_dir, "VS Code Server の bin の用意")
 
 
 def _report_legacy_vscode_volumes() -> None:
