@@ -85,7 +85,7 @@ def scale_harness(tmp_path, monkeypatch):
 
     monkeypatch.setattr(container.project_runtime, 'write_scale', write_scale)
     monkeypatch.setattr(container, 'ensure_volumes',
-                        lambda scale, project: calls.append(('volumes', scale)))
+                        lambda scale: calls.append(('volumes', scale)))
     monkeypatch.setattr(container, 'ensure_network',
                         lambda name='devbase_net': calls.append(('network', name)))
 
@@ -373,14 +373,17 @@ def test_scale_rejects_a_scale_not_above_current(scale_harness, new_scale):
 
 
 def test_scale_passes_explicit_project_name(scale_harness, monkeypatch):
-    """現状固定: 明示的に指定された project_name が ensure_volumes, _build_scaled_override, _push_bao_token に渡る。"""
+    """現状固定: 明示的に指定された project_name が _build_scaled_override, _push_bao_token に渡る。
+
+    ensure_volumes にはプロジェクト名を渡さない（ボリュームの名前に使わないため）。
+    """
     captured: dict = {}
 
     orig_volumes = container.ensure_volumes
 
-    def fake_ensure_volumes(scale, project):
-        captured['volumes_project'] = project
-        return orig_volumes(scale, project)
+    def fake_ensure_volumes(*args, **kwargs):
+        captured['volumes_args'] = (args, kwargs)
+        return orig_volumes(*args, **kwargs)
 
     orig_build = container._build_scaled_override
 
@@ -400,7 +403,7 @@ def test_scale_passes_explicit_project_name(scale_harness, monkeypatch):
 
     assert container.cmd_scale(2, project_name='custom-proj') == 0
 
-    assert captured['volumes_project'] == 'custom-proj'
+    assert captured['volumes_args'] == ((2,), {})
     assert captured['build_project'] == 'custom-proj'
     assert captured['bao_project'] == 'custom-proj'
 

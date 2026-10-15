@@ -4,6 +4,7 @@ import copy
 import os
 import re
 import yaml
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple,
@@ -15,6 +16,7 @@ from devbase.log import get_logger
 
 from . import bind_mounts
 from .manager import (
+    CONTAINER_HOME,
     VSCODE_BIN_TARGET,
     VSCODE_SERVER_TARGET,
     VSCODE_SERVER_VOLUME,
@@ -27,7 +29,7 @@ from .manager import (
 logger = get_logger(__name__)
 
 # 旧 /home/ubuntu マウントは非推奨のため scale 生成時に除去する
-_DEPRECATED_TARGET = '/home/ubuntu'
+_DEPRECATED_TARGET = CONTAINER_HOME
 
 # VS Code Server の置き場 (PLAN36 / #463)。本体 (bin/) だけを全コンテナ共通の
 # named volume に置く。コンテナの書き込みレイヤに置くと devbase up のたびに
@@ -506,13 +508,26 @@ def _apply_host_gateway(service: dict, environment: Mapping[str, str]) -> None:
     _add_host_gateway(service)
 
 
+@dataclass(frozen=True)
+class _DevInstanceSpec:
+    """dev の各インスタンスへ同じ形で当てる設定の組。
+
+    ``group_volume`` はグループのホームのボリューム名。``dev_environment`` は
+    devbase 由来の環境変数、``vscode_volume`` は VS Code Server のボリューム名
+    (#463)、``host_gateway_environment`` はホストの loopback へ届かせるための
+    上書き (#295)。
+    """
+
+    group_volume: str
+    dev_environment: Optional[Mapping[str, str]] = None
+    vscode_volume: Optional[str] = None
+    host_gateway_environment: Optional[Mapping[str, str]] = None
+
+
 def _build_dev_instance(
     dev_service: dict, dev_service_name: str, index: int,
-    group_volume: str,
+    spec: _DevInstanceSpec,
     secret_env_names: Sequence[str] = (),
-    dev_environment: Optional[Mapping[str, str]] = None,
-    vscode_volume: Optional[str] = None,
-    host_gateway_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build the service definition for one scaled dev instance (dev-<index>)."""
     service = copy.deepcopy(dev_service)
@@ -525,15 +540,15 @@ def _build_dev_instance(
     _mask_secret_environment(service, secret_env_names)
     # 機密の伏せ字化のあとに載せる。devbase 由来の値 (clone プラン等) は機密では
     # なく、そのままコンテナへ渡す必要があるため。
-    _apply_dev_environment(service, dev_environment or {})
-    _apply_host_gateway(service, host_gateway_environment or {})
+    _apply_dev_environment(service, spec.dev_environment or {})
+    _apply_host_gateway(service, spec.host_gateway_environment or {})
 
     # Update volume mounts for /persistent/ai and /work
     ai_volume = get_ai_volume_for_index(index)
     work_volume = get_work_volume_for_index(index)
     service['volumes'] = _replace_volumes_for_instance(
-        service.get('volumes', []), ai_volume, work_volume, group_volume,
-        vscode_volume,
+        service.get('volumes', []), ai_volume, work_volume, spec.group_volume,
+        spec.vscode_volume,
     )
 
     return service
@@ -541,12 +556,9 @@ def _build_dev_instance(
 
 def _build_scaled_services(
     services: dict, dev_service: dict, dev_service_name: str, scale: int,
-    group_volume: str,
+    spec: _DevInstanceSpec,
     secret_names: Optional[_SecretNames] = None,
     secret_services: Optional[Mapping[str, Set[str]]] = None,
-    dev_environment: Optional[Mapping[str, str]] = None,
-    vscode_volume: Optional[str] = None,
-    host_gateway_environment: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build the services section: non-dev services + dev-1..dev-N instances.
 
@@ -587,11 +599,8 @@ def _build_scaled_services(
     # 構成でも両方の機密を必要とする。
     for i in range(1, scale + 1):
         scaled_services[f'{dev_service_name}-{i}'] = _build_dev_instance(
-            dev_service, dev_service_name, i, group_volume,
+            dev_service, dev_service_name, i, spec,
             secret_names.for_dev,
-            dev_environment=dev_environment,
-            vscode_volume=vscode_volume,
-            host_gateway_environment=host_gateway_environment,
         )
     return scaled_services
 
@@ -847,15 +856,17 @@ def generate_scaled_compose(
         secret_env_names, global_env_names, project_env_names,
         dev_excluded=dev_excluded)
 
-    vscode_volume = _vscode_volume(dev_service)
+    spec = _DevInstanceSpec(
+        group_volume=group_volume,
+        dev_environment=dev_environment,
+        vscode_volume=_vscode_volume(dev_service),
+        host_gateway_environment=host_gateway_environment,
+    )
 
     scaled_services = _build_scaled_services(
-        services, dev_service, dev_service_name, scale, group_volume,
+        services, dev_service, dev_service_name, scale, spec,
         secret_names=secret_names,
         secret_services=secret_services,
-        dev_environment=dev_environment,
-        vscode_volume=vscode_volume,
-        host_gateway_environment=host_gateway_environment,
     )
 
     # 列挙を絞るだけでは、元の compose.yml が environment に**直書き**している
@@ -879,7 +890,7 @@ def generate_scaled_compose(
     scaled_config = {
         'services': scaled_services,
         'volumes': _build_volumes_section(
-            config, scale, group_volume, vscode_volume),
+            config, scale, spec.group_volume, spec.vscode_volume),
         'networks': _build_networks_section(config),
     }
 

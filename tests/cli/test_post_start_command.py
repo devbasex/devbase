@@ -6,18 +6,16 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from devbase import cli
+from tests.cli.conftest import bash_complete as _bash_complete
 from tests.cli.conftest import python_args, stdout_field
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BASH_COMPLETION = REPO_ROOT / "etc" / "devbase-completion.bash"
 ZSH_COMPLETION = REPO_ROOT / "etc" / "_devbase"
 
 
@@ -76,21 +74,6 @@ def test_wrapper_project_post_start_name_cds_and_strips(exec_wrapper):
 
     assert stdout_field(r, "PWD:").endswith("/projects/myapp"), r.stdout
     assert python_args(r) == "project post-start", r.stdout
-
-
-def _bash_complete(words, cword, devbase_root):
-    script = f"""
-set -e
-source "{BASH_COMPLETION}"
-COMP_WORDS=({words})
-COMP_CWORD={cword}
-_devbase_completions
-printf '%s\\n' "${{COMPREPLY[@]}}"
-"""
-    env = {**os.environ, "DEVBASE_ROOT": str(devbase_root)}
-    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
-    assert proc.returncode == 0, proc.stderr
-    return [line for line in proc.stdout.splitlines() if line]
 
 
 def test_bash_completion_lists_post_start_only_under_project(tmp_path):

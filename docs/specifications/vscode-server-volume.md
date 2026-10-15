@@ -311,7 +311,7 @@ Dev Containers の既定の拡張は、作り直しの後の attach で入り直
 
 | 観点 | 置き場 |
 | --- | --- |
-| `ensure_volumes` を違うプロジェクト名・違うグループ・scale 2 で呼んでも、共通の VS Code Server ボリュームの作成は 1 回で名前は同じこと。あれば作らず、インスタンスごとの VS Code Server のボリュームを作らないこと | `tests/volume/test_manager_vscode.py` |
+| `ensure_volumes` を違うグループ・scale 2 で呼んでも、共通の VS Code Server ボリュームの作成は 1 回で名前は同じこと。あれば作らず、インスタンスごとの VS Code Server のボリュームを作らないこと | `tests/volume/test_manager_vscode.py` |
 | 共通の名前が `devbase_vscode_` で始まらず、旧形式の一覧が共通の名前の混ざった一覧から旧形式だけを名前の順で返すこと。一覧の失敗で空を返すこと | 同上 |
 | scale 2 の生成物の各 dev インスタンスに、同じ共通の VS Code Server ボリュームが `/home/ubuntu/.vscode-server/bin` に 1 つ付き、`~/.vscode-server` と `~/.vscode-server/data` へのマウントが無いこと。`volumes:` に `external: true` で 1 回だけあること | `tests/volume/test_compose_vscode.py` |
 | dev サービスが `~/.vscode-server` か `~/.vscode-server/bin` を宣言していれば足さず、`~/.vscode-server/data` だけなら `bin` に足すこと。生成物に旧形式の名前が無いこと | 同上 |

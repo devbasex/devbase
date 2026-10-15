@@ -511,23 +511,45 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
         return 0
 
     if reset and env_file.file_exists():
-        try:
-            env_file.backup()
-        except DevbaseError as e:
-            # サーバ backend では退避を作れないまま消すことになる。退避が無ければ
-            # 削除へ進まない (PLAN51 設計 2)
-            logger.error("退避を作れないため、既存の設定を消さずに中止します: %s", e)
+        if not _reset_env_file(env_file):
             return 1
-        logger.info("既存の設定をバックアップしました")
-        for key in list(env_file.get_all().keys()):
-            env_file.delete(key)
 
     print("\n" + "=" * 42)
     print("devbase 環境セットアップ")
     print("=" * 42)
 
     host = host_import.resolve(policies, _import_policy_group(devbase_root, target_group))
+    _run_collectors(env_file, host)
 
+    env_file.save()
+
+    _update_source_metadata(devbase_root, env_file,
+                            aws_selection=host.selections.get('aws', _KEEP_SELECTION))
+
+    logger.info("セットアップ完了: %s (%d変数)", env_file.path, env_file.count())
+    return 0
+
+
+def _reset_env_file(env_file) -> bool:
+    """既存の設定を退避してから全キーを消す。退避を作れなければ消さずに ``False``。"""
+    try:
+        env_file.backup()
+    except DevbaseError as e:
+        # サーバ backend では退避を作れないまま消すことになる。退避が無ければ
+        # 削除へ進まない (PLAN51 設計 2)
+        logger.error("退避を作れないため、既存の設定を消さずに中止します: %s", e)
+        return False
+    logger.info("既存の設定をバックアップしました")
+    for key in list(env_file.get_all().keys()):
+        env_file.delete(key)
+    return True
+
+
+def _run_collectors(env_file, host) -> None:
+    """登録された集め手を見つけ、順に対話で値を集める。
+
+    ``host_import`` 属性を持つ集め手にだけ、ホストの資格情報の取り込みの方針を渡す。
+    """
     registry = CollectorRegistry()
     registry.discover()
 
@@ -537,14 +559,6 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
             collector.collect_fn(env_file, host=host)
         else:
             collector.collect_fn(env_file)
-
-    env_file.save()
-
-    _update_source_metadata(devbase_root, env_file,
-                            aws_selection=host.selections.get('aws', _KEEP_SELECTION))
-
-    logger.info("セットアップ完了: %s (%d変数)", env_file.path, env_file.count())
-    return 0
 
 
 def _import_policy_group(devbase_root: Path, target_group: Optional[str]) -> Optional[str]:
@@ -875,25 +889,31 @@ def _aws_sync_plan(ctx: _SyncContext):
       プロファイルの集合が値のプロファイルの集合と一致すれば丸ごと。値が読めない、または値にあって
       今のファイルに無いプロファイルがあれば書かない (決定 10)
     """
-    from devbase.env.collectors.aws import _encode_aws_config_files
-    from devbase.env.host_import import ALL
-
     source = ctx.sources.get_source('aws')
     if source and source.get('type') == 'aws_profiles':
         return _aws_plan_for_selection(ctx, list(source.get('profiles') or []))
     if source:
-        return _encode_aws_config_files, ALL
+        return _aws_whole_plan()
     return _aws_plan_for_unregistered(ctx)
+
+
+def _aws_whole_plan():
+    """``~/.aws`` を丸ごと入れ直す計画 ``(encode_fn, ALL)`` (I8)"""
+    from devbase.env.collectors.aws import _encode_aws_config_files
+    from devbase.env.host_import import ALL
+
+    return _encode_aws_config_files, ALL
 
 
 def _aws_plan_for_selection(ctx: _SyncContext, profiles):
     """控えが ``aws_profiles`` のとき、選んだプロファイルとその連なりだけを切り出す計画 (I7)"""
     from devbase.env import aws_profiles
 
+    plan = (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
     key = keys.AWS_CONFIG_BASE64
     targets = ctx.targets
     if targets.holder(key) is None:
-        return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+        return plan
     payload = aws_profiles.build_from_home(profiles)
     _report_unknown_profiles(payload)
     if _report_profile_conflicts(payload):
@@ -905,14 +925,13 @@ def _aws_plan_for_selection(ctx: _SyncContext, profiles):
                     "（選択はグループの控えのもの。入れ直すなら devbase env init --reset）",
                     _AWS_LABEL, ctx.store.display_label(dest.ref))
         return None
-    return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+    return plan
 
 
 def _aws_plan_for_unregistered(ctx: _SyncContext):
     """控えに項目が無いとき、参照の値のプロファイルを選択とみなす計画 (決定 10)"""
     from devbase.env import aws_profiles
     from devbase.env.collectors.aws import _encode_aws_config_files
-    from devbase.env.host_import import ALL
 
     key = keys.AWS_CONFIG_BASE64
     targets = ctx.targets
@@ -931,7 +950,7 @@ def _aws_plan_for_unregistered(ctx: _SyncContext):
     current = (set(aws_profiles.profile_names(config_text))
                | set(aws_profiles.credential_names(credentials_text)))
     if current == set(in_value):
-        return _encode_aws_config_files, ALL
+        return _aws_whole_plan()
     payload = aws_profiles.build(config_text, credentials_text, in_value)
     if payload.unknown:
         _report_unknown_profiles(payload)
@@ -1687,7 +1706,6 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
     生成先と探索先が構造的に一致する契約を保つ。
     """
     from devbase.env import agekeys
-    from devbase.errors import DevbaseError
 
     path = agekeys.key_file_path()
 

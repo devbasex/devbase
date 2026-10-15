@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from devbase.volume.compose import generate_scaled_compose
+from tests.volume.conftest import DEVBASE_MANAGED
 
 
 COMPOSE_DICT_ENV = """services:
@@ -45,17 +46,6 @@ volumes:
 
 REPO_ENV = {"DEVBASE_REPOS": "cGxhbg==", "DEVBASE_PRIMARY_DIR": "myapp"}
 
-# devbase 自身が dev サービスへ常に載せる環境変数 (PLAN39)。
-# 個々のテストの期待値からは除いて比較し、内容そのものは
-# test_devbase_managed_environment_is_always_present で固定する。
-DEVBASE_MANAGED = {
-    "DEVBASE_ACCOUNT_GROUP": "acme",
-    "CLOUDSDK_CONFIG": "/persistent/group/gcloud",
-    "GOOGLE_WORKSPACE_CLI_CONFIG_DIR": "/persistent/group/gws",
-    "GCP_AUTH_MODE": "adc",
-}
-
-
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
@@ -83,6 +73,9 @@ def env_of(service) -> dict:
     return dict(entry.split("=", 1) for entry in environment)
 
 
+# devbase 自身が dev サービスへ常に載せる環境変数 (PLAN39、DEVBASE_MANAGED)。
+# 個々のテストの期待値からは除いて比較し、内容そのものは
+# test_devbase_managed_environment_is_always_present で固定する。
 def user_env(service) -> dict:
     """devbase 自身が載せる変数を除いた environment"""
     return {k: v for k, v in env_of(service).items() if k not in DEVBASE_MANAGED}

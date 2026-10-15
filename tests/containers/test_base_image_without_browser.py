@@ -22,12 +22,13 @@ Dockerfile の形の検査 (``test_base_dockerfile_playwright.py``) では足り
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 
 import pytest
 
 from tests.conftest import host_docker_env
+
+from .docker_images import image_unavailable
 
 DEFAULT_IMAGE = "devbase-base:latest"
 _IMAGE_FROM_ENV = os.environ.get("DEVBASE_TEST_BASE_IMAGE", "").strip()
@@ -76,22 +77,7 @@ exit 0
 
 
 def _docker_unavailable() -> str | None:
-    if shutil.which("docker") is None:
-        return "docker が PATH に無い"
-    try:
-        subprocess.run(["docker", "info"], capture_output=True, timeout=30, check=True,
-                       env=host_docker_env())
-    except (subprocess.SubprocessError, OSError):
-        return "docker daemon へ繋がらない"
-    try:
-        out = subprocess.run(["docker", "image", "inspect", IMAGE],
-                             capture_output=True, timeout=30, env=host_docker_env())
-    except (subprocess.SubprocessError, OSError):
-        return f"{IMAGE} を調べられない"
-    if out.returncode != 0:
-        hint = "" if IMAGE_IS_EXPLICIT else f"。{BUILD_HINT}"
-        return f"{IMAGE} が無い{hint}"
-    return None
+    return image_unavailable(IMAGE, "" if IMAGE_IS_EXPLICIT else f"。{BUILD_HINT}")
 
 
 @pytest.fixture(scope="session")

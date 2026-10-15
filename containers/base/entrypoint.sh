@@ -652,24 +652,14 @@ devbase_remove_vscode_server_path() {
     return 0
 }
 
-# 共通のボリュームの bin/ を片付ける (#463)。消すのは次の 3 種だけで、bin/ のほかの
-# もの・~/.vscode-server の bin 以外には触らない。終了コードは常に 0。
-#
-# 1. 残す版の数を超えた古い版。版は 40 桁の 16 進の名前で product.json を持つ
-#    ディレクトリ。product.json の更新時刻の新しい順 (同じなら名前の順) に並べる。
-#    product.json は片付けが書き換えないため、同時に走る片付けどうしで並びが同じに
-#    なり、残る版が残す数より減らない (ディレクトリの更新時刻では減った)
-# 2. 残った版の直下の入れ子の本体 (product.json を持つディレクトリ)。本体の同時の
-#    展開で、遅れた側の中身が bin/<commit>/vscode-server-linux-<arch>/ に残ったもの
-# 3. 60 分より古い展開の途中のディレクトリ bin/<commit>_<数字>
-#
-# シンボリックリンクは辿らない。bin/ 自身・bin/<commit>・入れ子がリンクなら、版にも
-# 片付けの対象にも数えない。リンク先の bin の外のものを消さないためである
-devbase_prune_vscode_server_bin() {
-    local bin="$1" keep="${2:-$DEVBASE_VSCODE_SERVER_KEEP}"
-    local entry name mtime listing="" count=0 kept=() nested
-
-    [ -d "$bin" ] && [ ! -L "$bin" ] || return 0
+# bin/ の版のうち、残す版の数を超えた古い版を消し、残した版の名前を新しい順に 1 行ずつ
+# 標準出力へ出す (#463 の片付けの規則 1)。版は 40 桁の 16 進の名前で product.json を
+# 持つディレクトリ。product.json の更新時刻の新しい順 (同じなら名前の順) に並べる。
+# product.json は片付けが書き換えないため、同時に走る片付けどうしで並びが同じになり、
+# 残る版が残す数より減らない (ディレクトリの更新時刻では減った)
+devbase_prune_vscode_server_old_versions() {
+    local bin="$1" keep="$2"
+    local entry name mtime listing="" count=0
 
     for entry in "$bin"/*; do
         name="${entry##*/}"
@@ -684,13 +674,24 @@ devbase_prune_vscode_server_bin() {
         [ -n "$name" ] || continue
         count=$((count + 1))
         if [ "$count" -le "$keep" ]; then
-            kept+=("$name")
+            printf '%s\n' "$name"
         else
             devbase_remove_vscode_server_path "${bin}/${name}"
         fi
     done < <(printf '%s' "$listing" | LC_ALL=C sort -k1,1nr -k2,2)
 
-    for name in "${kept[@]}"; do
+    return 0
+}
+
+# 残した版の直下の入れ子の本体 (product.json を持つディレクトリ) を消す (#463 の片付けの
+# 規則 2)。本体の同時の展開で、遅れた側の中身が bin/<commit>/vscode-server-linux-<arch>/
+# に残ったもの。残した版の名前は標準入力から 1 行ずつ読む
+devbase_prune_vscode_server_nested() {
+    local bin="$1"
+    local name nested
+
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
         # 数えた後にリンクへ置き換わっていれば、リンク先を辿らない
         [ ! -L "$bin" ] && [ ! -L "${bin}/${name}" ] || continue
         for nested in "${bin}/${name}"/*/; do
@@ -701,12 +702,43 @@ devbase_prune_vscode_server_bin() {
         done
     done
 
+    return 0
+}
+
+# 60 分より古い展開の途中のディレクトリ bin/<commit>_<数字> を消す (#463 の片付けの
+# 規則 3)
+devbase_prune_vscode_server_partial() {
+    local bin="$1"
+    local entry name
+
     while IFS= read -r entry; do
         name="${entry##*/}"
         [[ "$name" =~ ^[0-9a-f]{40}_[0-9]+$ ]] || continue
         devbase_remove_vscode_server_path "$entry"
     done < <(find "$bin" -mindepth 1 -maxdepth 1 -type d \
         -mmin "+${DEVBASE_VSCODE_SERVER_STALE_MINUTES}" 2>/dev/null)
+
+    return 0
+}
+
+# 共通のボリュームの bin/ を片付ける (#463)。消すのは次の 3 種だけで、bin/ のほかの
+# もの・~/.vscode-server の bin 以外には触らない。終了コードは常に 0。
+#
+# 1. 残す版の数を超えた古い版 (devbase_prune_vscode_server_old_versions)
+# 2. 残った版の直下の入れ子の本体 (devbase_prune_vscode_server_nested)
+# 3. 60 分より古い展開の途中のディレクトリ (devbase_prune_vscode_server_partial)
+#
+# シンボリックリンクは辿らない。bin/ 自身・bin/<commit>・入れ子がリンクなら、版にも
+# 片付けの対象にも数えない。リンク先の bin の外のものを消さないためである
+devbase_prune_vscode_server_bin() {
+    local bin="$1" keep="${2:-$DEVBASE_VSCODE_SERVER_KEEP}"
+    local kept
+
+    [ -d "$bin" ] && [ ! -L "$bin" ] || return 0
+
+    kept=$(devbase_prune_vscode_server_old_versions "$bin" "$keep")
+    devbase_prune_vscode_server_nested "$bin" <<< "$kept"
+    devbase_prune_vscode_server_partial "$bin"
 
     return 0
 }

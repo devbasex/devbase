@@ -13,7 +13,6 @@ base イメージの ``ln`` と ``mkdir`` は uutils coreutils で、CI の runn
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -21,6 +20,8 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import host_docker_env
+
+from .docker_images import image_unavailable
 
 IMAGE = "devbase-base:latest"
 ENTRYPOINT = Path(__file__).resolve().parents[2] / "containers" / "base" / "entrypoint.sh"
@@ -38,19 +39,7 @@ def _docker(*args: str, timeout: float = 120, check: bool = True) -> subprocess.
 
 
 def _docker_unavailable() -> str | None:
-    if shutil.which("docker") is None:
-        return "docker が PATH に無い"
-    try:
-        _docker("info", timeout=30)
-    except (subprocess.SubprocessError, OSError):
-        return "docker daemon へ繋がらない"
-    try:
-        out = _docker("image", "inspect", IMAGE, timeout=30, check=False)
-    except (subprocess.SubprocessError, OSError):
-        return f"{IMAGE} を調べられない"
-    if out.returncode != 0:
-        return f"{IMAGE} が無い"
-    return None
+    return image_unavailable(IMAGE)
 
 
 @pytest.fixture

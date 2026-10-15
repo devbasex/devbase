@@ -29,12 +29,13 @@ skip すると、テスト設計の「片付けに置き場を足して建てる
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 
 import pytest
 
 from tests.conftest import host_docker_env
+
+from .docker_images import image_unavailable
 
 DEFAULT_IMAGE = "devbase-browser:latest"
 # 隔離の fixture より前 (読み込み時) に読む。隔離の一覧に入っていないが、入っても効くように
@@ -114,22 +115,7 @@ exit 0
 
 def _docker_unavailable() -> str | None:
     """Docker が使えない / イメージが無い理由。使えるなら None"""
-    if shutil.which("docker") is None:
-        return "docker が PATH に無い"
-    try:
-        subprocess.run(["docker", "info"], capture_output=True, timeout=30, check=True,
-                       env=host_docker_env())
-    except (subprocess.SubprocessError, OSError):
-        return "docker daemon へ繋がらない"
-    try:
-        out = subprocess.run(["docker", "image", "inspect", IMAGE],
-                             capture_output=True, timeout=30, env=host_docker_env())
-    except (subprocess.SubprocessError, OSError):
-        return f"{IMAGE} を調べられない"
-    if out.returncode != 0:
-        hint = "" if IMAGE_IS_EXPLICIT else f"。{BUILD_HINT}"
-        return f"{IMAGE} が無い{hint}"
-    return None
+    return image_unavailable(IMAGE, "" if IMAGE_IS_EXPLICIT else f"。{BUILD_HINT}")
 
 
 @pytest.fixture(scope="session")

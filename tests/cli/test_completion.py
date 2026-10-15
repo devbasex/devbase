@@ -8,32 +8,17 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests.cli.conftest import bash_complete as _bash_complete
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASH_COMPLETION = REPO_ROOT / "etc" / "devbase-completion.bash"
 ZSH_COMPLETION = REPO_ROOT / "etc" / "_devbase"
-
-
-def _bash_complete(words, cword, devbase_root):
-    """bash 補完を source して COMPREPLY を改行区切りで返す。"""
-    script = f"""
-set -e
-source "{BASH_COMPLETION}"
-COMP_WORDS=({words})
-COMP_CWORD={cword}
-_devbase_completions
-printf '%s\\n' "${{COMPREPLY[@]}}"
-"""
-    env = {**os.environ, "DEVBASE_ROOT": str(devbase_root)}
-    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
-    assert proc.returncode == 0, proc.stderr
-    return [line for line in proc.stdout.splitlines() if line]
 
 
 @pytest.fixture
@@ -281,3 +266,132 @@ def test_bash_container_flags_only_without_names(fake_root, words, cword, expect
 ])
 def test_bash_context_value_is_not_completed(fake_root, words, cword):
     assert _bash_complete(words, cword, fake_root) == []
+
+
+# #452: bash の補完の各分岐の候補の現状固定（R9・R10 で分岐を関数へ移す前に縛る）
+_PLUGINS = {"alpha", "beta"}
+_REPOS = ["official", "extra"]
+_ENV_EXPORT_FLAGS = ["--include-project", "--exclude-project", "--no-global", "--no-metadata",
+                     "--recipient", "--passphrase-env", "--passphrase-stdin", "--force-unencrypted",
+                     "--unsafe-allow-unencrypted-bucket"]
+_ENV_IMPORT_FLAGS = ["--merge", "--replace-keys", "--replace", "--dry-run", "--identity",
+                     "--passphrase-env", "--passphrase-stdin", "--include-project", "--exclude-project",
+                     "--no-global", "--no-metadata", "--merge-metadata", "--backup-dir", "--keep-last"]
+_LIST_FLAGS = ["--no-interactive", "--plain", "-P", "--interactive", "-i"]
+_CONTAINER_SUBCOMMANDS = ["up", "down", "ps", "login", "logs", "scale", "build", "rebuild", "profile", "open"]
+_ENV_SUBCOMMANDS = ["init", "sync", "list", "set", "get", "delete", "edit", "project", "export", "import",
+                    "keygen", "exec", "token", "encrypt", "decrypt", "rekey", "doctor", "backend"]
+_PLUGIN_SUBCOMMANDS = ["list", "install", "uninstall", "update", "info", "sync", "repo"]
+_SNAPSHOT_SUBCOMMANDS = ["create", "list", "restore", "copy", "delete", "rotate"]
+
+
+@pytest.fixture
+def fake_root_with_plugins(fake_root):
+    """プラグインの置き場（ディレクトリと symlink）と plugins.yml を持つ root。"""
+    plugins = fake_root / "plugins"
+    plugins.mkdir()
+    (plugins / "alpha").mkdir()
+    (fake_root / "beta_target").mkdir()
+    (plugins / "beta").symlink_to(fake_root / "beta_target")
+    (fake_root / "plugins.yml").write_text(
+        "repositories:\n  - name: official\n  - name: extra\n")
+    return fake_root
+
+
+@pytest.mark.parametrize("words, cword, expected", [
+    # 位置 2: 1 語目ごと
+    ("devbase login ''", 2, ["1", "2"]),
+    ("devbase login '-'", 2, ["--context"]),
+    ("devbase build ''", 2, []),
+    ("devbase build '-'", 2, ["--context"]),
+    ("devbase scale '-'", 2, ["--context"]),
+    ("devbase rebuild ''", 2, _NAMES),
+    ("devbase list ''", 2, _LIST_FLAGS),
+    ("devbase list '-'", 2, _LIST_FLAGS),
+    ("devbase container ''", 2, _CONTAINER_SUBCOMMANDS),
+    ("devbase ct ''", 2, _CONTAINER_SUBCOMMANDS),
+    ("devbase env ''", 2, _ENV_SUBCOMMANDS),
+    ("devbase plugin ''", 2, _PLUGIN_SUBCOMMANDS),
+    ("devbase pl ''", 2, _PLUGIN_SUBCOMMANDS),
+    ("devbase snapshot ''", 2, _SNAPSHOT_SUBCOMMANDS),
+    ("devbase ss ''", 2, _SNAPSHOT_SUBCOMMANDS),
+    ("devbase status ''", 2, []),
+    # 位置 3: トップレベルのシノニム
+    ("devbase open web '-'", 3, ["--open-index", "--context"]),
+    ("devbase up web '-'", 3, ["--context"]),
+    ("devbase scale web ''", 3, []),
+    # 位置 3: project
+    ("devbase project login ''", 3, ["1", "2"]),
+    ("devbase project login '-'", 3, ["--context"]),
+    ("devbase project build '-'", 3, ["--context"]),
+    ("devbase project build ''", 3, []),
+    ("devbase project rebuild '-'", 3, ["--context"]),
+    ("devbase project profile ''", 3, ["up", "down", "list"]),
+    # 位置 3: container / ct
+    ("devbase container up '-'", 3, ["--context"]),
+    ("devbase container up ''", 3, []),
+    ("devbase ct build '-'", 3, ["--context"]),
+    ("devbase container login ''", 3, ["1", "2"]),
+    ("devbase container scale ''", 3, ["1", "2", "3", "4", "5"]),
+    ("devbase ct scale '-'", 3, ["--context"]),
+    # 位置 3: env
+    ("devbase env exec '-'", 3, ["--context"]),
+    ("devbase env token '-'", 3, ["--context"]),
+    ("devbase env init '-'", 3, ["--reset"]),
+    ("devbase env init ''", 3, []),
+    ("devbase env list '-'", 3, ["--global", "-g", "--project", "-p", "--reveal", "-r", "--keys", "-k"]),
+    ("devbase env set '-'", 3, ["--project", "-p"]),
+    ("devbase env delete '-'", 3, ["--project", "-p"]),
+    ("devbase env edit '-'", 3, ["--project", "-p"]),
+    ("devbase env export '-'", 3, _ENV_EXPORT_FLAGS),
+    ("devbase env import '-'", 3, _ENV_IMPORT_FLAGS),
+    ("devbase env sync '-'", 3, []),
+    # 位置 3: plugin / pl
+    ("devbase plugin list ''", 3, ["--available"]),
+    ("devbase pl install '-'", 3, ["--link", "--all"]),
+    ("devbase plugin install ''", 3, []),
+    ("devbase plugin uninstall ''", 3, _PLUGINS),
+    ("devbase pl update ''", 3, _PLUGINS),
+    ("devbase plugin info ''", 3, _PLUGINS),
+    ("devbase plugin repo ''", 3, ["add", "remove", "list", "refresh"]),
+    # 位置 3: snapshot / ss
+    ("devbase snapshot create '-'", 3, ["--name", "--full"]),
+    ("devbase ss restore '-'", 3, ["--point"]),
+    ("devbase snapshot rotate '-'", 3, ["--keep"]),
+    ("devbase snapshot create ''", 3, []),
+    # 位置 4
+    ("devbase project open web '-'", 4, ["--open-index", "--context"]),
+    ("devbase project up web '-'", 4, ["--context"]),
+    ("devbase project down web '-'", 4, ["--context"]),
+    ("devbase project rebuild web '-'", 4, ["--context"]),
+    ("devbase project scale web '-'", 4, ["--context"]),
+    ("devbase project post-start web '-'", 4, ["--context"]),
+    ("devbase project up web ''", 4, []),
+    ("devbase project profile up '-'", 4, ["--context"]),
+    ("devbase container profile down '-'", 4, ["--context"]),
+    ("devbase ct profile list '-'", 4, ["--context"]),
+    ("devbase container ps web '-'", 4, []),
+    ("devbase plugin install src '-'", 4, ["--link", "--all"]),
+    ("devbase pl install src ''", 4, []),
+    ("devbase plugin repo add '-'", 4, ["--name"]),
+    ("devbase env set KEY '-'", 4, []),
+])
+def test_bash_completion_branches(fake_root_with_plugins, words, cword, expected):
+    out = _bash_complete(words, cword, fake_root_with_plugins)
+    if isinstance(expected, set):
+        assert set(out) == expected
+    else:
+        assert out == expected
+
+
+def _python3_has_yaml():
+    python3 = shutil.which("python3")
+    if python3 is None:
+        return False
+    return subprocess.run([python3, "-c", "import yaml"], capture_output=True).returncode == 0
+
+
+@pytest.mark.skipif(not _python3_has_yaml(), reason="python3 か yaml が無い（リポジトリ名は python3 で plugins.yml を読む）")
+@pytest.mark.parametrize("words", ["devbase pl repo remove ''", "devbase plugin repo refresh ''"])
+def test_bash_completion_plugin_repo_names(fake_root_with_plugins, words):
+    assert _bash_complete(words, 4, fake_root_with_plugins) == _REPOS

@@ -190,45 +190,63 @@ def run_completions(lines: list[str], *, devbase_root: Path, home: Path,
                                 stderr=subprocess.PIPE, start_new_session=True)
         pids: set[int] = {proc.pid}
         timed_out = False
-        seen, last_change = 0, time.monotonic()
         try:
-            while proc.poll() is None:
-                progress = _read_progress(outdir)
-                if len(progress) != seen:
-                    seen, last_change = len(progress), time.monotonic()
-                elif time.monotonic() - last_change > timeout:
-                    timed_out = True
-                    break
-                time.sleep(0.05)
+            timed_out = _wait_until_stalled(proc, outdir, timeout)
         finally:
-            if proc.poll() is None:
-                pids |= _descendants(proc.pid)
-                _kill_all(pids)
-            stdout, stderr = proc.communicate()
-            # 内側の zsh は別のセッションで動き、外側が終わると親を失う。残っていれば子孫ごと終える
-            inner = _read_text(outdir / "inner_pid").strip()
-            if inner.isdigit():
-                pids.add(int(inner))
-                if alive(int(inner)):
-                    leftover = _descendants(int(inner))
-                    pids |= leftover
-                    _kill_all(leftover)
+            stdout, stderr = _reap(proc, outdir, pids)
         progress = _read_progress(outdir)
         terminal = _read_text(outdir / "term") + stdout.decode(errors="replace")
-        done = {int(p.split()[1]) for p in progress if p.startswith("done ")}
-        ready = "ready" in progress
-        pending = [n for n in range(1, len(lines) + 1) if n not in done]
-        # 時間切れの行は、読み込みを終えた後で最初に終わらなかった行
-        stuck = pending[0] if timed_out and ready and pending else None
-        results = []
-        for n, line in enumerate(lines, start=1):
-            if n in done:
-                text = _read_text(outdir / str(n)).splitlines()
-                words = frozenset(w for w in text if w and w not in ("__CALL__", "__DONE__"))
-                results.append(LineResult(line, OK, words, "__CALL__" in text))
-            elif n == stuck:
-                results.append(LineResult(line, TIMEOUT))
-            else:
-                results.append(LineResult(line, NOT_RUN))
+        results = _line_results(lines, progress, outdir, timed_out)
         return RunResult(results, terminal, stderr.decode(errors="replace"), pids,
-                         setup_timed_out=timed_out and not ready)
+                         setup_timed_out=timed_out and "ready" not in progress)
+
+
+def _wait_until_stalled(proc: subprocess.Popen, outdir: Path, timeout: float) -> bool:
+    """zsh が終わるか、進みが ``timeout`` 秒止まるまで待つ。止まったら ``True``。"""
+    seen, last_change = 0, time.monotonic()
+    while proc.poll() is None:
+        progress = _read_progress(outdir)
+        if len(progress) != seen:
+            seen, last_change = len(progress), time.monotonic()
+        elif time.monotonic() - last_change > timeout:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _reap(proc: subprocess.Popen, outdir: Path, pids: set[int]) -> tuple[bytes, bytes]:
+    """外側の zsh と内側の zsh の子孫を終え、外側の出力を返す。終えた pid は ``pids`` へ足す。"""
+    if proc.poll() is None:
+        pids |= _descendants(proc.pid)
+        _kill_all(pids)
+    stdout, stderr = proc.communicate()
+    # 内側の zsh は別のセッションで動き、外側が終わると親を失う。残っていれば子孫ごと終える
+    inner = _read_text(outdir / "inner_pid").strip()
+    if inner.isdigit():
+        pids.add(int(inner))
+        if alive(int(inner)):
+            leftover = _descendants(int(inner))
+            pids |= leftover
+            _kill_all(leftover)
+    return stdout, stderr
+
+
+def _line_results(lines: list[str], progress: list[str], outdir: Path,
+                  timed_out: bool) -> list[LineResult]:
+    """完了の記録（``done``・``ready``）から行ごとの結果を並べる。"""
+    done = {int(p.split()[1]) for p in progress if p.startswith("done ")}
+    ready = "ready" in progress
+    pending = [n for n in range(1, len(lines) + 1) if n not in done]
+    # 時間切れの行は、読み込みを終えた後で最初に終わらなかった行
+    stuck = pending[0] if timed_out and ready and pending else None
+    results = []
+    for n, line in enumerate(lines, start=1):
+        if n in done:
+            text = _read_text(outdir / str(n)).splitlines()
+            words = frozenset(w for w in text if w and w not in ("__CALL__", "__DONE__"))
+            results.append(LineResult(line, OK, words, "__CALL__" in text))
+        elif n == stuck:
+            results.append(LineResult(line, TIMEOUT))
+        else:
+            results.append(LineResult(line, NOT_RUN))
+    return results

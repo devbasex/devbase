@@ -16,6 +16,8 @@ SHARED_VOLUME_PREFIX = "devbase_home_"
 WORK_VOLUME_PREFIX = "devbase_work_"
 # 全コンテナで共有するホームディレクトリボリューム
 HOME_UBUNTU_VOLUME = "devbase_home_ubuntu"
+#: コンテナの中の利用者 ubuntu のホーム
+CONTAINER_HOME = '/home/ubuntu'
 
 # --- アカウントグループ (PLAN39 / #315) --------------------------------------
 # アカウントグループは「使用する Google / AWS アカウントの単位」。グループごとに
@@ -46,9 +48,9 @@ LEGACY_GROUP_NAME = "default"
 VSCODE_SERVER_VOLUME = "devbase_vscode-server-bin"
 #: VS Code Server の置き場。生成する compose のマウント先と、起動の後の処理が
 #: 所有者を直す先の両方がこれを使う
-VSCODE_SERVER_TARGET = '/home/ubuntu/.vscode-server'
+VSCODE_SERVER_TARGET = f'{CONTAINER_HOME}/.vscode-server'
 #: 本体の置き場。:data:`VSCODE_SERVER_VOLUME` を付ける先
-VSCODE_BIN_TARGET = '/home/ubuntu/.vscode-server/bin'
+VSCODE_BIN_TARGET = f'{VSCODE_SERVER_TARGET}/bin'
 #: #463 より前の、~/.vscode-server を丸ごと持つコンテナごとのボリュームの接頭辞
 LEGACY_VSCODE_VOLUME_PREFIX = "devbase_vscode_"
 _LEGACY_VSCODE_VOLUME_RE = re.compile(r"^devbase_vscode_.+_[0-9]+$")
@@ -157,16 +159,6 @@ def find_legacy_vscode_volumes() -> list[str]:
 
 class VolumeManager:
     """Manages Docker volumes for devbase projects"""
-
-    def __init__(self, project_name: str = None):
-        """
-        Initialize VolumeManager
-
-        Args:
-            project_name: Project name. ボリュームの名前には使わない
-                (#463 より前は VS Code Server ボリュームの名前に使った)
-        """
-        self.project_name = project_name
 
     def _volume_exists(self, volume_name: str) -> bool:
         """Check if Docker volume exists"""
@@ -291,8 +283,7 @@ class VolumeManager:
             raise DockerError(f"Failed to create volume {volume_name}")
 
 
-def ensure_volumes(scale: int, project_name: str = None,
-                   group: Optional[str] = None) -> None:
+def ensure_volumes(scale: int, group: Optional[str] = None) -> None:
     """
     Ensure required shared volumes exist for the specified scale
 
@@ -303,10 +294,9 @@ def ensure_volumes(scale: int, project_name: str = None,
 
     Args:
         scale: Number of container instances
-        project_name: Project name (unused for volume names since #463)
         group: Account group name (省略時は DEVBASE_ACCOUNT_GROUP。既定の値は無い)
     """
-    manager = VolumeManager(project_name)
+    manager = VolumeManager()
     manager.ensure_volumes(scale, group)
 
 
