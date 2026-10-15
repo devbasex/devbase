@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from .dockerfile_parse import run_blocks
+
 BASE_DIR = Path(__file__).resolve().parents[2] / "containers" / "base"
 DOCKERFILE = BASE_DIR / "Dockerfile"
 FONTS_CONF = BASE_DIR / "fonts-local.conf"
@@ -73,28 +75,8 @@ def _statements() -> str:
 
 
 def _run_blocks() -> list[str]:
-    """Dockerfile を RUN ブロック単位 (行継続を含む 1 命令分) に分ける
-
-    ``RUN`` の本文は ``\\`` の行継続で複数行にまたがる。``RUN`` で始まる**行**だけを
-    見ると、拾えるのは 1 行目 (``RUN set -eux; \\``) だけでパッケージ名は 1 つも
-    入らない。命令ごとに継続行まで連結してから検査する。
-    """
-    lines = _statements().splitlines()
-    blocks: list[str] = []
-    block: list[str] | None = None
-    for line in lines:
-        if block is None:
-            if not line.startswith("RUN "):
-                continue
-            block = []
-        block.append(line)
-        if not line.rstrip().endswith("\\"):
-            blocks.append("\n".join(block))
-            block = None
-    if block is not None:  # 最終行が \ で終わっていても取りこぼさない
-        blocks.append("\n".join(block))
-    assert blocks, "RUN が 1 つも見つからない"
-    return blocks
+    """Dockerfile を RUN ブロック単位 (行継続を含む 1 命令分) に分ける"""
+    return run_blocks(_statements())
 
 
 def _first_run_block() -> str:

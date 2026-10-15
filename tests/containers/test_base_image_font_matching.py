@@ -16,12 +16,13 @@ Dockerfile の文字列検査 (``test_base_dockerfile_fonts.py``) では足り�
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 
 import pytest
 
 from tests.conftest import host_docker_env
+
+from .docker_images import image_unavailable
 
 IMAGE = "devbase-base:latest"
 BUILD_HINT = f"`devbase build base --no-cache` で {IMAGE} を建て直すと、この検査が効く"
@@ -125,21 +126,7 @@ fi
 
 def _docker_unavailable() -> str | None:
     """Docker が使えない / イメージが無い理由。使えるなら None"""
-    if shutil.which("docker") is None:
-        return "docker が PATH に無い"
-    try:
-        subprocess.run(["docker", "info"], capture_output=True, timeout=30, check=True,
-                       env=host_docker_env())
-    except (subprocess.SubprocessError, OSError):
-        return "docker daemon へ繋がらない"
-    try:
-        out = subprocess.run(["docker", "image", "inspect", IMAGE],
-                             capture_output=True, timeout=30, env=host_docker_env())
-    except (subprocess.SubprocessError, OSError):
-        return f"{IMAGE} を調べられない"
-    if out.returncode != 0:
-        return f"{IMAGE} が無い。{BUILD_HINT}"
-    return None
+    return image_unavailable(IMAGE, f"。{BUILD_HINT}")
 
 
 @pytest.fixture(scope="session")

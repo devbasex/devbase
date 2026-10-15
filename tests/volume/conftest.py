@@ -4,7 +4,8 @@
 へ置いてから構成を作る (#315)。構成の生成とボリュームの作成を単独で呼ぶテストは、その後の
 状態 (グループが決まっている) を前提にする。未設定の振る舞いを見るテストは自分で消す。
 
-compose の生成を見るテストが共有する補助 (``write_compose``・``load_scaled``・``mount_source``)
+compose の生成を見るテストが共有する補助 (``write_compose``・``load_scaled``・``mount_source``・
+``DEVBASE_MANAGED``)
 もここに置き、``from tests.volume.conftest import ...`` で取り込む。
 """
 
@@ -12,6 +13,16 @@ from __future__ import annotations
 
 import pytest
 import yaml
+
+
+# devbase 自身が dev サービスへ常に載せる環境変数 (PLAN39)。``DEVBASE_ACCOUNT_GROUP`` の値は
+# 下の ``_declared_account_group`` が置く ``acme`` に対応する。
+DEVBASE_MANAGED = {
+    "DEVBASE_ACCOUNT_GROUP": "acme",
+    "CLOUDSDK_CONFIG": "/persistent/group/gcloud",
+    "GOOGLE_WORKSPACE_CLI_CONFIG_DIR": "/persistent/group/gws",
+    "GCP_AUTH_MODE": "adc",
+}
 
 
 @pytest.fixture(autouse=True)

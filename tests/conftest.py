@@ -315,21 +315,38 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         rec = self._record('GET')
-        state = self.server_state
         path = rec.kv_path
+        if self._refuse_read(rec, path):
+            return None
+        return self._read_secret(path)
+
+    def _refuse_read(self, rec: Received, path: Optional[str]) -> bool:
+        """読み出しの前の拒否 (mount・認可・禁止) と、失敗と応答の注入。応答を返したら真"""
+        state = self.server_state
         if path is None or not self._mount_ok(rec):
-            return self._send(404, {'errors': []})
+            self._send(404, {'errors': []})
+            return True
         if not self._authorized(rec):
-            return self._send(403, {'errors': ['permission denied']})
+            self._send(403, {'errors': ['permission denied']})
+            return True
         if self._forbidden(path):
-            return self._send(403, {'errors': ['permission denied']})
+            self._send(403, {'errors': ['permission denied']})
+            return True
         state.get_attempts += 1
         if state.get_attempts in state.fail_get_attempts:
-            return self._send(503, {'errors': ['unavailable']})
+            self._send(503, {'errors': ['unavailable']})
+            return True
         if state.get_body is not None:
-            return self._send(state.get_status or 200, raw=state.get_body)
+            self._send(state.get_status or 200, raw=state.get_body)
+            return True
         if state.get_status is not None:
-            return self._send(state.get_status, {'errors': ['error']})
+            self._send(state.get_status, {'errors': ['error']})
+            return True
+        return False
+
+    def _read_secret(self, path: str):
+        """保存した値から応答を組み立てる (無い・論理削除済み・読み戻しの改ざんを当てた値)"""
+        state = self.server_state
         if path not in state.versions:
             return self._send(404, {'errors': []})
         version = state.versions[path]

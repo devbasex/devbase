@@ -8,18 +8,11 @@ import pytest
 import yaml
 
 from devbase.volume.compose import generate_scaled_compose
+from tests.volume.conftest import DEVBASE_MANAGED
 
 
-# devbase 自身が dev サービスへ常に載せる変数 (PLAN39)。機密ではないので、
+# devbase 自身が dev サービスへ常に載せる変数 (PLAN39、DEVBASE_MANAGED は conftest)。機密ではないので、
 # 「機密の渡し方」を見るこのファイルの期待値からは除いて比較する。
-DEVBASE_MANAGED = {
-    "DEVBASE_ACCOUNT_GROUP": "acme",
-    "CLOUDSDK_CONFIG": "/persistent/group/gcloud",
-    "GOOGLE_WORKSPACE_CLI_CONFIG_DIR": "/persistent/group/gws",
-    "GCP_AUTH_MODE": "adc",
-}
-
-
 def _without_managed(environment):
     """environment から devbase 由来の変数を除く (map / list の記法は保つ)"""
     if isinstance(environment, dict):

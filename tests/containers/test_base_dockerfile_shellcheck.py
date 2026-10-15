@@ -19,6 +19,8 @@ from pathlib import Path
 
 import yaml
 
+from .dockerfile_parse import run_blocks
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "containers" / "base" / "Dockerfile"
 CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -34,25 +36,8 @@ def _statements() -> str:
 
 
 def _run_blocks() -> list[str]:
-    """Dockerfile を RUN ブロック単位 (行継続を含む 1 命令分) に分ける
-
-    ``RUN`` で始まる**行**だけを見ると、行継続の先にあるパッケージ名を 1 つも拾えない。
-    """
-    blocks: list[str] = []
-    block: list[str] | None = None
-    for line in _statements().splitlines():
-        if block is None:
-            if not line.startswith("RUN "):
-                continue
-            block = []
-        block.append(line)
-        if not line.rstrip().endswith("\\"):
-            blocks.append("\n".join(block))
-            block = None
-    if block is not None:  # 最終行が \ で終わっていても取りこぼさない
-        blocks.append("\n".join(block))
-    assert blocks, "RUN が 1 つも見つからない"
-    return blocks
+    """Dockerfile を RUN ブロック単位 (行継続を含む 1 命令分) に分ける"""
+    return run_blocks(_statements())
 
 
 def _first_apt_install(block: str) -> str:
