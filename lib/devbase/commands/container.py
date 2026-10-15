@@ -1505,7 +1505,7 @@ def _run_deploy_pipeline(project_name: str, scale: int, config,
     起動できなかったインスタンスがあれば、起動の待ちの ``ContainerStartupError`` をそのまま通す。
     """
     logger.info("[1/6] Ensuring volumes exist...")
-    ensure_volumes(scale, project_name)
+    ensure_volumes(scale)
 
     logger.info("[1.5/6] Ensuring network exists...")
     ensure_network('devbase_net')
@@ -1945,7 +1945,7 @@ def _run_scale_pipeline(project_name: str, new_scale: int, current_scale: int,
     project_runtime.write_scale(Path.cwd(), new_scale)
 
     logger.info("[2/5] Ensuring volumes exist for scale=%d...", new_scale)
-    ensure_volumes(new_scale, project_name)
+    ensure_volumes(new_scale)
 
     logger.info("[2.5/5] Ensuring network exists...")
     ensure_network('devbase_net')
