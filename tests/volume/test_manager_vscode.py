@@ -50,12 +50,12 @@ def _record_docker(monkeypatch, existing: set[str] = frozenset()) -> list[str]:
     return created
 
 
-def test_shared_volume_is_created_once_for_any_project_group_and_scale(monkeypatch):
-    """プロジェクト・グループ・scale が違っても、作るのは同じ名前の 1 本だけ。"""
+def test_shared_volume_is_created_once_for_any_group_and_scale(monkeypatch):
+    """グループ・scale が違っても、作るのは同じ名前の 1 本だけ。"""
     created = _record_docker(monkeypatch)
 
-    manager.ensure_volumes(2, project_name="proj-a")
-    manager.ensure_volumes(1, project_name="proj-b", group="team-b")
+    manager.ensure_volumes(2)
+    manager.ensure_volumes(1, group="team-b")
 
     vscode = [n for n in created if "vscode" in n]
     assert vscode == [manager.VSCODE_SERVER_VOLUME]
@@ -66,7 +66,7 @@ def test_existing_shared_volume_is_not_recreated(monkeypatch):
     created = _record_docker(
         monkeypatch, existing={manager.VSCODE_SERVER_VOLUME})
 
-    manager.ensure_volumes(1, project_name="proj-a")
+    manager.ensure_volumes(1)
 
     assert manager.VSCODE_SERVER_VOLUME not in created
 
@@ -75,7 +75,7 @@ def test_no_per_instance_vscode_volume_is_created(monkeypatch):
     """インスタンスごとの VS Code Server のボリュームと旧形式を作らない。"""
     created = _record_docker(monkeypatch)
 
-    manager.ensure_volumes(3, project_name="proj-a")
+    manager.ensure_volumes(3)
 
     assert not [n for n in created
                 if n.startswith(manager.LEGACY_VSCODE_VOLUME_PREFIX)]
@@ -90,7 +90,7 @@ def test_failure_to_create_shared_volume_raises(monkeypatch):
         lambda self, name: name != manager.VSCODE_SERVER_VOLUME)
 
     with pytest.raises(manager.DockerError):
-        manager.ensure_volumes(1, project_name="proj-a")
+        manager.ensure_volumes(1)
 
 
 # ---------------------------------------------------------------------------

@@ -51,7 +51,7 @@ def test_creates_all_volumes_in_order_when_none_exist(monkeypatch, caplog):
     calls = _fake_docker(monkeypatch)
 
     with caplog.at_level(logging.INFO, logger=manager.logger.name):
-        manager.VolumeManager("proj-a").ensure_volumes(2)
+        manager.VolumeManager().ensure_volumes(2)
 
     assert calls == [
         ("exists", "devbase_home_ubuntu"),
@@ -81,7 +81,7 @@ def test_existing_volumes_are_only_checked(monkeypatch, caplog):
     calls = _fake_docker(monkeypatch, existing=existing)
 
     with caplog.at_level(logging.INFO, logger=manager.logger.name):
-        manager.VolumeManager("proj-a").ensure_volumes(1, group="team-b")
+        manager.VolumeManager().ensure_volumes(1, group="team-b")
 
     assert calls == [
         ("exists", "devbase_home_ubuntu"),
@@ -103,7 +103,7 @@ def test_mixed_existing_and_missing(monkeypatch, caplog):
     calls = _fake_docker(monkeypatch, existing=existing)
 
     with caplog.at_level(logging.INFO, logger=manager.logger.name):
-        manager.VolumeManager("proj-a").ensure_volumes(3)
+        manager.VolumeManager().ensure_volumes(3)
 
     assert [name for kind, name in calls if kind == "create"] == [
         "devbase_home_ubuntu",
@@ -125,7 +125,7 @@ def test_mixed_existing_and_missing(monkeypatch, caplog):
 def test_scale_zero_creates_only_shared_volumes(monkeypatch):
     calls = _fake_docker(monkeypatch)
 
-    manager.VolumeManager("proj-a").ensure_volumes(0)
+    manager.VolumeManager().ensure_volumes(0)
 
     assert [name for kind, name in calls if kind == "create"] == [
         "devbase_home_ubuntu",
@@ -147,7 +147,7 @@ def test_failed_creation_raises_and_stops(monkeypatch, failing, created_before):
     calls = _fake_docker(monkeypatch, failing={failing})
 
     with pytest.raises(DockerError) as excinfo:
-        manager.VolumeManager("proj-a").ensure_volumes(3)
+        manager.VolumeManager().ensure_volumes(3)
 
     assert str(excinfo.value) == f"Failed to create volume {failing}"
     assert calls[-1] == ("create", failing)
@@ -158,7 +158,7 @@ def test_invalid_group_fails_before_touching_docker(monkeypatch):
     calls = _fake_docker(monkeypatch)
 
     with pytest.raises(DevbaseError):
-        manager.VolumeManager("proj-a").ensure_volumes(1, group="bad/name")
+        manager.VolumeManager().ensure_volumes(1, group="bad/name")
 
     assert calls == []
 
@@ -166,7 +166,7 @@ def test_invalid_group_fails_before_touching_docker(monkeypatch):
 def test_module_function_delegates_with_group(monkeypatch):
     calls = _fake_docker(monkeypatch)
 
-    manager.ensure_volumes(1, project_name="proj-a", group="team-b")
+    manager.ensure_volumes(1, group="team-b")
 
     assert [name for kind, name in calls if kind == "create"] == [
         "devbase_home_ubuntu",

@@ -158,16 +158,6 @@ def find_legacy_vscode_volumes() -> list[str]:
 class VolumeManager:
     """Manages Docker volumes for devbase projects"""
 
-    def __init__(self, project_name: str = None):
-        """
-        Initialize VolumeManager
-
-        Args:
-            project_name: Project name. ボリュームの名前には使わない
-                (#463 より前は VS Code Server ボリュームの名前に使った)
-        """
-        self.project_name = project_name
-
     def _volume_exists(self, volume_name: str) -> bool:
         """Check if Docker volume exists"""
         try:
@@ -291,8 +281,7 @@ class VolumeManager:
             raise DockerError(f"Failed to create volume {volume_name}")
 
 
-def ensure_volumes(scale: int, project_name: str = None,
-                   group: Optional[str] = None) -> None:
+def ensure_volumes(scale: int, group: Optional[str] = None) -> None:
     """
     Ensure required shared volumes exist for the specified scale
 
@@ -303,10 +292,9 @@ def ensure_volumes(scale: int, project_name: str = None,
 
     Args:
         scale: Number of container instances
-        project_name: Project name (unused for volume names since #463)
         group: Account group name (省略時は DEVBASE_ACCOUNT_GROUP。既定の値は無い)
     """
-    manager = VolumeManager(project_name)
+    manager = VolumeManager()
     manager.ensure_volumes(scale, group)
 
 
