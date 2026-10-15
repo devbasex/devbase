@@ -205,29 +205,19 @@ _devbase_complete_env_args() {
             _devbase_complete_flags "$ctx_flags" "$cur"
             ;;
         init)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--reset" -- "$cur"))
-            fi
+            _devbase_complete_flags "--reset" "$cur"
             ;;
         list)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--global -g --project -p --reveal -r --keys -k" -- "$cur"))
-            fi
+            _devbase_complete_flags "--global -g --project -p --reveal -r --keys -k" "$cur"
             ;;
         set|delete|edit)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--project -p" -- "$cur"))
-            fi
+            _devbase_complete_flags "--project -p" "$cur"
             ;;
         export)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--include-project --exclude-project --no-global --no-metadata --recipient --passphrase-env --passphrase-stdin --force-unencrypted --unsafe-allow-unencrypted-bucket" -- "$cur"))
-            fi
+            _devbase_complete_flags "--include-project --exclude-project --no-global --no-metadata --recipient --passphrase-env --passphrase-stdin --force-unencrypted --unsafe-allow-unencrypted-bucket" "$cur"
             ;;
         import)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--merge --replace-keys --replace --dry-run --identity --passphrase-env --passphrase-stdin --include-project --exclude-project --no-global --no-metadata --merge-metadata --backup-dir --keep-last" -- "$cur"))
-            fi
+            _devbase_complete_flags "--merge --replace-keys --replace --dry-run --identity --passphrase-env --passphrase-stdin --include-project --exclude-project --no-global --no-metadata --merge-metadata --backup-dir --keep-last" "$cur"
             ;;
     esac
 }
@@ -240,9 +230,7 @@ _devbase_complete_plugin_args() {
             COMPREPLY=($(compgen -W "--available" -- "$cur"))
             ;;
         install)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--link --all" -- "$cur"))
-            fi
+            _devbase_complete_flags "--link --all" "$cur"
             ;;
         uninstall|update|info)
             local devbase_root
@@ -264,19 +252,13 @@ _devbase_complete_plugin_args() {
 _devbase_complete_snapshot_args() {
     case "$prev" in
         create)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--name --full" -- "$cur"))
-            fi
+            _devbase_complete_flags "--name --full" "$cur"
             ;;
         restore)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--point" -- "$cur"))
-            fi
+            _devbase_complete_flags "--point" "$cur"
             ;;
         rotate)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--keep" -- "$cur"))
-            fi
+            _devbase_complete_flags "--keep" "$cur"
             ;;
     esac
 }
@@ -331,17 +313,13 @@ _devbase_complete_profile_flags() {
 _devbase_complete_plugin_after_args() {
     # plugin install flags after source argument
     if [ "${words[2]}" = "install" ]; then
-        if [[ "$cur" == -* ]]; then
-            COMPREPLY=($(compgen -W "--link --all" -- "$cur"))
-        fi
+        _devbase_complete_flags "--link --all" "$cur"
     fi
     # plugin repo subcommand arguments
     if [ "${words[2]}" = "repo" ]; then
         case "$prev" in
             add)
-                if [[ "$cur" == -* ]]; then
-                    COMPREPLY=($(compgen -W "--name" -- "$cur"))
-                fi
+                _devbase_complete_flags "--name" "$cur"
                 ;;
             remove|refresh)
                 local devbase_root
