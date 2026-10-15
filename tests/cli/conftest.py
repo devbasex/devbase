@@ -23,6 +23,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = REPO_ROOT / "bin" / "devbase"
+BASH_COMPLETION = REPO_ROOT / "etc" / "devbase-completion.bash"
 
 _FAKE_UV = """\
 #!/bin/bash
@@ -213,3 +214,28 @@ def compose_wrapper(exec_wrapper) -> ComposeWrapperRoot:
     wrapper = ComposeWrapperRoot(root)
     wrapper.extra_env = {}
     return wrapper
+
+
+def run_bash_completion(comp_words: str, cword: int, devbase_root) -> subprocess.CompletedProcess:
+    """bash 補完を source して ``_devbase_completions`` を実行し、COMPREPLY を改行区切りで出す。
+
+    ``comp_words`` は ``COMP_WORDS=(...)`` の中へそのまま入れる語の並び (引用符を含む)。
+    ``DEVBASE_ROOT`` は ``devbase_root`` を渡し、実環境の値を継承しない。
+    """
+    script = f"""
+set -e
+source "{BASH_COMPLETION}"
+COMP_WORDS=({comp_words})
+COMP_CWORD={cword}
+_devbase_completions
+printf '%s\\n' "${{COMPREPLY[@]}}"
+"""
+    env = {**os.environ, "DEVBASE_ROOT": str(devbase_root)}
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, check=False)
+
+
+def bash_complete(comp_words: str, cword: int, devbase_root) -> list[str]:
+    """bash 補完を source して COMPREPLY を改行区切りで返す。"""
+    proc = run_bash_completion(comp_words, cword, devbase_root)
+    assert proc.returncode == 0, proc.stderr
+    return [line for line in proc.stdout.splitlines() if line]

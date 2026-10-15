@@ -18,18 +18,16 @@
 from __future__ import annotations
 
 import argparse
-import os
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from devbase import cli
+from tests.cli.conftest import run_bash_completion
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = REPO_ROOT / "bin" / "devbase"
-BASH_COMPLETION = REPO_ROOT / "etc" / "devbase-completion.bash"
 ZSH_COMPLETION = REPO_ROOT / "etc" / "_devbase"
 SPEC = REPO_ROOT / "docs" / "specifications" / "cli-argument-resolution.md"
 
@@ -178,16 +176,7 @@ def fake_root(tmp_path):
 def _bash_complete(words, devbase_root, cur=""):
     """`devbase <words...> <cur>` の最後の位置で bash 補完を実行し、候補を返す。"""
     quoted = " ".join(f'"{w}"' for w in ("devbase",) + tuple(words) + (cur,))
-    script = f"""
-set -e
-source "{BASH_COMPLETION}"
-COMP_WORDS=({quoted})
-COMP_CWORD={len(words) + 1}
-_devbase_completions
-printf '%s\\n' "${{COMPREPLY[@]}}"
-"""
-    env = {**os.environ, "DEVBASE_ROOT": str(devbase_root)}
-    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, check=False)
+    proc = run_bash_completion(quoted, len(words) + 1, devbase_root)
     assert proc.returncode == 0, f"etc/devbase-completion.bash の実行に失敗: {words} {proc.stderr}"
     return {line for line in proc.stdout.splitlines() if line}
 

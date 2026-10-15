@@ -49,3 +49,27 @@ def parse(text: str) -> list[Instruction]:
         keyword, _, args = joined.partition(" ")
         instructions.append(Instruction(keyword.upper(), args.strip()))
     return instructions
+
+
+def run_blocks(text: str) -> list[str]:
+    """Dockerfile を RUN ブロック単位 (行継続を含む 1 命令分) に分ける
+
+    ``RUN`` の本文は ``\\`` の行継続で複数行にまたがる。``RUN`` で始まる**行**だけを
+    見ると、拾えるのは 1 行目 (``RUN set -eux; \\``) だけでパッケージ名は 1 つも
+    入らない。命令ごとに継続行まで連結してから検査する。
+    """
+    blocks: list[str] = []
+    block: list[str] | None = None
+    for line in text.splitlines():
+        if block is None:
+            if not line.startswith("RUN "):
+                continue
+            block = []
+        block.append(line)
+        if not line.rstrip().endswith("\\"):
+            blocks.append("\n".join(block))
+            block = None
+    if block is not None:  # 最終行が \ で終わっていても取りこぼさない
+        blocks.append("\n".join(block))
+    assert blocks, "RUN が 1 つも見つからない"
+    return blocks

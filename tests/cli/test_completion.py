@@ -8,32 +8,17 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests.cli.conftest import bash_complete as _bash_complete
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASH_COMPLETION = REPO_ROOT / "etc" / "devbase-completion.bash"
 ZSH_COMPLETION = REPO_ROOT / "etc" / "_devbase"
-
-
-def _bash_complete(words, cword, devbase_root):
-    """bash 補完を source して COMPREPLY を改行区切りで返す。"""
-    script = f"""
-set -e
-source "{BASH_COMPLETION}"
-COMP_WORDS=({words})
-COMP_CWORD={cword}
-_devbase_completions
-printf '%s\\n' "${{COMPREPLY[@]}}"
-"""
-    env = {**os.environ, "DEVBASE_ROOT": str(devbase_root)}
-    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
-    assert proc.returncode == 0, proc.stderr
-    return [line for line in proc.stdout.splitlines() if line]
 
 
 @pytest.fixture
