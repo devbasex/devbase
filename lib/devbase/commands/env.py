@@ -511,23 +511,45 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
         return 0
 
     if reset and env_file.file_exists():
-        try:
-            env_file.backup()
-        except DevbaseError as e:
-            # サーバ backend では退避を作れないまま消すことになる。退避が無ければ
-            # 削除へ進まない (PLAN51 設計 2)
-            logger.error("退避を作れないため、既存の設定を消さずに中止します: %s", e)
+        if not _reset_env_file(env_file):
             return 1
-        logger.info("既存の設定をバックアップしました")
-        for key in list(env_file.get_all().keys()):
-            env_file.delete(key)
 
     print("\n" + "=" * 42)
     print("devbase 環境セットアップ")
     print("=" * 42)
 
     host = host_import.resolve(policies, _import_policy_group(devbase_root, target_group))
+    _run_collectors(env_file, host)
 
+    env_file.save()
+
+    _update_source_metadata(devbase_root, env_file,
+                            aws_selection=host.selections.get('aws', _KEEP_SELECTION))
+
+    logger.info("セットアップ完了: %s (%d変数)", env_file.path, env_file.count())
+    return 0
+
+
+def _reset_env_file(env_file) -> bool:
+    """既存の設定を退避してから全キーを消す。退避を作れなければ消さずに ``False``。"""
+    try:
+        env_file.backup()
+    except DevbaseError as e:
+        # サーバ backend では退避を作れないまま消すことになる。退避が無ければ
+        # 削除へ進まない (PLAN51 設計 2)
+        logger.error("退避を作れないため、既存の設定を消さずに中止します: %s", e)
+        return False
+    logger.info("既存の設定をバックアップしました")
+    for key in list(env_file.get_all().keys()):
+        env_file.delete(key)
+    return True
+
+
+def _run_collectors(env_file, host) -> None:
+    """登録された集め手を見つけ、順に対話で値を集める。
+
+    ``host_import`` 属性を持つ集め手にだけ、ホストの資格情報の取り込みの方針を渡す。
+    """
     registry = CollectorRegistry()
     registry.discover()
 
@@ -537,14 +559,6 @@ def cmd_env_init(devbase_root: Path, reset: bool = False, group: Optional[str] =
             collector.collect_fn(env_file, host=host)
         else:
             collector.collect_fn(env_file)
-
-    env_file.save()
-
-    _update_source_metadata(devbase_root, env_file,
-                            aws_selection=host.selections.get('aws', _KEEP_SELECTION))
-
-    logger.info("セットアップ完了: %s (%d変数)", env_file.path, env_file.count())
-    return 0
 
 
 def _import_policy_group(devbase_root: Path, target_group: Optional[str]) -> Optional[str]:
