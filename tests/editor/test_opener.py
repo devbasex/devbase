@@ -1278,7 +1278,7 @@ def test_open_editor_remote_ssh_empty_ssh_host_launches_flat_uri_with_context(mo
     calls = []
     with caplog.at_level(logging.INFO):
         opener.open_editor(
-            project_name="investment", dev_service_name="dev", workdir="/work/investment",
+            project_name="myapp-ml", dev_service_name="dev", workdir="/work/myapp-ml",
             environ={"VSCODE_IPC_HOOK_CLI": "/run/x.sock",
                      "SSH_CONNECTION": "192.168.1.16 5 192.168.1.201 22",
                      "DEVBASE_EDITOR_SSH_HOST": ""},
@@ -1286,7 +1286,7 @@ def test_open_editor_remote_ssh_empty_ssh_host_launches_flat_uri_with_context(mo
             docker_context="wsl",
         )
     uri = calls[0][2]
-    assert "@ssh-remote+" not in uri and uri.endswith("/work/investment")
+    assert "@ssh-remote+" not in uri and uri.endswith("/work/myapp-ml")
     assert _decode(uri)["settings"]["context"] == "wsl"
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "同名" not in text  # ネストしていないので案内は出ない
