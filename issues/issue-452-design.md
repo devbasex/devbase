@@ -47,7 +47,7 @@
 | --- | --- | --- | --- | --- |
 | 1 回の `sync` | `commands/env.py` の sync の関数 | `_SyncContext` | 書き込み先（`SyncTargets`）・控え（`SourcesManager`） | AWS の入れ直しの計画 `(encode_fn, selection)` |
 | age の鍵 | `commands/env.py` の `cmd_env_keygen` | 鍵ファイルのパス | — | 公開鍵 |
-| スケールで作るファイルの dev サービス | `volume/compose.py` | サービスの辞書 | — | マウント先のパス（`CONTAINER_HOME`（新）から作る 3 つの定数） |
+| スケールで作るファイルの dev サービス | `volume/compose.py`（サービスの辞書と `_DEPRECATED_TARGET`）。マウント先のパスの定数 `CONTAINER_HOME`（新）・`VSCODE_SERVER_TARGET`・`VSCODE_BIN_TARGET` は `volume/manager.py`（決定 4。`compose.py` に置くと循環取り込みになる） | サービスの辞書 | — | マウント先のパス（`manager.py` の `CONTAINER_HOME`（新）から作る 3 つの定数） |
 | 補完の 1 回 | `etc/devbase-completion.bash` の `_devbase_completions` | 語の並び `words` と位置 `cword` | — | 候補 `COMPREPLY` |
 | 偽の OpenBao の 1 回の読み出し | `tests/conftest.py` の `_Handler` | 受けた要求 `Received` | 状態 `server_state` | 応答（状態と本文） |
 
@@ -575,7 +575,7 @@ R3 の 2 つの式は別の関数にあるため、組を返す関数を 1 つ�
 | 抜き出した関数も long_method の基準を満たす | 同上（抜き出した関数も測定の表に載せる） | 同上 |
 | `env keygen`・`env sync`（AWS）・`--group` の検査・スケールで作るファイル・`snapshot list` の出力・終了コード・書き込みが同じ | I1〜I3・I8。コミット 2 で `tests/` を変えずに全体のテストが通る。`--group` の検査（R4）と `snapshot list`（R7）は変えない | 各行の壊し方 |
 | bash と zsh の補完の候補が同じ | I4・I5 | I4・I5 の壊し方 |
-| R11〜R15 の移動を除き、`tests/` の既存のテストを変えていない。移動でも `assert` を変えていない | `git diff <コミット 1 の後>..` で `tests/` の `assert` の行が増減しないこと（決定 8 で呼び出しの名前を残す） | `assert` の期待値を書き換えて通す |
+| R11〜R15 の移動を除き、`tests/` の既存のテストを変えていない。移動でも `assert` を変えていない | `git diff <コミット 1 の後>..` で、テスト関数（`test_` で始まる関数）の中の `assert` の行が増減しないこと（決定 8 で呼び出しの名前を残す）。補助の中で移す `assert`（R11 の `bash_complete` の終了コード・R14 の `run_blocks` の空の検査）は、移す先と元を並べて文字列が同じであること | `assert` の期待値を書き換えて通す |
 | R15 の後も、Docker かイメージが無い端末で 4 つのファイルが飛ばされ、理由の文が同じ | I7 | 接尾を落とす（`BUILD_HINT` が消える）/ `IMAGE_IS_EXPLICIT` のときも案内を付ける |
 | `manager.py` の変更が先頭の定数に限られる | I10 | `ensure_volumes` の引数に触る |
 | 表に無い関数と前提 6 の同じ形のものを変えていない | `git diff` の hunk の関数名を、構成要素の表の「変えないもの」と突き合わせる | `_issue_or_error` の取り込みや `etc/_devbase` を直す |
