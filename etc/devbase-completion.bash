@@ -1,11 +1,17 @@
  # bash completion for devbase
 
+# devbase のルートを解決し、呼び出し元の `local devbase_root` へ入れる。
+# 標準出力で返すとコマンド置換で値の末尾の改行が落ちるため、変数へ直に入れる。
+_devbase_resolve_root() {
+    devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
+}
+
 # projects/ 配下のプロジェクト名 (symlink / 実ディレクトリ) を列挙する。
 # `devbase project up <name>` やトップレベルシノニム `devbase up <name>` の
 # name 補完に使う。
 _devbase_project_names() {
     local devbase_root
-    devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
+    _devbase_resolve_root
     local projects_dir="${devbase_root}/projects"
     if [ -d "$projects_dir" ]; then
         # -L で symlink を辿り -type d で判定することで、実ディレクトリと
@@ -35,6 +41,329 @@ _devbase_complete_flags() {
     fi
 }
 
+# 以下の _devbase_complete_* は引数を取らず、cur・prev・words・cword とフラグの一覧
+# (ctx_flags・ps_flags・logs_flags・open_flags) を _devbase_completions の local から読む。
+# どの関数も最後の文を if / case にし、当たらないときも終了の状態を 0 に保つ。
+
+# 位置 2: 1 語目ごとのサブコマンド・フラグ・プロジェクト名。
+_devbase_complete_subcommands() {
+    # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
+    local project_subcommands="up down ps login logs scale build rebuild list profile open post-start"
+    local container_subcommands="up down ps login logs scale build rebuild profile open"
+    local env_subcommands="init sync list set get delete edit project export import keygen exec token encrypt decrypt rekey doctor backend"
+    local plugin_subcommands="list install uninstall update info sync repo"
+    local snapshot_subcommands="create list restore copy delete rotate"
+    case "$prev" in
+        login)
+            _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
+            ;;
+        # build は image を取る (候補は出さない)。
+        build)
+            _devbase_complete_flags "$ctx_flags" "$cur"
+            ;;
+        # トップレベルシノニム: up/down/scale/rebuild は [name] を取るため
+        # プロジェクト名を補完する (login=index / build=image は対象外)。
+        up|down|scale|rebuild)
+            _devbase_complete_flags "$ctx_flags" "$cur" names
+            ;;
+        # open は [name] と --open-index / --context を取る (PLAN59)。
+        open)
+            _devbase_complete_flags "$open_flags" "$cur" names
+            ;;
+        # ps は [name] と -a フラグの両方を取る (project ps と同じ挙動)。
+        ps)
+            _devbase_complete_flags "$ps_flags" "$cur" names
+            ;;
+        # list は位置引数を取らず対話制御フラグのみ。`-*` ガードを外し
+        # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
+        list)
+            COMPREPLY=($(compgen -W "--no-interactive --plain -P --interactive -i" -- "$cur"))
+            ;;
+        project)
+            COMPREPLY=($(compgen -W "$project_subcommands" -- "$cur"))
+            ;;
+        container|ct)
+            COMPREPLY=($(compgen -W "$container_subcommands" -- "$cur"))
+            ;;
+        env)
+            COMPREPLY=($(compgen -W "$env_subcommands" -- "$cur"))
+            ;;
+        plugin|pl)
+            COMPREPLY=($(compgen -W "$plugin_subcommands" -- "$cur"))
+            ;;
+        snapshot|ss)
+            COMPREPLY=($(compgen -W "$snapshot_subcommands" -- "$cur"))
+            ;;
+    esac
+}
+
+# 位置 3: 1 語目 (グループ) で振り分ける。
+_devbase_complete_args() {
+    case "${words[1]}" in
+        # トップレベルシノニム: `devbase ps web -<TAB>` (group=ps, cword=3)
+        # のように name 位置が埋まった後でもフラグを補完する。project と対称化。
+        ps)
+            _devbase_complete_flags "$ps_flags" "$cur"
+            ;;
+        open)
+            _devbase_complete_flags "$open_flags" "$cur"
+            ;;
+        up|down|scale|rebuild)
+            _devbase_complete_flags "$ctx_flags" "$cur"
+            ;;
+        project)
+            _devbase_complete_project_args
+            ;;
+        container|ct)
+            _devbase_complete_container_args
+            ;;
+        env)
+            _devbase_complete_env_args
+            ;;
+        plugin|pl)
+            _devbase_complete_plugin_args
+            ;;
+        snapshot|ss)
+            _devbase_complete_snapshot_args
+            ;;
+    esac
+}
+
+# project subcommand arguments (推奨グループ)
+_devbase_complete_project_args() {
+    case "$prev" in
+        up|down|rebuild)
+            _devbase_complete_flags "$ctx_flags" "$cur" names
+            ;;
+        login)
+            _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
+            ;;
+        scale)
+            # `project scale <name> N` / `project scale N` の両形。
+            # name 補完を提示する (数値はユーザが直接入力)。
+            _devbase_complete_flags "$ctx_flags" "$cur" names
+            ;;
+        build)
+            _devbase_complete_flags "$ctx_flags" "$cur"
+            ;;
+        ps)
+            _devbase_complete_flags "$ps_flags" "$cur" names
+            ;;
+        logs)
+            _devbase_complete_flags "$logs_flags" "$cur" names
+            ;;
+        # list は位置引数を取らず対話制御フラグのみ。`-*` ガードを外し
+        # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
+        list)
+            COMPREPLY=($(compgen -W "--no-interactive --plain -P --interactive -i" -- "$cur"))
+            ;;
+        profile)
+            COMPREPLY=($(compgen -W "up down list" -- "$cur"))
+            ;;
+        open)
+            _devbase_complete_flags "$open_flags" "$cur" names
+            ;;
+        # post-start は [name] と --context を取る (#371)
+        post-start)
+            _devbase_complete_flags "$ctx_flags" "$cur" names
+            ;;
+    esac
+}
+
+# container subcommand arguments (非推奨: project へ移行してください)
+_devbase_complete_container_args() {
+    case "$prev" in
+        up|down|build|rebuild)
+            _devbase_complete_flags "$ctx_flags" "$cur"
+            ;;
+        login)
+            _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
+            ;;
+        scale)
+            _devbase_complete_flags "$ctx_flags" "$cur" "1 2 3 4 5"
+            ;;
+        profile)
+            COMPREPLY=($(compgen -W "up down list" -- "$cur"))
+            ;;
+        open)
+            _devbase_complete_flags "$open_flags" "$cur"
+            ;;
+        ps)
+            _devbase_complete_flags "$ps_flags" "$cur"
+            ;;
+        logs)
+            _devbase_complete_flags "$logs_flags" "$cur"
+            ;;
+    esac
+}
+
+# env subcommand arguments
+_devbase_complete_env_args() {
+    case "$prev" in
+        # exec / token は --context を取る (exec は `--` より前だけ)
+        exec|token)
+            _devbase_complete_flags "$ctx_flags" "$cur"
+            ;;
+        init)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--reset" -- "$cur"))
+            fi
+            ;;
+        list)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--global -g --project -p --reveal -r --keys -k" -- "$cur"))
+            fi
+            ;;
+        set|delete|edit)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--project -p" -- "$cur"))
+            fi
+            ;;
+        export)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--include-project --exclude-project --no-global --no-metadata --recipient --passphrase-env --passphrase-stdin --force-unencrypted --unsafe-allow-unencrypted-bucket" -- "$cur"))
+            fi
+            ;;
+        import)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--merge --replace-keys --replace --dry-run --identity --passphrase-env --passphrase-stdin --include-project --exclude-project --no-global --no-metadata --merge-metadata --backup-dir --keep-last" -- "$cur"))
+            fi
+            ;;
+    esac
+}
+
+# plugin subcommand arguments
+_devbase_complete_plugin_args() {
+    local repo_subcommands="add remove list refresh"
+    case "$prev" in
+        list)
+            COMPREPLY=($(compgen -W "--available" -- "$cur"))
+            ;;
+        install)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--link --all" -- "$cur"))
+            fi
+            ;;
+        uninstall|update|info)
+            local devbase_root
+            _devbase_resolve_root
+            local plugin_dir="${devbase_root}/plugins"
+            if [ -d "$plugin_dir" ]; then
+                local plugins
+                plugins=$(find "$plugin_dir" -mindepth 1 -maxdepth 1 -type d -o -type l | xargs -I{} basename {} 2>/dev/null)
+                COMPREPLY=($(compgen -W "$plugins" -- "$cur"))
+            fi
+            ;;
+        repo)
+            COMPREPLY=($(compgen -W "$repo_subcommands" -- "$cur"))
+            ;;
+    esac
+}
+
+# snapshot subcommand arguments
+_devbase_complete_snapshot_args() {
+    case "$prev" in
+        create)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--name --full" -- "$cur"))
+            fi
+            ;;
+        restore)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--point" -- "$cur"))
+            fi
+            ;;
+        rotate)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--keep" -- "$cur"))
+            fi
+            ;;
+    esac
+}
+
+# 位置 4: 1 語目で振り分ける。
+_devbase_complete_after_args() {
+    case "${words[1]}" in
+        project)
+            _devbase_complete_project_flags
+            _devbase_complete_profile_flags
+            ;;
+        container|ct)
+            _devbase_complete_profile_flags
+            ;;
+        plugin|pl)
+            _devbase_complete_plugin_after_args
+            ;;
+    esac
+}
+
+# project: name 位置が埋まった後 (例: `project ps web -<TAB>`)
+# でもフラグを補完する。subcommand は words[2]。
+_devbase_complete_project_flags() {
+    case "${words[2]}" in
+        ps)
+            _devbase_complete_flags "$ps_flags" "$cur"
+            ;;
+        logs)
+            _devbase_complete_flags "$logs_flags" "$cur"
+            ;;
+        open)
+            _devbase_complete_flags "$open_flags" "$cur"
+            ;;
+        up|down|rebuild|scale|post-start)
+            _devbase_complete_flags "$ctx_flags" "$cur"
+            ;;
+    esac
+}
+
+# project / container の profile up|down|list の直後 (例: `project profile up -<TAB>`)
+_devbase_complete_profile_flags() {
+    if [ "${words[2]}" = "profile" ]; then
+        case "$prev" in
+            up|down|list)
+                _devbase_complete_flags "$ctx_flags" "$cur"
+                ;;
+        esac
+    fi
+}
+
+# plugin install の引数の後のフラグと、plugin repo のサブコマンドの引数
+_devbase_complete_plugin_after_args() {
+    # plugin install flags after source argument
+    if [ "${words[2]}" = "install" ]; then
+        if [[ "$cur" == -* ]]; then
+            COMPREPLY=($(compgen -W "--link --all" -- "$cur"))
+        fi
+    fi
+    # plugin repo subcommand arguments
+    if [ "${words[2]}" = "repo" ]; then
+        case "$prev" in
+            add)
+                if [[ "$cur" == -* ]]; then
+                    COMPREPLY=($(compgen -W "--name" -- "$cur"))
+                fi
+                ;;
+            remove|refresh)
+                local devbase_root
+                _devbase_resolve_root
+                local yml="${devbase_root}/plugins.yml"
+                if [ -f "$yml" ] && command -v python3 >/dev/null 2>&1; then
+                    local repos
+                    repos=$(python3 -c "
+import yaml, sys
+try:
+    d = yaml.safe_load(open('$yml'))
+    print(' '.join(r['name'] for r in (d or {}).get('repositories', [])))
+except Exception:
+    pass
+" 2>/dev/null)
+                    COMPREPLY=($(compgen -W "$repos" -- "$cur"))
+                fi
+                ;;
+        esac
+    fi
+}
+
 _devbase_completions() {
     local cur prev words cword
     _init_completion 2>/dev/null || {
@@ -46,13 +375,6 @@ _devbase_completions() {
     }
 
     local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale open list help"
-    # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
-    local project_subcommands="up down ps login logs scale build rebuild list profile open post-start"
-    local container_subcommands="up down ps login logs scale build rebuild profile open"
-    local env_subcommands="init sync list set get delete edit project export import keygen exec token encrypt decrypt rekey doctor backend"
-    local plugin_subcommands="list install uninstall update info sync repo"
-    local repo_subcommands="add remove list refresh"
-    local snapshot_subcommands="create list restore copy delete rotate"
     # --context NAME を取るサブコマンドのフラグ候補 (トップレベル・project・container で共通)。
     # 道の直後と、[name] を取るものはプロジェクト名の直後で出す (#435)。
     local ctx_flags="--context"
@@ -71,276 +393,13 @@ _devbase_completions() {
             COMPREPLY=($(compgen -W "$commands" -- "$cur"))
             ;;
         2)
-            case "$prev" in
-                login)
-                    _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
-                    ;;
-                # build は image を取る (候補は出さない)。
-                build)
-                    _devbase_complete_flags "$ctx_flags" "$cur"
-                    ;;
-                # トップレベルシノニム: up/down/scale/rebuild は [name] を取るため
-                # プロジェクト名を補完する (login=index / build=image は対象外)。
-                up|down|scale|rebuild)
-                    _devbase_complete_flags "$ctx_flags" "$cur" names
-                    ;;
-                # open は [name] と --open-index / --context を取る (PLAN59)。
-                open)
-                    _devbase_complete_flags "$open_flags" "$cur" names
-                    ;;
-                # ps は [name] と -a フラグの両方を取る (project ps と同じ挙動)。
-                ps)
-                    _devbase_complete_flags "$ps_flags" "$cur" names
-                    ;;
-                # list は位置引数を取らず対話制御フラグのみ。`-*` ガードを外し
-                # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
-                list)
-                    COMPREPLY=($(compgen -W "--no-interactive --plain -P --interactive -i" -- "$cur"))
-                    ;;
-                project)
-                    COMPREPLY=($(compgen -W "$project_subcommands" -- "$cur"))
-                    ;;
-                container|ct)
-                    COMPREPLY=($(compgen -W "$container_subcommands" -- "$cur"))
-                    ;;
-                env)
-                    COMPREPLY=($(compgen -W "$env_subcommands" -- "$cur"))
-                    ;;
-                plugin|pl)
-                    COMPREPLY=($(compgen -W "$plugin_subcommands" -- "$cur"))
-                    ;;
-                snapshot|ss)
-                    COMPREPLY=($(compgen -W "$snapshot_subcommands" -- "$cur"))
-                    ;;
-            esac
+            _devbase_complete_subcommands
             ;;
         3)
-            local group="${words[1]}"
-            # トップレベルシノニム: `devbase ps web -<TAB>` (group=ps, cword=3)
-            # のように name 位置が埋まった後でもフラグを補完する。project と対称化。
-            case "$group" in
-                ps)
-                    _devbase_complete_flags "$ps_flags" "$cur"
-                    ;;
-                open)
-                    _devbase_complete_flags "$open_flags" "$cur"
-                    ;;
-                up|down|scale|rebuild)
-                    _devbase_complete_flags "$ctx_flags" "$cur"
-                    ;;
-            esac
-            # project subcommand arguments (推奨グループ)
-            if [ "$group" = "project" ]; then
-                case "$prev" in
-                    up|down|rebuild)
-                        _devbase_complete_flags "$ctx_flags" "$cur" names
-                        ;;
-                    login)
-                        _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
-                        ;;
-                    scale)
-                        # `project scale <name> N` / `project scale N` の両形。
-                        # name 補完を提示する (数値はユーザが直接入力)。
-                        _devbase_complete_flags "$ctx_flags" "$cur" names
-                        ;;
-                    build)
-                        _devbase_complete_flags "$ctx_flags" "$cur"
-                        ;;
-                    ps)
-                        _devbase_complete_flags "$ps_flags" "$cur" names
-                        ;;
-                    logs)
-                        _devbase_complete_flags "$logs_flags" "$cur" names
-                        ;;
-                    # list は位置引数を取らず対話制御フラグのみ。`-*` ガードを外し
-                    # 常にフラグ候補を出す (zsh 側 _arguments と挙動を揃える)。
-                    list)
-                        COMPREPLY=($(compgen -W "--no-interactive --plain -P --interactive -i" -- "$cur"))
-                        ;;
-                    profile)
-                        COMPREPLY=($(compgen -W "up down list" -- "$cur"))
-                        ;;
-                    open)
-                        _devbase_complete_flags "$open_flags" "$cur" names
-                        ;;
-                    # post-start は [name] と --context を取る (#371)
-                    post-start)
-                        _devbase_complete_flags "$ctx_flags" "$cur" names
-                        ;;
-                esac
-            fi
-            # container subcommand arguments (非推奨: project へ移行してください)
-            if [ "$group" = "container" ] || [ "$group" = "ct" ]; then
-                case "$prev" in
-                    up|down|build|rebuild)
-                        _devbase_complete_flags "$ctx_flags" "$cur"
-                        ;;
-                    login)
-                        _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
-                        ;;
-                    scale)
-                        _devbase_complete_flags "$ctx_flags" "$cur" "1 2 3 4 5"
-                        ;;
-                    profile)
-                        COMPREPLY=($(compgen -W "up down list" -- "$cur"))
-                        ;;
-                    open)
-                        _devbase_complete_flags "$open_flags" "$cur"
-                        ;;
-                    ps)
-                        _devbase_complete_flags "$ps_flags" "$cur"
-                        ;;
-                    logs)
-                        _devbase_complete_flags "$logs_flags" "$cur"
-                        ;;
-                esac
-            fi
-            # env subcommand arguments
-            if [ "$group" = "env" ]; then
-                case "$prev" in
-                    # exec / token は --context を取る (exec は `--` より前だけ)
-                    exec|token)
-                        _devbase_complete_flags "$ctx_flags" "$cur"
-                        ;;
-                    init)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--reset" -- "$cur"))
-                        fi
-                        ;;
-                    list)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--global -g --project -p --reveal -r --keys -k" -- "$cur"))
-                        fi
-                        ;;
-                    set|delete|edit)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--project -p" -- "$cur"))
-                        fi
-                        ;;
-                    export)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--include-project --exclude-project --no-global --no-metadata --recipient --passphrase-env --passphrase-stdin --force-unencrypted --unsafe-allow-unencrypted-bucket" -- "$cur"))
-                        fi
-                        ;;
-                    import)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--merge --replace-keys --replace --dry-run --identity --passphrase-env --passphrase-stdin --include-project --exclude-project --no-global --no-metadata --merge-metadata --backup-dir --keep-last" -- "$cur"))
-                        fi
-                        ;;
-                esac
-            fi
-            # plugin subcommand arguments
-            if [ "$group" = "plugin" ] || [ "$group" = "pl" ]; then
-                case "$prev" in
-                    list)
-                        COMPREPLY=($(compgen -W "--available" -- "$cur"))
-                        ;;
-                    install)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--link --all" -- "$cur"))
-                        fi
-                        ;;
-                    uninstall|update|info)
-                        local devbase_root
-                        devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
-                        local plugin_dir="${devbase_root}/plugins"
-                        if [ -d "$plugin_dir" ]; then
-                            local plugins
-                            plugins=$(find "$plugin_dir" -mindepth 1 -maxdepth 1 -type d -o -type l | xargs -I{} basename {} 2>/dev/null)
-                            COMPREPLY=($(compgen -W "$plugins" -- "$cur"))
-                        fi
-                        ;;
-                    repo)
-                        COMPREPLY=($(compgen -W "$repo_subcommands" -- "$cur"))
-                        ;;
-                esac
-            fi
-            # snapshot subcommand arguments
-            if [ "$group" = "snapshot" ] || [ "$group" = "ss" ]; then
-                case "$prev" in
-                    create)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--name --full" -- "$cur"))
-                        fi
-                        ;;
-                    restore)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--point" -- "$cur"))
-                        fi
-                        ;;
-                    rotate)
-                        if [[ "$cur" == -* ]]; then
-                            COMPREPLY=($(compgen -W "--keep" -- "$cur"))
-                        fi
-                        ;;
-                esac
-            fi
+            _devbase_complete_args
             ;;
         4)
-            local group="${words[1]}"
-            # project: name 位置が埋まった後 (例: `project ps web -<TAB>`)
-            # でもフラグを補完する。subcommand は words[2]。
-            if [ "$group" = "project" ]; then
-                case "${words[2]}" in
-                    ps)
-                        _devbase_complete_flags "$ps_flags" "$cur"
-                        ;;
-                    logs)
-                        _devbase_complete_flags "$logs_flags" "$cur"
-                        ;;
-                    open)
-                        _devbase_complete_flags "$open_flags" "$cur"
-                        ;;
-                    up|down|rebuild|scale|post-start)
-                        _devbase_complete_flags "$ctx_flags" "$cur"
-                        ;;
-                esac
-            fi
-            # project / container の profile up|down|list の直後 (例: `project profile up -<TAB>`)
-            if [ "$group" = "project" ] || [ "$group" = "container" ] || [ "$group" = "ct" ]; then
-                if [ "${words[2]}" = "profile" ]; then
-                    case "$prev" in
-                        up|down|list)
-                            _devbase_complete_flags "$ctx_flags" "$cur"
-                            ;;
-                    esac
-                fi
-            fi
-            # plugin install flags after source argument
-            if [ "$group" = "plugin" ] || [ "$group" = "pl" ]; then
-                if [ "${words[2]}" = "install" ]; then
-                    if [[ "$cur" == -* ]]; then
-                        COMPREPLY=($(compgen -W "--link --all" -- "$cur"))
-                    fi
-                fi
-                # plugin repo subcommand arguments
-                if [ "${words[2]}" = "repo" ]; then
-                    case "$prev" in
-                        add)
-                            if [[ "$cur" == -* ]]; then
-                                COMPREPLY=($(compgen -W "--name" -- "$cur"))
-                            fi
-                            ;;
-                        remove|refresh)
-                            local devbase_root
-                            devbase_root="${DEVBASE_ROOT:-$(dirname "$(dirname "$(command -v devbase 2>/dev/null)")" 2>/dev/null)}"
-                            local yml="${devbase_root}/plugins.yml"
-                            if [ -f "$yml" ] && command -v python3 >/dev/null 2>&1; then
-                                local repos
-                                repos=$(python3 -c "
-import yaml, sys
-try:
-    d = yaml.safe_load(open('$yml'))
-    print(' '.join(r['name'] for r in (d or {}).get('repositories', [])))
-except Exception:
-    pass
-" 2>/dev/null)
-                                COMPREPLY=($(compgen -W "$repos" -- "$cur"))
-                            fi
-                            ;;
-                    esac
-                fi
-            fi
+            _devbase_complete_after_args
             ;;
     esac
 }

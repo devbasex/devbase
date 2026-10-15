@@ -875,25 +875,31 @@ def _aws_sync_plan(ctx: _SyncContext):
       プロファイルの集合が値のプロファイルの集合と一致すれば丸ごと。値が読めない、または値にあって
       今のファイルに無いプロファイルがあれば書かない (決定 10)
     """
-    from devbase.env.collectors.aws import _encode_aws_config_files
-    from devbase.env.host_import import ALL
-
     source = ctx.sources.get_source('aws')
     if source and source.get('type') == 'aws_profiles':
         return _aws_plan_for_selection(ctx, list(source.get('profiles') or []))
     if source:
-        return _encode_aws_config_files, ALL
+        return _aws_whole_plan()
     return _aws_plan_for_unregistered(ctx)
+
+
+def _aws_whole_plan():
+    """``~/.aws`` を丸ごと入れ直す計画 ``(encode_fn, ALL)`` (I8)"""
+    from devbase.env.collectors.aws import _encode_aws_config_files
+    from devbase.env.host_import import ALL
+
+    return _encode_aws_config_files, ALL
 
 
 def _aws_plan_for_selection(ctx: _SyncContext, profiles):
     """控えが ``aws_profiles`` のとき、選んだプロファイルとその連なりだけを切り出す計画 (I7)"""
     from devbase.env import aws_profiles
 
+    plan = (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
     key = keys.AWS_CONFIG_BASE64
     targets = ctx.targets
     if targets.holder(key) is None:
-        return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+        return plan
     payload = aws_profiles.build_from_home(profiles)
     _report_unknown_profiles(payload)
     if _report_profile_conflicts(payload):
@@ -905,14 +911,13 @@ def _aws_plan_for_selection(ctx: _SyncContext, profiles):
                     "（選択はグループの控えのもの。入れ直すなら devbase env init --reset）",
                     _AWS_LABEL, ctx.store.display_label(dest.ref))
         return None
-    return (lambda: aws_profiles.build_from_home(profiles).encode()), profiles
+    return plan
 
 
 def _aws_plan_for_unregistered(ctx: _SyncContext):
     """控えに項目が無いとき、参照の値のプロファイルを選択とみなす計画 (決定 10)"""
     from devbase.env import aws_profiles
     from devbase.env.collectors.aws import _encode_aws_config_files
-    from devbase.env.host_import import ALL
 
     key = keys.AWS_CONFIG_BASE64
     targets = ctx.targets
@@ -931,7 +936,7 @@ def _aws_plan_for_unregistered(ctx: _SyncContext):
     current = (set(aws_profiles.profile_names(config_text))
                | set(aws_profiles.credential_names(credentials_text)))
     if current == set(in_value):
-        return _encode_aws_config_files, ALL
+        return _aws_whole_plan()
     payload = aws_profiles.build(config_text, credentials_text, in_value)
     if payload.unknown:
         _report_unknown_profiles(payload)
@@ -1687,7 +1692,6 @@ def cmd_env_keygen(devbase_root: Path, force: bool = False,
     生成先と探索先が構造的に一致する契約を保つ。
     """
     from devbase.env import agekeys
-    from devbase.errors import DevbaseError
 
     path = agekeys.key_file_path()
 

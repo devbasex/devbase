@@ -15,6 +15,7 @@ from devbase.log import get_logger
 
 from . import bind_mounts
 from .manager import (
+    CONTAINER_HOME,
     VSCODE_BIN_TARGET,
     VSCODE_SERVER_TARGET,
     VSCODE_SERVER_VOLUME,
@@ -27,7 +28,7 @@ from .manager import (
 logger = get_logger(__name__)
 
 # 旧 /home/ubuntu マウントは非推奨のため scale 生成時に除去する
-_DEPRECATED_TARGET = '/home/ubuntu'
+_DEPRECATED_TARGET = CONTAINER_HOME
 
 # VS Code Server の置き場 (PLAN36 / #463)。本体 (bin/) だけを全コンテナ共通の
 # named volume に置く。コンテナの書き込みレイヤに置くと devbase up のたびに
