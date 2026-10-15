@@ -72,8 +72,10 @@ docker.sock を mount して docker を使う。DinD を前提に作られた唯
 | 知らせの検査 | `tests/containers/test_entrypoint_dind_removed.py` | entrypoint を source して、知らせの出力と、触れてはならないコマンドを呼ばないことを固定する |
 
 型（クラス）は持たない。Dockerfile の命令・設定ファイル・entrypoint のシェル関数だけで構成する。
-Dockerfile を命令に分ける部品（`Instruction` / `parse`）は `tests/containers/dockerfile_parse.py` に
-あり、Dockerfile の形を固定する検査が共通に使う。
+Dockerfile を命令に分ける部品（`Instruction` / `parse`）と、`RUN` を行継続を含む 1 命令ずつに分ける `run_blocks` は
+`tests/containers/dockerfile_parse.py` にあり、Dockerfile の形を固定する検査が共通に使う。建てたイメージの中身を
+見る検査は、Docker とイメージが使えないときに飛ばす理由を `tests/containers/docker_images.py` の
+`image_unavailable` から得る（Docker を起動するため、`dockerfile_parse.py` とは分けて置く）。
 
 ## 仕様
 

@@ -159,6 +159,14 @@ bash（`etc/devbase-completion.bash`）は、道ごとの分岐が `_devbase_com
 候補は旗の有無に依らない。直前の語が `--context` なら、どの分岐にも入る前に候補を空にして終える。
 連想配列を使わず、macOS の bash 3.2 で動く。
 
+bash の補完の入口 `_devbase_completions` は、語の位置（`cword`）だけで振り分ける。位置 1 はトップレベルのサブコマンド、
+位置 2 は `_devbase_complete_subcommands`、位置 3 は `_devbase_complete_args`、位置 4 は `_devbase_complete_after_args`
+へ渡し、位置 3・4 はさらにグループ（`project`・`container|ct`・`env`・`plugin|pl`・`snapshot|ss`）ごとの関数
+（`_devbase_complete_project_args` など）へ分ける。どの関数も 60 行以下に収める。devbase のルート
+（`${DEVBASE_ROOT:-…}`）は `_devbase_resolve_root` 1 か所で解決し、呼び出し元の `local devbase_root` へ直に入れる。
+標準出力で返すと、コマンド置換で値の末尾の改行が落ちるためである。bash の補完のテストは、補完を実行する補助
+（`tests/cli/conftest.py` の `run_bash_completion`・`bash_complete`）を共通に使う。
+
 zsh（`etc/_devbase`）は、サブコマンドの分岐から `_arguments` を直接呼ばず、`_devbase_arguments <深さ>` を通す。
 `_arguments` は `words[1]` だけをコマンド名として飛ばすため、そのまま呼ぶと `devbase up <TAB>` の `up` が 1 番目の
 引数に数えられ、`'1:name:_devbase_project_names'` が利用者の引数を指さない。`_devbase_arguments` は `words` と
@@ -166,6 +174,11 @@ zsh（`etc/_devbase`）は、サブコマンドの分岐から `_arguments` を�
 呼ぶ。`--context` の指定は値の補完を持たない `'--context[Docker context]:context:'` で、`--context` の集合の
 すべての道に分岐を置く（トップレベルの `build`・`container up|down|rebuild`・`env token`・入れ子の
 `profile up|down|list` も `*)` に落とさない）。
+
+`project` と `container` の `profile` の分岐は、同じ形の `case` の入れ子を 2 か所に持つ。関数へ寄せないのは、一致テスト
+（`tests/cli/test_name_context_consistency.py`）が `case` の見出しを字下げの深さで辿って `--context` の指定を探すため
+である。関数へ移すと、`profile)` の本体が呼び出しの 1 行になり、`up|down|list)` の見出しが見つからなくなる。重なりは
+約 10 行で、テストの辿り方を変える費用に見合わない。
 
 #### zsh の補完の実行テスト
 
