@@ -1,6 +1,8 @@
 """OpenBao (KV v2 + AppRole) を保存先にする ``SecretBackend`` 実装 (PLAN51)
 
-REST を標準ライブラリの ``urllib.request`` で叩く (常時依存を増やさない)。
+REST を標準ライブラリの ``urllib.request`` で叩く。TLS の証明書は OS の信頼ストア
+(``truststore``) で検証する (#497)。TLS を傍受するプロキシの CA を OS に入れた端末でも届くため。
+プロセス全体へは注入せず、OpenBao への接続にだけ使う。
 使う経路は仕様「OpenBao との契約」の 4 つだけ:
 
 - ``POST /v1/auth/approle/login`` — ``role_id`` / ``secret_id`` を token へ交換
@@ -31,9 +33,11 @@ token はプロセス内にだけ持ち、ディスクへ書かない。実行�
 
 from __future__ import annotations
 
+import functools
 import http.client
 import json
 import socket
+import ssl
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +60,36 @@ LOGIN_PATH = '/v1/auth/approle/login'
 
 #: check-and-set の不一致を表す、応答の ``errors`` に含まれる語
 _CAS_MISMATCH = 'check-and-set'
+
+#: 意味を持つ HTTP の状態コード
+_HTTP_BAD_REQUEST = 400
+_HTTP_FORBIDDEN = 403
+_HTTP_NOT_FOUND = 404
+#: ログインの拒否 (secret_id の失効・書き間違いと、利用者の無効化)
+_LOGIN_REJECT_STATUSES = (_HTTP_BAD_REQUEST, _HTTP_FORBIDDEN)
+
+
+@functools.lru_cache(maxsize=1)
+def _tls_context() -> Optional[ssl.SSLContext]:
+    """OpenBao への HTTP に渡す SSL コンテキスト。OS の信頼ストアで検証する。
+
+    ``truststore.SSLContext`` は検証を緩めない (``CERT_REQUIRED``・ホスト名の照合)。
+    ただし ``verify_flags`` は ``ssl.create_default_context()`` と揃わない。Python 3.13 の
+    既定は ``VERIFY_X509_STRICT`` と ``VERIFY_X509_PARTIAL_CHAIN`` を立てるが、
+    ``truststore.SSLContext`` は立てない。今までの ``urlopen`` が拒んだ不適合な証明書を
+    受け入れないよう、その Python の既定の ``verify_flags`` を写す。
+    ``truststore.inject_into_ssl()`` は使わない。プロセス全体の ``ssl`` を差し替え、
+    boto3 など他の通信の検証まで変えてしまうため。``truststore`` を import できない
+    ときは ``None`` を返し、``urlopen`` は今までどおり既定のコンテキストで検証する。
+    """
+    try:
+        import truststore
+    except ImportError:
+        logger.debug("truststore を読み込めないため、既定の SSL コンテキストで OpenBao へ接続します")
+        return None
+    context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.verify_flags = ssl.create_default_context().verify_flags
+    return context
 
 
 class SecretUnreachableError(SecretStoreError):
@@ -83,7 +117,12 @@ def _dict_get(value: Any, key: str) -> Any:
     return value.get(key) if isinstance(value, dict) else None
 
 
-class _HttpStatus(Exception):
+def _as_version(value: Any) -> Optional[int]:
+    """応答の版として読める値 (整数で真偽値でない) ならその値、ほかは ``None``"""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+class _HttpStatusError(Exception):
     """HTTP の失敗応答 (内部用)"""
 
     def __init__(self, status: int, body: bytes):
@@ -148,6 +187,10 @@ class OpenBaoBackend:
     @property
     def url(self) -> str:
         return self._settings.url
+
+    def _at_server(self, message: str, *details: str) -> str:
+        """失敗の文言へ接続先の行を足す。``details`` は接続先の行の後へ 1 行ずつ続ける"""
+        return '\n'.join([message, f"  接続先: {self.url}", *details])
 
     def _check_group(self, ref: SecretRef) -> None:
         """参照のグループが設定のレイアウトと合うことを確かめる (PLAN56)。
@@ -217,22 +260,20 @@ class OpenBaoBackend:
             data = self._http('POST', LOGIN_PATH,
                               body={'role_id': creds.role_id, 'secret_id': creds.secret_id},
                               auth=False)
-        except _HttpStatus as e:
+        except _HttpStatusError as e:
             # 400 (invalid role or secret) は secret_id の失効・書き間違い、403 は利用者
             # (entity) の無効化。どちらも資格の取り消しで、キャッシュへ落ちてはいけない
-            if e.status in (400, 403):
-                raise SecretAuthError(
-                    f"OpenBao の資格を確認できません (認証が拒まれました: HTTP {e.status})\n"
-                    f"  接続先: {self.url}\n"
+            if e.status in _LOGIN_REJECT_STATUSES:
+                raise SecretAuthError(self._at_server(
+                    f"OpenBao の資格を確認できません (認証が拒まれました: HTTP {e.status})",
                     "  この端末の secret_id が失効していないか、利用者が無効化されていないか"
-                    "確認してください") from None
+                    "確認してください")) from None
             raise SecretUnreachableError(
-                f"OpenBao へ到達できません (HTTP {e.status})\n  接続先: {self.url}") from None
+                self._at_server(f"OpenBao へ到達できません (HTTP {e.status})")) from None
         auth = _dict_get(data, 'auth')
         token = _dict_get(auth, 'client_token')
         if not isinstance(token, str) or not token:
-            raise SecretUnreachableError(
-                f"OpenBao の認証応答を解釈できません\n  接続先: {self.url}")
+            raise SecretUnreachableError(self._at_server("OpenBao の認証応答を解釈できません"))
         lease = auth.get('lease_duration')
         ttl = float(lease) if isinstance(lease, (int, float)) and lease > 0 else 3600.0
         self._token = token
@@ -275,7 +316,8 @@ class OpenBaoBackend:
             headers['X-Vault-Token'] = self._ensure_token()
         req = _urlrequest.Request(url, data=payload, method=method, headers=headers)
         try:
-            with _urlrequest.urlopen(req, timeout=self._settings.timeout_seconds) as resp:
+            with _urlrequest.urlopen(req, timeout=self._settings.timeout_seconds,
+                                     context=_tls_context()) as resp:
                 raw = resp.read()
         except _urlerror.HTTPError as e:
             # 失敗応答の本文も最後まで受け取れないことがある (5xx の途中切れ)。
@@ -283,33 +325,31 @@ class OpenBaoBackend:
             try:
                 body = e.read() or b''
             except (OSError, http.client.HTTPException) as read_error:
-                raise SecretUnreachableError(
+                raise SecretUnreachableError(self._at_server(
                     f"OpenBao へ到達できません (HTTP {e.code} の応答を最後まで受け取れません: "
-                    f"{read_error})\n  接続先: {self.url}") from None
-            raise _HttpStatus(e.code, body) from None
+                    f"{read_error})")) from None
+            raise _HttpStatusError(e.code, body) from None
         except (_urlerror.URLError, socket.timeout, ConnectionError, OSError,
                 http.client.HTTPException) as e:
             # 本文の途中で切られたとき (IncompleteRead) も「応答を最後まで受け取れなかった」
             # 不達として扱う
-            raise SecretUnreachableError(
-                f"OpenBao へ到達できません ({e.reason if hasattr(e, 'reason') else e})\n"
-                f"  接続先: {self.url}") from None
+            raise SecretUnreachableError(self._at_server(
+                f"OpenBao へ到達できません ({e.reason if hasattr(e, 'reason') else e})")) from None
         if not raw:
             return {}
         try:
             return json.loads(raw.decode('utf-8'))
         except ValueError:
-            raise SecretUnreachableError(
-                f"OpenBao の応答を JSON として読めません ({method} {path})\n"
-                f"  接続先: {self.url}") from None
+            raise SecretUnreachableError(self._at_server(
+                f"OpenBao の応答を JSON として読めません ({method} {path})")) from None
 
     def _unreachable(self, status: int, ref: SecretRef) -> SecretUnreachableError:
         return SecretUnreachableError(
-            f"OpenBao へ到達できません ({ref.label()}: HTTP {status})\n  接続先: {self.url}")
+            self._at_server(f"OpenBao へ到達できません ({ref.label()}: HTTP {status})"))
 
     def _unreadable(self, ref: SecretRef, why: str) -> SecretUnreachableError:
         return SecretUnreachableError(
-            f"OpenBao の応答を解釈できません ({ref.label()}: {why})\n  接続先: {self.url}")
+            self._at_server(f"OpenBao の応答を解釈できません ({ref.label()}: {why})"))
 
     def _forbidden(self, ref: SecretRef, action: str, *,
                    hint: str = '', show_path: bool = True) -> SecretAuthError:
@@ -319,9 +359,8 @@ class OpenBaoBackend:
         ``を削除する``)。``show_path`` が真ならパス行を足す。``hint`` があれば
         末尾へ足す (削除は付けない)。
         """
-        message = (
-            f"OpenBao でこの参照{action}権限がありません ({ref.label()}: HTTP 403)\n"
-            f"  接続先: {self.url}")
+        message = self._at_server(
+            f"OpenBao でこの参照{action}権限がありません ({ref.label()}: HTTP 403)")
         if show_path:
             message += f"\n  パス: {self.display_path(ref)}"
         if hint:
@@ -336,7 +375,21 @@ class OpenBaoBackend:
         inner = _dict_get(data, 'data')
         metadata = _dict_get(inner, 'metadata')
         version = _dict_get(metadata, 'version')
-        return version if isinstance(version, int) and not isinstance(version, bool) else None
+        return _as_version(version)
+
+    @classmethod
+    def _version_from_404(cls, body: bytes) -> int:
+        """404 の応答の本文から現在の版を取り出す (無ければ 0)。
+
+        未作成、または最新版が論理削除されている。後者は本文に現在の版が入る
+        (版 0 を送ると不一致になる)
+        """
+        try:
+            data = json.loads(body.decode('utf-8')) if body else {}
+        except (ValueError, UnicodeDecodeError):
+            data = {}
+        version = cls._version_of(data)
+        return version if version is not None else 0
 
     def _parse_secrets(self, ref: SecretRef, data: Any) -> Dict[str, str]:
         inner = _dict_get(data, 'data')
@@ -362,18 +415,11 @@ class OpenBaoBackend:
         """
         try:
             data = self._http('GET', self._kv_path('data', ref))
-        except _HttpStatus as e:
-            if e.status == 404:
-                # 未作成、または最新版が論理削除されている。後者は本文に現在の版が入る
-                # (版 0 を送ると不一致になる)
-                try:
-                    body = json.loads(e.body.decode('utf-8')) if e.body else {}
-                except (ValueError, UnicodeDecodeError):
-                    body = {}
-                version = self._version_of(body)
-                self._remember(ref, {}, version if version is not None else 0)
+        except _HttpStatusError as e:
+            if e.status == _HTTP_NOT_FOUND:
+                self._remember(ref, {}, self._version_from_404(e.body))
                 return {}
-            if e.status == 403:
+            if e.status == _HTTP_FORBIDDEN:
                 raise self._forbidden(
                     ref, 'を読む',
                     hint=f"  backend.yml の openbao.user (現在: {self._settings.user}) が"
@@ -432,11 +478,10 @@ class OpenBaoBackend:
             self.fetch(ref)
             basis = self._seen[ref]
         if basis.version is None:
-            raise SecretUnreachableError(
-                f"OpenBao へ到達できないため、{ref.label()}へ書き込めません\n"
-                f"  接続先: {self.url}\n"
+            raise SecretUnreachableError(self._at_server(
+                f"OpenBao へ到達できないため、{ref.label()}へ書き込めません",
                 "  控えから読んだ内容は書き戻しません (不達の間の他の利用者の更新を"
-                "上書きしないため)。サーバへ届く状態でやり直してください")
+                "上書きしないため)。サーバへ届く状態でやり直してください"))
         return basis.version
 
     def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
@@ -445,8 +490,8 @@ class OpenBaoBackend:
         body = {'options': {'cas': version}, 'data': dict(data)}
         try:
             response = self._http('POST', self._kv_path('data', ref), body=body)
-        except _HttpStatus as e:
-            if e.status == 400 and any(_CAS_MISMATCH in msg for msg in e.errors()):
+        except _HttpStatusError as e:
+            if e.status == _HTTP_BAD_REQUEST and any(_CAS_MISMATCH in msg for msg in e.errors()):
                 # 読んだ内容がもう現物と違う。控えを消して、やり直しを促す
                 self._forget(ref)
                 raise SecretConflictError(
@@ -454,7 +499,7 @@ class OpenBaoBackend:
                     f"(版 {version} が現在の版と一致しません)\n"
                     f"  パス: {self.display_path(ref)}\n"
                     "  もう一度読み直してから同じ操作をやり直してください") from None
-            if e.status == 403:
+            if e.status == _HTTP_FORBIDDEN:
                 # ログインは通っている。資格の取り消しではなく、このパスへ書く権限が無い
                 raise self._forbidden(
                     ref, 'への書き込み',
@@ -462,10 +507,9 @@ class OpenBaoBackend:
                          "利用者だけです") from None
             if 400 <= e.status < 500:
                 # サーバが拒んだと確定した。サーバは変わっておらず、控えはそのまま正しい
-                raise SecretRefusedError(
-                    f"OpenBao が書き込みを拒みました ({ref.label()}: HTTP {e.status})\n"
-                    f"  接続先: {self.url}\n"
-                    f"  パス: {self.display_path(ref)}") from None
+                raise SecretRefusedError(self._at_server(
+                    f"OpenBao が書き込みを拒みました ({ref.label()}: HTTP {e.status})",
+                    f"  パス: {self.display_path(ref)}")) from None
             # 5xx はサーバが更新を確定した後で応答だけが失われた可能性がある
             self._forget(ref)
             raise self._unreachable(e.status, ref) from None
@@ -474,8 +518,8 @@ class OpenBaoBackend:
             self._forget(ref)
             raise
         inner = _dict_get(response, 'data')
-        new_version = _dict_get(inner, 'version')
-        if not isinstance(new_version, int) or isinstance(new_version, bool):
+        new_version = _as_version(_dict_get(inner, 'version'))
+        if new_version is None:
             self._forget(ref)
             raise self._unreadable(ref, '保存の応答に data.version がありません')
         # 応答の版が次の書き込みの基準になる (同じ実行で同じ参照を再び書くとき、
@@ -496,8 +540,8 @@ class OpenBaoBackend:
             return False
         try:
             self._http('DELETE', self._kv_path('metadata', ref))
-        except _HttpStatus as e:
-            if e.status == 403:
+        except _HttpStatusError as e:
+            if e.status == _HTTP_FORBIDDEN:
                 raise self._forbidden(ref, 'を削除する', show_path=False) from None
             self._forget(ref)
             raise self._unreachable(e.status, ref) from None

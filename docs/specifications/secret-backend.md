@@ -917,6 +917,14 @@ token をホストのディスクへ置かない決まりを守るためであ�
 - KV v2 は値の中の `${OTHER_KEY}` を展開しない。参照記法は文字列のまま往復する
 - KV v2 にはコメント・空行の置き場が無く、`load_bytes()` が返すのは `KEY=VALUE` の並び
   である
+- `https` の接続先の証明書は、OS の信頼ストア（[truststore](https://truststore.readthedocs.io/)。
+  macOS はキーチェーン、Windows は証明書ストア、Linux は OpenSSL の既定の CA）で検証する。4 つの経路
+  （認証を含む）はすべて同じ SSL コンテキストを使う。TLS を傍受するプロキシの CA を OS に入れた端末で、
+  `SSL_CERT_FILE` などを付けずに届くためである。検証は緩めない（証明書の検証とホスト名の照合を
+  行い、Python 3.13 の `VERIFY_X509_STRICT` も外さない）。プロセス全体へは注入せず
+  （`truststore.inject_into_ssl()` を使わない）、boto3 など他の通信の検証は変わらない。`truststore` を
+  読み込めないときは、Python の既定の SSL コンテキストで続ける。検証の失敗は到達できない失敗
+  （`SecretUnreachableError`）として扱う
 
 パスの対応（`<g>` は参照のグループの置き場のグループ名）:
 
@@ -1498,6 +1506,9 @@ groups:
   `--secret-id-stdin` へパイプで渡し、画面にも出さない
 - コンテナから見た接続先の置き換えは `http` の loopback に限る。`https` の URL は置き換えず、TLS の
   検証の相手を変えない
+- ホストの devbase は OpenBao の証明書を OS の信頼ストアで検証する（「OpenBao との契約」）。OS に入れた
+  CA を信頼するため、OS の信頼ストアへ CA を足せる者は接続先を偽れる。これは同じ端末のブラウザや curl と
+  同じ前提である
 - `scope` を SHA-256 にするのは、`role_id` とパスを平文で残さないためである
 - 個人単位の機密はパスで分け、他人のパスを読む権限が無ければサーバが 403 を返す。宛先を
   指すのは設定、渡してよいかを決めるのはサーバ（entity 名で絞るポリシー）という分担である

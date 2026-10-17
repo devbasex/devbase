@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 from urllib import request
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -29,6 +30,11 @@ TEAM_GLOBAL_PATH = 'team/global'
 TEAM_WEB_PATH = 'team/projects/web'
 USER_GLOBAL_PATH = 'users/member01/global'
 USER_WEB_PATH = 'users/member01/projects/web'
+
+
+def _kv_posts(openbao):
+    """ログインの POST を除いた、KV への POST"""
+    return [r for r in openbao.requests_of('POST') if r.kv_path]
 
 
 @pytest.mark.parametrize('body', [
@@ -147,8 +153,7 @@ def test_save_sends_the_whole_dictionary_in_one_post_with_the_read_version(store
 
     store.save(GLOBAL, {'SAME': '1', 'CHANGED': 'new', 'ADDED': 'a'})
 
-    posts = openbao.requests_of('POST')
-    posts = [r for r in posts if r.kv_path is not None]
+    posts = _kv_posts(openbao)
     assert len(posts) == 1
     assert posts[0].cas == 1
     assert posts[0].body['data'] == {'SAME': '1', 'CHANGED': 'new', 'ADDED': 'a'}
@@ -163,14 +168,14 @@ def test_save_without_a_prior_read_fetches_the_version_first(store, openbao):
     store.save(GLOBAL, {'A': '3'})
 
     assert len(openbao.requests_of('GET')) == 1
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 2
 
 
 def test_save_to_an_unwritten_path_uses_version_zero(store, openbao):
     store.save(GLOBAL, {'A': '1'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 0
     assert openbao.version_of(TEAM_GLOBAL_PATH) == 1
 
@@ -183,7 +188,7 @@ def test_save_after_a_soft_delete_uses_the_current_version_not_zero(store, openb
     assert store.load(GLOBAL) == {}
     store.save(GLOBAL, {'B': '1'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 2
     assert openbao.get(TEAM_GLOBAL_PATH) == {'B': '1'}
 
@@ -220,7 +225,7 @@ def test_a_second_save_in_the_same_store_uses_the_version_returned_by_the_first(
     store.save(GLOBAL, {'A': '1'})
     store.save(GLOBAL, {'A': '2'})
 
-    posts = [r for r in openbao.requests_of('POST') if r.kv_path]
+    posts = _kv_posts(openbao)
     assert [p.cas for p in posts] == [0, 1]
     assert openbao.get(TEAM_GLOBAL_PATH) == {'A': '2'}
     assert len(openbao.requests_of('GET')) == 1     # 1 度目の保存前だけ
@@ -256,7 +261,7 @@ def test_path_segments_are_percent_encoded_in_the_url(openbao_root, openbao):
 
     store.save(USER_GLOBAL, {'A': '1'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert '%20' in post.path
     assert post.kv_path == 'users/member 01/global'
 
@@ -362,6 +367,45 @@ def test_other_4xx_on_write_is_a_refusal_not_an_outage(store, openbao, status):
     assert openbao.get(TEAM_GLOBAL_PATH) == {'A': '1'}
 
 
+def _write_fails_with(monkeypatch, status, body):
+    """KV への POST だけを ``status`` と本文 ``body`` の失敗応答にする"""
+    from urllib import error
+
+    real = request.urlopen
+
+    def urlopen(req, *args, **kwargs):
+        if req.get_method() == 'POST' and '/data/' in urlsplit(req.full_url).path:
+            raise error.HTTPError(req.full_url, status, 'error', {}, io.BytesIO(body))
+        return real(req, *args, **kwargs)
+
+    monkeypatch.setattr(request, 'urlopen', urlopen)
+
+
+@pytest.mark.parametrize('body', [
+    b'', b'{not json', b'\xff\xfe', b'[]', b'{"errors": "check-and-set"}',
+], ids=['empty', 'malformed', 'undecodable', 'array', 'errors-not-a-list'])
+def test_write_400_without_readable_errors_is_a_refusal(store, openbao, monkeypatch, body):
+    """現状固定: 400 の本文から errors を読めなければ版の不一致ではなく拒否。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    store.load(GLOBAL)
+    _write_fails_with(monkeypatch, 400, body)
+
+    with pytest.raises(SecretRefusedError) as exc:
+        store.save(GLOBAL, {'A': '2'})
+
+    assert not isinstance(exc.value, (SecretAuthError, SecretConflictError))
+
+
+def test_write_400_errors_are_read_as_strings(store, openbao, monkeypatch):
+    """現状固定: errors の要素は文字列にしてから版の不一致の語を探す。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    store.load(GLOBAL)
+    _write_fails_with(monkeypatch, 400, b'{"errors": [1, "check-and-set mismatch"]}')
+
+    with pytest.raises(SecretConflictError):
+        store.save(GLOBAL, {'A': '2'})
+
+
 def test_an_expiring_token_is_renewed_before_the_request(store, openbao, monkeypatch):
     import time
 
@@ -429,7 +473,168 @@ def test_write_does_not_touch_the_server_when_the_read_fails(store, openbao):
     with pytest.raises(SecretStoreError):
         store.save(GLOBAL, {'A': '1'})
 
-    assert not any(r.kv_path for r in openbao.requests_of('POST'))
+    assert not _kv_posts(openbao)
+
+
+# ---------------------------------------------------------------------------
+# fetch の分岐 (現状固定)
+# ---------------------------------------------------------------------------
+
+def _cached_after_outage(openbao_root, openbao, ref):
+    """サーバを落とし、新しい SecretStore がキャッシュから読む内容"""
+    openbao.stop()
+    return SecretStore(openbao_root).load(ref)
+
+
+def test_fetch_returns_the_secrets_and_replaces_the_cache(openbao_root, store, openbao):
+    """現状固定: 成功した fetch は値を返し、キャッシュをその内容で置き換える。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+
+    assert backend.fetch(GLOBAL) == {'A': '1'}
+    assert _cached_after_outage(openbao_root, openbao, GLOBAL) == {'A': '1'}
+
+
+def test_fetch_reads_the_server_again_even_after_a_load(store, openbao):
+    """現状固定: fetch は控え (_seen) を使わず、毎回 GET する。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+    assert backend.load(GLOBAL) == {'A': '1'}
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '2'})
+
+    assert backend.fetch(GLOBAL) == {'A': '2'}
+    assert backend.load(GLOBAL) == {'A': '2'}
+    assert len([r for r in openbao.requests_of('GET') if r.kv_path]) == 2
+
+
+def test_fetch_refreshes_the_version_used_by_the_next_save(store, openbao):
+    """現状固定: fetch で更新した版が次の書き込みの CAS になる。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+    backend.fetch(GLOBAL)
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '2'})
+    backend.fetch(GLOBAL)
+
+    store.save(GLOBAL, {'A': '3'})
+
+    post = _kv_posts(openbao)[0]
+    assert post.cas == 2
+
+
+def test_fetch_of_an_unwritten_path_is_empty_and_caches_empty(openbao_root, store, openbao):
+    """現状固定: 404 (未作成) は空を返し、キャッシュも空で置き換える。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+    assert backend.fetch(GLOBAL) == {'A': '1'}
+    openbao.get_status = 404                # 消えた (版の無い 404)
+
+    assert backend.fetch(GLOBAL) == {}
+    openbao.get_status = None
+    assert _cached_after_outage(openbao_root, openbao, GLOBAL) == {}
+
+
+def test_fetch_of_a_soft_deleted_path_keeps_the_current_version(store, openbao):
+    """現状固定: 論理削除の 404 は空を返し、本文の版を基準にする。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    openbao.soft_delete(TEAM_GLOBAL_PATH)
+
+    assert store.backend_for(GLOBAL).fetch(GLOBAL) == {}
+    store.save(GLOBAL, {'B': '1'})
+
+    post = _kv_posts(openbao)[0]
+    assert post.cas == 1
+
+
+@pytest.mark.parametrize('body', [
+    b'', b'{not json', b'\xff\xfe', b'[]', b'{"errors": []}',
+    b'{"data": {"metadata": {"version": "3"}}}',
+    b'{"data": {"metadata": {"version": true}}}',
+], ids=['empty', 'malformed', 'undecodable', 'array', 'no-data', 'string-version',
+        'bool-version'])
+def test_fetch_404_without_a_usable_version_uses_version_zero(store, openbao, body):
+    """現状固定: 404 の本文から版を読めなければ空を返し、版 0 を基準にする。"""
+    openbao.get_status = 404
+    openbao.get_body = body
+
+    assert store.backend_for(GLOBAL).fetch(GLOBAL) == {}
+    openbao.get_status = None
+    openbao.get_body = None
+    store.save(GLOBAL, {'A': '1'})
+
+    post = _kv_posts(openbao)[0]
+    assert post.cas == 0
+
+
+def test_fetch_403_is_an_auth_error_with_the_user_hint(store, openbao):
+    """現状固定: 403 は読む権限の SecretAuthError。パスと openbao.user の手掛かりを含む。"""
+    openbao.forbidden_prefixes = ['team/']
+
+    with pytest.raises(SecretAuthError) as exc:
+        store.backend_for(GLOBAL).fetch(GLOBAL)
+
+    message = str(exc.value)
+    assert message.startswith('OpenBao でこの参照を読む権限がありません')
+    assert 'HTTP 403' in message
+    assert f'接続先: {openbao.url}' in message
+    assert 'パス: ' in message
+    assert 'backend.yml の openbao.user (現在: member01) が本人の識別子と違う可能性があります' \
+        in message
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__ is True
+
+
+@pytest.mark.parametrize('status', [400, 401, 405, 500, 503])
+def test_fetch_other_statuses_are_unreachable_with_the_status(store, openbao, status):
+    """現状固定: 404・403 以外の失敗応答は HTTP の番号付きの SecretUnreachableError。"""
+    openbao.get_status = status
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.backend_for(GLOBAL).fetch(GLOBAL)
+
+    message = str(exc.value)
+    assert message.startswith('OpenBao へ到達できません (')
+    assert f'HTTP {status})' in message
+    assert f'接続先: {openbao.url}' in message
+    assert exc.value.__suppress_context__ is True
+
+
+def test_fetch_failure_does_not_touch_the_basis_or_the_cache(openbao_root, store, openbao):
+    """現状固定: 失敗した fetch は前の基準とキャッシュを残す。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+    backend.fetch(GLOBAL)
+    openbao.get_status = 500
+
+    with pytest.raises(SecretUnreachableError):
+        backend.fetch(GLOBAL)
+
+    assert backend.load(GLOBAL) == {'A': '1'}
+    assert _cached_after_outage(openbao_root, openbao, GLOBAL) == {'A': '1'}
+
+
+@pytest.mark.parametrize('metadata', [
+    '', ', "metadata": {}', ', "metadata": {"version": "1"}', ', "metadata": {"version": true}',
+    ', "metadata": []',
+], ids=['no-metadata', 'no-version', 'string-version', 'bool-version', 'array-metadata'])
+def test_fetch_without_a_version_is_unreadable(store, openbao, metadata):
+    """現状固定: 200 で data.metadata.version (整数) が無ければ解釈できない応答。"""
+    openbao.get_body = ('{"data": {"data": {"A": "1"}%s}}' % metadata).encode()
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.backend_for(GLOBAL).fetch(GLOBAL)
+
+    message = str(exc.value)
+    assert message.startswith('OpenBao の応答を解釈できません (')
+    assert 'data.metadata.version がありません' in message
+
+
+def test_fetch_checks_the_secrets_before_the_version(store, openbao):
+    """現状固定: data.data と版の両方が不正なら、data.data の不正を先に報じる。"""
+    openbao.get_body = b'{"data": {"data": "nope"}}'
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.backend_for(GLOBAL).fetch(GLOBAL)
+
+    assert 'data.data が辞書ではありません' in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
@@ -545,3 +750,163 @@ def test_group_layout_reads_and_writes_the_group_paths(openbao_root, openbao):
     assert openbao.get('users/member01/acme/global') == {'B': '2'}
     assert {r.kv_path for r in openbao.received if r.kv_path} == {
         'team/initech/projects/web', 'users/member01/acme/global'}
+
+
+# ---------------------------------------------------------------------------
+# TLS の検証 (#497)。OpenBao への HTTP は OS の信頼ストアで検証する
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def recorded_urlopen(monkeypatch):
+    """``urlopen`` を包み、経路と ``context`` 引数を控えてから本物へ渡す"""
+    from devbase.env import openbao as openbao_module
+
+    openbao_module._tls_context.cache_clear()
+    calls = []
+    real = request.urlopen
+
+    def urlopen(req, *args, **kwargs):
+        calls.append((req.get_method(), urlsplit(req.full_url).path, kwargs.get('context')))
+        return real(req, *args, **kwargs)
+
+    monkeypatch.setattr(request, 'urlopen', urlopen)
+    yield calls
+    openbao_module._tls_context.cache_clear()
+
+
+def _exercise_every_route(store):
+    """認証・取得・保存・削除の 4 経路をすべて通す"""
+    store.save(GLOBAL, {'TOKEN': 'abc'})
+    store.backend_for(GLOBAL).remove(GLOBAL)
+
+
+def test_every_openbao_route_uses_the_truststore_context(store, openbao, recorded_urlopen):
+    import truststore
+
+    _exercise_every_route(store)
+
+    routes = {(method, path.split('/')[2] if path != '/v1/auth/approle/login' else 'login')
+              for method, path, _ in recorded_urlopen}
+    assert routes == {('POST', 'login'), ('GET', 'devbase'), ('POST', 'devbase'),
+                      ('DELETE', 'devbase')}
+    contexts = {id(context) for _, _, context in recorded_urlopen}
+    assert len(contexts) == 1
+    context = recorded_urlopen[0][2]
+    assert isinstance(context, truststore.SSLContext)
+    # 検証は緩めない
+    import ssl
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert context.verify_flags == ssl.create_default_context().verify_flags
+
+
+def test_truststore_context_copies_the_default_verify_flags(monkeypatch):
+    """既定のコンテキストが立てる検証のフラグ (3.13 の ``VERIFY_X509_STRICT`` など) を落とさない
+
+    Python の版によらず確かめるため、既定のコンテキストへ ``VERIFY_X509_STRICT`` と
+    ``VERIFY_X509_PARTIAL_CHAIN`` を足した形にして、写されることを見る。
+    """
+    import ssl
+
+    import truststore
+    from devbase.env import openbao as openbao_module
+
+    strict = ssl.VERIFY_X509_STRICT | ssl.VERIFY_X509_PARTIAL_CHAIN
+    real = ssl.create_default_context
+
+    def create_default_context(*args, **kwargs):
+        context = real(*args, **kwargs)
+        context.verify_flags |= strict
+        return context
+
+    monkeypatch.setattr(ssl, 'create_default_context', create_default_context)
+    openbao_module._tls_context.cache_clear()
+    try:
+        context = openbao_module._tls_context()
+    finally:
+        openbao_module._tls_context.cache_clear()
+
+    assert isinstance(context, truststore.SSLContext)
+    assert context.verify_flags & strict == strict
+    assert context.verify_flags == create_default_context().verify_flags
+
+
+def test_truststore_is_not_injected_into_the_process(store, openbao, recorded_urlopen):
+    """boto3 など他の通信の検証を変えない (``inject_into_ssl`` を使わない)"""
+    import ssl
+
+    original = ssl.SSLContext
+    _exercise_every_route(store)
+
+    assert ssl.SSLContext is original
+    assert ssl.create_default_context().__class__ is original
+
+
+def test_missing_truststore_falls_back_to_the_default_context(store, openbao,
+                                                              recorded_urlopen, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, 'truststore', None)  # import が ImportError になる
+
+    _exercise_every_route(store)
+
+    assert recorded_urlopen
+    assert all(context is None for _, _, context in recorded_urlopen)
+    assert store.load(GLOBAL) == {}
+
+
+def test_certificate_verification_failure_is_unreachable(store, monkeypatch):
+    """証明書の検証の失敗は、これまでどおり到達できない失敗として扱う"""
+    import ssl
+    from urllib import error
+
+    def urlopen(req, *args, **kwargs):
+        raise error.URLError(ssl.SSLCertVerificationError(
+            1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed'))
+
+    monkeypatch.setattr(request, 'urlopen', urlopen)
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.load(GLOBAL)
+    message = str(exc.value)
+    assert message.startswith('OpenBao へ到達できません (')
+    assert 'CERTIFICATE_VERIFY_FAILED' in message
+    assert '\n  接続先: ' in message
+
+
+def _refers_to_urlopen(function) -> bool:
+    """関数の本体 (入れ子の関数を含む) が ``urlopen`` を属性か名前で参照するか"""
+    import ast
+
+    for inner in ast.walk(function):
+        if isinstance(inner, ast.Attribute) and inner.attr == 'urlopen':
+            return True
+        if isinstance(inner, ast.Name) and inner.id == 'urlopen':
+            return True
+    return False
+
+
+def test_refers_to_urlopen_sees_attributes_names_and_nested_functions():
+    import ast
+
+    def function_of(source):
+        return ast.parse(source).body[0]
+
+    assert _refers_to_urlopen(function_of('def f():\n    request.urlopen(x)\n'))
+    assert _refers_to_urlopen(function_of('def f():\n    urlopen(x)\n'))
+    assert _refers_to_urlopen(function_of('def f():\n    def g():\n        urlopen(x)\n'))
+    assert not _refers_to_urlopen(function_of('def f():\n    request.urlopen_later(x)\n'))
+
+
+def test_urlopen_is_called_only_from_the_openbao_http_helper():
+    """``urlopen`` を呼ぶ経路は ``OpenBaoBackend._http`` だけ (増えたら同じ context を使わせる)"""
+    import ast
+
+    lib = Path(__file__).resolve().parents[2] / 'lib' / 'devbase'
+    callers = []
+    for source in sorted(lib.rglob('*.py')):
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        callers += [(source.relative_to(lib).as_posix(), node.name)
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and _refers_to_urlopen(node)]
+    assert sorted(set(callers)) == [('env/openbao.py', '_http')]
