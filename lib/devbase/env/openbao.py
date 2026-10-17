@@ -175,6 +175,10 @@ class OpenBaoBackend:
     def url(self) -> str:
         return self._settings.url
 
+    def _at_server(self, message: str) -> str:
+        """失敗の文言の末尾へ接続先の行を足す"""
+        return f"{message}\n  接続先: {self.url}"
+
     def _check_group(self, ref: SecretRef) -> None:
         """参照のグループが設定のレイアウトと合うことを確かめる (PLAN56)。
 
@@ -253,12 +257,11 @@ class OpenBaoBackend:
                     "  この端末の secret_id が失効していないか、利用者が無効化されていないか"
                     "確認してください") from None
             raise SecretUnreachableError(
-                f"OpenBao へ到達できません (HTTP {e.status})\n  接続先: {self.url}") from None
+                self._at_server(f"OpenBao へ到達できません (HTTP {e.status})")) from None
         auth = _dict_get(data, 'auth')
         token = _dict_get(auth, 'client_token')
         if not isinstance(token, str) or not token:
-            raise SecretUnreachableError(
-                f"OpenBao の認証応答を解釈できません\n  接続先: {self.url}")
+            raise SecretUnreachableError(self._at_server("OpenBao の認証応答を解釈できません"))
         lease = auth.get('lease_duration')
         ttl = float(lease) if isinstance(lease, (int, float)) and lease > 0 else 3600.0
         self._token = token
@@ -310,33 +313,31 @@ class OpenBaoBackend:
             try:
                 body = e.read() or b''
             except (OSError, http.client.HTTPException) as read_error:
-                raise SecretUnreachableError(
+                raise SecretUnreachableError(self._at_server(
                     f"OpenBao へ到達できません (HTTP {e.code} の応答を最後まで受け取れません: "
-                    f"{read_error})\n  接続先: {self.url}") from None
+                    f"{read_error})")) from None
             raise _HttpStatusError(e.code, body) from None
         except (_urlerror.URLError, socket.timeout, ConnectionError, OSError,
                 http.client.HTTPException) as e:
             # 本文の途中で切られたとき (IncompleteRead) も「応答を最後まで受け取れなかった」
             # 不達として扱う
-            raise SecretUnreachableError(
-                f"OpenBao へ到達できません ({e.reason if hasattr(e, 'reason') else e})\n"
-                f"  接続先: {self.url}") from None
+            raise SecretUnreachableError(self._at_server(
+                f"OpenBao へ到達できません ({e.reason if hasattr(e, 'reason') else e})")) from None
         if not raw:
             return {}
         try:
             return json.loads(raw.decode('utf-8'))
         except ValueError:
-            raise SecretUnreachableError(
-                f"OpenBao の応答を JSON として読めません ({method} {path})\n"
-                f"  接続先: {self.url}") from None
+            raise SecretUnreachableError(self._at_server(
+                f"OpenBao の応答を JSON として読めません ({method} {path})")) from None
 
     def _unreachable(self, status: int, ref: SecretRef) -> SecretUnreachableError:
         return SecretUnreachableError(
-            f"OpenBao へ到達できません ({ref.label()}: HTTP {status})\n  接続先: {self.url}")
+            self._at_server(f"OpenBao へ到達できません ({ref.label()}: HTTP {status})"))
 
     def _unreadable(self, ref: SecretRef, why: str) -> SecretUnreachableError:
         return SecretUnreachableError(
-            f"OpenBao の応答を解釈できません ({ref.label()}: {why})\n  接続先: {self.url}")
+            self._at_server(f"OpenBao の応答を解釈できません ({ref.label()}: {why})"))
 
     def _forbidden(self, ref: SecretRef, action: str, *,
                    hint: str = '', show_path: bool = True) -> SecretAuthError:
@@ -346,9 +347,8 @@ class OpenBaoBackend:
         ``を削除する``)。``show_path`` が真ならパス行を足す。``hint`` があれば
         末尾へ足す (削除は付けない)。
         """
-        message = (
-            f"OpenBao でこの参照{action}権限がありません ({ref.label()}: HTTP 403)\n"
-            f"  接続先: {self.url}")
+        message = self._at_server(
+            f"OpenBao でこの参照{action}権限がありません ({ref.label()}: HTTP 403)")
         if show_path:
             message += f"\n  パス: {self.display_path(ref)}"
         if hint:
