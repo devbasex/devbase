@@ -61,6 +61,13 @@ LOGIN_PATH = '/v1/auth/approle/login'
 #: check-and-set の不一致を表す、応答の ``errors`` に含まれる語
 _CAS_MISMATCH = 'check-and-set'
 
+#: 意味を持つ HTTP の状態コード
+_HTTP_BAD_REQUEST = 400
+_HTTP_FORBIDDEN = 403
+_HTTP_NOT_FOUND = 404
+#: ログインの拒否 (secret_id の失効・書き間違いと、利用者の無効化)
+_LOGIN_REJECT_STATUSES = (_HTTP_BAD_REQUEST, _HTTP_FORBIDDEN)
+
 
 @functools.lru_cache(maxsize=1)
 def _tls_context() -> Optional[ssl.SSLContext]:
@@ -250,7 +257,7 @@ class OpenBaoBackend:
         except _HttpStatusError as e:
             # 400 (invalid role or secret) は secret_id の失効・書き間違い、403 は利用者
             # (entity) の無効化。どちらも資格の取り消しで、キャッシュへ落ちてはいけない
-            if e.status in (400, 403):
+            if e.status in _LOGIN_REJECT_STATUSES:
                 raise SecretAuthError(
                     f"OpenBao の資格を確認できません (認証が拒まれました: HTTP {e.status})\n"
                     f"  接続先: {self.url}\n"
@@ -404,10 +411,10 @@ class OpenBaoBackend:
         try:
             data = self._http('GET', self._kv_path('data', ref))
         except _HttpStatusError as e:
-            if e.status == 404:
+            if e.status == _HTTP_NOT_FOUND:
                 self._remember(ref, {}, self._version_from_404(e.body))
                 return {}
-            if e.status == 403:
+            if e.status == _HTTP_FORBIDDEN:
                 raise self._forbidden(
                     ref, 'を読む',
                     hint=f"  backend.yml の openbao.user (現在: {self._settings.user}) が"
@@ -480,7 +487,7 @@ class OpenBaoBackend:
         try:
             response = self._http('POST', self._kv_path('data', ref), body=body)
         except _HttpStatusError as e:
-            if e.status == 400 and any(_CAS_MISMATCH in msg for msg in e.errors()):
+            if e.status == _HTTP_BAD_REQUEST and any(_CAS_MISMATCH in msg for msg in e.errors()):
                 # 読んだ内容がもう現物と違う。控えを消して、やり直しを促す
                 self._forget(ref)
                 raise SecretConflictError(
@@ -488,7 +495,7 @@ class OpenBaoBackend:
                     f"(版 {version} が現在の版と一致しません)\n"
                     f"  パス: {self.display_path(ref)}\n"
                     "  もう一度読み直してから同じ操作をやり直してください") from None
-            if e.status == 403:
+            if e.status == _HTTP_FORBIDDEN:
                 # ログインは通っている。資格の取り消しではなく、このパスへ書く権限が無い
                 raise self._forbidden(
                     ref, 'への書き込み',
@@ -531,7 +538,7 @@ class OpenBaoBackend:
         try:
             self._http('DELETE', self._kv_path('metadata', ref))
         except _HttpStatusError as e:
-            if e.status == 403:
+            if e.status == _HTTP_FORBIDDEN:
                 raise self._forbidden(ref, 'を削除する', show_path=False) from None
             self._forget(ref)
             raise self._unreachable(e.status, ref) from None
