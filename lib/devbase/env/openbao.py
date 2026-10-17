@@ -104,7 +104,7 @@ def _dict_get(value: Any, key: str) -> Any:
     return value.get(key) if isinstance(value, dict) else None
 
 
-class _HttpStatus(Exception):
+class _HttpStatusError(Exception):
     """HTTP の失敗応答 (内部用)"""
 
     def __init__(self, status: int, body: bytes):
@@ -238,7 +238,7 @@ class OpenBaoBackend:
             data = self._http('POST', LOGIN_PATH,
                               body={'role_id': creds.role_id, 'secret_id': creds.secret_id},
                               auth=False)
-        except _HttpStatus as e:
+        except _HttpStatusError as e:
             # 400 (invalid role or secret) は secret_id の失効・書き間違い、403 は利用者
             # (entity) の無効化。どちらも資格の取り消しで、キャッシュへ落ちてはいけない
             if e.status in (400, 403):
@@ -308,7 +308,7 @@ class OpenBaoBackend:
                 raise SecretUnreachableError(
                     f"OpenBao へ到達できません (HTTP {e.code} の応答を最後まで受け取れません: "
                     f"{read_error})\n  接続先: {self.url}") from None
-            raise _HttpStatus(e.code, body) from None
+            raise _HttpStatusError(e.code, body) from None
         except (_urlerror.URLError, socket.timeout, ConnectionError, OSError,
                 http.client.HTTPException) as e:
             # 本文の途中で切られたとき (IncompleteRead) も「応答を最後まで受け取れなかった」
@@ -398,7 +398,7 @@ class OpenBaoBackend:
         """
         try:
             data = self._http('GET', self._kv_path('data', ref))
-        except _HttpStatus as e:
+        except _HttpStatusError as e:
             if e.status == 404:
                 self._remember(ref, {}, self._version_from_404(e.body))
                 return {}
@@ -474,7 +474,7 @@ class OpenBaoBackend:
         body = {'options': {'cas': version}, 'data': dict(data)}
         try:
             response = self._http('POST', self._kv_path('data', ref), body=body)
-        except _HttpStatus as e:
+        except _HttpStatusError as e:
             if e.status == 400 and any(_CAS_MISMATCH in msg for msg in e.errors()):
                 # 読んだ内容がもう現物と違う。控えを消して、やり直しを促す
                 self._forget(ref)
@@ -525,7 +525,7 @@ class OpenBaoBackend:
             return False
         try:
             self._http('DELETE', self._kv_path('metadata', ref))
-        except _HttpStatus as e:
+        except _HttpStatusError as e:
             if e.status == 403:
                 raise self._forbidden(ref, 'を削除する', show_path=False) from None
             self._forget(ref)
