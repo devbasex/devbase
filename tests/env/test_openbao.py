@@ -799,6 +799,30 @@ def test_certificate_verification_failure_is_unreachable(store, monkeypatch):
     assert '\n  接続先: ' in message
 
 
+def _refers_to_urlopen(function) -> bool:
+    """関数の本体 (入れ子の関数を含む) が ``urlopen`` を属性か名前で参照するか"""
+    import ast
+
+    for inner in ast.walk(function):
+        if isinstance(inner, ast.Attribute) and inner.attr == 'urlopen':
+            return True
+        if isinstance(inner, ast.Name) and inner.id == 'urlopen':
+            return True
+    return False
+
+
+def test_refers_to_urlopen_sees_attributes_names_and_nested_functions():
+    import ast
+
+    def function_of(source):
+        return ast.parse(source).body[0]
+
+    assert _refers_to_urlopen(function_of('def f():\n    request.urlopen(x)\n'))
+    assert _refers_to_urlopen(function_of('def f():\n    urlopen(x)\n'))
+    assert _refers_to_urlopen(function_of('def f():\n    def g():\n        urlopen(x)\n'))
+    assert not _refers_to_urlopen(function_of('def f():\n    request.urlopen_later(x)\n'))
+
+
 def test_urlopen_is_called_only_from_the_openbao_http_helper():
     """``urlopen`` を呼ぶ経路は ``OpenBaoBackend._http`` だけ (増えたら同じ context を使わせる)"""
     import ast
@@ -807,10 +831,7 @@ def test_urlopen_is_called_only_from_the_openbao_http_helper():
     callers = []
     for source in sorted(lib.rglob('*.py')):
         tree = ast.parse(source.read_text(encoding='utf-8'))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                for inner in ast.walk(node):
-                    if isinstance(inner, ast.Attribute) and inner.attr == 'urlopen' or \
-                            isinstance(inner, ast.Name) and inner.id == 'urlopen':
-                        callers.append((source.relative_to(lib).as_posix(), node.name))
+        callers += [(source.relative_to(lib).as_posix(), node.name)
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef) and _refers_to_urlopen(node)]
     assert sorted(set(callers)) == [('env/openbao.py', '_http')]
