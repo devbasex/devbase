@@ -182,9 +182,9 @@ class OpenBaoBackend:
     def url(self) -> str:
         return self._settings.url
 
-    def _at_server(self, message: str) -> str:
-        """失敗の文言の末尾へ接続先の行を足す"""
-        return f"{message}\n  接続先: {self.url}"
+    def _at_server(self, message: str, *details: str) -> str:
+        """失敗の文言へ接続先の行を足す。``details`` は接続先の行の後へ 1 行ずつ続ける"""
+        return '\n'.join([message, f"  接続先: {self.url}", *details])
 
     def _check_group(self, ref: SecretRef) -> None:
         """参照のグループが設定のレイアウトと合うことを確かめる (PLAN56)。
@@ -258,11 +258,10 @@ class OpenBaoBackend:
             # 400 (invalid role or secret) は secret_id の失効・書き間違い、403 は利用者
             # (entity) の無効化。どちらも資格の取り消しで、キャッシュへ落ちてはいけない
             if e.status in _LOGIN_REJECT_STATUSES:
-                raise SecretAuthError(
-                    f"OpenBao の資格を確認できません (認証が拒まれました: HTTP {e.status})\n"
-                    f"  接続先: {self.url}\n"
+                raise SecretAuthError(self._at_server(
+                    f"OpenBao の資格を確認できません (認証が拒まれました: HTTP {e.status})",
                     "  この端末の secret_id が失効していないか、利用者が無効化されていないか"
-                    "確認してください") from None
+                    "確認してください")) from None
             raise SecretUnreachableError(
                 self._at_server(f"OpenBao へ到達できません (HTTP {e.status})")) from None
         auth = _dict_get(data, 'auth')
@@ -473,11 +472,10 @@ class OpenBaoBackend:
             self.fetch(ref)
             basis = self._seen[ref]
         if basis.version is None:
-            raise SecretUnreachableError(
-                f"OpenBao へ到達できないため、{ref.label()}へ書き込めません\n"
-                f"  接続先: {self.url}\n"
+            raise SecretUnreachableError(self._at_server(
+                f"OpenBao へ到達できないため、{ref.label()}へ書き込めません",
                 "  控えから読んだ内容は書き戻しません (不達の間の他の利用者の更新を"
-                "上書きしないため)。サーバへ届く状態でやり直してください")
+                "上書きしないため)。サーバへ届く状態でやり直してください"))
         return basis.version
 
     def save(self, ref: SecretRef, data: Dict[str, str]) -> Path:
@@ -503,10 +501,9 @@ class OpenBaoBackend:
                          "利用者だけです") from None
             if 400 <= e.status < 500:
                 # サーバが拒んだと確定した。サーバは変わっておらず、控えはそのまま正しい
-                raise SecretRefusedError(
-                    f"OpenBao が書き込みを拒みました ({ref.label()}: HTTP {e.status})\n"
-                    f"  接続先: {self.url}\n"
-                    f"  パス: {self.display_path(ref)}") from None
+                raise SecretRefusedError(self._at_server(
+                    f"OpenBao が書き込みを拒みました ({ref.label()}: HTTP {e.status})",
+                    f"  パス: {self.display_path(ref)}")) from None
             # 5xx はサーバが更新を確定した後で応答だけが失われた可能性がある
             self._forget(ref)
             raise self._unreachable(e.status, ref) from None
