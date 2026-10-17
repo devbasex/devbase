@@ -360,6 +360,20 @@ class OpenBaoBackend:
         version = _dict_get(metadata, 'version')
         return version if isinstance(version, int) and not isinstance(version, bool) else None
 
+    @classmethod
+    def _version_from_404(cls, body: bytes) -> int:
+        """404 の応答の本文から現在の版を取り出す (無ければ 0)。
+
+        未作成、または最新版が論理削除されている。後者は本文に現在の版が入る
+        (版 0 を送ると不一致になる)
+        """
+        try:
+            data = json.loads(body.decode('utf-8')) if body else {}
+        except (ValueError, UnicodeDecodeError):
+            data = {}
+        version = cls._version_of(data)
+        return version if version is not None else 0
+
     def _parse_secrets(self, ref: SecretRef, data: Any) -> Dict[str, str]:
         inner = _dict_get(data, 'data')
         values = _dict_get(inner, 'data')
@@ -386,14 +400,7 @@ class OpenBaoBackend:
             data = self._http('GET', self._kv_path('data', ref))
         except _HttpStatus as e:
             if e.status == 404:
-                # 未作成、または最新版が論理削除されている。後者は本文に現在の版が入る
-                # (版 0 を送ると不一致になる)
-                try:
-                    body = json.loads(e.body.decode('utf-8')) if e.body else {}
-                except (ValueError, UnicodeDecodeError):
-                    body = {}
-                version = self._version_of(body)
-                self._remember(ref, {}, version if version is not None else 0)
+                self._remember(ref, {}, self._version_from_404(e.body))
                 return {}
             if e.status == 403:
                 raise self._forbidden(
