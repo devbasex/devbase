@@ -367,6 +367,45 @@ def test_other_4xx_on_write_is_a_refusal_not_an_outage(store, openbao, status):
     assert openbao.get(TEAM_GLOBAL_PATH) == {'A': '1'}
 
 
+def _write_fails_with(monkeypatch, status, body):
+    """KV への POST だけを ``status`` と本文 ``body`` の失敗応答にする"""
+    from urllib import error
+
+    real = request.urlopen
+
+    def urlopen(req, *args, **kwargs):
+        if req.get_method() == 'POST' and '/data/' in urlsplit(req.full_url).path:
+            raise error.HTTPError(req.full_url, status, 'error', {}, io.BytesIO(body))
+        return real(req, *args, **kwargs)
+
+    monkeypatch.setattr(request, 'urlopen', urlopen)
+
+
+@pytest.mark.parametrize('body', [
+    b'', b'{not json', b'\xff\xfe', b'[]', b'{"errors": "check-and-set"}',
+], ids=['empty', 'malformed', 'undecodable', 'array', 'errors-not-a-list'])
+def test_write_400_without_readable_errors_is_a_refusal(store, openbao, monkeypatch, body):
+    """現状固定: 400 の本文から errors を読めなければ版の不一致ではなく拒否。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    store.load(GLOBAL)
+    _write_fails_with(monkeypatch, 400, body)
+
+    with pytest.raises(SecretRefusedError) as exc:
+        store.save(GLOBAL, {'A': '2'})
+
+    assert not isinstance(exc.value, (SecretAuthError, SecretConflictError))
+
+
+def test_write_400_errors_are_read_as_strings(store, openbao, monkeypatch):
+    """現状固定: errors の要素は文字列にしてから版の不一致の語を探す。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    store.load(GLOBAL)
+    _write_fails_with(monkeypatch, 400, b'{"errors": [1, "check-and-set mismatch"]}')
+
+    with pytest.raises(SecretConflictError):
+        store.save(GLOBAL, {'A': '2'})
+
+
 def test_an_expiring_token_is_renewed_before_the_request(store, openbao, monkeypatch):
     import time
 
