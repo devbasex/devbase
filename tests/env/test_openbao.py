@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 from urllib import request
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -545,3 +546,110 @@ def test_group_layout_reads_and_writes_the_group_paths(openbao_root, openbao):
     assert openbao.get('users/member01/acme/global') == {'B': '2'}
     assert {r.kv_path for r in openbao.received if r.kv_path} == {
         'team/initech/projects/web', 'users/member01/acme/global'}
+
+
+# ---------------------------------------------------------------------------
+# TLS の検証 (#497)。OpenBao への HTTP は OS の信頼ストアで検証する
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def recorded_urlopen(monkeypatch):
+    """``urlopen`` を包み、経路と ``context`` 引数を控えてから本物へ渡す"""
+    from devbase.env import openbao as openbao_module
+
+    openbao_module._tls_context.cache_clear()
+    calls = []
+    real = request.urlopen
+
+    def urlopen(req, *args, **kwargs):
+        calls.append((req.get_method(), urlsplit(req.full_url).path, kwargs.get('context')))
+        return real(req, *args, **kwargs)
+
+    monkeypatch.setattr(request, 'urlopen', urlopen)
+    yield calls
+    openbao_module._tls_context.cache_clear()
+
+
+def _exercise_every_route(store):
+    """認証・取得・保存・削除の 4 経路をすべて通す"""
+    store.save(GLOBAL, {'TOKEN': 'abc'})
+    store.backend_for(GLOBAL).remove(GLOBAL)
+
+
+def test_every_openbao_route_uses_the_truststore_context(store, openbao, recorded_urlopen):
+    import truststore
+
+    _exercise_every_route(store)
+
+    routes = {(method, path.split('/')[2] if path != '/v1/auth/approle/login' else 'login')
+              for method, path, _ in recorded_urlopen}
+    assert routes == {('POST', 'login'), ('GET', 'devbase'), ('POST', 'devbase'),
+                      ('DELETE', 'devbase')}
+    contexts = {id(context) for _, _, context in recorded_urlopen}
+    assert len(contexts) == 1
+    context = recorded_urlopen[0][2]
+    assert isinstance(context, truststore.SSLContext)
+    # 検証は緩めない
+    import ssl
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
+def test_truststore_is_not_injected_into_the_process(store, openbao, recorded_urlopen):
+    """boto3 など他の通信の検証を変えない (``inject_into_ssl`` を使わない)"""
+    import ssl
+
+    original = ssl.SSLContext
+    _exercise_every_route(store)
+
+    assert ssl.SSLContext is original
+    assert ssl.create_default_context().__class__ is original
+
+
+def test_missing_truststore_falls_back_to_the_default_context(store, openbao,
+                                                              recorded_urlopen, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, 'truststore', None)  # import が ImportError になる
+
+    _exercise_every_route(store)
+
+    assert recorded_urlopen
+    assert all(context is None for _, _, context in recorded_urlopen)
+    assert store.load(GLOBAL) == {}
+
+
+def test_certificate_verification_failure_is_unreachable(store, monkeypatch):
+    """証明書の検証の失敗は、これまでどおり到達できない失敗として扱う"""
+    import ssl
+    from urllib import error
+
+    def urlopen(req, *args, **kwargs):
+        raise error.URLError(ssl.SSLCertVerificationError(
+            1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed'))
+
+    monkeypatch.setattr(request, 'urlopen', urlopen)
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.load(GLOBAL)
+    message = str(exc.value)
+    assert message.startswith('OpenBao へ到達できません (')
+    assert 'CERTIFICATE_VERIFY_FAILED' in message
+    assert '\n  接続先: ' in message
+
+
+def test_urlopen_is_called_only_from_the_openbao_http_helper():
+    """``urlopen`` を呼ぶ経路は ``OpenBaoBackend._http`` だけ (増えたら同じ context を使わせる)"""
+    import ast
+
+    lib = Path(__file__).resolve().parents[2] / 'lib' / 'devbase'
+    callers = []
+    for source in sorted(lib.rglob('*.py')):
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.Attribute) and inner.attr == 'urlopen' or \
+                            isinstance(inner, ast.Name) and inner.id == 'urlopen':
+                        callers.append((source.relative_to(lib).as_posix(), node.name))
+    assert sorted(set(callers)) == [('env/openbao.py', '_http')]

@@ -1,6 +1,8 @@
 """OpenBao (KV v2 + AppRole) を保存先にする ``SecretBackend`` 実装 (PLAN51)
 
-REST を標準ライブラリの ``urllib.request`` で叩く (常時依存を増やさない)。
+REST を標準ライブラリの ``urllib.request`` で叩く。TLS の証明書は OS の信頼ストア
+(``truststore``) で検証する (#497)。TLS を傍受するプロキシの CA を OS に入れた端末でも届くため。
+プロセス全体へは注入せず、OpenBao への接続にだけ使う。
 使う経路は仕様「OpenBao との契約」の 4 つだけ:
 
 - ``POST /v1/auth/approle/login`` — ``role_id`` / ``secret_id`` を token へ交換
@@ -31,9 +33,11 @@ token はプロセス内にだけ持ち、ディスクへ書かない。実行�
 
 from __future__ import annotations
 
+import functools
 import http.client
 import json
 import socket
+import ssl
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +60,23 @@ LOGIN_PATH = '/v1/auth/approle/login'
 
 #: check-and-set の不一致を表す、応答の ``errors`` に含まれる語
 _CAS_MISMATCH = 'check-and-set'
+
+
+@functools.lru_cache(maxsize=1)
+def _tls_context() -> Optional[ssl.SSLContext]:
+    """OpenBao への HTTP に渡す SSL コンテキスト。OS の信頼ストアで検証する。
+
+    ``truststore.SSLContext`` は検証を緩めない (``CERT_REQUIRED``・ホスト名の照合)。
+    ``truststore.inject_into_ssl()`` は使わない。プロセス全体の ``ssl`` を差し替え、
+    boto3 など他の通信の検証まで変えてしまうため。``truststore`` を import できない
+    ときは ``None`` を返し、``urlopen`` は今までどおり既定のコンテキストで検証する。
+    """
+    try:
+        import truststore
+    except ImportError:
+        logger.debug("truststore を読み込めないため、既定の SSL コンテキストで OpenBao へ接続します")
+        return None
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 
 class SecretUnreachableError(SecretStoreError):
@@ -275,7 +296,8 @@ class OpenBaoBackend:
             headers['X-Vault-Token'] = self._ensure_token()
         req = _urlrequest.Request(url, data=payload, method=method, headers=headers)
         try:
-            with _urlrequest.urlopen(req, timeout=self._settings.timeout_seconds) as resp:
+            with _urlrequest.urlopen(req, timeout=self._settings.timeout_seconds,
+                                     context=_tls_context()) as resp:
                 raw = resp.read()
         except _urlerror.HTTPError as e:
             # 失敗応答の本文も最後まで受け取れないことがある (5xx の途中切れ)。
