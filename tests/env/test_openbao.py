@@ -434,6 +434,167 @@ def test_write_does_not_touch_the_server_when_the_read_fails(store, openbao):
 
 
 # ---------------------------------------------------------------------------
+# fetch の分岐 (現状固定)
+# ---------------------------------------------------------------------------
+
+def _cached_after_outage(openbao_root, openbao, ref):
+    """サーバを落とし、新しい SecretStore がキャッシュから読む内容"""
+    openbao.stop()
+    return SecretStore(openbao_root).load(ref)
+
+
+def test_fetch_returns_the_secrets_and_replaces_the_cache(openbao_root, store, openbao):
+    """現状固定: 成功した fetch は値を返し、キャッシュをその内容で置き換える。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+
+    assert backend.fetch(GLOBAL) == {'A': '1'}
+    assert _cached_after_outage(openbao_root, openbao, GLOBAL) == {'A': '1'}
+
+
+def test_fetch_reads_the_server_again_even_after_a_load(store, openbao):
+    """現状固定: fetch は控え (_seen) を使わず、毎回 GET する。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+    assert backend.load(GLOBAL) == {'A': '1'}
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '2'})
+
+    assert backend.fetch(GLOBAL) == {'A': '2'}
+    assert backend.load(GLOBAL) == {'A': '2'}
+    assert len([r for r in openbao.requests_of('GET') if r.kv_path]) == 2
+
+
+def test_fetch_refreshes_the_version_used_by_the_next_save(store, openbao):
+    """現状固定: fetch で更新した版が次の書き込みの CAS になる。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+    backend.fetch(GLOBAL)
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '2'})
+    backend.fetch(GLOBAL)
+
+    store.save(GLOBAL, {'A': '3'})
+
+    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    assert post.cas == 2
+
+
+def test_fetch_of_an_unwritten_path_is_empty_and_caches_empty(openbao_root, store, openbao):
+    """現状固定: 404 (未作成) は空を返し、キャッシュも空で置き換える。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+    assert backend.fetch(GLOBAL) == {'A': '1'}
+    openbao.get_status = 404                # 消えた (版の無い 404)
+
+    assert backend.fetch(GLOBAL) == {}
+    openbao.get_status = None
+    assert _cached_after_outage(openbao_root, openbao, GLOBAL) == {}
+
+
+def test_fetch_of_a_soft_deleted_path_keeps_the_current_version(store, openbao):
+    """現状固定: 論理削除の 404 は空を返し、本文の版を基準にする。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    openbao.soft_delete(TEAM_GLOBAL_PATH)
+
+    assert store.backend_for(GLOBAL).fetch(GLOBAL) == {}
+    store.save(GLOBAL, {'B': '1'})
+
+    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    assert post.cas == 1
+
+
+@pytest.mark.parametrize('body', [
+    b'', b'{not json', b'\xff\xfe', b'[]', b'{"errors": []}',
+    b'{"data": {"metadata": {"version": "3"}}}',
+    b'{"data": {"metadata": {"version": true}}}',
+], ids=['empty', 'malformed', 'undecodable', 'array', 'no-data', 'string-version',
+        'bool-version'])
+def test_fetch_404_without_a_usable_version_uses_version_zero(store, openbao, body):
+    """現状固定: 404 の本文から版を読めなければ空を返し、版 0 を基準にする。"""
+    openbao.get_status = 404
+    openbao.get_body = body
+
+    assert store.backend_for(GLOBAL).fetch(GLOBAL) == {}
+    openbao.get_status = None
+    openbao.get_body = None
+    store.save(GLOBAL, {'A': '1'})
+
+    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    assert post.cas == 0
+
+
+def test_fetch_403_is_an_auth_error_with_the_user_hint(store, openbao):
+    """現状固定: 403 は読む権限の SecretAuthError。パスと openbao.user の手掛かりを含む。"""
+    openbao.forbidden_prefixes = ['team/']
+
+    with pytest.raises(SecretAuthError) as exc:
+        store.backend_for(GLOBAL).fetch(GLOBAL)
+
+    message = str(exc.value)
+    assert message.startswith('OpenBao でこの参照を読む権限がありません')
+    assert 'HTTP 403' in message
+    assert f'接続先: {openbao.url}' in message
+    assert 'パス: ' in message
+    assert 'backend.yml の openbao.user (現在: member01) が本人の識別子と違う可能性があります' \
+        in message
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__ is True
+
+
+@pytest.mark.parametrize('status', [400, 401, 405, 500, 503])
+def test_fetch_other_statuses_are_unreachable_with_the_status(store, openbao, status):
+    """現状固定: 404・403 以外の失敗応答は HTTP の番号付きの SecretUnreachableError。"""
+    openbao.get_status = status
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.backend_for(GLOBAL).fetch(GLOBAL)
+
+    message = str(exc.value)
+    assert message.startswith('OpenBao へ到達できません (')
+    assert f'HTTP {status})' in message
+    assert f'接続先: {openbao.url}' in message
+    assert exc.value.__suppress_context__ is True
+
+
+def test_fetch_failure_does_not_touch_the_basis_or_the_cache(openbao_root, store, openbao):
+    """現状固定: 失敗した fetch は前の基準とキャッシュを残す。"""
+    openbao.put(TEAM_GLOBAL_PATH, {'A': '1'})
+    backend = store.backend_for(GLOBAL)
+    backend.fetch(GLOBAL)
+    openbao.get_status = 500
+
+    with pytest.raises(SecretUnreachableError):
+        backend.fetch(GLOBAL)
+
+    assert backend.load(GLOBAL) == {'A': '1'}
+    assert _cached_after_outage(openbao_root, openbao, GLOBAL) == {'A': '1'}
+
+
+@pytest.mark.parametrize('metadata', [
+    '', ', "metadata": {}', ', "metadata": {"version": "1"}', ', "metadata": {"version": true}',
+    ', "metadata": []',
+], ids=['no-metadata', 'no-version', 'string-version', 'bool-version', 'array-metadata'])
+def test_fetch_without_a_version_is_unreadable(store, openbao, metadata):
+    """現状固定: 200 で data.metadata.version (整数) が無ければ解釈できない応答。"""
+    openbao.get_body = ('{"data": {"data": {"A": "1"}%s}}' % metadata).encode()
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.backend_for(GLOBAL).fetch(GLOBAL)
+
+    message = str(exc.value)
+    assert message.startswith('OpenBao の応答を解釈できません (')
+    assert 'data.metadata.version がありません' in message
+
+
+def test_fetch_checks_the_secrets_before_the_version(store, openbao):
+    """現状固定: data.data と版の両方が不正なら、data.data の不正を先に報じる。"""
+    openbao.get_body = b'{"data": {"data": "nope"}}'
+
+    with pytest.raises(SecretUnreachableError) as exc:
+        store.backend_for(GLOBAL).fetch(GLOBAL)
+
+    assert 'data.data が辞書ではありません' in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
 # backend test
 # ---------------------------------------------------------------------------
 
