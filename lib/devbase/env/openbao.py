@@ -104,6 +104,11 @@ def _dict_get(value: Any, key: str) -> Any:
     return value.get(key) if isinstance(value, dict) else None
 
 
+def _as_version(value: Any) -> Optional[int]:
+    """応答の版として読める値 (整数で真偽値でない) ならその値、ほかは ``None``"""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 class _HttpStatusError(Exception):
     """HTTP の失敗応答 (内部用)"""
 
@@ -358,7 +363,7 @@ class OpenBaoBackend:
         inner = _dict_get(data, 'data')
         metadata = _dict_get(inner, 'metadata')
         version = _dict_get(metadata, 'version')
-        return version if isinstance(version, int) and not isinstance(version, bool) else None
+        return _as_version(version)
 
     @classmethod
     def _version_from_404(cls, body: bytes) -> int:
@@ -503,8 +508,8 @@ class OpenBaoBackend:
             self._forget(ref)
             raise
         inner = _dict_get(response, 'data')
-        new_version = _dict_get(inner, 'version')
-        if not isinstance(new_version, int) or isinstance(new_version, bool):
+        new_version = _as_version(_dict_get(inner, 'version'))
+        if new_version is None:
             self._forget(ref)
             raise self._unreadable(ref, '保存の応答に data.version がありません')
         # 応答の版が次の書き込みの基準になる (同じ実行で同じ参照を再び書くとき、
