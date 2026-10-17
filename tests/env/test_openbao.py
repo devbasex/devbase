@@ -32,6 +32,11 @@ USER_GLOBAL_PATH = 'users/member01/global'
 USER_WEB_PATH = 'users/member01/projects/web'
 
 
+def _kv_posts(openbao):
+    """ログインの POST を除いた、KV への POST"""
+    return [r for r in openbao.requests_of('POST') if r.kv_path]
+
+
 @pytest.mark.parametrize('body', [
     [], {}, {'auth': None}, {'auth': {}},
     {'auth': {'client_token': 123}}, {'auth': {'client_token': ''}},
@@ -148,8 +153,7 @@ def test_save_sends_the_whole_dictionary_in_one_post_with_the_read_version(store
 
     store.save(GLOBAL, {'SAME': '1', 'CHANGED': 'new', 'ADDED': 'a'})
 
-    posts = openbao.requests_of('POST')
-    posts = [r for r in posts if r.kv_path is not None]
+    posts = _kv_posts(openbao)
     assert len(posts) == 1
     assert posts[0].cas == 1
     assert posts[0].body['data'] == {'SAME': '1', 'CHANGED': 'new', 'ADDED': 'a'}
@@ -164,14 +168,14 @@ def test_save_without_a_prior_read_fetches_the_version_first(store, openbao):
     store.save(GLOBAL, {'A': '3'})
 
     assert len(openbao.requests_of('GET')) == 1
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 2
 
 
 def test_save_to_an_unwritten_path_uses_version_zero(store, openbao):
     store.save(GLOBAL, {'A': '1'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 0
     assert openbao.version_of(TEAM_GLOBAL_PATH) == 1
 
@@ -184,7 +188,7 @@ def test_save_after_a_soft_delete_uses_the_current_version_not_zero(store, openb
     assert store.load(GLOBAL) == {}
     store.save(GLOBAL, {'B': '1'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 2
     assert openbao.get(TEAM_GLOBAL_PATH) == {'B': '1'}
 
@@ -221,7 +225,7 @@ def test_a_second_save_in_the_same_store_uses_the_version_returned_by_the_first(
     store.save(GLOBAL, {'A': '1'})
     store.save(GLOBAL, {'A': '2'})
 
-    posts = [r for r in openbao.requests_of('POST') if r.kv_path]
+    posts = _kv_posts(openbao)
     assert [p.cas for p in posts] == [0, 1]
     assert openbao.get(TEAM_GLOBAL_PATH) == {'A': '2'}
     assert len(openbao.requests_of('GET')) == 1     # 1 度目の保存前だけ
@@ -257,7 +261,7 @@ def test_path_segments_are_percent_encoded_in_the_url(openbao_root, openbao):
 
     store.save(USER_GLOBAL, {'A': '1'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert '%20' in post.path
     assert post.kv_path == 'users/member 01/global'
 
@@ -430,7 +434,7 @@ def test_write_does_not_touch_the_server_when_the_read_fails(store, openbao):
     with pytest.raises(SecretStoreError):
         store.save(GLOBAL, {'A': '1'})
 
-    assert not any(r.kv_path for r in openbao.requests_of('POST'))
+    assert not _kv_posts(openbao)
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +478,7 @@ def test_fetch_refreshes_the_version_used_by_the_next_save(store, openbao):
 
     store.save(GLOBAL, {'A': '3'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 2
 
 
@@ -498,7 +502,7 @@ def test_fetch_of_a_soft_deleted_path_keeps_the_current_version(store, openbao):
     assert store.backend_for(GLOBAL).fetch(GLOBAL) == {}
     store.save(GLOBAL, {'B': '1'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 1
 
 
@@ -518,7 +522,7 @@ def test_fetch_404_without_a_usable_version_uses_version_zero(store, openbao, bo
     openbao.get_body = None
     store.save(GLOBAL, {'A': '1'})
 
-    post = [r for r in openbao.requests_of('POST') if r.kv_path][0]
+    post = _kv_posts(openbao)[0]
     assert post.cas == 0
 
 
