@@ -797,6 +797,38 @@ def test_every_openbao_route_uses_the_truststore_context(store, openbao, recorde
     import ssl
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
+    assert context.verify_flags == ssl.create_default_context().verify_flags
+
+
+def test_truststore_context_copies_the_default_verify_flags(monkeypatch):
+    """既定のコンテキストが立てる検証のフラグ (3.13 の ``VERIFY_X509_STRICT`` など) を落とさない
+
+    Python の版によらず確かめるため、既定のコンテキストへ ``VERIFY_X509_STRICT`` と
+    ``VERIFY_X509_PARTIAL_CHAIN`` を足した形にして、写されることを見る。
+    """
+    import ssl
+
+    import truststore
+    from devbase.env import openbao as openbao_module
+
+    strict = ssl.VERIFY_X509_STRICT | ssl.VERIFY_X509_PARTIAL_CHAIN
+    real = ssl.create_default_context
+
+    def create_default_context(*args, **kwargs):
+        context = real(*args, **kwargs)
+        context.verify_flags |= strict
+        return context
+
+    monkeypatch.setattr(ssl, 'create_default_context', create_default_context)
+    openbao_module._tls_context.cache_clear()
+    try:
+        context = openbao_module._tls_context()
+    finally:
+        openbao_module._tls_context.cache_clear()
+
+    assert isinstance(context, truststore.SSLContext)
+    assert context.verify_flags & strict == strict
+    assert context.verify_flags == create_default_context().verify_flags
 
 
 def test_truststore_is_not_injected_into_the_process(store, openbao, recorded_urlopen):

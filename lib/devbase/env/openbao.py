@@ -74,6 +74,10 @@ def _tls_context() -> Optional[ssl.SSLContext]:
     """OpenBao への HTTP に渡す SSL コンテキスト。OS の信頼ストアで検証する。
 
     ``truststore.SSLContext`` は検証を緩めない (``CERT_REQUIRED``・ホスト名の照合)。
+    ただし ``verify_flags`` は ``ssl.create_default_context()`` と揃わない。Python 3.13 の
+    既定は ``VERIFY_X509_STRICT`` と ``VERIFY_X509_PARTIAL_CHAIN`` を立てるが、
+    ``truststore.SSLContext`` は立てない。今までの ``urlopen`` が拒んだ不適合な証明書を
+    受け入れないよう、その Python の既定の ``verify_flags`` を写す。
     ``truststore.inject_into_ssl()`` は使わない。プロセス全体の ``ssl`` を差し替え、
     boto3 など他の通信の検証まで変えてしまうため。``truststore`` を import できない
     ときは ``None`` を返し、``urlopen`` は今までどおり既定のコンテキストで検証する。
@@ -83,7 +87,9 @@ def _tls_context() -> Optional[ssl.SSLContext]:
     except ImportError:
         logger.debug("truststore を読み込めないため、既定の SSL コンテキストで OpenBao へ接続します")
         return None
-    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.verify_flags = ssl.create_default_context().verify_flags
+    return context
 
 
 class SecretUnreachableError(SecretStoreError):
