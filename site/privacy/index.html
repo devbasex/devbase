@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー | devbase</title>
+<meta name="description" content="devbase のプライバシーポリシー">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='5' y='20' width='22' height='6' rx='2' fill='%232563eb'/%3E%3Crect x='8' y='13' width='16' height='5.5' rx='2' fill='%2360a5fa'/%3E%3Crect x='11' y='6' width='10' height='5.5' rx='2' fill='%23bfdbfe'/%3E%3C/svg%3E">
+<style>
+:root { --bg:#fff; --fg:#16181d; --muted:#5b6270; --line:#e3e6eb; --accent:#2563eb; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0d1017; --fg:#e8ebf1; --muted:#9aa3b5; --line:#232a38; --accent:#6ea0ff; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Segoe UI","Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif; line-height:1.8; font-size:16px; }
+a { color:var(--accent); }
+.wrap { max-width:760px; margin:0 auto; padding:0 16px; }
+header { border-bottom:1px solid var(--line); }
+header .wrap { display:flex; align-items:center; height:60px; }
+.brand { display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px; color:var(--fg); text-decoration:none; }
+.brand svg { width:28px; height:28px; }
+main { padding:48px 0 64px; }
+h1 { font-size:30px; margin:0 0 6px; }
+.date { color:var(--muted); font-size:14px; margin:0 0 36px; }
+h2 { font-size:19px; margin:36px 0 8px; }
+p, li { color:var(--fg); }
+ul { padding-left:1.3em; }
+hr { border:0; border-top:1px solid var(--line); margin:56px 0 0; }
+.en h1 { font-size:24px; }
+footer { border-top:1px solid var(--line); padding:24px 0; font-size:13px; color:var(--muted); }
+footer a { margin-right:16px; }
+</style>
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="../"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="20" width="22" height="6" rx="2" fill="#2563eb"/><rect x="8" y="13" width="16" height="5.5" rx="2" fill="#60a5fa"/><rect x="11" y="6" width="10" height="5.5" rx="2" fill="#bfdbfe"/></svg>devbase</a></div></header>
+<main><div class="wrap">
+<h1>プライバシーポリシー</h1>
+<p class="date">制定日: 2026年10月27日</p>
+
+<p>このポリシーは、devbase と、devbase の上で動く道具（以下「本ソフトウェア」）が Google アカウントの情報をどう扱うかを定めます。本ソフトウェアはオープンソースで、devbase プロジェクト（以下「私たち」）が <a href="https://github.com/devbasex/devbase">github.com/devbasex/devbase</a> で開発しています。</p>
+
+<h2>1. 本ソフトウェアの動き方</h2>
+<p>本ソフトウェアは、利用者が自分の端末やコンテナの中で動かすプログラムです。私たちはサーバーを運営しておらず、利用者のデータを受け取る仕組みはありません。</p>
+
+<h2>2. 取得する情報</h2>
+<p>利用者が Google アカウントでログインして許可したとき、本ソフトウェアは次のものを受け取ります。</p>
+<ul>
+  <li>Google が発行するアクセストークンとリフレッシュトークン</li>
+  <li>利用者が許可した範囲（スコープ）の Google のデータ。たとえばメールアドレスや、利用者が操作を指示したファイル</li>
+</ul>
+
+<h2>3. 使い方</h2>
+<p>受け取った情報は、利用者が本ソフトウェアに指示した操作（ファイルの取得・書き込みなど）を行うためだけに使います。広告や、利用者の指示によらない分析には使いません。</p>
+
+<h2>4. 保存する場所</h2>
+<p>トークンとデータは、利用者の端末かコンテナのボリュームにだけ保存します。私たちや第三者へ送ることはありません。</p>
+
+<h2>5. 第三者への提供</h2>
+<p>私たちは利用者の情報を受け取らないので、第三者へ提供・販売することもありません。</p>
+
+<h2>6. Google API のデータの扱い</h2>
+<p>本ソフトウェアが Google API から受け取った情報の使用と、ほかのアプリへの転送は、Limited Use の要件を含む <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a> に従います。</p>
+
+<h2>7. 削除とアクセスの取り消し</h2>
+<p>利用者は <a href="https://myaccount.google.com/permissions">Google アカウントの「サードパーティ製のアプリとサービス」</a> から、いつでも本ソフトウェアへの許可を取り消せます。端末に残ったトークンとデータは、該当のファイルかボリュームを消すと削除されます。</p>
+
+<h2>8. 変更</h2>
+<p>このポリシーを変えるときは、このページを更新します。変更の履歴は GitHub のリポジトリに残ります。</p>
+
+<h2>9. 問い合わせ</h2>
+<p>このポリシーについての問い合わせは <a href="https://github.com/devbasex/devbase/issues">GitHub Issues</a> で受け付けます。</p>
+
+<hr>
+<section class="en" lang="en">
+<h2>Privacy Policy (English summary)</h2>
+<p>devbase and the tools that run on it ("the Software") are open-source programs that users run on their own machines or containers. We do not operate any server that receives user data.</p>
+<ul>
+  <li><b>What we access:</b> OAuth tokens issued by Google and the Google user data within the scopes the user grants.</li>
+  <li><b>How we use it:</b> only to perform the operations the user asks the Software to perform. Never for advertising.</li>
+  <li><b>Storage:</b> tokens and data stay on the user's machine or container volume. Nothing is sent to us or to third parties.</li>
+  <li><b>Sharing:</b> we do not receive, share, or sell user data.</li>
+  <li><b>Google API data:</b> the Software's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</li>
+  <li><b>Revocation and deletion:</b> users can revoke access at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> and delete local tokens and data by removing the files or volumes.</li>
+  <li><b>Contact:</b> <a href="https://github.com/devbasex/devbase/issues">GitHub Issues</a>.</li>
+</ul>
+</section>
+</div></main>
+<footer><div class="wrap"><a href="../">devbase</a><a href="../privacy/">プライバシーポリシー</a><a href="../terms/">利用規約</a><a href="https://github.com/devbasex/devbase">GitHub</a></div></footer>
+</body>
+</html>
