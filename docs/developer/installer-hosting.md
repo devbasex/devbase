@@ -57,7 +57,7 @@ flowchart LR
 | 種別 | ホスト | 値 | 用途 |
 |---|---|---|---|
 | CNAME | `dl` | `devbasex.github.io.` | Pages へのルーティング |
-| TXT | `_github-pages-challenge-devbasex` | GitHub 発行トークン | ドメイン検証（乗っ取り防止・任意だが推奨） |
+| TXT | `_github-pages-challenge-devbasex.dl` | GitHub 発行トークン | ドメイン検証（乗っ取り防止）。組織の Verified domains で検証する |
 
 - basex.jp のネームサーバーは `01.dnsv.jp`〜`04.dnsv.jp`（お名前.com の DNS レコード
   設定用サーバー）。NS 変更は不要。
@@ -176,8 +176,9 @@ curl -fsSL https://dl.basex.jp/i | head -20
   `https://dl.basex.jp/i` が HTTP 200・証明書一致・`http→https` 301 を確認済み。
 - URL 更新（README / docs / install.sh）: **完了**（#49）。配信内容の sha256 が
   `main:install.sh` と一致することを確認済み。
-- ドメイン検証 TXT（§4・乗っ取り防止）: **未**（推奨）。GitHub の Verify domains で
-  発行されるトークンを、お名前.com に TXT `_github-pages-challenge-devbasex` として登録する。
+- ドメイン検証 TXT（§4・乗っ取り防止）: **完了**。TXT `_github-pages-challenge-devbasex.dl` が
+  登録済みで、組織 devbasex の Settings → Pages → Verified domains で `dl.basex.jp` が Verified
+  であることを確認した（2026-10-27）。
 
 ## 12. 出典
 
