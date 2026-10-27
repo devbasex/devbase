@@ -23,7 +23,7 @@
 ### Changed
 - **`https://dl.basex.jp/` を devbase の紹介ページにしました。** これまでのワンライナーだけの案内に替え、できること・
   はじめ方・コマンドの体系・はじめから入っている道具・ドキュメントへの入口を 1 枚にまとめました（コピーのボタン付き）。
-  ページの正本は `site/index.html` です。ワンライナーの URL（`https://dl.basex.jp/i`）と配信の中身は変わりません。
+  ロゴ（base の上に層が積まれる形）とアイコンは自前で描いたものです。ページの正本は `site/index.html` です。ワンライナーの URL（`https://dl.basex.jp/i`）と配信の中身は変わりません。
 - **シェル補完（bash・zsh）が、`--context NAME` を受け付けるすべてのサブコマンドで `--context` を出すようにしました（#435）。**
   これまでは `open` と `project post-start` だけでした。`up`・`down`・`ps`・`login`・`scale`・`build`・`rebuild`、
   `project` / `container` の配下（`logs`・`profile up|down|list` を含む）、`env exec`・`env token` で、`-` を打って補完すると

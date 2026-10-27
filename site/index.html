@@ -9,7 +9,7 @@
 <meta property="og:description" content="Docker Compose で再現できる開発環境を、プラグインで配る CLI。">
 <meta property="og:url" content="https://dl.basex.jp/">
 <meta property="og:type" content="website">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Cpath d='M9 10l6 6-6 6M17 22h7' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='5' y='20' width='22' height='6' rx='2' fill='%232563eb'/%3E%3Crect x='8' y='13' width='16' height='5.5' rx='2' fill='%2360a5fa'/%3E%3Crect x='11' y='6' width='10' height='5.5' rx='2' fill='%23bfdbfe'/%3E%3C/svg%3E">
 <style>
 :root {
   --bg: #ffffff;
@@ -144,7 +144,7 @@ body { overflow-x: hidden; }
 <header class="nav">
   <div class="wrap">
     <a class="brand" href="./">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#2563eb"/><path d="M9 10l6 6-6 6M17 22h7" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="20" width="22" height="6" rx="2" fill="#2563eb"/><rect x="8" y="13" width="16" height="5.5" rx="2" fill="#60a5fa"/><rect x="11" y="6" width="10" height="5.5" rx="2" fill="#bfdbfe"/></svg>
       devbase
     </a>
     <nav class="links">
@@ -187,32 +187,32 @@ body { overflow-x: hidden; }
       <p class="sub">手元の端末を汚さずに、チームで同じ環境を使い回すための仕組みをまとめています。</p>
       <div class="grid">
         <div class="card">
-          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></svg></div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="15" width="18" height="5" rx="1.5"/><path d="M12 3v8M8.5 7.5 12 11l3.5-3.5"/></svg></div>
           <h3>プラグインで配る</h3>
           <p>プロジェクトの <code>compose.yml</code> やフックを Git リポジトリにまとめ、<code>devbase plugin install</code> で入れて、<code>update</code> で揃えます。</p>
         </div>
         <div class="card">
-          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg></div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="11" height="7" rx="1.5"/><rect x="3" y="14" width="11" height="6" rx="1.5"/><rect x="17" y="4" width="4" height="16" rx="1.5"/></svg></div>
           <h3>同じ環境を何度でも</h3>
           <p>共通の base イメージから派生させるので、誰の端末でも同じ道具と版がそろいます。古いイメージは <code>devbase rebuild</code> で建て直します。</p>
         </div>
         <div class="card">
-          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M9 13v2M15 13v2"/></svg></div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 10l3 2.5L7 15M13 15h4"/></svg></div>
           <h3>AI エージェントの CLI 入り</h3>
           <p>Claude Code・Codex・Gemini CLI などがはじめから入っています。認証と会話の記録はコンテナを作り直しても残ります。</p>
         </div>
         <div class="card">
-          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="8" height="8" rx="1.5"/><rect x="14" y="3" width="8" height="8" rx="1.5"/><rect x="2" y="13" width="8" height="8" rx="1.5"/><path d="M18 14v6M15 17h6"/></svg></div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="5.5" height="10" rx="1.5"/><rect x="9.25" y="7" width="5.5" height="10" rx="1.5"/><rect x="16.5" y="7" width="5.5" height="10" rx="1.5" stroke-dasharray="2.5 2"/></svg></div>
           <h3>並べて動かす</h3>
           <p><code>devbase scale</code> で、動いているコンテナを止めずに同じプロジェクトの作業場所を増やせます。エージェントを並行で走らせるときに使います。</p>
         </div>
         <div class="card">
-          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h4M7 17h4"/></svg></div>
           <h3>認証情報を分ける</h3>
           <p>アカウントグループごとに認証情報と会話の記録を別のボリュームへ置きます。環境変数は age での暗号化や OpenBao から配れます。</p>
         </div>
         <div class="card">
-          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="3" width="13" height="9" rx="1.5"/><path d="M5 7v8.5A1.5 1.5 0 0 0 6.5 17H16M2 10v8.5A1.5 1.5 0 0 0 3.5 20H13"/></svg></div>
           <h3>スナップショット</h3>
           <p>ホームのボリュームを差分で控え、世代を残して戻せます。端末を移るときの引っ越しにも使えます。</p>
         </div>
