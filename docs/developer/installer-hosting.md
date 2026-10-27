@@ -77,15 +77,16 @@ flowchart LR
   成果物（artifact）として公開する。`install.sh` はリポジトリ root の 1 ファイルが
   正本（single source of truth）であり、Pages 用に複製しない。
 - 成果物に `CNAME`（内容 `dl.basex.jp`）を含め、custom domain を固定する。
-- ルート（`/`）には簡単な案内 HTML を置く（任意）。
+- ルート（`/`）には devbase の紹介ページを置く。正本は `site/index.html`（外部の読み込みの無い 1 ファイル）で、
+  ワークフローが `site/` をそのまま `_site/` へ写す。
 - 配信パスは `/i` のみ（ワークフローで `install.sh` を `_site/i` へコピー）。
 
 ### 5.2 配信ワークフロー（`.github/workflows/pages.yml`）
 
 ```mermaid
 flowchart TD
-    A["push to main<br/>(install.sh 変更時)"] --> B["checkout"]
-    B --> C["_site/ 組み立て<br/>install.sh / CNAME / index.html"]
+    A["push to main<br/>(install.sh・site/ 変更時)"] --> B["checkout"]
+    B --> C["_site/ 組み立て<br/>site/ / install.sh / CNAME"]
     C --> D["upload-pages-artifact"]
     D --> E["deploy-pages"]
     E --> F["https://dl.basex.jp/i 更新"]
@@ -93,10 +94,10 @@ flowchart TD
 
 要点:
 
-- トリガ: `push`（`paths: [install.sh, .github/workflows/pages.yml]`）+ `workflow_dispatch`。
+- トリガ: `push`（`paths: [install.sh, site/**, .github/workflows/pages.yml]`）+ `workflow_dispatch`。
 - 権限: `pages: write` / `id-token: write` / `contents: read`。
 - 並行制御: `concurrency: { group: pages, cancel-in-progress: true }`。
-- `_site/` に `install.sh` をコピーし、`CNAME` に `dl.basex.jp` を書き出す。
+- `_site/` に `site/` と `install.sh`（`i` として）をコピーし、`CNAME` に `dl.basex.jp` を書き出す。
 
 ### 5.3 HTTPS
 
