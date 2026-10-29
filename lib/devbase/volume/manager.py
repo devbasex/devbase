@@ -53,6 +53,17 @@ VSCODE_SERVER_TARGET = f'{CONTAINER_HOME}/.vscode-server'
 VSCODE_BIN_TARGET = f'{VSCODE_SERVER_TARGET}/bin'
 #: #463 より前の、~/.vscode-server を丸ごと持つコンテナごとのボリュームの接頭辞
 LEGACY_VSCODE_VOLUME_PREFIX = "devbase_vscode_"
+
+# --- Dev Containers の共有の置き場 (#507) ------------------------------------
+# Dev Containers 拡張は、コンテナに名前が "vscode" のボリュームが付いていれば、
+# 拡張のキャッシュと本体の新しい版をその中 (<マウント先>/vscode-server) に置く。
+# 付いていなければ、VS Code を動かしている手元の端末のキャッシュを使い、CPU の
+# 種類を見ずに拡張を送る。名前は Dev Containers の決め打ちで、devbase_ で始められない。
+VSCODE_CACHE_VOLUME = "vscode"
+#: :data:`VSCODE_CACHE_VOLUME` を付ける先。Dev Containers が自分で作るコンテナと同じ
+VSCODE_CACHE_TARGET = '/vscode'
+#: 共有の置き場の中の拡張のキャッシュ。起動の後の処理が片付ける
+VSCODE_CACHE_EXTENSIONS_DIR = f'{VSCODE_CACHE_TARGET}/vscode-server/extensionsCache'
 _LEGACY_VSCODE_VOLUME_RE = re.compile(r"^devbase_vscode_.+_[0-9]+$")
 
 
@@ -237,6 +248,7 @@ class VolumeManager:
         - devbase_work_{i}: Project work directory per instance
         - devbase_vscode-server-bin: VS Code Server の本体, shared by all
           containers (#463)
+        - vscode: Dev Containers の共有の置き場, shared by all containers (#507)
 
         Args:
             scale: Number of container instances
@@ -257,6 +269,9 @@ class VolumeManager:
 
         # Ensure VS Code Server binary volume (once for all containers, #463)
         self._ensure_volume(VSCODE_SERVER_VOLUME, "VS Code Server")
+
+        # Ensure the Dev Containers cache volume (once for all containers, #507)
+        self._ensure_volume(VSCODE_CACHE_VOLUME, "Dev Containers cache")
 
         # Create or verify work volumes for each instance
         for i in range(1, scale + 1):

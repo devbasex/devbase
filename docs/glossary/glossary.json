@@ -1034,6 +1034,12 @@
       "source": "docs/specifications/vscode-server-volume.md"
     },
     {
+      "term": "Dev Containers の共有の置き場",
+      "context": "editor",
+      "meaning": "すべての dev コンテナが /vscode に付ける 1 本のボリューム vscode。名前は Dev Containers 拡張の決め打ちで、付いていると拡張のキャッシュ（/vscode/vscode-server/extensionsCache）と VS Code Server の新しい版の本体（/vscode/vscode-server/bin/<build>/<commit>）を手元の端末でなくこの中に置く。docker ホストごとにあり、別の CPU 向けの拡張が混ざらない",
+      "source": "issues/507-vscode-cache-volume.md"
+    },
+    {
       "term": "入れ子の本体",
       "context": "container-start",
       "meaning": "VS Code Server の本体の同時の展開で、遅れた側の中身が bin/<commit>/vscode-server-linux-<arch>/ に入れ子で残ったもの。product.json を持ち、コンテナの起動の片付けが消す",

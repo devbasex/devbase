@@ -58,7 +58,7 @@ def test_shared_volume_is_created_once_for_any_group_and_scale(monkeypatch):
     manager.ensure_volumes(1, group="team-b")
 
     vscode = [n for n in created if "vscode" in n]
-    assert vscode == [manager.VSCODE_SERVER_VOLUME]
+    assert vscode == [manager.VSCODE_SERVER_VOLUME, manager.VSCODE_CACHE_VOLUME]
 
 
 def test_existing_shared_volume_is_not_recreated(monkeypatch):
@@ -151,3 +151,35 @@ def test_snapshot_targets_exclude_shared_vscode_volume(tmp_path):
     volumes = SnapshotManager(tmp_path, group="acme").volumes
 
     assert manager.VSCODE_SERVER_VOLUME not in volumes.values()
+
+
+# ---------------------------------------------------------------------------
+# Dev Containers の共有の置き場 (#507 の受け入れ条件 2)
+# ---------------------------------------------------------------------------
+
+def test_cache_volume_name_is_the_one_dev_containers_looks_for():
+    """Dev Containers は名前が "vscode" のボリュームだけを共有の置き場と見なす。"""
+    assert manager.VSCODE_CACHE_VOLUME == "vscode"
+    assert manager.VSCODE_CACHE_TARGET == "/vscode"
+    assert manager.VSCODE_CACHE_EXTENSIONS_DIR == "/vscode/vscode-server/extensionsCache"
+
+
+def test_cache_volume_is_created_once_and_not_recreated(monkeypatch):
+    """無ければ 1 本だけ作り、あれば作らない。"""
+    created = _record_docker(monkeypatch)
+    manager.ensure_volumes(2)
+    manager.ensure_volumes(1, group="team-b")
+    assert created.count(manager.VSCODE_CACHE_VOLUME) == 1
+
+    created = _record_docker(monkeypatch, existing={manager.VSCODE_CACHE_VOLUME})
+    manager.ensure_volumes(1)
+    assert manager.VSCODE_CACHE_VOLUME not in created
+
+
+def test_snapshot_targets_exclude_cache_volume(tmp_path):
+    """スナップショットの対象に Dev Containers の共有の置き場が入らない。"""
+    from devbase.snapshot.manager import SnapshotManager
+
+    volumes = SnapshotManager(tmp_path, group="acme").volumes
+
+    assert manager.VSCODE_CACHE_VOLUME not in volumes.values()

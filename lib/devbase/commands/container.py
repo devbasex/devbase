@@ -1075,14 +1075,21 @@ def _prepare_vscode_server_bin(project_name: str, scale: int, dev_service_name: 
     ``bin`` が root のままで attach が失敗するため、窓を開く前にここで揃える
     (詳細は :mod:`devbase.editor.vscode_server`)。
 
+    続けて、Dev Containers の共有の置き場 (``/vscode``) の拡張のキャッシュと、
+    ``bin`` のリンク切れを片付ける (#507)。
+
     失敗しても起動の後の処理は倒さない (debug の記録にとどめる)。
     ``indices`` を渡すとその番号にだけ行う。渡さなければ 1 から ``scale``。
     """
     from devbase.editor import vscode_server
 
+    def prepare(container_name: str) -> None:
+        vscode_server.prepare_bin_dir(container_name)
+        vscode_server.prune_shared_cache(container_name)
+
     _for_each_dev_container(
         project_name, scale, dev_service_name, compose_file, indices,
-        vscode_server.prepare_bin_dir, "VS Code Server の bin の用意")
+        prepare, "VS Code Server の bin の用意")
 
 
 def _report_legacy_vscode_volumes() -> None:

@@ -60,6 +60,8 @@ def test_creates_all_volumes_in_order_when_none_exist(monkeypatch, caplog):
         ("create", "devbase_home_acme"),
         ("exists", "devbase_vscode-server-bin"),
         ("create", "devbase_vscode-server-bin"),
+        ("exists", "vscode"),
+        ("create", "vscode"),
         ("exists", "devbase_work_1"),
         ("create", "devbase_work_1"),
         ("exists", "devbase_work_2"),
@@ -70,6 +72,7 @@ def test_creates_all_volumes_in_order_when_none_exist(monkeypatch, caplog):
         "  Creating devbase_home_ubuntu (shared home)...",
         "  Creating devbase_home_acme (account group)...",
         "  Creating devbase_vscode-server-bin (VS Code Server)...",
+        "  Creating vscode (Dev Containers cache)...",
         "  Creating devbase_work_1...",
         "  Creating devbase_work_2...",
     ]
@@ -77,7 +80,7 @@ def test_creates_all_volumes_in_order_when_none_exist(monkeypatch, caplog):
 
 def test_existing_volumes_are_only_checked(monkeypatch, caplog):
     existing = {"devbase_home_ubuntu", "devbase_home_team-b",
-                "devbase_vscode-server-bin", "devbase_work_1"}
+                "devbase_vscode-server-bin", "vscode", "devbase_work_1"}
     calls = _fake_docker(monkeypatch, existing=existing)
 
     with caplog.at_level(logging.INFO, logger=manager.logger.name):
@@ -87,6 +90,7 @@ def test_existing_volumes_are_only_checked(monkeypatch, caplog):
         ("exists", "devbase_home_ubuntu"),
         ("exists", "devbase_home_team-b"),
         ("exists", "devbase_vscode-server-bin"),
+        ("exists", "vscode"),
         ("exists", "devbase_work_1"),
     ]
     assert _messages(caplog) == [
@@ -94,6 +98,7 @@ def test_existing_volumes_are_only_checked(monkeypatch, caplog):
         "  devbase_home_ubuntu (shared home, exists)",
         "  devbase_home_team-b (account group, exists)",
         "  devbase_vscode-server-bin (VS Code Server, exists)",
+        "  vscode (Dev Containers cache, exists)",
         "  devbase_work_1 (exists)",
     ]
 
@@ -108,6 +113,7 @@ def test_mixed_existing_and_missing(monkeypatch, caplog):
     assert [name for kind, name in calls if kind == "create"] == [
         "devbase_home_ubuntu",
         "devbase_vscode-server-bin",
+        "vscode",
         "devbase_work_1",
         "devbase_work_3",
     ]
@@ -116,6 +122,7 @@ def test_mixed_existing_and_missing(monkeypatch, caplog):
         "  Creating devbase_home_ubuntu (shared home)...",
         "  devbase_home_acme (account group, exists)",
         "  Creating devbase_vscode-server-bin (VS Code Server)...",
+        "  Creating vscode (Dev Containers cache)...",
         "  Creating devbase_work_1...",
         "  devbase_work_2 (exists)",
         "  Creating devbase_work_3...",
@@ -131,6 +138,7 @@ def test_scale_zero_creates_only_shared_volumes(monkeypatch):
         "devbase_home_ubuntu",
         "devbase_home_acme",
         "devbase_vscode-server-bin",
+        "vscode",
     ]
 
 
@@ -138,10 +146,12 @@ def test_scale_zero_creates_only_shared_volumes(monkeypatch):
     ("devbase_home_ubuntu", []),
     ("devbase_home_acme", ["devbase_home_ubuntu"]),
     ("devbase_vscode-server-bin", ["devbase_home_ubuntu", "devbase_home_acme"]),
+    ("vscode", ["devbase_home_ubuntu", "devbase_home_acme",
+                "devbase_vscode-server-bin"]),
     ("devbase_work_1", ["devbase_home_ubuntu", "devbase_home_acme",
-                        "devbase_vscode-server-bin"]),
+                        "devbase_vscode-server-bin", "vscode"]),
     ("devbase_work_2", ["devbase_home_ubuntu", "devbase_home_acme",
-                        "devbase_vscode-server-bin", "devbase_work_1"]),
+                        "devbase_vscode-server-bin", "vscode", "devbase_work_1"]),
 ])
 def test_failed_creation_raises_and_stops(monkeypatch, failing, created_before):
     calls = _fake_docker(monkeypatch, failing={failing})
@@ -172,5 +182,6 @@ def test_module_function_delegates_with_group(monkeypatch):
         "devbase_home_ubuntu",
         "devbase_home_team-b",
         "devbase_vscode-server-bin",
+        "vscode",
         "devbase_work_1",
     ]
