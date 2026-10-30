@@ -57,7 +57,7 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | 共通の VS Code Server ボリューム | — | すべての dev コンテナが ~/.vscode-server/bin に付ける 1 本のボリューム devbase_vscode-server-bin。サーバーの本体の版（bin/<commit>）だけを持ち、拡張と data/ を持たない | — | — | `docs/specifications/vscode-server-volume.md` |
 | コンテナごとの VS Code Server の状態 | — | ~/.vscode-server のうち bin/ 以外（extensions/・extensionsCache/・data/）。拡張・接続トークン・.devport・マシンの設定（window.title を含む）・ログ・User/ の状態を持つ。どのボリュームにも置かず、コンテナの書き込みレイヤーに残る。devbase up の作り直しで消え、docker restart では残る | — | — | `docs/specifications/vscode-server-volume.md` |
 | 旧形式の VS Code Server ボリューム | — | #463 より前の devbase が dev コンテナ 1 つに 1 本付けていた devbase_vscode_<project>_<index>。~/.vscode-server を丸ごと持つ。#463 の後は付けず、devbase は消さない | — | — | `docs/specifications/vscode-server-volume.md` |
-| Dev Containers の共有の置き場 | — | すべての dev コンテナが /vscode に付ける 1 本のボリューム vscode。名前は Dev Containers 拡張の決め打ちで、付いていると拡張のキャッシュ（/vscode/vscode-server/extensionsCache）と VS Code Server の新しい版の本体（/vscode/vscode-server/bin/<build>/<commit>）を手元の端末でなくこの中に置く。docker ホストごとにあり、別の CPU 向けの拡張が混ざらない | — | — | `issues/507-vscode-cache-volume.md` |
+| Dev Containers の共有の置き場 | — | すべての dev コンテナが /vscode に付ける 1 本のボリューム vscode。名前は Dev Containers 拡張の決め打ちで、付いていると拡張のキャッシュ（/vscode/vscode-server/extensionsCache）と VS Code Server の新しい版の本体（/vscode/vscode-server/bin/<build>/<commit>）を手元の端末でなくこの中に置く。docker ホストごとにあり、別の CPU 向けの拡張が混ざらない | — | — | `docs/specifications/vscode-server-volume.md` |
 
 ## 機密の置き場（`secret`）
 

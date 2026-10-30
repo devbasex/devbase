@@ -1037,7 +1037,7 @@
       "term": "Dev Containers の共有の置き場",
       "context": "editor",
       "meaning": "すべての dev コンテナが /vscode に付ける 1 本のボリューム vscode。名前は Dev Containers 拡張の決め打ちで、付いていると拡張のキャッシュ（/vscode/vscode-server/extensionsCache）と VS Code Server の新しい版の本体（/vscode/vscode-server/bin/<build>/<commit>）を手元の端末でなくこの中に置く。docker ホストごとにあり、別の CPU 向けの拡張が混ざらない",
-      "source": "issues/507-vscode-cache-volume.md"
+      "source": "docs/specifications/vscode-server-volume.md"
     },
     {
       "term": "入れ子の本体",
