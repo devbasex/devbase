@@ -493,6 +493,32 @@ docker inspect <project>-dev-1 \
 
 拡張機能は `devbase up` の作り直しで消え、作り直しの後の最初の attach で入り直します（仕様）。
 
+### VS Code の attach が「Copy extensions to remote」で止まる
+
+**症状:**
+
+VS Code の Dev Containers の記録が `Extensions cache, copy to remote: ...-linux-arm64` などを出したあと、
+`Start: Run in container: # Copy extensions to remote` で進まなくなる。
+
+**原因:**
+
+コンテナに Dev Containers の共有の置き場（名前 `vscode` のボリューム）が付いていないと、Dev Containers 拡張は
+VS Code を動かしている手元の端末の 1 つのキャッシュから、拡張の名前だけで選んでコンテナへ送ります。別の CPU 向けの
+版（x86_64 のコンテナへ `-linux-arm64`）が混ざっていると、送る途中で止まります。手元のキャッシュは Windows では
+`%LOCALAPPDATA%\Temp\vsch\extensionsCache` にあります。
+
+**解決策:**
+
+1. `devbase up` でコンテナを作り直し、共有の置き場を付けます。付いたかは次で確かめます。
+
+```bash
+docker inspect <project>-dev-1 \
+  --format '{{range .Mounts}}{{.Name}} -> {{.Destination}}{{"\n"}}{{end}}' \
+  | grep -x 'vscode -> /vscode'
+```
+
+2. 作り直す前に開きたいときは、手元のキャッシュから、開く先と違う CPU 向けの版（`*-linux-arm64` など）を消します。
+
 ## 問題が解決しない場合
 
 上記の方法で解決しない場合は、以下の情報を添えて [GitHub Issues](https://github.com/devbasex/devbase/issues) に報告してください。

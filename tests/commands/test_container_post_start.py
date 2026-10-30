@@ -558,10 +558,21 @@ def test_post_start_uses_the_scale_compose_file(harness):
 LEGACY = ['devbase_vscode_proj-a_2', 'devbase_vscode_proj-a_1']
 
 
-def _bin_fixes(events):
-    """``docker exec -u 0 <名前> sh -c …`` (bin の所有者の直し) を打ったコンテナ名"""
+def _root_execs(events, marker):
+    """``docker exec -u 0 <名前> sh -c <手順>`` のうち、手順に ``marker`` を含むものの名前"""
     return [e[1][4] for e in events
-            if e[0] == 'run' and e[1][:4] == ['docker', 'exec', '-u', '0']]
+            if e[0] == 'run' and e[1][:4] == ['docker', 'exec', '-u', '0']
+            and marker in e[1][-1]]
+
+
+def _bin_fixes(events):
+    """bin の所有者の直し (#463) を打ったコンテナ名"""
+    return _root_execs(events, 'owner_of')
+
+
+def _cache_prunes(events):
+    """Dev Containers の共有の置き場の片付け (#507) を打ったコンテナ名"""
+    return _root_execs(events, 'extensionsCache')
 
 
 def test_up_prepares_vscode_bin_before_the_title(harness):
@@ -575,6 +586,7 @@ def test_up_prepares_vscode_bin_before_the_title(harness):
     order = [e[1][4] if e[0] == 'run' else e[1] for e in events
              if e[0] == 'title' or (e[0] == 'run' and e[1][:4] == ['docker', 'exec', '-u', '0'])]
     assert order.index('real-dev-1') < order.index('real-dev-2')
+    assert _cache_prunes(events) == ['real-dev-1', 'real-dev-2']
     first_title = next(i for i, e in enumerate(events) if e[0] == 'title')
     last_fix = max(i for i, e in enumerate(events)
                    if e[0] == 'run' and e[1][:4] == ['docker', 'exec', '-u', '0'])
@@ -646,3 +658,18 @@ def test_scale_and_post_start_do_not_report_legacy_volumes(harness, caplog):
     assert container.cmd_post_start() == 0
 
     assert not any('VS Code Server のボリューム' in m for m in _messages(caplog))
+
+
+def test_cache_prune_failure_does_not_stop_post_start(harness, monkeypatch):
+    """#507: 共有の置き場を片付けられなくても、bin の直しと窓のタイトルは続く"""
+    from devbase.editor import vscode_server
+
+    def boom(name, runner=None):
+        raise RuntimeError('docker down')
+
+    monkeypatch.setattr(vscode_server, 'prune_shared_cache', boom)
+    harness['setup'](scale=1)
+
+    assert container.cmd_up() == 0
+    assert _bin_fixes(harness['events']) == ['real-dev-1']
+    assert _indices(harness['events'], 'title') == [1]

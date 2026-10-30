@@ -1,4 +1,4 @@
-"""共通の VS Code Server ボリュームのマウントと宣言 (#463)
+"""共通の VS Code Server ボリュームと Dev Containers の共有の置き場のマウントと宣言 (#463・#507)
 
 生成 compose に対して次を固定する。
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from devbase.volume import compose
-from devbase.volume.manager import VSCODE_SERVER_VOLUME
+from devbase.volume.manager import VSCODE_CACHE_VOLUME, VSCODE_SERVER_VOLUME
 from tests.volume.conftest import load_scaled, mount_source, write_compose
 
 SERVER_TARGET = "/home/ubuntu/.vscode-server"
@@ -171,3 +171,68 @@ def test_data_only_declaration_still_gets_shared_bin(in_tmp_cwd):
     dev = load_scaled(in_tmp_cwd)["services"]["dev-1"]
     assert mount_source(dev, DATA_TARGET) == "./vscode-data"
     assert mount_source(dev, BIN_TARGET) == VSCODE_SERVER_VOLUME
+
+
+# ---------------------------------------------------------------------------
+# Dev Containers の共有の置き場 (#507 の受け入れ条件 1)
+# ---------------------------------------------------------------------------
+
+CACHE_TARGET = "/vscode"
+
+
+def test_every_instance_mounts_the_cache_volume(in_tmp_cwd):
+    """どのインスタンスにも名前 "vscode" のボリュームを /vscode に 1 つ付ける。"""
+    write_compose(in_tmp_cwd, {"dev": {"image": "dev:latest"}})
+
+    compose.generate_scaled_compose(scale=2)
+
+    scaled = load_scaled(in_tmp_cwd)
+    for name in ("dev-1", "dev-2"):
+        dev = scaled["services"][name]
+        assert mount_source(dev, CACHE_TARGET) == VSCODE_CACHE_VOLUME
+        assert _sources(dev).count(VSCODE_CACHE_VOLUME) == 1
+        # #463 の本体のマウントはそのまま
+        assert mount_source(dev, BIN_TARGET) == VSCODE_SERVER_VOLUME
+    assert scaled["volumes"][VSCODE_CACHE_VOLUME] == {"external": True}
+
+
+def test_non_dev_services_do_not_get_the_cache_volume(in_tmp_cwd):
+    write_compose(in_tmp_cwd, {
+        "dev": {"image": "dev:latest"},
+        "db": {"image": "mysql:8"},
+    })
+
+    compose.generate_scaled_compose(scale=1)
+
+    db = load_scaled(in_tmp_cwd)["services"]["db"]
+    assert mount_source(db, CACHE_TARGET) is None
+
+
+def test_declared_cache_mount_is_not_overridden(in_tmp_cwd):
+    """プロジェクトが /vscode を自分で付けていれば、マウントも宣言も足さない。"""
+    write_compose(in_tmp_cwd, {
+        "dev": {"image": "dev:latest", "volumes": ["./own:/vscode"]},
+    })
+
+    compose.generate_scaled_compose(scale=1)
+
+    scaled = load_scaled(in_tmp_cwd)
+    dev = scaled["services"]["dev-1"]
+    assert mount_source(dev, CACHE_TARGET) == "./own"
+    assert VSCODE_CACHE_VOLUME not in _sources(dev)
+    assert VSCODE_CACHE_VOLUME not in scaled["volumes"]
+    # 本体のボリュームは /vscode の指定に左右されない
+    assert mount_source(dev, BIN_TARGET) == VSCODE_SERVER_VOLUME
+
+
+def test_declared_vscode_server_mount_still_gets_cache_volume(in_tmp_cwd):
+    """~/.vscode-server を自分で付けていても、/vscode は別のパスなので足す。"""
+    write_compose(in_tmp_cwd, {
+        "dev": {"image": "dev:latest",
+                "volumes": [f"./vscode-server:{SERVER_TARGET}"]},
+    })
+
+    compose.generate_scaled_compose(scale=1)
+
+    dev = load_scaled(in_tmp_cwd)["services"]["dev-1"]
+    assert mount_source(dev, CACHE_TARGET) == VSCODE_CACHE_VOLUME

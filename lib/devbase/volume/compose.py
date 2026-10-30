@@ -18,6 +18,8 @@ from . import bind_mounts
 from .manager import (
     CONTAINER_HOME,
     VSCODE_BIN_TARGET,
+    VSCODE_CACHE_TARGET,
+    VSCODE_CACHE_VOLUME,
     VSCODE_SERVER_TARGET,
     VSCODE_SERVER_VOLUME,
     get_ai_volume_for_index,
@@ -35,6 +37,10 @@ _DEPRECATED_TARGET = CONTAINER_HOME
 # named volume に置く。コンテナの書き込みレイヤに置くと devbase up のたびに
 # 215MB の再ダウンロードが走る。extensions/・data/ などは書き込みレイヤに残す。
 # パス (VSCODE_SERVER_TARGET・VSCODE_BIN_TARGET) は manager に置く。
+#
+# Dev Containers の共有の置き場 (#507) は名前 "vscode" のボリュームを /vscode に付ける。
+# 付いていると Dev Containers は拡張のキャッシュを手元の端末でなくその中に持ち、
+# 別の CPU 向けの拡張が手元を介して送られなくなる。
 
 
 def get_dev_service_name() -> str:
@@ -113,6 +119,7 @@ def _replace_volume_source(vol: Any, source: str, target: str) -> Any:
 def _replace_volumes_for_instance(
     volumes: list, ai_volume: str, work_volume: str, group_volume: str,
     vscode_volume: Optional[str] = None,
+    vscode_cache_volume: Optional[str] = None,
 ) -> list:
     """Replace volume mounts in a service's volumes list for a specific instance.
 
@@ -124,6 +131,8 @@ def _replace_volumes_for_instance(
     ``vscode_volume`` は ``~/.vscode-server/bin`` へ足すボリューム (#463)。
     上の 3 つと違って**差し替えではなく追加**で、プロジェクトが同じマウント先を
     書いている場合は呼び出し側が ``None`` を渡して手を出さない。
+    ``vscode_cache_volume`` は ``/vscode`` へ足す Dev Containers の共有の置き場
+    (#507) で、扱いは ``vscode_volume`` と同じ。
     """
     replacements = {
         '/persistent/ai': ai_volume,
@@ -152,12 +161,15 @@ def _replace_volumes_for_instance(
     )
     if vscode_volume:
         new_volumes.append(f"{vscode_volume}:{VSCODE_BIN_TARGET}")
+    if vscode_cache_volume:
+        new_volumes.append(f"{vscode_cache_volume}:{VSCODE_CACHE_TARGET}")
     return new_volumes
 
 
 def _build_volumes_section(
     config: dict, scale: int, group_volume: str,
     vscode_volume: Optional[str] = None,
+    vscode_cache_volume: Optional[str] = None,
 ) -> dict:
     """Build the volumes section for a scaled compose file."""
     # Copy original volumes (mysql, valkey, etc.) from config
@@ -181,6 +193,10 @@ def _build_volumes_section(
     # 宣言する。external は実体の存在を要求するため、使わない名前を書くと起動が落ちる。
     if vscode_volume:
         volumes[vscode_volume] = {'external': True}
+
+    # Add the Dev Containers cache volume (#507). 宣言の扱いは上と同じ。
+    if vscode_cache_volume:
+        volumes[vscode_cache_volume] = {'external': True}
 
     return volumes
 
@@ -514,13 +530,14 @@ class _DevInstanceSpec:
 
     ``group_volume`` はグループのホームのボリューム名。``dev_environment`` は
     devbase 由来の環境変数、``vscode_volume`` は VS Code Server のボリューム名
-    (#463)、``host_gateway_environment`` はホストの loopback へ届かせるための
+    (#463)、``vscode_cache_volume`` は Dev Containers の共有の置き場 (#507)、``host_gateway_environment`` はホストの loopback へ届かせるための
     上書き (#295)。
     """
 
     group_volume: str
     dev_environment: Optional[Mapping[str, str]] = None
     vscode_volume: Optional[str] = None
+    vscode_cache_volume: Optional[str] = None
     host_gateway_environment: Optional[Mapping[str, str]] = None
 
 
@@ -548,7 +565,7 @@ def _build_dev_instance(
     work_volume = get_work_volume_for_index(index)
     service['volumes'] = _replace_volumes_for_instance(
         service.get('volumes', []), ai_volume, work_volume, spec.group_volume,
-        spec.vscode_volume,
+        spec.vscode_volume, spec.vscode_cache_volume,
     )
 
     return service
@@ -860,6 +877,7 @@ def generate_scaled_compose(
         group_volume=group_volume,
         dev_environment=dev_environment,
         vscode_volume=_vscode_volume(dev_service),
+        vscode_cache_volume=_vscode_cache_volume(dev_service),
         host_gateway_environment=host_gateway_environment,
     )
 
@@ -890,7 +908,8 @@ def generate_scaled_compose(
     scaled_config = {
         'services': scaled_services,
         'volumes': _build_volumes_section(
-            config, scale, spec.group_volume, spec.vscode_volume),
+            config, scale, spec.group_volume, spec.vscode_volume,
+            spec.vscode_cache_volume),
         'networks': _build_networks_section(config),
     }
 
@@ -911,6 +930,17 @@ def _vscode_volume(dev_service: dict) -> Optional[str]:
             or _declares_target(dev_service, VSCODE_BIN_TARGET)):
         return None
     return VSCODE_SERVER_VOLUME
+
+
+def _vscode_cache_volume(dev_service: dict) -> Optional[str]:
+    """dev インスタンスの ``/vscode`` へ足す Dev Containers の共有の置き場 (#507)。
+
+    どの dev インスタンスにも同じ 1 本を付ける。プロジェクトが自分で ``/vscode`` を
+    マウントしている場合は、その指定を奪わず ``None`` を返す。
+    """
+    if _declares_target(dev_service, VSCODE_CACHE_TARGET):
+        return None
+    return VSCODE_CACHE_VOLUME
 
 
 def _drop_dev_excluded(scaled_services: dict, dev_service_name: str, scale: int,

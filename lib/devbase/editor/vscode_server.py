@@ -20,12 +20,19 @@ import subprocess
 from typing import Callable, Optional
 
 from devbase.log import get_logger
-from devbase.volume.manager import VSCODE_BIN_TARGET, VSCODE_SERVER_TARGET
+from devbase.volume.manager import (
+    VSCODE_BIN_TARGET,
+    VSCODE_CACHE_EXTENSIONS_DIR,
+    VSCODE_CACHE_SERVER_DIR,
+    VSCODE_SERVER_TARGET,
+)
 
 logger = get_logger(__name__)
 
 # docker exec の待ち時間上限 (秒)。ローカルの docker への 1 コマンドなので即答する。
 _EXEC_TIMEOUT = 10
+# 片付けの待ち時間上限 (秒)。拡張のキャッシュのファイルを消すだけなので短い。
+_PRUNE_TIMEOUT = 30
 
 
 def bin_fix_script(home_root: Optional[str] = None) -> str:
@@ -72,6 +79,86 @@ def prepare_bin_dir(container_name: str,
         return False
     if result.returncode != 0:
         logger.debug("VS Code Server の bin の所有者を直せませんでした (%s): %s",
+                     container_name, (result.stderr or "").strip())
+        return False
+    return True
+
+
+# --- Dev Containers の共有の置き場の片付け (#507) ------------------------------
+# dev インスタンスには Dev Containers の共有の置き場 (名前 "vscode" のボリューム) が
+# /vscode に付く。Dev Containers は拡張のキャッシュを 500 ファイルまで残し、本体の
+# 古い版を消すと ~/.vscode-server/bin/<commit> のリンクが切れて残る。起動の後の処理で
+# 両方を片付ける。entrypoint でなくここで行うのは、イメージを建て直さずに効かせるため。
+
+#: 拡張のキャッシュに、拡張ごとに残す版の数
+EXTENSIONS_CACHE_KEEP = 3
+
+
+def shared_cache_prune_script(cache_dir: Optional[str] = None,
+                              bin_dir: Optional[str] = None,
+                              keep: int = EXTENSIONS_CACHE_KEEP,
+                              shared_dir: Optional[str] = None) -> str:
+    """共有の置き場の拡張のキャッシュと ``bin`` のリンク切れを片付けるシェルの手順。
+
+    1. ``cache_dir`` の直下の通常のファイルを、ファイル名の最初の「``-`` と数字」より
+       前 (拡張の ID) で分け、更新時刻の新しい順に ``keep`` 個を残して消す。
+       リンクとディレクトリには触らない。``cache_dir`` が無い・リンクなら何もしない
+    2. ``bin_dir`` の直下で、名前が 40 桁の 16 進のリンクのうち、リンク先が無いものを
+       消す。リンクでないもの・リンク先があるものには触らない。``shared_dir``
+       (共有の置き場の中の ``vscode-server``) が無いコンテナでは行わない。``bin`` は
+       全 dev コンテナで共有のボリュームで、共有の置き場が付いていないコンテナ
+       (作り直す前のもの) からは、他のコンテナが張ったリンクがすべて切れて見えるため
+
+    どちらも失敗を無視し、終了コードは常に 0。パスの既定は compose のマウント先と同じ
+    定数から組む。引数はテストが手元のディレクトリで試すためだけに渡す。
+    """
+    cache = shlex.quote(cache_dir or VSCODE_CACHE_EXTENSIONS_DIR)
+    bin_path = shlex.quote(bin_dir or VSCODE_BIN_TARGET)
+    shared = shlex.quote(shared_dir or VSCODE_CACHE_SERVER_DIR)
+    return (
+        f"if [ -d {cache} ] && [ ! -L {cache} ]; then "
+        f"( cd {cache} && ls -t | "
+        # 数える前に通常のファイルだけへ絞る (ディレクトリやリンクが残す枠を取らない)
+        "while IFS= read -r f; do "
+        "[ -f \"$f\" ] && [ ! -L \"$f\" ] && printf '%s\\n' \"$f\"; "
+        "done | "
+        f"awk -v keep={int(keep)} "
+        "'{ id = $0; sub(/-[0-9].*$/, \"\", id); if (++n[id] > keep) print }' | "
+        "while IFS= read -r f; do rm -f -- \"$f\"; done ) || true; "
+        "fi; "
+        f"if [ -d {shared} ] && [ -d {bin_path} ] && [ ! -L {bin_path} ]; then "
+        f"for p in {bin_path}/*; do "
+        "n=\"${p##*/}\"; "
+        "case \"$n\" in *[!0-9a-f]*) continue ;; esac; "
+        "[ \"${#n}\" -eq 40 ] || continue; "
+        "[ -L \"$p\" ] && [ ! -e \"$p\" ] && rm -f -- \"$p\"; "
+        "done; "
+        "fi; "
+        "exit 0"
+    )
+
+
+def prune_shared_cache(container_name: str,
+                       runner: Optional[Callable] = None) -> bool:
+    """コンテナの共有の置き場の拡張のキャッシュと ``bin`` のリンク切れを片付ける。
+
+    Dev Containers は共有の置き場へ root で書くので、``docker exec -u 0`` で打つ。
+    片付けられたら True。docker の失敗・タイムアウトは False を返し、例外を出さない
+    (起動の後の処理を止めない)。
+    """
+    run = runner or subprocess.run
+    try:
+        result = run(
+            ["docker", "exec", "-u", "0", container_name,
+             "sh", "-c", shared_cache_prune_script()],
+            capture_output=True, text=True, timeout=_PRUNE_TIMEOUT, check=False,
+        )
+    except Exception as e:  # noqa: BLE001 - docker 不在/タイムアウト等で起動を倒さない
+        logger.debug("Dev Containers の共有の置き場を片付けられませんでした (%s): %s",
+                     container_name, e)
+        return False
+    if result.returncode != 0:
+        logger.debug("Dev Containers の共有の置き場を片付けられませんでした (%s): %s",
                      container_name, (result.stderr or "").strip())
         return False
     return True

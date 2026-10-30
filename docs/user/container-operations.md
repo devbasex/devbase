@@ -204,6 +204,13 @@ VS Code を attach すると、コンテナ内の `~/.vscode-server` に VS Code
 |---|---|---|
 | `bin/`（本体） | 共通のボリューム `devbase_vscode-server-bin` | コンテナの起動の片付けが古い版を消す（下記） |
 | `extensions/`・`extensionsCache/`・`data/` など `bin/` 以外 | コンテナの書き込みレイヤー（ボリュームではない） | `devbase up` の作り直し（down → up）。`docker restart` と端末の再起動では残る |
+| 拡張のキャッシュと、新しい版の本体（Dev Containers が置く） | Dev Containers の共有の置き場 `vscode`（`/vscode`） | 拡張は起動の後の処理が拡張ごとに新しい 3 版を残して消す。本体は Dev Containers が新しい 9 版を残して消す |
+
+dev コンテナには、名前 `vscode` のボリュームも `/vscode` に付きます。Dev Containers 拡張は、このボリュームが
+付いたコンテナでは拡張のキャッシュをこの中に持ち、VS Code を動かしている手元の端末のキャッシュを使いません。
+ボリュームは docker ホストごとにあるので、arm64 の端末（Mac など）で入った拡張が x86_64 のサーバーのコンテナへ
+送られることはありません。新しい版の本体も Dev Containers がこの中（`/vscode/vscode-server/bin/<build>/<commit>`）に置き、
+`~/.vscode-server/bin/<commit>` にはそこへのリンクを張ります。
 
 `devbase up` でコンテナを作り直すたびに、次のものが消えます。
 
