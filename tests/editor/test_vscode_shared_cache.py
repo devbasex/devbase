@@ -64,10 +64,13 @@ def dirs(tmp_path: Path):
     return cache, bin_dir
 
 
-def _run(cache: Path, bin_dir: Path, keep: int = 3):
+def _run(cache: Path, bin_dir: Path, keep: int = 3,
+         shared: Path | None = None):
+    """``shared`` は共有の置き場の中の ``vscode-server``。既定は ``cache`` の親"""
     return subprocess.run(
         ["sh", "-c", vscode_server.shared_cache_prune_script(
-            str(cache), str(bin_dir), keep=keep)],
+            str(cache), str(bin_dir), keep=keep,
+            shared_dir=str(shared or cache.parent))],
         capture_output=True, text=True)
 
 
@@ -167,3 +170,15 @@ def test_removes_only_dangling_commit_links_in_bin(dirs, tmp_path: Path):
     assert result.returncode == 0, result.stderr
     assert sorted(p.name for p in bin_dir.iterdir()) == sorted(
         [COMMIT_A, "c" * 40, "not-a-commit"])
+
+
+def test_bin_links_are_kept_without_the_shared_dir(dirs, tmp_path: Path):
+    """共有の置き場が付いていないコンテナ (作り直す前のもの) では、``bin`` のリンクは
+    どれも切れて見える。共通の bin ボリュームは他のコンテナと共有なので消さない"""
+    cache, bin_dir = dirs
+    (bin_dir / COMMIT_B).symlink_to(tmp_path / "gone" / COMMIT_B)
+
+    result = _run(cache, bin_dir, shared=tmp_path / "no-vscode" / "vscode-server")
+
+    assert result.returncode == 0, result.stderr
+    assert (bin_dir / COMMIT_B).is_symlink()

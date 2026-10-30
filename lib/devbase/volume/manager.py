@@ -62,8 +62,10 @@ LEGACY_VSCODE_VOLUME_PREFIX = "devbase_vscode_"
 VSCODE_CACHE_VOLUME = "vscode"
 #: :data:`VSCODE_CACHE_VOLUME` を付ける先。Dev Containers が自分で作るコンテナと同じ
 VSCODE_CACHE_TARGET = '/vscode'
+#: 共有の置き場の中で Dev Containers が使う置き場。これが無いコンテナでは bin のリンクを片付けない
+VSCODE_CACHE_SERVER_DIR = f'{VSCODE_CACHE_TARGET}/vscode-server'
 #: 共有の置き場の中の拡張のキャッシュ。起動の後の処理が片付ける
-VSCODE_CACHE_EXTENSIONS_DIR = f'{VSCODE_CACHE_TARGET}/vscode-server/extensionsCache'
+VSCODE_CACHE_EXTENSIONS_DIR = f'{VSCODE_CACHE_SERVER_DIR}/extensionsCache'
 _LEGACY_VSCODE_VOLUME_RE = re.compile(r"^devbase_vscode_.+_[0-9]+$")
 
 

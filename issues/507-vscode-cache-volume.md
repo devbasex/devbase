@@ -65,4 +65,5 @@ Dev Containers 拡張（0.469.0）の attach の振る舞い（`dist/extension/e
 
 - Dev Containers が `/vscode` 側の古い版を消すと、`bin/` のリンクが切れて残る。中身は無いが、版の数だけ溜まる
 - 消すのは、名前が 40 桁の 16 進で、リンクで、リンク先が無いものだけ。entrypoint の片付けの規則（リンクを版に数えず、辿らない）は変えない
+- 共有の置き場（`/vscode/vscode-server`）が無いコンテナでは行わない。`bin` は全 dev コンテナで共有のボリュームで、devbase を更新した後に作り直していないコンテナからは、他のコンテナが張ったリンクがすべて切れて見える。そこで `devbase project post-start` を打つと、作り直したコンテナのリンクを消してしまう（PR #508 のレビュー）
 - 決定 3 と同じ `docker exec -u 0` の 1 回で行う

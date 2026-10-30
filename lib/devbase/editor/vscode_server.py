@@ -23,6 +23,7 @@ from devbase.log import get_logger
 from devbase.volume.manager import (
     VSCODE_BIN_TARGET,
     VSCODE_CACHE_EXTENSIONS_DIR,
+    VSCODE_CACHE_SERVER_DIR,
     VSCODE_SERVER_TARGET,
 )
 
@@ -95,20 +96,25 @@ EXTENSIONS_CACHE_KEEP = 3
 
 def shared_cache_prune_script(cache_dir: Optional[str] = None,
                               bin_dir: Optional[str] = None,
-                              keep: int = EXTENSIONS_CACHE_KEEP) -> str:
+                              keep: int = EXTENSIONS_CACHE_KEEP,
+                              shared_dir: Optional[str] = None) -> str:
     """共有の置き場の拡張のキャッシュと ``bin`` のリンク切れを片付けるシェルの手順。
 
     1. ``cache_dir`` の直下の通常のファイルを、ファイル名の最初の「``-`` と数字」より
        前 (拡張の ID) で分け、更新時刻の新しい順に ``keep`` 個を残して消す。
        リンクとディレクトリには触らない。``cache_dir`` が無い・リンクなら何もしない
     2. ``bin_dir`` の直下で、名前が 40 桁の 16 進のリンクのうち、リンク先が無いものを
-       消す。リンクでないもの・リンク先があるものには触らない
+       消す。リンクでないもの・リンク先があるものには触らない。``shared_dir``
+       (共有の置き場の中の ``vscode-server``) が無いコンテナでは行わない。``bin`` は
+       全 dev コンテナで共有のボリュームで、共有の置き場が付いていないコンテナ
+       (作り直す前のもの) からは、他のコンテナが張ったリンクがすべて切れて見えるため
 
     どちらも失敗を無視し、終了コードは常に 0。パスの既定は compose のマウント先と同じ
     定数から組む。引数はテストが手元のディレクトリで試すためだけに渡す。
     """
     cache = shlex.quote(cache_dir or VSCODE_CACHE_EXTENSIONS_DIR)
     bin_path = shlex.quote(bin_dir or VSCODE_BIN_TARGET)
+    shared = shlex.quote(shared_dir or VSCODE_CACHE_SERVER_DIR)
     return (
         f"if [ -d {cache} ] && [ ! -L {cache} ]; then "
         f"( cd {cache} && ls -t | "
@@ -120,7 +126,7 @@ def shared_cache_prune_script(cache_dir: Optional[str] = None,
         "'{ id = $0; sub(/-[0-9].*$/, \"\", id); if (++n[id] > keep) print }' | "
         "while IFS= read -r f; do rm -f -- \"$f\"; done ) || true; "
         "fi; "
-        f"if [ -d {bin_path} ] && [ ! -L {bin_path} ]; then "
+        f"if [ -d {shared} ] && [ -d {bin_path} ] && [ ! -L {bin_path} ]; then "
         f"for p in {bin_path}/*; do "
         "n=\"${p##*/}\"; "
         "case \"$n\" in *[!0-9a-f]*) continue ;; esac; "
