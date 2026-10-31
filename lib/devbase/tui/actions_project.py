@@ -148,6 +148,37 @@ def _op_scale(devbase_root: Path, name: str):
     return dispatch_lifecycle("scale", name, new_scale=new_scale)
 
 
+def _open_candidates(name: str):
+    """動いている dev コンテナと既定の番号 (``container.project_open_candidates``)。
+
+    切替による CWD / 環境変数の変更は TUI セッションへ残さない。
+    """
+    from devbase.commands import container
+
+    with _preserve_cwd_env():
+        return container.project_open_candidates(name)
+
+
+def _op_open(devbase_root: Path, name: str):
+    """エディタを開く。動いている dev コンテナが 2 つ以上なら、どれを開くかを選ばせる。
+
+    1 つ以下・数が分からないときは選ばせず、既定 (``DEVBASE_OPEN_INDEX``、無ければ 1) を
+    ``cmd_open`` に任せる (停止中の起動・エラーの出し方は ``cmd_open`` が持つ)。カーソルの
+    初期位置は既定の番号で、それが動いていなければ動いているものの先頭に置く。
+    """
+    found = _open_candidates(name)
+    if found is None or len(found[0]) < 2:
+        return dispatch_lifecycle("open", name, open_index=None)
+    running, default_index = found
+    indices = [i for i, _container in running]
+    index = flow.need(menu.select(
+        f"'{name}' で開くコンテナを選択 {menu.HINT_BACK}:",
+        [(container_name, i) for i, container_name in running],
+        back=True, search=False,
+        default=default_index if default_index in indices else indices[0]))
+    return dispatch_lifecycle("open", name, open_index=index)
+
+
 def _op_build(devbase_root: Path, name: str):
     image = flow.need(_select_build_image(devbase_root))
     return dispatch_lifecycle("build", name, image=image or None)
@@ -175,9 +206,9 @@ _OP_HANDLERS = {
     # コマンドは無視する)。down はデータを失わない (volume 保持・up で復旧可能)
     # ためメニュー選択を意思表示とみなし、確認プロンプトを出さない。
     # ps の --all は CLI 既定 (False) に揃える。
-    # open はコンテナに触らずエディタだけを開く。index は尋ねず既定
-    # (DEVBASE_OPEN_INDEX、無ければ 1) を開く (PLAN59 決定 6)。
-    "open": lambda root, name: dispatch_lifecycle("open", name, open_index=None),
+    # open はコンテナに触らずエディタだけを開く。動いている dev コンテナが 2 つ以上の
+    # ときだけ開く先を選ばせる (_op_open)。
+    "open": _op_open,
     "up": lambda root, name: dispatch_lifecycle("up", name, scale=None),
     # 「再ビルド (rebuild --no-cache)」はラベル通り base/project とも無条件 no-cache
     # で再ビルドする。CLI の `rebuild` は期限判定 (= build --expires=7) でキャッシュ

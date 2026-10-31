@@ -270,3 +270,47 @@ def test_up_reads_the_same_env_index_as_open(monkeypatch, env_index, expected):
         monkeypatch.setenv('DEVBASE_OPEN_INDEX', env_index)
     assert container._resolve_open_index(None, 2) == expected
     assert container._explicit_open_index(None) == expected
+
+
+# --- TUI が開く先を選ばせるための照会 (project_open_candidates) ---------------
+
+@pytest.fixture
+def entered(monkeypatch):
+    """対象プロジェクトへの切り替えを差し替える。切り替えた後の env を返す箱"""
+    box = {'ok': True, 'env': {}}
+
+    def fake_enter(name):
+        box['name'] = name
+        os.environ.update(box['env'])
+        return box['ok']
+
+    monkeypatch.setattr(container, '_enter_project', fake_enter)
+    return box
+
+
+def test_open_candidates_lists_running_dev_and_default_index(harness, entered):
+    """動いている dev コンテナと、既定の番号 (切り替え先の DEVBASE_OPEN_INDEX) を返す"""
+    harness.running = [(1, 'proj-dev-1'), (2, 'proj-dev-2')]
+    entered['env'] = {'DEVBASE_OPEN_INDEX': '2'}
+    assert container.project_open_candidates('proj') == (
+        [(1, 'proj-dev-1'), (2, 'proj-dev-2')], 2)
+    assert entered['name'] == 'proj'
+    assert harness.ps_args == ('proj', 'dev')
+    assert harness.opened == [] and harness.ups == []
+
+
+def test_open_candidates_queries_the_project_context(harness, entered):
+    """照会は devbase open と同じ docker の接続先 (切り替え先の DEVBASE_DOCKER_CONTEXT) へ届く"""
+    entered['env'] = {'DEVBASE_DOCKER_CONTEXT': 'remote-a'}
+    container.project_open_candidates('proj')
+    assert harness.ps_context == ['remote-a']
+
+
+@pytest.mark.parametrize('case', ['not-resolved', 'ps-failed'])
+def test_open_candidates_unknown_is_none(harness, entered, case):
+    """名前を解決できない・docker ps が失敗したときは None (選ばせずに従来の open へ任せる)"""
+    if case == 'not-resolved':
+        entered['ok'] = False
+    else:
+        harness.running = None
+    assert container.project_open_candidates('proj') is None

@@ -573,3 +573,16 @@ def test_integer_fallback_abort(monkeypatch):
 
     monkeypatch.setattr("builtins.input", _eof)
     assert menu.integer("scale") is None
+
+
+def test_select_passes_default_value(monkeypatch):
+    """default は初期カーソルの value として questionary へ渡る。省けば渡さない"""
+    pytest.importorskip("questionary")
+
+    holder = _fake_select(monkeypatch)
+    menu.select("t", [("A", 1), ("B", 2)], back=True, default=2)
+    assert holder["kwargs"]["default"] == 2
+
+    holder = _fake_select(monkeypatch)
+    menu.select("t", [("A", 1), ("B", 2)], back=True)
+    assert "default" not in holder["kwargs"]
