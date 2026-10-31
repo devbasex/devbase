@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-10-31
+
+派生イメージ（`general`・`php`・`php85`）の言語サーバ（#236）は、`devbase build` でイメージを建て直した後に届きます。
+
 ### Added
 - **自分で OpenBao サーバを立てて使うための文書とポリシーの雛形・試用の構成を足しました（#295）。**
   [OpenBao サーバを用意する](docs/user/openbao-server.md)が、個人の形（自分で 1 台）・チームの形（チームで 1 台）・
@@ -1145,7 +1149,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v4.1.1...HEAD
+[4.1.1]: https://github.com/devbasex/devbase/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/devbasex/devbase/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/devbasex/devbase/compare/v3.10.0...v4.0.0
 [3.10.0]: https://github.com/devbasex/devbase/compare/v3.9.0...v3.10.0
