@@ -10,7 +10,7 @@
 | トップレベル | `devbase open [name] [--open-index N] [--context NAME]` |
 | `project` グループ | `devbase project open [name] [--open-index N] [--context NAME]` |
 | `container` / `ct` グループ（非推奨） | `devbase container open [--open-index N] [--context NAME]` |
-| `devbase list` の TUI | 起動中のプロジェクトの操作メニューの先頭「エディタを開く (open)」 |
+| `devbase list` の TUI | 起動中のプロジェクトの操作メニューの先頭「エディタを開く (open)」。dev コンテナが 2 つ以上動いていれば、開くものを選ぶ |
 
 dev コンテナが 1 つ以上動いていれば、コンテナ・ボリューム・ネットワークに触らずに窓を開く。1 つも
 動いていなければ `devbase up --open` と同じく起動してから開く。`devbase up` の `--open` /
@@ -35,7 +35,7 @@ dev コンテナが 1 つ以上動いていれば、コンテナ・ボリュー�
 | 本体 | `lib/devbase/commands/container.py` | `cmd_open`。番号の解決は `_explicit_open_index`（環境変数の読み方は `up` と共有する `_open_index_from_env`） |
 | 開く処理 | `lib/devbase/commands/container.py` | `_open_editor_at`。開く対象（フォルダかワークスペースか）と compose file と接続先を組み、`opener.open_editor` の結果を返す。有効判定と番号の解決は持たない。`up` の `_maybe_open_editor` も同じ関数を通る |
 | 起動中の判定 | `lib/devbase/utils/docker.py` | `running_dev_instances(project, dev_service_name, runner=None)`。`devbase env token` の配り先（`env.py` の `_running_dev_containers`）と共有する |
-| 一覧の操作メニュー | `lib/devbase/tui/actions_project.py` | `_RUNNING_OPS` の先頭と `_OP_HANDLERS["open"]` |
+| 一覧の操作メニュー | `lib/devbase/tui/actions_project.py` | `_RUNNING_OPS` の先頭と `_OP_HANDLERS["open"]`（`_op_open`）。開く先の候補は `container.project_open_candidates` が返す |
 | シェル補完 | `etc/devbase-completion.bash`、`etc/_devbase` | トップレベル・`project`・`container` の `open`、`[name]` と `--open-index` / `--context` |
 
 型（クラス）は追加していない。モジュール関数の並びで構成する。
@@ -124,7 +124,8 @@ graph TD
 | 項目 | 内容 |
 | --- | --- |
 | 位置 | 起動中の行の操作メニューの先頭（Enter 1 回で決まる位置）。以下は再起動 (up)・停止 (down)・ログイン (login) … の順 |
-| 委譲 | `dispatch_lifecycle("open", <name>, open_index=None)`。番号は尋ねず、既定（`DEVBASE_OPEN_INDEX`、無ければ 1）を開く |
+| 開く先の選択 | `container.project_open_candidates(<name>)` が、対象プロジェクトへ切り替えて `cmd_open` と同じ接続先へ `running_dev_instances` を問い合わせ、動いているインスタンスと既定の番号（切り替え先の `DEVBASE_OPEN_INDEX`、無ければ 1）を返す。動いているものが 2 つ以上なら、コンテナ名を並べた選択を出す。カーソルの初期位置は既定の番号で、それが動いていなければ動いているものの先頭。Esc でサブメニューへ戻り、Ctrl-C で全体を中止する（どちらも開かない） |
+| 委譲 | 選んだときは `dispatch_lifecycle("open", <name>, open_index=<選んだ番号>)`。動いているものが 1 つ以下か、候補を得られない（名前を解決できない・`docker ps` が失敗した）ときは選ばせず `open_index=None` で委譲し、停止中の起動とエラーの出し方は `cmd_open` に任せる |
 | 実行後 | コンテナの数が変わらないため、トップの一覧へ戻らずサブメニューに留まる（`_BACK_TO_TOP_OPS` に含めない）。成否によらず続けて別の操作を選べる |
 
 停止中の行は従来どおり選ぶと直接 `up` する。
@@ -163,8 +164,12 @@ graph TD
 - 3 入口の parse、`container open` が名前を拒むこと、`--open` / `--no-open` と値付きの前方一致の拒否、
   ショートカットと `project open` が名前を解決してから `cmd_open` へ渡すこと、前方一致、`bin/devbase` が名前を
   取り除いて移動すること（`tests/cli/test_open_command.py`）
-- TUI の先頭・委譲の属性・サブメニューに留まること・成否によらず次の操作を選べること
-  （`tests/cli/tui/test_open_menu.py`、`tests/cli/tui/test_actions_project.py`）
+- TUI の先頭・委譲の属性・サブメニューに留まること・成否によらず次の操作を選べること。動いているものが 2 つ以上で
+  選ばせ、選んだ番号で委譲すること、1 つ以下と候補が無いときは選ばせないこと、カーソルの初期位置、Esc と Ctrl-C で
+  開かないこと（`tests/cli/tui/test_open_menu.py`、`tests/cli/tui/test_actions_project.py`）。`select` の初期位置の受け渡し
+  （`tests/cli/tui/test_menu.py`）
+- `project_open_candidates` の返す値・切り替え先の接続先へ問い合わせること・名前を解決できない／`docker ps` の失敗で
+  `None`（`tests/commands/test_container_open.py`）
 - bash / zsh の補完（`tests/cli/test_completion.py`）
 
 実機（起動中のプロジェクト、非 TTY）では、`open` / `open --open-index <動いていない番号>` /

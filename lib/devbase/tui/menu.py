@@ -225,7 +225,7 @@ def _make_select_question(message: str, choices, *, search: bool, default=None):
 
 
 def select(message: str, choices, *, back: bool = False, search: bool = False,
-           left_back: bool = False):
+           left_back: bool = False, default=None):
     """questionary の select を起動し、選択値を返す共通関数。
 
     Parameters
@@ -241,6 +241,8 @@ def select(message: str, choices, *, back: bool = False, search: bool = False,
              カーソル移動と衝突するため、back の ← バインドは無効化し Esc のみで戻る。
     left_back: True なら search 有効でも ← で戻る。questionary の絞り込みは入力カーソルを
              持たない (文字の追記と Backspace だけ) ため、← を奪っても絞り込みは損なわれない。
+    default: 初期カーソルを置く choice の ``value``。choices に無い値は渡さない (questionary が
+             例外にする)。``None`` なら先頭。
 
     Returns
     -------
@@ -249,7 +251,7 @@ def select(message: str, choices, *, back: bool = False, search: bool = False,
 
     テストではこの関数自体を monkeypatch して questionary の実起動を避ける。
     """
-    question = _make_select_question(message, choices, search=search)
+    question = _make_select_question(message, choices, search=search, default=default)
     if back:
         # search 有効時は ← を入力カーソル用に空けておく (Esc のみで戻る)。
         question = with_escape_back(question, bind_left=left_back or not search)

@@ -696,6 +696,38 @@ def project_profile_names(project_name: str) -> list[str]:
         _runtime.release_store()
 
 
+def project_open_candidates(project_name: str):
+    """TUI の「エディタを開く」が選ばせる候補。動いている dev コンテナと既定の番号。
+
+    戻り値: ``(running, default_index)``。``running`` は :func:`running_dev_instances` の
+    ``(番号, コンテナ名)`` の列、``default_index`` は切り替え先の env で読んだ
+    ``DEVBASE_OPEN_INDEX`` (無ければ 1)。名前を解決できない・状態を取得できないときは
+    ``None`` で、呼び出し側は選ばせずに ``cmd_open`` へ任せる (エラーの出し方は ``cmd_open``
+    が持つ)。
+
+    :func:`project_profile_names` と同じく対象プロジェクトへ切り替えて env と機密を載せ、
+    ``cmd_open`` と同じ接続先 (``project.local.yml`` / ``DEVBASE_DOCKER_CONTEXT``) へ問い合わせる。
+    CWD と ``os.environ`` は戻さないので、呼び出し側が復元の範囲を張る。
+    """
+    from devbase.env import runtime as _runtime
+
+    docker_context.reset()
+    try:
+        if not _enter_project(project_name):
+            return None
+        docker_context.apply(_choose_context(None))
+        running = running_dev_instances(project_name, get_dev_service_name())
+        if running is None:
+            return None
+        return running, _open_index_from_env()
+    except (DevbaseError, OSError) as e:
+        logger.debug("開く先の候補を解決できません (%s): %s", project_name, e)
+        return None
+    finally:
+        docker_context.reset()
+        _runtime.release_store()
+
+
 def _dispatch_lifecycle(args) -> int:
     """`project` / `container` 共有のサブコマンドディスパッチャ。
 
