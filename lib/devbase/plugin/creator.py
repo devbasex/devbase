@@ -12,6 +12,7 @@ import os
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from pathlib import PurePosixPath
 from typing import Dict, List, Optional, Protocol, Tuple
 
 from devbase.env import groups
@@ -23,11 +24,12 @@ from devbase.volume.manager import validate_account_group
 from . import publish, scaffold
 from .github import GhClient, GitHubRef, RepoView
 from .installer import install_plugin
-from .models import RegisteredRepository
+from .models import InstalledPlugin, RegisteredRepository
 from .registry import PluginRegistry
 from .repo_manager import (
     _find_registered,
     _pull_ff_only,
+    _require_default_branch,
     _snapshot_repo_projects,
     _url_to_repos_dirname,
     add_repository,
@@ -184,6 +186,16 @@ def _require_clone(registry: PluginRegistry, repo: RegisteredRepository) -> None
     )
 
 
+def _require_clone_on_default(
+    registry: PluginRegistry, repo: RegisteredRepository, default_branch: str,
+) -> None:
+    """登録の clone が GitHub の既定ブランチを追っていることを確かめる (読むだけ)
+
+    書き込みの後に分かると、マージ済みのものを手元へ取り込めずに止まる。
+    """
+    _require_default_branch(registry.devbase_root / repo.local_path, default_branch)
+
+
 def plan_plugin(
     registry: PluginRegistry, gh: GhClient, value: str, *,
     name: Optional[str] = None, public: bool = False,
@@ -202,6 +214,8 @@ def plan_plugin(
         raise RepositoryError(
             f"{ref.full_name} は登録済みですが、既定ブランチに {scaffold.REGISTRY_FILE} が"
             "ありません")
+    if registered is not None:
+        _require_clone_on_default(registry, registered, default_branch)
     _reject_duplicate_plugin(registry, gh, ref, plugin, state)
     return CreationPlan(
         kind=KIND_PLUGIN, ref=ref, name=plugin, state=state,
@@ -240,20 +254,33 @@ class PluginTarget:
         return f"{self.plugin} ({self.ref.full_name})"
 
 
+def _path_in_repo(plugin: InstalledPlugin, repo: RegisteredRepository) -> Optional[str]:
+    """導入先のパスのリポジトリの直下からの相対 (直下は空の文字列)。clone の外なら ``None``
+
+    ``registry.yml`` の項目に ``path`` が無いプラグインも、導入先ならリポジトリの直下と分かる。
+    """
+    try:
+        relative = PurePosixPath(plugin.path).relative_to(repo.local_path)
+    except ValueError:
+        return None
+    return scaffold.normal_plugin_path(relative.as_posix())
+
+
 def _installed_targets(registry: PluginRegistry) -> List[PluginTarget]:
     """導入済みで、登録済みの GitHub のリポジトリに項目があるプラグイン (GitHub を見ない)"""
     targets = []
     for plugin in registry.list_installed():
         repo = None if plugin.linked else _find_registered(registry, plugin.source)
-        entry = repo.find_plugin(plugin.name) if repo else None
-        if entry is None:
+        if repo is None or repo.find_plugin(plugin.name) is None:
+            continue
+        path = _path_in_repo(plugin, repo)
+        if path is None:
             continue
         try:
             ref = GitHubRef.parse(repo.url)
         except RepositoryError:
             continue
-        targets.append(PluginTarget(plugin.name, repo, ref,
-                                    (entry.path or plugin.name).rstrip('/')))
+        targets.append(PluginTarget(plugin.name, repo, ref, path))
     return targets
 
 
@@ -349,6 +376,9 @@ def _decide_group(
     return validate_account_group(value)
 
 
+_REPO_ROOT_LABEL = 'リポジトリの直下'
+
+
 def _require_current_path(gh: GhClient, target: PluginTarget) -> None:
     """手元の登録の ``path`` が既定ブランチの ``registry.yml`` と同じことを確かめる (読むだけ)
 
@@ -359,9 +389,10 @@ def _require_current_path(gh: GhClient, target: PluginTarget) -> None:
     current = scaffold.registry_plugin_path(text, target.plugin)
     if current == target.path:
         return
+    remote = '項目なし' if current is None else current or _REPO_ROOT_LABEL
     raise RepositoryError(
         f"プラグイン {target.plugin} の path が、{target.ref.full_name} の既定ブランチ "
-        f"({current or '項目なし'}) と手元の登録 ({target.path}) で違います。"
+        f"({remote}) と手元の登録 ({target.path or _REPO_ROOT_LABEL}) で違います。"
         "次のコマンドで取り込んでから打ち直してください:\n"
         f"  devbase plugin repo refresh {target.repo.name}"
     )
@@ -384,8 +415,9 @@ def plan_project(
 
     target = _decide_target(registry, gh, ref, plugin, prompter)
     _require_clone(registry, target.repo)
+    _require_clone_on_default(registry, target.repo, target.default_branch)
     _require_current_path(gh, target)
-    destination = f"{target.path}/projects/{project}"
+    destination = scaffold.project_dir(target.path, project)
     if gh.read_file(target.ref, destination) is not None:
         raise RepositoryError(f"{target.ref.full_name} に {destination} が既にあります")
     decided_group = _decide_group(registry, target, group, prompter)
@@ -466,7 +498,8 @@ def _apply_locally(registry: PluginRegistry, plan: CreationPlan) -> None:
         else:
             # 取り込みに改名や移動が入っていても refresh が移行先を見つけられるよう、先に控える
             pre_pull = _snapshot_repo_projects(registry, plan.registered)
-            _pull_ff_only(registry.devbase_root / plan.registered.local_path)
+            _pull_ff_only(registry.devbase_root / plan.registered.local_path,
+                          plan.default_branch)
             refresh_repository(registry, plan.registered.name, pre_pull_projects=pre_pull)
         if plan.kind == KIND_PLUGIN:
             install_plugin(registry, f"{_source_url(plan)}:{plan.name}")

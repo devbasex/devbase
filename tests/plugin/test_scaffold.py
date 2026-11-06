@@ -31,6 +31,24 @@ def test_plugin_files():
     }
 
 
+def test_project_files_at_the_repository_root():
+    files = scaffold.project_files("", "app", REF, "acme")
+    assert set(files) == {"projects/app/project.yml", "projects/app/compose.yml",
+                          "projects/app/env"}
+
+
+@pytest.mark.parametrize("entry, expected", [
+    ("- name: a\n", ""),
+    ("- name: a\n  path: \"\"\n", ""),
+    ("- name: a\n  path: ./\n", ""),
+    ("- name: a\n  path: sub/a/\n", "sub/a"),
+    ("- name: a\n  path: ./a\n", "a"),
+    ("- name: b\n", None),
+])
+def test_registry_plugin_path(entry, expected):
+    assert scaffold.registry_plugin_path(f"plugins:\n{entry}", "a") == expected
+
+
 def test_project_files():
     files = scaffold.project_files("team-a/", "My-App", REF, "acme")
     assert set(files) == {

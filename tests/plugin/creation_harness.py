@@ -85,7 +85,8 @@ def _gh_repo_view(world, state, argv):
     allowed = entry.get('merge_methods', ['merge', 'squash', 'rebase'])
     values = {
         'isEmpty': not has_commits,
-        'defaultBranchRef': {'name': 'main'} if has_commits else None,
+        'defaultBranchRef': ({'name': entry.get('default_branch', 'main')}
+                             if has_commits else None),
         'viewerPermission': entry.get('permission', 'ADMIN'),
         'mergeCommitAllowed': 'merge' in allowed,
         'squashMergeAllowed': 'squash' in allowed,
@@ -238,6 +239,13 @@ class FakeGitHub:
         state = self.state()
         state['repos'][full_name].update(values)
         self._state_file.write_text(json.dumps(state))
+
+    def set_default_branch(self, full_name: str, branch: str) -> None:
+        """既定ブランチを ``branch`` へ変える。今の main は残す。"""
+        bare = self._bare(full_name)
+        _bare_git(bare, 'update-ref', f'refs/heads/{branch}', 'refs/heads/main')
+        _bare_git(bare, 'symbolic-ref', 'HEAD', f'refs/heads/{branch}')
+        self.update_repo(full_name, default_branch=branch)
 
     def add_org(self, name, *, state='active', role='member', can_create=False):
         orgs = self.state()['orgs']

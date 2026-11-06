@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 import yaml
 
@@ -338,6 +340,71 @@ def test_plugin_gone_from_the_registry_stops(github, root, app, run_cli, caplog)
     assert run_cli("project", "new", APP, "--yes") == 1
     assert github.write_calls() == []
     assert "項目なし" in caplog.text
+
+
+ROOT_REGISTRY = "name: plugins\nplugins:\n  - name: team-a\n    description: x\n"
+
+
+def _root_plugin_repo(github, root, full="owner/plugins"):
+    """registry.yml の項目に path が無い、リポジトリの直下のプラグインを導入する。"""
+    github.add_repo(full, {
+        "registry.yml": ROOT_REGISTRY,
+        "plugin.yml": "name: team-a\nversion: '1.0.0'\n",
+        "projects/.gitkeep": "",
+    })
+    registry = PluginRegistry(root)
+    url = f"https://github.com/{full}.git"
+    add_repository(registry, url)
+    install_plugin(registry, f"{url}:team-a")
+    return root / "repos" / f"github.com--{full.replace('/', '--')}"
+
+
+def test_plugin_at_the_repository_root(github, root, app, run_cli):
+    """path の無い項目は導入と同じく直下として扱い、projects/ へ現れる。"""
+    clone = _root_plugin_repo(github, root)
+    assert run_cli("project", "new", APP, "--group", "acme", "--yes") == 0
+    assert github.file("owner/plugins", "projects/app/project.yml") is not None
+    assert github.file("owner/plugins", "team-a/projects/app/project.yml") is None
+    assert (clone / "projects" / "app" / "project.yml").is_file()
+    assert (root / "projects" / "app" / "project.yml").is_file(), "projects/ へ反映する"
+
+
+def test_group_comes_from_the_repository_root(github, root, app, run_cli):
+    clone = _root_plugin_repo(github, root)
+    (clone / "projects" / "p0").mkdir()
+    (clone / "projects" / "p0" / "env").write_text("DEVBASE_ACCOUNT_GROUP=acme\n")
+    assert run_cli("project", "new", APP, "--yes") == 0
+    assert github.file("owner/plugins", "projects/app/env") == "DEVBASE_ACCOUNT_GROUP=acme\n"
+
+
+def test_plugin_moved_from_the_root_stops(github, root, app, run_cli, caplog):
+    _root_plugin_repo(github, root)
+    github.commit("owner/plugins", {"registry.yml": MOVED_REGISTRY})
+    assert run_cli("project", "new", APP, "--group", "acme", "--yes") == 1
+    assert github.write_calls() == []
+    assert "リポジトリの直下" in caplog.text
+
+
+def test_moved_default_branch_stops_before_writing(github, root, app, run_cli, caplog):
+    """既定ブランチを変えて main を残しても、古い main の clone のまま進めない。"""
+    _plugin_repo(github, root, "owner/plugins", groups=["acme"])
+    github.set_default_branch("owner/plugins", "develop")
+    before = _plugins_yml(root)
+    assert run_cli("project", "new", APP, "--yes") == 1
+    assert github.write_calls() == []
+    assert _plugins_yml(root) == before
+    assert "既定ブランチ develop" in caplog.text
+    assert "switch develop" in caplog.text
+
+
+def test_clone_on_the_new_default_branch_completes(github, root, app, run_cli):
+    """切り替えた clone は、origin/HEAD が古いままでも進める。"""
+    clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
+    github.set_default_branch("owner/plugins", "develop")
+    subprocess.run(["git", "fetch", "origin"], cwd=clone, check=True, capture_output=True)
+    subprocess.run(["git", "switch", "develop"], cwd=clone, check=True, capture_output=True)
+    assert run_cli("project", "new", APP, "--yes") == 0
+    assert (root / "projects" / "app" / "project.yml").is_file()
 
 
 def test_tty_decline_changes_nothing(github, root, app, run_cli):

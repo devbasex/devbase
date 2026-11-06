@@ -58,10 +58,12 @@ class _Script:
     def __init__(self, table):
         self.table = table
         self.calls = []
+        self.envs = []
 
-    def __call__(self, cmd, **_kwargs):
+    def __call__(self, cmd, **kwargs):
         assert cmd[0] == "gh"
         self.calls.append(cmd[1:])
+        self.envs.append(kwargs.get("env"))
         for prefix, result in self.table:
             if cmd[1:len(prefix) + 1] == prefix:
                 if callable(result):
@@ -83,6 +85,16 @@ def client(monkeypatch):
 
 
 REF = GitHubRef("owner", "repo", "https://github.com/owner/repo.git")
+
+
+def test_gh_always_targets_github_com(client, monkeypatch):
+    """GH_HOST が別のホストを指していても、git と同じ github.com を操作する。"""
+    monkeypatch.setenv("GH_HOST", "ghe.example.com")
+    monkeypatch.setenv("PATH", "/kept")
+    gh, script = client([(["api", "user"], (0, '{"login": "me"}', ""))])
+    gh.login()
+    assert script.envs[0]["GH_HOST"] == "github.com"
+    assert script.envs[0]["PATH"] == "/kept"
 
 
 def test_ensure_ready_without_gh_tells_what_to_do(monkeypatch):

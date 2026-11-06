@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Dict, List, Optional
 
 import yaml
@@ -45,8 +46,22 @@ def plugin_files(name: str) -> Dict[str, str]:
     return {f'{name}/plugin.yml': plugin_yml, f'{name}/projects/.gitkeep': ''}
 
 
+def normal_plugin_path(path: str) -> str:
+    """リポジトリの直下からのプラグインのパスを比べられる形にする。直下は空の文字列"""
+    normal = PurePosixPath(path.rstrip('/')).as_posix()
+    return '' if normal == '.' else normal
+
+
+def project_dir(plugin_path: str, name: str) -> str:
+    """プロジェクトのディレクトリ (リポジトリの直下からのパス)"""
+    return PurePosixPath(plugin_path, 'projects', name).as_posix()
+
+
 def project_files(plugin_path: str, name: str, ref: GitHubRef, group: str) -> Dict[str, str]:
-    """プロジェクトのファイル (リポジトリの直下からのパス → 中身)"""
+    """プロジェクトのファイル (リポジトリの直下からのパス → 中身)。
+
+    ``plugin_path`` が空なら、プラグインはリポジトリの直下にある。
+    """
     project_yml = (
         'version: 1\n'
         'scale: 1\n'
@@ -79,7 +94,7 @@ networks:
   devbase_net:
     external: true
 """
-    base = f"{plugin_path.rstrip('/')}/projects/{name}"
+    base = project_dir(plugin_path, name)
     return {
         f'{base}/project.yml': project_yml,
         f'{base}/compose.yml': compose_yml,
@@ -111,10 +126,13 @@ def registry_plugin_names(text: str) -> List[str]:
 
 
 def registry_plugin_path(text: str, name: str) -> Optional[str]:
-    """``registry.yml`` の ``name`` の項目の ``path``。項目が無ければ ``None``"""
+    """``registry.yml`` の ``name`` の項目の ``path``。項目が無ければ ``None``。
+
+    ``path`` が無い項目は、導入と同じくリポジトリの直下 (空の文字列) として扱う。
+    """
     for entry in _load_registry(text).get('plugins') or []:
         if entry.get('name') == name:
-            return (entry.get('path') or name).rstrip('/')
+            return normal_plugin_path(entry.get('path') or '')
     return None
 
 

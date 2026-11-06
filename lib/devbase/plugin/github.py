@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -24,6 +25,9 @@ _SHORT_RE = re.compile(r'([^/:@]+)/([^/:@]+?)(?:\.git)?')
 _OWNER_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9-]*')
 _REPO_RE = re.compile(r'[A-Za-z0-9._][A-Za-z0-9._-]*')
 _RESERVED_REPOS = frozenset({'.', '..', '.git'})
+
+#: ``gh`` の操作先。``GitHubRef`` が受けるのも git が操作するのも github.com だけである
+_GITHUB_HOST = 'github.com'
 
 _PUSH_PERMISSIONS = frozenset({'ADMIN', 'MAINTAIN', 'WRITE'})
 _MISSING_REPO_MARK = 'Could not resolve to a Repository'
@@ -91,7 +95,10 @@ class GhClient:
         self._login: Optional[str] = None
 
     def _run(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(['gh', *args], capture_output=True, text=True, check=False)
+        # GH_HOST が別のホストを指していても、git と同じ github.com の認証で操作する
+        env = {**os.environ, 'GH_HOST': _GITHUB_HOST}
+        return subprocess.run(['gh', *args], capture_output=True, text=True, check=False,
+                              env=env)
 
     def _json(self, *args: str, what: str):
         result = self._run(*args)
