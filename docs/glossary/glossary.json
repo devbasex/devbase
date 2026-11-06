@@ -1059,7 +1059,7 @@
     {
       "term": "プラグインリポジトリ",
       "context": "plugin-distribution",
-      "meaning": "直下に registry.yml を持ち、1 つ以上のプラグインを収めた Git リポジトリ。devbase plugin repo add で登録する",
+      "meaning": "直下に registry.yml を持つ Git リポジトリ。収めたプラグインは 0 件でもよい。devbase plugin repo add で登録する",
       "pending_source": "issues/issue-514-design.md"
     },
     {

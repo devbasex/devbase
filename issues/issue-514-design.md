@@ -30,27 +30,34 @@
 | コンテキスト | 何の語が 1 つの意味に決まるか |
 | --- | --- |
 | プラグインの配布 | プラグインリポジトリ・プラグイン・プロジェクト・登録・導入・作成フロー |
+| 機密の置き場（`secret`） | アカウントグループとその宣言 |
+| コマンドの入口（`cli`） | 名前の形 |
+
+変更はプラグインの配布の中で閉じ、ほかの 2 つのモデルを変えない。コンテキストマップの関係は**順応者**である。プラグインの配布が下流になり、グループの規則（`validate_account_group`）と名前の形（`names.is_single_segment_name`）をそのまま受け入れて、独自の規則を持たない。
 
 ### 集約
 
 | 集約 | 持ち主（書き換えてよいもの） | 根 | エンティティ | 値オブジェクト |
 | --- | --- | --- | --- | --- |
-| プラグインリポジトリ（GitHub の既定ブランチ） | 作成フローの `publish`（PR のマージ経由だけ） | リポジトリ | プラグイン・プロジェクト | `GitHubRef`・`registry.yml` の項目 |
+| プラグインリポジトリ（GitHub の既定ブランチ） | 中身は `publish` が PR のマージと、空のリポジトリの最初のコミットで書く。リポジトリの作成は `creator` が `GhClient.create_repo` を呼んで行う | リポジトリ | プラグイン・プロジェクト | `GitHubRef`・`registry.yml` の項目 |
 | 手元の登録（`plugins.yml`） | 既存の `PluginRegistry`（`add_repository`・`install_plugin`・`refresh_repository` 経由だけ） | `plugins.yml` | 登録済みリポジトリ・導入済みプラグイン | — |
+| 手元の clone（`repos/` の clone と `projects/` への反映） | `_pull_ff_only`（取り込み）と、既存の `add_repository`（clone）・`install_plugin`・`refresh_repository`（`projects/` への反映） | `repos/` の clone | 作業ツリー | — |
 
-作成フローは手元の `repos/` の clone へ直接書かない。手元はマージの後に取り込むだけである。
+`creator` と `publish` は手元の `repos/` の clone へファイルを置かない。手元が変わるのは、既定ブランチへの反映の後に上の持ち主を呼ぶときだけである。
 
 ### 不変条件
 
 | # | 集約 | 条件 | 破れたときの扱い |
 | --- | --- | --- | --- |
 | I1 | 全体 | 計画の確定（解決と確認）が終わるまで、GitHub にも手元にも書かない | 実装の誤り。テストで止める |
-| I2 | 手元の登録 | マージが成功するまで `plugins.yml` を変えない | 同上 |
+| I2 | 手元の登録 | 作成フローが既定ブランチへ入れる変更がすべて反映される（最初のコミットの push かマージが成功する）まで `plugins.yml` を変えない。入れる変更が無い経路は、確認の後にそのまま登録する | 同上 |
 | I3 | プラグインリポジトリ | `registry.yml` の編集の前後で既存の項目が同じで、増えるのは 1 項目だけである | 検証で不一致なら push せず止める |
-| I4 | 手元の登録 | 手元の clone の作業ツリーと未コミットの変更を作成フローが書き換えない。取り込みは早送りだけである | 早送りできなければ止める |
+| I4 | 手元の clone | 未コミットの変更を失わない | 取り込みが変更とぶつかれば止める |
 | I5 | プラグインリポジトリ | リポジトリの公開は `--public` のときだけである | テストで止める |
 | I6 | 全体 | 作成フローはコンテナを起動しない（`AGENTS.md` の P3: 利用者の環境の `devbase up` は人の承認が要る） | テストで止める |
 | I7 | プラグインリポジトリ | 既定ブランチへの直接の push は、空のリポジトリの最初のコミットだけである | テストで止める |
+| I8 | 手元の clone | 手元の clone の取り込みは早送りだけである | 早送りできなければ止める |
+| I9 | 全体 | グループ（`--group`・最多の値・TTY で聞いた値）は `validate_account_group` を、プラグインとプロジェクトの名前は `names.is_single_segment_name` を通してから計画へ入れる | 通らなければ何も変えず、理由を出して終了コード 1 で止める |
 
 ### ドメインイベント
 
@@ -66,11 +73,13 @@
 | E8 | 手元の clone へ取り込んだ | `_pull_ff_only` | 登録 |
 | E9 | `plugins.yml` へ登録し、`projects/` へ反映した | 既存の `add_repository`・`install_plugin`・`refresh_repository` | 利用者 |
 
+E6〜E9 の通り方は経路で変わる（「経路ごとの反映と登録」）。空のリポジトリは E6 の push が既定ブランチへの最初のコミットで、E7 を通らない。未登録のリポジトリには手元の clone が無いので、E8 を通らず E9 の `add_repository` が clone する。`registry.yml` がある未登録のリポジトリは E5〜E8 を通らず E9 だけを行う。
+
 ### 用語
 
 | 用語 | 意味 | 用語集への反映 |
 | --- | --- | --- |
-| プラグインリポジトリ | 直下に `registry.yml` を持ち、1 つ以上のプラグインを収めた Git リポジトリ | 追加 |
+| プラグインリポジトリ | 直下に `registry.yml` を持つ Git リポジトリ。収めたプラグインは 0 件でもよい | 追加 |
 | 作成フロー | リポジトリ・プラグイン・プロジェクトを足す一連の操作。権限の確認からマージ、手元への取り込み、登録までを含む | 追加 |
 | 作成の計画 | 作成フローが書き込みの前に確定する、作るもの・ファイル・マージ先の組 | 追加 |
 
@@ -89,7 +98,7 @@
 | --- | --- |
 | `lib/devbase/plugin/github.py`（新規） | `GitHubRef`（引数の解決）と `GhClient`（`gh` の呼び出し。権限・作成・PR・マージ）。トークンを扱わない |
 | `lib/devbase/plugin/scaffold.py`（新規） | テンプレートの文字列の生成と `registry.yml` への 1 項目の追記。外部へ出ない純粋な処理 |
-| `lib/devbase/plugin/publish.py`（新規） | 一時の clone で変更を作り、push・PR・マージするまで（E6・E7） |
+| `lib/devbase/plugin/publish.py`（新規） | 一時の clone で変更を作り、空のリポジトリなら最初のコミットを push し、それ以外は push・PR・マージするまで（E6・E7） |
 | `lib/devbase/plugin/creator.py`（新規） | 3 つのフローの `plan_*`（読むだけ）と `execute`（書く）。入れ先とグループの決定 |
 | `lib/devbase/commands/plugin.py` | `plugin new`・`plugin repo new` の入口 |
 | `lib/devbase/commands/project.py` | `project new` の入口 |
@@ -146,6 +155,19 @@ graph TD
   - `gh api user/memberships/orgs/<owner>` の `state` が `active` で、`role` が `admin` か、組織の `members_can_create_repositories` が真である
 - 読めない private のリポジトリは「無い」と同じに見える。`gh repo create` が失敗するので、その出力を示して終了する
 
+### 経路ごとの反映と登録
+
+`plugin new` は未登録のリポジトリでも受け入れ条件 17 を守るため、プラグインの PR のマージまで登録しない。
+
+| コマンド | リポジトリ | 既定ブランチへの反映 | 登録と反映（反映の後に行う） |
+| --- | --- | --- | --- |
+| `plugin repo new` | 無い・空 | 最初のコミットの直接の push | `add_repository` |
+| `plugin repo new` | `registry.yml` が無い | PR のマージ | `add_repository` |
+| `plugin repo new` | `registry.yml` がある・未登録 | 無し | `add_repository` |
+| `plugin new` | 登録済み | プラグインの PR のマージ | `_pull_ff_only` → `refresh_repository` → `install_plugin` |
+| `plugin new` | 未登録 | 上の 3 行のどれかの反映に続けて、プラグインの PR のマージ | `add_repository` → `install_plugin` |
+| `project new` | 入れ先のプラグインのリポジトリ（登録済み） | プロジェクトの PR のマージ | `_pull_ff_only` → `refresh_repository` |
+
 ### 入れ先のプラグインの決定（プロジェクト）
 
 1. `--plugin` があればそれを使う（導入済みで push できることは確かめる）
@@ -154,6 +176,8 @@ graph TD
 4. 1 件ならそれを計画に示す。複数なら TTY で選ばせ、TTY が無ければ候補を出して 1 で終わる。0 件なら 1 で終わる
 
 ### テンプレート
+
+リポジトリの `registry.yml` は `name: <リポジトリ名>`・`description: ""`・`plugins: []` である。`plugins` が空でも `add_repository` は登録する。
 
 プラグインは `<名前>/plugin.yml`（`name`・`version: "1.0.0"`・`description`・`requires.devbase: ">=3.0.0"`・`projects.mode: auto`・`priority: 50`）と `<名前>/projects/.gitkeep`。
 
@@ -205,9 +229,17 @@ sequenceDiagram
     opt リポジトリが無い
         C->>G: repo create
     end
-    C->>T: 浅い clone → ブランチ → ファイル → commit → push
-    C->>G: PR 作成 → マージ
-    C->>L: 早送りの取り込み
+    alt 空のリポジトリ
+        C->>T: 浅い clone → ファイル → commit → 既定ブランチへ push
+    else registry.yml があり足すものが無い
+        Note over C,T: GitHub へ書かない
+    else それ以外
+        C->>T: 浅い clone → ブランチ → ファイル → commit → push
+        C->>G: PR 作成 → マージ
+    end
+    opt 登録済みのリポジトリ
+        C->>L: 早送りの取り込み
+    end
     C->>L: 登録・反映
 ```
 
@@ -219,6 +251,7 @@ sequenceDiagram
 | push | リポジトリを作った後なら、そのリポジトリ | 同じコマンドの再実行 |
 | 同じブランチが既にある | 既存のブランチと PR | 開いている PR の URL |
 | マージ | PR とブランチ | PR の URL。マージの後に打つコマンド（`plugin repo add`・`plugin repo refresh`・`plugin install`） |
+| 未登録のリポジトリへの `plugin new` のプラグインの PR | 先に反映した最初のコミットか `registry.yml` は既定ブランチに残る。`plugins.yml` は元のまま | 上の行に同じ |
 | 取り込み | マージ済み。手元は元のまま | 原因と `git -C <clone> status`、続けて打つコマンド |
 | 登録 | マージと取り込み済み | 既存のコマンドのエラーと、続けて打つコマンド |
 
@@ -242,7 +275,7 @@ sequenceDiagram
 
 ### 決定 2: 登録済みの経路を二重に書かないため、取り込みと登録は既存の関数に任せる
 
-マージの後は `add_repository`・`install_plugin`・`refresh_repository` を呼ぶ。`refresh_repository` の `git pull` は早送りを保証しないので、前に `_pull_ff_only` を置き、既定ブランチでない clone や分岐した clone は止める。
+既定ブランチへの反映の後は `add_repository`・`install_plugin`・`refresh_repository` を呼ぶ。`refresh_repository` の `git pull` は早送りを保証しないので、前に `_pull_ff_only` を置き、既定ブランチでない clone や分岐した clone は止める。
 
 採らなかった案: `_git_pull` に `--ff-only` を足す。既存の `plugin repo refresh` の振る舞いが変わる。
 
@@ -282,21 +315,29 @@ TUI は `creator` の読むだけの関数（候補とグループの案）を�
 
 根拠: 根拠なし（MVV 版 1）
 
+### 決定 8: マージできないときに手元の登録を残さないため、登録は作成フローの最後の反映の後に回す
+
+未登録のリポジトリへの `plugin new` は、リポジトリの分岐の反映に続けてプラグインの PR をマージし、そのマージが成功してから `add_repository` と `install_plugin` を呼ぶ。リポジトリの分岐の反映とプラグインの追加は順に別の変更として行い、1 つの PR にまとめない。
+
+採らなかった案: リポジトリの分岐を終えた時点で登録する。プラグインの PR のマージが失敗すると `plugins.yml` が変わったまま残り、受け入れ条件 17 を破る。
+
+根拠: 根拠なし（MVV 版 1）
+
 ## テスト設計
 
 | 受け入れ条件・不変条件 | どの振る舞いで縛るか | どう壊したら落ちるべきか |
 | --- | --- | --- |
-| 1・2・3・4、I5、I7 | 分岐の表の全行を、偽の `gh` と手元の bare リポジトリで実行し、作ったもの・PR・`plugins.yml` を見る | 既定を公開にする・PR を飛ばす・権限なしで作る |
+| 1・2・3・4、I5、I7 | 分岐の表と経路の表の全行を、偽の `gh` と手元の bare リポジトリで実行し、作ったもの・PR・`plugins.yml` を見る。`plugins` が空の `registry.yml` も登録できる | 既定を公開にする・PR を飛ばす・権限なしで作る・プラグイン 0 件の登録を拒む |
 | 5 | `GitHubRef.parse` が 4 つの形で同じ owner/repo を返し、GitHub 以外を拒む | `.git` を外さない・別ホストを通す |
-| 6・7・8 | プラグインのフローで `plugin.yml`・`registry.yml`・導入の状態を見る。未登録・重複名・形の誤りを含む | 登録の省略・重複の上書き |
+| 6・7・8、I9 | プラグインのフローで `plugin.yml`・`registry.yml`・導入の状態を見る。未登録・重複名・形の誤りを含む | 登録の省略・重複の上書き・名前の形を見ない |
 | 9・12 | プロジェクトの 3 ファイルと `projects/<名前>` の反映を見る。読めないとき・重複のときは何も変わらない | ファイルの欠け・上書き |
 | 10 | 決定の規則の 4 段を候補の表で縛る | owner の絞り込みの省略・TTY なしで選ぶ |
-| 11 | 最多の値・同数・値なし・`--group` | 同数で片方を選ぶ |
+| 11、I9 | 最多の値・同数・値なし・`--group`。予約語など `validate_account_group` が弾く値は、どの出所でも何も書かず終了コード 1 になる | 同数で片方を選ぶ・グループの規則を通さず `env` へ書く |
 | 13、I6 | 作成フローの全経路で `docker` と `compose` を呼ばない | 手順に `up` を足す |
 | 14 | `gh` なし・未認証で、書き込みの呼び出しが 0 回 | 確認を後回しにする |
 | 15、I1 | 確認の前は書き込みの呼び出しが 0 回。TTY なしで `--yes` なしは 1 | 確認を飛ばす |
-| 16、I4 | 手元に未コミットの変更がある clone で完走し、変更が残る。分岐した clone は止まる | 手元の作業ツリーへ書く・マージコミットを作る |
-| 17、I2 | マージの失敗で `plugins.yml` が同じで、URL が出る。成功のとき作業場所が残らない | 先に登録する |
+| 16、I4、I8 | 手元に未コミットの変更がある clone で完走し、変更が残る。分岐した clone は止まる | `creator`・`publish` が手元の作業ツリーへ書く・マージコミットを作る |
+| 17、I2 | マージの失敗で `plugins.yml` が同じで、URL が出る。未登録のリポジトリへの `plugin new` でも同じである。成功のとき作業場所が残らない | 先に登録する |
 | 18・19・20 | メニューの全項目が既存の操作へ届き、Esc と Ctrl-C の戻り値が既存どおりに伝わる | 項目の欠け・Esc の取り違え |
 | 21 | 既存のテストが変わらず通る | 既存の属性を変える |
 | 22 | `project new owner/repo` がプロジェクトの切替を通らない | `_PROJECT_NAME_SUBCOMMANDS` へ足す |
