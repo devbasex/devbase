@@ -8,16 +8,20 @@ GitHub と手元へ書く。手元の登録は、既定ブランチへ入れる�
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import os
+from collections import Counter
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Protocol, Tuple
 
+from devbase.env import groups
 from devbase.errors import DevbaseError, RepositoryError
 from devbase.log import get_logger
 from devbase.utils import names
+from devbase.volume.manager import validate_account_group
 
 from . import publish, scaffold
-from .github import GhClient, GitHubRef
+from .github import GhClient, GitHubRef, RepoView
 from .installer import install_plugin
 from .models import RegisteredRepository
 from .registry import PluginRegistry
@@ -33,6 +37,17 @@ logger = get_logger("devbase.plugin.creator")
 
 KIND_REPO = 'repo'
 KIND_PLUGIN = 'plugin'
+KIND_PROJECT = 'project'
+
+
+class Prompter(Protocol):
+    """入れ先とグループを人へ聞く口。TTY が無いときは渡さない"""
+
+    def choose(self, message: str, options: List[str]) -> Optional[str]:
+        """``options`` から 1 つ選ばせる。選ばなければ ``None``"""
+
+    def ask(self, message: str) -> Optional[str]:
+        """1 行を入力させる。入れなければ ``None``"""
 
 
 class RepoState(Enum):
@@ -55,6 +70,8 @@ class CreationPlan:
     registered: Optional[RegisteredRepository] = None
     files: Dict[str, str] = field(default_factory=dict)
     registry_entry: Optional[str] = None
+    #: 計画の文面に足す行 (入れ先のプラグインなど)
+    details: Tuple[str, ...] = ()
     #: 空でなければ何もしないで終わる。その理由
     noop_reason: str = ''
 
@@ -67,6 +84,7 @@ class CreationPlan:
         target = self.default_branch or 'GitHub の既定ブランチ'
         lines = [f"作成の計画: {self.kind} {self.name}",
                  f"  リポジトリ: {self.ref.full_name}"]
+        lines.extend(f"  {detail}" for detail in self.details)
         if self.state is RepoState.ABSENT:
             visibility = 'public' if self.public else 'private'
             lines.append(f"  作成: {self.ref.full_name} を {visibility} で作る")
@@ -203,6 +221,161 @@ def _reject_duplicate_plugin(
                 f"プラグイン {plugin} は {ref.full_name} の {scaffold.REGISTRY_FILE} に既にあります")
     if gh.read_file(ref, plugin) is not None:
         raise RepositoryError(f"{ref.full_name} に {plugin} が既にあります")
+
+
+@dataclass(frozen=True)
+class PluginTarget:
+    """プロジェクトの入れ先のプラグイン"""
+    plugin: str
+    repo: RegisteredRepository
+    ref: GitHubRef
+    path: str
+    default_branch: str = ''
+
+    @property
+    def label(self) -> str:
+        return f"{self.plugin} ({self.ref.full_name})"
+
+
+def _installed_targets(registry: PluginRegistry) -> List[PluginTarget]:
+    """導入済みで、登録済みの GitHub のリポジトリに項目があるプラグイン (GitHub を見ない)"""
+    targets = []
+    for plugin in registry.list_installed():
+        repo = None if plugin.linked else _find_registered(registry, plugin.source)
+        entry = repo.find_plugin(plugin.name) if repo else None
+        if entry is None:
+            continue
+        try:
+            ref = GitHubRef.parse(repo.url)
+        except RepositoryError:
+            continue
+        targets.append(PluginTarget(plugin.name, repo, ref,
+                                    (entry.path or plugin.name).rstrip('/')))
+    return targets
+
+
+def _pushable(gh: GhClient, target: PluginTarget, views: Dict[str, Optional[RepoView]],
+              ) -> Optional[PluginTarget]:
+    """push できる入れ先に既定ブランチを埋めて返す。``gh`` はリポジトリごとに 1 回"""
+    key = target.ref.full_name
+    if key not in views:
+        views[key] = gh.view_repo(target.ref)
+    view = views[key]
+    if view is None or view.empty or not view.can_push:
+        return None
+    return replace(target, default_branch=view.default_branch)
+
+
+def plugin_candidates(
+    registry: PluginRegistry, gh: GhClient, ref: GitHubRef,
+) -> List[PluginTarget]:
+    """入れ先の候補 (読むだけ)。対象と同じ owner の候補があれば、それに絞る"""
+    views: Dict[str, Optional[RepoView]] = {}
+    pushable = [found for target in _installed_targets(registry)
+                if (found := _pushable(gh, target, views)) is not None]
+    owner = ref.owner.lower()
+    same_owner = [t for t in pushable if t.ref.owner.lower() == owner]
+    return same_owner or pushable
+
+
+def _named_target(registry: PluginRegistry, gh: GhClient, plugin: str) -> PluginTarget:
+    target = next((t for t in _installed_targets(registry) if t.plugin == plugin), None)
+    if target is None:
+        raise RepositoryError(
+            f"プラグイン {plugin} は、導入済みの GitHub のプラグインの中にありません")
+    found = _pushable(gh, target, {})
+    if found is None:
+        raise RepositoryError(f"{target.ref.full_name} へ push する権限がありません")
+    return found
+
+
+def _decide_target(
+    registry: PluginRegistry, gh: GhClient, ref: GitHubRef,
+    plugin: Optional[str], prompter: Optional[Prompter],
+) -> PluginTarget:
+    """入れ先のプラグインを決める (受け入れ条件 10)"""
+    if plugin:
+        return _named_target(registry, gh, plugin)
+    candidates = plugin_candidates(registry, gh, ref)
+    if not candidates:
+        raise RepositoryError(
+            "入れ先のプラグインがありません。push できるプラグインを導入するか、"
+            "devbase plugin new で足してください"
+        )
+    if len(candidates) == 1:
+        return candidates[0]
+    labels = [c.label for c in candidates]
+    if prompter is None:
+        listed = '\n'.join(f"  {label}" for label in labels)
+        raise RepositoryError(f"入れ先のプラグインを --plugin で指定してください:\n{listed}")
+    chosen = prompter.choose("入れ先のプラグインを選んでください", labels)
+    if chosen is None:
+        raise RepositoryError("入れ先のプラグインが選ばれませんでした")
+    return candidates[labels.index(chosen)]
+
+
+def suggest_group(registry: PluginRegistry, target: PluginTarget) -> Optional[str]:
+    """入れ先の既存プロジェクトで最多のグループ (読むだけ)。無い・同数なら ``None``"""
+    projects = registry.devbase_root / target.repo.local_path / target.path / 'projects'
+    counts: Counter = Counter()
+    for project in names.project_dirs(projects):
+        try:
+            found = groups._read_declaration(project / groups.ENV_FILENAME)
+        except DevbaseError as e:
+            logger.debug("グループの案から外します (%s): %s", project.name, e)
+            continue
+        if found is not None and found[0].strip():
+            counts[found[0].strip()] += 1
+    ranked = counts.most_common(2)
+    if not ranked or (len(ranked) == 2 and ranked[0][1] == ranked[1][1]):
+        return None
+    return ranked[0][0]
+
+
+def _decide_group(
+    registry: PluginRegistry, target: PluginTarget,
+    group: Optional[str], prompter: Optional[Prompter],
+) -> str:
+    """グループを決めて ``validate_account_group`` を通す (受け入れ条件 11・不変条件 I9)"""
+    value = group or suggest_group(registry, target)
+    if not value and prompter is not None:
+        value = prompter.ask("アカウントグループを入力してください")
+    if not value:
+        raise RepositoryError(
+            f"アカウントグループを決められません。--group で指定してください ({target.plugin})")
+    return validate_account_group(value)
+
+
+def plan_project(
+    registry: PluginRegistry, gh: GhClient, value: str, *,
+    plugin: Optional[str] = None, group: Optional[str] = None,
+    name: Optional[str] = None, prompter: Optional[Prompter] = None,
+) -> CreationPlan:
+    """``project new`` の計画 (読むだけ)"""
+    ref = GitHubRef.parse(value)
+    gh.ensure_ready()
+    project = _checked_name(name or ref.repo, "プロジェクト")
+    if gh.view_repo(ref) is None:
+        raise RepositoryError(f"{ref.full_name} が見つからないか読めません")
+    local = registry.get_projects_dir() / project
+    if os.path.lexists(local):
+        raise RepositoryError(f"{local} が既にあります")
+
+    target = _decide_target(registry, gh, ref, plugin, prompter)
+    _require_clone(registry, target.repo)
+    destination = f"{target.path}/projects/{project}"
+    if gh.read_file(target.ref, destination) is not None:
+        raise RepositoryError(f"{target.ref.full_name} に {destination} が既にあります")
+    decided_group = _decide_group(registry, target, group, prompter)
+
+    return CreationPlan(
+        kind=KIND_PROJECT, ref=target.ref, name=project, state=RepoState.HAS_REGISTRY,
+        default_branch=target.default_branch, registered=target.repo,
+        files=scaffold.project_files(target.path, project, ref, decided_group),
+        details=(f"対象: {ref.full_name}",
+                 f"入れ先のプラグイン: {target.plugin}",
+                 f"アカウントグループ: {decided_group}"),
+    )
 
 
 def _reflect_repository(gh: GhClient, plan: CreationPlan) -> None:

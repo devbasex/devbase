@@ -1,0 +1,62 @@
+"""``devbase project new`` の入口のテスト (#514 の受け入れ条件 22)。"""
+
+from __future__ import annotations
+
+import sys
+
+import pytest
+
+from devbase import cli
+
+from .conftest import python_args, stdout_field
+
+
+@pytest.mark.parametrize("target", ["owner/repo", "myapp"])
+def test_wrapper_does_not_resolve_the_argument_as_a_project(exec_wrapper, target):
+    """同じ名前のプロジェクトがあっても、引数をプロジェクト名として解決しない。"""
+    exec_wrapper.project("myapp")
+    (exec_wrapper.root / "projects" / "owner").mkdir()
+    r = exec_wrapper(["project", "new", target])
+    assert "/projects/" not in stdout_field(r, "PWD:"), r.stdout
+    assert python_args(r) == f"project new {target}", r.stdout
+
+
+def test_new_is_in_the_prefix_map():
+    assert "new" in cli.SUBCMD_MAP[("project",)]
+    assert "new" in cli.SUBCMD_MAP[("plugin", "pl")]
+
+
+def test_prefix_resolves_to_new(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["devbase", "project", "n", "owner/repo"])
+    cli._expand_argv()
+    assert sys.argv == ["devbase", "project", "new", "owner/repo"]
+
+
+def test_secrets_are_not_injected():
+    assert cli._skip_secret_injection("project", "new")
+
+
+def test_parser_arguments():
+    args = cli._create_parser().parse_args(
+        ["project", "new", "owner/repo", "--plugin", "p", "--group", "g",
+         "--name", "n", "--yes"])
+    assert (args.repo, args.plugin, args.group, args.name, args.yes) == (
+        "owner/repo", "p", "g", "n", True)
+
+
+def test_dispatch_does_not_reach_the_lifecycle(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setenv("DEVBASE_ROOT", str(tmp_path))
+
+    def _fake(root, args):
+        seen["root"] = root
+        seen["repo"] = args.repo
+        return 0
+
+    from devbase.commands import container, project
+    monkeypatch.setattr(project, "cmd_project_new", _fake)
+    monkeypatch.setattr(container, "cmd_project",
+                        lambda *_a: pytest.fail("lifecycle へ流れた"))
+    args = cli._create_parser().parse_args(["project", "new", "owner/repo"])
+    assert cli._dispatch("project", args) == 0
+    assert seen == {"root": tmp_path, "repo": "owner/repo"}

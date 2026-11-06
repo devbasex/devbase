@@ -58,7 +58,7 @@ GROUP_ALIASES = {
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
     ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list',
-                          'profile', 'open', 'post-start'],
+                          'profile', 'open', 'post-start', 'new'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild',
                           'profile', 'open'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
@@ -345,6 +345,17 @@ def _add_project_parser(subparsers):
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
     _add_list_subparser(pj_sub)
+
+    # `new` はプラグインへプロジェクトを足す作成フロー (#514)。lifecycle ではなく、引数は
+    # GitHub のリポジトリなので wrapper の _PROJECT_NAME_SUBCOMMANDS には含めない。
+    pj_new = pj_sub.add_parser(
+        'new', help='Add a project for a GitHub repository to a plugin (does not start it)')
+    _add_new_target_arg(pj_new)
+    pj_new.add_argument('--plugin', default=None, help='Plugin to add the project to')
+    pj_new.add_argument('--group', default=None, help='Account group of the project')
+    pj_new.add_argument('--name', default=None,
+                        help='Project name (default: the repository name)')
+    _add_yes_arg(pj_new)
 
     # `migrate-config` は旧 env 形式から project.yml への変換 (PLAN32)。lifecycle
     # ではないため wrapper の _PROJECT_NAME_SUBCOMMANDS には含めない。
@@ -970,6 +981,8 @@ _NO_SECRET_INJECTION = frozenset({
     # コンテナの bao へ token を届けるだけで、機密の値は要らない。注入するとサーバへの
     # 往復が増える (PLAN54)。
     ('env', 'token'),
+    # プラグインへファイルを足すだけで機密を使わない。lifecycle の分岐より先に抜ける (#514)。
+    ('project', 'new'),
 })
 
 
@@ -1120,6 +1133,10 @@ def _dispatch(cmd, args):
             from devbase.commands.project import cmd_project_list
             return cmd_project_list(devbase_root, args)
         # `project migrate-config` も lifecycle ではなく projects/ 全体の変換。
+        if getattr(args, 'subcommand', None) == 'new':
+            devbase_root = _require_devbase_root()
+            from devbase.commands.project import cmd_project_new
+            return cmd_project_new(devbase_root, args)
         if getattr(args, 'subcommand', None) == 'migrate-config':
             devbase_root = _require_devbase_root()
             from devbase.commands.project import cmd_project_migrate_config
