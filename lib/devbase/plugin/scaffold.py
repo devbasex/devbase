@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import PurePosixPath
 from typing import Dict, List, Optional
 
@@ -20,6 +21,10 @@ REGISTRY_FILE = 'registry.yml'
 
 _PLUGINS_KEY = 'plugins:'
 _EMPTY_LIST_VALUE = '[]'
+
+_IMAGE_SEPARATORS = re.compile(r'[._-]+')
+_VALID_IMAGE_SEPARATOR = re.compile(r'[._]|__|-+')
+_IMAGE_SEPARATOR_FALLBACK = '-'
 
 
 def _scalar(value: str) -> str:
@@ -52,6 +57,19 @@ def normal_plugin_path(path: str) -> str:
     return '' if normal == '.' else normal
 
 
+def image_name(name: str) -> str:
+    """プロジェクト名から Docker の参照として有効なイメージ名を作る。
+
+    名前の形は Docker より広く、``app-`` や ``app..web`` も通る。小文字にし、末尾の区切り文字を
+    落とし、2 つの英数字の間に置けない区切り文字の並びを ``-`` に置き換える。
+    """
+    def separator(match: re.Match) -> str:
+        found = match.group()
+        return found if _VALID_IMAGE_SEPARATOR.fullmatch(found) else _IMAGE_SEPARATOR_FALLBACK
+
+    return _IMAGE_SEPARATORS.sub(separator, name.lower().rstrip('._-'))
+
+
 def project_dir(plugin_path: str, name: str) -> str:
     """プロジェクトのディレクトリ (リポジトリの直下からのパス)"""
     return PurePosixPath(plugin_path, 'projects', name).as_posix()
@@ -74,7 +92,7 @@ def project_files(plugin_path: str, name: str, ref: GitHubRef, group: str) -> Di
 services:
 
   dev:
-    image: {_scalar(name.lower() + ':latest')}
+    image: {_scalar(image_name(name) + ':latest')}
     build:
       context: ${{DEVBASE_ROOT}}/containers/general/
       dockerfile: Dockerfile

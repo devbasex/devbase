@@ -50,6 +50,14 @@ def app(github):
     return APP
 
 
+def test_name_outside_docker_rules_gets_a_valid_image(github, root, app, run_cli):
+    clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
+    assert run_cli("project", "new", APP, "--name", "app-", "--yes") == 0
+
+    compose = yaml.safe_load((clone / "team-a/projects/app-/compose.yml").read_text())
+    assert compose["services"]["dev"]["image"] == "app:latest"
+
+
 def test_project_is_added_and_reflected(github, root, app, run_cli):
     clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     assert run_cli("project", "new", APP, "--yes") == 0

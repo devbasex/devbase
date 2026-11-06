@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import textwrap
 
 import pytest
@@ -71,6 +72,32 @@ def test_project_files():
     assert "env" in dev["env_file"]
 
     assert files["team-a/projects/My-App/env"] == "DEVBASE_ACCOUNT_GROUP=acme\n"
+
+
+@pytest.mark.parametrize("name, image", [
+    ("web", "web"),
+    ("My-App", "my-app"),
+    ("a.b", "a.b"),
+    ("a_b", "a_b"),
+    ("a__b", "a__b"),
+    ("a---b", "a---b"),
+    ("app-", "app"),
+    ("app.", "app"),
+    ("app_", "app"),
+    ("App_-.", "app"),
+    ("app..web", "app-web"),
+    ("app___web", "app-web"),
+    ("app.-web", "app-web"),
+    ("app_-web", "app-web"),
+])
+def test_image_name_is_a_valid_docker_reference(name, image):
+    assert scaffold.image_name(name) == image
+    # distribution/reference の regexp.go の pathComponent と同じ規則
+    assert re.fullmatch(r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*", image)
+
+    files = scaffold.project_files("team-a", name, REF, "acme")
+    compose = yaml.safe_load(files[f"team-a/projects/{name}/compose.yml"])
+    assert compose["services"]["dev"]["image"] == f"{image}:latest"
 
 
 @pytest.mark.parametrize("name", ["null", "true", "1.0", "yes", "012"])

@@ -274,7 +274,7 @@ graph TD
 | ファイル | 中身 |
 | --- | --- |
 | `project.yml` | `version: 1`・`scale: 1`・`open_editor: true`・`repos`（`owner`・`repo`） |
-| `compose.yml` | `containers/general` の `dev` 1 台。イメージ名は `<名前の小文字>:latest` |
+| `compose.yml` | `containers/general` の `dev` 1 台。イメージ名は `<名前の小文字>:latest`。名前の形は Docker の参照より広いので、末尾の区切り文字を落とし、2 つの英数字の間に置けない区切り文字の並びを `-` にする（`app-` は `app:latest`、`app..web` は `app-web:latest`） |
 | `env` | `DEVBASE_ACCOUNT_GROUP=<グループ>` |
 
 作業ブランチは `devbase/new-<kind>-<名前>`、PR の題は `devbase: <kind> <名前> を足す`。
