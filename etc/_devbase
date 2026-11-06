@@ -99,6 +99,7 @@ _devbase() {
         'profile:Start / stop compose profile services'
         'open:Open the editor attached to the dev container'
         'post-start:Redo the post-start steps on running instances'
+        'new:Add a project for a GitHub repository to a plugin'
     )
 
     container_subcommands=(
@@ -143,9 +144,11 @@ _devbase() {
         'info:Show plugin details'
         'sync:Resync project symlinks'
         'repo:Manage plugin repositories'
+        'new:Add a new plugin to a repository on GitHub'
     )
 
     repo_subcommands=(
+        'new:Create (if needed) and register a repository on GitHub'
         'add:Register a repository'
         'remove:Unregister a repository'
         'list:List registered repositories'
@@ -275,6 +278,14 @@ _devbase() {
                     _devbase_arguments 3 \
                         '--context[Docker context]:context:' \
                         '1:name:_devbase_project_names'
+                    ;;
+                new)
+                    _devbase_arguments 3 \
+                        '1:repository:' \
+                        '--plugin[Plugin to add the project to]:plugin:' \
+                        '--group[Account group of the project]:group:' \
+                        '--name[Project name]:name:' \
+                        '--yes[Proceed without confirming the plan]'
                     ;;
                 *)
                     _describe -t project-commands 'project command' project_subcommands
@@ -441,8 +452,21 @@ _devbase() {
                 uninstall|update|info)
                     _devbase_plugin_names
                     ;;
+                new)
+                    _devbase_arguments 3 \
+                        '1:repository:' \
+                        '--name[Plugin name]:name:' \
+                        '--public[Make the repository public when it is created]' \
+                        '--yes[Proceed without confirming the plan]'
+                    ;;
                 repo)
                     case "$words[4]" in
+                        new)
+                            _devbase_arguments 4 \
+                                '1:repository:' \
+                                '--public[Make the repository public when it is created]' \
+                                '--yes[Proceed without confirming the plan]'
+                            ;;
                         add)
                             _devbase_arguments 4 \
                                 '1:url:_urls' \
