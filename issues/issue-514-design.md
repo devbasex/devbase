@@ -88,7 +88,9 @@ E5〜E9 の通り方は、コマンドとリポジトリの状態の組で変わ
 | `plugin new` | `registry.yml` がある・未登録 | E6 → E7 → E9 |
 | `project new` | 入れ先のプラグインのリポジトリ（登録済み） | E6 → E7 → E8 → E9 |
 
-登録済みのリポジトリへの `plugin repo new` は E4 の前に 0 で終わり、どのイベントも通らない。
+push できる登録済みのリポジトリへの `plugin repo new` は E4 の前に 0 で終わり、どのイベントも通らない。push できないときは登録済みでも E4 の前に終了コード 1 で止まる。
+
+`plugin new`・`project new` は、登録の `local_path` が空か clone のディレクトリが無いとき、E4 の前に終了コード 1 で止まり、どのイベントも通らない（「経路ごとの反映と登録」）。
 
 ### 用語
 
@@ -146,9 +148,9 @@ graph TD
 
 | コマンド | 引数 | 終了コード |
 | --- | --- | --- |
-| `devbase plugin repo new <repo>` | `--public`（既定 private）、`--yes` | 0 成功・登録済み / 1 それ以外 |
-| `devbase plugin new <repo>` | `--name`（既定はリポジトリ名）、`--public`、`--yes` | 同上 |
-| `devbase project new <repo>` | `--plugin`、`--group`、`--name`（既定はリポジトリ名）、`--yes` | 同上 |
+| `devbase plugin repo new <repo>` | `--public`（既定 private）、`--yes` | 0 成功・push できる登録済み / 1 それ以外 |
+| `devbase plugin new <repo>` | `--name`（既定はリポジトリ名）、`--public`、`--yes` | 0 成功 / 1 それ以外 |
+| `devbase project new <repo>` | `--plugin`、`--group`、`--name`（既定はリポジトリ名）、`--yes` | 0 成功 / 1 それ以外 |
 
 `<repo>` は `owner/repo`・`https://github.com/owner/repo[.git]`・`git@github.com:owner/repo[.git]` を受ける。`git@` の形の入力は clone の URL も `git@` のままにし、ほかは `https://github.com/owner/repo.git` にする。
 
@@ -162,7 +164,7 @@ graph TD
 | ある | できる | 無い | PR → マージ → 登録 |
 | ある | できる | ある | 登録だけ |
 | ある | できる | ある（登録済み） | 何もせず 0 |
-| ある・空 | できない | — | 終了（1） |
+| ある・空 | できない | — | 終了（1）。登録済みでも同じ |
 
 - push できるのは `viewerPermission` が `ADMIN`・`MAINTAIN`・`WRITE` のとき
 - owner に作れるのは次のどちらかのとき:
@@ -183,6 +185,18 @@ graph TD
 | `_pull_ff_only` | 登録の `repo.local_path` の clone |
 | `refresh_repository` | 登録の `repo.name` |
 | `install_plugin` | `<repo.url>:<プラグイン名>`（登録の `repo.url`） |
+
+`plugin new` と `project new` は、計画の確定の前に、登録の clone を確かめる。対象は `plugin new` では `_find_registered` が見つけた登録、`project new` では入れ先のプラグインの登録である。
+
+| 登録の状態 | 動作 |
+| --- | --- |
+| `repo.local_path` が空（v3.0.0 より前の登録） | GitHub にも手元にも書かず、終了コード 1 で止まる |
+| `devbase_root / repo.local_path` のディレクトリが無い | 同上 |
+| どちらでもない | 下の表の経路へ進む |
+
+- **空のまま進めない理由**: `devbase_root / ""` は devbase 本体を指す。`_pull_ff_only` が本体の clone を取り込むか、続く `refresh_repository` の拒否で既定ブランチへのマージの後に止まる
+- **案内**: `devbase plugin repo remove <repo.name>` の後に `devbase plugin repo add <repo.url>` を打つ。`repo remove` はそのリポジトリから導入したプラグインもアンインストールするので、`devbase plugin install` を打ち直すことも案内に書く
+- **`plugin repo new` は確かめない**: 登録済みの経路は clone に触らないので、`local_path` が空でも push できれば何もせず 0 で終わる
 
 | コマンド | リポジトリ | 既定ブランチへの反映 | 登録と反映（反映の後に行う） |
 | --- | --- | --- | --- |
@@ -249,7 +263,7 @@ sequenceDiagram
     participant L as 手元
     U->>C: コマンド
     C->>G: 認証と権限（読むだけ）
-    C->>L: 登録の照合（読むだけ）
+    C->>L: 登録の照合と clone の確認（読むだけ）
     C->>U: 作成の計画と確認
     U-->>C: 承認
     opt リポジトリが無い
@@ -273,7 +287,7 @@ sequenceDiagram
     C->>L: 登録・反映
 ```
 
-リポジトリの分岐の反映とプラグインの追加は別の浅い clone で順に行う（決定 8）。登録済みのリポジトリへの `plugin repo new` は登録の照合で分かるので、確認へ進まず 0 で終わる。
+リポジトリの分岐の反映とプラグインの追加は別の浅い clone で順に行う（決定 8）。`plugin repo new` は権限の確認と登録の照合で登録済みだと分かると確認へ進まず、push できれば 0、できなければ 1 で終わる。
 
 ### 途中で止まったとき
 
@@ -373,7 +387,8 @@ TUI は `creator` の読むだけの関数（候補とグループの案）を�
 | 5 | `GitHubRef.parse` が 4 つの形で同じ owner/repo を返し、GitHub 以外を拒む | `.git` を外さない・別ホストを通す |
 | 6・7・8、I9 | プラグインのフローで `plugin.yml`・`registry.yml`・導入の状態を見る。未登録・重複名・形の誤りを含む | 登録の省略・重複の上書き・名前の形を見ない |
 | 6・7、決定 8 | 未登録のリポジトリへの `plugin new` を、無い・空・`registry.yml` が無い・ある の 4 状態で実行し、既定ブランチへの反映の順（リポジトリの分岐 → プラグインの PR → 登録）を見る | プラグインを最初のコミットや `registry.yml` の PR へまとめる・プラグインの PR の前に登録する |
-| 6・7、決定 9 | `git@` の形と `.git` の無い URL で登録したリポジトリへ、形の違う入力で `plugin new` を打つ。登録済みの経路を通って 0 で終わり、`plugins.yml` の `url` が変わらず、プラグインが導入される。同じ入力の `plugin repo new` は何もせず 0 で終わる | 完全一致で照合する・入力の URL を `install_plugin` へ渡す |
+| 6・7、決定 9 | `git@` の形と `.git` の無い URL で登録したリポジトリへ、形の違う入力で `plugin new` を打つ。登録済みの経路を通って 0 で終わり、`plugins.yml` の `url` が変わらず、プラグインが導入される。同じ入力の `plugin repo new` は何もせず 0 で終わる。push できない登録へは、同じ入力の `plugin repo new` が何も書かず 1 で終わる | 完全一致で照合する・入力の URL を `install_plugin` へ渡す・push の可否を見ずに登録済みなら 0 で終わる |
+| 6・9、I1 | `local_path` が空の登録と clone のディレクトリが無い登録へ、`plugin new` と `project new` を打つ。どちらも確認の前に終了コード 1 で止まり、GitHub への書き込みの呼び出しが 0 回で、`plugins.yml` と devbase 本体の作業ツリーが変わらず、案内に `plugin repo remove` と `plugin repo add` が出る。同じ登録へ `plugin repo new` を打つと、push できれば何もせず 0 で終わる | 空の `local_path` を `devbase_root` へ足して取り込む・確かめをマージの後へ回す |
 | 9・12 | プロジェクトの 3 ファイルと `projects/<名前>` の反映を見る。読めないとき・重複のときは何も変わらない | ファイルの欠け・上書き |
 | 10 | 決定の規則の 4 段を候補の表で縛る | owner の絞り込みの省略・TTY なしで選ぶ |
 | 11、I9 | 最多の値・同数・値なし・`--group`。予約語など `validate_account_group` が弾く値は、どの出所でも何も書かず終了コード 1 になる | 同数で片方を選ぶ・グループの規則を通さず `env` へ書く |
