@@ -1060,19 +1060,19 @@
       "term": "プラグインリポジトリ",
       "context": "plugin-distribution",
       "meaning": "直下に registry.yml を持つ Git リポジトリ。収めたプラグインは 0 件でもよい。devbase plugin repo add で登録する",
-      "pending_source": "issues/issue-514-design.md"
+      "source": "docs/specifications/plugin-creation-flow.md"
     },
     {
       "term": "作成フロー",
       "context": "plugin-distribution",
       "meaning": "リポジトリ・プラグイン・プロジェクトを足す一連の操作。権限の確認からマージ、手元への取り込み、登録までを含む",
-      "pending_source": "issues/issue-514-design.md"
+      "source": "docs/specifications/plugin-creation-flow.md"
     },
     {
       "term": "作成の計画",
       "context": "plugin-distribution",
       "meaning": "作成フローが書き込みの前に確定する、作るもの・ファイル・マージ先の組",
-      "pending_source": "issues/issue-514-design.md"
+      "source": "docs/specifications/plugin-creation-flow.md"
     }
   ]
 }

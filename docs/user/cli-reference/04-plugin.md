@@ -89,7 +89,7 @@ devbase plugin migrate
 
 ## 作成フロー（`plugin new` / `plugin repo new` / `project new` に共通）
 
-リポジトリ・プラグイン・プロジェクトを足すコマンドは、権限の確認からマージ、手元への取り込み、登録までを 1 回で行います。
+リポジトリ・プラグイン・プロジェクトを足すコマンドは、権限の確認からマージ、手元への取り込み、登録までを 1 回で行います。振る舞いの正本は[確定仕様](../../specifications/plugin-creation-flow.md)にあります。
 
 - **対象は GitHub だけです。** 引数は `owner/repo`・`https://github.com/owner/repo[.git]`・`git@github.com:owner/repo[.git]` のどれかです。`git@` の形で渡すと clone の URL も `git@` になります
 - **`gh` が要ります。** 入っていない・ログインしていないときは、何も変えずに次の操作を出して終了コード 1 で止まります。認証は `gh` と `git` の設定に任せます
