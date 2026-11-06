@@ -285,7 +285,8 @@ ecommerce/
 
 `plugin.yml` は Plugin ごとに 1 ファイルです。1 つのリポジトリで複数の Plugin を配布する場合は、
 Plugin ごとにディレクトリを分けてそれぞれに `plugin.yml` を置き、リポジトリルートの
-`registry.yml` に一覧を記述します。
+`registry.yml` に一覧を記述します。リポジトリの直下に `registry.yml` があればプラグインリポジトリとして登録でき、
+収めたプラグインは 0 件（`plugins: []`）でもかまいません。
 
 ```
 my-registry/

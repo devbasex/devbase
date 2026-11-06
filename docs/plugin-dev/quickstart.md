@@ -12,6 +12,20 @@ devbase用のPluginを作成し、公開するまでの手順を解説します�
 
 ---
 
+## コマンドで足す
+
+GitHub で公開するプラグインは、`gh` が使えればコマンド 1 つで足せます。ファイルの配置・PR・マージ・手元への取り込みまで終わります。
+
+```bash
+devbase plugin repo create your-user/my-plugins   # プラグインリポジトリを用意して登録する
+devbase plugin create your-user/my-plugins --name my-plugin   # プラグインを足して導入する
+devbase project create your-user/my-app --plugin my-plugin --group personal   # プロジェクトを足す
+```
+
+詳しくは [plugin グループ](../user/cli-reference/04-plugin.md#作成フローplugin-create--plugin-repo-create--project-create-に共通)を参照してください。この後の節は、手でファイルを置くときの手順です。
+
+---
+
 ## 1. Pluginリポジトリの作成
 
 ### 1.1 Gitリポジトリの初期化

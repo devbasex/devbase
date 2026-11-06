@@ -214,7 +214,7 @@ zsh（`etc/_devbase`）は、サブコマンドの分岐から `_arguments` を�
 | 規則 | `[A-Za-z0-9][A-Za-z0-9._-]*` に**全体が**一致する。先頭が英数字なので `.`・`..`・`-x`・空文字は当たらない。`/`・`\`・空白・非 ASCII は含められない |
 | Python | `devbase.utils.names.is_single_segment_name(value)`。`re.fullmatch` で見るため、末尾の改行も不一致になる |
 | shell | `_SINGLE_SEGMENT_NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'`。比較は関数の中で `local LC_ALL=C` にして行う |
-| 使う場所 | shell: `maybe_cd_project`、`build` の衝突の判定。Python: `_resolve_project_name`、`_named_lifecycle_project`、`_build_single_image` |
+| 使う場所 | shell: `maybe_cd_project`、`build` の衝突の判定。Python: `_resolve_project_name`、`_named_lifecycle_project`、`_build_single_image`、作成フローのプラグイン名とプロジェクト名の確認（`plugin/creator.py` の `_checked_name`） |
 
 プロジェクト名とイメージ名は同じ規則を使う。どちらも「決まった親ディレクトリ（`projects/` /
 `containers/`）の直下の 1 つの名前」を表すためである。`/` と `..` だけを弾く拒否リストは採らない
@@ -283,8 +283,8 @@ shell が Python を呼ばずに同じ正規表現を文字列で持つのは、
 プラグインの同期（`discover_projects`・実ディレクトリの知らせ）、`plugin info` と `status` の
 プラグインのプロジェクト数（どちらも `discover_projects` を通す）、`status` のコンテナの状態、
 `project list`、見つからない名前での `up` の候補、`project migrate-config`、`env export`、
-`env doctor`、`env encrypt` / `env decrypt`、`env backend status` と backend の移行が、`projects/` を
-走査するときの名前の条件としてこの述語を呼ぶ。ディレクトリの条件（`is_dir()`・壊れた symlink を
+`env doctor`、`env encrypt` / `env decrypt`、`env backend status` と backend の移行、`project create` の
+グループの案が、`projects/` を走査するときの名前の条件としてこの述語を呼ぶ。ディレクトリの条件（`is_dir()`・壊れた symlink を
 拾う `is_symlink()`・`compose.yml` の有無）は走査ごとに持つ。名前の条件はディレクトリの条件より
 先に見る（壊れた symlink を名前だけで外せ、`stat` を打たないため）。同期が張った symlink の掃除と、
 別名の衝突を見るための実ディレクトリの集合は、プロジェクトを数えないため述語を通さない。
@@ -302,6 +302,7 @@ shell が Python を呼ばずに同じ正規表現を文字列で持つのは、
 | `env doctor` の重なりと除外設定の確認 | `commands/env_ops.py` | `names.project_dirs` | `is_dir()` |
 | `env encrypt` / `env decrypt` の対象 | `commands/env_migrate.py` | `names.project_dirs` | `is_dir()` |
 | `env backend status` と backend の移行の対象 | `commands/env_backend.py` | `names.project_dirs` の後に `SecretRef.for_project`（拒まれた名前は黙って外す） | `is_dir()` |
+| `project create` のグループの案（入れ先のプラグインの `projects/` を数える `suggest_group`） | `plugin/creator.py` | `names.project_dirs` | `is_dir()` |
 
 `plugin info` と `status` のプラグインのプロジェクト数は、述語を個別に持たず `discover_projects` を
 通す。同期と同じ関数を呼ぶことで、ディレクトリの条件まで同期と構造的に一致する。

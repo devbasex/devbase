@@ -179,6 +179,50 @@ def _git_pull(repo_dir: Path) -> None:
         )
 
 
+def _require_default_branch(repo_dir: Path, default_branch: str) -> None:
+    """clone が既定ブランチにいて ``origin`` の同じブランチを追っていることを確かめる (読むだけ)。
+
+    ``default_branch`` は GitHub から得た値を渡す。clone の ``origin/HEAD`` は、既定ブランチを
+    変えても追従しない。古いブランチが残っていると取り込みが成功し、既定ブランチへ入れたものが
+    手元に現れないまま終わる。
+
+    Raises:
+        RepositoryError: 既定ブランチを追っていないとき
+    """
+    current = _run_git(repo_dir, 'branch', '--show-current').stdout.strip()
+    upstream = _run_git(repo_dir, 'rev-parse', '--abbrev-ref', '@{u}')
+    if current == default_branch and upstream.returncode != 0:
+        raise RepositoryError(str(_missing_upstream_error(repo_dir)))
+    tracking = upstream.stdout.strip() if upstream.returncode == 0 else ''
+    if current != default_branch or tracking != f"origin/{default_branch}":
+        raise RepositoryError(
+            f"{repo_dir} は既定ブランチ {default_branch} を追っていません "
+            f"(今: {current or 'detached HEAD'}、追跡先: {tracking or 'なし'})。\n"
+            f"確かめる: git -C {repo_dir} status\n"
+            f"切り替える: git -C {repo_dir} fetch origin && "
+            f"git -C {repo_dir} switch {default_branch}"
+        )
+
+
+def _pull_ff_only(repo_dir: Path, default_branch: str) -> None:
+    """既定ブランチの clone を早送りだけで取り込む (#514 の I4・I8)。
+
+    既定ブランチ以外・detached HEAD・分岐した clone・作業ツリーの変更とぶつかる取り込みは
+    何も変えずに止める。
+
+    Raises:
+        RepositoryError: 早送りで取り込めないとき
+    """
+    _require_default_branch(repo_dir, default_branch)
+
+    result = _run_git(repo_dir, 'pull', '--ff-only')
+    if result.returncode != 0:
+        raise RepositoryError(
+            f"{repo_dir} を早送りで取り込めません: {result.stderr.strip()}\n"
+            f"確かめる: git -C {repo_dir} status"
+        )
+
+
 def _log_available_plugins(
     registry: PluginRegistry, plugins: list[AvailablePlugin],
 ) -> None:
@@ -218,6 +262,22 @@ def _reject_duplicate_registration(registry: PluginRegistry, repo_url: str) -> N
                 "Both SSH and HTTPS URLs resolve to the same repository.\n"
                 "Use 'devbase plugin repo refresh' to update the existing entry."
             )
+
+
+def _find_registered(
+    registry: PluginRegistry, url: str,
+) -> Optional[RegisteredRepository]:
+    """URL の形 (SSH・HTTPS・``.git`` の有無) によらず登録を探す (読むだけ。#514 の決定 9)。
+
+    比べ方は ``_reject_duplicate_registration`` と同じで、``add_repository`` が拒否する
+    ものをここで見つける。
+    """
+    dirname = _url_to_repos_dirname(url)
+    return next(
+        (repo for repo in registry.list_repositories()
+         if _url_to_repos_dirname(repo.url) == dirname),
+        None,
+    )
 
 
 def _resolve_new_repo_name(
@@ -360,11 +420,21 @@ def show_repositories(registry: PluginRegistry) -> None:
     logger.info("Total: %d repository(ies)", len(repos))
 
 
+def _snapshot_repo_projects(
+    registry: PluginRegistry, repo: RegisteredRepository,
+) -> dict[str, set[str]]:
+    """このリポジトリから導入したプラグインのプロジェクト名を pull の前に控える"""
+    from .updater import _snapshot_plugin_projects
+    return _snapshot_plugin_projects(registry, [
+        p for p in registry.list_installed() if p.source == repo.url and not p.linked])
+
+
 def refresh_repository(
     registry: PluginRegistry,
     name: str,
     *,
     sync: bool = True,
+    pre_pull_projects: Optional[dict[str, set[str]]] = None,
 ) -> None:
     """Refresh plugin list for a registered repository (git pull + re-read registry.yml).
 
@@ -372,6 +442,8 @@ def refresh_repository(
         sync: If True (default), call sync_projects after updating metadata.
             Set to False when refreshing multiple repositories in a batch to
             avoid redundant sync calls — the caller should sync once at the end.
+        pre_pull_projects: Snapshot from ``_snapshot_repo_projects``, for callers
+            that pulled the clone themselves. Default: snapshot here before pulling.
 
     Raises RepositoryError if not found.
     """
@@ -395,10 +467,9 @@ def refresh_repository(
     # Snapshot installed plugin project names BEFORE git pull so that
     # migration can still detect where old projects moved even after
     # the working tree is updated by pull.
-    from .updater import _snapshot_plugin_projects
     installed = registry.list_installed()
-    repo_installed = [p for p in installed if p.source == repo.url and not p.linked]
-    pre_pull_projects = _snapshot_plugin_projects(registry, repo_installed)
+    if pre_pull_projects is None:
+        pre_pull_projects = _snapshot_repo_projects(registry, repo)
 
     try:
         _git_pull(clone_dir)

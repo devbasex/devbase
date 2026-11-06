@@ -84,21 +84,36 @@ def _no_dispatch(monkeypatch):
 # run(): plugin メニューのループと戻り値プロトコル
 # ---------------------------------------------------------------------------
 
+def _in_group(monkeypatch, group, *ops):
+    """第 1 階層で ``group`` を選び、第 2 階層で ``ops`` を順に選ぶスタブを置く。"""
+    monkeypatch.setattr(actions_plugin, "_select_operation", _seq(group, menu.MENU_BACK))
+    seen = []
+    select = _seq(*ops, menu.MENU_BACK)
+
+    def _select_group(chosen):
+        seen.append(chosen)
+        return select()
+
+    monkeypatch.setattr(actions_plugin, "_select_group_operation", _select_group)
+    return seen
+
+
 def test_run_executes_then_stays_in_submenu(monkeypatch, tmp_path):
-    """操作を実行 → plugin メニューに留まり、Esc/← (MENU_BACK) で初めてトップへ戻る。"""
+    """操作を実行 → 用途のメニューに留まり、Esc/← (MENU_BACK) で 1 つずつ戻る。"""
     captured = _capture_dispatch(monkeypatch)
-    monkeypatch.setattr(actions_plugin, "_select_operation", _seq("sync", menu.MENU_BACK))
+    seen = _in_group(monkeypatch, "maintain", "sync")
     assert actions_plugin.run(tmp_path) is menu.MENU_BACK
     assert captured["subcommand"] == "sync"
     assert captured["devbase_root"] == tmp_path
+    assert seen == ["maintain", "maintain"], "実行の後は同じ用途のメニューを再表示する"
 
 
 def test_run_executes_nonzero_then_back(monkeypatch, tmp_path):
-    """非0 を返す操作でも実行後は plugin メニューに留まり、戻りは MENU_BACK。"""
+    """非0 を返す操作でも実行後はメニューに留まり、戻りは MENU_BACK。"""
     from devbase.commands import plugin as plugin_mod
     calls = []
     monkeypatch.setattr(plugin_mod, "cmd_plugin", lambda root, args: calls.append(1) or 1)
-    monkeypatch.setattr(actions_plugin, "_select_operation", _seq("sync", menu.MENU_BACK))
+    _in_group(monkeypatch, "maintain", "sync")
     assert actions_plugin.run(tmp_path) is menu.MENU_BACK
     assert calls == [1], "操作は実行される (rc は終了コードへは伝搬しない)"
 
@@ -120,13 +135,8 @@ def test_run_ctrl_c_aborts(monkeypatch, tmp_path):
 
 
 def test_run_arg_cancel_reshows_menu(monkeypatch, tmp_path):
-    """引数収集を中止 (_ARG_CANCEL) すると plugin メニューを再表示し、再選択で実行する。"""
-    # 1 回目: install (→ 引数収集中止) / 2 回目: sync (→ 実行) / 3 回目: MENU_BACK
-    select = _seq("install", "sync", menu.MENU_BACK)
-    select_calls = []
-    monkeypatch.setattr(actions_plugin, "_select_operation",
-                        lambda: select_calls.append(1) or select())
-
+    """引数収集を中止 (_ARG_CANCEL) すると同じ用途のメニューを再表示し、再選択で実行する。"""
+    seen = _in_group(monkeypatch, "install-update", "install", "update")
     run_calls = []
 
     def fake_run_op(root, op):
@@ -136,78 +146,322 @@ def test_run_arg_cancel_reshows_menu(monkeypatch, tmp_path):
     monkeypatch.setattr(actions_plugin, "_run_operation", fake_run_op)
 
     assert actions_plugin.run(tmp_path) is menu.MENU_BACK
-    assert run_calls == ["install", "sync"]
-    assert len(select_calls) == 3, "引数中止と実行後に plugin メニューが再表示される"
+    assert run_calls == ["install", "update"]
+    assert len(seen) == 3, "引数中止と実行後に用途のメニューが再表示される"
 
 
-def test_run_repo_back_reshows_plugin_menu(monkeypatch, tmp_path):
-    """repo サブ階層で Esc/← (MENU_BACK) を押すと plugin メニューへ戻る。"""
+def test_run_group_back_reshows_plugin_menu(monkeypatch, tmp_path):
+    """用途のメニューで Esc/← (MENU_BACK) を押すと第 1 階層へ戻る。"""
     select_calls = []
     monkeypatch.setattr(actions_plugin, "_select_operation",
                         lambda: (select_calls.append(1),
-                                 "repo" if len(select_calls) == 1 else menu.MENU_BACK)[1])
-    monkeypatch.setattr(actions_plugin, "_repo_menu", lambda root: menu.MENU_BACK)
+                                 "view" if len(select_calls) == 1 else menu.MENU_BACK)[1])
+    monkeypatch.setattr(actions_plugin, "_group_menu", lambda root, group: menu.MENU_BACK)
 
     assert actions_plugin.run(tmp_path) is menu.MENU_BACK
-    assert len(select_calls) == 2, "repo から戻ると plugin メニューが再表示される"
+    assert len(select_calls) == 2, "用途のメニューから戻ると第 1 階層が再表示される"
 
 
-def test_run_repo_back_then_plugin_back(monkeypatch, tmp_path):
-    """repo サブ階層は自身で操作を完結し、戻ると plugin メニューを再表示する。
-
-    新仕様では repo サブ階層 (``_repo_menu``) は操作実行後もそこに留まり、戻りは
-    MENU_BACK のみ (rc を上位へ伝搬しない)。plugin 側はそれを受けてメニューを
-    再表示し、さらに MENU_BACK でトップへ戻る。
-    """
-    repo_calls = []
-    monkeypatch.setattr(actions_plugin, "_select_operation", _seq("repo", menu.MENU_BACK))
-    monkeypatch.setattr(actions_plugin, "_repo_menu",
-                        lambda root: repo_calls.append(1) or menu.MENU_BACK)
-    assert actions_plugin.run(tmp_path) is menu.MENU_BACK
-    assert repo_calls == [1], "repo サブ階層へ 1 度遷移してから plugin メニューへ戻る"
-
-
-def test_run_repo_ctrl_c_aborts(monkeypatch, tmp_path):
-    """repo サブ階層で Ctrl-C (None) を受けたら全体中止を伝搬する。"""
-    monkeypatch.setattr(actions_plugin, "_select_operation", lambda: "repo")
-    monkeypatch.setattr(actions_plugin, "_repo_menu", lambda root: None)
+def test_run_group_ctrl_c_aborts(monkeypatch, tmp_path):
+    """用途のメニューで Ctrl-C (None) を受けたら全体中止を伝搬する。"""
+    monkeypatch.setattr(actions_plugin, "_select_operation", lambda: "view")
+    monkeypatch.setattr(actions_plugin, "_group_menu", lambda root, group: None)
     assert actions_plugin.run(tmp_path) is None
 
 
+def test_ctrl_c_inside_an_operation_aborts_everything(monkeypatch, tmp_path):
+    """引数収集の Ctrl-C は 2 階層を抜けて全体中止になる。"""
+    called = _no_dispatch(monkeypatch)
+    _in_group(monkeypatch, "install-update", "install")
+    monkeypatch.setattr(menu, "text", lambda *a, **k: None)
+    assert actions_plugin.run(tmp_path) is None
+    assert called == []
+
+
 # ---------------------------------------------------------------------------
-# _select_operation / _select_repo_operation: menu.select への委譲
+# メニューの構成
 # ---------------------------------------------------------------------------
 
-def test_select_operation_lists_all_ops(monkeypatch):
+def test_select_operation_lists_the_purposes(monkeypatch):
     captured = {}
 
     def fake_select(message, choices, *, back, search):
-        captured.update(back=back, search=search,
-                        values=[c[1] for c in choices])
-        return "list"
+        captured.update(back=back, search=search, labels=[c[0] for c in choices])
+        return choices[0][1]
 
     monkeypatch.setattr(menu, "select", fake_select)
-    assert actions_plugin._select_operation() == "list"
+    assert actions_plugin._select_operation() == "view"
     assert captured["back"] is True
     assert captured["search"] is False
-    # 閲覧系の list 2 種を先頭にしつつ全 9 操作 (repo 含む) を提示する。
-    # --available は y/N で聞かず独立したメニュー項目で提供する。
-    assert captured["values"] == [
-        "list", "list-available", "install", "uninstall", "update", "info",
-        "sync", "migrate", "repo"]
+    assert captured["labels"] == ["見る", "新規追加", "導入・更新", "削除", "保守"]
 
 
-def test_select_repo_operation_lists_all_ops(monkeypatch):
+@pytest.mark.parametrize("group, values", [
+    ("view", ["list", "list-available", "info", "repo-list"]),
+    ("create", ["create-project", "create-plugin", "create-repo"]),
+    ("install-update", ["install", "update", "repo-add", "repo-refresh"]),
+    ("remove", ["uninstall", "repo-remove"]),
+    ("maintain", ["sync", "migrate"]),
+])
+def test_select_group_operation_lists_the_ops(monkeypatch, group, values):
     captured = {}
 
     def fake_select(message, choices, *, back, search):
         captured.update(back=back, values=[c[1] for c in choices])
-        return "add"
+        return choices[0][1]
 
     monkeypatch.setattr(menu, "select", fake_select)
-    assert actions_plugin._select_repo_operation() == "add"
+    assert actions_plugin._select_group_operation(group) == values[0]
     assert captured["back"] is True
-    assert captured["values"] == ["list", "add", "remove", "refresh"]
+    assert captured["values"] == values
+
+
+def test_every_menu_item_has_a_handler():
+    items = [value for ops in actions_plugin._GROUP_OPS.values() for _, value in ops]
+    assert sorted(items) == sorted(actions_plugin._OP_HANDLERS)
+
+
+@pytest.mark.parametrize("op, repo_command", [
+    ("repo-list", "list"), ("repo-add", "add"), ("repo-remove", "remove"),
+    ("repo-refresh", "refresh"),
+])
+def test_repo_items_reach_the_repo_operation(monkeypatch, tmp_path, op, repo_command):
+    seen = []
+    monkeypatch.setattr(actions_plugin, "_run_repo_operation",
+                        lambda root, value: seen.append(value) or 0)
+    assert actions_plugin._run_operation(tmp_path, op) == 0
+    assert seen == [repo_command]
+
+
+# ---------------------------------------------------------------------------
+# 新規追加: 値を集めて CLI のハンドラへ渡す
+# ---------------------------------------------------------------------------
+
+class _Plan:
+    def __init__(self, noop_reason=""):
+        self.noop_reason = noop_reason
+
+    def describe(self):
+        return "作成の計画: テスト"
+
+
+class _Target:
+    def __init__(self, plugin):
+        self.plugin = plugin
+        self.label = f"{plugin} (owner/r)"
+
+
+def _texts(monkeypatch, *values):
+    monkeypatch.setattr(menu, "text", _seq(*values))
+
+
+def _capture_project(monkeypatch):
+    from devbase.commands import project as project_mod
+    captured = {}
+
+    def _spy(root, args):
+        captured.update(vars(args))
+        return 0
+
+    monkeypatch.setattr(project_mod, "cmd_project_create", _spy)
+    return captured
+
+
+@pytest.fixture
+def creation(monkeypatch):
+    """gh に触らないよう creator の読むだけの関数を差し替える。"""
+    from devbase.plugin import creator
+    from devbase.plugin.github import GhClient
+
+    calls = {}
+    monkeypatch.setattr(GhClient, "ensure_ready", lambda self: None)
+    monkeypatch.setattr(creator, "plugin_candidates", lambda *a: [_Target("one")])
+    monkeypatch.setattr(creator, "suggest_group", lambda *a: "acme")
+
+    def _plan(kind):
+        def _record(registry, gh, value, **kwargs):
+            calls[kind] = (value, kwargs)
+            return _Plan()
+        return _record
+
+    for kind in ("repo", "plugin", "project"):
+        monkeypatch.setattr(creator, f"plan_{kind}", _plan(kind))
+    return calls
+
+
+def test_create_repo_passes_values_with_yes(monkeypatch, tmp_path, creation, capsys):
+    from devbase.commands import plugin as plugin_mod
+    captured = {}
+    monkeypatch.setattr(plugin_mod, "cmd_plugin",
+                        lambda root, args: captured.update(vars(args)) or 0)
+    _texts(monkeypatch, "owner/repo")
+    answers = _seq(True, True)
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: answers())
+    assert actions_plugin._run_operation(tmp_path, "create-repo") == 0
+    assert captured == {"subcommand": "repo", "repo_command": "create", "repo": "owner/repo",
+                        "public": True, "yes": True}
+    assert creation["repo"] == ("owner/repo", {"public": True})
+    assert "作成の計画" in capsys.readouterr().out
+
+
+def test_create_repo_public_defaults_to_no(monkeypatch, tmp_path, creation):
+    _capture_dispatch(monkeypatch)
+    _texts(monkeypatch, "owner/repo")
+    defaults = []
+
+    def fake_confirm(message, *, default=False):
+        defaults.append(default)
+        return True
+
+    monkeypatch.setattr(menu, "confirm", fake_confirm)
+    assert actions_plugin._run_operation(tmp_path, "create-repo") == 0
+    assert defaults[0] is False
+
+
+def test_create_repo_noop_skips_the_confirmation(monkeypatch, tmp_path):
+    from devbase.plugin import creator
+    from devbase.plugin.github import GhClient
+    monkeypatch.setattr(GhClient, "ensure_ready", lambda self: None)
+    monkeypatch.setattr(creator, "plan_repo", lambda *a, **k: _Plan("登録済み"))
+    captured = _capture_dispatch(monkeypatch)
+    _texts(monkeypatch, "owner/repo")
+    answers = []
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: answers.append(1) or False)
+    assert actions_plugin._run_operation(tmp_path, "create-repo") == 0
+    assert len(answers) == 1, "公開の確認だけで、計画の確認は出さない"
+    assert captured["repo_command"] == "create"
+
+
+def test_create_plugin_passes_values(monkeypatch, tmp_path, creation):
+    from devbase.commands import plugin as plugin_mod
+    captured = {}
+    monkeypatch.setattr(plugin_mod, "cmd_plugin",
+                        lambda root, args: captured.update(vars(args)) or 0)
+    _texts(monkeypatch, "owner/repo", "team-a")
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    assert actions_plugin._run_operation(tmp_path, "create-plugin") == 0
+    assert captured == {"subcommand": "create", "repo": "owner/repo", "name": "team-a",
+                        "public": False, "yes": True}
+
+
+def test_create_plugin_empty_name_is_none(monkeypatch, tmp_path, creation):
+    captured = _capture_dispatch(monkeypatch)
+    _texts(monkeypatch, "owner/repo", "")
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    assert actions_plugin._run_operation(tmp_path, "create-plugin") == 0
+    assert captured["name"] is None
+    assert creation["plugin"][1]["name"] is None
+
+
+def test_create_project_single_candidate_shows_no_select(monkeypatch, tmp_path, creation):
+    captured = _capture_project(monkeypatch)
+    prompts = []
+
+    def fake_text(message, *, default=None, allow_empty=True):
+        prompts.append((message, default))
+        return {0: "owner/app", 1: "web", 2: "typed"}[len(prompts) - 1]
+
+    monkeypatch.setattr(menu, "text", fake_text)
+    monkeypatch.setattr(menu, "select", lambda *a, **k: pytest.fail("候補 1 件で選択を出した"))
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    assert actions_plugin._run_operation(tmp_path, "create-project") == 0
+    assert captured == {"subcommand": "create", "repo": "owner/app", "name": "web",
+                        "plugin": "one", "group": "typed", "yes": True}
+    assert prompts[2][1] == "acme", "グループは案を既定値にする"
+    assert creation["project"] == ("owner/app", {"plugin": "one", "group": "typed",
+                                                 "name": "web"})
+
+
+def test_create_project_multiple_candidates_select(monkeypatch, tmp_path, creation):
+    from devbase.plugin import creator
+    monkeypatch.setattr(creator, "plugin_candidates",
+                        lambda *a: [_Target("one"), _Target("two")])
+    captured = _capture_project(monkeypatch)
+    _texts(monkeypatch, "owner/app", "", "acme")
+    offered = {}
+
+    def fake_select(message, choices, *, back, search):
+        offered.update(values=[c[1] for c in choices], back=back)
+        return "two"
+
+    monkeypatch.setattr(menu, "select", fake_select)
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
+    assert actions_plugin._run_operation(tmp_path, "create-project") == 0
+    assert offered == {"values": ["one", "two"], "back": True}
+    assert captured["plugin"] == "two"
+    assert captured["name"] is None
+
+
+def test_create_project_without_candidates_reports(monkeypatch, tmp_path, creation, caplog):
+    from devbase.plugin import creator
+    monkeypatch.setattr(creator, "plugin_candidates", lambda *a: [])
+    captured = _capture_project(monkeypatch)
+    _texts(monkeypatch, "owner/app", "")
+    assert actions_plugin._run_operation(tmp_path, "create-project") == 1
+    assert captured == {}
+    assert "入れ先" in caplog.text
+
+
+@pytest.mark.parametrize("op", ["create-project", "create-plugin", "create-repo"])
+def test_create_esc_at_the_repository_goes_back(monkeypatch, tmp_path, creation, op):
+    called = _no_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "text", lambda *a, **k: menu.MENU_BACK)
+    assert actions_plugin._run_operation(tmp_path, op) is actions_plugin._ARG_CANCEL
+    assert called == []
+
+
+@pytest.mark.parametrize("op", ["create-project", "create-plugin", "create-repo"])
+def test_create_ctrl_c_at_the_repository_aborts(monkeypatch, tmp_path, creation, op):
+    called = _no_dispatch(monkeypatch)
+    monkeypatch.setattr(menu, "text", lambda *a, **k: None)
+    assert actions_plugin._run_operation(tmp_path, op) is None
+    assert called == []
+
+
+@pytest.mark.parametrize("answer, expected", [
+    (False, actions_plugin._ARG_CANCEL),
+    (menu.MENU_BACK, actions_plugin._ARG_CANCEL),
+    (None, None),
+])
+def test_create_plan_confirmation_refused(monkeypatch, tmp_path, creation, answer, expected):
+    called = _no_dispatch(monkeypatch)
+    captured = _capture_project(monkeypatch)
+    _texts(monkeypatch, "owner/app", "", "acme")
+    monkeypatch.setattr(menu, "confirm", lambda *a, **k: answer)
+    assert actions_plugin._run_operation(tmp_path, "create-project") is expected
+    assert called == []
+    assert captured == {}
+
+
+@pytest.mark.parametrize("step", ["select", "group"])
+def test_create_project_esc_in_the_middle_goes_back(monkeypatch, tmp_path, creation, step):
+    from devbase.plugin import creator
+    monkeypatch.setattr(creator, "plugin_candidates",
+                        lambda *a: [_Target("one"), _Target("two")])
+    captured = _capture_project(monkeypatch)
+    if step == "select":
+        _texts(monkeypatch, "owner/app", "")
+        monkeypatch.setattr(menu, "select", lambda *a, **k: menu.MENU_BACK)
+    else:
+        _texts(monkeypatch, "owner/app", "", menu.MENU_BACK)
+        monkeypatch.setattr(menu, "select", lambda *a, **k: "one")
+    assert actions_plugin._run_operation(tmp_path, "create-project") is actions_plugin._ARG_CANCEL
+    assert captured == {}
+
+
+def test_create_plan_error_is_reported_with_rc_1(monkeypatch, tmp_path, creation, caplog):
+    from devbase.errors import RepositoryError
+    from devbase.plugin import creator
+
+    def _boom(*_a, **_k):
+        raise RepositoryError("push する権限がありません")
+
+    monkeypatch.setattr(creator, "plan_plugin", _boom)
+    called = _no_dispatch(monkeypatch)
+    _texts(monkeypatch, "owner/repo", "")
+    assert actions_plugin._run_operation(tmp_path, "create-plugin") == 1
+    assert called == []
+    assert "push する権限がありません" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -490,53 +744,6 @@ def test_run_repo_operation_remove_ctrl_c_aborts(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _repo_menu: サブ階層メニューのループ
-# ---------------------------------------------------------------------------
-
-def test_repo_menu_back_returns_menu_back(monkeypatch, tmp_path):
-    monkeypatch.setattr(actions_plugin, "_select_repo_operation",
-                        lambda: menu.MENU_BACK)
-    assert actions_plugin._repo_menu(tmp_path) is menu.MENU_BACK
-
-
-def test_repo_menu_ctrl_c_aborts(monkeypatch, tmp_path):
-    monkeypatch.setattr(actions_plugin, "_select_repo_operation", lambda: None)
-    assert actions_plugin._repo_menu(tmp_path) is None
-
-
-def test_repo_menu_arg_cancel_reshows_submenu(monkeypatch, tmp_path):
-    """引数収集を中止 (_ARG_CANCEL) するとサブ階層メニューを再表示し、再選択で実行する。"""
-    # 1 回目: add (→ 引数収集中止) / 2 回目: list (→ 実行) / 3 回目: MENU_BACK
-    select = _seq("add", "list", menu.MENU_BACK)
-    select_calls = []
-    monkeypatch.setattr(actions_plugin, "_select_repo_operation",
-                        lambda: select_calls.append(1) or select())
-
-    run_calls = []
-
-    def fake_run_op(root, op):
-        run_calls.append(op)
-        return actions_plugin._ARG_CANCEL if op == "add" else 0
-
-    monkeypatch.setattr(actions_plugin, "_run_repo_operation", fake_run_op)
-
-    assert actions_plugin._repo_menu(tmp_path) is menu.MENU_BACK
-    assert run_calls == ["add", "list"]
-    assert len(select_calls) == 3, "引数中止と実行後にサブ階層メニューが再表示される"
-
-
-def test_repo_menu_executes_then_stays(monkeypatch, tmp_path):
-    """repo 操作を実行 → サブ階層に留まり、Esc/← (MENU_BACK) で plugin メニューへ。"""
-    monkeypatch.setattr(actions_plugin, "_select_repo_operation",
-                        _seq("list", menu.MENU_BACK))
-    calls = []
-    monkeypatch.setattr(actions_plugin, "_run_repo_operation",
-                        lambda root, op: calls.append(op) or 1)
-    assert actions_plugin._repo_menu(tmp_path) is menu.MENU_BACK
-    assert calls == ["list"], "操作は実行される (rc は終了コードへは伝搬しない)"
-
-
-# ---------------------------------------------------------------------------
 # 名前選択ヘルパ (_select_name / _select_installed_plugin / _select_repository)
 # ---------------------------------------------------------------------------
 
@@ -619,3 +826,13 @@ def test_select_repository_empty_is_cancel(monkeypatch, tmp_path):
     assert actions_plugin._select_repository(tmp_path, "選択") \
         is actions_plugin._ARG_CANCEL
     assert selects == []
+
+
+def test_creation_drops_injected_secrets_before_gh(monkeypatch, tmp_path):
+    """TUI は起動時の注入が載ったまま動くので、gh を呼ぶ前に落とす (#514 の決定 11)。"""
+    from devbase.env import runtime
+
+    cleared = []
+    monkeypatch.setattr(runtime, "clear_injected", lambda: cleared.append(True))
+    actions_plugin._creation_context(tmp_path)
+    assert cleared == [True]

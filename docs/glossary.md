@@ -265,10 +265,10 @@ devbase up / scale がコンテナを起動して待ち、その後にホスト�
 
 ## プラグインの配布（`plugin-distribution`）
 
-プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project new）
+プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project create）
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |
-| プラグインリポジトリ | — | 直下に registry.yml を持つ Git リポジトリ。収めたプラグインは 0 件でもよい。devbase plugin repo add で登録する | — | — | — |
-| 作成フロー | — | リポジトリ・プラグイン・プロジェクトを足す一連の操作。権限の確認からマージ、手元への取り込み、登録までを含む | — | — | — |
-| 作成の計画 | — | 作成フローが書き込みの前に確定する、作るもの・ファイル・マージ先の組 | — | — | — |
+| プラグインリポジトリ | — | 直下に registry.yml を持つ Git リポジトリ。収めたプラグインは 0 件でもよい。devbase plugin repo add で登録する | — | — | `docs/specifications/plugin-creation-flow.md` |
+| 作成フロー | — | リポジトリ・プラグイン・プロジェクトを足す一連の操作。権限の確認からマージ、手元への取り込み、登録までを含む | — | — | `docs/specifications/plugin-creation-flow.md` |
+| 作成の計画 | — | 作成フローが書き込みの前に確定する、作るもの・ファイル・マージ先の組 | — | — | `docs/specifications/plugin-creation-flow.md` |

@@ -63,6 +63,53 @@ def _resolve_plugin_name(entry: Path) -> str | None:
     return None
 
 
+class _TtyPrompter:
+    """入れ先とグループを端末で聞く (creator.Prompter)"""
+
+    def choose(self, message: str, options: list[str]) -> str | None:
+        print(message)
+        for number, option in enumerate(options, start=1):
+            print(f"  {number}. {option}")
+        answer = self.ask("番号")
+        if answer and answer.isdecimal() and 1 <= int(answer) <= len(options):
+            return options[int(answer) - 1]
+        return None
+
+    def ask(self, message: str) -> str | None:
+        try:
+            return input(f"{message}: ").strip() or None
+        except (EOFError, KeyboardInterrupt):
+            return None
+
+
+def cmd_project_create(devbase_root: Path, args) -> int:
+    """`project create`: 入れ先のプラグインへプロジェクトを足し、手元へ反映する。
+
+    コンテナは起動しない (``devbase up`` は打たない)。
+    """
+    from devbase.commands.plugin import run_creation
+    from devbase.errors import DevbaseError
+    from devbase.plugin import creator
+    from devbase.plugin.github import GhClient
+    from devbase.plugin.registry import PluginRegistry
+
+    registry = PluginRegistry(devbase_root)
+    gh = GhClient()
+    prompter = _TtyPrompter() if sys.stdin.isatty() else None
+    try:
+        plan = creator.plan_project(
+            registry, gh, args.repo,
+            plugin=getattr(args, 'plugin', None),
+            group=getattr(args, 'group', None),
+            name=getattr(args, 'name', None),
+            prompter=prompter,
+        )
+        return run_creation(registry, gh, plan, getattr(args, 'yes', False))
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+
 def list_projects(projects_dir: Path) -> list[dict]:
     """projects/ 配下のプロジェクトを NAME / PLUGIN / STATUS で列挙する。
 

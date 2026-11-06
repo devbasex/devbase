@@ -154,6 +154,10 @@ flowchart LR
 | `registry.py` | `plugins.yml` の読み書き |
 | `installer.py` | プラグインの install / uninstall。Git clone やローカルリンクに対応 |
 | `repo_manager.py` | リポジトリの add / remove / list / refresh |
+| `github.py` | GitHub の参照の解決と `gh` の呼び出し（権限・作成・PR・マージ） |
+| `scaffold.py` | 作成フローの雛形の生成と `registry.yml` への追記 |
+| `publish.py` | 一時の浅い clone から既定ブランチへ変更を入れる |
+| `creator.py` | 作成フローの計画（読むだけ）と実行。入れ先とグループの決定 |
 | `updater.py` | プラグインの update とマイグレーション |
 | `syncer.py` | `plugins/*/projects/*` から `projects/` へのシンボリックリンク同期 |
 | `info.py` | プラグイン詳細情報の表示 |

@@ -213,6 +213,13 @@ def test_bash_open_completes_its_flags(fake_root, words, cword):
     assert set(_bash_complete(words, cword, fake_root)) == {"--open-index", "--context"}
 
 
+def test_zsh_completion_mentions_create():
+    text = ZSH_COMPLETION.read_text()
+    for flag in ("--plugin", "--group", "--public", "--yes"):
+        assert f"'{flag}[" in text
+    assert "'create:" in text
+
+
 def test_zsh_completion_mentions_open():
     text = ZSH_COMPLETION.read_text()
     assert text.count("'open:") == 3   # トップレベル / project / container
@@ -281,7 +288,7 @@ _LIST_FLAGS = ["--no-interactive", "--plain", "-P", "--interactive", "-i"]
 _CONTAINER_SUBCOMMANDS = ["up", "down", "ps", "login", "logs", "scale", "build", "rebuild", "profile", "open"]
 _ENV_SUBCOMMANDS = ["init", "sync", "list", "set", "get", "delete", "edit", "project", "export", "import",
                     "keygen", "exec", "token", "encrypt", "decrypt", "rekey", "doctor", "backend"]
-_PLUGIN_SUBCOMMANDS = ["list", "install", "uninstall", "update", "info", "sync", "repo"]
+_PLUGIN_SUBCOMMANDS = ["list", "install", "uninstall", "update", "info", "sync", "repo", "create"]
 _SNAPSHOT_SUBCOMMANDS = ["create", "list", "restore", "copy", "delete", "rotate"]
 
 
@@ -353,7 +360,11 @@ def fake_root_with_plugins(fake_root):
     ("devbase plugin uninstall ''", 3, _PLUGINS),
     ("devbase pl update ''", 3, _PLUGINS),
     ("devbase plugin info ''", 3, _PLUGINS),
-    ("devbase plugin repo ''", 3, ["add", "remove", "list", "refresh"]),
+    ("devbase plugin repo ''", 3, ["create", "add", "remove", "list", "refresh"]),
+    ("devbase plugin create '-'", 3, ["--name", "--public", "--yes"]),
+    ("devbase pl create ''", 3, []),
+    ("devbase project create '-'", 3, ["--plugin", "--group", "--name", "--yes"]),
+    ("devbase project create ''", 3, []),
     # 位置 3: snapshot / ss
     ("devbase snapshot create '-'", 3, ["--name", "--full"]),
     ("devbase ss restore '-'", 3, ["--point"]),
@@ -374,6 +385,9 @@ def fake_root_with_plugins(fake_root):
     ("devbase plugin install src '-'", 4, ["--link", "--all"]),
     ("devbase pl install src ''", 4, []),
     ("devbase plugin repo add '-'", 4, ["--name"]),
+    ("devbase plugin repo create '-'", 4, ["--public", "--yes"]),
+    ("devbase plugin create owner/repo '-'", 4, ["--name", "--public", "--yes"]),
+    ("devbase project create owner/repo '-'", 4, ["--plugin", "--group", "--name", "--yes"]),
     ("devbase env set KEY '-'", 4, []),
 ])
 def test_bash_completion_branches(fake_root_with_plugins, words, cword, expected):
