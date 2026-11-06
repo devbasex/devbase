@@ -262,3 +262,13 @@ devbase up / scale がコンテナを起動して待ち、その後にホスト�
 | snap スタブ | — | Ubuntu の chromium-browser パッケージ。中身は chromium の snap を入れる案内だけで、コンテナの中では Chromium として起動しない | — | — | `docs/specifications/base-image-rendering.md` |
 | ブラウザの依存パッケージ | — | playwright install の --with-deps が apt で入れるパッケージ。共有ライブラリ（libnss3 など）とフォント（fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei など）を含む。base は、このうち fonts-liberation・fonts-ipafont-gothic・fonts-wqy-zenhei・libnss3 などを明示して持つ | — | — | `docs/specifications/base-image-rendering.md` |
 | ブラウザの派生イメージ | — | containers/browser（タグ devbase-browser:latest）。base を継ぎ、Playwright の Chromium・ブラウザの依存パッケージ・追加の太さのフォントを足す | — | — | `docs/specifications/base-image-rendering.md` |
+
+## プラグインの配布（`plugin-distribution`）
+
+プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project new）
+
+| 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
+| --- | --- | --- | --- | --- | --- |
+| プラグインリポジトリ | — | 直下に registry.yml を持ち、1 つ以上のプラグインを収めた Git リポジトリ。devbase plugin repo add で登録する | — | — | — |
+| 作成フロー | — | リポジトリ・プラグイン・プロジェクトを足す一連の操作。権限の確認からマージ、手元への取り込み、登録までを含む | — | — | — |
+| 作成の計画 | — | 作成フローが書き込みの前に確定する、作るもの・ファイル・マージ先の組 | — | — | — |

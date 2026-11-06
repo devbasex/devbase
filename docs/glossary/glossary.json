@@ -70,6 +70,11 @@
       "id": "browser",
       "name": "ブラウザ",
       "meaning": "ブラウザの派生イメージに入るブラウザと、base が作るその置き場（containers/base/Dockerfile / containers/browser/Dockerfile）"
+    },
+    {
+      "id": "plugin-distribution",
+      "name": "プラグインの配布",
+      "meaning": "プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project new）"
     }
   ],
   "terms": [
@@ -1050,6 +1055,24 @@
       "context": "container-start",
       "meaning": "コンテナの起動の片付けが共通の VS Code Server ボリュームの bin/ に残す本体の版の数。5。版は product.json の更新時刻の新しい順に数える",
       "source": "docs/specifications/vscode-server-volume.md"
+    },
+    {
+      "term": "プラグインリポジトリ",
+      "context": "plugin-distribution",
+      "meaning": "直下に registry.yml を持ち、1 つ以上のプラグインを収めた Git リポジトリ。devbase plugin repo add で登録する",
+      "pending_source": "issues/issue-514-design.md"
+    },
+    {
+      "term": "作成フロー",
+      "context": "plugin-distribution",
+      "meaning": "リポジトリ・プラグイン・プロジェクトを足す一連の操作。権限の確認からマージ、手元への取り込み、登録までを含む",
+      "pending_source": "issues/issue-514-design.md"
+    },
+    {
+      "term": "作成の計画",
+      "context": "plugin-distribution",
+      "meaning": "作成フローが書き込みの前に確定する、作るもの・ファイル・マージ先の組",
+      "pending_source": "issues/issue-514-design.md"
     }
   ]
 }
