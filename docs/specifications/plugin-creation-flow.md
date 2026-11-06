@@ -2,7 +2,7 @@
 
 ## 概要
 
-`devbase plugin repo new`・`devbase plugin new`・`devbase project new` は、GitHub の URL か `owner/repo` を
+`devbase plugin repo create`・`devbase plugin create`・`devbase project create` は、GitHub の URL か `owner/repo` を
 1 つ受け、権限の確認からファイルの配置・PR・マージ・手元への取り込み・`plugins.yml` への登録までを 1 回で行う。
 `devbase list` の TUI のプラグインのメニューからも同じ操作を実行できる。
 
@@ -10,7 +10,7 @@
 書かない。コンテナは起動しない（`devbase up` は打たない）。`gh` が要るのはこの 3 つのコマンドだけである。
 
 利用者向けの引数と使い方は [plugin グループ](../user/cli-reference/04-plugin.md) と
-[project グループ](../user/cli-reference/02-project.md#devbase-project-new) にある。
+[project グループ](../user/cli-reference/02-project.md#devbase-project-create) にある。
 
 ## 用語
 
@@ -58,7 +58,7 @@ GitHub 上のプラグインへリポジトリを足すには、`registry.yml`�
 | 既定ブランチへの反映 | `lib/devbase/plugin/publish.py` | 一時の浅い clone で変更を作る。`push_initial`（最初のコミット）、`publish_change`（push・PR・マージ）、`branch_name`、`MergeFailed` |
 | 計画と実行 | `lib/devbase/plugin/creator.py` | `plan_repo`・`plan_plugin`・`plan_project`（読むだけ）、`execute`（書く）、`CreationPlan`、入れ先とグループの決定 |
 | 登録の照合と取り込み | `lib/devbase/plugin/repo_manager.py` | `_find_registered`、`_require_default_branch`、`_pull_ff_only`、`_snapshot_repo_projects`。`refresh_repository` は控えを `pre_pull_projects` で受ける |
-| CLI の入口 | `lib/devbase/commands/plugin.py`、`lib/devbase/commands/project.py` | `cmd_plugin_new`・`cmd_repo_new`・`cmd_project_new`、計画の確認 `run_creation`、端末で聞く `_TtyPrompter` |
+| CLI の入口 | `lib/devbase/commands/plugin.py`、`lib/devbase/commands/project.py` | `cmd_plugin_create`・`cmd_repo_create`・`cmd_project_create`、計画の確認 `run_creation`、端末で聞く `_TtyPrompter` |
 | パーサと機密の注入 | `lib/devbase/cli.py` | パーサ、`SUBCMD_MAP`、`repo_subcmds`、`_NO_SECRET_INJECTION`、`_injection_subcommand` |
 | TUI | `lib/devbase/tui/actions_plugin.py` | 2 階層のメニューと新規追加の 3 つの入口 |
 | シェル補完 | `etc/_devbase`、`etc/devbase-completion.bash` | 3 つのコマンドとオプションの候補 |
@@ -78,8 +78,8 @@ graph TD
     R --> Reg[plugins.yml]
 ```
 
-`bin/devbase` は変わらない。`_PROJECT_NAME_SUBCOMMANDS` に `new` が無いので、`project new owner/repo` の引数は
-プロジェクト名として解決されない。`new` は `project`・`plugin` の既存の副命令と接頭辞が重ならないため、
+`bin/devbase` は変わらない。`_PROJECT_NAME_SUBCOMMANDS` に `create` が無いので、`project create owner/repo` の引数は
+プロジェクト名として解決されない。`create` は `project`・`plugin` の既存の副命令と接頭辞が重ならないため、
 `SUBCMD_PREFIX_PREFERENCES` は持たない。
 
 ## 仕様
@@ -113,9 +113,9 @@ graph TD
 
 | コマンド | 引数 | 終了コード |
 | --- | --- | --- |
-| `devbase plugin repo new <repo>` | `--public`（既定 private）、`--yes` | 0 成功・push できる登録済み / 1 それ以外 |
-| `devbase plugin new <repo>` | `--name`（既定はリポジトリ名）、`--public`、`--yes` | 0 成功 / 1 それ以外 |
-| `devbase project new <repo>` | `--plugin`、`--group`、`--name`（既定はリポジトリ名を整えたもの）、`--yes` | 0 成功 / 1 それ以外 |
+| `devbase plugin repo create <repo>` | `--public`（既定 private）、`--yes` | 0 成功・push できる登録済み / 1 それ以外 |
+| `devbase plugin create <repo>` | `--name`（既定はリポジトリ名）、`--public`、`--yes` | 0 成功 / 1 それ以外 |
+| `devbase project create <repo>` | `--plugin`、`--group`、`--name`（既定はリポジトリ名を整えたもの）、`--yes` | 0 成功 / 1 それ以外 |
 
 `<repo>` は `owner/repo`・`https://github.com/owner/repo[.git]`・`git@github.com:owner/repo[.git]` を受ける。`git@` の形の
 入力は clone の URL も `git@` のままにし、ほかは `https://github.com/owner/repo.git` にする。GitHub 以外の URL と形の誤りは
@@ -136,7 +136,7 @@ graph TD
 
 ### リポジトリの分岐
 
-`plugin repo new` と、未登録のリポジトリへの `plugin new` が通る。
+`plugin repo create` と、未登録のリポジトリへの `plugin create` が通る。
 
 | リポジトリ | push | `registry.yml` | 動作 |
 | --- | --- | --- | --- |
@@ -146,7 +146,7 @@ graph TD
 | 空・未登録 | できる | — | 最初のコミットを直接 push → 登録 |
 | ある・未登録 | できる | 無い | PR → マージ → 登録 |
 | ある・未登録 | できる | ある | 登録だけ |
-| 空・ある・登録済み | できる | — | `plugin repo new` は何もせず 0 |
+| 空・ある・登録済み | できる | — | `plugin repo create` は何もせず 0 |
 | 空・ある | できない | — | 終了（1）。登録済みでも同じ |
 
 - push できるのは `viewerPermission` が `ADMIN`・`MAINTAIN`・`WRITE` のときである
@@ -171,40 +171,40 @@ graph TD
 | `_pull_ff_only` | 登録の `repo.local_path` の clone |
 | `refresh_repository` | 登録の `repo.name` |
 | `install_plugin` | `<repo.url>:<プラグイン名>`（登録の `repo.url`） |
-| 一時の clone と push（`plugin new`・`project new`） | 登録の `repo.url`（SSH の認証だけの利用者が https で止まらない） |
+| 一時の clone と push（`plugin create`・`project create`） | 登録の `repo.url`（SSH の認証だけの利用者が https で止まらない） |
 
 ### 計画の確定の前の確認
 
-`plugin new` と `project new` は、計画の確定の前に次を確かめる。対象の登録は、`plugin new` では `_find_registered` が見つけた
-登録、`project new` では入れ先のプラグインの登録である。どれも GitHub にも手元にも書かず、終了コード 1 で止まる。
+`plugin create` と `project create` は、計画の確定の前に次を確かめる。対象の登録は、`plugin create` では `_find_registered` が見つけた
+登録、`project create` では入れ先のプラグインの登録である。どれも GitHub にも手元にも書かず、終了コード 1 で止まる。
 
 | 確認 | 止まる理由 | 案内 |
 | --- | --- | --- |
 | `repo.local_path` が空でなく、`devbase_root / repo.local_path` がディレクトリである | 空のまま進むと `devbase_root` そのものを指し、devbase 本体を取り込む | `plugin repo remove <repo.name>` と `plugin repo add <repo.url>`。導入し直す `plugin install` も案内する |
 | clone が GitHub の既定ブランチにいて、`origin` の同じブランチを追っている | clone の `origin/HEAD` は既定ブランチの変更に追従せず、取り込みが成功しても足したものが手元に現れない | 切り替えのコマンド |
-| `plugin new`: 登録済みのリポジトリの既定ブランチに `registry.yml` がある | 登録済みの経路は 1 項目の追記だけで、リポジトリの分岐を通らない | — |
-| `project new`: 登録の `path` が既定ブランチの `registry.yml` の項目と同じである | 古い `path` へマージすると、足したプロジェクトが `projects/` に現れないまま 0 で終わる | `plugin repo refresh <repo.name>` |
+| `plugin create`: 登録済みのリポジトリの既定ブランチに `registry.yml` がある | 登録済みの経路は 1 項目の追記だけで、リポジトリの分岐を通らない | — |
+| `project create`: 登録の `path` が既定ブランチの `registry.yml` の項目と同じである | 古い `path` へマージすると、足したプロジェクトが `projects/` に現れないまま 0 で終わる | `plugin repo refresh <repo.name>` |
 
-`plugin repo new` はこれらを確かめない。登録済みの経路は clone に触らないので、`local_path` が空でも push できれば何もせず 0 で終わる。
+`plugin repo create` はこれらを確かめない。登録済みの経路は clone に触らないので、`local_path` が空でも push できれば何もせず 0 で終わる。
 
 ### 経路ごとの反映と登録
 
 | コマンド | リポジトリ | 既定ブランチへの反映 | 登録と反映（反映の後に行う） | 通るイベント（E4 の後） |
 | --- | --- | --- | --- | --- |
-| `plugin repo new` | 無い | 最初のコミットの直接の push | `add_repository` | E5 → E6 → E9 |
-| `plugin repo new` | 空 | 最初のコミットの直接の push | `add_repository` | E6 → E9 |
-| `plugin repo new` | `registry.yml` が無い | PR のマージ | `add_repository` | E6 → E7 → E9 |
-| `plugin repo new` | `registry.yml` がある・未登録 | 無し | `add_repository` | E9 |
-| `plugin new` | 登録済み | プラグインの PR のマージ | `_pull_ff_only` → `refresh_repository` → `install_plugin` | E6 → E7 → E8 → E9 |
-| `plugin new` | 無い | 最初のコミット → プラグインの PR のマージ | `add_repository` → `install_plugin` | E5 → E6 → E6 → E7 → E9 |
-| `plugin new` | 空 | 最初のコミット → プラグインの PR のマージ | `add_repository` → `install_plugin` | E6 → E6 → E7 → E9 |
-| `plugin new` | `registry.yml` が無い | `registry.yml` の PR のマージ → プラグインの PR のマージ | `add_repository` → `install_plugin` | E6 → E7 → E6 → E7 → E9 |
-| `plugin new` | `registry.yml` がある・未登録 | プラグインの PR のマージ | `add_repository` → `install_plugin` | E6 → E7 → E9 |
-| `project new` | 入れ先のプラグインのリポジトリ（登録済み） | プロジェクトの PR のマージ | `_pull_ff_only` → `refresh_repository` | E6 → E7 → E8 → E9 |
+| `plugin repo create` | 無い | 最初のコミットの直接の push | `add_repository` | E5 → E6 → E9 |
+| `plugin repo create` | 空 | 最初のコミットの直接の push | `add_repository` | E6 → E9 |
+| `plugin repo create` | `registry.yml` が無い | PR のマージ | `add_repository` | E6 → E7 → E9 |
+| `plugin repo create` | `registry.yml` がある・未登録 | 無し | `add_repository` | E9 |
+| `plugin create` | 登録済み | プラグインの PR のマージ | `_pull_ff_only` → `refresh_repository` → `install_plugin` | E6 → E7 → E8 → E9 |
+| `plugin create` | 無い | 最初のコミット → プラグインの PR のマージ | `add_repository` → `install_plugin` | E5 → E6 → E6 → E7 → E9 |
+| `plugin create` | 空 | 最初のコミット → プラグインの PR のマージ | `add_repository` → `install_plugin` | E6 → E6 → E7 → E9 |
+| `plugin create` | `registry.yml` が無い | `registry.yml` の PR のマージ → プラグインの PR のマージ | `add_repository` → `install_plugin` | E6 → E7 → E6 → E7 → E9 |
+| `plugin create` | `registry.yml` がある・未登録 | プラグインの PR のマージ | `add_repository` → `install_plugin` | E6 → E7 → E9 |
+| `project create` | 入れ先のプラグインのリポジトリ（登録済み） | プロジェクトの PR のマージ | `_pull_ff_only` → `refresh_repository` | E6 → E7 → E8 → E9 |
 
 未登録のリポジトリには手元の clone が無いので E8 を通らず、`add_repository` が clone する。
 
-未登録のリポジトリへの `plugin new` は、リポジトリの分の反映とプラグインの追加を別の変更として順に行い、プラグインの PR の
+未登録のリポジトリへの `plugin create` は、リポジトリの分の反映とプラグインの追加を別の変更として順に行い、プラグインの PR の
 マージが成功してから登録する。先に登録すると、マージの失敗で `plugins.yml` が変わったまま残るためである。
 
 登録済みの経路は `_pull_ff_only` の前に、導入済みのプラグインのプロジェクト一覧を `_snapshot_repo_projects` で控え、
@@ -233,7 +233,7 @@ sequenceDiagram
     else registry.yml がある
         Note over C,T: リポジトリの分岐では GitHub へ書かない
     end
-    opt plugin new・project new
+    opt plugin create・project create
         C->>T: 浅い clone → ブランチ → プラグインかプロジェクトのファイル → commit → push
         C->>G: PR 作成 → マージ
     end
@@ -314,9 +314,9 @@ sequenceDiagram
 | プラグイン | リポジトリ → 名前（空で既定）→ 計画の確認 |
 | リポジトリ | リポジトリ → 公開するかの確認（既定 いいえ）→ 計画の確認 |
 
-TUI は `creator` の読むだけの関数で候補・案・計画を得て、確かめた値を `yes=True` で `cmd_plugin`・`cmd_project_new` へ渡す。
+TUI は `creator` の読むだけの関数で候補・案・計画を得て、確かめた値を `yes=True` で `cmd_plugin`・`cmd_project_create` へ渡す。
 入力の差を CLI と TUI で分けないため、ロジックは二重に持たない。TUI のプラグインの入口は `--public` を持たない。
-`plugin repo new` の計画が `noop_reason` を持つときは、確認を出さずに渡す。
+`plugin repo create` の計画が `noop_reason` を持つときは、確認を出さずに渡す。
 
 ## データ・設定
 
@@ -354,7 +354,7 @@ TUI は `creator` の読むだけの関数で候補・案・計画を得て、�
 
 ### 作業ブランチと PR
 
-作業ブランチは `devbase/new-<種類>-<名前>`、PR の題は `devbase: <種類> <名前> を足す` である。種類は `repo`・`plugin`・`project` で、
+作業ブランチは `devbase/create-<種類>-<名前>`、PR の題は `devbase: <種類> <名前> を足す` である。種類は `repo`・`plugin`・`project` で、
 PR の本文は固定の 1 行である。
 
 名前の形は git のブランチ名より広いので、`..` を含むか `.`・`.lock` で終わる名前は、ブランチの `<名前>` の `.` を `-` に置き換えて
@@ -403,9 +403,9 @@ CI は待たず、`--auto` と `--admin` は使わない。必須の検査やレ
 | 作ったリポジトリへの反映 | 作ったリポジトリ | 作成済みであることと、同じコマンドの打ち直し |
 | 同じブランチが既にある | 既存のブランチと PR | 開いている PR があればその URL。無ければブランチを消して打ち直す案内 |
 | PR の作成 | GitHub のブランチ | ブランチを消して打ち直す案内 |
-| マージ | PR とブランチ | PR の URL と、マージの後に打つコマンド（未登録は `plugin repo add`、登録済みは `plugin repo refresh`。`plugin new` は `plugin install` も） |
-| `plugin new` の `registry.yml` の PR | PR とブランチ。プラグインの PR はまだ無い。`plugins.yml` は元のまま | PR の URL と、マージの後に同じ `plugin new` を打ち直す案内 |
-| 未登録のリポジトリへの `plugin new` のプラグインの PR | 先に反映した最初のコミットか `registry.yml` は既定ブランチに残る。`plugins.yml` は元のまま | PR の URL と、マージの後に打つコマンド（`plugin repo add`・`plugin install`） |
+| マージ | PR とブランチ | PR の URL と、マージの後に打つコマンド（未登録は `plugin repo add`、登録済みは `plugin repo refresh`。`plugin create` は `plugin install` も） |
+| `plugin create` の `registry.yml` の PR | PR とブランチ。プラグインの PR はまだ無い。`plugins.yml` は元のまま | PR の URL と、マージの後に同じ `plugin create` を打ち直す案内 |
+| 未登録のリポジトリへの `plugin create` のプラグインの PR | 先に反映した最初のコミットか `registry.yml` は既定ブランチに残る。`plugins.yml` は元のまま | PR の URL と、マージの後に打つコマンド（`plugin repo add`・`plugin install`） |
 | 取り込み | マージ済み。手元は元のまま | 原因と `git -C <clone> status`、続けて打つコマンド |
 | 登録 | マージと取り込み済み | 既存のコマンドのエラーと、続けて打つコマンド |
 
@@ -438,22 +438,22 @@ CI は待たず、`--auto` と `--admin` は使わない。必須の検査やレ
 | プラグイン | `plugin.yml`・`registry.yml` の項目が入り、`plugin list` に出る。重複名と名前の形の誤りは何も変えない | `tests/plugin/test_create_plugin.py` |
 | 未登録へのプラグイン | 4 状態で、リポジトリの分 → プラグインの PR → 登録の順である | `tests/plugin/test_create_plugin.py` |
 | 登録の照合 | URL の形が違っても登録済みの経路を通り、`plugins.yml` の `url` が変わらない。push できない登録は何も書かず 1 で終わる | `tests/plugin/test_create_plugin.py`、`tests/plugin/test_create_repo.py` |
-| 登録の clone | `local_path` が空か clone が無い登録は、確認の前に止まり、書き込みの呼び出しが 0 回で、devbase 本体が変わらない。`plugin repo new` は 0 で終わる | `tests/plugin/test_create_plugin.py`、`tests/plugin/test_create_project.py` |
+| 登録の clone | `local_path` が空か clone が無い登録は、確認の前に止まり、書き込みの呼び出しが 0 回で、devbase 本体が変わらない。`plugin repo create` は 0 で終わる | `tests/plugin/test_create_plugin.py`、`tests/plugin/test_create_project.py` |
 | プロジェクト | 3 ファイルと `projects/<名前>` の反映。読めないとき・重複のときは何も変わらない | `tests/plugin/test_create_project.py` |
 | 入れ先とグループ | 決定の 4 段を満たす。同数で片方を選ばず、どの出所でもグループの規則を通す | `tests/plugin/test_create_project.py` |
 | 名前 | Compose・Docker の参照・git のブランチ名の規則に合う | `tests/plugin/test_create_project.py`、`tests/plugin/test_create_plugin.py`、`tests/plugin/test_publish.py` |
 | コンテナ | どの経路でも `docker` と `compose` を呼ばない | `tests/plugin/test_create_project.py` ほか |
 | `gh` と確認 | `gh` が無い・未認証・確認の前は書き込みの呼び出しが 0 回である。端末が無く `--yes` が無ければ 1 である | `tests/plugin/test_create_repo.py` ほか |
 | 手元の clone | 未コミットの変更が残り、分岐した clone と既定ブランチを追わない clone は止まる。`creator`・`publish` は手元の作業ツリーへ書かない | `tests/plugin/test_repo_manager_creation.py`、`tests/plugin/test_create_plugin.py` |
-| マージの失敗 | `plugins.yml` が同じで URL が出る。未登録のリポジトリへの `plugin new` でも同じである。成功のとき作業場所が残らない | `tests/plugin/test_create_plugin.py`、`tests/plugin/test_create_project.py` |
+| マージの失敗 | `plugins.yml` が同じで URL が出る。未登録のリポジトリへの `plugin create` でも同じである。成功のとき作業場所が残らない | `tests/plugin/test_create_plugin.py`、`tests/plugin/test_create_project.py` |
 | `registry.yml` | コメント付きのファイルで既存の行が残り、壊れる追記は止まる | `tests/plugin/test_scaffold.py` |
 | TUI | メニューの全項目が既存の操作へ届き、Esc と Ctrl-C の戻り値が既存どおりに伝わる | `tests/cli/tui/test_actions_plugin.py` |
-| 退行 | 既存の `plugin` のサブコマンドが変わらない。`project new owner/repo` がプロジェクトの切替を通らない。補完の候補が CLI と一致する | `tests/cli/test_project_new_dispatch.py`、`tests/cli/test_completion.py` |
+| 退行 | 既存の `plugin` のサブコマンドが変わらない。`project create owner/repo` がプロジェクトの切替を通らない。補完の候補が CLI と一致する | `tests/cli/test_project_create_dispatch.py`、`tests/cli/test_completion.py` |
 
 ## 関連リンク
 
-- [CLI リファレンス: 作成フロー](../user/cli-reference/04-plugin.md#作成フローplugin-new--plugin-repo-new--project-new-に共通)
-- [CLI リファレンス: `devbase project new`](../user/cli-reference/02-project.md#devbase-project-new)
+- [CLI リファレンス: 作成フロー](../user/cli-reference/04-plugin.md#作成フローplugin-create--plugin-repo-create--project-create-に共通)
+- [CLI リファレンス: `devbase project create`](../user/cli-reference/02-project.md#devbase-project-create)
 - [プラグイン開発クイックスタート: コマンドで足す](../plugin-dev/quickstart.md#コマンドで足す)
 - [plugin.yml リファレンス](../plugin-dev/plugin-yml-reference.md)
 - [位置引数の解決](cli-argument-resolution.md)

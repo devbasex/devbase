@@ -265,7 +265,7 @@ devbase up / scale がコンテナを起動して待ち、その後にホスト�
 
 ## プラグインの配布（`plugin-distribution`）
 
-プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project new）
+プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project create）
 
 | 語 | 識別子 | 意味 | 廃止した語 | 廃止した識別子 | 正本 |
 | --- | --- | --- | --- | --- | --- |

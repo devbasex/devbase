@@ -31,7 +31,7 @@ def test_branch_name_is_a_valid_git_branch(name):
 
 
 def test_branch_name_keeps_valid_names():
-    assert publish.branch_name("plugin", "a.b") == "devbase/new-plugin-a.b"
+    assert publish.branch_name("plugin", "a.b") == "devbase/create-plugin-a.b"
 
 
 def test_branch_name_is_unique_and_stable_for_replaced_names():
@@ -64,11 +64,11 @@ def test_publish_change_opens_and_merges_a_pr(github, gh, tmp_path, monkeypatch)
                                  registry_entry="team-a")
     pr = github.prs()[0]
     assert pr["url"] == url
-    assert pr["head"] == "devbase/new-plugin-team-a"
+    assert pr["head"] == "devbase/create-plugin-team-a"
     assert pr["base"] == "main"
     assert pr["title"] == "devbase: plugin team-a を足す"
     assert pr["state"] == "MERGED"
-    assert github.pushed_refs(FULL) == ["refs/heads/devbase/new-plugin-team-a"], \
+    assert github.pushed_refs(FULL) == ["refs/heads/devbase/create-plugin-team-a"], \
         "既定ブランチへ直接 push しない (I7)"
     assert github.branches(FULL) == ["main"], "作業用のブランチが残らない"
     assert leftovers() == [], "作業場所が残らない"
@@ -134,7 +134,7 @@ def test_publish_change_rejects_a_path_above_the_clone(github, gh):
 
 def test_publish_change_stops_at_an_existing_branch_with_pr(github, gh):
     github.add_repo(FULL, REGISTRY)
-    publish_branch = "devbase/new-plugin-team-a"
+    publish_branch = "devbase/create-plugin-team-a"
     github.update_repo(FULL, merge_error="blocked")
     with pytest.raises(publish.MergeFailed):
         publish.publish_change(gh, REF, kind="plugin", name="team-a",

@@ -208,7 +208,7 @@ def test_create_repo_failure_carries_gh_output(client):
 
 def test_create_pr_returns_url(client):
     gh, script = client([(["pr", "create"], (0, "https://github.com/owner/repo/pull/7\n"))])
-    url = gh.create_pr(REF, base="main", head="devbase/new-plugin-x", title="t", body="b")
+    url = gh.create_pr(REF, base="main", head="devbase/create-plugin-x", title="t", body="b")
     assert url == "https://github.com/owner/repo/pull/7"
     assert script.calls[0][:4] == ["pr", "create", "--repo", "owner/repo"]
 
@@ -285,9 +285,9 @@ def test_merge_pr_failure_is_tried_once(client):
 
 def test_find_open_pr(client):
     gh, _ = client([(["pr", "list"], (0, f'[{{"url": "{PR}"}}]'))])
-    assert gh.find_open_pr(REF, "devbase/new-plugin-x") == PR
+    assert gh.find_open_pr(REF, "devbase/create-plugin-x") == PR
 
 
 def test_find_open_pr_none(client):
     gh, _ = client([(["pr", "list"], (0, "[]"))])
-    assert gh.find_open_pr(REF, "devbase/new-plugin-x") is None
+    assert gh.find_open_pr(REF, "devbase/create-plugin-x") is None

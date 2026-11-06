@@ -1,7 +1,7 @@
 """plugin カテゴリの TUI 操作フロー (PLAN31_2 PR4)。
 
-``devbase plugin`` の全サブコマンド (list/install/uninstall/update/info/sync/migrate/new)、
-``plugin repo`` のサブコマンド (new/add/remove/list/refresh) と ``project new`` を、
+``devbase plugin`` の全サブコマンド (list/install/uninstall/update/info/sync/migrate/create)、
+``plugin repo`` のサブコマンド (create/add/remove/list/refresh) と ``project create`` を、
 用途で分けた 2 階層のメニューから実行できるようにする (#514)。
 引数は ``tui.menu`` の収集ヘルパで CLI parser と同じ属性値 (plan 2.3 契約表) を集め、
 ``tui.dispatch.dispatch_group`` 経由で既存ハンドラ ``cmd_plugin`` へ委譲する
@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 # Enter 連打で安全な一覧表示へ到達できるようにする。
 _PLUGIN_GROUPS: list[tuple[str, str]] = [
     ("見る", "view"),
-    ("新規追加", "new"),
+    ("新規追加", "create"),
     ("導入・更新", "install-update"),
     ("削除", "remove"),
     ("保守", "maintain"),
@@ -45,10 +45,10 @@ _GROUP_OPS: dict[str, list[tuple[str, str]]] = {
         ("詳細表示 (info)", "info"),
         ("リポジトリ一覧 (repo list)", "repo-list"),
     ],
-    "new": [
-        ("プロジェクト (project new)", "new-project"),
-        ("プラグイン (plugin new)", "new-plugin"),
-        ("リポジトリ (plugin repo new)", "new-repo"),
+    "create": [
+        ("プロジェクト (project create)", "create-project"),
+        ("プラグイン (plugin create)", "create-plugin"),
+        ("リポジトリ (plugin repo create)", "create-repo"),
     ],
     "install-update": [
         ("インストール (install)", "install"),
@@ -270,7 +270,7 @@ def _confirm_plan(plan) -> None:
     flow.confirm_or_back("この計画で進めますか?")
 
 
-def _op_new_repo(devbase_root: Path):
+def _op_create_repo(devbase_root: Path):
     from devbase.plugin import creator
 
     repo = flow.need(menu.text(_NEW_REPOSITORY_PROMPT, allow_empty=False))
@@ -284,11 +284,11 @@ def _op_new_repo(devbase_root: Path):
         return 1
     if not plan.noop_reason:
         _confirm_plan(plan)
-    return _dispatch(devbase_root, "repo", repo_command="new",
+    return _dispatch(devbase_root, "repo", repo_command="create",
                      repo=repo, public=public, yes=True)
 
 
-def _op_new_plugin(devbase_root: Path):
+def _op_create_plugin(devbase_root: Path):
     from devbase.plugin import creator
 
     repo = flow.need(menu.text(_NEW_REPOSITORY_PROMPT, allow_empty=False))
@@ -300,7 +300,7 @@ def _op_new_plugin(devbase_root: Path):
         logger.error("%s", e)
         return 1
     _confirm_plan(plan)
-    return _dispatch(devbase_root, "new", repo=repo, name=name, public=False, yes=True)
+    return _dispatch(devbase_root, "create", repo=repo, name=name, public=False, yes=True)
 
 
 def _select_target(candidates):
@@ -312,8 +312,8 @@ def _select_target(candidates):
         f"入れ先のプラグインを選択 {menu.HINT_BACK}:", choices, back=True, search=False))
 
 
-def _op_new_project(devbase_root: Path):
-    from devbase.commands.project import cmd_project_new
+def _op_create_project(devbase_root: Path):
+    from devbase.commands.project import cmd_project_create
     from devbase.plugin import creator
     from devbase.plugin.github import GitHubRef
 
@@ -337,7 +337,7 @@ def _op_new_project(devbase_root: Path):
         logger.error("%s", e)
         return 1
     _confirm_plan(plan)
-    return dispatch_group(cmd_project_new, devbase_root, "new", repo=repo, name=name,
+    return dispatch_group(cmd_project_create, devbase_root, "create", repo=repo, name=name,
                           plugin=plugin, group=group, yes=True)
 
 
@@ -352,9 +352,9 @@ _OP_HANDLERS = {
     # sync / migrate は引数なし (plan 2.3: 属性なし)。即実行。
     "sync": lambda root: _dispatch(root, "sync"),
     "migrate": lambda root: _dispatch(root, "migrate"),
-    "new-project": _op_new_project,
-    "new-plugin": _op_new_plugin,
-    "new-repo": _op_new_repo,
+    "create-project": _op_create_project,
+    "create-plugin": _op_create_plugin,
+    "create-repo": _op_create_repo,
     "repo-list": lambda root: _run_repo_operation(root, "list"),
     "repo-add": lambda root: _run_repo_operation(root, "add"),
     "repo-remove": lambda root: _run_repo_operation(root, "remove"),

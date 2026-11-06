@@ -198,7 +198,7 @@ def test_select_operation_lists_the_purposes(monkeypatch):
 
 @pytest.mark.parametrize("group, values", [
     ("view", ["list", "list-available", "info", "repo-list"]),
-    ("new", ["new-project", "new-plugin", "new-repo"]),
+    ("create", ["create-project", "create-plugin", "create-repo"]),
     ("install-update", ["install", "update", "repo-add", "repo-refresh"]),
     ("remove", ["uninstall", "repo-remove"]),
     ("maintain", ["sync", "migrate"]),
@@ -263,7 +263,7 @@ def _capture_project(monkeypatch):
         captured.update(vars(args))
         return 0
 
-    monkeypatch.setattr(project_mod, "cmd_project_new", _spy)
+    monkeypatch.setattr(project_mod, "cmd_project_create", _spy)
     return captured
 
 
@@ -289,7 +289,7 @@ def creation(monkeypatch):
     return calls
 
 
-def test_new_repo_passes_values_with_yes(monkeypatch, tmp_path, creation, capsys):
+def test_create_repo_passes_values_with_yes(monkeypatch, tmp_path, creation, capsys):
     from devbase.commands import plugin as plugin_mod
     captured = {}
     monkeypatch.setattr(plugin_mod, "cmd_plugin",
@@ -297,14 +297,14 @@ def test_new_repo_passes_values_with_yes(monkeypatch, tmp_path, creation, capsys
     _texts(monkeypatch, "owner/repo")
     answers = _seq(True, True)
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: answers())
-    assert actions_plugin._run_operation(tmp_path, "new-repo") == 0
-    assert captured == {"subcommand": "repo", "repo_command": "new", "repo": "owner/repo",
+    assert actions_plugin._run_operation(tmp_path, "create-repo") == 0
+    assert captured == {"subcommand": "repo", "repo_command": "create", "repo": "owner/repo",
                         "public": True, "yes": True}
     assert creation["repo"] == ("owner/repo", {"public": True})
     assert "作成の計画" in capsys.readouterr().out
 
 
-def test_new_repo_public_defaults_to_no(monkeypatch, tmp_path, creation):
+def test_create_repo_public_defaults_to_no(monkeypatch, tmp_path, creation):
     _capture_dispatch(monkeypatch)
     _texts(monkeypatch, "owner/repo")
     defaults = []
@@ -314,11 +314,11 @@ def test_new_repo_public_defaults_to_no(monkeypatch, tmp_path, creation):
         return True
 
     monkeypatch.setattr(menu, "confirm", fake_confirm)
-    assert actions_plugin._run_operation(tmp_path, "new-repo") == 0
+    assert actions_plugin._run_operation(tmp_path, "create-repo") == 0
     assert defaults[0] is False
 
 
-def test_new_repo_noop_skips_the_confirmation(monkeypatch, tmp_path):
+def test_create_repo_noop_skips_the_confirmation(monkeypatch, tmp_path):
     from devbase.plugin import creator
     from devbase.plugin.github import GhClient
     monkeypatch.setattr(GhClient, "ensure_ready", lambda self: None)
@@ -327,33 +327,33 @@ def test_new_repo_noop_skips_the_confirmation(monkeypatch, tmp_path):
     _texts(monkeypatch, "owner/repo")
     answers = []
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: answers.append(1) or False)
-    assert actions_plugin._run_operation(tmp_path, "new-repo") == 0
+    assert actions_plugin._run_operation(tmp_path, "create-repo") == 0
     assert len(answers) == 1, "公開の確認だけで、計画の確認は出さない"
-    assert captured["repo_command"] == "new"
+    assert captured["repo_command"] == "create"
 
 
-def test_new_plugin_passes_values(monkeypatch, tmp_path, creation):
+def test_create_plugin_passes_values(monkeypatch, tmp_path, creation):
     from devbase.commands import plugin as plugin_mod
     captured = {}
     monkeypatch.setattr(plugin_mod, "cmd_plugin",
                         lambda root, args: captured.update(vars(args)) or 0)
     _texts(monkeypatch, "owner/repo", "team-a")
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
-    assert actions_plugin._run_operation(tmp_path, "new-plugin") == 0
-    assert captured == {"subcommand": "new", "repo": "owner/repo", "name": "team-a",
+    assert actions_plugin._run_operation(tmp_path, "create-plugin") == 0
+    assert captured == {"subcommand": "create", "repo": "owner/repo", "name": "team-a",
                         "public": False, "yes": True}
 
 
-def test_new_plugin_empty_name_is_none(monkeypatch, tmp_path, creation):
+def test_create_plugin_empty_name_is_none(monkeypatch, tmp_path, creation):
     captured = _capture_dispatch(monkeypatch)
     _texts(monkeypatch, "owner/repo", "")
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
-    assert actions_plugin._run_operation(tmp_path, "new-plugin") == 0
+    assert actions_plugin._run_operation(tmp_path, "create-plugin") == 0
     assert captured["name"] is None
     assert creation["plugin"][1]["name"] is None
 
 
-def test_new_project_single_candidate_shows_no_select(monkeypatch, tmp_path, creation):
+def test_create_project_single_candidate_shows_no_select(monkeypatch, tmp_path, creation):
     captured = _capture_project(monkeypatch)
     prompts = []
 
@@ -364,15 +364,15 @@ def test_new_project_single_candidate_shows_no_select(monkeypatch, tmp_path, cre
     monkeypatch.setattr(menu, "text", fake_text)
     monkeypatch.setattr(menu, "select", lambda *a, **k: pytest.fail("候補 1 件で選択を出した"))
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
-    assert actions_plugin._run_operation(tmp_path, "new-project") == 0
-    assert captured == {"subcommand": "new", "repo": "owner/app", "name": "web",
+    assert actions_plugin._run_operation(tmp_path, "create-project") == 0
+    assert captured == {"subcommand": "create", "repo": "owner/app", "name": "web",
                         "plugin": "one", "group": "typed", "yes": True}
     assert prompts[2][1] == "acme", "グループは案を既定値にする"
     assert creation["project"] == ("owner/app", {"plugin": "one", "group": "typed",
                                                  "name": "web"})
 
 
-def test_new_project_multiple_candidates_select(monkeypatch, tmp_path, creation):
+def test_create_project_multiple_candidates_select(monkeypatch, tmp_path, creation):
     from devbase.plugin import creator
     monkeypatch.setattr(creator, "plugin_candidates",
                         lambda *a: [_Target("one"), _Target("two")])
@@ -386,32 +386,32 @@ def test_new_project_multiple_candidates_select(monkeypatch, tmp_path, creation)
 
     monkeypatch.setattr(menu, "select", fake_select)
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: True)
-    assert actions_plugin._run_operation(tmp_path, "new-project") == 0
+    assert actions_plugin._run_operation(tmp_path, "create-project") == 0
     assert offered == {"values": ["one", "two"], "back": True}
     assert captured["plugin"] == "two"
     assert captured["name"] is None
 
 
-def test_new_project_without_candidates_reports(monkeypatch, tmp_path, creation, caplog):
+def test_create_project_without_candidates_reports(monkeypatch, tmp_path, creation, caplog):
     from devbase.plugin import creator
     monkeypatch.setattr(creator, "plugin_candidates", lambda *a: [])
     captured = _capture_project(monkeypatch)
     _texts(monkeypatch, "owner/app", "")
-    assert actions_plugin._run_operation(tmp_path, "new-project") == 1
+    assert actions_plugin._run_operation(tmp_path, "create-project") == 1
     assert captured == {}
     assert "入れ先" in caplog.text
 
 
-@pytest.mark.parametrize("op", ["new-project", "new-plugin", "new-repo"])
-def test_new_esc_at_the_repository_goes_back(monkeypatch, tmp_path, creation, op):
+@pytest.mark.parametrize("op", ["create-project", "create-plugin", "create-repo"])
+def test_create_esc_at_the_repository_goes_back(monkeypatch, tmp_path, creation, op):
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "text", lambda *a, **k: menu.MENU_BACK)
     assert actions_plugin._run_operation(tmp_path, op) is actions_plugin._ARG_CANCEL
     assert called == []
 
 
-@pytest.mark.parametrize("op", ["new-project", "new-plugin", "new-repo"])
-def test_new_ctrl_c_at_the_repository_aborts(monkeypatch, tmp_path, creation, op):
+@pytest.mark.parametrize("op", ["create-project", "create-plugin", "create-repo"])
+def test_create_ctrl_c_at_the_repository_aborts(monkeypatch, tmp_path, creation, op):
     called = _no_dispatch(monkeypatch)
     monkeypatch.setattr(menu, "text", lambda *a, **k: None)
     assert actions_plugin._run_operation(tmp_path, op) is None
@@ -423,18 +423,18 @@ def test_new_ctrl_c_at_the_repository_aborts(monkeypatch, tmp_path, creation, op
     (menu.MENU_BACK, actions_plugin._ARG_CANCEL),
     (None, None),
 ])
-def test_new_plan_confirmation_refused(monkeypatch, tmp_path, creation, answer, expected):
+def test_create_plan_confirmation_refused(monkeypatch, tmp_path, creation, answer, expected):
     called = _no_dispatch(monkeypatch)
     captured = _capture_project(monkeypatch)
     _texts(monkeypatch, "owner/app", "", "acme")
     monkeypatch.setattr(menu, "confirm", lambda *a, **k: answer)
-    assert actions_plugin._run_operation(tmp_path, "new-project") is expected
+    assert actions_plugin._run_operation(tmp_path, "create-project") is expected
     assert called == []
     assert captured == {}
 
 
 @pytest.mark.parametrize("step", ["select", "group"])
-def test_new_project_esc_in_the_middle_goes_back(monkeypatch, tmp_path, creation, step):
+def test_create_project_esc_in_the_middle_goes_back(monkeypatch, tmp_path, creation, step):
     from devbase.plugin import creator
     monkeypatch.setattr(creator, "plugin_candidates",
                         lambda *a: [_Target("one"), _Target("two")])
@@ -445,11 +445,11 @@ def test_new_project_esc_in_the_middle_goes_back(monkeypatch, tmp_path, creation
     else:
         _texts(monkeypatch, "owner/app", "", menu.MENU_BACK)
         monkeypatch.setattr(menu, "select", lambda *a, **k: "one")
-    assert actions_plugin._run_operation(tmp_path, "new-project") is actions_plugin._ARG_CANCEL
+    assert actions_plugin._run_operation(tmp_path, "create-project") is actions_plugin._ARG_CANCEL
     assert captured == {}
 
 
-def test_new_plan_error_is_reported_with_rc_1(monkeypatch, tmp_path, creation, caplog):
+def test_create_plan_error_is_reported_with_rc_1(monkeypatch, tmp_path, creation, caplog):
     from devbase.errors import RepositoryError
     from devbase.plugin import creator
 
@@ -459,7 +459,7 @@ def test_new_plan_error_is_reported_with_rc_1(monkeypatch, tmp_path, creation, c
     monkeypatch.setattr(creator, "plan_plugin", _boom)
     called = _no_dispatch(monkeypatch)
     _texts(monkeypatch, "owner/repo", "")
-    assert actions_plugin._run_operation(tmp_path, "new-plugin") == 1
+    assert actions_plugin._run_operation(tmp_path, "create-plugin") == 1
     assert called == []
     assert "push する権限がありません" in caplog.text
 

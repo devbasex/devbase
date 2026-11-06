@@ -87,7 +87,7 @@ devbase plugin migrate
 
 `--link` でインストールしたプラグインは移行対象外です。
 
-## 作成フロー（`plugin new` / `plugin repo new` / `project new` に共通）
+## 作成フロー（`plugin create` / `plugin repo create` / `project create` に共通）
 
 リポジトリ・プラグイン・プロジェクトを足すコマンドは、権限の確認からマージ、手元への取り込み、登録までを 1 回で行います。振る舞いの正本は[確定仕様](../../specifications/plugin-creation-flow.md)にあります。
 
@@ -98,40 +98,40 @@ devbase plugin migrate
 - **マージは 1 回だけ試します。** CI を待たず、`--auto` と `--admin` を使いません。必須のレビューや検査でマージできないときは、PR の URL とマージの後に打つコマンドを出して終了コード 1 で止まり、`plugins.yml` は変わりません
 - **コンテナは起動しません。** 起動は `devbase up` を別に打ちます
 
-作業ブランチは `devbase/new-<種類>-<名前>` で、マージのときに消えます。git のブランチ名にできない名前（`..` を含むか `.`・`.lock` で終わる）は、`.` を `-` に置き換えてハッシュを足した形になります。同じブランチが既にあると止まり、開いている PR があればその URL を出します。
+作業ブランチは `devbase/create-<種類>-<名前>` で、マージのときに消えます。git のブランチ名にできない名前（`..` を含むか `.`・`.lock` で終わる）は、`.` を `-` に置き換えてハッシュを足した形になります。同じブランチが既にあると止まり、開いている PR があればその URL を出します。
 
-## `devbase plugin new`
+## `devbase plugin create`
 
 GitHub のリポジトリへプラグインを足して導入します。
 
 ```
-devbase plugin new <repo> [--name <名前>] [--public] [--yes]
+devbase plugin create <repo> [--name <名前>] [--public] [--yes]
 ```
 
 | パラメータ | 必須 | 説明 |
 |-----------|------|------|
-| `repo` | はい | GitHub のリポジトリ（[作成フロー](#作成フローplugin-new--plugin-repo-new--project-new-に共通)） |
+| `repo` | はい | GitHub のリポジトリ（[作成フロー](#作成フローplugin-create--plugin-repo-create--project-create-に共通)） |
 | `--name` | いいえ | プラグインの名前（既定: リポジトリ名）。英数字で始まり英数字・`.`・`-`・`_` だけからなる形 |
 | `--public` | いいえ | リポジトリを新しく作るときに公開する（既定: private）。既存のリポジトリの公開範囲は変えない |
 | `--yes` | いいえ | 計画の確認を省く。端末が無いときは必須 |
 
 `<名前>/plugin.yml`・`<名前>/projects/.gitkeep`・`registry.yml` の項目を足す PR を作ってマージし、手元へ取り込んで導入します。
 
-未登録のリポジトリは、先に `plugin repo new` と同じ分岐を通します。リポジトリの分の変更とプラグインの PR は別の変更として順に入り、登録はプラグインの PR のマージの後です。
+未登録のリポジトリは、先に `plugin repo create` と同じ分岐を通します。リポジトリの分の変更とプラグインの PR は別の変更として順に入り、登録はプラグインの PR のマージの後です。
 
 同じ名前のプラグインが `registry.yml` か導入済みの中にあるとき、同じ名前のパスがリポジトリにあるときは、何も変えずに終了コード 1 で止まります。登録の手元の clone が無いときは、登録し直すコマンドを出して止まります。登録の手元の clone が GitHub の既定ブランチを追っていないときは、切り替えのコマンドを出して止まります。
 
-## `devbase plugin repo new`
+## `devbase plugin repo create`
 
 プラグインリポジトリを用意して登録します。
 
 ```
-devbase plugin repo new <repo> [--public] [--yes]
+devbase plugin repo create <repo> [--public] [--yes]
 ```
 
 | パラメータ | 必須 | 説明 |
 |-----------|------|------|
-| `repo` | はい | GitHub のリポジトリ（[作成フロー](#作成フローplugin-new--plugin-repo-new--project-new-に共通)） |
+| `repo` | はい | GitHub のリポジトリ（[作成フロー](#作成フローplugin-create--plugin-repo-create--project-create-に共通)） |
 | `--public` | いいえ | リポジトリを新しく作るときに公開する（既定: private） |
 | `--yes` | いいえ | 計画の確認を省く。端末が無いときは必須 |
 

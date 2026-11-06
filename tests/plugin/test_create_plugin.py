@@ -1,4 +1,4 @@
-"""``devbase plugin new`` のテスト (#514 の受け入れ条件 6〜8・16・17、決定 8・9)。"""
+"""``devbase plugin create`` のテスト (#514 の受け入れ条件 6〜8・16・17、決定 8・9)。"""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _assert_installed(root, name="team-a", source=URL):
 
 @pytest.mark.parametrize("name", ["app..web", "app.", "app.lock"])
 def test_name_outside_branch_rules_is_installed(github, root, registered, run_cli, name):
-    assert run_cli("plugin", "new", FULL, "--name", name, "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--name", name, "--yes") == 0
 
     assert github.prs()[0]["state"] == "MERGED"
     assert name in _registry_names(github)
@@ -53,9 +53,9 @@ def test_name_outside_branch_rules_is_installed(github, root, registered, run_cl
 
 
 def test_registered_repo_gets_a_plugin(github, root, registered, run_cli, capsys):
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 0
     pr = github.prs()[0]
-    assert pr["head"] == "devbase/new-plugin-team-a"
+    assert pr["head"] == "devbase/create-plugin-team-a"
     assert pr["state"] == "MERGED"
     assert github.file(FULL, "team-a/plugin.yml") is not None
     assert github.file(FULL, "team-a/projects/.gitkeep") is not None
@@ -70,14 +70,14 @@ def test_registered_repo_gets_a_plugin(github, root, registered, run_cli, capsys
 
 
 def test_default_name_is_the_repo_name(github, root, registered, run_cli):
-    assert run_cli("plugin", "new", FULL, "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--yes") == 0
     _assert_installed(root, "repo")
 
 
 @pytest.mark.parametrize("prepare, first_pushes, first_titles", [
     ("absent", ["refs/heads/main"], ["devbase: repo repo を足す"]),
     ("empty", ["refs/heads/main"], ["devbase: repo repo を足す"]),
-    ("no-registry", ["refs/heads/devbase/new-repo-repo"], ["seed", "devbase: repo repo を足す"]),
+    ("no-registry", ["refs/heads/devbase/create-repo-repo"], ["seed", "devbase: repo repo を足す"]),
     ("registry", [], ["seed"]),
 ])
 def test_unregistered_goes_through_the_repo_branch_first(
@@ -90,9 +90,9 @@ def test_unregistered_goes_through_the_repo_branch_first(
     elif prepare == "registry":
         github.add_repo(FULL, {"registry.yml": REGISTRY})
 
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 0
 
-    assert github.pushed_refs(FULL) == [*first_pushes, "refs/heads/devbase/new-plugin-team-a"]
+    assert github.pushed_refs(FULL) == [*first_pushes, "refs/heads/devbase/create-plugin-team-a"]
     assert github.subjects(FULL) == [*first_titles, "devbase: plugin team-a を足す"], \
         "リポジトリの分岐 → プラグインの PR の順に別の変更で入る (決定 8)"
     _assert_installed(root)
@@ -100,12 +100,12 @@ def test_unregistered_goes_through_the_repo_branch_first(
 
 def test_absent_is_private_unless_public(github, root, run_cli):
     github.add_org("owner", role="admin")
-    assert run_cli("plugin", "new", FULL, "--public", "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--public", "--yes") == 0
     assert github.state()["repos"][FULL]["visibility"] == "public"
 
 
 def test_public_does_not_change_an_existing_repo(github, root, registered, run_cli):
-    assert run_cli("plugin", "new", FULL, "--public", "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--public", "--yes") == 0
     assert [c for c in github.write_calls() if c[:2] == ["repo", "create"]] == []
 
 
@@ -115,7 +115,7 @@ def test_repo_branch_that_ends_writes_nothing(github, root, run_cli, setup):
         github.add_repo(FULL, {"README.md": "x\n"}, permission="READ")
     else:
         github.add_org("owner", role="member", state="pending")
-    assert run_cli("plugin", "new", FULL, "--yes") == 1
+    assert run_cli("plugin", "create", FULL, "--yes") == 1
     assert github.write_calls() == []
     assert _plugins_yml(root) is None
 
@@ -123,7 +123,7 @@ def test_repo_branch_that_ends_writes_nothing(github, root, run_cli, setup):
 def test_duplicate_in_registry_changes_nothing(github, root, run_cli, caplog):
     text = "name: repo\nplugins:\n  - name: team-a\n    path: other\n"
     github.add_repo(FULL, {"registry.yml": text})
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 1
     assert github.write_calls() == []
     assert _plugins_yml(root) is None
     assert "team-a" in caplog.text
@@ -131,7 +131,7 @@ def test_duplicate_in_registry_changes_nothing(github, root, run_cli, caplog):
 
 def test_duplicate_directory_changes_nothing(github, root, run_cli):
     github.add_repo(FULL, {"registry.yml": REGISTRY, "team-a/README.md": "x\n"})
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 1
     assert github.write_calls() == []
 
 
@@ -146,14 +146,14 @@ def test_duplicate_installed_name_changes_nothing(github, root, registered, run_
     from devbase.plugin.installer import install_plugin
     install_plugin(registry, f"https://github.com/{other}.git:team-a")
     before = _plugins_yml(root)
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 1
     assert _plugins_yml(root) == before
     assert github.write_calls() == []
 
 
 @pytest.mark.parametrize("name", ["../up", "a/b", "-x", ".hidden", "a b"])
 def test_bad_name_form_stops_before_gh_writes(github, root, registered, run_cli, name):
-    assert run_cli("plugin", "new", FULL, f"--name={name}", "--yes") == 1
+    assert run_cli("plugin", "create", FULL, f"--name={name}", "--yes") == 1
     assert github.write_calls() == []
 
 
@@ -166,13 +166,13 @@ def test_url_form_difference_uses_the_registered_path(
         github, root, run_cli, registered_url, value):
     github.add_repo(FULL, {"registry.yml": REGISTRY})
     add_repository(PluginRegistry(root), registered_url)
-    assert run_cli("plugin", "new", value, "--name", "team-a", "--yes") == 0
+    assert run_cli("plugin", "create", value, "--name", "team-a", "--yes") == 0
     urls = [r.url for r in PluginRegistry(root).list_repositories()]
     assert urls == [registered_url], "plugins.yml の url は変わらない"
     _assert_installed(root, source=registered_url)
-    # 同じ入力の repo new は何もしない
+    # 同じ入力の repo create は何もしない
     calls = len(github.write_calls())
-    assert run_cli("plugin", "repo", "new", value) == 0
+    assert run_cli("plugin", "repo", "create", value) == 0
     assert len(github.write_calls()) == calls
 
 
@@ -183,18 +183,18 @@ def test_registration_without_clone_stops_before_writing(github, root, run_cli, 
     PluginRegistry(root).add_repository(RegisteredRepository(
         name="r", url=URL, local_path=local_path))
     before = _plugins_yml(root)
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 1
     assert github.write_calls() == []
     assert _plugins_yml(root) == before
     assert "plugin repo remove r" in caplog.text
     assert f"plugin repo add {URL}" in caplog.text
-    # 同じ登録へ repo new は何もせず 0
-    assert run_cli("plugin", "repo", "new", FULL) == 0
+    # 同じ登録へ repo create は何もせず 0
+    assert run_cli("plugin", "repo", "create", FULL) == 0
 
 
 def test_uncommitted_changes_survive(github, root, registered, run_cli):
     (registered / "note.txt").write_text("mine\n")
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 0
     assert (registered / "note.txt").read_text() == "mine\n"
     status = subprocess.run(["git", "status", "--porcelain"], cwd=registered,
                             check=True, capture_output=True, text=True).stdout
@@ -205,7 +205,7 @@ def test_colliding_change_stops_and_is_kept(github, root, registered, run_cli, c
     edited = REGISTRY + "# 手元の編集\n"
     (registered / "registry.yml").write_text(edited)
     before = _plugins_yml(root)
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 1
     assert (registered / "registry.yml").read_text() == edited
     assert _plugins_yml(root) == before
     assert "git -C" in caplog.text
@@ -218,7 +218,7 @@ def test_diverged_clone_stops_with_commands(github, root, registered, run_cli, c
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=registered, check=True,
                           capture_output=True, text=True).stdout
     github.commit(FULL, {"other.txt": "x\n"})
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 1
     assert _plugins_yml(root) == before
     assert subprocess.run(["git", "rev-parse", "HEAD"], cwd=registered, check=True,
                           capture_output=True, text=True).stdout == head
@@ -233,7 +233,7 @@ def test_merge_failure_keeps_plugins_yml(github, root, run_cli, caplog, prepare)
     if prepare == "registered":
         add_repository(PluginRegistry(root), URL)
     before = _plugins_yml(root)
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 1
     assert _plugins_yml(root) == before
     assert github.prs()[0]["url"] in caplog.text
     assert "devbase plugin install" in caplog.text
@@ -243,10 +243,10 @@ def test_merge_failure_keeps_plugins_yml(github, root, run_cli, caplog, prepare)
 def test_registry_pr_merge_failure_asks_to_rerun(github, root, run_cli, caplog):
     """プラグインの PR がまだ無いので、登録と導入ではなく打ち直しを案内する。"""
     github.add_repo(FULL, {"README.md": "x\n"}, merge_error="required reviews")
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
-    assert [pr["head"] for pr in github.prs()] == ["devbase/new-repo-repo"]
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 1
+    assert [pr["head"] for pr in github.prs()] == ["devbase/create-repo-repo"]
     assert github.prs()[0]["url"] in caplog.text
-    assert f"devbase plugin new {URL} --name team-a" in caplog.text
+    assert f"devbase plugin create {URL} --name team-a" in caplog.text
     assert "devbase plugin install" not in caplog.text
     assert "devbase plugin repo add" not in caplog.text
     assert _plugins_yml(root) is None
@@ -258,7 +258,7 @@ def test_ssh_registration_clones_and_pushes_over_ssh(github, root, run_cli):
     github.add_repo(FULL, {"registry.yml": REGISTRY})
     add_repository(PluginRegistry(root), url)
     github.ssh_only()
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 0
     _assert_installed(root, source=url)
 
 
@@ -279,7 +279,7 @@ def test_rename_in_the_pulled_update_keeps_the_project(github, root, run_cli):
         "moved/plugin.yml": "name: moved\nversion: '1.0.0'\n",
         "moved/projects/p1/compose.yml": "services: {}\n",
     }, remove=["old"])
-    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--name", "team-a", "--yes") == 0
 
     registry = PluginRegistry(root)
     assert registry.get("old") is None
@@ -288,14 +288,14 @@ def test_rename_in_the_pulled_update_keeps_the_project(github, root, run_cli):
 
 
 def test_never_touches_docker(github, root, registered, run_cli):
-    assert run_cli("plugin", "new", FULL, "--yes") == 0
+    assert run_cli("plugin", "create", FULL, "--yes") == 0
     assert github.docker_calls() == []
 
 
-def test_prefix_of_new_resolves(github, root, registered, run_cli):
-    assert run_cli("pl", "n", FULL, "--yes") == 0
+def test_prefix_of_create_resolves(github, root, registered, run_cli):
+    assert run_cli("pl", "c", FULL, "--yes") == 0
 
 
 def test_no_tty_without_yes_stops(github, root, registered, run_cli):
-    assert run_cli("plugin", "new", FULL) == 1
+    assert run_cli("plugin", "create", FULL) == 1
     assert github.write_calls() == []

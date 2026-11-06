@@ -283,7 +283,7 @@ shell が Python を呼ばずに同じ正規表現を文字列で持つのは、
 プラグインの同期（`discover_projects`・実ディレクトリの知らせ）、`plugin info` と `status` の
 プラグインのプロジェクト数（どちらも `discover_projects` を通す）、`status` のコンテナの状態、
 `project list`、見つからない名前での `up` の候補、`project migrate-config`、`env export`、
-`env doctor`、`env encrypt` / `env decrypt`、`env backend status` と backend の移行、`project new` の
+`env doctor`、`env encrypt` / `env decrypt`、`env backend status` と backend の移行、`project create` の
 グループの案が、`projects/` を走査するときの名前の条件としてこの述語を呼ぶ。ディレクトリの条件（`is_dir()`・壊れた symlink を
 拾う `is_symlink()`・`compose.yml` の有無）は走査ごとに持つ。名前の条件はディレクトリの条件より
 先に見る（壊れた symlink を名前だけで外せ、`stat` を打たないため）。同期が張った symlink の掃除と、
@@ -302,7 +302,7 @@ shell が Python を呼ばずに同じ正規表現を文字列で持つのは、
 | `env doctor` の重なりと除外設定の確認 | `commands/env_ops.py` | `names.project_dirs` | `is_dir()` |
 | `env encrypt` / `env decrypt` の対象 | `commands/env_migrate.py` | `names.project_dirs` | `is_dir()` |
 | `env backend status` と backend の移行の対象 | `commands/env_backend.py` | `names.project_dirs` の後に `SecretRef.for_project`（拒まれた名前は黙って外す） | `is_dir()` |
-| `project new` のグループの案（入れ先のプラグインの `projects/` を数える `suggest_group`） | `plugin/creator.py` | `names.project_dirs` | `is_dir()` |
+| `project create` のグループの案（入れ先のプラグインの `projects/` を数える `suggest_group`） | `plugin/creator.py` | `names.project_dirs` | `is_dir()` |
 
 `plugin info` と `status` のプラグインのプロジェクト数は、述語を個別に持たず `discover_projects` を
 通す。同期と同じ関数を呼ぶことで、ディレクトリの条件まで同期と構造的に一致する。

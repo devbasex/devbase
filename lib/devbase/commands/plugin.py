@@ -40,7 +40,7 @@ def cmd_plugin(devbase_root: Path, args) -> int:
         'sync':      lambda: cmd_sync(devbase_root),
         'migrate':   lambda: cmd_plugin_migrate(devbase_root),
         'repo':      lambda: cmd_repo(devbase_root, args),
-        'new':       lambda: cmd_plugin_new(devbase_root, args),
+        'create':    lambda: cmd_plugin_create(devbase_root, args),
     }
 
     handler = handlers.get(subcmd)
@@ -200,8 +200,8 @@ def _confirmed() -> bool:
     return False
 
 
-def cmd_plugin_new(devbase_root: Path, args) -> int:
-    """`plugin new`: リポジトリへプラグインを足して導入する"""
+def cmd_plugin_create(devbase_root: Path, args) -> int:
+    """`plugin create`: リポジトリへプラグインを足して導入する"""
     registry = PluginRegistry(devbase_root)
     gh = GhClient()
     try:
@@ -214,8 +214,8 @@ def cmd_plugin_new(devbase_root: Path, args) -> int:
         return 1
 
 
-def cmd_repo_new(devbase_root: Path, args) -> int:
-    """`plugin repo new`: プラグインリポジトリを用意して登録する"""
+def cmd_repo_create(devbase_root: Path, args) -> int:
+    """`plugin repo create`: プラグインリポジトリを用意して登録する"""
     registry = PluginRegistry(devbase_root)
     gh = GhClient()
     try:
@@ -233,11 +233,11 @@ def cmd_repo(devbase_root: Path, args) -> int:
     repo_cmd = getattr(args, 'repo_command', None)
 
     if not repo_cmd:
-        logger.error("Usage: devbase plugin repo <new|add|remove|list|refresh>")
+        logger.error("Usage: devbase plugin repo <create|add|remove|list|refresh>")
         return 1
 
-    if repo_cmd == 'new':
-        return cmd_repo_new(devbase_root, args)
+    if repo_cmd == 'create':
+        return cmd_repo_create(devbase_root, args)
 
     handlers = {
         'add':     lambda: add_repository(registry, args.url, name=args.name),

@@ -47,7 +47,7 @@ def branch_name(kind: str, name: str) -> str:
     if _BRANCH_UNSAFE.search(name):
         digest = hashlib.sha256(name.encode()).hexdigest()[:_BRANCH_DIGEST_LENGTH]
         name = f"{name.replace('.', '-')}-{digest}"
-    return f"devbase/new-{kind}-{name}"
+    return f"devbase/create-{kind}-{name}"
 
 
 def pr_title(kind: str, name: str) -> str:

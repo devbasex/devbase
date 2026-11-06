@@ -42,16 +42,16 @@ _devbase_complete_flags() {
 }
 
 # 以下の _devbase_complete_* は引数を取らず、cur・prev・words・cword とフラグの一覧
-# (ctx_flags・ps_flags・logs_flags・open_flags・plugin_new_flags・project_new_flags) を _devbase_completions の local から読む。
+# (ctx_flags・ps_flags・logs_flags・open_flags・plugin_create_flags・project_create_flags) を _devbase_completions の local から読む。
 # どの関数も最後の文を if / case にし、当たらないときも終了の状態を 0 に保つ。
 
 # 位置 2: 1 語目ごとのサブコマンド・フラグ・プロジェクト名。
 _devbase_complete_subcommands() {
     # project / container は同じサブコマンド群 (container は非推奨だが補完は維持)。
-    local project_subcommands="up down ps login logs scale build rebuild list profile open post-start new"
+    local project_subcommands="up down ps login logs scale build rebuild list profile open post-start create"
     local container_subcommands="up down ps login logs scale build rebuild profile open"
     local env_subcommands="init sync list set get delete edit project export import keygen exec token encrypt decrypt rekey doctor backend"
-    local plugin_subcommands="list install uninstall update info sync repo new"
+    local plugin_subcommands="list install uninstall update info sync repo create"
     local snapshot_subcommands="create list restore copy delete rotate"
     case "$prev" in
         login)
@@ -167,9 +167,9 @@ _devbase_complete_project_args() {
         post-start)
             _devbase_complete_flags "$ctx_flags" "$cur" names
             ;;
-        # new の引数は GitHub のリポジトリなので、プロジェクト名は出さない (#514)
-        new)
-            _devbase_complete_flags "$project_new_flags" "$cur"
+        # create の引数は GitHub のリポジトリなので、プロジェクト名は出さない (#514)
+        create)
+            _devbase_complete_flags "$project_create_flags" "$cur"
             ;;
     esac
 }
@@ -228,7 +228,7 @@ _devbase_complete_env_args() {
 
 # plugin subcommand arguments
 _devbase_complete_plugin_args() {
-    local repo_subcommands="new add remove list refresh"
+    local repo_subcommands="create add remove list refresh"
     case "$prev" in
         list)
             COMPREPLY=($(compgen -W "--available" -- "$cur"))
@@ -236,8 +236,8 @@ _devbase_complete_plugin_args() {
         install)
             _devbase_complete_flags "--link --all" "$cur"
             ;;
-        new)
-            _devbase_complete_flags "$plugin_new_flags" "$cur"
+        create)
+            _devbase_complete_flags "$plugin_create_flags" "$cur"
             ;;
         uninstall|update|info)
             local devbase_root
@@ -302,8 +302,8 @@ _devbase_complete_project_flags() {
         up|down|rebuild|scale|post-start)
             _devbase_complete_flags "$ctx_flags" "$cur"
             ;;
-        new)
-            _devbase_complete_flags "$project_new_flags" "$cur"
+        create)
+            _devbase_complete_flags "$project_create_flags" "$cur"
             ;;
     esac
 }
@@ -325,8 +325,8 @@ _devbase_complete_plugin_after_args() {
     if [ "${words[2]}" = "install" ]; then
         _devbase_complete_flags "--link --all" "$cur"
     fi
-    if [ "${words[2]}" = "new" ]; then
-        _devbase_complete_flags "$plugin_new_flags" "$cur"
+    if [ "${words[2]}" = "create" ]; then
+        _devbase_complete_flags "$plugin_create_flags" "$cur"
     fi
     # plugin repo subcommand arguments
     if [ "${words[2]}" = "repo" ]; then
@@ -334,7 +334,7 @@ _devbase_complete_plugin_after_args() {
             add)
                 _devbase_complete_flags "--name" "$cur"
                 ;;
-            new)
+            create)
                 _devbase_complete_flags "--public --yes" "$cur"
                 ;;
             remove|refresh)
@@ -375,8 +375,8 @@ _devbase_completions() {
     local ps_flags="--all -a --context"
     local logs_flags="--follow -f --tail --context"
     local open_flags="--open-index --context"
-    local plugin_new_flags="--name --public --yes"
-    local project_new_flags="--plugin --group --name --yes"
+    local plugin_create_flags="--name --public --yes"
+    local project_create_flags="--plugin --group --name --yes"
 
     # --context の値 (docker context の名前) は補完しない。
     if [ "$prev" = "--context" ]; then

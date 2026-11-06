@@ -82,8 +82,8 @@ class _TtyPrompter:
             return None
 
 
-def cmd_project_new(devbase_root: Path, args) -> int:
-    """`project new`: 入れ先のプラグインへプロジェクトを足し、手元へ反映する。
+def cmd_project_create(devbase_root: Path, args) -> int:
+    """`project create`: 入れ先のプラグインへプロジェクトを足し、手元へ反映する。
 
     コンテナは起動しない (``devbase up`` は打たない)。
     """

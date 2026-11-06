@@ -6,9 +6,9 @@
 
 ### Added
 - **リポジトリ・プラグイン・プロジェクトを新規に足すコマンドを足しました（#514）。**
-  `devbase plugin repo new <repo>`・`devbase plugin new <repo>`・`devbase project new <repo>` は、GitHub の URL か
+  `devbase plugin repo create <repo>`・`devbase plugin create <repo>`・`devbase project create <repo>` は、GitHub の URL か
   `owner/repo` を受け、権限の確認からファイルの配置・PR・マージ・手元への取り込み・登録までを 1 回で行います。
-  新しいリポジトリは private で作り、`--public` のときだけ公開します。`project new` は入れ先のプラグインとアカウントグループを
+  新しいリポジトリは private で作り、`--public` のときだけ公開します。`project create` は入れ先のプラグインとアカウントグループを
   引数か既存の値から決め、決まらないときは端末で聞きます。変更の前に作成の計画を示して確認し、端末が無いときは `--yes` が要ります。
   コンテナは起動しません。`gh` が要るのはこの 3 つのコマンドだけです。
 

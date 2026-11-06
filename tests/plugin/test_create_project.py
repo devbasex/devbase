@@ -1,4 +1,4 @@
-"""``devbase project new`` のテスト (#514 の受け入れ条件 9〜13)。"""
+"""``devbase project create`` のテスト (#514 の受け入れ条件 9〜13)。"""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def app(github):
 
 def test_name_outside_docker_rules_gets_a_valid_image(github, root, app, run_cli):
     clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP, "--name", "app-", "--yes") == 0
+    assert run_cli("project", "create", APP, "--name", "app-", "--yes") == 0
 
     compose = yaml.safe_load((clone / "team-a/projects/app-/compose.yml").read_text())
     assert compose["services"]["dev"]["image"] == "app:latest"
@@ -66,7 +66,7 @@ def test_name_outside_docker_rules_gets_a_valid_image(github, root, app, run_cli
 def test_default_name_follows_compose_rules(github, root, run_cli, repo, project):
     github.add_repo(f"owner/{repo}", {"README.md": "x\n"}, permission="READ")
     clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", f"owner/{repo}", "--yes") == 0
+    assert run_cli("project", "create", f"owner/{repo}", "--yes") == 0
 
     assert (clone / f"team-a/projects/{project}/project.yml").is_file()
     assert (root / "projects" / project).exists()
@@ -78,7 +78,7 @@ def test_name_outside_compose_rules_stops_before_writing(
         github, root, app, run_cli, caplog, name):
     clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     before = _plugins_yml(root)
-    assert run_cli("project", "new", APP, "--name", name, "--yes") == 1
+    assert run_cli("project", "create", APP, "--name", name, "--yes") == 1
 
     assert "小文字の英数字で始まり" in caplog.text
     assert github.write_calls() == []
@@ -88,10 +88,10 @@ def test_name_outside_compose_rules_stops_before_writing(
 
 def test_project_is_added_and_reflected(github, root, app, run_cli):
     clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP, "--yes") == 0
+    assert run_cli("project", "create", APP, "--yes") == 0
 
     pr = github.prs()[0]
-    assert pr["head"] == "devbase/new-project-app"
+    assert pr["head"] == "devbase/create-project-app"
     assert pr["state"] == "MERGED"
     base = "team-a/projects/app"
     full = "owner/plugins"
@@ -109,7 +109,7 @@ def test_project_is_added_and_reflected(github, root, app, run_cli):
 
 def test_name_option(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP, "--name", "web", "--yes") == 0
+    assert run_cli("project", "create", APP, "--name", "web", "--yes") == 0
     assert (root / "projects" / "web").is_dir()
     assert not (root / "projects" / "app").exists()
     assert github.file("owner/plugins", "team-a/projects/web/project.yml") is not None
@@ -117,7 +117,7 @@ def test_name_option(github, root, app, run_cli):
 
 def test_plan_shows_target_and_group(github, root, app, run_cli, capsys):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP) == 1, "TTY が無く --yes も無い"
+    assert run_cli("project", "create", APP) == 1, "TTY が無く --yes も無い"
     out = capsys.readouterr().out
     assert "team-a" in out and "acme" in out and "owner/plugins" in out and "main" in out
     assert github.write_calls() == []
@@ -129,34 +129,34 @@ def test_plan_shows_target_and_group(github, root, app, run_cli, capsys):
 def test_plugin_option_wins(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/one", plugin="one", groups=["acme"])
     _plugin_repo(github, root, "owner/two", plugin="two", groups=["acme"])
-    assert run_cli("project", "new", APP, "--plugin", "two", "--yes") == 0
+    assert run_cli("project", "create", APP, "--plugin", "two", "--yes") == 0
     assert github.file("owner/two", "two/projects/app/env") is not None
 
 
 def test_plugin_option_requires_install(github, root, app, run_cli, caplog):
     _plugin_repo(github, root, "owner/one", plugin="one", groups=["acme"], install=False)
-    assert run_cli("project", "new", APP, "--plugin", "one", "--yes") == 1
+    assert run_cli("project", "create", APP, "--plugin", "one", "--yes") == 1
     assert "one" in caplog.text
     assert github.write_calls() == []
 
 
 def test_plugin_option_requires_push(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/one", plugin="one", groups=["acme"], permission="READ")
-    assert run_cli("project", "new", APP, "--plugin", "one", "--yes") == 1
+    assert run_cli("project", "create", APP, "--plugin", "one", "--yes") == 1
     assert github.write_calls() == []
 
 
 def test_same_owner_narrows_the_candidates(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/one", plugin="one", groups=["acme"])
     _plugin_repo(github, root, "other/two", plugin="two", groups=["acme"])
-    assert run_cli("project", "new", APP, "--yes") == 0
+    assert run_cli("project", "create", APP, "--yes") == 0
     assert github.file("owner/one", "one/projects/app/env") is not None
 
 
 def test_no_same_owner_keeps_all_candidates(github, root, app, run_cli, caplog):
     _plugin_repo(github, root, "other/one", plugin="one", groups=["acme"])
     _plugin_repo(github, root, "other/two", plugin="two", groups=["acme"])
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert "one" in caplog.text and "two" in caplog.text
     assert github.write_calls() == []
 
@@ -164,26 +164,26 @@ def test_no_same_owner_keeps_all_candidates(github, root, app, run_cli, caplog):
 def test_unpushable_are_not_candidates(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/one", plugin="one", groups=["acme"], permission="READ")
     _plugin_repo(github, root, "other/two", plugin="two", groups=["acme"])
-    assert run_cli("project", "new", APP, "--yes") == 0
+    assert run_cli("project", "create", APP, "--yes") == 0
     assert github.file("other/two", "two/projects/app/env") is not None
 
 
 def test_multiple_with_tty_asks(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/one", plugin="one", groups=["acme"])
     _plugin_repo(github, root, "owner/two", plugin="two", groups=["acme"])
-    assert run_cli("project", "new", APP, "--yes", tty=True, answers=["2"]) == 0
+    assert run_cli("project", "create", APP, "--yes", tty=True, answers=["2"]) == 0
     assert github.file("owner/two", "two/projects/app/env") is not None
 
 
 def test_multiple_with_tty_bad_answer_stops(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/one", plugin="one", groups=["acme"])
     _plugin_repo(github, root, "owner/two", plugin="two", groups=["acme"])
-    assert run_cli("project", "new", APP, "--yes", tty=True, answers=["9"]) == 1
+    assert run_cli("project", "create", APP, "--yes", tty=True, answers=["9"]) == 1
     assert github.write_calls() == []
 
 
 def test_zero_candidates_stops(github, root, app, run_cli):
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
 
 
@@ -239,14 +239,14 @@ def test_gh_is_called_once_per_repository(github, root, app):
 ])
 def test_group_is_the_most_common(github, root, app, run_cli, groups, expected):
     _plugin_repo(github, root, "owner/plugins", groups=groups)
-    assert run_cli("project", "new", APP, "--yes") == 0
+    assert run_cli("project", "create", APP, "--yes") == 0
     assert github.file("owner/plugins", "team-a/projects/app/env") \
         == f"DEVBASE_ACCOUNT_GROUP={expected}\n"
 
 
 def test_group_option_wins(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme", "acme"])
-    assert run_cli("project", "new", APP, "--group", "mine", "--yes") == 0
+    assert run_cli("project", "create", APP, "--group", "mine", "--yes") == 0
     assert github.file("owner/plugins", "team-a/projects/app/env") \
         == "DEVBASE_ACCOUNT_GROUP=mine\n"
 
@@ -254,14 +254,14 @@ def test_group_option_wins(github, root, app, run_cli):
 @pytest.mark.parametrize("groups", [["a", "b"], []], ids=["tie", "none"])
 def test_undecided_group_without_tty_stops(github, root, app, run_cli, groups):
     _plugin_repo(github, root, "owner/plugins", groups=groups)
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
 
 
 @pytest.mark.parametrize("groups", [["a", "b"], []], ids=["tie", "none"])
 def test_undecided_group_with_tty_asks(github, root, app, run_cli, groups):
     _plugin_repo(github, root, "owner/plugins", groups=groups)
-    assert run_cli("project", "new", APP, "--yes", tty=True, answers=["typed"]) == 0
+    assert run_cli("project", "create", APP, "--yes", tty=True, answers=["typed"]) == 0
     assert github.file("owner/plugins", "team-a/projects/app/env") \
         == "DEVBASE_ACCOUNT_GROUP=typed\n"
 
@@ -269,19 +269,19 @@ def test_undecided_group_with_tty_asks(github, root, app, run_cli, groups):
 @pytest.mark.parametrize("bad", ["default", "ubuntu", "123", "a b"])
 def test_bad_group_from_option_stops(github, root, app, run_cli, bad):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP, f"--group={bad}", "--yes") == 1
+    assert run_cli("project", "create", APP, f"--group={bad}", "--yes") == 1
     assert github.write_calls() == []
 
 
 def test_bad_group_from_most_common_stops(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["default"])
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
 
 
 def test_bad_group_from_tty_stops(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins")
-    assert run_cli("project", "new", APP, "--yes", tty=True, answers=["default"]) == 1
+    assert run_cli("project", "create", APP, "--yes", tty=True, answers=["default"]) == 1
     assert github.write_calls() == []
 
 
@@ -290,35 +290,35 @@ def test_bad_group_from_tty_stops(github, root, app, run_cli):
 
 def test_unreadable_target_stops(github, root, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
 
 
 def test_existing_in_projects_stops(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     (root / "projects" / "app").mkdir()
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
 
 
 def test_broken_symlink_in_projects_stops(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     (root / "projects" / "app").symlink_to("../gone")
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
 
 
 def test_existing_in_the_plugin_stops(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     github.commit("owner/plugins", {"team-a/projects/app/project.yml": "version: 1\n"})
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
 
 
 @pytest.mark.parametrize("name", ["../up", "a/b", "-x"])
 def test_bad_name_stops(github, root, app, run_cli, name):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP, f"--name={name}", "--yes") == 1
+    assert run_cli("project", "create", APP, f"--name={name}", "--yes") == 1
     assert github.write_calls() == []
 
 
@@ -335,7 +335,7 @@ def test_registration_without_clone_stops(github, root, app, run_cli, caplog, st
     else:
         shutil.rmtree(clone)
     before = _plugins_yml(root)
-    assert run_cli("project", "new", APP, "--plugin", "team-a", "--yes") == 1
+    assert run_cli("project", "create", APP, "--plugin", "team-a", "--yes") == 1
     assert github.write_calls() == []
     assert _plugins_yml(root) == before
     assert "plugin repo remove" in caplog.text
@@ -346,7 +346,7 @@ def test_merge_failure_leaves_the_local_side(github, root, app, run_cli, caplog)
     _plugin_repo(github, root, "owner/plugins", groups=["acme"],
                  merge_error="required reviews")
     before = _plugins_yml(root)
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert _plugins_yml(root) == before
     assert not (root / "projects" / "app").exists()
     assert github.prs()[0]["url"] in caplog.text
@@ -361,19 +361,19 @@ def test_stale_plugin_path_stops_before_writing(github, root, app, run_cli, capl
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     github.commit("owner/plugins", {"registry.yml": MOVED_REGISTRY,
                                     "moved/plugin.yml": "name: team-a\nversion: '1.0.0'\n"})
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
     assert "devbase plugin repo refresh plugins" in caplog.text
 
     assert run_cli("plugin", "repo", "refresh", "plugins") == 0
-    assert run_cli("project", "new", APP, "--group", "acme", "--yes") == 0
+    assert run_cli("project", "create", APP, "--group", "acme", "--yes") == 0
     assert github.file("owner/plugins", "moved/projects/app/project.yml") is not None
 
 
 def test_plugin_gone_from_the_registry_stops(github, root, app, run_cli, caplog):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     github.commit("owner/plugins", {"registry.yml": "name: plugins\nplugins: []\n"})
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
     assert "項目なし" in caplog.text
 
@@ -398,7 +398,7 @@ def _root_plugin_repo(github, root, full="owner/plugins"):
 def test_plugin_at_the_repository_root(github, root, app, run_cli):
     """path の無い項目は導入と同じく直下として扱い、projects/ へ現れる。"""
     clone = _root_plugin_repo(github, root)
-    assert run_cli("project", "new", APP, "--group", "acme", "--yes") == 0
+    assert run_cli("project", "create", APP, "--group", "acme", "--yes") == 0
     assert github.file("owner/plugins", "projects/app/project.yml") is not None
     assert github.file("owner/plugins", "team-a/projects/app/project.yml") is None
     assert (clone / "projects" / "app" / "project.yml").is_file()
@@ -409,14 +409,14 @@ def test_group_comes_from_the_repository_root(github, root, app, run_cli):
     clone = _root_plugin_repo(github, root)
     (clone / "projects" / "p0").mkdir()
     (clone / "projects" / "p0" / "env").write_text("DEVBASE_ACCOUNT_GROUP=acme\n")
-    assert run_cli("project", "new", APP, "--yes") == 0
+    assert run_cli("project", "create", APP, "--yes") == 0
     assert github.file("owner/plugins", "projects/app/env") == "DEVBASE_ACCOUNT_GROUP=acme\n"
 
 
 def test_plugin_moved_from_the_root_stops(github, root, app, run_cli, caplog):
     _root_plugin_repo(github, root)
     github.commit("owner/plugins", {"registry.yml": MOVED_REGISTRY})
-    assert run_cli("project", "new", APP, "--group", "acme", "--yes") == 1
+    assert run_cli("project", "create", APP, "--group", "acme", "--yes") == 1
     assert github.write_calls() == []
     assert "リポジトリの直下" in caplog.text
 
@@ -426,7 +426,7 @@ def test_moved_default_branch_stops_before_writing(github, root, app, run_cli, c
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     github.set_default_branch("owner/plugins", "develop")
     before = _plugins_yml(root)
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert github.write_calls() == []
     assert _plugins_yml(root) == before
     assert "既定ブランチ develop" in caplog.text
@@ -439,28 +439,28 @@ def test_clone_on_the_new_default_branch_completes(github, root, app, run_cli):
     github.set_default_branch("owner/plugins", "develop")
     subprocess.run(["git", "fetch", "origin"], cwd=clone, check=True, capture_output=True)
     subprocess.run(["git", "switch", "develop"], cwd=clone, check=True, capture_output=True)
-    assert run_cli("project", "new", APP, "--yes") == 0
+    assert run_cli("project", "create", APP, "--yes") == 0
     assert (root / "projects" / "app" / "project.yml").is_file()
 
 
 def test_tty_decline_changes_nothing(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP, tty=True, answers=["n"]) == 1
+    assert run_cli("project", "create", APP, tty=True, answers=["n"]) == 1
     assert github.write_calls() == []
 
 
 def test_unauthenticated(github, root, app, run_cli, caplog):
     github.update(authed=False)
-    assert run_cli("project", "new", APP, "--yes") == 1
+    assert run_cli("project", "create", APP, "--yes") == 1
     assert "gh auth login" in caplog.text
 
 
 def test_non_github_url_stops(github, root, run_cli):
-    assert run_cli("project", "new", "https://gitlab.com/owner/app", "--yes") == 1
+    assert run_cli("project", "create", "https://gitlab.com/owner/app", "--yes") == 1
     assert github.calls() == []
 
 
 def test_never_touches_docker(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
-    assert run_cli("project", "new", APP, "--yes") == 0
+    assert run_cli("project", "create", APP, "--yes") == 0
     assert github.docker_calls() == []

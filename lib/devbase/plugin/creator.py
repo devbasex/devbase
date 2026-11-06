@@ -148,7 +148,7 @@ def _reject_stale_clone(registry: PluginRegistry, ref: GitHubRef) -> None:
 def plan_repo(
     registry: PluginRegistry, gh: GhClient, value: str, *, public: bool = False,
 ) -> CreationPlan:
-    """``plugin repo new`` の計画 (読むだけ)"""
+    """``plugin repo create`` の計画 (読むだけ)"""
     ref = GitHubRef.parse(value)
     gh.ensure_ready()
     registered = _find_registered(registry, ref.clone_url)
@@ -214,7 +214,7 @@ def plan_plugin(
     registry: PluginRegistry, gh: GhClient, value: str, *,
     name: Optional[str] = None, public: bool = False,
 ) -> CreationPlan:
-    """``plugin new`` の計画 (読むだけ)。未登録ならリポジトリの分岐も計画に入る"""
+    """``plugin create`` の計画 (読むだけ)。未登録ならリポジトリの分岐も計画に入る"""
     ref = GitHubRef.parse(value)
     gh.ensure_ready()
     plugin = _checked_name(name or ref.repo, "プラグイン")
@@ -344,7 +344,7 @@ def _decide_target(
     if not candidates:
         raise RepositoryError(
             "入れ先のプラグインがありません。push できるプラグインを導入するか、"
-            "devbase plugin new で足してください"
+            "devbase plugin create で足してください"
         )
     if len(candidates) == 1:
         return candidates[0]
@@ -417,7 +417,7 @@ def plan_project(
     plugin: Optional[str] = None, group: Optional[str] = None,
     name: Optional[str] = None, prompter: Optional[Prompter] = None,
 ) -> CreationPlan:
-    """``project new`` の計画 (読むだけ)"""
+    """``project create`` の計画 (読むだけ)"""
     ref = GitHubRef.parse(value)
     gh.ensure_ready()
     project = _project_name(name, ref.repo)
@@ -461,7 +461,7 @@ def _reflect_repository(gh: GhClient, plan: CreationPlan) -> None:
             # プラグインの PR はまだ無いので、登録と導入ではなく打ち直しを案内する
             raise RepositoryError(
                 f"{e}\nこの PR をマージした後に、同じコマンドを打ち直してください:\n"
-                f"  devbase plugin new {plan.ref.clone_url} --name {plan.name}"
+                f"  devbase plugin create {plan.ref.clone_url} --name {plan.name}"
             ) from e
 
 

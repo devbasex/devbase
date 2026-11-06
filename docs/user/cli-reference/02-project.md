@@ -447,17 +447,17 @@ devbase rebuild [name]
 |-----------|------|------|
 | `name` | いいえ | 対象プロジェクト名（省略時はカレント） |
 
-## `devbase project new`
+## `devbase project create`
 
 GitHub のリポジトリのプロジェクトをプラグインへ足し、手元へ反映します。コンテナは起動しません。
 
 ```
-devbase project new <repo> [--plugin <名前>] [--group <名前>] [--name <名前>] [--yes]
+devbase project create <repo> [--plugin <名前>] [--group <名前>] [--name <名前>] [--yes]
 ```
 
 | パラメータ | 必須 | 説明 |
 |-----------|------|------|
-| `repo` | はい | 対象の GitHub のリポジトリ（`owner/repo`・URL。[作成フロー](04-plugin.md#作成フローplugin-new--plugin-repo-new--project-new-に共通)） |
+| `repo` | はい | 対象の GitHub のリポジトリ（`owner/repo`・URL。[作成フロー](04-plugin.md#作成フローplugin-create--plugin-repo-create--project-create-に共通)） |
 | `--plugin` | いいえ | 入れ先のプラグイン |
 | `--group` | いいえ | アカウントグループ |
 | `--name` | いいえ | プロジェクトの名前。小文字の英数字で始まり、小文字の英数字・`-`・`_` だけからなる形（Compose のプロジェクト名の規則）で、合わなければ何も変えずに終了コード 1 で止まります。既定はリポジトリ名を小文字にし、使えない文字の並びを `-` に置き換えたものです（`MyApp` は `myapp`、`foo.github.io` は `foo-github-io`） |
@@ -536,14 +536,14 @@ build / rebuild を選べます。先頭（Enter 1 回で決まる位置）は *
 | 削除 | アンインストール / リポジトリ削除 |
 | 保守 | リンクの再同期 / レガシー構成の移行 |
 
-新規追加は、CLI の `project new`・`plugin new`・`plugin repo new` と同じ値を順に聞きます。入れ先のプラグインは候補が 2 件以上のときに選択肢で出し、グループは入れ先の案を既定値にします。最後に作成の計画を示して確認します。
+新規追加は、CLI の `project create`・`plugin create`・`plugin repo create` と同じ値を順に聞きます。入れ先のプラグインは候補が 2 件以上のときに選択肢で出し、グループは入れ先の案を既定値にします。最後に作成の計画を示して確認します。
 
 - 確認プロンプト (y/N) が出るのは破壊的操作（plugin uninstall / plugin repo remove /
   snapshot restore / snapshot delete / 環境変数のキーの削除）と新規追加の計画だけで、その他は CLI 既定値で即実行します
 - 操作の出力後は Enter キーで一覧へ戻ります（出力が流れて読めなくなるのを防ぐため）
 - 環境変数の「キーの一覧と編集」と「OpenBao の接続設定」は [環境変数の TUI](03-env.md#tui-でのキーの編集と-openbao-の接続設定) を参照してください
 - TUI が提供しない細かいオプション（`env get/export/import`、
-  `plugin install --link/--all`、`plugin new --public`、`snapshot create --full`、`logs --follow` 等）は
+  `plugin install --link/--all`、`plugin create --public`、`snapshot create --full`、`logs --follow` 等）は
   CLI を使用してください
 - questionary 未導入時は従来の番号入力（選択 → up）にフォールバックします
 

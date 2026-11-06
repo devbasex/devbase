@@ -74,7 +74,7 @@
     {
       "id": "plugin-distribution",
       "name": "プラグインの配布",
-      "meaning": "プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project new）"
+      "meaning": "プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project create）"
     }
   ],
   "terms": [
