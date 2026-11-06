@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 
 from devbase.errors import DevbaseError, RepositoryError
 from devbase.log import get_logger
+from devbase.utils import names
 
 from . import publish, scaffold
 from .github import GhClient, GitHubRef
@@ -31,6 +32,7 @@ from .repo_manager import (
 logger = get_logger("devbase.plugin.creator")
 
 KIND_REPO = 'repo'
+KIND_PLUGIN = 'plugin'
 
 
 class RepoState(Enum):
@@ -139,6 +141,70 @@ def plan_repo(
     )
 
 
+def _checked_name(name: str, what: str) -> str:
+    """プラグインとプロジェクトの名前を 名前の形 で確かめる (不変条件 I9)"""
+    if not names.is_single_segment_name(name):
+        raise RepositoryError(
+            f"{what}の名前にできません: '{name}' ({names.NAME_FORM_HINT})")
+    return name
+
+
+def _require_clone(registry: PluginRegistry, repo: RegisteredRepository) -> None:
+    """登録の clone があることを確かめる。無ければ何も書かずに止める (読むだけ)
+
+    ``local_path`` が空のまま進むと ``devbase_root`` そのものを指し、devbase 本体を取り込む。
+    """
+    if repo.local_path and (registry.devbase_root / repo.local_path).is_dir():
+        return
+    raise RepositoryError(
+        f"登録 {repo.name} の手元の clone がありません。次のコマンドで登録し直してください:\n"
+        f"  devbase plugin repo remove {repo.name}\n"
+        f"  devbase plugin repo add {repo.url}\n"
+        "repo remove はこのリポジトリから導入したプラグインも外すので、"
+        "devbase plugin install も打ち直してください"
+    )
+
+
+def plan_plugin(
+    registry: PluginRegistry, gh: GhClient, value: str, *,
+    name: Optional[str] = None, public: bool = False,
+) -> CreationPlan:
+    """``plugin new`` の計画 (読むだけ)。未登録ならリポジトリの分岐も計画に入る"""
+    ref = GitHubRef.parse(value)
+    gh.ensure_ready()
+    plugin = _checked_name(name or ref.repo, "プラグイン")
+    registered = _find_registered(registry, ref.clone_url)
+    if registered is not None:
+        _require_clone(registry, registered)
+    state, default_branch = _inspect(registry, gh, ref, registered)
+    if registered is not None and state is not RepoState.HAS_REGISTRY:
+        raise RepositoryError(
+            f"{ref.full_name} は登録済みですが、既定ブランチに {scaffold.REGISTRY_FILE} が"
+            "ありません")
+    _reject_duplicate_plugin(registry, gh, ref, plugin, state)
+    return CreationPlan(
+        kind=KIND_PLUGIN, ref=ref, name=plugin, state=state,
+        default_branch=default_branch, public=public, registered=registered,
+        files=scaffold.plugin_files(plugin), registry_entry=plugin,
+    )
+
+
+def _reject_duplicate_plugin(
+    registry: PluginRegistry, gh: GhClient, ref: GitHubRef, plugin: str, state: RepoState,
+) -> None:
+    if registry.get(plugin) is not None:
+        raise RepositoryError(f"プラグイン {plugin} は既に導入されています")
+    if state in (RepoState.ABSENT, RepoState.EMPTY):
+        return
+    if state is RepoState.HAS_REGISTRY:
+        text = gh.read_file(ref, scaffold.REGISTRY_FILE) or ''
+        if plugin in scaffold.registry_plugin_names(text):
+            raise RepositoryError(
+                f"プラグイン {plugin} は {ref.full_name} の {scaffold.REGISTRY_FILE} に既にあります")
+    if gh.read_file(ref, plugin) is not None:
+        raise RepositoryError(f"{ref.full_name} に {plugin} が既にあります")
+
+
 def _reflect_repository(gh: GhClient, plan: CreationPlan) -> None:
     """リポジトリの分岐の分を既定ブランチへ入れる"""
     files = {scaffold.REGISTRY_FILE: scaffold.registry_yml(plan.ref.repo)}
@@ -149,12 +215,19 @@ def _reflect_repository(gh: GhClient, plan: CreationPlan) -> None:
         publish.publish_change(gh, plan.ref, kind=KIND_REPO, name=plan.ref.repo, files=files)
 
 
+def _source_url(plan: CreationPlan) -> str:
+    """手元の呼び出しへ渡す URL。登録済みなら登録の値 (決定 9)"""
+    return plan.ref.clone_url if plan.registered is None else plan.registered.url
+
+
 def _follow_up(plan: CreationPlan) -> str:
     """マージの後に手で打つコマンド"""
     if plan.registered is None:
         commands = [f"devbase plugin repo add {plan.ref.clone_url}"]
     else:
         commands = [f"devbase plugin repo refresh {plan.registered.name}"]
+    if plan.kind == KIND_PLUGIN:
+        commands.append(f"devbase plugin install {_source_url(plan)}:{plan.name}")
     return '\n'.join(f"  {command}" for command in commands)
 
 
@@ -165,6 +238,9 @@ def execute(registry: PluginRegistry, gh: GhClient, plan: CreationPlan) -> None:
         logger.info("リポジトリを作りました: %s", plan.ref.full_name)
     try:
         _reflect_repository(gh, plan)
+        if plan.kind != KIND_REPO:
+            publish.publish_change(gh, plan.ref, kind=plan.kind, name=plan.name,
+                                   files=plan.files, registry_entry=plan.registry_entry)
     except publish.MergeFailed as e:
         raise RepositoryError(f"{e}\nマージの後に打つコマンド:\n{_follow_up(plan)}") from e
     except DevbaseError as e:
@@ -185,6 +261,8 @@ def _apply_locally(registry: PluginRegistry, plan: CreationPlan) -> None:
         else:
             _pull_ff_only(registry.devbase_root / plan.registered.local_path)
             refresh_repository(registry, plan.registered.name)
+        if plan.kind == KIND_PLUGIN:
+            install_plugin(registry, f"{_source_url(plan)}:{plan.name}")
     except DevbaseError as e:
         if not plan.writes_github:
             raise

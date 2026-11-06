@@ -40,6 +40,7 @@ def cmd_plugin(devbase_root: Path, args) -> int:
         'sync':      lambda: cmd_sync(devbase_root),
         'migrate':   lambda: cmd_plugin_migrate(devbase_root),
         'repo':      lambda: cmd_repo(devbase_root, args),
+        'new':       lambda: cmd_plugin_new(devbase_root, args),
     }
 
     handler = handlers.get(subcmd)
@@ -197,6 +198,20 @@ def _confirmed() -> bool:
         return True
     logger.info("中止しました。何も変えていません")
     return False
+
+
+def cmd_plugin_new(devbase_root: Path, args) -> int:
+    """`plugin new`: リポジトリへプラグインを足して導入する"""
+    registry = PluginRegistry(devbase_root)
+    gh = GhClient()
+    try:
+        plan = creator.plan_plugin(registry, gh, args.repo,
+                                   name=getattr(args, 'name', None),
+                                   public=getattr(args, 'public', False))
+        return run_creation(registry, gh, plan, getattr(args, 'yes', False))
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
 
 
 def cmd_repo_new(devbase_root: Path, args) -> int:

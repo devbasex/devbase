@@ -64,7 +64,8 @@ SUBCMD_MAP = {
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
                           'exec', 'token', 'encrypt', 'decrypt', 'rekey', 'doctor',
                           'export', 'import', 'backend'],
-    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
+    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate',
+                          'new'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
 
@@ -710,6 +711,15 @@ def _add_plugin_parser(subparsers):
 
     pl_sub.add_parser('migrate',
                       help='Migrate legacy plugins/ installs to repos/ clones')
+
+    p_new = pl_sub.add_parser(
+        'new', help='Add a new plugin to a repository on GitHub and install it')
+    _add_new_target_arg(p_new)
+    p_new.add_argument('--name', default=None,
+                       help='Plugin name (default: the repository name)')
+    p_new.add_argument('--public', action='store_true',
+                       help='Make the repository public when it is created (default: private)')
+    _add_yes_arg(p_new)
 
     # Plugin repo sub-subcommands
     pl_repo = pl_sub.add_parser('repo', help='Manage plugin repositories')

@@ -105,6 +105,11 @@ def add_registry_entry(text: str, name: str) -> str:
     return added
 
 
+def registry_plugin_names(text: str) -> List[str]:
+    """``registry.yml`` の ``plugins`` の名前"""
+    return [entry.get('name', '') for entry in _load_registry(text).get('plugins') or []]
+
+
 def _load_registry(text: str) -> dict:
     try:
         data = yaml.safe_load(text)
