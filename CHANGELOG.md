@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-11-06
+
 ### Added
 - **リポジトリ・プラグイン・プロジェクトを新規に足すコマンドを足しました（#514）。**
   `devbase plugin repo create <repo>`・`devbase plugin create <repo>`・`devbase project create <repo>` は、GitHub の URL か
@@ -1162,7 +1164,8 @@ OSS 化に伴う初回リリース。devbase は本バージョンより `devbas
 ### Removed
 - 「公式レジストリ」固定の概念を廃止。各レジストリは対等な扱いとなる。
 
-[Unreleased]: https://github.com/devbasex/devbase/compare/v4.1.1...HEAD
+[Unreleased]: https://github.com/devbasex/devbase/compare/v4.2.0...HEAD
+[4.2.0]: https://github.com/devbasex/devbase/compare/v4.1.1...v4.2.0
 [4.1.1]: https://github.com/devbasex/devbase/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/devbasex/devbase/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/devbasex/devbase/compare/v3.10.0...v4.0.0
