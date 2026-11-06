@@ -170,6 +170,20 @@ def _checked_name(name: str, what: str) -> str:
     return name
 
 
+def _project_name(name: Optional[str], repo: str) -> str:
+    """プロジェクトの名前を決める。``devbase up`` が Compose へ渡せる名前だけを返す
+
+    既定のリポジトリ名は利用者が選んだものではないので形を整え、``--name`` は変えずに止める。
+    """
+    project = _checked_name(name or repo, "プロジェクト")
+    if not name:
+        return scaffold.compose_project_name(project)
+    if not scaffold.is_compose_project_name(project):
+        raise RepositoryError(
+            f"プロジェクトの名前にできません: '{project}' ({scaffold.COMPOSE_NAME_HINT})")
+    return project
+
+
 def _require_clone(registry: PluginRegistry, repo: RegisteredRepository) -> None:
     """登録の clone があることを確かめる。無ければ何も書かずに止める (読むだけ)
 
@@ -406,7 +420,7 @@ def plan_project(
     """``project new`` の計画 (読むだけ)"""
     ref = GitHubRef.parse(value)
     gh.ensure_ready()
-    project = _checked_name(name or ref.repo, "プロジェクト")
+    project = _project_name(name, ref.repo)
     if gh.view_repo(ref) is None:
         raise RepositoryError(f"{ref.full_name} が見つからないか読めません")
     local = registry.get_projects_dir() / project

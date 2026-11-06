@@ -7,7 +7,9 @@ clone には利用者の変更があるので、どちらも一時の clone で�
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Dict, Optional
@@ -23,6 +25,8 @@ from .repo_manager import _run_git
 logger = get_logger("devbase.plugin.publish")
 
 _PR_BODY = "devbase の作成フローが足しました。"
+_BRANCH_UNSAFE = re.compile(r'\.\.|\.$|\.lock$')
+_BRANCH_DIGEST_LENGTH = 8
 
 
 class MergeFailed(RepositoryError):
@@ -34,6 +38,15 @@ class MergeFailed(RepositoryError):
 
 
 def branch_name(kind: str, name: str) -> str:
+    """作業ブランチの名前を返す。
+
+    名前の形は git のブランチ名より広く、``a..b``・``a.``・``a.lock`` も通る。これらは ``.`` を
+    ``-`` に置き換え、元の名前のハッシュを足す。違う名前が同じブランチにならず、同じ名前は
+    打ち直しても同じブランチになる。
+    """
+    if _BRANCH_UNSAFE.search(name):
+        digest = hashlib.sha256(name.encode()).hexdigest()[:_BRANCH_DIGEST_LENGTH]
+        name = f"{name.replace('.', '-')}-{digest}"
     return f"devbase/new-{kind}-{name}"
 
 

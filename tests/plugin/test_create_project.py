@@ -58,6 +58,34 @@ def test_name_outside_docker_rules_gets_a_valid_image(github, root, app, run_cli
     assert compose["services"]["dev"]["image"] == "app:latest"
 
 
+@pytest.mark.parametrize("repo, project", [
+    ("MyApp", "myapp"),
+    ("foo.github.io", "foo-github-io"),
+    ("a..b", "a-b"),
+])
+def test_default_name_follows_compose_rules(github, root, run_cli, repo, project):
+    github.add_repo(f"owner/{repo}", {"README.md": "x\n"}, permission="READ")
+    clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
+    assert run_cli("project", "new", f"owner/{repo}", "--yes") == 0
+
+    assert (clone / f"team-a/projects/{project}/project.yml").is_file()
+    assert (root / "projects" / project).exists()
+    assert not (root / "projects" / repo).exists()
+
+
+@pytest.mark.parametrize("name", ["MyApp", "my.app", "app..web", "app.", "team.lock"])
+def test_name_outside_compose_rules_stops_before_writing(
+        github, root, app, run_cli, caplog, name):
+    clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
+    before = _plugins_yml(root)
+    assert run_cli("project", "new", APP, "--name", name, "--yes") == 1
+
+    assert "小文字の英数字で始まり" in caplog.text
+    assert github.write_calls() == []
+    assert not (clone / f"team-a/projects/{name}").exists()
+    assert _plugins_yml(root) == before
+
+
 def test_project_is_added_and_reflected(github, root, app, run_cli):
     clone = _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     assert run_cli("project", "new", APP, "--yes") == 0

@@ -25,6 +25,11 @@ _EMPTY_LIST_VALUE = '[]'
 _IMAGE_SEPARATORS = re.compile(r'[._-]+')
 _VALID_IMAGE_SEPARATOR = re.compile(r'[._]|__|-+')
 _IMAGE_SEPARATOR_FALLBACK = '-'
+_COMPOSE_PROJECT_NAME = re.compile(r'[a-z0-9][a-z0-9_-]*')
+_COMPOSE_UNSAFE_CHARS = re.compile(r'[^a-z0-9_-]+')
+_COMPOSE_FALLBACK = '-'
+
+COMPOSE_NAME_HINT = "小文字の英数字で始まり、小文字の英数字・`-`・`_` だけからなる形"
 
 
 def _scalar(value: str) -> str:
@@ -57,11 +62,25 @@ def normal_plugin_path(path: str) -> str:
     return '' if normal == '.' else normal
 
 
+def is_compose_project_name(name: str) -> bool:
+    """Compose のプロジェクト名にできるか。``devbase up`` は名前をそのまま Compose へ渡す"""
+    return _COMPOSE_PROJECT_NAME.fullmatch(name) is not None
+
+
+def compose_project_name(name: str) -> str:
+    """名前の形に合う名前を Compose のプロジェクト名の形にする。
+
+    小文字にし、使えない文字の並びを ``-`` に置き換える。名前の形は英数字で始まるので、結果も
+    英数字で始まる。
+    """
+    return _COMPOSE_UNSAFE_CHARS.sub(_COMPOSE_FALLBACK, name.lower())
+
+
 def image_name(name: str) -> str:
     """プロジェクト名から Docker の参照として有効なイメージ名を作る。
 
-    名前の形は Docker より広く、``app-`` や ``app..web`` も通る。小文字にし、末尾の区切り文字を
-    落とし、2 つの英数字の間に置けない区切り文字の並びを ``-`` に置き換える。
+    Compose のプロジェクト名でも ``app-`` や ``app_-web`` は Docker の参照にならない。小文字にし、
+    末尾の区切り文字を落とし、2 つの英数字の間に置けない区切り文字の並びを ``-`` に置き換える。
     """
     def separator(match: re.Match) -> str:
         found = match.group()

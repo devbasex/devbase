@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -20,6 +21,24 @@ REGISTRY = {"registry.yml": "name: repo\nplugins: []\n"}
 @pytest.fixture
 def gh(github):
     return GhClient()
+
+
+@pytest.mark.parametrize("name", ["app", "a.b", "app-", "app..web", "app.", "app.lock", "a.lock."])
+def test_branch_name_is_a_valid_git_branch(name):
+    branch = publish.branch_name("plugin", name)
+    subprocess.run(["git", "check-ref-format", "--branch", branch], check=True,
+                   capture_output=True)
+
+
+def test_branch_name_keeps_valid_names():
+    assert publish.branch_name("plugin", "a.b") == "devbase/new-plugin-a.b"
+
+
+def test_branch_name_is_unique_and_stable_for_replaced_names():
+    names = ["a..b", "a.-b", "a-.b", "a--b", "a.b.", "a-b-"]
+    branches = [publish.branch_name("plugin", name) for name in names]
+    assert len(set(branches)) == len(names)
+    assert publish.branch_name("plugin", "a..b") == branches[0]
 
 
 def _temp_leftovers(tmp_path, monkeypatch):

@@ -43,6 +43,15 @@ def _assert_installed(root, name="team-a", source=URL):
     return plugin
 
 
+@pytest.mark.parametrize("name", ["app..web", "app.", "app.lock"])
+def test_name_outside_branch_rules_is_installed(github, root, registered, run_cli, name):
+    assert run_cli("plugin", "new", FULL, "--name", name, "--yes") == 0
+
+    assert github.prs()[0]["state"] == "MERGED"
+    assert name in _registry_names(github)
+    _assert_installed(root, name)
+
+
 def test_registered_repo_gets_a_plugin(github, root, registered, run_cli, capsys):
     assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 0
     pr = github.prs()[0]

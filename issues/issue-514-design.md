@@ -57,7 +57,7 @@
 | I6 | 全体 | 作成フローはコンテナを起動しない（`AGENTS.md` の P3: 利用者の環境の `devbase up` は人の承認が要る） | テストで止める |
 | I7 | プラグインリポジトリ | 既定ブランチへの直接の push は、空のリポジトリの最初のコミットだけである | テストで止める |
 | I8 | 手元の clone | 手元の clone の取り込みは早送りだけである | 早送りできなければ止める |
-| I9 | 全体 | グループ（`--group`・最多の値・TTY で聞いた値）は `validate_account_group` を、プラグインとプロジェクトの名前は `names.is_single_segment_name` を通してから計画へ入れる | 通らなければ何も変えず、理由を出して終了コード 1 で止める |
+| I9 | 全体 | グループ（`--group`・最多の値・TTY で聞いた値）は `validate_account_group` を、プラグインとプロジェクトの名前は `names.is_single_segment_name` を、プロジェクトの名前はさらに Compose のプロジェクト名の規則を通してから計画へ入れる（既定のリポジトリ名は規則の形へ整える） | 通らなければ何も変えず、理由を出して終了コード 1 で止める |
 
 ### ドメインイベント
 
@@ -274,10 +274,12 @@ graph TD
 | ファイル | 中身 |
 | --- | --- |
 | `project.yml` | `version: 1`・`scale: 1`・`open_editor: true`・`repos`（`owner`・`repo`） |
-| `compose.yml` | `containers/general` の `dev` 1 台。イメージ名は `<名前の小文字>:latest`。名前の形は Docker の参照より広いので、末尾の区切り文字を落とし、2 つの英数字の間に置けない区切り文字の並びを `-` にする（`app-` は `app:latest`、`app..web` は `app-web:latest`） |
+| `compose.yml` | `containers/general` の `dev` 1 台。イメージ名は `<名前>:latest`。プロジェクトの名前は Docker の参照より広いので、末尾の区切り文字を落とし、2 つの英数字の間に置けない区切り文字の並びを `-` にする（`app-` は `app:latest`、`app_-web` は `app-web:latest`） |
 | `env` | `DEVBASE_ACCOUNT_GROUP=<グループ>` |
 
-作業ブランチは `devbase/new-<kind>-<名前>`、PR の題は `devbase: <kind> <名前> を足す`。
+プロジェクトの名前は、名前の形に加えて Compose のプロジェクト名の規則（`[a-z0-9][a-z0-9_-]*`）に合わせる。`devbase up` が名前をそのまま `COMPOSE_PROJECT_NAME` へ渡すので、合わない名前は作成が 0 で終わっても起動で止まるためである。既定のリポジトリ名は小文字にし、使えない文字の並びを `-` に置き換える（`MyApp` は `myapp`、`foo.github.io` は `foo-github-io`）。`--name` で渡された合わない名前は、計画の確定の前に終了コード 1 で止める。
+
+作業ブランチは `devbase/new-<kind>-<名前>`、PR の題は `devbase: <kind> <名前> を足す`。名前の形は git のブランチ名より広いので、`..` を含むか `.`・`.lock` で終わる名前は、ブランチの `<名前>` の `.` を `-` に置き換えて元の名前の SHA-256 の先頭 8 文字を足す（`app..web` は `app--web-<8 文字>`）。違う名前が同じブランチにならず、同じ名前は打ち直しても同じブランチになる。
 
 ### 画面（`devbase list` のプラグインのメニュー）
 

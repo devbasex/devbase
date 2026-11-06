@@ -460,7 +460,7 @@ devbase project new <repo> [--plugin <名前>] [--group <名前>] [--name <名�
 | `repo` | はい | 対象の GitHub のリポジトリ（`owner/repo`・URL。[作成フロー](04-plugin.md#作成フローplugin-new--plugin-repo-new--project-new-に共通)） |
 | `--plugin` | いいえ | 入れ先のプラグイン |
 | `--group` | いいえ | アカウントグループ |
-| `--name` | いいえ | プロジェクトの名前（既定: リポジトリ名） |
+| `--name` | いいえ | プロジェクトの名前。小文字の英数字で始まり、小文字の英数字・`-`・`_` だけからなる形（Compose のプロジェクト名の規則）で、合わなければ何も変えずに終了コード 1 で止まります。既定はリポジトリ名を小文字にし、使えない文字の並びを `-` に置き換えたものです（`MyApp` は `myapp`、`foo.github.io` は `foo-github-io`） |
 | `--yes` | いいえ | 計画の確認を省く。端末が無いときは必須 |
 
 入れ先のプラグインの `projects/<名前>/` に `project.yml`・`compose.yml`・`env` を足す PR を作ってマージし、手元へ取り込んで `projects/` へ反映します。`<repo>` はプロジェクト名として解決されません。
