@@ -424,6 +424,7 @@ def execute(registry: PluginRegistry, gh: GhClient, plan: CreationPlan) -> None:
             ) from e
         raise
     _apply_locally(registry, plan)
+    logger.info("%s %s を足しました", plan.kind, plan.name)
 
 
 def _apply_locally(registry: PluginRegistry, plan: CreationPlan) -> None:
