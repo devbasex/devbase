@@ -73,7 +73,22 @@
 | E8 | 手元の clone へ取り込んだ | `_pull_ff_only` | 登録 |
 | E9 | `plugins.yml` へ登録し、`projects/` へ反映した | 既存の `add_repository`・`install_plugin`・`refresh_repository` | 利用者 |
 
-E6〜E9 の通り方は経路で変わる（「経路ごとの反映と登録」）。空のリポジトリは E6 の push が既定ブランチへの最初のコミットで、E7 を通らない。未登録のリポジトリには手元の clone が無いので、E8 を通らず E9 の `add_repository` が clone する。`registry.yml` がある未登録のリポジトリは E5〜E8 を通らず E9 だけを行う。
+E5〜E9 の通り方は、コマンドとリポジトリの状態の組で変わる（「経路ごとの反映と登録」）。未登録のリポジトリには手元の clone が無いので E8 を通らず、E9 の `add_repository` が clone する。
+
+| コマンド | リポジトリ | 通るイベント（E4 の後） |
+| --- | --- | --- |
+| `plugin repo new` | 無い | E5 → E6（最初のコミット）→ E9 |
+| `plugin repo new` | 空 | E6（最初のコミット）→ E9 |
+| `plugin repo new` | `registry.yml` が無い | E6 → E7 → E9 |
+| `plugin repo new` | `registry.yml` がある・未登録 | E9 |
+| `plugin new` | 登録済み | E6 → E7 → E8 → E9 |
+| `plugin new` | 無い | E5 → E6（最初のコミット）→ E6 → E7 → E9 |
+| `plugin new` | 空 | E6（最初のコミット）→ E6 → E7 → E9 |
+| `plugin new` | `registry.yml` が無い | E6 → E7 → E6 → E7 → E9 |
+| `plugin new` | `registry.yml` がある・未登録 | E6 → E7 → E9 |
+| `project new` | 入れ先のプラグインのリポジトリ（登録済み） | E6 → E7 → E8 → E9 |
+
+登録済みのリポジトリへの `plugin repo new` は E4 の前に 0 で終わり、どのイベントも通らない。
 
 ### 用語
 
@@ -105,7 +120,7 @@ E6〜E9 の通り方は経路で変わる（「経路ごとの反映と登録」
 | `lib/devbase/cli.py` | パーサ、`SUBCMD_MAP`、`repo_subcmds`、`project` の分岐、`_NO_SECRET_INJECTION` への `('project', 'new')` の追加 |
 | `etc/_devbase`・`etc/devbase-completion.bash` | シェル補完 |
 | `lib/devbase/tui/actions_plugin.py` | メニューの組み直しと 3 つの入口 |
-| `lib/devbase/plugin/repo_manager.py` | `_pull_ff_only` を足す。既存の関数は変えない |
+| `lib/devbase/plugin/repo_manager.py` | `_pull_ff_only` と `_find_registered`（URL の形によらず登録を探す）を足す。既存の関数は変えない |
 
 `bin/devbase` は変えない。`_PROJECT_NAME_SUBCOMMANDS` に `new` を足さないので、`project new owner/repo` は name 解決を通らない。
 
@@ -158,6 +173,16 @@ graph TD
 ### 経路ごとの反映と登録
 
 `plugin new` は未登録のリポジトリでも受け入れ条件 17 を守るため、プラグインの PR のマージまで登録しない。
+
+登録済みか未登録かは、計画の確定の前に `_find_registered` で決める。これは入力の URL と `plugins.yml` の全登録の `repo.url` を `_url_to_repos_dirname` の一致で比べ、見つけた登録を返す読むだけの関数である。`get_repository_by_url` の完全一致では、`git@` の形や `.git` の無い URL で登録したリポジトリが未登録に見え、プラグインの PR をマージした後に `add_repository` が登録済みとして拒否する。
+
+見つけた登録は計画に持ち、登録済みの経路の呼び出しには入力の URL ではなく登録の値を渡す。`install_plugin` の内部も `get_repository_by_url` の完全一致で登録を探すためである。
+
+| 呼び出し | 渡す値 |
+| --- | --- |
+| `_pull_ff_only` | 登録の `repo.local_path` の clone |
+| `refresh_repository` | 登録の `repo.name` |
+| `install_plugin` | `<repo.url>:<プラグイン名>`（登録の `repo.url`） |
 
 | コマンド | リポジトリ | 既定ブランチへの反映 | 登録と反映（反映の後に行う） |
 | --- | --- | --- | --- |
@@ -224,17 +249,22 @@ sequenceDiagram
     participant L as 手元
     U->>C: コマンド
     C->>G: 認証と権限（読むだけ）
+    C->>L: 登録の照合（読むだけ）
     C->>U: 作成の計画と確認
     U-->>C: 承認
     opt リポジトリが無い
         C->>G: repo create
     end
     alt 空のリポジトリ
-        C->>T: 浅い clone → ファイル → commit → 既定ブランチへ push
-    else registry.yml があり足すものが無い
-        Note over C,T: GitHub へ書かない
-    else それ以外
-        C->>T: 浅い clone → ブランチ → ファイル → commit → push
+        C->>T: 浅い clone → registry.yml → commit → 既定ブランチへ push
+    else registry.yml が無い
+        C->>T: 浅い clone → ブランチ → registry.yml → commit → push
+        C->>G: PR 作成 → マージ
+    else registry.yml がある
+        Note over C,T: リポジトリの分岐では GitHub へ書かない
+    end
+    opt plugin new・project new
+        C->>T: 浅い clone → ブランチ → プラグインかプロジェクトのファイル → commit → push
         C->>G: PR 作成 → マージ
     end
     opt 登録済みのリポジトリ
@@ -242,6 +272,8 @@ sequenceDiagram
     end
     C->>L: 登録・反映
 ```
+
+リポジトリの分岐の反映とプラグインの追加は別の浅い clone で順に行う（決定 8）。登録済みのリポジトリへの `plugin repo new` は登録の照合で分かるので、確認へ進まず 0 で終わる。
 
 ### 途中で止まったとき
 
@@ -323,6 +355,16 @@ TUI は `creator` の読むだけの関数（候補とグループの案）を�
 
 根拠: 根拠なし（MVV 版 1）
 
+### 決定 9: URL の形の違いでマージの後に止まらないため、登録の照合は `_url_to_repos_dirname` の一致で行う
+
+`repo_manager.py` に `_find_registered` を足し、計画の確定の前に登録を探す。見つけた登録の `repo.url`・`repo.name`・`repo.local_path` を後の呼び出しへ渡す（「経路ごとの反映と登録」）。比べ方は既存の `_reject_duplicate_registration` と同じで、`add_repository` が拒否するものを計画の段階で登録済みの経路へ入れる。
+
+採らなかった案: `get_repository_by_url` を URL の形の違いを吸収するよう変える。`install_plugin` などの既存の経路の振る舞いが変わる。
+
+採らなかった案: `add_repository` の拒否を受けてから登録済みとして続ける。既定ブランチへのマージの後に経路が変わり、計画で示した手順と違う動きになる。
+
+根拠: 根拠なし（MVV 版 1）
+
 ## テスト設計
 
 | 受け入れ条件・不変条件 | どの振る舞いで縛るか | どう壊したら落ちるべきか |
@@ -330,6 +372,8 @@ TUI は `creator` の読むだけの関数（候補とグループの案）を�
 | 1・2・3・4、I5、I7 | 分岐の表と経路の表の全行を、偽の `gh` と手元の bare リポジトリで実行し、作ったもの・PR・`plugins.yml` を見る。`plugins` が空の `registry.yml` も登録できる | 既定を公開にする・PR を飛ばす・権限なしで作る・プラグイン 0 件の登録を拒む |
 | 5 | `GitHubRef.parse` が 4 つの形で同じ owner/repo を返し、GitHub 以外を拒む | `.git` を外さない・別ホストを通す |
 | 6・7・8、I9 | プラグインのフローで `plugin.yml`・`registry.yml`・導入の状態を見る。未登録・重複名・形の誤りを含む | 登録の省略・重複の上書き・名前の形を見ない |
+| 6・7、決定 8 | 未登録のリポジトリへの `plugin new` を、無い・空・`registry.yml` が無い・ある の 4 状態で実行し、既定ブランチへの反映の順（リポジトリの分岐 → プラグインの PR → 登録）を見る | プラグインを最初のコミットや `registry.yml` の PR へまとめる・プラグインの PR の前に登録する |
+| 6・7、決定 9 | `git@` の形と `.git` の無い URL で登録したリポジトリへ、形の違う入力で `plugin new` を打つ。登録済みの経路を通って 0 で終わり、`plugins.yml` の `url` が変わらず、プラグインが導入される。同じ入力の `plugin repo new` は何もせず 0 で終わる | 完全一致で照合する・入力の URL を `install_plugin` へ渡す |
 | 9・12 | プロジェクトの 3 ファイルと `projects/<名前>` の反映を見る。読めないとき・重複のときは何も変わらない | ファイルの欠け・上書き |
 | 10 | 決定の規則の 4 段を候補の表で縛る | owner の絞り込みの省略・TTY なしで選ぶ |
 | 11、I9 | 最多の値・同数・値なし・`--group`。予約語など `validate_account_group` が弾く値は、どの出所でも何も書かず終了コード 1 になる | 同数で片方を選ぶ・グループの規則を通さず `env` へ書く |
