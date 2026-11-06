@@ -1,7 +1,8 @@
 """plugin カテゴリの TUI 操作フロー (PLAN31_2 PR4)。
 
-``devbase plugin`` の全サブコマンド (list/install/uninstall/update/info/sync/migrate)
-と ``plugin repo`` のサブ階層 (add/remove/list/refresh) を TUI から実行できるようにする。
+``devbase plugin`` の全サブコマンド (list/install/uninstall/update/info/sync/migrate/new)、
+``plugin repo`` のサブコマンド (new/add/remove/list/refresh) と ``project new`` を、
+用途で分けた 2 階層のメニューから実行できるようにする (#514)。
 引数は ``tui.menu`` の収集ヘルパで CLI parser と同じ属性値 (plan 2.3 契約表) を集め、
 ``tui.dispatch.dispatch_group`` 経由で既存ハンドラ ``cmd_plugin`` へ委譲する
 (ロジック二重実装なし)。
@@ -25,29 +26,47 @@ from devbase.tui.dispatch import dispatch_group
 
 logger = get_logger(__name__)
 
-# plugin サブコマンド (表示順 = ハイライト既定順)。閲覧系の list を先頭に置き、
-# Enter 連打で安全な一覧表示へ到達できるようにする。value は cmd_plugin の subcommand 名
-# (repo のみサブ階層メニューへの分岐)。--available は y/N で聞かず独立した
-# メニュー項目にする (非破壊操作の確認プロンプト廃止)。
-_PLUGIN_OPS: list[tuple[str, str]] = [
-    ("導入済み一覧 (list)", "list"),
-    ("利用可能一覧 (list --available)", "list-available"),
-    ("インストール (install)", "install"),
-    ("アンインストール (uninstall)", "uninstall"),
-    ("更新 (update)", "update"),
-    ("詳細表示 (info)", "info"),
-    ("プロジェクトリンク再同期 (sync)", "sync"),
-    ("レガシー構成の移行 (migrate)", "migrate"),
-    ("リポジトリ管理 (repo)", "repo"),
+# 第 1 階層は用途で分ける (表示順 = ハイライト既定順)。閲覧だけの「見る」を先頭に置き、
+# Enter 連打で安全な一覧表示へ到達できるようにする。
+_PLUGIN_GROUPS: list[tuple[str, str]] = [
+    ("見る", "view"),
+    ("新規追加", "new"),
+    ("導入・更新", "install-update"),
+    ("削除", "remove"),
+    ("保守", "maintain"),
 ]
 
-# plugin repo サブ階層 (表示順 = ハイライト既定順)。value は repo_command 名。
-_REPO_OPS: list[tuple[str, str]] = [
-    ("リポジトリ一覧 (list)", "list"),
-    ("リポジトリ登録 (add)", "add"),
-    ("リポジトリ削除 (remove)", "remove"),
-    ("リポジトリ更新 (refresh)", "refresh"),
-]
+# 第 2 階層。value は ``_OP_HANDLERS`` のキー。--available は y/N で聞かず独立した
+# メニュー項目にする (非破壊操作の確認プロンプト廃止)。
+_GROUP_OPS: dict[str, list[tuple[str, str]]] = {
+    "view": [
+        ("導入済み一覧 (list)", "list"),
+        ("利用可能一覧 (list --available)", "list-available"),
+        ("詳細表示 (info)", "info"),
+        ("リポジトリ一覧 (repo list)", "repo-list"),
+    ],
+    "new": [
+        ("プロジェクト (project new)", "new-project"),
+        ("プラグイン (plugin new)", "new-plugin"),
+        ("リポジトリ (plugin repo new)", "new-repo"),
+    ],
+    "install-update": [
+        ("インストール (install)", "install"),
+        ("更新 (update)", "update"),
+        ("リポジトリ登録 (repo add)", "repo-add"),
+        ("リポジトリ更新 (repo refresh)", "repo-refresh"),
+    ],
+    "remove": [
+        ("アンインストール (uninstall)", "uninstall"),
+        ("リポジトリ削除 (repo remove)", "repo-remove"),
+    ],
+    "maintain": [
+        ("プロジェクトリンク再同期 (sync)", "sync"),
+        ("レガシー構成の移行 (migrate)", "migrate"),
+    ],
+}
+
+_NEW_REPOSITORY_PROMPT = "GitHub のリポジトリ (URL か owner/repo)"
 
 # 中止系番兵は flow と同一オブジェクトを再公開する (呼び出し側・テストの契約)。
 _ARG_CANCEL = flow.ARG_CANCEL
@@ -128,23 +147,22 @@ def _select_repository(devbase_root: Path, message: str, *,
 # ---------------------------------------------------------------------------
 
 def _select_operation():
-    """plugin 操作を選ぶサブメニュー。
+    """第 1 階層 (用途) を選ぶメニュー。
 
-    戻り値: サブコマンド文字列 / ``MENU_BACK`` (Esc・← → トップへ戻る) / ``None``
-    (Ctrl-C 中止)。
+    戻り値: 用途の値 / ``MENU_BACK`` (Esc・← → トップへ戻る) / ``None`` (Ctrl-C 中止)。
     """
     return menu.select(f"plugin 操作を選択 {menu.HINT_BACK}:",
-                       list(_PLUGIN_OPS), back=True, search=False)
+                       list(_PLUGIN_GROUPS), back=True, search=False)
 
 
-def _select_repo_operation():
-    """plugin repo 操作を選ぶサブ階層メニュー。
+def _select_group_operation(group: str):
+    """第 2 階層 (用途の中の操作) を選ぶメニュー。
 
-    戻り値: repo_command 文字列 / ``MENU_BACK`` (Esc・← → plugin メニューへ戻る) /
-    ``None`` (Ctrl-C 中止)。
+    戻り値: 操作の値 / ``MENU_BACK`` (Esc・← → 第 1 階層へ戻る) / ``None`` (Ctrl-C 中止)。
     """
-    return menu.select(f"リポジトリ操作を選択 {menu.HINT_BACK}:",
-                       list(_REPO_OPS), back=True, search=False)
+    label = next(text for text, value in _PLUGIN_GROUPS if value == group)
+    return menu.select(f"{label}: 操作を選択 {menu.HINT_BACK}:",
+                       list(_GROUP_OPS[group]), back=True, search=False)
 
 
 # ---------------------------------------------------------------------------
@@ -178,36 +196,6 @@ def _op_info(devbase_root: Path):
     name = flow.need(_select_installed_plugin(
         devbase_root, "詳細を表示する plugin を選択"))
     return _dispatch(devbase_root, "info", name=name)
-
-
-_OP_HANDLERS = {
-    # list 系は引数収集なしで即実行 (--available はメニュー項目で分岐)。
-    "list": lambda root: _dispatch(root, "list", available=False),
-    "list-available": lambda root: _dispatch(root, "list", available=True),
-    "install": _op_install,
-    "uninstall": _op_uninstall,
-    "update": _op_update,
-    "info": _op_info,
-    # sync / migrate は引数なし (plan 2.3: 属性なし)。即実行。
-    "sync": lambda root: _dispatch(root, "sync"),
-    "migrate": lambda root: _dispatch(root, "migrate"),
-}
-
-
-@flow.collect_args
-def _run_operation(devbase_root: Path, op: str):
-    """選択された plugin 操作の引数を収集して ``cmd_plugin`` へ委譲する。
-
-    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc・確認拒否で引数収集を
-    中止 = サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
-    破壊的な uninstall は実行前に確認する (plan 3.4)。
-    """
-    handler = _OP_HANDLERS.get(op)
-    if handler is None:
-        # 到達しない (メニュー値は _PLUGIN_OPS に限定される)。保守的に no-op。
-        logger.error("未知の操作です: %s", op)
-        raise flow.BackOut
-    return handler(devbase_root)
 
 
 def _op_repo_add(devbase_root: Path):
@@ -263,39 +251,157 @@ def _run_repo_operation(devbase_root: Path, op: str):
 
 
 # ---------------------------------------------------------------------------
+# 新規追加: 値を集めて計画を確かめ、CLI のハンドラへ --yes 相当で渡す (#514 の決定 5)
+# ---------------------------------------------------------------------------
+
+def _creation_context(devbase_root: Path):
+    from devbase.plugin.github import GhClient
+    from devbase.plugin.registry import PluginRegistry
+
+    return PluginRegistry(Path(devbase_root)), GhClient()
+
+
+def _confirm_plan(plan) -> None:
+    """作成の計画を示して確認する。拒否 / Esc なら ``BackOut`` で戻る。"""
+    print(plan.describe())
+    flow.confirm_or_back("この計画で進めますか?")
+
+
+def _op_new_repo(devbase_root: Path):
+    from devbase.plugin import creator
+
+    repo = flow.need(menu.text(_NEW_REPOSITORY_PROMPT, allow_empty=False))
+    public = flow.need(menu.confirm(
+        "新しく作るときに公開しますか (--public)?", default=False))
+    registry, gh = _creation_context(devbase_root)
+    try:
+        plan = creator.plan_repo(registry, gh, repo, public=public)
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    if not plan.noop_reason:
+        _confirm_plan(plan)
+    return _dispatch(devbase_root, "repo", repo_command="new",
+                     repo=repo, public=public, yes=True)
+
+
+def _op_new_plugin(devbase_root: Path):
+    from devbase.plugin import creator
+
+    repo = flow.need(menu.text(_NEW_REPOSITORY_PROMPT, allow_empty=False))
+    name = flow.need(menu.text("プラグインの名前 (空でリポジトリ名)", allow_empty=True)) or None
+    registry, gh = _creation_context(devbase_root)
+    try:
+        plan = creator.plan_plugin(registry, gh, repo, name=name)
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    _confirm_plan(plan)
+    return _dispatch(devbase_root, "new", repo=repo, name=name, public=False, yes=True)
+
+
+def _select_target(candidates):
+    """入れ先の候補から 1 件選ばせる。候補が 1 件なら選択を出さない。"""
+    if len(candidates) == 1:
+        return candidates[0].plugin
+    choices = [(c.label, c.plugin) for c in candidates]
+    return flow.back_as_cancel(menu.select(
+        f"入れ先のプラグインを選択 {menu.HINT_BACK}:", choices, back=True, search=False))
+
+
+def _op_new_project(devbase_root: Path):
+    from devbase.commands.project import cmd_project_new
+    from devbase.plugin import creator
+    from devbase.plugin.github import GitHubRef
+
+    repo = flow.need(menu.text(_NEW_REPOSITORY_PROMPT, allow_empty=False))
+    name = flow.need(menu.text("プロジェクトの名前 (空でリポジトリ名)", allow_empty=True)) or None
+    registry, gh = _creation_context(devbase_root)
+    try:
+        ref = GitHubRef.parse(repo)
+        gh.ensure_ready()
+        candidates = creator.plugin_candidates(registry, gh, ref)
+        if not candidates:
+            logger.error("入れ先のプラグインがありません。push できるプラグインを導入してください")
+            return 1
+        plugin = flow.need(_select_target(candidates))
+        target = next(c for c in candidates if c.plugin == plugin)
+        group = flow.need(menu.text("アカウントグループ",
+                                    default=creator.suggest_group(registry, target),
+                                    allow_empty=False))
+        plan = creator.plan_project(registry, gh, repo, plugin=plugin, group=group, name=name)
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+    _confirm_plan(plan)
+    return dispatch_group(cmd_project_new, devbase_root, "new", repo=repo, name=name,
+                          plugin=plugin, group=group, yes=True)
+
+
+_OP_HANDLERS = {
+    # list 系は引数収集なしで即実行 (--available はメニュー項目で分岐)。
+    "list": lambda root: _dispatch(root, "list", available=False),
+    "list-available": lambda root: _dispatch(root, "list", available=True),
+    "install": _op_install,
+    "uninstall": _op_uninstall,
+    "update": _op_update,
+    "info": _op_info,
+    # sync / migrate は引数なし (plan 2.3: 属性なし)。即実行。
+    "sync": lambda root: _dispatch(root, "sync"),
+    "migrate": lambda root: _dispatch(root, "migrate"),
+    "new-project": _op_new_project,
+    "new-plugin": _op_new_plugin,
+    "new-repo": _op_new_repo,
+    "repo-list": lambda root: _run_repo_operation(root, "list"),
+    "repo-add": lambda root: _run_repo_operation(root, "add"),
+    "repo-remove": lambda root: _run_repo_operation(root, "remove"),
+    "repo-refresh": lambda root: _run_repo_operation(root, "refresh"),
+}
+
+
+@flow.collect_args
+def _run_operation(devbase_root: Path, op: str):
+    """選択された plugin 操作の引数を収集して ``cmd_plugin`` へ委譲する。
+
+    戻り値: dispatch の rc (``int``) / ``_ARG_CANCEL`` (Esc・確認拒否で引数収集を
+    中止 = サブメニューへ戻る) / ``None`` (選択・入力中の Ctrl-C → 全体中止)。
+    破壊的な uninstall は実行前に確認する (plan 3.4)。
+    """
+    handler = _OP_HANDLERS.get(op)
+    if handler is None:
+        # 到達しない (メニュー値は _GROUP_OPS に限定される)。保守的に no-op。
+        logger.error("未知の操作です: %s", op)
+        raise flow.BackOut
+    return handler(devbase_root)
+
+
+# ---------------------------------------------------------------------------
 # メニューループ
 # ---------------------------------------------------------------------------
 
-def _repo_menu(devbase_root: Path):
-    """plugin repo のサブ階層メニューを回す。
+def _group_menu(devbase_root: Path, group: str):
+    """用途のメニューを回す。
 
-    戻り値 (``flow.menu_loop`` のプロトコル): ``menu.MENU_BACK`` (Esc・← で plugin
-    メニューへ戻る) / ``None`` (Ctrl-C 全体中止)。操作実行後は (出力確認の一時停止
-    後) サブ階層メニューに留まり、引数収集を中止 (``_ARG_CANCEL``) した場合も再表示する。
+    戻り値 (``flow.menu_loop`` のプロトコル): ``menu.MENU_BACK`` (Esc・← で第 1 階層へ
+    戻る) / ``None`` (Ctrl-C 全体中止)。操作の実行後は (出力確認の一時停止後) 用途の
+    メニューに留まり、引数収集を中止 (``_ARG_CANCEL``) した場合も再表示する。
     """
-    return flow.menu_loop(_select_repo_operation,
-                          lambda op: _run_repo_operation(devbase_root, op))
+    return flow.menu_loop(lambda: _select_group_operation(group),
+                          lambda op: _run_operation(devbase_root, op))
 
 
 def run(devbase_root: Path):
-    """プラグイン操作カテゴリ。操作選択 → 引数収集 → ``cmd_plugin`` へ委譲。
+    """プラグイン操作カテゴリ。用途 → 操作 → 引数収集 → ``cmd_plugin`` へ委譲。
 
     戻り値プロトコル (トップループが ``is`` 同一性で判定する。actions_project と同じ):
-    - ``menu.MENU_BACK``: plugin メニューで Esc/← (トップメニューへ戻る)。操作を
-      実行しても (出力確認の一時停止後) plugin メニューに留まり、Esc/← で初めて
-      トップへ戻る。
+    - ``menu.MENU_BACK``: 第 1 階層で Esc/← (トップメニューへ戻る)。
     - ``None``: Ctrl-C による全体中止。
 
-    repo はサブ階層メニュー (``_repo_menu``) へ分岐する。repo 側も実行後はそこに
-    留まり、Esc/← (``MENU_BACK``) で plugin メニューへ戻る (``_ARG_CANCEL`` 相当に
-    読み替えて再表示する)。
+    用途のメニューは自身で操作を完結し、Esc/← (``MENU_BACK``) で戻ったら第 1 階層を
+    再表示する (``_ARG_CANCEL`` 相当に読み替える)。
     """
-    def _run(op):
-        if op == "repo":
-            rc = _repo_menu(devbase_root)
-            # repo 階層は自身で操作を完結する。Esc/← (MENU_BACK) で戻ったら plugin
-            # メニューを再表示し、Ctrl-C (None) はそのまま全体中止へ伝搬する。
-            return _ARG_CANCEL if rc is menu.MENU_BACK else rc
-        return _run_operation(devbase_root, op)
+    def _run(group):
+        rc = _group_menu(devbase_root, group)
+        return _ARG_CANCEL if rc is menu.MENU_BACK else rc
 
     return flow.menu_loop(_select_operation, _run)

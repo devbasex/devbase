@@ -58,13 +58,14 @@ GROUP_ALIASES = {
 # Subcommand map for prefix resolution: {(aliases...): [subcmds]}
 SUBCMD_MAP = {
     ('project',):        ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild', 'list',
-                          'profile', 'open', 'post-start'],
+                          'profile', 'open', 'post-start', 'new'],
     ('container', 'ct'): ['up', 'down', 'ps', 'login', 'logs', 'scale', 'build', 'rebuild',
                           'profile', 'open'],
     ('env',):            ['init', 'sync', 'list', 'set', 'get', 'delete', 'edit', 'project', 'keygen',
                           'exec', 'token', 'encrypt', 'decrypt', 'rekey', 'doctor',
                           'export', 'import', 'backend'],
-    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate'],
+    ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate',
+                          'new'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
 }
 
@@ -344,6 +345,17 @@ def _add_project_parser(subparsers):
     # `list` は lifecycle ではなく一覧表示 (commands/project.py)。name positional は
     # 取らない (wrapper の _PROJECT_NAME_SUBCOMMANDS にも含めない)。
     _add_list_subparser(pj_sub)
+
+    # `new` はプラグインへプロジェクトを足す作成フロー (#514)。lifecycle ではなく、引数は
+    # GitHub のリポジトリなので wrapper の _PROJECT_NAME_SUBCOMMANDS には含めない。
+    pj_new = pj_sub.add_parser(
+        'new', help='Add a project for a GitHub repository to a plugin (does not start it)')
+    _add_new_target_arg(pj_new)
+    pj_new.add_argument('--plugin', default=None, help='Plugin to add the project to')
+    pj_new.add_argument('--group', default=None, help='Account group of the project')
+    pj_new.add_argument('--name', default=None,
+                        help='Project name (default: the repository name)')
+    _add_yes_arg(pj_new)
 
     # `migrate-config` は旧 env 形式から project.yml への変換 (PLAN32)。lifecycle
     # ではないため wrapper の _PROJECT_NAME_SUBCOMMANDS には含めない。
@@ -669,6 +681,17 @@ def _add_env_import_parser(env_sub):
                             help='Keep only the last N backup directories (default: 10, 0 to disable)')
 
 
+def _add_new_target_arg(parser):
+    """作成フロー (#514) の共通の引数。GitHub のリポジトリを 1 つ取る。"""
+    parser.add_argument('repo', help='GitHub URL or owner/repo')
+
+
+def _add_yes_arg(parser):
+    """作成フロー (#514) の確認を省く ``--yes``。TTY が無いときは必須。"""
+    parser.add_argument('--yes', action='store_true',
+                        help='Proceed without confirming the plan (required without a TTY)')
+
+
 def _add_plugin_parser(subparsers):
     """Plugin group parser"""
     pl_parser = subparsers.add_parser('plugin', aliases=['pl'],
@@ -700,9 +723,25 @@ def _add_plugin_parser(subparsers):
     pl_sub.add_parser('migrate',
                       help='Migrate legacy plugins/ installs to repos/ clones')
 
+    p_new = pl_sub.add_parser(
+        'new', help='Add a new plugin to a repository on GitHub and install it')
+    _add_new_target_arg(p_new)
+    p_new.add_argument('--name', default=None,
+                       help='Plugin name (default: the repository name)')
+    p_new.add_argument('--public', action='store_true',
+                       help='Make the repository public when it is created (default: private)')
+    _add_yes_arg(p_new)
+
     # Plugin repo sub-subcommands
     pl_repo = pl_sub.add_parser('repo', help='Manage plugin repositories')
     pl_repo_sub = pl_repo.add_subparsers(dest='repo_command')
+
+    r_new = pl_repo_sub.add_parser(
+        'new', help='Create (if needed) and register a plugin repository on GitHub')
+    _add_new_target_arg(r_new)
+    r_new.add_argument('--public', action='store_true',
+                       help='Make the repository public when it is created (default: private)')
+    _add_yes_arg(r_new)
 
     r_add = pl_repo_sub.add_parser('add', help='Register a repository')
     r_add.add_argument('url', help='Repository URL or GitHub shorthand')
@@ -882,7 +921,7 @@ def _expand_argv():
     commands = ['init', 'status', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
                 'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'open', 'list',
                 'help']
-    repo_subcmds = ['add', 'remove', 'list', 'refresh']
+    repo_subcmds = ['new', 'add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):
         sys.argv[1] = _resolve_prefix(sys.argv[1], commands, TOP_PREFIX_PREFERENCES)
@@ -942,6 +981,8 @@ _NO_SECRET_INJECTION = frozenset({
     # コンテナの bao へ token を届けるだけで、機密の値は要らない。注入するとサーバへの
     # 往復が増える (PLAN54)。
     ('env', 'token'),
+    # プラグインへファイルを足すだけで機密を使わない。lifecycle の分岐より先に抜ける (#514)。
+    ('project', 'new'),
 })
 
 
@@ -1092,6 +1133,10 @@ def _dispatch(cmd, args):
             from devbase.commands.project import cmd_project_list
             return cmd_project_list(devbase_root, args)
         # `project migrate-config` も lifecycle ではなく projects/ 全体の変換。
+        if getattr(args, 'subcommand', None) == 'new':
+            devbase_root = _require_devbase_root()
+            from devbase.commands.project import cmd_project_new
+            return cmd_project_new(devbase_root, args)
         if getattr(args, 'subcommand', None) == 'migrate-config':
             devbase_root = _require_devbase_root()
             from devbase.commands.project import cmd_project_migrate_config

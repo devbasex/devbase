@@ -447,6 +447,34 @@ devbase rebuild [name]
 |-----------|------|------|
 | `name` | いいえ | 対象プロジェクト名（省略時はカレント） |
 
+## `devbase project new`
+
+GitHub のリポジトリのプロジェクトをプラグインへ足し、手元へ反映します。コンテナは起動しません。
+
+```
+devbase project new <repo> [--plugin <名前>] [--group <名前>] [--name <名前>] [--yes]
+```
+
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| `repo` | はい | 対象の GitHub のリポジトリ（`owner/repo`・URL。[作成フロー](04-plugin.md#作成フローplugin-new--plugin-repo-new--project-new-に共通)） |
+| `--plugin` | いいえ | 入れ先のプラグイン |
+| `--group` | いいえ | アカウントグループ |
+| `--name` | いいえ | プロジェクトの名前（既定: リポジトリ名） |
+| `--yes` | いいえ | 計画の確認を省く。端末が無いときは必須 |
+
+入れ先のプラグインの `projects/<名前>/` に `project.yml`・`compose.yml`・`env` を足す PR を作ってマージし、手元へ取り込んで `projects/` へ反映します。`<repo>` はプロジェクト名として解決されません。
+
+入れ先のプラグインは次の順で決まります。
+
+1. `--plugin` があればそれを使います（導入済みで push できることを確かめます）
+2. 無ければ、導入済みで push できるプラグインを候補にし、対象と同じ owner の候補があれば、それに絞ります
+3. 候補が 1 件ならそれを計画に示します。複数なら端末で選びます。端末が無ければ候補を出して終了コード 1 で止まります。候補が 0 件のときも終了コード 1 で止まります
+
+アカウントグループは、`--group`、入れ先の既存プロジェクトの最多の値の順で決まります。最多が同数か値が無いときは端末で聞き、端末が無ければ終了コード 1 で止まります。どの出所の値も `DEVBASE_ACCOUNT_GROUP` の規則（`default` などの予約語は使えません）を通します。
+
+対象のリポジトリを読めないとき、同じ名前のプロジェクトが `projects/` か入れ先にあるときは、何も変えずに終了コード 1 で止まります。
+
 ## `devbase project list`
 
 `$DEVBASE_ROOT/projects/` 配下のプロジェクトを `NAME` / `PLUGIN` / `STATUS` の一覧で
@@ -494,16 +522,28 @@ build / rebuild を選べます。先頭（Enter 1 回で決まる位置）は *
 | カテゴリ | 選べる操作 |
 |---------|-----------|
 | 環境変数 | キーの一覧と編集 / sync / init / OpenBao の接続設定 |
-| プラグイン | 導入済み一覧 / 利用可能一覧 / install / uninstall / update / info / sync / migrate / repo 管理 |
+| プラグイン | 用途で分けたメニューから選びます（下の表） |
 | スナップショット | list / create / restore / copy / delete / rotate |
 | ステータス | 環境全体の状態を表示（`devbase status` 相当） |
 
+プラグインのメニューは第 1 階層が用途で、各項目の中に操作があります。
+
+| 用途 | 選べる操作 |
+|------|-----------|
+| 見る | 導入済み一覧 / 利用可能一覧 / 詳細 / リポジトリ一覧 |
+| 新規追加 | プロジェクト / プラグイン / リポジトリ |
+| 導入・更新 | インストール / 更新 / リポジトリ登録 / リポジトリ更新 |
+| 削除 | アンインストール / リポジトリ削除 |
+| 保守 | リンクの再同期 / レガシー構成の移行 |
+
+新規追加は、CLI の `project new`・`plugin new`・`plugin repo new` と同じ値を順に聞きます。入れ先のプラグインは候補が 2 件以上のときに選択肢で出し、グループは入れ先の案を既定値にします。最後に作成の計画を示して確認します。
+
 - 確認プロンプト (y/N) が出るのは破壊的操作（plugin uninstall / plugin repo remove /
-  snapshot restore / snapshot delete / 環境変数のキーの削除）のみで、その他は CLI 既定値で即実行します
+  snapshot restore / snapshot delete / 環境変数のキーの削除）と新規追加の計画だけで、その他は CLI 既定値で即実行します
 - 操作の出力後は Enter キーで一覧へ戻ります（出力が流れて読めなくなるのを防ぐため）
 - 環境変数の「キーの一覧と編集」と「OpenBao の接続設定」は [環境変数の TUI](03-env.md#tui-でのキーの編集と-openbao-の接続設定) を参照してください
 - TUI が提供しない細かいオプション（`env get/export/import`、
-  `plugin install --link/--all`、`snapshot create --full`、`logs --follow` 等）は
+  `plugin install --link/--all`、`plugin new --public`、`snapshot create --full`、`logs --follow` 等）は
   CLI を使用してください
 - questionary 未導入時は従来の番号入力（選択 → up）にフォールバックします
 

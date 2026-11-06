@@ -179,6 +179,35 @@ def _git_pull(repo_dir: Path) -> None:
         )
 
 
+def _pull_ff_only(repo_dir: Path) -> None:
+    """既定ブランチの clone を早送りだけで取り込む (#514 の I4・I8)。
+
+    既定ブランチ以外・detached HEAD・分岐した clone・作業ツリーの変更とぶつかる取り込みは
+    何も変えずに止める。既定ブランチは clone の ``origin/HEAD`` で決める。
+
+    Raises:
+        RepositoryError: 早送りで取り込めないとき
+    """
+    current = _run_git(repo_dir, 'branch', '--show-current').stdout.strip()
+    head = _run_git(repo_dir, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD')
+    default = head.stdout.strip().split('/', 1)[-1] if head.returncode == 0 else ''
+    if not current or (default and current != default):
+        raise RepositoryError(
+            f"{repo_dir} は既定ブランチ {default or '(不明)'} ではありません "
+            f"(今: {current or 'detached HEAD'})。\n"
+            f"確かめる: git -C {repo_dir} status"
+        )
+    if _run_git(repo_dir, 'rev-parse', '--abbrev-ref', '@{u}').returncode != 0:
+        raise RepositoryError(str(_missing_upstream_error(repo_dir)))
+
+    result = _run_git(repo_dir, 'pull', '--ff-only')
+    if result.returncode != 0:
+        raise RepositoryError(
+            f"{repo_dir} を早送りで取り込めません: {result.stderr.strip()}\n"
+            f"確かめる: git -C {repo_dir} status"
+        )
+
+
 def _log_available_plugins(
     registry: PluginRegistry, plugins: list[AvailablePlugin],
 ) -> None:
@@ -218,6 +247,22 @@ def _reject_duplicate_registration(registry: PluginRegistry, repo_url: str) -> N
                 "Both SSH and HTTPS URLs resolve to the same repository.\n"
                 "Use 'devbase plugin repo refresh' to update the existing entry."
             )
+
+
+def _find_registered(
+    registry: PluginRegistry, url: str,
+) -> Optional[RegisteredRepository]:
+    """URL の形 (SSH・HTTPS・``.git`` の有無) によらず登録を探す (読むだけ。#514 の決定 9)。
+
+    比べ方は ``_reject_duplicate_registration`` と同じで、``add_repository`` が拒否する
+    ものをここで見つける。
+    """
+    dirname = _url_to_repos_dirname(url)
+    return next(
+        (repo for repo in registry.list_repositories()
+         if _url_to_repos_dirname(repo.url) == dirname),
+        None,
+    )
 
 
 def _resolve_new_repo_name(
