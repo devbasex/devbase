@@ -119,10 +119,18 @@ def test_no_push_stops_without_writing(github, root, run_cli, caplog):
     assert FULL in caplog.text
 
 
-def test_absent_and_cannot_create_stops(github, root, run_cli):
-    github.add_org("owner", role="member", can_create=False)
+def test_absent_and_not_a_member_stops(github, root, run_cli):
     assert run_cli("plugin", "repo", "new", FULL, "--yes") == 1
     assert github.write_calls() == []
+    assert not github.exists(FULL)
+    assert _plugins_yml(root) is None
+
+
+def test_org_forbids_creation_stops_at_create_with_gh_output(github, root, run_cli, caplog):
+    """非管理者には組織の設定が返らないので、gh repo create の失敗の出力で止まる。"""
+    github.add_org("owner", role="member", can_create=False)
+    assert run_cli("plugin", "repo", "new", FULL, "--yes") == 1
+    assert "cannot create repositories" in caplog.text
     assert not github.exists(FULL)
     assert _plugins_yml(root) is None
 

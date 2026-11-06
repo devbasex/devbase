@@ -206,7 +206,8 @@ graph TD
 - push できるのは `viewerPermission` が `ADMIN`・`MAINTAIN`・`WRITE` のとき
 - owner に作れるのは次のどちらかのとき:
   - owner が `gh api user` の `login` と同じである
-  - `gh api user/memberships/orgs/<owner>` の `state` が `active` で、`role` が `admin` か、組織の `members_can_create_repositories` が真である
+  - `gh api user/memberships/orgs/<owner>` の `state` が `active` で、`role` が `admin` か、組織の `members_can_create_repositories` が偽でない
+  - `members_can_create_repositories` は組織の owner にしか返らない。値が無いときは判定できないので計画へ進め、作れなければ `gh repo create` の出力を示して終了する（書き込みは起きない）
 - 読めない private のリポジトリは「無い」と同じに見える。`gh repo create` が失敗するので、その出力を示して終了する
 
 ### 経路ごとの反映と登録
@@ -222,6 +223,7 @@ graph TD
 | `_pull_ff_only` | 登録の `repo.local_path` の clone |
 | `refresh_repository` | 登録の `repo.name` |
 | `install_plugin` | `<repo.url>:<プラグイン名>`（登録の `repo.url`） |
+| 一時の clone と push | 登録の `repo.url`（SSH の認証だけの利用者が https で止まらない） |
 
 `plugin new` と `project new` は、計画の確定の前に、登録の clone を確かめる。対象は `plugin new` では `_find_registered` が見つけた登録、`project new` では入れ先のプラグインの登録である。
 
@@ -234,6 +236,12 @@ graph TD
 - **空のまま進めない理由**: `devbase_root / ""` は devbase 本体を指す。`_pull_ff_only` が本体の clone を取り込むか、続く `refresh_repository` の拒否で既定ブランチへのマージの後に止まる
 - **案内**: `devbase plugin repo remove <repo.name>` の後に `devbase plugin repo add <repo.url>` を打つ。`repo remove` はそのリポジトリから導入したプラグインもアンインストールするので、`devbase plugin install` を打ち直すことも案内に書く
 - **`plugin repo new` は確かめない**: 登録済みの経路は clone に触らないので、`local_path` が空でも push できれば何もせず 0 で終わる
+
+`project new` は、計画の確定の前に、入れ先のプラグインの登録の `path` を既定ブランチの `registry.yml` と比べる。項目が無いか違うときは、GitHub にも手元にも書かず終了コード 1 で止まり、`devbase plugin repo refresh <repo.name>` を案内する。古い `path` へマージすると、続く取り込みが新しい `path` を登録し、足したプロジェクトが `projects/` に現れないまま 0 で終わるためである。
+
+一時の clone へ書くパスは、symlink と `..` を解決して clone の中に収まることを確かめ、外を指すものがあれば 1 ファイルも書かずに止まる。clone の中身は他人が書いたもので、書き込みが利用者の手元のファイルへ届かないようにする。
+
+登録済みの経路の `_pull_ff_only` の前に、導入済みのプラグインのプロジェクト一覧を控え、`refresh_repository` へ渡す。取り込みにプラグインの改名や移動が入っていても、移行先を見つけられる。
 
 | コマンド | リポジトリ | 既定ブランチへの反映 | 登録と反映（反映の後に行う） |
 | --- | --- | --- | --- |
@@ -334,6 +342,7 @@ sequenceDiagram
 | push | リポジトリを作った後なら、そのリポジトリ | 同じコマンドの再実行 |
 | 同じブランチが既にある | 既存のブランチと PR | 開いている PR の URL |
 | マージ | PR とブランチ | PR の URL。マージの後に打つコマンド（`plugin repo add`・`plugin repo refresh`・`plugin install`） |
+| `plugin new` の `registry.yml` の PR | PR とブランチ。プラグインの PR はまだ無い。`plugins.yml` は元のまま | PR の URL。この PR をマージした後に同じ `plugin new` を打ち直す案内 |
 | 未登録のリポジトリへの `plugin new` のプラグインの PR | 先に反映した最初のコミットか `registry.yml` は既定ブランチに残る。`plugins.yml` は元のまま | 上の行に同じ |
 | 取り込み | マージ済み。手元は元のまま | 原因と `git -C <clone> status`、続けて打つコマンド |
 | 登録 | マージと取り込み済み | 既存のコマンドのエラーと、続けて打つコマンド |
@@ -434,7 +443,7 @@ TUI は `creator` の読むだけの関数（候補とグループの案）を�
 
 ### 決定 11: トークンをアプリで扱わないため、GitHub の操作は `gh` に任せる
 
-権限の確認・リポジトリの作成・PR・マージを `gh` の呼び出しで行う。認証は利用者の `gh` の設定に任せる。
+権限の確認・リポジトリの作成・PR・マージを `gh` の呼び出しで行う。認証は利用者の `gh` の設定に任せる。機密の `GH_TOKEN` が環境変数に載ると `gh` がそのトークンで動くので、3 つのコマンドは機密を注入せず、TUI は `gh` を呼ぶ前に注入を取り除く。
 
 採らなかった案: PyGithub を使う。トークンをアプリが受け取ることになる。
 

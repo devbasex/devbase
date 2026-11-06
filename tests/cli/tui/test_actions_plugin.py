@@ -826,3 +826,13 @@ def test_select_repository_empty_is_cancel(monkeypatch, tmp_path):
     assert actions_plugin._select_repository(tmp_path, "選択") \
         is actions_plugin._ARG_CANCEL
     assert selects == []
+
+
+def test_creation_drops_injected_secrets_before_gh(monkeypatch, tmp_path):
+    """TUI は起動時の注入が載ったまま動くので、gh を呼ぶ前に落とす (#514 の決定 11)。"""
+    from devbase.env import runtime
+
+    cleared = []
+    monkeypatch.setattr(runtime, "clear_injected", lambda: cleared.append(True))
+    actions_plugin._creation_context(tmp_path)
+    assert cleared == [True]

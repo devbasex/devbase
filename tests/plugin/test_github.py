@@ -145,6 +145,8 @@ def test_view_repo_empty_has_no_default_branch(client):
      '{"members_can_create_repositories": true}', True),
     ("team-a", '{"state": "active", "role": "member"}',
      '{"members_can_create_repositories": false}', False),
+    # 値は組織の owner にしか返らない。判定できないので進め、gh repo create の失敗で止める
+    ("team-a", '{"state": "active", "role": "member"}', '{"login": "team-a"}', True),
     ("team-a", '{"state": "pending", "role": "admin"}', None, False),
     ("team-a", False, None, False),
 ])

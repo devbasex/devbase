@@ -110,6 +110,14 @@ def registry_plugin_names(text: str) -> List[str]:
     return [entry.get('name', '') for entry in _load_registry(text).get('plugins') or []]
 
 
+def registry_plugin_path(text: str, name: str) -> Optional[str]:
+    """``registry.yml`` の ``name`` の項目の ``path``。項目が無ければ ``None``"""
+    for entry in _load_registry(text).get('plugins') or []:
+        if entry.get('name') == name:
+            return (entry.get('path') or name).rstrip('/')
+    return None
+
+
 def _load_registry(text: str) -> dict:
     try:
         data = yaml.safe_load(text)

@@ -954,7 +954,7 @@ def main():
 
     cmd = args.command
 
-    _load_secret_env(cmd, getattr(args, 'subcommand', None), name=getattr(args, 'name', None))
+    _load_secret_env(cmd, _injection_subcommand(args), name=getattr(args, 'name', None))
 
     try:
         return _dispatch(cmd, args)
@@ -981,8 +981,11 @@ _NO_SECRET_INJECTION = frozenset({
     # コンテナの bao へ token を届けるだけで、機密の値は要らない。注入するとサーバへの
     # 往復が増える (PLAN54)。
     ('env', 'token'),
-    # プラグインへファイルを足すだけで機密を使わない。lifecycle の分岐より先に抜ける (#514)。
+    # 作成フローの認証は利用者の gh の設定に任せる (#514 の決定 11)。機密の GH_TOKEN が
+    # 環境変数に載ると、gh は利用者のログインではなくそのトークンで作成・マージする。
     ('project', 'new'),
+    ('plugin', 'new'),
+    ('plugin', 'repo new'),
 })
 
 
@@ -1030,7 +1033,15 @@ def _undeclared_current_project(root: Path) -> bool:
     return False
 
 
+def _injection_subcommand(args) -> Optional[str]:
+    """注入の判定に使うサブコマンド。``plugin repo new`` は ``repo new`` の形で渡す"""
+    subcommand = getattr(args, 'subcommand', None)
+    repo_command = getattr(args, 'repo_command', None)
+    return f"{subcommand} {repo_command}" if repo_command else subcommand
+
+
 def _skip_secret_injection(cmd: str, subcommand: Optional[str]) -> bool:
+    cmd = GROUP_ALIASES.get(cmd, cmd)
     return ((cmd, None) in _NO_SECRET_INJECTION
             or (cmd, subcommand) in _NO_SECRET_INJECTION)
 

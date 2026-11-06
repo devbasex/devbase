@@ -64,8 +64,9 @@ def _gh_api(world, state, argv):
         org = state['orgs'].get(path.split('/', 1)[1])
         if org is None:
             raise _Fail('gh: Not Found (HTTP 404)')
-        return json.dumps({
-            'members_can_create_repositories': org.get('members_can_create_repositories')})
+        # 実の GitHub はこの値を組織の owner にしか返さない
+        return json.dumps({'members_can_create_repositories': True}
+                          if org['role'] == 'admin' else {'login': path.split('/', 1)[1]})
     if path.startswith('repos/'):
         _, owner, repo, _, file_path = path.split('/', 4)
         bare = world / 'git' / owner / f'{repo}.git'
@@ -97,6 +98,9 @@ def _gh_repo_create(world, state, argv):
     full_name = argv[0]
     if full_name in state['repos']:
         raise _Fail('GraphQL: Name already exists on this account (createRepository)')
+    org = state['orgs'].get(full_name.split('/')[0])
+    if org is not None and org['role'] != 'admin' and not org['can_create']:
+        raise _Fail('GraphQL: owner cannot create repositories (createRepository)')
     state['repos'][full_name] = {
         'permission': 'ADMIN',
         'visibility': 'public' if '--public' in argv else 'private',
@@ -224,6 +228,12 @@ class FakeGitHub:
         state.update(values)
         self._state_file.write_text(json.dumps(state))
 
+    def ssh_only(self) -> None:
+        """https の URL を使えなくする (SSH の認証だけの利用者)。"""
+        text = self.gitconfig.read_text().replace('\tinsteadOf = https://github.com/\n', '')
+        self.gitconfig.write_text(
+            f'{text}[url "file://{self.world}/no-https/"]\n\tinsteadOf = https://github.com/\n')
+
     def update_repo(self, full_name: str, **values) -> None:
         state = self.state()
         state['repos'][full_name].update(values)
@@ -231,8 +241,7 @@ class FakeGitHub:
 
     def add_org(self, name, *, state='active', role='member', can_create=False):
         orgs = self.state()['orgs']
-        orgs[name] = {'state': state, 'role': role,
-                      'members_can_create_repositories': can_create}
+        orgs[name] = {'state': state, 'role': role, 'can_create': can_create}
         self.update(orgs=orgs)
 
     def add_repo(self, full_name: str, files=None, **values) -> Path:
@@ -247,8 +256,8 @@ class FakeGitHub:
             pushes.unlink(missing_ok=True)
         return bare
 
-    def commit(self, full_name: str, files: dict, message='change') -> None:
-        """既定ブランチへ別の人が入れたコミットを作る。"""
+    def commit(self, full_name: str, files: dict, message='change', remove=()) -> None:
+        """既定ブランチへ別の人が入れたコミットを作る。値が ``Path`` なら symlink にする。"""
         bare = self.world / 'git' / f'{full_name}.git'
         work = self.world / 'seed'
         env = {**os.environ, 'GIT_CONFIG_GLOBAL': str(self.gitconfig)}
@@ -258,7 +267,12 @@ class FakeGitHub:
         for path, text in files.items():
             target = work / path
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text)
+            if isinstance(text, Path):
+                target.symlink_to(text)
+            else:
+                target.write_text(text)
+        for path in remove:
+            subprocess.run(['git', 'rm', '-rqf', path], cwd=work, check=True, env=env)
         subprocess.run(['git', 'add', '-A'], cwd=work, check=True, env=env)
         subprocess.run(['git', 'commit', '-q', '-m', message], cwd=work, check=True, env=env)
         subprocess.run([*GIT, 'push', '-q', 'origin', 'main'], cwd=work, check=True, env=env,

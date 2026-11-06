@@ -315,6 +315,31 @@ def test_merge_failure_leaves_the_local_side(github, root, app, run_cli, caplog)
     assert "devbase plugin repo refresh" in caplog.text
 
 
+MOVED_REGISTRY = "name: plugins\nplugins:\n  - name: team-a\n    path: moved\n"
+
+
+def test_stale_plugin_path_stops_before_writing(github, root, app, run_cli, caplog):
+    """既定ブランチで path が変わっていたら、古い path へマージしない。"""
+    _plugin_repo(github, root, "owner/plugins", groups=["acme"])
+    github.commit("owner/plugins", {"registry.yml": MOVED_REGISTRY,
+                                    "moved/plugin.yml": "name: team-a\nversion: '1.0.0'\n"})
+    assert run_cli("project", "new", APP, "--yes") == 1
+    assert github.write_calls() == []
+    assert "devbase plugin repo refresh plugins" in caplog.text
+
+    assert run_cli("plugin", "repo", "refresh", "plugins") == 0
+    assert run_cli("project", "new", APP, "--group", "acme", "--yes") == 0
+    assert github.file("owner/plugins", "moved/projects/app/project.yml") is not None
+
+
+def test_plugin_gone_from_the_registry_stops(github, root, app, run_cli, caplog):
+    _plugin_repo(github, root, "owner/plugins", groups=["acme"])
+    github.commit("owner/plugins", {"registry.yml": "name: plugins\nplugins: []\n"})
+    assert run_cli("project", "new", APP, "--yes") == 1
+    assert github.write_calls() == []
+    assert "項目なし" in caplog.text
+
+
 def test_tty_decline_changes_nothing(github, root, app, run_cli):
     _plugin_repo(github, root, "owner/plugins", groups=["acme"])
     assert run_cli("project", "new", APP, tty=True, answers=["n"]) == 1

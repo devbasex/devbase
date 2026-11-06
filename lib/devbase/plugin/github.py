@@ -137,7 +137,11 @@ class GhClient:
         )
 
     def can_create_in(self, owner: str) -> bool:
-        """``owner`` の下にリポジトリを作れるか (読むだけ)"""
+        """``owner`` の下にリポジトリを作れるか (読むだけ)
+
+        組織の ``members_can_create_repositories`` は組織の owner にしか返らないので、値が無い
+        ときは判定できない。作れると見て進め、作れなければ ``gh repo create`` の失敗で止める。
+        """
         if owner.lower() == self.login().lower():
             return True
         membership = self._read_api(f'user/memberships/orgs/{owner}')
@@ -146,7 +150,7 @@ class GhClient:
         if membership.get('role') == 'admin':
             return True
         org = self._read_api(f'orgs/{owner}')
-        return bool(org and org.get('members_can_create_repositories'))
+        return (org or {}).get('members_can_create_repositories') is not False
 
     def _read_api(self, path: str) -> Optional[dict]:
         """権限が無い・無いものは ``None``、それ以外の失敗は例外にする"""

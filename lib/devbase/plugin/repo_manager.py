@@ -405,11 +405,21 @@ def show_repositories(registry: PluginRegistry) -> None:
     logger.info("Total: %d repository(ies)", len(repos))
 
 
+def _snapshot_repo_projects(
+    registry: PluginRegistry, repo: RegisteredRepository,
+) -> dict[str, set[str]]:
+    """このリポジトリから導入したプラグインのプロジェクト名を pull の前に控える"""
+    from .updater import _snapshot_plugin_projects
+    return _snapshot_plugin_projects(registry, [
+        p for p in registry.list_installed() if p.source == repo.url and not p.linked])
+
+
 def refresh_repository(
     registry: PluginRegistry,
     name: str,
     *,
     sync: bool = True,
+    pre_pull_projects: Optional[dict[str, set[str]]] = None,
 ) -> None:
     """Refresh plugin list for a registered repository (git pull + re-read registry.yml).
 
@@ -417,6 +427,8 @@ def refresh_repository(
         sync: If True (default), call sync_projects after updating metadata.
             Set to False when refreshing multiple repositories in a batch to
             avoid redundant sync calls — the caller should sync once at the end.
+        pre_pull_projects: Snapshot from ``_snapshot_repo_projects``, for callers
+            that pulled the clone themselves. Default: snapshot here before pulling.
 
     Raises RepositoryError if not found.
     """
@@ -440,10 +452,9 @@ def refresh_repository(
     # Snapshot installed plugin project names BEFORE git pull so that
     # migration can still detect where old projects moved even after
     # the working tree is updated by pull.
-    from .updater import _snapshot_plugin_projects
     installed = registry.list_installed()
-    repo_installed = [p for p in installed if p.source == repo.url and not p.linked]
-    pre_pull_projects = _snapshot_plugin_projects(registry, repo_installed)
+    if pre_pull_projects is None:
+        pre_pull_projects = _snapshot_repo_projects(registry, repo)
 
     try:
         _git_pull(clone_dir)

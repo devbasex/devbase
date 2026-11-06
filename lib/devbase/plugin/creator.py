@@ -28,6 +28,7 @@ from .registry import PluginRegistry
 from .repo_manager import (
     _find_registered,
     _pull_ff_only,
+    _snapshot_repo_projects,
     _url_to_repos_dirname,
     add_repository,
     refresh_repository,
@@ -194,6 +195,8 @@ def plan_plugin(
     registered = _find_registered(registry, ref.clone_url)
     if registered is not None:
         _require_clone(registry, registered)
+        # 一時の clone と push も登録の URL で行う。SSH の認証だけの利用者が https で止まらない
+        ref = replace(ref, clone_url=registered.url)
     state, default_branch = _inspect(registry, gh, ref, registered)
     if registered is not None and state is not RepoState.HAS_REGISTRY:
         raise RepositoryError(
@@ -346,6 +349,24 @@ def _decide_group(
     return validate_account_group(value)
 
 
+def _require_current_path(gh: GhClient, target: PluginTarget) -> None:
+    """手元の登録の ``path`` が既定ブランチの ``registry.yml`` と同じことを確かめる (読むだけ)
+
+    古い ``path`` へマージすると、続く取り込みが新しい ``path`` を登録し、足したプロジェクトが
+    ``projects/`` に現れないまま 0 で終わる。
+    """
+    text = gh.read_file(target.ref, scaffold.REGISTRY_FILE) or ''
+    current = scaffold.registry_plugin_path(text, target.plugin)
+    if current == target.path:
+        return
+    raise RepositoryError(
+        f"プラグイン {target.plugin} の path が、{target.ref.full_name} の既定ブランチ "
+        f"({current or '項目なし'}) と手元の登録 ({target.path}) で違います。"
+        "次のコマンドで取り込んでから打ち直してください:\n"
+        f"  devbase plugin repo refresh {target.repo.name}"
+    )
+
+
 def plan_project(
     registry: PluginRegistry, gh: GhClient, value: str, *,
     plugin: Optional[str] = None, group: Optional[str] = None,
@@ -363,6 +384,7 @@ def plan_project(
 
     target = _decide_target(registry, gh, ref, plugin, prompter)
     _require_clone(registry, target.repo)
+    _require_current_path(gh, target)
     destination = f"{target.path}/projects/{project}"
     if gh.read_file(target.ref, destination) is not None:
         raise RepositoryError(f"{target.ref.full_name} に {destination} が既にあります")
@@ -385,7 +407,16 @@ def _reflect_repository(gh: GhClient, plan: CreationPlan) -> None:
         publish.push_initial(plan.ref, files,
                              title=publish.pr_title(KIND_REPO, plan.ref.repo))
     elif plan.state is RepoState.NO_REGISTRY:
-        publish.publish_change(gh, plan.ref, kind=KIND_REPO, name=plan.ref.repo, files=files)
+        try:
+            publish.publish_change(gh, plan.ref, kind=KIND_REPO, name=plan.ref.repo, files=files)
+        except publish.MergeFailed as e:
+            if plan.kind != KIND_PLUGIN:
+                raise
+            # プラグインの PR はまだ無いので、登録と導入ではなく打ち直しを案内する
+            raise RepositoryError(
+                f"{e}\nこの PR をマージした後に、同じコマンドを打ち直してください:\n"
+                f"  devbase plugin new {plan.ref.clone_url} --name {plan.name}"
+            ) from e
 
 
 def _source_url(plan: CreationPlan) -> str:
@@ -433,8 +464,10 @@ def _apply_locally(registry: PluginRegistry, plan: CreationPlan) -> None:
         if plan.registered is None:
             add_repository(registry, plan.ref.clone_url)
         else:
+            # 取り込みに改名や移動が入っていても refresh が移行先を見つけられるよう、先に控える
+            pre_pull = _snapshot_repo_projects(registry, plan.registered)
             _pull_ff_only(registry.devbase_root / plan.registered.local_path)
-            refresh_repository(registry, plan.registered.name)
+            refresh_repository(registry, plan.registered.name, pre_pull_projects=pre_pull)
         if plan.kind == KIND_PLUGIN:
             install_plugin(registry, f"{_source_url(plan)}:{plan.name}")
     except DevbaseError as e:

@@ -32,8 +32,27 @@ def test_prefix_resolves_to_new(monkeypatch):
     assert sys.argv == ["devbase", "project", "new", "owner/repo"]
 
 
-def test_secrets_are_not_injected():
-    assert cli._skip_secret_injection("project", "new")
+@pytest.mark.parametrize("argv", [
+    ["project", "new", "owner/repo"],
+    ["plugin", "new", "owner/repo"],
+    ["pl", "new", "owner/repo"],
+    ["plugin", "repo", "new", "owner/repo"],
+    ["pl", "repo", "new", "owner/repo"],
+])
+def test_creation_flows_leave_gh_to_the_users_login(argv):
+    """機密の GH_TOKEN が載ると、gh は利用者のログインではなくそのトークンで動く (決定 11)。"""
+    args = cli._create_parser().parse_args(argv)
+    assert cli._skip_secret_injection(args.command, cli._injection_subcommand(args))
+
+
+@pytest.mark.parametrize("argv", [
+    ["plugin", "list"],
+    ["plugin", "repo", "add", "owner/repo"],
+    ["pl", "repo", "refresh", "name"],
+])
+def test_other_plugin_commands_still_inject(argv):
+    args = cli._create_parser().parse_args(argv)
+    assert not cli._skip_secret_injection(args.command, cli._injection_subcommand(args))
 
 
 def test_parser_arguments():

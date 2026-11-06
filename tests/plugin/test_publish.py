@@ -67,6 +67,52 @@ def test_publish_change_refuses_to_overwrite(github, gh):
     assert github.pushed_refs(FULL) == []
 
 
+@pytest.mark.parametrize("link, written", [
+    ("team-a/projects", "team-a/projects/p/env"),
+    ("team-a/env", "team-a/env"),
+])
+def test_publish_change_stays_inside_the_clone(github, gh, tmp_path, link, written):
+    """既存リポジトリの symlink をたどって手元のファイルを作らない (既にあるディレクトリ・無い先)。"""
+    outside = tmp_path / "outside"
+    if link == "team-a/projects":
+        outside.mkdir()
+    github.add_repo(FULL, REGISTRY)
+    github.commit(FULL, {link: outside})
+    with pytest.raises(RepositoryError, match="外を指して"):
+        publish.publish_change(gh, REF, kind="project", name="p", files={written: "X=1\n"})
+    assert not outside.exists() or list(outside.iterdir()) == []
+    assert github.branches(FULL) == ["main"]
+
+
+def test_publish_change_checks_every_file_before_writing(github, gh, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    github.add_repo(FULL, REGISTRY)
+    github.commit(FULL, {"links": outside})
+    with pytest.raises(RepositoryError):
+        publish.publish_change(gh, REF, kind="project", name="p",
+                               files={"inside/a": "1\n", "links/b": "2\n"})
+    assert list(outside.iterdir()) == []
+
+
+def test_publish_change_does_not_write_through_a_registry_symlink(github, gh, tmp_path):
+    outside = tmp_path / "registry.yml"
+    outside.write_text("name: mine\nplugins: []\n")
+    github.add_repo(FULL, {"README.md": "x\n"})
+    github.commit(FULL, {"registry.yml": outside})
+    with pytest.raises(RepositoryError, match="外を指して"):
+        publish.publish_change(gh, REF, kind="plugin", name="team-a",
+                               files={"team-a/plugin.yml": "name: team-a\n"},
+                               registry_entry="team-a")
+    assert outside.read_text() == "name: mine\nplugins: []\n"
+
+
+def test_publish_change_rejects_a_path_above_the_clone(github, gh):
+    github.add_repo(FULL, REGISTRY)
+    with pytest.raises(RepositoryError, match="外を指して"):
+        publish.publish_change(gh, REF, kind="project", name="p", files={"../x": "1\n"})
+
+
 def test_publish_change_stops_at_an_existing_branch_with_pr(github, gh):
     github.add_repo(FULL, REGISTRY)
     publish_branch = "devbase/new-plugin-team-a"

@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from devbase.commands.plugin import cmd_plugin_list
+from devbase.plugin.installer import install_plugin
 from devbase.plugin.models import RegisteredRepository
 from devbase.plugin.registry import PluginRegistry
 from devbase.plugin.repo_manager import add_repository
@@ -104,7 +105,7 @@ def test_repo_branch_that_ends_writes_nothing(github, root, run_cli, setup):
     if setup == "no-push":
         github.add_repo(FULL, {"README.md": "x\n"}, permission="READ")
     else:
-        github.add_org("owner", role="member")
+        github.add_org("owner", role="member", state="pending")
     assert run_cli("plugin", "new", FULL, "--yes") == 1
     assert github.write_calls() == []
     assert _plugins_yml(root) is None
@@ -228,6 +229,53 @@ def test_merge_failure_keeps_plugins_yml(github, root, run_cli, caplog, prepare)
     assert github.prs()[0]["url"] in caplog.text
     assert "devbase plugin install" in caplog.text
     assert "devbase plugin repo" in caplog.text
+
+
+def test_registry_pr_merge_failure_asks_to_rerun(github, root, run_cli, caplog):
+    """プラグインの PR がまだ無いので、登録と導入ではなく打ち直しを案内する。"""
+    github.add_repo(FULL, {"README.md": "x\n"}, merge_error="required reviews")
+    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 1
+    assert [pr["head"] for pr in github.prs()] == ["devbase/new-repo-repo"]
+    assert github.prs()[0]["url"] in caplog.text
+    assert f"devbase plugin new {URL} --name team-a" in caplog.text
+    assert "devbase plugin install" not in caplog.text
+    assert "devbase plugin repo add" not in caplog.text
+    assert _plugins_yml(root) is None
+
+
+def test_ssh_registration_clones_and_pushes_over_ssh(github, root, run_cli):
+    """一時の clone と push は入力から作った https ではなく、登録の URL で走る。"""
+    url = "git@github.com:owner/repo.git"
+    github.add_repo(FULL, {"registry.yml": REGISTRY})
+    add_repository(PluginRegistry(root), url)
+    github.ssh_only()
+    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 0
+    _assert_installed(root, source=url)
+
+
+def test_rename_in_the_pulled_update_keeps_the_project(github, root, run_cli):
+    """取り込みでプラグインが移っても、移行先を導入してプロジェクトのリンクを残す。"""
+    github.add_repo(FULL, {
+        "registry.yml": "name: repo\nplugins:\n  - name: old\n    path: old\n",
+        "old/plugin.yml": "name: old\nversion: '1.0.0'\n",
+        "old/projects/p1/compose.yml": "services: {}\n",
+    })
+    registry = PluginRegistry(root)
+    add_repository(registry, URL)
+    install_plugin(registry, f"{URL}:old")
+    assert (root / "projects" / "p1").is_dir()
+
+    github.commit(FULL, {
+        "registry.yml": "name: repo\nplugins:\n  - name: moved\n    path: moved\n",
+        "moved/plugin.yml": "name: moved\nversion: '1.0.0'\n",
+        "moved/projects/p1/compose.yml": "services: {}\n",
+    }, remove=["old"])
+    assert run_cli("plugin", "new", FULL, "--name", "team-a", "--yes") == 0
+
+    registry = PluginRegistry(root)
+    assert registry.get("old") is None
+    assert registry.get("moved") is not None
+    assert (root / "projects" / "p1").is_dir()
 
 
 def test_never_touches_docker(github, root, registered, run_cli):

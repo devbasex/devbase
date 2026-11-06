@@ -7,6 +7,7 @@ clone には利用者の変更があるので、どちらも一時の clone で�
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 from typing import Dict, Optional
@@ -47,17 +48,29 @@ def _git(clone: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _inside(clone: Path, relative: str) -> Path:
+    """clone の中のパスを返す。symlink や ``..`` をたどって外へ出るものは止める
+
+    clone の中身は他人が書いたものなので、書き込みが利用者の手元のファイルへ届かないようにする。
+    """
+    target = clone / relative
+    if not target.resolve().is_relative_to(clone.resolve()):
+        raise RepositoryError(f"{relative} はリポジトリの外を指しているので、書き込みません")
+    return target
+
+
 def _write_files(clone: Path, files: Dict[str, str]) -> None:
+    targets = {relative: _inside(clone, relative) for relative in files}
     for relative, text in files.items():
-        target = clone / relative
-        if target.exists():
+        target = targets[relative]
+        if os.path.lexists(target):
             raise RepositoryError(f"{relative} は既にあります。上書きしません")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
 
 
 def _add_to_registry(clone: Path, name: str) -> None:
-    path = clone / scaffold.REGISTRY_FILE
+    path = _inside(clone, scaffold.REGISTRY_FILE)
     path.write_text(scaffold.add_registry_entry(path.read_text(), name))
 
 

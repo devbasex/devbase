@@ -255,9 +255,12 @@ def _run_repo_operation(devbase_root: Path, op: str):
 # ---------------------------------------------------------------------------
 
 def _creation_context(devbase_root: Path):
+    from devbase.env import runtime as _runtime
     from devbase.plugin.github import GhClient
     from devbase.plugin.registry import PluginRegistry
 
+    # TUI は起動時の注入が載ったまま動く。gh は利用者の設定で動かす (#514 の決定 11)
+    _runtime.clear_injected()
     return PluginRegistry(Path(devbase_root)), GhClient()
 
 
