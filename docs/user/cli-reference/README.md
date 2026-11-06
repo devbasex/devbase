@@ -5,9 +5,9 @@ devbase の全コマンドの構文、オプション、使用例をまとめた
 | ファイル | 内容 |
 |---------|------|
 | [トップレベルコマンド](01-toplevel.md) | `init` / `status` / `bin/rc` |
-| [project グループ](02-project.md) | コンテナのライフサイクル管理・一覧（`up` / `down` / `login` / `ps` / `logs` / `scale` / `build` / `rebuild` / `open` / `post-start` / `profile` / `list`）と非推奨の `container` グループ |
+| [project グループ](02-project.md) | コンテナのライフサイクル管理・一覧（`up` / `down` / `login` / `ps` / `logs` / `scale` / `build` / `rebuild` / `open` / `post-start` / `profile` / `list` / `new`）と非推奨の `container` グループ |
 | [env グループ](03-env.md) | 環境変数の管理（`init` / `sync` / `list` / `set` / `get` / `delete` / `edit` / `project` / `keygen` / `encrypt` / `decrypt` / `exec` / `token` / `rekey` / `doctor` / `export` / `import`） |
-| [plugin グループ](04-plugin.md) | プラグインの管理（`list` / `install` / `uninstall` / `update` / `info` / `sync` / `migrate` / `repo *`） |
+| [plugin グループ](04-plugin.md) | プラグインの管理（`list` / `install` / `uninstall` / `update` / `info` / `sync` / `migrate` / `new` / `repo *`） |
 | [snapshot グループ](05-snapshot.md) | スナップショットの管理（`create` / `list` / `restore` / `copy` / `delete` / `rotate`） |
 
 ## コマンド体系
