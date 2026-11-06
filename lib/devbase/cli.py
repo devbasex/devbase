@@ -669,6 +669,17 @@ def _add_env_import_parser(env_sub):
                             help='Keep only the last N backup directories (default: 10, 0 to disable)')
 
 
+def _add_new_target_arg(parser):
+    """作成フロー (#514) の共通の引数。GitHub のリポジトリを 1 つ取る。"""
+    parser.add_argument('repo', help='GitHub URL or owner/repo')
+
+
+def _add_yes_arg(parser):
+    """作成フロー (#514) の確認を省く ``--yes``。TTY が無いときは必須。"""
+    parser.add_argument('--yes', action='store_true',
+                        help='Proceed without confirming the plan (required without a TTY)')
+
+
 def _add_plugin_parser(subparsers):
     """Plugin group parser"""
     pl_parser = subparsers.add_parser('plugin', aliases=['pl'],
@@ -703,6 +714,13 @@ def _add_plugin_parser(subparsers):
     # Plugin repo sub-subcommands
     pl_repo = pl_sub.add_parser('repo', help='Manage plugin repositories')
     pl_repo_sub = pl_repo.add_subparsers(dest='repo_command')
+
+    r_new = pl_repo_sub.add_parser(
+        'new', help='Create (if needed) and register a plugin repository on GitHub')
+    _add_new_target_arg(r_new)
+    r_new.add_argument('--public', action='store_true',
+                       help='Make the repository public when it is created (default: private)')
+    _add_yes_arg(r_new)
 
     r_add = pl_repo_sub.add_parser('add', help='Register a repository')
     r_add.add_argument('url', help='Repository URL or GitHub shorthand')
@@ -882,7 +900,7 @@ def _expand_argv():
     commands = ['init', 'status', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
                 'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'open', 'list',
                 'help']
-    repo_subcmds = ['add', 'remove', 'list', 'refresh']
+    repo_subcmds = ['new', 'add', 'remove', 'list', 'refresh']
 
     if len(sys.argv) >= 2 and not sys.argv[1].startswith('-'):
         sys.argv[1] = _resolve_prefix(sys.argv[1], commands, TOP_PREFIX_PREFERENCES)

@@ -1,9 +1,12 @@
 """Plugin management CLI commands"""
 
+import sys
 from pathlib import Path
 
 from devbase.errors import DevbaseError
 from devbase.log import get_logger
+from devbase.plugin import creator
+from devbase.plugin.github import GhClient
 from devbase.plugin.registry import PluginRegistry
 from devbase.plugin.installer import install_plugin, uninstall_plugin
 from devbase.plugin.updater import update_plugin
@@ -168,14 +171,58 @@ def cmd_plugin_migrate(devbase_root: Path) -> int:
     return 0
 
 
+def run_creation(registry, gh, plan, yes: bool) -> int:
+    """作成の計画を示して確認を取り、実行する (#514 の E4 以降)"""
+    if plan.noop_reason:
+        logger.info("%s", plan.noop_reason)
+        return 0
+
+    print(plan.describe())
+    if not yes and not _confirmed():
+        return 1
+    creator.execute(registry, gh, plan)
+    return 0
+
+
+def _confirmed() -> bool:
+    """TTY で確認を取る。TTY が無ければ ``--yes`` を求めて断る"""
+    if not sys.stdin.isatty():
+        logger.error("確認できる端末がありません。この計画で進めるなら --yes を付けて打ってください")
+        return False
+    try:
+        answer = input("この計画で進めますか? [y/N]: ")
+    except (EOFError, KeyboardInterrupt):
+        answer = ''
+    if answer.strip().lower() in ('y', 'yes'):
+        return True
+    logger.info("中止しました。何も変えていません")
+    return False
+
+
+def cmd_repo_new(devbase_root: Path, args) -> int:
+    """`plugin repo new`: プラグインリポジトリを用意して登録する"""
+    registry = PluginRegistry(devbase_root)
+    gh = GhClient()
+    try:
+        plan = creator.plan_repo(registry, gh, args.repo,
+                                 public=getattr(args, 'public', False))
+        return run_creation(registry, gh, plan, getattr(args, 'yes', False))
+    except DevbaseError as e:
+        logger.error("%s", e)
+        return 1
+
+
 def cmd_repo(devbase_root: Path, args) -> int:
     """Dispatch repo subcommands"""
     registry = PluginRegistry(devbase_root)
     repo_cmd = getattr(args, 'repo_command', None)
 
     if not repo_cmd:
-        logger.error("Usage: devbase plugin repo <add|remove|list|refresh>")
+        logger.error("Usage: devbase plugin repo <new|add|remove|list|refresh>")
         return 1
+
+    if repo_cmd == 'new':
+        return cmd_repo_new(devbase_root, args)
 
     handlers = {
         'add':     lambda: add_repository(registry, args.url, name=args.name),
