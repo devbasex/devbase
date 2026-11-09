@@ -5,7 +5,7 @@
     {
       "name": "python",
       "frameworks": [],
-      "files": 318,
+      "files": 332,
       "version": "3.10"
     },
     {
@@ -33,14 +33,9 @@
   "test_duration": {
     "measured": [
       {
-        "seconds": 156.2,
-        "source": "ndf-record",
-        "detail": "NDF の実行の記録の直近 1 件の中央値"
-      },
-      {
-        "seconds": 213.0,
+        "seconds": 231.0,
         "source": "ci-steps",
-        "detail": "run 42167442574（.github/workflows/ci.yml）のテストの step 3 個の合計"
+        "detail": "run 42615128154（.github/workflows/ci.yml）のテストの step 3 個の合計"
       }
     ]
   },
@@ -50,7 +45,7 @@
       {
         "path": ".github/workflows/ci.yml",
         "jobs": 10,
-        "wall_seconds": 152.0
+        "wall_seconds": 161.0
       },
       {
         "path": ".github/workflows/pages.yml",
@@ -108,17 +103,17 @@
     "notes": []
   },
   "materials": {
-    "unknown": "人が書く項目。今回の解析では決めない"
+    "unknown": "答えが無い"
   },
   "analysis": {
     "analyzer": 3,
-    "at": "2026-11-06T05:42:01+00:00",
+    "at": "2026-11-09T12:16:01+00:00",
     "inputs": {
       ".github/workflows/ci.yml": "52b0ae9662bc281832ef06f8f1653f6cdc99e3b7",
       ".github/workflows/pages.yml": "8939f8f7022b0b89d7daa11cd0196c38b26c7cc7",
       "AGENTS.md": "987d0ae5be4cdb913e42d97d80c951000a67c9b9",
       "CLAUDE.md": "43c994c2d3617f947bcb5adf1933e21dabe46bb5",
-      "pyproject.toml": "106f16b78215f0ec0eaf765fa0349eb1eccca349"
+      "pyproject.toml": "cd6ecf1762ef22d85c028153293458aae41fd317"
     },
     "branches": {
       "head": "main",
@@ -127,16 +122,16 @@
       ]
     },
     "written": {
-      "languages": "897769539f7d409526aca7fb9ea180205aa6d771482db26cbee34fe5e148d4f6",
-      "test_duration": "9d42f60f15da9f21b458f9616a4336f489c7bfffc2cab680226b75a4b3850fea",
-      "ci": "55350886f3ab5199a02b5ce1ef42ffcebe502d5a2d6a860e9db7239c538a474b",
+      "languages": "86cea024c7b343b6a8f63104122001ad4ddb763e7bd3c6cad7debe9a0545cb11",
+      "test_duration": "8b9e51921bad27fa358a71f7791aaa876ddf3beca58bf0afd5b40cab8f1ed6ac",
+      "ci": "90b5311c7a2bad65a88410d1507d98b5cf9dd3856a8b12478fab2f47e774411e",
       "services": "53f4e4c15a04bde773f9d0d89be06cd65f1a9248c0603b06b78bfa8a5f8a0771",
       "delivery": "59cb01d5cd85f0c5a1a1684c740f8551bece1053067c50dfa0d4bddeb4394718",
       "issues": "c851aa29d3c11745f1307194db49eba6a488771771ea86c21c7237e400e336b8",
       "checks": "fe2f3b4ef49492d81cb350fb689bf9f9dff6cfd1817d72d6ff9fe3350e3d5e6a",
       "ndf_policies": "81c1c2e31df60254dfd66878f3c3b3190c87a2a0b78a2275e13cde3a199e9fa1",
       "instructions": "7a611cbbe4e28a789904ff3e7bf44c94bc2f3f3b61ca326b89dad8fce6484da7",
-      "materials": "108f79f7b80b50f02c5006faa42c73e62812ca61f18c2befd95ec85a97b5fb8b",
+      "materials": "eec1b759fe58ecfcf4c8373becd6975fba410eebb3742cfa3142e56552c8e77b",
       "worktree.json#base_branch": "e4a9e4d8baa71a9d8ebf56ec8ae3ea1e82be9f96ae6fe89e36d701d4a5337f30",
       "worktree.json#production_branch": "e4a9e4d8baa71a9d8ebf56ec8ae3ea1e82be9f96ae6fe89e36d701d4a5337f30"
     }
