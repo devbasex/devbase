@@ -5,7 +5,7 @@
     {
       "name": "python",
       "frameworks": [],
-      "files": 272,
+      "files": 318,
       "version": "3.10"
     },
     {
@@ -33,14 +33,14 @@
   "test_duration": {
     "measured": [
       {
-        "seconds": 63.1,
+        "seconds": 156.2,
         "source": "ndf-record",
-        "detail": "NDF の実行の記録の直近 9 件の中央値"
+        "detail": "NDF の実行の記録の直近 1 件の中央値"
       },
       {
-        "seconds": 89.0,
+        "seconds": 213.0,
         "source": "ci-steps",
-        "detail": "run 36659180058（.github/workflows/ci.yml）のテストの step 3 個の合計"
+        "detail": "run 42167442574（.github/workflows/ci.yml）のテストの step 3 個の合計"
       }
     ]
   },
@@ -50,11 +50,12 @@
       {
         "path": ".github/workflows/ci.yml",
         "jobs": 10,
-        "wall_seconds": 82.0
+        "wall_seconds": 152.0
       },
       {
         "path": ".github/workflows/pages.yml",
-        "jobs": 1
+        "jobs": 1,
+        "wall_seconds": 39.0
       }
     ],
     "required_checks": []
@@ -69,15 +70,15 @@
       "target": "main ブランチ（install.sh が取得）",
       "kind": "auto",
       "trigger": "main へのマージ",
-      "branch": "main",
-      "versioned": true
+      "versioned": true,
+      "channel": "production"
     },
     {
       "target": "GitHub Pages のインストーラ",
       "kind": "auto",
       "trigger": "pages.yml",
-      "branch": "main",
-      "versioned": false
+      "versioned": false,
+      "channel": "production"
     }
   ],
   "issues": {
@@ -94,19 +95,30 @@
     "reject_md_wording_tests": false
   },
   "instructions": {
-    "files": [],
-    "imports": [],
-    "notes": [
-      "指示書（AGENTS.md・CLAUDE.md など）が無い。NDF と各ランタイムが読む指示書を置くとよい"
-    ]
+    "files": [
+      "AGENTS.md",
+      "CLAUDE.md"
+    ],
+    "imports": [
+      {
+        "from": "CLAUDE.md",
+        "to": "AGENTS.md"
+      }
+    ],
+    "notes": []
+  },
+  "materials": {
+    "unknown": "人が書く項目。今回の解析では決めない"
   },
   "analysis": {
-    "analyzer": 1,
-    "at": "2026-09-30T02:21:38+00:00",
+    "analyzer": 3,
+    "at": "2026-11-06T05:42:01+00:00",
     "inputs": {
-      ".github/workflows/ci.yml": "899f0904e3116e8e7b2081b4f3fa247bf9438697",
-      ".github/workflows/pages.yml": "6ce8d59753f498aa64adfcc6f1f55a7e6306188e",
-      "pyproject.toml": "f91722aa16a434510840b097bcadd93967b45ac8"
+      ".github/workflows/ci.yml": "52b0ae9662bc281832ef06f8f1653f6cdc99e3b7",
+      ".github/workflows/pages.yml": "8939f8f7022b0b89d7daa11cd0196c38b26c7cc7",
+      "AGENTS.md": "987d0ae5be4cdb913e42d97d80c951000a67c9b9",
+      "CLAUDE.md": "43c994c2d3617f947bcb5adf1933e21dabe46bb5",
+      "pyproject.toml": "106f16b78215f0ec0eaf765fa0349eb1eccca349"
     },
     "branches": {
       "head": "main",
@@ -115,15 +127,16 @@
       ]
     },
     "written": {
-      "languages": "4b8c7cd1a5e196e31fcc6ac1dc3b1f02cee8c612d9d52edfa73d4cdc36a31637",
-      "test_duration": "2034a1cebb12e613ed9880891c32fe36d77271cd6a873da00fc1feba92091e08",
-      "ci": "efacaf42b244dff200765a4eb6ade24796aa6d8e1ae566d33070632304ca92bb",
+      "languages": "897769539f7d409526aca7fb9ea180205aa6d771482db26cbee34fe5e148d4f6",
+      "test_duration": "9d42f60f15da9f21b458f9616a4336f489c7bfffc2cab680226b75a4b3850fea",
+      "ci": "55350886f3ab5199a02b5ce1ef42ffcebe502d5a2d6a860e9db7239c538a474b",
       "services": "53f4e4c15a04bde773f9d0d89be06cd65f1a9248c0603b06b78bfa8a5f8a0771",
-      "delivery": "5dbcd4bca9a6ebb23f6d4964d0714cb977119f9d7f0465cb77335e42b3a0c8c0",
+      "delivery": "59cb01d5cd85f0c5a1a1684c740f8551bece1053067c50dfa0d4bddeb4394718",
       "issues": "c851aa29d3c11745f1307194db49eba6a488771771ea86c21c7237e400e336b8",
       "checks": "fe2f3b4ef49492d81cb350fb689bf9f9dff6cfd1817d72d6ff9fe3350e3d5e6a",
       "ndf_policies": "81c1c2e31df60254dfd66878f3c3b3190c87a2a0b78a2275e13cde3a199e9fa1",
-      "instructions": "d67dfdc765964077eebae7c9f86172e5dd32b67c641d837fcd513f38f733d649",
+      "instructions": "7a611cbbe4e28a789904ff3e7bf44c94bc2f3f3b61ca326b89dad8fce6484da7",
+      "materials": "108f79f7b80b50f02c5006faa42c73e62812ca61f18c2befd95ec85a97b5fb8b",
       "worktree.json#base_branch": "e4a9e4d8baa71a9d8ebf56ec8ae3ea1e82be9f96ae6fe89e36d701d4a5337f30",
       "worktree.json#production_branch": "e4a9e4d8baa71a9d8ebf56ec8ae3ea1e82be9f96ae6fe89e36d701d4a5337f30"
     }
