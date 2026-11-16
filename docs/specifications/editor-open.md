@@ -102,14 +102,16 @@ graph TD
 
 | 場面 | 起動に渡す環境 | ログ |
 | --- | --- | --- |
-| 拾い直し、合う `remote-cli` がある | `VSCODE_IPC_HOOK_CLI` は拾い直したソケット。`PATH` は先頭が合う `remote-cli`、2 番目以降がペインの `PATH` の要素（並びも重複もそのまま。ペインに `PATH` が無ければ `remote-cli` だけ） | info 1 行（足したディレクトリ） |
-| 拾い直し、合う `remote-cli` が無い | `VSCODE_IPC_HOOK_CLI` だけ差し替え、`PATH` はペインのまま。起動は続ける | warning 1 行（見つからない理由と、`update-environment` に `VSCODE_GIT_ASKPASS_NODE` を入れる案内） |
+| 拾い直し、SSH でない（手元のデスクトップ版の統合ターミナル） | `VSCODE_IPC_HOOK_CLI` だけ差し替え、`PATH` はペインのまま。`VSCODE_GIT_ASKPASS_NODE` を問い合わせない | info 1 行（拾い直し）だけ。`remote-cli` の warning は出さない |
+| 拾い直し（SSH）、合う `remote-cli` がある | `VSCODE_IPC_HOOK_CLI` は拾い直したソケット。`PATH` は先頭が合う `remote-cli`、2 番目以降がペインの `PATH` の要素（並びも重複もそのまま。ペインに `PATH` が無ければ `remote-cli` だけ） | info 1 行（足したディレクトリ） |
+| 拾い直し（SSH）、合う `remote-cli` が無い | `VSCODE_IPC_HOOK_CLI` だけ差し替え、`PATH` はペインのまま。起動は続ける | warning 1 行（見つからない理由と、`update-environment` に `VSCODE_GIT_ASKPASS_NODE` を入れる案内） |
 | 拾い直していない | 変更なし。`VSCODE_GIT_ASKPASS_NODE` を問い合わせない | 変更なし |
 
 - **合う `remote-cli` は、セッション環境の `VSCODE_GIT_ASKPASS_NODE` だけから求める。** 値は VS Code サーバーの
   `node` の絶対パスで、その置かれたディレクトリの `bin/remote-cli` を使う。`~/.vscode-server` などのサーバーの
-  ディレクトリは探さない（版の違うサーバーが並び、拾い直したソケットのものを決められないため）。tmux への
-  問い合わせは拾い直したときに 1 回（`tmux show-environment VSCODE_GIT_ASKPASS_NODE`、上限 2 秒）だけ増える
+  ディレクトリは探さない（版の違うサーバーが並び、拾い直したソケットのものを決められないため）。求めるのは
+  SSH 越し（Remote-SSH）のときだけで、手元のデスクトップ版では値が Electron のヘルパーを指し `remote-cli` が
+  無いため求めない。tmux への問い合わせは SSH 越しに拾い直したときに 1 回（`tmux show-environment VSCODE_GIT_ASKPASS_NODE`、上限 2 秒）だけ増える
 - **足すのは、値が絶対パスで、求めたディレクトリに起動するエディタの名前の実行できる通常のファイルがあるときだけ。**
   名前は `DEVBASE_EDITOR` の先頭の語の末尾の名前、無ければ `code`
 - 見つからない理由は 4 つ: セッション環境に無い（tmux の失敗を含む）・消されている（`-VSCODE_GIT_ASKPASS_NODE`）・
@@ -164,7 +166,7 @@ graph TD
 | `DEVBASE_OPEN_INDEX` | `--open-index` を省いたときの番号。数でなければ 1。`up` と読み方を共有する |
 | `DEVBASE_OPEN_EDITOR` / `project.yml` の `open_editor` | `open` では見ない |
 | `DEVBASE_EDITOR` / `DEVBASE_EDITOR_SSH_HOST` / `DEVBASE_EDITOR_DOCKER_CONTEXT` / `DEVBASE_WORKSPACE` | `opener.open_editor` が従来どおり読む |
-| tmux のセッション環境の `VSCODE_GIT_ASKPASS_NODE` | IPC ソケットを拾い直したときだけ読み、合う `remote-cli` を求める。ペインのシェルの値は見ない |
+| tmux のセッション環境の `VSCODE_GIT_ASKPASS_NODE` | SSH 越しに IPC ソケットを拾い直したときだけ読み、合う `remote-cli` を求める。ペインのシェルの値は見ない |
 
 永続データは持たない。
 
@@ -201,7 +203,7 @@ graph TD
 - bash / zsh の補完（`tests/cli/test_completion.py`）
 - tmux で拾い直したとき、合う `remote-cli` が `PATH` の先頭に入り起動する `code` がそれに解決されること、
   ペインの要素の並びが保たれること、見つからない 4 つの理由で `PATH` が変わらず warning が 1 行出ること、
-  拾い直さないときに `VSCODE_GIT_ASKPASS_NODE` を問い合わせないこと（`tests/editor/test_opener.py`。tmux は
+  拾い直さないとき・SSH でないときに `VSCODE_GIT_ASKPASS_NODE` を問い合わせず warning も出さないこと（`tests/editor/test_opener.py`。tmux は
   `subprocess.run` を差し替え、実の tmux サーバーに触れない）
 
 実機（起動中のプロジェクト、非 TTY）では、`open` / `open --open-index <動いていない番号>` /

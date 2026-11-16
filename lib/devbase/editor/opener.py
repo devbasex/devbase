@@ -793,6 +793,30 @@ def _prepend_path(path: Optional[str], directory: str) -> str:
     return directory + os.pathsep + path
 
 
+def _prepend_matching_remote_cli(env, session_env):
+    """拾い直したソケットに合う ``remote-cli`` を ``env`` の PATH の先頭に入れる。
+
+    見つからなければ PATH は変えずに警告する。``env`` はすでに複製済みのものを受け取り、
+    そのまま書き換えて返す。
+    """
+    editor_name = _editor_name(session_env)
+    remote_cli, reason = _find_matching_remote_cli(session_env, editor_name)
+    if remote_cli:
+        env["PATH"] = _prepend_path(env.get("PATH"), remote_cli)
+        logger.info(
+            "拾い直したソケットに合う remote-cli を PATH の先頭に入れました (%s)",
+            remote_cli,
+        )
+    else:
+        logger.warning(
+            "拾い直したソケットに合う remote-cli が見つかりません (%s)。PATH は変えずに "
+            "%s で起動します。tmux の update-environment に %s を入れると次から直ります "
+            "(環境変数ガイドの tmux 設定を参照してください)",
+            reason, editor_name or "エディタ", _ASKPASS_NODE_VAR,
+        )
+    return env
+
+
 def _prepare_ipc_env(env, ctx: EditorContext):
     """拾い直した IPC ソケットを env へ反映し、必要な警告ログを出す。
 
@@ -801,7 +825,9 @@ def _prepare_ipc_env(env, ctx: EditorContext):
     そのソケットと同じ VS Code サーバーの ``remote-cli`` を PATH の先頭に入れる。
     ペインの PATH の先頭がデスクトップ版の code だと、``VSCODE_IPC_HOOK_CLI`` を
     読まずホストの VS Code へ向けて開いてしまうため。求められなければ PATH は変えず
-    警告する。変数だけ残って接続先が死んでいる IPC ソケットは無言の失敗になりやすい
+    警告する。remote-cli を求めるのは SSH 越し (Remote-SSH) のときだけで、手元の
+    デスクトップ版の統合ターミナルでは ``VSCODE_GIT_ASKPASS_NODE`` が Electron の
+    ヘルパーを指し remote-cli が無いため、問い合わせも警告もしない。変数だけ残って接続先が死んでいる IPC ソケットは無言の失敗になりやすい
     ので明示する (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
 
     ``env`` は差し替えが要る場合のみ複製して返す (要らなければそのまま返す)。
@@ -817,21 +843,8 @@ def _prepare_ipc_env(env, ctx: EditorContext):
             "tmux 設定を参照してください。",
             stale_ipc or "(未設定)", ctx.ipc_socket,
         )
-        editor_name = _editor_name(session_env)
-        remote_cli, reason = _find_matching_remote_cli(session_env, editor_name)
-        if remote_cli:
-            env["PATH"] = _prepend_path(env.get("PATH"), remote_cli)
-            logger.info(
-                "拾い直したソケットに合う remote-cli を PATH の先頭に入れました (%s)",
-                remote_cli,
-            )
-        else:
-            logger.warning(
-                "拾い直したソケットに合う remote-cli が見つかりません (%s)。PATH は変えずに "
-                "%s で起動します。tmux の update-environment に %s を入れると次から直ります "
-                "(環境変数ガイドの tmux 設定を参照してください)",
-                reason, editor_name or "エディタ", _ASKPASS_NODE_VAR,
-            )
+        if ctx.is_ssh:
+            env = _prepend_matching_remote_cli(env, session_env)
     if ctx.ipc_from_previous_client:
         # ペインを作った以前のクライアントの IPC。生きていても code に渡すとそちらへ
         # 委譲してしまうので外す (セッション環境の IPC を拾えていれば上で差し替え済み)。

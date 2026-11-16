@@ -764,6 +764,24 @@ def test_prepare_ipc_env_without_recovery_does_not_query(monkeypatch):
     assert run.calls == []
 
 
+def test_prepare_ipc_env_not_ssh_skips_remote_cli(monkeypatch, caplog):
+    """SSH でない (手元のデスクトップ版の統合ターミナル) ときは remote-cli を問い合わせず、
+    警告も出さない。VSCODE_GIT_ASKPASS_NODE は Electron のヘルパーを指し remote-cli が無いため。"""
+    import logging
+    run = _FakeRun()
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    ctx = opener.EditorContext(
+        is_tty=True, is_ssh=False, in_vscode=True, is_wsl=False, is_darwin=True,
+        ipc_socket="/tmp/live.sock")
+    with caplog.at_level(logging.INFO):
+        env = opener._prepare_ipc_env(
+            {"TMUX": "x", "VSCODE_IPC_HOOK_CLI": "/tmp/gone.sock", "PATH": "/usr/bin"}, ctx)
+    assert env["VSCODE_IPC_HOOK_CLI"] == "/tmp/live.sock"
+    assert env["PATH"] == "/usr/bin"
+    assert run.calls == []
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
 def _desktop_pane(monkeypatch, tmp_path, listening_ipc_socket, lines_extra=None,
                   devbase_editor=None):
     """再現手順の状態: ペインの PATH の先頭にデスクトップ版の code、ペインの IPC は死に、
