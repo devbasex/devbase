@@ -563,6 +563,10 @@ devbase は**実際にソケットへ接続できるかを確認**してから V
 
 死んでいた場合、**tmux 内なら `tmux show-environment` を見に行きます**。`update-environment`（後述）を設定していれば、tmux のセッション環境は attach のたびに更新されるので、**ペインのシェルが古くても tmux 側には生きた値が入っています**。拾えた場合はその値を使い、起動する `code` にも渡します（変数を差し替えないと `code` 自身が古いソケットへ繋ぎに行って失敗するため）。
 
+拾い直したときは、そのソケットと同じ VS Code サーバーの `remote-cli`（`<サーバーのディレクトリ>/bin/remote-cli`）を、起動に渡す `PATH` の先頭に入れます。ペインのシェルの `PATH` の先頭がホストのデスクトップ版の `code`（`/usr/local/bin/code` など）だと、`VSCODE_IPC_HOOK_CLI` があってもホストの VS Code に向けて開き、手元の PC に窓が開かないためです。サーバーのディレクトリは、tmux のセッション環境の `VSCODE_GIT_ASKPASS_NODE`（VS Code サーバーの `node` の絶対パス）の置かれた場所から求めます。`~/.vscode-server` の下を探すことはしません（版の違うサーバーが並び、拾い直したソケットのものを決められないため）。ペインの `PATH` のほかの要素は、並びを変えずに残します。
+
+`VSCODE_GIT_ASKPASS_NODE` は tmux の `update-environment` の既定に入っていないため、**後述の設定を入れていないと合う `remote-cli` は見つかりません**。見つからないとき（セッション環境に無い・消されている・絶対パスでない・求めた場所に実行できるエディタ（`DEVBASE_EDITOR` の先頭の語の名前。無ければ `code`）が無い）は、理由と後述の設定の案内を警告で出し、`PATH` を変えずにこれまでどおり起動します。
+
 SSH 越しかどうかの判定も、tmux 内ではセッション環境の `SSH_CONNECTION` を見ます。SSH から立てた tmux サーバーに手元の端末から attach し直すと、ペインのシェルには `SSH_CONNECTION` が残りますが、セッション環境は `-SSH_CONNECTION`（いまのクライアントは SSH でない）に更新されます。`SSH_CONNECTION` は tmux の `update-environment` に既定で入っているので、設定は要りません。セッション環境から分からないとき（tmux 外・tmux の失敗）は、ペインのシェルの `SSH_CONNECTION` / `SSH_CLIENT` / `SSH_TTY` で判定します。
 
 セッション環境から分かるいまのクライアントの SSH 状態が、ペインのシェルの SSH 状態（`SSH_*` の有無）と食い違うときは、向きによらず、ペインのシェルに残る `VSCODE_IPC_HOOK_CLI` はペインを作った以前のクライアントのものとみなし、そのウィンドウが開いたままで接続できても使いません。SSH から立てた tmux に手元から attach し直したときは、ホスト上のコンテナを開く URI がリモートのクライアントへ届いて開けず、手元で立てた tmux に Remote-SSH から attach し直したときは、SSH 先を経由する URI が Remote-SSH の接続を持たない手元の VS Code へ届いて開けないためです。tmux のセッション環境にいまのクライアントの生きた値が入っていれば、そちらを使います。入っていなければ IPC 無しとして扱い、SSH なら手元で実行するコマンドを示し、手元なら手元の `code` を起動します。食い違わないとき・セッション環境から分からないときは、ペインの値をこれまでどおり使います。死んだソケットを指す `VSCODE_IPC_HOOK_CLI` も、起動する `code` に渡しません。`VSCODE_IPC_HOOK_CLI` を外すときは、`PATH` から Remote-SSH などの `remote-cli`（`~/.vscode-server/bin/<commit>/bin/remote-cli`・`~/.cursor-server/...` など）を除いて手元の `code` を探します。`remote-cli` の `code` は `VSCODE_IPC_HOOK_CLI` が無いと何も開かずに終わるためです。手元の `code` が見つからなければ、起動せずにスキップします。
@@ -584,7 +588,7 @@ SSH 越しかどうかの判定も、tmux 内ではセッション環境の `SSH
 set -ga update-environment " VSCODE_IPC_HOOK_CLI VSCODE_GIT_IPC_HANDLE VSCODE_GIT_ASKPASS_NODE VSCODE_GIT_ASKPASS_MAIN VSCODE_GIT_ASKPASS_EXTRA_ARGS VSCODE_NONCE GIT_ASKPASS BROWSER TERM_PROGRAM"
 ```
 
-これで **attach のたびに**接続してきたクライアントの値でセッション環境が更新されます。**`devbase up` にはこの設定だけで十分**です（devbase がセッション環境を直接読むため）。
+これで **attach のたびに**接続してきたクライアントの値でセッション環境が更新されます。**`devbase up` にはこの設定だけで十分**です（devbase がセッション環境を直接読むため）。`VSCODE_IPC_HOOK_CLI` と `VSCODE_GIT_ASKPASS_NODE` の 2 つは、Remote-SSH で入ったホストの tmux から手元の VS Code に開くために要ります（後者は合う `remote-cli` を求めるため）。
 
 ただし更新されるのはセッション環境であり、**すでに起動しているペインのシェル**には波及しません。`code` を手で叩く、git の askpass を使うなど **devbase 以外**でも追随させたい場合は、シェルの rc（`~/.bash_profile` 等）にプロンプトフックを置きます。なお **rc を書き換えても、すでに動いているシェルには反映されません**（起動時に一度読むだけのため）。そのペインで直ちに効かせたいときは `source ~/.bash_profile` するか、開き直してください。
 
