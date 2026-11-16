@@ -1096,11 +1096,18 @@
       "pending_source": "issues/issue-523-requirements.md"
     },
     {
+      "term": "合う remote-cli",
+      "context": "editor",
+      "meaning": "拾い直したソケットと同じ VS Code サーバーの remote-cli。セッション環境の VSCODE_GIT_ASKPASS_NODE（サーバーの node のパス）の置かれたディレクトリの bin/remote-cli",
+      "source": "",
+      "pending_source": "issues/issue-523-design.md"
+    },
+    {
       "term": "デスクトップ版の code",
       "context": "editor",
-      "meaning": "ホストに入れたデスクトップ版の VS Code の CLI。VSCODE_IPC_HOOK_CLI を読まず、ホストの VS Code に向けて開く",
+      "meaning": "ホストに入れたデスクトップ版の VS Code の CLI。VSCODE_IPC_HOOK_CLI があっても、PATH に remote-cli が無ければホストの VS Code に向けて開く",
       "source": "",
-      "pending_source": "issues/issue-523-requirements.md"
+      "pending_source": "issues/issue-523-design.md"
     }
   ]
 }

@@ -61,7 +61,8 @@ up の後に VS Code で dev コンテナを開く（docs/specifications/editor-
 | セッション環境 | — | tmux のサーバーがセッションごとに持つ環境変数。update-environment に挙げた変数は attach のたびにいまのクライアントの値へ更新される。ペインのシェルの環境変数はペインを作ったときの値のまま残る | — | — | — |
 | IPC ソケットの拾い直し | — | ペインのシェルの VSCODE_IPC_HOOK_CLI が使えないとき、セッション環境の VSCODE_IPC_HOOK_CLI が接続できればそちらを使うこと | — | — | — |
 | remote-cli | — | Remote-SSH などの VS Code サーバーが持つ CLI の置き場（<サーバーのディレクトリ>/bin/remote-cli）。中の code は VSCODE_IPC_HOOK_CLI のソケットを通じて手元の VS Code に窓を開かせる | — | — | — |
-| デスクトップ版の code | — | ホストに入れたデスクトップ版の VS Code の CLI。VSCODE_IPC_HOOK_CLI を読まず、ホストの VS Code に向けて開く | — | — | — |
+| 合う remote-cli | — | 拾い直したソケットと同じ VS Code サーバーの remote-cli。セッション環境の VSCODE_GIT_ASKPASS_NODE（サーバーの node のパス）の置かれたディレクトリの bin/remote-cli | — | — | — |
+| デスクトップ版の code | — | ホストに入れたデスクトップ版の VS Code の CLI。VSCODE_IPC_HOOK_CLI があっても、PATH に remote-cli が無ければホストの VS Code に向けて開く | — | — | — |
 
 ## 機密の置き場（`secret`）
 
