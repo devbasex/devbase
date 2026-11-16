@@ -728,18 +728,87 @@ def _drop_vscode_ipc(env):
     return env
 
 
+_ASKPASS_NODE_VAR = "VSCODE_GIT_ASKPASS_NODE"
+# 合う remote-cli を求められなかった理由 (warning にそのまま載せる)。
+_REMOTE_CLI_UNSET = f"tmux のセッション環境に {_ASKPASS_NODE_VAR} がありません"
+_REMOTE_CLI_REMOVED = (
+    f"tmux のセッション環境の {_ASKPASS_NODE_VAR} が消されています (-{_ASKPASS_NODE_VAR})")
+_REMOTE_CLI_NOT_ABSOLUTE = f"{_ASKPASS_NODE_VAR} が絶対パスではありません"
+_REMOTE_CLI_NO_EDITOR = "{directory} に実行できる {name} がありません"
+
+
+def _editor_name(environ) -> Optional[str]:
+    """起動するエディタのファイル名 (``remote-cli`` の中で確かめる名前) を返す。
+
+    ``DEVBASE_EDITOR`` があればその先頭の語の末尾の名前、無ければ ``code``。
+    語に分けられない・名前が空のときは None。
+    """
+    try:
+        parts = resolve_editor_display(environ)
+    except ValueError:
+        return None
+    name = os.path.basename(parts[0])
+    return name or None
+
+
+def _is_executable_file(path: str) -> bool:
+    """パスが実行できる通常のファイルか (確かめの途中の例外は False)。"""
+    try:
+        return os.path.isfile(path) and os.access(path, os.X_OK)
+    except (OSError, ValueError):
+        return False
+
+
+def _find_matching_remote_cli(environ, editor_name: Optional[str]
+                              ) -> tuple[Optional[str], Optional[str]]:
+    """セッション環境の ``VSCODE_GIT_ASKPASS_NODE`` から合う ``remote-cli`` を求める。
+
+    ``VSCODE_GIT_ASKPASS_NODE`` は VS Code サーバーの ``node`` の絶対パスで、その置かれた
+    ディレクトリの ``bin/remote-cli`` が、拾い直したソケットと同じサーバーの CLI になる。
+    サーバーのディレクトリを探すことはしない (版のずれたサーバーへ委ねないため)。
+
+    戻り値は ``(ディレクトリ, 見つからない理由)`` で、ちょうど一方だけが None でない。
+    """
+    if editor_name is None:
+        return None, _REMOTE_CLI_NO_EDITOR.format(
+            directory="remote-cli", name="エディタ")
+    value = _tmux_show_env(_ASKPASS_NODE_VAR, environ)
+    if value is _TMUX_REMOVED:
+        return None, _REMOTE_CLI_REMOVED
+    if value is None:
+        return None, _REMOTE_CLI_UNSET
+    if not os.path.isabs(value):
+        return None, _REMOTE_CLI_NOT_ABSOLUTE
+    # normpath を掛けないので末尾の名前は必ず remote-cli になる。
+    directory = os.path.join(os.path.dirname(value), "bin", "remote-cli")
+    if not _is_executable_file(os.path.join(directory, editor_name)):
+        return None, _REMOTE_CLI_NO_EDITOR.format(directory=directory, name=editor_name)
+    return directory, None
+
+
+def _prepend_path(path: Optional[str], directory: str) -> str:
+    """``directory`` を先頭の要素にした PATH を返す (ほかの要素は並びも重複もそのまま)。"""
+    if not path:
+        return directory
+    return directory + os.pathsep + path
+
+
 def _prepare_ipc_env(env, ctx: EditorContext):
     """拾い直した IPC ソケットを env へ反映し、必要な警告ログを出す。
 
     tmux のセッション環境から拾い直せた場合は、起動する code にもその値を渡す。
-    変数を差し替えないと code 自身が古いソケットへ繋ぎに行って失敗する。変数だけ
-    残って接続先が死んでいる IPC ソケットは無言の失敗になりやすいので明示する
-    (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
+    変数を差し替えないと code 自身が古いソケットへ繋ぎに行って失敗する。あわせて
+    そのソケットと同じ VS Code サーバーの ``remote-cli`` を PATH の先頭に入れる。
+    ペインの PATH の先頭がデスクトップ版の code だと、``VSCODE_IPC_HOOK_CLI`` を
+    読まずホストの VS Code へ向けて開いてしまうため。求められなければ PATH は変えず
+    警告する。変数だけ残って接続先が死んでいる IPC ソケットは無言の失敗になりやすい
+    ので明示する (tmux セッション再利用・VS Code ウィンドウのリロード後など)。
 
     ``env`` は差し替えが要る場合のみ複製して返す (要らなければそのまま返す)。
     """
     stale_ipc = env.get("VSCODE_IPC_HOOK_CLI")
     if ctx.ipc_socket and ctx.ipc_socket != stale_ipc:
+        session_env = env
         env = dict(env)
         env["VSCODE_IPC_HOOK_CLI"] = ctx.ipc_socket
         logger.info(
@@ -748,6 +817,21 @@ def _prepare_ipc_env(env, ctx: EditorContext):
             "tmux 設定を参照してください。",
             stale_ipc or "(未設定)", ctx.ipc_socket,
         )
+        editor_name = _editor_name(session_env)
+        remote_cli, reason = _find_matching_remote_cli(session_env, editor_name)
+        if remote_cli:
+            env["PATH"] = _prepend_path(env.get("PATH"), remote_cli)
+            logger.info(
+                "拾い直したソケットに合う remote-cli を PATH の先頭に入れました (%s)",
+                remote_cli,
+            )
+        else:
+            logger.warning(
+                "拾い直したソケットに合う remote-cli が見つかりません (%s)。PATH は変えずに "
+                "%s で起動します。tmux の update-environment に %s を入れると次から直ります "
+                "(環境変数ガイドの tmux 設定を参照してください)",
+                reason, editor_name or "エディタ", _ASKPASS_NODE_VAR,
+            )
     if ctx.ipc_from_previous_client:
         # ペインを作った以前のクライアントの IPC。生きていても code に渡すとそちらへ
         # 委譲してしまうので外す (セッション環境の IPC を拾えていれば上で差し替え済み)。
@@ -857,12 +941,15 @@ def open_editor(*, project_name: str, dev_service_name: str, workdir: str,
     # tmux のセッション環境から拾い直せた場合は env を差し替え、死んだ IPC ソケット
     # の警告も出す。
     had_ipc = bool(env.get("VSCODE_IPC_HOOK_CLI"))
+    pane_path = env.get("PATH")
     env = _prepare_ipc_env(env, ctx)
     # IPC を外したときは remote-cli を除いた PATH で手元の code を探す
-    # (見つからなければ skip / print_command へ落ちる)。
+    # (見つからなければ skip / print_command へ落ちる)。合う remote-cli を PATH の
+    # 先頭に入れたときも、起動 (Popen は env の PATH で探す) と同じ PATH で探す。
     dropped_ipc = had_ipc and "VSCODE_IPC_HOOK_CLI" not in env
+    path_changed = env.get("PATH") != pane_path
     editor = resolve_editor_cmd(            # launch 用 (which 込み・None あり得る)
-        env, path=env.get("PATH") if dropped_ipc else None)
+        env, path=env.get("PATH") if dropped_ipc or path_changed else None)
     display = resolve_editor_display(env)   # print 用 (必ず非 None)
     plan = decide_action(ctx, editor_available=bool(editor))
 
