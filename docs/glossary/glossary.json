@@ -1073,6 +1073,41 @@
       "context": "plugin-distribution",
       "meaning": "作成フローが書き込みの前に確定する、作るもの・ファイル・マージ先の組",
       "source": "docs/specifications/plugin-creation-flow.md"
+    },
+    {
+      "term": "セッション環境",
+      "context": "editor",
+      "meaning": "tmux のサーバーがセッションごとに持つ環境変数。update-environment に挙げた変数は attach のたびにいまのクライアントの値へ更新される。ペインのシェルの環境変数はペインを作ったときの値のまま残る",
+      "source": "",
+      "pending_source": "issues/issue-523-requirements.md"
+    },
+    {
+      "term": "IPC ソケットの拾い直し",
+      "context": "editor",
+      "meaning": "ペインのシェルの VSCODE_IPC_HOOK_CLI が使えないとき、セッション環境の VSCODE_IPC_HOOK_CLI が接続できればそちらを使うこと",
+      "source": "",
+      "pending_source": "issues/issue-523-requirements.md"
+    },
+    {
+      "term": "remote-cli",
+      "context": "editor",
+      "meaning": "Remote-SSH などの VS Code サーバーが持つ CLI の置き場（<サーバーのディレクトリ>/bin/remote-cli）。中の code は VSCODE_IPC_HOOK_CLI のソケットを通じて手元の VS Code に窓を開かせる",
+      "source": "",
+      "pending_source": "issues/issue-523-requirements.md"
+    },
+    {
+      "term": "合う remote-cli",
+      "context": "editor",
+      "meaning": "拾い直したソケットと同じ VS Code サーバーの remote-cli。セッション環境の VSCODE_GIT_ASKPASS_NODE（サーバーの node のパス）の置かれたディレクトリの bin/remote-cli",
+      "source": "",
+      "pending_source": "issues/issue-523-design.md"
+    },
+    {
+      "term": "デスクトップ版の code",
+      "context": "editor",
+      "meaning": "ホストに入れたデスクトップ版の VS Code の CLI。VSCODE_IPC_HOOK_CLI があっても、PATH に remote-cli が無ければホストの VS Code に向けて開く",
+      "source": "",
+      "pending_source": "issues/issue-523-design.md"
     }
   ]
 }
