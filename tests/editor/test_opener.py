@@ -784,6 +784,9 @@ def _desktop_pane(monkeypatch, tmp_path, listening_ipc_socket, lines_extra=None,
                "PATH": os.pathsep.join([desktop, "/usr/bin"])}
     if devbase_editor is not None:
         environ["DEVBASE_EDITOR"] = devbase_editor
+    # PATH を変えない経路ではエディタを実行中のプロセスの PATH で探す (これまでどおり)。
+    # 端末に code があるかで結果が変わらないよう、プロセスの PATH もペインに揃える。
+    monkeypatch.setenv("PATH", environ["PATH"])
     return environ, run
 
 
