@@ -565,7 +565,7 @@ devbase は**実際にソケットへ接続できるかを確認**してから V
 
 拾い直したときは、そのソケットと同じ VS Code サーバーの `remote-cli`（`<サーバーのディレクトリ>/bin/remote-cli`）を、起動に渡す `PATH` の先頭に入れます。ペインのシェルの `PATH` の先頭がホストのデスクトップ版の `code`（`/usr/local/bin/code` など）だと、`VSCODE_IPC_HOOK_CLI` があってもホストの VS Code に向けて開き、手元の PC に窓が開かないためです。サーバーのディレクトリは、tmux のセッション環境の `VSCODE_GIT_ASKPASS_NODE`（VS Code サーバーの `node` の絶対パス）の置かれた場所から求めます。`~/.vscode-server` の下を探すことはしません（版の違うサーバーが並び、拾い直したソケットのものを決められないため）。ペインの `PATH` のほかの要素は、並びを変えずに残します。
 
-`VSCODE_GIT_ASKPASS_NODE` は tmux の `update-environment` の既定に入っていないため、**後述の設定を入れていないと合う `remote-cli` は見つかりません**。見つからないとき（セッション環境に無い・消されている・絶対パスでない・求めた場所に実行できる `code` が無い）は、理由と後述の設定の案内を警告で出し、`PATH` を変えずにこれまでどおり起動します。
+`VSCODE_GIT_ASKPASS_NODE` は tmux の `update-environment` の既定に入っていないため、**後述の設定を入れていないと合う `remote-cli` は見つかりません**。見つからないとき（セッション環境に無い・消されている・絶対パスでない・求めた場所に実行できるエディタ（`DEVBASE_EDITOR` の先頭の語の名前。無ければ `code`）が無い）は、理由と後述の設定の案内を警告で出し、`PATH` を変えずにこれまでどおり起動します。
 
 SSH 越しかどうかの判定も、tmux 内ではセッション環境の `SSH_CONNECTION` を見ます。SSH から立てた tmux サーバーに手元の端末から attach し直すと、ペインのシェルには `SSH_CONNECTION` が残りますが、セッション環境は `-SSH_CONNECTION`（いまのクライアントは SSH でない）に更新されます。`SSH_CONNECTION` は tmux の `update-environment` に既定で入っているので、設定は要りません。セッション環境から分からないとき（tmux 外・tmux の失敗）は、ペインのシェルの `SSH_CONNECTION` / `SSH_CLIENT` / `SSH_TTY` で判定します。
 
