@@ -95,8 +95,8 @@ devbase/
 | `_find_matching_remote_cli` | それ以外 | `(os.path.join(os.path.dirname(値), "bin", "remote-cli"), None)` |
 
 求めるディレクトリは、`node` の置かれたディレクトリに `bin/remote-cli` を連結して作る。`os.path.normpath` を掛けないため、
-末尾の名前は必ず `remote-cli` になり、決定 3 の「名前が `remote-cli`」はこの作り方で満たす（`_is_remote_cli_dir` で
-確かめ直す行は置かない。当たらない分岐はテストで踏めないため）。テストは足したディレクトリの末尾の名前を見る。
+末尾の名前は必ず `remote-cli` になる。決定 3 の「名前が `remote-cli`」はこの作り方で満たす。`_is_remote_cli_dir` で
+確かめ直す行は置かない。当たらない分岐はテストで踏めないためである。テストは足したディレクトリの末尾の名前を見る。
 
 `_prepare_ipc_env` と `open_editor` の判定表:
 
@@ -164,9 +164,9 @@ devbase/
 
 ## 単体テストの観点
 
-テストは `tests/editor/test_opener.py` に置き、tmux は既存の `_FakeTmuxEnv`（変数ごとの出力を返す）を `opener.subprocess.run`
-の差し替えに使う。VS Code サーバーの配置は `tmp_path` に `node` と `bin/remote-cli/<エディタ>` を作って与え、ソケットの
-接続は既存のテストと同じく `_socket_connectable` を差し替える。実の tmux サーバーに触れない。
+テストは `tests/editor/test_opener.py` に置く。tmux は、既存の `_FakeTmuxEnv`（変数ごとの出力を返す）を
+`opener.subprocess.run` の差し替えに使う。VS Code サーバーの配置は、`tmp_path` に `node` と `bin/remote-cli/<エディタ>` を
+作って与える。ソケットの接続は、既存のテストと同じく `_socket_connectable` を差し替える。実の tmux サーバーに触れない。
 
 | 関数 | 正常 | 境界値 | 異常 |
 | --- | --- | --- | --- |
