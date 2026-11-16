@@ -92,6 +92,33 @@ graph TD
   `docker ps` の環境変数 `DOCKER_CONTEXT` と、`opener.open_editor` の `docker_context` の両方に使う
 - 機密は `login` と同じく任意で注入する（`opener` の `docker compose ps` の補間のため）
 
+### tmux で IPC ソケットを拾い直したときの起動
+
+`up` の自動オープンと `open` に共通の、`opener.open_editor` の振る舞いである。tmux のペインのシェルの
+`VSCODE_IPC_HOOK_CLI` が使えず、tmux のセッション環境から接続できるソケットを拾い直したとき
+（`_prepare_ipc_env`）は、そのソケットと同じ VS Code サーバーの `remote-cli` を `PATH` の先頭に入れて起動する。
+ペインの `PATH` の先頭がデスクトップ版の `code` だと、`VSCODE_IPC_HOOK_CLI` があってもホストの VS Code に向けて
+開き、手元の PC に窓が開かないためである。
+
+| 場面 | 起動に渡す環境 | ログ |
+| --- | --- | --- |
+| 拾い直し、合う `remote-cli` がある | `VSCODE_IPC_HOOK_CLI` は拾い直したソケット。`PATH` は先頭が合う `remote-cli`、2 番目以降がペインの `PATH` の要素（並びも重複もそのまま。ペインに `PATH` が無ければ `remote-cli` だけ） | info 1 行（足したディレクトリ） |
+| 拾い直し、合う `remote-cli` が無い | `VSCODE_IPC_HOOK_CLI` だけ差し替え、`PATH` はペインのまま。起動は続ける | warning 1 行（見つからない理由と、`update-environment` に `VSCODE_GIT_ASKPASS_NODE` を入れる案内） |
+| 拾い直していない | 変更なし。`VSCODE_GIT_ASKPASS_NODE` を問い合わせない | 変更なし |
+
+- **合う `remote-cli` は、セッション環境の `VSCODE_GIT_ASKPASS_NODE` だけから求める。** 値は VS Code サーバーの
+  `node` の絶対パスで、その置かれたディレクトリの `bin/remote-cli` を使う。`~/.vscode-server` などのサーバーの
+  ディレクトリは探さない（版の違うサーバーが並び、拾い直したソケットのものを決められないため）。tmux への
+  問い合わせは拾い直したときに 1 回（`tmux show-environment VSCODE_GIT_ASKPASS_NODE`、上限 2 秒）だけ増える
+- **足すのは、値が絶対パスで、求めたディレクトリに起動するエディタの名前の実行できる通常のファイルがあるときだけ。**
+  名前は `DEVBASE_EDITOR` の先頭の語の末尾の名前、無ければ `code`
+- 見つからない理由は 4 つ: セッション環境に無い（tmux の失敗を含む）・消されている（`-VSCODE_GIT_ASKPASS_NODE`）・
+  絶対パスでない・求めたディレクトリに実行できるエディタが無い
+- エディタの存在の確かめも、起動に渡す環境の `PATH` で行う（起動も同じ `PATH` で実行ファイルを探すため）。
+  起動するコマンドの先頭の語は書き換えない。`DEVBASE_EDITOR` が絶対パスなら、その実行ファイルが起動される
+- `VSCODE_GIT_ASKPASS_NODE` は tmux の `update-environment` の既定に入っていない。利用者が
+  [環境変数ガイド](../user/environment-variables.md)の tmux の設定を入れたときだけセッション環境に入る
+
 ### 引数と終了コード
 
 | 状況 | 終了コード | 出力 |
@@ -137,6 +164,7 @@ graph TD
 | `DEVBASE_OPEN_INDEX` | `--open-index` を省いたときの番号。数でなければ 1。`up` と読み方を共有する |
 | `DEVBASE_OPEN_EDITOR` / `project.yml` の `open_editor` | `open` では見ない |
 | `DEVBASE_EDITOR` / `DEVBASE_EDITOR_SSH_HOST` / `DEVBASE_EDITOR_DOCKER_CONTEXT` / `DEVBASE_WORKSPACE` | `opener.open_editor` が従来どおり読む |
+| tmux のセッション環境の `VSCODE_GIT_ASKPASS_NODE` | IPC ソケットを拾い直したときだけ読み、合う `remote-cli` を求める。ペインのシェルの値は見ない |
 
 永続データは持たない。
 
@@ -171,6 +199,10 @@ graph TD
 - `project_open_candidates` の返す値・切り替え先の接続先へ問い合わせること・名前を解決できない／`docker ps` の失敗で
   `None`（`tests/commands/test_container_open.py`）
 - bash / zsh の補完（`tests/cli/test_completion.py`）
+- tmux で拾い直したとき、合う `remote-cli` が `PATH` の先頭に入り起動する `code` がそれに解決されること、
+  ペインの要素の並びが保たれること、見つからない 4 つの理由で `PATH` が変わらず warning が 1 行出ること、
+  拾い直さないときに `VSCODE_GIT_ASKPASS_NODE` を問い合わせないこと（`tests/editor/test_opener.py`。tmux は
+  `subprocess.run` を差し替え、実の tmux サーバーに触れない）
 
 実機（起動中のプロジェクト、非 TTY）では、`open` / `open --open-index <動いていない番号>` /
 `open --context <存在しない context>` / `open --open 2` / `project open --open-index 2` の終了コードが上の表の
