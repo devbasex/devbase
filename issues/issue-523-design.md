@@ -299,7 +299,7 @@ VS Code サーバーは統合ターミナルの `PATH` の先頭に自分の `re
 
 | 課題 | 扱い | 取り込み先 | 触るファイル |
 | --- | --- | --- | --- |
-| #523 | 実装する | — | `lib/devbase/editor/opener.py`、`tests/editor/test_opener.py`、`docs/specifications/editor-open.md`、`docs/user/environment-variables.md`、`CHANGELOG.md`、`docs/glossary.md`・`docs/glossary/glossary.json`（用語の追加と意味の変更。設計の段で反映済みで、実装の段では内容を変えない） |
+| #523 | 実装する | — | `lib/devbase/editor/opener.py`、`tests/editor/test_opener.py`、`docs/specifications/editor-open.md`、`docs/user/environment-variables.md`、`CHANGELOG.md`、`docs/glossary.md`、`docs/glossary/glossary.json`（用語の追加と意味の変更。設計の段で反映済みで、実装の段では内容を変えない） |
 
 ## 人へ残す判断
 
