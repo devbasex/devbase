@@ -549,6 +549,304 @@ def test_open_editor_ssh_reattached_tmux_uses_session_ipc(
     assert seen["env"]["VSCODE_IPC_HOOK_CLI"] == second_ipc_socket
 
 
+# ---------------------------------------------------------------------------
+# 拾い直したソケットに合う remote-cli を PATH の先頭に入れる (#523)
+# ---------------------------------------------------------------------------
+
+def _make_exe(path):
+    """``path`` に実行できる空のスクリプトを置く。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+def _make_server(root, name="code"):
+    """VS Code サーバーの配置 (``<root>/node`` と ``<root>/bin/remote-cli/<name>``) を作る。"""
+    _make_exe(root / "node")
+    _make_exe(root / "bin" / "remote-cli" / name)
+    return str(root / "node"), str(root / "bin" / "remote-cli")
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, "code"),
+    ("", "code"),
+    ("cursor --reuse-window", "cursor"),
+    ("/opt/bin/cursor", "cursor"),
+    ("'unterminated", None),
+    ('""', None),
+])
+def test_editor_name(value, expected):
+    environ = {} if value is None else {"DEVBASE_EDITOR": value}
+    assert opener._editor_name(environ) == expected
+
+
+def test_is_executable_file(tmp_path):
+    exe = _make_exe(tmp_path / "exe")
+    link = tmp_path / "link"
+    link.symlink_to(exe)
+    plain = tmp_path / "plain"
+    plain.write_text("x")
+    plain.chmod(0o644)
+    assert opener._is_executable_file(exe) is True
+    assert opener._is_executable_file(str(link)) is True
+    assert opener._is_executable_file(str(plain)) is False
+    assert opener._is_executable_file(str(tmp_path)) is False
+    assert opener._is_executable_file(str(tmp_path / "missing")) is False
+    assert opener._is_executable_file(str(tmp_path / "a\0b")) is False
+
+
+@pytest.mark.parametrize("path, expected", [
+    ("/a:/b", "/rc:/a:/b"),
+    (None, "/rc"),
+    ("", "/rc"),
+    ("/x/remote-cli:/a", "/rc:/x/remote-cli:/a"),
+])
+def test_prepend_path(path, expected):
+    expected = expected.replace(":", os.pathsep)
+    path = path.replace(":", os.pathsep) if path else path
+    assert opener._prepend_path(path, "/rc") == expected
+
+
+@pytest.mark.parametrize("layout", [
+    ("cli", "servers", "Stable-abc", "server"),   # 現行の配置
+    ("bin", "abc123"),                            # 旧い配置
+])
+def test_find_matching_remote_cli_found(monkeypatch, tmp_path, layout):
+    node, rc = _make_server(tmp_path.joinpath(".vscode-server", *layout))
+    run = _FakeTmuxEnv({"VSCODE_GIT_ASKPASS_NODE": f"VSCODE_GIT_ASKPASS_NODE={node}\n"})
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    got = opener._find_matching_remote_cli({"TMUX": "x"}, "code")
+    assert got == (rc, None)
+    assert os.path.basename(got[0]) == "remote-cli"
+    assert run.calls == [["tmux", "show-environment", "VSCODE_GIT_ASKPASS_NODE"]]
+
+
+@pytest.mark.parametrize("editor_name, found", [("cursor", True), ("code", False)])
+def test_find_matching_remote_cli_uses_editor_name(
+        monkeypatch, tmp_path, editor_name, found):
+    node, rc = _make_server(tmp_path / "server", name="cursor")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv(
+        {"VSCODE_GIT_ASKPASS_NODE": f"VSCODE_GIT_ASKPASS_NODE={node}\n"}))
+    directory, reason = opener._find_matching_remote_cli({"TMUX": "x"}, editor_name)
+    assert (directory == rc) is found
+    assert (reason is None) is found
+
+
+def _bad_code(kind, rc_dir):
+    """``rc_dir/code`` を「実行できるエディタが無い」状態にする。"""
+    rc_dir.mkdir(parents=True)
+    if kind == "not_executable":
+        (rc_dir / "code").write_text("x")
+        (rc_dir / "code").chmod(0o644)
+    elif kind == "directory":
+        (rc_dir / "code").mkdir()
+
+
+@pytest.mark.parametrize("tmux_line, returncode, expected", [
+    ("", 0, opener._REMOTE_CLI_UNSET),
+    ("", 1, opener._REMOTE_CLI_UNSET),
+    ("-VSCODE_GIT_ASKPASS_NODE\n", 0, opener._REMOTE_CLI_REMOVED),
+    ("VSCODE_GIT_ASKPASS_NODE=server/node\n", 0, opener._REMOTE_CLI_NOT_ABSOLUTE),
+])
+def test_find_matching_remote_cli_reasons(monkeypatch, tmux_line, returncode, expected):
+    monkeypatch.setattr(opener.subprocess, "run",
+                        _FakeRun(stdout=tmux_line, returncode=returncode))
+    assert opener._find_matching_remote_cli({"TMUX": "x"}, "code") == (None, expected)
+
+
+@pytest.mark.parametrize("kind", ["missing", "not_executable", "directory"])
+def test_find_matching_remote_cli_no_executable_editor(monkeypatch, tmp_path, kind):
+    server = tmp_path / "server"
+    _make_exe(server / "node")
+    _bad_code(kind, server / "bin" / "remote-cli")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv(
+        {"VSCODE_GIT_ASKPASS_NODE": f"VSCODE_GIT_ASKPASS_NODE={server / 'node'}\n"}))
+    directory, reason = opener._find_matching_remote_cli({"TMUX": "x"}, "code")
+    assert directory is None
+    assert reason == opener._REMOTE_CLI_NO_EDITOR.format(
+        directory=str(server / "bin" / "remote-cli"), name="code")
+
+
+def test_find_matching_remote_cli_without_editor_name_skips_tmux(monkeypatch):
+    run = _FakeRun()
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    directory, reason = opener._find_matching_remote_cli({"TMUX": "x"}, None)
+    assert directory is None and reason
+    assert run.calls == []
+
+
+def test_find_matching_remote_cli_does_not_search_server_dirs(monkeypatch, tmp_path):
+    """値が無ければ、サーバーのディレクトリに remote-cli/code があっても使わない (I1)。"""
+    _make_server(tmp_path / ".vscode-server" / "cli" / "servers" / "Stable-abc" / "server")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv({}))
+    assert opener._find_matching_remote_cli({"TMUX": "x"}, "code") == (
+        None, opener._REMOTE_CLI_UNSET)
+
+
+def _recovered_ctx(socket):
+    return opener.EditorContext(
+        is_tty=True, is_ssh=True, in_vscode=True, is_wsl=False, is_darwin=True,
+        ipc_socket=socket)
+
+
+def test_prepare_ipc_env_prepends_matching_remote_cli(monkeypatch, tmp_path, caplog):
+    import logging
+    node, rc = _make_server(tmp_path / "server")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv(
+        {"VSCODE_GIT_ASKPASS_NODE": f"VSCODE_GIT_ASKPASS_NODE={node}\n"}))
+    pane_path = os.pathsep.join(["/usr/local/bin", "/usr/bin", "/bin"])
+    with caplog.at_level(logging.INFO):
+        env = opener._prepare_ipc_env(
+            {"TMUX": "x", "VSCODE_IPC_HOOK_CLI": "/tmp/gone.sock", "PATH": pane_path},
+            _recovered_ctx("/tmp/live.sock"))
+    parts = env["PATH"].split(os.pathsep)
+    assert parts[0] == rc
+    assert parts[1:] == pane_path.split(os.pathsep)
+    assert env["VSCODE_IPC_HOOK_CLI"] == "/tmp/live.sock"
+    added = [r for r in caplog.records if "remote-cli を PATH の先頭" in r.getMessage()]
+    assert len(added) == 1 and rc in added[0].getMessage()
+    assert added[0].levelno == logging.INFO
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_prepare_ipc_env_without_pane_path(monkeypatch, tmp_path):
+    node, rc = _make_server(tmp_path / "server")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv(
+        {"VSCODE_GIT_ASKPASS_NODE": f"VSCODE_GIT_ASKPASS_NODE={node}\n"}))
+    env = opener._prepare_ipc_env({"TMUX": "x"}, _recovered_ctx("/tmp/live.sock"))
+    assert env["PATH"] == rc
+
+
+def test_prepare_ipc_env_previous_client_keeps_recovered_ipc(monkeypatch, tmp_path):
+    """以前のクライアントの IPC と拾い直しが重なっても IPC を外さず、PATH を差し替える。"""
+    node, rc = _make_server(tmp_path / "server")
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv(
+        {"VSCODE_GIT_ASKPASS_NODE": f"VSCODE_GIT_ASKPASS_NODE={node}\n"}))
+    ctx = opener.EditorContext(
+        is_tty=True, is_ssh=True, in_vscode=True, is_wsl=False, is_darwin=True,
+        ipc_socket="/tmp/live.sock", ipc_from_previous_client=True)
+    env = opener._prepare_ipc_env(
+        {"TMUX": "x", "VSCODE_IPC_HOOK_CLI": "/tmp/old.sock", "PATH": "/usr/bin"}, ctx)
+    assert env["VSCODE_IPC_HOOK_CLI"] == "/tmp/live.sock"
+    assert env["PATH"].split(os.pathsep)[0] == rc
+
+
+@pytest.mark.parametrize("lines", [
+    {},
+    {"VSCODE_GIT_ASKPASS_NODE": "-VSCODE_GIT_ASKPASS_NODE\n"},
+    {"VSCODE_GIT_ASKPASS_NODE": "VSCODE_GIT_ASKPASS_NODE=server/node\n"},
+    {"VSCODE_GIT_ASKPASS_NODE": "VSCODE_GIT_ASKPASS_NODE=/nonexistent/server/node\n"},
+])
+def test_prepare_ipc_env_warns_when_remote_cli_missing(monkeypatch, caplog, lines):
+    import logging
+    monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv(lines))
+    with caplog.at_level(logging.INFO):
+        env = opener._prepare_ipc_env(
+            {"TMUX": "x", "VSCODE_IPC_HOOK_CLI": "/tmp/gone.sock", "PATH": "/usr/bin"},
+            _recovered_ctx("/tmp/live.sock"))
+    assert env["PATH"] == "/usr/bin"
+    assert env["VSCODE_IPC_HOOK_CLI"] == "/tmp/live.sock"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "remote-cli が見つかりません" in warnings[0]
+    assert "update-environment" in warnings[0]
+    assert "VSCODE_GIT_ASKPASS_NODE" in warnings[0]
+
+
+def test_prepare_ipc_env_without_recovery_does_not_query(monkeypatch):
+    """拾い直していないときは VSCODE_GIT_ASKPASS_NODE を問い合わせず、env もそのまま。"""
+    run = _FakeRun()
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    environ = {"TMUX": "x", "VSCODE_IPC_HOOK_CLI": "/tmp/live.sock", "PATH": "/usr/bin"}
+    env = opener._prepare_ipc_env(environ, _recovered_ctx("/tmp/live.sock"))
+    assert env is environ
+    assert run.calls == []
+
+
+def _desktop_pane(monkeypatch, tmp_path, listening_ipc_socket, lines_extra=None,
+                  devbase_editor=None):
+    """再現手順の状態: ペインの PATH の先頭にデスクトップ版の code、ペインの IPC は死に、
+    セッション環境の IPC だけが接続できる (Remote-SSH の統合ターミナルから attach)。"""
+    desktop = str(tmp_path / "desktop" / "bin")
+    _make_exe(tmp_path / "desktop" / "bin" / "code")
+    monkeypatch.setattr(opener, "resolve_container_name",
+                        lambda *a, **kw: "proj-a-dev-1")
+    lines = {
+        "SSH_CONNECTION": "SSH_CONNECTION=192.0.2.1 1 192.0.2.2 22\n",
+        "VSCODE_IPC_HOOK_CLI": f"VSCODE_IPC_HOOK_CLI={listening_ipc_socket}\n",
+        **(lines_extra or {}),
+    }
+    run = _FakeTmuxEnv(lines)
+    monkeypatch.setattr(opener.subprocess, "run", run)
+    environ = {"TMUX": "x", "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 22",
+               "VSCODE_IPC_HOOK_CLI": str(tmp_path / "gone.sock"),
+               "PATH": os.pathsep.join([desktop, "/usr/bin"])}
+    if devbase_editor is not None:
+        environ["DEVBASE_EDITOR"] = devbase_editor
+    # PATH を変えない経路ではエディタを実行中のプロセスの PATH で探す (これまでどおり)。
+    # 端末に code があるかで結果が変わらないよう、プロセスの PATH もペインに揃える。
+    monkeypatch.setenv("PATH", environ["PATH"])
+    return environ, run
+
+
+def test_open_editor_recovered_ipc_launches_matching_remote_cli(
+        monkeypatch, tmp_path, listening_ipc_socket):
+    """受け入れ条件 1・2: 起動する code は合う remote-cli のものに解決される。"""
+    node, rc = _make_server(tmp_path / "server")
+    environ, run = _desktop_pane(
+        monkeypatch, tmp_path, listening_ipc_socket,
+        {"VSCODE_GIT_ASKPASS_NODE": f"VSCODE_GIT_ASKPASS_NODE={node}\n"})
+    seen = {}
+    result = opener.open_editor(
+        project_name="proj-a", dev_service_name="dev", workdir="/work",
+        environ=environ, isatty=True, system="Darwin",
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert seen["cmd"][0] == "code"
+    assert shutil.which(seen["cmd"][0], path=seen["env"]["PATH"]) == os.path.join(rc, "code")
+    assert seen["env"]["PATH"].split(os.pathsep) == [rc, *environ["PATH"].split(os.pathsep)]
+    assert seen["env"]["VSCODE_IPC_HOOK_CLI"] == listening_ipc_socket
+    asked = [c for c in run.calls if c[-1] == "VSCODE_GIT_ASKPASS_NODE"]
+    assert len(asked) == 1
+
+
+def test_open_editor_recovered_ipc_keeps_absolute_devbase_editor(
+        monkeypatch, tmp_path, listening_ipc_socket):
+    """DEVBASE_EDITOR が絶対パスなら先頭の語はそのまま、PATH は差し替わる (前提 4)。"""
+    node, rc = _make_server(tmp_path / "server")
+    editor = _make_exe(tmp_path / "opt" / "code")
+    environ, _ = _desktop_pane(
+        monkeypatch, tmp_path, listening_ipc_socket,
+        {"VSCODE_GIT_ASKPASS_NODE": f"VSCODE_GIT_ASKPASS_NODE={node}\n"},
+        devbase_editor=editor)
+    seen = {}
+    result = opener.open_editor(
+        project_name="proj-a", dev_service_name="dev", workdir="/work",
+        environ=environ, isatty=True, system="Darwin",
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert seen["cmd"][0] == editor
+    assert seen["env"]["PATH"].split(os.pathsep)[0] == rc
+
+
+def test_open_editor_recovered_ipc_without_remote_cli_still_launches(
+        monkeypatch, tmp_path, listening_ipc_socket):
+    """合う remote-cli が無くても、PATH を変えずにこれまでどおり起動する。"""
+    environ, _ = _desktop_pane(monkeypatch, tmp_path, listening_ipc_socket)
+    seen = {}
+    result = opener.open_editor(
+        project_name="proj-a", dev_service_name="dev", workdir="/work",
+        environ=environ, isatty=True, system="Darwin",
+        launcher=lambda cmd, env: seen.update(cmd=cmd, env=env),
+    )
+    assert result == "launch"
+    assert seen["env"]["PATH"] == environ["PATH"]
+    assert seen["env"]["VSCODE_IPC_HOOK_CLI"] == listening_ipc_socket
+
+
 def test_detect_context_same_client_keeps_pane_ipc(monkeypatch, listening_ipc_socket):
     """SSH 状態が食い違わなければ、ペインの生きた IPC をそのまま使う (従来どおり)。"""
     monkeypatch.setattr(opener.subprocess, "run", _FakeTmuxEnv({

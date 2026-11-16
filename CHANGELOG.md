@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Remote-SSH で入ったホストの tmux から、手元の PC の VS Code にエディタが開くようにしました（#523）。**
+  以前のクライアントが作った tmux のペインで、IPC ソケットを tmux のセッション環境から拾い直しても、起動されるのは
+  ペインの `PATH` の先頭にあるホストのデスクトップ版の `code` で、手元の PC には何も開いていませんでした。
+  拾い直したときは、セッション環境の `VSCODE_GIT_ASKPASS_NODE` からそのソケットと同じ VS Code サーバーの
+  `remote-cli` を求め、`PATH` の先頭に入れて起動します。見つからないときは理由と設定の案内を警告に出し、
+  これまでどおり起動します。**効かせるには `~/.tmux.conf` の `update-environment` に `VSCODE_GIT_ASKPASS_NODE` を
+  入れます**（[環境変数ガイド](docs/user/environment-variables.md)の tmux の節の推奨設定に含まれています）。
+
 ## [4.2.0] - 2026-11-06
 
 ### Added
