@@ -146,6 +146,69 @@ def test_focus_events_is_on(options):
 
 
 @needs_tmux
+def test_set_clipboard_relays_osc52_from_panes(options):
+    """#528: ペインの中のプログラム (入れ子の tmux など) が送る OSC 52 を外側の端末へ中継する。
+
+    既定の ``external`` は tmux 自身のコピーだけを端末へ送り、ペインから来た OSC 52 を捨てる。
+    そのままだと入れ子の内側の tmux で ``Ctrl+C`` したものが手元のクリップボードに届かない。
+    """
+    assert options["set-clipboard"] == ["on"]
+
+
+def _wait_until(predicate, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+@needs_tmux
+def test_nested_tmux_copy_reaches_outer_tmux():
+    """#528: 内側の tmux のコピー (OSC 52) が外側の tmux のバッファに届く。
+
+    外側と内側の両方に base の設定を読ませ、外側のペインから内側のサーバへ attach する。
+    内側で ``set-buffer -w`` (``Ctrl+C`` のコピーと同じく OSC 52 で端末へ送る) をすると、
+    外側が ``set-clipboard on`` なら外側のバッファにも同じ文字列が入る。
+    """
+    tag = uuid.uuid4().hex[:8]
+    outer = Path(tempfile.gettempdir()) / f"dvb528o-{tag}"
+    inner = Path(tempfile.gettempdir()) / f"dvb528i-{tag}"
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    env["TERM"] = "xterm-256color"
+    o = ["tmux", "-S", str(outer)]
+    i = ["tmux", "-S", str(inner)]
+    text = f"nested-copy-{tag}"
+    try:
+        subprocess.run([*o, "-f", str(TMUX_CONF), "new-session", "-d", "-x", "120", "-y", "30"],
+                       env=env, check=True, capture_output=True)
+        subprocess.run([*i, "-f", str(TMUX_CONF), "new-session", "-d", "-s", "in"],
+                       env=env, check=True, capture_output=True)
+        subprocess.run([*o, "send-keys", f"env -u TMUX tmux -S {inner} attach -t in", "Enter"],
+                       env=env, check=True, capture_output=True)
+
+        def attached() -> bool:
+            shown = subprocess.run([*i, "list-clients"], env=env, capture_output=True, text=True)
+            return bool(shown.stdout.strip())
+
+        assert _wait_until(attached), "外側のペインから内側の tmux へ attach できなかった"
+        subprocess.run([*i, "set-buffer", "-w", text], env=env, check=True, capture_output=True)
+
+        def relayed() -> bool:
+            shown = subprocess.run([*o, "list-buffers"], env=env, capture_output=True, text=True)
+            return text in shown.stdout
+
+        assert _wait_until(relayed), "内側のコピーが外側の tmux のバッファに届かない"
+    finally:
+        for base in (i, o):
+            subprocess.run([*base, "kill-server"], env=env, capture_output=True)
+        for sock in (inner, outer):
+            with contextlib.suppress(FileNotFoundError):
+                sock.unlink()
+
+
+@needs_tmux
 def test_default_terminal_is_tmux_256color(options):
     """条件 4: tmux の版に依らず tmux-256color へ固定する。"""
     assert options["default-terminal"] == ["tmux-256color"]
