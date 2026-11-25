@@ -34,7 +34,7 @@ def _seq(*values):
 
 
 # ---------------------------------------------------------------------------
-# handle_row(): 選択行の処理 (running → 操作サブメニュー / 他は直接 up)
+# handle_row(): 選択行の処理 (running かどうかで操作サブメニューを出し分ける)
 # ---------------------------------------------------------------------------
 
 def _row(status):
@@ -102,23 +102,108 @@ def test_handle_row_up_down_return_to_top(monkeypatch, tmp_path, op):
     assert len(select_calls) == 1, "up/down は実行後トップへ戻り再選択させない"
 
 
-@pytest.mark.parametrize("status", ["stopped", "unknown"])
-def test_handle_row_non_running_direct_up(monkeypatch, tmp_path, status):
-    """非 running 行はサブメニューを出さず直接 up する (PR1 非回帰)。"""
+def _stopped(monkeypatch, *answers, rc=0):
+    """停止中のメニューの答えを順に返し、出したメニューと委譲した操作を記録する。"""
     from devbase.commands import container as container_mod
 
-    action_calls = []
-    monkeypatch.setattr(actions_project, "_select_action",
-                        lambda name, ops=None: action_calls.append(name) or "down")
-    captured = {}
+    menus, calls = [], []
+    sel = _seq(*answers)
+    monkeypatch.setattr(actions_project.menu, "select",
+                        lambda message, choices, **kw: menus.append((message, choices, kw))
+                        or sel())
     monkeypatch.setattr(container_mod, "cmd_project",
-                        lambda args: captured.update(
-                            subcommand=args.subcommand, name=args.name) or 0)
+                        lambda args: calls.append(vars(args)) or rc)
+    return menus, calls
 
-    result = actions_project.handle_row(tmp_path, _row(status))
-    assert result == 0                       # 直接 up の rc を返す
-    assert action_calls == [], "非 running ではサブメニューを出さない"
-    assert captured == {"subcommand": "up", "name": "myapp"}
+
+@pytest.mark.parametrize("status", ["stopped", "unknown"])
+def test_handle_row_non_running_shows_menu_before_up(monkeypatch, tmp_path, status):
+    """非 running 行は起動せずにメニューを出す。Esc なら何もせず一覧へ戻る。"""
+    menus, calls = _stopped(monkeypatch, menu.MENU_BACK)
+
+    assert actions_project.handle_row(tmp_path, _row(status)) is menu.MENU_BACK
+    assert calls == []
+    message, choices, kw = menus[0]
+    assert "myapp" in message and status in message
+    assert [value for _label, value in choices] == ["up", "set-scale", "rebuild", "settings"]
+    assert kw["back"] is True
+
+
+@pytest.mark.parametrize("rc", [0, 1])
+def test_handle_row_stopped_up_returns_rc(monkeypatch, tmp_path, rc):
+    """起動の rc はトップループへ返す (一時停止はトップループが行う)。"""
+    monkeypatch.setattr(flow, "pause_for_review", lambda: pytest.fail("二重に待たない"))
+    menus, calls = _stopped(monkeypatch, "up", rc=rc)
+
+    result = actions_project.handle_row(tmp_path, _row("stopped"))
+    assert result == rc and type(result) is int
+    assert calls == [{"subcommand": "up", "name": "myapp", "scale": None}]
+    assert len(menus) == 1
+
+
+def test_handle_row_stopped_rebuild_stays_in_menu(monkeypatch, tmp_path):
+    menus, calls = _stopped(monkeypatch, "rebuild", "up")
+
+    assert actions_project.handle_row(tmp_path, _row("stopped")) == 0
+    assert [c["subcommand"] for c in calls] == ["build", "up"]
+    assert calls[0]["no_cache"] is True
+    assert len(menus) == 2
+
+
+def test_handle_row_stopped_ctrl_c_aborts(monkeypatch, tmp_path):
+    _menus, calls = _stopped(monkeypatch, None)
+    assert actions_project.handle_row(tmp_path, _row("stopped")) is None
+    assert calls == []
+
+
+@pytest.mark.parametrize("new", [1, 5])
+def test_stopped_scale_only_writes_project_yml(monkeypatch, tmp_path, new):
+    """停止中のスケール変更は増減とも project.yml だけを書き、コンテナを起動しない。"""
+    project = tmp_path / "projects" / "myapp"
+    project.mkdir(parents=True)
+    yml = "version: 1\nscale: 3  # 数\nrepos:\n  - {owner: a, repo: b}\n"
+    (project / "project.yml").write_text(yml)
+    asked = {}
+    monkeypatch.setattr(actions_project.menu, "integer",
+                        lambda message, **kw: asked.update(kw) or new)
+    _menus, calls = _stopped(monkeypatch, "set-scale", menu.MENU_BACK)
+
+    assert actions_project.handle_row(tmp_path, _row("stopped")) is menu.MENU_BACK
+    assert calls == []
+    assert asked == {"default": 3, "min_value": 1}
+    assert (project / "project.yml").read_text() == yml.replace("scale: 3", f"scale: {new}")
+
+
+@pytest.mark.parametrize("answer,expected", [(menu.MENU_BACK, menu.MENU_BACK), (None, None)])
+def test_stopped_scale_can_be_cancelled(monkeypatch, tmp_path, answer, expected):
+    project = tmp_path / "projects" / "myapp"
+    project.mkdir(parents=True)
+    yml = "version: 1\nrepos:\n  - {owner: a, repo: b}\n"
+    (project / "project.yml").write_text(yml)
+    monkeypatch.setattr(actions_project.menu, "integer", lambda message, **kw: answer)
+    _stopped(monkeypatch, "set-scale", menu.MENU_BACK)
+
+    assert actions_project.handle_row(tmp_path, _row("stopped")) is expected
+    assert (project / "project.yml").read_text() == yml
+
+
+def test_stopped_scale_without_project_yml_returns_to_menu(monkeypatch, tmp_path):
+    menus, calls = _stopped(monkeypatch, "set-scale", menu.MENU_BACK)
+    assert actions_project.handle_row(tmp_path, _row("unknown")) is menu.MENU_BACK
+    assert len(menus) == 2 and calls == []
+
+
+@pytest.mark.parametrize("result,expected,count", [
+    (flow.ARG_CANCEL, menu.MENU_BACK, 2), (None, None, 1)])
+def test_stopped_settings(monkeypatch, tmp_path, result, expected, count):
+    """設定変更から戻ると停止中のメニューへ、Ctrl-C なら全体を中止する。"""
+    seen = []
+    monkeypatch.setitem(actions_project._OP_HANDLERS, "settings",
+                        lambda root, name: seen.append(name) or result)
+    menus, _calls = _stopped(monkeypatch, "settings", menu.MENU_BACK)
+
+    assert actions_project.handle_row(tmp_path, _row("stopped")) is expected
+    assert seen == ["myapp"] and len(menus) == count
 
 
 def test_handle_row_action_menu_back_returns_menu_back(monkeypatch, tmp_path):

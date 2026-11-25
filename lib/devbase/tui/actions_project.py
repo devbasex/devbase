@@ -4,11 +4,9 @@
 ``_show_action_menu`` / ``_fallback_select_and_up`` をこのモジュールへ移送し、
 メニュー部品は ``tui.menu`` に、ハンドラ委譲は ``tui.dispatch`` に一般化した。
 
-PR1 で **一覧選択 → (running なら操作サブメニュー) → それ以外は直接 up** を移送し、
-PR2 で running 操作サブメニューを **up/down/login/ps/logs/scale/build/rebuild の全操作**
-へ拡張し、PLAN59 で先頭にエディタを開き直す open を足した。login/ps/logs/scale は running 中コンテナを対象とするため running 行限定、
-stopped/unknown は従来どおり直接 up (PR1 非回帰)。引数を要する操作は ``tui.menu`` の
-収集ヘルパで CLI と同じ属性値を集める (plan 2.3 契約表)。down はデータを失わない
+running 行は **up/down/login/ps/logs/scale/build/rebuild** とエディタを開き直す open
+(PLAN59) の操作サブメニュー、stopped/unknown 行は起動・スケール変更・再ビルド・
+プロジェクト設定変更のサブメニューを出す。引数を要する操作は ``tui.menu`` の収集ヘルパで CLI と同じ属性値を集める (plan 2.3 契約表)。down はデータを失わない
 (volume 保持) ためメニュー選択を意思表示とみなし、確認プロンプトは出さない。
 
 プロジェクト一覧の表示・選択は ``tui.app`` (トップ画面) が担い、本モジュールは
@@ -20,8 +18,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from devbase.errors import DevbaseError
 from devbase.log import get_logger
-from devbase.tui import flow, menu
+from devbase.tui import actions_settings, flow, menu
 from devbase.tui.dispatch import _preserve_cwd_env, dispatch_lifecycle
 
 logger = get_logger(__name__)
@@ -41,6 +40,15 @@ _RUNNING_OPS: list[tuple[str, str]] = [
     ("スケール変更 (scale)", "scale"),
     ("イメージビルド (build)", "build"),
     ("再ビルド (rebuild --no-cache)", "rebuild"),
+]
+
+# running でない行 (stopped / unknown) で選べる操作。起動を先頭に置き、一覧からの Enter
+# 連打で従来どおり up へ届く。
+_STOPPED_OPS: list[tuple[str, str]] = [
+    ("起動 (up)", "up"),
+    ("スケール変更 (scale)", "set-scale"),
+    ("再ビルド (rebuild --no-cache)", "rebuild"),
+    ("プロジェクト設定変更", "settings"),
 ]
 
 # プロファイルを持つプロジェクトにだけ足す操作 (PLAN58 決定 8)。持たないプロジェクトで
@@ -148,6 +156,27 @@ def _op_scale(devbase_root: Path, name: str):
     return dispatch_lifecycle("scale", name, new_scale=new_scale)
 
 
+def _op_set_scale(devbase_root: Path, name: str):
+    """停止中のプロジェクトのコンテナ数を変える。``project.yml`` だけを書き、起動しない。
+
+    CLI の ``scale`` は動いているコンテナを増やす操作で、減らせず、その場で起動する。停止中は
+    次の起動の数を決めればよいので委譲しない。
+    """
+    from devbase.project import runtime
+
+    project_dir = Path(devbase_root) / "projects" / name
+    try:
+        current = runtime.read_scale(project_dir)
+        new_scale = flow.need(menu.integer(f"'{name}' のコンテナ数", default=current,
+                                           min_value=1))
+        runtime.write_scale(project_dir, new_scale)
+    except (DevbaseError, OSError) as e:
+        logger.error("コンテナ数を変更しませんでした: %s", e)
+        return _ARG_CANCEL
+    logger.info("コンテナ数: %d -> %d (次の起動から反映されます)", current, new_scale)
+    return _ARG_CANCEL
+
+
 def _open_candidates(name: str):
     """動いている dev コンテナと既定の番号 (``container.project_open_candidates``)。
 
@@ -220,6 +249,8 @@ _OP_HANDLERS = {
     "ps": lambda root, name: dispatch_lifecycle("ps", name, all=False),
     "logs": _op_logs,
     "scale": _op_scale,
+    "set-scale": _op_set_scale,
+    "settings": actions_settings.run,
     "build": _op_build,
     "profile-up": _op_profile("up"),
     "profile-down": _op_profile("down"),
@@ -258,26 +289,35 @@ def _operation_menu(devbase_root: Path, name: str):
         back_after=lambda op: op in _BACK_TO_TOP_OPS)
 
 
+def _stopped_menu(devbase_root: Path, row: dict):
+    """running でない行の操作メニューを回す。
+
+    戻り値: 起動 (up) の rc (``int``。一覧へ戻る) / ``menu.MENU_BACK`` (Esc・←) /
+    ``None`` (Ctrl-C 全体中止)。起動以外は実行後も同じメニューに留まり、続けて起動できる。
+    """
+    name = row["name"]
+    message = f"'{name}' ({row.get('status', '')}) の操作を選択 {menu.HINT_BACK}:"
+    return flow.menu_loop(
+        lambda: menu.select(message, list(_STOPPED_OPS), back=True, search=False),
+        lambda op: _run_operation(devbase_root, name, op),
+        return_rc=lambda op: op == "up")
+
+
 def handle_row(devbase_root: Path, row: dict):
     """一覧で選択された 1 プロジェクト行を処理する (トップ画面から呼ばれる)。
 
     戻り値プロトコル (トップループが ``is`` 同一性で判定する):
-    - ``menu.MENU_BACK``: 操作サブメニューで Esc/← (一覧へ戻る)。running 行は操作を
-      実行しても (出力確認の一時停止後) サブメニューに留まり、Esc/← で初めて一覧へ
-      戻るため、この値を返す。
-    - **直接 up を実行した場合** (stopped / unknown 行): ``dispatch_lifecycle`` の
+    - ``menu.MENU_BACK``: 操作サブメニューで Esc/← (一覧へ戻る)。操作を実行しても
+      (出力確認の一時停止後) サブメニューに留まり、Esc/← で初めて一覧へ戻る。running 行の
+      up/down とプロファイルの起動・停止だけは、実行後に一覧へ戻る。
+    - stopped / unknown 行で **起動 (up) を実行した場合**: ``dispatch_lifecycle`` の
       rc (``int``) を返す。トップループが rc を記憶し ``devbase list`` の終了コードへ
       伝搬する。
     - ``None``: サブメニューで Ctrl-C による全体中止。
-
-    選択行が running 中なら ``_operation_menu`` で全操作を選ばせ (実行後もサブ
-    メニューに留まる)、それ以外 (stopped / unknown) は従来どおり直接 ``project up``
-    を起動して一覧へ戻る (PR1 非回帰)。
     """
-    name = row["name"]
     if str(row.get("status", "")).startswith("running"):
-        return _operation_menu(devbase_root, name)
-    return dispatch_lifecycle("up", name, scale=None)
+        return _operation_menu(devbase_root, row["name"])
+    return _stopped_menu(devbase_root, row)
 
 
 def fallback_select_and_up(rows: list[dict]) -> int:

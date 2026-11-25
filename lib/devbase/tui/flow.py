@@ -157,7 +157,7 @@ def pause_for_review(prompt: str = PROMPT_BACK_TO_MENU) -> bool:
     return True
 
 
-def menu_loop(select_op, run_op, *, back_after=None):
+def menu_loop(select_op, run_op, *, back_after=None, return_rc=None):
     """「操作選択 → 実行」のサブメニューループ (actions_* の ``run`` 共通骨格)。
 
     Parameters
@@ -167,11 +167,13 @@ def menu_loop(select_op, run_op, *, back_after=None):
     back_after: ``op -> bool`` の述語 (省略可)。``True`` を返す操作は実行後に
                 サブメニューへ留まらず**上位 (トップ一覧) へ戻る**。状態が大きく
                 変わる操作 (project の up/down 等) で最新状態を再表示するために使う。
+    return_rc:  ``op -> bool`` の述語 (省略可)。``True`` を返す操作は、一時停止せずに
+                rc をそのまま返す (一時停止と rc の記憶は呼び出し元のトップループが行う)。
 
     Returns
     -------
     ``menu.MENU_BACK`` (Esc・← で 1 つ上へ戻る / back_after な操作の実行後) /
-    ``None`` (Ctrl-C 全体中止)。
+    ``None`` (Ctrl-C 全体中止) / rc (``return_rc`` な操作の実行後)。
 
     既定 (``back_after=None``) では、操作を実行した後もトップへ戻らず、出力を
     読めるよう ``pause_for_review`` で Enter を待ってから**同じサブメニューを
@@ -191,6 +193,8 @@ def menu_loop(select_op, run_op, *, back_after=None):
             continue           # 引数収集中止 → 一時停止せず同じメニューを再表示
         if rc is None:
             return None        # run_op 内の Ctrl-C → 全体中止
+        if return_rc is not None and return_rc(op):
+            return rc
         # 操作を実行した: まず出力を読めるよう一時停止する (Ctrl-C は全体中止)。
         if not pause_for_review():
             return None
