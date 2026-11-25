@@ -144,6 +144,44 @@ def declare(root: Path, project: Optional[str]) -> DeclaredGroup:
     return DeclaredGroup(name=name, source=path, line=line)
 
 
+def write_declaration(root: Path, project: str, group: str) -> DeclaredGroup:
+    """プロジェクトのグループの宣言 (``projects/<name>/env``) を書き換える。
+
+    効いている宣言の行 (同じキーが複数あれば最後の行) だけを書き換え、無ければ末尾へ足す。
+    ほかの行は変えない。
+
+    Raises:
+        DevbaseError: 名前が使えない・プロジェクトが無い・``$DEVBASE_ROOT/env`` に宣言が
+            ある・書き込めない。どのときもファイルの中身は元のまま
+    """
+    from devbase.volume.manager import validate_account_group
+
+    root = Path(root)
+    name = validate_account_group(group)
+    check_root_env(root)
+    path = root / 'projects' / project / ENV_FILENAME
+    if not path.parent.is_dir():
+        raise GroupDeclarationError(f"プロジェクト {project} がありません: {path.parent}")
+    found = _read_declaration(path)
+    try:
+        original = path.read_bytes() if path.is_file() else b''
+        lines = original.decode('utf-8').splitlines(keepends=True)
+        if found is None:
+            if lines and not lines[-1].endswith(('\n', '\r')):
+                lines[-1] += '\n'
+            lines.append(f"{keys.DEVBASE_ACCOUNT_GROUP}={name}\n")
+        else:
+            line = lines[found[1] - 1]
+            body = line.rstrip('\r\n')
+            export = 'export ' if body.lstrip().startswith('export ') else ''
+            lines[found[1] - 1] = (f"{export}{keys.DEVBASE_ACCOUNT_GROUP}={name}"
+                                   f"{line[len(body):]}")
+        path.write_bytes(''.join(lines).encode('utf-8'))
+    except (OSError, UnicodeDecodeError) as e:
+        raise DevbaseError(f"{path} を書き換えられませんでした: {e}") from e
+    return declare(root, project)
+
+
 def _project_names(root: Path) -> List[str]:
     from devbase.utils import names
 

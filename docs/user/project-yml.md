@@ -117,6 +117,11 @@ clone は**コンテナ起動のたびに試行される**ので、後から権�
 `Repository not found` (404) を返します。警告からは区別できないため、リポジトリ名の
 打ち間違いも同じ見え方になります。詳細は `devbase project logs <name>` で確認してください。
 
+## `devbase list` から変更する
+
+停止中のプロジェクトは、`devbase list` の「スケール変更」「プロジェクト設定変更」から `project.yml` と
+`project.local.yml` を書き換えられます（[CLI リファレンス](cli-reference/02-project.md#tui-の画面構成とキー操作)）。
+
 ## `env` との使い分け
 
 | 書く場所 | 内容 | 例 |

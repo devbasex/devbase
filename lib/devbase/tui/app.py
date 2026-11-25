@@ -2,7 +2,7 @@
 
 ``run(devbase_root, args)`` が ``cmd_project_list`` から呼ばれる入口。
 利用頻度が最も高い **プロジェクト一覧を起動直後のトップ画面** とし、
-プロジェクト選択 → (running なら操作サブメニュー / それ以外は up) を最短経路にする。
+プロジェクト選択 → 操作サブメニュー (running かどうかで項目が変わる) を最短経路にする。
 env / plugin / snapshot / status は画面最下部に横並びで常設するメニューバー
 (``menu.select_with_menubar``) から遷移する (←→ で項目間を移動、Enter で決定)。
 
@@ -11,16 +11,16 @@ env / plugin / snapshot / status は画面最下部に横並びで常設する�
   テーブルのみ。
 - questionary 不在時は一覧メニューを出さず、従来の番号入力フォールバック
   (project up) へ縮退して muscle-memory を保全する。
-- 一覧は先頭プロジェクトを既定ハイライトとし、Enter 連打で従来の
-  「最初のプロジェクトを up」へ最短到達できる。
+- 一覧は先頭プロジェクトを既定ハイライトとし、停止中の操作メニューの先頭は起動 (up) な
+  ので、Enter 連打で従来の「最初のプロジェクトを up」へ届く。
 
 ナビ規約: トップ (プロジェクト一覧) は Esc / Ctrl-C で中止 (戻り先なし)。
 各カテゴリ・サブメニュー内では Esc / ← で 1 つ前へ戻る (``menu.MENU_BACK``)、
 Ctrl-C で全体中止 (``None``)。サブメニューで操作を実行した後はトップへ戻らず、
 出力を読めるよう Enter を待ってから**同じサブメニューを再表示する** (実行を
 繰り返せる。``flow.pause_for_review`` / ``flow.menu_loop``)。Esc / ← で一覧へ
-戻ると、直前に選んだプロジェクト行へカーソルを復元する。直接 up する stopped/
-unknown 行と status 表示だけは実行後に Enter を待って一覧へ戻る
+戻ると、直前に選んだプロジェクト行へカーソルを復元する。stopped/unknown 行の
+起動 (up) と status 表示だけは実行後に Enter を待って一覧へ戻る
 (``_pause_for_review``)。
 """
 

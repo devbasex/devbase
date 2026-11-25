@@ -107,7 +107,8 @@ Python 側のエントリーポイント。以下の責務を持つ。
 | `menu.py` | questionary ラッパ（`select` / `select_with_menubar` / `text` / `confirm` / `integer` / `path`）と Esc/← キーバインド・回答後ガード |
 | `flow.py` | 中止系番兵（Ctrl-C=`None` / Esc=`MENU_BACK` / 確認拒否）を例外へ変換する共通ナビ制御 |
 | `dispatch.py` | 収集した属性を Namespace に詰めて `cmd_*` ハンドラを呼ぶ薄い委譲層 |
-| `actions_project.py` | プロジェクト行の処理（up / 起動中は操作サブメニュー） |
+| `actions_project.py` | プロジェクト行の処理（起動中・停止中それぞれの操作サブメニュー） |
+| `actions_settings.py` | 停止中のプロジェクトの「プロジェクト設定変更」。書き込みは `project/settings.py`（`project.yml` / `project.local.yml`）と `env/groups.py` の `write_declaration` が行う |
 | `actions_env.py` / `actions_plugin.py` / `actions_snapshot.py` / `actions_status.py` | 各カテゴリの操作フロー |
 | `actions_env_keys.py` / `actions_env_openbao.py` | env カテゴリの画面（キーの一覧と編集・OpenBao の接続設定） |
 | `env_delegate.py` | env の画面が `cmd_env` へ委譲する部品（委譲と、プロジェクトの置き場へ書くときの chdir + `PWD` の差し替え）。env メニューと各画面がここを使い、画面からメニューのモジュールを読まない |
