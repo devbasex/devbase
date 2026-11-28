@@ -72,13 +72,13 @@ tests/
   - `KeyboardInterrupt`: `sudo -v` の呼び出しで受け、何も書かずに `ok` 偽で返す（下の異常系の表）
 - `revert`
   - 事後条件: `Report.ok` が真なら devbase のファイルが無い。目印の無いファイルは残る
-  - 副作用: `rm -f <devbase のファイル>`（権限は `choose_privilege` で選ぶ）、`sysctl --system`
+  - 副作用: `rm -f <devbase のファイル>`、`sysctl --system`。権限は `apply` と同じく `choose_privilege` で選ぶ。`SUDO_PROMPT` なら消す前に何を消すかを 1 行出してから `sudo -v` で尋ね、`NONE` なら打つコマンドを出して `ok` 偽で返す
 
 ### 異常系の処理
 
 | 関数 | 失敗 | 原因 | 検出する場所 | 扱い | 利用者に見える出力と終了コード | 後始末と再実行の可否 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `read_runtime_value` | 読めない・0 / 1 以外 | 権限・壊れた値 | `OSError`・`int()` | `None` と同じに扱い、行に理由を足す | 「ホスト: 読めない（理由）」。`apply` は変えずに 0 | 無し。再実行できる |
+| `read_runtime_value` | 読めない・0 / 1 以外 | 権限・壊れた値 | `OSError`・`int()` | キーが無いときと同じ `None` を返し、行に理由を足す。`apply` は「キーが無い」と同じ道（変えずに `probe_container_kernel` へ）を通る | 「ホスト: 読めない（理由）」。`apply` は変えずに 0 | 無し。再実行できる |
 | `choose_privilege` | 権限が無い | root でなく、sudo が無いかパスワードが要り tty も無い | 返り値 `NONE` | 止める | 打つコマンド（`sudo install …` と `sudo sysctl -p …`）。`apply` 1 | 何も書いていない。再実行できる |
 | `apply` | devbase のパスに目印の無いファイルがあり、書く必要がある | 利用者が手で置いた | 1 行目 | 書かずに止める | 「devbase のファイルではないので書き換えない」とパスと理由。1 | 何も書いていない。利用者がファイルを直すか消せば再実行できる |
 | `apply` | `sudo -v` が通らない | パスワードの誤り | 終了コード | 止める | 打つコマンド。1 | 何も書いていない |
@@ -88,6 +88,8 @@ tests/
 | `probe_container_kernel` | docker が無い・届かない・時間切れ | 未導入・daemon 停止 | `FileNotFoundError`・終了コード・`TimeoutExpired` | 既定値で続ける（未確認） | 「コンテナが動くカーネル: 未確認（理由）」。終了コードに数えない | 無し |
 | `probe_container_kernel` | `--pull never` が未知のオプション | 古い docker | 終了コードと標準エラー | 既定値で続ける（未確認） | 同上 | 無し |
 | `revert` | 目印が無い | 利用者が同じパスに置いた | 1 行目 | 止める | 「devbase のファイルではないので消さない」。1 | 何も消さない |
+| `revert` | 権限が無い（`choose_privilege` が `NONE`） | `apply` と同じ | 返り値 `NONE` | 止める | 打つコマンド（`sudo rm -f …` と `sudo sysctl --system`）。1 | 何も消していない。再実行できる |
+| `revert` | `sudo -v` が通らない・入力を中断した | パスワードの誤り・Ctrl-C | 終了コード・`except KeyboardInterrupt` | `apply` と同じく止める | 「中断した」か打つコマンド。1 | 何も消していない。再実行できる |
 | `revert` | `sysctl --system` が失敗する | 他のファイルの誤り | 終了コード | ファイルは消したまま報告する | 「消したが読み直しに失敗した。再起動で反映される」。1 | 再実行で読み直せる |
 
 ### 処理の手順
@@ -102,7 +104,7 @@ tests/
 | `apply` | 今の値 0・設定ファイルの上の値 1・ここまでの行に当たらない | 説明を出し、権限を選んで書く。書いた後に `later_overrides` が空なら「再起動の後も 0」と出す |
 | `apply` | 今の値 1・ここまでの行に当たらない | 説明を出し、権限を選んで書く |
 | `apply` | 書いた後に `later_overrides` が空でない | パスを挙げて「再起動の後に 1 へ戻る」と警告する。「再起動の後も 0」は出さない（`ok` は真のまま） |
-| `apply` | コンテナが動くカーネルの値が 1 で、ホストの値が 0 か `None` | 変え方の案内を足す（`ok` は変えない） |
+| `apply` | コンテナが動くカーネルの値が 1 で、ホストの値が 0 か `None`（キーが無い・読めない） | 変え方の案内を足す（`ok` は変えない）。ホストの値が 1 のとき（コンテナの中など）は、ホストの側の行の案内だけを出し、この案内は足さない。設計文書の流れ図の DV と同じ条件である |
 
 ### 内部のデータと定数
 
@@ -141,7 +143,7 @@ tests/
 | `config_value` | `/usr/lib` の 10 が 1、`/etc` の 60 が 0 → 0 と 60 のパス | 同じ名前が `/etc` と `/usr/lib` にある・`-` の付いた行・`/` で書いたキー | 読めないファイルを飛ばす |
 | `later_overrides` | 99 が 1 を書く → そのパス | 99 が 0 を書く → 空 | — |
 | `choose_privilege` | root → `ROOT` | `sudo -n` 0 → `SUDO`、tty だけ → `SUDO_PROMPT` | sudo が無い → `NONE` |
-| `probe_container_kernel` | イメージあり → `--pull never` の `docker run` | イメージ無し・`apparmor` 無し → 制限は効かない | docker 無し・時間切れ・未知のオプション → 未確認 |
+| `probe_container_kernel` | イメージあり（`docker image inspect --format '{{.Id}}' devbase-base:latest` が 0）→ `--pull never` の `docker run` | イメージ無し・`apparmor` 無し → 制限は効かない | docker 無し・時間切れ・未知のオプション → 未確認 |
 | `apply` | 受け入れ条件 1・2・7 | 6・8・9・10 | 3・4・5（`sudo -v` の中断）・11・16・22 |
 | `revert` | 12 | ファイルが無い | 目印が無い・`sysctl --system` の失敗 |
 
@@ -188,7 +190,7 @@ tests/
 
 満たす決定: 決定 1、受け入れ条件 20・21
 
-| 写し | 変える中身 |
+| コマンドの一覧を持つ場所 | 変える中身 |
 | --- | --- |
 | `_create_parser` | `userns` の parser と、`status` / `apply` / `revert` の subparser（`dest='subcommand'`） |
 | `_ROOT_COMMANDS` | `'userns': ('devbase.commands.userns', 'cmd_userns', True)` |
@@ -204,5 +206,5 @@ tests/
 
 | 足すもの | 中身 |
 | --- | --- |
-| autouse の fixture | `devbase.utils.userns.DEFAULT_PATHS` を `tmp_path` の下のパス（proc のキーは作らない）へ、`DEFAULT_RUNNER` を呼ばれたら `AssertionError` を出すものへ差し替える。userns のテストは自分の runner を引数で渡す |
+| autouse の fixture | `DEVBASE_SKIP_USERNS=1` を既定で置き、既存の `cmd_init` のテストが `apply` を通らないようにする。`devbase.utils.userns.DEFAULT_PATHS` を `tmp_path` の下のパス（proc のキーは作らない）へ、`DEFAULT_RUNNER` を呼ばれたら `UnexpectedHostCall` を出すものへ差し替える。`UnexpectedHostCall` は `BaseException` を継ぐテスト用の例外で、`_apply_userns` の `except Exception` に握りつぶされずテストを落とす。userns のテストは `DEVBASE_SKIP_USERNS` を外し、自分の runner と paths を引数で渡す |
 | `ISOLATED_ENV` | `DEVBASE_SKIP_USERNS` |

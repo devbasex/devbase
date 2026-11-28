@@ -90,7 +90,7 @@ devbase のファイル:      無し（/etc/sysctl.d/60-devbase-userns.conf）
 
 ```text
 ==> ホストの userns の制限を外します
-    キー:     kernel.apparmor_restrict_unprivileged_userns（1 → 0）
+    キー:     kernel.apparmor_restrict_unprivileged_userns（今 <今の値>・再起動の後 <設定ファイルの上の値> → どちらも 0）
     ファイル: /etc/sysctl.d/60-devbase-userns.conf（再起動の後も 0 のまま）
     理由:     dev コンテナの中で bubblewrap（codex のサンドボックスなど）が user namespace を作るため
     緩むこと: AppArmor のプロファイルを持たない、ホストのすべての特権の無いプロセスが user namespace を作れるようになる
@@ -106,8 +106,8 @@ devbase のファイル:      無し（/etc/sysctl.d/60-devbase-userns.conf）
 
 ```mermaid
 flowchart TD
-    S[apply] --> K{/proc/sys/kernel/<br>apparmor_restrict_…<br>がある}
-    K -->|無い| DK
+    S[apply] --> K{/proc/sys/kernel/<br>apparmor_restrict_…<br>を 0 か 1 で読めた}
+    K -->|無い・読めない| DK
     K -->|ある| CT{コンテナの中}
     CT -->|はい| DK
     CT -->|いいえ| V{今の値 0 で、<br>設定ファイルの上の値 0 か<br>devbase のパスのファイルが 0 を書く}
@@ -128,7 +128,7 @@ flowchart TD
     LT -->|はい| WARN[そのパスを挙げて警告]
     LT -->|いいえ| DK
     WARN --> DK
-    DK[コンテナが動くカーネルの値を読む] --> DV{1 か}
+    DK[コンテナが動くカーネルの値を読む] --> DV{1 で、ホストの値が<br>0 か読めない}
     DV -->|はい| G[変え方の案内を出す]
     DV -->|いいえ・未確認| END[終える]
     G --> END
@@ -139,7 +139,7 @@ flowchart TD
 | 手元の状態 | 読み方 | 出す値 |
 | --- | --- | --- |
 | docker が無い・daemon に届かない・20 秒で返らない | 読まない | 未確認（理由） |
-| `devbase-base:latest` がある | `docker run --rm --pull never --network none --entrypoint cat devbase-base:latest /proc/sys/kernel/apparmor_restrict_unprivileged_userns` | 0 / 1。ファイルが無ければ「キーが無い」 |
+| `devbase-base:latest` がある（`docker image inspect --format '{{.Id}}' devbase-base:latest` が 0 で終わる） | `docker run --rm --pull never --network none --entrypoint cat devbase-base:latest /proc/sys/kernel/apparmor_restrict_unprivileged_userns` | 0 / 1。ファイルが無ければ「キーが無い」 |
 | イメージが無く、`docker info` の `SecurityOptions` に `apparmor` が無い | `docker info --format '{{json .SecurityOptions}}'` | 制限は効かない（AppArmor が無い） |
 | イメージが無く、`apparmor` がある | 同上 | 未確認（イメージが無い。`devbase build` の後に `devbase userns status` で確かめる） |
 
