@@ -42,7 +42,7 @@ tests/
 
 ## userns の判定と変更（`lib/devbase/utils/userns.py`）
 
-満たす決定: 決定 3・4・5・7、受け入れ条件 1〜4・6〜16・18・19
+満たす決定: 決定 3・4・5・7、受け入れ条件 1〜4・6〜16・18・19・22
 
 ### 関数の仕様
 
@@ -66,8 +66,10 @@ tests/
   - 事後条件: `os.geteuid() == 0` なら `ROOT`。そうでなく `sudo -n true` が 0 なら `SUDO`。そうでなく `paths.tty` を読み書きで開けるなら `SUDO_PROMPT`。それ以外は `NONE`。`sudo` が無ければ `NONE`
   - 副作用: `sudo -n true` の起動（標準入力は `DEVNULL`）
 - `apply`
-  - 事後条件: 返す `Report.ok` が真なら、今の値と設定ファイルの上の値がどちらも 0 か、変えないと決めた（キーが無い・コンテナの中）。偽なら devbase のファイルは呼ぶ前と同じ
-  - 副作用: devbase のファイルの書き込み（`install -m 0644 <一時ファイル> <devbase のファイル>`。`SUDO` / `SUDO_PROMPT` は頭に `sudo`）、`sysctl -p <devbase のファイル>`、`SUDO_PROMPT` の `sudo -v`（tty から読む）、docker の起動。一時ファイルは `tempfile` で作り、終わりに消す
+  - 事後条件（`ok` が真）: 今の値が 0 で、devbase のパスのファイルが 0 を書いている。または、変えないと決めた（キーが無い・コンテナの中）。設定ファイルの上の値は問わず、後のファイルが 1 を書くならそのパスを `warnings` に挙げる
+  - 事後条件（`ok` が偽）: devbase のパスのファイルは呼ぶ前と同じ。無かったなら無く、あったなら同じ中身である
+  - 副作用: devbase のファイルの書き込み（`install -m 0644 <一時ファイル> <devbase のファイル>`。`SUDO` / `SUDO_PROMPT` は頭に `sudo`）、`sysctl -p <devbase のファイル>`、`SUDO_PROMPT` の `sudo -v`（tty から読む）、docker の起動。書く前に、目印のある前のファイルの中身を読んで覚えておく。一時ファイルは `tempfile` で作り、終わりに消す
+  - `KeyboardInterrupt`: `sudo -v` の呼び出しで受け、何も書かずに `ok` 偽で返す（下の異常系の表）
 - `revert`
   - 事後条件: `Report.ok` が真なら devbase のファイルが無い。目印の無いファイルは残る
   - 副作用: `rm -f <devbase のファイル>`（権限は `choose_privilege` で選ぶ）、`sysctl --system`
@@ -78,9 +80,11 @@ tests/
 | --- | --- | --- | --- | --- | --- | --- |
 | `read_runtime_value` | 読めない・0 / 1 以外 | 権限・壊れた値 | `OSError`・`int()` | `None` と同じに扱い、行に理由を足す | 「ホスト: 読めない（理由）」。`apply` は変えずに 0 | 無し。再実行できる |
 | `choose_privilege` | 権限が無い | root でなく、sudo が無いかパスワードが要り tty も無い | 返り値 `NONE` | 止める | 打つコマンド（`sudo install …` と `sudo sysctl -p …`）。`apply` 1 | 何も書いていない。再実行できる |
-| `apply` | `sudo -v` が通らない | パスワードの誤り・中断 | 終了コード | 止める | 打つコマンド。1 | 何も書いていない |
+| `apply` | devbase のパスに目印の無いファイルがあり、書く必要がある | 利用者が手で置いた | 1 行目 | 書かずに止める | 「devbase のファイルではないので書き換えない」とパスと理由。1 | 何も書いていない。利用者がファイルを直すか消せば再実行できる |
+| `apply` | `sudo -v` が通らない | パスワードの誤り | 終了コード | 止める | 打つコマンド。1 | 何も書いていない |
+| `apply` | `sudo -v` の入力を中断した | 利用者が Ctrl-C を押した（SIGINT は sudo と Python の両方に届く） | `sudo -v` の呼び出しを囲む `except KeyboardInterrupt` | 断ったものとして止める | 「中断した」と打つコマンド。1 | 何も書いていない。再実行できる |
 | `apply` | 書き込みが失敗する | 読み取り専用の `/etc` など | `install` の終了コード | 止める | 失敗の標準エラーの先頭の行。1 | 一時ファイルを消す |
-| `apply` | `sysctl -p` が失敗する・その後の値が 0 でない | 読み取り専用の `/proc/sys`・LSM が拒む | 終了コード・`read_runtime_value` | 書いたファイルを消して止める | 「戻した」と理由。1 | 書いたファイルを消す。消せなければパスを出す |
+| `apply` | `sysctl -p` が失敗する・その後の値が 0 でない | 読み取り専用の `/proc/sys`・LSM が拒む | 終了コード・`read_runtime_value` | 書く前の状態へ戻して止める | 「戻した」と理由。1 | 前にファイルが無ければ消す。目印のある前のファイルがあれば、覚えておいた中身を同じ `install` で書き戻す。戻せなければパスを出す |
 | `probe_container_kernel` | docker が無い・届かない・時間切れ | 未導入・daemon 停止 | `FileNotFoundError`・終了コード・`TimeoutExpired` | 既定値で続ける（未確認） | 「コンテナが動くカーネル: 未確認（理由）」。終了コードに数えない | 無し |
 | `probe_container_kernel` | `--pull never` が未知のオプション | 古い docker | 終了コードと標準エラー | 既定値で続ける（未確認） | 同上 | 無し |
 | `revert` | 目印が無い | 利用者が同じパスに置いた | 1 行目 | 止める | 「devbase のファイルではないので消さない」。1 | 何も消さない |
@@ -93,9 +97,11 @@ tests/
 | `apply` | キーが無い | 変えない。`probe_container_kernel` へ |
 | `apply` | キーがある・コンテナの中 | 変えない。「ホストで打つ」と出す |
 | `apply` | 今の値 0・設定ファイルの上の値 0 | 変えない。「既に 0」 |
-| `apply` | 今の値 0・設定ファイルの上の値 1 | 書き、「再起動の後も 0」と出す |
-| `apply` | 今の値 1 | 説明を出し、権限を選んで書く |
-| `apply` | 書いた後に `later_overrides` が空でない | パスを挙げて警告する（`ok` は真のまま） |
+| `apply` | 今の値 0・devbase のパスのファイル（目印の有無を問わない）が 0 を書く・設定ファイルの上の値 1 | 変えない。sudo を呼ばない。`later_overrides` のパスを挙げて「再起動の後に 1 へ戻る」と警告する（`ok` は真） |
+| `apply` | 書く必要がある（ここまでの行に当たらない）・devbase のパスに目印の無いファイルがある | 書かずに理由を出す（`ok` は偽） |
+| `apply` | 今の値 0・設定ファイルの上の値 1・ここまでの行に当たらない | 説明を出し、権限を選んで書く。書いた後に `later_overrides` が空なら「再起動の後も 0」と出す |
+| `apply` | 今の値 1・ここまでの行に当たらない | 説明を出し、権限を選んで書く |
+| `apply` | 書いた後に `later_overrides` が空でない | パスを挙げて「再起動の後に 1 へ戻る」と警告する。「再起動の後も 0」は出さない（`ok` は真のまま） |
 | `apply` | コンテナが動くカーネルの値が 1 で、ホストの値が 0 か `None` | 変え方の案内を足す（`ok` は変えない） |
 
 ### 内部のデータと定数
@@ -136,7 +142,7 @@ tests/
 | `later_overrides` | 99 が 1 を書く → そのパス | 99 が 0 を書く → 空 | — |
 | `choose_privilege` | root → `ROOT` | `sudo -n` 0 → `SUDO`、tty だけ → `SUDO_PROMPT` | sudo が無い → `NONE` |
 | `probe_container_kernel` | イメージあり → `--pull never` の `docker run` | イメージ無し・`apparmor` 無し → 制限は効かない | docker 無し・時間切れ・未知のオプション → 未確認 |
-| `apply` | 受け入れ条件 1・2・7 | 6・8・9・10 | 3・4・11・16 |
+| `apply` | 受け入れ条件 1・2・7 | 6・8・9・10 | 3・4・5（`sudo -v` の中断）・11・16・22 |
 | `revert` | 12 | ファイルが無い | 目印が無い・`sysctl --system` の失敗 |
 
 ## userns のコマンド（`lib/devbase/commands/userns.py`）
@@ -161,7 +167,7 @@ tests/
 
 | 関数 | 保存先 | 種類 | シグネチャ | 責務 |
 | --- | --- | --- | --- | --- |
-| `_apply_userns` | `lib/devbase/commands/init.py` | 新設 | `() -> None` | `DEVBASE_SKIP_USERNS` を見て飛ばすか `apply` を呼び、結果を出す。例外を外へ出さない |
+| `_apply_userns` | `lib/devbase/commands/init.py` | 新設 | `() -> None` | `DEVBASE_SKIP_USERNS` を見て飛ばすか `apply` を呼び、結果を出す。例外と `KeyboardInterrupt` を外へ出さない |
 | `cmd_init` | 同上 | 変更 | 変えない | 補完の登録の後・最後の案内の前に `_apply_userns()` を呼ぶ。返り値は呼ぶ前と同じ規則で決める |
 
 ### 異常系の処理
@@ -170,12 +176,13 @@ tests/
 | --- | --- | --- | --- | --- | --- | --- |
 | `_apply_userns` | `apply` が `ok` 偽で返る | 権限が無いなど | `Report.ok` | 警告にして続ける | 打つコマンドと「後で `devbase userns apply` を打つ」。`init` は 0 | `devbase userns apply` で再実行できる |
 | `_apply_userns` | 想定外の例外 | 実装の誤り | `except Exception` | 警告にして続ける | 「userns の確かめに失敗した: <例外>」。`init` は 0 | 同上 |
+| `_apply_userns` | `sudo -v` 以外の所で Ctrl-C が押された（docker の確かめの待ちなど） | 利用者の中断 | `except KeyboardInterrupt` | 警告にして続ける。`sudo -v` の中断は `apply` が受けて `ok` 偽で返すので、ここへは来ない | 「userns の確かめを中断した。後で `devbase userns apply` を打つ」。`init` は 0 | 同上 |
 
 ### 単体テストの観点
 
 | 関数 | 正常 | 境界値 | 異常 |
 | --- | --- | --- | --- |
-| `_apply_userns` | `apply` を 1 回呼ぶ | `DEVBASE_SKIP_USERNS=""` は呼ぶ、`=1` は呼ばない | `ok` 偽・例外でも `cmd_init` が 0 |
+| `_apply_userns` | `apply` を 1 回呼ぶ | `DEVBASE_SKIP_USERNS=""` は呼ぶ、`=1` は呼ばない | `ok` 偽・例外・`KeyboardInterrupt` でも `cmd_init` が 0 |
 
 ## CLI の登録（`cli.py`・`bin/devbase`・補完）
 
