@@ -155,7 +155,7 @@ tests/
 
 | 関数 | 保存先 | 種類 | シグネチャ | 責務 |
 | --- | --- | --- | --- | --- |
-| `cmd_userns` | `lib/devbase/commands/userns.py` | 新設 | `(args) -> int` | `args.subcommand`（`status` / `apply` / `revert`）で `utils/userns.py` を呼び、`Report` の行を出して終了コードを返す |
+| `cmd_userns` | `lib/devbase/commands/userns.py` | 新設 | `(devbase_root: Path, args) -> int` | `args.subcommand`（`status` / `apply` / `revert`）で `utils/userns.py` を呼び、`Report` の行を出して終了コードを返す。`devbase_root` は使わないが、`_ROOT_COMMANDS` から `func(devbase_root, args)` の形で呼ばれるので、`cmd_env` などと同じ引数で受ける |
 
 - `cmd_userns`
   - 事後条件: `status` は常に 0。`apply` / `revert` は `Report.ok` が真なら 0、偽なら 1。サブコマンドが無ければ使い方を出して 2
