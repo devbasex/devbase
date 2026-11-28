@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added
+- **`devbase init`（`install.sh` が呼ぶ）が、ホストの userns の制限を外すようにしました（#533）。** Ubuntu 23.10 以降の
+  ホストでは `kernel.apparmor_restrict_unprivileged_userns = 1` が、dev コンテナの中の bubblewrap（codex のサンドボックスなど）の
+  user namespace の作成を止めていました。`init` は最後に、変えるキー・置くファイル・緩むこと・戻し方を出してから
+  `/etc/sysctl.d/60-devbase-userns.conf` を置き、その場で 0 にします。権限は root・パスワード無しの sudo・端末で尋ねる sudo の順に
+  選び、得られなければ打つコマンドを出してインストールを続けます。**ホスト全体の制限が外れます。** 飛ばすには
+  `DEVBASE_SKIP_USERNS=1` を付けて `init` を打ちます。確かめる・戻すコマンドとして `devbase userns status` / `apply` / `revert` を
+  足しました。macOS など VM の中でコンテナが動く端末では、VM の値を読んで変え方の案内だけを出します。ホストの設定だけでは
+  codex のサンドボックスは動きません（Docker の既定の seccomp も止めます。#534）。
+
 ### Fixed
 - **tmux の中でさらに tmux を動かしたとき（入れ子）も、内側の tmux の `Ctrl+C` のコピーが手元の PC のクリップボードに
   届くようにしました（#528）。** base イメージの tmux の既定に `set -s set-clipboard on` を足し、ペインの中のプログラムが

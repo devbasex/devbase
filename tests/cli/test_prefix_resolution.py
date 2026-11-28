@@ -113,3 +113,23 @@ def test_env_subcmd_map_covers_all_registered_subcommands():
     env_parser = parser._subparsers._group_actions[0].choices["env"]
     registered = set(env_parser._subparsers._group_actions[0].choices)
     assert registered == set(cli.SUBCMD_MAP[("env",)])
+
+
+def test_expand_argv_u_resolves_to_up(monkeypatch):
+    """`userns` (#533) 追加後も `devbase u` は `up` に解決される (受け入れ条件 20)"""
+    monkeypatch.setattr(sys, "argv", ["devbase", "u"])
+    cli._expand_argv()
+    assert sys.argv == ["devbase", "up"]
+
+
+def test_expand_argv_us_resolves_to_userns(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["devbase", "us", "st"])
+    cli._expand_argv()
+    assert sys.argv == ["devbase", "userns", "status"]
+
+
+def test_userns_in_help(capsys):
+    """`devbase --help` に `userns` が現れる (受け入れ条件 21)"""
+    with pytest.raises(SystemExit):
+        cli._create_parser().parse_args(["--help"])
+    assert "userns" in capsys.readouterr().out

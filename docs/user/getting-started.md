@@ -28,7 +28,7 @@ curl -fsSL https://dl.basex.jp/i | bash && . ~/devbase/bin/rc
 このコマンドは次を行います。
 
 1. `~/devbase` に devbase を clone します（既に devbase が clone 済みなら `git pull --ff-only` で更新）。
-2. clone 先で `devbase init` を 1 回実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成を含む）。
+2. clone 先で `devbase init` を 1 回実行します（uv の自動導入・PATH/補完の登録・`plugins.yml` 生成・ホストの userns の制限を外すことを含む）。
 3. 末尾の `&& . ~/devbase/bin/rc` を**いま開いている端末**で実行し、その端末で即座に `devbase`（PATH / 補完）が使える状態にします。新しく開くターミナルは init の rc 追記により自動で有効です。
 
 `env init`（手順 7）は対話が必要なため、ワンライナーでは**実行せず案内のみ**です。完了後に手動で実行してください。配置先を `DEVBASE_INSTALL_DIR` で変えた場合は、`~/devbase/...` を同じパスに合わせてください。
@@ -73,8 +73,18 @@ cd devbase
 - `bin/devbase` を PATH に追加（環境に応じて `~/.zshrc` / `~/.bashrc` / `~/.bash_profile` のいずれかに追記）
 - シェル補完スクリプトの登録（Tab 補完が有効になる）
 - プラグイン設定ファイル `plugins.yml` の作成
+- ホストの userns の制限を外す（Linux のホストで `kernel.apparmor_restrict_unprivileged_userns` が 1 のとき）
 
 書き込み先は現在のシェル種別と OS から自動判定されます（zsh → `~/.zshrc`、bash on macOS → `~/.bash_profile`、bash on Linux → `~/.bashrc`）。
+
+**ホストの userns の制限について:** Ubuntu 23.10 以降のホストでは、dev コンテナの中の bubblewrap（codex のサンドボックスなど）が
+user namespace を作れません。`init` は最後に、変えるキー・置くファイル・緩むこと・戻し方を出してから
+`/etc/sysctl.d/60-devbase-userns.conf` を置き、その場で 0 にします。sudo のパスワードが要る端末では端末で尋ねます。
+ホスト全体の制限が外れ、AppArmor のプロファイルを持たないすべての特権の無いプロセスが user namespace を作れるようになります。
+
+- 変えたくなければ `DEVBASE_SKIP_USERNS=1 ./bin/devbase init` で飛ばします
+- 戻すには `devbase userns revert`、今の値を見るには `devbase userns status` を打ちます（[`devbase userns`](cli-reference/01-toplevel.md#devbase-userns)）
+- 権限が得られなかったときも `init` は止まりません。出たコマンドを打つか、後で `devbase userns apply` を打ちます
 
 ### 3. シェルで有効化
 

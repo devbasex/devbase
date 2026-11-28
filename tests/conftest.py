@@ -402,6 +402,8 @@ ISOLATED_ENV = (
     'DEVBASE_S3_SSE_KMS_KEY_ID',
     # DEVBASE_IMAGE_MAX_AGE_DAYS と同じ理由で手で足す
     'DEVBASE_SNAPSHOT_MIN_INTERVAL_MINUTES',
+    # 既定で _isolate_userns_host が '1' を置く。継いだ値を消してから置く (#533)
+    'DEVBASE_SKIP_USERNS',
     'DEVBASE_WINDOW_TITLE',
     'DEVBASE_WORKSPACE',
     'DEVBASE_WORKSPACE_B64',
@@ -537,6 +539,44 @@ def _isolate_devbase_root(tmp_path_factory, monkeypatch):
     テストへ漏らさないためである。
     """
     monkeypatch.setenv('DEVBASE_ROOT', str(tmp_path_factory.mktemp('devbase-root')))
+
+
+class UnexpectedHostCall(BaseException):
+    """テストが実のホストへ子プロセスを起動しようとした (#533 の決定 7)
+
+    ``BaseException`` を継ぐのは、``cmd_init`` の ``except Exception`` に握りつぶされず
+    テストを落とすためである。
+    """
+
+
+def _refuse_host_call(*args, **kwargs):
+    raise UnexpectedHostCall(f'userns の既定の runner が呼ばれた: {args!r}')
+
+
+@pytest.fixture(autouse=True)
+def _isolate_userns_host(_isolate_env, tmp_path_factory, monkeypatch):
+    """ホストの userns の読み書きを tmp と「呼ばれたら落ちる runner」へ向ける (#533)
+
+    パスワード無しの sudo がある端末 (CI の runner など) で、既存の ``cmd_init`` のテストが
+    ``apply`` を通って実の ``/etc/sysctl.d`` と ``/proc/sys`` を書かないようにする。
+    ``DEVBASE_SKIP_USERNS=1`` を既定で置き、既定のパスを tmp (proc のキーは作らない) へ、
+    既定の runner を落ちるものへ、実効ユーザー ID を root でない値へ差し替える。
+    userns のテストは ``DEVBASE_SKIP_USERNS`` を外し、自分の paths と runner を渡す。
+    """
+    from devbase.utils import userns
+
+    root = tmp_path_factory.mktemp('userns-host')
+    monkeypatch.setenv('DEVBASE_SKIP_USERNS', '1')
+    monkeypatch.setattr(userns, 'DEFAULT_PATHS', userns.HostPaths(
+        proc_key=root / 'proc' / 'apparmor_restrict_unprivileged_userns',
+        sysctl_dirs=(root / 'etc/sysctl.d', root / 'run/sysctl.d',
+                     root / 'usr/local/lib/sysctl.d', root / 'usr/lib/sysctl.d'),
+        devbase_file=root / 'etc/sysctl.d/60-devbase-userns.conf',
+        container_markers=(root / '.dockerenv', root / 'run/.containerenv'),
+        tty=root / 'no-tty',
+    ))
+    monkeypatch.setattr(userns, 'DEFAULT_RUNNER', _refuse_host_call)
+    monkeypatch.setattr(userns, '_euid', lambda: 1000)
 
 
 @pytest.fixture(autouse=True)

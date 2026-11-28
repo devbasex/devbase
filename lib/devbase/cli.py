@@ -67,6 +67,7 @@ SUBCMD_MAP = {
     ('plugin', 'pl'):    ['list', 'install', 'uninstall', 'update', 'info', 'sync', 'repo', 'migrate',
                           'create'],
     ('snapshot', 'ss'):  ['create', 'list', 'restore', 'copy', 'delete', 'rotate'],
+    ('userns',):         ['status', 'apply', 'revert'],
 }
 
 # 後方互換: prefix が複数候補にマッチする場合に、特定の入力を特定のサブコマンドに
@@ -99,6 +100,8 @@ SUBCMD_PREFIX_PREFERENCES = {
 # bin/devbase の resolve_command 内 preference と同期させること。
 TOP_PREFIX_PREFERENCES = {
     'l': 'login',
+    # `userns` (#533) 追加で `u` が `up` / `userns` の両方にマッチするため、`devbase u` → `up` を維持する。
+    'u': 'up',
 }
 
 
@@ -841,6 +844,15 @@ def _add_shortcuts(subparsers):
     _add_list_subparser(subparsers)
 
 
+def _add_userns_parser(subparsers):
+    """userns parser (#533): ホストの userns の制限を確かめる・外す・戻す"""
+    p = subparsers.add_parser('userns', help="Show, lift or restore the host's userns restriction")
+    sub = p.add_subparsers(dest='subcommand')
+    sub.add_parser('status', help='Show the host, sysctl.d and container kernel values')
+    sub.add_parser('apply', help='Lift the restriction with /etc/sysctl.d/60-devbase-userns.conf')
+    sub.add_parser('revert', help='Remove the devbase sysctl file and restore the value')
+
+
 def _create_parser():
     """Create command line parser"""
     parser = argparse.ArgumentParser(
@@ -885,6 +897,7 @@ def _create_parser():
     _add_env_parser(subparsers)
     _add_plugin_parser(subparsers)
     _add_snapshot_parser(subparsers)
+    _add_userns_parser(subparsers)
     _add_shortcuts(subparsers)
 
     return parser
@@ -919,7 +932,7 @@ def _expand_argv():
     # bin/devbase が build を shell 実装に委譲するため Python 側には top-level
     # build parser が無い。project build / container build は引き続き利用可能。
     commands = ['init', 'status', 'project', 'container', 'ct', 'env', 'plugin', 'pl',
-                'snapshot', 'ss', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'open', 'list',
+                'snapshot', 'ss', 'userns', 'up', 'down', 'login', 'ps', 'scale', 'rebuild', 'open', 'list',
                 'help']
     repo_subcmds = ['create', 'add', 'remove', 'list', 'refresh']
 
@@ -972,6 +985,8 @@ def main():
 # サブコマンドが ``None`` の項目は「そのコマンド全体をスキップする」意味。
 _NO_SECRET_INJECTION = frozenset({
     ('init', None),
+    # ホストの sysctl を読み書きするだけで、機密の値は要らない (#533)
+    ('userns', None),
     ('env', 'keygen'),
     ('env', 'encrypt'),
     ('env', 'decrypt'),
@@ -1120,6 +1135,7 @@ _ROOT_COMMANDS = {
     'env':      ('devbase.commands.env',      'cmd_env',      True),
     'plugin':   ('devbase.commands.plugin',   'cmd_plugin',   True),
     'snapshot': ('devbase.commands.snapshot', 'cmd_snapshot', True),
+    'userns':   ('devbase.commands.userns',   'cmd_userns',   True),
 }
 
 

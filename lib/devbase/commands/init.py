@@ -1,5 +1,6 @@
 """Init command implementation"""
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,6 +13,7 @@ from devbase.utils.shell import (
     add_to_rc_file
 )
 from devbase.utils.config import get_devbase_root, get_devbase_bin, get_devbase_etc
+from devbase.utils import userns
 
 logger = get_logger("devbase.commands.init")
 
@@ -246,6 +248,27 @@ def _register_shell_completion(
     return added
 
 
+def _apply_userns() -> None:
+    """ホストの userns の制限を外す (#533)。結果に依らず init を止めない (決定 2)
+
+    ``DEVBASE_SKIP_USERNS`` に空でない値があれば飛ばす。例外と ``KeyboardInterrupt`` は
+    警告にして外へ出さない。``sudo -v`` の入力の中断は ``apply`` が受けて ``ok`` 偽で返す。
+    """
+    if os.environ.get('DEVBASE_SKIP_USERNS'):
+        logger.info("DEVBASE_SKIP_USERNS があるため、ホストの userns の制限の確かめを飛ばした")
+        return
+    try:
+        report = userns.apply(emit=userns.logger_emit(logger))
+    except KeyboardInterrupt:
+        logger.warning("userns の確かめを中断した。後で devbase userns apply を打つ")
+        return
+    except Exception as e:  # noqa: BLE001 - インストールを止めない
+        logger.warning("userns の確かめに失敗した: %s。後で devbase userns apply を打つ", e)
+        return
+    if not report.ok:
+        logger.warning("ホストの userns の制限を外せなかった。後で devbase userns apply を打つ")
+
+
 def cmd_init(devbase_root: Path = None) -> int:
     """
     Initialize devbase environment (add to PATH, register shell completion,
@@ -313,6 +336,9 @@ def cmd_init(devbase_root: Path = None) -> int:
         completion_added = _register_shell_completion(
             current_shell, devbase_etc, rc_file,
         )
+
+        # ホストの userns の制限 (#533)。失敗しても終了コードを変えない
+        _apply_userns()
 
         # Print final message
         if env_added or completion_added:

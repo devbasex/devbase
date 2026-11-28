@@ -60,7 +60,7 @@ _devbase_arguments() {
 
 _devbase() {
     local -a commands project_subcommands container_subcommands env_subcommands
-    local -a plugin_subcommands repo_subcommands snapshot_subcommands
+    local -a plugin_subcommands repo_subcommands snapshot_subcommands userns_subcommands
 
     commands=(
         'init:Initialize devbase environment'
@@ -74,6 +74,7 @@ _devbase() {
         'pl:Manage plugins (alias)'
         'snapshot:Manage snapshots'
         'ss:Manage snapshots (alias)'
+        'userns:Show, lift or restore the host userns restriction'
         'up:Start containers (shortcut)'
         'down:Stop containers (shortcut)'
         'login:Login to container (shortcut)'
@@ -162,6 +163,12 @@ _devbase() {
         'copy:Copy a snapshot'
         'delete:Delete a snapshot'
         'rotate:Rotate old snapshots'
+    )
+
+    userns_subcommands=(
+        'status:Show the host, sysctl.d and container kernel values'
+        'apply:Lift the restriction with the devbase sysctl file'
+        'revert:Remove the devbase sysctl file and restore the value'
     )
 
     # --context NAME を取るサブコマンドは、どれも値を補完しない --context を出す (#435)。
@@ -512,6 +519,9 @@ _devbase() {
                     _describe -t snapshot-commands 'snapshot command' snapshot_subcommands
                     ;;
             esac
+            ;;
+        userns)
+            _describe -t userns-commands 'userns command' userns_subcommands
             ;;
         *)
             _describe -t commands 'devbase command' commands

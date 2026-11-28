@@ -53,6 +53,7 @@ _devbase_complete_subcommands() {
     local env_subcommands="init sync list set get delete edit project export import keygen exec token encrypt decrypt rekey doctor backend"
     local plugin_subcommands="list install uninstall update info sync repo create"
     local snapshot_subcommands="create list restore copy delete rotate"
+    local userns_subcommands="status apply revert"
     case "$prev" in
         login)
             _devbase_complete_flags "$ctx_flags" "$cur" "1 2"
@@ -93,6 +94,9 @@ _devbase_complete_subcommands() {
             ;;
         snapshot|ss)
             COMPREPLY=($(compgen -W "$snapshot_subcommands" -- "$cur"))
+            ;;
+        userns)
+            COMPREPLY=($(compgen -W "$userns_subcommands" -- "$cur"))
             ;;
     esac
 }
@@ -368,7 +372,7 @@ _devbase_completions() {
         cword=$COMP_CWORD
     }
 
-    local commands="init status shell-rc project container ct env plugin pl snapshot ss up down login build rebuild ps scale open list help"
+    local commands="init status shell-rc project container ct env plugin pl snapshot ss userns up down login build rebuild ps scale open list help"
     # --context NAME を取るサブコマンドのフラグ候補 (トップレベル・project・container で共通)。
     # 道の直後と、[name] を取るものはプロジェクト名の直後で出す (#435)。
     local ctx_flags="--context"
