@@ -75,6 +75,11 @@
       "id": "plugin-distribution",
       "name": "プラグインの配布",
       "meaning": "プラグインリポジトリの作成と登録、プラグインとプロジェクトの追加（lib/devbase/plugin/ と devbase plugin / devbase project create）"
+    },
+    {
+      "id": "host-userns",
+      "name": "ホストの userns の制限",
+      "meaning": "devbase init と devbase userns が扱う、ホストとコンテナが動くカーネルの user namespace の制限（issues/issue-533-design.md）"
     }
   ],
   "terms": [
@@ -1103,6 +1108,34 @@
       "context": "editor",
       "meaning": "ホストに入れたデスクトップ版の VS Code の CLI。VSCODE_IPC_HOOK_CLI があっても、PATH に remote-cli が無ければホストの VS Code に向けて開く",
       "source": "docs/specifications/editor-open.md"
+    },
+    {
+      "term": "userns の制限",
+      "context": "host-userns",
+      "meaning": "kernel.apparmor_restrict_unprivileged_userns が 1 で、AppArmor のプロファイルを持たない特権の無いプロセスが user namespace を作れない状態",
+      "source": "",
+      "pending_source": "issues/issue-533-design.md"
+    },
+    {
+      "term": "devbase の sysctl の設定ファイル",
+      "context": "host-userns",
+      "meaning": "devbase が置く /etc/sysctl.d/60-devbase-userns.conf。1 行目の目印のコメント（# devbase: で始まる）で devbase が置いたものと見分ける",
+      "source": "",
+      "pending_source": "issues/issue-533-design.md"
+    },
+    {
+      "term": "設定ファイルの上の値",
+      "context": "host-userns",
+      "meaning": "sysctl.d の読む順（ファイル名の辞書順で最後のものが勝つ）で、起動のときにキーへ入る値",
+      "source": "",
+      "pending_source": "issues/issue-533-design.md"
+    },
+    {
+      "term": "コンテナが動くカーネル",
+      "context": "host-userns",
+      "meaning": "dockerd が動くカーネル。Linux の native の dockerd ではホストと同じで、macOS や docker context の接続先では別である",
+      "source": "",
+      "pending_source": "issues/issue-533-design.md"
     }
   ]
 }
