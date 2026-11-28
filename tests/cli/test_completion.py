@@ -151,6 +151,18 @@ def test_zsh_completion_mentions_project_and_list():
     assert "list:List projects" in text
 
 
+def test_bash_top_level_commands_include_userns(fake_root):
+    """#533: bash の補完のトップレベルに userns が出る (受け入れ条件 21)"""
+    assert "userns" in _bash_complete("devbase ''", 1, fake_root)
+
+
+def test_zsh_completion_mentions_userns():
+    text = ZSH_COMPLETION.read_text()
+    assert "'userns:" in text
+    for sub in ("status", "apply", "revert"):
+        assert f"'{sub}:" in text
+
+
 def test_zsh_completion_marks_container_deprecated():
     text = ZSH_COMPLETION.read_text()
     assert "deprecated" in text.lower()
@@ -322,6 +334,7 @@ def fake_root_with_plugins(fake_root):
     ("devbase pl ''", 2, _PLUGIN_SUBCOMMANDS),
     ("devbase snapshot ''", 2, _SNAPSHOT_SUBCOMMANDS),
     ("devbase ss ''", 2, _SNAPSHOT_SUBCOMMANDS),
+    ("devbase userns ''", 2, ["status", "apply", "revert"]),
     ("devbase status ''", 2, []),
     # 位置 3: トップレベルのシノニム
     ("devbase open web '-'", 3, ["--open-index", "--context"]),

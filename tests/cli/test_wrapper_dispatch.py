@@ -131,6 +131,21 @@ class TestWrapperDispatch:
         result = run_wrapper("lo")
         assert python_args(result) == "login", result.stdout
 
+    def test_userns_reaches_python(self, run_wrapper):
+        """#533: `devbase userns status` が Python へ届く (受け入れ条件 21)"""
+        result = run_wrapper("userns", "status")
+        assert "unknown command" not in result.stderr.lower(), result.stderr
+        assert python_args(result) == "userns status", result.stdout
+
+    def test_u_prefix_resolves_to_up(self, run_wrapper):
+        """#533: `userns` 追加後も `devbase u` は `up` に解決される (受け入れ条件 20)"""
+        result = run_wrapper("u")
+        assert python_args(result) == "up", result.stdout
+
+    def test_us_prefix_resolves_to_userns(self, run_wrapper):
+        result = run_wrapper("us", "status")
+        assert python_args(result) == "userns status", result.stdout
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

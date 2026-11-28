@@ -21,6 +21,7 @@ lib/devbase/
 tests/
   conftest.py
   utils/test_userns.py *
+  utils/userns_fake.py *
   commands/test_userns_command.py *
   commands/test_init_userns.py *
   cli/test_prefix_resolution.py
@@ -28,7 +29,7 @@ tests/
   cli/test_wrapper_dispatch.py
 ```
 
-依存の向き: `cli.py` → `commands/userns.py` → `utils/userns.py`、`commands/init.py` → `utils/userns.py` の一方向で、`utils/userns.py` は `devbase.log` と標準ライブラリだけに依存する。`utils/userns.py` は表示を持たず、出す行を返り値（`Report` の `lines`）に入れ、コマンドの側が出す。
+依存の向き: `cli.py` → `commands/userns.py` → `utils/userns.py`、`commands/init.py` → `utils/userns.py` の一方向で、`utils/userns.py` は `devbase.log` と標準ライブラリだけに依存する（`Runner` は `docker_context.Runner` と同じ形をこのモジュールで置く）。`utils/userns.py` は表示を持たず、出す行を `Report` の `lines` に入れ、コマンドの側が渡した `emit` で足すたびに出す。
 
 | パス | 種類 | 役割 1 文 | 依存する先 | クラスまたはモジュール | メソッドと最上位の関数 |
 | --- | --- | --- | --- | --- | --- |
@@ -49,14 +50,14 @@ tests/
 | 関数 | 保存先 | 種類 | シグネチャ | 責務 |
 | --- | --- | --- | --- | --- |
 | `read_runtime_value` | `lib/devbase/utils/userns.py` | 新設 | `(paths: HostPaths) -> int \| None` | proc のキーを読み、0 / 1 を返す。キーが無ければ `None` |
-| `config_value` | 同上 | 新設 | `(paths: HostPaths) -> tuple[int \| None, Path \| None]` | sysctl.d の読む順で最後にキーを書くファイルと、その値を返す |
+| `config_value` | 同上 | 新設 | `(paths: HostPaths, skip: Path \| None = None) -> tuple[int \| None, Path \| None]` | sysctl.d の読む順で最後にキーを書くファイルと、その値を返す。`skip` のファイルは無いものとして読む（`revert` が消した後の値を求める） |
 | `later_overrides` | 同上 | 新設 | `(paths: HostPaths) -> list[Path]` | devbase のファイルより辞書順で後にあり、キーへ 0 以外を書くファイルを返す |
 | `in_container` | 同上 | 新設 | `(paths: HostPaths) -> bool` | コンテナの印（`/.dockerenv`・`/run/.containerenv`）があるかを返す |
 | `choose_privilege` | 同上 | 新設 | `(paths: HostPaths, runner: Runner) -> Privilege` | `ROOT` / `SUDO` / `SUDO_PROMPT` / `NONE` を選ぶ。尋ねはしない |
 | `probe_container_kernel` | 同上 | 新設 | `(runner: Runner, timeout: float = 20.0) -> ContainerKernel` | 設計文書の「処理の流れ」の表のとおりにコンテナが動くカーネルの値を読む |
-| `status` | 同上 | 新設 | `(paths: HostPaths \| None = None, runner: Runner \| None = None) -> Report` | 3 つの値を読み、行を組む。何も変えない |
-| `apply` | 同上 | 新設 | `(paths: HostPaths \| None = None, runner: Runner \| None = None) -> Report` | 設計文書の「処理の流れ」の図のとおりに外す |
-| `revert` | 同上 | 新設 | `(paths: HostPaths \| None = None, runner: Runner \| None = None) -> Report` | 目印のある devbase のファイルを消し、`sysctl --system` を打つ |
+| `status` | 同上 | 新設 | `(paths: HostPaths \| None = None, runner: Runner \| None = None, emit: Emit \| None = None) -> Report` | 3 つの値を読み、行を組む。何も変えない |
+| `apply` | 同上 | 新設 | `(paths: HostPaths \| None = None, runner: Runner \| None = None, emit: Emit \| None = None) -> Report` | 設計文書の「処理の流れ」の図のとおりに外す |
+| `revert` | 同上 | 新設 | `(paths: HostPaths \| None = None, runner: Runner \| None = None, emit: Emit \| None = None) -> Report` | 目印のある devbase のファイルを消し、このキーだけを消した後の設定ファイルの上の値へ `sysctl -w` で戻す |
 
 - `config_value`
   - 事前条件: 無し（ディレクトリが無ければ飛ばす）
@@ -72,7 +73,8 @@ tests/
   - `KeyboardInterrupt`: `sudo -v` の呼び出しで受け、何も書かずに `ok` 偽で返す（下の異常系の表）
 - `revert`
   - 事後条件: `Report.ok` が真なら devbase のファイルが無い。目印の無いファイルは残る
-  - 副作用: `rm -f <devbase のファイル>`、`sysctl --system`。権限は `apply` と同じく `choose_privilege` で選ぶ。`SUDO_PROMPT` なら消す前に何を消すかを 1 行出してから `sudo -v` で尋ね、`NONE` なら打つコマンドを出して `ok` 偽で返す
+  - 手順: 先にファイルの有無と目印を確かめる。ファイルが無ければ runner を呼ばずに `ok` 真で返し、目印が無ければ runner を呼ばずに `ok` 偽で返す。消すと決まってから `choose_privilege` を呼ぶ
+  - 副作用: `rm -f <devbase のファイル>`、`sysctl -w kernel.apparmor_restrict_unprivileged_userns=<値>`（値は `config_value(paths, skip=<devbase のファイル>)`、つまり消した後の設定ファイルの上の値）。消した後の設定ファイルの上の値が無い・ホストにキーが無いときは `sysctl` を打たず、今の値を変えない（再起動の後はカーネルの既定になると出す）。`sysctl --system` は打たない（他のキーの値まで戻すため）。権限は `apply` と同じく `choose_privilege` で選ぶ。`SUDO_PROMPT` なら消す前に何を消すかを 1 行出してから `sudo -v` で尋ね、`NONE` なら打つコマンドを出して `ok` 偽で返す
 
 ### 異常系の処理
 
@@ -88,9 +90,9 @@ tests/
 | `probe_container_kernel` | docker が無い・届かない・時間切れ | 未導入・daemon 停止 | `FileNotFoundError`・終了コード・`TimeoutExpired` | 既定値で続ける（未確認） | 「コンテナが動くカーネル: 未確認（理由）」。終了コードに数えない | 無し |
 | `probe_container_kernel` | `--pull never` が未知のオプション | 古い docker | 終了コードと標準エラー | 既定値で続ける（未確認） | 同上 | 無し |
 | `revert` | 目印が無い | 利用者が同じパスに置いた | 1 行目 | 止める | 「devbase のファイルではないので消さない」。1 | 何も消さない |
-| `revert` | 権限が無い（`choose_privilege` が `NONE`） | `apply` と同じ | 返り値 `NONE` | 止める | 打つコマンド（`sudo rm -f …` と `sudo sysctl --system`）。1 | 何も消していない。再実行できる |
+| `revert` | 権限が無い（`choose_privilege` が `NONE`） | `apply` と同じ | 返り値 `NONE` | 止める | 打つコマンド（`sudo rm -f …` と `sudo sysctl -w <キー>=<消した後の設定ファイルの上の値>`）。1 | 何も消していない。再実行できる |
 | `revert` | `sudo -v` が通らない・入力を中断した | パスワードの誤り・Ctrl-C | 終了コード・`except KeyboardInterrupt` | `apply` と同じく止める | 「中断した」か打つコマンド。1 | 何も消していない。再実行できる |
-| `revert` | `sysctl --system` が失敗する | 他のファイルの誤り | 終了コード | ファイルは消したまま報告する | 「消したが読み直しに失敗した。再起動で反映される」。1 | 再実行で読み直せる |
+| `revert` | `sysctl -w` が失敗する | 読み取り専用の `/proc/sys`・LSM が拒む | 終了コード | ファイルは消したまま報告する | 「ファイルは消したが、今の値を戻せなかった。再起動で反映される」。1 | ファイルが無いので再実行は何もしない。再起動か手の `sysctl -w` で戻る |
 
 ### 処理の手順
 
@@ -104,7 +106,7 @@ tests/
 | `apply` | 今の値 0・設定ファイルの上の値 1・ここまでの行に当たらない | 説明を出し、権限を選んで書く。書いた後に `later_overrides` が空なら「再起動の後も 0」と出す |
 | `apply` | 今の値 1・ここまでの行に当たらない | 説明を出し、権限を選んで書く |
 | `apply` | 書いた後に `later_overrides` が空でない | パスを挙げて「再起動の後に 1 へ戻る」と警告する。「再起動の後も 0」は出さない（`ok` は真のまま） |
-| `apply` | コンテナが動くカーネルの値が 1 で、ホストの値が 0 か `None`（キーが無い・読めない） | 変え方の案内を足す（`ok` は変えない）。ホストの値が 1 のとき（コンテナの中など）は、ホストの側の行の案内だけを出し、この案内は足さない。設計文書の流れ図の DV と同じ条件である |
+| `apply` | コンテナが動くカーネルの値が 1 で、ホストの値が 0 か `None`（キーが無い・読めない） | 変え方の案内を足す（`ok` は変えない）。ホストの値が 1 のとき（コンテナの中など）は、ホストの側の行の案内だけを出し、この案内は足さない。設計文書の流れ図の「1 で、ホストの値が 0 か読めない」の分岐と同じ条件である |
 
 ### 内部のデータと定数
 
@@ -116,7 +118,9 @@ tests/
 | `DEFAULT_PATHS` / `DEFAULT_RUNNER` | モジュールの既定 | 同上 | `HostPaths()` / `subprocess.run`。テストの fixture が差し替える |
 | `Privilege` | 型（Enum） | 同上 | `ROOT` / `SUDO` / `SUDO_PROMPT` / `NONE` |
 | `ContainerKernel` | 型 | 同上 | `value: int \| None`、`source: str`（`image` / `docker-info` / `none`）、`reason: str` |
-| `Report` | 型 | 同上 | `ok: bool`、`changed: bool`、`lines: list[str]`、`warnings: list[str]` |
+| `Report` | 型 | 同上 | `ok: bool`、`changed: bool`、`lines: list[str]`、`warnings: list[str]`、`emit: Emit \| None`。`add` / `warn` で行を足すたびに `emit` を呼ぶ。`sudo -v` がパスワードを尋ねる前に説明を出すため（受け入れ条件 3）、行は返り値を待たずに出す |
+| `Emit` | 型 | 同上 | `(レベル, 行) -> None`。レベルは `info` / `warning`。`logger_emit(logger)` が logger へ出すものを作る |
+| `_euid` | 関数 | 同上 | `os.geteuid()`。テストの fixture が root でない値へ差し替える |
 | `PROBE_IMAGE` | 定数 | 同上 | `devbase-base:latest` |
 | `PROBE_TIMEOUT` | 定数 | 同上 | 20 秒 |
 
@@ -145,7 +149,7 @@ tests/
 | `choose_privilege` | root → `ROOT` | `sudo -n` 0 → `SUDO`、tty だけ → `SUDO_PROMPT` | sudo が無い → `NONE` |
 | `probe_container_kernel` | イメージあり（`docker image inspect --format '{{.Id}}' devbase-base:latest` が 0）→ `--pull never` の `docker run` | イメージ無し・`apparmor` 無し → 制限は効かない | docker 無し・時間切れ・未知のオプション → 未確認 |
 | `apply` | 受け入れ条件 1・2・7 | 6・8・9・10 | 3・4・5（`sudo -v` の中断）・11・16・22 |
-| `revert` | 12 | ファイルが無い | 目印が無い・`sysctl --system` の失敗 |
+| `revert` | 12（`sysctl -w` で消した後の設定ファイルの上の値へ戻す） | ファイルが無い（runner を呼ばない）・消した後の設定ファイルの上の値が無い（`sysctl` を打たない） | 目印が無い（runner を呼ばない）・`sysctl -w` の失敗・`sudo -v` の中断 |
 
 ## userns のコマンド（`lib/devbase/commands/userns.py`）
 

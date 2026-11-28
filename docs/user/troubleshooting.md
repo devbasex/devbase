@@ -72,6 +72,26 @@ Docker Daemon が起動しているか確認してください。
 docker info
 ```
 
+### dev コンテナの中で codex のサンドボックス（bubblewrap）が user namespace を作れない
+
+**症状:**
+
+dev コンテナの中で `bwrap` や `unshare -Ur true` が `Operation not permitted` などで止まる。
+
+**原因と解決策:**
+
+Ubuntu 23.10 以降のホストの userns の制限（`kernel.apparmor_restrict_unprivileged_userns = 1`）が止めています。
+`devbase init` が外すはずですが、権限が得られなかった・`DEVBASE_SKIP_USERNS` で飛ばした・後のファイルが 1 を書いて再起動で戻った、
+のいずれかで残っていることがあります。
+
+```bash
+devbase userns status   # ホスト・設定ファイル・コンテナが動くカーネルの値
+devbase userns apply    # 外す（sudo のパスワードを尋ねることがある）
+```
+
+ホストを 0 にしても、Docker の既定の seccomp が `unshare` を止めるため、それだけでは codex のサンドボックスは動きません。
+macOS など、コンテナが VM の中で動く端末では、`status` が VM の値を出し、`apply` は変え方の案内だけを出します。
+
 ## 2. コンテナ関連
 
 ### コンテナが起動しない

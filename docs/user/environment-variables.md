@@ -719,6 +719,19 @@ dev コンテナで使うには、base イメージの建て直し（`devbase bu
 サブコマンドごとの引数・終了コード・`peek` の出力・`prefix S` のメニューの仕様は
 [tmux のセッションを名指しで扱うコマンド（tmux-session）](../specifications/tmux-named-session.md) にあります。
 
+## ホストの userns の制限を外さない（`DEVBASE_SKIP_USERNS`）
+
+`devbase init`（`install.sh` が呼ぶ）は最後に、ホストの userns の制限（`kernel.apparmor_restrict_unprivileged_userns`）を外します
+（[`devbase userns`](cli-reference/01-toplevel.md#devbase-userns)）。`DEVBASE_SKIP_USERNS` に空でない値があれば、`init` はこの手順を飛ばし、
+飛ばしたことを 1 行出します。
+
+```bash
+DEVBASE_SKIP_USERNS=1 devbase init
+curl -fsSL https://dl.basex.jp/i | DEVBASE_SKIP_USERNS=1 bash
+```
+
+`devbase userns apply` を直に打ったときは見ません（明示の操作を優先します）。
+
 ## ソースファイル変更検出
 
 devbase はソースファイル（`~/.aws/config` 等）のハッシュを `.env.sources.yml` で管理しています。
