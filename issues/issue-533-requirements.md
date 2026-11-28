@@ -87,7 +87,7 @@
 - [ ] 19. テストの全体（`env -u DEVBASE_ROOT uv run --locked pytest tests/ -q`）は、キーが 1 の Linux の端末で走らせても `/etc/sysctl.d` を変えず、sudo を起動しない（退行しない）
 - [ ] 20. `devbase u` は今と同じく `up` に解決する（退行しない）。前提の確認: `TOP_PREFIX_PREFERENCES` に `u` は無く、`up` が `u` で始まる唯一のトップレベルのコマンドである（2026-11-28、`lib/devbase/cli.py` の `_expand_argv`）
 - [ ] 21. `devbase userns` は `devbase --help`・bash と zsh の補完・`bin/devbase` の振り分けに現れる
-- [ ] 22. 前提: `/etc/sysctl.d/60-devbase-userns.conf` に目印の無いファイル（利用者が手で置いたもの）があり、今の値が 1 か、そのファイルがキーへ 0 を書いていない。結果: `apply` はそのファイルを書き換えず、理由を出して終了コード 1
+- [ ] 22. 前提: `/etc/sysctl.d/60-devbase-userns.conf` に目印の無いファイル（利用者が手で置いたもの）があり、書く必要がある。書く必要があるのは、今の値が 1 のときと、今の値は 0 だが設定ファイルの上では 1 になり、そのファイルがキーへ 0 を書いていないときである（今の値も設定ファイルの上の値も 0 なら、条件 6 のとおり何も書かずに終わる）。結果: `apply` はそのファイルを書き換えず、理由を出して終了コード 1
 
 ## 非機能の条件
 
