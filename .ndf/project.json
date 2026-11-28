@@ -60,22 +60,6 @@
     "compose_files": [],
     "databases": []
   },
-  "delivery": [
-    {
-      "target": "main ブランチ（install.sh が取得）",
-      "kind": "auto",
-      "trigger": "main へのマージ",
-      "versioned": true,
-      "channel": "production"
-    },
-    {
-      "target": "GitHub Pages のインストーラ",
-      "kind": "auto",
-      "trigger": "pages.yml",
-      "versioned": false,
-      "channel": "production"
-    }
-  ],
   "issues": {
     "primary": "github",
     "others": [
@@ -135,5 +119,62 @@
       "worktree.json#base_branch": "e4a9e4d8baa71a9d8ebf56ec8ae3ea1e82be9f96ae6fe89e36d701d4a5337f30",
       "worktree.json#production_branch": "e4a9e4d8baa71a9d8ebf56ec8ae3ea1e82be9f96ae6fe89e36d701d4a5337f30"
     }
+  },
+  "branch_strategy": {
+    "kind": "custom",
+    "release_strategy": "trunk",
+    "branches": {
+      "production": "main",
+      "base": "main"
+    },
+    "sprint": {
+      "start": "production",
+      "integrate": "release",
+      "doc_prs": "sprint"
+    },
+    "release": {
+      "form": "package-plugin",
+      "version_store": {
+        "kind": "none"
+      },
+      "tag": null,
+      "github_release": false,
+      "cd": null,
+      "deliveries": [
+        {
+          "target": "main ブランチ（install.sh が取得）",
+          "kind": "auto",
+          "trigger": "main へのマージ",
+          "branch": "main",
+          "channel": "production",
+          "versioned": true
+        },
+        {
+          "target": "GitHub Pages のインストーラ",
+          "kind": "auto",
+          "trigger": "pages.yml",
+          "branch": "main",
+          "channel": "production",
+          "versioned": false
+        }
+      ]
+    },
+    "channels": [
+      {
+        "name": "stable",
+        "ref": "main"
+      }
+    ],
+    "approval": {
+      "target": "production_pr",
+      "via": "gate"
+    },
+    "merge": {
+      "actor": "ndf",
+      "method": "strict",
+      "commit": "merge",
+      "admin": false
+    },
+    "verify": null
   }
 }
