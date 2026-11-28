@@ -18,9 +18,9 @@
       "approved_at": "2026-09-28T03:10:55+00:00",
       "approved_by": "takemi.ohama",
       "reason": "初版",
-      "vet": {
-        "verdict": "follow",
-        "at": "2026-09-28T03:10:48+00:00",
+      "validation": {
+        "result": "pass",
+        "checked_at": "2026-09-28T03:10:48+00:00",
         "accepted_unknown": false
       },
       "changes": [],
